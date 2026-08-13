@@ -113,6 +113,9 @@ Configuração:
 
  dsm config show
 
+Steam:
+
+ dsm steam auth
 
 Runtime Manager:
 
@@ -435,6 +438,52 @@ game_command()
     esac
 }
 
+steam_command()
+{
+    local ACTION="${1:-}"
+    local PROVIDER="${DSM_ROOT}/installer/providers/steam.sh"
+    local CONF="${DSM_ROOT}/config/providers/steam.conf"
+
+    case "${ACTION}" in
+        auth)
+            if [[ ! -f "${PROVIDER}" ]]
+            then
+                echo "Provider Steam não encontrado:" >&2
+                echo "${PROVIDER}" >&2
+                return 1
+            fi
+
+            if [[ -f "${CONF}" ]]
+            then
+                unset DSM_STEAM_USER 2>/dev/null || true
+                unset STEAM_USER 2>/dev/null || true
+
+                # shellcheck source=/dev/null
+                source "${CONF}"
+            fi
+
+            local USER="${DSM_STEAM_USER:-${STEAM_USER:-}}"
+
+            if [[ -z "${USER}" ]]
+            then
+                echo "Usuário Steam não configurado." >&2
+                echo "Configure DSM_STEAM_USER em:" >&2
+                echo "${CONF}" >&2
+                return 1
+            fi
+
+            # shellcheck source=/dev/null
+            source "${PROVIDER}"
+
+            steam_provider_authenticate "${USER}"
+        ;;
+
+        *)
+            echo "Uso: dsm steam auth" >&2
+            return 2
+        ;;
+    esac
+}
 catalog_command()
 {
     exec "${DSM_ROOT}/installer/catalog.sh" "$@"
@@ -568,6 +617,11 @@ runtime)
 config)
     shift
     config_command "$@"
+;;
+
+steam)
+    shift
+    steam_command "$@"
 ;;
 
 game)

@@ -211,6 +211,53 @@ steam_provider_install_anonymous()
         +quit
 }
 
+steam_provider_authenticate()
+{
+    local STEAM_USER="${1:-}"
+    local STATUS=0
+
+    if [[ -z "${STEAM_USER}" || "${STEAM_USER}" == "anonymous" ]]
+    then
+        steam_error "Usuário Steam não informado."
+        return 1
+    fi
+
+    steam_provider_validate || return 1
+
+    if [[ ! -t 0 || ! -t 1 ]]
+    then
+        steam_error "Autenticação Steam requer um terminal interativo."
+        steam_error "Execute esta operação diretamente em um terminal administrativo."
+        return 1
+    fi
+
+    echo
+    echo "============================================"
+    echo " Capivara - Steam Authentication"
+    echo "============================================"
+    echo
+    echo "Usuário Steam: ${STEAM_USER}"
+    echo
+    echo "A senha e o Steam Guard serão solicitados diretamente pelo SteamCMD."
+    echo "O Capivara não armazena essas credenciais."
+    echo
+
+    "${STEAMCMD_BIN}" \
+        +login "${STEAM_USER}" \
+        +quit
+
+    STATUS=$?
+
+    if (( STATUS != 0 ))
+    then
+        steam_error "Falha na autenticação Steam."
+        return "${STATUS}"
+    fi
+
+    steam_log "Autenticação Steam concluída."
+    return 0
+}
+
 steam_provider_install_authenticated()
 {
     local APP_ID="$1"
@@ -309,6 +356,7 @@ export -f steam_progress_publish steam_progress_parse_line
 export -f steamcmd_build_command steamcmd_run_with_progress
 export -f steam_provider_ensure steam_provider_validate
 export -f steam_manifest_path steam_manifest_exists steam_buildid
+export -f steam_provider_authenticate
 export -f steam_provider_install_anonymous steam_provider_install_authenticated
 export -f steam_provider_install steam_provider_update steam_provider_verify steam_provider_info
 export -f provider_ensure provider_install provider_update provider_verify provider_info provider_version
