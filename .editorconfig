@@ -1,3 +1,6 @@
+# Capivara DSM
+# Editor configuration for Windows/Linux compatibility
+
 root = true
 
 [*]
@@ -6,13 +9,16 @@ end_of_line = lf
 insert_final_newline = true
 trim_trailing_whitespace = true
 
-[*.md]
-trim_trailing_whitespace = false
-
-[*.{sh,service,conf,cfg,json,yml,yaml,py,js,css,html,sql}]
+[*.{sh,service,py,json,conf,cfg,js,css,html,yml,yaml,sql}]
 charset = utf-8
 end_of_line = lf
 insert_final_newline = true
+
+[*.md]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = false
 
 [version]
 charset = utf-8
