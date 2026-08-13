@@ -24,6 +24,9 @@ class DatabaseManagerTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.database = self.root / "data" / "capivara.db"
+        self.migrations = DB.load_migrations()
+        self.expected_migration_versions = [migration.version for migration in self.migrations]
+        self.current_migration = self.expected_migration_versions[-1]
 
     def tearDown(self):
         self.temp.cleanup()
@@ -39,8 +42,8 @@ class DatabaseManagerTest(unittest.TestCase):
         second = DB.initialize(self.database)
 
         self.assertTrue(first["initialized"])
-        self.assertEqual(first["current_migration"], 5)
-        self.assertEqual(first["applied_now"], [1, 3, 4, 5])
+        self.assertEqual(first["current_migration"], self.current_migration)
+        self.assertEqual(first["applied_now"], self.expected_migration_versions)
         self.assertEqual(second["applied_now"], [])
         self.assertTrue(
             {
@@ -132,7 +135,7 @@ class DatabaseManagerTest(unittest.TestCase):
 
     def test_changed_applied_migration_is_rejected(self):
         DB.initialize(self.database)
-        migration = DB.load_migrations()[0]
+        migration = self.migrations[0]
         changed = replace(migration, checksum="0" * 64)
         with closing(DB.connect(self.database)) as connection:
             with self.assertRaisesRegex(DB.DatabaseError, "checksum does not match"):
@@ -156,7 +159,7 @@ class DatabaseManagerTest(unittest.TestCase):
         )
         result = json.loads(completed.stdout)
         self.assertEqual(result["kind"], "DatabaseStatus")
-        self.assertEqual(result["current_migration"], 5)
+        self.assertEqual(result["current_migration"], self.current_migration)
 
 
 if __name__ == "__main__":
