@@ -1,0 +1,6 @@
+{
+  "schema_version": 2, "kind": "ContentDefinition", "id": "minecraft.example.modpack", "name": "Example Forge Modpack", "content_type": "modpack", "game": "minecraft", "version": "1.0.0",
+  "catalog": { "provider": "custom-manifest", "project_id": "example-modpack" },
+  "compatibility": { "game_versions": ["1.20.1"], "editions": ["java"], "loaders": ["forge"], "loader_versions": [">=47.1"], "java": { "min": 17, "max": 17 }, "os": ["linux", "windows"], "architectures": ["x86_64"] },
+  "dependencies": [{ "id": "minecraft.example.mod", "version": ">=1.0.0", "required": true }], "conflicts": [], "artifact": { "provider": "local", "package_id": "examples/example-modpack.zip" }
+}

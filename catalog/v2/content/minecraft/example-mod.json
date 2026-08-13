@@ -1,0 +1,6 @@
+{
+  "schema_version": 2, "kind": "ContentDefinition", "id": "minecraft.example.mod", "name": "Example Fabric Mod", "content_type": "mod", "game": "minecraft", "version": "1.0.0",
+  "catalog": { "provider": "builtin", "project_id": "example-mod" },
+  "compatibility": { "game_versions": ["1.20.1", "1.21.1"], "editions": ["java"], "loaders": ["fabric"], "loader_versions": [">=0.15"], "java": { "min": 17, "max": 21 }, "os": ["linux", "windows"], "architectures": ["x86_64", "aarch64"] },
+  "dependencies": [], "conflicts": [], "artifact": { "provider": "local", "package_id": "examples/example-mod.jar" }
+}

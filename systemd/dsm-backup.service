@@ -1,0 +1,13 @@
+[Unit]
+Description=DSM Backup Service
+After=network.target
+
+[Service]
+Type=oneshot
+User={{DSM_USER}}
+Group={{DSM_GROUP}}
+Environment=DSM_ROOT=/opt/dsm
+WorkingDirectory=/opt/dsm
+ExecStart=/opt/dsm/backup/backup.sh create
+StandardOutput=journal
+StandardError=journal

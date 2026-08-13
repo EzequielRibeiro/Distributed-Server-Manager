@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capivara-dsm.local/schemas/v2/content-lock.schema.json",
+  "title": "ContentLock",
+  "type": "object",
+  "required": ["schema_version", "kind", "generation", "entries"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "kind": { "const": "ContentLock" },
+    "generation": { "type": "integer", "minimum": 1 },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "version", "provider", "package_id", "path"],
+        "properties": {
+          "id": { "type": "string" }, "type": { "enum": ["mod", "plugin", "modpack"] },
+          "version": { "type": "string" }, "provider": { "type": "string" },
+          "package_id": { "type": "string" }, "path": { "type": "string" }, "sha256": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

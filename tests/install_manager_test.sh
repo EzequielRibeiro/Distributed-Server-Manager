@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INSTALLER="${ROOT}/install.sh"
+CLI="${ROOT}/bin/dsm"
+
+fail(){ echo "FAIL: $*" >&2; exit 1; }
+EXPECTED_VERSION=$(tr -d '\r\n' <"${ROOT}/version")
+
+bash -n "${INSTALLER}"
+
+if grep -qE 'mine|/home/mine' "${ROOT}/config/dsm.conf"
+then
+    fail "distributed dsm.conf contains a machine-specific account"
+fi
+grep -Fq -- '--exclude "config/dsm.conf"' "${INSTALLER}" \
+    || fail "installer overwrites an existing dsm.conf"
+grep -Fq -- '--exclude "config/agent.conf"' "${INSTALLER}" \
+    || fail "installer overwrites an existing agent.conf"
+grep -Fq 'write_dsm_config' "${INSTALLER}" \
+    || fail "installer does not configure dsm.conf"
+grep -Fq 'select_installation_source' "${INSTALLER}" \
+    || fail "interactive installer does not offer source selection"
+grep -Fq 'if ! pwd -P >/dev/null 2>&1' "${CLI}" \
+    || fail "dsm CLI cannot recover from a removed working directory"
+grep -Fq -- '--local' "${INSTALLER}" \
+    || fail "local installation option is unavailable"
+grep -Fq 'guard_existing_installation' "${INSTALLER}" \
+    || fail "existing installation is not guarded"
+grep -Fq 'initialize_database' "${INSTALLER}" \
+    || fail "installer does not initialize the database"
+grep -Fq -- '--reinstall' "${INSTALLER}" \
+    || fail "explicit reinstall option is unavailable"
+grep -Fq 'legacy_worker_units=' "${INSTALLER}" \
+    || fail "installer does not disable duplicate legacy workers"
+grep -Fq 'systemctl disable --now "${unit}"' "${INSTALLER}" \
+    || fail "installer leaves legacy workers running"
+
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf -- "${TMP_DIR}"' EXIT
+
+(
+    id() {
+        case "$1" in
+            -un) printf 'node1\n' ;;
+            -gn) printf 'node1\n' ;;
+            *) return 1 ;;
+        esac
+    }
+    source "${INSTALLER}"
+    chown() { :; }
+    chmod() { :; }
+
+    DSM_ROOT="${TMP_DIR}/opt/dsm"
+    DSM_SERVICE_USER="node1"
+    DSM_SERVICE_GROUP="node1"
+    DSM_SERVICE_HOME="/home/node1"
+    mkdir -p "${DSM_ROOT}/config"
+    cp "${ROOT}/config/dsm.conf" "${DSM_ROOT}/config/dsm.conf"
+    cp "${ROOT}/version" "${DSM_ROOT}/version"
+    printf 'LOCAL_SETTING="preserved"\n' >>"${DSM_ROOT}/config/dsm.conf"
+
+    write_dsm_config >/dev/null
+
+    grep -q '^DSM_USER="node1"$' "${DSM_ROOT}/config/dsm.conf" || fail "DSM_USER not written"
+    grep -q '^DSM_GROUP="node1"$' "${DSM_ROOT}/config/dsm.conf" || fail "DSM_GROUP not written"
+    grep -q '^DSM_HOME="/home/node1"$' "${DSM_ROOT}/config/dsm.conf" || fail "DSM_HOME not written"
+    grep -q "^DSM_VERSION=\"${EXPECTED_VERSION}\"$" "${DSM_ROOT}/config/dsm.conf" || fail "DSM_VERSION not written"
+    grep -q "^INSTALLER_VERSION=\"${EXPECTED_VERSION}\"$" "${DSM_ROOT}/config/dsm.conf" || fail "INSTALLER_VERSION not written"
+    grep -q "^DSM_DATABASE=\"${DSM_ROOT}/data/capivara.db\"$" "${DSM_ROOT}/config/dsm.conf" || fail "DSM_DATABASE not written"
+    grep -q '^LOCAL_SETTING="preserved"$' "${DSM_ROOT}/config/dsm.conf" || fail "local setting overwritten"
+)
+
+(
+    id() {
+        case "$1" in
+            -un) printf 'node1\n' ;;
+            -gn) printf 'node1\n' ;;
+            *) return 1 ;;
+        esac
+    }
+    source "${INSTALLER}"
+    is_interactive() { return 0; }
+    INSTALL_MODE="remote"
+    INSTALL_MODE_EXPLICIT=0
+    select_installation_source >/dev/null <<<"1"
+    [[ "${INSTALL_MODE}" == "local" ]] || fail "interactive local source was not selected"
+)
+
+if (
+    id() {
+        case "$1" in
+            -un) printf 'node1\n' ;;
+            -gn) printf 'node1\n' ;;
+            *) return 1 ;;
+        esac
+    }
+    source "${INSTALLER}"
+    DSM_ROOT="${TMP_DIR}/existing/opt/dsm"
+    DSM_SOURCE="${ROOT}"
+    ALLOW_REINSTALL=0
+    mkdir -p "${DSM_ROOT}/config"
+    printf '0.9.0\n' >"${DSM_ROOT}/version"
+    : >"${DSM_ROOT}/config/dsm.conf"
+    guard_existing_installation >/dev/null 2>&1
+); then
+    fail "existing installation was overwritten without --reinstall"
+fi
+
+(
+    id() {
+        case "$1" in
+            -un) printf 'node1\n' ;;
+            -gn) printf 'node1\n' ;;
+            *) return 1 ;;
+        esac
+    }
+    source "${INSTALLER}"
+    DSM_ROOT="${TMP_DIR}/existing/opt/dsm"
+    DSM_SOURCE="${ROOT}"
+    ALLOW_REINSTALL=1
+    guard_existing_installation >/dev/null 2>&1
+)
+
+echo "Install manager tests passed."

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capivara-dsm.local/schemas/v2/installation-plan.schema.json",
+  "title": "InstallationPlan",
+  "type": "object",
+  "required": ["schema_version", "kind", "instance", "runtime", "operations"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "kind": { "const": "InstallationPlan" },
+    "instance": { "type": "string", "minLength": 1 },
+    "runtime": { "type": "string", "minLength": 1 },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["action", "content_id", "content_type", "version", "target", "artifact"],
+        "properties": {
+          "action": { "enum": ["install", "remove"] },
+          "content_id": { "type": "string" },
+          "content_type": { "enum": ["mod", "plugin", "modpack"] },
+          "version": { "type": "string" },
+          "target": { "type": "string" },
+          "artifact": { "type": "object", "required": ["provider", "package_id"] }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+[Unit]
+Description=Capivara DSM Dashboard Web Interface
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/opt/dsm
+
+[Service]
+Type=simple
+User={{DSM_USER}}
+Group={{DSM_GROUP}}
+Environment=DSM_ROOT=/opt/dsm
+EnvironmentFile=-/etc/default/dsm-dashboard
+WorkingDirectory=/opt/dsm/dashboard
+ExecStart=/usr/bin/python3 /opt/dsm/dashboard/server.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=capivara-dashboard
+
+[Install]
+WantedBy=multi-user.target

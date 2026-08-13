@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capivara-dsm.local/schemas/v2/instance-manifest.schema.json",
+  "title": "InstanceManifest",
+  "type": "object",
+  "required": ["schema_version", "kind", "instance", "runtime", "content", "generation"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "kind": { "const": "InstanceManifest" },
+    "instance": { "type": "string" },
+    "runtime": { "type": "object", "required": ["id"] },
+    "content": { "type": "array", "items": { "type": "string" } },
+    "generation": { "type": "integer", "minimum": 1 },
+    "updated_at": { "type": "integer" }
+  }
+}

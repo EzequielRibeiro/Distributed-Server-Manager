@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capivara-dsm.local/schemas/v2/content-definition.schema.json",
+  "title": "ContentDefinition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "id", "content_type", "game", "catalog", "compatibility", "dependencies", "conflicts", "artifact"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "kind": { "const": "ContentDefinition" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]+$" },
+    "name": { "type": "string", "minLength": 1 },
+    "content_type": { "enum": ["mod", "plugin", "modpack"] },
+    "game": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "catalog": { "type": "object", "required": ["provider"], "properties": { "provider": { "type": "string", "minLength": 1 }, "project_id": { "type": ["string", "null"] } } },
+    "compatibility": {
+      "type": "object",
+      "properties": {
+        "game_versions": { "type": "array", "items": { "type": "string" } },
+        "editions": { "type": "array", "items": { "type": "string" } },
+        "loaders": { "type": "array", "items": { "type": "string" } },
+        "loader_versions": { "type": "array", "items": { "type": "string" } },
+        "java": { "type": ["object", "null"], "properties": { "min": { "type": "integer" }, "max": { "type": "integer" } } },
+        "os": { "type": "array", "items": { "type": "string" } },
+        "architectures": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "dependencies": { "type": "array", "items": { "$ref": "#/$defs/relation" } },
+    "conflicts": { "type": "array", "items": { "$ref": "#/$defs/relation" } },
+    "artifact": { "type": "object", "required": ["provider"], "properties": { "provider": { "type": "string", "minLength": 1 }, "package_id": { "type": ["string", "null"] } } }
+  },
+  "$defs": {
+    "relation": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string" }, "version": { "type": ["string", "null"] }, "required": { "type": "boolean" } } }
+  }
+}

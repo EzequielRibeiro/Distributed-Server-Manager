@@ -1,0 +1,236 @@
+#!/bin/bash
+
+DSM_ROOT="${DSM_ROOT:-/opt/dsm}"
+RUNTIME_DIR="$DSM_ROOT/runtime"
+STATE_DIR="$RUNTIME_DIR/state"
+source "$DSM_ROOT/core/runtime_engine.sh"
+
+mkdir -p "$STATE_DIR"
+
+runtime_get_resource()
+{
+
+HOST="$1"
+GAME="$2"
+INSTANCE="$3"
+MODULE="$4"
+
+
+FILE="$STATE_DIR/$HOST/$GAME/$INSTANCE/$MODULE.json"
+
+
+if [ -f "$FILE" ]
+then
+
+    cat "$FILE"
+
+else
+
+    echo "{}"
+
+fi
+
+}
+
+
+
+case "$1" in
+
+publish)
+
+
+if [ $# -lt 6 ]
+then
+
+echo "Uso:"
+echo "dsm-runtime publish <host> <game> <instance> <module> <json>"
+
+exit 1
+
+fi
+
+HOST="$2"
+GAME="$3"
+INSTANCE="$4"
+MODULE="$5"
+DATA="$6"
+
+
+runtime_update_resource \
+"$HOST" \
+"$GAME" \
+"$INSTANCE" \
+"$MODULE" \
+"$DATA"
+
+
+
+;;
+
+status)
+
+echo "DSM Runtime"
+echo ""
+
+find "$STATE_DIR" -name "*.json" | while read file
+do
+
+RESOURCE=$(echo "$file" | sed "s#$STATE_DIR/##")
+
+echo "$RESOURCE : OK"
+
+done
+
+;;
+
+
+get)
+
+if [ $# -lt 5 ]
+then
+
+echo "Uso:"
+echo "dsm-runtime get <host> <game> <instance> <module>"
+
+exit 1
+
+fi
+
+
+HOST="$2"
+GAME="$3"
+INSTANCE="$4"
+MODULE="$5"
+
+
+FILE="$STATE_DIR/$HOST/$GAME/$INSTANCE/$MODULE.json"
+
+
+if [ -f "$FILE" ]
+then
+
+cat "$FILE"
+
+else
+
+echo "{}"
+
+fi
+
+;;
+
+
+list)
+
+find "$STATE_DIR" -name "*.json" | while read file
+do
+
+echo "$file"
+
+done
+
+;;
+
+
+health)
+
+FAILED=0
+FOUND=0
+
+
+while read file
+do
+
+[ -f "$file" ] || continue
+
+FOUND=1
+
+jq empty "$file" >/dev/null 2>&1 || FAILED=1
+
+
+done < <(find "$STATE_DIR" -name "*.json")
+
+
+if [ "$FOUND" -eq 0 ]
+then
+
+echo "Runtime EMPTY"
+
+
+elif [ "$FAILED" -eq 0 ]
+then
+
+echo "Runtime HEALTHY"
+
+
+else
+
+echo "Runtime DEGRADED"
+
+fi
+
+
+;;
+
+
+get-resource)
+
+    if [ $# -lt 4 ]
+    then
+
+        echo "Uso:"
+        echo " dsm-runtime get-resource <host> <game> <instance> <module>"
+
+        exit 1
+
+    fi
+
+
+    runtime_get_resource \
+    "$2" \
+    "$3" \
+    "$4" \
+    "$5"
+
+;;
+
+dashboard)
+
+    if [ $# -lt 4 ]
+    then
+
+        echo "Uso:"
+        echo " dsm-runtime dashboard <server> <game> <instance>"
+
+        exit 1
+
+    fi
+
+
+    "$RUNTIME_DIR/api/dashboard.sh" \
+    summary \
+    "$2" \
+    "$3" \
+    "$4"
+
+;;
+
+*)
+
+echo "DSM Runtime API"
+
+echo ""
+
+echo "Uso:"
+echo ""
+echo " dsm-runtime publish <host> <game> <instance> <module> <json>"
+echo " dsm-runtime get <host> <game> <instance> <module>"
+echo " dsm-runtime get-resource <host> <game> <instance> <module>"
+echo " dsm-runtime status"
+echo " dsm-runtime list"
+echo " dsm-runtime health"
+echo " dsm-runtime dashboard <host> <game> <instance>"
+
+;;
+
+esac

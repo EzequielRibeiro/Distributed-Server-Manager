@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Usuários | Capivara DSM</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/catalog-v2.css">
+</head>
+<body>
+<main class="dashboard customer-page">
+    <section class="card catalog-v2-card">
+        <div class="card-title">
+            <div><h1>Administração de usuários</h1><p class="catalog-v2-subtitle">Acessos administrativos, de Controladores, clientes e operadores.</p></div>
+            <div class="catalog-v2-actions"><a class="customer-action-link" href="/index.html">Voltar</a><button id="users-logout">Sair</button></div>
+        </div>
+    </section>
+
+    <section class="card catalog-v2-card">
+        <div class="card-title"><h2 id="user-form-title">Novo usuário</h2></div>
+        <div class="catalog-v2-form">
+            <label>Login<input id="user-name" maxlength="64" placeholder="nome.usuario"></label>
+            <label>Perfil<select id="user-role"><option value="customer">Cliente</option><option value="controller">Controlador</option><option value="operator">Operador</option><option value="admin">Administrador</option></select></label>
+            <label>Vínculo<select id="user-scope"><option value="">Selecione o perfil</option></select></label>
+            <label>Senha<input id="user-password" type="password" minlength="8" placeholder="Obrigatória para novo acesso"></label>
+            <label>Estado<select id="user-active"><option value="true">Ativo</option><option value="false">Desativado</option></select></label>
+        </div>
+        <div class="catalog-v2-actions"><button id="user-save" class="catalog-v2-primary">Salvar usuário</button><button id="user-cancel" hidden>Cancelar edição</button></div>
+        <div id="users-message" class="catalog-v2-summary"></div>
+    </section>
+
+    <section class="card catalog-v2-card">
+        <div class="card-title"><h2>Usuários do sistema</h2></div>
+        <div class="users-table-wrap">
+            <table class="users-table"><thead><tr><th>Login</th><th>Perfil</th><th>Vínculo</th><th>Estado</th><th>Ações</th></tr></thead><tbody id="users-table"></tbody></table>
+        </div>
+    </section>
+</main>
+<script src="/users.js"></script>
+</body>
+</html>

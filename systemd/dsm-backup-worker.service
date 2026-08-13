@@ -1,0 +1,19 @@
+[Unit]
+Description=DSM Backup Monitoring Worker
+After=network.target
+
+[Service]
+Type=simple
+User={{DSM_USER}}
+Group={{DSM_GROUP}}
+Environment=DSM_ROOT=/opt/dsm
+Environment=DSM_INTERVAL=900
+ExecStart=/opt/dsm/dashboard/workers/backup_worker.sh
+Restart=always
+RestartSec=30
+WorkingDirectory=/opt/dsm
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

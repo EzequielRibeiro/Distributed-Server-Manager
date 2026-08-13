@@ -1,0 +1,9 @@
+{
+  "schema_version": 2, "kind": "RuntimeDefinition", "id": "minecraft.bedrock.vanilla", "name": "Minecraft Bedrock Dedicated Server",
+  "game": "minecraft", "edition": "bedrock", "variant": "bedrock", "loader": null,
+  "version": { "strategy": "dynamic", "resolver": "minecraft_bedrock", "config": { "download_page": "https://www.minecraft.net/en-us/download/server/bedrock", "linux_base": "https://www.minecraft.net/bedrockdedicatedserver/bin-linux" } },
+  "process": { "engine": "native", "executable": "bedrock_server", "artifact_mode": "executable" },
+  "requirements": { "os": ["linux"], "architectures": ["x86_64"], "java": null },
+  "artifact": { "provider": "http-archive", "auth": "anonymous", "archive_type": "zip" },
+  "installation": { "directory": "/opt/dsm/game-data/minecraft/bedrock" }
+}

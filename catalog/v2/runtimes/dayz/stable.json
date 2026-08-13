@@ -1,0 +1,9 @@
+{
+  "schema_version": 2, "kind": "RuntimeDefinition", "id": "dayz.stable", "name": "DayZ Dedicated Server",
+  "game": "dayz", "edition": "default", "variant": "stable", "loader": null,
+  "version": { "strategy": "static", "value": "current", "build": "steam-current" },
+  "process": { "engine": "native", "executable": "DayZServer", "artifact_mode": "executable" },
+  "requirements": { "os": ["linux", "windows"], "architectures": ["x86_64"], "java": null },
+  "artifact": { "provider": "steam", "auth": "required", "package_id": "223350" },
+  "installation": { "directory": "/opt/dsm/game-data/dayz/serverfiles" }
+}

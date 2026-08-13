@@ -1,0 +1,6 @@
+# DSM Dashboard Python Requirements
+# O Dashboard utiliza apenas bibliotecas padrão do Python 3.9+
+# Dashboard uses only Python 3.9+ standard libraries
+
+# Requisito Mínimo: Python 3.9
+# Minimum Requirement: Python 3.9

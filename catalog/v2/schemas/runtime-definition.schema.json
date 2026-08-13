@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capivara-dsm.local/schemas/v2/runtime-definition.schema.json",
+  "title": "RuntimeDefinition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "id",
+    "game",
+    "edition",
+    "variant",
+    "version",
+    "process",
+    "requirements",
+    "artifact",
+    "installation"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "kind": {
+      "const": "RuntimeDefinition"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]+$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "game": {
+      "type": "string",
+      "minLength": 1
+    },
+    "edition": {
+      "type": "string",
+      "minLength": 1
+    },
+    "variant": {
+      "type": "string",
+      "minLength": 1
+    },
+    "loader": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "version": {
+      "type": "object",
+      "required": [
+        "strategy"
+      ],
+      "properties": {
+        "strategy": {
+          "enum": [
+            "static",
+            "dynamic"
+          ]
+        },
+        "resolver": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "build": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "config": {
+          "type": "object"
+        }
+      }
+    },
+    "process": {
+      "type": "object",
+      "required": [
+        "engine",
+        "executable"
+      ],
+      "properties": {
+        "engine": {
+          "enum": [
+            "java",
+            "native"
+          ]
+        },
+        "executable": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact_mode": {
+          "enum": [
+            "file",
+            "executable",
+            "directory"
+          ]
+        }
+      }
+    },
+    "requirements": {
+      "$ref": "#/$defs/requirements"
+    },
+    "artifact": {
+      "type": "object",
+      "required": [
+        "provider"
+      ],
+      "properties": {
+        "provider": {
+          "enum": [
+            "steam",
+            "http",
+            "http-archive",
+            "github",
+            "local",
+            "custom",
+            "source-build"
+          ]
+        },
+        "auth": {
+          "enum": [
+            "anonymous",
+            "required"
+          ]
+        },
+        "package_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repository": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tag": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "asset": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "archive_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "installation": {
+      "type": "object",
+      "required": [
+        "directory"
+      ],
+      "properties": {
+        "directory": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "requirements": {
+      "type": "object",
+      "required": [
+        "os",
+        "architectures"
+      ],
+      "properties": {
+        "os": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "architectures": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "java": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "min": {
+              "type": "integer"
+            },
+            "max": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  }
+}

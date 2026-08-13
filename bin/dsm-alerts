@@ -1,0 +1,315 @@
+#!/bin/bash
+# =============================================================
+# DSM CLI - Alert Manager v1.2.0
+#
+# Arquivo:
+#   bin/dsm-alerts
+#
+# Função:
+#   Interface CLI para gerenciamento de alertas DSM
+#
+# Commands:
+#   dsm alerts
+#   dsm alerts list
+#   dsm alerts active
+#   dsm alerts critical
+#   dsm alerts count
+#   dsm alerts ack <id>
+#   dsm alerts resolve <id>
+#   dsm alerts suppress <id> <minutos>
+#   dsm alerts history
+# =============================================================
+
+# chmod +x /opt/dsm/bin/dsm-alerts
+# ln -s /opt/dsm/bin/dsm-alerts /usr/local/bin/dsm-alerts
+
+DSM_ROOT="${DSM_ROOT:-/opt/dsm}"
+
+ALERT_MANAGER="$DSM_ROOT/monitor/alertmanager.sh"
+ALERT_HISTORY="$DSM_ROOT/runtime/alerts/history.log"
+
+# -------------------------------------------------------------
+# Verifica instalação
+# -------------------------------------------------------------
+check_install()
+{
+    if [ ! -x "$ALERT_MANAGER" ]; then
+        echo "ERRO: Alert Manager não encontrado:"
+        echo "$ALERT_MANAGER"
+        exit 1
+    fi
+}
+
+# -------------------------------------------------------------
+# Cabeçalho
+# -------------------------------------------------------------
+header()
+{
+echo
+echo "======================================="
+echo " DSM ALERT MANAGER v1.2.0"
+echo "======================================="
+echo
+}
+
+# -------------------------------------------------------------
+# Ajuda
+# -------------------------------------------------------------
+usage()
+{
+
+cat <<EOF
+
+Uso:
+
+ dsm-alerts <comando>
+
+
+Comandos:
+
+ list
+     Lista todos os alertas
+
+
+ active
+     Mostra alertas ativos
+
+
+ critical
+     Mostra alertas críticos
+
+
+ count
+     Mostra resumo dos alertas
+
+
+ ack <id>
+     Reconhece um alerta
+
+
+ resolve <id>
+     Resolve um alerta
+
+
+ suppress <id> <minutos>
+     Silencia um alerta temporariamente
+
+
+ history
+     Mostra histórico
+
+
+ help
+     Exibe esta ajuda
+
+
+Exemplos:
+
+ dsm-alerts list
+
+ dsm-alerts ack cpu-host
+
+ dsm-alerts suppress temperature 30
+
+
+EOF
+
+}
+
+# -------------------------------------------------------------
+# Lista alertas
+# -------------------------------------------------------------
+cmd_list()
+{
+header
+"$ALERT_MANAGER" list
+}
+
+# -------------------------------------------------------------
+# Alertas ativos
+# -------------------------------------------------------------
+cmd_active()
+{
+header
+"$ALERT_MANAGER" json |
+jq '
+[
+ .[]
+ |
+ select(
+    .state=="OPEN"
+    or
+    .state=="ACKNOWLEDGED"
+ )
+]
+'
+}
+
+# -------------------------------------------------------------
+# Críticos
+# -------------------------------------------------------------
+cmd_critical()
+{
+header
+
+"$ALERT_MANAGER" json |
+jq '
+[
+ .[]
+ |
+ select(
+    .level=="CRITICAL"
+ )
+]
+'
+}
+
+# -------------------------------------------------------------
+# Contadores
+# -------------------------------------------------------------
+cmd_count()
+{
+header
+
+echo "Abertos.......:"
+"$ALERT_MANAGER" count OPEN
+
+echo
+echo "Reconhecidos..:"
+"$ALERT_MANAGER" count ACKNOWLEDGED
+
+echo
+echo "Resolvidos....:"
+"$ALERT_MANAGER" count RESOLVED
+}
+
+# -------------------------------------------------------------
+# Reconhecer
+# -------------------------------------------------------------
+cmd_ack()
+{
+local id="$1"
+
+if [ -z "$id" ]; then
+echo "Informe o ID do alerta"
+exit 1
+fi
+
+"$ALERT_MANAGER" ack "$id"
+
+if [ $? -eq 0 ]; then
+echo "Alerta reconhecido:"
+echo "$id"
+else
+echo "Falha ao reconhecer alerta"
+fi
+}
+
+# -------------------------------------------------------------
+# Resolver
+# -------------------------------------------------------------
+cmd_resolve()
+{
+local id="$1"
+
+if [ -z "$id" ]; then
+echo "Informe o ID do alerta"
+exit 1
+fi
+
+"$ALERT_MANAGER" resolve "$id"
+
+if [ $? -eq 0 ]; then
+echo "Alerta resolvido:"
+echo "$id"
+else
+echo "Falha ao resolver alerta"
+fi
+}
+
+# -------------------------------------------------------------
+# Suprimir
+# -------------------------------------------------------------
+cmd_suppress()
+{
+local id="$1"
+local minutes="$2"
+
+if [ -z "$id" ] || [ -z "$minutes" ]; then
+echo "Uso:"
+echo "dsm-alerts suppress <id> <minutos>"
+exit 1
+fi
+
+"$ALERT_MANAGER" suppress "$id" "$minutes"
+
+echo
+echo "Alerta suprimido:"
+echo "ID.......: $id"
+echo "Tempo....: $minutes minutos"
+}
+
+# -------------------------------------------------------------
+# Histórico
+# -------------------------------------------------------------
+cmd_history()
+{
+header
+
+if [ -f "$ALERT_HISTORY" ]; then
+tail -50 "$ALERT_HISTORY"
+else
+echo "Nenhum histórico encontrado"
+fi
+}
+
+# -------------------------------------------------------------
+# Router principal
+# -------------------------------------------------------------
+check_install
+
+case "$1" in
+
+list)
+cmd_list
+;;
+
+active)
+cmd_active
+;;
+
+critical)
+cmd_critical
+;;
+
+count)
+cmd_count
+;;
+
+ack)
+cmd_ack "$2"
+;;
+
+resolve)
+cmd_resolve "$2"
+;;
+
+suppress)
+cmd_suppress "$2" "$3"
+;;
+
+history)
+cmd_history
+;;
+
+help|"")
+usage
+;;
+
+*)
+echo "Comando desconhecido:"
+echo "$1"
+usage
+exit 1
+;;
+esac

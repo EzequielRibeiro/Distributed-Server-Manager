@@ -1,0 +1,9 @@
+{
+  "schema_version": 2, "kind": "RuntimeDefinition", "id": "minecraft.java.vanilla", "name": "Minecraft Java Vanilla",
+  "game": "minecraft", "edition": "java", "variant": "vanilla", "loader": null,
+  "version": { "strategy": "static", "value": "1.21.8", "build": "6bce4ef400e4efaa63a13d5e6f6b500be969ef81" },
+  "process": { "engine": "java", "executable": "server.jar", "artifact_mode": "file" },
+  "requirements": { "os": ["linux", "windows"], "architectures": ["x86_64", "aarch64"], "java": { "min": 21, "max": 25 } },
+  "artifact": { "provider": "http", "auth": "anonymous", "url": "https://piston-data.mojang.com/v1/objects/6bce4ef400e4efaa63a13d5e6f6b500be969ef81/server.jar", "asset": "server.jar" },
+  "installation": { "directory": "/opt/dsm/game-data/minecraft/vanilla" }
+}

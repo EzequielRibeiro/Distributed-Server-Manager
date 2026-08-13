@@ -1,0 +1,7 @@
+{
+  "schema_version": 2,
+  "runtime": { "id": "minecraft.java.fabric", "game": "minecraft", "version": "1.21.1", "edition": "java", "loader": "fabric", "loader_version": "0.16.14" },
+  "environment": { "os": "linux", "architecture": "x86_64", "java": 21 },
+  "content": ["minecraft.example.mod"],
+  "installed_content": []
+}

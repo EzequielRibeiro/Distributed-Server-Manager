@@ -1,0 +1,6 @@
+{
+  "schema_version": 2, "kind": "ContentDefinition", "id": "minecraft.example.plugin", "name": "Example Paper Plugin", "content_type": "plugin", "game": "minecraft", "version": "1.0.0",
+  "catalog": { "provider": "builtin", "project_id": "example-plugin" },
+  "compatibility": { "game_versions": ["1.20.1", "1.21.1"], "editions": ["java"], "loaders": ["paper", "arclight"], "loader_versions": [], "java": { "min": 17, "max": 21 }, "os": ["linux", "windows"], "architectures": ["x86_64", "aarch64"] },
+  "dependencies": [], "conflicts": [{ "id": "minecraft.example.mod", "version": null, "required": false }], "artifact": { "provider": "local", "package_id": "examples/example-plugin.jar" }
+}

@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes jq
+
+      - name: Validate Bash syntax
+        run: git ls-files -z '*.sh' | xargs -0 -n1 bash -n
+
+      - name: Validate JSON catalogs
+        run: find catalog games -type f -name '*.json' -print0 | xargs -0 -n1 jq empty
+
+      - name: Validate Python
+        run: |
+          python3 -m py_compile dashboard/server.py database/manager.py database/registry.py tests/dashboard_catalog_v2_test.py tests/database_test.py tests/registry_test.py
+          python3 -m unittest tests/dashboard_catalog_v2_test.py
+          python3 -m unittest tests/database_test.py
+          python3 -m unittest tests/registry_test.py
+
+      - name: Validate Dashboard JavaScript
+        run: find dashboard/web -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Test installer
+        run: bash tests/install_manager_test.sh
+
+      - name: Test updater
+        run: bash tests/update_manager_test.sh
+
+      - name: Test Catalog v2
+        run: bash tests/catalog_v2_test.sh
+
+      - name: Test reproducible release build
+        run: bash tests/release_build_test.sh

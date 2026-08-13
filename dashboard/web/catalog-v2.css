@@ -1,0 +1,64 @@
+.catalog-v2-card { display: grid; gap: 18px; }
+.catalog-v2-subtitle { margin: 5px 0 0; color: #94a3b8; font-size: .9rem; }
+.catalog-v2-title-actions { display: flex; align-items: center; gap: 10px; }
+.catalog-v2-refresh { padding: 7px 10px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; color: #cbd5e1; cursor: pointer; }
+.catalog-v2-refresh:hover { border-color: #38bdf8; color: #f8fafc; }
+.catalog-v2-status { padding: 6px 10px; border-radius: 999px; background: #334155; font-size: .75rem; }
+.catalog-v2-status[data-state="success"] { background: #14532d; color: #86efac; }
+.catalog-v2-status[data-state="pending"] { background: #713f12; color: #fde68a; }
+.catalog-v2-status[data-state="error"] { background: #7f1d1d; color: #fecaca; }
+.catalog-v2-section { display: grid; gap: 12px; padding: 14px; border: 1px solid #1e293b; border-radius: 10px; background: rgba(15,23,42,.45); }
+.catalog-v2-section-title { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.catalog-v2-section-title h3 { margin: 0; }
+.catalog-v2-section-title p { margin: 4px 0 0; color: #64748b; font-size: .8rem; }
+.catalog-v2-form { display: grid; grid-template-columns: repeat(auto-fit,minmax(170px,1fr)); gap: 12px; }
+.catalog-v2-form label { display: grid; gap: 7px; color: #94a3b8; font-size: .8rem; }
+.catalog-v2-form input,.catalog-v2-form select { min-width: 0; padding: 10px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; color: #e2e8f0; }
+.catalog-v2-form input:disabled,.catalog-v2-form select:disabled { opacity: .55; cursor: not-allowed; }
+.catalog-v2-runtime-selector { grid-template-columns: repeat(3,minmax(180px,1fr)); }
+.catalog-v2-runtime-summary { display: grid; grid-template-columns: repeat(auto-fit,minmax(120px,1fr)); gap: 8px; }
+.catalog-v2-runtime-summary > div { display: grid; gap: 4px; padding: 10px; border: 1px solid #1e293b; border-radius: 8px; background: #020617; }
+.catalog-v2-runtime-summary span { color: #64748b; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; }
+.catalog-v2-runtime-summary strong { color: #e2e8f0; overflow-wrap: anywhere; }
+.catalog-v2-runtime-summary[data-state="online"] > div:first-child strong { color: #86efac; }
+.catalog-v2-runtime-summary[data-state="offline"] > div:first-child strong { color: #fca5a5; }
+.catalog-v2-instance-profile { display: grid; grid-template-columns: 88px minmax(0,1fr); gap: 14px; align-items: center; padding: 14px; border: 1px solid #1e293b; border-radius: 10px; background: #020617; }
+.catalog-v2-instance-logo-wrap { width: 72px; height: 72px; display: grid; place-items: center; overflow: hidden; border: 1px solid #334155; border-radius: 14px; background: #0f172a; }
+.catalog-v2-instance-logo { width: 100%; height: 100%; object-fit: cover; }
+.catalog-v2-instance-logo-fallback { font-size: 1.8rem; font-weight: 700; color: #38bdf8; }
+.catalog-v2-instance-profile-details { display: grid; grid-template-columns: repeat(auto-fit,minmax(170px,1fr)); gap: 9px 14px; min-width: 0; }
+.catalog-v2-instance-profile-details h4 { grid-column: 1/-1; margin: 0 0 3px; color: #e2e8f0; }
+.catalog-v2-instance-profile-details div { display: grid; gap: 3px; min-width: 0; }
+.catalog-v2-instance-profile-details span { color: #64748b; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; }
+.catalog-v2-instance-profile-details strong { color: #cbd5e1; overflow-wrap: anywhere; }
+.catalog-v2-columns { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+.catalog-v2-content-wrap,.catalog-v2-installed-wrap { min-width: 0; padding: 14px; border: 1px solid #1e293b; border-radius: 10px; }
+.catalog-v2-content-wrap h3,.catalog-v2-installed-wrap h3 { margin: 0 0 10px; }
+.catalog-v2-content { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 8px; }
+.catalog-v2-content-item { display: flex; gap: 9px; align-items: flex-start; padding: 10px; background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; }
+.catalog-v2-content-body { display: grid; gap: 3px; min-width: 0; }
+.catalog-v2-content-body strong { color: #e2e8f0; overflow-wrap: anywhere; }
+.catalog-v2-content-body small { color: #64748b; overflow-wrap: anywhere; }
+.catalog-v2-installed-list { display: grid; gap: 8px; }
+.catalog-v2-installed-item { display: grid; gap: 3px; padding: 10px; border: 1px solid #1e293b; border-radius: 8px; background: #0f172a; }
+.catalog-v2-installed-item strong { color: #e2e8f0; overflow-wrap: anywhere; }
+.catalog-v2-installed-item small { color: #64748b; overflow-wrap: anywhere; }
+.catalog-v2-empty { color: #64748b; font-size: .85rem; }
+.catalog-v2-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+.catalog-v2-actions button { padding: 10px 13px; border: 1px solid #334155; border-radius: 8px; background: #1e293b; color: #e2e8f0; cursor: pointer; }
+.catalog-v2-actions button:hover { border-color: #38bdf8; }
+.catalog-v2-actions button:disabled { opacity: .5; cursor: not-allowed; border-color: #334155; }
+.catalog-v2-actions .catalog-v2-primary { background: #0369a1; }
+.catalog-v2-actions .catalog-v2-danger { background: #7f1d1d; }
+.catalog-v2-summary { color: #cbd5e1; }
+.catalog-v2-result { max-height: 380px; overflow: auto; margin: 0; padding: 14px; border-radius: 8px; background: #020617; color: #bae6fd; white-space: pre-wrap; }
+.catalog-v2-config-editor { min-height: 260px; width: 100%; box-sizing: border-box; resize: vertical; padding: 12px; border: 1px solid #334155; border-radius: 8px; background: #020617; color: #e2e8f0; font: .85rem/1.45 ui-monospace, monospace; }
+.catalog-v2-config-editor:disabled { opacity: .55; }
+.customer-page { max-width: 1180px; margin: 0 auto; padding: 24px; display: grid; gap: 18px; }
+.customer-action-link { padding: 10px 13px; border-radius: 8px; color: #fff; text-decoration: none; }
+.users-table-wrap { overflow-x: auto; }
+.users-table { width: 100%; border-collapse: collapse; }
+.users-table th,.users-table td { padding: 11px; border-bottom: 1px solid #1e293b; text-align: left; }
+.users-table td:last-child { display: flex; gap: 8px; }
+@media (max-width: 900px) { .catalog-v2-columns { grid-template-columns: 1fr; } .catalog-v2-runtime-selector { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .catalog-v2-instance-profile { grid-template-columns: 1fr; } }

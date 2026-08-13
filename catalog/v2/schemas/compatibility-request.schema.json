@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capivara-dsm.local/schemas/v2/compatibility-request.schema.json",
+  "title": "CompatibilityRequest",
+  "type": "object",
+  "required": ["schema_version", "runtime", "environment", "content"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "runtime": { "type": "object", "required": ["id", "game", "version", "edition"], "properties": { "id": { "type": "string" }, "game": { "type": "string" }, "version": { "type": "string" }, "edition": { "type": "string" }, "loader": { "type": ["string", "null"] }, "loader_version": { "type": ["string", "null"] } } },
+    "environment": { "type": "object", "required": ["os", "architecture"], "properties": { "os": { "type": "string" }, "architecture": { "type": "string" }, "java": { "type": ["integer", "null"] } } },
+    "content": { "type": "array", "items": { "type": "string" } },
+    "installed_content": { "type": "array", "items": { "type": "string" } }
+  }
+}

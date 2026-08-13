@@ -1,0 +1,25 @@
+[Unit]
+Description=Capivara DSM Alert Engine
+After=network.target dsm-monitor.service
+Wants=dsm-monitor.service
+RequiresMountsFor=/opt/dsm
+
+[Service]
+Type=simple
+User={{DSM_USER}}
+Group={{DSM_GROUP}}
+Environment=DSM_ROOT=/opt/dsm
+WorkingDirectory=/opt/dsm
+ExecStart=/opt/dsm/monitor/alert_engine.sh daemon
+Restart=always
+RestartSec=10
+TimeoutStartSec=30
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=capivara-alert-engine
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,40 @@
+[Unit]
+Description=Capivara DSM Process Watchdog
+Documentation=Capivara Distributed Server Manager
+
+After=network.target
+
+
+[Service]
+
+Type=simple
+
+
+User={{DSM_USER}}
+Group={{DSM_GROUP}}
+
+
+WorkingDirectory=/opt/dsm
+
+
+Environment=DSM_ROOT=/opt/dsm
+
+
+ExecStart=/opt/dsm/core/process/process_watchdog.sh start
+
+
+Restart=always
+
+
+RestartSec=10
+
+
+TimeoutStartSec=30
+
+TimeoutStopSec=30
+
+
+
+[Install]
+
+WantedBy=multi-user.target

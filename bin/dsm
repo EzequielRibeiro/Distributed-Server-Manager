@@ -1,0 +1,606 @@
+#!/bin/bash
+# =============================================================
+# bin/dsm - COMANDO PRINCIPAL DSM
+#
+# DayZ Server Manager
+#
+# Responsável por:
+#
+# - inicializar ambiente DSM
+# - carregar configurações
+# - executar módulos
+#
+# Fonte única:
+#
+#   /opt/dsm/config/dsm.conf
+#
+# =============================================================
+
+set -Eeuo pipefail
+
+# Uma atualização pode substituir /opt/dsm enquanto um terminal ainda o usa
+# como diretório atual. Recupere o shell antes de executar qualquer comando
+# que dependa de getcwd().
+if ! pwd -P >/dev/null 2>&1
+then
+    cd /opt 2>/dev/null || cd /
+fi
+
+# =============================================================
+# Definir DSM_ROOT
+# =============================================================
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
+export DSM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# =============================================================
+# Bootstrap
+# =============================================================
+
+BOOTSTRAP="${DSM_ROOT}/core/bootstrap.sh"
+
+if [ ! -f "${BOOTSTRAP}" ]
+then
+    echo "Bootstrap não encontrado:"
+    echo "${BOOTSTRAP}"
+    exit 1
+fi
+
+# shellcheck source=/dev/null
+source "${BOOTSTRAP}"
+
+# =============================================================
+# Helpers
+# =============================================================
+
+section()
+{
+    echo
+    echo "============================================================"
+    echo "$1"
+    echo "============================================================"
+    echo
+}
+
+usage()
+{
+
+cat <<EOF
+
+============================================================
+ Capiva - Distributed Server Manager
+============================================================
+
+Uso:
+
+ dsm <comando>
+
+
+Servidor:
+
+ dsm server start
+ dsm server stop
+ dsm server restart
+ dsm server status
+ dsm server validate
+
+
+Diagnóstico:
+
+ dsm doctor
+ dsm monitor
+ dsm doctor run       Executa diagnóstico completo"
+ dsm doctor status    Mostra último diagnóstico"
+
+
+Mods:
+
+ dsm mods install
+ dsm mods update
+ dsm mods verify
+ dsm mods rollback
+ dsm mods keys
+ dsm mods state
+
+
+Backup:
+
+ dsm backup create
+
+
+Configuração:
+
+ dsm config show
+
+
+Runtime Manager:
+
+ runtime
+
+
+Dashboard:
+
+ dsm user add <usuario> <admin|operator|controller|customer> [scope]
+ dsm user remove <usuario>
+ dsm user passwd <usuario>
+ dsm user list
+
+Games:
+
+ dsm game install <environment-id> <version|latest|current>
+ dsm game show <environment-id> <version|latest|current>
+
+Catálogo de Conteúdo:
+
+ dsm catalog runtime list [game]
+ dsm catalog runtime show <runtime-id>
+ dsm catalog runtime prepare <runtime-id> <version>
+ dsm content list [game]
+ dsm content show <content-id>
+ dsm content plan <request.json> <instance-path>
+ dsm content install <request.json> <instance-path>
+ dsm content remove <instance-path> <content-id>
+ dsm content list-installed <instance-path>
+ dsm content verify <instance-path>
+ dsm content rollback <instance-path>
+ dsm compatibility check <request.json>
+
+ Adicione --json a qualquer comando catalog/content/compatibility
+ para saída estruturada destinada a scripts e APIs.
+
+Database:
+
+ dsm database init
+ dsm database migrate
+ dsm database status
+ dsm database check
+ dsm database backup <arquivo.db>
+
+Instâncias:
+
+ dsm instance create-aurora   Cria Controlador, Agente, Cliente e Servidor Aurora
+ dsm instance purge-orphan <id>
+                              Remove somente cadastro órfão sem diretório local
+
+
+Example:
+
+ dsm user add admin admin
+ dsm user add aurora customer CLI-DEMO-001
+ dsm user passwd carlos
+ dsm user remove carlos
+ dsm user list
+
+============================================================
+
+EOF
+
+}
+
+# =============================================================
+# Servidor
+# =============================================================
+server_command()
+{
+    local ACTION="${1:-}"
+    local GAME="${2:-}"
+    local INSTANCE="${3:-}"
+
+    # =========================================================
+    # Contexto da operação
+    # =========================================================
+
+    if [[ -n "${GAME}" ]]
+    then
+        export GAME_ID="${GAME}"
+    fi
+
+    if [[ -n "${INSTANCE}" ]]
+    then
+        export DSM_INSTANCE_ID="${INSTANCE}"
+    fi
+
+    # =========================================================
+    # Validação
+    # =========================================================
+
+    case "${ACTION}" in
+
+        start|stop|restart|status|validate|publish)
+
+            if [[ -z "${GAME_ID:-}" ]]
+            then
+                echo "GAME_ID não definido."
+                echo
+                echo "Uso:"
+                echo "  dsm server ${ACTION} <game> <instance>"
+                return 1
+            fi
+
+            if [[ -z "${DSM_INSTANCE_ID:-}" ]]
+            then
+                echo "DSM_INSTANCE_ID não definido."
+                echo
+                echo "Uso:"
+                echo "  dsm server ${ACTION} <game> <instance>"
+                return 1
+            fi
+
+        ;;
+
+    esac
+
+    # =========================================================
+    # Router
+    # =========================================================
+
+    case "${ACTION}" in
+
+        start)
+            source "${DSM_ROOT}/server/start.sh"
+            server_start
+        ;;
+
+        stop)
+            source "${DSM_ROOT}/server/stop.sh"
+            server_stop
+        ;;
+
+        restart)
+            source "${DSM_ROOT}/server/restart.sh"
+            server_restart
+        ;;
+
+        status)
+            source "${DSM_ROOT}/server/status.sh"
+            server_status
+        ;;
+
+        validate)
+            source "${DSM_ROOT}/server/validate.sh"
+            server_validate
+        ;;
+
+        publish)
+            source "${DSM_ROOT}/core/runtime/publisher.sh"
+            publish_server_state
+        ;;
+
+        *)
+            usage
+            return 1
+        ;;
+
+    esac
+}
+
+# =============================================================
+# Doctor
+# =============================================================
+
+doctor_command()
+{
+case "${1:-run}" in
+
+
+run)
+
+    source "${DSM_ROOT}/doctor/runner.sh"
+
+;;
+
+
+status)
+
+    if [[ -f "${DSM_ROOT}/core/lib/runtime.sh" ]]
+    then
+        source "${DSM_ROOT}/core/lib/runtime.sh"
+        runtime_init
+        runtime_get doctor
+    else
+        echo "Runtime indisponível."
+        return 1
+    fi
+
+;;
+
+
+*)
+
+    echo
+    echo "Uso:"
+    echo " dsm doctor run"
+    echo " dsm doctor status"
+    echo
+
+    return 1
+
+;;
+
+esac
+}
+
+# =============================================================
+# Monitor
+# =============================================================
+
+monitor_command()
+{
+local module="${DSM_ROOT}/monitor/diagnose.sh"
+
+if [[ ! -f "${module}" ]]
+then
+    log_error \
+    "Módulo Monitor não encontrado:"
+    echo "${module}"
+    return 1
+fi
+
+source "${module}"
+diagnose_run "$@"
+}
+
+# =============================================================
+# Mods
+#
+# Novo pipeline Módulo 03
+# =============================================================
+
+mods_dispatch()
+{
+local module="${DSM_ROOT}/mods/mods.sh"
+
+if [[ ! -f "${module}" ]]
+then
+    log_error \
+    "Dispatcher de Mods não encontrado:"
+    echo "${module}"
+    return 1
+fi
+
+bash "${module}" "$@"
+}
+
+# =============================================================
+# Backup
+# =============================================================
+
+backup_command()
+{
+case "${1:-}" in
+
+create)
+    source "${DSM_ROOT}/backup/create.sh"
+    backup_create
+;;
+
+restore)
+    source "${DSM_ROOT}/backup/restore.sh"
+    restore_backup "$2"
+;;
+
+snapshot)
+    source "${DSM_ROOT}/backup/snapshot.sh"
+    snapshot_create
+;;
+
+*)
+echo
+echo "Uso:"
+echo " dsm backup create"
+echo " dsm backup restore arquivo"
+echo " dsm backup snapshot"
+;;
+esac
+}
+
+# =============================================================
+# Configuração
+# =============================================================
+
+config_command()
+{
+case "${1:-}" in
+
+show)
+    config_show
+;;
+
+*)
+echo
+echo "Uso:"
+echo " dsm config show"
+;;
+esac
+}
+
+# =============================================================
+# Instalação de jogos
+# =============================================================
+
+game_command()
+{
+    local ACTION="${1:-}"
+    shift || true
+
+    case "${ACTION}" in
+        install|show)
+            exec "${DSM_ROOT}/installer/install_selection.sh" "${ACTION}" "$@"
+            ;;
+        *)
+            echo "Uso: dsm game install|show <environment-id> <version|latest|current>" >&2
+            return 2
+            ;;
+    esac
+}
+
+catalog_command()
+{
+    exec "${DSM_ROOT}/installer/catalog.sh" "$@"
+}
+
+database_command()
+{
+    exec python3 "${DSM_ROOT}/database/manager.py" \
+        --root "${DSM_ROOT}" \
+        --database "${DSM_DATABASE:-${DSM_ROOT}/data/capivara.db}" \
+        "$@"
+}
+
+instance_command()
+{
+    case "${1:-}" in
+        create-aurora)
+            exec python3 "${DSM_ROOT}/database/registry.py" \
+                --root "${DSM_ROOT}" \
+                --database "${DSM_DATABASE:-${DSM_ROOT}/data/capivara.db}" \
+                create-aurora
+            ;;
+        purge-orphan)
+            shift
+            if [[ $# -ne 1 ]]
+            then
+                echo "Uso: dsm instance purge-orphan <instance-id>" >&2
+                return 2
+            fi
+            exec python3 "${DSM_ROOT}/database/registry.py" \
+                --root "${DSM_ROOT}" \
+                --database "${DSM_DATABASE:-${DSM_ROOT}/data/capivara.db}" \
+                purge-orphan "$1"
+            ;;
+        *) usage; return 1 ;;
+    esac
+}
+
+
+# =============================================================
+# Entrada principal
+# =============================================================
+
+case "${1:-}" in
+
+start|stop|restart|status)
+    server_command "$@"
+;;
+
+server)
+
+    shift
+
+    server_command "$@"
+
+;;
+
+doctor)
+    shift
+
+    source "${DSM_ROOT}/doctor/doctor.sh"
+
+    case "${1:-run}" in
+
+        run)
+            doctor_run
+        ;;
+
+        status)
+
+            if ! declare -F runtime_get >/dev/null
+            then
+                echo "Runtime indisponível."
+                exit 1
+            fi
+
+
+            DATA="$(runtime_get doctor)"
+
+
+            if [[ -z "${DATA}" ]]
+            then
+                echo "Nenhum diagnóstico disponível."
+                echo
+                echo "Execute:"
+                echo " dsm doctor run"
+                exit 1
+            fi
+
+
+            doctor_format_status "${DATA}"
+
+        ;;
+
+        *)
+            echo
+            echo "Uso:"
+            echo " dsm doctor run"
+            echo " dsm doctor status"
+            ;;
+
+    esac
+;;
+
+monitor)
+    shift
+    monitor_command "$@"
+;;
+
+mods)
+    shift
+    mods_dispatch "$@"
+;;
+
+backup)
+    shift
+    backup_command "$@"
+;;
+
+user)
+    shift
+    exec "$DSM_ROOT/core/user_manager.sh" "$@"
+
+;;
+
+runtime)
+    shift
+    /opt/dsm/bin/dsm-runtime "$@"
+;;
+
+config)
+    shift
+    config_command "$@"
+;;
+
+game)
+    shift
+    game_command "$@"
+;;
+
+catalog)
+    shift
+    catalog_command "$@"
+;;
+
+content)
+    shift
+    catalog_command content "$@"
+;;
+
+compatibility)
+    shift
+    catalog_command compatibility "$@"
+;;
+
+database|db)
+    shift
+    database_command "$@"
+;;
+
+instance)
+    shift
+    instance_command "$@"
+;;
+
+*)
+    usage
+;;
+esac

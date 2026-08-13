@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+
+DSM_ROOT="${DSM_ROOT:-/opt/dsm}"
+
+WORKERS_DIR="${DSM_ROOT}/dashboard/workers"
+
+LOG="${DSM_ROOT}/logs/dashboard_worker.log"
+
+
+log()
+{
+    echo "$(date '+%F %T') $*" >> "$LOG"
+}
+
+
+start_worker()
+{
+    local WORKER="$1"
+
+    if [ -x "${WORKERS_DIR}/${WORKER}" ]
+    then
+        log "Iniciando ${WORKER}"
+
+        bash "${WORKERS_DIR}/${WORKER}" daemon \
+        >> "$LOG" 2>&1 &
+
+    else
+        log "Worker inexistente: ${WORKER}"
+    fi
+}
+
+
+main()
+{
+
+    mkdir -p "$(dirname "$LOG")"
+
+
+    start_worker dashboard_worker.sh
+
+    start_worker server_worker.sh
+
+    start_worker metrics_worker.sh
+
+    start_worker scheduler_worker.sh
+
+    start_worker events_worker.sh
+
+    start_worker monitor_worker.sh
+
+    start_worker doctor_worker.sh
+
+    start_worker mods_worker.sh
+
+    start_worker alerts_worker.sh
+
+    start_worker backup_worker.sh
+
+
+    while true
+    do
+        sleep 60
+    done
+
+}
+
+
+main

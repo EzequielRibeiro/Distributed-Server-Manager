@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+
+#############################################
+# Capivara Distributed Server Manager
+# Agent Configuration Template
+#############################################
+
+AGENT_ID=""
+AGENT_NAME=""
+AGENT_STATUS="pending"
+
+CONTROLLER_ENDPOINT=""
+CONTROLLER_PORT=""
+CONTROLLER_PROTOCOL=""
+AGENT_TOKEN=""
+
+DSM_USER=""
+DSM_GROUP=""
+HOSTNAME=""
+DSM_NODE_ID=""
+
+DSM_ROOT=""
+DSM_CONFIG_DIR=""
+DSM_RUNTIME_DIR=""
+DSM_LOG_DIR=""
+INSTANCE_ROOT=""
+
+SYSTEMD_ENABLED=""
+WORKER_INTERVAL=""
+TIMEZONE=""
+
+AGENT_IP=""
+AGENT_DNS=""
+AGENT_PORT=""
+
+CERTIFICATE=""
+AGENT_FINGERPRINT=""
+
+ENABLE_PROCESS_MANAGER="1"
+ENABLE_WATCHDOG="1"
+ENABLE_RECOVERY="1"
+ENABLE_EVENTS="1"
+ENABLE_BACKUP="1"
+ENABLE_METRICS="1"
+
+REGISTER_DATE=""
+LAST_CONTROLLER_SYNC=""

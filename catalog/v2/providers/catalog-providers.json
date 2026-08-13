@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "kind": "CatalogProviderRegistry",
+  "providers": [
+    {
+      "id": "builtin",
+      "role": "catalog",
+      "external": false
+    },
+    {
+      "id": "custom-manifest",
+      "role": "catalog",
+      "external": false
+    }
+  ],
+  "artifact_providers": [
+    "steam",
+    "http",
+    "http-archive",
+    "github",
+    "local",
+    "custom",
+    "source-build"
+  ]
+}

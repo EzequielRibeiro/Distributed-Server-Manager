@@ -1,0 +1,9 @@
+{
+  "schema_version": 2, "kind": "RuntimeDefinition", "id": "arma3.stable", "name": "Arma 3 Dedicated Server",
+  "game": "arma3", "edition": "default", "variant": "stable", "loader": null,
+  "version": { "strategy": "static", "value": "current", "build": "steam-current" },
+  "process": { "engine": "native", "executable": "arma3server", "artifact_mode": "executable" },
+  "requirements": { "os": ["linux", "windows"], "architectures": ["x86_64"], "java": null },
+  "artifact": { "provider": "steam", "auth": "anonymous", "package_id": "233780" },
+  "installation": { "directory": "/opt/dsm/game-data/arma3/serverfiles" }
+}

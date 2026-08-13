@@ -1,0 +1,11 @@
+[Unit]
+Description=DSM Notification Engine Timer
+
+[Timer]
+OnBootSec=30sec
+OnUnitActiveSec=30sec
+AccuracySec=5sec
+Unit=dsm-notification-engine.service
+
+[Install]
+WantedBy=timers.target

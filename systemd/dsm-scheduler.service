@@ -1,0 +1,27 @@
+# =============================================================
+# Capivara DSM Scheduler Service
+# =============================================================
+
+[Unit]
+Description=Capivara DSM Scheduler Daemon
+After=network.target
+RequiresMountsFor=/opt/dsm
+
+[Service]
+Type=simple
+User={{DSM_USER}}
+Group={{DSM_GROUP}}
+Environment=DSM_ROOT=/opt/dsm
+WorkingDirectory=/opt/dsm
+ExecStart=/bin/bash /opt/dsm/scheduler/scheduler.sh daemon
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=capivara-scheduler
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+#!/bin/bash
+# =============================================================
+# DSM Scheduler Task
+#
+# Arquivo:
+#   scheduler/tasks/backup.task
+#
+# Backup automático diário
+#
+# DSM Scheduler v1.2.0
+# =============================================================
+
+NAME="backup_daily"
+SCHEDULE="04:00"
+COMMAND="backup"
+ENABLED=1
+FILE="backup.task"

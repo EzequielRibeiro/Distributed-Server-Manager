@@ -1,0 +1,17 @@
+#!/bin/bash
+# =============================================================
+# DSM Scheduler Task
+#
+# Arquivo:
+#   scheduler/tasks/doctor.task
+#
+# Diagnóstico automático diário DSM
+#
+# DSM Scheduler v1.2.0
+# =============================================================
+
+NAME="doctor_daily"
+SCHEDULE="06:00"
+COMMAND="doctor"
+ENABLED=1
+FILE="doctor.task"

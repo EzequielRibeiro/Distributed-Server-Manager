@@ -1,0 +1,29 @@
+#!/bin/bash
+# =============================================================
+# DSM Scheduler Task
+#
+# Arquivo:
+#   scheduler/tasks/restart.task
+#
+# Restart automático de manutenção
+#
+# DSM Scheduler v1.2.0
+# =============================================================
+
+# Este restart via DSM é opcional.
+#
+# O ciclo normal de reinício com avisos aos jogadores
+# já é realizado pelo DayZ através de:
+#
+# - messages.xml
+# - server/restart.sh
+# - doctor
+#
+# Use esta tarefa somente para um restart extra
+# de segurança em horário fixo de baixo movimento.
+
+NAME="restart_maintenance"
+SCHEDULE="06:30"
+COMMAND="restart"
+ENABLED=0
+FILE="restart.task"

@@ -1,0 +1,35 @@
+{
+  "servers": [
+    {
+      "id": "server01",
+      "host": "horizon-server",
+      "games": [
+        {
+          "id": "dayz",
+          "instances": [
+            {
+              "id": "survival01",
+              "path": "/home/mine/steamcmd/dayzserver",
+              "port": 2302
+            },
+            {
+              "id": "survival02",
+              "path": "/home/mine/steamcmd/dayzserver2",
+              "port": 2402
+            }
+          ]
+        },
+        {
+          "id": "rust",
+          "instances": [
+            {
+              "id": "rust01",
+              "path": "/home/mine/rust/server01",
+              "port": 28015
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

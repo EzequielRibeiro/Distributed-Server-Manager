@@ -1,0 +1,400 @@
+/*
+=============================================================
+ DSM Dashboard
+ style.css
+ Versão: 3.0.0
+ Interface Web DSM
+=============================================================
+*/
+
+/* ============================================================
+   RESET
+============================================================ */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    background: #0f172a;
+    color: #e5e7eb;
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+
+/* ============================================================
+   HEADER
+============================================================ */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 25px 40px;
+    background: #111827;
+    border-bottom: 1px solid #1f2937;
+}
+
+.header h1 {
+    font-size: 28px;
+}
+
+.header span {
+    color: #94a3b8;
+}
+
+/* ============================================================
+   STATUS
+============================================================ */
+.status {
+    padding: 8px 18px;
+    border-radius: 20px;
+    font-weight: bold;
+    font-size: 14px;
+}
+
+.status.online {
+    background: #14532d;
+    color: #4ade80;
+}
+
+.status.offline {
+    background: #450a0a;
+    color: #f87171;
+}
+
+.status.warning {
+    background: #78350f;
+    color: #fbbf24;
+}
+
+.status.critical {
+    background: #7f1d1d;
+    color: #ef4444;
+}
+
+/* ============================================================
+   CONTAINER
+============================================================ */
+.container {
+    padding: 30px 40px;
+}
+
+.card {
+    background: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 14px;
+    padding: 25px;
+    margin-bottom: 25px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.25);
+}
+
+.card h2 {
+    margin-bottom: 20px;
+    font-size: 20px;
+}
+
+/* ============================================================
+   GRID
+============================================================ */
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+}
+
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 20px;
+}
+
+.info-grid div {
+    background: #020617;
+    padding: 18px;
+    border-radius: 10px;
+}
+
+.info-grid label {
+    display: block;
+    color: #94a3b8;
+    font-size: 13px;
+}
+
+.info-grid strong {
+    font-size: 20px;
+}
+
+/* ============================================================
+   NUMBERS
+============================================================ */
+.big-number {
+    font-size: 45px;
+    font-weight: bold;
+    color: #38bdf8;
+}
+
+/* ============================================================
+   BUTTONS
+============================================================ */
+.buttons {
+    margin-top: 25px;
+    display: flex;
+    gap: 15px;
+}
+
+button {
+    border: none;
+    padding: 12px 25px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+    background: #2563eb;
+    color: white;
+    transition: .2s;
+}
+
+button:hover {
+    transform: translateY(-2px);
+    opacity: .9;
+}
+
+button:nth-child(2) {
+    background: #dc2626;
+}
+
+button:nth-child(3) {
+    background: #d97706;
+}
+
+/* ============================================================
+   RESOURCE MONITOR
+============================================================ */
+.resource {
+    margin-bottom: 25px;
+}
+
+.resource-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.progress {
+    width: 100%;
+    height: 18px;
+    background: #020617;
+    border-radius: 20px;
+    overflow: hidden;
+}
+
+.progress-bar,
+.progress-value {
+    height: 100%;
+    width: 0%;
+    background: #38bdf8;
+    transition: width .5s ease;
+}
+
+/* ============================================================
+   LISTAS
+============================================================ */
+.list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.list div {
+    background: #020617;
+    padding: 12px 16px;
+    border-radius: 8px;
+    border-left: 4px solid #38bdf8;
+}
+
+/* ============================================================
+   EVENTOS
+============================================================ */
+#events-list div {
+    font-family: monospace;
+    font-size: 14px;
+}
+
+.log-death {
+
+    background:#3b0000;
+
+    border-left:4px solid red;
+
+    padding:8px;
+
+    margin-bottom:5px;
+
+    color:#ff8080;
+
+    font-weight:bold;
+
+}
+/* ============================================================
+   FOOTER
+============================================================ */
+footer {
+    text-align: center;
+    padding: 20px;
+    color: #64748b;
+    border-top: 1px solid #1f2937;
+}
+
+/* ============================================================
+   RESPONSIVO
+============================================================ */
+@media(max-width:700px) {
+    .header {
+        flex-direction: column;
+        gap: 15px;
+    }
+    .container {
+        padding: 20px;
+    }
+    .buttons {
+        flex-direction: column;
+    }
+}
+
+/* =================================================
+   LOGIN
+================================================= */
+.login-page {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+.login-box {
+    width: min(380px, calc(100vw - 48px));
+    box-sizing: border-box;
+    background: #111827;
+    padding: 40px;
+    border-radius: 15px;
+    text-align: center;
+}
+
+.login-box h1 {
+    font-size: clamp(32px, 10vw, 50px);
+}
+
+.form-group {
+    text-align: left;
+    margin-top: 20px;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 12px;
+    margin-top: 8px;
+    border-radius: 8px;
+    border: none;
+}
+
+.login-error {
+    margin-top: 20px;
+    color: #ef4444;
+}
+
+/* ============================================================
+   SIDEBAR HORIZONTAL
+============================================================ */
+
+.sidebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 15px 30px;
+    background: #111827;
+    border-bottom: 1px solid #1f2937;
+}
+
+
+.sidebar nav {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 20px;
+}
+
+
+.sidebar nav a {
+
+    display: flex;
+    align-items: center;
+
+    padding: 10px 18px;
+
+    text-decoration: none;
+
+    color: #e5e7eb;
+
+    border-radius: 8px;
+
+    transition: .2s;
+
+}
+
+
+.sidebar nav a:hover {
+
+    background: #1e293b;
+
+    color: #38bdf8;
+
+}
+
+
+/* Sessão do usuário no lado direito */
+
+.sidebar-session {
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 15px;
+
+}
+
+
+.sidebar-session .card-title {
+
+    display: none;
+
+}
+
+
+.sidebar-session .server-info {
+
+    display: flex;
+
+}
+
+
+.sidebar-session .info-box {
+
+    padding: 0;
+
+    background: transparent;
+
+}
+
+
+.sidebar-session label {
+
+    display: none;
+
+}
+
+
+.logout-btn {
+
+    padding: 10px 15px;
+
+}

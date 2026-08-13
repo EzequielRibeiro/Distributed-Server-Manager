@@ -1,0 +1,28 @@
+# =============================================================
+# Capivara DSM Dashboard Worker
+# =============================================================
+
+[Unit]
+Description=Capivara DSM Dashboard Worker
+After=network.target dsm-monitor.service dsm-scheduler.service
+Wants=dsm-scheduler.service
+RequiresMountsFor=/opt/dsm
+
+[Service]
+Type=simple
+User={{DSM_USER}}
+Group={{DSM_GROUP}}
+WorkingDirectory=/opt/dsm
+Environment=DSM_ROOT=/opt/dsm
+ExecStart=/bin/bash /opt/dsm/dashboard/workers/worker.sh
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=capivara-dashboard-worker
+
+[Install]
+WantedBy=multi-user.target

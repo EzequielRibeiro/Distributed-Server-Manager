@@ -1,0 +1,17 @@
+{
+  "event": {
+    "id": "string",
+    "type": "string",
+    "category": "string",
+    "severity": "string",
+    "source": "string",
+    "timestamp": "integer",
+
+    "actor": {
+      "user": "",
+      "ip": ""
+    },
+
+    "data": {}
+  }
+}

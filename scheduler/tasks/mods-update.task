@@ -1,0 +1,17 @@
+#!/bin/bash
+# =============================================================
+# DSM Scheduler Task
+#
+# Arquivo:
+#   scheduler/tasks/mods-update.task
+#
+# Atualização automática de Mods DayZ
+#
+# DSM Scheduler v1.2.0
+# =============================================================
+
+NAME="mods_update_daily"
+SCHEDULE="05:00"
+COMMAND="mods_update"
+ENABLED=1
+FILE="mods-update.task"

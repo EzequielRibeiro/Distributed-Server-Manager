@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#091a18">
+  <title>Capivara DSM — Servidores</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Navegação principal">
+      <a class="brand" href="#" aria-label="Capivara DSM">
+        <span class="brand-mark" aria-hidden="true">C</span>
+        <span><strong>capivara</strong><small>DSM</small></span>
+      </a>
+
+      <button class="create-server" id="new-server-btn"><span>＋</span> Novo servidor</button>
+
+      <div class="sidebar-label">Seus servidores <span>4</span></div>
+      <nav class="server-list" id="server-list">
+        <button class="server-item active" data-server="Aurora SMP" data-game="Minecraft" data-color="#70d19b">
+          <span class="status online"></span><span class="game-icon minecraft">M</span>
+          <span><strong>Aurora SMP</strong><small>Minecraft · Paper</small></span><span class="players">18/40</span>
+        </button>
+        <button class="server-item" data-server="Ilha Ferrugem" data-game="Rust" data-color="#e08355">
+          <span class="status online"></span><span class="game-icon rust">R</span>
+          <span><strong>Ilha Ferrugem</strong><small>Rust · Vanilla</small></span><span class="players">42/100</span>
+        </button>
+        <button class="server-item" data-server="Chernarus BR" data-game="DayZ" data-color="#8ca477">
+          <span class="status warning"></span><span class="game-icon dayz">D</span>
+          <span><strong>Chernarus BR</strong><small>DayZ · Expansion</small></span><span class="players">0/60</span>
+        </button>
+        <button class="server-item" data-server="Operação Javali" data-game="Arma 3" data-color="#b8a36a">
+          <span class="status offline"></span><span class="game-icon arma">A3</span>
+          <span><strong>Operação Javali</strong><small>Arma 3 · Antistasi</small></span><span class="players">—</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <button class="utility"><span>?</span> Central de ajuda</button>
+        <button class="profile"><span class="avatar">ER</span><span><strong>Ezequiel</strong><small>Administrador</small></span><span>•••</span></button>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <button class="mobile-menu" id="mobile-menu" aria-label="Abrir menu">☰</button>
+        <div class="breadcrumb"><span>Servidores</span><b>/</b><strong id="breadcrumb-name">Aurora SMP</strong></div>
+        <div class="top-actions">
+          <button class="icon-button" aria-label="Notificações">●<span class="notification-dot"></span></button>
+          <button class="status-pill"><span></span> Todos os sistemas operacionais</button>
+        </div>
+      </header>
+
+      <section class="server-header">
+        <div>
+          <div class="eyebrow" id="game-label">MINECRAFT · PAPER 1.21.1</div>
+          <h1 id="server-title">Aurora SMP <span class="live-badge">ONLINE</span></h1>
+          <p>mc.aurora.capivara.host:25565 <button class="copy-btn" data-copy="mc.aurora.capivara.host:25565">Copiar</button></p>
+        </div>
+        <div class="power-actions">
+          <button class="secondary">Reiniciar</button>
+          <button class="danger">Parar servidor</button>
+        </div>
+      </section>
+
+      <nav class="section-tabs" aria-label="Seções do servidor">
+        <button class="section-tab active" data-view="overview">Visão geral</button>
+        <button class="section-tab" data-view="console">Console</button>
+        <button class="section-tab" data-view="settings">Configuração</button>
+        <button class="section-tab" data-view="files">Arquivos</button>
+        <button class="section-tab" data-view="backups">Backups</button>
+      </nav>
+
+      <div class="content" id="main-content">
+        <section class="view active" id="view-overview">
+          <div class="metric-grid">
+            <article class="metric-card"><span>CPU</span><strong>38<small>%</small></strong><div class="meter"><i style="width:38%"></i></div><small>2.4 de 6 vCPU</small></article>
+            <article class="metric-card"><span>Memória</span><strong>5,8<small> GB</small></strong><div class="meter"><i style="width:72%"></i></div><small>de 8 GB alocados</small></article>
+            <article class="metric-card"><span>Jogadores</span><strong>18<small>/40</small></strong><div class="avatar-stack"><i>ML</i><i>BR</i><i>JV</i><i>+15</i></div><small>pico hoje: 32</small></article>
+            <article class="metric-card"><span>Armazenamento</span><strong>12,4<small> GB</small></strong><div class="meter"><i style="width:49%"></i></div><small>de 25 GB</small></article>
+          </div>
+
+          <div class="overview-grid">
+            <article class="panel console-preview">
+              <div class="panel-heading"><div><span class="panel-kicker">ATIVIDADE AO VIVO</span><h2>Console</h2></div><button class="text-button" data-open-view="console">Abrir console →</button></div>
+              <pre><span class="time">14:32:09</span> <span class="ok">[Server thread/INFO]</span> BiaLima joined the game
+<span class="time">14:32:12</span> <span class="ok">[Server thread/INFO]</span> BiaLima has made the advancement [Stone Age]
+<span class="time">14:34:40</span> <span class="warn">[Server thread/WARN]</span> Can't keep up! Running 1240ms behind
+<span class="time">14:35:01</span> <span class="ok">[Capivara]</span> Backup incremental concluído em 3.2s</pre>
+            </article>
+            <article class="panel quick-actions">
+              <div class="panel-heading"><div><span class="panel-kicker">ATALHOS</span><h2>Gerenciar</h2></div></div>
+              <button data-open-view="settings"><span class="action-icon">⚙</span><span><strong>Configurar servidor</strong><small>Mundo, gameplay e rede</small></span><b>›</b></button>
+              <button id="import-open"><span class="action-icon">⇧</span><span><strong>Importar arquivos</strong><small>Pasta local, ZIP ou TAR.GZ</small></span><b>›</b></button>
+              <button data-open-view="backups"><span class="action-icon">↺</span><span><strong>Criar backup</strong><small>Snapshot manual seguro</small></span><b>›</b></button>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" id="view-console">
+          <div class="console-layout">
+            <article class="panel console-full">
+              <div class="panel-heading"><div><span class="panel-kicker">TEMPO REAL</span><h2>Console do servidor</h2></div><label class="toggle"><input type="checkbox" checked><span></span> Autoscroll</label></div>
+              <pre id="terminal"><span class="time">14:28:01</span> <span class="ok">[Server thread/INFO]</span> Starting minecraft server version 1.21.1
+<span class="time">14:28:03</span> <span class="ok">[Server thread/INFO]</span> Loading properties
+<span class="time">14:28:08</span> <span class="ok">[Server thread/INFO]</span> Preparing level "aurora"
+<span class="time">14:28:17</span> <span class="ok">[Server thread/INFO]</span> Done (8.421s)! For help, type "help"
+<span class="time">14:32:09</span> <span class="ok">[Server thread/INFO]</span> BiaLima joined the game
+<span class="time">14:34:40</span> <span class="warn">[Server thread/WARN]</span> Can't keep up! Running 1240ms behind
+<span class="time">14:35:01</span> <span class="capy">[Capivara]</span> Backup incremental concluído em 3.2s</pre>
+              <form class="command-bar" id="command-form"><span>›</span><input id="command-input" placeholder="Digite um comando, como say Olá" autocomplete="off"><button>Enviar</button></form>
+            </article>
+            <aside class="panel player-panel"><div class="panel-heading"><div><span class="panel-kicker">18 ONLINE</span><h2>Jogadores</h2></div></div><div id="player-list"></div></aside>
+          </div>
+        </section>
+
+        <section class="view" id="view-settings">
+          <div class="settings-layout">
+            <aside class="settings-nav"><button class="active">Geral</button><button>Mundo</button><button>Gameplay</button><button>Rede</button><button>Java e desempenho</button><button>Avançado</button></aside>
+            <article class="panel settings-form" id="settings-form">
+              <div class="panel-heading"><div><span class="panel-kicker">PERFIL MINECRAFT</span><h2>Configurações gerais</h2><p>Campos amigáveis sincronizados com <code>server.properties</code>.</p></div><span class="saved-state">✓ Salvo</span></div>
+              <div class="form-grid">
+                <label>Nome do mundo<input value="aurora"></label><label>Porta do servidor<input type="number" value="25565"></label>
+                <label>Modo de jogo<select><option>Sobrevivência</option><option>Criativo</option><option>Aventura</option></select></label><label>Dificuldade<select><option>Fácil</option><option selected>Normal</option><option>Difícil</option></select></label>
+                <label>Máximo de jogadores<input type="number" value="40"></label><label>Distância de visão<input type="number" value="12"></label>
+              </div>
+              <div class="switch-grid"><label><input type="checkbox" checked><span></span><b>PvP</b><small>Combate entre jogadores</small></label><label><input type="checkbox" checked><span></span><b>Whitelist</b><small>Acesso apenas por lista</small></label><label><input type="checkbox" checked><span></span><b>Modo online</b><small>Validar contas Mojang</small></label><label><input type="checkbox"><span></span><b>Hardcore</b><small>Morte permanente</small></label></div>
+              <label class="full-field">Mensagem do servidor<textarea>§2Capivara SMP §8• §fSobrevivência brasileira</textarea></label>
+              <div class="form-footer"><span>Alterações com validação antes de reiniciar.</span><button class="primary">Salvar alterações</button></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" id="view-files">
+          <article class="panel files-panel"><div class="panel-heading"><div><span class="panel-kicker">ARQUIVOS</span><h2>/servers/aurora</h2></div><div><button class="secondary" id="import-open-2">Importar</button> <button class="primary">Novo arquivo</button></div></div><div class="file-table"><div class="file-row header"><span>Nome</span><span>Tamanho</span><span>Modificado</span><span></span></div><div class="file-row"><span>📁 plugins</span><span>—</span><span>há 12 min</span><button>•••</button></div><div class="file-row"><span>📁 world</span><span>—</span><span>há 2 min</span><button>•••</button></div><div class="file-row"><span>📄 server.properties</span><span>1,8 KB</span><span>há 8 min</span><button>•••</button></div><div class="file-row"><span>📄 paper-global.yml</span><span>12 KB</span><span>ontem</span><button>•••</button></div></div></article>
+        </section>
+
+        <section class="view" id="view-backups">
+          <article class="panel backup-panel"><div class="panel-heading"><div><span class="panel-kicker">PROTEÇÃO DE DADOS</span><h2>Backups</h2><p>Snapshots automáticos e pontos de restauração.</p></div><button class="primary">Criar backup agora</button></div><div class="backup-hero"><div><span>Próximo backup</span><strong>Hoje, 18:00</strong><small>Incremental · retenção de 14 dias</small></div><div class="backup-score">100%<small>saudável</small></div></div><div class="backup-list"><div><span class="backup-icon">✓</span><span><strong>automático-2026-08-11-1200</strong><small>Hoje, 12:00 · 4,3 GB</small></span><button>Restaurar</button></div><div><span class="backup-icon">✓</span><span><strong>antes-do-update-1.21.1</strong><small>Ontem, 21:42 · 4,2 GB</small></span><button>Restaurar</button></div></div></article>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="modal" id="server-modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <button class="modal-close" data-close-modal aria-label="Fechar">×</button>
+      <div class="wizard-head"><div><span class="panel-kicker">NOVO SERVIDOR</span><h2 id="modal-title">Importar arquivos existentes</h2><p>Traga um servidor local para o Capivara com validação antes da instalação.</p></div><div class="wizard-steps"><span class="active">1</span><i></i><span>2</span><i></i><span>3</span></div></div>
+
+      <div class="modal-tabs"><button class="active" data-modal-mode="import">Importar servidor</button><button data-modal-mode="create">Criar do zero</button></div>
+
+      <div id="import-flow">
+        <h3>Qual jogo você quer importar?</h3>
+        <div class="game-cards" id="game-cards">
+          <button class="selected" data-game-type="minecraft"><span class="game-symbol minecraft">M</span><strong>Minecraft</strong><small>Java, Paper, Fabric, Forge</small><b>✓</b></button>
+          <button data-game-type="rust"><span class="game-symbol rust">R</span><strong>Rust</strong><small>Vanilla, Oxide/uMod</small><b>✓</b></button>
+          <button data-game-type="dayz"><span class="game-symbol dayz">D</span><strong>DayZ</strong><small>Vanilla, Expansion</small><b>✓</b></button>
+          <button data-game-type="arma"><span class="game-symbol arma">A3</span><strong>Arma 3</strong><small>Vanilla, Altis, Antistasi</small><b>✓</b></button>
+        </div>
+        <div class="drop-zone" id="drop-zone" tabindex="0" role="button" aria-label="Selecionar arquivos do servidor">
+          <input type="file" id="server-files" webkitdirectory directory multiple hidden>
+          <input type="file" id="server-archive" accept=".zip,.tar,.gz,.tgz" hidden>
+          <span class="upload-icon">⇧</span><strong>Arraste a pasta do servidor para cá</strong><p>ou <button type="button" id="browse-files">selecione a pasta no computador</button></p><small id="format-hint">Detectamos Paper, Spigot, Fabric, Forge e Vanilla pelo conteúdo.</small>
+          <p class="archive-choice">Também pode <button type="button" id="browse-archive">escolher um ZIP ou TAR.GZ</button></p>
+        </div>
+        <div class="security-note"><span>✓</span><p><strong>Importação segura</strong><br>Os arquivos são analisados antes da instalação. Executáveis e caminhos inválidos são bloqueados; nenhum servidor existente é sobrescrito sem confirmação.</p></div>
+        <div class="modal-footer"><span>Também aceita <strong>.zip</strong> e <strong>.tar.gz</strong> de até 25 GB.</span><button class="primary" id="analyze-btn" disabled>Analisar arquivos <span>→</span></button></div>
+      </div>
+
+      <div id="create-flow" hidden>
+        <h3>Escolha um jogo para começar</h3>
+        <div class="game-cards create-games">
+          <button class="selected"><span class="game-symbol minecraft">M</span><strong>Minecraft</strong><small>Configuração completa de mundo</small><b>✓</b></button>
+          <button><span class="game-symbol rust">R</span><strong>Rust</strong><small>Mapa, wipe e Oxide/uMod</small><b>✓</b></button>
+          <button><span class="game-symbol dayz">D</span><strong>DayZ</strong><small>Missão, mods e economia</small><b>✓</b></button>
+          <button><span class="game-symbol arma">A3</span><strong>Arma 3</strong><small>Missão, DLCs e parâmetros</small><b>✓</b></button>
+        </div>
+        <div class="create-fields"><label>Nome do servidor<input value="Meu servidor"></label><label>Perfil<select><option>Paper 1.21.1</option><option>Vanilla 1.21.1</option><option>Fabric 1.21.1</option></select></label><label>Região<select><option>São Paulo</option><option>Rio de Janeiro</option></select></label><label>Memória<select><option>4 GB</option><option selected>8 GB</option><option>12 GB</option></select></label></div>
+        <div class="modal-footer"><span>Você poderá ajustar mundo e plugins depois.</span><button class="primary">Continuar <span>→</span></button></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>
