@@ -160,8 +160,36 @@ steam_provider_ensure()
 
 steam_provider_validate()
 {
+    local INTERNAL_BIN=""
+
     steam_provider_ensure || return 1
-    [[ -x "${STEAMCMD_BIN}" ]]
+
+    if [[ ! -x "${STEAMCMD_BIN}" ]]
+    then
+        steam_error "Launcher SteamCMD não é executável:"
+        steam_error "${STEAMCMD_BIN}"
+        return 1
+    fi
+
+    if [[ -f "${STEAMCMD_ROOT}/linux32/steamcmd" ]]
+    then
+        INTERNAL_BIN="${STEAMCMD_ROOT}/linux32/steamcmd"
+    elif [[ -f "${STEAMCMD_ROOT}/linux64/steamcmd" ]]
+    then
+        INTERNAL_BIN="${STEAMCMD_ROOT}/linux64/steamcmd"
+    else
+        steam_error "Binário interno do SteamCMD não encontrado."
+        return 1
+    fi
+
+    if [[ ! -x "${INTERNAL_BIN}" ]]
+    then
+        steam_error "Binário interno do SteamCMD não é executável:"
+        steam_error "${INTERNAL_BIN}"
+        return 1
+    fi
+
+    return 0
 }
 
 steam_manifest_path()
