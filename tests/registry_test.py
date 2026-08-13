@@ -50,9 +50,22 @@ class RegistryTest(unittest.TestCase):
             root = Path(temporary)
             database = root / "data" / "capivara.db"
             REGISTRY.create_aurora(root, database)
-            (root / "catalog" / "v2" / "runtimes" / "dayz").mkdir(parents=True)
+            runtime = root / "catalog" / "v2" / "runtimes" / "dayz"
+            runtime.mkdir(parents=True)
+            (runtime / "stable.json").write_text(
+                '{"id":"dayz.stable","game":"dayz","variant":"stable",'
+                '"artifact":{"provider":"steam","auth":"required"},'
+                '"installation":{"directory":"/opt/dsm/game-data/dayz/serverfiles"}}',
+                encoding="utf-8",
+            )
             user = {"username": "aurora", "role": "customer", "scope_id": "CLI-DEMO-001"}
-            payload = {"game": "dayz"}
+            payload = {
+                "game": "dayz",
+                "runtime_id": "dayz.stable",
+                "edition": "stable",
+                "version": "latest",
+                "build": "default",
+            }
             with mock.patch.object(SERVER, "start_instance_provisioning", return_value={"status": "queued", "progress": 5}):
                 result = SERVER.create_customer_instance(user, payload, root=root, database_path=database)
             self.assertTrue(result["created"])
@@ -168,12 +181,16 @@ class RegistryTest(unittest.TestCase):
             (instance / ".dsm").mkdir(parents=True)
             resource = root / "runtime" / "resources" / "DemoNode" / "dayz" / "demo-dayz"
             resource.mkdir(parents=True)
-            SERVER._provision_worker(root, database, "demo-dayz", "DemoNode", "dayz", instance, "agent-demo")
+            with mock.patch.object(SERVER, "_controller_alert", return_value=True) as alert:
+                SERVER._provision_worker(
+                    root, database, "demo-dayz", "DemoNode", "dayz",
+                    "dayz.stable", "stable", "latest", "default", instance, "agent-demo"
+                )
             provision = SERVER.read_json(resource / "provision.json")
-            alerts = SERVER.read_json(root / "dashboard" / "state" / "alerts_state.json")
             self.assertEqual(provision["status"], "pending_steam_auth")
             self.assertIn("autenticação Steam", provision["message"])
-            self.assertEqual(alerts[0]["instance"], "demo-dayz")
+            alert.assert_called_once()
+            self.assertEqual(alert.call_args.args[3], "demo-dayz")
 
     def test_provisioning_reuses_local_game_data_and_copies_instance_files(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -182,20 +199,31 @@ class RegistryTest(unittest.TestCase):
             REGISTRY.create_aurora(root, database)
             runtime = root / "catalog" / "v2" / "runtimes" / "minecraft"
             runtime.mkdir(parents=True)
-            (runtime / "vanilla.json").write_text('{"id":"minecraft.java.vanilla","game":"minecraft","variant":"vanilla","artifact":{"provider":"http","auth":"anonymous"},"installation":{"directory":"/opt/dsm/game-data/minecraft/vanilla"}}')
+            (runtime / "vanilla.json").write_text(
+                '{"id":"minecraft.java.vanilla","game":"minecraft","variant":"vanilla",'
+                '"artifact":{"provider":"http","auth":"anonymous"},'
+                '"installation":{"directory":"/opt/dsm/game-data/minecraft/vanilla"},'
+                '"process":{"engine":"java","executable":"server.jar"}}',
+                encoding="utf-8",
+            )
             game_data = root / "game-data" / "minecraft" / "vanilla"
             game_data.mkdir(parents=True)
+            (game_data / "server.jar").write_bytes(b"test-server")
             (game_data / "server.properties").write_text("motd=Capivara\n")
             instance = root / "instances" / "DemoNode" / "minecraft" / "demo-minecraft"
             (instance / ".dsm").mkdir(parents=True)
             resource = root / "runtime" / "resources" / "DemoNode" / "minecraft" / "demo-minecraft"
             resource.mkdir(parents=True)
-            SERVER._provision_worker(root, database, "demo-minecraft", "DemoNode", "minecraft", instance, "agent-demo")
+            SERVER._provision_worker(
+                root, database, "demo-minecraft", "DemoNode", "minecraft",
+                "minecraft.java.vanilla", "java", "latest", "default", instance, "agent-demo"
+            )
             provision = SERVER.read_json(resource / "provision.json")
             self.assertEqual(provision["status"], "offline")
             self.assertEqual(provision["progress"], 100)
             self.assertEqual((instance / "serverfiles" / "server.properties").read_text(), "motd=Capivara\n")
-
+            self.assertTrue((instance / "serverfiles" / "server.jar").is_file())
+            self.assertIn('RUNTIME_ID="minecraft.java.vanilla"', (instance / "instance.conf").read_text())
 
 
 if __name__ == "__main__":
