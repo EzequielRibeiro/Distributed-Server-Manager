@@ -84,6 +84,7 @@ install_manager_load_provider_config()
         return 0
     fi
 
+    unset DSM_STEAM_USER 2>/dev/null || true
     unset STEAM_USER 2>/dev/null || true
 
     # shellcheck source=/dev/null
@@ -165,13 +166,17 @@ install_manager_resolve_user()
     install_manager_load_provider_config "${PROVIDER}"
 
     case "${PROVIDER}" in
-        steam)
-            if [[ -n "${STEAM_USER:-}" ]]
-            then
-                USER="${STEAM_USER}"
-            fi
-        ;;
-    esac
+    steam)
+        if [[ -n "${DSM_STEAM_USER:-}" ]]
+        then
+            USER="${DSM_STEAM_USER}"
+        elif [[ -n "${STEAM_USER:-}" ]]
+        then
+            # Compatibilidade temporária com configurações antigas.
+            USER="${STEAM_USER}"
+        fi
+    ;;
+esac
 
     if [[ -n "${USER}" ]]
     then
