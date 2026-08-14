@@ -69,8 +69,14 @@
     const failed =
       status === "failed";
 
+    const completed =
+      String(
+        provision?.stage || ""
+      ).toLowerCase() === "completed"
+      && Number(provision?.progress) >= 100;
+
     const visible =
-      pending || failed;
+      pending || failed || completed;
 
     const box =
       $("provision-progress");
@@ -148,6 +154,23 @@
     box.classList.remove(
       "provision-failed"
     );
+
+    /*
+     * Provisionamento concluído.
+     *
+     * O resultado permanece visível para deixar claro
+     * ao cliente que a instalação terminou com sucesso.
+     */
+    if (completed) {
+      $("provision-label").textContent =
+        "Instalação concluída";
+
+      $("provision-detail").textContent =
+        provision.message ||
+        "O servidor está pronto para iniciar.";
+
+      return;
+    }
 
     /*
      * Steam requer intervenção administrativa.
@@ -1105,5 +1128,72 @@
     )
   );
 
-  if(!auth()||!identity.server||!identity.game||!identity.instance){location.href=auth()?"/customer.html":"/login.html"}else{Promise.all([loadSummary(),loadConfigs()]).catch(error=>message(error.message));loadLogs();setInterval(loadLogs,2000);setInterval(()=>loadSummary().catch(()=>{}),10000)}
+  /*
+   * Polling adaptativo do estado da instância.
+   *
+   * Durante o provisionamento consultamos o estado
+   * a cada 2 segundos. Em estado estável, a cada
+   * 10 segundos.
+   */
+  async function scheduleSummaryRefresh() {
+    let delay = 10000;
+
+    try {
+      await loadSummary();
+
+      const status = String(
+        summary?.provision?.status || ""
+      ).toLowerCase();
+
+      if (
+        [
+          "queued",
+          "provisioning",
+          "pending_steam_auth",
+        ].includes(status)
+      ) {
+        delay = 2000;
+      }
+    } catch {
+      /*
+       * Uma falha temporária não interrompe o polling.
+       */
+    }
+
+    window.setTimeout(
+      scheduleSummaryRefresh,
+      delay
+    );
+  }
+
+  if (
+    !auth()
+    || !identity.server
+    || !identity.game
+    || !identity.instance
+  ) {
+    location.href =
+      auth()
+        ? "/customer.html"
+        : "/login.html";
+  } else {
+    /*
+     * scheduleSummaryRefresh() já executa loadSummary()
+     * imediatamente. Portanto, evitamos uma segunda
+     * chamada simultânea durante a inicialização.
+     */
+    loadConfigs().catch(
+      error => message(error.message)
+    );
+
+    loadLogs();
+
+    window.setInterval(
+      loadLogs,
+      2000
+    );
+
+    scheduleSummaryRefresh();
+  }
+
 })();

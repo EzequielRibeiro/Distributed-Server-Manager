@@ -584,6 +584,25 @@ def create_customer_instance(user, payload, root=DSM_ROOT, database_path=DATABAS
                     "INSERT INTO instance_contracts(instance_id,contract_id) VALUES (?,?)",
                     (instance_id, contract_id),
                 )
+
+                #
+                # Reserva de rede da instância.
+                #
+                # Para DayZ, a porta principal do jogo é
+                # reservada no mesmo transaction scope da
+                # criação da instância.
+                #
+                if game == "dayz":
+                    allocate_instance_port(
+                        connection,
+                        instance_id=instance_id,
+                        node_id=agent["node_id"],
+                        name="game",
+                        protocol="udp",
+                        start_port=24000,
+                        end_port=24999,
+                    )
+
                 metadata_path.parent.mkdir(parents=True, exist_ok=False)
                 (instance_path / "config").mkdir()
                 (instance_path / "config" / "server.conf").write_text(
@@ -636,10 +655,458 @@ def create_customer_instance(user, payload, root=DSM_ROOT, database_path=DATABAS
         "name": name,
         "instance": str(instance_path),
         "agent_id": agent["id"],
+        "node_id": agent["node_id"],
         "game": game,
         "contract_id": contract_id,
         "provision": provision,
     }
+
+
+
+def allocate_instance_port(
+    connection,
+    *,
+    instance_id,
+    node_id,
+    name,
+    protocol,
+    start_port,
+    end_port,
+    bind_address="0.0.0.0",
+):
+    """
+    Reserva uma porta de rede para uma instância.
+
+    A tabela instance_ports é a autoridade de alocação.
+    A unicidade (node_id, protocol, port) impede que duas
+    instâncias do mesmo Node recebam a mesma porta/protocolo.
+
+    Esta função não faz commit. Ela deve participar da
+    transação do chamador.
+    """
+
+    protocol = str(protocol).strip().lower()
+
+    if protocol not in {"tcp", "udp"}:
+        raise ValueError(
+            f"unsupported port protocol: {protocol}"
+        )
+
+    start_port = int(start_port)
+    end_port = int(end_port)
+
+    if (
+        start_port < 1
+        or end_port > 65535
+        or start_port > end_port
+    ):
+        raise ValueError(
+            "invalid port allocation range"
+        )
+
+    existing = connection.execute(
+        """
+        SELECT port
+        FROM instance_ports
+        WHERE instance_id=?
+          AND name=?
+          AND protocol=?
+        """,
+        (
+            instance_id,
+            name,
+            protocol,
+        ),
+    ).fetchone()
+
+    if existing:
+        return int(existing["port"])
+
+    used = {
+        int(row["port"])
+        for row in connection.execute(
+            """
+            SELECT port
+            FROM instance_ports
+            WHERE node_id=?
+              AND protocol=?
+              AND port BETWEEN ? AND ?
+            """,
+            (
+                node_id,
+                protocol,
+                start_port,
+                end_port,
+            ),
+        )
+    }
+
+    #
+    # Também respeitamos o estado real da rede do Node.
+    #
+    # instance_ports é a autoridade das reservas feitas
+    # pelo Capivara, mas podem existir processos externos
+    # usando portas que ainda não estão registradas no DSM.
+    #
+    # Como o Dashboard atualmente executa no próprio Node,
+    # consultamos os sockets locais através de `ss`.
+    #
+    try:
+        command = (
+            ["ss", "-H", "-lun"]
+            if protocol == "udp"
+            else ["ss", "-H", "-ltn"]
+        )
+
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                #
+                # Não dependemos da posição das colunas
+                # produzidas pelo `ss`.
+                #
+                # Procuramos campos terminados em :PORTA.
+                # O primeiro endereço desse formato na linha
+                # corresponde ao socket local listado.
+                #
+                port = None
+
+                for field in line.split():
+                    match = re.search(
+                        r":([0-9]+)$",
+                        field,
+                    )
+
+                    if not match:
+                        continue
+
+                    candidate = int(
+                        match.group(1)
+                    )
+
+                    if (
+                        start_port
+                        <= candidate
+                        <= end_port
+                    ):
+                        port = candidate
+                        break
+
+                if port is not None:
+                    used.add(port)
+
+    except (
+        OSError,
+        subprocess.SubprocessError,
+    ) as exc:
+        #
+        # Falhar na inspeção do sistema não deve provocar
+        # uma falsa sensação de segurança.
+        #
+        # Interrompemos a alocação em vez de correr o risco
+        # de entregar uma porta já ocupada.
+        #
+        raise RuntimeError(
+            "unable to inspect operating-system ports"
+        ) from exc
+
+    for port in range(
+        start_port,
+        end_port + 1,
+    ):
+        if port in used:
+            continue
+
+        try:
+            connection.execute(
+                """
+                INSERT INTO instance_ports(
+                    instance_id,
+                    node_id,
+                    name,
+                    protocol,
+                    port,
+                    bind_address
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    instance_id,
+                    node_id,
+                    name,
+                    protocol,
+                    port,
+                    bind_address,
+                ),
+            )
+
+            return port
+
+        except sqlite3.IntegrityError:
+            #
+            # Outra transação pode ter reservado a porta
+            # antes desta tentativa.
+            #
+            continue
+
+    raise RuntimeError(
+        f"no available {protocol} port "
+        f"for node {node_id} "
+        f"in range {start_port}-{end_port}"
+    )
+
+
+
+def allocate_dayz_ports(
+    connection,
+    *,
+    instance_id,
+    node_id,
+    start_port=24000,
+    end_port=24999,
+    bind_address="0.0.0.0",
+):
+    """
+    Reserva o par de portas UDP utilizado pelo DayZ.
+
+    Para uma porta principal P, o servidor utiliza:
+        game     = P
+        game_aux = P + 2
+
+    O par é tratado como uma unidade lógica. Nenhuma
+    reserva é feita enquanto as duas portas não forem
+    consideradas disponíveis.
+    """
+
+    start_port = int(start_port)
+    end_port = int(end_port)
+
+    if (
+        start_port < 1
+        or end_port > 65535
+        or start_port > end_port
+        or start_port + 2 > end_port
+    ):
+        raise ValueError(
+            "invalid DayZ port allocation range"
+        )
+
+    #
+    # Idempotência: se a instância já possuir o par,
+    # devolvemos as reservas existentes.
+    #
+    existing = connection.execute(
+        """
+        SELECT name, port
+        FROM instance_ports
+        WHERE instance_id=?
+          AND protocol='udp'
+          AND name IN ('game', 'game_aux')
+        """,
+        (instance_id,),
+    ).fetchall()
+
+    existing_ports = {
+        row["name"]: int(row["port"])
+        for row in existing
+    }
+
+    if (
+        "game" in existing_ports
+        and "game_aux" in existing_ports
+    ):
+        game_port = existing_ports["game"]
+        aux_port = existing_ports["game_aux"]
+
+        if aux_port != game_port + 2:
+            raise RuntimeError(
+                "invalid existing DayZ port pair"
+            )
+
+        return {
+            "game": game_port,
+            "game_aux": aux_port,
+        }
+
+    if existing_ports:
+        raise RuntimeError(
+            "incomplete existing DayZ port reservation"
+        )
+
+    #
+    # Portas já reservadas pelo Capivara.
+    #
+    used = {
+        int(row["port"])
+        for row in connection.execute(
+            """
+            SELECT port
+            FROM instance_ports
+            WHERE node_id=?
+              AND protocol='udp'
+              AND port BETWEEN ? AND ?
+            """,
+            (
+                node_id,
+                start_port,
+                end_port,
+            ),
+        )
+    }
+
+    #
+    # Portas efetivamente ocupadas no sistema operacional.
+    #
+    try:
+        result = subprocess.run(
+            ["ss", "-H", "-lun"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                "unable to inspect operating-system ports"
+            )
+
+        for line in result.stdout.splitlines():
+            for field in line.split():
+                match = re.search(
+                    r":([0-9]+)$",
+                    field,
+                )
+
+                if not match:
+                    continue
+
+                candidate = int(
+                    match.group(1)
+                )
+
+                if (
+                    start_port
+                    <= candidate
+                    <= end_port
+                ):
+                    used.add(candidate)
+                    break
+
+    except (
+        OSError,
+        subprocess.SubprocessError,
+    ) as exc:
+        raise RuntimeError(
+            "unable to inspect operating-system ports"
+        ) from exc
+
+    #
+    # Política de blocos DayZ.
+    #
+    # Cada instância recebe um bloco lógico de 10 portas.
+    # Somente a base de cada bloco pode ser utilizada como
+    # porta principal:
+    #
+    #   24000 -> game=24000, game_aux=24002
+    #   24010 -> game=24010, game_aux=24012
+    #   24020 -> game=24020, game_aux=24022
+    #
+    # Isso evita alocações pouco previsíveis como
+    # 24001/24003 e deixa espaço dentro de cada bloco para
+    # futuras portas auxiliares do DayZ.
+    #
+    block_size = 10
+
+    for game_port in range(
+        start_port,
+        end_port - 1,
+        block_size,
+    ):
+        aux_port = game_port + 2
+
+        if (
+            game_port in used
+            or aux_port in used
+        ):
+            continue
+
+        try:
+            connection.execute(
+                """
+                INSERT INTO instance_ports(
+                    instance_id,
+                    node_id,
+                    name,
+                    protocol,
+                    port,
+                    bind_address
+                )
+                VALUES (?, ?, 'game', 'udp', ?, ?)
+                """,
+                (
+                    instance_id,
+                    node_id,
+                    game_port,
+                    bind_address,
+                ),
+            )
+
+            connection.execute(
+                """
+                INSERT INTO instance_ports(
+                    instance_id,
+                    node_id,
+                    name,
+                    protocol,
+                    port,
+                    bind_address
+                )
+                VALUES (?, ?, 'game_aux', 'udp', ?, ?)
+                """,
+                (
+                    instance_id,
+                    node_id,
+                    aux_port,
+                    bind_address,
+                ),
+            )
+
+            return {
+                "game": game_port,
+                "game_aux": aux_port,
+            }
+
+        except sqlite3.IntegrityError:
+            #
+            # Como a função participa da transação externa,
+            # removemos somente uma eventual reserva parcial
+            # feita nesta tentativa.
+            #
+            connection.execute(
+                """
+                DELETE FROM instance_ports
+                WHERE instance_id=?
+                  AND protocol='udp'
+                  AND name IN ('game', 'game_aux')
+                """,
+                (instance_id,),
+            )
+
+            continue
+
+    raise RuntimeError(
+        f"no available DayZ UDP port pair "
+        f"for node {node_id} "
+        f"in range {start_port}-{end_port}"
+    )
 
 
 def _provision_path(root, node_id, game, instance_id):
@@ -1075,16 +1542,57 @@ def _provision_worker(
             message="Preparando os arquivos exclusivos da instância…",
         )
         target = instance_path / "serverfiles"
+
         if not target.exists():
-            shutil.copytree(
-                game_data,
-                target,
-                symlinks=False,
-                ignore=shutil.ignore_patterns(
-                    ".dsm",
-                    "runtime",
-                ),
-            )
+            try:
+                shutil.copytree(
+                    game_data,
+                    target,
+                    symlinks=False,
+                    ignore=shutil.ignore_patterns(
+                        ".dsm",
+                        "runtime",
+                    ),
+                )
+            except (OSError, shutil.Error) as exc:
+                error_text = str(exc)
+
+                no_space = (
+                    getattr(exc, "errno", None) == 28
+                    or "No space left on device"
+                    in error_text
+                )
+
+                if no_space:
+                    message = (
+                        "Espaço insuficiente no Agent para "
+                        "preparar os arquivos da instância."
+                    )
+                else:
+                    message = (
+                        "Não foi possível preparar os "
+                        "arquivos da instância."
+                    )
+
+                _set_provision(
+                    root,
+                    node_id,
+                    game,
+                    instance_id,
+                    database_path=database_path,
+                    status="failed",
+                    stage="failed",
+                    progress=82,
+                    message=message,
+                    error=error_text,
+                )
+
+                write_log(
+                    f"Falha ao preparar {game} / "
+                    f"{instance_id}: {error_text}"
+                )
+
+                return
 
         process_definition = definition.get(
             "process",
@@ -1161,6 +1669,63 @@ def _provision_worker(
 
         if isinstance(args, list):
             args = " ".join(str(item) for item in args)
+
+        #
+        # Argumentos específicos de rede da instância.
+        #
+        # O DayZ recebe a porta que foi reservada em
+        # instance_ports durante a criação da instância.
+        #
+        if game == "dayz":
+            with closing(
+                database_connection(
+                    database_path
+                )
+            ) as connection:
+                port_row = connection.execute(
+                    """
+                    SELECT port
+                    FROM instance_ports
+                    WHERE instance_id=?
+                      AND name='game'
+                      AND protocol='udp'
+                    """,
+                    (instance_id,),
+                ).fetchone()
+
+            if not port_row:
+                _set_provision(
+                    root,
+                    node_id,
+                    game,
+                    instance_id,
+                    database_path=database_path,
+                    status="failed",
+                    stage="failed",
+                    progress=82,
+                    message=(
+                        "A porta de rede da instância "
+                        "não está reservada."
+                    ),
+                )
+
+                return
+
+            game_port = int(
+                port_row["port"]
+            )
+
+            dayz_args = (
+                f"-port={game_port} "
+                "-config=serverDZ.cfg"
+            )
+
+            if args:
+                args = (
+                    f"{args} {dayz_args}"
+                )
+            else:
+                args = dayz_args
 
         def shell_value(value):
             return (
@@ -1973,18 +2538,6 @@ def control_instance(
     )
 
     if success:
-        state = (
-            "offline"
-            if action == "stop"
-            else "online"
-        )
-
-        health = (
-            "offline"
-            if state == "offline"
-            else "healthy"
-        )
-
         resource = (
             DSM_ROOT
             / "runtime"
@@ -1994,17 +2547,35 @@ def control_instance(
             / instance_id
         )
 
-        write_json(
+        #
+        # O instance.sh publica o estado observado através
+        # de process_running(). Esse estado é a fonte de
+        # verdade após a operação.
+        #
+        server_state = read_json(
             resource / "server.json",
-            {
-                "status": {
-                    "state": state,
-                    "health": health,
-                }
-            },
+            {},
         )
 
-        with closing(database_connection(database_path)) as connection:
+        status = server_state.get(
+            "status",
+            {},
+        )
+
+        state = status.get(
+            "state",
+            "offline",
+        )
+
+        if state not in {
+            "online",
+            "offline",
+        }:
+            state = "offline"
+
+        with closing(
+            database_connection(database_path)
+        ) as connection:
             with connection:
                 connection.execute(
                     """
@@ -2238,6 +2809,50 @@ def api_runtime_summary(server, game, instance):
         "game": game,
         "instance": instance,
     }
+
+    #
+    # Reconciliação do estado persistido.
+    #
+    # O processo observado acima é a fonte de verdade.
+    # server.json e instances.status são projeções desse
+    # estado e podem ter ficado obsoletos após uma queda
+    # espontânea do processo.
+    #
+    observed_state = (
+        "online"
+        if live_pid is not None
+        else "offline"
+    )
+
+    write_json(
+        base / "server.json",
+        server_state,
+    )
+
+    try:
+        with closing(
+            database_connection(DATABASE_FILE)
+        ) as connection:
+            with connection:
+                connection.execute(
+                    """
+                    UPDATE instances
+                    SET status=?
+                    WHERE id=?
+                      AND status<>?
+                    """,
+                    (
+                        observed_state,
+                        instance,
+                        observed_state,
+                    ),
+                )
+    except sqlite3.Error:
+        #
+        # A leitura do runtime deve continuar disponível
+        # mesmo se a persistência do estado falhar.
+        #
+        pass
 
     mods = read_json(
         base / "mods.json",

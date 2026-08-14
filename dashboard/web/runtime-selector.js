@@ -1787,9 +1787,39 @@
             closeSelector();
 
             /*
-             * Atualiza o dashboard caso o
-             * customer.js disponibilize uma
-             * função pública para isso.
+             * A criação é assíncrona.
+             *
+             * Após a API criar a instância e iniciar o
+             * provisionamento, abrimos imediatamente a
+             * página da nova instância. Essa página já
+             * acompanha provision.json periodicamente e
+             * mostra estágio, progresso e mensagens.
+             */
+            if (
+                result
+                && result.instance_id
+                && result.node_id
+                && result.game
+            ) {
+                const params =
+                    new URLSearchParams({
+                        server:
+                            result.node_id,
+                        game:
+                            result.game,
+                        instance:
+                            result.instance_id,
+                    });
+
+                window.location.href =
+                    `/customer-instance.html?${params.toString()}`;
+
+                return result;
+            }
+
+            /*
+             * Fallback defensivo caso uma versão antiga
+             * da API não devolva a identidade completa.
              */
             if (
                 window.CapivaraCustomer
@@ -1802,15 +1832,7 @@
                     .CapivaraCustomer
                     .reload();
             } else {
-                /*
-                 * Fallback para versões do
-                 * customer.js sem API pública.
-                 */
-                setTimeout(
-                    () =>
-                        window.location.reload(),
-                    700
-                );
+                window.location.reload();
             }
 
             return result;
