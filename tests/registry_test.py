@@ -66,8 +66,31 @@ class RegistryTest(unittest.TestCase):
                 "version": "latest",
                 "build": "default",
             }
-            with mock.patch.object(SERVER, "start_instance_provisioning", return_value={"status": "queued", "progress": 5}):
-                result = SERVER.create_customer_instance(user, payload, root=root, database_path=database)
+            with (
+                mock.patch.object(
+                    SERVER,
+                    "start_instance_provisioning",
+                    return_value={
+                        "status": "queued",
+                        "progress": 5,
+                    },
+                ),
+                mock.patch.object(
+                    SERVER.subprocess,
+                    "run",
+                    return_value=mock.Mock(
+                        returncode=0,
+                        stdout="",
+                        stderr="",
+                    ),
+                ),
+            ):
+                result = SERVER.create_customer_instance(
+                    user,
+                    payload,
+                    root=root,
+                    database_path=database,
+                )
             self.assertTrue(result["created"])
             self.assertEqual(result["instance_id"], "cli-demo-001-dayz-001")
             self.assertEqual(result["name"], "Servidor DayZ 001")

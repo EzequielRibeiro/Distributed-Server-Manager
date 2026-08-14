@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import importlib.util
 import io
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -63,9 +64,24 @@ class UsersCliTest(unittest.TestCase):
         self.assertNotIn("Traceback", stdout + stderr)
 
     def test_customer_without_scope_is_rejected_before_password_prompt(self):
+        bash = shutil.which("bash")
+
+        if bash is None:
+            self.skipTest(
+                "bash is not available in this environment"
+            )
+
         result = subprocess.run(
-            ["bash", str(ROOT / "core" / "user_manager.sh"), "add", "aurora", "customer"],
-            env={"DSM_ROOT": str(ROOT)},
+            [
+                bash,
+                str(ROOT / "core" / "user_manager.sh"),
+                "add",
+                "aurora",
+                "customer",
+            ],
+            env={
+                "DSM_ROOT": str(ROOT),
+            },
             capture_output=True,
             text=True,
             check=False,
@@ -73,10 +89,22 @@ class UsersCliTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
-        self.assertIn("papel customer exigem o identificador do scope", result.stderr)
-        self.assertIn("dsm user add <usuario> customer <scope>", result.stderr)
-        self.assertNotIn("Password:", result.stdout + result.stderr)
-        self.assertNotIn("Traceback", result.stdout + result.stderr)
+        self.assertIn(
+            "papel customer exigem o identificador do scope",
+            result.stderr,
+        )
+        self.assertIn(
+            "dsm user add <usuario> customer <scope>",
+            result.stderr,
+        )
+        self.assertNotIn(
+            "Password:",
+            result.stdout + result.stderr,
+        )
+        self.assertNotIn(
+            "Traceback",
+            result.stdout + result.stderr,
+        )
 
 
 if __name__ == "__main__":
