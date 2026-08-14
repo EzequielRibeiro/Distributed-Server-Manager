@@ -76,6 +76,7 @@ DATABASE_DIR = DSM_ROOT / "database"
 if str(DATABASE_DIR) not in sys.path:
     sys.path.insert(0, str(DATABASE_DIR))
 from users import hash_password, verify_password
+import alerts as alert_store
 
 MAX_JSON_BODY = 12 * 1024 * 1024
 MAX_INSTANCE_CONFIG = 1024 * 1024
@@ -1172,6 +1173,130 @@ def _set_provision(
     return payload
 
 
+def _instance_alert_context(
+    database_path,
+    instance_id,
+):
+    with closing(
+        database_connection(
+            database_path,
+        )
+    ) as connection:
+        row = connection.execute(
+            """
+            SELECT
+                controller_id,
+                agent_id,
+                node_id
+            FROM instances
+            WHERE id=?
+            """,
+            (
+                instance_id,
+            ),
+        ).fetchone()
+
+    if row is None:
+        raise ValueError(
+            f"instance is not registered: {instance_id}"
+        )
+
+    return {
+        "controller_id": row["controller_id"],
+        "agent_id": row["agent_id"],
+        "node_id": row["node_id"],
+    }
+
+
+def _open_provision_alert(
+    database_path,
+    *,
+    instance_id,
+    rule_id,
+    level,
+    message,
+):
+    alert_id = (
+        f"{rule_id}:"
+        f"{instance_id}"
+    )
+
+    try:
+        context = _instance_alert_context(
+            database_path,
+            instance_id,
+        )
+
+        return alert_store.open_alert(
+            Path(database_path),
+            alert_id=alert_id,
+            rule_id=rule_id,
+            level=level,
+            message=message,
+            scope="instance",
+            controller_id=context[
+                "controller_id"
+            ],
+            agent_id=context[
+                "agent_id"
+            ],
+            node_id=context[
+                "node_id"
+            ],
+            instance_id=instance_id,
+        )
+
+    except Exception as exc:
+        write_log(
+            f"Falha ao persistir alerta "
+            f"{alert_id}: {exc}"
+        )
+
+        return None
+
+
+def _resolve_provision_alert(
+    database_path,
+    *,
+    instance_id,
+    rule_id,
+):
+    alert_id = (
+        f"{rule_id}:"
+        f"{instance_id}"
+    )
+
+    try:
+        return alert_store.resolve_alert(
+            Path(database_path),
+            alert_id,
+        )
+
+    except Exception as exc:
+        write_log(
+            f"Falha ao resolver alerta "
+            f"{alert_id}: {exc}"
+        )
+
+        return None
+
+
+def _resolve_provision_alerts(
+    database_path,
+    instance_id,
+):
+    for rule_id in (
+        "provision.runtime-missing",
+        "provision.steam-auth-required",
+        "provision.install-failed",
+    ):
+        _resolve_provision_alert(
+            database_path,
+            instance_id=instance_id,
+            rule_id=rule_id,
+        )
+
+
 def _controller_alert(root, node_id, game, instance_id, agent_id, message):
     alert_id = f"steam-auth:{instance_id}"
 
@@ -1352,6 +1477,16 @@ def _provision_worker(
             progress=5,
             message="Não foi possível preparar o ambiente do jogo.",
         )
+        _open_provision_alert(
+            database_path,
+            instance_id=instance_id,
+            rule_id="provision.runtime-missing",
+            level="CRITICAL",
+            message=(
+                f"Falha ao localizar o runtime "
+                f"de {game}: {exc}"
+            ),
+        )
         _controller_alert(
             root,
             node_id,
@@ -1410,6 +1545,17 @@ def _provision_worker(
                 stage="steam_auth",
                 progress=15,
                 message=message,
+            )
+            _open_provision_alert(
+                database_path,
+                instance_id=instance_id,
+                rule_id="provision.steam-auth-required",
+                level="CRITICAL",
+                message=(
+                    f"{game} / {instance_id}: "
+                    f"Steam Guard, credencial ou licença "
+                    f"exige autenticação no Agent {agent_id}."
+                ),
             )
             _controller_alert(
                 root,
@@ -1501,6 +1647,17 @@ def _provision_worker(
                         progress=35,
                         message=message,
                     )
+                    _open_provision_alert(
+                        database_path,
+                        instance_id=instance_id,
+                        rule_id="provision.steam-auth-required",
+                        level="CRITICAL",
+                        message=(
+                            f"{game} / {instance_id}: "
+                            f"autenticação Steam necessária "
+                            f"no Agent {agent_id}."
+                        ),
+                    )
                     _controller_alert(
                         root,
                         node_id,
@@ -1520,6 +1677,17 @@ def _provision_worker(
                         stage="failed",
                         progress=35,
                         message="Não foi possível instalar o jogo. O administrador foi notificado.",
+                    )
+                    _open_provision_alert(
+                        database_path,
+                        instance_id=instance_id,
+                        rule_id="provision.install-failed",
+                        level="CRITICAL",
+                        message=(
+                            f"Falha ao instalar {game} "
+                            f"para {instance_id}: "
+                            f"{output[-500:]}"
+                        ),
                     )
                     _controller_alert(
                         root,
@@ -1772,6 +1940,11 @@ def _provision_worker(
             stage="completed",
             progress=100,
             message=("Instalação concluída. " "O servidor está pronto para iniciar."),
+        )
+
+        _resolve_provision_alerts(
+            database_path,
+            instance_id,
         )
 
         _resolve_controller_alert(
