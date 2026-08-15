@@ -48,6 +48,34 @@ do
         || fail "required packaged file missing: ${relative_path}"
 done
 
+mapfile -t EXPECTED_MIGRATIONS < <(
+    git -C "${ROOT}" ls-tree -r --name-only "${COMMIT}" -- database/migrations \
+        | grep -E '^database/migrations/[0-9]{3}_[a-z0-9_]+\.sql$'
+)
+
+(( ${#EXPECTED_MIGRATIONS[@]} > 0 )) \
+    || fail "release commit contains no database migrations"
+
+for relative_path in "${EXPECTED_MIGRATIONS[@]}"
+do
+    [[ -f "${PACKAGE_ROOT}/${relative_path}" ]] \
+        || fail "packaged database migration missing: ${relative_path}"
+done
+
+mapfile -t PACKAGED_MIGRATIONS < <(
+    find "${PACKAGE_ROOT}/database/migrations" \
+        -maxdepth 1 -type f -name '*.sql' -printf 'database/migrations/%f\n' \
+        | sort
+)
+
+mapfile -t EXPECTED_MIGRATIONS_SORTED < <(
+    printf '%s\n' "${EXPECTED_MIGRATIONS[@]}" | sort
+)
+
+[[ "$(printf '%s\n' "${PACKAGED_MIGRATIONS[@]}")" == \
+   "$(printf '%s\n' "${EXPECTED_MIGRATIONS_SORTED[@]}")" ]] \
+    || fail "packaged database migration set differs from release commit"
+
 for forbidden_path in \
     .git .idea .artifacts cache logs packages instances \
     tools/steamcmd runtime/state dashboard/state/dashboard_state.json

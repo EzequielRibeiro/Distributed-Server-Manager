@@ -93,6 +93,22 @@ do
         || fail "required release file missing: ${relative_path}"
 done
 
+# Every SQL migration tracked by the release commit is part of the
+# database upgrade contract and must be present in the package.
+mapfile -t MIGRATION_FILES < <(
+    git -C "${ROOT}" ls-tree -r --name-only "${COMMIT}" -- database/migrations \
+        | grep -E '^database/migrations/[0-9]{3}_[a-z0-9_]+\.sql$'
+)
+
+(( ${#MIGRATION_FILES[@]} > 0 )) \
+    || fail "no database migrations found in release commit"
+
+for relative_path in "${MIGRATION_FILES[@]}"
+do
+    [[ -f "${PACKAGE_ROOT}/${relative_path}" ]] \
+        || fail "required database migration missing: ${relative_path}"
+done
+
 FILE_COUNT=$(find "${PACKAGE_ROOT}" -type f | wc -l | tr -d ' ')
 CREATED_AT=$(python3 - "${SOURCE_DATE_EPOCH}" <<'PY'
 import datetime
