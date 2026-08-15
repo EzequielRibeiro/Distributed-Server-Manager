@@ -4167,18 +4167,168 @@ def notify(level, title, message):
     return NOTIFICATIONS.push(level, title, message)
 
 
-def api_notifications():
-    success, data = run_api_script("notifications.sh", "list")
-    if success:
-        return data
-
+def _dashboard_alert_item(alert):
     return {
-        "total": 0,
-        "critical": 0,
-        "warning": 0,
-        "alerts": [],
-        "error": data,
+        "id": alert["id"],
+        "level": alert["level"],
+        "title": alert.get("rule_id") or alert["id"],
+        "message": alert.get("message", ""),
+        "created": alert.get("opened_at"),
+        "ack": alert.get("state") == "ACKNOWLEDGED",
     }
+
+
+def _can_access_alert(
+    user,
+    alert,
+    database_path=DATABASE_FILE,
+):
+    if not user or not alert:
+        return False
+
+    role = user.get("role")
+    scope_id = user.get("scope_id", "")
+
+    if role in {
+        "admin",
+        "operator",
+    }:
+        return True
+
+    if role == "controller":
+        return bool(
+            scope_id
+            and alert.get("controller_id")
+            == scope_id
+        )
+
+    if role != "customer":
+        return False
+
+    instance_id = alert.get(
+        "instance_id"
+    )
+
+    if (
+        not scope_id
+        or not instance_id
+    ):
+        return False
+
+    with closing(
+        database_connection(
+            database_path
+        )
+    ) as connection:
+        row = connection.execute(
+            """
+            SELECT customer_id
+            FROM instances
+            WHERE id=?
+            """,
+            (
+                instance_id,
+            ),
+        ).fetchone()
+
+    return bool(
+        row
+        and row["customer_id"]
+        == scope_id
+    )
+
+
+def _dashboard_active_alerts(
+    user,
+    database_path=DATABASE_FILE,
+):
+    if not user:
+        return []
+
+    role = user.get("role")
+    scope_id = user.get("scope_id", "")
+
+    if role in {
+        "admin",
+        "operator",
+    }:
+        return alert_store.list_active(
+            Path(database_path),
+        )
+
+    if role == "controller":
+        if not scope_id:
+            return []
+
+        return alert_store.list_active(
+            Path(database_path),
+            controller_id=scope_id,
+        )
+
+    if role != "customer":
+        return []
+
+    if not scope_id:
+        return []
+
+    active = alert_store.list_active(
+        Path(database_path),
+    )
+
+    return [
+        alert
+        for alert in active
+        if _can_access_alert(
+            user,
+            alert,
+            database_path=database_path,
+        )
+    ]
+
+
+def api_notifications(
+    user=None,
+    database_path=DATABASE_FILE,
+):
+    try:
+        active = _dashboard_active_alerts(
+            user,
+            database_path=database_path,
+        )
+
+        alerts = [
+            _dashboard_alert_item(alert)
+            for alert in active
+        ]
+
+        return {
+            "total": len(alerts),
+            "critical": sum(
+                1
+                for alert in alerts
+                if alert["level"] == "CRITICAL"
+            ),
+            "warning": sum(
+                1
+                for alert in alerts
+                if alert["level"] == "WARNING"
+            ),
+            "alerts": alerts,
+        }
+
+    except Exception as exc:
+        write_log(
+            f"Falha ao carregar Alert Store "
+            f"para o dashboard: {exc}"
+        )
+
+        return {
+            "total": 0,
+            "critical": 0,
+            "warning": 0,
+            "alerts": [],
+            "error": str(exc),
+        }
 
 
 def api_notification_history():
@@ -4753,7 +4903,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "/api/logs": api_logs,
             "/api/dashboard/summary": dashboard_summary,
             "/api/health": dashboard_health,
-            "/api/notifications": api_notifications,
+            "/api/notifications": lambda: api_notifications(
+                user,
+                database_path=DATABASE_FILE,
+            ),
             "/api/notifications/clear": api_notification_clear,
             "/api/notifications/history": api_notification_history,
         }
@@ -4791,31 +4944,70 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 )
                 return
 
-            success, data = run_api_script(
-                "notifications.sh",
-                "acknowledge",
-                alert_id,
-                user=user,
-            )
+            try:
+                alert = alert_store.get_alert(
+                    Path(DATABASE_FILE),
+                    alert_id,
+                )
 
-            if success:
+                if alert is None:
+                    self.send_json(
+                        422,
+                        {
+                            "ok": False,
+                            "id": alert_id,
+                            "error": "alert not found",
+                        },
+                    )
+                    return
+
+                if not _can_access_alert(
+                    user,
+                    alert,
+                    database_path=DATABASE_FILE,
+                ):
+                    self.forbidden()
+                    return
+
+                result = alert_store.acknowledge_alert(
+                    Path(DATABASE_FILE),
+                    alert_id,
+                )
+
                 self.send_json(
                     200,
                     {
                         "ok": True,
                         "id": alert_id,
-                        "result": data,
+                        "result": result,
                     },
                 )
-            else:
+
+            except ValueError as exc:
                 self.send_json(
                     422,
                     {
                         "ok": False,
                         "id": alert_id,
-                        "error": data,
+                        "error": str(exc),
                     },
                 )
+
+            except Exception as exc:
+                write_log(
+                    f"Falha ao reconhecer alerta "
+                    f"{alert_id}: {exc}"
+                )
+
+                self.send_json(
+                    500,
+                    {
+                        "ok": False,
+                        "id": alert_id,
+                        "error": "internal alert store error",
+                    },
+                )
+
             return
 
         if path == "/api/instance/config":
