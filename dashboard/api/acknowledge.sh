@@ -1,89 +1,142 @@
-#!/bin/bash
+#!/usr/bin/env bash
+
 # =============================================================
-# DSM Dashboard API v1.2.0
-# Arquivo: dashboard/api/acknowledge.sh
-# Função: Reconhecimento manual de alertas pelo Dashboard
+# Capivara DSM Dashboard API
+# Acknowledge Alert
+#
+# Fonte:
+#   database/alert_store.sh
+#
+# Mantém o contrato HTTP legado enquanto a persistência passa
+# a utilizar o Alert Store SQLite.
 # =============================================================
+
+set -u
+
 
 DSM_ROOT="${DSM_ROOT:-/opt/dsm}"
-STATE_MANAGER="$DSM_ROOT/core/alert_state.sh"
-NOTIFICATION_CENTER="$DSM_ROOT/core/notification_center.sh"
 
-# -------------------------------------------------------------
-# Cabeçalho HTTP
-# -------------------------------------------------------------
-api_header() {
+ALERT_STORE="$DSM_ROOT/database/alert_store.sh"
+
+
+api_header()
+{
     echo "Content-Type: application/json"
     echo ""
 }
 
-# -------------------------------------------------------------
-# Resposta JSON
-# -------------------------------------------------------------
-json_response() {
-cat <<EOF
+
+json_response()
 {
-  "success": $1,
-  "message": "$2"
-}
-EOF
+    local ok="$1"
+    local message="$2"
+
+    printf \
+        '{"ok":%s,"message":"%s"}\n' \
+        "$ok" \
+        "$message"
 }
 
-# -------------------------------------------------------------
-# Obter parâmetro id
-# Aceita: QUERY_STRING: id=host-cpu ou: acknowledge.sh host-cpu
-# -------------------------------------------------------------
-get_alert_id() {
-    if [ -n "$1" ]; then
-        echo "$1"
-        return
+
+get_alert_id()
+{
+    local argument="${1:-}"
+    local id=""
+
+    if [[ -n "$argument" ]]
+    then
+        id="$argument"
+    elif [[ -n "${QUERY_STRING:-}" ]]
+    then
+        id="$(
+            printf '%s' "$QUERY_STRING" |
+            tr '&' '\n' |
+            awk -F= '$1 == "id" {print $2; exit}'
+        )"
     fi
 
-    echo "$QUERY_STRING" | tr '&' '\n' | awk -F= '/^id=/{print $2}'
+    printf '%s\n' "$id"
 }
 
-# -------------------------------------------------------------
-# Reconhecer alerta
-# -------------------------------------------------------------
-acknowledge_alert() {
+
+acknowledge_alert()
+{
     local id="$1"
 
-    if [ -z "$id" ]; then
-        json_response false "ID do alerta não informado"
-        return 1
-    fi
-
-    # Verifica se existe
-    local exists
-    exists=$("$STATE_MANAGER" get "$id" | jq -r '.id // empty')
-
-    if [ -z "$exists" ]; then
-        json_response false "Alerta inexistente"
-        return 1
-    fi
-
-    # Alterar estado
-    if "$STATE_MANAGER" set "$id" ACKNOWLEDGED
+    if [[ -z "$id" ]]
     then
-        # Atualiza Notification Center
-        "$NOTIFICATION_CENTER" ack "$id"
-        json_response true "Alerta reconhecido"
-    else
-        json_response false "Não foi possível reconhecer alerta"
+        json_response \
+            false \
+            "ID do alerta não informado"
+        return 2
     fi
+
+    if [[ ! -f "$ALERT_STORE" ]]
+    then
+        json_response \
+            false \
+            "Alert Store não encontrado"
+        return 2
+    fi
+
+    local result
+    local status
+
+    result="$(
+        /bin/bash \
+            "$ALERT_STORE" \
+            ack \
+            "$id" \
+            2>&1
+    )"
+
+    status=$?
+
+    if [[ $status -eq 0 ]]
+    then
+        json_response \
+            true \
+            "Alerta reconhecido"
+
+        return 0
+    fi
+
+    json_response \
+        false \
+        "Não foi possível reconhecer alerta"
+
+    return "$status"
 }
 
-# -------------------------------------------------------------
-# Execução
-# -------------------------------------------------------------
-case "$REQUEST_METHOD" in
-POST|"")
-    api_header
-    ALERT_ID=$(get_alert_id "$1")
-    acknowledge_alert "$ALERT_ID"
-;;
-*)
-    api_header
-    json_response false "Método não permitido"
-;;
-esac
+
+main()
+{
+    case "${REQUEST_METHOD:-POST}" in
+
+    POST|"")
+        api_header
+
+        ALERT_ID="$(
+            get_alert_id \
+                "${1:-}"
+        )"
+
+        acknowledge_alert \
+            "$ALERT_ID"
+        ;;
+
+    *)
+        api_header
+
+        json_response \
+            false \
+            "Método não permitido"
+
+        return 1
+        ;;
+
+    esac
+}
+
+
+main "$@"

@@ -1,69 +1,148 @@
 #!/usr/bin/env bash
+
 # =============================================================
 # Capivara DSM Dashboard API
 # Notifications
 #
-# Fonte única:
-#   core/notification_center.sh
+# Fonte:
+#   database/alert_store.sh
+#
+# Contrato HTTP legado preservado.
 # =============================================================
 
 set -u
 
-DSM_ROOT="${DSM_ROOT:-/opt/dsm}"
-NOTIFICATION_CENTER="$DSM_ROOT/core/notification_center.sh"
 
-if [ ! -x "$NOTIFICATION_CENTER" ]; then
+DSM_ROOT="${DSM_ROOT:-/opt/dsm}"
+
+ALERT_STORE="$DSM_ROOT/database/alert_store.sh"
+
+
+json_error()
+{
+    local message="${1:-unknown error}"
+
     printf '%s\n' \
-        '{"total":0,"critical":0,"warning":0,"alerts":[],"error":"Notification Center não encontrado"}'
+        "{\"total\":0,\"critical\":0,\"warning\":0,\"alerts\":[],\"error\":\"${message}\"}"
+}
+
+
+if [[ ! -f "$ALERT_STORE" ]]
+then
+    json_error \
+        "Alert Store não encontrado"
     exit 1
 fi
 
+
 action="${1:-list}"
+
 
 case "$action" in
 
 list)
-    alerts="$("$NOTIFICATION_CENTER" active 2>/dev/null)"
+    alerts="$(
+        /bin/bash \
+            "$ALERT_STORE" \
+            active \
+            2>/dev/null
+    )"
 
-    if ! printf '%s' "$alerts" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    status=$?
+
+    if [[ $status -ne 0 ]]
+    then
+        json_error \
+            "Falha ao consultar Alert Store"
+        exit "$status"
+    fi
+
+    if ! printf '%s' "$alerts" |
+        jq -e 'type == "array"' \
+            >/dev/null 2>&1
+    then
         alerts='[]'
     fi
 
     printf '%s\n' "$alerts" |
     jq '{
         total: length,
-        critical: ([.[] | select((.level // "" | ascii_upcase) == "CRITICAL")] | length),
-        warning: ([.[] | select((.level // "" | ascii_upcase) == "WARNING")] | length),
+        critical: (
+            [
+                .[]
+                | select(
+                    (
+                        .level
+                        // ""
+                        | ascii_upcase
+                    )
+                    == "CRITICAL"
+                )
+            ]
+            | length
+        ),
+        warning: (
+            [
+                .[]
+                | select(
+                    (
+                        .level
+                        // ""
+                        | ascii_upcase
+                    )
+                    == "WARNING"
+                )
+            ]
+            | length
+        ),
         alerts: .
     }'
     ;;
 
+
 active)
-    "$NOTIFICATION_CENTER" active
+    /bin/bash \
+        "$ALERT_STORE" \
+        active
     ;;
+
 
 history)
-    "$NOTIFICATION_CENTER" history
+    /bin/bash \
+        "$ALERT_STORE" \
+        history
     ;;
 
+
 count)
-    "$NOTIFICATION_CENTER" count
+    /bin/bash \
+        "$ALERT_STORE" \
+        count
     ;;
+
 
 ack|acknowledge)
     id="${2:-}"
 
-    if [ -z "$id" ]; then
-        echo '{"ok":false,"error":"id obrigatório"}'
+    if [[ -z "$id" ]]
+    then
+        printf '%s\n' \
+            '{"ok":false,"error":"id obrigatório"}'
         exit 1
     fi
 
-    "$NOTIFICATION_CENTER" ack "$id"
-    printf '{"ok":true,"id":"%s"}\n' "$id"
+    /bin/bash \
+        "$ALERT_STORE" \
+        ack \
+        "$id"
     ;;
 
+
 *)
-    printf '{"error":"ação inválida","action":"%s"}\n' "$action"
+    printf \
+        '{"error":"ação inválida","action":"%s"}\n' \
+        "$action"
+
     exit 1
     ;;
 
