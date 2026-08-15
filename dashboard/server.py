@@ -4331,12 +4331,131 @@ def api_notifications(
         }
 
 
-def api_notification_history():
-    return NOTIFICATIONS.history()
+def _dashboard_alert_history(
+    user,
+    database_path=DATABASE_FILE,
+):
+    if not user:
+        return []
+
+    role = user.get("role")
+    scope_id = user.get("scope_id", "")
+
+    if role in {
+        "admin",
+        "operator",
+    }:
+        return alert_store.list_alerts(
+            Path(database_path),
+        )
+
+    if role == "controller":
+        if not scope_id:
+            return []
+
+        return alert_store.list_alerts(
+            Path(database_path),
+            controller_id=scope_id,
+        )
+
+    if role != "customer":
+        return []
+
+    if not scope_id:
+        return []
+
+    alerts = alert_store.list_alerts(
+        Path(database_path),
+    )
+
+    return [
+        alert
+        for alert in alerts
+        if _can_access_alert(
+            user,
+            alert,
+            database_path=database_path,
+        )
+    ]
 
 
-def api_notification_clear():
-    return NOTIFICATIONS.clear()
+def api_notification_history(
+    user=None,
+    database_path=DATABASE_FILE,
+):
+    try:
+        alerts = _dashboard_alert_history(
+            user,
+            database_path=database_path,
+        )
+
+        return {
+            "total": len(alerts),
+            "alerts": [
+                {
+                    **_dashboard_alert_item(alert),
+                    "state": alert.get("state"),
+                    "resolved": alert.get("resolved_at"),
+                    "updated": alert.get("updated_at"),
+                }
+                for alert in alerts
+            ],
+        }
+
+    except Exception as exc:
+        write_log(
+            f"Falha ao carregar historico de Alert Store "
+            f"para o dashboard: {exc}"
+        )
+
+        return {
+            "total": 0,
+            "alerts": [],
+            "error": str(exc),
+        }
+
+
+def api_notification_clear(
+    user=None,
+    database_path=DATABASE_FILE,
+):
+    try:
+        active = _dashboard_active_alerts(
+            user,
+            database_path=database_path,
+        )
+
+        resolved = []
+
+        for alert in active:
+            result = alert_store.resolve_alert(
+                Path(database_path),
+                alert["id"],
+            )
+
+            if result is not None:
+                resolved.append(
+                    alert["id"]
+                )
+
+        return {
+            "ok": True,
+            "cleared": len(resolved),
+            "ids": resolved,
+        }
+
+    except Exception as exc:
+        write_log(
+            f"Falha ao limpar Alert Store "
+            f"para o dashboard: {exc}"
+        )
+
+        return {
+            "ok": False,
+            "cleared": 0,
+            "ids": [],
+            "error": str(exc),
+        }
 
 
 def dispatch_discord_notifications():
@@ -4907,8 +5026,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 user,
                 database_path=DATABASE_FILE,
             ),
-            "/api/notifications/clear": api_notification_clear,
-            "/api/notifications/history": api_notification_history,
+            "/api/notifications/clear": lambda: api_notification_clear(
+                user,
+                database_path=DATABASE_FILE,
+            ),
+            "/api/notifications/history": lambda: api_notification_history(
+                user,
+                database_path=DATABASE_FILE,
+            ),
         }
 
         if path in endpoints:
