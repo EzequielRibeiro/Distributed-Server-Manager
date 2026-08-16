@@ -51,6 +51,48 @@ fi
 source "${BOOTSTRAP}"
 
 # =============================================================
+# Update Manager
+# =============================================================
+
+update_command()
+{
+    local ACTION="${1:-}"
+    local module="${DSM_ROOT}/update-manager/update-manager.sh"
+
+    if [[ ! -f "${module}" ]]
+    then
+        echo "Update Manager não encontrado:" >&2
+        echo "${module}" >&2
+        return 1
+    fi
+
+    # shellcheck source=/dev/null
+    source "${module}"
+
+    case "${ACTION}" in
+        check)
+            dsm_update_check
+            ;;
+
+        run)
+            dsm_update_run
+            ;;
+
+        history)
+            dsm_update_history
+            ;;
+
+        *)
+            echo "Uso:" >&2
+            echo "  dsm update check" >&2
+            echo "  dsm update run" >&2
+            echo "  dsm update history" >&2
+            return 2
+            ;;
+    esac
+}
+
+# =============================================================
 # Helpers
 # =============================================================
 
@@ -112,6 +154,13 @@ Backup:
 Configuração:
 
  dsm config show
+
+Update:
+
+ dsm update check
+ dsm update run
+ dsm update history
+
 
 Steam:
 
@@ -642,6 +691,11 @@ content)
 compatibility)
     shift
     catalog_command compatibility "$@"
+;;
+
+update)
+    shift
+    update_command "$@"
 ;;
 
 database|db)

@@ -50,6 +50,9 @@ jobs:
       - name: Test updater
         run: bash tests/update_manager_test.sh
 
+      - name: Test updater CLI
+        run: bash tests/update_cli_test.sh
+
       - name: Test Catalog v2
         run: bash tests/catalog_v2_test.sh
 

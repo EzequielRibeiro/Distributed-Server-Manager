@@ -113,3 +113,68 @@ cleanup_downloads()
     tail -n "$REMOVE" |
     xargs -r rm -f
 }
+
+# =============================================================
+# Download do checksum SHA256 oficial
+# =============================================================
+
+download_checksum()
+{
+    local URL="$1"
+    local FILENAME
+    local FILE
+
+    if [ -z "$URL" ]
+    then
+        log_error \
+            "URL do checksum não informada."
+        return 1
+    fi
+
+    mkdir -p "$CHECKSUM_DIR"
+
+    FILENAME=$(basename "$URL")
+
+    if [ -z "$FILENAME" ]
+    then
+        log_error \
+            "Nome do arquivo de checksum inválido."
+        return 1
+    fi
+
+    FILE="$CHECKSUM_DIR/$FILENAME"
+
+    if [ -f "$FILE" ]
+    then
+        echo "$FILE"
+        return 0
+    fi
+
+    echo
+    echo "Baixando checksum SHA256:"
+    echo "$URL"
+    echo
+
+    if ! curl \
+        --fail \
+        --location \
+        --connect-timeout "$DOWNLOAD_TIMEOUT" \
+        --output "$FILE" \
+        "$URL"
+    then
+        log_error \
+            "Erro no download do checksum."
+        rm -f "$FILE"
+        return 1
+    fi
+
+    if [ ! -s "$FILE" ]
+    then
+        log_error \
+            "Arquivo de checksum vazio."
+        rm -f "$FILE"
+        return 1
+    fi
+
+    echo "$FILE"
+}

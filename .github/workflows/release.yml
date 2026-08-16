@@ -41,6 +41,7 @@ jobs:
           python3 -m unittest tests/database_test.py
           bash tests/install_manager_test.sh
           bash tests/update_manager_test.sh
+          bash tests/update_cli_test.sh
           bash tests/catalog_v2_test.sh
           bash tests/release_build_test.sh
 

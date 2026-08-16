@@ -59,45 +59,89 @@ github_release_version()
 }
 
 # =============================================================
-# Obtém URL do pacote DSM
+# Obtém URL do pacote oficial Capivara DSM
 #
-# Prioridade:
-#
-# 1 DSM-*-release.tar.gz
-# 2 DSM-*.tar.gz
+# Contrato:
+# tag vX.Y.Z
+# asset capivara-dsm-X.Y.Z.tar.gz
 #
 # =============================================================
 
 github_release_download()
 {
-    release_json="$1"
+    local release_json="$1"
+    local release_version
+    local asset_name
+    local asset_url
 
-    asset_url=$(echo "$release_json" |
-    jq -r '
-    .assets[]
-    .browser_download_url
-    ' |
-    grep "DSM-" |
-    grep "release.tar.gz" |
-    head -1)
+    release_version=$(github_release_version "$release_json")
 
-    if [ -z "$asset_url" ]
+    if [ -z "$release_version" ] || [ "$release_version" = "null" ]
     then
-        asset_url=$(echo "$release_json" |
-        jq -r '
-        .assets[]
-        .browser_download_url
-        ' |
-        grep "DSM-" |
-        grep "\.tar\.gz" |
-        head -1)
+        log_error "Release sem tag_name válido."
+        return 1
     fi
 
-    if [ -z "$asset_url" ]
+    release_version="${release_version#v}"
+    asset_name="capivara-dsm-${release_version}.tar.gz"
+
+    asset_url=$(echo "$release_json" |
+        jq -r --arg asset_name "$asset_name" '
+            .assets[]?
+            | select(.name == $asset_name)
+            | .browser_download_url
+        ' |
+        head -1)
+
+    if [ -z "$asset_url" ] || [ "$asset_url" = "null" ]
     then
         log_error \
-        "Nenhum pacote DSM encontrado na Release"
+            "Pacote oficial não encontrado na release: ${asset_name}"
+        return 1
+    fi
 
+    echo "$asset_url"
+}
+
+# =============================================================
+# Obtém URL do checksum SHA256 oficial
+#
+# Contrato:
+# tag vX.Y.Z
+# asset capivara-dsm-X.Y.Z.tar.gz.sha256
+#
+# =============================================================
+
+github_release_checksum_download()
+{
+    local release_json="$1"
+    local release_version
+    local asset_name
+    local asset_url
+
+    release_version=$(github_release_version "$release_json")
+
+    if [ -z "$release_version" ] || [ "$release_version" = "null" ]
+    then
+        log_error "Release sem tag_name válido."
+        return 1
+    fi
+
+    release_version="${release_version#v}"
+    asset_name="capivara-dsm-${release_version}.tar.gz.sha256"
+
+    asset_url=$(echo "$release_json" |
+        jq -r --arg asset_name "$asset_name" '
+            .assets[]?
+            | select(.name == $asset_name)
+            | .browser_download_url
+        ' |
+        head -1)
+
+    if [ -z "$asset_url" ] || [ "$asset_url" = "null" ]
+    then
+        log_error \
+            "Checksum oficial não encontrado na release: ${asset_name}"
         return 1
     fi
 

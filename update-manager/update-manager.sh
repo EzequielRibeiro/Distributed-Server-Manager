@@ -77,8 +77,28 @@ dsm_update_check()
         log_error "Falha consultando GitHub"
         return 1
     fi
+        latest_version=$(github_release_version "$release_json")
 
-    latest_version=$(github_release_version "$release_json")
+    if [ -z "$latest_version" ] || [ "$latest_version" = "null" ]
+    then
+        log_error "Release sem versão válida"
+        return 1
+    fi
+
+    # GitHub usa tags vX.Y.Z; o arquivo version usa X.Y.Z.
+       latest_version="${latest_version#v}"
+
+    if ! is_semver "$current_version"
+    then
+        log_error "Versão instalada inválida: $current_version"
+        return 1
+    fi
+
+    if ! is_semver "$latest_version"
+    then
+        log_error "Versão remota inválida: $latest_version"
+        return 1
+    fi
 
     echo
     echo "Versão instalada:"
@@ -88,19 +108,33 @@ dsm_update_check()
     echo "Última versão:"
     echo "$latest_version"
 
-    if [ "$current_version" = "$latest_version" ]
-    then
-        echo
-        echo "DSM já está atualizado."
+    comparison=$(semver_compare "$latest_version" "$current_version")
 
-        return 0
-    fi
+    case "$comparison" in
+        0)
+            echo
+            echo "DSM já está atualizado."
+            return 0
+            ;;
 
-    echo
-    echo "Nova versão disponível:"
-    echo "$latest_version"
+        1)
+            echo
+            echo "Nova versão disponível:"
+            echo "$latest_version"
+            return 10
+            ;;
 
-    return 10
+        -1)
+            echo
+            echo "A versão instalada está à frente da release disponível."
+            return 0
+            ;;
+
+        *)
+            log_error "Falha comparando versões DSM"
+            return 1
+            ;;
+    esac
 }
 
 # =============================================================
@@ -109,15 +143,33 @@ dsm_update_check()
 
 dsm_update_run()
 {
+    local result
+
     log_info "Iniciando atualização DSM"
 
-    dsm_update_check
-    result=$?
-
-    if [ "$result" -ne 0 ] && [ "$result" -ne 10 ]
+    if dsm_update_check
     then
-        return 1
+        result=0
+    else
+        result=$?
     fi
+
+    case "$result" in
+        0)
+            # A instalação já está na versão selecionada pelo canal.
+            # Não deve baixar nem reinstalar a mesma release.
+            return 0
+            ;;
+
+        10)
+            # Atualização disponível. Continua o pipeline.
+            ;;
+
+        *)
+            log_error "Falha verificando atualização DSM"
+            return 1
+            ;;
+    esac
 
     OLD_VERSION=$(cat "$INSTALL_DIR/version")
 
@@ -148,13 +200,51 @@ dsm_update_run()
     fi
 
     # =========================================================
-    # Obtém checksum SHA256
+    # Obtém checksum SHA256 oficial
     # =========================================================
 
     echo
     echo "Obtendo checksum da release..."
 
-    checksum=$(github_release_checksum "$release_json" || true)
+    checksum_url=$(github_release_checksum_download "$release_json")
+
+    if [ -z "$checksum_url" ]
+    then
+        log_error "Release sem checksum SHA256 oficial"
+
+        notify_dispatch \
+            "DSM Update" \
+            "Checksum SHA256 não encontrado"
+
+        return 1
+    fi
+
+    checksum_file=$(download_checksum "$checksum_url")
+
+    if [ ! -f "$checksum_file" ]
+    then
+        log_error "Falha no download do checksum SHA256"
+
+        notify_dispatch \
+            "DSM Update" \
+            "Falha no download do checksum SHA256"
+
+        return 1
+    fi
+
+    checksum=$(awk 'NR == 1 { print $1 }' "$checksum_file")
+
+    if ! printf '%s\n' "$checksum" |
+        grep -Eq '^[[:xdigit:]]{64}$'
+    then
+        log_error "Checksum SHA256 oficial inválido"
+
+        notify_dispatch \
+            "DSM Update" \
+            "Checksum SHA256 oficial inválido"
+
+        return 1
+    fi
 
     # =========================================================
     # Validação do pacote
@@ -214,23 +304,21 @@ dsm_update_run()
     echo
     echo "Executando atualização DSM..."
 
-    "$DSM_ROOT/update.sh" \
+    if ! "$DSM_ROOT/update.sh" \
     "$PACKAGE_ROOT"
-
-    if [ $? -ne 0 ]
     then
         log_error "Módulo 10 falhou"
 
-        notify_dispatch \
+    notify_dispatch \
         "DSM Update" \
         "Atualização falhou"
 
-        events_emit \
+    events_emit \
         "DSM_UPDATE_FAILED" \
         "$latest_version" \
         2>/dev/null || true
 
-        return 1
+       return 1
     fi
 
     # =========================================================

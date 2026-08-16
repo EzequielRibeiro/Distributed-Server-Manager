@@ -58,6 +58,12 @@ export DSM_ROOT="${DSM_ROOT:-/opt/dsm}"
     && source "${DSM_ROOT}/core/config.sh"
 
 # -------------------------------------------------------------
+# Semantic Versioning Library
+# -------------------------------------------------------------
+[[ -f "${DSM_ROOT}/core/semver.sh" ]] \
+    && source "${DSM_ROOT}/core/semver.sh"
+
+# -------------------------------------------------------------
 # Runtime Publisher
 # -------------------------------------------------------------
 [[ -f "${DSM_ROOT}/core/runtime/publisher.sh" ]] \

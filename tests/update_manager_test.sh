@@ -262,4 +262,592 @@ fi
     grep -q '^LOCAL_SETTING="preserved"$' "${CONFIG_FILE}" || fail "local configuration was overwritten"
 )
 
+# =============================================================
+# Update Manager semantic version contract
+# =============================================================
+
+UPDATE_MANAGER="${ROOT}/update-manager/update-manager.sh"
+
+(
+    DSM_ROOT="${ROOT}"
+
+    # shellcheck source=../update-manager/update-manager.sh
+    source "${UPDATE_MANAGER}"
+
+    [[ "$(semver_compare 1.1.0 1.0.0)" == "1" ]] \
+        || fail "update manager upgrade comparison failed"
+
+    [[ "$(semver_compare 1.0.0 1.0.0)" == "0" ]] \
+        || fail "update manager equal-version comparison failed"
+
+    [[ "$(semver_compare 1.0.0 1.1.0)" == "-1" ]] \
+        || fail "update manager downgrade comparison failed"
+
+    [[ "$(semver_compare 1.0.0-rc.1 1.0.0)" == "-1" ]] \
+        || fail "update manager prerelease comparison failed"
+
+    [[ "$(semver_compare 1.0.0-rc.2 1.0.0-rc.10)" == "-1" ]] \
+        || fail "update manager numeric prerelease comparison failed"
+)
+
+# =============================================================
+# Update Manager update-check contract
+# =============================================================
+
+(
+    DSM_ROOT="${ROOT}"
+
+    # shellcheck source=../update-manager/update-manager.sh
+    source "${UPDATE_MANAGER}"
+
+    TEST_INSTALL_DIR="$(mktemp -d)"
+    INSTALL_DIR="${TEST_INSTALL_DIR}"
+
+    trap 'rm -rf -- "${TEST_INSTALL_DIR}"' EXIT
+
+    log_info()
+    {
+        :
+    }
+
+    log_error()
+    {
+        :
+    }
+
+    notify_dispatch()
+    {
+        :
+    }
+
+    github_latest_release()
+    {
+        printf '%s\n' '{"tag_name":"v1.0.0"}'
+    }
+
+    printf '%s\n' '1.0.0' >"${INSTALL_DIR}/version"
+
+    dsm_update_check >/dev/null \
+        || fail "equal release should report DSM as up to date"
+)
+
+(
+    DSM_ROOT="${ROOT}"
+
+    # shellcheck source=../update-manager/update-manager.sh
+    source "${UPDATE_MANAGER}"
+
+    TEST_INSTALL_DIR="$(mktemp -d)"
+    INSTALL_DIR="${TEST_INSTALL_DIR}"
+
+    trap 'rm -rf -- "${TEST_INSTALL_DIR}"' EXIT
+
+    log_info()
+    {
+        :
+    }
+
+    log_error()
+    {
+        :
+    }
+
+    notify_dispatch()
+    {
+        :
+    }
+
+    github_latest_release()
+    {
+        printf '%s\n' '{"tag_name":"v1.1.0"}'
+    }
+
+    printf '%s\n' '1.0.0' >"${INSTALL_DIR}/version"
+
+    set +e
+    dsm_update_check >/dev/null
+    STATUS=$?
+    set -e
+
+    [[ "${STATUS}" -eq 10 ]] \
+        || fail "newer release should return 10; returned ${STATUS}"
+)
+
+(
+    DSM_ROOT="${ROOT}"
+
+    # shellcheck source=../update-manager/update-manager.sh
+    source "${UPDATE_MANAGER}"
+
+    TEST_INSTALL_DIR="$(mktemp -d)"
+    INSTALL_DIR="${TEST_INSTALL_DIR}"
+
+    trap 'rm -rf -- "${TEST_INSTALL_DIR}"' EXIT
+
+    log_info()
+    {
+        :
+    }
+
+    log_error()
+    {
+        :
+    }
+
+    notify_dispatch()
+    {
+        :
+    }
+
+    github_latest_release()
+    {
+        printf '%s\n' '{"tag_name":"v1.0.0"}'
+    }
+
+    printf '%s\n' '1.1.0' >"${INSTALL_DIR}/version"
+
+    dsm_update_check >/dev/null \
+        || fail "installed version ahead of release should not be treated as an update"
+)
+
+(
+    DSM_ROOT="${ROOT}"
+
+    # shellcheck source=../update-manager/update-manager.sh
+    source "${UPDATE_MANAGER}"
+
+    TEST_INSTALL_DIR="$(mktemp -d)"
+    INSTALL_DIR="${TEST_INSTALL_DIR}"
+
+    trap 'rm -rf -- "${TEST_INSTALL_DIR}"' EXIT
+
+    log_info()
+    {
+        :
+    }
+
+    log_error()
+    {
+        :
+    }
+
+    notify_dispatch()
+    {
+        :
+    }
+
+    github_latest_release()
+    {
+        printf '%s\n' '{"tag_name":"v1.1.0"}'
+    }
+
+    printf '%s\n' 'invalid-version' >"${INSTALL_DIR}/version"
+
+    if dsm_update_check >/dev/null 2>&1
+    then
+        fail "invalid installed version was accepted"
+    fi
+)
+
+(
+    DSM_ROOT="${ROOT}"
+
+    # shellcheck source=../update-manager/update-manager.sh
+    source "${UPDATE_MANAGER}"
+
+    TEST_INSTALL_DIR="$(mktemp -d)"
+    INSTALL_DIR="${TEST_INSTALL_DIR}"
+
+    trap 'rm -rf -- "${TEST_INSTALL_DIR}"' EXIT
+
+    log_info()
+    {
+        :
+    }
+
+    log_error()
+    {
+        :
+    }
+
+    notify_dispatch()
+    {
+        :
+    }
+
+    github_latest_release()
+    {
+        printf '%s\n' '{"tag_name":"not-semver"}'
+    }
+
+    printf '%s\n' '1.0.0' >"${INSTALL_DIR}/version"
+
+    if dsm_update_check >/dev/null 2>&1
+    then
+        fail "invalid remote version was accepted"
+    fi
+)
+
+(
+    DSM_ROOT="${ROOT}"
+
+    # shellcheck source=../update-manager/update-manager.sh
+    source "${UPDATE_MANAGER}"
+
+    TEST_INSTALL_DIR="$(mktemp -d)"
+    INSTALL_DIR="${TEST_INSTALL_DIR}"
+
+    trap 'rm -rf -- "${TEST_INSTALL_DIR}"' EXIT
+
+    log_info()
+    {
+        :
+    }
+
+    log_error()
+    {
+        :
+    }
+
+    notify_dispatch()
+    {
+        :
+    }
+
+    github_latest_release()
+    {
+        printf '%s\n' '{"tag_name":null}'
+    }
+
+    printf '%s\n' '1.0.0' >"${INSTALL_DIR}/version"
+
+    if dsm_update_check >/dev/null 2>&1
+    then
+        fail "release without tag_name was accepted"
+    fi
+)
+
+# =============================================================
+# Update Manager update-run gate contract
+# =============================================================
+
+# Up to date:
+# dsm_update_run must stop successfully without entering
+# the download/install pipeline.
+(
+    DSM_ROOT="${ROOT}"
+
+    # shellcheck source=../update-manager/update-manager.sh
+    source "${UPDATE_MANAGER}"
+
+    PIPELINE_CALLED=0
+
+    log_info()
+    {
+        :
+    }
+
+    log_error()
+    {
+        :
+    }
+
+    dsm_update_check()
+    {
+        return 0
+    }
+
+    github_latest_release()
+    {
+        PIPELINE_CALLED=1
+        return 1
+    }
+
+    dsm_update_run >/dev/null \
+        || fail "update run should succeed when DSM is already up to date"
+
+    [[ "${PIPELINE_CALLED}" -eq 0 ]] \
+        || fail "update run entered pipeline for an up-to-date installation"
+)
+
+# Check failure:
+# dsm_update_run must convert a check failure into a normal
+# update-run failure and must not enter the pipeline.
+(
+    DSM_ROOT="${ROOT}"
+
+    # shellcheck source=../update-manager/update-manager.sh
+    source "${UPDATE_MANAGER}"
+
+    PIPELINE_CALLED=0
+
+    log_info()
+    {
+        :
+    }
+
+    log_error()
+    {
+        :
+    }
+
+    dsm_update_check()
+    {
+        return 1
+    }
+
+    github_latest_release()
+    {
+        PIPELINE_CALLED=1
+        return 1
+    }
+
+    if dsm_update_run >/dev/null 2>&1
+    then
+        fail "update run accepted an update-check failure"
+    fi
+
+    [[ "${PIPELINE_CALLED}" -eq 0 ]] \
+        || fail "update run entered pipeline after update-check failure"
+)
+
+# Update available:
+# return 10 from dsm_update_check is the only status that
+# authorizes dsm_update_run to enter the update pipeline.
+# Update available:
+# return 10 from dsm_update_check is the only status that
+# authorizes dsm_update_run to enter the update pipeline.
+(
+    DSM_ROOT="${ROOT}"
+
+    # shellcheck source=../update-manager/update-manager.sh
+    source "${UPDATE_MANAGER}"
+
+    TEST_INSTALL_DIR="$(mktemp -d)"
+    PIPELINE_MARKER="${TEST_INSTALL_DIR}/pipeline-called"
+    INSTALL_DIR="${TEST_INSTALL_DIR}"
+
+    trap 'rm -rf -- "${TEST_INSTALL_DIR}"' EXIT
+
+    printf '%s\n' '1.0.0' >"${INSTALL_DIR}/version"
+
+    log_info()
+    {
+        :
+    }
+
+    log_error()
+    {
+        :
+    }
+
+    notify_dispatch()
+    {
+        :
+    }
+
+    dsm_update_check()
+    {
+        return 10
+    }
+
+    github_latest_release()
+    {
+        touch "${PIPELINE_MARKER}"
+        printf '%s\n' '{"tag_name":"v1.1.0"}'
+    }
+
+    github_release_download()
+    {
+        # Deliberately stop the pipeline immediately after
+        # proving that status 10 allowed it to advance.
+        printf '%s\n' ''
+    }
+
+    if dsm_update_run >/dev/null 2>&1
+    then
+        fail "update run unexpectedly completed without a release package"
+    fi
+
+    [[ -f "${PIPELINE_MARKER}" ]] \
+        || fail "update run did not enter pipeline when update-check returned 10"
+)
+
+# =============================================================
+# Update Manager checksum fail-closed contract
+# =============================================================
+
+(
+    DSM_ROOT="${ROOT}"
+
+    # shellcheck source=../update-manager/verify-release.sh
+    source "${ROOT}/update-manager/verify-release.sh"
+
+    TEST_ROOT="$(mktemp -d)"
+    PACKAGE_VERSION="1.0.0"
+    PACKAGE_NAME="capivara-dsm-${PACKAGE_VERSION}"
+    PACKAGE_ROOT="${TEST_ROOT}/${PACKAGE_NAME}"
+    PACKAGE="${TEST_ROOT}/${PACKAGE_NAME}.tar.gz"
+
+    trap 'rm -rf -- "${TEST_ROOT}"' EXIT
+
+    mkdir -p \
+        "${PACKAGE_ROOT}/bin" \
+        "${PACKAGE_ROOT}/core"
+
+    printf '%s\n' "${PACKAGE_VERSION}" >"${PACKAGE_ROOT}/version"
+    printf '%s\n' '#!/usr/bin/env bash' >"${PACKAGE_ROOT}/bin/dsm"
+    printf '%s\n' '#!/usr/bin/env bash' >"${PACKAGE_ROOT}/core/bootstrap.sh"
+
+    tar -czf "${PACKAGE}" -C "${TEST_ROOT}" "${PACKAGE_NAME}"
+
+    VERIFY_CHECKSUM=1
+
+    log_error()
+    {
+        :
+    }
+
+    VALID_CHECKSUM="$(sha256sum "${PACKAGE}" | awk '{print $1}')"
+    INVALID_CHECKSUM="$(printf '0%.0s' {1..64})"
+
+    verify_release "${PACKAGE}" "${VALID_CHECKSUM}" >/dev/null \
+        || fail "valid release checksum was rejected"
+
+    if verify_release "${PACKAGE}" "${INVALID_CHECKSUM}" >/dev/null 2>&1
+    then
+        fail "invalid release checksum was accepted"
+    fi
+
+    if verify_release "${PACKAGE}" "" >/dev/null 2>&1
+    then
+        fail "missing release checksum was accepted"
+    fi
+)
+
+# =============================================================
+# Update Manager pipeline checksum fail-closed integration
+# =============================================================
+(
+    DSM_ROOT="${ROOT}"
+
+    # shellcheck source=../update-manager/update-manager.sh
+    source "${UPDATE_MANAGER}"
+
+    PIPELINE_ROOT="$(mktemp -d)"
+    trap 'rm -rf -- "${PIPELINE_ROOT}"' EXIT
+    PIPELINE_INSTALL="${PIPELINE_ROOT}/install"
+    PIPELINE_DOWNLOADS="${PIPELINE_ROOT}/downloads"
+    PIPELINE_TEMP="${PIPELINE_ROOT}/tmp"
+
+    mkdir -p \
+        "${PIPELINE_INSTALL}" \
+        "${PIPELINE_DOWNLOADS}" \
+        "${PIPELINE_TEMP}"
+
+    printf '%s\n' '1.0.0' >"${PIPELINE_INSTALL}/version"
+
+    PIPELINE_PACKAGE="${PIPELINE_DOWNLOADS}/dsm.tar.gz"
+    PIPELINE_CHECKSUM="${PIPELINE_DOWNLOADS}/dsm.tar.gz.sha256"
+    UPDATE_MARKER="${PIPELINE_ROOT}/update-called"
+    EVENT_LOG="${PIPELINE_ROOT}/events.log"
+
+    printf '%s\n' 'corrupted package' >"${PIPELINE_PACKAGE}"
+
+    VALID_FORMAT_INVALID_CHECKSUM="$(
+        printf '0%.0s' {1..64}
+    )"
+
+    printf '%s  %s\n' \
+        "${VALID_FORMAT_INVALID_CHECKSUM}" \
+        "dsm.tar.gz" \
+        >"${PIPELINE_CHECKSUM}"
+
+    INSTALL_DIR="${PIPELINE_INSTALL}"
+    TEMP_DIR="${PIPELINE_TEMP}"
+
+    dsm_update_check()
+    {
+        latest_version="2.0.0"
+        return 10
+    }
+
+    github_latest_release()
+    {
+        printf '%s\n' '{"tag_name":"v2.0.0"}'
+    }
+
+    github_release_download()
+    {
+        printf '%s\n' 'https://example.invalid/dsm.tar.gz'
+    }
+
+    download_release()
+    {
+        printf '%s\n' "${PIPELINE_PACKAGE}"
+    }
+
+    github_release_checksum_download()
+    {
+        printf '%s\n' 'https://example.invalid/dsm.tar.gz.sha256'
+    }
+
+    download_checksum()
+    {
+        printf '%s\n' "${PIPELINE_CHECKSUM}"
+    }
+
+    notify_dispatch()
+    {
+        :
+    }
+
+    events_emit()
+    {
+        printf '%s\n' "$*" >>"${EVENT_LOG}"
+    }
+
+    verify_release()
+    {
+        return 1
+    }
+
+    dsm_update_history_add()
+    {
+        fail "history was written after checksum validation failure"
+    }
+
+    update_guard()
+    {
+        touch "${UPDATE_MARKER}"
+        return 0
+    }
+
+    DSM_ROOT="${PIPELINE_ROOT}/dsm-root"
+
+    mkdir -p "${DSM_ROOT}"
+
+    cat >"${DSM_ROOT}/update.sh" <<EOF
+#!/usr/bin/env bash
+touch "${UPDATE_MARKER}"
+exit 0
+EOF
+
+    chmod +x "${DSM_ROOT}/update.sh"
+
+    if dsm_update_run >/dev/null 2>&1
+    then
+        fail "update pipeline accepted failed checksum validation"
+    fi
+
+    [ ! -e "${UPDATE_MARKER}" ] \
+        || fail "update.sh executed after checksum validation failure"
+
+    [ -f "${EVENT_LOG}" ] \
+        || fail "DSM_UPDATE_FAILED event was not emitted"
+
+    grep -q '^DSM_UPDATE_FAILED 2\.0\.0$' "${EVENT_LOG}" \
+        || fail "wrong event emitted after checksum validation failure"
+)
+
 echo "Update manager tests passed."

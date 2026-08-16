@@ -12,6 +12,33 @@
 # =============================================================
 
 source "$DSM_ROOT/update-manager/config.conf"
+ARCHIVE_INSPECTOR="$DSM_ROOT/core/archive_inspector.py"
+SEMVER_LIB="$DSM_ROOT/core/semver.sh"
+ARCHIVE_SECURITY_LIB="$DSM_ROOT/core/archive_security.sh"
+
+if [[ ! -f "$SEMVER_LIB" ]]
+then
+    log_error "Biblioteca SemVer não encontrada: $SEMVER_LIB"
+    return 1 2>/dev/null || exit 1
+fi
+
+if [[ ! -f "$ARCHIVE_SECURITY_LIB" ]]
+then
+    log_error "Biblioteca de segurança de arquivos não encontrada: $ARCHIVE_SECURITY_LIB"
+    return 1 2>/dev/null || exit 1
+fi
+
+if [[ ! -f "$ARCHIVE_INSPECTOR" ]]
+then
+    log_error "Inspetor de arquivos não encontrado: $ARCHIVE_INSPECTOR"
+    return 1 2>/dev/null || exit 1
+fi
+
+# shellcheck source=core/semver.sh
+source "$SEMVER_LIB"
+
+# shellcheck source=core/archive_security.sh
+source "$ARCHIVE_SECURITY_LIB"
 
 # =============================================================
 # Validação principal
@@ -81,22 +108,126 @@ verify_release()
 
             echo "Checksum OK."
 
-        else
-            echo
-            echo "Aviso:"
-            echo "Checksum não fornecido."
-            echo "Continuando sem validação SHA256."
-
-        fi
+            else
+                log_error \
+                "Checksum SHA256 não fornecido."
+                return 1
+            fi
 
     fi
 
     # =========================================================
-    # Validação estrutura DSM
+    # Validação segura da estrutura do arquivo
     # =========================================================
 
     echo
-    echo "Validando estrutura DSM..."
+    echo "Validando segurança da estrutura DSM..."
+
+    local ARCHIVE_MEMBER
+    local ARCHIVE_TARGET
+    local ARCHIVE_TYPE
+    local RELEASE_ROOT
+    local INSPECTION_FILE
+    local -a ARCHIVE_MEMBERS=()
+
+    INSPECTION_FILE="$(mktemp)" || {
+        log_error \
+            "Não foi possível criar arquivo temporário para inspeção."
+        return 1
+    }
+
+    if ! python3 "$ARCHIVE_INSPECTOR" "$FILE" >"$INSPECTION_FILE"
+    then
+        log_error \
+            "Não foi possível inspecionar os metadados do pacote."
+        rm -f -- "$INSPECTION_FILE"
+        return 1
+    fi
+
+    while IFS=$'\t' read -r \
+        ARCHIVE_TYPE ARCHIVE_MEMBER ARCHIVE_TARGET
+    do
+        if [[ -z "$ARCHIVE_MEMBER" ]]
+        then
+            log_error \
+                "Pacote contém membro sem nome."
+            rm -f -- "$INSPECTION_FILE"
+            return 1
+        fi
+
+        case "$ARCHIVE_TYPE" in
+            member)
+                if ! archive_validate_member "$ARCHIVE_MEMBER"
+                then
+                    log_error \
+                        "Pacote contém caminho inseguro:"
+                    echo "$ARCHIVE_MEMBER"
+                    rm -f -- "$INSPECTION_FILE"
+                    return 1
+                fi
+                ;;
+
+            symlink)
+                if ! archive_validate_symlink \
+                    "$ARCHIVE_MEMBER" "$ARCHIVE_TARGET"
+                then
+                    log_error \
+                        "Pacote contém link simbólico inseguro:"
+                    echo "$ARCHIVE_MEMBER -> $ARCHIVE_TARGET"
+                    rm -f -- "$INSPECTION_FILE"
+                    return 1
+                fi
+                ;;
+
+            hardlink)
+                if ! archive_validate_hardlink \
+                    "$ARCHIVE_MEMBER" "$ARCHIVE_TARGET"
+                then
+                    log_error \
+                        "Pacote contém hard link inseguro:"
+                    echo "$ARCHIVE_MEMBER -> $ARCHIVE_TARGET"
+                    rm -f -- "$INSPECTION_FILE"
+                    return 1
+                fi
+                ;;
+
+            *)
+                log_error \
+                    "Pacote contém tipo de membro desconhecido:"
+                echo "$ARCHIVE_TYPE"
+                rm -f -- "$INSPECTION_FILE"
+                return 1
+                ;;
+        esac
+
+        ARCHIVE_MEMBERS+=("$ARCHIVE_MEMBER")
+
+    done <"$INSPECTION_FILE"
+
+    rm -f -- "$INSPECTION_FILE"
+
+    if (( ${#ARCHIVE_MEMBERS[@]} == 0 ))
+    then
+        log_error \
+            "Pacote não contém membros válidos."
+        return 1
+    fi
+
+    if ! RELEASE_ROOT=$(
+        archive_release_members_root "${ARCHIVE_MEMBERS[@]}"
+    )
+    then
+        log_error \
+            "Pacote possui estrutura de release inválida."
+        return 1
+    fi
+
+    echo "Raiz da release validada:"
+    echo "$RELEASE_ROOT"
+
+    # =========================================================
+    # Extração temporária após validação
+    # =========================================================
 
     TEMP_VERIFY="/tmp/dsm-verify"
 
@@ -104,17 +235,14 @@ verify_release()
     mkdir -p "$TEMP_VERIFY"
 
     tar -xzf "$FILE" \
-    -C "$TEMP_VERIFY"
+        -C "$TEMP_VERIFY"
 
-    PACKAGE_ROOT=$(find "$TEMP_VERIFY" \
-    -name version \
-    -printf "%h\n" \
-    | head -1)
+    PACKAGE_ROOT="$TEMP_VERIFY/$RELEASE_ROOT"
 
-    if [ -z "$PACKAGE_ROOT" ]
+    if [ ! -f "$PACKAGE_ROOT/version" ]
     then
         log_error \
-        "Pacote sem arquivo version."
+            "Pacote sem arquivo version."
         rm -rf "$TEMP_VERIFY"
         return 1
     fi
