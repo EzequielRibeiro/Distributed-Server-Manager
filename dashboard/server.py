@@ -33,6 +33,7 @@ import sqlite3
 import shutil
 import tarfile
 import uuid
+from datetime import datetime, timezone
 from collections import defaultdict
 from contextlib import closing
 from pathlib import Path
@@ -77,6 +78,10 @@ if str(DATABASE_DIR) not in sys.path:
     sys.path.insert(0, str(DATABASE_DIR))
 from users import hash_password, verify_password
 import alerts as alert_store
+from backend import DatabaseConfig
+from backend_factory import create_backend
+from dashboard_repository import DashboardRepository
+from runtime_backend import backend_from_environment
 
 MAX_JSON_BODY = 12 * 1024 * 1024
 MAX_INSTANCE_CONFIG = 1024 * 1024
@@ -386,35 +391,53 @@ def database_connection(database_path=DATABASE_FILE):
     return connection
 
 
+def dashboard_repository(database_path=DATABASE_FILE):
+    """Return persistence extracted from the dashboard server."""
+    if (
+        Path(database_path).resolve() == DATABASE_FILE
+        and os.environ.get("DSM_DATABASE_DRIVER", "sqlite").strip().lower()
+        not in {"", "sqlite", "sqlite3"}
+    ):
+        return DashboardRepository(backend_from_environment())
+    return DashboardRepository(create_backend(DatabaseConfig(
+        driver="sqlite",
+        database=str(Path(database_path).expanduser().resolve()),
+    )))
+
+
 def customer_agents(user, database_path=DATABASE_FILE):
     if not user or user.get("role") != "customer" or not user.get("scope_id"):
         return []
-    with closing(database_connection(database_path)) as connection:
-        rows = connection.execute(
-            "SELECT a.id,a.node_id,a.name,a.status FROM agents a "
-            "JOIN customers c ON c.controller_id=a.controller_id "
-            "WHERE c.id=? AND c.status='active' AND a.status='active' ORDER BY a.name",
-            (user["scope_id"],),
-        ).fetchall()
-    return [dict(row) for row in rows]
+    return dashboard_repository(database_path).customer_agents(user["scope_id"])
 
 
 def customer_contracts(user, database_path=DATABASE_FILE):
     if not user or user.get("role") != "customer" or not user.get("scope_id"):
         return []
-    with closing(database_connection(database_path)) as connection:
-        rows = connection.execute(
-            "SELECT c.id,c.game_id,c.status,c.instance_limit,c.starts_at,c.ends_at,COUNT(ic.instance_id) AS instances_used "
-            "FROM service_contracts c LEFT JOIN instance_contracts ic ON ic.contract_id=c.id "
-            "WHERE c.customer_id=? GROUP BY c.id ORDER BY c.created_at",
-            (user["scope_id"],),
-        ).fetchall()
-    now = time.strftime("%Y-%m-%dT%H:%M:%S")
+    rows = dashboard_repository(database_path).customer_contracts(user["scope_id"])
+    now = datetime.now(timezone.utc)
+
+    def contract_not_expired(ends_at):
+        if not ends_at:
+            return True
+        if isinstance(ends_at, datetime):
+            if ends_at.tzinfo is None:
+                ends_at = ends_at.replace(tzinfo=timezone.utc)
+            return ends_at > now
+        try:
+            parsed = datetime.fromisoformat(
+                str(ends_at).replace("Z", "+00:00")
+            )
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed > now
+        except ValueError:
+            return str(ends_at) > now.isoformat()
     return [
-        dict(row)
+        row
         | {
             "available": row["status"] == "active"
-            and (not row["ends_at"] or row["ends_at"] > now)
+            and contract_not_expired(row["ends_at"])
             and row["instances_used"] < row["instance_limit"]
         }
         for row in rows
@@ -662,6 +685,106 @@ def create_customer_instance(user, payload, root=DSM_ROOT, database_path=DATABAS
         "provision": provision,
     }
 
+def _occupied_local_ports(protocol, start_port, end_port):
+    command = ["ss", "-H", "-lun"] if protocol == "udp" else ["ss", "-H", "-ltn"]
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=5, check=False
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("unable to inspect operating-system ports") from exc
+    if result.returncode != 0:
+        raise RuntimeError("unable to inspect operating-system ports")
+    ports = set()
+    for line in result.stdout.splitlines():
+        for field in line.split():
+            match = re.search(r":([0-9]+)$", field)
+            if match and start_port <= int(match.group(1)) <= end_port:
+                ports.add(int(match.group(1)))
+                break
+    return ports
+
+
+def create_customer_instance(
+    user,
+    payload,
+    root=DSM_ROOT,
+    database_path=DATABASE_FILE,
+):
+    """Create a customer instance using extracted persistence."""
+    if not user or user.get("role") != "customer" or not user.get("scope_id"):
+        raise PermissionError("only a scoped customer can create an instance")
+    game = str(payload.get("game", "")).strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{1,63}", game):
+        raise ValueError("invalid game")
+    runtime_id = str(payload.get("runtime_id", "")).strip()
+    edition = str(payload.get("edition", "")).strip()
+    version = str(payload.get("version", "")).strip()
+    build = str(payload.get("build", "")).strip()
+    for value, label in (
+        (runtime_id, "runtime_id"), (edition, "edition"),
+        (version, "version"), (build, "build"),
+    ):
+        if not value:
+            raise ValueError(f"{label} is required")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", runtime_id):
+        raise ValueError("invalid runtime_id")
+    if not (root / "catalog" / "v2" / "runtimes" / game).is_dir():
+        raise ValueError("game is not available in the catalog")
+    try:
+        runtime_def = _runtime_definition(root, game, runtime_id)
+    except ValueError as exc:
+        raise ValueError("requested runtime_id is not available for this game") from exc
+    variant = runtime_def.get("variant") or runtime_def.get("loader") or runtime_def.get("edition")
+    repository = dashboard_repository(database_path)
+    plan = repository.create_customer_instance(
+        customer_id=user["scope_id"], username=user["username"], game=game,
+        runtime_id=runtime_id, edition=edition, variant=variant,
+        version=version, build=build, instances_root=root / "instances",
+        unavailable_ports_provider=(
+            lambda: _occupied_local_ports("udp", 24000, 24999)
+            if game == "dayz" else set()
+        ),
+    )
+    instance_path = plan["instance_path"]
+    metadata_path = plan["metadata_path"]
+    metadata = plan["metadata"]
+    try:
+        metadata_path.parent.mkdir(parents=True, exist_ok=False)
+        (instance_path / "config").mkdir()
+        (instance_path / "config" / "server.conf").write_text(
+            f'# Configuração da instância {plan["name"]}\n'
+            f'INSTANCE_ID="{plan["instance_id"]}"\nGAME_ID="{game}"\n',
+            encoding="utf-8",
+        )
+        metadata_path.write_text(
+            json.dumps(metadata, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        resource = root / "runtime" / "resources" / plan["node_id"] / game / plan["instance_id"]
+        resource.mkdir(parents=True, exist_ok=False)
+        (resource / "instance.json").write_text(
+            json.dumps(metadata, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        (resource / "server.json").write_text(
+            json.dumps({"status": {"state": "provisioning", "health": "pending"}}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except Exception:
+        repository.delete_instance(plan["instance_id"])
+        if instance_path.exists():
+            shutil.rmtree(instance_path)
+        raise
+    provision = start_instance_provisioning(
+        root, database_path, plan["instance_id"], plan["node_id"], game,
+        runtime_id, edition, version, build, instance_path, plan["agent_id"],
+    )
+    return {
+        "created": True, "instance_id": plan["instance_id"], "name": plan["name"],
+        "instance": str(instance_path), "agent_id": plan["agent_id"],
+        "node_id": plan["node_id"], "game": game,
+        "contract_id": plan["contract_id"], "provision": provision,
+    }
 
 
 def allocate_instance_port(
@@ -1160,16 +1283,10 @@ def _set_provision(
             }
         },
     )
-    with closing(
-        database_connection(
-            database_path,
-        )
-    ) as connection:
-        with connection:
-            connection.execute(
-                "UPDATE instances SET status=? WHERE id=?",
-                (status, instance_id),
-            )
+    dashboard_repository(database_path).update_instance_status(
+        instance_id,
+        status,
+    )
     return payload
 
 
@@ -1177,24 +1294,9 @@ def _instance_alert_context(
     database_path,
     instance_id,
 ):
-    with closing(
-        database_connection(
-            database_path,
-        )
-    ) as connection:
-        row = connection.execute(
-            """
-            SELECT
-                controller_id,
-                agent_id,
-                node_id
-            FROM instances
-            WHERE id=?
-            """,
-            (
-                instance_id,
-            ),
-        ).fetchone()
+    row = dashboard_repository(database_path).instance_context(
+        instance_id
+    )
 
     if row is None:
         raise ValueError(
@@ -1845,23 +1947,11 @@ def _provision_worker(
         # instance_ports durante a criação da instância.
         #
         if game == "dayz":
-            with closing(
-                database_connection(
-                    database_path
-                )
-            ) as connection:
-                port_row = connection.execute(
-                    """
-                    SELECT port
-                    FROM instance_ports
-                    WHERE instance_id=?
-                      AND name='game'
-                      AND protocol='udp'
-                    """,
-                    (instance_id,),
-                ).fetchone()
+            game_port = dashboard_repository(
+                database_path
+            ).instance_port(instance_id)
 
-            if not port_row:
+            if game_port is None:
                 _set_provision(
                     root,
                     node_id,
@@ -1878,10 +1968,6 @@ def _provision_worker(
                 )
 
                 return
-
-            game_port = int(
-                port_row["port"]
-            )
 
             dayz_args = (
                 f"-port={game_port} "
@@ -2174,6 +2260,49 @@ def retry_instance_provisioning(
     }
 
 
+def retry_instance_provisioning(
+    user,
+    instance_path,
+    database_path=DATABASE_FILE,
+):
+    """Reserve and restart provisioning through DashboardRepository."""
+    instance = Path(catalog_instance_path(str(instance_path)))
+    relative = instance.relative_to(INSTANCE_ROOT)
+    if len(relative.parts) != 3:
+        raise ValueError("instance path must identify server, game and instance")
+    node_id, game, instance_id = relative.parts
+    row = dashboard_repository(database_path).reserve_retry(
+        instance_id,
+        node_id,
+        game,
+    )
+    runtime_id = str(row["runtime_id"] or "").strip()
+    edition = str(row["edition"] or "").strip()
+    version = str(row["game_version"] or "").strip()
+    build = str(row["build_id"] or "").strip()
+    agent_id = str(row["agent_id"] or "").strip()
+    if not all((runtime_id, edition, version, build, agent_id)):
+        dashboard_repository(database_path).update_instance_status(
+            instance_id,
+            row["status"],
+        )
+        raise ValueError("instance runtime selection is incomplete")
+    audit(
+        user, "instance.provision.retry", "started", instance_id,
+        f"runtime={runtime_id};version={version};build={build}",
+        database_path=database_path,
+    )
+    provision = start_instance_provisioning(
+        DSM_ROOT, database_path, instance_id, node_id, game,
+        runtime_id, edition, version, build, instance, agent_id,
+    )
+    return {
+        "retried": True, "instance_id": instance_id,
+        "runtime_id": runtime_id, "edition": edition,
+        "version": version, "build": build, "provision": provision,
+    }
+
+
 def instance_identity_path(server, game, instance):
     for value in (server, game, instance):
         if not isinstance(value, str) or not re.fullmatch(
@@ -2198,13 +2327,11 @@ def instance_permission_profile(user, instance_path, database_path=DATABASE_FILE
     ):
         return "operator"
     try:
-        with closing(database_connection(database_path)) as connection:
-            row = connection.execute(
-                "SELECT permission_profile FROM instance_access WHERE username=? AND instance_id=?",
-                (user.get("username"), Path(instance_path).name),
-            ).fetchone()
-        return row["permission_profile"] if row else None
-    except sqlite3.Error:
+        return dashboard_repository(database_path).permission_profile(
+            user.get("username"),
+            Path(instance_path).name,
+        )
+    except Exception:
         return None
 
 
@@ -2219,19 +2346,14 @@ def audit(
     user, action, result, instance_id=None, details=None, database_path=DATABASE_FILE
 ):
     try:
-        with closing(database_connection(database_path)) as connection:
-            with connection:
-                connection.execute(
-                    "INSERT INTO audit_log(username,instance_id,action,result,details) VALUES (?,?,?,?,?)",
-                    (
-                        user.get("username", "system") if user else "system",
-                        instance_id,
-                        action,
-                        result,
-                        details,
-                    ),
-                )
-    except sqlite3.Error:
+        dashboard_repository(database_path).write_audit(
+            user.get("username", "system") if user else "system",
+            instance_id,
+            action,
+            result,
+            details,
+        )
+    except Exception:
         pass
 
 
@@ -2746,21 +2868,10 @@ def control_instance(
         }:
             state = "offline"
 
-        with closing(
-            database_connection(database_path)
-        ) as connection:
-            with connection:
-                connection.execute(
-                    """
-                    UPDATE instances
-                    SET status=?
-                    WHERE id=?
-                    """,
-                    (
-                        state,
-                        instance_id,
-                    ),
-                )
+        dashboard_repository(database_path).update_instance_status(
+            instance_id,
+            state,
+        )
 
     audit(
         user,
@@ -2796,11 +2907,9 @@ def delete_instance(
     if instance_exists:
         instance.rename(quarantine)
     try:
-        with closing(database_connection(database_path)) as connection:
-            with connection:
-                deleted = connection.execute(
-                    "DELETE FROM instances WHERE id=?", (instance_id,)
-                ).rowcount
+        deleted = dashboard_repository(database_path).delete_instance(
+            instance_id
+        )
         if not deleted:
             raise ValueError("instance is not registered or was already deleted")
         if quarantine.exists():
@@ -3003,24 +3112,11 @@ def api_runtime_summary(server, game, instance):
     )
 
     try:
-        with closing(
-            database_connection(DATABASE_FILE)
-        ) as connection:
-            with connection:
-                connection.execute(
-                    """
-                    UPDATE instances
-                    SET status=?
-                    WHERE id=?
-                      AND status<>?
-                    """,
-                    (
-                        observed_state,
-                        instance,
-                        observed_state,
-                    ),
-                )
-    except sqlite3.Error:
+        dashboard_repository(DATABASE_FILE).reconcile_instance_status(
+            instance,
+            observed_state,
+        )
+    except Exception:
         #
         # A leitura do runtime deve continuar disponível
         # mesmo se a persistência do estado falhar.
@@ -3469,15 +3565,12 @@ def api_runtime_list(database_path=DATABASE_FILE):
     if not root.exists():
         return []
 
-    registered = None
-    if Path(database_path).is_file():
-        with closing(database_connection(database_path)) as connection:
-            registered = {
-                (row["node_id"], row["game_id"], row["id"])
-                for row in connection.execute(
-                    "SELECT id,node_id,game_id FROM instances"
-                )
-            }
+    try:
+        registered = dashboard_repository(
+            database_path
+        ).registered_instances()
+    except Exception:
+        registered = None
 
     for server_dir in root.iterdir():
         if not server_dir.is_dir():
@@ -3546,10 +3639,15 @@ def write_json(path: Path, data):
 
 
 def write_log(message):
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    logfile = LOG_DIR / "dashboard.log"
-    with logfile.open("a", encoding="utf-8") as fp:
-        fp.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        logfile = LOG_DIR / "dashboard.log"
+        with logfile.open("a", encoding="utf-8") as fp:
+            fp.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+    except OSError:
+        # Logging must not turn a recoverable persistence error into
+        # a dashboard request failure (for example on read-only media).
+        return None
 
 
 # =============================================================
@@ -3560,15 +3658,10 @@ _USERS_LOCK = threading.Lock()
 
 
 def load_users(database_path=DATABASE_FILE):
-    """Load dashboard identities exclusively from SQLite."""
-    if not database_path.is_file():
-        return {}
+    """Load dashboard identities through DashboardRepository."""
     try:
-        with closing(database_connection(database_path)) as connection:
-            rows = connection.execute(
-                "SELECT username,password_hash,role,scope_id,active FROM dashboard_users ORDER BY username"
-            ).fetchall()
-    except sqlite3.Error:
+        rows = dashboard_repository(database_path).load_users()
+    except Exception:
         return {}
     return {
         row["username"]: {
@@ -3629,20 +3722,7 @@ def public_users():
 
 
 def user_scope_options(database_path=DATABASE_FILE):
-    with closing(database_connection(database_path)) as connection:
-        controllers = [
-            dict(row)
-            for row in connection.execute(
-                "SELECT id,name,status FROM controllers ORDER BY name"
-            )
-        ]
-        customers = [
-            dict(row)
-            for row in connection.execute(
-                "SELECT id,name,status FROM customers ORDER BY name"
-            )
-        ]
-    return {"controllers": controllers, "customers": customers}
+    return dashboard_repository(database_path).scope_options()
 
 
 def update_dashboard_user(payload, current_username):
@@ -3690,14 +3770,13 @@ def update_dashboard_user(payload, current_username):
             for item in projected.values()
         ):
             raise ValueError("at least one active administrator is required")
-        with closing(database_connection()) as connection:
-            with connection:
-                connection.execute(
-                    "INSERT INTO dashboard_users(username,password_hash,role,scope_id,active) VALUES (?,?,?,?,?) "
-                    "ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash,role=excluded.role,"
-                    "scope_id=excluded.scope_id,active=excluded.active,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')",
-                    (username, password_hash, role, scope_id or None, int(active)),
-                )
+        dashboard_repository().save_user(
+            username,
+            password_hash,
+            role,
+            scope_id or None,
+            active,
+        )
     return {"saved": True, "username": username}
 
 
@@ -3715,11 +3794,7 @@ def delete_dashboard_user(username, current_username):
             for item in remaining.values()
         ):
             raise ValueError("at least one active administrator is required")
-        with closing(database_connection()) as connection:
-            with connection:
-                connection.execute(
-                    "DELETE FROM dashboard_users WHERE username=?", (username,)
-                )
+        dashboard_repository().delete_user(username)
     return {"deleted": True, "username": username}
 
 
@@ -4215,21 +4290,9 @@ def _can_access_alert(
     ):
         return False
 
-    with closing(
-        database_connection(
-            database_path
-        )
-    ) as connection:
-        row = connection.execute(
-            """
-            SELECT customer_id
-            FROM instances
-            WHERE id=?
-            """,
-            (
-                instance_id,
-            ),
-        ).fetchone()
+    row = dashboard_repository(database_path).instance_context(
+        instance_id
+    )
 
     return bool(
         row
