@@ -11,7 +11,7 @@
 
 [Unit]
 Description=DSM Discord Integration Engine
-Documentation=https://github.com/seu-repositorio/dsm
+Documentation=https://github.com/EzequielRibeiro/Distributed-Server-Manager
 After=network-online.target
 Wants=network-online.target
 

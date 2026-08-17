@@ -63,7 +63,8 @@ python3 "${DSM_ROOT}/database/operations.py" \
 )
 if command -v systemd-analyze >/dev/null 2>&1
 then
-    SYSTEMD_UNIT_PATH="${SYSTEMD_DIR}" systemd-analyze verify \
+    SYSTEMD_UNIT_PATH="${SYSTEMD_DIR}:/usr/lib/systemd/system:/lib/systemd/system" \
+        systemd-analyze verify \
         "${SYSTEMD_DIR}"/*.service "${SYSTEMD_DIR}"/*.timer
 fi
 

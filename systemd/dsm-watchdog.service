@@ -1,6 +1,6 @@
 [Unit]
 Description=Capivara DSM Process Watchdog
-Documentation=Capivara Distributed Server Manager
+Documentation=https://github.com/EzequielRibeiro/Distributed-Server-Manager
 
 After=network.target
 
