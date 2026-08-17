@@ -83,13 +83,13 @@ class UserRepository:
                 session.execute(
                     "INSERT INTO dashboard_users(username, password_hash, "
                     "role, scope_id, active) VALUES "
-                    f"({self.dialect.parameters(4)}, 1)",
+                    f"({self.dialect.parameters(4)}, TRUE)",
                     (username, password_hash, role, scope_id),
                 )
             else:
                 session.execute(
                     f"UPDATE dashboard_users SET password_hash={ph}, "
-                    f"role={ph}, scope_id={ph}, active=1, updated_at={now} "
+                    f"role={ph}, scope_id={ph}, active=TRUE, updated_at={now} "
                     f"WHERE username={ph}",
                     (password_hash, role, scope_id, username),
                 )
@@ -121,7 +121,7 @@ class UserRepository:
             if row["role"] == "admin":
                 count = session.execute(
                     "SELECT COUNT(*) AS total FROM dashboard_users "
-                    "WHERE role='admin' AND active=1"
+                    "WHERE role='admin' AND active=TRUE"
                 ).fetchone()
                 if int(count["total"]) <= 1:
                     raise ValueError("cannot delete the last active administrator")

@@ -115,7 +115,7 @@ class UserRepositoryIntegrationTest(unittest.TestCase):
         with self.repository.session() as session:
             row = session.execute(
                 "SELECT COUNT(*) AS total FROM dashboard_users "
-                "WHERE role='admin' AND active=1 AND username<>"
+                "WHERE role='admin' AND active=TRUE AND username<>"
                 + placeholder,
                 (self.first,),
             ).fetchone()

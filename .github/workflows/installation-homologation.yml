@@ -86,7 +86,15 @@ jobs:
               --env MYSQL_PASSWORD=capivara-homologation \
               --env MYSQL_ROOT_PASSWORD=capivara-root-homologation \
               --publish "${PORT}:3306" "${IMAGE}"
-            until docker exec dsm-homologation-db mysqladmin ping --silent; do sleep 2; done
+            if [[ "${DRIVER}" == "mariadb" ]]; then
+              until docker exec dsm-homologation-db mariadb \
+                --user=capivara --password=capivara-homologation \
+                --database=capivara --execute='SELECT 1'; do sleep 2; done
+            else
+              until docker exec dsm-homologation-db mysql \
+                --user=capivara --password=capivara-homologation \
+                --database=capivara --execute='SELECT 1'; do sleep 2; done
+            fi
           fi
 
       - name: Homologate remote installation

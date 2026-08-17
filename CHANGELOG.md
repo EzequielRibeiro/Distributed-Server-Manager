@@ -1,5 +1,12 @@
 # DSM CHANGELOG
 
+## v1.1.1 — 2026-08-17
+
+- Corrige o bootstrap de usuários no PostgreSQL usando literal booleano portátil
+- Homologa instalação remota, bootstrap, systemd, health HTTP e reinstalação
+  em SQLite, PostgreSQL, MySQL e MariaDB
+- Aguarda a criação autenticada do banco descartável antes da instalação
+
 ## v1.1.0 — 2026-08-17
 
 - Adiciona instalação real em raiz temporária no gate Linux

@@ -92,7 +92,7 @@ class RegistryRepository:
             ).fetchone() is None:
                 session.execute(
                     "INSERT INTO dashboard_users(username,password_hash,role,scope_id,active) "
-                    f"VALUES ({self.dialect.parameters(4)},1)",
+                    f"VALUES ({self.dialect.parameters(4)},TRUE)",
                     ("aurora", password_hash, "customer", "CLI-DEMO-001"),
                 )
             self._upsert(session, "instances", "id", {
