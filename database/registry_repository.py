@@ -121,6 +121,72 @@ class RegistryRepository:
                 ("cliente-demo", "aurora-minecraft-001"),
             )
 
+    def bootstrap_topology(
+        self,
+        *,
+        controller_id: str,
+        controller_node_id: str,
+        controller_name: str,
+        agent_id: str,
+        agent_node_id: str,
+        agent_name: str,
+    ) -> dict[str, Any]:
+        """Create or reconcile the first production controller and agent."""
+        self.initialize()
+        with self.transaction() as session:
+            self._upsert(session, "nodes", "id", {
+                "id": controller_node_id,
+                "name": controller_name,
+                "role": "controller",
+                "status": "active",
+            })
+            self._upsert(session, "controllers", "id", {
+                "id": controller_id,
+                "node_id": controller_node_id,
+                "name": controller_name,
+                "status": "active",
+            })
+            self._upsert(session, "nodes", "id", {
+                "id": agent_node_id,
+                "name": agent_name,
+                "role": "agent",
+                "status": "active",
+            })
+            self._upsert(session, "agents", "id", {
+                "id": agent_id,
+                "controller_id": controller_id,
+                "node_id": agent_node_id,
+                "name": agent_name,
+                "status": "active",
+            })
+        return {
+            "controller_id": controller_id,
+            "controller_node_id": controller_node_id,
+            "agent_id": agent_id,
+            "agent_node_id": agent_node_id,
+        }
+
+    def topology_status(self) -> dict[str, int]:
+        """Return bootstrap-relevant active object counts."""
+        self.initialize()
+        with self.backend.connect() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                result = {}
+                for name, table in (
+                    ("controllers", "controllers"),
+                    ("agents", "agents"),
+                    ("customers", "customers"),
+                    ("instances", "instances"),
+                ):
+                    row = session.execute(
+                        f"SELECT COUNT(*) AS total FROM {table}"
+                    ).fetchone()
+                    result[name] = int(row["total"])
+            finally:
+                session.close()
+        return result
+
     def get_instance(self, instance_id: str) -> dict[str, Any] | None:
         self.initialize()
         with self.backend.connect() as connection:

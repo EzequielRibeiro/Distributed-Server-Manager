@@ -81,7 +81,11 @@ REQUIRED_FILES=(
     core/bootstrap.sh
     dashboard/server.py
     database/manager.py
+    database/runtime_backend.py
+    database/operations.py
     database/migrations/001_initial.sql
+    database/migrations_postgresql/001_initial.sql
+    database/migrations_mysql/001_initial.sql
     installer/catalog.sh
     installer/compatibility_resolver.sh
     catalog/v2/schemas/runtime-definition.schema.json
@@ -96,8 +100,9 @@ done
 # Every SQL migration tracked by the release commit is part of the
 # database upgrade contract and must be present in the package.
 mapfile -t MIGRATION_FILES < <(
-    git -C "${ROOT}" ls-tree -r --name-only "${COMMIT}" -- database/migrations \
-        | grep -E '^database/migrations/[0-9]{3}_[a-z0-9_]+\.sql$'
+    git -C "${ROOT}" ls-tree -r --name-only "${COMMIT}" -- \
+        database/migrations database/migrations_postgresql database/migrations_mysql \
+        | grep -E '^database/migrations(_postgresql|_mysql)?/[0-9]{3}_[a-z0-9_]+\.sql$'
 )
 
 (( ${#MIGRATION_FILES[@]} > 0 )) \
@@ -144,7 +149,11 @@ manifest = {
         "core/bootstrap.sh",
         "dashboard/server.py",
         "database/manager.py",
+        "database/runtime_backend.py",
+        "database/operations.py",
         "database/migrations/001_initial.sql",
+        "database/migrations_postgresql/001_initial.sql",
+        "database/migrations_mysql/001_initial.sql",
         "installer/catalog.sh",
         "installer/compatibility_resolver.sh",
         "catalog/v2/schemas/runtime-definition.schema.json",

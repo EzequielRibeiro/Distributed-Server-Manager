@@ -70,6 +70,13 @@ DSM_VERSION=""
 INSTALLER_VERSION=""
 DSM_DATA_DIR=""
 DSM_DATABASE=""
+DSM_DATABASE_DRIVER="sqlite"
+DSM_DATABASE_HOST=""
+DSM_DATABASE_PORT=""
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER=""
+DSM_DATABASE_PASSWORD_FILE=""
+DSM_DATABASE_TLS="preferred"
 INSTALL_LOG=""
 INSTALL_DATE=""
 SYSTEMD_ENABLED=1
@@ -86,6 +93,7 @@ NEW_SRC=""
 BACKUP_FILE=""
 BACKUP_PART=""
 BACKUP_PROCESS_PID=""
+DATABASE_BACKUP_FILE=""
 UPDATE_TRANSACTION_STARTED=0
 ACTIVE_SERVICES=()
 OLD_VERSION=""
@@ -186,6 +194,9 @@ load_configuration() {
     echo "Carregando configuração DSM..."
     echo "Loading DSM configuration..."
     source "${CONFIG_FILE}"
+    export DSM_DATABASE_DRIVER DSM_DATABASE DSM_DATABASE_HOST DSM_DATABASE_PORT
+    export DSM_DATABASE_NAME DSM_DATABASE_USER DSM_DATABASE_PASSWORD_FILE
+    export DSM_DATABASE_TLS
     if [[ -z "${DSM_USER:-}" ]]
     then
         echo "Usuário DSM não definido."
@@ -509,6 +520,30 @@ create_backup() {
     fi
 }
 
+create_database_backup() {
+    [[ "${DSM_DATABASE_DRIVER:-sqlite}" != "sqlite" ]] || return 0
+    local MANAGER="${NEW_SRC}/database/manager.py"
+    local SUFFIX="sql"
+    [[ "${DSM_DATABASE_DRIVER}" != "postgresql" ]] || SUFFIX="dump"
+    DATABASE_BACKUP_FILE="${BACKUP_FILE%.tar.gz}.database.${SUFFIX}"
+    [[ -f "${MANAGER}" ]] \
+        || { echo "Gerenciador multi-database ausente: ${MANAGER}" >&2; return 1; }
+    echo "Criando backup consistente do banco ${DSM_DATABASE_DRIVER}..."
+    python3 "${MANAGER}" --root "${INSTALL_DIR}" \
+        backup "${DATABASE_BACKUP_FILE}"
+}
+
+restore_database_backup() {
+    [[ -n "${DATABASE_BACKUP_FILE}" \
+        && -f "${DATABASE_BACKUP_FILE}" ]] || return 0
+    local MANAGER="${INSTALL_DIR}/database/manager.py"
+    [[ -f "${MANAGER}" ]] \
+        || { echo "Gerenciador para restauração ausente: ${MANAGER}" >&2; return 1; }
+    echo "Restaurando banco ${DSM_DATABASE_DRIVER} antes do rollback de arquivos..."
+    python3 "${MANAGER}" --root "${INSTALL_DIR}" \
+        restore "${DATABASE_BACKUP_FILE}" --confirm-restore
+}
+
 # =============================================================
 # Parar serviços DSM | Stop DSM services
 # =============================================================
@@ -687,11 +722,14 @@ update_configuration_version() {
     then
         printf 'DSM_DATABASE="%s/data/capivara.db"\n' "${INSTALL_DIR}" >>"${CONFIG_FILE}"
     fi
+    if ! grep -q '^DSM_DATABASE_DRIVER=' "${CONFIG_FILE}"
+    then
+        printf 'DSM_DATABASE_DRIVER="sqlite"\n' >>"${CONFIG_FILE}"
+    fi
 }
 
 migrate_database() {
     local MANAGER="${INSTALL_DIR}/database/manager.py"
-    local DATABASE="${DSM_DATABASE:-${INSTALL_DIR}/data/capivara.db}"
 
     echo
     echo "Aplicando migrações do banco de dados..."
@@ -701,7 +739,7 @@ migrate_database() {
         echo "Gerenciador de banco ausente | Database manager missing: ${MANAGER}"
         exit 1
     fi
-    python3 "${MANAGER}" --root "${INSTALL_DIR}" --database "${DATABASE}" migrate
+    python3 "${MANAGER}" --root "${INSTALL_DIR}" migrate
 }
 
 # =============================================================
@@ -1122,6 +1160,7 @@ main() {
         echo "Automatic rollback will not be available if the update fails."
     else
         create_backup
+        create_database_backup
     fi
     # Preparação | Preparation
     capture_service_state
@@ -1210,6 +1249,7 @@ rollback() {
         echo "Backup não encontrado | not found."
         return 1
     fi
+    restore_database_backup
     echo "Removendo instalação quebrada..."
     echo "Removing broken installation..."
     rm -rf "${GAME_DATA_ROLLBACK}"

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import hashlib
 import json
 import os
@@ -15,6 +16,9 @@ import manager as database
 from backend import DatabaseBackend, DatabaseConfig
 from backend_factory import create_backend
 from registry_repository import RegistryRepository
+from runtime_backend import backend_from_environment
+from user_repository import UserRepository
+from users import hash_password
 
 
 AURORA_LOGO = (
@@ -256,13 +260,67 @@ def main() -> int:
     subcommands.add_parser("create-aurora", help="create the fictitious Aurora hierarchy")
     purge = subcommands.add_parser("purge-orphan", help="remove an orphan instance record without a local directory")
     purge.add_argument("instance_id")
+    bootstrap = subcommands.add_parser(
+        "bootstrap", help="create the first administrator, controller and agent"
+    )
+    bootstrap.add_argument("--admin", default="admin")
+    bootstrap.add_argument("--admin-password-file", type=Path)
+    bootstrap.add_argument("--controller-id", default="controller-main")
+    bootstrap.add_argument("--controller-node-id", default="controller-node")
+    bootstrap.add_argument("--controller-name", default="Controlador Principal")
+    bootstrap.add_argument("--agent-id", default="agent-main")
+    bootstrap.add_argument("--agent-node-id", default="agent-node")
+    bootstrap.add_argument("--agent-name", default="Agente Principal")
+    subcommands.add_parser("bootstrap-status", help="show initial topology status")
     args = parser.parse_args()
     root = args.root.resolve()
-    database_path = (args.database or root / "data" / "capivara.db").resolve()
-    if args.command == "create-aurora":
-        payload = create_aurora(root, database_path)
+    target: Path | DatabaseBackend
+    if args.database is not None or not os.environ.get("DSM_DATABASE_DRIVER"):
+        target = (args.database or root / "data" / "capivara.db").resolve()
     else:
-        payload = purge_orphan_instance(root, database_path, args.instance_id)
+        target = backend_from_environment()
+    if args.command == "create-aurora":
+        payload = create_aurora(root, target)
+    elif args.command == "purge-orphan":
+        payload = purge_orphan_instance(root, target, args.instance_id)
+    else:
+        repository = _repository(target)
+        if args.command == "bootstrap-status":
+            payload = repository.topology_status()
+        else:
+            if args.admin_password_file:
+                if not args.admin_password_file.is_file():
+                    raise ValueError("administrator password file does not exist")
+                if os.name != "nt" and args.admin_password_file.stat().st_mode & 0o077:
+                    raise ValueError(
+                        "administrator password file must use mode 600 or stricter"
+                    )
+                password = args.admin_password_file.read_text(
+                    encoding="utf-8"
+                ).rstrip("\r\n")
+            else:
+                password = getpass.getpass("Senha do administrador: ")
+                confirmation = getpass.getpass("Confirme a senha: ")
+                if password != confirmation:
+                    raise ValueError("password confirmation does not match")
+            payload = repository.bootstrap_topology(
+                controller_id=args.controller_id,
+                controller_node_id=args.controller_node_id,
+                controller_name=args.controller_name,
+                agent_id=args.agent_id,
+                agent_node_id=args.agent_node_id,
+                agent_name=args.agent_name,
+            )
+            users = UserRepository(repository.backend)
+            existing = users.get(args.admin.lower())
+            users.save(
+                username=args.admin.lower(),
+                password_hash=hash_password(password),
+                role="admin",
+                replace=existing is not None,
+            )
+            payload["administrator"] = args.admin.lower()
+            payload["created"] = True
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0
 

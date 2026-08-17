@@ -77,6 +77,13 @@ grep -Fq 'wait_with_progress' "${UPDATE}" || fail "backup progress is not displa
 grep -Fq 'cd "$(dirname "${INSTALL_DIR}")"' "${UPDATE}" || fail "update can keep a deleted installation as working directory"
 grep -Fq 'validate_runtime_account' "${UPDATE}" || fail "DSM runtime account is not validated"
 grep -Fq 'migrate_database' "${UPDATE}" || fail "database migrations are not part of the update"
+grep -Fq 'create_database_backup' "${UPDATE}" || fail "network database backup is missing"
+grep -Fq 'restore_database_backup' "${UPDATE}" || fail "network database rollback is missing"
+grep -Fq -- '--confirm-restore' "${UPDATE}" || fail "database restore lacks destructive confirmation"
+grep -Fq 'export DSM_DATABASE_DRIVER' "${UPDATE}" || fail "runtime database configuration is not exported"
+if grep -Fq -- '--database "${DATABASE}" migrate' "${UPDATE}"; then
+    fail "update migrations are forced to SQLite"
+fi
 grep -Fq 'id -u "${DSM_USER}"' "${UPDATE}" || fail "DSM user existence is not checked"
 grep -Fq 'getent group "${DSM_GROUP}"' "${UPDATE}" || fail "DSM group existence is not checked"
 grep -Fq 'capture_service_state' "${UPDATE}" || fail "active service state is not captured"

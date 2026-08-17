@@ -1,6 +1,15 @@
 # DSM CHANGELOG
 
-## Em desenvolvimento — v1.1.0-dev.2
+## Em desenvolvimento — v1.1.0-dev.6
+
+- Adiciona bootstrap idempotente do primeiro administrador, controller e agent
+- Adiciona diagnóstico estruturado `dsm operations readiness`
+- Valida o ciclo de provisionamento, auditoria, backup e recuperação
+- Implementa backup e restauração para SQLite, PostgreSQL, MySQL e MariaDB
+- Exige confirmação explícita para restauração destrutiva do banco
+- Integra backup externo e restauração ao rollback do atualizador
+- Inclui todas as migrations multi-database no pacote reproduzível de release
+- Mantém a promoção para estável condicionada à homologação Linux/systemd
 
 - Corrige o caminho do serviço agregado de workers do Dashboard
 - Inicializa estados com o padrão `*_state.json` usado pela API

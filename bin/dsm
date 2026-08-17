@@ -50,6 +50,11 @@ fi
 # shellcheck source=/dev/null
 source "${BOOTSTRAP}"
 
+# Python management commands consume the same runtime database contract.
+export DSM_DATABASE_DRIVER DSM_DATABASE DSM_DATABASE_HOST DSM_DATABASE_PORT
+export DSM_DATABASE_NAME DSM_DATABASE_USER DSM_DATABASE_PASSWORD_FILE
+export DSM_DATABASE_TLS
+
 # =============================================================
 # Update Manager
 # =============================================================
@@ -208,6 +213,11 @@ Database:
  dsm database status
  dsm database check
  dsm database backup <arquivo.db>
+ dsm database restore <arquivo> --confirm-restore
+
+Operação:
+
+ dsm operations readiness
 
 Instâncias:
 
@@ -542,17 +552,20 @@ database_command()
 {
     exec python3 "${DSM_ROOT}/database/manager.py" \
         --root "${DSM_ROOT}" \
-        --database "${DSM_DATABASE:-${DSM_ROOT}/data/capivara.db}" \
         "$@"
 }
 
 instance_command()
 {
     case "${1:-}" in
+        bootstrap|bootstrap-status)
+            exec python3 "${DSM_ROOT}/database/registry.py" \
+                --root "${DSM_ROOT}" \
+                "$@"
+            ;;
         create-aurora)
             exec python3 "${DSM_ROOT}/database/registry.py" \
                 --root "${DSM_ROOT}" \
-                --database "${DSM_DATABASE:-${DSM_ROOT}/data/capivara.db}" \
                 create-aurora
             ;;
         purge-orphan)
@@ -564,11 +577,16 @@ instance_command()
             fi
             exec python3 "${DSM_ROOT}/database/registry.py" \
                 --root "${DSM_ROOT}" \
-                --database "${DSM_DATABASE:-${DSM_ROOT}/data/capivara.db}" \
                 purge-orphan "$1"
             ;;
         *) usage; return 1 ;;
     esac
+}
+
+operations_command()
+{
+    exec python3 "${DSM_ROOT}/database/operations.py" \
+        --root "${DSM_ROOT}" "$@"
 }
 
 
@@ -706,6 +724,11 @@ database|db)
 instance)
     shift
     instance_command "$@"
+;;
+
+operations|ops)
+    shift
+    operations_command "$@"
 ;;
 
 *)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -432,17 +433,30 @@ class PostgreSQLBackendTest(
             expected,
         )
 
-    def test_backup_is_explicitly_unavailable(self):
-        backend = PostgreSQLBackend(
-            self.config()
-        )
+    def test_backup_uses_pg_dump_without_password_argument(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "backup.dump"
 
-        with self.assertRaises(
-            DatabaseError
-        ):
-            backend.backup(
-                "backup.sql"
-            )
+            def run(command, **kwargs):
+                Path(command[command.index("--file") + 1]).write_bytes(b"dump")
+
+            with patch("subprocess.run", side_effect=run) as runner:
+                result = PostgreSQLBackend(self.config()).backup(str(target))
+            command = runner.call_args.args[0]
+            self.assertEqual(command[0], "pg_dump")
+            self.assertNotIn("password", " ".join(command).lower())
+            self.assertEqual(result["size"], 4)
+
+    def test_restore_uses_pg_restore(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "backup.dump"
+            source.write_bytes(b"dump")
+            with patch("subprocess.run") as runner:
+                result = PostgreSQLBackend(self.config()).restore(str(source))
+            command = runner.call_args.args[0]
+            self.assertEqual(command[0], "pg_restore")
+            self.assertIn("--single-transaction", command)
+            self.assertEqual(result["kind"], "DatabaseRestore")
 
     def test_close_is_safe(self):
         backend = PostgreSQLBackend(

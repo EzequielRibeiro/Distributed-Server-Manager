@@ -447,3 +447,29 @@ def backup_database(
         "backup": str(destination),
         "size": destination.stat().st_size,
     }
+
+
+def restore_database(database: Path, source: Path) -> dict[str, object]:
+    """Atomically restore a validated SQLite backup."""
+    if not source.is_file():
+        raise DatabaseError(f"backup not found: {source}")
+    with closing(connect(source, create_parent=False)) as candidate:
+        integrity = candidate.execute("PRAGMA integrity_check").fetchone()[0]
+        if integrity != "ok":
+            raise DatabaseError("backup failed SQLite integrity_check")
+    database.parent.mkdir(parents=True, exist_ok=True)
+    temporary = database.with_name(database.name + ".restore-part")
+    temporary.unlink(missing_ok=True)
+    try:
+        with closing(connect(source, create_parent=False)) as candidate:
+            with closing(sqlite3.connect(temporary)) as target:
+                candidate.backup(target)
+        os.replace(temporary, database)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    return {
+        "schema_version": 1, "kind": "DatabaseRestore",
+        "database": str(database), "backup": str(source),
+        "size": database.stat().st_size,
+    }

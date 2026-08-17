@@ -21,6 +21,7 @@ if str(DATABASE_DIR) not in sys.path:
 import sqlite_engine
 
 from backend import (
+    DatabaseError as BackendDatabaseError,
     DatabaseConfig,
     DatabaseConfigurationError,
     DatabaseConnectionError,
@@ -487,6 +488,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    restore_parser = subparsers.add_parser(
+        "restore",
+        help="restore a backend-specific backup",
+    )
+    restore_parser.add_argument("source")
+    restore_parser.add_argument(
+        "--confirm-restore",
+        action="store_true",
+        help="confirm replacement of the configured database",
+    )
+
     return parser
 
 
@@ -531,6 +543,13 @@ def execute_backend_command(
                 )
             )
 
+        if args.command == "restore":
+            if not args.confirm_restore:
+                raise DatabaseConfigurationError(
+                    "restore requires --confirm-restore"
+                )
+            return dict(backend.restore(args.source))
+
         raise DatabaseConfigurationError(
             "unsupported database command: "
             f"{args.command}"
@@ -570,6 +589,7 @@ def main(
 
     except (
         DatabaseError,
+        BackendDatabaseError,
         DatabaseConfigurationError,
         DatabaseConnectionError,
         DatabaseMigrationError,

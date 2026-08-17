@@ -290,6 +290,18 @@ class SQLiteBackend(DatabaseBackend):
 
         return result
 
+    def restore(self, source: str) -> Mapping[str, Any]:
+        """Atomically restore a validated SQLite backup."""
+        try:
+            result = dict(sqlite_engine.restore_database(
+                self.database_path,
+                Path(source).expanduser().resolve(),
+            ))
+        except (sqlite_engine.DatabaseError, OSError, sqlite3.Error) as exc:
+            raise DatabaseError(f"SQLite restore failed: {exc}") from exc
+        result["driver"] = self.name
+        return result
+
     def close(
         self,
     ) -> None:

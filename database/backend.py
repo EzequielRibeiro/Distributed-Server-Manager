@@ -89,5 +89,9 @@ class DatabaseBackend(ABC):
         """Create a backend-appropriate consistent backup."""
 
     @abstractmethod
+    def restore(self, source: str) -> Mapping[str, Any]:
+        """Restore a backend-appropriate backup."""
+
+    @abstractmethod
     def close(self) -> None:
         """Release backend resources or pools."""

@@ -42,15 +42,19 @@ for relative_path in \
     version install.sh update.sh bin/dsm core/bootstrap.sh \
     dashboard/server.py installer/catalog.sh \
     installer/compatibility_resolver.sh database/manager.py \
-    database/migrations/001_initial.sql release-manifest.json
+    database/runtime_backend.py database/operations.py \
+    database/migrations/001_initial.sql \
+    database/migrations_postgresql/001_initial.sql \
+    database/migrations_mysql/001_initial.sql release-manifest.json
 do
     [[ -f "${PACKAGE_ROOT}/${relative_path}" ]] \
         || fail "required packaged file missing: ${relative_path}"
 done
 
 mapfile -t EXPECTED_MIGRATIONS < <(
-    git -C "${ROOT}" ls-tree -r --name-only "${COMMIT}" -- database/migrations \
-        | grep -E '^database/migrations/[0-9]{3}_[a-z0-9_]+\.sql$'
+    git -C "${ROOT}" ls-tree -r --name-only "${COMMIT}" -- \
+        database/migrations database/migrations_postgresql database/migrations_mysql \
+        | grep -E '^database/migrations(_postgresql|_mysql)?/[0-9]{3}_[a-z0-9_]+\.sql$'
 )
 
 (( ${#EXPECTED_MIGRATIONS[@]} > 0 )) \
@@ -63,9 +67,12 @@ do
 done
 
 mapfile -t PACKAGED_MIGRATIONS < <(
-    find "${PACKAGE_ROOT}/database/migrations" \
-        -maxdepth 1 -type f -name '*.sql' -printf 'database/migrations/%f\n' \
-        | sort
+    for directory in migrations migrations_postgresql migrations_mysql
+    do
+        find "${PACKAGE_ROOT}/database/${directory}" \
+            -maxdepth 1 -type f -name '*.sql' \
+            -printf "database/${directory}/%f\n"
+    done | sort
 )
 
 mapfile -t EXPECTED_MIGRATIONS_SORTED < <(

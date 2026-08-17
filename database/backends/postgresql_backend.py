@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import os
+from pathlib import Path
+import subprocess
 from typing import Any, Iterator, Mapping, Sequence
 
 import postgresql_engine
@@ -168,16 +171,78 @@ class PostgreSQLBackend(DatabaseBackend):
         self,
         destination: str,
     ) -> Mapping[str, Any]:
-        """Create a PostgreSQL backup.
-
-        PostgreSQL backup support will be implemented
-        separately using an appropriate backup provider.
-        """
-
-        raise DatabaseError(
-            "PostgreSQL backup provider "
-            "is not implemented yet"
+        """Create a consistent custom-format backup using pg_dump."""
+        target = Path(destination).expanduser().resolve()
+        if target.exists():
+            raise DatabaseError(f"backup destination already exists: {target}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        environment = os.environ.copy()
+        password = postgresql_engine.read_password_file(
+            self.config.password_file
         )
+        if password is not None:
+            environment["PGPASSWORD"] = password
+        environment["PGSSLMODE"] = postgresql_engine.normalize_sslmode(
+            self.config.tls_mode
+        )
+        command = [
+            "pg_dump", "--format=custom", "--no-owner", "--no-acl",
+            "--host", str(self.config.host),
+            "--port", str(self.config.port),
+            "--username", str(self.config.user),
+            "--file", str(target), str(self.config.database),
+        ]
+        try:
+            subprocess.run(
+                command, env=environment, check=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+            )
+            if not target.is_file():
+                raise DatabaseError("pg_dump did not create the backup")
+        except (FileNotFoundError, subprocess.CalledProcessError, OSError) as exc:
+            target.unlink(missing_ok=True)
+            raise DatabaseError(f"PostgreSQL backup failed: {exc}") from exc
+        finally:
+            environment.pop("PGPASSWORD", None)
+        return {
+            "schema_version": 1, "kind": "DatabaseBackup",
+            "driver": self.name, "backup": str(target),
+            "size": target.stat().st_size,
+        }
+
+    def restore(self, source: str) -> Mapping[str, Any]:
+        """Restore a pg_dump custom-format backup using pg_restore."""
+        backup = Path(source).expanduser().resolve()
+        if not backup.is_file():
+            raise DatabaseError(f"backup not found: {backup}")
+        environment = os.environ.copy()
+        password = postgresql_engine.read_password_file(
+            self.config.password_file
+        )
+        if password is not None:
+            environment["PGPASSWORD"] = password
+        environment["PGSSLMODE"] = postgresql_engine.normalize_sslmode(
+            self.config.tls_mode
+        )
+        command = [
+            "pg_restore", "--clean", "--if-exists", "--no-owner", "--no-acl",
+            "--single-transaction", "--host", str(self.config.host),
+            "--port", str(self.config.port), "--username", str(self.config.user),
+            "--dbname", str(self.config.database), str(backup),
+        ]
+        try:
+            subprocess.run(
+                command, env=environment, check=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+            )
+        except (FileNotFoundError, subprocess.CalledProcessError, OSError) as exc:
+            raise DatabaseError(f"PostgreSQL restore failed: {exc}") from exc
+        finally:
+            environment.pop("PGPASSWORD", None)
+        return {
+            "schema_version": 1, "kind": "DatabaseRestore",
+            "driver": self.name, "backup": str(backup),
+        }
 
     # =========================================================
     # Lifecycle

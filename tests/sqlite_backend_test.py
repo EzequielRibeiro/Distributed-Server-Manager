@@ -203,6 +203,23 @@ class SQLiteBackendTest(unittest.TestCase):
             0,
         )
 
+    def test_restore_replaces_database_atomically(self):
+        self.backend.initialize()
+        destination = Path(self.temp.name) / "backup" / "capivara.db"
+        self.backend.backup(str(destination))
+        with self.backend.transaction() as connection:
+            connection.execute(
+                "INSERT INTO nodes(id,name,role) VALUES (?,?,?)",
+                ("after-backup", "After Backup", "agent"),
+            )
+        result = self.backend.restore(str(destination))
+        self.assertEqual(result["kind"], "DatabaseRestore")
+        with self.backend.connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM nodes WHERE id=?", ("after-backup",)
+            ).fetchone()
+        self.assertIsNone(row)
+
 
 if __name__ == "__main__":
     unittest.main()
