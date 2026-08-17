@@ -81,11 +81,16 @@ jobs:
               --publish "${PORT}:5432" "${IMAGE}"
             until docker exec dsm-homologation-db pg_isready -U capivara -d capivara; do sleep 2; done
           else
+            DATABASE_SERVER_ARGS=()
+            if [[ "${DRIVER}" == "mysql" ]]; then
+              DATABASE_SERVER_ARGS+=(--log-bin-trust-function-creators=1)
+            fi
             docker run --detach --name dsm-homologation-db \
               --env MYSQL_DATABASE=capivara --env MYSQL_USER=capivara \
               --env MYSQL_PASSWORD=capivara-homologation \
               --env MYSQL_ROOT_PASSWORD=capivara-root-homologation \
-              --publish "${PORT}:3306" "${IMAGE}"
+              --publish "${PORT}:3306" "${IMAGE}" \
+              "${DATABASE_SERVER_ARGS[@]}"
             if [[ "${DRIVER}" == "mariadb" ]]; then
               until docker exec dsm-homologation-db mariadb \
                 --user=capivara --password=capivara-homologation \
