@@ -1,6 +1,6 @@
 # DSM CHANGELOG
 
-## Em desenvolvimento — v1.1.0-dev.7
+## v1.1.0 — 2026-08-17
 
 - Adiciona instalação real em raiz temporária no gate Linux
 - Valida reinstalação, bootstrap, readiness e health HTTP do Dashboard
@@ -13,7 +13,7 @@
 - Exige confirmação explícita para restauração destrutiva do banco
 - Integra backup externo e restauração ao rollback do atualizador
 - Inclui todas as migrations multi-database no pacote reproduzível de release
-- Mantém a promoção para estável condicionada à homologação Linux/systemd
+- Homologa instalação e reinstalação em Linux com health check via systemd
 
 - Corrige o caminho do serviço agregado de workers do Dashboard
 - Inicializa estados com o padrão `*_state.json` usado pela API
