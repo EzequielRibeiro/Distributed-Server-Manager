@@ -1,0 +1,7 @@
+-- =============================================================
+-- Capivara Distributed Server Manager
+-- PostgreSQL Migration 006
+-- Customer administration
+--
+-- Historical migration intentionally contains no schema changes.
+-- =============================================================
