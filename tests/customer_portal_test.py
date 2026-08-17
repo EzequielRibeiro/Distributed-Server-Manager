@@ -108,6 +108,8 @@ class CustomerPortalTest(unittest.TestCase):
         self.assertIn('id="provision-progress"', instance_page)
         self.assertIn("renderProvision", instance_script)
         self.assertIn("pending_steam_auth", instance_script)
+        self.assertIn('failed || status === "pending_steam_auth"', instance_script)
+        self.assertIn("Tentar instalação novamente", instance_page)
         self.assertIn("item.provision", customer_script)
 
 

@@ -1694,7 +1694,10 @@ def _provision_worker(
                 progress=35,
                 message="Baixando e validando o jogo no game-data do Agent…",
             )
-            env = os.environ | {"DSM_ROOT": str(root)}
+            env = os.environ | {
+                "DSM_ROOT": str(root),
+                "DSM_INSTANCE": instance_id,
+            }
             if _steam_user(root):
                 env["DSM_STEAM_USER"] = _steam_user(root)
 
@@ -5114,6 +5117,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         user = authenticate(self.headers)
+        if user is None:
+            self.unauthorized()
+            return
         if not can_write(user):
             self.forbidden()
             return

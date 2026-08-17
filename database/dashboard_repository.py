@@ -336,10 +336,15 @@ class DashboardRepository:
 
     def reconcile_instance_status(self, instance_id: str, status: str) -> int:
         ph = self.dialect.placeholder
+        protected = (
+            "queued", "provisioning", "installing",
+            "pending_steam_auth", "failed",
+        )
         with self.session(transaction=True) as session:
             cursor = session.execute(
-                f"UPDATE instances SET status={ph} WHERE id={ph} AND status<>{ph}",
-                (status, instance_id, status),
+                f"UPDATE instances SET status={ph} WHERE id={ph} AND status<>{ph} "
+                f"AND status NOT IN ({self.dialect.parameters(len(protected))})",
+                (status, instance_id, status, *protected),
             )
         return cursor.rowcount
 

@@ -295,6 +295,28 @@ steam_provider_install_authenticated()
     [[ -n "${STEAM_USER}" ]] || return 1
     mkdir -p "${INSTALL_PATH}"
 
+    # O provisionamento do Dashboard não possui terminal para responder a
+    # senha/Steam Guard. Valide primeiro as credenciais em cache sem pseudo-TTY
+    # para que a operação falhe rapidamente e possa orientar o administrador.
+    local AUTH_OUTPUT=""
+    local AUTH_STATUS=0
+    if command -v timeout >/dev/null 2>&1
+    then
+        AUTH_OUTPUT="$(timeout 60 "${STEAMCMD_BIN}" \
+            +login "${STEAM_USER}" +quit </dev/null 2>&1)" || AUTH_STATUS=$?
+    else
+        AUTH_OUTPUT="$("${STEAMCMD_BIN}" \
+            +login "${STEAM_USER}" +quit </dev/null 2>&1)" || AUTH_STATUS=$?
+    fi
+
+    if (( AUTH_STATUS != 0 ))
+    then
+        printf '%s\n' "${AUTH_OUTPUT}"
+        steam_error "Autenticação Steam necessária ou expirada."
+        steam_error "Execute 'dsm steam auth' no Agent e tente novamente."
+        return 42
+    fi
+
     steamcmd_run_with_progress \
         +force_install_dir "${INSTALL_PATH}" \
         +login "${STEAM_USER}" \

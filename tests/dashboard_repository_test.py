@@ -71,6 +71,28 @@ class DashboardRepositoryTest(unittest.TestCase):
             "DemoNode",
         )
 
+    def test_runtime_reconciliation_preserves_provision_states(self):
+        instance_id = "cliente-demo"
+        for protected in (
+            "queued", "provisioning", "installing",
+            "pending_steam_auth", "failed",
+        ):
+            self.repository.update_instance_status(instance_id, protected)
+            self.assertEqual(
+                self.repository.reconcile_instance_status(instance_id, "offline"),
+                0,
+            )
+            with self.repository.session() as session:
+                row = session.execute(
+                    "SELECT status FROM instances WHERE id=?", (instance_id,)
+                ).fetchone()
+            self.assertEqual(row["status"], protected)
+
+        self.repository.update_instance_status(instance_id, "online")
+        self.assertEqual(
+            self.repository.reconcile_instance_status(instance_id, "offline"), 1
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

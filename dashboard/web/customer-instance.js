@@ -133,13 +133,17 @@
     /*
      * Falha persistente
      */
-    if (failed) {
+    if (failed || status === "pending_steam_auth") {
       $("provision-label").textContent =
-        "Falha na instalação";
+        status === "pending_steam_auth"
+          ? "Autenticação Steam necessária"
+          : "Falha na instalação";
 
       $("provision-detail").textContent =
         provision.message ||
-        "Não foi possível instalar o jogo. O administrador foi notificado.";
+        (status === "pending_steam_auth"
+          ? "O administrador deve autenticar a Steam. Depois, tente novamente."
+          : "Não foi possível instalar o jogo. O administrador foi notificado.");
 
       box.classList.add(
         "provision-failed"
