@@ -115,6 +115,32 @@ class AlertRepositorySQLiteTest(unittest.TestCase):
         )
 
     def test_transaction_session_commits(self):
+        self._seed_controller()
+        with self.repository.transaction() as session:
+            session.execute(
+                """
+                INSERT INTO alerts(
+                    id, scope, controller_id, rule_id,
+                    level, state, message
+                ) VALUES (?,?,?,?,?,?,?)
+                """,
+                (
+                    "repository-alert",
+                    "controller",
+                    "controller1",
+                    "repository-rule",
+                    "WARNING",
+                    "OPEN",
+                    "Repository test",
+                ),
+            )
+
+        alert = self.repository.get_alert(
+            "repository-alert"
+        )
+        self.assertEqual(alert["state"], "OPEN")
+
+    def _seed_controller(self):
         with self.repository.transaction() as session:
             session.execute(
                 """
@@ -140,28 +166,57 @@ class AlertRepositorySQLiteTest(unittest.TestCase):
                     "active",
                 ),
             )
-            session.execute(
-                """
-                INSERT INTO alerts(
-                    id, scope, controller_id, rule_id,
-                    level, state, message
-                ) VALUES (?,?,?,?,?,?,?)
-                """,
-                (
-                    "repository-alert",
-                    "controller",
-                    "controller1",
-                    "repository-rule",
-                    "WARNING",
-                    "OPEN",
-                    "Repository test",
-                ),
-            )
 
-        alert = self.repository.get_alert(
-            "repository-alert"
+    def test_alert_lifecycle(self):
+        self._seed_controller()
+        opened = self.repository.open_alert(
+            alert_id="lifecycle",
+            rule_id="rule.lifecycle",
+            level="WARNING",
+            message="Lifecycle",
+            scope="controller",
+            controller_id="controller1",
         )
-        self.assertEqual(alert["state"], "OPEN")
+        self.assertEqual(opened["action"], "OPEN")
+        acknowledged = self.repository.acknowledge_alert("lifecycle")
+        self.assertEqual(acknowledged["state"], "ACKNOWLEDGED")
+        resolved = self.repository.resolve_alert("lifecycle")
+        self.assertEqual(resolved["state"], "RESOLVED")
+        reopened = self.repository.open_alert(
+            alert_id="lifecycle",
+            rule_id="rule.lifecycle",
+            level="CRITICAL",
+            message="Reopened",
+            scope="controller",
+            controller_id="controller1",
+        )
+        self.assertEqual(reopened["action"], "REOPEN")
+        self.assertEqual(len(self.repository.alert_history("lifecycle")), 4)
+
+    def test_list_count_and_suppress(self):
+        self._seed_controller()
+        self.repository.open_alert(
+            alert_id="query-alert",
+            rule_id="rule.query",
+            level="CRITICAL",
+            message="Query",
+            scope="controller",
+            controller_id="controller1",
+        )
+        self.assertEqual(
+            self.repository.count_alerts(active_only=True), 1
+        )
+        self.assertEqual(
+            self.repository.list_alerts(
+                active_only=True, limit=1
+            )[0]["id"],
+            "query-alert",
+        )
+        suppressed = self.repository.suppress_alert("query-alert", 5)
+        self.assertEqual(suppressed["state"], "SUPPRESSED")
+        self.assertEqual(
+            self.repository.count_alerts(active_only=True), 0
+        )
 
     def test_suppression_minutes_are_validated(self):
         with self.assertRaises(ValueError):

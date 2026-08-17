@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -16,29 +15,13 @@ if str(DATABASE_DIR) not in sys.path:
     )
 
 
-import alerts as ALERTS
+from alert_repository import AlertRepository
+from runtime_backend import backend_from_environment
 
 
-def database_path():
-    configured = os.environ.get(
-        "DSM_DATABASE",
-        "",
-    ).strip()
-
-    if configured:
-        return Path(configured)
-
-    root = Path(
-        os.environ.get(
-            "DSM_ROOT",
-            "/opt/dsm",
-        )
-    )
-
-    return (
-        root
-        / "data"
-        / "capivara.db"
+def repository():
+    return AlertRepository(
+        backend_from_environment()
     )
 
 
@@ -82,8 +65,7 @@ def print_json(payload):
 
 
 def command_open(args):
-    result = ALERTS.open_alert(
-        database_path(),
+    result = repository().open_alert(
         alert_id=args.id,
         rule_id=args.rule_id,
         level=normalize_level(
@@ -101,8 +83,7 @@ def command_open(args):
 
 
 def command_ack(args):
-    result = ALERTS.acknowledge_alert(
-        database_path(),
+    result = repository().acknowledge_alert(
         args.id,
     )
 
@@ -110,8 +91,7 @@ def command_ack(args):
 
 
 def command_resolve(args):
-    result = ALERTS.resolve_alert(
-        database_path(),
+    result = repository().resolve_alert(
         args.id,
     )
 
@@ -119,8 +99,7 @@ def command_resolve(args):
 
 
 def command_get(args):
-    result = ALERTS.get_alert(
-        database_path(),
+    result = repository().get_alert(
         args.id,
     )
 
@@ -128,16 +107,16 @@ def command_get(args):
 
 
 def command_active(args):
-    result = ALERTS.list_active(
-        database_path(),
+    result = repository().list_alerts(
+        active_only=True,
     )
 
     print_json(result)
 
 
 def command_count(args):
-    result = ALERTS.count_active(
-        database_path(),
+    result = repository().count_alerts(
+        active_only=True,
     )
 
     print_json(
@@ -149,13 +128,11 @@ def command_count(args):
 
 def command_history(args):
     if args.id:
-        result = ALERTS.alert_history(
-            database_path(),
+        result = repository().alert_history(
             args.id,
         )
     else:
-        result = ALERTS.list_alerts(
-            database_path(),
+        result = repository().list_alerts(
         )
 
     print_json(result)
