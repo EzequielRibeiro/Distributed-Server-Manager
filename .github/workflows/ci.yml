@@ -47,6 +47,9 @@ jobs:
       - name: Test installer
         run: bash tests/install_manager_test.sh
 
+      - name: Smoke test real Linux installation
+        run: sudo --preserve-env=GITHUB_ACTIONS bash tests/linux_install_smoke_test.sh
+
       - name: Test updater
         run: bash tests/update_manager_test.sh
 

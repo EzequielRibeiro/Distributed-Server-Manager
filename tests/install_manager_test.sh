@@ -30,6 +30,8 @@ grep -Fq 'guard_existing_installation' "${INSTALLER}" \
     || fail "existing installation is not guarded"
 grep -Fq 'initialize_database' "${INSTALLER}" \
     || fail "installer does not initialize the database"
+grep -Fq 'initialize_runtime_state' "${INSTALLER}" \
+    || fail "installer does not initialize dashboard runtime state"
 grep -Fq -- '--reinstall' "${INSTALLER}" \
     || fail "explicit reinstall option is unavailable"
 grep -Fq 'legacy_worker_units=' "${INSTALLER}" \
@@ -124,6 +126,30 @@ fi
     DSM_SOURCE="${ROOT}"
     ALLOW_REINSTALL=1
     guard_existing_installation >/dev/null 2>&1
+)
+
+(
+    id() {
+        case "$1" in
+            -un|-gn) printf 'node1\n' ;;
+            *) return 1 ;;
+        esac
+    }
+    source "${INSTALLER}"
+    DSM_ROOT="${TMP_DIR}/rendered-root"
+    SYSTEMD_DIR="${TMP_DIR}/rendered-systemd"
+    DSM_SERVICE_USER="node1"
+    DSM_SERVICE_GROUP="node1"
+    SYSTEMD_ACTIVE=1
+    mkdir -p "${DSM_ROOT}/systemd" "${SYSTEMD_DIR}"
+    cp "${ROOT}/systemd/dsm-dashboard.service" "${DSM_ROOT}/systemd/"
+    systemctl(){ :; }
+    install_systemd_units >/dev/null
+    rendered="${SYSTEMD_DIR}/dsm-dashboard.service"
+    grep -Fq "${DSM_ROOT}/dashboard/server.py" "${rendered}" \
+        || fail "rendered unit does not use configured DSM_ROOT"
+    ! grep -Fq '/opt/dsm' "${rendered}" \
+        || fail "rendered unit retains hard-coded /opt/dsm"
 )
 
 echo "Install manager tests passed."

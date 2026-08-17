@@ -35,6 +35,7 @@ INSTALL_MODE_EXPLICIT=0
     && INSTALL_MODE_EXPLICIT=1
 
 INSTALL_STEAMCMD="${DSM_INSTALL_STEAMCMD:-auto}"
+INSTALL_SYSTEMD="${DSM_INSTALL_SYSTEMD:-auto}"
 STEAMCMD_ROOT="${STEAMCMD_ROOT:-/opt/steamcmd}"
 
 DSM_DATABASE_DRIVER="${DSM_DATABASE_DRIVER:-sqlite}"
@@ -702,6 +703,19 @@ check_python_database_driver()
 
 check_systemd_capability()
 {
+    case "${INSTALL_SYSTEMD}" in
+        0|no|false|skip)
+            SYSTEMD_ACTIVE=0
+            requirement_warn "systemd" "desabilitado por DSM_INSTALL_SYSTEMD"
+            return 0
+            ;;
+        auto|1|yes|true)
+            ;;
+        *)
+            requirement_fail "systemd" "DSM_INSTALL_SYSTEMD inválido"
+            return 1
+            ;;
+    esac
     if [[ -d /run/systemd/system ]] \
         && command -v systemctl >/dev/null 2>&1 \
         && systemctl show-environment >/dev/null 2>&1
@@ -1882,6 +1896,20 @@ EOF_AGENT
     chmod 640 "${config}"
 }
 
+initialize_runtime_state()
+{
+    local initializer="${DSM_ROOT}/dashboard/state/init_state.sh"
+    [[ -f "${initializer}" ]] || die "Inicializador de estado ausente: ${initializer}"
+    if (( DRY_RUN ))
+    then
+        log "[DRY-RUN] inicializaria o estado operacional do Dashboard."
+        return 0
+    fi
+    DSM_ROOT="${DSM_ROOT}" bash "${initializer}"
+    chown -R "${DSM_SERVICE_USER}:${DSM_SERVICE_GROUP}" \
+        "${DSM_ROOT}/dashboard/state"
+}
+
 # =============================================================
 # Database
 # =============================================================
@@ -1997,6 +2025,7 @@ install_systemd_units()
         sed -i \
             -e "s|{{DSM_USER}}|${DSM_SERVICE_USER}|g" \
             -e "s|{{DSM_GROUP}}|${DSM_SERVICE_GROUP}|g" \
+            -e "s|/opt/dsm|${DSM_ROOT}|g" \
             "${destination}"
 
     done < <(
@@ -2224,6 +2253,7 @@ main()
 
     write_dsm_config
     write_agent_config
+    initialize_runtime_state
 
     initialize_database
 

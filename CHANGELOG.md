@@ -1,6 +1,10 @@
 # DSM CHANGELOG
 
-## Em desenvolvimento — v1.1.0-dev.6
+## Em desenvolvimento — v1.1.0-dev.7
+
+- Adiciona instalação real em raiz temporária no gate Linux
+- Valida reinstalação, bootstrap, readiness e health HTTP do Dashboard
+- Renderiza unidades systemd com `DSM_ROOT` configurável e executa `systemd-analyze verify`
 
 - Adiciona bootstrap idempotente do primeiro administrador, controller e agent
 - Adiciona diagnóstico estruturado `dsm operations readiness`

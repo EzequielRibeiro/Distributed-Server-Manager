@@ -40,6 +40,7 @@ jobs:
           python3 -m unittest tests/dashboard_catalog_v2_test.py
           python3 -m unittest tests/database_test.py
           bash tests/install_manager_test.sh
+          sudo --preserve-env=GITHUB_ACTIONS bash tests/linux_install_smoke_test.sh
           bash tests/update_manager_test.sh
           bash tests/update_cli_test.sh
           bash tests/catalog_v2_test.sh
