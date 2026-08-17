@@ -12,6 +12,11 @@
 import re
 import sqlite3
 from contextlib import closing
+from pathlib import Path
+
+from backend import DatabaseBackend, DatabaseConfig
+from backend_factory import create_backend
+from customer_repository import CustomerRepository
 
 
 DOCUMENT_RE = re.compile(r"\D+")
@@ -67,7 +72,7 @@ def customer_to_public(row):
     return data
 
 
-def search_customers(
+def _legacy_search_customers(
     database_path,
     *,
     query="",
@@ -256,7 +261,7 @@ def search_customers(
     }
 
 
-def get_customer(
+def _legacy_get_customer(
     database_path,
     customer_id,
 ):
@@ -488,3 +493,58 @@ def get_customer(
     ]
 
     return result
+
+
+# =============================================================
+# Multi-database compatibility facade
+#
+# Keep the historical implementation above temporarily for an
+# easily reviewable transition. These final public definitions are
+# authoritative and delegate every query to CustomerRepository.
+# =============================================================
+
+def _repository(
+    target: str | Path | DatabaseBackend,
+) -> CustomerRepository:
+    if isinstance(target, DatabaseBackend):
+        return CustomerRepository(target)
+
+    return CustomerRepository(
+        create_backend(
+            DatabaseConfig(
+                driver="sqlite",
+                database=str(
+                    Path(target).expanduser().resolve()
+                ),
+            )
+        )
+    )
+
+
+def search_customers(
+    database_path: str | Path | DatabaseBackend,
+    *,
+    query="",
+    status="",
+    limit=50,
+    offset=0,
+):
+    """Search customers through CustomerRepository."""
+
+    return _repository(database_path).search_customers(
+        query=query,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+
+
+def get_customer(
+    database_path: str | Path | DatabaseBackend,
+    customer_id,
+):
+    """Return a customer view through CustomerRepository."""
+
+    return _repository(database_path).get_customer(
+        customer_id
+    )
