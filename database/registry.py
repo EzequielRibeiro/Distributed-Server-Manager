@@ -12,6 +12,9 @@ from contextlib import closing
 from pathlib import Path
 
 import manager as database
+from backend import DatabaseBackend, DatabaseConfig
+from backend_factory import create_backend
+from registry_repository import RegistryRepository
 
 
 AURORA_LOGO = (
@@ -163,6 +166,85 @@ def purge_orphan_instance(root: Path, database_path: Path, instance_id: str) -> 
         "instance_id": instance_id,
         "name": row["name"],
         "runtime_removed": runtime_path.exists() is False,
+    }
+
+
+def _repository(target: Path | DatabaseBackend) -> RegistryRepository:
+    if isinstance(target, DatabaseBackend):
+        return RegistryRepository(target)
+    return RegistryRepository(create_backend(DatabaseConfig(
+        driver="sqlite", database=str(Path(target).expanduser().resolve())
+    )))
+
+
+def create_aurora(
+    root: Path,
+    database_path: Path | DatabaseBackend,
+) -> dict[str, object]:
+    """Create the Aurora hierarchy through RegistryRepository."""
+    instance_path = root / "instances" / "DemoNode" / "minecraft" / "cliente-demo"
+    metadata = {
+        "schema_version": 1,
+        "controller_id": "controller-demo",
+        "agent_id": "agent-demo",
+        "display_name": "Servidor Aurora",
+        "owner": {"name": "Marina Souza", "username": "marina.demo"},
+        "customer": {
+            "id": "CLI-DEMO-001", "name": "Aurora Games Ltda.",
+            "email": "contato@example.invalid", "phone": "+55 11 0000-0000",
+        },
+        "logo_url": AURORA_LOGO,
+    }
+    metadata_dir = instance_path / ".dsm"
+    metadata_path = metadata_dir / "instance-metadata.json"
+    repository = _repository(database_path)
+    repository.create_aurora(
+        password_hash=password_hash("Aurora@2026!"),
+        manifest_path=str(metadata_path),
+        metadata_json=json.dumps(metadata, ensure_ascii=False),
+    )
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    temporary = metadata_path.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(metadata, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, metadata_path)
+    return {
+        "created": True, "controller_id": "controller-demo",
+        "agent_id": "agent-demo", "customer_id": "CLI-DEMO-001",
+        "instance_id": "cliente-demo", "instance": str(instance_path),
+        "metadata": str(metadata_path),
+    }
+
+
+def purge_orphan_instance(
+    root: Path,
+    database_path: Path | DatabaseBackend,
+    instance_id: str,
+) -> dict[str, object]:
+    """Remove a registry row only when no local instance directory exists."""
+    if not instance_id or not all(
+        part not in instance_id for part in ("/", "\\", "..")
+    ):
+        raise ValueError("invalid instance identifier")
+    repository = _repository(database_path)
+    row = repository.get_instance(instance_id)
+    if row is None:
+        raise ValueError("instance is not registered")
+    instance_path = root / "instances" / row["node_id"] / row["game_id"] / row["id"]
+    if instance_path.exists():
+        raise ValueError(
+            "instance has a local directory; use the instance administration danger zone instead"
+        )
+    runtime_path = root / "runtime" / "resources" / row["node_id"] / row["game_id"] / row["id"]
+    repository.delete_instance(instance_id)
+    if runtime_path.is_dir():
+        import shutil
+        shutil.rmtree(runtime_path)
+    return {
+        "purged": True, "instance_id": instance_id, "name": row["name"],
+        "runtime_removed": not runtime_path.exists(),
     }
 
 
