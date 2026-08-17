@@ -26,6 +26,8 @@ grep -Fq 'if ! pwd -P >/dev/null 2>&1' "${CLI}" \
     || fail "dsm CLI cannot recover from a removed working directory"
 grep -Fq -- '--local' "${INSTALLER}" \
     || fail "local installation option is unavailable"
+grep -Fq 'run mkdir -p "$(dirname "${DSM_LINK}")"' "${INSTALLER}" \
+    || fail "installer does not create custom CLI link parent"
 grep -Fq 'guard_existing_installation' "${INSTALLER}" \
     || fail "existing installation is not guarded"
 grep -Fq 'initialize_database' "${INSTALLER}" \

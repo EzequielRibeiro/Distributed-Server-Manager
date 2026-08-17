@@ -1975,6 +1975,7 @@ run_database_manager()
 
 install_cli()
 {
+    run mkdir -p "$(dirname "${DSM_LINK}")"
     run ln -sf \
         "${DSM_BIN}" \
         "${DSM_LINK}"
