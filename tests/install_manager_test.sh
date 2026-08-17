@@ -34,7 +34,8 @@ grep -Fq -- '--reinstall' "${INSTALLER}" \
     || fail "explicit reinstall option is unavailable"
 grep -Fq 'legacy_worker_units=' "${INSTALLER}" \
     || fail "installer does not disable duplicate legacy workers"
-grep -Fq 'systemctl disable --now "${unit}"' "${INSTALLER}" \
+grep -Fq 'disable \' "${INSTALLER}" \
+    && grep -Fq -- '--now \' "${INSTALLER}" \
     || fail "installer leaves legacy workers running"
 
 TMP_DIR="$(mktemp -d)"
@@ -61,6 +62,7 @@ trap 'rm -rf -- "${TMP_DIR}"' EXIT
     cp "${ROOT}/version" "${DSM_ROOT}/version"
     printf 'LOCAL_SETTING="preserved"\n' >>"${DSM_ROOT}/config/dsm.conf"
 
+    normalize_database_settings
     write_dsm_config >/dev/null
 
     grep -q '^DSM_USER="node1"$' "${DSM_ROOT}/config/dsm.conf" || fail "DSM_USER not written"
@@ -69,6 +71,7 @@ trap 'rm -rf -- "${TMP_DIR}"' EXIT
     grep -q "^DSM_VERSION=\"${EXPECTED_VERSION}\"$" "${DSM_ROOT}/config/dsm.conf" || fail "DSM_VERSION not written"
     grep -q "^INSTALLER_VERSION=\"${EXPECTED_VERSION}\"$" "${DSM_ROOT}/config/dsm.conf" || fail "INSTALLER_VERSION not written"
     grep -q "^DSM_DATABASE=\"${DSM_ROOT}/data/capivara.db\"$" "${DSM_ROOT}/config/dsm.conf" || fail "DSM_DATABASE not written"
+    grep -q '^DSM_DATABASE_DRIVER="sqlite"$' "${DSM_ROOT}/config/dsm.conf" || fail "database driver not written"
     grep -q '^LOCAL_SETTING="preserved"$' "${DSM_ROOT}/config/dsm.conf" || fail "local setting overwritten"
 )
 
