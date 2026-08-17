@@ -1,277 +1,610 @@
 #!/usr/bin/env python3
-"""SQLite persistence and migration manager for Capivara DSM."""
+"""Capivara DSM database manager and compatibility facade."""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
-import re
 import sqlite3
 import sys
-from contextlib import closing
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 
-MIGRATION_PATTERN = re.compile(r"^(?P<version>[0-9]{3})_(?P<name>[a-z0-9_]+)\.sql$")
-SCHEMA_MIGRATIONS_SQL = """
-CREATE TABLE IF NOT EXISTS schema_migrations (
-    version INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,
-    checksum TEXT NOT NULL,
-    applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+DATABASE_DIR = Path(__file__).resolve().parent
+
+if str(DATABASE_DIR) not in sys.path:
+    sys.path.insert(0, str(DATABASE_DIR))
+
+
+import sqlite_engine
+
+from backend import (
+    DatabaseConfig,
+    DatabaseConfigurationError,
+    DatabaseConnectionError,
+    DatabaseMigrationError,
 )
-"""
 
+from backend_factory import (
+    create_backend,
+    normalize_database_driver,
+)
 
-class DatabaseError(RuntimeError):
-    """Raised when database initialization or validation cannot continue."""
+# =============================================================
+# SQLite compatibility API
+#
+# Existing Capivara modules still import database/manager.py
+# directly. Keep this API stable while consumers are migrated
+# gradually to DatabaseBackend.
+# =============================================================
 
-
-@dataclass(frozen=True)
-class Migration:
-    version: int
-    name: str
-    path: Path
-    sql: str
-    checksum: str
+DatabaseError = sqlite_engine.DatabaseError
+Migration = sqlite_engine.Migration
 
 
 def default_root() -> Path:
-    return Path(os.environ.get("DSM_ROOT", Path(__file__).resolve().parents[1])).resolve()
+    """Return the configured Capivara root directory."""
+
+    return sqlite_engine.default_root()
 
 
-def default_database(root: Path) -> Path:
-    configured = os.environ.get("DSM_DATABASE")
-    return Path(configured).resolve() if configured else root / "data" / "capivara.db"
+def default_database(
+    root: Path,
+) -> Path:
+    """Return the legacy/default SQLite database path."""
+
+    return sqlite_engine.default_database(root)
 
 
 def migration_directory() -> Path:
-    return Path(__file__).resolve().parent / "migrations"
+    """Return the current SQLite migration directory."""
+
+    return sqlite_engine.migration_directory()
 
 
-def load_migrations(directory: Path | None = None) -> list[Migration]:
-    directory = directory or migration_directory()
-    migrations: list[Migration] = []
-    seen_versions: set[int] = set()
+def load_migrations(
+    directory: Path | None = None,
+) -> list[Migration]:
+    """Load SQLite migrations using the legacy API."""
 
-    if not directory.is_dir():
-        raise DatabaseError(f"migration directory not found: {directory}")
-
-    for path in sorted(directory.glob("*.sql")):
-        match = MIGRATION_PATTERN.fullmatch(path.name)
-        if not match:
-            raise DatabaseError(f"invalid migration filename: {path.name}")
-        version = int(match.group("version"))
-        if version in seen_versions:
-            raise DatabaseError(f"duplicate migration version: {version}")
-        seen_versions.add(version)
-        sql = path.read_text(encoding="utf-8")
-        migrations.append(
-            Migration(
-                version=version,
-                name=match.group("name"),
-                path=path,
-                sql=sql,
-                checksum=hashlib.sha256(sql.encode("utf-8")).hexdigest(),
-            )
-        )
-
-    if not migrations:
-        raise DatabaseError("no database migrations were found")
-    return migrations
+    return sqlite_engine.load_migrations(
+        directory
+    )
 
 
-def connect(database: Path, *, create_parent: bool = True) -> sqlite3.Connection:
-    if create_parent:
-        database.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(database, timeout=5)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 5000")
-    return connection
+def connect(
+    database: Path,
+    *,
+    create_parent: bool = True,
+) -> sqlite3.Connection:
+    """Open a legacy SQLite connection.
+
+    New database-aware code should prefer DatabaseBackend.
+    """
+
+    return sqlite_engine.connect(
+        database,
+        create_parent=create_parent,
+    )
 
 
-def _sql_literal(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
+def applied_migrations(
+    connection: sqlite3.Connection,
+) -> dict[int, sqlite3.Row]:
+    """Return migrations recorded by SQLite."""
 
-
-def applied_migrations(connection: sqlite3.Connection) -> dict[int, sqlite3.Row]:
-    connection.execute(SCHEMA_MIGRATIONS_SQL)
-    rows = connection.execute(
-        "SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY version"
-    ).fetchall()
-    return {int(row["version"]): row for row in rows}
+    return sqlite_engine.applied_migrations(
+        connection
+    )
 
 
 def apply_migrations(
-    connection: sqlite3.Connection, migrations: Iterable[Migration] | None = None
+    connection: sqlite3.Connection,
+    migrations: Iterable[Migration] | None = None,
 ) -> list[int]:
-    migration_list = list(migrations or load_migrations())
-    applied = applied_migrations(connection)
-    completed: list[int] = []
+    """Apply SQLite migrations using the legacy API."""
 
-    for migration in migration_list:
-        previous = applied.get(migration.version)
-        if previous:
-            if previous["checksum"] != migration.checksum:
-                raise DatabaseError(
-                    f"applied migration {migration.version:03d} checksum does not match"
-                )
-            continue
+    return sqlite_engine.apply_migrations(
+        connection,
+        migrations,
+    )
 
-        tracking_sql = (
-            "INSERT INTO schema_migrations(version, name, checksum) VALUES ("
-            f"{migration.version}, {_sql_literal(migration.name)}, "
-            f"{_sql_literal(migration.checksum)});"
+
+def initialize(
+    database: Path,
+) -> dict[str, object]:
+    """Initialize SQLite using the legacy API."""
+
+    return sqlite_engine.initialize(
+        database
+    )
+
+
+def database_status(
+    database: Path,
+    *,
+    applied_now: Iterable[int] = (),
+) -> dict[str, object]:
+    """Return SQLite status using the legacy API."""
+
+    return sqlite_engine.database_status(
+        database,
+        applied_now=applied_now,
+    )
+
+
+def check_database(
+    database: Path,
+) -> dict[str, object]:
+    """Run legacy SQLite database checks."""
+
+    return sqlite_engine.check_database(
+        database
+    )
+
+
+def backup_database(
+    database: Path,
+    destination: Path,
+) -> dict[str, object]:
+    """Create a legacy SQLite backup."""
+
+    return sqlite_engine.backup_database(
+        database,
+        destination,
+    )
+
+
+# =============================================================
+# Multi-backend configuration
+# =============================================================
+
+def default_driver() -> str:
+    """Return the configured database driver."""
+
+    return normalize_database_driver(
+        os.environ.get(
+            "DSM_DATABASE_DRIVER",
+            "sqlite",
         )
-        script = f"BEGIN IMMEDIATE;\n{migration.sql}\n{tracking_sql}\nCOMMIT;\n"
-        try:
-            connection.executescript(script)
-        except sqlite3.Error as exc:
-            connection.rollback()
-            raise DatabaseError(
-                f"migration {migration.version:03d}_{migration.name} failed: {exc}"
-            ) from exc
-        completed.append(migration.version)
-
-    return completed
+    )
 
 
-def initialize(database: Path) -> dict[str, object]:
-    with closing(connect(database)) as connection:
-        connection.execute("PRAGMA journal_mode = WAL")
-        connection.execute("PRAGMA synchronous = NORMAL")
-        completed = apply_migrations(connection)
-    return database_status(database, applied_now=completed)
+def _environment_port(
+    default: int,
+) -> int:
+    """Read and validate DSM_DATABASE_PORT."""
 
+    value = os.environ.get(
+        "DSM_DATABASE_PORT"
+    )
 
-def _table_names(connection: sqlite3.Connection) -> list[str]:
-    return [
-        str(row[0])
-        for row in connection.execute(
-            "SELECT name FROM sqlite_master "
-            "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    if not value:
+        return default
+
+    try:
+        port = int(value)
+
+    except ValueError as exc:
+        raise DatabaseConfigurationError(
+            "DSM_DATABASE_PORT must be an integer"
+        ) from exc
+
+    if not 1 <= port <= 65535:
+        raise DatabaseConfigurationError(
+            "DSM_DATABASE_PORT must be between "
+            "1 and 65535"
         )
-    ]
+
+    return port
 
 
-def database_status(database: Path, *, applied_now: Iterable[int] = ()) -> dict[str, object]:
-    if not database.is_file():
-        return {
-            "schema_version": 1,
-            "kind": "DatabaseStatus",
-            "database": str(database),
-            "initialized": False,
-            "health": "missing",
-            "current_migration": 0,
-            "applied_migrations": [],
-            "applied_now": list(applied_now),
-            "tables": [],
-        }
+def _validate_port(
+    port: int,
+) -> int:
+    """Validate a network database port."""
 
-    with closing(connect(database, create_parent=False)) as connection:
-        table_names = _table_names(connection)
-        if "schema_migrations" not in table_names:
-            migrations: list[dict[str, object]] = []
-        else:
-            migrations = [
-                dict(row)
-                for row in connection.execute(
-                    "SELECT version, name, checksum, applied_at "
-                    "FROM schema_migrations ORDER BY version"
-                )
-            ]
-        quick_check = str(connection.execute("PRAGMA quick_check").fetchone()[0])
+    if not 1 <= port <= 65535:
+        raise DatabaseConfigurationError(
+            "database port must be between "
+            "1 and 65535"
+        )
 
-    return {
-        "schema_version": 1,
-        "kind": "DatabaseStatus",
-        "database": str(database),
-        "initialized": bool(migrations),
-        "health": "ok" if quick_check == "ok" else "error",
-        "current_migration": int(migrations[-1]["version"]) if migrations else 0,
-        "applied_migrations": migrations,
-        "applied_now": list(applied_now),
-        "tables": table_names,
-    }
+    return port
 
 
-def check_database(database: Path) -> dict[str, object]:
-    status = database_status(database)
-    status["kind"] = "DatabaseCheck"
-    status["valid"] = bool(status["initialized"] and status["health"] == "ok")
-    return status
+def _validate_connect_timeout(
+    timeout: int,
+) -> int:
+    """Validate database connection timeout."""
+
+    if timeout <= 0:
+        raise DatabaseConfigurationError(
+            "database connect timeout must "
+            "be greater than zero"
+        )
+
+    return timeout
 
 
-def backup_database(database: Path, destination: Path) -> dict[str, object]:
-    if not database.is_file():
-        raise DatabaseError(f"database not found: {database}")
-    if destination.exists():
-        raise DatabaseError(f"backup destination already exists: {destination}")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with closing(connect(database, create_parent=False)) as source:
-        with closing(sqlite3.connect(destination)) as target:
-            source.backup(target)
-    return {
-        "schema_version": 1,
-        "kind": "DatabaseBackup",
-        "database": str(database),
-        "backup": str(destination),
-        "size": destination.stat().st_size,
-    }
+def config_from_args(
+    args: argparse.Namespace,
+) -> DatabaseConfig:
+    """Build backend-independent database configuration."""
 
+    driver = normalize_database_driver(
+        args.driver
+    )
+
+    connect_timeout = (
+        _validate_connect_timeout(
+            args.connect_timeout
+        )
+    )
+
+    root = args.root.resolve()
+
+    # ---------------------------------------------------------
+    # SQLite
+    # ---------------------------------------------------------
+
+    if driver == "sqlite":
+        database = (
+            args.database.resolve()
+            if args.database
+            else default_database(root)
+        )
+
+        return DatabaseConfig(
+            driver="sqlite",
+            database=str(database),
+            connect_timeout=connect_timeout,
+        )
+
+    # ---------------------------------------------------------
+    # PostgreSQL / MySQL
+    # ---------------------------------------------------------
+
+    database_name = (
+        args.database_name
+        or os.environ.get(
+            "DSM_DATABASE_NAME",
+            "capivara",
+        )
+    )
+
+    host = (
+        args.host
+        or os.environ.get(
+            "DSM_DATABASE_HOST",
+            ""
+        )
+    ).strip()
+
+    user = (
+        args.user
+        or os.environ.get(
+            "DSM_DATABASE_USER",
+            ""
+        )
+    ).strip()
+
+    password_file = (
+        args.password_file
+        or os.environ.get(
+            "DSM_DATABASE_PASSWORD_FILE"
+        )
+    )
+
+    tls_mode = (
+        args.tls
+        or os.environ.get(
+            "DSM_DATABASE_TLS",
+            "preferred",
+        )
+    ).strip().lower()
+
+    if not database_name:
+        raise DatabaseConfigurationError(
+            f"{driver} requires a database name"
+        )
+
+    if not host:
+        raise DatabaseConfigurationError(
+            f"{driver} requires a database host"
+        )
+
+    if not user:
+        raise DatabaseConfigurationError(
+            f"{driver} requires a database user"
+        )
+
+    if driver == "postgresql":
+        port = (
+            args.port
+            if args.port is not None
+            else _environment_port(5432)
+        )
+
+    else:
+        port = (
+            args.port
+            if args.port is not None
+            else _environment_port(3306)
+        )
+
+    port = _validate_port(port)
+
+    return DatabaseConfig(
+        driver=driver,
+        database=database_name,
+        host=host,
+        port=port,
+        user=user,
+        password_file=password_file,
+        tls_mode=tls_mode,
+        connect_timeout=connect_timeout,
+    )
+
+
+# =============================================================
+# CLI
+# =============================================================
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Capivara DSM SQLite manager")
-    parser.add_argument("--root", type=Path, default=default_root())
-    parser.add_argument("--database", type=Path)
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("init", help="create the database and apply migrations")
-    subparsers.add_parser("migrate", help="apply pending migrations")
-    subparsers.add_parser("status", help="show migration and database status")
-    subparsers.add_parser("check", help="run SQLite integrity checks")
-    backup_parser = subparsers.add_parser("backup", help="create a consistent SQLite backup")
-    backup_parser.add_argument("destination", type=Path)
+    """Build database management CLI parser."""
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Capivara DSM database manager"
+        )
+    )
+
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=default_root(),
+    )
+
+    parser.add_argument(
+        "--driver",
+        default=default_driver(),
+        help=(
+            "database driver: "
+            "sqlite, postgresql or mysql"
+        ),
+    )
+
+    # Legacy SQLite path option.
+    parser.add_argument(
+        "--database",
+        type=Path,
+        help="SQLite database path",
+    )
+
+    # Network database options.
+    parser.add_argument(
+        "--database-name",
+        help=(
+            "PostgreSQL/MySQL database name"
+        ),
+    )
+
+    parser.add_argument(
+        "--host",
+        help="database server hostname",
+    )
+
+    parser.add_argument(
+        "--port",
+        type=int,
+        help="database server port",
+    )
+
+    parser.add_argument(
+        "--user",
+        help="database user",
+    )
+
+    parser.add_argument(
+        "--password-file",
+        help=(
+            "file containing the database password"
+        ),
+    )
+
+    parser.add_argument(
+        "--tls",
+        help=(
+            "database TLS mode"
+        ),
+    )
+
+    try:
+        default_timeout = int(
+            os.environ.get(
+                "DSM_DATABASE_CONNECT_TIMEOUT",
+                "5",
+            )
+        )
+
+    except ValueError as exc:
+        raise DatabaseConfigurationError(
+            "DSM_DATABASE_CONNECT_TIMEOUT "
+            "must be an integer"
+        ) from exc
+
+    parser.add_argument(
+        "--connect-timeout",
+        type=int,
+        default=default_timeout,
+        help="database connection timeout",
+    )
+
+    subparsers = parser.add_subparsers(
+        dest="command",
+        required=True,
+    )
+
+    subparsers.add_parser(
+        "init",
+        help=(
+            "create/initialize database "
+            "and apply migrations"
+        ),
+    )
+
+    subparsers.add_parser(
+        "migrate",
+        help="apply pending migrations",
+    )
+
+    subparsers.add_parser(
+        "status",
+        help=(
+            "show migration and database status"
+        ),
+    )
+
+    subparsers.add_parser(
+        "check",
+        help="run database health checks",
+    )
+
+    backup_parser = (
+        subparsers.add_parser(
+            "backup",
+            help="create a consistent database backup",
+        )
+    )
+
+    backup_parser.add_argument(
+        "destination",
+        help=(
+            "backend-specific backup destination"
+        ),
+    )
+
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    root = args.root.resolve()
-    database = (args.database or default_database(root)).resolve()
+def execute_backend_command(
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    """Execute a CLI command through DatabaseBackend."""
+
+    config = config_from_args(
+        args
+    )
+
+    backend = create_backend(
+        config
+    )
 
     try:
-        if args.command in {"init", "migrate"}:
-            payload = initialize(database)
-        elif args.command == "status":
-            payload = database_status(database)
-        elif args.command == "check":
-            payload = check_database(database)
-        elif args.command == "backup":
-            payload = backup_database(database, args.destination.resolve())
-        else:  # pragma: no cover - argparse prevents this branch.
-            parser.error(f"unsupported command: {args.command}")
-            return 2
-    except (DatabaseError, OSError, sqlite3.Error) as exc:
+        if args.command == "init":
+            return dict(
+                backend.initialize()
+            )
+
+        if args.command == "migrate":
+            return dict(
+                backend.migrate()
+            )
+
+        if args.command == "status":
+            return dict(
+                backend.status()
+            )
+
+        if args.command == "check":
+            return dict(
+                backend.health_check()
+            )
+
+        if args.command == "backup":
+            return dict(
+                backend.backup(
+                    args.destination
+                )
+            )
+
+        raise DatabaseConfigurationError(
+            "unsupported database command: "
+            f"{args.command}"
+        )
+
+    finally:
+        backend.close()
+
+
+def _error_payload(
+    exc: Exception,
+) -> dict[str, object]:
+    """Build stable database CLI error output."""
+
+    return {
+        "schema_version": 1,
+        "kind": "DatabaseError",
+        "error": str(exc),
+    }
+
+
+def main(
+    argv: list[str] | None = None,
+) -> int:
+    """Run the Capivara database manager CLI."""
+
+    try:
+        parser = build_parser()
+
+        args = parser.parse_args(
+            argv
+        )
+
+        payload = execute_backend_command(
+            args
+        )
+
+    except (
+        DatabaseError,
+        DatabaseConfigurationError,
+        DatabaseConnectionError,
+        DatabaseMigrationError,
+        sqlite3.Error,
+        OSError,
+        ValueError,
+    ) as exc:
         print(
             json.dumps(
-                {"schema_version": 1, "kind": "DatabaseError", "error": str(exc)},
+                _error_payload(exc),
                 ensure_ascii=False,
             ),
             file=sys.stderr,
         )
+
         return 1
 
-    print(json.dumps(payload, indent=2, ensure_ascii=False))
-    if args.command == "check" and not payload["valid"]:
+    print(
+        json.dumps(
+            payload,
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
+
+    if (
+        args.command == "check"
+        and not payload.get("valid", False)
+    ):
         return 1
+
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(
+        main()
+    )
