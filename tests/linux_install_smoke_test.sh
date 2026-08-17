@@ -9,10 +9,10 @@ TEST_ROOT="$(mktemp -d /tmp/capivara-install-smoke.XXXXXX)"
 
 cleanup()
 {
-    if [[ -n "${DASHBOARD_PID:-}" ]] && kill -0 "${DASHBOARD_PID}" 2>/dev/null
+    if [[ -n "${SYSTEMD_SMOKE_UNIT:-}" ]]
     then
-        kill "${DASHBOARD_PID}" 2>/dev/null || true
-        wait "${DASHBOARD_PID}" 2>/dev/null || true
+        systemctl stop "${SYSTEMD_SMOKE_UNIT}" 2>/dev/null || true
+        systemctl reset-failed "${SYSTEMD_SMOKE_UNIT}" 2>/dev/null || true
     fi
     [[ "${TEST_ROOT}" == /tmp/capivara-install-smoke.* ]] \
         && rm -rf -- "${TEST_ROOT}"
@@ -71,9 +71,18 @@ fi
 # Start the installed dashboard and exercise its unauthenticated health probe.
 export DASHBOARD_HOST="127.0.0.1"
 export DASHBOARD_PORT="18080"
-python3 "${DSM_ROOT}/dashboard/server.py" \
-    >"${TEST_ROOT}/dashboard.log" 2>&1 &
-DASHBOARD_PID=$!
+systemctl show-environment >/dev/null 2>&1 \
+    || { echo "active systemd is required for release smoke test" >&2; exit 1; }
+SYSTEMD_SMOKE_UNIT="capivara-dashboard-smoke.service"
+systemd-run \
+    --unit="${SYSTEMD_SMOKE_UNIT}" \
+    --property="WorkingDirectory=${DSM_ROOT}/dashboard" \
+    --setenv="DSM_ROOT=${DSM_ROOT}" \
+    --setenv="DSM_DATABASE_DRIVER=sqlite" \
+    --setenv="DSM_DATABASE=${DSM_DATABASE}" \
+    --setenv="DASHBOARD_HOST=${DASHBOARD_HOST}" \
+    --setenv="DASHBOARD_PORT=${DASHBOARD_PORT}" \
+    /usr/bin/python3 "${DSM_ROOT}/dashboard/server.py"
 for _ in {1..30}
 do
     if curl --fail --silent "http://127.0.0.1:18080/health" \
@@ -83,11 +92,12 @@ do
     fi
     sleep 1
 done
+systemctl is-active --quiet "${SYSTEMD_SMOKE_UNIT}"
 curl --fail --silent "http://127.0.0.1:18080/health" \
     | python3 -c 'import json,sys; assert json.load(sys.stdin)["status"] == "healthy"'
-kill "${DASHBOARD_PID}"
-wait "${DASHBOARD_PID}" 2>/dev/null || true
-DASHBOARD_PID=""
+systemctl stop "${SYSTEMD_SMOKE_UNIT}"
+systemctl reset-failed "${SYSTEMD_SMOKE_UNIT}" 2>/dev/null || true
+SYSTEMD_SMOKE_UNIT=""
 
 # Reinstallation must preserve the initialized database and administrator.
 bash "${SOURCE_ROOT}/install.sh" --local --reinstall
