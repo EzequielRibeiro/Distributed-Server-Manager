@@ -6,6 +6,23 @@ set -Eeuo pipefail
 
 SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_ROOT="$(mktemp -d /tmp/capivara-install-smoke.XXXXXX)"
+INSTALL_SOURCE="${DSM_INSTALL_SMOKE_SOURCE:-local}"
+RELEASE_TAG="${DSM_INSTALL_SMOKE_RELEASE_TAG:-}"
+
+case "${INSTALL_SOURCE}" in
+    local)
+        INSTALL_ARGS=(--local)
+        ;;
+    remote)
+        [[ -n "${RELEASE_TAG}" ]] \
+            || { echo "DSM_INSTALL_SMOKE_RELEASE_TAG is required for remote smoke" >&2; exit 2; }
+        INSTALL_ARGS=(--remote --version "${RELEASE_TAG}")
+        ;;
+    *)
+        echo "invalid DSM_INSTALL_SMOKE_SOURCE: ${INSTALL_SOURCE}" >&2
+        exit 2
+        ;;
+esac
 
 cleanup()
 {
@@ -28,18 +45,31 @@ export DSM_NODE_ROLE="controller"
 export DSM_INSTALL_STEAMCMD="0"
 export DSM_INSTALL_SYSTEMD="0"
 export DSM_NON_INTERACTIVE="1"
-export DSM_DATABASE_DRIVER="sqlite"
-export DSM_DATABASE="${DSM_ROOT}/data/capivara.db"
+export DSM_DATABASE_DRIVER="${DSM_DATABASE_DRIVER:-sqlite}"
+if [[ "${DSM_DATABASE_DRIVER}" == "sqlite" ]]
+then
+    export DSM_DATABASE="${DSM_DATABASE:-${DSM_ROOT}/data/capivara.db}"
+fi
 
-bash "${SOURCE_ROOT}/install.sh" --local
+bash "${SOURCE_ROOT}/install.sh" "${INSTALL_ARGS[@]}"
 
 [[ -x "${DSM_ROOT}/bin/dsm" ]]
 [[ -L "${DSM_LINK}" ]]
-[[ -f "${DSM_DATABASE}" ]]
+if [[ "${DSM_DATABASE_DRIVER}" == "sqlite" ]]
+then
+    [[ -f "${DSM_DATABASE}" ]]
+fi
+if [[ -n "${RELEASE_TAG}" ]]
+then
+    [[ "$(tr -d '\r\n' <"${DSM_ROOT}/version")" == "${RELEASE_TAG#v}" ]]
+fi
 
-python3 "${DSM_ROOT}/database/manager.py" \
-    --root "${DSM_ROOT}" --driver sqlite --database "${DSM_DATABASE}" check \
-    | python3 -c 'import json,sys; assert json.load(sys.stdin)["valid"]'
+if [[ "${DSM_DATABASE_DRIVER}" == "sqlite" ]]
+then
+    python3 "${DSM_ROOT}/database/manager.py" \
+        --root "${DSM_ROOT}" --driver sqlite --database "${DSM_DATABASE}" check \
+        | python3 -c 'import json,sys; assert json.load(sys.stdin)["valid"]'
+fi
 
 password_file="${TEST_ROOT}/admin-password"
 printf 'Capivara-Smoke-Admin-2026!\n' >"${password_file}"
@@ -56,7 +86,7 @@ python3 "${DSM_ROOT}/database/operations.py" \
 # Render every unit against the temporary root and validate it with systemd.
 (
     # shellcheck source=../install.sh
-    source "${SOURCE_ROOT}/install.sh"
+    source "${DSM_ROOT}/install.sh"
     SYSTEMD_ACTIVE=1
     systemctl(){ :; }
     install_systemd_units >/dev/null
@@ -78,8 +108,14 @@ systemd-run \
     --unit="${SYSTEMD_SMOKE_UNIT}" \
     --property="WorkingDirectory=${DSM_ROOT}/dashboard" \
     --setenv="DSM_ROOT=${DSM_ROOT}" \
-    --setenv="DSM_DATABASE_DRIVER=sqlite" \
-    --setenv="DSM_DATABASE=${DSM_DATABASE}" \
+    --setenv="DSM_DATABASE_DRIVER=${DSM_DATABASE_DRIVER}" \
+    --setenv="DSM_DATABASE=${DSM_DATABASE:-}" \
+    --setenv="DSM_DATABASE_HOST=${DSM_DATABASE_HOST:-}" \
+    --setenv="DSM_DATABASE_PORT=${DSM_DATABASE_PORT:-}" \
+    --setenv="DSM_DATABASE_NAME=${DSM_DATABASE_NAME:-}" \
+    --setenv="DSM_DATABASE_USER=${DSM_DATABASE_USER:-}" \
+    --setenv="DSM_DATABASE_PASSWORD_FILE=${DSM_DATABASE_PASSWORD_FILE:-}" \
+    --setenv="DSM_DATABASE_TLS=${DSM_DATABASE_TLS:-}" \
     --setenv="DASHBOARD_HOST=${DASHBOARD_HOST}" \
     --setenv="DASHBOARD_PORT=${DASHBOARD_PORT}" \
     /usr/bin/python3 "${DSM_ROOT}/dashboard/server.py"
@@ -100,9 +136,9 @@ systemctl reset-failed "${SYSTEMD_SMOKE_UNIT}" 2>/dev/null || true
 SYSTEMD_SMOKE_UNIT=""
 
 # Reinstallation must preserve the initialized database and administrator.
-bash "${SOURCE_ROOT}/install.sh" --local --reinstall
+bash "${DSM_ROOT}/install.sh" "${INSTALL_ARGS[@]}" --reinstall
 python3 "${DSM_ROOT}/database/operations.py" \
     --root "${DSM_ROOT}" readiness \
     | python3 -c 'import json,sys; assert json.load(sys.stdin)["ready"]'
 
-echo "Linux installation smoke test passed."
+echo "Linux ${INSTALL_SOURCE} installation smoke test passed."

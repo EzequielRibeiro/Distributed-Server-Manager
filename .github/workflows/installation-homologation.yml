@@ -1,0 +1,110 @@
+name: Installation Homologation
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Stable release tag to homologate
+        required: true
+        default: v1.1.0
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installation-homologation-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  remote-sqlite:
+    name: Remote release / SQLite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout homologation harness
+        uses: actions/checkout@v4
+
+      - name: Install validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes jq
+
+      - name: Homologate remote installation
+        env:
+          DSM_INSTALL_SMOKE_SOURCE: remote
+          DSM_INSTALL_SMOKE_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: sudo --preserve-env=GITHUB_ACTIONS,DSM_INSTALL_SMOKE_SOURCE,DSM_INSTALL_SMOKE_RELEASE_TAG bash tests/linux_install_smoke_test.sh
+
+  remote-database:
+    name: Remote release / ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: PostgreSQL
+            driver: postgresql
+            image: postgres:17
+            port: 15432
+          - label: MySQL
+            driver: mysql
+            image: mysql:8.4
+            port: 13306
+          - label: MariaDB
+            driver: mariadb
+            image: mariadb:11
+            port: 13307
+
+    steps:
+      - name: Checkout homologation harness
+        uses: actions/checkout@v4
+
+      - name: Install database drivers and validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes jq python3-pip
+          sudo python3 -m pip install --break-system-packages 'psycopg[binary]' mysql-connector-python
+
+      - name: Start disposable database
+        env:
+          DRIVER: ${{ matrix.driver }}
+          IMAGE: ${{ matrix.image }}
+          PORT: ${{ matrix.port }}
+        run: |
+          if [[ "${DRIVER}" == "postgresql" ]]; then
+            docker run --detach --name dsm-homologation-db \
+              --env POSTGRES_DB=capivara --env POSTGRES_USER=capivara \
+              --env POSTGRES_PASSWORD=capivara-homologation \
+              --publish "${PORT}:5432" "${IMAGE}"
+            until docker exec dsm-homologation-db pg_isready -U capivara -d capivara; do sleep 2; done
+          else
+            docker run --detach --name dsm-homologation-db \
+              --env MYSQL_DATABASE=capivara --env MYSQL_USER=capivara \
+              --env MYSQL_PASSWORD=capivara-homologation \
+              --env MYSQL_ROOT_PASSWORD=capivara-root-homologation \
+              --publish "${PORT}:3306" "${IMAGE}"
+            until docker exec dsm-homologation-db mysqladmin ping --silent; do sleep 2; done
+          fi
+
+      - name: Homologate remote installation
+        env:
+          DSM_INSTALL_SMOKE_SOURCE: remote
+          DSM_INSTALL_SMOKE_RELEASE_TAG: ${{ inputs.release_tag }}
+          DSM_DATABASE_DRIVER: ${{ matrix.driver }}
+          DSM_DATABASE_HOST: 127.0.0.1
+          DSM_DATABASE_PORT: ${{ matrix.port }}
+          DSM_DATABASE_NAME: capivara
+          DSM_DATABASE_USER: capivara
+          DSM_DATABASE_PASSWORD_FILE: /tmp/capivara-database-password
+          DSM_DATABASE_TLS: disable
+        run: |
+          printf '%s\n' 'capivara-homologation' | sudo tee "${DSM_DATABASE_PASSWORD_FILE}" >/dev/null
+          sudo chmod 600 "${DSM_DATABASE_PASSWORD_FILE}"
+          sudo --preserve-env=GITHUB_ACTIONS,DSM_INSTALL_SMOKE_SOURCE,DSM_INSTALL_SMOKE_RELEASE_TAG,DSM_DATABASE_DRIVER,DSM_DATABASE_HOST,DSM_DATABASE_PORT,DSM_DATABASE_NAME,DSM_DATABASE_USER,DSM_DATABASE_PASSWORD_FILE,DSM_DATABASE_TLS bash tests/linux_install_smoke_test.sh
+
+      - name: Database logs on failure
+        if: failure()
+        run: docker logs dsm-homologation-db
