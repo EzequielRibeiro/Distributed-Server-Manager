@@ -34,6 +34,8 @@ grep -Fq 'initialize_database' "${INSTALLER}" \
     || fail "installer does not initialize the database"
 grep -Fq 'initialize_runtime_state' "${INSTALLER}" \
     || fail "installer does not initialize dashboard runtime state"
+grep -Fq 'mkdir -p "${SYSTEMD_DIR}"' "${INSTALLER}" \
+    || fail "installer does not create a custom systemd unit directory"
 grep -Fq -- '--reinstall' "${INSTALLER}" \
     || fail "explicit reinstall option is unavailable"
 grep -Fq 'legacy_worker_units=' "${INSTALLER}" \

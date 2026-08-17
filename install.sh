@@ -2009,6 +2009,8 @@ install_systemd_units()
     [[ -d "${DSM_ROOT}/systemd" ]] \
         || return 0
 
+    mkdir -p "${SYSTEMD_DIR}"
+
     local source_unit
     local name
     local destination
