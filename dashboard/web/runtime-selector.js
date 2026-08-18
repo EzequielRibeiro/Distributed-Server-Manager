@@ -57,6 +57,10 @@
         version: null,
         build: null,
 
+        regions: [],
+        region: null,
+        allowCrossRegion: false,
+
         creating: false,
     };
 
@@ -87,6 +91,11 @@
             buildStep: $("runtime-build-step"),
             build: $("runtime-build"),
 
+            regionStep: $("runtime-region-step"),
+            region: $("runtime-region"),
+            regionFallback: $("runtime-region-fallback"),
+            regionHelp: $("runtime-region-help"),
+
             summaryStep: $("runtime-summary-step"),
 
             summaryGame: $("runtime-summary-game"),
@@ -94,6 +103,8 @@
             summaryRuntime: $("runtime-summary-runtime"),
             summaryVersion: $("runtime-summary-version"),
             summaryBuild: $("runtime-summary-build"),
+            summaryRegion: $("runtime-summary-region"),
+            summaryRegionFallback: $("runtime-summary-region-fallback"),
 
             minecraftNotice: $("minecraft-runtime-notice"),
 
@@ -717,6 +728,15 @@
         state.build =
             null;
 
+        state.regions =
+            [];
+
+        state.region =
+            null;
+
+        state.allowCrossRegion =
+            false;
+
         const el =
             elements();
 
@@ -742,6 +762,10 @@
             await loadRuntimes(
                 game
             );
+
+        await loadRegions();
+
+        renderRegions();
 
         if (
             !state.runtimes.length
@@ -778,6 +802,9 @@
             true;
 
         el.buildStep.hidden =
+            true;
+
+        el.regionStep.hidden =
             true;
 
         el.summaryStep.hidden =
@@ -976,6 +1003,9 @@
             true;
 
         el.buildStep.hidden =
+            true;
+
+        el.regionStep.hidden =
             true;
 
         el.summaryStep.hidden =
@@ -1602,6 +1632,105 @@
 
 
     // =========================================================
+    // Regiões
+    // =========================================================
+
+    function regionLabel(region) {
+        if (!region) {
+            return "";
+        }
+
+        const parts = [];
+
+        if (region.name) {
+            parts.push(region.name);
+        }
+
+        if (region.country_code) {
+            parts.push(region.country_code);
+        }
+
+        return parts.join(" - ")
+            || region.id
+            || "Região";
+    }
+
+
+    async function loadRegions() {
+        const data =
+            await request(
+                "/api/customer/regions"
+            );
+
+        const regions =
+            Array.isArray(data?.regions)
+                ? data.regions
+                : [];
+
+        state.regions =
+            regions;
+
+        return regions;
+    }
+
+
+    function renderRegions() {
+        const el =
+            elements();
+
+        el.region.replaceChildren(
+            new Option(
+                "Selecione…",
+                ""
+            )
+        );
+
+        for (
+            const region
+            of state.regions
+        ) {
+            el.region.append(
+                new Option(
+                    regionLabel(region),
+                    region.id
+                )
+            );
+        }
+
+        el.region.disabled =
+            state.regions.length === 0;
+
+        if (!state.regions.length) {
+            el.region.replaceChildren(
+                new Option(
+                    "Nenhuma região disponível",
+                    ""
+                )
+            );
+
+            el.regionHelp.textContent =
+                "Nenhuma região está cadastrada para seleção.";
+        }
+        else {
+            el.regionHelp.textContent =
+                "A região é uma preferência. O Controller selecionará o Agent adequado.";
+        }
+    }
+
+
+    function selectRegion(value) {
+        state.region =
+            state.regions.find(
+                (region) =>
+                    region.id === value
+            )
+            || null;
+
+        updateSummary();
+    }
+
+
+    // =========================================================
     // Resumo
     // =========================================================
 
@@ -1611,6 +1740,16 @@
 
         const complete =
             Boolean(
+                state.game
+                && state.edition
+                && state.runtime
+                && state.version
+                && state.build
+                && state.region
+            );
+
+        el.regionStep.hidden =
+            !(
                 state.game
                 && state.edition
                 && state.runtime
@@ -1649,6 +1788,16 @@
         el.summaryBuild.textContent =
             state.build.label;
 
+        el.summaryRegion.textContent =
+            regionLabel(
+                state.region
+            );
+
+        el.summaryRegionFallback.textContent =
+            state.allowCrossRegion
+                ? "Sim"
+                : "Não";
+
         el.minecraftNotice.hidden =
             state.game !==
             "minecraft";
@@ -1669,6 +1818,7 @@
             || !state.runtime
             || !state.version
             || !state.build
+            || !state.region
         ) {
             throw new Error(
                 "A seleção do servidor está incompleta."
@@ -1735,6 +1885,14 @@
 
                 build:
                     state.build.value,
+            },
+
+            placement: {
+                region_id:
+                    state.region.id,
+
+                allow_cross_region:
+                    state.allowCrossRegion,
             },
         };
     }
@@ -1882,6 +2040,15 @@
         state.build =
             null;
 
+        state.regions =
+            [];
+
+        state.region =
+            null;
+
+        state.allowCrossRegion =
+            false;
+
         resetSelectionUI();
     }
 
@@ -1933,6 +2100,35 @@
                     selectBuild(
                         el.build.value
                     );
+                }
+            );
+        }
+
+        if (
+            el.region
+        ) {
+            el.region.addEventListener(
+                "change",
+                () => {
+                    selectRegion(
+                        el.region.value
+                    );
+                }
+            );
+        }
+
+        if (
+            el.regionFallback
+        ) {
+            el.regionFallback.addEventListener(
+                "change",
+                () => {
+                    state.allowCrossRegion =
+                        Boolean(
+                            el.regionFallback.checked
+                        );
+
+                    updateSummary();
                 }
             );
         }
@@ -2022,6 +2218,12 @@
 
                 build:
                     state.build,
+
+                region:
+                    state.region,
+
+                allowCrossRegion:
+                    state.allowCrossRegion,
             };
         },
     };

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capivara-dsm.local/schemas/v2/configuration-profile.schema.json",
+  "title": "ConfigurationProfile",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "path"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string"
+          },
+          "category": {
+            "enum": ["game", "mod", "plugin", "runtime"]
+          },
+          "editable": {
+            "type": "boolean"
+          },
+          "optional": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}

@@ -50,6 +50,58 @@ class RegistryTest(unittest.TestCase):
             root = Path(temporary)
             database = root / "data" / "capivara.db"
             REGISTRY.create_aurora(root, database)
+
+            # O placement atual exige uma topologia geográfica
+            # explícita para que um Agent seja elegível.
+            with closing(sqlite3.connect(database)) as connection:
+                with connection:
+                    connection.execute(
+                        "INSERT INTO regions("
+                        "id,name,country_code,continent_code,"
+                        "latitude,longitude,status"
+                        ") VALUES (?,?,?,?,?,?,?)",
+                        (
+                            "br-test",
+                            "Brasil Teste",
+                            "BR",
+                            "SA",
+                            -23.5505,
+                            -46.6333,
+                            "active",
+                        ),
+                    )
+                    connection.execute(
+                        "INSERT INTO datacenters("
+                        "id,region_id,name,provider,city,"
+                        "country_code,latitude,longitude,status"
+                        ") VALUES (?,?,?,?,?,?,?,?,?)",
+                        (
+                            "dc-test",
+                            "br-test",
+                            "Datacenter Teste",
+                            "test",
+                            "São Paulo",
+                            "BR",
+                            -23.5505,
+                            -46.6333,
+                            "active",
+                        ),
+                    )
+                    connection.execute(
+                        "INSERT INTO agent_locations("
+                        "agent_id,datacenter_id,latitude,"
+                        "longitude,public_host,status"
+                        ") VALUES (?,?,?,?,?,?)",
+                        (
+                            "agent-demo",
+                            "dc-test",
+                            -23.5505,
+                            -46.6333,
+                            "127.0.0.1",
+                            "active",
+                        ),
+                    )
+
             runtime = root / "catalog" / "v2" / "runtimes" / "dayz"
             runtime.mkdir(parents=True)
             (runtime / "stable.json").write_text(
@@ -197,6 +249,58 @@ class RegistryTest(unittest.TestCase):
             root = Path(temporary)
             database = root / "data" / "capivara.db"
             REGISTRY.create_aurora(root, database)
+
+            # O placement atual exige uma topologia geográfica
+            # explícita para que um Agent seja elegível.
+            with closing(sqlite3.connect(database)) as connection:
+                with connection:
+                    connection.execute(
+                        "INSERT INTO regions("
+                        "id,name,country_code,continent_code,"
+                        "latitude,longitude,status"
+                        ") VALUES (?,?,?,?,?,?,?)",
+                        (
+                            "br-test",
+                            "Brasil Teste",
+                            "BR",
+                            "SA",
+                            -23.5505,
+                            -46.6333,
+                            "active",
+                        ),
+                    )
+                    connection.execute(
+                        "INSERT INTO datacenters("
+                        "id,region_id,name,provider,city,"
+                        "country_code,latitude,longitude,status"
+                        ") VALUES (?,?,?,?,?,?,?,?,?)",
+                        (
+                            "dc-test",
+                            "br-test",
+                            "Datacenter Teste",
+                            "test",
+                            "São Paulo",
+                            "BR",
+                            -23.5505,
+                            -46.6333,
+                            "active",
+                        ),
+                    )
+                    connection.execute(
+                        "INSERT INTO agent_locations("
+                        "agent_id,datacenter_id,latitude,"
+                        "longitude,public_host,status"
+                        ") VALUES (?,?,?,?,?,?)",
+                        (
+                            "agent-demo",
+                            "dc-test",
+                            -23.5505,
+                            -46.6333,
+                            "127.0.0.1",
+                            "active",
+                        ),
+                    )
+
             runtime = root / "catalog" / "v2" / "runtimes" / "dayz"
             runtime.mkdir(parents=True)
             (runtime / "stable.json").write_text('{"id":"dayz.stable","game":"dayz","variant":"stable","artifact":{"provider":"steam","auth":"required"},"installation":{"directory":"/opt/dsm/game-data/dayz/serverfiles"}}')

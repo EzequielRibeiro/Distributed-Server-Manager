@@ -97,6 +97,12 @@ from agent_ports_api import (
     list_agents_for_user,
     set_agent_ports_for_user,
 )
+from instance_placement import (
+    resolve_instance_placement,
+)
+from region_preference_api import (
+    region_options_for_user,
+)
 
 MAX_JSON_BODY = 12 * 1024 * 1024
 MAX_INSTANCE_CONFIG = 1024 * 1024
@@ -494,10 +500,29 @@ def create_customer_instance(
         raise ValueError("requested runtime_id is not available for this game") from exc
     variant = runtime_def.get("variant") or runtime_def.get("loader") or runtime_def.get("edition")
     repository = dashboard_repository(database_path)
+
+    placement = resolve_instance_placement(
+        user,
+        payload,
+        repository,
+    )
+
+    contract_id = str(
+        payload.get("contract_id", "")
+    ).strip() or None
+
     plan = repository.create_customer_instance(
-        customer_id=user["scope_id"], username=user["username"], game=game,
-        runtime_id=runtime_id, edition=edition, variant=variant,
-        version=version, build=build, instances_root=root / "instances",
+        customer_id=user["scope_id"],
+        username=user["username"],
+        game=game,
+        runtime_id=runtime_id,
+        edition=edition,
+        variant=variant,
+        version=version,
+        build=build,
+        instances_root=root / "instances",
+        contract_id=contract_id,
+        selected_agent_id=placement["agent_id"],
         network_profile=runtime_def.get("network"),
         occupied_ports_provider=occupied_ports_for_agent,
     )
@@ -537,8 +562,16 @@ def create_customer_instance(
     return {
         "created": True, "instance_id": plan["instance_id"], "name": plan["name"],
         "instance": str(instance_path), "agent_id": plan["agent_id"],
-        "node_id": plan["node_id"], "game": game,
-        "contract_id": plan["contract_id"], "provision": provision,
+        "node_id": plan["node_id"],
+        "game": game,
+        "contract_id": plan["contract_id"],
+        "placement": {
+            "region_id": placement.get("region_id"),
+            "datacenter_id": placement.get("datacenter_id"),
+            "score": placement.get("score"),
+            "reason": placement.get("reason"),
+        },
+        "provision": provision,
     }
 
 
@@ -4299,6 +4332,39 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 )
 
             except ValueError as exc:
+                self.send_json(
+                    400,
+                    {"error": str(exc)},
+                )
+
+            return
+
+        if path == "/api/customer/regions":
+            try:
+                backend = dashboard_repository(
+                    DATABASE_FILE
+                ).backend
+
+                result = region_options_for_user(
+                    user,
+                    backend,
+                )
+
+                self.send_json(
+                    200,
+                    result,
+                )
+
+            except PermissionError as exc:
+                self.send_json(
+                    403,
+                    {"error": str(exc)},
+                )
+
+            except (
+                ValueError,
+                RuntimeError,
+            ) as exc:
                 self.send_json(
                     400,
                     {"error": str(exc)},

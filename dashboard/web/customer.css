@@ -183,3 +183,21 @@
     border-color: #3d4a46;
     color: #788581;
 }
+
+.runtime-region-fallback {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    margin-top: 12px;
+    color: var(--muted);
+}
+
+.runtime-region-fallback input {
+    margin-top: 2px;
+}
+
+#runtime-region-help {
+    display: block;
+    margin-top: 10px;
+    color: var(--muted);
+}

@@ -78,6 +78,8 @@ class DashboardRepository:
         version: str,
         build: str,
         instances_root: Path,
+        contract_id: str | None = None,
+        selected_agent_id: str | None = None,
         network_profile: dict[str, Any] | None = None,
         occupied_ports_provider=None,
         unavailable_ports: set[int] | None = None,
@@ -96,27 +98,95 @@ class DashboardRepository:
             ).fetchone()
             if customer is None or customer["status"] != "active":
                 raise PermissionError("customer is not active")
-            contract = session.execute(
-                "SELECT c.id,c.game_id,c.status,c.instance_limit,c.ends_at,"
-                "COUNT(ic.instance_id) AS instances_used FROM service_contracts c "
-                "LEFT JOIN instance_contracts ic ON ic.contract_id=c.id "
-                f"WHERE c.customer_id={ph} AND c.game_id={ph} AND c.status='active' "
-                f"AND (c.ends_at IS NULL OR c.ends_at>{now}) GROUP BY c.id "
-                "HAVING COUNT(ic.instance_id)<c.instance_limit "
-                "ORDER BY c.starts_at,c.id LIMIT 1",
-                (customer["id"], game),
-            ).fetchone()
+            if contract_id:
+                contract = session.execute(
+                    "SELECT c.id,c.game_id,c.status,c.instance_limit,c.ends_at,"
+                    "COUNT(ic.instance_id) AS instances_used "
+                    "FROM service_contracts c "
+                    "LEFT JOIN instance_contracts ic ON ic.contract_id=c.id "
+                    f"WHERE c.id={ph} "
+                    f"AND c.customer_id={ph} "
+                    f"AND c.game_id={ph} "
+                    "AND c.status='active' "
+                    f"AND (c.ends_at IS NULL OR c.ends_at>{now}) "
+                    "GROUP BY c.id "
+                    "HAVING COUNT(ic.instance_id)<c.instance_limit",
+                    (
+                        contract_id,
+                        customer["id"],
+                        game,
+                    ),
+                ).fetchone()
+            else:
+                contract = session.execute(
+                    "SELECT c.id,c.game_id,c.status,c.instance_limit,c.ends_at,"
+                    "COUNT(ic.instance_id) AS instances_used "
+                    "FROM service_contracts c "
+                    "LEFT JOIN instance_contracts ic ON ic.contract_id=c.id "
+                    f"WHERE c.customer_id={ph} "
+                    f"AND c.game_id={ph} "
+                    "AND c.status='active' "
+                    f"AND (c.ends_at IS NULL OR c.ends_at>{now}) "
+                    "GROUP BY c.id "
+                    "HAVING COUNT(ic.instance_id)<c.instance_limit "
+                    "ORDER BY c.starts_at,c.id LIMIT 1",
+                    (
+                        customer["id"],
+                        game,
+                    ),
+                ).fetchone()
+
             if contract is None:
-                raise PermissionError("no contracted instance slot is available for this game")
-            agent = session.execute(
-                "SELECT a.id,a.node_id,a.name,a.status,COUNT(i.id) AS instance_count "
-                "FROM agents a LEFT JOIN instances i ON i.agent_id=a.id "
-                f"WHERE a.controller_id={ph} AND a.status='active' "
-                "GROUP BY a.id ORDER BY instance_count,a.name,a.id LIMIT 1",
-                (customer["controller_id"],),
-            ).fetchone()
-            if agent is None:
-                raise PermissionError("no active agent is available for the customer controller")
+                if contract_id:
+                    raise PermissionError(
+                        "requested contract is unavailable, expired, "
+                        "outside customer scope, or has no free instance slot"
+                    )
+
+                raise PermissionError(
+                    "no contracted instance slot is available for this game"
+                )
+            if selected_agent_id:
+                agent = session.execute(
+                    "SELECT a.id,a.node_id,a.name,a.status,"
+                    "COUNT(i.id) AS instance_count "
+                    "FROM agents a "
+                    "LEFT JOIN instances i ON i.agent_id=a.id "
+                    f"WHERE a.id={ph} "
+                    f"AND a.controller_id={ph} "
+                    "AND a.status='active' "
+                    "GROUP BY a.id,a.node_id,a.name,a.status",
+                    (
+                        selected_agent_id,
+                        customer["controller_id"],
+                    ),
+                ).fetchone()
+
+                if agent is None:
+                    raise PermissionError(
+                        "selected agent is not active or does not "
+                        "belong to the customer controller"
+                    )
+            else:
+                agent = session.execute(
+                    "SELECT a.id,a.node_id,a.name,a.status,"
+                    "COUNT(i.id) AS instance_count "
+                    "FROM agents a "
+                    "LEFT JOIN instances i ON i.agent_id=a.id "
+                    f"WHERE a.controller_id={ph} "
+                    "AND a.status='active' "
+                    "GROUP BY a.id,a.node_id,a.name,a.status "
+                    "ORDER BY instance_count,a.name,a.id LIMIT 1",
+                    (
+                        customer["controller_id"],
+                    ),
+                ).fetchone()
+
+                if agent is None:
+                    raise PermissionError(
+                        "no active agent is available for "
+                        "the customer controller"
+                    )
             sequence_row = session.execute(
                 "SELECT COUNT(*)+1 AS sequence FROM instances "
                 f"WHERE customer_id={ph} AND game_id={ph}",
