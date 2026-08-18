@@ -15,15 +15,15 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf -- "${TMP_DIR}"' EXIT
 
 SOURCE_DIR="${TMP_DIR}/source"
-DOWNLOAD_DIR="${TMP_DIR}/downloads"
-CHECKSUM_DIR="${TMP_DIR}/checksums"
+TEST_DOWNLOAD_DIR="${TMP_DIR}/downloads"
+TEST_CHECKSUM_DIR="${TMP_DIR}/checksums"
 PACKAGE_SOURCE="${TMP_DIR}/capivara-dsm-test.tar.gz"
 CHECKSUM_SOURCE="${TMP_DIR}/capivara-dsm-test.tar.gz.sha256"
 
 mkdir -p \
     "${SOURCE_DIR}/capivara-dsm-test" \
-    "${DOWNLOAD_DIR}" \
-    "${CHECKSUM_DIR}"
+    "${TEST_DOWNLOAD_DIR}" \
+    "${TEST_CHECKSUM_DIR}"
 
 printf '%s\n' 'test' >"${SOURCE_DIR}/capivara-dsm-test/version"
 tar -czf "${PACKAGE_SOURCE}" -C "${SOURCE_DIR}" capivara-dsm-test
@@ -36,8 +36,8 @@ export DSM_ROOT
 source "${DOWNLOAD_MODULE}"
 
 # Override cache paths after loading the production configuration.
-DOWNLOAD_DIR="${DOWNLOAD_DIR}"
-CHECKSUM_DIR="${CHECKSUM_DIR}"
+DOWNLOAD_DIR="${TEST_DOWNLOAD_DIR}"
+CHECKSUM_DIR="${TEST_CHECKSUM_DIR}"
 DOWNLOAD_TIMEOUT=5
 
 log_error()
@@ -87,7 +87,7 @@ curl()
 }
 
 RELEASE_URL="https://example.invalid/capivara-dsm-test.tar.gz"
-EXPECTED_PACKAGE="${DOWNLOAD_DIR}/capivara-dsm-test.tar.gz"
+EXPECTED_PACKAGE="${TEST_DOWNLOAD_DIR}/capivara-dsm-test.tar.gz"
 RELEASE_STDERR="${TMP_DIR}/release.stderr"
 
 PACKAGE="$(download_release "${RELEASE_URL}" 2>"${RELEASE_STDERR}")"
@@ -105,7 +105,7 @@ grep -Fq "${RELEASE_URL}" "${RELEASE_STDERR}" \
     || fail "release URL was not written to stderr"
 
 CHECKSUM_URL="https://example.invalid/capivara-dsm-test.tar.gz.sha256"
-EXPECTED_CHECKSUM="${CHECKSUM_DIR}/capivara-dsm-test.tar.gz.sha256"
+EXPECTED_CHECKSUM="${TEST_CHECKSUM_DIR}/capivara-dsm-test.tar.gz.sha256"
 CHECKSUM_STDERR="${TMP_DIR}/checksum.stderr"
 
 CHECKSUM_FILE="$(download_checksum "${CHECKSUM_URL}" 2>"${CHECKSUM_STDERR}")"
