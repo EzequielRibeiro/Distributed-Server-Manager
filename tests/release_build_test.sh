@@ -15,6 +15,29 @@ fail() {
     exit 1
 }
 
+resolve_python3()
+{
+    local candidate
+
+    for candidate in python3 python
+    do
+        command -v "${candidate}" >/dev/null 2>&1 ||
+            continue
+
+        if "${candidate}" -c \
+            'import sys; raise SystemExit(0 if sys.version_info.major == 3 else 1)' \
+            >/dev/null 2>&1
+        then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done
+
+    fail "required Python 3 interpreter not found"
+}
+
+PYTHON_BIN="$(resolve_python3)"
+
 bash -n "${BUILDER}"
 "${BUILDER}" HEAD "${TMP_DIR}/first" >/dev/null
 "${BUILDER}" HEAD "${TMP_DIR}/second" >/dev/null
@@ -91,7 +114,7 @@ do
         || fail "generated or machine-local path was packaged: ${forbidden_path}"
 done
 
-python3 - \
+"${PYTHON_BIN}" - \
     "${TMP_DIR}/first/${MANIFEST_NAME}" \
     "${PACKAGE_ROOT}/release-manifest.json" \
     "${VERSION}" "${COMMIT}" <<'PY'

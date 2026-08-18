@@ -10,10 +10,36 @@ fail() {
     exit 1
 }
 
-for command_name in git tar gzip sha256sum python3
+for command_name in git tar gzip sha256sum
 do
-    command -v "${command_name}" >/dev/null 2>&1 || fail "required command not found: ${command_name}"
+    command -v "${command_name}" >/dev/null 2>&1 ||
+        fail "required command not found: ${command_name}"
 done
+
+
+resolve_python3()
+{
+    local candidate
+
+    for candidate in python3 python
+    do
+        command -v "${candidate}" >/dev/null 2>&1 ||
+            continue
+
+        if "${candidate}" -c \
+            'import sys; raise SystemExit(0 if sys.version_info.major == 3 else 1)' \
+            >/dev/null 2>&1
+        then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done
+
+    fail "required Python 3 interpreter not found"
+}
+
+
+PYTHON_BIN="$(resolve_python3)"
 
 git -C "${ROOT}" rev-parse --verify "${REF}^{commit}" >/dev/null 2>&1 \
     || fail "invalid Git ref: ${REF}"
@@ -115,7 +141,7 @@ do
 done
 
 FILE_COUNT=$(find "${PACKAGE_ROOT}" -type f | wc -l | tr -d ' ')
-CREATED_AT=$(python3 - "${SOURCE_DATE_EPOCH}" <<'PY'
+CREATED_AT=$("${PYTHON_BIN}" - "${SOURCE_DATE_EPOCH}" <<'PY'
 import datetime
 import sys
 
@@ -124,7 +150,7 @@ print(datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).isoformat().
 PY
 )
 
-python3 - \
+"${PYTHON_BIN}" - \
     "${PACKAGE_ROOT}/release-manifest.json" \
     "${VERSION}" "${COMMIT}" "${CREATED_AT}" "${ARCHIVE_NAME}" "${FILE_COUNT}" <<'PY'
 import json
