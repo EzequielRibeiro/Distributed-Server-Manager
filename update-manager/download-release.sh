@@ -10,6 +10,14 @@
 # - validar download
 # - controlar versões antigas
 #
+# Contrato das funções de download:
+# - stdout: somente o caminho do arquivo retornado
+# - stderr: mensagens informativas e de progresso
+#
+# Esse contrato é necessário porque o Update Manager usa
+# command substitution, por exemplo:
+#   package=$(download_release "$download_url")
+#
 # =============================================================
 
 source "$DSM_ROOT/update-manager/config.conf"
@@ -48,23 +56,21 @@ download_release()
 
     if [ -f "$FILE" ]
     then
-        echo "$FILE"
+        printf '%s\n' "$FILE"
         return 0
     fi
 
-    echo
-    echo "Baixando release DSM:"
-    echo "$URL"
-    echo
+    printf '\n' >&2
+    printf 'Baixando release DSM:\n' >&2
+    printf '%s\n' "$URL" >&2
+    printf '\n' >&2
 
-    curl \
-    --fail \
-    --location \
-    --connect-timeout "$DOWNLOAD_TIMEOUT" \
-    --output "$FILE" \
-    "$URL"
-
-    if [ $? -ne 0 ]
+    if ! curl \
+        --fail \
+        --location \
+        --connect-timeout "$DOWNLOAD_TIMEOUT" \
+        --output "$FILE" \
+        "$URL"
     then
         log_error \
         "Erro no download."
@@ -84,7 +90,7 @@ download_release()
         return 1
     fi
 
-    echo "$FILE"
+    printf '%s\n' "$FILE"
 }
 
 # =============================================================
@@ -146,14 +152,14 @@ download_checksum()
 
     if [ -f "$FILE" ]
     then
-        echo "$FILE"
+        printf '%s\n' "$FILE"
         return 0
     fi
 
-    echo
-    echo "Baixando checksum SHA256:"
-    echo "$URL"
-    echo
+    printf '\n' >&2
+    printf 'Baixando checksum SHA256:\n' >&2
+    printf '%s\n' "$URL" >&2
+    printf '\n' >&2
 
     if ! curl \
         --fail \
@@ -176,5 +182,5 @@ download_checksum()
         return 1
     fi
 
-    echo "$FILE"
+    printf '%s\n' "$FILE"
 }
