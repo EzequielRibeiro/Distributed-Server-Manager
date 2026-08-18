@@ -42,6 +42,7 @@ jobs:
           bash tests/install_manager_test.sh
           sudo --preserve-env=GITHUB_ACTIONS bash tests/linux_install_smoke_test.sh
           bash tests/update_manager_test.sh
+          bash tests/update_download_output_test.sh
           bash tests/update_cli_test.sh
           bash tests/catalog_v2_test.sh
           bash tests/release_build_test.sh
