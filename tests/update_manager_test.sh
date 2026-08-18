@@ -857,4 +857,163 @@ EOF
         || fail "wrong event emitted after checksum validation failure"
 )
 
+# =============================================================
+# Update Process Guard permanent contract
+# =============================================================
+
+PROCESS_GUARD="${ROOT}/update-manager/process-guard.sh"
+
+[[ -f "${PROCESS_GUARD}" ]] \
+    || fail "update Process Guard module is missing"
+
+grep -Fq 'GUARD="${NEW_SRC}/update-manager/process-guard.sh"' "${UPDATE}" \
+    || fail "update.sh does not load the Process Guard from the release source"
+
+[[ "$(
+    grep -Ec '^run_process_guard\(\)$' "${UPDATE}"
+)" -eq 1 ]] \
+    || fail "run_process_guard function must exist exactly once"
+
+[[ "$(
+    grep -Ec '^[[:space:]]+run_process_guard[[:space:]]*$' "${UPDATE}"
+)" -eq 1 ]] \
+    || fail "run_process_guard must be called exactly once"
+
+grep -Fq 'process_guard_pre_update' "${UPDATE}" \
+    || fail "update.sh does not invoke the Process Guard pre-update gate"
+
+(
+    guard_line="$(
+        grep -nE '^[[:space:]]+run_process_guard[[:space:]]*$' \
+            "${UPDATE}" |
+        cut -d: -f1
+    )"
+
+    capture_line="$(
+        grep -nE '^[[:space:]]+capture_service_state[[:space:]]*$' \
+            "${UPDATE}" |
+        cut -d: -f1
+    )"
+
+    transaction_line="$(
+        grep -nE '^[[:space:]]+UPDATE_TRANSACTION_STARTED=1[[:space:]]*$' \
+            "${UPDATE}" |
+        cut -d: -f1
+    )"
+
+    stop_line="$(
+        grep -nE '^[[:space:]]+stop_services[[:space:]]*$' \
+            "${UPDATE}" |
+        cut -d: -f1
+    )"
+
+    [[ "${guard_line}" =~ ^[0-9]+$ ]] \
+        || fail "Process Guard call line was not found"
+
+    [[ "${capture_line}" =~ ^[0-9]+$ ]] \
+        || fail "capture_service_state call line was not found"
+
+    [[ "${transaction_line}" =~ ^[0-9]+$ ]] \
+        || fail "update transaction marker line was not found"
+
+    [[ "${stop_line}" =~ ^[0-9]+$ ]] \
+        || fail "stop_services call line was not found"
+
+    (( guard_line < capture_line )) \
+        || fail "Process Guard runs after service state capture"
+
+    (( capture_line < transaction_line )) \
+        || fail "update transaction starts before service state capture"
+
+    (( transaction_line < stop_line )) \
+        || fail "DSM services stop before update transaction starts"
+)
+
+(
+    while IFS= read -r line
+    do
+        trimmed="$(
+            printf '%s\n' "${line}" |
+                sed 's/^[[:space:]]*//'
+        )"
+
+        case "${trimmed}" in
+            pkill|pkill\ *|killall|killall\ *)
+                fail "Process Guard contains destructive process termination"
+                ;;
+            kill\ *)
+                if [[ ! "${trimmed}" =~ ^kill[[:space:]]+-0([[:space:]]|$) ]]
+                then
+                    fail "Process Guard contains destructive kill command"
+                fi
+                ;;
+        esac
+
+    done <"${PROCESS_GUARD}"
+)
+
+(
+    TEST_ROOT="$(mktemp -d)"
+    TEST_PID=""
+
+    cleanup_process_guard_test()
+    {
+        if [[ -n "${TEST_PID}" ]] &&
+           kill -0 "${TEST_PID}" 2>/dev/null
+        then
+            wait "${TEST_PID}" 2>/dev/null || true
+        fi
+
+        rm -rf -- "${TEST_ROOT}"
+    }
+
+    trap cleanup_process_guard_test EXIT
+
+    export DSM_ROOT="${TEST_ROOT}"
+
+    # shellcheck source=../update-manager/process-guard.sh
+    source "${PROCESS_GUARD}"
+
+    INSTANCE_PATH="${DSM_ROOT}/instances/TestNode/dayz/test-instance"
+    PIDFILE="${INSTANCE_PATH}/runtime/process.pid"
+
+    mkdir -p "${INSTANCE_PATH}/runtime"
+
+    ACTIVE="$(process_guard_active_instances)"
+
+    [[ -z "${ACTIVE}" ]] \
+        || fail "Process Guard reports an active instance without a process"
+
+    sleep 2 &
+    TEST_PID=$!
+
+    printf '%s\n' "${TEST_PID}" >"${PIDFILE}"
+
+    ACTIVE="$(process_guard_active_instances)"
+
+    [[ -n "${ACTIVE}" ]] \
+        || fail "Process Guard did not detect an active instance"
+
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" \
+        || fail "Process Guard active instance output lacks the PID"
+
+    grep -Fq "test-instance" <<<"${ACTIVE}" \
+        || fail "Process Guard active instance output lacks the instance"
+
+    if process_guard_assert_no_active_instances >/dev/null 2>&1
+    then
+        fail "Process Guard allowed update with an active game instance"
+    fi
+
+    wait "${TEST_PID}"
+    TEST_PID=""
+
+    ACTIVE="$(process_guard_active_instances)"
+
+    [[ -z "${ACTIVE}" ]] \
+        || fail "Process Guard treats a stale PID as active"
+
+    process_guard_assert_no_active_instances >/dev/null \
+        || fail "Process Guard blocks update without active instances"
+)
 echo "Update manager tests passed."

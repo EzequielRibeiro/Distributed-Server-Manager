@@ -545,6 +545,45 @@ restore_database_backup() {
 }
 
 # =============================================================
+# Process Guard
+# =============================================================
+
+run_process_guard()
+{
+    local GUARD
+
+    GUARD="${NEW_SRC}/update-manager/process-guard.sh"
+
+    if [[ ! -f "${GUARD}" ]]
+    then
+        echo
+        echo "ERRO: Process Guard não encontrado."
+        echo "ERROR: Process Guard not found."
+        echo "${GUARD}"
+        return 1
+    fi
+
+    # shellcheck source=/dev/null
+    source "${GUARD}"
+
+    if ! declare -F process_guard_pre_update >/dev/null
+    then
+        echo
+        echo "ERRO: Process Guard inválido."
+        echo "ERROR: Invalid Process Guard."
+        echo "Função ausente: process_guard_pre_update"
+        return 1
+    fi
+
+    echo
+    echo "Verificando processos antes da atualização..."
+    echo "Checking processes before update..."
+
+    process_guard_pre_update
+}
+
+
+# =============================================================
 # Parar serviços DSM | Stop DSM services
 # =============================================================
 capture_service_state() {
@@ -1163,6 +1202,7 @@ main() {
         create_database_backup
     fi
     # Preparação | Preparation
+    run_process_guard
     capture_service_state
     UPDATE_TRANSACTION_STARTED=1
     stop_services

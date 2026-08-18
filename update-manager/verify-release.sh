@@ -41,6 +41,31 @@ source "$SEMVER_LIB"
 source "$ARCHIVE_SECURITY_LIB"
 
 # =============================================================
+# Python runtime
+# =============================================================
+
+resolve_python_runtime()
+{
+    local candidate
+
+    for candidate in python3 python
+    do
+        command -v "${candidate}" >/dev/null 2>&1 ||
+            continue
+
+        if "${candidate}" -c \
+            'import sys; raise SystemExit(0 if sys.version_info.major == 3 else 1)' \
+            >/dev/null 2>&1
+        then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# =============================================================
 # Validação principal
 # =============================================================
 
@@ -48,6 +73,7 @@ verify_release()
 {
     local FILE="$1"
     local CHECKSUM="$2"
+    local PYTHON_RUNTIME
 
     # =========================================================
     # Arquivo existe?
@@ -136,7 +162,18 @@ verify_release()
         return 1
     }
 
-    if ! python3 "$ARCHIVE_INSPECTOR" "$FILE" >"$INSPECTION_FILE"
+    if ! PYTHON_RUNTIME="$(resolve_python_runtime)"
+    then
+        log_error \
+            "Python 3 não encontrado para inspeção segura do pacote."
+        rm -f -- "$INSPECTION_FILE"
+        return 1
+    fi
+
+    if ! "${PYTHON_RUNTIME}" \
+        "$ARCHIVE_INSPECTOR" \
+        "$FILE" \
+        >"$INSPECTION_FILE"
     then
         log_error \
             "Não foi possível inspecionar os metadados do pacote."
