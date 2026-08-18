@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================
-# Capivara DSM Alert Manager v1.2.1
+# Capivara DSM Alert Manager v1.3.0
 #
 # Arquivo:
 #   monitor/alertmanager.sh
@@ -450,7 +450,7 @@ init)
 
 *)
     cat <<'USAGE'
-Capivara DSM Alert Manager v1.2.1
+Capivara DSM Alert Manager v1.3.0
 
 Uso:
  alertmanager.sh init
