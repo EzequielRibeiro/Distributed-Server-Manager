@@ -1,0 +1,57 @@
+name: Update Manager Regression
+
+on:
+  pull_request:
+    paths:
+      - 'update-manager/**'
+      - 'update.sh'
+      - 'bin/dsm'
+      - 'tests/update*_test.sh'
+      - 'tests/release_build_test.sh'
+      - 'release/**'
+      - 'version'
+      - '.github/workflows/update-manager-regression.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-manager-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate updater Bash syntax
+        run: |
+          bash -n update-manager/download-release.sh
+          bash -n update-manager/update-manager.sh
+          bash -n update-manager/verify-release.sh
+          bash -n update.sh
+          bash -n tests/update_download_output_test.sh
+          bash -n tests/update_manager_test.sh
+          bash -n tests/update_cli_test.sh
+          bash -n tests/release_build_test.sh
+
+      - name: Verify patch version
+        run: test "$(tr -d '\r\n' <version)" = '1.2.1'
+
+      - name: Test download stdout stderr contract
+        run: bash tests/update_download_output_test.sh
+
+      - name: Test Update Manager
+        run: bash tests/update_manager_test.sh
+
+      - name: Test updater CLI
+        run: bash tests/update_cli_test.sh
+
+      - name: Test reproducible release build
+        run: bash tests/release_build_test.sh
