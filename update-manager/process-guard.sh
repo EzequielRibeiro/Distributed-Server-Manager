@@ -17,6 +17,7 @@ set -Eeuo pipefail
 
 
 DSM_ROOT="${DSM_ROOT:-/opt/dsm}"
+PROCESS_GUARD_CGROUP_ROOT="${PROCESS_GUARD_CGROUP_ROOT:-/sys/fs/cgroup}"
 
 
 # =============================================================
@@ -92,12 +93,87 @@ process_guard_instance_from_pidfile()
     printf '%s\n' "${instance_path}"
 }
 
+# =============================================================
+# systemd / cgroup runtime authority
+# =============================================================
+
+process_guard_systemd_cgroups()
+{
+    local cgroup_root
+
+    cgroup_root="${PROCESS_GUARD_CGROUP_ROOT}"
+
+    [[ -d "${cgroup_root}" ]] || return 0
+
+    find "${cgroup_root}" \
+        -type d \
+        -name 'capivara-instance-*.service' \
+        -print \
+        2>/dev/null
+}
+
+
+process_guard_unit_from_cgroup()
+{
+    local cgroup="${1:-}"
+
+    [[ -n "${cgroup}" ]] || return 1
+
+    basename "${cgroup}"
+}
+
+
+process_guard_active_systemd_instances()
+{
+    local cgroup
+    local procs_file
+    local unit
+    local pid
+    local command
+
+    while IFS= read -r cgroup
+    do
+        [[ -d "${cgroup}" ]] || continue
+
+        procs_file="${cgroup}/cgroup.procs"
+
+        [[ -r "${procs_file}" ]] || continue
+
+        unit="$(
+            process_guard_unit_from_cgroup "${cgroup}" ||
+            true
+        )"
+
+        [[ -n "${unit}" ]] || continue
+
+        while IFS= read -r pid
+        do
+            [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+
+            process_guard_pid_is_running "${pid}" ||
+                continue
+
+            command="$(
+                process_guard_pid_command "${pid}" ||
+                true
+            )"
+
+            printf '%s\t%s\t%s\n' \
+                "${pid}" \
+                "systemd:${unit}" \
+                "${command}"
+
+        done <"${procs_file}"
+
+    done < <(process_guard_systemd_cgroups)
+}
+
 
 # =============================================================
-# Active game instances
+# Legacy PID-file runtime
 # =============================================================
 
-process_guard_active_instances()
+process_guard_active_pidfile_instances()
 {
     local pidfile
     local pid
@@ -113,7 +189,8 @@ process_guard_active_instances()
             true
         )"
 
-        process_guard_pid_is_running "${pid}" || continue
+        process_guard_pid_is_running "${pid}" ||
+            continue
 
         instance_path="$(
             process_guard_instance_from_pidfile "${pidfile}" ||
@@ -133,6 +210,106 @@ process_guard_active_instances()
             "${command}"
 
     done < <(process_guard_instance_pidfiles)
+}
+
+
+# =============================================================
+# Defensive process discovery
+# =============================================================
+
+process_guard_active_process_instances()
+{
+    local snapshot
+    local line
+    local pid
+    local command
+    local instance_path
+    local remainder
+
+    snapshot="$(
+        ps -eo pid=,args= 2>/dev/null ||
+        true
+    )"
+
+    [[ -n "${snapshot}" ]] || return 0
+
+    while IFS= read -r line
+    do
+        pid="$(
+            printf '%s\n' "${line}" |
+                awk '{print $1}'
+        )"
+
+        [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+
+        command="$(
+            printf '%s\n' "${line}" |
+                sed -E 's/^[[:space:]]*[0-9]+[[:space:]]+//'
+        )"
+
+        case "${command}" in
+            "${DSM_ROOT}"/instances/*)
+                ;;
+            *)
+                continue
+                ;;
+        esac
+
+        remainder="${command#"${DSM_ROOT}/instances/"}"
+
+        instance_path="${DSM_ROOT}/instances/${remainder}"
+
+        #
+        # A referência de instância é somente informativa aqui.
+        # Mesmo que o diretório original já tenha sido removido,
+        # o processo continua sendo motivo suficiente para
+        # bloquear a atualização.
+        #
+        instance_path="$(
+            printf '%s\n' "${instance_path}" |
+                awk '{print $1}'
+        )"
+
+        printf '%s\t%s\t%s\n' \
+            "${pid}" \
+            "${instance_path}" \
+            "${command}"
+
+    done <<<"${snapshot}"
+}
+
+# =============================================================
+# Active game instances
+# =============================================================
+
+process_guard_active_instances()
+{
+    {
+        #
+        # 1. Autoridade primária:
+        #    transient units/cgroups do Capivara.
+        #
+        process_guard_active_systemd_instances
+
+        #
+        # 2. Compatibilidade:
+        #    runtimes antigos baseados em process.pid.
+        #
+        process_guard_active_pidfile_instances
+
+        #
+        # 3. Defesa adicional:
+        #    processo vivo executando diretamente sob
+        #    ${DSM_ROOT}/instances.
+        #
+        process_guard_active_process_instances
+
+    } |
+        awk -F '\t' '
+            NF >= 2 && !seen[$1]++ {
+                print
+            }
+        '
 }
 
 
@@ -272,3 +449,8 @@ export -f process_guard_assert_no_active_instances
 export -f process_guard_legacy_workers
 export -f process_guard_report_legacy_workers
 export -f process_guard_pre_update
+export -f process_guard_systemd_cgroups
+export -f process_guard_unit_from_cgroup
+export -f process_guard_active_systemd_instances
+export -f process_guard_active_pidfile_instances
+export -f process_guard_active_process_instances

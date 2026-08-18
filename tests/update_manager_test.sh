@@ -971,6 +971,10 @@ grep -Fq 'process_guard_pre_update' "${UPDATE}" \
 
     export DSM_ROOT="${TEST_ROOT}"
 
+    TEST_CGROUP_ROOT="${TEST_ROOT}/cgroup"
+
+    export PROCESS_GUARD_CGROUP_ROOT="${TEST_CGROUP_ROOT}"
+
     # shellcheck source=../update-manager/process-guard.sh
     source "${PROCESS_GUARD}"
 
@@ -1015,5 +1019,55 @@ grep -Fq 'process_guard_pre_update' "${UPDATE}" \
 
     process_guard_assert_no_active_instances >/dev/null \
         || fail "Process Guard blocks update without active instances"
+
+    # ---------------------------------------------------------
+    # Active transient systemd unit without instance directory
+    #
+    # Reproduz o caso real observado no Linux:
+    #
+    #   capivara-instance-<id>.service
+    #
+    # permanece ativa mesmo depois que o diretório original
+    # da instância deixou de existir.
+    # ---------------------------------------------------------
+
+    ORPHAN_UNIT="capivara-instance-orphan-dayz.service"
+
+    ORPHAN_CGROUP="${TEST_CGROUP_ROOT}/user.slice/user-test.slice/app.slice/${ORPHAN_UNIT}"
+
+    mkdir -p "${ORPHAN_CGROUP}"
+
+    sleep 2 &
+    TEST_PID=$!
+
+    printf '%s\n' "${TEST_PID}" \
+        >"${ORPHAN_CGROUP}/cgroup.procs"
+
+    ACTIVE="$(process_guard_active_instances)"
+
+    [[ -n "${ACTIVE}" ]] \
+        || fail "Process Guard did not detect an active transient unit"
+
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" \
+        || fail "Process Guard transient unit output lacks the PID"
+
+    grep -Fq "${ORPHAN_UNIT}" <<<"${ACTIVE}" \
+        || fail "Process Guard transient unit output lacks the unit name"
+
+    if process_guard_assert_no_active_instances >/dev/null 2>&1
+    then
+        fail "Process Guard allowed update with an orphan active transient unit"
+    fi
+
+    wait "${TEST_PID}"
+    TEST_PID=""
+
+    ACTIVE="$(process_guard_active_instances)"
+
+    [[ -z "${ACTIVE}" ]] \
+        || fail "Process Guard treats an empty transient cgroup as active"
+
+    process_guard_assert_no_active_instances >/dev/null \
+        || fail "Process Guard blocks update after transient unit becomes empty"
 )
 echo "Update manager tests passed."
