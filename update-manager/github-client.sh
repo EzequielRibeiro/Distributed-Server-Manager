@@ -9,6 +9,9 @@
 # - obter versão
 # - localizar pacote DSM oficial
 #
+# Funções usadas por command substitution devem manter stdout
+# reservado ao valor retornado. Mensagens de erro vão para stderr.
+#
 # =============================================================
 
 # =============================================================
@@ -25,7 +28,7 @@ github_latest_release()
 {
     if [ -z "$GITHUB_API" ]
     then
-        log_error "GITHUB_API não configurado"
+        log_error "GITHUB_API não configurado" >&2
         return 1
     fi
 
@@ -39,11 +42,11 @@ github_latest_release()
 
     if [ $? -ne 0 ]
     then
-        log_error "Falha consultando GitHub"
+        log_error "Falha consultando GitHub" >&2
         return 1
     fi
 
-    echo "$response"
+    printf '%s\n' "$response"
 }
 
 # =============================================================
@@ -54,7 +57,7 @@ github_release_version()
 {
     release_json="$1"
 
-    echo "$release_json" |
+    printf '%s\n' "$release_json" |
     jq -r '.tag_name'
 }
 
@@ -78,14 +81,14 @@ github_release_download()
 
     if [ -z "$release_version" ] || [ "$release_version" = "null" ]
     then
-        log_error "Release sem tag_name válido."
+        log_error "Release sem tag_name válido." >&2
         return 1
     fi
 
     release_version="${release_version#v}"
     asset_name="capivara-dsm-${release_version}.tar.gz"
 
-    asset_url=$(echo "$release_json" |
+    asset_url=$(printf '%s\n' "$release_json" |
         jq -r --arg asset_name "$asset_name" '
             .assets[]?
             | select(.name == $asset_name)
@@ -96,11 +99,11 @@ github_release_download()
     if [ -z "$asset_url" ] || [ "$asset_url" = "null" ]
     then
         log_error \
-            "Pacote oficial não encontrado na release: ${asset_name}"
+            "Pacote oficial não encontrado na release: ${asset_name}" >&2
         return 1
     fi
 
-    echo "$asset_url"
+    printf '%s\n' "$asset_url"
 }
 
 # =============================================================
@@ -123,14 +126,14 @@ github_release_checksum_download()
 
     if [ -z "$release_version" ] || [ "$release_version" = "null" ]
     then
-        log_error "Release sem tag_name válido."
+        log_error "Release sem tag_name válido." >&2
         return 1
     fi
 
     release_version="${release_version#v}"
     asset_name="capivara-dsm-${release_version}.tar.gz.sha256"
 
-    asset_url=$(echo "$release_json" |
+    asset_url=$(printf '%s\n' "$release_json" |
         jq -r --arg asset_name "$asset_name" '
             .assets[]?
             | select(.name == $asset_name)
@@ -141,11 +144,11 @@ github_release_checksum_download()
     if [ -z "$asset_url" ] || [ "$asset_url" = "null" ]
     then
         log_error \
-            "Checksum oficial não encontrado na release: ${asset_name}"
+            "Checksum oficial não encontrado na release: ${asset_name}" >&2
         return 1
     fi
 
-    echo "$asset_url"
+    printf '%s\n' "$asset_url"
 }
 
 # =============================================================
@@ -158,7 +161,7 @@ github_release_channel()
 
     case "$UPDATE_CHANNEL" in
     stable)
-        echo "$release_json" |
+        printf '%s\n' "$release_json" |
         jq -r '.prerelease' |
         grep -q false
         ;;
@@ -169,7 +172,7 @@ github_release_channel()
         return 0
         ;;
     *)
-        log_error "Canal inválido: $UPDATE_CHANNEL"
+        log_error "Canal inválido: $UPDATE_CHANNEL" >&2
         return 1
         ;;
     esac
