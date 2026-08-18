@@ -74,14 +74,29 @@ DATABASE_FILE = Path(
     os.environ.get("DSM_DATABASE", DSM_ROOT / "data" / "capivara.db")
 ).resolve()
 DATABASE_DIR = DSM_ROOT / "database"
-if str(DATABASE_DIR) not in sys.path:
-    sys.path.insert(0, str(DATABASE_DIR))
+
+for module_dir in (
+    DATABASE_DIR,
+    DASHBOARD_DIR,
+):
+    if str(module_dir) not in sys.path:
+        sys.path.insert(0, str(module_dir))
+
 from users import hash_password, verify_password
 import alerts as alert_store
 from backend import DatabaseConfig
 from backend_factory import create_backend
 from dashboard_repository import DashboardRepository
 from runtime_backend import backend_from_environment
+from instance_network import (
+    apply_instance_network,
+    occupied_ports_for_agent,
+)
+from agent_ports_api import (
+    agent_ports_for_user,
+    list_agents_for_user,
+    set_agent_ports_for_user,
+)
 
 MAX_JSON_BODY = 12 * 1024 * 1024
 MAX_INSTANCE_CONFIG = 1024 * 1024
@@ -215,6 +230,9 @@ STATIC_FILES = {
     "/settings.html": WEB_DIR / "settings.html",
     "/users.html": WEB_DIR / "users.html",
     "/users.js": WEB_DIR / "users.js",
+    "/agents.html": WEB_DIR / "agents.html",
+    "/agents.js": WEB_DIR / "agents.js",
+    "/agents.css": WEB_DIR / "agents.css",
     "/customer.html": WEB_DIR / "customer.html",
     "/customer.js": WEB_DIR / "customer.js",
     "/customer.css": WEB_DIR / "customer.css",
@@ -444,267 +462,6 @@ def customer_contracts(user, database_path=DATABASE_FILE):
     ]
 
 
-def create_customer_instance(user, payload, root=DSM_ROOT, database_path=DATABASE_FILE):
-    if not user or user.get("role") != "customer" or not user.get("scope_id"):
-        raise PermissionError("only a scoped customer can create an instance")
-    game = str(payload.get("game", "")).strip().lower()
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{1,63}", game):
-        raise ValueError("invalid game")
-
-    # Runtime selection fields (required for creation)
-    runtime_id = str(payload.get("runtime_id", "")).strip()
-    edition = str(payload.get("edition", "")).strip()
-    version = str(payload.get("version", "")).strip()
-    build = str(payload.get("build", "")).strip()
-
-    if not runtime_id:
-        raise ValueError("runtime_id is required")
-    if not edition:
-        raise ValueError("edition is required")
-    if not version:
-        raise ValueError("version is required")
-    if not build:
-        raise ValueError("build is required")
-
-    # Basic validation for runtime id
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", runtime_id):
-        raise ValueError("invalid runtime_id")
-
-    runtimes_dir = root / "catalog" / "v2" / "runtimes" / game
-
-    if not runtimes_dir.is_dir():
-        raise ValueError(
-            "game is not available in the catalog"
-        )
-
-    try:
-        runtime_def = _runtime_definition(
-            root,
-            game,
-            runtime_id,
-        )
-    except ValueError as exc:
-        raise ValueError(
-            "requested runtime_id is not available for this game"
-        ) from exc
-
-    with closing(database_connection(database_path)) as connection:
-        connection.execute("BEGIN IMMEDIATE")
-        customer = connection.execute(
-            "SELECT id,controller_id,name,email,phone,status FROM customers WHERE id=?",
-            (user["scope_id"],),
-        ).fetchone()
-        if not customer or customer["status"] != "active":
-            raise PermissionError("customer is not active")
-        contract = connection.execute(
-            "SELECT c.id,c.game_id,c.status,c.instance_limit,c.ends_at,COUNT(ic.instance_id) AS instances_used "
-            "FROM service_contracts c LEFT JOIN instance_contracts ic ON ic.contract_id=c.id "
-            "WHERE c.customer_id=? AND c.game_id=? AND c.status='active' "
-            "AND (c.ends_at IS NULL OR c.ends_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) "
-            "GROUP BY c.id HAVING COUNT(ic.instance_id) < c.instance_limit ORDER BY c.starts_at,c.id LIMIT 1",
-            (customer["id"], game),
-        ).fetchone()
-        if not contract:
-            raise PermissionError(
-                "no contracted instance slot is available for this game"
-            )
-        contract_id = contract["id"]
-        agent = connection.execute(
-            "SELECT a.id,a.node_id,a.name,a.status,COUNT(i.id) AS instance_count FROM agents a "
-            "LEFT JOIN instances i ON i.agent_id=a.id WHERE a.controller_id=? AND a.status='active' "
-            "GROUP BY a.id ORDER BY instance_count,a.name,a.id LIMIT 1",
-            (customer["controller_id"],),
-        ).fetchone()
-        if not agent:
-            raise PermissionError(
-                "no active agent is available for the customer controller"
-            )
-        sequence = connection.execute(
-            "SELECT COUNT(*) + 1 FROM instances WHERE customer_id=? AND game_id=?",
-            (customer["id"], game),
-        ).fetchone()[0]
-        customer_prefix = (
-            re.sub(r"[^a-z0-9]+", "-", customer["id"].lower()).strip("-")[:36]
-            or "cliente"
-        )
-        game_prefix = re.sub(r"[^a-z0-9]+", "-", game).strip("-")[:16]
-        while True:
-            instance_id = f"{customer_prefix}-{game_prefix}-{sequence:03d}"
-            if not connection.execute(
-                "SELECT 1 FROM instances WHERE id=?", (instance_id,)
-            ).fetchone():
-                break
-            sequence += 1
-        game_name = {
-            "dayz": "DayZ",
-            "arma3": "Arma 3",
-            "rust": "Rust",
-            "minecraft": "Minecraft",
-            "mindustry": "Mindustry",
-        }.get(game, game.title())
-        name = f"Servidor {game_name} {sequence:03d}"
-        instance_path = (
-            root / "instances" / agent["node_id"] / game / instance_id
-        ).resolve()
-        variant = (
-            runtime_def.get("variant")
-            or runtime_def.get("loader")
-            or runtime_def.get("edition")
-            or None
-        )
-
-        metadata = {
-            "schema_version": 2,
-            "controller_id": customer["controller_id"],
-            "agent_id": agent["id"],
-            "game": {"id": game},
-            "runtime": {
-                "id": runtime_id,
-                "edition": edition,
-                "variant": variant,
-                "version": version,
-                "build": build,
-            },
-            "owner": {"username": user["username"]},
-            "customer": {
-                "id": customer["id"],
-                "name": customer["name"],
-                "email": customer["email"],
-                "phone": customer["phone"],
-            },
-        }
-        metadata_path = instance_path / ".dsm" / "instance-metadata.json"
-        # include runtime selection in instance metadata
-        metadata["runtime_selection"] = {
-            "runtime_id": runtime_id,
-            "edition": edition,
-            "version": version,
-            "build": build,
-        }
-        try:
-            with connection:
-                connection.execute(
-                    "INSERT INTO instances(id,node_id,game_id,name,status,manifest_path,metadata_json,controller_id,agent_id,customer_id,runtime_id,edition,variant,game_version,build_id) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        instance_id,
-                        agent["node_id"],
-                        game,
-                        name,
-                        "provisioning",
-                        str(metadata_path),
-                        json.dumps(metadata, ensure_ascii=False),
-                        customer["controller_id"],
-                        agent["id"],
-                        customer["id"],
-                        runtime_id,
-                        edition,
-                        variant,
-                        version,
-                        build,
-                    ),
-                )
-                connection.execute(
-                    "INSERT INTO instance_contracts(instance_id,contract_id) VALUES (?,?)",
-                    (instance_id, contract_id),
-                )
-
-                #
-                # Reserva de rede da instância.
-                #
-                # Para DayZ, a porta principal do jogo é
-                # reservada no mesmo transaction scope da
-                # criação da instância.
-                #
-                if game == "dayz":
-                    allocate_instance_port(
-                        connection,
-                        instance_id=instance_id,
-                        node_id=agent["node_id"],
-                        name="game",
-                        protocol="udp",
-                        start_port=24000,
-                        end_port=24999,
-                    )
-
-                metadata_path.parent.mkdir(parents=True, exist_ok=False)
-                (instance_path / "config").mkdir()
-                (instance_path / "config" / "server.conf").write_text(
-                    f'# Configuração da instância {name}\nINSTANCE_ID="{instance_id}"\nGAME_ID="{game}"\n',
-                    encoding="utf-8",
-                )
-                metadata_path.write_text(
-                    json.dumps(metadata, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8",
-                )
-                resource = (
-                    root
-                    / "runtime"
-                    / "resources"
-                    / agent["node_id"]
-                    / game
-                    / instance_id
-                )
-                resource.mkdir(parents=True, exist_ok=False)
-                (resource / "instance.json").write_text(
-                    json.dumps(metadata, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8",
-                )
-                (resource / "server.json").write_text(
-                    json.dumps(
-                        {"status": {"state": "provisioning", "health": "pending"}},
-                        indent=2,
-                    )
-                    + "\n",
-                    encoding="utf-8",
-                )
-        except sqlite3.IntegrityError as exc:
-            raise ValueError("instance identifier already exists") from exc
-    provision = start_instance_provisioning(
-        root,
-        database_path,
-        instance_id,
-        agent["node_id"],
-        game,
-        runtime_id,
-        edition,
-        version,
-        build,
-        instance_path,
-        agent["id"],
-    )
-    return {
-        "created": True,
-        "instance_id": instance_id,
-        "name": name,
-        "instance": str(instance_path),
-        "agent_id": agent["id"],
-        "node_id": agent["node_id"],
-        "game": game,
-        "contract_id": contract_id,
-        "provision": provision,
-    }
-
-def _occupied_local_ports(protocol, start_port, end_port):
-    command = ["ss", "-H", "-lun"] if protocol == "udp" else ["ss", "-H", "-ltn"]
-    try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, timeout=5, check=False
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise RuntimeError("unable to inspect operating-system ports") from exc
-    if result.returncode != 0:
-        raise RuntimeError("unable to inspect operating-system ports")
-    ports = set()
-    for line in result.stdout.splitlines():
-        for field in line.split():
-            match = re.search(r":([0-9]+)$", field)
-            if match and start_port <= int(match.group(1)) <= end_port:
-                ports.add(int(match.group(1)))
-                break
-    return ports
-
-
 def create_customer_instance(
     user,
     payload,
@@ -741,10 +498,8 @@ def create_customer_instance(
         customer_id=user["scope_id"], username=user["username"], game=game,
         runtime_id=runtime_id, edition=edition, variant=variant,
         version=version, build=build, instances_root=root / "instances",
-        unavailable_ports_provider=(
-            lambda: _occupied_local_ports("udp", 24000, 24999)
-            if game == "dayz" else set()
-        ),
+        network_profile=runtime_def.get("network"),
+        occupied_ports_provider=occupied_ports_for_agent,
     )
     instance_path = plan["instance_path"]
     metadata_path = plan["metadata_path"]
@@ -785,452 +540,6 @@ def create_customer_instance(
         "node_id": plan["node_id"], "game": game,
         "contract_id": plan["contract_id"], "provision": provision,
     }
-
-
-def allocate_instance_port(
-    connection,
-    *,
-    instance_id,
-    node_id,
-    name,
-    protocol,
-    start_port,
-    end_port,
-    bind_address="0.0.0.0",
-):
-    """
-    Reserva uma porta de rede para uma instância.
-
-    A tabela instance_ports é a autoridade de alocação.
-    A unicidade (node_id, protocol, port) impede que duas
-    instâncias do mesmo Node recebam a mesma porta/protocolo.
-
-    Esta função não faz commit. Ela deve participar da
-    transação do chamador.
-    """
-
-    protocol = str(protocol).strip().lower()
-
-    if protocol not in {"tcp", "udp"}:
-        raise ValueError(
-            f"unsupported port protocol: {protocol}"
-        )
-
-    start_port = int(start_port)
-    end_port = int(end_port)
-
-    if (
-        start_port < 1
-        or end_port > 65535
-        or start_port > end_port
-    ):
-        raise ValueError(
-            "invalid port allocation range"
-        )
-
-    existing = connection.execute(
-        """
-        SELECT port
-        FROM instance_ports
-        WHERE instance_id=?
-          AND name=?
-          AND protocol=?
-        """,
-        (
-            instance_id,
-            name,
-            protocol,
-        ),
-    ).fetchone()
-
-    if existing:
-        return int(existing["port"])
-
-    used = {
-        int(row["port"])
-        for row in connection.execute(
-            """
-            SELECT port
-            FROM instance_ports
-            WHERE node_id=?
-              AND protocol=?
-              AND port BETWEEN ? AND ?
-            """,
-            (
-                node_id,
-                protocol,
-                start_port,
-                end_port,
-            ),
-        )
-    }
-
-    #
-    # Também respeitamos o estado real da rede do Node.
-    #
-    # instance_ports é a autoridade das reservas feitas
-    # pelo Capivara, mas podem existir processos externos
-    # usando portas que ainda não estão registradas no DSM.
-    #
-    # Como o Dashboard atualmente executa no próprio Node,
-    # consultamos os sockets locais através de `ss`.
-    #
-    try:
-        command = (
-            ["ss", "-H", "-lun"]
-            if protocol == "udp"
-            else ["ss", "-H", "-ltn"]
-        )
-
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-
-        if result.returncode == 0:
-            for line in result.stdout.splitlines():
-                #
-                # Não dependemos da posição das colunas
-                # produzidas pelo `ss`.
-                #
-                # Procuramos campos terminados em :PORTA.
-                # O primeiro endereço desse formato na linha
-                # corresponde ao socket local listado.
-                #
-                port = None
-
-                for field in line.split():
-                    match = re.search(
-                        r":([0-9]+)$",
-                        field,
-                    )
-
-                    if not match:
-                        continue
-
-                    candidate = int(
-                        match.group(1)
-                    )
-
-                    if (
-                        start_port
-                        <= candidate
-                        <= end_port
-                    ):
-                        port = candidate
-                        break
-
-                if port is not None:
-                    used.add(port)
-
-    except (
-        OSError,
-        subprocess.SubprocessError,
-    ) as exc:
-        #
-        # Falhar na inspeção do sistema não deve provocar
-        # uma falsa sensação de segurança.
-        #
-        # Interrompemos a alocação em vez de correr o risco
-        # de entregar uma porta já ocupada.
-        #
-        raise RuntimeError(
-            "unable to inspect operating-system ports"
-        ) from exc
-
-    for port in range(
-        start_port,
-        end_port + 1,
-    ):
-        if port in used:
-            continue
-
-        try:
-            connection.execute(
-                """
-                INSERT INTO instance_ports(
-                    instance_id,
-                    node_id,
-                    name,
-                    protocol,
-                    port,
-                    bind_address
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    instance_id,
-                    node_id,
-                    name,
-                    protocol,
-                    port,
-                    bind_address,
-                ),
-            )
-
-            return port
-
-        except sqlite3.IntegrityError:
-            #
-            # Outra transação pode ter reservado a porta
-            # antes desta tentativa.
-            #
-            continue
-
-    raise RuntimeError(
-        f"no available {protocol} port "
-        f"for node {node_id} "
-        f"in range {start_port}-{end_port}"
-    )
-
-
-
-def allocate_dayz_ports(
-    connection,
-    *,
-    instance_id,
-    node_id,
-    start_port=24000,
-    end_port=24999,
-    bind_address="0.0.0.0",
-):
-    """
-    Reserva o par de portas UDP utilizado pelo DayZ.
-
-    Para uma porta principal P, o servidor utiliza:
-        game     = P
-        game_aux = P + 2
-
-    O par é tratado como uma unidade lógica. Nenhuma
-    reserva é feita enquanto as duas portas não forem
-    consideradas disponíveis.
-    """
-
-    start_port = int(start_port)
-    end_port = int(end_port)
-
-    if (
-        start_port < 1
-        or end_port > 65535
-        or start_port > end_port
-        or start_port + 2 > end_port
-    ):
-        raise ValueError(
-            "invalid DayZ port allocation range"
-        )
-
-    #
-    # Idempotência: se a instância já possuir o par,
-    # devolvemos as reservas existentes.
-    #
-    existing = connection.execute(
-        """
-        SELECT name, port
-        FROM instance_ports
-        WHERE instance_id=?
-          AND protocol='udp'
-          AND name IN ('game', 'game_aux')
-        """,
-        (instance_id,),
-    ).fetchall()
-
-    existing_ports = {
-        row["name"]: int(row["port"])
-        for row in existing
-    }
-
-    if (
-        "game" in existing_ports
-        and "game_aux" in existing_ports
-    ):
-        game_port = existing_ports["game"]
-        aux_port = existing_ports["game_aux"]
-
-        if aux_port != game_port + 2:
-            raise RuntimeError(
-                "invalid existing DayZ port pair"
-            )
-
-        return {
-            "game": game_port,
-            "game_aux": aux_port,
-        }
-
-    if existing_ports:
-        raise RuntimeError(
-            "incomplete existing DayZ port reservation"
-        )
-
-    #
-    # Portas já reservadas pelo Capivara.
-    #
-    used = {
-        int(row["port"])
-        for row in connection.execute(
-            """
-            SELECT port
-            FROM instance_ports
-            WHERE node_id=?
-              AND protocol='udp'
-              AND port BETWEEN ? AND ?
-            """,
-            (
-                node_id,
-                start_port,
-                end_port,
-            ),
-        )
-    }
-
-    #
-    # Portas efetivamente ocupadas no sistema operacional.
-    #
-    try:
-        result = subprocess.run(
-            ["ss", "-H", "-lun"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-
-        if result.returncode != 0:
-            raise RuntimeError(
-                "unable to inspect operating-system ports"
-            )
-
-        for line in result.stdout.splitlines():
-            for field in line.split():
-                match = re.search(
-                    r":([0-9]+)$",
-                    field,
-                )
-
-                if not match:
-                    continue
-
-                candidate = int(
-                    match.group(1)
-                )
-
-                if (
-                    start_port
-                    <= candidate
-                    <= end_port
-                ):
-                    used.add(candidate)
-                    break
-
-    except (
-        OSError,
-        subprocess.SubprocessError,
-    ) as exc:
-        raise RuntimeError(
-            "unable to inspect operating-system ports"
-        ) from exc
-
-    #
-    # Política de blocos DayZ.
-    #
-    # Cada instância recebe um bloco lógico de 10 portas.
-    # Somente a base de cada bloco pode ser utilizada como
-    # porta principal:
-    #
-    #   24000 -> game=24000, game_aux=24002
-    #   24010 -> game=24010, game_aux=24012
-    #   24020 -> game=24020, game_aux=24022
-    #
-    # Isso evita alocações pouco previsíveis como
-    # 24001/24003 e deixa espaço dentro de cada bloco para
-    # futuras portas auxiliares do DayZ.
-    #
-    block_size = 10
-
-    for game_port in range(
-        start_port,
-        end_port - 1,
-        block_size,
-    ):
-        aux_port = game_port + 2
-
-        if (
-            game_port in used
-            or aux_port in used
-        ):
-            continue
-
-        try:
-            connection.execute(
-                """
-                INSERT INTO instance_ports(
-                    instance_id,
-                    node_id,
-                    name,
-                    protocol,
-                    port,
-                    bind_address
-                )
-                VALUES (?, ?, 'game', 'udp', ?, ?)
-                """,
-                (
-                    instance_id,
-                    node_id,
-                    game_port,
-                    bind_address,
-                ),
-            )
-
-            connection.execute(
-                """
-                INSERT INTO instance_ports(
-                    instance_id,
-                    node_id,
-                    name,
-                    protocol,
-                    port,
-                    bind_address
-                )
-                VALUES (?, ?, 'game_aux', 'udp', ?, ?)
-                """,
-                (
-                    instance_id,
-                    node_id,
-                    aux_port,
-                    bind_address,
-                ),
-            )
-
-            return {
-                "game": game_port,
-                "game_aux": aux_port,
-            }
-
-        except sqlite3.IntegrityError:
-            #
-            # Como a função participa da transação externa,
-            # removemos somente uma eventual reserva parcial
-            # feita nesta tentativa.
-            #
-            connection.execute(
-                """
-                DELETE FROM instance_ports
-                WHERE instance_id=?
-                  AND protocol='udp'
-                  AND name IN ('game', 'game_aux')
-                """,
-                (instance_id,),
-            )
-
-            continue
-
-    raise RuntimeError(
-        f"no available DayZ UDP port pair "
-        f"for node {node_id} "
-        f"in range {start_port}-{end_port}"
-    )
 
 
 def _provision_path(root, node_id, game, instance_id):
@@ -1943,46 +1252,68 @@ def _provision_worker(
         if isinstance(args, list):
             args = " ".join(str(item) for item in args)
 
-        #
-        # Argumentos específicos de rede da instância.
-        #
-        # O DayZ recebe a porta que foi reservada em
-        # instance_ports durante a criação da instância.
-        #
-        if game == "dayz":
-            game_port = dashboard_repository(
-                database_path
-            ).instance_port(instance_id)
+        reserved_ports = dashboard_repository(
+            database_path
+        ).instance_ports(
+            instance_id
+        )
 
-            if game_port is None:
-                _set_provision(
-                    root,
-                    node_id,
-                    game,
-                    instance_id,
-                    database_path=database_path,
-                    status="failed",
-                    stage="failed",
-                    progress=82,
-                    message=(
-                        "A porta de rede da instância "
-                        "não está reservada."
-                    ),
-                )
+        try:
+            network_state = apply_instance_network(
+                instance_path,
+                definition,
+                reserved_ports,
+            )
+        except (
+            ValueError,
+            RuntimeError,
+            OSError,
+        ) as exc:
+            _set_provision(
+                root,
+                node_id,
+                game,
+                instance_id,
+                database_path=database_path,
+                status="failed",
+                stage="failed",
+                progress=82,
+                message=(
+                    "Não foi possível aplicar a "
+                    "configuração de rede da instância."
+                ),
+                error=str(exc),
+            )
+            return
 
-                return
+        network_args = network_state[
+            "arguments"
+        ]
 
-            dayz_args = (
-                f"-port={game_port} "
-                "-config=serverDZ.cfg"
+        if network_args:
+            rendered_network_args = " ".join(
+                network_args
             )
 
             if args:
                 args = (
-                    f"{args} {dayz_args}"
+                    f"{args} "
+                    f"{rendered_network_args}"
                 )
             else:
-                args = dayz_args
+                args = (
+                    rendered_network_args
+                )
+
+        network_env_lines = [
+            f'{name}="{value}"'
+            for name, value
+            in sorted(
+                network_state[
+                    "environment"
+                ].items()
+            )
+        ]
 
         def shell_value(value):
             return (
@@ -2013,6 +1344,7 @@ def _provision_worker(
                     f'EXECUTABLE="{shell_value(executable)}"',
                     f'WORKING_DIR="{shell_value(working_dir)}"',
                     f'ARGS="{shell_value(args)}"',
+                    *network_env_lines,
                     "",
                 ]
             ),
@@ -4914,6 +4246,66 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_json(200, {"agents": customer_agents(user)})
             return
 
+        if path == "/api/agents":
+            try:
+                backend = dashboard_repository(
+                    DATABASE_FILE
+                ).backend
+
+                self.send_json(
+                    200,
+                    {
+                        "agents": list_agents_for_user(
+                            user,
+                            backend,
+                        )
+                    },
+                )
+            except PermissionError as exc:
+                self.send_json(
+                    403,
+                    {"error": str(exc)},
+                )
+            return
+
+        if path == "/api/agent/ports":
+            query = parse_qs(
+                parsed.query
+            )
+
+            try:
+                backend = dashboard_repository(
+                    DATABASE_FILE
+                ).backend
+
+                result = agent_ports_for_user(
+                    user,
+                    backend,
+                    query.get(
+                        "agent_id",
+                        [""],
+                    )[0],
+                )
+
+                self.send_json(
+                    200,
+                    result,
+                )
+
+            except PermissionError as exc:
+                self.send_json(
+                    403,
+                    {"error": str(exc)},
+                )
+
+            except ValueError as exc:
+                self.send_json(
+                    400,
+                    {"error": str(exc)},
+                )
+
+            return
+
         if path == "/api/customer/contracts":
             self.send_json(200, {"contracts": customer_contracts(user)})
             return
@@ -5126,6 +4518,42 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         parsed = urlparse(self.path)
         path = parsed.path
+
+        if path == "/api/agent/ports/set":
+            try:
+                body = self.read_json_body()
+
+                backend = dashboard_repository(
+                    DATABASE_FILE
+                ).backend
+
+                result = set_agent_ports_for_user(
+                    user,
+                    backend,
+                    body,
+                )
+
+                self.send_json(
+                    200,
+                    result,
+                )
+
+            except PermissionError as exc:
+                self.send_json(
+                    403,
+                    {"error": str(exc)},
+                )
+
+            except (
+                ValueError,
+                RuntimeError,
+            ) as exc:
+                self.send_json(
+                    400,
+                    {"error": str(exc)},
+                )
+
+            return
 
         if path == "/api/acknowledge":
             query = parse_qs(parsed.query)

@@ -57,10 +57,32 @@ class DashboardRepositoryTest(unittest.TestCase):
             version="latest",
             build="default",
             instances_root=Path(self.temp.name) / "instances",
-            unavailable_ports_provider=lambda: {24000},
+            network_profile={
+                "allocation": "block",
+                "block_size": 10,
+                "ports": [
+                    {
+                        "name": "game",
+                        "protocol": "udp",
+                        "offset": 0,
+                    },
+                    {
+                        "name": "game_aux",
+                        "protocol": "udp",
+                        "offset": 2,
+                    },
+                ],
+            },
+            occupied_ports_provider=(
+                lambda agent_id, node_id, protocol, start_port, end_port:
+                    {24000, 24002}
+                    if protocol == "udp"
+                    else set()
+            ),
         )
         self.assertEqual(plan["instance_id"], "cli-demo-001-dayz-001")
-        self.assertEqual(plan["game_port"], 24001)
+        self.assertEqual(plan["game_port"], 24010)
+        self.assertEqual(plan["ports"]["game_aux"], 24012)
         self.repository.update_instance_status(plan["instance_id"], "failed")
         reserved = self.repository.reserve_retry(
             plan["instance_id"], "DemoNode", "dayz"

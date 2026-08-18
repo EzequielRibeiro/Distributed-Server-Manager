@@ -1,9 +1,75 @@
 {
-  "schema_version": 2, "kind": "RuntimeDefinition", "id": "arma3.stable", "name": "Arma 3 Dedicated Server",
-  "game": "arma3", "edition": "default", "variant": "stable", "loader": null,
-  "version": { "strategy": "static", "value": "current", "build": "steam-current" },
-  "process": { "engine": "native", "executable": "arma3server", "artifact_mode": "executable" },
-  "requirements": { "os": ["linux", "windows"], "architectures": ["x86_64"], "java": null },
-  "artifact": { "provider": "steam", "auth": "anonymous", "package_id": "233780" },
-  "installation": { "directory": "/opt/dsm/game-data/arma3/serverfiles" }
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "arma3.stable",
+  "name": "Arma 3 Dedicated Server",
+  "game": "arma3",
+  "edition": "default",
+  "variant": "stable",
+  "loader": null,
+  "version": {
+    "strategy": "static",
+    "value": "current",
+    "build": "steam-current"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "arma3server",
+    "artifact_mode": "executable"
+  },
+  "requirements": {
+    "os": [
+      "linux",
+      "windows"
+    ],
+    "architectures": [
+      "x86_64"
+    ],
+    "java": null
+  },
+  "artifact": {
+    "provider": "steam",
+    "auth": "anonymous",
+    "package_id": "233780"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/arma3/serverfiles"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 100,
+    "ports": [
+      {
+        "name": "game",
+        "protocol": "udp",
+        "offset": 0
+      },
+      {
+        "name": "steam_query",
+        "protocol": "udp",
+        "offset": 1
+      },
+      {
+        "name": "steam_master",
+        "protocol": "udp",
+        "offset": 2
+      },
+      {
+        "name": "von_reserved",
+        "protocol": "udp",
+        "offset": 3
+      },
+      {
+        "name": "battleye",
+        "protocol": "udp",
+        "offset": 4
+      }
+    ],
+    "apply": [
+      {
+        "kind": "argument",
+        "template": "-port={game}"
+      }
+    ]
+  }
 }

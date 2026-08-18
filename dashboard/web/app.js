@@ -193,6 +193,9 @@ function applyRBAC(role) {
     document.querySelectorAll(".instance-manager-only").forEach(el => {
         el.style.display = ["admin", "controller", "client", "customer"].includes(role) ? "" : "none";
     });
+    document.querySelectorAll(".agent-manager-only").forEach(el => {
+        el.style.display = ["admin", "controller"].includes(role) ? "" : "none";
+    });
 }
 
 /* ============================================================

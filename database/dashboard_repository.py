@@ -5,9 +5,20 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from core.network.port_allocator import (
+    PortRange,
+    allocate_port_profile,
+)
+from core.network.port_profile import PortProfile
 
 from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
@@ -67,10 +78,12 @@ class DashboardRepository:
         version: str,
         build: str,
         instances_root: Path,
+        network_profile: dict[str, Any] | None = None,
+        occupied_ports_provider=None,
         unavailable_ports: set[int] | None = None,
         unavailable_ports_provider=None,
     ) -> dict[str, Any]:
-        """Reserve ownership, contract capacity and optional network port."""
+        """Reserve ownership, contract capacity and runtime network ports."""
         self.initialize()
         ph = self.dialect.placeholder
         now = self.dialect.current_timestamp
@@ -165,35 +178,189 @@ class DashboardRepository:
                 f"({self.dialect.parameters(2)})",
                 (instance_id, contract["id"]),
             )
+            ports: dict[str, int] = {}
             port = None
-            if game == "dayz":
-                if unavailable_ports_provider is not None:
-                    unavailable_ports = set(
+
+            if network_profile is not None:
+                profile = PortProfile.from_mapping(
+                    network_profile
+                )
+
+                if profile is None:
+                    raise RuntimeError(
+                        "invalid empty network profile"
+                    )
+
+                if (
+                    self.backend.name
+                    in {"postgresql", "mysql"}
+                ):
+                    session.execute(
+                        "SELECT id FROM agents "
+                        f"WHERE id={ph} FOR UPDATE",
+                        (agent["id"],),
+                    ).fetchone()
+
+                range_rows = session.execute(
+                    "SELECT protocol,start_port,end_port "
+                    "FROM agent_port_ranges "
+                    f"WHERE agent_id={ph} "
+                    "AND status='active' "
+                    "ORDER BY protocol,start_port",
+                    (agent["id"],),
+                ).fetchall()
+
+                ranges = [
+                    PortRange(
+                        protocol=row["protocol"],
+                        start_port=int(row["start_port"]),
+                        end_port=int(row["end_port"]),
+                    )
+                    for row in range_rows
+                ]
+
+                if not ranges:
+                    raise RuntimeError(
+                        f"agent {agent['id']} has no active port range"
+                    )
+
+                reserved_rows = session.execute(
+                    "SELECT protocol,port "
+                    "FROM instance_ports "
+                    f"WHERE node_id={ph}",
+                    (agent["node_id"],),
+                ).fetchall()
+
+                reserved: dict[str, set[int]] = {
+                    "tcp": set(),
+                    "udp": set(),
+                }
+
+                for row in reserved_rows:
+                    reserved[
+                        row["protocol"]
+                    ].add(
+                        int(row["port"])
+                    )
+
+                occupied: dict[str, set[int]] = {
+                    "tcp": set(),
+                    "udp": set(),
+                }
+
+                provider = occupied_ports_provider
+
+                if (
+                    provider is None
+                    and unavailable_ports_provider is not None
+                ):
+                    legacy = set(
                         unavailable_ports_provider()
                     )
-                used_rows = session.execute(
-                    "SELECT port FROM instance_ports "
-                    f"WHERE node_id={ph} AND protocol={ph} AND port BETWEEN {ph} AND {ph}",
-                    (agent["node_id"], "udp", 24000, 24999),
-                ).fetchall()
-                used = {int(row["port"]) for row in used_rows} | unavailable_ports
-                port = next((candidate for candidate in range(24000, 25000)
-                             if candidate not in used), None)
-                if port is None:
+
+                    def provider(
+                        agent_id,
+                        node_id,
+                        protocol,
+                        start_port,
+                        end_port,
+                    ):
+                        if protocol != "udp":
+                            return set()
+
+                        return {
+                            value
+                            for value in legacy
+                            if start_port <= value <= end_port
+                        }
+
+                if provider is None:
                     raise RuntimeError(
-                        f"no available udp port for node {agent['node_id']} in range 24000-24999"
+                        "operating-system port inspection "
+                        "provider is required"
                     )
-                session.execute(
-                    "INSERT INTO instance_ports(instance_id,node_id,name,protocol,port,bind_address) "
-                    f"VALUES ({self.dialect.parameters(6)})",
-                    (instance_id, agent["node_id"], "game", "udp", port, "0.0.0.0"),
+
+                for item in ranges:
+                    if item.protocol not in profile.protocols:
+                        continue
+
+                    occupied[
+                        item.protocol
+                    ].update(
+                        provider(
+                            agent["id"],
+                            agent["node_id"],
+                            item.protocol,
+                            item.start_port,
+                            item.end_port,
+                        )
+                    )
+
+                allocation = allocate_port_profile(
+                    profile,
+                    ranges,
+                    reserved=reserved,
+                    occupied=occupied,
                 )
+
+                ports = dict(
+                    allocation.ports
+                )
+
+                requirements = {
+                    requirement.name: requirement
+                    for requirement in profile.ports
+                }
+
+                for name, reserved_port in ports.items():
+                    requirement = requirements[
+                        name
+                    ]
+
+                    session.execute(
+                        "INSERT INTO instance_ports("
+                        "instance_id,node_id,name,protocol,"
+                        "port,bind_address"
+                        ") VALUES "
+                        f"({self.dialect.parameters(6)})",
+                        (
+                            instance_id,
+                            agent["node_id"],
+                            name,
+                            requirement.protocol,
+                            reserved_port,
+                            requirement.bind_address,
+                        ),
+                    )
+
+                metadata["network"] = {
+                    "ports": ports,
+                }
+
+                session.execute(
+                    "UPDATE instances "
+                    f"SET metadata_json={ph} "
+                    f"WHERE id={ph}",
+                    (
+                        json.dumps(
+                            metadata,
+                            ensure_ascii=False,
+                        ),
+                        instance_id,
+                    ),
+                )
+
+                port = ports.get(
+                    "game"
+                )
+
         return {
             "instance_id": instance_id, "name": name,
             "instance_path": instance_path, "metadata_path": metadata_path,
             "metadata": metadata, "agent_id": agent["id"],
             "node_id": agent["node_id"], "contract_id": contract["id"],
             "game_port": port,
+            "ports": ports,
         }
 
     def update_instance_status(self, instance_id: str, status: str) -> int:
@@ -223,6 +390,23 @@ class DashboardRepository:
                 (instance_id, name, protocol),
             ).fetchone()
         return None if row is None else int(row["port"])
+
+    def instance_ports(self, instance_id: str) -> dict[str, int]:
+        ph = self.dialect.placeholder
+
+        with self.session() as session:
+            rows = session.execute(
+                "SELECT name,port "
+                "FROM instance_ports "
+                f"WHERE instance_id={ph} "
+                "ORDER BY name",
+                (instance_id,),
+            ).fetchall()
+
+        return {
+            row["name"]: int(row["port"])
+            for row in rows
+        }
 
     def permission_profile(self, username: str, instance_id: str) -> str | None:
         ph = self.dialect.placeholder

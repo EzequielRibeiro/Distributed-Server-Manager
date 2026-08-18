@@ -206,6 +206,13 @@ Catálogo de Conteúdo:
  Adicione --json a qualquer comando catalog/content/compatibility
  para saída estruturada destinada a scripts e APIs.
 
+Agents:
+
+ dsm agent ports show <agent-id>
+ dsm agent ports set <agent-id> <inicio> <fim> [--protocol tcp|udp|both]
+ dsm agent ports check <agent-id>
+
+
 Database:
 
  dsm database init
@@ -583,6 +590,29 @@ instance_command()
     esac
 }
 
+agent_command()
+{
+    local RESOURCE="${1:-}"
+
+    case "${RESOURCE}" in
+        ports)
+            shift
+            exec python3 \
+                "${DSM_ROOT}/database/agent_ports_cli.py" \
+                "$@"
+            ;;
+
+        *)
+            echo "Uso:" >&2
+            echo "  dsm agent ports show <agent-id>" >&2
+            echo "  dsm agent ports set <agent-id> <inicio> <fim> [--protocol tcp|udp|both]" >&2
+            echo "  dsm agent ports check <agent-id>" >&2
+            return 2
+            ;;
+    esac
+}
+
+
 operations_command()
 {
     exec python3 "${DSM_ROOT}/database/operations.py" \
@@ -719,6 +749,11 @@ update)
 database|db)
     shift
     database_command "$@"
+;;
+
+agent)
+    shift
+    agent_command "$@"
 ;;
 
 instance)

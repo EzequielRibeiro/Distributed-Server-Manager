@@ -1,0 +1,103 @@
+
+.agents-main {
+    padding: 24px;
+    margin-left: 250px;
+}
+
+.agents-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 24px;
+}
+
+.agents-grid {
+    display: grid;
+    grid-template-columns:
+        repeat(
+            auto-fit,
+            minmax(280px, 1fr)
+        );
+    gap: 16px;
+}
+
+.agent-card,
+.agent-detail,
+.range-card {
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 12px;
+    padding: 18px;
+    background: rgba(255,255,255,.035);
+}
+
+.agent-card {
+    cursor: pointer;
+}
+
+.agent-card:hover {
+    transform: translateY(-1px);
+}
+
+.agent-status {
+    font-weight: 700;
+}
+
+.range-grid {
+    display: grid;
+    grid-template-columns:
+        repeat(
+            auto-fit,
+            minmax(240px, 1fr)
+        );
+    gap: 12px;
+    margin: 18px 0;
+}
+
+.range-card.near-exhaustion {
+    border-color: #ffb020;
+}
+
+.range-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.conflict-box {
+    margin: 18px 0;
+}
+
+.conflict-danger {
+    font-weight: 700;
+}
+
+.range-form {
+    display: grid;
+    gap: 12px;
+    max-width: 620px;
+}
+
+.range-form label {
+    display: grid;
+    gap: 6px;
+}
+
+.force-option {
+    padding: 10px;
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 8px;
+}
+
+.agents-error {
+    padding: 12px;
+    margin-bottom: 16px;
+    border-radius: 8px;
+}
+
+@media (max-width: 900px) {
+    .agents-main {
+        margin-left: 0;
+    }
+}

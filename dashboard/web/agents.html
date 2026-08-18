@@ -1,0 +1,149 @@
+
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta
+        name="viewport"
+        content="width=device-width,initial-scale=1"
+    >
+    <title>Capivara DSM - Agents</title>
+
+    <link
+        rel="stylesheet"
+        href="/style.css"
+    >
+    <link
+        rel="stylesheet"
+        href="/agents.css"
+    >
+</head>
+
+<body>
+    <div id="sidebar-component"></div>
+
+    <main class="agents-main">
+        <header class="agents-header">
+            <div>
+                <h1>Agents</h1>
+
+                <p>
+                    Administração da infraestrutura
+                    gerenciada pelo Controller.
+                </p>
+            </div>
+
+            <button
+                id="refresh-agents"
+                type="button"
+            >
+                Atualizar
+            </button>
+        </header>
+
+        <div
+            id="agents-error"
+            class="agents-error"
+            hidden
+        ></div>
+
+        <section
+            id="agents-list"
+            class="agents-grid"
+        ></section>
+
+        <section
+            id="agent-detail"
+            class="agent-detail"
+            hidden
+        >
+            <h2 id="agent-detail-title">
+                Agent
+            </h2>
+
+            <div
+                id="agent-ranges"
+                class="range-grid"
+            ></div>
+
+            <div
+                id="agent-conflicts"
+                class="conflict-box"
+            ></div>
+
+            <form
+                id="agent-range-form"
+                class="range-form"
+            >
+                <h3>
+                    Alterar faixa administrada
+                </h3>
+
+                <label>
+                    Protocolo
+
+                    <select
+                        id="range-protocol"
+                    >
+                        <option value="both">
+                            TCP + UDP
+                        </option>
+
+                        <option value="udp">
+                            UDP
+                        </option>
+
+                        <option value="tcp">
+                            TCP
+                        </option>
+                    </select>
+                </label>
+
+                <label>
+                    Porta inicial
+
+                    <input
+                        id="range-start"
+                        type="number"
+                        min="1"
+                        max="65535"
+                        required
+                    >
+                </label>
+
+                <label>
+                    Porta final
+
+                    <input
+                        id="range-end"
+                        type="number"
+                        min="1"
+                        max="65535"
+                        required
+                    >
+                </label>
+
+                <label
+                    id="force-wrapper"
+                    class="force-option"
+                    hidden
+                >
+                    <input
+                        id="range-force"
+                        type="checkbox"
+                    >
+
+                    Confirmação administrativa para
+                    manter reservas fora da nova faixa
+                </label>
+
+                <button type="submit">
+                    Salvar faixa
+                </button>
+            </form>
+        </section>
+    </main>
+
+    <script src="/agents.js"></script>
+</body>
+</html>
