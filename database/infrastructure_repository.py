@@ -174,7 +174,7 @@ class InfrastructureRepository:
         sql = (
             "SELECT a.id AS agent_id,COUNT(i.id) AS instance_count "
             "FROM agents a "
-            "LEFT JOIN instances i ON i.agent_id=a.id"
+            "JOIN instances i ON i.agent_id=a.id"
         )
         params: tuple[Any, ...] = ()
         if controller_id is not None:

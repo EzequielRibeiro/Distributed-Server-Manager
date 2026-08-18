@@ -100,6 +100,8 @@ from agent_ports_api import (
 from instance_placement import (
     resolve_instance_placement,
 )
+from infrastructure_http import dispatch_infrastructure_get
+
 from region_preference_api import (
     region_options_for_user,
 )
@@ -229,6 +231,11 @@ STATIC_FILES = {
     "/installation-events.css": WEB_DIR / "installation-events.css",
     "/catalog-v2.js": WEB_DIR / "catalog-v2.js",
     "/js/notifications.js": WEB_DIR / "js" / "notifications.js",
+    "/js/dashboard-state.js": WEB_DIR / "js" / "dashboard-state.js",
+    "/js/infrastructure-explorer.js": WEB_DIR / "js" / "infrastructure-explorer.js",
+    "/js/infrastructure-shell.js": WEB_DIR / "js" / "infrastructure-shell.js",
+    "/css/infrastructure-explorer.css": WEB_DIR / "css" / "infrastructure-explorer.css",
+    "/css/infrastructure-shell.css": WEB_DIR / "css" / "infrastructure-shell.css",
     "/catalog-v2.css": WEB_DIR / "catalog-v2.css",
     "/css/alerts.css": WEB_DIR / "css" / "alerts.css",
     "/console.html": WEB_DIR / "console.html",
@@ -4278,6 +4285,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if path == "/api/instance/agents":
             self.send_json(200, {"agents": customer_agents(user)})
             return
+
+        if path == "/api/infrastructure":
+            backend = dashboard_repository(
+                DATABASE_FILE
+            ).backend
+
+            result = dispatch_infrastructure_get(
+                path,
+                parsed.query,
+                user=user,
+                backend=backend,
+            )
+
+            if result is not None:
+                status, payload = result
+                self.send_json(
+                    status,
+                    payload,
+                )
+                return
 
         if path == "/api/agents":
             try:
