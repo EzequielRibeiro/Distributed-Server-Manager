@@ -398,3 +398,810 @@ footer {
     padding: 10px 15px;
 
 }
+
+/* ============================================================
+   CAPIVARA RESPONSIVE DASHBOARD V1
+============================================================ */
+
+/*
+ * Área principal.
+ *
+ * Evita que o conteúdo seja esticado indefinidamente em
+ * monitores grandes, mantendo uma área útil confortável.
+ */
+.dashboard {
+    width: min(100%, 1680px);
+    margin-inline: auto;
+    box-sizing: border-box;
+    padding-inline: clamp(18px, 2.5vw, 40px);
+}
+
+
+/*
+ * O header acompanha a largura útil da Dashboard.
+ */
+.dashboard > .header {
+    margin-inline:
+        calc(-1 * clamp(18px, 2.5vw, 40px));
+    padding-inline:
+        clamp(18px, 2.5vw, 40px);
+}
+
+
+/*
+ * Cards um pouco mais compactos em relação ao CSS histórico.
+ */
+.dashboard > .card {
+    padding:
+        clamp(18px, 2vw, 25px);
+}
+
+
+/*
+ * Informações das instâncias e do Controller.
+ *
+ * auto-fit preserva várias colunas quando há espaço,
+ * mas reduz naturalmente conforme a viewport diminui.
+ */
+.dashboard .server-info {
+    display: grid;
+    grid-template-columns:
+        repeat(
+            auto-fit,
+            minmax(
+                min(180px, 100%),
+                1fr
+            )
+        );
+    gap: 14px;
+}
+
+
+/*
+ * Impede conteúdos longos de ampliarem a página horizontalmente.
+ */
+.dashboard .info-box,
+.dashboard .card,
+.dashboard .card-title,
+.dashboard .server-info {
+    min-width: 0;
+}
+
+.dashboard .info-box span,
+.dashboard .info-box strong {
+    overflow-wrap: anywhere;
+}
+
+
+/*
+ * Monitor de CPU / RAM / Disco.
+ */
+.dashboard .resource-grid {
+    display: grid;
+    grid-template-columns:
+        repeat(
+            3,
+            minmax(0, 1fr)
+        );
+    gap: 16px;
+    margin-bottom: 25px;
+}
+
+.dashboard .resource-grid .card {
+    margin-bottom: 0;
+}
+
+
+/*
+ * Títulos.
+ */
+.dashboard .card-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+}
+
+.dashboard .card-title h2 {
+    min-width: 0;
+}
+
+
+/*
+ * Logs.
+ *
+ * Mantemos uma área de trabalho útil, mas impedimos que
+ * centenas de linhas dominem visualmente toda a Dashboard.
+ */
+.dashboard .logs-box {
+    box-sizing: border-box;
+    width: 100%;
+    max-height: clamp(260px, 42vh, 460px);
+    overflow: auto;
+    overscroll-behavior: contain;
+}
+
+
+/*
+ * Canvas responsivo.
+ */
+.dashboard canvas {
+    display: block;
+    max-width: 100%;
+}
+
+.dashboard .chart-card canvas {
+    width: 100% !important;
+}
+
+
+/*
+ * Navegação.
+ *
+ * Em desktop continua horizontal, mas agora pode quebrar linha
+ * antes de começar a provocar overflow.
+ */
+.sidebar {
+    box-sizing: border-box;
+    gap: 16px;
+}
+
+.sidebar nav {
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.sidebar nav a {
+    white-space: nowrap;
+}
+
+.sidebar-session {
+    flex-shrink: 0;
+}
+
+
+/* ============================================================
+   NOTEBOOK / TABLET
+============================================================ */
+
+@media (max-width: 1100px) {
+
+    .sidebar {
+        align-items: flex-start;
+        flex-wrap: wrap;
+        padding:
+            14px
+            clamp(18px, 3vw, 28px);
+    }
+
+    .sidebar nav {
+        order: 3;
+        width: 100%;
+    }
+
+    .sidebar nav a {
+        flex:
+            1
+            1
+            auto;
+        justify-content: center;
+        text-align: center;
+    }
+
+    .dashboard .resource-grid {
+        grid-template-columns:
+            repeat(
+                2,
+                minmax(0, 1fr)
+            );
+    }
+
+    .dashboard .card-title {
+        flex-wrap: wrap;
+    }
+}
+
+
+/* ============================================================
+   TABLET PEQUENO
+============================================================ */
+
+@media (max-width: 760px) {
+
+    .dashboard {
+        padding-inline: 16px;
+    }
+
+    .dashboard > .header {
+        margin-inline: -16px;
+        padding:
+            20px
+            16px;
+        align-items: flex-start;
+    }
+
+    .dashboard > .card {
+        padding: 18px;
+        margin-bottom: 16px;
+    }
+
+    .dashboard .resource-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+
+    .dashboard .server-info {
+        grid-template-columns:
+            repeat(
+                2,
+                minmax(0, 1fr)
+            );
+        gap: 10px;
+    }
+
+    .dashboard .logs-box {
+        max-height: 340px;
+    }
+
+    .sidebar {
+        display: block;
+        padding: 12px 16px;
+    }
+
+    .sidebar nav {
+        display: grid;
+        grid-template-columns:
+            repeat(
+                2,
+                minmax(0, 1fr)
+            );
+        margin-top: 8px;
+    }
+
+    .sidebar nav a {
+        padding: 10px 12px;
+        white-space: normal;
+    }
+
+    .sidebar-session {
+        justify-content: space-between;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top:
+            1px
+            solid
+            #1f2937;
+    }
+
+    .dashboard .catalog-v2-title-actions {
+        flex-wrap: wrap;
+    }
+}
+
+
+/* ============================================================
+   CELULAR
+============================================================ */
+
+@media (max-width: 520px) {
+
+    .dashboard {
+        padding-inline: 10px;
+    }
+
+    .dashboard > .header {
+        margin-inline: -10px;
+        padding:
+            18px
+            14px;
+    }
+
+    .dashboard > .card {
+        padding: 14px;
+        border-radius: 10px;
+    }
+
+    .dashboard .server-info {
+        grid-template-columns: 1fr;
+    }
+
+    .dashboard .card-title {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+
+    .dashboard .card-title h2 {
+        font-size: 18px;
+    }
+
+    .dashboard .logs-box {
+        max-height: 280px;
+        font-size: 12px;
+    }
+
+    .sidebar nav {
+        grid-template-columns: 1fr;
+    }
+
+    .sidebar-session {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .sidebar-session .server-info,
+    .sidebar-session .info-box,
+    .logout-btn {
+        width: 100%;
+    }
+
+    .logout-btn {
+        box-sizing: border-box;
+    }
+
+    .dashboard select,
+    .dashboard input,
+    .dashboard textarea,
+    .dashboard button {
+        max-width: 100%;
+    }
+}
+
+
+/* ============================================================
+   TELAS MUITO LARGAS
+============================================================ */
+
+@media (min-width: 1900px) {
+
+    .dashboard {
+        width: min(88vw, 1680px);
+    }
+}
+
+/* ============================================================
+   CAPIVARA RESPONSIVE DASHBOARD V2
+   Refinamento visual
+============================================================ */
+
+
+/*
+ * Mantém uma leitura confortável em desktop.
+ *
+ * O V1 permite até 1680 px. Aqui limitamos a região de
+ * conteúdo mais densa para evitar cards excessivamente largos.
+ */
+.dashboard {
+    max-width: 1600px;
+}
+
+
+/*
+ * Espaçamento vertical consistente entre blocos.
+ */
+.dashboard > .card,
+.dashboard > section {
+    scroll-margin-top: 90px;
+}
+
+
+/*
+ * Cabeçalho.
+ *
+ * Evita que títulos e informações secundárias fiquem
+ * excessivamente separados em telas largas.
+ */
+.dashboard > .header {
+    gap: 20px;
+}
+
+
+/*
+ * Cards.
+ */
+.dashboard .card {
+    box-sizing: border-box;
+}
+
+.dashboard .card > :first-child {
+    margin-top: 0;
+}
+
+.dashboard .card > :last-child {
+    margin-bottom: 0;
+}
+
+
+/*
+ * Cards informativos menores.
+ *
+ * Evita blocos muito largos e altos quando existe pouco conteúdo.
+ */
+.dashboard .info-box {
+    min-height: 72px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+
+/*
+ * Log / atividade.
+ *
+ * O log passa a ter comportamento claramente secundário:
+ * altura menor no desktop e scroll próprio.
+ */
+.dashboard .logs-card {
+    min-height: 0;
+}
+
+.dashboard .logs-box {
+    min-height: 160px;
+    height: auto;
+    max-height: min(32vh, 360px);
+    overflow-y: auto;
+    overflow-x: auto;
+}
+
+
+/*
+ * Barra de rolagem do log um pouco menos intrusiva.
+ */
+.dashboard .logs-box {
+    scrollbar-width: thin;
+}
+
+
+/*
+ * Textos longos, identificadores, IPs e caminhos não devem
+ * aumentar a largura da página.
+ */
+.dashboard pre,
+.dashboard code,
+.dashboard .logs-box,
+.dashboard .info-box,
+.dashboard td,
+.dashboard th {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+
+/*
+ * Tabelas permanecem utilizáveis em telas menores.
+ */
+.dashboard table {
+    max-width: 100%;
+}
+
+.dashboard .table-wrapper,
+.dashboard .table-container {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+
+/*
+ * Botões não devem crescer indefinidamente quando isolados.
+ */
+.dashboard button {
+    min-height: 36px;
+}
+
+
+/*
+ * Melhor distribuição dos cards principais em monitores.
+ */
+@media (min-width: 1200px) {
+
+    .dashboard {
+        padding-top: 24px;
+        padding-bottom: 42px;
+    }
+
+    .dashboard > .card {
+        margin-bottom: 18px;
+    }
+
+    .dashboard .server-info {
+        grid-template-columns:
+            repeat(
+                auto-fit,
+                minmax(210px, 1fr)
+            );
+    }
+}
+
+
+/* ============================================================
+   NOTEBOOK
+============================================================ */
+
+@media (max-width: 1366px) {
+
+    .dashboard {
+        max-width: 1280px;
+        padding-inline: 22px;
+    }
+
+    .dashboard > .header {
+        margin-inline: -22px;
+        padding-inline: 22px;
+    }
+
+    .dashboard .logs-box {
+        max-height: 300px;
+    }
+}
+
+
+/* ============================================================
+   TABLET
+============================================================ */
+
+@media (max-width: 900px) {
+
+    .dashboard {
+        width: 100%;
+        padding-inline: 16px;
+    }
+
+    .dashboard .info-box {
+        min-height: 64px;
+    }
+
+    .dashboard .logs-box {
+        min-height: 140px;
+        max-height: 260px;
+    }
+
+    .dashboard button,
+    .dashboard select,
+    .dashboard input {
+        min-height: 40px;
+    }
+}
+
+
+/* ============================================================
+   CELULAR
+============================================================ */
+
+@media (max-width: 520px) {
+
+    body {
+        overflow-x: hidden;
+    }
+
+    .dashboard {
+        width: 100%;
+        max-width: none;
+        padding-inline: 10px;
+    }
+
+    .dashboard > .card {
+        margin-bottom: 12px;
+    }
+
+    .dashboard .info-box {
+        min-height: auto;
+        padding: 12px;
+    }
+
+    .dashboard .logs-box {
+        min-height: 120px;
+        max-height: 220px;
+        line-height: 1.45;
+    }
+
+    .dashboard button,
+    .dashboard select,
+    .dashboard input,
+    .dashboard textarea {
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    .dashboard .buttons {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+}
+
+
+/* ============================================================
+   MONITORES ULTRAWIDE
+============================================================ */
+
+@media (min-width: 2200px) {
+
+    .dashboard {
+        width: 1500px;
+        max-width: 1500px;
+    }
+
+    .dashboard .logs-box {
+        max-height: 320px;
+    }
+}
+
+/* ============================================================
+   CAPIVARA RESPONSIVE NAVIGATION V1
+============================================================ */
+
+
+/*
+ * Desktop:
+ * preserva a barra horizontal existente.
+ */
+.sidebar {
+    width: 100%;
+    max-width: 100%;
+}
+
+.sidebar nav {
+    min-width: 0;
+}
+
+.sidebar nav a {
+    min-width: 0;
+}
+
+
+/*
+ * Sessão do usuário mais compacta.
+ */
+.sidebar-session {
+    min-width: 0;
+}
+
+.sidebar-session .card-title {
+    margin: 0;
+}
+
+.sidebar-session .server-info {
+    margin: 0;
+}
+
+.sidebar-session .info-box {
+    min-width: 0;
+}
+
+
+/* ============================================================
+   TABLET
+============================================================ */
+
+@media (max-width: 900px) {
+
+    .sidebar {
+        gap: 10px;
+    }
+
+    .sidebar nav {
+        width: 100%;
+        display: grid;
+        grid-template-columns:
+            repeat(
+                3,
+                minmax(0, 1fr)
+            );
+        gap: 8px;
+    }
+
+    .sidebar nav a {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 42px;
+        padding: 9px 10px;
+        border-radius: 8px;
+        text-align: center;
+        white-space: normal;
+        line-height: 1.2;
+    }
+
+    .sidebar-session {
+        width: 100%;
+        display: grid;
+        grid-template-columns:
+            minmax(0, 1fr)
+            auto;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .sidebar-session .card-title {
+        display: none;
+    }
+
+    .sidebar-session .server-info {
+        min-width: 0;
+    }
+
+    .sidebar-session .info-box {
+        padding: 8px 10px;
+    }
+
+    .logout-btn {
+        min-width: 90px;
+    }
+}
+
+
+/* ============================================================
+   CELULAR
+============================================================ */
+
+@media (max-width: 620px) {
+
+    .sidebar {
+        padding:
+            10px
+            12px;
+    }
+
+    .sidebar nav {
+        grid-template-columns:
+            repeat(
+                2,
+                minmax(0, 1fr)
+            );
+        gap: 6px;
+    }
+
+    .sidebar nav a {
+        min-height: 40px;
+        padding: 8px;
+        font-size: 13px;
+    }
+
+    .sidebar-session {
+        grid-template-columns: 1fr;
+        gap: 6px;
+        margin-top: 8px;
+        padding-top: 8px;
+    }
+
+    .sidebar-session .server-info {
+        display: block;
+    }
+
+    .sidebar-session .info-box {
+        min-height: auto;
+        padding: 7px 9px;
+    }
+
+    .sidebar-session .info-box label {
+        display: inline;
+        margin-right: 6px;
+    }
+
+    .sidebar-session .info-box span {
+        display: inline;
+    }
+
+    .logout-btn {
+        width: 100%;
+        min-height: 38px;
+    }
+}
+
+
+/* ============================================================
+   CELULAR ESTREITO
+============================================================ */
+
+@media (max-width: 420px) {
+
+    .sidebar nav {
+        grid-template-columns: 1fr;
+    }
+
+    .sidebar nav a {
+        justify-content: flex-start;
+        text-align: left;
+    }
+}
