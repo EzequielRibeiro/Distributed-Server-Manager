@@ -10,6 +10,14 @@
 # - validar download
 # - controlar versões antigas
 #
+# Contrato das funções de download:
+# - stdout: somente o caminho do arquivo retornado
+# - stderr: mensagens informativas, progresso e erros
+#
+# Esse contrato é necessário porque o Update Manager usa
+# command substitution, por exemplo:
+#   package=$(download_release "$download_url")
+#
 # =============================================================
 
 source "$DSM_ROOT/update-manager/config.conf"
@@ -21,7 +29,7 @@ download_release()
     if [ -z "$URL" ]
     then
         log_error \
-        "URL da release não informada."
+        "URL da release não informada." >&2
         return 1
     fi
 
@@ -48,26 +56,24 @@ download_release()
 
     if [ -f "$FILE" ]
     then
-        echo "$FILE"
+        printf '%s\n' "$FILE"
         return 0
     fi
 
-    echo
-    echo "Baixando release DSM:"
-    echo "$URL"
-    echo
+    printf '\n' >&2
+    printf 'Baixando release DSM:\n' >&2
+    printf '%s\n' "$URL" >&2
+    printf '\n' >&2
 
-    curl \
-    --fail \
-    --location \
-    --connect-timeout "$DOWNLOAD_TIMEOUT" \
-    --output "$FILE" \
-    "$URL"
-
-    if [ $? -ne 0 ]
+    if ! curl \
+        --fail \
+        --location \
+        --connect-timeout "$DOWNLOAD_TIMEOUT" \
+        --output "$FILE" \
+        "$URL"
     then
         log_error \
-        "Erro no download."
+        "Erro no download." >&2
         rm -f "$FILE"
         return 1
     fi
@@ -79,12 +85,12 @@ download_release()
     if ! tar -tzf "$FILE" >/dev/null 2>&1
     then
         log_error \
-        "Pacote baixado inválido."
+        "Pacote baixado inválido." >&2
         rm -f "$FILE"
         return 1
     fi
 
-    echo "$FILE"
+    printf '%s\n' "$FILE"
 }
 
 # =============================================================
@@ -127,7 +133,7 @@ download_checksum()
     if [ -z "$URL" ]
     then
         log_error \
-            "URL do checksum não informada."
+            "URL do checksum não informada." >&2
         return 1
     fi
 
@@ -138,7 +144,7 @@ download_checksum()
     if [ -z "$FILENAME" ]
     then
         log_error \
-            "Nome do arquivo de checksum inválido."
+            "Nome do arquivo de checksum inválido." >&2
         return 1
     fi
 
@@ -146,14 +152,14 @@ download_checksum()
 
     if [ -f "$FILE" ]
     then
-        echo "$FILE"
+        printf '%s\n' "$FILE"
         return 0
     fi
 
-    echo
-    echo "Baixando checksum SHA256:"
-    echo "$URL"
-    echo
+    printf '\n' >&2
+    printf 'Baixando checksum SHA256:\n' >&2
+    printf '%s\n' "$URL" >&2
+    printf '\n' >&2
 
     if ! curl \
         --fail \
@@ -163,7 +169,7 @@ download_checksum()
         "$URL"
     then
         log_error \
-            "Erro no download do checksum."
+            "Erro no download do checksum." >&2
         rm -f "$FILE"
         return 1
     fi
@@ -171,10 +177,10 @@ download_checksum()
     if [ ! -s "$FILE" ]
     then
         log_error \
-            "Arquivo de checksum vazio."
+            "Arquivo de checksum vazio." >&2
         rm -f "$FILE"
         return 1
     fi
 
-    echo "$FILE"
+    printf '%s\n' "$FILE"
 }

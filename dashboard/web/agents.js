@@ -455,7 +455,7 @@ async function initialize() {
             )
         ) {
             throw new Error(
-                "Você não possui permissão "
+                "Você não possui permissão " +
                 "para administrar Agents."
             );
         }
