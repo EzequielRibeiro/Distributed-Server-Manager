@@ -37,8 +37,35 @@
         <div id="runtime-type-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">3</span><div><strong>Tipo de servidor</strong><small>Escolha a implementação desejada.</small></div></div><div id="runtime-types" class="runtime-selector-grid"></div></div>
         <div id="runtime-version-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">4</span><div><strong>Versão</strong><small>Escolha a versão do jogo.</small></div></div><label class="runtime-field" for="runtime-version">Versão<select id="runtime-version"><option value="">Selecione…</option></select></label></div>
         <div id="runtime-build-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">5</span><div><strong>Build</strong><small>Escolha uma build específica ou utilize a recomendada.</small></div></div><label class="runtime-field" for="runtime-build">Build<select id="runtime-build"><option value="">Selecione…</option></select></label></div>
+        <div id="runtime-region-step" class="runtime-step" hidden>
+          <div class="runtime-step-header">
+            <span class="runtime-step-number">6</span>
+            <div>
+              <strong>Região</strong>
+              <small>Escolha a região preferencial para hospedar o servidor.</small>
+            </div>
+          </div>
+
+          <label class="runtime-field" for="runtime-region">
+            Região
+            <select id="runtime-region">
+              <option value="">Selecione…</option>
+            </select>
+          </label>
+
+          <small id="runtime-region-help">
+            A região é uma preferência. O Controller selecionará o Agent adequado.
+          </small>
+
+          <label class="runtime-region-fallback">
+            <input id="runtime-region-fallback" type="checkbox">
+            <span>
+              Permitir outra região caso não exista capacidade disponível na região escolhida.
+            </span>
+          </label>
+        </div>
         <div id="runtime-summary-step" class="runtime-step" hidden>
-          <div class="runtime-step-header"><span class="runtime-step-number">6</span><div><strong>Confirmar servidor</strong><small>Revise as escolhas antes da criação.</small></div></div>
+          <div class="runtime-step-header"><span class="runtime-step-number">7</span><div><strong>Confirmar servidor</strong><small>Revise as escolhas antes da criação.</small></div></div>
           <div id="runtime-selection-summary" class="runtime-selection-summary"><div><span>Jogo</span><strong id="runtime-summary-game">—</strong></div><div><span>Edição</span><strong id="runtime-summary-edition">—</strong></div><div><span>Servidor</span><strong id="runtime-summary-runtime">—</strong></div><div><span>Versão</span><strong id="runtime-summary-version">—</strong></div><div><span>Build</span><strong id="runtime-summary-build">—</strong></div><div><span>Região</span><strong id="runtime-summary-region">—</strong></div><div><span>Fallback regional</span><strong id="runtime-summary-region-fallback">Não</strong></div></div>
           <div id="minecraft-runtime-notice" class="runtime-notice" hidden><strong>Tipo de servidor Minecraft</strong><p>A escolha determina quais mods, plugins e recursos poderão ser utilizados posteriormente.</p></div>
           <div class="runtime-create-actions"><button id="create-instance-submit" class="button" type="button" disabled>Criar servidor</button></div>
