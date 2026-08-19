@@ -118,7 +118,7 @@ systemd-run \
     --setenv="DSM_DATABASE_TLS=${DSM_DATABASE_TLS:-}" \
     --setenv="DASHBOARD_HOST=${DASHBOARD_HOST}" \
     --setenv="DASHBOARD_PORT=${DASHBOARD_PORT}" \
-    /usr/bin/python3 "${DSM_ROOT}/dashboard/server.py"
+    /usr/bin/python3 "${DSM_ROOT}/dashboard/server_part8.py"
 for _ in {1..30}
 do
     if curl --fail --silent "http://127.0.0.1:18080/health" \

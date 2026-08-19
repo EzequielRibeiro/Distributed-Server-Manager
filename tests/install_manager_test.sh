@@ -150,7 +150,7 @@ fi
     systemctl(){ :; }
     install_systemd_units >/dev/null
     rendered="${SYSTEMD_DIR}/dsm-dashboard.service"
-    grep -Fq "${DSM_ROOT}/dashboard/server.py" "${rendered}" \
+    grep -Fq "${DSM_ROOT}/dashboard/server_part8.py" "${rendered}" \
         || fail "rendered unit does not use configured DSM_ROOT"
     ! grep -Fq '/opt/dsm' "${rendered}" \
         || fail "rendered unit retains hard-coded /opt/dsm"

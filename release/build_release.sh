@@ -106,6 +106,7 @@ REQUIRED_FILES=(
     bin/dsm
     core/bootstrap.sh
     dashboard/server.py
+    dashboard/server_part8.py
     database/manager.py
     database/runtime_backend.py
     database/operations.py
@@ -174,6 +175,7 @@ manifest = {
         "bin/dsm",
         "core/bootstrap.sh",
         "dashboard/server.py",
+        "dashboard/server_part8.py",
         "database/manager.py",
         "database/runtime_backend.py",
         "database/operations.py",
