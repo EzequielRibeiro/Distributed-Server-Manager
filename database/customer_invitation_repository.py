@@ -45,6 +45,7 @@ class CustomerInvitationRepository:
                 if actor is None: raise PermissionError("only the customer owner can invite users")
                 duplicate=s.execute("SELECT 1 FROM customer_user_identities i JOIN dashboard_users u ON u.username=i.username "+f"WHERE LOWER(i.email)=LOWER({ph})",(email,)).fetchone()
                 if duplicate is not None: raise ValueError("invitation could not be created")
+                s.execute(f"UPDATE customer_invitations SET revoked_at={self.dialect.current_timestamp} WHERE customer_id={ph} AND LOWER(email)=LOWER({ph}) AND accepted_at IS NULL AND revoked_at IS NULL",(customer_id,email))
                 s.execute("INSERT INTO customer_invitations(id,customer_id,email,account_role,token_hash,expires_at,invited_by) "+f"VALUES ({self.dialect.parameters(7)})",(invitation_id,customer_id,email,account_role,_digest(token),_db_datetime(self.backend,expires),invited_by))
                 for instance_id,profile in instance_access.items():
                     profile=str(profile).lower()
