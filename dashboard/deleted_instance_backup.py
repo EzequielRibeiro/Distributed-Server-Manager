@@ -1,11 +1,13 @@
-"""Secure access to retained backups from deleted instances."""
+"""Secure access and lifecycle for retained deleted-instance backups."""
 
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 from typing import Any
 
-from instance_deletion_service import get_deletion_operation
+from instance_deletion_service import _save, get_deletion_operation
 
 
 def _same_owner(user: dict[str, Any], owner: dict[str, Any]) -> bool:
@@ -50,3 +52,51 @@ def resolve_deleted_instance_backup(root: Path, instance_id: str, user: dict[str
     if not candidate.is_file() or candidate.is_symlink():
         raise FileNotFoundError("backup file not found")
     return candidate, operation
+
+
+def pending_deleted_backups(root: Path, user: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """List retained backups visible to the authenticated account."""
+    if not isinstance(user, dict):
+        raise PermissionError("authentication required")
+    base = root / "runtime" / "operations" / "instance-deletion"
+    result: list[dict[str, Any]] = []
+    if not base.is_dir():
+        return result
+    for state_file in base.glob("*/current.json"):
+        operation = get_deletion_operation(root, state_file.parent.name)
+        if operation.get("state") != "completed" or operation.get("backup_download_state") != "pending":
+            continue
+        if not _same_owner(user, operation.get("backup_owner", {})):
+            continue
+        result.append({
+            "instance_id": operation.get("instance_id"),
+            "game": operation.get("game"),
+            "server": operation.get("server"),
+            "backup_name": operation.get("backup_name"),
+            "backup_size": operation.get("backup_size", 0),
+            "backup_ready_at": operation.get("backup_ready_at"),
+        })
+    return sorted(result, key=lambda item: float(item.get("backup_ready_at") or 0), reverse=True)
+
+
+def complete_deleted_instance_backup_download(root: Path, instance_id: str, user: dict[str, Any] | None) -> dict:
+    """Remove a retained archive only after the HTTP layer confirms a complete transfer."""
+    backup, operation = resolve_deleted_instance_backup(root, instance_id, user)
+    try:
+        backup.unlink()
+    except FileNotFoundError:
+        pass
+    removed_at = time.time()
+    operation = _save(
+        root,
+        operation,
+        backup_download_state="downloaded",
+        backup_downloaded_at=removed_at,
+        backup_removed_at=removed_at,
+        backup_path=None,
+    )
+    try:
+        backup.parent.rmdir()
+    except OSError:
+        pass
+    return operation
