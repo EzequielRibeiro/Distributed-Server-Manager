@@ -7,7 +7,7 @@
 #   - parar dashboard
 #   - verificar status
 #   - executar em foreground (systemd)
-# Servidor: dashboard/server.py
+# Servidor: dashboard/server_part8.py
 # DSM Version: 1.2.0
 # =============================================================
 
@@ -20,7 +20,7 @@ DASHBOARD_PID_FILE="${DASHBOARD_PID_DIR}/dashboard.pid"
 
 DASHBOARD_PORT="${DASHBOARD_PORT:-8080}"
 
-DASHBOARD_SERVER="${DSM_ROOT}/dashboard/server.py"
+DASHBOARD_SERVER="${DSM_ROOT}/dashboard/server_part8.py"
 
 DASHBOARD_LOG="${DSM_ROOT}/logs/dashboard.log"
 
