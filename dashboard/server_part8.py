@@ -13,6 +13,7 @@ from customer_security import customer_rate_limiter,remote_identity
 from customer_team_api import CUSTOMER_TEAM_PATHS,dispatch_customer_team
 from customer_team_repository import CustomerTeamRepository
 from customer_verification_api import CUSTOMER_VERIFICATION_PATHS,dispatch_customer_verification
+from deleted_instance_backup import resolve_deleted_instance_backup
 from instance_deletion_api import begin_deletion,deletion_status
 from instance_lifecycle_http import dispatch_instance_lifecycle_get,dispatch_instance_lifecycle_post,dispatch_instance_reinstall_post
 from instance_reinstall_service import reinstall_instance,reinstall_busy
@@ -44,7 +45,6 @@ def integrated_authenticate(headers):
     except Exception:return None
 
 def _require_area_role(handler,user,allowed_roles):
-    """Enforce UI-area separation on the server, never only in JavaScript."""
     if user is None:
         handler.unauthorized();return False
     if user.get("role") not in allowed_roles:
@@ -100,19 +100,34 @@ def integrated_get(self):
         if path in {"/","/index.html"}:_serve_controller_page(self)
         else:self.send_file(legacy.STATIC_FILES[path])
         return
+    if path=="/api/instance/delete/backup":
+        user=integrated_authenticate(self.headers)
+        if user is None:self.unauthorized();return
+        try:
+            query=parse_qs(parsed.query,keep_blank_values=True)
+            instance_id=str((query.get("instance") or [""])[0]).strip()
+            backup,operation=resolve_deleted_instance_backup(legacy.DSM_ROOT,instance_id,user)
+            self.send_response(200)
+            self.send_header("Content-Type","application/gzip")
+            self.send_header("Content-Disposition",f'attachment; filename="{backup.name}"')
+            self.send_header("Content-Length",str(backup.stat().st_size))
+            self.send_header("Cache-Control","no-store")
+            self.end_headers()
+            with backup.open("rb") as source:
+                while True:
+                    chunk=source.read(1024*1024)
+                    if not chunk:break
+                    self.wfile.write(chunk)
+            return
+        except PermissionError:self.forbidden()
+        except FileNotFoundError as exc:self.send_json(404,{"error":str(exc)})
+        except (ValueError,OSError) as exc:self.send_json(400,{"error":str(exc)})
+        return
     if path=="/api/instance/delete/status":
         user=integrated_authenticate(self.headers)
         if not legacy.can_read(user):self.unauthorized();return
         try:
-            result=dispatch_instance_lifecycle_get(
-                path,
-                parsed.query,
-                user=user,
-                root=legacy.DSM_ROOT,
-                resolve_instance=_instance_from_values,
-                can_access=integrated_can_access_instance,
-                deletion_status=deletion_status,
-            )
+            result=dispatch_instance_lifecycle_get(path,parsed.query,user=user,root=legacy.DSM_ROOT,resolve_instance=_instance_from_values,can_access=integrated_can_access_instance,deletion_status=deletion_status)
             if _send(self,result):return
         except PermissionError:self.forbidden()
         except (ValueError,OSError) as exc:self.send_json(400,{"error":str(exc)})
@@ -133,122 +148,32 @@ def integrated_post(self):
     path=urlparse(self.path).path;peer=remote_identity(self)
     if path=="/api/instance/reinstall/v2":
         user=integrated_authenticate(self.headers)
-        if user is None:
-            self.unauthorized()
-            return
-        if user.get("role") not in {"admin","controller"}:
-            self.forbidden()
-            return
+        if user is None:self.unauthorized();return
+        if user.get("role") not in {"admin","controller"}:self.forbidden();return
         try:
-            payload=self.read_json_body()
-
-            instance=Path(
-                _instance_from_values(
-                    payload.get("server"),
-                    payload.get("game"),
-                    payload.get("instance"),
-                )
-            )
-
-            server,game,_=instance.relative_to(
-                legacy.INSTANCE_ROOT
-            ).parts
-
-            def runner(preserve):
-                return legacy.reinstall_instance_from_game_data(
-                    user,
-                    server,
-                    game,
-                    instance.name,
-                    preserve_config=preserve,
-                )
-
-            result=dispatch_instance_reinstall_post(
-                path,
-                payload,
-                user=user,
-                resolve_instance=_instance_from_values,
-                can_access=integrated_can_access_instance,
-                reinstall_busy=reinstall_busy,
-                reinstall_instance=reinstall_instance,
-                runner=runner,
-                deletion_status=deletion_status,
-                root=legacy.DSM_ROOT,
-            )
-
-            if _send(self,result):
-                return
-
-        except RuntimeError as exc:
-            self.send_json(
-                409,
-                {"error":str(exc)},
-            )
-        except PermissionError:
-            self.forbidden()
-        except (ValueError,OSError) as exc:
-            self.send_json(
-                400,
-                {"error":str(exc)},
-            )
+            payload=self.read_json_body();instance=Path(_instance_from_values(payload.get("server"),payload.get("game"),payload.get("instance")))
+            server,game,_=instance.relative_to(legacy.INSTANCE_ROOT).parts
+            def runner(preserve):return legacy.reinstall_instance_from_game_data(user,server,game,instance.name,preserve_config=preserve)
+            result=dispatch_instance_reinstall_post(path,payload,user=user,resolve_instance=_instance_from_values,can_access=integrated_can_access_instance,reinstall_busy=reinstall_busy,reinstall_instance=reinstall_instance,runner=runner,deletion_status=deletion_status,root=legacy.DSM_ROOT)
+            if _send(self,result):return
+        except RuntimeError as exc:self.send_json(409,{"error":str(exc)})
+        except PermissionError:self.forbidden()
+        except (ValueError,OSError) as exc:self.send_json(400,{"error":str(exc)})
         return
     if path=="/api/instance/delete":
         user=integrated_authenticate(self.headers)
         if user is None:self.unauthorized();return
         if not legacy.can_write(user):self.forbidden();return
         try:
-            payload=self.read_json_body()
-            instance=_instance_from_values(
-                payload.get("server"),
-                payload.get("game"),
-                payload.get("instance"),
-            )
+            payload=self.read_json_body();instance=_instance_from_values(payload.get("server"),payload.get("game"),payload.get("instance"))
             def stop():
-                success,result=legacy.control_instance(
-                    user,
-                    instance,
-                    "stop",
-                )
-                if not success:
-                    raise RuntimeError(
-                        (result or {}).get(
-                            "error",
-                            "could not stop instance",
-                        )
-                        if isinstance(result,dict)
-                        else "could not stop instance"
-                    )
-            def delete_record(instance_id):
-                return legacy.dashboard_repository(
-                    legacy.DATABASE_FILE
-                ).delete_instance(instance_id)
+                success,result=legacy.control_instance(user,instance,"stop")
+                if not success:raise RuntimeError((result or {}).get("error","could not stop instance") if isinstance(result,dict) else "could not stop instance")
+            def delete_record(instance_id):return legacy.dashboard_repository(legacy.DATABASE_FILE).delete_instance(instance_id)
             def audit(action,status,detail):
-                audit_instance_id = (
-                    getattr(instance, "name", None)
-                    or str(instance).rstrip("/").rsplit("/", 1)[-1]
-                )
-
-                legacy.audit(
-                    user,
-                    action,
-                    status,
-                    audit_instance_id,
-                    detail,
-                    database_path=legacy.DATABASE_FILE,
-                )
-            result=dispatch_instance_lifecycle_post(
-                path,
-                payload,
-                user=user,
-                root=legacy.DSM_ROOT,
-                resolve_instance=_instance_from_values,
-                has_permission=legacy.has_instance_permission,
-                begin_deletion=begin_deletion,
-                stop_instance=stop,
-                delete_record=delete_record,
-                audit=audit,
-                reinstall_busy=reinstall_busy,
-            )
+                audit_instance_id=getattr(instance,"name",None) or str(instance).rstrip("/").rsplit("/",1)[-1]
+                legacy.audit(user,action,status,audit_instance_id,detail,database_path=legacy.DATABASE_FILE)
+            result=dispatch_instance_lifecycle_post(path,payload,user=user,root=legacy.DSM_ROOT,resolve_instance=_instance_from_values,has_permission=legacy.has_instance_permission,begin_deletion=begin_deletion,stop_instance=stop,delete_record=delete_record,audit=audit,reinstall_busy=reinstall_busy)
             if _send(self,result):return
         except PermissionError:self.forbidden()
         except (ValueError,OSError,RuntimeError) as exc:self.send_json(400,{"error":str(exc)})
