@@ -93,7 +93,7 @@ def integrated_get(self):
 def integrated_post(self):
     path=urlparse(self.path).path; peer=remote_identity(self)
     if path in PUBLIC_PATHS|PUBLIC_INVITATION_PATHS|CUSTOMER_VERIFICATION_PATHS:
-        limits={"/api/customer/register":(5,900),"/api/customer/password-recovery":(5,900),"/api/customer/password-reset":(10,900),"/api/customer/invitations/accept":(10,900),"/api/customer/email-verification":(10,900)}
+        limits={"/api/customer/register":(5,900),"/api/customer/password-recovery":(5,900),"/api/customer/password-reset":(10,900),"/api/customer/invitations/accept":(10,900),"/api/customer/email-verification":(10,900),"/api/customer/email-verification/resend":(5,900)}
         limit,window=limits[path]
         if not _limit(self,path,peer,limit=limit,window=window):return
         try:payload=self.read_json_body()
