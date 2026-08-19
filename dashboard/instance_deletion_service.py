@@ -75,7 +75,22 @@ def _final_backup(root: Path, instance: Path, operation: dict) -> dict:
     destination = directory / "final-delete.tar.gz"
     temporary = directory / "final-delete.tar.gz.part"
     temporary.unlink(missing_ok=True)
-    operation = _save(root, operation, state="final_backup", stage="final_backup", total_bytes=total, processed_bytes=0, progress=0, backup_name=destination.name, backup_scope="configuration_and_game_map", message="Criando backup final…")
+    operation = _save(
+        root,
+        operation,
+        state="final_backup",
+        stage="final_backup",
+        total_bytes=total,
+        processed_bytes=0,
+        progress=0,
+        backup_name=destination.name,
+        backup_path=str(destination.relative_to(root)),
+        backup_scope="configuration_and_game_map",
+        backup_download_state="creating",
+        backup_downloaded_at=None,
+        backup_removed_at=None,
+        message="Criando backup final…",
+    )
     processed = 0
     checkpoint_bytes = 0
     checkpoint_time = 0.0
@@ -104,7 +119,17 @@ def _final_backup(root: Path, instance: Path, operation: dict) -> dict:
     except Exception:
         temporary.unlink(missing_ok=True)
         raise
-    return _save(root, operation, processed_bytes=total, total_bytes=total, progress=100, backup_size=destination.stat().st_size, backup_files=len(files))
+    return _save(
+        root,
+        operation,
+        processed_bytes=total,
+        total_bytes=total,
+        progress=100,
+        backup_size=destination.stat().st_size,
+        backup_files=len(files),
+        backup_download_state="pending",
+        backup_ready_at=_now(),
+    )
 
 
 def _worker(root: Path, instance: Path, operation: dict, stop_instance: Callable[[], None], delete_record: Callable[[str], bool], audit: Callable[[str, str, str | None], None]) -> None:
