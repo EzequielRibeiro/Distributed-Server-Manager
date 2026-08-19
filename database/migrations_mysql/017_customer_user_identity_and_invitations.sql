@@ -9,6 +9,13 @@ CREATE TABLE customer_user_identities (
         REFERENCES dashboard_users(username) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+INSERT INTO customer_user_identities(username,email,email_verified_at)
+SELECT m.username,c.account_email,c.email_verified_at
+FROM customer_account_members m
+JOIN customers c ON c.id=m.customer_id
+WHERE m.account_role='owner'
+  AND c.account_email IS NOT NULL;
+
 CREATE TABLE customer_invitations (
     id VARCHAR(191) NOT NULL,
     customer_id VARCHAR(191) NOT NULL,
