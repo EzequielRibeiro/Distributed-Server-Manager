@@ -167,7 +167,7 @@ def _worker(root: Path, instance: Path, operation: dict, stop_instance: Callable
             _RUNNING.discard(instance_id)
 
 
-def start_deletion(root: Path, instance: Path, *, server: str, game: str, final_backup: bool, stop_instance: Callable[[], None], delete_record: Callable[[str], bool], audit: Callable[[str, str, str | None], None]) -> tuple[dict, bool]:
+def start_deletion(root: Path, instance: Path, *, server: str, game: str, final_backup: bool, stop_instance: Callable[[], None], delete_record: Callable[[str], bool], audit: Callable[[str, str, str | None], None], backup_owner: dict | None = None) -> tuple[dict, bool]:
     instance_id = instance.name
     with _LOCK:
         current = get_deletion_operation(root, instance_id)
@@ -175,7 +175,29 @@ def start_deletion(root: Path, instance: Path, *, server: str, game: str, final_
             busy = dict(current)
             busy.update(busy=True, accepted=False, message="Já existe uma exclusão em andamento para esta instância.")
             return busy, False
-        operation = {"operation_id": uuid.uuid4().hex, "type": "instance_delete", "instance_id": instance_id, "server": server, "game": game, "final_backup": bool(final_backup), "state": "queued", "stage": "queued", "progress": 0, "processed_bytes": 0, "total_bytes": 0, "accepted": True, "message": "Exclusão da instância em andamento", "created_at": _now(), "updated_at": _now()}
+        owner = backup_owner if isinstance(backup_owner, dict) else {}
+        operation = {
+            "operation_id": uuid.uuid4().hex,
+            "type": "instance_delete",
+            "instance_id": instance_id,
+            "server": server,
+            "game": game,
+            "final_backup": bool(final_backup),
+            "backup_owner": {
+                "username": str(owner.get("username", "")),
+                "scope_id": str(owner.get("scope_id", "")),
+                "role": str(owner.get("role", "")),
+            },
+            "state": "queued",
+            "stage": "queued",
+            "progress": 0,
+            "processed_bytes": 0,
+            "total_bytes": 0,
+            "accepted": True,
+            "message": "Exclusão da instância em andamento",
+            "created_at": _now(),
+            "updated_at": _now(),
+        }
         _atomic_json(_state_path(root, instance_id), operation)
         _RUNNING.add(instance_id)
         threading.Thread(target=_worker, args=(root, instance, operation, stop_instance, delete_record, audit), daemon=True, name=f"delete-{instance_id}").start()
