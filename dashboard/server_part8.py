@@ -20,6 +20,8 @@ CUSTOMER_PUBLIC_FILES={
     "/customer-login.html":legacy.WEB_DIR/"customer-login.html","/customer-register.html":legacy.WEB_DIR/"customer-register.html","/customer-forgot-password.html":legacy.WEB_DIR/"customer-forgot-password.html","/customer-reset-password.html":legacy.WEB_DIR/"customer-reset-password.html","/customer-verify-email.html":legacy.WEB_DIR/"customer-verify-email.html","/customer-invitation.html":legacy.WEB_DIR/"customer-invitation.html","/customer-auth.css":legacy.WEB_DIR/"customer-auth.css","/customer-auth.js":legacy.WEB_DIR/"customer-auth.js","/customer-onboarding.js":legacy.WEB_DIR/"customer-onboarding.js",
 }
 CUSTOMER_AUTHENTICATED_FILES={"/customer-members.html":legacy.WEB_DIR/"customer-members.html","/customer-members.js":legacy.WEB_DIR/"customer-members.js","/customer-team.css":legacy.WEB_DIR/"customer-team.css","/customer-deletion-v2.js":legacy.WEB_DIR/"customer-deletion-v2.js","/customer-overview-v2.js":legacy.WEB_DIR/"customer-overview-v2.js","/instance-lifecycle-v2.js":legacy.WEB_DIR/"instance-lifecycle-v2.js"}
+CUSTOMER_PROTECTED_PAGES={"/customer.html","/customer-instance.html","/customer-members.html"}
+CONTROLLER_PROTECTED_PAGES={"/","/index.html","/console.html","/settings.html","/users.html","/agents.html","/contract-demo.html"}
 legacy.STATIC_FILES.update(CUSTOMER_PUBLIC_FILES); legacy.STATIC_FILES.update(CUSTOMER_AUTHENTICATED_FILES)
 _original_get=legacy.DashboardHandler.do_GET; _original_post=legacy.DashboardHandler.do_POST
 _original_can_access_instance=legacy.can_access_instance; _original_instance_permission_profile=legacy.instance_permission_profile
@@ -39,6 +41,14 @@ def integrated_authenticate(headers):
     if user is not None:return user
     try:return authenticate_customer(headers,_backend())
     except Exception:return None
+
+def _require_area_role(handler,user,allowed_roles):
+    """Enforce UI-area separation on the server, never only in JavaScript."""
+    if user is None:
+        handler.unauthorized();return False
+    if user.get("role") not in allowed_roles:
+        handler.forbidden();return False
+    return True
 
 def integrated_instance_permission_profile(user,instance_path,database_path=legacy.DATABASE_FILE):
     if user and user.get("role")=="customer":
@@ -79,10 +89,20 @@ def integrated_get(self):
     if path in CUSTOMER_PUBLIC_FILES:self.send_file(CUSTOMER_PUBLIC_FILES[path]);return
     if path in CUSTOMER_AUTHENTICATED_FILES:
         user=integrated_authenticate(self.headers)
-        if not legacy.can_read(user):self.unauthorized();return
+        if not _require_area_role(self,user,{"customer"}):return
         self.send_file(CUSTOMER_AUTHENTICATED_FILES[path]);return
-    if path=="/customer-instance.html":_serve_instance_page(self);return
-    if path in {"/","/index.html"}:_serve_controller_page(self);return
+    if path in CUSTOMER_PROTECTED_PAGES:
+        user=integrated_authenticate(self.headers)
+        if not _require_area_role(self,user,{"customer"}):return
+        if path=="/customer-instance.html":_serve_instance_page(self)
+        else:self.send_file(legacy.STATIC_FILES[path])
+        return
+    if path in CONTROLLER_PROTECTED_PAGES:
+        user=integrated_authenticate(self.headers)
+        if not _require_area_role(self,user,{"admin","controller","operator"}):return
+        if path in {"/","/index.html"}:_serve_controller_page(self)
+        else:self.send_file(legacy.STATIC_FILES[path])
+        return
     if path=="/api/instance/delete/status":
         user=integrated_authenticate(self.headers)
         if not legacy.can_read(user):self.unauthorized();return
@@ -96,7 +116,7 @@ def integrated_get(self):
     user=None
     if authenticated_get:
         user=integrated_authenticate(self.headers)
-        if not legacy.can_read(user):self.unauthorized();return
+        if not _require_area_role(self,user,{"customer"}):return
     if path in CUSTOMER_AUTH_PATHS:_send(self,dispatch_customer_auth("GET",path,user=user,backend=_backend()));return
     if path=="/api/customer/team":_send(self,dispatch_customer_team("GET",path,payload=None,user=user,backend=_backend()));return
     if path=="/api/customer/team/invitations":_send(self,dispatch_customer_invitations("GET",path,payload=None,user=user,backend=_backend()));return
@@ -148,7 +168,7 @@ def integrated_post(self):
         _send(self,dispatch_customer_verification("POST",path,payload=payload,backend=_backend()));return
     if path in (CUSTOMER_TEAM_PATHS-{"/api/customer/team"})|(TEAM_INVITATION_PATHS-{"/api/customer/team/invitations"}):
         user=integrated_authenticate(self.headers)
-        if user is None:self.unauthorized();return
+        if not _require_area_role(self,user,{"customer"}):return
         if not legacy.can_write(user):self.forbidden();return
         if not _limit(self,"customer-team-write",str(user.get("username","")),limit=60,window=60):return
         try:payload=self.read_json_body()
@@ -157,7 +177,7 @@ def integrated_post(self):
         _send(self,dispatch_customer_invitations("POST",path,payload=payload,user=user,backend=_backend()));return
     if path in AUTHENTICATED_PATHS:
         user=integrated_authenticate(self.headers)
-        if user is None:self.unauthorized();return
+        if not _require_area_role(self,user,{"customer"}):return
         if not legacy.can_write(user):self.forbidden();return
         try:payload=self.read_json_body()
         except ValueError as exc:self.send_json(400,{"error":str(exc)});return
