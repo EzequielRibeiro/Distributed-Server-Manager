@@ -1745,7 +1745,6 @@
                 && state.runtime
                 && state.version
                 && state.build
-                && state.region
             );
 
         el.regionStep.hidden =
@@ -1789,9 +1788,9 @@
             state.build.label;
 
         el.summaryRegion.textContent =
-            regionLabel(
-                state.region
-            );
+            state.region
+                ? regionLabel(state.region)
+                : "Automática";
 
         el.summaryRegionFallback.textContent =
             state.allowCrossRegion
@@ -1818,7 +1817,6 @@
             || !state.runtime
             || !state.version
             || !state.build
-            || !state.region
         ) {
             throw new Error(
                 "A seleção do servidor está incompleta."
@@ -1889,7 +1887,7 @@
 
             placement: {
                 region_id:
-                    state.region.id,
+                    state.region?.id || null,
 
                 allow_cross_region:
                     state.allowCrossRegion,

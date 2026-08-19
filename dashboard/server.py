@@ -101,6 +101,7 @@ from instance_placement import (
     resolve_instance_placement,
 )
 from infrastructure_http import dispatch_infrastructure_get
+from agent_location_http import dispatch_agent_location_post
 
 from region_preference_api import (
     region_options_for_user,
@@ -4622,6 +4623,35 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         parsed = urlparse(self.path)
         path = parsed.path
+
+        if path == "/api/agent/location":
+            try:
+                body = self.read_json_body()
+
+                backend = dashboard_repository(
+                    DATABASE_FILE
+                ).backend
+
+                result = dispatch_agent_location_post(
+                    path,
+                    body,
+                    user=user,
+                    backend=backend,
+                )
+
+                if result is not None:
+                    status, payload = result
+                    self.send_json(
+                        status,
+                        payload,
+                    )
+                    return
+            except ValueError as exc:
+                self.send_json(
+                    400,
+                    {"error": str(exc)},
+                )
+                return
 
         if path == "/api/agent/ports/set":
             try:

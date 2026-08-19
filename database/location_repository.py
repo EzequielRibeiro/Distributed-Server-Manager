@@ -41,6 +41,139 @@ class LocationRepository:
             finally:
                 session.close()
 
+    def _upsert(
+        self,
+        session: AlertSession,
+        table: str,
+        key: str,
+        values: dict[str, Any],
+    ) -> None:
+        """Insert or reconcile a repository-owned record."""
+        ph = self.dialect.placeholder
+
+        existing = session.execute(
+            f"SELECT 1 FROM {table} WHERE {key}={ph}",
+            (values[key],),
+        ).fetchone()
+
+        if existing is None:
+            columns = tuple(values)
+            session.execute(
+                f"INSERT INTO {table}({','.join(columns)}) "
+                f"VALUES ({self.dialect.parameters(len(columns))})",
+                tuple(values[column] for column in columns),
+            )
+            return
+
+        updates = [
+            column
+            for column in values
+            if column != key
+        ]
+
+        if not updates:
+            return
+
+        session.execute(
+            f"UPDATE {table} SET "
+            + ",".join(
+                f"{column}={ph}"
+                for column in updates
+            )
+            + f" WHERE {key}={ph}",
+            tuple(
+                values[column]
+                for column in updates
+            )
+            + (values[key],),
+        )
+
+    def upsert_region(
+        self,
+        *,
+        region_id: str,
+        name: str,
+        country_code: str | None = None,
+        continent_code: str | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        status: str = "active",
+    ) -> None:
+        """Create or reconcile a geographic Region."""
+        with self.session(transaction=True) as session:
+            self._upsert(
+                session,
+                "regions",
+                "id",
+                {
+                    "id": region_id,
+                    "name": name,
+                    "country_code": country_code,
+                    "continent_code": continent_code,
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "status": status,
+                },
+            )
+
+    def upsert_datacenter(
+        self,
+        *,
+        datacenter_id: str,
+        region_id: str,
+        name: str,
+        provider: str | None = None,
+        city: str | None = None,
+        country_code: str | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        status: str = "active",
+    ) -> None:
+        """Create or reconcile a Datacenter."""
+        with self.session(transaction=True) as session:
+            self._upsert(
+                session,
+                "datacenters",
+                "id",
+                {
+                    "id": datacenter_id,
+                    "region_id": region_id,
+                    "name": name,
+                    "provider": provider,
+                    "city": city,
+                    "country_code": country_code,
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "status": status,
+                },
+            )
+
+    def upsert_agent_location(
+        self,
+        *,
+        agent_id: str,
+        datacenter_id: str,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        public_host: str | None = None,
+        status: str = "active",
+    ) -> None:
+        """Assign or reconcile the geographic location of an Agent."""
+        with self.session(transaction=True) as session:
+            self._upsert(
+                session,
+                "agent_locations",
+                "agent_id",
+                {
+                    "agent_id": agent_id,
+                    "datacenter_id": datacenter_id,
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "public_host": public_host,
+                    "status": status,
+                },
+            )
+
     def regions(self) -> list[dict[str, Any]]:
         with self.session() as session:
             rows = session.execute(

@@ -5,6 +5,7 @@ const API = "/api";
 
 let currentUser = null;
 let selectedAgent = null;
+let infrastructureTopology = null;
 
 
 function authHeader() {
@@ -166,6 +167,133 @@ function applyRole() {
         !== "admin";
 }
 
+
+
+async function loadInfrastructure() {
+    infrastructureTopology =
+        await request(
+            "/infrastructure?active_only=true"
+        );
+
+    return infrastructureTopology;
+}
+
+function collectDatacenters(
+    value,
+    result = []
+) {
+    if (!value) {
+        return result;
+    }
+
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            collectDatacenters(
+                item,
+                result
+            );
+        }
+
+        return result;
+    }
+
+    if (typeof value !== "object") {
+        return result;
+    }
+
+    if (
+        value.type === "datacenter"
+        && value.id
+    ) {
+        result.push(value);
+    }
+
+    for (
+        const child
+        of Object.values(value)
+    ) {
+        if (
+            child
+            && typeof child === "object"
+        ) {
+            collectDatacenters(
+                child,
+                result
+            );
+        }
+    }
+
+    return result;
+}
+
+function renderDatacenters() {
+    const select =
+        document.getElementById(
+            "agent-datacenter"
+        );
+
+    if (!select) {
+        return;
+    }
+
+    const current =
+        select.value;
+
+    select.replaceChildren();
+
+    const empty =
+        document.createElement(
+            "option"
+        );
+
+    empty.value = "";
+    empty.textContent =
+        "Selecione um datacenter";
+
+    select.appendChild(empty);
+
+    const unique =
+        new Map();
+
+    for (
+        const item
+        of collectDatacenters(
+            infrastructureTopology
+        )
+    ) {
+        if (item?.id) {
+            unique.set(
+                String(item.id),
+                item
+            );
+        }
+    }
+
+    for (
+        const item
+        of unique.values()
+    ) {
+        const option =
+            document.createElement(
+                "option"
+            );
+
+        option.value =
+            String(item.id);
+
+        option.textContent =
+            item.name
+            || String(item.id);
+
+        select.appendChild(
+            option
+        );
+    }
+
+    if (current) {
+        select.value = current;
+    }
+}
 
 function agentCard(agent) {
     const card =
@@ -370,6 +498,101 @@ async function loadAgent(
 }
 
 
+
+async function saveAgentLocation(
+    event
+) {
+    event.preventDefault();
+
+    if (!selectedAgent) {
+        errorMessage(
+            "Selecione um Agent."
+        );
+        return;
+    }
+
+    const datacenter =
+        document.getElementById(
+            "agent-datacenter"
+        ).value;
+
+    if (!datacenter) {
+        errorMessage(
+            "Selecione um datacenter."
+        );
+        return;
+    }
+
+    const latitude =
+        document.getElementById(
+            "agent-latitude"
+        ).value.trim();
+
+    const longitude =
+        document.getElementById(
+            "agent-longitude"
+        ).value.trim();
+
+    const payload = {
+        agent_id:
+            selectedAgent,
+
+        datacenter_id:
+            datacenter,
+
+        latitude:
+            latitude === ""
+                ? null
+                : Number(latitude),
+
+        longitude:
+            longitude === ""
+                ? null
+                : Number(longitude),
+
+        public_host:
+            document.getElementById(
+                "agent-public-host"
+            ).value.trim()
+            || null,
+
+        status:
+            document.getElementById(
+                "agent-location-status"
+            ).value
+    };
+
+    try {
+        const result =
+            await request(
+                "/agent/location",
+                {
+                    method: "POST",
+                    body:
+                        JSON.stringify(
+                            payload
+                        )
+                }
+            );
+
+        errorMessage();
+
+        await loadInfrastructure();
+
+        renderDatacenters();
+
+        document.getElementById(
+            "agent-datacenter"
+        ).value =
+            result.datacenter_id
+            || "";
+    } catch (error) {
+        errorMessage(
+            error.message
+        );
+    }
+}
+
 async function saveRange(event) {
     event.preventDefault();
 
@@ -481,6 +704,14 @@ async function initialize() {
             "agent-range-form"
         ).onsubmit =
             saveRange;
+
+        document.getElementById(
+            "agent-location-form"
+        ).onsubmit =
+            saveAgentLocation;
+
+        await loadInfrastructure();
+        renderDatacenters();
 
         await loadAgents();
 

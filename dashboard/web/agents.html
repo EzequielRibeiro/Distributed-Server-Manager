@@ -72,6 +72,75 @@
             ></div>
 
             <form
+                id="agent-location-form"
+                class="range-form"
+            >
+                <h3>
+                    Localização do Agent
+                </h3>
+
+                <label>
+                    Datacenter
+                    <select
+                        id="agent-datacenter"
+                        required
+                    >
+                        <option value="">
+                            Selecione um datacenter
+                        </option>
+                    </select>
+                </label>
+
+                <label>
+                    Latitude
+                    <input
+                        id="agent-latitude"
+                        type="number"
+                        min="-90"
+                        max="90"
+                        step="any"
+                    >
+                </label>
+
+                <label>
+                    Longitude
+                    <input
+                        id="agent-longitude"
+                        type="number"
+                        min="-180"
+                        max="180"
+                        step="any"
+                    >
+                </label>
+
+                <label>
+                    Host público
+                    <input
+                        id="agent-public-host"
+                        type="text"
+                    >
+                </label>
+
+                <label>
+                    Status
+                    <select
+                        id="agent-location-status"
+                    >
+                        <option value="active">
+                            Ativo
+                        </option>
+                        <option value="disabled">
+                            Desabilitado
+                        </option>
+                    </select>
+                </label>
+
+                <button type="submit">
+                    Salvar localização
+                </button>
+            </form>
+
+            <form
                 id="agent-range-form"
                 class="range-form"
             >
