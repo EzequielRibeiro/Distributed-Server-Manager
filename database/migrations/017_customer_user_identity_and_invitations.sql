@@ -11,6 +11,14 @@ CREATE TABLE customer_user_identities (
 CREATE UNIQUE INDEX idx_customer_user_identity_email
     ON customer_user_identities(LOWER(email));
 
+-- Backfill the verified/contact e-mail for existing Customer owners.
+INSERT INTO customer_user_identities(username,email,email_verified_at)
+SELECT m.username,c.account_email,c.email_verified_at
+FROM customer_account_members m
+JOIN customers c ON c.id=m.customer_id
+WHERE m.account_role='owner'
+  AND c.account_email IS NOT NULL;
+
 CREATE TABLE customer_invitations (
     id TEXT PRIMARY KEY,
     customer_id TEXT NOT NULL,
