@@ -15,7 +15,6 @@
     "core/bootstrap.sh",
     "dashboard/server.py",
     "dashboard/server_part8.py",
-    "installer/catalog_v2.sh",
     "installer/compatibility_resolver.sh",
     "catalog/v2/schemas/runtime-definition.schema.json",
     "systemd/dsm-dashboard.service"
