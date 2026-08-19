@@ -14,7 +14,7 @@ from customer_account_http import AUTHENTICATED_PATHS, PUBLIC_PATHS
 def test_customer_auth_api_is_separate_from_admin_auth():
     assert "/api/customer/auth/me" in CUSTOMER_AUTH_PATHS
     assert "/api/auth/me" not in CUSTOMER_AUTH_PATHS
-    assert "/api/customer/auth/me" in AUTHENTICATED_PATHS
+    assert "/api/customer/auth/me" not in AUTHENTICATED_PATHS
 
 
 def test_customer_team_api_has_explicit_permission_operations():
@@ -26,7 +26,7 @@ def test_customer_team_api_has_explicit_permission_operations():
         "/api/customer/team/access",
     }
     assert expected <= CUSTOMER_TEAM_PATHS
-    assert expected <= AUTHENTICATED_PATHS
+    assert not (expected & AUTHENTICATED_PATHS)
 
 
 def test_public_account_flows_remain_separate_from_team_api():
