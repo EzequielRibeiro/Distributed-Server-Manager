@@ -498,11 +498,60 @@ class DashboardRepository:
             )
 
     def delete_instance(self, instance_id: str) -> int:
+        """
+        Remove uma instância e suas relações operacionais de forma
+        transacional.
+
+        Relações configuradas com ON DELETE CASCADE são eliminadas pelo
+        banco. Alertas, porém, são preservados como histórico do nó para
+        que uma instância removida não continue sendo referenciada por FK.
+        """
+        ph = self.dialect.placeholder
+
         with self.session(transaction=True) as session:
-            cursor = session.execute(
-                f"DELETE FROM instances WHERE id={self.dialect.placeholder}",
+            instance = session.execute(
+                "SELECT id,node_id FROM instances "
+                f"WHERE id={ph}",
+                (instance_id,),
+            ).fetchone()
+
+            if instance is None:
+                return 0
+
+            # -----------------------------------------------------
+            # Preservar alertas como histórico.
+            #
+            # alerts.instance_id possui ON DELETE RESTRICT.
+            # O trigger também proíbe scope='instance' sem instance_id.
+            # Portanto o alerta passa a ser histórico do nó antes da
+            # exclusão da instância.
+            # -----------------------------------------------------
+
+            session.execute(
+                "UPDATE alerts "
+                "SET state=CASE "
+                "        WHEN state IN ('OPEN','ACKNOWLEDGED','SUPPRESSED') "
+                "        THEN 'RESOLVED' "
+                "        ELSE state "
+                "    END, "
+                "    resolved_at=CASE "
+                "        WHEN state IN ('OPEN','ACKNOWLEDGED','SUPPRESSED') "
+                "             AND resolved_at IS NULL "
+                "        THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                "        ELSE resolved_at "
+                "    END, "
+                "    scope='node', "
+                "    instance_id=NULL, "
+                "    updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                f"WHERE instance_id={ph}",
                 (instance_id,),
             )
+
+            cursor = session.execute(
+                f"DELETE FROM instances WHERE id={ph}",
+                (instance_id,),
+            )
+
         return cursor.rowcount
 
     def registered_instances(self) -> set[tuple[str, str, str]]:

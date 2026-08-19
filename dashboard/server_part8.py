@@ -223,11 +223,16 @@ def integrated_post(self):
                     legacy.DATABASE_FILE
                 ).delete_instance(instance_id)
             def audit(action,status,detail):
+                audit_instance_id = (
+                    getattr(instance, "name", None)
+                    or str(instance).rstrip("/").rsplit("/", 1)[-1]
+                )
+
                 legacy.audit(
                     user,
                     action,
                     status,
-                    instance.name,
+                    audit_instance_id,
                     detail,
                     database_path=legacy.DATABASE_FILE,
                 )

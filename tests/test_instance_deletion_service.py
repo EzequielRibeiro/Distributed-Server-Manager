@@ -86,3 +86,55 @@ def test_backup_failure_preserves_instance_and_previous_archive(tmp_path, monkey
     assert instance.is_dir()
     assert deleted == []
     assert previous.read_bytes() == b"previous-valid-backup"
+
+
+
+def test_database_delete_failure_restores_instance_directory(tmp_path):
+    instance = (
+        tmp_path
+        / "instances"
+        / "node-a"
+        / "dayz"
+        / "demo-fk-failure"
+    )
+    instance.mkdir(parents=True)
+    (instance / "serverDZ.cfg").write_text(
+        "hostname=Capivara",
+        encoding="utf-8",
+    )
+
+    def fail_delete(_instance_id):
+        raise RuntimeError("FOREIGN KEY constraint failed")
+
+    audits = []
+
+    start_deletion(
+        tmp_path,
+        instance,
+        server="node-a",
+        game="dayz",
+        final_backup=False,
+        stop_instance=lambda: None,
+        delete_record=fail_delete,
+        audit=lambda *args: audits.append(args),
+    )
+
+    result = wait_terminal(
+        tmp_path,
+        "demo-fk-failure",
+    )
+
+    assert result["state"] == "failed"
+    assert "FOREIGN KEY" in result["error"]
+    assert instance.is_dir()
+
+    quarantine = list(
+        instance.parent.glob(
+            ".demo-fk-failure.deleting-*"
+        )
+    )
+    assert quarantine == []
+
+    assert audits
+    assert audits[-1][0] == "instance.delete"
+    assert audits[-1][1] == "error"

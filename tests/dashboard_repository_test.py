@@ -46,6 +46,79 @@ class DashboardRepositoryTest(unittest.TestCase):
         self.repository.write_audit("aurora", "cliente-demo", "test", "success", None)
         self.assertEqual(self.repository.delete_instance("cliente-demo"), 1)
 
+    def test_delete_instance_preserves_instance_alert_as_node_history(self):
+        instance_id = "cliente-demo"
+        alert_id = "test-delete-alert:cliente-demo"
+
+        with self.repository.session(transaction=True) as session:
+            session.execute(
+                """
+                INSERT INTO alerts(
+                    id,
+                    scope,
+                    controller_id,
+                    agent_id,
+                    node_id,
+                    instance_id,
+                    rule_id,
+                    level,
+                    state,
+                    message
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    alert_id,
+                    "instance",
+                    "controller-demo",
+                    "agent-demo",
+                    "DemoNode",
+                    instance_id,
+                    "test.instance.delete",
+                    "CRITICAL",
+                    "RESOLVED",
+                    "Alerta histórico de teste",
+                ),
+            )
+
+        self.assertEqual(
+            self.repository.delete_instance(instance_id),
+            1,
+        )
+
+        self.assertIsNone(
+            self.repository.instance_context(instance_id)
+        )
+
+        with self.repository.session() as session:
+            alert = session.execute(
+                """
+                SELECT
+                    scope,
+                    controller_id,
+                    agent_id,
+                    node_id,
+                    instance_id,
+                    state,
+                    message
+                FROM alerts
+                WHERE id=?
+                """,
+                (alert_id,),
+            ).fetchone()
+
+        self.assertIsNotNone(alert)
+        self.assertEqual(alert["scope"], "node")
+        self.assertEqual(alert["controller_id"], "controller-demo")
+        self.assertEqual(alert["agent_id"], "agent-demo")
+        self.assertEqual(alert["node_id"], "DemoNode")
+        self.assertIsNone(alert["instance_id"])
+        self.assertEqual(alert["state"], "RESOLVED")
+        self.assertEqual(
+            alert["message"],
+            "Alerta histórico de teste",
+        )
+
     def test_customer_instance_reservation_and_retry(self):
         plan = self.repository.create_customer_instance(
             customer_id="CLI-DEMO-001",
