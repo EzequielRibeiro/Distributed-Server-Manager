@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Área do cliente | Capivara DSM</title>
+  <link rel="stylesheet" href="/customer-auth.css">
+</head>
+<body>
+  <main class="customer-auth-shell">
+    <section class="customer-auth-card">
+      <p class="eyebrow">CAPIVARA DSM</p>
+      <h1>Área do cliente</h1>
+      <p>Acesse seus contratos e servidores.</p>
+      <form id="customer-login-form">
+        <label>E-mail ou usuário
+          <input id="customer-login-user" autocomplete="username" required>
+        </label>
+        <label>Senha
+          <input id="customer-login-password" type="password" autocomplete="current-password" required>
+        </label>
+        <button type="submit">Entrar</button>
+      </form>
+      <p id="customer-login-message" role="status"></p>
+      <nav class="customer-auth-links">
+        <a href="/customer-forgot-password.html">Recuperar senha</a>
+        <a href="/customer-register.html">Criar cadastro</a>
+        <a href="/login.html">Acesso administrativo</a>
+      </nav>
+    </section>
+  </main>
+  <script src="/customer-auth.js"></script>
+</body>
+</html>
