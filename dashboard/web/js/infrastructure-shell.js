@@ -3,6 +3,7 @@
 
     function mount() {
         const Explorer = window.CapivaraInfrastructureExplorer;
+        const Details = window.CapivaraInfrastructureDetails;
         if (!Explorer || document.getElementById("capivara-infrastructure-shell")) return;
 
         const shell = document.createElement("aside");
@@ -18,6 +19,7 @@
                 <button type="button" class="infra-shell-close" aria-label="Fechar infraestrutura">×</button>
             </div>
             <div class="infrastructure-explorer" data-infrastructure-explorer></div>
+            <div class="infrastructure-details" data-infrastructure-details></div>
         `;
         document.body.appendChild(shell);
 
@@ -30,7 +32,12 @@
         document.body.appendChild(trigger);
 
         const explorer = shell.querySelector("[data-infrastructure-explorer]");
+        const details = shell.querySelector("[data-infrastructure-details]");
         const close = shell.querySelector(".infra-shell-close");
+
+        if (Details) {
+            Details.mount(details);
+        }
 
         function open() {
             shell.hidden = false;

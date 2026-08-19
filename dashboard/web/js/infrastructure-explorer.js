@@ -127,7 +127,13 @@
             if (options.controllerId) query.set("controller_id", options.controllerId);
             if (options.activeOnly) query.set("active_only", "true");
             const suffix = query.toString() ? `?${query.toString()}` : "";
-            const response = await fetch(`/api/infrastructure${suffix}`, { credentials: "same-origin" });
+            const auth = sessionStorage.getItem("dsm_auth") || "";
+            const response = await fetch(`/api/infrastructure${suffix}`, {
+                headers: {
+                    Authorization: `Basic ${auth}`,
+                    Accept: "application/json",
+                },
+            });
             const payload = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
             if (State) State.setInfrastructure(payload);
