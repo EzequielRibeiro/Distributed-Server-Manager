@@ -3954,9 +3954,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def unauthorized(self):
-        self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="DSM Dashboard"')
-        self.end_headers()
+        self.send_json(
+            401,
+            {"error": "Autenticação necessária | Authentication required"},
+        )
 
     def forbidden(self):
         self.send_json(403, {"error": "Acesso negado | Access denied"})
