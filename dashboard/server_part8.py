@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""Customer HTTP integration wrapper for Capivara DSM.
-
-Keeps the legacy dashboard server focused on transport while customer account,
-authentication, invitations, team RBAC, verification and security stay modular.
-"""
+"""Customer HTTP integration wrapper for Capivara DSM."""
 from __future__ import annotations
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse,parse_qs
 import server as legacy
 from customer_account_http import AUTHENTICATED_PATHS,PUBLIC_PATHS,dispatch_customer_account
 from customer_auth_api import CUSTOMER_AUTH_PATHS,dispatch_customer_auth
@@ -17,23 +13,12 @@ from customer_security import customer_rate_limiter,remote_identity
 from customer_team_api import CUSTOMER_TEAM_PATHS,dispatch_customer_team
 from customer_team_repository import CustomerTeamRepository
 from customer_verification_api import CUSTOMER_VERIFICATION_PATHS,dispatch_customer_verification
+from instance_deletion_api import begin_deletion,deletion_status
 
 CUSTOMER_PUBLIC_FILES={
-    "/customer-login.html":legacy.WEB_DIR/"customer-login.html",
-    "/customer-register.html":legacy.WEB_DIR/"customer-register.html",
-    "/customer-forgot-password.html":legacy.WEB_DIR/"customer-forgot-password.html",
-    "/customer-reset-password.html":legacy.WEB_DIR/"customer-reset-password.html",
-    "/customer-verify-email.html":legacy.WEB_DIR/"customer-verify-email.html",
-    "/customer-invitation.html":legacy.WEB_DIR/"customer-invitation.html",
-    "/customer-auth.css":legacy.WEB_DIR/"customer-auth.css",
-    "/customer-auth.js":legacy.WEB_DIR/"customer-auth.js",
-    "/customer-onboarding.js":legacy.WEB_DIR/"customer-onboarding.js",
+    "/customer-login.html":legacy.WEB_DIR/"customer-login.html","/customer-register.html":legacy.WEB_DIR/"customer-register.html","/customer-forgot-password.html":legacy.WEB_DIR/"customer-forgot-password.html","/customer-reset-password.html":legacy.WEB_DIR/"customer-reset-password.html","/customer-verify-email.html":legacy.WEB_DIR/"customer-verify-email.html","/customer-invitation.html":legacy.WEB_DIR/"customer-invitation.html","/customer-auth.css":legacy.WEB_DIR/"customer-auth.css","/customer-auth.js":legacy.WEB_DIR/"customer-auth.js","/customer-onboarding.js":legacy.WEB_DIR/"customer-onboarding.js",
 }
-CUSTOMER_AUTHENTICATED_FILES={
-    "/customer-members.html":legacy.WEB_DIR/"customer-members.html",
-    "/customer-members.js":legacy.WEB_DIR/"customer-members.js",
-    "/customer-team.css":legacy.WEB_DIR/"customer-team.css",
-}
+CUSTOMER_AUTHENTICATED_FILES={"/customer-members.html":legacy.WEB_DIR/"customer-members.html","/customer-members.js":legacy.WEB_DIR/"customer-members.js","/customer-team.css":legacy.WEB_DIR/"customer-team.css","/customer-deletion-v2.js":legacy.WEB_DIR/"customer-deletion-v2.js"}
 legacy.STATIC_FILES.update(CUSTOMER_PUBLIC_FILES); legacy.STATIC_FILES.update(CUSTOMER_AUTHENTICATED_FILES)
 _original_get=legacy.DashboardHandler.do_GET; _original_post=legacy.DashboardHandler.do_POST
 _original_can_access_instance=legacy.can_access_instance; _original_instance_permission_profile=legacy.instance_permission_profile
@@ -75,9 +60,34 @@ def integrated_create_customer_instance(user,payload,root=legacy.DSM_ROOT,databa
     return result
 legacy.authenticate=integrated_authenticate; legacy.instance_permission_profile=integrated_instance_permission_profile; legacy.can_access_instance=integrated_can_access_instance; legacy.create_customer_instance=integrated_create_customer_instance
 
+def _instance_from_values(server,game,instance):
+    return legacy.instance_identity_path(str(server or ""),str(game or ""),str(instance or ""))
+def _authorized_instance(user,server,game,instance):
+    path=_instance_from_values(server,game,instance)
+    if not legacy.has_instance_permission(user,path,"instance.delete"):raise PermissionError("instance deletion is not allowed")
+    return path
+
+def _serve_instance_page(self):
+    source=(legacy.WEB_DIR/"customer-instance.html").read_text(encoding="utf-8")
+    marker="</body>"
+    script='<script src="/customer-deletion-v2.js"></script>'
+    body=(source.replace(marker,script+marker) if marker in source else source+script).encode("utf-8")
+    self.send_response(200); self.send_header("Content-Type","text/html; charset=utf-8"); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
+
 def integrated_get(self):
-    path=urlparse(self.path).path
+    parsed=urlparse(self.path); path=parsed.path
     if path in CUSTOMER_PUBLIC_FILES:self.send_file(CUSTOMER_PUBLIC_FILES[path]); return
+    if path=="/customer-instance.html":_serve_instance_page(self); return
+    if path=="/api/instance/delete/status":
+        user=integrated_authenticate(self.headers)
+        if not legacy.can_read(user):self.unauthorized(); return
+        query=parse_qs(parsed.query)
+        try:
+            instance=_authorized_instance(user,query.get("server",[""])[0],query.get("game",[""])[0],query.get("instance",[""])[0])
+            self.send_json(200,deletion_status(legacy.DSM_ROOT,instance.name))
+        except PermissionError:self.forbidden()
+        except (ValueError,OSError) as exc:self.send_json(400,{"error":str(exc)})
+        return
     authenticated_get=path in CUSTOMER_AUTH_PATHS or path=="/api/customer/team" or path=="/api/customer/team/invitations" or path in AUTHENTICATED_PATHS
     user=None
     if authenticated_get:
@@ -92,6 +102,25 @@ def integrated_get(self):
 
 def integrated_post(self):
     path=urlparse(self.path).path; peer=remote_identity(self)
+    if path=="/api/instance/delete":
+        user=integrated_authenticate(self.headers)
+        if user is None:self.unauthorized(); return
+        if not legacy.can_write(user):self.forbidden(); return
+        try:
+            payload=self.read_json_body(); instance=_authorized_instance(user,payload.get("server"),payload.get("game"),payload.get("instance"))
+            if payload.get("confirmation")!=instance.name:raise ValueError("instance identifier confirmation does not match")
+            relative=instance.relative_to(legacy.INSTANCE_ROOT)
+            server,game,_=relative.parts
+            def stop():
+                success,result=legacy.control_instance(user,instance,"stop")
+                if not success:raise RuntimeError((result or {}).get("error","could not stop instance") if isinstance(result,dict) else "could not stop instance")
+            def delete_record(instance_id):return legacy.dashboard_repository(legacy.DATABASE_FILE).delete_instance(instance_id)
+            def audit(action,status,detail):legacy.audit(user,action,status,instance.name,detail,database_path=legacy.DATABASE_FILE)
+            status,operation=begin_deletion(legacy.DSM_ROOT,instance,server=server,game=game,final_backup=payload.get("final_backup") is True,stop_instance=stop,delete_record=delete_record,audit=audit)
+            self.send_json(status,operation)
+        except PermissionError:self.forbidden()
+        except (ValueError,OSError,RuntimeError) as exc:self.send_json(400,{"error":str(exc)})
+        return
     if path in PUBLIC_PATHS|PUBLIC_INVITATION_PATHS|CUSTOMER_VERIFICATION_PATHS:
         limits={"/api/customer/register":(5,900),"/api/customer/password-recovery":(5,900),"/api/customer/password-reset":(10,900),"/api/customer/invitations/accept":(10,900),"/api/customer/email-verification":(10,900),"/api/customer/email-verification/resend":(5,900)}
         limit,window=limits[path]
