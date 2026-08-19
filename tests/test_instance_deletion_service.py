@@ -43,14 +43,31 @@ def test_final_backup_is_selective_and_excludes_game_binary(tmp_path):
     (instance / "mpmissions" / "dayzOffline.chernarusplus" / "storage_1" / "players.db").write_bytes(b"map-state")
     (instance / "serverfiles" / "DayZServer").write_bytes(b"large-game-binary")
     start_deletion(tmp_path, instance, server="node-a", game="dayz", final_backup=True, stop_instance=lambda: None, delete_record=lambda _: True, audit=lambda *args: None)
-    assert wait_terminal(tmp_path, "demo-002")["state"] == "completed"
+    result = wait_terminal(tmp_path, "demo-002")
+    assert result["state"] == "completed"
     backup = tmp_path / "backups" / "instances" / "demo-002" / "final-delete.tar.gz"
+    assert backup.is_file()
+    assert result["backup_download_state"] == "pending"
+    assert result["backup_path"] == "backups/instances/demo-002/final-delete.tar.gz"
+    assert result["backup_ready_at"] > 0
     with tarfile.open(backup, "r:gz") as archive:
         names = set(archive.getnames())
     assert "demo-002/serverDZ.cfg" in names
     assert "demo-002/mpmissions/dayzOffline.chernarusplus/init.c" in names
     assert "demo-002/mpmissions/dayzOffline.chernarusplus/storage_1/players.db" in names
     assert "demo-002/serverfiles/DayZServer" not in names
+
+
+def test_deletion_without_backup_has_no_download_handoff(tmp_path):
+    instance = tmp_path / "instances" / "node-a" / "dayz" / "demo-no-backup"
+    instance.mkdir(parents=True)
+    (instance / "serverDZ.cfg").write_text("hostname=Capivara")
+    start_deletion(tmp_path, instance, server="node-a", game="dayz", final_backup=False, stop_instance=lambda: None, delete_record=lambda _: True, audit=lambda *args: None)
+    result = wait_terminal(tmp_path, "demo-no-backup")
+    assert result["state"] == "completed"
+    assert "backup_path" not in result
+    assert "backup_download_state" not in result
+    assert not (tmp_path / "backups" / "instances" / "demo-no-backup").exists()
 
 
 def test_new_final_backup_replaces_previous_archive(tmp_path):
@@ -88,53 +105,20 @@ def test_backup_failure_preserves_instance_and_previous_archive(tmp_path, monkey
     assert previous.read_bytes() == b"previous-valid-backup"
 
 
-
 def test_database_delete_failure_restores_instance_directory(tmp_path):
-    instance = (
-        tmp_path
-        / "instances"
-        / "node-a"
-        / "dayz"
-        / "demo-fk-failure"
-    )
+    instance = tmp_path / "instances" / "node-a" / "dayz" / "demo-fk-failure"
     instance.mkdir(parents=True)
-    (instance / "serverDZ.cfg").write_text(
-        "hostname=Capivara",
-        encoding="utf-8",
-    )
-
+    (instance / "serverDZ.cfg").write_text("hostname=Capivara", encoding="utf-8")
     def fail_delete(_instance_id):
         raise RuntimeError("FOREIGN KEY constraint failed")
-
     audits = []
-
-    start_deletion(
-        tmp_path,
-        instance,
-        server="node-a",
-        game="dayz",
-        final_backup=False,
-        stop_instance=lambda: None,
-        delete_record=fail_delete,
-        audit=lambda *args: audits.append(args),
-    )
-
-    result = wait_terminal(
-        tmp_path,
-        "demo-fk-failure",
-    )
-
+    start_deletion(tmp_path, instance, server="node-a", game="dayz", final_backup=False, stop_instance=lambda: None, delete_record=fail_delete, audit=lambda *args: audits.append(args))
+    result = wait_terminal(tmp_path, "demo-fk-failure")
     assert result["state"] == "failed"
     assert "FOREIGN KEY" in result["error"]
     assert instance.is_dir()
-
-    quarantine = list(
-        instance.parent.glob(
-            ".demo-fk-failure.deleting-*"
-        )
-    )
+    quarantine = list(instance.parent.glob(".demo-fk-failure.deleting-*"))
     assert quarantine == []
-
     assert audits
     assert audits[-1][0] == "instance.delete"
     assert audits[-1][1] == "error"
