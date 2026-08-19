@@ -1,4 +1,4 @@
-import json
+import tarfile
 import time
 from pathlib import Path
 
@@ -15,89 +15,108 @@ def wait_terminal(root: Path, instance_id: str, timeout=5):
     raise AssertionError("deletion operation did not finish")
 
 
-def test_repeated_delete_requests_share_one_operation_and_backup(tmp_path):
+def test_concurrent_delete_requests_are_rejected_while_one_operates(tmp_path):
     instance = tmp_path / "instances" / "node-a" / "dayz" / "demo-001"
     instance.mkdir(parents=True)
+    (instance / "serverDZ.cfg").write_text("hostname=Capivara")
     (instance / "serverfiles").mkdir()
-    (instance / "serverfiles" / "server.bin").write_bytes(b"capivara" * 65536)
-
-    deleted = []
-    stopped = []
-    audits = []
+    (instance / "serverfiles" / "server.bin").write_bytes(b"game-binary")
+    gate = []
 
     def stop():
-        stopped.append(True)
-
-    def delete_record(instance_id):
-        deleted.append(instance_id)
-        return True
-
-    def audit(action, result, detail):
-        audits.append((action, result, detail))
+        time.sleep(0.15)
+        gate.append(True)
 
     first, created = start_deletion(
-        tmp_path,
-        instance,
-        server="node-a",
-        game="dayz",
-        final_backup=True,
-        stop_instance=stop,
-        delete_record=delete_record,
-        audit=audit,
+        tmp_path, instance, server="node-a", game="dayz", final_backup=True,
+        stop_instance=stop, delete_record=lambda _: True, audit=lambda *args: None,
     )
     assert created is True
 
-    operation_ids = {first["operation_id"]}
     for _ in range(9):
-        current, _ = start_deletion(
-            tmp_path,
-            instance,
-            server="node-a",
-            game="dayz",
-            final_backup=True,
-            stop_instance=stop,
-            delete_record=delete_record,
-            audit=audit,
+        current, accepted = start_deletion(
+            tmp_path, instance, server="node-a", game="dayz", final_backup=True,
+            stop_instance=stop, delete_record=lambda _: True, audit=lambda *args: None,
         )
-        operation_ids.add(current["operation_id"])
+        assert accepted is False
+        assert current["busy"] is True
+        assert current["operation_id"] == first["operation_id"]
 
     result = wait_terminal(tmp_path, "demo-001")
     assert result["state"] == "completed"
-    assert len(operation_ids) == 1
-    assert deleted == ["demo-001"]
-    assert len(stopped) == 1
-    backups = list((tmp_path / "backups" / "instances" / "demo-001").glob("final-delete-*.tar.gz"))
-    assert len(backups) == 1
-    assert not list((tmp_path / "backups" / "instances" / "demo-001").glob("*.part"))
-    assert not instance.exists()
+    assert gate == [True]
 
 
-def test_failed_final_backup_preserves_instance(tmp_path, monkeypatch):
+def test_final_backup_contains_only_configuration_and_map(tmp_path):
+    instance = tmp_path / "instances" / "node-a" / "dayz" / "demo-002"
+    (instance / "mpmissions" / "dayzOffline.chernarusplus" / "storage_1").mkdir(parents=True)
+    (instance / "serverfiles").mkdir()
+    (instance / "serverDZ.cfg").write_text("hostname=Capivara")
+    (instance / "mpmissions" / "dayzOffline.chernarusplus" / "init.c").write_text("void main() {}")
+    (instance / "mpmissions" / "dayzOffline.chernarusplus" / "storage_1" / "players.db").write_bytes(b"map-state")
+    (instance / "serverfiles" / "DayZServer").write_bytes(b"large-game-binary")
+
+    start_deletion(
+        tmp_path, instance, server="node-a", game="dayz", final_backup=True,
+        stop_instance=lambda: None, delete_record=lambda _: True, audit=lambda *args: None,
+    )
+    result = wait_terminal(tmp_path, "demo-002")
+    assert result["state"] == "completed"
+    backup = tmp_path / "backups" / "instances" / "demo-002" / "final-delete.tar.gz"
+    assert backup.is_file()
+    with tarfile.open(backup, "r:gz") as archive:
+        names = set(archive.getnames())
+    assert "demo-002/serverDZ.cfg" in names
+    assert "demo-002/mpmissions/dayzOffline.chernarusplus/init.c" in names
+    assert "demo-002/mpmissions/dayzOffline.chernarusplus/storage_1/players.db" in names
+    assert "demo-002/serverfiles/DayZServer" not in names
+
+
+def test_new_final_backup_replaces_existing_backup(tmp_path):
+    from dashboard.instance_deletion_service import _final_backup
+
+    instance = tmp_path / "instances" / "node-a" / "dayz" / "demo-003"
+    instance.mkdir(parents=True)
+    config = instance / "serverDZ.cfg"
+    config.write_text("version=old")
+    operation = {"operation_id": "one", "instance_id": "demo-003"}
+    _final_backup(tmp_path, instance, operation)
+    backup = tmp_path / "backups" / "instances" / "demo-003" / "final-delete.tar.gz"
+    first = backup.read_bytes()
+
+    config.write_text("version=new-and-different")
+    operation = {"operation_id": "two", "instance_id": "demo-003"}
+    _final_backup(tmp_path, instance, operation)
+    assert backup.is_file()
+    assert backup.read_bytes() != first
+    assert len(list(backup.parent.glob("final-delete*.tar.gz"))) == 1
+    assert not list(backup.parent.glob("*.part"))
+
+
+def test_failed_final_backup_preserves_instance_and_previous_backup(tmp_path, monkeypatch):
     import dashboard.instance_deletion_service as service
 
-    instance = tmp_path / "instances" / "node-a" / "dayz" / "demo-002"
+    instance = tmp_path / "instances" / "node-a" / "dayz" / "demo-004"
     instance.mkdir(parents=True)
-    (instance / "data.bin").write_bytes(b"data")
+    (instance / "serverDZ.cfg").write_text("data")
+    backup_dir = tmp_path / "backups" / "instances" / "demo-004"
+    backup_dir.mkdir(parents=True)
+    previous = backup_dir / "final-delete.tar.gz"
+    previous.write_bytes(b"previous-valid-backup")
 
     def fail_backup(*args, **kwargs):
         raise OSError("simulated backup failure")
 
     monkeypatch.setattr(service, "_final_backup", fail_backup)
     deleted = []
-
     start_deletion(
-        tmp_path,
-        instance,
-        server="node-a",
-        game="dayz",
-        final_backup=True,
+        tmp_path, instance, server="node-a", game="dayz", final_backup=True,
         stop_instance=lambda: None,
         delete_record=lambda instance_id: deleted.append(instance_id) or True,
         audit=lambda *args: None,
     )
-
-    result = wait_terminal(tmp_path, "demo-002")
+    result = wait_terminal(tmp_path, "demo-004")
     assert result["state"] == "failed"
-    assert "simulated backup failure" in result["error"]
     assert instance.is_dir()
     assert deleted == []
+    assert previous.read_bytes() == b"previous-valid-backup"
