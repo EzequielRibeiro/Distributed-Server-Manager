@@ -48,7 +48,7 @@
         $("delete-progress-label").textContent = "Instância excluída com sucesso.";
         $("delete-progress-value").textContent = "100%";
         $("delete-progress-bar").style.width = "100%";
-        window.setTimeout(() => { location.href = "/customer.html"; }, 800);
+        window.setTimeout(() => { location.replace("/customer.html"); }, 800);
       } else if (operation?.state === "failed") {
         setControlsHidden(false);
         $("delete-progress").hidden = true;
