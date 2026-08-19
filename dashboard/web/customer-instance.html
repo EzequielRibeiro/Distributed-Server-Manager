@@ -10,168 +10,18 @@
     <section id="view-config" class="view"><article class="instance-panel"><div class="file-toolbar"><div><h2>Arquivos de configuração do jogo</h2><small>Ex.: serverDZ.cfg, server.properties e arquivos de mods/plugins.</small></div><select id="config-file"><option>Carregando…</option></select></div><textarea id="config-editor" class="config-editor" spellcheck="false"></textarea><p><button id="config-save" class="button">Salvar arquivo</button></p></article></section>
     <section id="view-files" class="view">
       <article class="instance-panel">
-
-        <div class="file-toolbar">
-          <div>
-            <h2>Arquivos do jogo</h2>
-            <span id="file-path">/</span>
-          </div>
-
-          <div>
-            <input
-              id="file-search"
-              type="search"
-              placeholder="Buscar arquivo ou pasta..."
-              autocomplete="off"
-            >
-
-            <button
-              id="file-search-button"
-              class="button"
-              type="button"
-            >
-              Buscar
-            </button>
-
-            <input id="file-upload" type="file">
-
-            <button
-              id="file-create-directory"
-              class="button"
-              type="button"
-            >
-              Nova pasta
-            </button>
-
-            <button
-              id="file-up"
-              class="button"
-              type="button"
-            >
-              Subir pasta
-            </button>
-          </div>
-        </div>
-
-        <div
-          id="file-search-info"
-          class="file-search-info"
-          hidden
-        ></div>
-
-        <p>
-          Esta área mostra somente os arquivos da instalação desta instância.
-          Arquivos internos do Capivara e do sistema não são acessíveis.
-        </p>
-
-        <table class="file-table">
-          <thead>
-            <tr>
-              <th>Nome</th>
-              <th>Tamanho</th>
-              <th>Modificado</th>
-              <th>Ações</th>
-            </tr>
-          </thead>
-
-          <tbody id="file-list"></tbody>
-        </table>
-
-        <!-- =====================================================
-             Editor de arquivo
-             ===================================================== -->
-        <div id="file-editor-panel" class="file-editor-panel" hidden>
-
-          <div class="file-toolbar">
-            <div>
-              <h3>Editar arquivo</h3>
-              <span id="file-editor-path"></span>
-            </div>
-
-            <div>
-              <button id="file-editor-close" class="button">
-                Fechar
-              </button>
-
-              <button id="file-editor-save" class="button">
-                Salvar
-              </button>
-            </div>
-          </div>
-
-          <textarea
-            id="file-editor"
-            class="config-editor"
-            spellcheck="false"
-          ></textarea>
-
-        </div>
-
+        <div class="file-toolbar"><div><h2>Arquivos do jogo</h2><span id="file-path">/</span></div><div><input id="file-search" type="search" placeholder="Buscar arquivo ou pasta..." autocomplete="off"><button id="file-search-button" class="button" type="button">Buscar</button><input id="file-upload" type="file"><button id="file-create-directory" class="button" type="button">Nova pasta</button><button id="file-up" class="button" type="button">Subir pasta</button></div></div>
+        <div id="file-search-info" class="file-search-info" hidden></div>
+        <p>Esta área mostra somente os arquivos da instalação desta instância. Arquivos internos do Capivara e do sistema não são acessíveis.</p>
+        <table class="file-table"><thead><tr><th>Nome</th><th>Tamanho</th><th>Modificado</th><th>Ações</th></tr></thead><tbody id="file-list"></tbody></table>
+        <div id="file-editor-panel" class="file-editor-panel" hidden><div class="file-toolbar"><div><h3>Editar arquivo</h3><span id="file-editor-path"></span></div><div><button id="file-editor-close" class="button">Fechar</button><button id="file-editor-save" class="button">Salvar</button></div></div><textarea id="file-editor" class="config-editor" spellcheck="false"></textarea></div>
       </article>
     </section>
     <section id="view-content" class="view"><article class="instance-panel"><div class="backup-toolbar"><div><h2>Mods, plugins e conteúdo</h2><span>Conteúdo compatível com o ambiente de execução selecionado.</span></div><button id="content-verify" class="button">Verificar integridade</button></div>
-
-      <div class="content-search">
-
-        <div class="file-toolbar">
-          <div>
-            <h3>Buscar conteúdo</h3>
-            <small>
-              Pesquise mods e plugins compatíveis com esta instância.
-            </small>
-          </div>
-        </div>
-
-        <div class="content-search-controls">
-
-          <input
-            id="content-search-query"
-            type="search"
-            placeholder="Ex.: LuckPerms, Chunky, ViaVersion..."
-            autocomplete="off"
-          >
-
-          <select id="content-search-type">
-            <option value="plugin">
-              Plugins
-            </option>
-
-            <option value="mod">
-              Mods
-            </option>
-
-            <option value="modpack">
-              Modpacks
-            </option>
-          </select>
-
-          <button
-            id="content-search-button"
-            class="button"
-            type="button"
-          >
-            Buscar
-          </button>
-
-        </div>
-
-        <div
-          id="content-search-status"
-          class="content-search-status"
-        ></div>
-
-        <div
-          id="content-search-results"
-          class="server-grid"
-        ></div>
-
-      </div>
-
-      <div id="content-available" class="server-grid"></div>
-
-      <h3>Instalado</h3><div id="content-installed"></div><p><button id="content-install" class="button" disabled>Instalar selecionados</button></p></article></section>
+      <div class="content-search"><div class="file-toolbar"><div><h3>Buscar conteúdo</h3><small>Pesquise mods e plugins compatíveis com esta instância.</small></div></div><div class="content-search-controls"><input id="content-search-query" type="search" placeholder="Ex.: LuckPerms, Chunky, ViaVersion..." autocomplete="off"><select id="content-search-type"><option value="plugin">Plugins</option><option value="mod">Mods</option><option value="modpack">Modpacks</option></select><button id="content-search-button" class="button" type="button">Buscar</button></div><div id="content-search-status" class="content-search-status"></div><div id="content-search-results" class="server-grid"></div></div>
+      <div id="content-available" class="server-grid"></div><h3>Instalado</h3><div id="content-installed"></div><p><button id="content-install" class="button" disabled>Instalar selecionados</button></p></article></section>
     <section id="view-backups" class="view"><article class="instance-panel"><div class="backup-toolbar"><div><h2>Backups da instância</h2><span>Pontos de restauração isolados deste servidor.</span></div><button id="backup-create" class="button">Criar backup agora</button></div><div id="backup-list"></div></article></section>
-    <section id="view-danger" class="view"><article class="instance-panel danger-zone"><h2>Excluir instância</h2><p>Remove permanentemente o servidor e seus dados locais. O contrato continuará ativo.</p><label><input id="delete-backup" type="checkbox" checked> Criar backup final antes da exclusão</label><div id="delete-progress" class="delete-progress" hidden role="status" aria-live="polite"><div><span id="delete-progress-label">Preparando exclusão…</span><strong id="delete-progress-value">0%</strong></div><div class="delete-progress-track"><i id="delete-progress-bar"></i></div><small>Não feche esta página enquanto a operação estiver em andamento.</small></div><p>Digite <strong id="delete-confirm-label"></strong> para confirmar:</p><input id="delete-confirm" autocomplete="off"><button id="instance-delete" class="button danger" disabled>Excluir permanentemente</button></article></section>
+    <section id="view-danger" class="view"><article class="instance-panel danger-zone"><h2>Excluir instância</h2><p><strong>Atenção:</strong> a exclusão remove permanentemente o servidor e seus dados locais. O contrato continuará ativo.</p><p>O backup final é opcional. Se você excluir sem criar um backup, todos os dados da instância serão perdidos e não poderão ser recuperados pelo Capivara DSM. Se quiser conservar configurações e dados de mapa, marque a opção abaixo para criar um backup e baixá-lo após a exclusão.</p><label><input id="delete-backup" type="checkbox"> Criar backup final para download antes da exclusão</label><div id="delete-progress" class="delete-progress" hidden role="status" aria-live="polite"><div><span id="delete-progress-label">Preparando exclusão…</span><strong id="delete-progress-value">0%</strong></div><div class="delete-progress-track"><i id="delete-progress-bar"></i></div><small>Não feche esta página enquanto a operação estiver em andamento.</small></div><p>Digite <strong id="delete-confirm-label"></strong> para confirmar:</p><input id="delete-confirm" autocomplete="off"><button id="instance-delete" class="button danger" disabled>Excluir permanentemente</button></article></section>
     <div id="customer-message" class="customer-message" role="status"></div>
   </main>
 </div><script src="/customer-instance.js"></script></body></html>
