@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Cadastro de cliente | Capivara DSM</title>
+  <link rel="stylesheet" href="/customer-auth.css">
+</head>
+<body><main class="customer-auth-shell"><section class="customer-auth-card wide">
+  <p class="eyebrow">CAPIVARA DSM</p><h1>Criar cadastro</h1>
+  <p>O e-mail será usado como identidade da conta e como semente para o nome de usuário SFTP.</p>
+  <form id="customer-register-form">
+    <label>Nome completo ou empresa<input name="name" autocomplete="name" required></label>
+    <label>E-mail<input name="email" type="email" autocomplete="email" required></label>
+    <label>Telefone<input name="phone" autocomplete="tel"></label>
+    <label>Tipo de documento<select name="document_type"><option value="">Não informar</option><option value="cpf">CPF</option><option value="cnpj">CNPJ</option><option value="other">Outro</option></select></label>
+    <label>Documento<input name="document_number"></label>
+    <label>Senha<input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+    <label>Confirmar senha<input name="password_confirmation" type="password" autocomplete="new-password" minlength="8" required></label>
+    <button type="submit">Criar conta</button>
+  </form>
+  <p id="customer-register-message" role="status"></p>
+  <nav class="customer-auth-links"><a href="/customer-login.html">Voltar ao login</a></nav>
+</section></main><script src="/customer-auth.js"></script></body></html>
