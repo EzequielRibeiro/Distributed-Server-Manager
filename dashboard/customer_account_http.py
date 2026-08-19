@@ -10,13 +10,20 @@ from typing import Any
 from alert_repository import AlertSession, dialect_for_backend
 from customer_account_api import member_capabilities, registration_payload, require_customer, require_member_management
 from customer_account_repository import CustomerAccountRepository
+from customer_auth_api import CUSTOMER_AUTH_PATHS, dispatch_customer_auth
 from customer_identity import CustomerIdentityService, normalize_email, sftp_username_seed
+from customer_team_api import CUSTOMER_TEAM_PATHS, dispatch_customer_team
 from customer_team_repository import CustomerTeamRepository
 from user_repository import UserRepository
 from users import hash_password
 
-PUBLIC_PATHS = {"/api/customer/register", "/api/customer/password-recovery", "/api/customer/password-reset"}
-AUTHENTICATED_PATHS = {"/api/customer/members"}
+PUBLIC_PATHS = {
+    "/api/customer/register",
+    "/api/customer/password-recovery",
+    "/api/customer/password-reset",
+}
+LEGACY_TEAM_PATHS = {"/api/customer/members"}
+AUTHENTICATED_PATHS = CUSTOMER_AUTH_PATHS | CUSTOMER_TEAM_PATHS | LEGACY_TEAM_PATHS
 
 
 def _username_for_email(session: AlertSession, dialect, email: str) -> str:
@@ -84,60 +91,49 @@ def reset_password(payload: dict[str, Any], backend) -> dict[str, Any]:
     return {"reset": True}
 
 
-def _actor_role(repository: CustomerTeamRepository, customer_id: str, username: str) -> str:
-    role = repository.account_role(customer_id, username)
-    if role is None: raise PermissionError("customer account membership is required")
-    return role
-
-
-def _team_snapshot(repository: CustomerTeamRepository, customer_id: str, actor_role: str) -> dict[str, Any]:
-    return {
-        "members": repository.list_members(customer_id),
-        "instances": repository.list_instances(customer_id),
-        "capabilities": member_capabilities(actor_role),
-        "rbac": {
-            "account_owner_manages_team": True,
-            "instance_profiles": ["viewer", "operator", "manager"],
-            "account_role_is_not_instance_profile": True,
-        },
-    }
+def _legacy_members(method: str, body: dict[str, Any], user, backend):
+    """Compatibility adapter for the pre-4.3Q /api/customer/members contract."""
+    if method == "GET":
+        return dispatch_customer_team("GET", "/api/customer/team", payload=None, user=user, backend=backend)
+    if method != "POST":
+        return 405, {"error": "method not allowed"}
+    action = str(body.get("action", "link")).strip().lower()
+    if action == "create": path = "/api/customer/team/members/create"
+    elif action == "role": path = "/api/customer/team/members/role"
+    elif action == "remove": path = "/api/customer/team/members/remove"
+    elif action == "access": path = "/api/customer/team/access"
+    elif action == "link":
+        username, customer_id = require_customer(user)
+        repository = CustomerTeamRepository(backend)
+        actor_role = repository.account_role(customer_id, username)
+        if actor_role is None: raise PermissionError("customer account membership is required")
+        require_member_management(actor_role)
+        target = str(body.get("username", "")).strip().lower()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,63}", target): raise ValueError("invalid username")
+        CustomerAccountRepository(backend).set_member(customer_id, target, str(body.get("account_role", "member")).strip().lower())
+        return dispatch_customer_team("GET", "/api/customer/team", payload=None, user=user, backend=backend)
+    else:
+        return 400, {"error": "invalid customer team action"}
+    return dispatch_customer_team("POST", path, payload=body, user=user, backend=backend)
 
 
 def dispatch_customer_account(method: str, path: str, *, payload: dict[str, Any] | None, user: dict[str, Any] | None, backend) -> tuple[int, dict[str, Any]] | None:
-    if path not in PUBLIC_PATHS | AUTHENTICATED_PATHS: return None
     body = payload or {}
+    if path in CUSTOMER_AUTH_PATHS:
+        return dispatch_customer_auth(method, path, user=user, backend=backend)
+    if path in CUSTOMER_TEAM_PATHS:
+        return dispatch_customer_team(method, path, payload=body, user=user, backend=backend)
+    if path in LEGACY_TEAM_PATHS:
+        try:
+            return _legacy_members(method, body, user, backend)
+        except PermissionError as exc: return 403, {"error": str(exc)}
+        except (ValueError, LookupError) as exc: return 400, {"error": str(exc)}
+    if path not in PUBLIC_PATHS:
+        return None
     try:
         if path == "/api/customer/register" and method == "POST": return 201, register_customer(body, backend)
         if path == "/api/customer/password-recovery" and method == "POST": return 202, request_recovery(body, backend)
         if path == "/api/customer/password-reset" and method == "POST": return 200, reset_password(body, backend)
-        if path == "/api/customer/members":
-            username, customer_id = require_customer(user); repository = CustomerTeamRepository(backend); actor_role = _actor_role(repository, customer_id, username)
-            if method == "GET": return 200, _team_snapshot(repository, customer_id, actor_role)
-            if method == "POST":
-                require_member_management(actor_role)
-                action = str(body.get("action", "link")).strip().lower()
-                target = str(body.get("username", "")).strip().lower()
-                if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,63}", target): raise ValueError("invalid username")
-                if action == "create":
-                    password = str(body.get("password", ""))
-                    if len(password) < 8: raise ValueError("password must have at least 8 characters")
-                    repository.create_member(customer_id, target, hash_password(password), str(body.get("account_role", "member")).strip().lower())
-                elif action in {"role", "link"}:
-                    role = str(body.get("account_role", "member")).strip().lower()
-                    if action == "link":
-                        # Backward-compatible link of an already scoped dashboard user.
-                        account_repo = CustomerAccountRepository(backend)
-                        account_repo.set_member(customer_id, target, role)
-                    else:
-                        repository.set_account_role(customer_id, target, role)
-                elif action == "access":
-                    profile = str(body.get("permission_profile", "")).strip().lower() or None
-                    repository.set_instance_access(customer_id, target, str(body.get("instance_id", "")).strip(), profile)
-                elif action == "remove":
-                    repository.remove_member(customer_id, target)
-                else:
-                    raise ValueError("invalid customer team action")
-                return 200, _team_snapshot(repository, customer_id, actor_role)
         return 405, {"error": "method not allowed"}
     except PermissionError as exc: return 403, {"error": str(exc)}
     except (ValueError, LookupError) as exc: return 400, {"error": str(exc)}
