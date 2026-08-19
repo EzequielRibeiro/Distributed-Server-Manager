@@ -1071,3 +1071,88 @@ grep -Fq 'process_guard_pre_update' "${UPDATE}" \
         || fail "Process Guard blocks update after transient unit becomes empty"
 )
 echo "Update manager tests passed."
+
+
+# =============================================================
+# Regression: legacy runtime account migration
+# =============================================================
+
+(
+    source "${UPDATE}"
+
+    INSTALL_DIR="${TMP_DIR}/legacy-install"
+
+    DSM_USER=""
+    DSM_GROUP=""
+    DSM_HOME=""
+
+    mkdir -p "${INSTALL_DIR}"
+
+    stat()
+    {
+        if [[ "$1" == "-c" && "$2" == "%U" ]]
+        then
+            printf '%s\n' "legacy-user"
+            return 0
+        fi
+
+        return 1
+    }
+
+    id()
+    {
+        if [[ "$1" == "-gn" && "$2" == "legacy-user" ]]
+        then
+            printf '%s\n' "legacy-group"
+            return 0
+        fi
+
+        return 1
+    }
+
+    getent()
+    {
+        if [[ "$1" == "passwd" && "$2" == "legacy-user" ]]
+        then
+            printf '%s\n' \
+                "legacy-user:x:1000:1000::/home/legacy-user:/bin/bash"
+            return 0
+        fi
+
+        return 1
+    }
+
+    resolve_legacy_runtime_account >/dev/null
+
+    [[ "${DSM_USER}" == "legacy-user" ]] \
+        || fail "legacy DSM user was not detected"
+
+    [[ "${DSM_GROUP}" == "legacy-group" ]] \
+        || fail "legacy DSM group was not detected"
+
+    [[ "${DSM_HOME}" == "/home/legacy-user" ]] \
+        || fail "legacy DSM home was not detected"
+)
+
+
+# =============================================================
+# Regression: notification backend is optional
+# =============================================================
+
+(
+    DSM_ROOT="${ROOT}"
+
+    source "${UPDATE_MANAGER}"
+
+    unset -f notify_dispatch 2>/dev/null || true
+
+    log_info()
+    {
+        :
+    }
+
+    dsm_update_notify \
+        "DSM Update" \
+        "Falha simulada"
+) || fail "missing notification backend broke update manager"
+

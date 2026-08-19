@@ -49,6 +49,29 @@ source "$UPDATE_MANAGER_ROOT/download-release.sh"
 # shellcheck source=/dev/null
 source "$UPDATE_MANAGER_ROOT/verify-release.sh"
 
+
+# =============================================================
+# Notificação tolerante a backend ausente
+# =============================================================
+
+dsm_update_notify()
+{
+    if declare -F notify_dispatch >/dev/null 2>&1
+    then
+        notify_dispatch "$@"
+        return 0
+    fi
+
+    if declare -F log_info >/dev/null 2>&1
+    then
+        log_info "Notificação indisponível: $*"
+    else
+        printf '%s\n' "Notificação indisponível: $*"
+    fi
+
+    return 0
+}
+
 # =============================================================
 # Verifica atualização disponível
 # =============================================================
@@ -63,7 +86,7 @@ dsm_update_check()
     then
         log_error "Arquivo de versão não encontrado"
 
-        notify_dispatch \
+        dsm_update_notify \
         "DSM Update" \
         "Instalação inválida"
 
@@ -181,7 +204,7 @@ dsm_update_run()
     then
         log_error "Release sem pacote"
 
-        notify_dispatch \
+        dsm_update_notify \
         "DSM Update" \
         "Pacote não encontrado"
 
@@ -212,7 +235,7 @@ dsm_update_run()
     then
         log_error "Release sem checksum SHA256 oficial"
 
-        notify_dispatch \
+        dsm_update_notify \
             "DSM Update" \
             "Checksum SHA256 não encontrado"
 
@@ -225,7 +248,7 @@ dsm_update_run()
     then
         log_error "Falha no download do checksum SHA256"
 
-        notify_dispatch \
+        dsm_update_notify \
             "DSM Update" \
             "Falha no download do checksum SHA256"
 
@@ -239,7 +262,7 @@ dsm_update_run()
     then
         log_error "Checksum SHA256 oficial inválido"
 
-        notify_dispatch \
+        dsm_update_notify \
             "DSM Update" \
             "Checksum SHA256 oficial inválido"
 
@@ -257,7 +280,7 @@ dsm_update_run()
     then
         log_error "Falha na validação do pacote DSM"
 
-        notify_dispatch \
+        dsm_update_notify \
         "DSM Update" \
         "Pacote DSM inválido"
 
@@ -309,7 +332,7 @@ dsm_update_run()
     then
         log_error "Módulo 10 falhou"
 
-    notify_dispatch \
+    dsm_update_notify \
         "DSM Update" \
         "Atualização falhou"
 

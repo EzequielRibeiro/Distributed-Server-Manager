@@ -178,6 +178,63 @@ initialize_logging() {
     exec 2>&1
 }
 
+
+# =============================================================
+# Migração de conta de runtime para instalações legadas
+# Legacy runtime account migration
+# =============================================================
+
+resolve_legacy_runtime_account() {
+    local detected_user=""
+    local detected_group=""
+    local detected_home=""
+
+    if [[ -z "${DSM_USER:-}" ]]
+    then
+        detected_user=$(stat -c '%U' "${INSTALL_DIR}" 2>/dev/null || true)
+
+        if [[ -n "${detected_user}" && "${detected_user}" != "root" ]]
+        then
+            DSM_USER="${detected_user}"
+
+            echo
+            echo "DSM_USER legado detectado automaticamente:"
+            echo "${DSM_USER}"
+        fi
+    fi
+
+    if [[ -n "${DSM_USER:-}" && -z "${DSM_GROUP:-}" ]]
+    then
+        detected_group=$(id -gn "${DSM_USER}" 2>/dev/null || true)
+
+        if [[ -n "${detected_group}" ]]
+        then
+            DSM_GROUP="${detected_group}"
+
+            echo
+            echo "DSM_GROUP legado detectado automaticamente:"
+            echo "${DSM_GROUP}"
+        fi
+    fi
+
+    if [[ -n "${DSM_USER:-}" && -z "${DSM_HOME:-}" ]]
+    then
+        detected_home=$(
+            getent passwd "${DSM_USER}" 2>/dev/null |
+                cut -d: -f6
+        )
+
+        if [[ -n "${detected_home}" ]]
+        then
+            DSM_HOME="${detected_home}"
+
+            echo
+            echo "DSM_HOME legado detectado automaticamente:"
+            echo "${DSM_HOME}"
+        fi
+    fi
+}
+
 # =============================================================
 # Carregar configuração DSM existente
 # Load existing DSM configuration
@@ -194,6 +251,9 @@ load_configuration() {
     echo "Carregando configuração DSM..."
     echo "Loading DSM configuration..."
     source "${CONFIG_FILE}"
+
+    resolve_legacy_runtime_account
+
     export DSM_DATABASE_DRIVER DSM_DATABASE DSM_DATABASE_HOST DSM_DATABASE_PORT
     export DSM_DATABASE_NAME DSM_DATABASE_USER DSM_DATABASE_PASSWORD_FILE
     export DSM_DATABASE_TLS
