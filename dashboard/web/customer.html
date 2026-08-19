@@ -9,138 +9,42 @@
 <body>
 <div class="customer-shell">
   <aside class="customer-sidebar">
-    <a class="customer-brand" href="/customer.html">
-      <span>C</span>
-      <strong>capivara <small>DSM</small></strong>
-    </a>
-
+    <a class="customer-brand" href="/customer.html"><span>C</span><strong>capivara <small>DSM</small></strong></a>
     <p class="customer-label">Cliente</p>
     <nav class="customer-catalog" aria-label="Área do cliente">
-      <a class="catalog-game active" href="/customer.html">
-        <span class="game-mark">◉</span>
-        <span><strong>Meus servidores</strong><small>Instâncias contratadas</small></span>
-      </a>
-      <a class="catalog-game" href="/customer-members.html">
-        <span class="game-mark">◎</span>
-        <span><strong>Equipe e acessos</strong><small>Usuários, convites e permissões</small></span>
-      </a>
+      <a class="catalog-game active" href="/customer.html"><span class="game-mark">◉</span><span><strong>Meus servidores</strong><small>Instâncias contratadas</small></span></a>
+      <a class="catalog-game" href="/customer-members.html"><span class="game-mark">◎</span><span><strong>Equipe e acessos</strong><small>Usuários, convites e permissões</small></span></a>
     </nav>
-
     <p class="customer-label">Jogos</p>
     <nav id="customer-catalog" class="customer-catalog" aria-label="Catálogo de jogos"></nav>
-
     <button id="customer-logout" class="customer-logout" type="button">Sair</button>
   </aside>
-
   <main class="customer-main">
-    <header class="customer-top">
-      <div>
-        <p class="customer-label">CAPIVARA DSM</p>
-        <h1>Meus servidores</h1>
-        <p>Gerencie os servidores disponíveis em seus contratos.</p>
-      </div>
-    </header>
-
+    <header class="customer-top"><div><p class="customer-label">CAPIVARA DSM</p><h1>Meus servidores</h1><p>Gerencie os servidores disponíveis em seus contratos.</p></div></header>
     <section class="customer-section">
-      <div class="section-heading">
-        <div>
-          <p class="customer-label">CONTRATOS</p>
-          <h2>Servidores disponíveis</h2>
-        </div>
-      </div>
+      <div class="section-heading"><div><p class="customer-label">CONTRATOS</p><h2>Servidores disponíveis</h2></div></div>
       <div id="customer-contracts" class="server-grid"><p>Carregando contratos…</p></div>
     </section>
-
     <section class="customer-section">
-      <div class="section-heading">
-        <div>
-          <p class="customer-label">INSTÂNCIAS</p>
-          <h2>Seus servidores</h2>
-        </div>
-      </div>
+      <div class="section-heading"><div><p class="customer-label">INSTÂNCIAS</p><h2>Instâncias existentes</h2></div></div>
       <div id="customer-servers" class="server-grid"><p>Carregando servidores…</p></div>
     </section>
-
     <section id="create-instance-panel" class="customer-section runtime-create-panel" hidden>
       <article class="instance-panel">
-        <div class="section-heading">
-          <div>
-            <p class="customer-label">NOVA INSTÂNCIA</p>
-            <h2 id="create-instance-title">Criar servidor</h2>
-            <p id="create-instance-description">Selecione o ambiente do servidor.</p>
-          </div>
-          <button id="create-instance-close" class="button" type="button">Cancelar</button>
-        </div>
-
-        <div class="runtime-step">
-          <div class="runtime-step-header">
-            <span class="runtime-step-number">1</span>
-            <div><strong>Jogo contratado</strong><small>O jogo é definido pelo contrato.</small></div>
-          </div>
-          <div id="runtime-game-summary" class="runtime-current-selection">—</div>
-        </div>
-
-        <div id="runtime-edition-step" class="runtime-step">
-          <div class="runtime-step-header">
-            <span class="runtime-step-number">2</span>
-            <div><strong>Edição</strong><small>Escolha a edição do jogo.</small></div>
-          </div>
-          <div id="runtime-editions" class="runtime-selector-grid"></div>
-        </div>
-
-        <div id="runtime-type-step" class="runtime-step" hidden>
-          <div class="runtime-step-header">
-            <span class="runtime-step-number">3</span>
-            <div><strong>Tipo de servidor</strong><small>Escolha a implementação desejada.</small></div>
-          </div>
-          <div id="runtime-types" class="runtime-selector-grid"></div>
-        </div>
-
-        <div id="runtime-version-step" class="runtime-step" hidden>
-          <div class="runtime-step-header">
-            <span class="runtime-step-number">4</span>
-            <div><strong>Versão</strong><small>Escolha a versão do jogo.</small></div>
-          </div>
-          <label class="runtime-field" for="runtime-version">Versão
-            <select id="runtime-version"><option value="">Selecione…</option></select>
-          </label>
-        </div>
-
-        <div id="runtime-build-step" class="runtime-step" hidden>
-          <div class="runtime-step-header">
-            <span class="runtime-step-number">5</span>
-            <div><strong>Build</strong><small>Escolha uma build específica ou utilize a recomendada.</small></div>
-          </div>
-          <label class="runtime-field" for="runtime-build">Build
-            <select id="runtime-build"><option value="">Selecione…</option></select>
-          </label>
-        </div>
-
+        <div class="section-heading"><div><p class="customer-label">NOVA INSTÂNCIA</p><h2 id="create-instance-title">Criar servidor</h2><p id="create-instance-description">Selecione o ambiente do servidor.</p></div><button id="create-instance-close" class="button" type="button">Cancelar</button></div>
+        <div class="runtime-step"><div class="runtime-step-header"><span class="runtime-step-number">1</span><div><strong>Jogo contratado</strong><small>O jogo é definido pelo contrato.</small></div></div><div id="runtime-game-summary" class="runtime-current-selection">—</div></div>
+        <div id="runtime-edition-step" class="runtime-step"><div class="runtime-step-header"><span class="runtime-step-number">2</span><div><strong>Edição</strong><small>Escolha a edição do jogo.</small></div></div><div id="runtime-editions" class="runtime-selector-grid"></div></div>
+        <div id="runtime-type-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">3</span><div><strong>Tipo de servidor</strong><small>Escolha a implementação desejada.</small></div></div><div id="runtime-types" class="runtime-selector-grid"></div></div>
+        <div id="runtime-version-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">4</span><div><strong>Versão</strong><small>Escolha a versão do jogo.</small></div></div><label class="runtime-field" for="runtime-version">Versão<select id="runtime-version"><option value="">Selecione…</option></select></label></div>
+        <div id="runtime-build-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">5</span><div><strong>Build</strong><small>Escolha uma build específica ou utilize a recomendada.</small></div></div><label class="runtime-field" for="runtime-build">Build<select id="runtime-build"><option value="">Selecione…</option></select></label></div>
         <div id="runtime-summary-step" class="runtime-step" hidden>
-          <div class="runtime-step-header">
-            <span class="runtime-step-number">6</span>
-            <div><strong>Confirmar servidor</strong><small>Revise as escolhas antes da criação.</small></div>
-          </div>
-          <div id="runtime-selection-summary" class="runtime-selection-summary">
-            <div><span>Jogo</span><strong id="runtime-summary-game">—</strong></div>
-            <div><span>Edição</span><strong id="runtime-summary-edition">—</strong></div>
-            <div><span>Servidor</span><strong id="runtime-summary-runtime">—</strong></div>
-            <div><span>Versão</span><strong id="runtime-summary-version">—</strong></div>
-            <div><span>Build</span><strong id="runtime-summary-build">—</strong></div>
-            <div><span>Região</span><strong id="runtime-summary-region">—</strong></div>
-            <div><span>Fallback regional</span><strong id="runtime-summary-region-fallback">Não</strong></div>
-          </div>
-          <div id="minecraft-runtime-notice" class="runtime-notice" hidden>
-            <strong>Tipo de servidor Minecraft</strong>
-            <p>A escolha determina quais mods, plugins e recursos poderão ser utilizados posteriormente.</p>
-          </div>
-          <div class="runtime-create-actions">
-            <button id="create-instance-submit" class="button" type="button" disabled>Criar servidor</button>
-          </div>
+          <div class="runtime-step-header"><span class="runtime-step-number">6</span><div><strong>Confirmar servidor</strong><small>Revise as escolhas antes da criação.</small></div></div>
+          <div id="runtime-selection-summary" class="runtime-selection-summary"><div><span>Jogo</span><strong id="runtime-summary-game">—</strong></div><div><span>Edição</span><strong id="runtime-summary-edition">—</strong></div><div><span>Servidor</span><strong id="runtime-summary-runtime">—</strong></div><div><span>Versão</span><strong id="runtime-summary-version">—</strong></div><div><span>Build</span><strong id="runtime-summary-build">—</strong></div><div><span>Região</span><strong id="runtime-summary-region">—</strong></div><div><span>Fallback regional</span><strong id="runtime-summary-region-fallback">Não</strong></div></div>
+          <div id="minecraft-runtime-notice" class="runtime-notice" hidden><strong>Tipo de servidor Minecraft</strong><p>A escolha determina quais mods, plugins e recursos poderão ser utilizados posteriormente.</p></div>
+          <div class="runtime-create-actions"><button id="create-instance-submit" class="button" type="button" disabled>Criar servidor</button></div>
         </div>
       </article>
     </section>
-
     <div id="customer-message" class="customer-message" role="status" aria-live="polite"></div>
   </main>
 </div>
