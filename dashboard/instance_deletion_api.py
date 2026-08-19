@@ -14,7 +14,7 @@ def deletion_status(root: Path, instance_id: str) -> dict:
     return operation
 
 
-def begin_deletion(root: Path, instance: Path, *, server: str, game: str, final_backup: bool, stop_instance, delete_record, audit):
+def begin_deletion(root: Path, instance: Path, *, server: str, game: str, final_backup: bool, stop_instance, delete_record, audit, backup_owner: dict | None = None):
     operation, accepted = start_deletion(
         root,
         instance,
@@ -24,5 +24,6 @@ def begin_deletion(root: Path, instance: Path, *, server: str, game: str, final_
         stop_instance=stop_instance,
         delete_record=delete_record,
         audit=audit,
+        backup_owner=backup_owner,
     )
     return (202 if accepted else 409), operation
