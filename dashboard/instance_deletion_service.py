@@ -1,4 +1,4 @@
-"""Persistent, idempotent instance deletion operations for the dashboard."""
+"""Persistent, exclusive instance deletion operations for the dashboard."""
 
 from __future__ import annotations
 
@@ -13,6 +13,15 @@ from pathlib import Path
 from typing import Callable
 
 _ACTIVE_STATES = {"queued", "stopping", "final_backup", "deleting"}
+_CONFIG_SUFFIXES = {
+    ".cfg", ".conf", ".config", ".ini", ".json", ".properties",
+    ".toml", ".xml", ".yaml", ".yml",
+}
+_CONFIG_NAMES = {"serverDZ.cfg", "server.properties", "instance.conf"}
+_MAP_PARTS = {
+    "mpmissions", "missions", "mission", "world", "worlds", "map", "maps",
+    "storage_1", "storage1",
+}
 _LOCK = threading.RLock()
 _RUNNING: set[str] = set()
 
@@ -55,110 +64,100 @@ def _save(root: Path, operation: dict, **changes) -> dict:
     return operation
 
 
-def _tree_size(path: Path) -> int:
-    total = 0
-    for item in path.rglob("*"):
+def _is_backup_file(instance: Path, path: Path) -> bool:
+    relative = path.relative_to(instance)
+    parts = {part.lower() for part in relative.parts}
+    if parts & _MAP_PARTS:
+        return True
+    if path.name in _CONFIG_NAMES or path.suffix.lower() in _CONFIG_SUFFIXES:
+        return True
+    if ".dsm" in parts and path.is_file():
+        return True
+    return False
+
+
+def _backup_files(instance: Path) -> list[Path]:
+    files = []
+    for path in instance.rglob("*"):
         try:
-            if item.is_file() and not item.is_symlink():
-                total += item.stat().st_size
+            if path.is_file() and not path.is_symlink() and _is_backup_file(instance, path):
+                files.append(path)
         except OSError:
             continue
-    return total
-
-
-class _ProgressReader:
-    def __init__(self, raw, callback: Callable[[int], None]):
-        self.raw = raw
-        self.callback = callback
-        self.count = 0
-
-    def read(self, size=-1):
-        data = self.raw.read(size)
-        self.count += len(data)
-        self.callback(self.count)
-        return data
-
-    def __getattr__(self, name):
-        return getattr(self.raw, name)
+    return files
 
 
 def _final_backup(root: Path, instance: Path, operation: dict) -> tuple[dict, Path]:
-    total = max(1, _tree_size(instance))
+    files = _backup_files(instance)
+    total = max(1, sum(path.stat().st_size for path in files))
     backup_dir = root / "backups" / "instances" / instance.name
     backup_dir.mkdir(parents=True, exist_ok=True)
-    name = f"final-delete-{operation['operation_id']}.tar.gz"
-    destination = backup_dir / name
-    temporary = destination.with_suffix(destination.suffix + ".part")
+
+    # One canonical deletion backup per instance. A new logical deletion
+    # replaces the previous backup only after the new archive is complete.
+    destination = backup_dir / "final-delete.tar.gz"
+    temporary = backup_dir / "final-delete.tar.gz.part"
+    temporary.unlink(missing_ok=True)
 
     operation = _save(
-        root,
-        operation,
-        state="final_backup",
-        stage="final_backup",
-        total_bytes=total,
-        processed_bytes=0,
-        progress=0,
-        backup_name=name,
-        message="Criando backup final…",
+        root, operation,
+        state="final_backup", stage="final_backup",
+        total_bytes=total, processed_bytes=0, progress=0,
+        backup_name=destination.name,
+        backup_scope="configuration_and_game_map",
+        message="Criando backup final de configurações e mapa…",
     )
 
+    processed = 0
     last_saved = {"bytes": 0, "time": 0.0}
 
-    def report(processed: int) -> None:
+    def report(delta: int) -> None:
+        nonlocal processed
+        processed += delta
         now = _now()
         if processed - last_saved["bytes"] < 4 * 1024 * 1024 and now - last_saved["time"] < 1:
             return
         last_saved.update(bytes=processed, time=now)
-        percent = min(99, int(processed * 100 / total))
-        _save(root, operation, processed_bytes=processed, progress=percent)
+        _save(root, operation, processed_bytes=processed, progress=min(99, int(processed * 100 / total)))
 
     try:
         with tarfile.open(temporary, "w:gz") as archive:
-            for path in instance.rglob("*"):
-                if path.is_symlink():
-                    continue
+            for path in files:
                 arcname = Path(instance.name) / path.relative_to(instance)
-                if path.is_dir():
-                    archive.add(path, arcname=str(arcname), recursive=False)
-                    continue
-                if not path.is_file():
-                    continue
                 info = archive.gettarinfo(str(path), arcname=str(arcname))
                 with path.open("rb") as raw:
-                    archive.addfile(info, _ProgressReader(raw, report))
+                    remaining = info.size
+                    class Reader:
+                        def read(self, size=-1):
+                            nonlocal remaining
+                            data = raw.read(size)
+                            remaining -= len(data)
+                            report(len(data))
+                            return data
+                    archive.addfile(info, Reader())
         os.replace(temporary, destination)
     except Exception:
         temporary.unlink(missing_ok=True)
         raise
 
     operation = _save(
-        root,
-        operation,
-        processed_bytes=total,
-        total_bytes=total,
-        progress=100,
+        root, operation,
+        processed_bytes=sum(path.stat().st_size for path in files),
+        total_bytes=total, progress=100,
         backup_size=destination.stat().st_size,
+        backup_files=len(files),
     )
     return operation, destination
 
 
-def _worker(
-    root: Path,
-    instance: Path,
-    operation: dict,
-    stop_instance: Callable[[], None],
-    delete_record: Callable[[str], bool],
-    audit: Callable[[str, str, str | None], None],
-) -> None:
+def _worker(root: Path, instance: Path, operation: dict, stop_instance: Callable[[], None], delete_record: Callable[[str], bool], audit: Callable[[str, str, str | None], None]) -> None:
     instance_id = operation["instance_id"]
     try:
         operation = _save(root, operation, state="stopping", stage="stopping", message="Preparando exclusão…")
         if instance.is_dir():
             stop_instance()
-
         if operation["final_backup"] and instance.is_dir():
             operation, _ = _final_backup(root, instance, operation)
-
         operation = _save(root, operation, state="deleting", stage="deleting", progress=100, message="Excluindo instância…")
         quarantine = instance.with_name(f".{instance.name}.deleting-{operation['operation_id'][:8]}")
         existed = instance.is_dir()
@@ -176,7 +175,6 @@ def _worker(
             if existed and quarantine.exists() and not instance.exists():
                 quarantine.rename(instance)
             raise
-
         _save(root, operation, state="completed", stage="completed", progress=100, message="Instância excluída com sucesso.", completed_at=_now())
         audit("instance.delete", "success", operation["operation_id"])
     except Exception as exc:
@@ -187,31 +185,18 @@ def _worker(
             _RUNNING.discard(instance_id)
 
 
-def start_deletion(
-    root: Path,
-    instance: Path,
-    *,
-    server: str,
-    game: str,
-    final_backup: bool,
-    stop_instance: Callable[[], None],
-    delete_record: Callable[[str], bool],
-    audit: Callable[[str, str, str | None], None],
-) -> tuple[dict, bool]:
+def start_deletion(root: Path, instance: Path, *, server: str, game: str, final_backup: bool, stop_instance: Callable[[], None], delete_record: Callable[[str], bool], audit: Callable[[str, str, str | None], None]) -> tuple[dict, bool]:
     instance_id = instance.name
     with _LOCK:
         current = get_deletion_operation(root, instance_id)
-        if current.get("state") in _ACTIVE_STATES:
-            if instance_id not in _RUNNING:
-                _RUNNING.add(instance_id)
-                thread = threading.Thread(
-                    target=_worker,
-                    args=(root, instance, current, stop_instance, delete_record, audit),
-                    daemon=True,
-                    name=f"delete-{instance_id}",
-                )
-                thread.start()
-            return current, False
+        # Strict exclusion: while an operation is active, every later request is
+        # rejected as busy. It never starts, resumes or queues another worker.
+        if current.get("state") in _ACTIVE_STATES or instance_id in _RUNNING:
+            busy = dict(current)
+            busy["busy"] = True
+            busy["accepted"] = False
+            busy["message"] = "Já existe uma exclusão em andamento para esta instância."
+            return busy, False
 
         operation = {
             "operation_id": uuid.uuid4().hex,
@@ -225,17 +210,13 @@ def start_deletion(
             "progress": 0,
             "processed_bytes": 0,
             "total_bytes": 0,
+            "accepted": True,
             "message": "Exclusão da instância em andamento",
             "created_at": _now(),
             "updated_at": _now(),
         }
         _atomic_json(_state_path(root, instance_id), operation)
         _RUNNING.add(instance_id)
-        thread = threading.Thread(
-            target=_worker,
-            args=(root, instance, operation, stop_instance, delete_record, audit),
-            daemon=True,
-            name=f"delete-{instance_id}",
-        )
+        thread = threading.Thread(target=_worker, args=(root, instance, operation, stop_instance, delete_record, audit), daemon=True, name=f"delete-{instance_id}")
         thread.start()
         return operation, True
