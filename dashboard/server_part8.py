@@ -13,6 +13,7 @@ from customer_security import customer_rate_limiter,remote_identity
 from customer_team_api import CUSTOMER_TEAM_PATHS,dispatch_customer_team
 from customer_team_repository import CustomerTeamRepository
 from customer_verification_api import CUSTOMER_VERIFICATION_PATHS,dispatch_customer_verification
+from controller_session import create_session,cookie_header,session_user_from_headers
 from deleted_instance_backup import complete_deleted_instance_backup_download,pending_deleted_backups,resolve_deleted_instance_backup
 from instance_deletion_api import begin_deletion,deletion_status
 from instance_lifecycle_http import dispatch_instance_lifecycle_get,dispatch_instance_lifecycle_post,dispatch_instance_reinstall_post
@@ -82,17 +83,36 @@ def integrated_get(self):
         if not _require_area_role(self,user,{"customer"}):return
         self.send_file(CUSTOMER_AUTHENTICATED_FILES[path]);return
     if path in CUSTOMER_PROTECTED_PAGES:
-        user=integrated_authenticate(self.headers)
+        user=session_user_from_headers(self.headers)
+        if user is None:
+            self.send_response(302)
+            self.send_header("Location","/customer-login.html")
+            self.send_header("Cache-Control","no-store")
+            self.send_header("Content-Length","0")
+            self.end_headers()
+            return
         if not _require_area_role(self,user,{"customer"}):return
         if path=="/customer-instance.html":_serve_instance_page(self)
         elif path=="/customer.html":_serve_customer_page(self)
         else:self.send_file(legacy.STATIC_FILES[path])
         return
     if path in CONTROLLER_PROTECTED_PAGES:
-        user=integrated_authenticate(self.headers)
-        if not _require_area_role(self,user,{"admin","controller","operator"}):return
-        if path in {"/","/index.html"}:_serve_controller_page(self)
-        else:self.send_file(legacy.STATIC_FILES[path])
+        user=session_user_from_headers(self.headers)
+        if user is None:
+            self.send_response(302)
+            self.send_header("Location","/login.html")
+            self.send_header("Cache-Control","no-store")
+            self.send_header("Content-Length","0")
+            self.end_headers()
+            return
+        if not _require_area_role(
+            self,user,{"admin","controller","operator"}
+        ):
+            return
+        if path in {"/","/index.html"}:
+            _serve_controller_page(self)
+        else:
+            self.send_file(legacy.STATIC_FILES[path])
         return
     if path=="/api/instance/delete/backups":
         user=integrated_authenticate(self.headers)
@@ -155,6 +175,24 @@ def integrated_post(self):
         except RuntimeError as exc:self.send_json(409,{"error":str(exc)})
         except PermissionError:self.forbidden()
         except (ValueError,OSError) as exc:self.send_json(400,{"error":str(exc)})
+        return
+    if path=="/api/auth/login":
+        user=integrated_authenticate(self.headers)
+        if user is None:
+            self.unauthorized()
+            return
+        if user.get("role") not in {"admin","controller","operator","customer"}:
+            self.forbidden()
+            return
+        token=create_session(user)
+        body=b'{"authenticated":true}'
+        self.send_response(200)
+        self.send_header("Content-Type","application/json; charset=utf-8")
+        self.send_header("Set-Cookie",cookie_header(token))
+        self.send_header("Cache-Control","no-store")
+        self.send_header("Content-Length",str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
         return
     if path=="/api/instance/delete":
         user=integrated_authenticate(self.headers)

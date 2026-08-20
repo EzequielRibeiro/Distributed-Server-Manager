@@ -4039,6 +4039,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "/contract-demo.html",
             "/contract-demo.js",
             "/runtime-selector.js",
+            "/theme.js",
+            "/components/header.html",
+            "/components/sidebar.html",
+            "/components/cards.html",
+            "/components/alerts.html",
             "/favicon.ico",
         }
         if path in public_files and path in STATIC_FILES:

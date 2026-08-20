@@ -62,21 +62,17 @@ async function login() {
     showError("");
 
     try {
-        const token = encodeBasicAuth(
-            user,
-            password
-        );
+        const token = encodeBasicAuth(user, password);
 
         const response = await fetch(
-            "/api/whoami",
+            "/api/auth/login",
             {
-                method: "GET",
-
+                method: "POST",
                 headers: {
                     "Authorization": `Basic ${token}`,
                     "Accept": "application/json"
                 },
-
+                credentials: "same-origin",
                 cache: "no-store"
             }
         );
@@ -86,50 +82,36 @@ async function login() {
                 showError(
                     "Usuário ou senha inválidos. | Invalid username or password."
                 );
+            } else if (response.status === 403) {
+                showError(
+                    "Usuário sem acesso ao Controller. | User cannot access Controller."
+                );
             } else {
                 showError(
                     `Erro HTTP ${response.status}.`
                 );
             }
-
             return;
         }
 
-        const session = await response.json();
+        await response.json();
 
-        saveSession(
-            user,
-            password
-        );
+        // Compatibilidade temporária com APIs existentes que
+        // ainda utilizam Basic Authentication.
+        saveSession(user, password);
 
-        if (
-            session.role === "client"
-            || session.role === "customer"
-        ) {
-            window.location.replace(
-                "/customer.html"
-            );
-        } else {
-            window.location.replace(
-                "/index.html"
-            );
-        }
+        window.location.replace("/index.html");
 
     } catch (error) {
-        console.error(
-            "Login error:",
-            error
-        );
+        console.error("Login error:", error);
 
         showError(
             "Erro de comunicação com servidor. | Server communication error."
         );
-
     } finally {
         loginButton.disabled = false;
     }
 }
-
 
 function showError(message) {
     const element = document.getElementById(
