@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 14+ Agent installation planning and progress tracking."""
+"""Agent installation planning, remote bootstrap and progress tracking."""
 
 from __future__ import annotations
 
@@ -8,8 +8,19 @@ from typing import Any
 from agent_install_command import linux_agent_install_command
 from windows_agent_install_command import windows_agent_install_command
 from agent_pairing_repository import AgentPairingRepository
+from agent_installation_preconfiguration import (
+    AgentInstallationPreconfigurationRepository,
+    normalize_preconfiguration,
+)
 from alert_repository import AlertSession, dialect_for_backend
 from infrastructure_repository import InfrastructureRepository
+from core.agent_ssh_deploy import (
+    AgentDeployError,
+    SSHDeployOptions,
+    bootstrap_agent,
+    preflight_ssh,
+    remote_agent_present,
+)
 
 
 def _role(user: dict[str, Any] | None) -> str:
@@ -62,10 +73,69 @@ def _local_instruction(platform: str, controller_url: str, pairing_token: str) -
     )
 
 
+def _ssh_options(payload: dict[str, Any]) -> SSHDeployOptions:
+    if payload.get("password") not in (None, "") or payload.get("ssh_password") not in (None, ""):
+        raise ValueError("SSH passwords are not accepted by the Dashboard")
+    if payload.get("identity_file") not in (None, ""):
+        raise ValueError("identity_file paths are not accepted from the Dashboard; configure the Controller SSH identity")
+
+    host = str(payload.get("ssh_host", "") or "").strip()
+    user = str(payload.get("ssh_user", "") or "").strip()
+    if not host:
+        raise ValueError("ssh_host is required for remote installation")
+    if not user:
+        raise ValueError("ssh_user is required for remote installation")
+    try:
+        port = int(payload.get("ssh_port", 22) or 22)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("ssh_port must be an integer") from exc
+
+    return SSHDeployOptions(host=host, ssh_user=user, ssh_port=port)
+
+
+def _run_ssh_preflight(options: SSHDeployOptions, ssh_runner=None) -> dict[str, Any]:
+    try:
+        if ssh_runner is None:
+            result = preflight_ssh(options)
+            present = remote_agent_present(options)
+        else:
+            result = preflight_ssh(options, runner=ssh_runner)
+            present = remote_agent_present(options, runner=ssh_runner)
+    except AgentDeployError as exc:
+        raise ValueError(str(exc)) from exc
+    if present:
+        raise ValueError("Capivara Agent already detected on remote host; automatic reinstall was refused")
+    return result
+
+
+def _run_ssh_bootstrap(
+    options: SSHDeployOptions,
+    *,
+    controller_url: str,
+    pairing_token: str,
+    timeout: int,
+    ssh_runner=None,
+) -> None:
+    try:
+        kwargs = {
+            "controller_url": controller_url,
+            "pairing_token": pairing_token,
+            "timeout": timeout,
+        }
+        if ssh_runner is None:
+            bootstrap_agent(options, **kwargs)
+        else:
+            bootstrap_agent(options, runner=ssh_runner, **kwargs)
+    except AgentDeployError as exc:
+        raise ValueError(str(exc)) from exc
+
+
 def create_agent_installation_for_user(
     user: dict[str, Any] | None,
     backend,
     payload: dict[str, Any] | None,
+    *,
+    ssh_runner=None,
 ) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("payload must be an object")
@@ -79,12 +149,24 @@ def create_agent_installation_for_user(
 
     if platform not in {"linux", "windows"}:
         raise ValueError("unsupported Agent platform")
-    if method not in {"github", "local"}:
+    if method not in {"github", "local", "ssh"}:
         raise ValueError("unsupported installation method")
-    if not controller_url:
-        raise ValueError("controller_url is required")
+    if method == "ssh" and platform != "linux":
+        raise ValueError("remote SSH installation currently supports Linux Agents only")
+    if not controller_url.startswith(("http://", "https://")):
+        raise ValueError("controller_url must use http:// or https://")
 
+    preconfiguration = normalize_preconfiguration(payload)
     region, datacenter = _location(backend, region_id, datacenter_id)
+
+    ssh_options = None
+    ssh_preflight = None
+    if method == "ssh":
+        ssh_options = _ssh_options(payload)
+        # No pairing token exists until the target is reachable, compatible and
+        # confirmed not to contain an existing Capivara Agent installation.
+        ssh_preflight = _run_ssh_preflight(ssh_options, ssh_runner=ssh_runner)
+
     issued = AgentPairingRepository(backend).issue_token(
         controller_id=controller_id,
         created_by=str((user or {}).get("username", "")).strip() or None,
@@ -104,14 +186,42 @@ def create_agent_installation_for_user(
         finally:
             session.close()
 
+    AgentInstallationPreconfigurationRepository(backend).save(
+        issued.token_id,
+        preconfiguration,
+    )
+
+    instruction = None
+    remote_bootstrap = None
     if method == "github":
         instruction = (
             windows_agent_install_command(controller_url=controller_url, pairing_token=issued.token)
             if platform == "windows"
             else linux_agent_install_command(controller_url=controller_url, pairing_token=issued.token)
         )
-    else:
+    elif method == "local":
         instruction = _local_instruction(platform, controller_url, issued.token)
+    else:
+        assert ssh_options is not None
+        try:
+            bootstrap_timeout = int(payload.get("bootstrap_timeout", 900) or 900)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("bootstrap_timeout must be an integer") from exc
+        _run_ssh_bootstrap(
+            ssh_options,
+            controller_url=controller_url,
+            pairing_token=issued.token,
+            timeout=bootstrap_timeout,
+            ssh_runner=ssh_runner,
+        )
+        remote_bootstrap = {
+            "state": "completed",
+            "host": ssh_options.host,
+            "ssh_user": ssh_options.ssh_user,
+            "ssh_port": ssh_options.ssh_port,
+            "platform": ssh_preflight.get("platform") if ssh_preflight else "linux",
+            "architecture": ssh_preflight.get("architecture") if ssh_preflight else None,
+        }
 
     return {
         "installation_id": issued.token_id,
@@ -122,6 +232,8 @@ def create_agent_installation_for_user(
         "datacenter": {"id": datacenter["id"], "name": datacenter["name"]},
         "expires_at": issued.expires_at,
         "instruction": instruction,
+        "remote_bootstrap": remote_bootstrap,
+        "preconfiguration": preconfiguration,
         "state": "waiting",
         "state_label": "Aguardando Agent",
     }
@@ -162,6 +274,7 @@ def agent_installation_status_for_user(
         finally:
             session.close()
 
+    preconfiguration = AgentInstallationPreconfigurationRepository(backend).get(installation_id)
     state = "waiting"
     label = "Aguardando Agent"
     if row["consumed_at"]:
@@ -182,11 +295,12 @@ def agent_installation_status_for_user(
         "health_status": str(inventory["health_status"]) if inventory is not None else None,
         "last_seen": inventory["last_seen"] if inventory is not None else None,
         "expires_at": row["expires_at"],
+        "preconfiguration": preconfiguration,
     }
 
 
 def bind_installation_after_enrollment(backend, *, pairing_token: str, agent_id: str) -> None:
-    """Bind enrollment to its dashboard installation and apply intended location."""
+    """Bind enrollment and apply intended location and preconfiguration."""
     from core.agent_identity import secret_digest
     from location_repository import LocationRepository
 
@@ -215,3 +329,11 @@ def bind_installation_after_enrollment(backend, *, pairing_token: str, agent_id:
             datacenter_id=str(row["datacenter_id"]),
             status="active",
         )
+
+    # Enrollment itself must not be rolled back if an optional administrative
+    # preconfiguration cannot be applied. The repository records the safe error
+    # so the Controller Dashboard can surface and retry it explicitly later.
+    try:
+        AgentInstallationPreconfigurationRepository(backend).apply(str(row["id"]), agent_id)
+    except Exception:
+        pass
