@@ -4,11 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.placement import (
-    PlacementCandidate,
-    PlacementRequest,
-    choose_candidate,
-)
+from core.placement import PlacementCandidate, PlacementRequest, choose_candidate
+from agent_runtime_repository import AgentRuntimeRepository
 from location_repository import LocationRepository
 from placement_errors import PlacementUnavailable
 from placement_status_repository import PlacementStatusRepository
@@ -45,25 +42,23 @@ def choose_agent_for_instance(
 ) -> dict[str, Any]:
     repository = LocationRepository(backend)
     repository.initialize()
-
     agents_evaluated = _controller_agent_count(repository, controller_id)
 
     rows = repository.candidates(
         controller_id,
-        region_id=(
-            preferred_region_id
-            if preferred_region_id
-            and not allow_cross_region
-            else None
-        ),
+        region_id=(preferred_region_id if preferred_region_id and not allow_cross_region else None),
     )
+
+    # Compatibility rule: an Agent with no runtime telemetry record retains the
+    # previous placement behavior. Once it starts heartbeating, only `online`
+    # accepts new placement; degraded/offline are preserved for running servers
+    # but excluded from new allocations.
+    health = AgentRuntimeRepository(backend).refresh_health(controller_id=controller_id)
+    rows = [row for row in rows if health.get(str(row["agent_id"]), "online") == "online"]
 
     if not rows:
         raise PlacementUnavailable(
-            reason=_unavailable_reason(
-                backend,
-                preferred_region_id=preferred_region_id,
-            ),
+            reason=_unavailable_reason(backend, preferred_region_id=preferred_region_id),
             agents_evaluated=agents_evaluated,
             requested_region_id=preferred_region_id,
         )
@@ -74,9 +69,7 @@ def choose_agent_for_instance(
             node_id=row["node_id"],
             region_id=row["region_id"],
             datacenter_id=row["datacenter_id"],
-            instance_count=int(
-                row.get("instance_count", 0) or 0
-            ),
+            instance_count=int(row.get("instance_count", 0) or 0),
             latitude=row.get("latitude"),
             longitude=row.get("longitude"),
         )
@@ -94,7 +87,6 @@ def choose_agent_for_instance(
         ),
         candidates,
     )
-
     return {
         "agent_id": decision.candidate.agent_id,
         "node_id": decision.candidate.node_id,
