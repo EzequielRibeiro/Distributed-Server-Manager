@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_game_data_repository import AgentGameDataRepository
 from agent_heartbeat_api import record_agent_heartbeat
 from agent_installation_api import bind_installation_after_enrollment
 from agent_lifecycle_repository import AgentLifecycleRepository
@@ -83,10 +84,26 @@ def _attach_update_state(result: dict[str, Any], body: dict[str, Any], *, agent_
                 result["update"] = command
         result["update_state"] = update_state
     except Exception:
-        # Heartbeat/liveness is more fundamental than the administrative update
-        # subsystem. A migration/configuration issue must not make a healthy Agent
-        # appear disconnected. The next heartbeat retries update coordination.
         result["update_state"] = {"update_status": "unavailable"}
+
+
+def _attach_game_data_state(result: dict[str, Any], body: dict[str, Any], *, agent_id: str, backend) -> None:
+    """Best-effort Agent command delivery without coupling liveness to job state."""
+    try:
+        jobs = AgentGameDataRepository(backend)
+        jobs.initialize()
+        reported = body.get("game_data_result") if isinstance(body.get("game_data_result"), dict) else None
+        state = jobs.apply_result(agent_id, reported) if reported else None
+        command = jobs.command_for_agent(agent_id)
+        if command:
+            state = jobs.mark_delivered(str(command["job_id"]))
+            result["game_data_command"] = command
+        if state is not None:
+            result["game_data_state"] = state
+        else:
+            result["game_data_state"] = {"status": "idle"}
+    except Exception:
+        result["game_data_state"] = {"status": "unavailable"}
 
 
 def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> tuple[int, dict[str, Any]]:
@@ -106,6 +123,7 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
             status = AgentLifecycleRepository(backend).transition(identity["agent_id"], "active").target
         result["status"] = status
         _attach_update_state(result, body, agent_id=identity["agent_id"], backend=backend)
+        _attach_game_data_state(result, body, agent_id=identity["agent_id"], backend=backend)
     except AgentCredentialInvalid:
         return 401, {"error": "agent_authentication_failed", "message": "Identidade do Agent inválida."}
     except Exception:
