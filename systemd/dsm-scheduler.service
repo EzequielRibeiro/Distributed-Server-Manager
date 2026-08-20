@@ -13,7 +13,7 @@ User={{DSM_USER}}
 Group={{DSM_GROUP}}
 Environment=DSM_ROOT=/opt/dsm
 WorkingDirectory=/opt/dsm
-ExecStart=/bin/bash /opt/dsm/scheduler/scheduler.sh daemon
+ExecStart=/bin/bash /opt/dsm/scheduler/scheduler.sh run
 Restart=always
 RestartSec=10
 NoNewPrivileges=true
