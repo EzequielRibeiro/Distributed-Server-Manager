@@ -111,6 +111,9 @@ jobs:
       - name: Test updater
         run: bash tests/update_manager_test.sh
 
+      - name: Test CLI and scheduler regression
+        run: bash tests/cli_scheduler_regression_test.sh
+
       - name: Test updater download output contract
         run: bash tests/update_download_output_test.sh
 
