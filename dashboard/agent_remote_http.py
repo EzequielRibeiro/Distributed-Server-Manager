@@ -7,7 +7,7 @@ from typing import Any
 
 from agent_heartbeat_api import record_agent_heartbeat
 from agent_lifecycle_repository import AgentLifecycleRepository
-from agent_pairing_api import enroll_agent
+from agent_pairing_api import enroll_remote_agent
 from agent_pairing_repository import (
     AgentCredentialInvalid,
     AgentPairingRepository,
@@ -23,14 +23,26 @@ HEARTBEAT_PATH = "/api/agent/heartbeat"
 
 def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, dict[str, Any]]:
     try:
-        result = enroll_agent(backend, payload)
+        result = enroll_remote_agent(backend, payload)
     except (PairingTokenInvalid, PairingTokenExpired, PairingTokenConsumed):
         return 401, {"error": "pairing_rejected", "message": "Pareamento inválido ou expirado."}
     except (PairingRegistrationConflict, ValueError):
         return 409, {"error": "pairing_conflict", "message": "Não foi possível registrar este Agent."}
     except Exception:
         return 500, {"error": "pairing_failed", "message": "Não foi possível concluir o pareamento."}
-    return 201, result
+
+    identity = dict(result.get("identity") or {})
+    return 201, {
+        "agent_id": result["agent_id"],
+        "node_id": result["node_id"],
+        "controller_id": result["controller_id"],
+        "status": result["status"],
+        "credential_id": identity["credential_id"],
+        "credential_secret": identity["credential_secret"],
+        "credential_type": identity["credential_type"],
+        "fingerprint": identity["fingerprint"],
+        "pairing_token_consumed": bool(result.get("pairing_token_consumed")),
+    }
 
 
 def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> tuple[int, dict[str, Any]]:
