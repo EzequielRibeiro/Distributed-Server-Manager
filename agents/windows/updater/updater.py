@@ -8,12 +8,11 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 import urllib.request
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 PROGRAM_DATA = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
 PROGRAM_FILES = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
@@ -36,6 +35,21 @@ def _download(url: str, target: Path) -> None:
     request = urllib.request.Request(url, headers={"User-Agent": "Capivara-Agent-Windows-Updater"})
     with urllib.request.urlopen(request, timeout=60) as response, target.open("wb") as output:
         shutil.copyfileobj(response, output)
+
+
+def _safe_extract(package: zipfile.ZipFile, destination: Path) -> None:
+    for info in package.infolist():
+        raw = info.filename
+        name = PurePosixPath(raw)
+        if name.is_absolute() or ".." in name.parts or "\\" in raw or ":" in raw:
+            raise RuntimeError(f"unsafe archive path: {raw}")
+        target = destination.joinpath(*name.parts)
+        if info.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with package.open(info) as source, target.open("wb") as output:
+            shutil.copyfileobj(source, output)
 
 
 def _verify(package_root: Path, version: str) -> None:
@@ -78,7 +92,7 @@ def apply_request() -> int:
         extract = work / "extract"
         extract.mkdir()
         with zipfile.ZipFile(archive) as package:
-            package.extractall(extract)
+            _safe_extract(package, extract)
         package_root = extract / f"capivara-agent-windows-{plain}"
         _verify(package_root, plain)
         for relative in (
@@ -101,7 +115,9 @@ def apply_request() -> int:
             else:
                 destination = INSTALL_ROOT / Path(relative).name
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination)
+            temporary = destination.with_suffix(destination.suffix + ".new")
+            shutil.copy2(source, temporary)
+            os.replace(temporary, destination)
 
     REQUEST_PATH.unlink(missing_ok=True)
     _write_result("applied", installed_version=plain, rollout_id=request.get("rollout_id"))
