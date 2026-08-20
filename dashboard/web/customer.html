@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Meus servidores | Capivara DSM</title>
   <link rel="stylesheet" href="/customer.css">
+  <link rel="stylesheet" href="/create-server-wizard.css">
 </head>
 <body>
 <div class="customer-shell">
@@ -32,37 +33,17 @@
     <section id="create-instance-panel" class="customer-section runtime-create-panel" hidden>
       <article class="instance-panel">
         <div class="section-heading"><div><p class="customer-label">NOVA INSTÂNCIA</p><h2 id="create-instance-title">Criar servidor</h2><p id="create-instance-description">Selecione o ambiente do servidor.</p></div><button id="create-instance-close" class="button" type="button">Cancelar</button></div>
+        <div id="runtime-placement-status" class="runtime-placement-status" role="status" aria-live="polite" data-state="checking"><strong>Verificando ambientes...</strong></div>
         <div class="runtime-step"><div class="runtime-step-header"><span class="runtime-step-number">1</span><div><strong>Jogo contratado</strong><small>O jogo é definido pelo contrato.</small></div></div><div id="runtime-game-summary" class="runtime-current-selection">—</div></div>
         <div id="runtime-edition-step" class="runtime-step"><div class="runtime-step-header"><span class="runtime-step-number">2</span><div><strong>Edição</strong><small>Escolha a edição do jogo.</small></div></div><div id="runtime-editions" class="runtime-selector-grid"></div></div>
         <div id="runtime-type-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">3</span><div><strong>Tipo de servidor</strong><small>Escolha a implementação desejada.</small></div></div><div id="runtime-types" class="runtime-selector-grid"></div></div>
         <div id="runtime-version-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">4</span><div><strong>Versão</strong><small>Escolha a versão do jogo.</small></div></div><label class="runtime-field" for="runtime-version">Versão<select id="runtime-version"><option value="">Selecione…</option></select></label></div>
         <div id="runtime-build-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">5</span><div><strong>Build</strong><small>Escolha uma build específica ou utilize a recomendada.</small></div></div><label class="runtime-field" for="runtime-build">Build<select id="runtime-build"><option value="">Selecione…</option></select></label></div>
         <div id="runtime-region-step" class="runtime-step" hidden>
-          <div class="runtime-step-header">
-            <span class="runtime-step-number">6</span>
-            <div>
-              <strong>Região</strong>
-              <small>Escolha a região preferencial para hospedar o servidor.</small>
-            </div>
-          </div>
-
-          <label class="runtime-field" for="runtime-region">
-            Região
-            <select id="runtime-region">
-              <option value="">Selecione…</option>
-            </select>
-          </label>
-
-          <small id="runtime-region-help">
-            A região é uma preferência. O Controller selecionará o Agent adequado.
-          </small>
-
-          <label class="runtime-region-fallback">
-            <input id="runtime-region-fallback" type="checkbox">
-            <span>
-              Permitir outra região caso não exista capacidade disponível na região escolhida.
-            </span>
-          </label>
+          <div class="runtime-step-header"><span class="runtime-step-number">6</span><div><strong>Região</strong><small>Escolha a região preferencial para hospedar o servidor.</small></div></div>
+          <label class="runtime-field" for="runtime-region">Região<select id="runtime-region"><option value="">Selecione…</option></select></label>
+          <small id="runtime-region-help">A região é uma preferência. O Controller selecionará o Agent adequado.</small>
+          <label class="runtime-region-fallback"><input id="runtime-region-fallback" type="checkbox"><span>Permitir outra região caso não exista capacidade disponível na região escolhida.</span></label>
         </div>
         <div id="runtime-summary-step" class="runtime-step" hidden>
           <div class="runtime-step-header"><span class="runtime-step-number">7</span><div><strong>Confirmar servidor</strong><small>Revise as escolhas antes da criação.</small></div></div>
@@ -77,5 +58,6 @@
 </div>
 <script src="/customer.js"></script>
 <script src="/runtime-selector.js"></script>
+<script src="/create-server-wizard.js"></script>
 </body>
 </html>
