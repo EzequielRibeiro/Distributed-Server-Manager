@@ -36,10 +36,13 @@ jobs:
 
       - name: Validate Python
         run: |
-          python3 -m py_compile dashboard/server.py database/manager.py database/registry.py tests/dashboard_catalog_v2_test.py tests/database_test.py tests/registry_test.py
+          python3 -m py_compile dashboard/server.py database/manager.py database/registry.py dashboard/location_admin_api.py dashboard/location_admin_http.py tests/dashboard_catalog_v2_test.py tests/database_test.py tests/registry_test.py tests/location_admin_api_test.py tests/location_admin_http_test.py tests/phase4_topology_integration_test.py
           python3 -m unittest tests/dashboard_catalog_v2_test.py
           python3 -m unittest tests/database_test.py
           python3 -m unittest tests/registry_test.py
+          python3 -m unittest tests/location_admin_api_test.py
+          python3 -m unittest tests/location_admin_http_test.py
+          python3 -m unittest tests/phase4_topology_integration_test.py
 
       - name: Validate Dashboard JavaScript
         run: find dashboard/web -type f -name '*.js' -print0 | xargs -0 -n1 node --check

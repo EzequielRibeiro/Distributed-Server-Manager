@@ -235,9 +235,9 @@ def installation_profile_identity(
             agent_id=effective_agent_id,
             agent_name=f"Agent {hostname}",
             region_id=f"region-local-{slug}",
-            region_name=f"Local {hostname}",
+            region_name="Local",
             datacenter_id=f"datacenter-local-{slug}",
-            datacenter_name=f"Local {hostname}",
+            datacenter_name="Local Default",
         )
 
     raise ValueError(f"invalid installation profile: {profile}")
