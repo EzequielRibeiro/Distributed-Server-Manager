@@ -31,16 +31,11 @@ class Phase1617PlacementEligibilityTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.backend = create_backend(
-            DatabaseConfig(
-                driver="sqlite",
-                database=str(Path(self.temp.name) / "capivara.db"),
-            )
+            DatabaseConfig(driver="sqlite", database=str(Path(self.temp.name) / "capivara.db"))
         )
         self.backend.initialize()
         self.identity = installation_profile_identity(
-            RegistryRepository(self.backend),
-            profile="hybrid",
-            hostname="phase16-agent",
+            RegistryRepository(self.backend), profile="hybrid", hostname="phase16-agent"
         )
         self.agent_id = self.identity["agent_id"]
         self.controller_id = self.identity["controller_id"]
@@ -49,7 +44,7 @@ class Phase1617PlacementEligibilityTest(unittest.TestCase):
         self.backend.close()
         self.temp.cleanup()
 
-    def _inventory(self, *, steamcmd=True, network=None, threads=8, ram=16 * 1024**3, storage=100 * 1024**3):
+    def _inventory(self, *, steamcmd=True, java=True, network=None, threads=8, ram=16 * 1024**3, storage=100 * 1024**3):
         repository = AgentRuntimeRepository(self.backend)
         repository.upsert_inventory(
             agent_id=self.agent_id,
@@ -59,9 +54,9 @@ class Phase1617PlacementEligibilityTest(unittest.TestCase):
             capabilities={
                 "native-linux": True,
                 "steamcmd": steamcmd,
-                "dayz": steamcmd,
-                "backup": True,
-                "mod-management": True,
+                "java": java,
+                "backup": False,
+                "mod-management": False,
             },
             cpu={"logical_cores": threads},
             ram_total_bytes=ram,
@@ -81,41 +76,40 @@ class Phase1617PlacementEligibilityTest(unittest.TestCase):
         self.assertEqual(udp["largest_contiguous_available"], 999)
         self.assertEqual(summary["observed_conflict_count"], 1)
 
-    def test_dayz_requires_capability_and_ten_contiguous_udp_ports(self):
-        requirements = requirements_for_instance(game_id="dayz")
+    def test_steam_native_runtime_requires_catalog_declared_infrastructure(self):
+        requirements = requirements_for_instance(game_id="dayz", runtime_id="dayz.stable")
+        self.assertEqual(requirements.capabilities, frozenset({"native-linux", "steamcmd"}))
+        self.assertEqual(len(requirements.ports), 1)
+        self.assertEqual(requirements.ports[0].protocol, "udp")
+        self.assertEqual(requirements.ports[0].count, 10)
+        self.assertTrue(requirements.ports[0].contiguous)
+
         self._inventory(steamcmd=True)
-        decision = choose_agent_for_instance(
-            self.backend,
-            controller_id=self.controller_id,
-            requirements=requirements,
-        )
+        decision = choose_agent_for_instance(self.backend, controller_id=self.controller_id, requirements=requirements)
         self.assertEqual(decision["agent_id"], self.agent_id)
 
         AgentPortRepository(self.backend).set_ranges(
-            self.agent_id,
-            protocols=("udp",),
-            start_port=24000,
-            end_port=24009,
+            self.agent_id, protocols=("udp",), start_port=24000, end_port=24009
         )
-        self._inventory(
-            steamcmd=True,
-            network={"tcp_listen": [], "udp_listen": [24000]},
-        )
+        self._inventory(steamcmd=True, network={"tcp_listen": [], "udp_listen": [24000]})
         with self.assertRaises(PlacementUnavailable):
-            choose_agent_for_instance(
-                self.backend,
-                controller_id=self.controller_id,
-                requirements=requirements,
-            )
+            choose_agent_for_instance(self.backend, controller_id=self.controller_id, requirements=requirements)
 
-    def test_dayz_agent_without_steamcmd_is_not_eligible(self):
+    def test_catalog_runtime_without_required_primitive_is_not_eligible(self):
         self._inventory(steamcmd=False)
+        requirements = requirements_for_instance(game_id="dayz", runtime_id="dayz.stable")
         with self.assertRaises(PlacementUnavailable):
-            choose_agent_for_instance(
-                self.backend,
-                controller_id=self.controller_id,
-                requirements=requirements_for_instance(game_id="dayz"),
-            )
+            choose_agent_for_instance(self.backend, controller_id=self.controller_id, requirements=requirements)
+
+    def test_java_requirement_is_inferred_without_game_specific_capability(self):
+        requirements = requirements_for_instance(
+            game_id="minecraft", runtime_id="minecraft.java.vanilla"
+        )
+        self.assertIn("java", requirements.capabilities)
+        self.assertNotIn("minecraft-java", requirements.capabilities)
+        self._inventory(java=False)
+        with self.assertRaises(PlacementUnavailable):
+            choose_agent_for_instance(self.backend, controller_id=self.controller_id, requirements=requirements)
 
     def test_resource_capacity_is_enforced_when_requested(self):
         self._inventory(threads=4, ram=4 * 1024**3, storage=8 * 1024**3)
@@ -128,11 +122,7 @@ class Phase1617PlacementEligibilityTest(unittest.TestCase):
             },
         )
         with self.assertRaises(PlacementUnavailable):
-            choose_agent_for_instance(
-                self.backend,
-                controller_id=self.controller_id,
-                requirements=requirements,
-            )
+            choose_agent_for_instance(self.backend, controller_id=self.controller_id, requirements=requirements)
 
     def test_linux_network_inventory_parses_ss_local_endpoint(self):
         completed = type("Completed", (), {"stdout": "LISTEN 0 128 0.0.0.0:2456 0.0.0.0:*\n"})()
