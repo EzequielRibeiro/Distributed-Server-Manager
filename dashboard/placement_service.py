@@ -10,6 +10,27 @@ from core.placement import (
     choose_candidate,
 )
 from location_repository import LocationRepository
+from placement_errors import PlacementUnavailable
+from placement_status_repository import PlacementStatusRepository
+
+
+def _controller_agent_count(repository: LocationRepository, controller_id: str) -> int:
+    ph = repository.dialect.placeholder
+    with repository.session() as session:
+        row = session.execute(
+            f"SELECT COUNT(*) AS total FROM agents WHERE controller_id={ph}",
+            (controller_id,),
+        ).fetchone()
+    return int(row["total"])
+
+
+def _unavailable_reason(backend, *, preferred_region_id: str | None) -> str:
+    snapshot = PlacementStatusRepository(backend).snapshot()
+    if int(snapshot.get("eligible_agents", 0) or 0) == 0:
+        return str(snapshot.get("placement_reason") or "no_eligible_agents")
+    if preferred_region_id:
+        return "requested_region_unavailable"
+    return "no_eligible_agents"
 
 
 def choose_agent_for_instance(
@@ -25,6 +46,8 @@ def choose_agent_for_instance(
     repository = LocationRepository(backend)
     repository.initialize()
 
+    agents_evaluated = _controller_agent_count(repository, controller_id)
+
     rows = repository.candidates(
         controller_id,
         region_id=(
@@ -34,6 +57,16 @@ def choose_agent_for_instance(
             else None
         ),
     )
+
+    if not rows:
+        raise PlacementUnavailable(
+            reason=_unavailable_reason(
+                backend,
+                preferred_region_id=preferred_region_id,
+            ),
+            agents_evaluated=agents_evaluated,
+            requested_region_id=preferred_region_id,
+        )
 
     candidates = [
         PlacementCandidate(
