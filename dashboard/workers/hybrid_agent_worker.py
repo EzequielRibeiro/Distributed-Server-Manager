@@ -13,10 +13,12 @@ from typing import Any
 
 ROOT = Path(os.environ.get("DSM_ROOT", Path(__file__).resolve().parents[2])).resolve()
 DATABASE = ROOT / "database"
-for path in (ROOT, DATABASE):
+DASHBOARD = ROOT / "dashboard"
+for path in (ROOT, DATABASE, DASHBOARD):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+from hybrid_game_data_client import process_hybrid_game_data_cycle
 from hybrid_local_reconciliation import reconcile_local_hybrid_runtime
 from registry_repository import RegistryRepository
 from runtime_backend import backend_from_environment
@@ -77,7 +79,8 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         agent_id=agent_id,
         hostname=socket.gethostname(),
     )
-    return {"active": True, "agent_id": agent_id, **result}
+    game_data = process_hybrid_game_data_cycle(effective_backend, root, agent_id)
+    return {"active": True, "agent_id": agent_id, "game_data": game_data, **result}
 
 
 def run_forever(root: Path = ROOT) -> None:
@@ -85,8 +88,10 @@ def run_forever(root: Path = ROOT) -> None:
         try:
             result = heartbeat_cycle(root)
             if result.get("active"):
+                game_data = result.get("game_data") if isinstance(result.get("game_data"), dict) else {}
+                state = game_data.get("state") if isinstance(game_data.get("state"), dict) else {}
                 print(
-                    f"hybrid heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')}",
+                    f"hybrid heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} game_data={state.get('status', 'idle')}",
                     flush=True,
                 )
         except Exception as exc:
