@@ -21,16 +21,13 @@ def detect_capabilities() -> dict[str, bool]:
         "docker": docker,
         "wine": wine,
         "minecraft-java": java,
-        # Bedrock is native Linux and does not require Java; this indicates the
-        # Agent runtime can host the Linux Bedrock server package.
         "minecraft-bedrock": True,
-        # DayZ Linux server installation/runtime requires SteamCMD in the
-        # current Capivara adapter contract.
         "dayz": steamcmd,
-        # These are runtime management abilities delivered by the Agent model,
-        # not assumptions about a particular game installation.
-        "backup": True,
-        "mod-management": True,
+        # These keys are already part of the capability vocabulary, but remain
+        # false until the remote Agent runtime actually exposes those command
+        # surfaces. Roadmap intent is never reported as runtime evidence.
+        "backup": False,
+        "mod-management": False,
     }
 
 
