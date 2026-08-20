@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 for path in (ROOT, ROOT / "database"):
@@ -92,6 +94,31 @@ class HybridLocalReconciliationTest(unittest.TestCase):
         self.assertIn('AGENT_TOKEN="keep-me"', text)
         self.assertTrue(result["runtime_reconciled"])
         self.assertEqual(result["health_status"], "online")
+
+    @unittest.skipUnless(hasattr(os, "chown"), "POSIX ownership test")
+    def test_reconciliation_preserves_agent_conf_owner_group_and_mode(self):
+        self.config.chmod(0o640)
+        before = self.config.stat()
+
+        with patch("hybrid_local_reconciliation.os.chown", wraps=os.chown) as chown:
+            reconcile_local_hybrid_runtime(
+                self.repository,
+                self.root,
+                node_id="phase23-host",
+                agent_id="agent-phase23-host",
+                hostname="phase23-host",
+                inventory=self._inventory(),
+            )
+
+        self.assertTrue(chown.called)
+        _, uid, gid = chown.call_args.args
+        self.assertEqual(uid, before.st_uid)
+        self.assertEqual(gid, before.st_gid)
+
+        after = self.config.stat()
+        self.assertEqual(after.st_uid, before.st_uid)
+        self.assertEqual(after.st_gid, before.st_gid)
+        self.assertEqual(after.st_mode & 0o777, 0o640)
 
     def test_reconciliation_is_retry_safe(self):
         first = reconcile_local_hybrid_runtime(

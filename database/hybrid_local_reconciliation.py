@@ -15,6 +15,7 @@ import re
 import shutil
 import socket
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,7 @@ def reconcile_agent_conf(
     if not config.is_file():
         raise HybridLocalReconciliationError(f"agent.conf not found: {config}")
 
+    metadata = config.stat()
     original = config.read_text(encoding="utf-8")
     updated = original
     for key, value in (
@@ -77,10 +79,26 @@ def reconcile_agent_conf(
 
     changed = updated != original
     if changed:
-        temporary = config.with_suffix(config.suffix + ".tmp")
-        temporary.write_text(updated, encoding="utf-8")
-        os.chmod(temporary, config.stat().st_mode & 0o777)
-        os.replace(temporary, config)
+        fd, temporary_name = tempfile.mkstemp(
+            prefix=f".{config.name}.",
+            dir=str(config.parent),
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(updated)
+                handle.flush()
+                os.fsync(handle.fileno())
+
+            # The role transition is commonly invoked through sudo. Preserve the
+            # runtime account ownership of agent.conf instead of inheriting root
+            # ownership from the privileged temporary file.
+            os.chown(temporary, metadata.st_uid, metadata.st_gid)
+            os.chmod(temporary, metadata.st_mode & 0o777)
+            os.replace(temporary, config)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
 
     return {"config_path": str(config), "config_changed": changed}
 
