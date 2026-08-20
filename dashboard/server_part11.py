@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 11 HTTP integration for remote Linux Agents."""
+"""Phase 11-13 HTTP integration for remote Linux Agents."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ _previous_post = legacy.DashboardHandler.do_POST
 _previous_get = legacy.DashboardHandler.do_GET
 ROOT_DIR = Path(__file__).resolve().parents[1]
 AGENT_INSTALL_PATH = "/agent/install.sh"
-AGENT_INSTALL_FILE = ROOT_DIR / "agents" / "linux" / "installer" / "install-agent.sh"
+AGENT_INSTALL_FILE = ROOT_DIR / "agents" / "linux" / "installer" / "bootstrap-release.sh"
 VERSION_FILE = ROOT_DIR / "version"
 
 
@@ -28,6 +28,8 @@ def integrated_get(self):
     except OSError:
         self.send_error(404)
         return
+    # The Controller pins its own installed release. The remote host therefore
+    # never follows mutable main and cannot silently install another version.
     prefix = f'CAPIVARA_RELEASE_TAG="${{CAPIVARA_RELEASE_TAG:-v{version}}}"\n'
     body = (prefix + script).encode("utf-8")
     self.send_response(200)
