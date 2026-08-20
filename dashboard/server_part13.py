@@ -14,6 +14,11 @@ from agent_update_http import (
     dispatch_update_get,
     dispatch_update_post,
 )
+from infrastructure_role_http import (
+    INFRASTRUCTURE_ROLE_PATH,
+    dispatch_infrastructure_role_get,
+    dispatch_infrastructure_role_post,
+)
 
 legacy = integration.legacy
 _previous_get = legacy.DashboardHandler.do_GET
@@ -54,6 +59,19 @@ def integrated_get(self):
     parsed = urlparse(self.path)
     if parsed.path == WINDOWS_INSTALL_PATH:
         return _serve_windows_bootstrap(self)
+    if parsed.path == INFRASTRUCTURE_ROLE_PATH:
+        user = _user(self)
+        if user is None:
+            return
+        query = parse_qs(parsed.query)
+        status, body = dispatch_infrastructure_role_get(
+            parsed.path,
+            user=user,
+            backend=legacy.dashboard_repository(legacy.DATABASE_FILE).backend,
+            node_id=(query.get("node_id") or [None])[0],
+        )
+        self.send_json(status, body)
+        return
     if parsed.path != STATUS_PATH:
         return _previous_get(self)
     user = _user(self)
@@ -71,6 +89,24 @@ def integrated_get(self):
 
 def integrated_post(self):
     parsed = urlparse(self.path)
+    if parsed.path == INFRASTRUCTURE_ROLE_PATH:
+        user = _user(self)
+        if user is None:
+            return
+        try:
+            payload = self.read_json_body()
+        except ValueError:
+            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
+            return
+        status, body = dispatch_infrastructure_role_post(
+            parsed.path,
+            payload,
+            user=user,
+            backend=legacy.dashboard_repository(legacy.DATABASE_FILE).backend,
+            root=ROOT_DIR,
+        )
+        self.send_json(status, body)
+        return
     if parsed.path not in {ROLLOUT_PATH, CHANNEL_PATH}:
         return _previous_post(self)
     user = _user(self)
