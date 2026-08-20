@@ -84,9 +84,21 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
             return None
         return self.contract_id
 
-    def _reserve_dayz_block(self, connection, instance_id: str, agent_id: str) -> list[int]:
-        summary = effective_port_summary(self.backend, agent_id)
-        udp_ranges = [item for item in summary["ranges"] if item["protocol"] == "udp"]
+    def _reserve_dayz_block(
+        self,
+        connection,
+        instance_id: str,
+        agent_id: str,
+        port_summary: dict,
+    ) -> list[int]:
+        """Reserve inside the caller's transaction using a preflight snapshot.
+
+        effective_port_summary() may refresh health and therefore opens its own
+        transaction. Calling it from inside the creation transaction would be a
+        nested SQLite writer. Production follows the same separation: preflight
+        eligibility first, then one atomic reservation transaction.
+        """
+        udp_ranges = [item for item in port_summary["ranges"] if item["protocol"] == "udp"]
         self.assertTrue(udp_ranges, "eligible DayZ Agent must expose an UDP range")
         selected = udp_ranges[0]
         start = int(selected["start_port"])
@@ -126,6 +138,11 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
             preferred_region_id=payload.get("region_id"),
             requirements=requirements,
         )
+        # Preflight the effective range before entering the single write
+        # transaction. The transaction below re-checks persistent reservations
+        # before inserting the block, preventing double allocation.
+        port_summary = effective_port_summary(self.backend, decision["agent_id"])
+
         instance_id = "phase22-dayz-001"
         progress = [
             {"progress": 5, "state": "placement", "message": "Agent selecionado"},
@@ -157,7 +174,12 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
                 (instance_id, contract_id),
             )
             connection.execute("UPDATE instances SET status='provisioning' WHERE id=?", (instance_id,))
-            ports = self._reserve_dayz_block(connection, instance_id, decision["agent_id"])
+            ports = self._reserve_dayz_block(
+                connection,
+                instance_id,
+                decision["agent_id"],
+                port_summary,
+            )
             # External SteamCMD is deliberately replaced by a deterministic E2E
             # provisioner; the orchestration/progress contract is real.
             connection.execute("UPDATE instances SET status='offline' WHERE id=?", (instance_id,))
