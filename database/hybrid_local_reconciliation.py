@@ -14,9 +14,17 @@ import platform
 import re
 import shutil
 import socket
+import sys
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+AGENT_RUNTIME_DIR = ROOT_DIR / "agents" / "linux" / "runtime"
+if str(AGENT_RUNTIME_DIR) not in sys.path:
+    sys.path.insert(0, str(AGENT_RUNTIME_DIR))
+
+from capabilities import detect_capabilities
+from network_inventory import collect_network_inventory
 from agent_runtime_repository import AgentRuntimeRepository
 from registry_repository import RegistryRepository
 
@@ -77,6 +85,16 @@ def reconcile_agent_conf(
     return {"config_path": str(config), "config_changed": changed}
 
 
+def _memory_total_bytes() -> int | None:
+    try:
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 def _default_inventory(root: Path, *, hostname: str) -> dict[str, Any]:
     disk = shutil.disk_usage(root if root.exists() else Path("/"))
     version_path = root / "version"
@@ -85,22 +103,26 @@ def _default_inventory(root: Path, *, hostname: str) -> dict[str, Any]:
     except OSError:
         version = "unknown"
 
-    # Keep capability detection dependency-light here. The dedicated Agent runtime
-    # may enrich this snapshot later; these primitives are enough for placement
-    # health to distinguish a live local Hybrid Agent from an unreported Agent.
+    capabilities = detect_capabilities()
+    # Hybrid installations keep SteamCMD below DSM_ROOT instead of requiring a
+    # global PATH entry. Report that factual bundled installation to placement.
+    bundled_steamcmd = root / "tools" / "steamcmd" / "steamcmd.sh"
+    if bundled_steamcmd.is_file():
+        capabilities["steamcmd"] = True
+
     return {
         "hostname": hostname,
         "os_name": platform.system().lower(),
         "architecture": platform.machine(),
         "capivara_version": version,
-        "capabilities": {"native-linux": platform.system().lower() == "linux"},
+        "capabilities": capabilities,
         "cpu": {"logical_cores": os.cpu_count(), "machine": platform.machine()},
-        "ram_total_bytes": None,
+        "ram_total_bytes": _memory_total_bytes(),
         "storage": {
             "root_total_bytes": disk.total,
             "root_free_bytes": disk.free,
         },
-        "network": {},
+        "network": collect_network_inventory(),
     }
 
 
@@ -163,6 +185,8 @@ def reconcile_local_hybrid_runtime(
         "runtime_reconciled": True,
         "health_status": snapshot.get("health_status"),
         "last_seen": last_seen,
+        "capabilities": snapshot.get("capabilities", {}),
+        "port_ranges": snapshot.get("port_ranges", []),
     }
 
 
