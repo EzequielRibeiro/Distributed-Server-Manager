@@ -17,6 +17,10 @@ for candidate in (ROOT_DIR, ROOT_DIR / "core", ROOT_DIR / "database"):
         sys.path.insert(0, str(candidate))
 
 from agent_deploy_topology import validate_deploy_location
+from agent_installation_preconfiguration import (
+    AgentInstallationPreconfigurationRepository,
+    normalize_preconfiguration,
+)
 from agent_pairing_repository import AgentPairingRepository
 from agent_ssh_deploy import (
     AgentDeployError,
@@ -90,6 +94,37 @@ def _controller_url(host: str, requested: str | None) -> str:
         address = f"[{address}]"
     port = int(os.environ.get("DSM_DASHBOARD_PORT", "8080") or "8080")
     return f"http://{address}:{port}"
+
+
+def _parse_port_range(value: str | None) -> tuple[int | None, int | None]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None, None
+    if raw.count("-") != 1:
+        raise ValueError("--port-range must use START-END, for example 24000-24999")
+    start_raw, end_raw = raw.split("-", 1)
+    try:
+        start = int(start_raw)
+        end = int(end_raw)
+    except ValueError as exc:
+        raise ValueError("--port-range must contain integer ports") from exc
+    if not 1 <= start <= end <= 65535:
+        raise ValueError("--port-range must satisfy 1 <= START <= END <= 65535")
+    return start, end
+
+
+def _preconfiguration_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    start, end = _parse_port_range(args.port_range)
+    if start is None and args.port_protocol is not None:
+        raise ValueError("--port-protocol requires --port-range")
+    payload: dict[str, Any] = {"agent_name": args.name}
+    if start is not None:
+        payload.update(
+            port_start=start,
+            port_end=end,
+            port_protocol=args.port_protocol or "both",
+        )
+    return normalize_preconfiguration(payload)
 
 
 def _annotate_pairing(
@@ -199,6 +234,7 @@ def deploy(args: argparse.Namespace) -> dict[str, Any]:
             region_id=args.region_id,
             datacenter_id=args.datacenter_id,
         )
+        preconfiguration = _preconfiguration_from_args(args)
 
         preflight = preflight_ssh(options)
         if remote_agent_present(options):
@@ -217,6 +253,10 @@ def deploy(args: argparse.Namespace) -> dict[str, Any]:
             region_id=region_id,
             datacenter_id=datacenter_id,
         )
+        AgentInstallationPreconfigurationRepository(backend).save(
+            issued.token_id,
+            preconfiguration,
+        )
 
         bootstrap_agent(
             options,
@@ -228,6 +268,9 @@ def deploy(args: argparse.Namespace) -> dict[str, Any]:
             _status_reader(backend, issued.token_id),
             timeout=args.heartbeat_timeout,
         )
+        applied_preconfiguration = AgentInstallationPreconfigurationRepository(backend).get(
+            issued.token_id
+        )
         return {
             "deployment": "completed",
             "host": args.host,
@@ -237,6 +280,7 @@ def deploy(args: argparse.Namespace) -> dict[str, Any]:
             "controller_url": controller_url,
             "region_id": region_id,
             "datacenter_id": datacenter_id,
+            "preconfiguration": applied_preconfiguration,
             "remote_platform": preflight.get("platform"),
             "remote_architecture": preflight.get("architecture"),
             "agent_id": online.get("agent_id"),
@@ -259,6 +303,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--controller-url")
     parser.add_argument("--region-id")
     parser.add_argument("--datacenter-id")
+    parser.add_argument("--name", help="administrative Agent name applied after enrollment")
+    parser.add_argument(
+        "--port-range",
+        metavar="START-END",
+        help="managed Agent port range applied after enrollment, for example 24000-24999",
+    )
+    parser.add_argument(
+        "--port-protocol",
+        choices=("tcp", "udp", "both"),
+        help="protocol for --port-range; defaults to both",
+    )
     parser.add_argument("--pairing-ttl", type=int, default=900)
     parser.add_argument("--connect-timeout", type=int, default=10)
     parser.add_argument("--bootstrap-timeout", type=int, default=900)
@@ -270,6 +325,13 @@ def build_parser() -> argparse.ArgumentParser:
 def _print_human(payload: dict[str, Any]) -> None:
     print("Capivara Agent Deployment")
     print()
+    preconfiguration = payload.get("preconfiguration") or {}
+    port_range = "unconfigured"
+    if preconfiguration.get("port_start") is not None:
+        port_range = (
+            f"{preconfiguration.get('port_protocol')} "
+            f"{preconfiguration.get('port_start')}-{preconfiguration.get('port_end')}"
+        )
     fields = (
         ("Host", payload.get("host")),
         ("SSH user", payload.get("ssh_user")),
@@ -277,6 +339,8 @@ def _print_human(payload: dict[str, Any]) -> None:
         ("Controller URL", payload.get("controller_url")),
         ("Region", payload.get("region_id") or "unconfigured"),
         ("Datacenter", payload.get("datacenter_id") or "unconfigured"),
+        ("Agent name", preconfiguration.get("requested_name") or "automatic"),
+        ("Port range", port_range),
         ("Remote platform", payload.get("remote_platform")),
         ("Architecture", payload.get("remote_architecture")),
         ("Agent", payload.get("agent_id")),
