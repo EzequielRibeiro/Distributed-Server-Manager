@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INSTALLER="${ROOT}/install.sh"
+UPDATER="${ROOT}/update.sh"
+SCHEDULER_UNIT="${ROOT}/systemd/dsm-scheduler.service"
+
+fail(){ echo "FAIL: $*" >&2; exit 1; }
+
+# Scheduler must invoke the public long-running entry point actually exposed by
+# scheduler/scheduler.sh. The historical 'daemon' argument caused an endless
+# systemd restart loop on installed nodes.
+grep -Fq 'ExecStart=/bin/bash /opt/dsm/scheduler/scheduler.sh run' \
+    "${SCHEDULER_UNIT}" \
+    || fail "scheduler unit does not use scheduler.sh run"
+
+if grep -Fq 'scheduler.sh daemon' "${SCHEDULER_UNIT}"
+then
+    fail "scheduler unit still references unsupported daemon action"
+fi
+
+# The Capivara infrastructure CLI is part of the release contract and must be
+# published globally together with dsm on fresh installs and upgrades.
+grep -Fq 'bin/cap' "${INSTALLER}" \
+    || fail "installer does not validate/install bin/cap"
+grep -Fq '/usr/local/bin/cap' "${INSTALLER}" \
+    || fail "installer does not publish the global cap command"
+grep -Fq 'bin/cap' "${UPDATER}" \
+    || fail "updater does not validate/install bin/cap"
+grep -Fq '/usr/local/bin/cap' "${UPDATER}" \
+    || fail "updater does not publish the global cap command"
+
+echo "CLI and scheduler regression tests passed."
