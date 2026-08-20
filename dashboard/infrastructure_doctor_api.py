@@ -20,7 +20,7 @@ for module_dir in (ROOT_DIR, DATABASE_DIR, ROOT_DIR / "dashboard"):
     if str(module_dir) not in sys.path:
         sys.path.insert(0, str(module_dir))
 
-from infrastructure_doctor import InfrastructureDoctor
+from infrastructure_doctor_contract import build_infrastructure_doctor_payload
 from runtime_backend import backend_from_environment
 
 _ALLOWED_ROLES = {"admin", "operator", "controller"}
@@ -30,11 +30,7 @@ def infrastructure_doctor_for_user(
     user: dict[str, Any] | None,
     backend,
 ) -> dict[str, Any]:
-    """Return the infrastructure Doctor payload for an authorized operator.
-
-    The function intentionally calls ``diagnose(reconcile=False)`` so a normal
-    Dashboard read cannot run migrations or persist derived Agent health.
-    """
+    """Return the canonical read-only Doctor payload for Dashboard consumers."""
     if not user:
         raise PermissionError("authentication required")
 
@@ -42,7 +38,10 @@ def infrastructure_doctor_for_user(
     if role not in _ALLOWED_ROLES:
         raise PermissionError("infrastructure Doctor requires Controller access")
 
-    return InfrastructureDoctor(backend).diagnose(reconcile=False)
+    return build_infrastructure_doctor_payload(
+        backend,
+        reconcile=False,
+    )
 
 
 def main() -> int:
