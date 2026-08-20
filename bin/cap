@@ -30,7 +30,7 @@ Infraestrutura:
   cap infrastructure role set hybrid [--node-id ID] [--controller-id ID] [--agent-id ID] [--json]
 
 Agents:
-  cap agent deploy HOST --ssh-user USER [options]
+  cap agent deploy HOST --ssh-user USER [--name NAME] [--region-id ID --datacenter-id ID] [--port-range START-END] [--port-protocol tcp|udp|both] [options]
   cap agent ports show <agent-id>
   cap agent ports set <agent-id> <inicio> <fim> [--protocol tcp|udp|both]
   cap agent ports check <agent-id>
