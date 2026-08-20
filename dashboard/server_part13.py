@@ -29,6 +29,7 @@ WINDOWS_INSTALL_PATH = "/agent/install.ps1"
 WINDOWS_INSTALL_FILE = ROOT_DIR / "agents" / "windows" / "installer" / "bootstrap-release.ps1"
 VERSION_FILE = ROOT_DIR / "version"
 legacy.STATIC_FILES["/agent-updates.js"] = legacy.WEB_DIR / "agent-updates.js"
+legacy.STATIC_FILES["/infrastructure-role-ui.js"] = legacy.WEB_DIR / "infrastructure-role-ui.js"
 
 
 def _user(self):
