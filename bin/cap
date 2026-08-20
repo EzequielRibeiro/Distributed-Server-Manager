@@ -15,35 +15,68 @@ source "${BOOTSTRAP}"
 export DSM_DATABASE_DRIVER DSM_DATABASE DSM_DATABASE_HOST DSM_DATABASE_PORT
 export DSM_DATABASE_NAME DSM_DATABASE_USER DSM_DATABASE_PASSWORD_FILE DSM_DATABASE_TLS
 
+LEGACY_DSM="${DSM_ROOT}/bin/dsm"
+
 usage(){
     cat >&2 <<'EOF'
+Capivara Distributed Server Manager
+
 Uso:
+  cap <comando> [opções]
+
+Infraestrutura:
   cap infrastructure doctor [--reconcile] [--json]
   cap infrastructure role show [--node-id ID] [--json]
   cap infrastructure role set hybrid [--node-id ID] [--controller-id ID] [--agent-id ID] [--json]
+
+Agents:
   cap agent deploy HOST --ssh-user USER [options]
+  cap agent ports show <agent-id>
+  cap agent ports set <agent-id> <inicio> <fim> [--protocol tcp|udp|both]
+  cap agent ports check <agent-id>
 
-Agent deploy options principais:
-  --ssh-port PORT
-  --identity-file PATH
-  --controller-id ID
-  --controller-url URL
-  --region-id ID
-  --datacenter-id ID
-  --json
+Comandos operacionais disponíveis via camada de compatibilidade:
+  cap server ...
+  cap doctor ...
+  cap monitor ...
+  cap mods ...
+  cap backup ...
+  cap user ...
+  cap runtime ...
+  cap config ...
+  cap steam ...
+  cap game ...
+  cap catalog ...
+  cap content ...
+  cap compatibility ...
+  cap update ...
+  cap database ...
+  cap db ...
+  cap instance ...
+  cap operations ...
+  cap ops ...
 
-SSH é utilizado somente no bootstrap inicial do Agent Linux.
-Senhas SSH não são aceitas como argumento; use chave/ssh-agent.
+Compatibilidade curta também preservada:
+  cap start|stop|restart|status ...
 
---reconcile aplica somente reconciliações determinísticas e seguras.
-
-A transição controller -> hybrid preserva o Node e o Controller existentes.
-A etapa de role altera apenas identidade/topologia persistida; configuração local,
-heartbeat e runtime do Agent são reconciliados em etapa separada.
+`cap` é a CLI oficial em consolidação. Nesta fase, comandos operacionais
+legados são encaminhados internamente para `dsm` sem duplicação de lógica.
 EOF
 }
 
+legacy_exec(){
+    if [[ ! -x "${LEGACY_DSM}" ]]; then
+        echo "CLI de compatibilidade não encontrada ou não executável: ${LEGACY_DSM}" >&2
+        exit 1
+    fi
+    exec "${LEGACY_DSM}" "$@"
+}
+
 case "${1:-}" in
+    help|--help|-h|"")
+        usage
+        ;;
+
     infrastructure)
         shift
         case "${1:-}" in
@@ -59,6 +92,7 @@ case "${1:-}" in
             *) usage; exit 2 ;;
         esac
         ;;
+
     agent)
         shift
         case "${1:-}" in
@@ -66,8 +100,19 @@ case "${1:-}" in
                 shift
                 exec python3 "${DSM_ROOT}/database/agent_deploy_cli.py" "$@"
                 ;;
+            ports)
+                legacy_exec agent "$@"
+                ;;
             *) usage; exit 2 ;;
         esac
         ;;
-    *) usage; exit 2 ;;
+
+    start|stop|restart|status|server|doctor|monitor|mods|backup|user|runtime|config|steam|game|catalog|content|compatibility|update|database|db|instance|operations|ops)
+        legacy_exec "$@"
+        ;;
+
+    *)
+        usage
+        exit 2
+        ;;
 esac

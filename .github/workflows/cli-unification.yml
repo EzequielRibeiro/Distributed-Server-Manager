@@ -1,0 +1,36 @@
+name: CLI Unification
+
+on:
+  pull_request:
+    paths:
+      - 'bin/cap'
+      - 'bin/dsm'
+      - 'tests/cli_unification_test.sh'
+      - 'docs/architecture/cli-unification.md'
+      - '.github/workflows/cli-unification.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'bin/cap'
+      - 'bin/dsm'
+      - 'tests/cli_unification_test.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate shell syntax
+        run: |
+          bash -n bin/cap
+          bash -n bin/dsm
+          bash -n tests/cli_unification_test.sh
+
+      - name: Test cap compatibility routing
+        run: bash tests/cli_unification_test.sh
