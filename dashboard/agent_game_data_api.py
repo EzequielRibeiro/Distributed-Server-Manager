@@ -11,7 +11,8 @@ from typing import Any
 
 from agent_game_data_repository import AgentGameDataRepository
 
-_IDENTIFIER = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+_ENVIRONMENT_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+_SELECTOR = re.compile(r"^[A-Za-z0-9._@-]{1,128}$")
 
 
 def _require_admin(user: dict[str, Any] | None) -> None:
@@ -22,9 +23,9 @@ def _require_admin(user: dict[str, Any] | None) -> None:
 def prepare_runtime_selection(root: Path, environment_id: str, selector: str) -> dict[str, Any]:
     environment_id = str(environment_id or "").strip()
     selector = str(selector or "current").strip()
-    if not _IDENTIFIER.fullmatch(environment_id):
+    if not _ENVIRONMENT_ID.fullmatch(environment_id):
         raise ValueError("valid environment_id is required")
-    if not _IDENTIFIER.fullmatch(selector):
+    if not _SELECTOR.fullmatch(selector):
         raise ValueError("valid selector is required")
 
     catalog = root / "installer" / "catalog.sh"
