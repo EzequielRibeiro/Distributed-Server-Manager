@@ -41,11 +41,25 @@ class PlacementStatusRepository:
         row = session.execute(sql).fetchone()
         return 0 if row is None else int(row["total"])
 
-    def snapshot(self) -> dict[str, Any]:
-        """Return counts, health-aware eligibility and stable blockers."""
-        self.initialize()
-        # Heartbeat age is derived at read time. This never changes agents.status.
-        AgentRuntimeRepository(self.backend).refresh_health()
+    def snapshot(
+        self,
+        *,
+        initialize: bool = True,
+        refresh_health: bool = True,
+    ) -> dict[str, Any]:
+        """Return counts, health-aware eligibility and stable blockers.
+
+        Existing callers keep the historical behavior by default. Diagnostic
+        callers can pass ``initialize=False, refresh_health=False`` to obtain a
+        strictly observational snapshot that neither runs migrations nor writes
+        derived heartbeat health back to the database.
+        """
+        if initialize:
+            self.initialize()
+        if refresh_health:
+            # Heartbeat age reconciliation is useful for operational placement,
+            # but it is deliberately optional for read-only diagnostics.
+            AgentRuntimeRepository(self.backend).refresh_health()
 
         with self.session() as session:
             result: dict[str, Any] = {}
