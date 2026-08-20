@@ -35,14 +35,29 @@ def _largest_contiguous(start: int, end: int, occupied: set[int]) -> int:
     return largest
 
 
-def effective_port_summary(backend, agent_id: str) -> dict[str, Any]:
-    """Return authoritative configured ranges enriched with real host usage."""
+def effective_port_summary(
+    backend,
+    agent_id: str,
+    *,
+    initialize: bool = True,
+    refresh_runtime_health: bool = True,
+) -> dict[str, Any]:
+    """Return configured ranges enriched with observed host usage.
+
+    Defaults preserve operational behavior. Diagnostic callers may disable
+    initialization and runtime-health refresh to keep the entire read path
+    strictly observational.
+    """
     repository = AgentPortRepository(backend)
-    repository.initialize()
+    if initialize:
+        repository.initialize()
     base = repository.summary(agent_id)
 
     try:
-        runtime = AgentRuntimeRepository(backend).snapshot(agent_id)
+        runtime = AgentRuntimeRepository(backend).snapshot(
+            agent_id,
+            refresh_health=refresh_runtime_health,
+        )
     except AgentRuntimeNotFound:
         runtime = {}
     network = runtime.get("network") if isinstance(runtime.get("network"), dict) else {}

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Infrastructure recovery diagnostics and conservative reconciliation.
+"""Infrastructure diagnostics and explicit conservative reconciliation.
 
-Phase 20 intentionally separates detection from mutation. The doctor can refresh
-runtime health from heartbeat age, but never reassigns Agents, locations or
-instances automatically.
+Normal Doctor execution is strictly observational: it does not initialize the
+schema, run migrations, refresh persisted Agent health, or otherwise change
+runtime state. Deterministic health reconciliation is available only when the
+caller explicitly requests ``--reconcile``.
 """
 
 from __future__ import annotations
@@ -68,12 +69,13 @@ class InfrastructureDoctor:
         return actions
 
     def diagnose(self, *, reconcile: bool = False) -> dict[str, Any]:
-        self.backend.initialize()
-        repairs = self.reconcile_safe() if reconcile else []
-        if not reconcile:
-            # Read-time health still needs to reflect heartbeat age, but this is
-            # the same deterministic reconciliation used by placement reads.
-            AgentRuntimeRepository(self.backend).refresh_health()
+        # Schema initialization can run migrations, therefore it belongs to the
+        # explicit mutation boundary together with health reconciliation.
+        if reconcile:
+            self.backend.initialize()
+            repairs = self.reconcile_safe()
+        else:
+            repairs = []
 
         findings: list[Finding] = []
 
@@ -213,7 +215,12 @@ class InfrastructureDoctor:
         agents_without_ranges = 0
         for row in active_agents:
             agent_id = str(row["id"])
-            summary = effective_port_summary(self.backend, agent_id)
+            summary = effective_port_summary(
+                self.backend,
+                agent_id,
+                initialize=False,
+                refresh_runtime_health=False,
+            )
             ranges = list(summary.get("ranges") or [])
             if not ranges:
                 agents_without_ranges += 1
@@ -231,7 +238,10 @@ class InfrastructureDoctor:
                     recommendation="Resolver reservas/sockets conflitantes antes de novo placement.",
                 ))
 
-        placement = PlacementStatusRepository(self.backend).snapshot()
+        placement = PlacementStatusRepository(self.backend).snapshot(
+            initialize=False,
+            refresh_health=False,
+        )
         placement_ready = bool(placement.get("placement_ready"))
         if not placement_ready:
             findings.append(Finding(

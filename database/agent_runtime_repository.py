@@ -172,8 +172,21 @@ class AgentRuntimeRepository:
                     )
         return changes
 
-    def snapshot(self, agent_id: str, *, now: datetime | None = None) -> dict[str, Any]:
-        self.refresh_health(now=now)
+    def snapshot(
+        self,
+        agent_id: str,
+        *,
+        now: datetime | None = None,
+        refresh_health: bool = True,
+    ) -> dict[str, Any]:
+        """Return one Agent runtime snapshot.
+
+        Operational callers retain health reconciliation by default. Diagnostic
+        callers can disable it to guarantee that the snapshot is observational
+        and does not update derived health state.
+        """
+        if refresh_health:
+            self.refresh_health(now=now)
         ph = self.dialect.placeholder
         with self.session() as session:
             row = session.execute(
