@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 CONTROLLER_URL=""
-PAIRING_TOKEN=""
+PAIRING_TOKEN="${CAPIVARA_PAIRING_TOKEN:-}"
 PACKAGE_DIR=""
 INSTALL_ROOT="${CAPIVARA_AGENT_ROOT:-/opt/capivara-agent}"
 CONFIG_DIR="${CAPIVARA_AGENT_CONFIG_DIR:-/etc/capivara-agent}"
@@ -16,6 +16,9 @@ usage(){ cat <<'EOF'
 Uso:
   sudo ./install-agent.sh --controller-url https://controller.exemplo --pairing-token TOKEN
   sudo ./install-agent.sh --package-dir /caminho/capivara-agent-linux-X.Y.Z --controller-url ... --pairing-token ...
+
+Para automação segura, o token também pode ser fornecido pelo ambiente raiz
+CAPIVARA_PAIRING_TOKEN, evitando exposição no argv do processo.
 
 Este instalador opera somente sobre um pacote/diretório local já validado ou
 construído a partir do repositório oficial. Ele não clona branch e não baixa código.
@@ -35,6 +38,7 @@ done
 [[ ${EUID} -eq 0 ]] || fail "execute como root"
 [[ "${CONTROLLER_URL}" =~ ^https?://[^[:space:]]+$ ]] || fail "Controller URL inválida"
 [[ -n "${PAIRING_TOKEN}" ]] || fail "pairing token é obrigatório"
+unset CAPIVARA_PAIRING_TOKEN
 for cmd in python3 install systemctl; do command -v "$cmd" >/dev/null || fail "comando necessário ausente: $cmd"; done
 
 if [[ -z "${PACKAGE_DIR}" ]]; then
