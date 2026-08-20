@@ -158,7 +158,7 @@ class AgentGameDataJobsTest(unittest.TestCase):
         self.assertEqual(selection["kind"], "RuntimeSelection")
         self.assertEqual(selection["game"], "dayz")
         self.assertEqual(selection["provider"], "steam")
-        self.assertEqual(selection["install"]["package_id"], 223350)
+        self.assertEqual(selection["install"]["package_id"], "223350")
 
     def test_dashboard_and_agent_package_expose_game_data_contract(self):
         ui = (ROOT / "dashboard/web/game-data-orchestration.js").read_text(encoding="utf-8")
