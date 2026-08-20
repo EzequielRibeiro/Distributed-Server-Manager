@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capivara Linux Agent runtime: enroll once, then heartbeat permanently."""
+"""Capivara Windows Agent using the same Controller protocol as Linux."""
 
 from __future__ import annotations
 
@@ -23,7 +23,8 @@ from capabilities import detect_capabilities
 from network_inventory import collect_network_inventory
 from update_client import clear_update_result, read_update_result, stage_update_request
 
-CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
+PROGRAM_DATA = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
+CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", PROGRAM_DATA / "CapivaraAgent" / "agent.json"))
 DEFAULT_HEARTBEAT_SECONDS = 30
 
 
@@ -32,11 +33,10 @@ def _load_config() -> dict[str, Any]:
 
 
 def _write_config(config: dict[str, Any]) -> None:
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     temp = CONFIG_PATH.with_suffix(".tmp")
     temp.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(temp, 0o600)
     temp.replace(CONFIG_PATH)
-    os.chmod(CONFIG_PATH, 0o600)
 
 
 def _post(url: str, payload: dict[str, Any], headers: dict[str, str] | None = None) -> dict[str, Any]:
@@ -56,16 +56,33 @@ def _post(url: str, payload: dict[str, Any], headers: dict[str, str] | None = No
 
 def _memory_total_bytes() -> int | None:
     try:
-        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
-            if line.startswith("MemTotal:"):
-                return int(line.split()[1]) * 1024
-    except (OSError, ValueError, IndexError):
-        return None
+        import ctypes
+
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        status = MEMORYSTATUSEX()
+        status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return int(status.ullTotalPhys)
+    except Exception:
+        pass
     return None
 
 
 def _inventory(config: dict[str, Any]) -> dict[str, Any]:
-    disk = shutil.disk_usage("/")
+    root = Path(os.environ.get("SystemDrive", "C:") + "\\")
+    disk = shutil.disk_usage(root)
     version_path = Path(__file__).resolve().parents[1] / "VERSION"
     try:
         installed_version = version_path.read_text(encoding="utf-8").strip()
@@ -74,7 +91,7 @@ def _inventory(config: dict[str, Any]) -> dict[str, Any]:
     payload = {
         "agent_id": config["agent_id"],
         "hostname": socket.gethostname(),
-        "os": platform.system().lower(),
+        "os": "windows",
         "architecture": platform.machine(),
         "capivara_version": installed_version,
         "address": config.get("advertise_address"),
@@ -108,7 +125,7 @@ def enroll(config: dict[str, Any]) -> dict[str, Any]:
             "name": config.get("name") or socket.gethostname(),
             "fingerprint": config["fingerprint"],
             "hostname": socket.gethostname(),
-            "os": platform.system().lower(),
+            "os": "windows",
             "architecture": platform.machine(),
             "capivara_version": config.get("capivara_version"),
             "address": config.get("advertise_address"),
@@ -135,10 +152,8 @@ def heartbeat(config: dict[str, Any]) -> dict[str, Any]:
         },
     )
     if result.get("update") and stage_update_request(dict(result["update"])):
-        print(
-            f"update staged version={result['update'].get('desired_version')} rollout={result['update'].get('rollout_id')}",
-            flush=True,
-        )
+        print(f"update staged version={result['update'].get('desired_version')}", flush=True)
+        raise SystemExit(0)
     if result.get("update_state", {}).get("update_status") == "completed":
         clear_update_result()
     return result
@@ -156,6 +171,8 @@ def run_forever() -> None:
                 f"heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} status={result.get('status')}",
                 flush=True,
             )
+        except SystemExit:
+            raise
         except Exception as exc:
             print(f"heartbeat failed: {exc}", file=sys.stderr, flush=True)
         time.sleep(interval)

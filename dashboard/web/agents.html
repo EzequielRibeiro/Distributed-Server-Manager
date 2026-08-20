@@ -11,7 +11,7 @@
 <div id="sidebar-component"></div>
 <main class="agents-main">
     <header class="agents-header">
-        <div><h1>Infraestrutura · Agents</h1><p>Instalação, localização e administração dos Agents gerenciados pelo Controller.</p></div>
+        <div><h1>Infraestrutura · Agents</h1><p>Instalação, localização, atualização e administração dos Agents gerenciados pelo Controller.</p></div>
         <div class="agents-header-actions">
             <button id="add-agent-focus" type="button">Adicionar Agent</button>
             <button id="refresh-agents" type="button">Atualizar</button>
@@ -26,7 +26,7 @@
             <fieldset>
                 <legend>Sistema</legend>
                 <label class="inline-option"><input type="radio" name="agent-platform" value="linux" checked> Linux</label>
-                <label class="inline-option"><input type="radio" name="agent-platform" value="windows"> Windows <small>(em preparação)</small></label>
+                <label class="inline-option"><input type="radio" name="agent-platform" value="windows"> Windows</label>
             </fieldset>
             <fieldset>
                 <legend>Método</legend>
@@ -66,6 +66,42 @@
         <div id="agent-ranges" class="range-grid"></div>
         <div id="agent-conflicts" class="conflict-box"></div>
 
+        <section class="range-form agent-manager-only" id="agent-update-panel">
+            <h3>Atualização remota</h3>
+            <div class="range-grid">
+                <article class="range-card"><span>Versão instalada</span><strong id="agent-installed-version">—</strong></article>
+                <article class="range-card"><span>Versão disponível</span><strong id="agent-available-version">—</strong></article>
+                <article class="range-card"><span>Status</span><strong id="agent-update-status">—</strong></article>
+                <article class="range-card"><span>Última atualização</span><strong id="agent-last-update">—</strong></article>
+            </div>
+            <form id="agent-update-channel-form" class="range-form">
+                <label>Canal
+                    <select id="agent-update-channel">
+                        <option value="stable">Stable</option>
+                        <option value="beta">Beta</option>
+                        <option value="local/manual">Local / manual</option>
+                    </select>
+                </label>
+                <button type="submit">Salvar canal</button>
+            </form>
+            <form id="agent-rollout-form" class="range-form">
+                <label>Agents do rollout
+                    <textarea id="agent-rollout-agents" rows="3" placeholder="agent-a, agent-b"></textarea>
+                </label>
+                <label>Versão desejada <input id="agent-rollout-version" type="text" placeholder="1.5.0" required></label>
+                <label>Tamanho do lote <input id="agent-rollout-batch-size" type="number" min="1" value="1" required></label>
+                <label>Canal
+                    <select id="agent-rollout-channel">
+                        <option value="stable">Stable</option>
+                        <option value="beta">Beta</option>
+                        <option value="local/manual">Local / manual</option>
+                    </select>
+                </label>
+                <p>O próximo lote só é liberado quando todos os Agents dos lotes anteriores voltarem online na versão esperada.</p>
+                <button type="submit">Criar rollout</button>
+            </form>
+        </section>
+
         <form id="agent-location-form" class="range-form">
             <h3>Localização do Agent</h3>
             <label>Região
@@ -97,5 +133,6 @@
 <script src="/agents.js"></script>
 <script src="/agent-installation.js"></script>
 <script src="/agent-location-ui.js"></script>
+<script src="/agent-updates.js"></script>
 </body>
 </html>

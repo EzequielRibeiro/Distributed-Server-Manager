@@ -33,11 +33,17 @@ tar -xzf "${TMP_DIR}/first/${ARCHIVE_NAME}" -C "${TMP_DIR}/extract"
 PACKAGE_ROOT="${TMP_DIR}/extract/capivara-dsm-${VERSION}"
 for relative_path in \
     version install.sh update.sh bin/dsm core/bootstrap.sh \
-    dashboard/server.py dashboard/server_part11.py dashboard/agent_remote_http.py \
+    dashboard/server.py dashboard/server_part13.py dashboard/agent_remote_http.py \
+    dashboard/agent_update_api.py dashboard/agent_update_http.py dashboard/windows_agent_install_command.py \
     installer/catalog.sh installer/compatibility_resolver.sh \
-    database/manager.py database/runtime_backend.py database/operations.py \
-    agents/common/identity.py agents/linux/installer/install-agent.sh \
-    agents/linux/runtime/agent.py agents/linux/services/capivara-agent.service \
+    database/manager.py database/runtime_backend.py database/operations.py database/agent_update_repository.py \
+    agents/common/identity.py \
+    agents/linux/installer/install-agent.sh agents/linux/runtime/agent.py agents/linux/runtime/update_client.py agents/linux/updater/updater.py \
+    agents/linux/services/capivara-agent.service agents/linux/services/capivara-agent-update.service agents/linux/services/capivara-agent-update.path \
+    agents/windows/installer/install-agent.ps1 agents/windows/installer/bootstrap-release.ps1 \
+    agents/windows/runtime/agent.py agents/windows/runtime/capabilities.py agents/windows/runtime/network_inventory.py agents/windows/runtime/update_client.py \
+    agents/windows/updater/updater.py agents/windows/service/register-task.ps1 \
+    release/build_windows_agent_package.py \
     database/migrations/001_initial.sql \
     database/migrations_postgresql/001_initial.sql \
     database/migrations_mysql/001_initial.sql release-manifest.json

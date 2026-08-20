@@ -13,7 +13,7 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
       - name: Checkout tag
@@ -38,9 +38,11 @@ jobs:
         run: |
           git ls-files -z '*.sh' | xargs -0 -n1 bash -n
           find catalog games -type f -name '*.json' -print0 | xargs -0 -n1 jq empty
-          python3 -m py_compile dashboard/server.py database/manager.py tests/dashboard_catalog_v2_test.py tests/database_test.py
+          python3 -m py_compile dashboard/server.py database/manager.py tests/dashboard_catalog_v2_test.py tests/database_test.py release/build_windows_agent_package.py
           python3 -m unittest tests/dashboard_catalog_v2_test.py
           python3 -m unittest tests/database_test.py
+          python3 -m unittest tests/phase18_agent_updates_test.py
+          python3 -m unittest tests/phase19_windows_agent_test.py
           bash tests/install_manager_test.sh
           sudo --preserve-env=GITHUB_ACTIONS bash tests/linux_install_smoke_test.sh
           bash tests/update_manager_test.sh
@@ -54,11 +56,17 @@ jobs:
         run: |
           release/build_release.sh "${GITHUB_SHA}" dist
           bash release/build_agent_package.sh "${GITHUB_SHA}" dist
+          python3 release/build_windows_agent_package.py "${GITHUB_SHA}" dist
 
       - name: Attest Linux Agent package provenance
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: 'dist/capivara-agent-linux-*.tar.gz'
+
+      - name: Attest Windows Agent package provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/capivara-agent-windows-*.zip'
 
       - name: Publish GitHub Release
         env:
@@ -75,12 +83,14 @@ jobs:
           fi
           gh release create "${GITHUB_REF_NAME}" \
             dist/*.tar.gz \
+            dist/*.zip \
             dist/*.sha256 \
             dist/*.manifest.json \
             dist/*.minisig \
             "${RELEASE_FLAGS[@]}" 2>/dev/null || \
           gh release create "${GITHUB_REF_NAME}" \
             dist/*.tar.gz \
+            dist/*.zip \
             dist/*.sha256 \
             dist/*.manifest.json \
             "${RELEASE_FLAGS[@]}"

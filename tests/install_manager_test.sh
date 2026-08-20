@@ -72,7 +72,7 @@ if (
     source "${INSTALLER}"; DSM_ROOT="${TMP_DIR}/rendered-root"; SYSTEMD_DIR="${TMP_DIR}/rendered-systemd"; DSM_SERVICE_USER="node1"; DSM_SERVICE_GROUP="node1"; SYSTEMD_ACTIVE=1
     mkdir -p "${DSM_ROOT}/systemd" "${SYSTEMD_DIR}"; cp "${ROOT}/systemd/dsm-dashboard.service" "${DSM_ROOT}/systemd/"; systemctl(){ :; }; install_systemd_units >/dev/null
     rendered="${SYSTEMD_DIR}/dsm-dashboard.service"
-    grep -Fq "${DSM_ROOT}/dashboard/server_part12.py" "${rendered}" || fail "rendered unit does not use configured DSM_ROOT"
+    grep -Fq "${DSM_ROOT}/dashboard/server_part13.py" "${rendered}" || fail "rendered unit does not use configured DSM_ROOT"
     ! grep -Fq '/opt/dsm' "${rendered}" || fail "rendered unit retains hard-coded /opt/dsm"
 )
 python3 -m unittest tests/profile_bootstrap_test.py
