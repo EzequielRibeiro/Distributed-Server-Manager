@@ -179,6 +179,14 @@ class AgentPairingRepository:
                 if _parse_timestamp(str(token_row["expires_at"])) <= current:
                     raise PairingTokenExpired("pairing token has expired")
 
+                claim = session.execute(
+                    f"UPDATE agent_pairing_tokens SET consumed_at={ph} "
+                    f"WHERE id={ph} AND consumed_at IS NULL",
+                    (_timestamp(current), str(token_row["id"])),
+                )
+                if getattr(claim, "rowcount", 0) != 1:
+                    raise PairingTokenConsumed("pairing token has already been consumed")
+
                 controller_id = str(token_row["controller_id"])
                 controller = session.execute(
                     f"SELECT status FROM controllers WHERE id={ph}",
@@ -221,10 +229,6 @@ class AgentPairingRepository:
                         fingerprint,
                         str(public_key).strip() if public_key else None,
                     ),
-                )
-                session.execute(
-                    f"UPDATE agent_pairing_tokens SET consumed_at={ph} WHERE id={ph} AND consumed_at IS NULL",
-                    (_timestamp(current), str(token_row["id"])),
                 )
             finally:
                 session.close()
