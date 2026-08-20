@@ -71,6 +71,21 @@ then
         | python3 -c 'import json,sys; assert json.load(sys.stdin)["valid"]'
 fi
 
+# A fresh Controller profile must already own its Controller identity but must
+# not fabricate an Agent. Placement therefore remains unavailable until an
+# Agent is enrolled.
+python3 "${DSM_ROOT}/database/registry.py" \
+    --root "${DSM_ROOT}" bootstrap-status \
+    | python3 -c '
+import json,sys
+payload=json.load(sys.stdin)
+assert payload["controllers"] == 1, payload
+assert payload["agents"] == 0, payload
+'
+
+grep -q '^DSM_NODE_ROLE="controller"$' "${DSM_ROOT}/config/agent.conf"
+grep -q '^DSM_NODE_ID="' "${DSM_ROOT}/config/agent.conf"
+
 password_file="${TEST_ROOT}/admin-password"
 printf 'Capivara-Smoke-Admin-2026!\n' >"${password_file}"
 chmod 600 "${password_file}"
@@ -140,5 +155,16 @@ bash "${DSM_ROOT}/install.sh" "${INSTALL_ARGS[@]}" --reinstall
 python3 "${DSM_ROOT}/database/operations.py" \
     --root "${DSM_ROOT}" readiness \
     | python3 -c 'import json,sys; assert json.load(sys.stdin)["ready"]'
+
+# Profile bootstrap is idempotent: reinstall must not add another automatic
+# Controller identity.
+python3 "${DSM_ROOT}/database/registry.py" \
+    --root "${DSM_ROOT}" bootstrap-status \
+    | python3 -c '
+import json,sys
+payload=json.load(sys.stdin)
+assert payload["controllers"] == 2, payload
+assert payload["agents"] == 1, payload
+'
 
 echo "Linux ${INSTALL_SOURCE} installation smoke test passed."
