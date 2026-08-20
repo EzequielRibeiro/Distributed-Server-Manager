@@ -17,6 +17,8 @@ legacy = integration.legacy
 _previous_get = legacy.DashboardHandler.do_GET
 _previous_post = legacy.DashboardHandler.do_POST
 _authenticate = integration.integration.integrated_customer_authenticate
+legacy.STATIC_FILES["/agent-installation.js"] = legacy.WEB_DIR / "agent-installation.js"
+legacy.STATIC_FILES["/agent-location-ui.js"] = legacy.WEB_DIR / "agent-location-ui.js"
 
 
 def _user(self):
