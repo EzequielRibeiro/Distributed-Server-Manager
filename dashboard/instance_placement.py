@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from placement_errors import PlacementUnavailable
 from placement_service import choose_agent_for_instance
 from region_preference_api import region_preference_for_creation
 
@@ -90,8 +91,9 @@ def resolve_instance_placement(
     )
 
     if not decision.get("agent_id"):
-        raise RuntimeError(
-            "placement did not select an Agent"
+        raise PlacementUnavailable(
+            reason="no_eligible_agents",
+            requested_region_id=preference["region_id"],
         )
 
     return {
