@@ -1,5 +1,14 @@
 # DSM CHANGELOG
 
+## v1.4.5 — 2026-08-20
+
+- Corrige `dsm-scheduler.service` para executar a ação pública `scheduler.sh run` em vez da ação inexistente `daemon`
+- Publica o CLI `cap` globalmente em `/usr/local/bin/cap` durante instalações novas
+- Faz o updater validar `bin/cap` no pacote e no staging antes de aplicar uma atualização
+- Garante permissão executável para `bin/cap` em instalação e atualização
+- Publica e valida os comandos globais `dsm` e `cap` após a atualização
+- Adiciona regressão dedicada para o contrato global `dsm/cap` e para o scheduler
+
 ## v1.4.4 — 2026-08-20
 
 - Adiciona transição segura e idempotente `controller -> hybrid` sem reinstalar o Capivara
