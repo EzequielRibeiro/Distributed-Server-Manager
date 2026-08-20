@@ -27,10 +27,7 @@ class CreateServerWizardContractTest(unittest.TestCase):
             self.assertIn(label, self.script)
 
     def test_unavailable_message_is_explicit(self):
-        self.assertIn(
-            "Nenhum ambiente está disponível para provisionamento neste momento.",
-            self.script,
-        )
+        self.assertIn("Nenhum ambiente está disponível para provisionamento neste momento.", self.script)
         self.assertIn("/api/placement/readiness", self.script)
 
     def test_opening_cta_is_hidden_while_wizard_is_open(self):
@@ -48,7 +45,7 @@ class CreateServerWizardContractTest(unittest.TestCase):
         self.assertIn('id="runtime-placement-status"', self.html)
 
     def test_service_uses_current_composed_entrypoint(self):
-        self.assertIn("dashboard/server_part11.py", self.service)
+        self.assertIn("dashboard/server_part12.py", self.service)
 
 
 if __name__ == "__main__":
