@@ -26,7 +26,14 @@ cmp -s "${TMP}/one/${ARCHIVE}" "${TMP}/two/${ARCHIVE}" || fail "Agent package is
 mkdir "${TMP}/extract"
 tar -xzf "${TMP}/one/${ARCHIVE}" -C "${TMP}/extract"
 PACKAGE="${TMP}/extract/capivara-agent-linux-${VERSION}"
-for path in install-agent.sh manifest.json VERSION agent/common/identity.py agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py services/capivara-agent.service config/README.md; do
+for path in \
+  install-agent.sh manifest.json VERSION \
+  agent/common/identity.py \
+  agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py agent/runtime/update_client.py \
+  agent/updater/updater.py \
+  services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path \
+  config/README.md
+do
   [[ -f "${PACKAGE}/${path}" ]] || fail "missing Agent package file: ${path}"
 done
 
@@ -40,18 +47,18 @@ assert manifest['version'] == (package / 'VERSION').read_text().strip()
 for relative in manifest['required_files']:
     data = (package / relative).read_bytes()
     assert hashlib.sha256(data).hexdigest() == manifest['files'][relative]['sha256']
-for relative in (
-    'agent/common/identity.py',
-    'agent/runtime/agent.py',
-    'agent/runtime/capabilities.py',
-    'agent/runtime/network_inventory.py',
-    'services/capivara-agent.service',
-):
-    source = root / ('agents/linux/' + relative.removeprefix('agent/') if relative.startswith('agent/runtime/') else 'agents/' + relative if relative.startswith('agent/common/') else 'agents/linux/services/capivara-agent.service')
-    if relative == 'agent/common/identity.py':
-        source = root / 'agents/common/identity.py'
-    elif relative.startswith('agent/runtime/'):
-        source = root / 'agents/linux/runtime' / pathlib.Path(relative).name
+source_map = {
+    'agent/common/identity.py': root / 'agents/common/identity.py',
+    'agent/runtime/agent.py': root / 'agents/linux/runtime/agent.py',
+    'agent/runtime/capabilities.py': root / 'agents/linux/runtime/capabilities.py',
+    'agent/runtime/network_inventory.py': root / 'agents/linux/runtime/network_inventory.py',
+    'agent/runtime/update_client.py': root / 'agents/linux/runtime/update_client.py',
+    'agent/updater/updater.py': root / 'agents/linux/updater/updater.py',
+    'services/capivara-agent.service': root / 'agents/linux/services/capivara-agent.service',
+    'services/capivara-agent-update.service': root / 'agents/linux/services/capivara-agent-update.service',
+    'services/capivara-agent-update.path': root / 'agents/linux/services/capivara-agent-update.path',
+}
+for relative, source in source_map.items():
     assert (package / relative).read_bytes() == source.read_bytes()
 PY
 
@@ -63,5 +70,6 @@ grep -Fq -- '--package-dir' "${INSTALLER}" || fail "local installer lacks --pack
 grep -Fq 'capivara-agent-linux-' "${BOOTSTRAP}" || fail "release bootstrap does not select Agent package"
 grep -Fq 'sha256sum' "${BOOTSTRAP}" || fail "release bootstrap does not validate checksum"
 ! grep -Fq '/main/' "${BOOTSTRAP}" || fail "release bootstrap follows mutable main"
+grep -Fq 'capivara-agent-update.path' "${INSTALLER}" || fail "installer does not enable safe remote updater"
 
 echo "Agent package tests passed."
