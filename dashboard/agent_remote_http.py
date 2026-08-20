@@ -5,11 +5,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_authenticated_api import authenticated_agent_heartbeat
+from agent_heartbeat_api import record_agent_heartbeat
 from agent_lifecycle_repository import AgentLifecycleRepository
 from agent_pairing_api import enroll_agent
 from agent_pairing_repository import (
     AgentCredentialInvalid,
+    AgentPairingRepository,
     PairingRegistrationConflict,
     PairingTokenConsumed,
     PairingTokenExpired,
@@ -32,29 +33,21 @@ def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, di
     return 201, result
 
 
-def dispatch_heartbeat(
-    payload: dict[str, Any] | None,
-    *,
-    headers,
-    backend,
-) -> tuple[int, dict[str, Any]]:
+def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> tuple[int, dict[str, Any]]:
     credential_id = str(headers.get("X-Capivara-Agent-Credential", "")).strip()
     credential_secret = str(headers.get("X-Capivara-Agent-Secret", "")).strip()
     fingerprint = str(headers.get("X-Capivara-Agent-Fingerprint", "")).strip() or None
     try:
-        result = authenticated_agent_heartbeat(
-            backend,
+        identity = AgentPairingRepository(backend).authenticate(
             credential_id=credential_id,
             credential_secret=credential_secret,
             fingerprint=fingerprint,
-            payload=payload,
         )
-        # A Controller-issued one-time token is explicit trust for bootstrap.
-        # The first authenticated heartbeat proves possession of the permanent
-        # credential and completes pairing -> active atomically through lifecycle.
-        if str(result.get("status", "")).strip().lower() == "pairing":
-            transition = AgentLifecycleRepository(backend).transition(result["agent_id"], "active")
-            result["status"] = transition.target
+        result = record_agent_heartbeat(identity["agent_id"], payload, backend=backend)
+        status = str(identity.get("status", "")).strip().lower()
+        if status == "pairing":
+            status = AgentLifecycleRepository(backend).transition(identity["agent_id"], "active").target
+        result["status"] = status
     except AgentCredentialInvalid:
         return 401, {"error": "agent_authentication_failed", "message": "Identidade do Agent inválida."}
     except Exception:
