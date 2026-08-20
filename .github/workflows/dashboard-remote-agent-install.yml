@@ -1,0 +1,87 @@
+name: Dashboard Remote Agent Install
+
+on:
+  pull_request:
+    paths:
+      - 'dashboard/agent_installation_api.py'
+      - 'dashboard/web/agents.html'
+      - 'dashboard/web/agent-installation.js'
+      - 'database/agent_installation_preconfiguration.py'
+      - 'database/migrations/026_agent_installation_preconfiguration.sql'
+      - 'database/migrations_postgresql/026_agent_installation_preconfiguration.sql'
+      - 'database/migrations_mysql/026_agent_installation_preconfiguration.sql'
+      - 'core/agent_ssh_deploy.py'
+      - 'tests/dashboard_remote_agent_install_test.py'
+      - 'docs/architecture/dashboard-remote-agent-install.md'
+      - '.github/workflows/dashboard-remote-agent-install.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/agent_installation_api.py'
+      - 'dashboard/web/agents.html'
+      - 'dashboard/web/agent-installation.js'
+      - 'database/agent_installation_preconfiguration.py'
+      - 'database/migrations/026_agent_installation_preconfiguration.sql'
+      - 'database/migrations_postgresql/026_agent_installation_preconfiguration.sql'
+      - 'database/migrations_mysql/026_agent_installation_preconfiguration.sql'
+      - 'core/agent_ssh_deploy.py'
+      - 'tests/dashboard_remote_agent_install_test.py'
+      - '.github/workflows/dashboard-remote-agent-install.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Python syntax
+        run: |
+          python3 -m py_compile \
+            dashboard/agent_installation_api.py \
+            database/agent_installation_preconfiguration.py \
+            core/agent_ssh_deploy.py \
+            tests/dashboard_remote_agent_install_test.py
+
+      - name: Validate Dashboard JavaScript
+        run: node --check dashboard/web/agent-installation.js
+
+      - name: Validate migration parity
+        run: |
+          set -euo pipefail
+          migrations=(
+            database/migrations/026_agent_installation_preconfiguration.sql
+            database/migrations_postgresql/026_agent_installation_preconfiguration.sql
+            database/migrations_mysql/026_agent_installation_preconfiguration.sql
+          )
+          required=(
+            agent_installation_preconfiguration
+            installation_id
+            requested_name
+            port_protocol
+            port_start
+            port_end
+            applied_at
+            apply_error
+            created_at
+            updated_at
+          )
+          for migration in "${migrations[@]}"; do
+            test -s "$migration"
+            for token in "${required[@]}"; do
+              grep -q "$token" "$migration"
+            done
+          done
+
+      - name: Test remote install and preconfiguration contracts
+        run: python3 -m unittest tests/dashboard_remote_agent_install_test.py
+
+      - name: Security contract
+        run: |
+          ! grep -R --line-number 'type="password"' dashboard/web/agents.html
+          ! grep -R --line-number 'StrictHostKeyChecking=no' dashboard/agent_installation_api.py core/agent_ssh_deploy.py
+          ! grep -R --line-number 'shell=True' dashboard/agent_installation_api.py core/agent_ssh_deploy.py
