@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 for path in (ROOT, ROOT / "database", ROOT / "dashboard"):
@@ -16,6 +17,7 @@ for path in (ROOT, ROOT / "database", ROOT / "dashboard"):
 from agent_pairing_repository import AgentPairingRepository
 from agent_port_repository import AgentPortRepository
 from agent_remote_http import dispatch_enroll, dispatch_heartbeat
+from agent_runtime_repository import AgentRuntimeRepository
 from backend import DatabaseConfig
 from backend_factory import create_backend
 from infrastructure_doctor import InfrastructureDoctor
@@ -113,6 +115,35 @@ class Phase20InfrastructureDoctorTest(unittest.TestCase):
         self.assertEqual(statuses["Datacenters"], "OK")
         self.assertEqual(statuses["Port allocation"], "OK")
         self.assertEqual(statuses["Placement"], "READY")
+
+    def test_default_doctor_is_strictly_observational(self):
+        self._enroll("agent-one", "sha256:one")
+        stale = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+        with self.backend.transaction() as connection:
+            connection.execute(
+                "UPDATE agent_runtime_inventory SET last_seen=?,health_status='online' WHERE agent_id='agent-one'",
+                (stale,),
+            )
+
+        with patch.object(
+            self.backend,
+            "initialize",
+            side_effect=AssertionError("doctor must not initialize or migrate the database"),
+        ), patch.object(
+            AgentRuntimeRepository,
+            "refresh_health",
+            side_effect=AssertionError("doctor must not persist derived Agent health"),
+        ):
+            result = InfrastructureDoctor(self.backend).diagnose()
+
+        self.assertFalse(result["reconcile_mode"])
+        self.assertEqual(result["repairs"], [])
+        with self.backend.connect() as connection:
+            row = connection.execute(
+                "SELECT health_status,last_seen FROM agent_runtime_inventory WHERE agent_id='agent-one'"
+            ).fetchone()
+        self.assertEqual(row["health_status"], "online")
+        self.assertEqual(row["last_seen"], stale)
 
     def test_duplicate_fingerprint_is_blocking_and_never_auto_repaired(self):
         self._enroll("agent-one", "sha256:duplicate", address="192.0.2.10")
