@@ -16,6 +16,7 @@ _authenticate = integration._authenticate
 ROOT_DIR = Path(__file__).resolve().parents[1]
 GAME_DATA_STATUS_PATH = "/api/agents/game-data/jobs"
 ENVIRONMENT_INSTALL_PATH = "/api/catalog/environment-install"
+legacy.STATIC_FILES["/game-data-orchestration.js"] = legacy.WEB_DIR / "game-data-orchestration.js"
 
 
 def _user(self):
