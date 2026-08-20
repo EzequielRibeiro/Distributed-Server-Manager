@@ -82,3 +82,6 @@ jobs:
 
       - name: Test reproducible release build
         run: bash tests/release_build_test.sh
+
+      - name: Test Linux Agent package
+        run: bash tests/agent_package_test.sh
