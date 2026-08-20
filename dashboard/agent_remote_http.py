@@ -25,17 +25,24 @@ HEARTBEAT_PATH = "/api/agent/heartbeat"
 def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, dict[str, Any]]:
     try:
         result = enroll_remote_agent(backend, payload)
-        bind_installation_after_enrollment(
-            backend,
-            pairing_token=str((payload or {}).get("pairing_token", "")),
-            agent_id=str(result["agent_id"]),
-        )
     except (PairingTokenInvalid, PairingTokenExpired, PairingTokenConsumed):
         return 401, {"error": "pairing_rejected", "message": "Pareamento inválido ou expirado."}
     except (PairingRegistrationConflict, ValueError):
         return 409, {"error": "pairing_conflict", "message": "Não foi possível registrar este Agent."}
     except Exception:
         return 500, {"error": "pairing_failed", "message": "Não foi possível concluir o pareamento."}
+
+    tracking_bound = True
+    try:
+        bind_installation_after_enrollment(
+            backend,
+            pairing_token=str((payload or {}).get("pairing_token", "")),
+            agent_id=str(result["agent_id"]),
+        )
+    except Exception:
+        # Pairing is a security boundary. A dashboard metadata failure must not
+        # invalidate a permanent identity already issued or invite token replay.
+        tracking_bound = False
 
     identity = dict(result.get("identity") or {})
     return 201, {
@@ -48,6 +55,7 @@ def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, di
         "credential_type": identity["credential_type"],
         "fingerprint": identity["fingerprint"],
         "pairing_token_consumed": bool(result.get("pairing_token_consumed")),
+        "installation_tracking_bound": tracking_bound,
     }
 
 
