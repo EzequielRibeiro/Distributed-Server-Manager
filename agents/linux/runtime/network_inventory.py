@@ -6,7 +6,7 @@ from __future__ import annotations
 import subprocess
 
 
-def _parse_ss(protocol: str, args: list[str]) -> list[int]:
+def _parse_ss(args: list[str]) -> list[int]:
     try:
         completed = subprocess.run(
             ["ss", "-H", "-l", "-n", *args],
@@ -21,9 +21,10 @@ def _parse_ss(protocol: str, args: list[str]) -> list[int]:
     ports: set[int] = set()
     for line in completed.stdout.splitlines():
         fields = line.split()
-        if len(fields) < 5:
+        # ss -Hln{t,u}: local endpoint is the penultimate field.
+        if len(fields) < 2:
             continue
-        local = fields[4]
+        local = fields[-2]
         port_text = local.rsplit(":", 1)[-1].strip("[]")
         try:
             port = int(port_text)
@@ -38,8 +39,8 @@ def collect_network_inventory() -> dict[str, object]:
     """Return listening/claimed TCP and UDP sockets observed by ``ss``."""
     return {
         "source": "ss",
-        "tcp_listen": _parse_ss("tcp", ["-t"]),
-        "udp_listen": _parse_ss("udp", ["-u"]),
+        "tcp_listen": _parse_ss(["-t"]),
+        "udp_listen": _parse_ss(["-u"]),
     }
 
 
