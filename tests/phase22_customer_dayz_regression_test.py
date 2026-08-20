@@ -89,6 +89,7 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
         connection,
         instance_id: str,
         agent_id: str,
+        node_id: str,
         port_summary: dict,
     ) -> list[int]:
         """Reserve inside the caller's transaction using a preflight snapshot.
@@ -115,9 +116,9 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
             if not occupied.intersection(block):
                 for offset, port in enumerate(block):
                     connection.execute(
-                        "INSERT INTO instance_ports(instance_id,name,protocol,port,bind_address) "
-                        "VALUES (?,?,?,?,?)",
-                        (instance_id, f"allocation_{offset}", "udp", port, "0.0.0.0"),
+                        "INSERT INTO instance_ports(instance_id,node_id,name,protocol,port,bind_address) "
+                        "VALUES (?,?,?,?,?,?)",
+                        (instance_id, node_id, f"allocation_{offset}", "udp", port, "0.0.0.0"),
                     )
                 return block
         raise RuntimeError("no contiguous DayZ port block available")
@@ -138,9 +139,6 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
             preferred_region_id=payload.get("region_id"),
             requirements=requirements,
         )
-        # Preflight the effective range before entering the single write
-        # transaction. The transaction below re-checks persistent reservations
-        # before inserting the block, preventing double allocation.
         port_summary = effective_port_summary(self.backend, decision["agent_id"])
 
         instance_id = "phase22-dayz-001"
@@ -178,6 +176,7 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
                 connection,
                 instance_id,
                 decision["agent_id"],
+                decision["node_id"],
                 port_summary,
             )
             # External SteamCMD is deliberately replaced by a deterministic E2E
@@ -207,6 +206,7 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
         self.assertEqual(status, 201)
         self.assertEqual(body["contract_id"], self.contract_id)
         self.assertEqual(body["agent_id"], self.agent_id)
+        self.assertEqual(body["node_id"], self.node_id)
         self.assertEqual(len(body["ports"]), 10)
         self.assertEqual(body["ports"], list(range(body["ports"][0], body["ports"][0] + 10)))
         self.assertEqual(body["provision"]["progress"], 100)
@@ -218,7 +218,7 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
                 (body["instance_id"],),
             ).fetchone()
             reserved = connection.execute(
-                "SELECT COUNT(*) AS total FROM instance_ports WHERE instance_id=?",
+                "SELECT COUNT(*) AS total,COUNT(DISTINCT node_id) AS nodes FROM instance_ports WHERE instance_id=?",
                 (body["instance_id"],),
             ).fetchone()
         self.assertEqual(instance["status"], "offline")
@@ -226,6 +226,7 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
         self.assertEqual(instance["node_id"], self.node_id)
         self.assertEqual(instance["customer_id"], self.customer_id)
         self.assertEqual(int(reserved["total"]), 10)
+        self.assertEqual(int(reserved["nodes"]), 1)
 
         # Controller restart: reopen the same persistent database and prove that
         # the completed creation and port reservations survive process restart.
