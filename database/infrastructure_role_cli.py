@@ -5,10 +5,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import socket
+from pathlib import Path
 from typing import Any
 
+from hybrid_local_reconciliation import (
+    HybridLocalReconciliationError,
+    reconcile_local_hybrid_runtime,
+)
 from infrastructure_role_transition import (
     InfrastructureRoleTransitionError,
     promote_controller_to_hybrid,
@@ -105,6 +111,44 @@ def promote_local_controller(
     )
 
 
+def promote_and_reconcile_local_controller(
+    repository: RegistryRepository,
+    *,
+    root: Path,
+    node_id: str,
+    controller_id: str | None = None,
+    agent_id: str | None = None,
+    identity_only: bool = False,
+) -> dict[str, Any]:
+    """Promote persisted identity and then reconcile retry-safe local state."""
+    payload = promote_local_controller(
+        repository,
+        node_id=node_id,
+        controller_id=controller_id,
+        agent_id=agent_id,
+    )
+    if identity_only:
+        return payload
+
+    try:
+        local = reconcile_local_hybrid_runtime(
+            repository,
+            root,
+            node_id=node_id,
+            agent_id=str(payload["agent_id"]),
+            hostname=socket.gethostname(),
+        )
+    except HybridLocalReconciliationError as exc:
+        raise HybridLocalReconciliationError(
+            "persisted role promotion succeeded, but local reconciliation failed; "
+            f"rerun the same command after correcting the local error: {exc}"
+        ) from exc
+
+    payload.update(local)
+    payload["runtime_reconciliation_required"] = False
+    return payload
+
+
 def _print_human(payload: dict[str, Any]) -> None:
     fields = (
         ("Node", payload.get("node_id")),
@@ -113,6 +157,7 @@ def _print_human(payload: dict[str, Any]) -> None:
         ("Agent", payload.get("agent_id") or "none"),
         ("Agent status", payload.get("agent_status") or "none"),
         ("Topology", payload.get("topology_state") or "n/a"),
+        ("Health", payload.get("health_status") or "n/a"),
     )
     for label, value in fields:
         print(f"{label:<14}: {value}")
@@ -120,7 +165,7 @@ def _print_human(payload: dict[str, Any]) -> None:
         print(f"Changed       : {'yes' if payload.get('changed') else 'no'}")
         print(
             "Runtime sync  : "
-            + ("required" if payload.get("runtime_reconciliation_required") else "not required")
+            + ("required" if payload.get("runtime_reconciliation_required") else "complete")
         )
 
 
@@ -137,6 +182,11 @@ def build_parser() -> argparse.ArgumentParser:
     set_parser.add_argument("--node-id", default=socket.gethostname())
     set_parser.add_argument("--controller-id")
     set_parser.add_argument("--agent-id")
+    set_parser.add_argument(
+        "--identity-only",
+        action="store_true",
+        help="persist role/topology only; skip local config/runtime reconciliation",
+    )
     set_parser.add_argument("--json", action="store_true")
     return parser
 
@@ -149,13 +199,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "show":
             payload = role_status(repository, node_id=str(args.node_id).strip())
         else:
-            payload = promote_local_controller(
+            root = Path(os.environ.get("DSM_ROOT", "/opt/dsm")).resolve()
+            payload = promote_and_reconcile_local_controller(
                 repository,
+                root=root,
                 node_id=str(args.node_id).strip(),
                 controller_id=args.controller_id,
                 agent_id=args.agent_id,
+                identity_only=bool(args.identity_only),
             )
-    except (InfrastructureRoleTransitionError, InfrastructureIdentityConflict) as exc:
+    except (
+        InfrastructureRoleTransitionError,
+        InfrastructureIdentityConflict,
+        HybridLocalReconciliationError,
+    ) as exc:
         parser.exit(2, f"Erro: {exc}\n")
 
     if args.json:
