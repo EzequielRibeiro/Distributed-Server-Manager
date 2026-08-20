@@ -220,10 +220,13 @@ class DashboardRemoteAgentInstallTest(unittest.TestCase):
                 "SELECT name FROM agents WHERE id='agent-prepared'"
             ).fetchone()
             ranges = connection.execute(
-                "SELECT protocol,start_port,end_port FROM agent_port_ranges WHERE agent_id='agent-prepared'"
+                "SELECT protocol,start_port,end_port FROM agent_port_ranges "
+                "WHERE agent_id='agent-prepared' ORDER BY protocol"
             ).fetchall()
         self.assertEqual(agent["name"], "Prepared Node")
-        self.assertEqual([(r["protocol"], r["start_port"], r["end_port"]) for r in ranges], [("udp", 25000, 25999)])
+        range_tuples = [(r["protocol"], r["start_port"], r["end_port"]) for r in ranges]
+        self.assertIn(("udp", 25000, 25999), range_tuples)
+        self.assertIn(("tcp", 24000, 24999), range_tuples)
 
         status = agent_installation_status_for_user(
             self.controller, self.backend, installation["installation_id"]
