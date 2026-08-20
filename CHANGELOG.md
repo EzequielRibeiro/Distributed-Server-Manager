@@ -1,5 +1,17 @@
 # DSM CHANGELOG
 
+## v1.4.4 — 2026-08-20
+
+- Adiciona transição segura e idempotente `controller -> hybrid` sem reinstalar o Capivara
+- Preserva Node, Controller, Customers, Contracts, Instances e vínculos existentes
+- Cria e reconcilia o Agent local, incluindo `agent.conf`, inventory, capabilities e sockets reais
+- Mantém heartbeat persistente do Agent híbrido via worker dedicado do Dashboard
+- Integra a promoção à CLI `cap infrastructure role set hybrid`
+- Integra a promoção à área `Infraestrutura · Agents` da Dashboard, restrita a `admin`
+- Adiciona regressão completa `Controller existente -> Hybrid -> placement DayZ`
+- Documenta o lifecycle em `docs/architecture/controller-to-hybrid-transition.md`
+- Mantém a transição inversa `hybrid -> controller` fora desta release para tratamento seguro futuro
+
 ## v1.1.1 — 2026-08-17
 
 - Corrige o bootstrap de usuários no PostgreSQL usando literal booleano portátil
