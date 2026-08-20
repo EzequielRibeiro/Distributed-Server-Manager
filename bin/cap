@@ -37,7 +37,6 @@ Agents:
 
 Comandos operacionais disponíveis via camada de compatibilidade:
   cap server ...
-  cap doctor ...
   cap monitor ...
   cap mods ...
   cap backup ...
@@ -59,7 +58,8 @@ Comandos operacionais disponíveis via camada de compatibilidade:
 Compatibilidade curta também preservada:
   cap start|stop|restart|status ...
 
-`cap` é a CLI oficial em consolidação. Nesta fase, comandos operacionais
+`cap infrastructure doctor` é o único Doctor oficial.
+`cap` é a CLI oficial em consolidação. Nesta fase, os demais comandos operacionais
 legados são encaminhados internamente para `dsm` sem duplicação de lógica.
 EOF
 }
@@ -107,7 +107,7 @@ case "${1:-}" in
         esac
         ;;
 
-    start|stop|restart|status|server|doctor|monitor|mods|backup|user|runtime|config|steam|game|catalog|content|compatibility|update|database|db|instance|operations|ops)
+    start|stop|restart|status|server|monitor|mods|backup|user|runtime|config|steam|game|catalog|content|compatibility|update|database|db|instance|operations|ops)
         legacy_exec "$@"
         ;;
 
