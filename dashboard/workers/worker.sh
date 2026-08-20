@@ -30,6 +30,23 @@ start_worker()
 }
 
 
+start_python_worker()
+{
+    local WORKER="$1"
+
+    if [ -f "${WORKERS_DIR}/${WORKER}" ]
+    then
+        log "Iniciando ${WORKER}"
+
+        python3 "${WORKERS_DIR}/${WORKER}" \
+        >> "$LOG" 2>&1 &
+
+    else
+        log "Worker inexistente: ${WORKER}"
+    fi
+}
+
+
 main()
 {
 
@@ -55,6 +72,10 @@ main()
     start_worker alerts_worker.sh
 
     start_worker backup_worker.sh
+
+    # Mantém inventory/heartbeat do Agent local em Nodes hybrid.
+    # Em Nodes controller o processo permanece inerte até a promoção.
+    start_python_worker hybrid_agent_worker.py
 
 
     while true
