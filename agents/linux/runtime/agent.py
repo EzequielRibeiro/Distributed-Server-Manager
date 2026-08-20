@@ -15,6 +15,13 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+RUNTIME_DIR = Path(__file__).resolve().parent
+if str(RUNTIME_DIR) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_DIR))
+
+from capabilities import detect_capabilities
+from network_inventory import collect_network_inventory
+
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
 DEFAULT_HEARTBEAT_SECONDS = 30
 
@@ -66,11 +73,7 @@ def _inventory(config: dict[str, Any]) -> dict[str, Any]:
         "capivara_version": str(config.get("capivara_version", "unknown")),
         "address": config.get("advertise_address"),
         "fingerprint": config["fingerprint"],
-        "capabilities": {
-            "runtime": "linux",
-            "systemd": Path("/run/systemd/system").exists(),
-            "game_server": True,
-        },
+        "capabilities": detect_capabilities(),
         "cpu": {
             "logical_cores": os.cpu_count(),
             "machine": platform.machine(),
@@ -80,6 +83,7 @@ def _inventory(config: dict[str, Any]) -> dict[str, Any]:
             "root_total_bytes": disk.total,
             "root_free_bytes": disk.free,
         },
+        "network": collect_network_inventory(),
         "heartbeat_interval_seconds": int(config.get("heartbeat_interval_seconds", DEFAULT_HEARTBEAT_SECONDS)),
         "degraded_after_seconds": int(config.get("degraded_after_seconds", 60)),
         "offline_after_seconds": int(config.get("offline_after_seconds", 120)),

@@ -19,6 +19,29 @@ SERVER = importlib.util.module_from_spec(SERVER_SPEC)
 SERVER_SPEC.loader.exec_module(SERVER)
 
 
+def seed_dayz_agent_runtime(connection):
+    connection.execute(
+        "INSERT INTO agent_runtime_inventory("
+        "agent_id,hostname,os_name,architecture,capivara_version,"
+        "capabilities_json,cpu_json,ram_total_bytes,storage_json,network_json,"
+        "health_status,last_seen"
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) "
+        "ON CONFLICT(agent_id) DO UPDATE SET "
+        "capabilities_json=excluded.capabilities_json,cpu_json=excluded.cpu_json,"
+        "ram_total_bytes=excluded.ram_total_bytes,storage_json=excluded.storage_json,"
+        "network_json=excluded.network_json,health_status='online',"
+        "last_seen=strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+        (
+            "agent-demo", "DemoNode", "linux", "x86_64", "test",
+            '{"native-linux":true,"steamcmd":true,"dayz":true,"backup":true,"mod-management":true}',
+            '{"logical_cores":8}', 16 * 1024**3,
+            '{"root_free_bytes":107374182400}',
+            '{"tcp_listen":[],"udp_listen":[]}',
+            "online",
+        ),
+    )
+
+
 class RegistryTest(unittest.TestCase):
     def test_create_aurora_is_complete_and_idempotent(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -51,8 +74,8 @@ class RegistryTest(unittest.TestCase):
             database = root / "data" / "capivara.db"
             REGISTRY.create_aurora(root, database)
 
-            # O placement atual exige uma topologia geográfica
-            # explícita para que um Agent seja elegível.
+            # Placement now requires explicit geographic topology and factual
+            # runtime evidence for games with technical requirements.
             with closing(sqlite3.connect(database)) as connection:
                 with connection:
                     connection.execute(
@@ -101,6 +124,7 @@ class RegistryTest(unittest.TestCase):
                             "active",
                         ),
                     )
+                    seed_dayz_agent_runtime(connection)
 
             runtime = root / "catalog" / "v2" / "runtimes" / "dayz"
             runtime.mkdir(parents=True)
@@ -250,8 +274,6 @@ class RegistryTest(unittest.TestCase):
             database = root / "data" / "capivara.db"
             REGISTRY.create_aurora(root, database)
 
-            # O placement atual exige uma topologia geográfica
-            # explícita para que um Agent seja elegível.
             with closing(sqlite3.connect(database)) as connection:
                 with connection:
                     connection.execute(

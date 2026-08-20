@@ -67,6 +67,7 @@ class AgentRuntimeRepository:
         cpu: Any = None,
         ram_total_bytes: int | None = None,
         storage: Any = None,
+        network: Any = None,
         heartbeat_interval_seconds: int = 30,
         degraded_after_seconds: int = 60,
         offline_after_seconds: int = 120,
@@ -86,8 +87,9 @@ class AgentRuntimeRepository:
         values = (
             hostname, os_name, architecture, capivara_version, address,
             fingerprint, self._json(capabilities), self._json(cpu),
-            ram_total_bytes, self._json(storage), heartbeat_interval_seconds,
-            degraded_after_seconds, offline_after_seconds, now, agent_id,
+            ram_total_bytes, self._json(storage), self._json(network),
+            heartbeat_interval_seconds, degraded_after_seconds,
+            offline_after_seconds, now, agent_id,
         )
 
         with self.session(transaction=True) as session:
@@ -101,10 +103,10 @@ class AgentRuntimeRepository:
                 session.execute(
                     "INSERT INTO agent_runtime_inventory("
                     "hostname,os_name,architecture,capivara_version,address,fingerprint,"
-                    "capabilities_json,cpu_json,ram_total_bytes,storage_json,"
+                    "capabilities_json,cpu_json,ram_total_bytes,storage_json,network_json,"
                     "heartbeat_interval_seconds,degraded_after_seconds,offline_after_seconds,"
                     "updated_at,agent_id) VALUES ("
-                    + self.dialect.parameters(15) + ")",
+                    + self.dialect.parameters(16) + ")",
                     values,
                 )
             else:
@@ -112,7 +114,7 @@ class AgentRuntimeRepository:
                     "UPDATE agent_runtime_inventory SET "
                     f"hostname={ph},os_name={ph},architecture={ph},capivara_version={ph},"
                     f"address={ph},fingerprint={ph},capabilities_json={ph},cpu_json={ph},"
-                    f"ram_total_bytes={ph},storage_json={ph},heartbeat_interval_seconds={ph},"
+                    f"ram_total_bytes={ph},storage_json={ph},network_json={ph},heartbeat_interval_seconds={ph},"
                     f"degraded_after_seconds={ph},offline_after_seconds={ph},updated_at={ph} "
                     f"WHERE agent_id={ph}",
                     values,
@@ -178,7 +180,7 @@ class AgentRuntimeRepository:
                 "SELECT a.id AS agent_id,a.node_id,a.controller_id,a.status,n.name AS node_name,"
                 "ari.hostname,ari.os_name,ari.architecture,ari.capivara_version,ari.address,"
                 "ari.fingerprint,ari.capabilities_json,ari.cpu_json,ari.ram_total_bytes,"
-                "ari.storage_json,ari.health_status,ari.last_seen "
+                "ari.storage_json,ari.network_json,ari.health_status,ari.last_seen "
                 "FROM agents a JOIN nodes n ON n.id=a.node_id "
                 "LEFT JOIN agent_runtime_inventory ari ON ari.agent_id=a.id "
                 f"WHERE a.id={ph}",
@@ -193,7 +195,7 @@ class AgentRuntimeRepository:
             ).fetchall()
 
         result = dict(row)
-        for field in ("capabilities_json", "cpu_json", "storage_json"):
+        for field in ("capabilities_json", "cpu_json", "storage_json", "network_json"):
             raw = result.pop(field, None)
             result[field.removesuffix("_json")] = json.loads(raw or "{}")
         result["port_ranges"] = [dict(item) for item in ports]

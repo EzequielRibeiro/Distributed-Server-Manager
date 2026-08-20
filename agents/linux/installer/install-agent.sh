@@ -42,7 +42,7 @@ if [[ -z "${PACKAGE_DIR}" ]]; then
 fi
 PACKAGE_DIR="$(cd "${PACKAGE_DIR}" && pwd)"
 
-for required in manifest.json VERSION agent/common/identity.py agent/runtime/agent.py services/capivara-agent.service; do
+for required in manifest.json VERSION agent/common/identity.py agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py services/capivara-agent.service; do
   [[ -f "${PACKAGE_DIR}/${required}" ]] || fail "arquivo obrigatório ausente: ${required}"
 done
 
@@ -71,6 +71,8 @@ id capivara-agent >/dev/null 2>&1 || useradd --system --home "${STATE_DIR}" --cr
 install -d -m 0755 -o root -g root "${INSTALL_ROOT}" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/common"
 install -d -m 0700 -o capivara-agent -g capivara-agent "${CONFIG_DIR}" "${STATE_DIR}"
 install -m 0755 "${PACKAGE_DIR}/agent/runtime/agent.py" "${INSTALL_ROOT}/runtime/agent.py"
+install -m 0644 "${PACKAGE_DIR}/agent/runtime/capabilities.py" "${INSTALL_ROOT}/runtime/capabilities.py"
+install -m 0644 "${PACKAGE_DIR}/agent/runtime/network_inventory.py" "${INSTALL_ROOT}/runtime/network_inventory.py"
 install -m 0644 "${PACKAGE_DIR}/agent/common/identity.py" "${INSTALL_ROOT}/common/identity.py"
 install -m 0644 "${PACKAGE_DIR}/manifest.json" "${INSTALL_ROOT}/manifest.json"
 printf '%s\n' "${VERSION}" >"${INSTALL_ROOT}/VERSION"

@@ -26,7 +26,7 @@ cmp -s "${TMP}/one/${ARCHIVE}" "${TMP}/two/${ARCHIVE}" || fail "Agent package is
 mkdir "${TMP}/extract"
 tar -xzf "${TMP}/one/${ARCHIVE}" -C "${TMP}/extract"
 PACKAGE="${TMP}/extract/capivara-agent-linux-${VERSION}"
-for path in install-agent.sh manifest.json VERSION agent/common/identity.py agent/runtime/agent.py services/capivara-agent.service config/README.md; do
+for path in install-agent.sh manifest.json VERSION agent/common/identity.py agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py services/capivara-agent.service config/README.md; do
   [[ -f "${PACKAGE}/${path}" ]] || fail "missing Agent package file: ${path}"
 done
 
@@ -40,9 +40,19 @@ assert manifest['version'] == (package / 'VERSION').read_text().strip()
 for relative in manifest['required_files']:
     data = (package / relative).read_bytes()
     assert hashlib.sha256(data).hexdigest() == manifest['files'][relative]['sha256']
-assert (package/'agent/common/identity.py').read_bytes() == (root/'agents/common/identity.py').read_bytes()
-assert (package/'agent/runtime/agent.py').read_bytes() == (root/'agents/linux/runtime/agent.py').read_bytes()
-assert (package/'services/capivara-agent.service').read_bytes() == (root/'agents/linux/services/capivara-agent.service').read_bytes()
+for relative in (
+    'agent/common/identity.py',
+    'agent/runtime/agent.py',
+    'agent/runtime/capabilities.py',
+    'agent/runtime/network_inventory.py',
+    'services/capivara-agent.service',
+):
+    source = root / ('agents/linux/' + relative.removeprefix('agent/') if relative.startswith('agent/runtime/') else 'agents/' + relative if relative.startswith('agent/common/') else 'agents/linux/services/capivara-agent.service')
+    if relative == 'agent/common/identity.py':
+        source = root / 'agents/common/identity.py'
+    elif relative.startswith('agent/runtime/'):
+        source = root / 'agents/linux/runtime' / pathlib.Path(relative).name
+    assert (package / relative).read_bytes() == source.read_bytes()
 PY
 
 INSTALLER="${PACKAGE}/install-agent.sh"
