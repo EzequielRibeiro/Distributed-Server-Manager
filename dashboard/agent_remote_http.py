@@ -17,6 +17,7 @@ from agent_pairing_repository import (
     PairingTokenExpired,
     PairingTokenInvalid,
 )
+from agent_update_repository import AgentUpdateRepository
 
 ENROLL_PATH = "/api/agent/enroll"
 HEARTBEAT_PATH = "/api/agent/heartbeat"
@@ -40,8 +41,6 @@ def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, di
             agent_id=str(result["agent_id"]),
         )
     except Exception:
-        # Pairing is a security boundary. A dashboard metadata failure must not
-        # invalidate a permanent identity already issued or invite token replay.
         tracking_bound = False
 
     identity = dict(result.get("identity") or {})
@@ -63,17 +62,36 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
     credential_id = str(headers.get("X-Capivara-Agent-Credential", "")).strip()
     credential_secret = str(headers.get("X-Capivara-Agent-Secret", "")).strip()
     fingerprint = str(headers.get("X-Capivara-Agent-Fingerprint", "")).strip() or None
+    body = payload if isinstance(payload, dict) else {}
     try:
         identity = AgentPairingRepository(backend).authenticate(
             credential_id=credential_id,
             credential_secret=credential_secret,
             fingerprint=fingerprint,
         )
-        result = record_agent_heartbeat(identity["agent_id"], payload, backend=backend)
+        result = record_agent_heartbeat(identity["agent_id"], body, backend=backend)
         status = str(identity.get("status", "")).strip().lower()
         if status == "pairing":
             status = AgentLifecycleRepository(backend).transition(identity["agent_id"], "active").target
         result["status"] = status
+
+        updates = AgentUpdateRepository(backend)
+        updates.initialize()
+        update_result = body.get("update_result") if isinstance(body.get("update_result"), dict) else None
+        if update_result and str(update_result.get("status", "")).lower() == "failed":
+            updates.mark_failed(identity["agent_id"], str(update_result.get("error", "update failed"))[:2000])
+        else:
+            update_state = updates.reconcile_after_heartbeat(
+                identity["agent_id"],
+                body.get("capivara_version"),
+                result.get("health_status", "online"),
+            )
+            command = updates.command_for_agent(identity["agent_id"])
+            if command and update_state.get("update_status") == "planned":
+                updates.mark_updating(identity["agent_id"])
+            if command:
+                result["update"] = command
+        result["update_state"] = updates.snapshot(identity["agent_id"])
     except AgentCredentialInvalid:
         return 401, {"error": "agent_authentication_failed", "message": "Identidade do Agent inválida."}
     except Exception:
