@@ -1,0 +1,43 @@
+name: Agent SSH Deploy
+
+on:
+  pull_request:
+    paths:
+      - 'bin/cap'
+      - 'core/agent_ssh_deploy.py'
+      - 'database/agent_deploy_cli.py'
+      - 'tests/agent_ssh_deploy_test.py'
+      - 'docs/architecture/agent-ssh-deploy.md'
+      - '.github/workflows/agent-ssh-deploy.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'bin/cap'
+      - 'core/agent_ssh_deploy.py'
+      - 'database/agent_deploy_cli.py'
+      - 'tests/agent_ssh_deploy_test.py'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate syntax
+        run: |
+          bash -n bin/cap
+          python3 -m py_compile core/agent_ssh_deploy.py database/agent_deploy_cli.py tests/agent_ssh_deploy_test.py
+
+      - name: Test SSH deployment contracts
+        run: python3 -m unittest tests/agent_ssh_deploy_test.py
+
+      - name: Security contract
+        run: |
+          ! grep -R --line-number -- '--password' core/agent_ssh_deploy.py database/agent_deploy_cli.py bin/cap
+          ! grep -R --line-number 'shell=True' core/agent_ssh_deploy.py database/agent_deploy_cli.py
+          ! grep -R --line-number 'StrictHostKeyChecking=no' core/agent_ssh_deploy.py database/agent_deploy_cli.py bin/cap
