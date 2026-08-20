@@ -1,0 +1,32 @@
+.runtime-placement-status {
+  display: grid;
+  gap: .25rem;
+  margin: 0 0 1rem;
+  padding: .85rem 1rem;
+  border: 1px solid currentColor;
+  border-radius: .65rem;
+}
+
+.runtime-placement-status strong {
+  font-size: .95rem;
+}
+
+.runtime-placement-status small {
+  opacity: .82;
+}
+
+.runtime-placement-status[data-state="checking"],
+.runtime-placement-status[data-state="creating"],
+.runtime-placement-status[data-state="provisioning"] {
+  opacity: .9;
+}
+
+.runtime-placement-status[data-state="available"],
+.runtime-placement-status[data-state="completed"] {
+  font-weight: 600;
+}
+
+.runtime-placement-status[data-state="unavailable"],
+.runtime-placement-status[data-state="failed"] {
+  font-weight: 600;
+}
