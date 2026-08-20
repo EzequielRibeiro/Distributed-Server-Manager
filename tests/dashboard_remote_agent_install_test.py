@@ -4,6 +4,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,7 +100,6 @@ class DashboardRemoteAgentInstallTest(unittest.TestCase):
         serialized = repr(result)
         self.assertNotIn("pairing-", serialized.lower())
         self.assertNotIn("token", serialized.lower())
-        # The secret is carried only inside encrypted SSH stdin for bootstrap.
         self.assertIsNotNone(calls[2][1])
         self.assertNotIn("--pairing-token", " ".join(calls[2][0]))
 
@@ -123,6 +123,42 @@ class DashboardRemoteAgentInstallTest(unittest.TestCase):
                 ssh_runner=runner,
             )
         self.assertEqual(self.pairing_count(), 0)
+
+    def test_failed_bootstrap_expires_issued_pairing_token(self):
+        def runner(argv, stdin_text, timeout):
+            remote_command = argv[-1]
+            if "CAPIVARA_PREFLIGHT_OK" in remote_command:
+                return SSHResult(0, "CAPIVARA_PREFLIGHT_OK\nx86_64\n", "")
+            if remote_command.startswith("test -f /var/lib/capivara-agent"):
+                return SSHResult(1, "", "")
+            if remote_command == "sudo -n python3 -":
+                return SSHResult(1, "", "bootstrap failed")
+            return SSHResult(1, "", "unexpected")
+
+        with self.assertRaisesRegex(ValueError, "Agent bootstrap failed"):
+            create_agent_installation_for_user(
+                self.controller,
+                self.backend,
+                {
+                    "platform": "linux",
+                    "method": "ssh",
+                    "region_id": "br-se",
+                    "datacenter_id": "dc-one",
+                    "controller_url": "https://controller.example",
+                    "ssh_host": "192.0.2.55",
+                    "ssh_user": "capadmin",
+                },
+                ssh_runner=runner,
+            )
+
+        self.assertEqual(self.pairing_count(), 1)
+        with self.backend.connect() as connection:
+            row = connection.execute(
+                "SELECT expires_at,consumed_at FROM agent_pairing_tokens ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+        expires = datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00"))
+        self.assertIsNone(row["consumed_at"])
+        self.assertLessEqual(expires, datetime.now(timezone.utc) + timedelta(seconds=2))
 
     def test_dashboard_rejects_ssh_password_without_issuing_token(self):
         with self.assertRaisesRegex(ValueError, "passwords are not accepted"):
