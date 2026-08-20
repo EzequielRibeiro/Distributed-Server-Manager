@@ -1,0 +1,15 @@
+[Unit]
+Description=Capivara DSM privileged Agent updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /opt/capivara-agent/updater/updater.py
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/capivara-agent /var/lib/capivara-agent
