@@ -10,7 +10,7 @@ O diagnóstico oficial é orientado aos recursos nativos do Capivara e separado 
 - `cap agent doctor`: diagnóstico local do Agent, planejado para a etapa seguinte;
 - `cap instance doctor <instance-id>`: diagnóstico de runtime/instância, planejado para evolução posterior.
 
-`cap doctor` não é um alias válido. `dsm doctor` também não executa mais o Doctor antigo e apenas informa que o administrador deve usar `cap infrastructure doctor`.
+`cap doctor` não é um alias válido. A CLI histórica `bin/dsm` foi mantida byte-a-byte nesta etapa para não misturar a remoção do Doctor com uma refatoração ampla da camada de compatibilidade. Assim, ainda existe nela uma rota antiga `dsm doctor`, porém a implementação que essa rota tentava carregar (`doctor/`) não existe mais e nenhum check legado pode ser executado. A retirada desse código morto pertence à etapa própria de unificação da CLI.
 
 ## Fronteira entre diagnóstico e mutação
 
