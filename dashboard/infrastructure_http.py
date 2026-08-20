@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""HTTP-facing dispatcher for Dashboard infrastructure topology.
+"""HTTP-facing dispatcher for Dashboard infrastructure topology and Doctor.
 
 This module deliberately contains no BaseHTTPRequestHandler dependency. The
-legacy dashboard server can delegate a matching request here with a minimal
-adapter, while authorization and topology composition remain outside
+Dashboard server delegates matching infrastructure requests here with a
+minimal adapter, while authorization and response composition remain outside
 server.py.
 """
 
@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import parse_qs
 
 from infrastructure_api import infrastructure_for_user
+from infrastructure_doctor_http import dispatch_infrastructure_doctor_get
 
 
 INFRASTRUCTURE_PATH = "/api/infrastructure"
@@ -33,11 +34,19 @@ def dispatch_infrastructure_get(
     user: dict[str, Any] | None,
     backend,
 ) -> tuple[int, dict[str, Any]] | None:
-    """Handle GET /api/infrastructure or return None for another path.
+    """Handle infrastructure GET endpoints or return None for another path.
 
     The return value is intentionally transport-neutral: ``(status, body)``.
     This lets server.py keep ownership of JSON serialization and HTTP headers.
     """
+    doctor_result = dispatch_infrastructure_doctor_get(
+        path,
+        user=user,
+        backend=backend,
+    )
+    if doctor_result is not None:
+        return doctor_result
+
     if path != INFRASTRUCTURE_PATH:
         return None
 

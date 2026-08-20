@@ -10,7 +10,7 @@ O diagnóstico oficial é orientado aos recursos nativos do Capivara e separado 
 - `cap agent doctor`: diagnóstico local do Agent, planejado para a etapa seguinte;
 - `cap instance doctor <instance-id>`: diagnóstico de runtime/instância, planejado para evolução posterior.
 
-`cap doctor` não é um alias válido. A CLI histórica `bin/dsm` foi mantida byte-a-byte nesta etapa para não misturar a remoção do Doctor com uma refatoração ampla da camada de compatibilidade. Assim, ainda existe nela uma rota antiga `dsm doctor`, porém a implementação que essa rota tentava carregar (`doctor/`) não existe mais e nenhum check legado pode ser executado. A retirada desse código morto pertence à etapa própria de unificação da CLI.
+`cap doctor` não é um alias válido. A CLI histórica `bin/dsm` foi mantida fora desta refatoração para não misturar a modernização do Doctor com a unificação ampla da camada de compatibilidade. Ainda pode existir nela uma rota antiga `dsm doctor`, porém a implementação histórica `doctor/` não existe mais e nenhum check legado pode ser executado. A retirada desse código morto pertence à etapa própria de unificação da CLI.
 
 ## Fronteira entre diagnóstico e mutação
 
@@ -58,37 +58,45 @@ Campos superiores do schema v1:
 - `degraded`: existe ao menos um warning, sem condição critical;
 - `critical`: existe finding critical ou a infraestrutura não está pronta.
 
-Os findings usam severidades `info`, `warning` e `critical` conforme a evolução dos checks. A apresentação humana pode usar rótulos próprios, mas integrações devem consumir `status` e `findings[].severity`.
+Os findings usam severidades `info`, `warning` e `critical`. A apresentação humana pode usar rótulos próprios, mas integrações devem consumir `status` e `findings[].severity`.
 
 ## Dashboard
 
 A API Python está em `dashboard/infrastructure_doctor_api.py`. Ela sempre executa o Doctor em modo read-only e não expõe reconciliação por GET.
 
-O contrato HTTP moderno é definido por `dashboard/infrastructure_doctor_http.py` para:
+O contrato HTTP oficial é:
 
 ```text
 GET /api/infrastructure/doctor
 ```
 
-A árvore histórica `doctor/` foi removida. Entretanto, `dashboard/server.py` ainda possui consumidores do estado agregado histórico. Para não deixar a Dashboard permanentemente degradada durante a extração progressiva de `server.py`, a ponte de apresentação introduzida em A2.3/A2.4 permanece temporariamente:
+O roteamento passa pela camada modular `dashboard/infrastructure_http.py`, que delega o endpoint do Doctor para `dashboard/infrastructure_doctor_http.py`. `dashboard/server.py` conserva apenas a adaptação HTTP genérica e não contém lógica de diagnóstico.
 
-- `dashboard/api/doctor.sh` apenas encaminha para a API Python moderna;
-- `dashboard/workers/doctor_worker.sh` apenas publica o contrato moderno;
-- `dashboard/workers/collect_doctor.sh` apenas atualiza o cache moderno;
-- `doctor_state.json` é cache de compatibilidade, nunca fonte de verdade.
+A transição baseada em cache foi encerrada. Não existem mais:
 
-Esses arquivos não contêm checks DayZ/LinuxGSM e não fazem parte do Doctor legado. Eles serão removidos quando `/api/infrastructure/doctor` for ligado diretamente ao roteamento modular da Dashboard e o campo histórico for retirado de `dashboard/server.py`, sem aumentar ainda mais esse arquivo.
+- `dashboard/api/doctor.sh`;
+- `dashboard/workers/doctor_worker.sh`;
+- `dashboard/workers/collect_doctor.sh`;
+- `doctor_state.json` como estado obrigatório da Dashboard;
+- campo `doctor` no agregado `dashboard_state.json`;
+- worker periódico dedicado ao Doctor.
+
+O Doctor passa a ser calculado sob demanda quando um consumidor autorizado requisita o endpoint moderno. Isso elimina escrita periódica de cache e evita executar diagnóstico apenas para manter um arquivo intermediário.
 
 ## Autorização
 
 A leitura do Doctor de infraestrutura é permitida para perfis administrativos/operacionais do Controller (`admin`, `operator`, `controller`). Perfis `customer` não recebem o diagnóstico global de infraestrutura.
 
+A rota GET da Dashboard nunca oferece `--reconcile`. Reconciliação continua restrita à CLI administrativa explícita.
+
 ## Fonte de verdade
 
-A fonte de verdade do Doctor moderno são os repositórios e estados nativos consultados pelo engine Python. Qualquer `doctor_state.json` existente durante a transição é apenas cache de apresentação.
+A fonte de verdade do Doctor moderno são os repositórios e estados nativos consultados pelo engine Python. A Dashboard não mantém uma segunda fonte de verdade em JSON.
 
 ## Componentes removidos
 
 Foram retirados do código-fonte todos os componentes do Doctor Bash histórico, incluindo adapters, analyzers, checks de servidor/mods/keys/permissões/disco, runners, contexto de instância, relatório e regras do diretório `doctor/`.
+
+Também foram retirados os bridges temporários da Dashboard e a dependência de `doctor_state.json`.
 
 Nenhum runtime novo deve reintroduzir `LINUXGSM_PATH`, `core/lgsm.sh` ou funções `lgsm_*` como dependência do Doctor. Diagnósticos específicos de jogos pertencem ao futuro `cap instance doctor`, implementado sobre os runtimes/providers nativos do Capivara.
