@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_heartbeat_api import record_agent_heartbeat
+from agent_installation_api import bind_installation_after_enrollment
 from agent_lifecycle_repository import AgentLifecycleRepository
 from agent_pairing_api import enroll_remote_agent
 from agent_pairing_repository import (
@@ -24,6 +25,11 @@ HEARTBEAT_PATH = "/api/agent/heartbeat"
 def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, dict[str, Any]]:
     try:
         result = enroll_remote_agent(backend, payload)
+        bind_installation_after_enrollment(
+            backend,
+            pairing_token=str((payload or {}).get("pairing_token", "")),
+            agent_id=str(result["agent_id"]),
+        )
     except (PairingTokenInvalid, PairingTokenExpired, PairingTokenConsumed):
         return 401, {"error": "pairing_rejected", "message": "Pareamento inválido ou expirado."}
     except (PairingRegistrationConflict, ValueError):
