@@ -53,7 +53,7 @@ jobs:
       - name: Build release artifacts
         run: |
           release/build_release.sh "${GITHUB_SHA}" dist
-          release/build_agent_package.sh "${GITHUB_SHA}" dist
+          bash release/build_agent_package.sh "${GITHUB_SHA}" dist
 
       - name: Attest Linux Agent package provenance
         uses: actions/attest-build-provenance@v2
