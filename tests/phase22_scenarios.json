@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "CapivaraPhase22E2EScenarios",
+  "scenarios": [
+    {"name": "Fresh Controller", "test": "tests/profile_bootstrap_test.py"},
+    {"name": "Fresh Agent", "test": "tests/profile_bootstrap_test.py"},
+    {"name": "Fresh Hybrid", "test": "tests/profile_bootstrap_test.py"},
+    {"name": "Remote Agent", "test": "tests/phase11_linux_agent_test.py"},
+    {"name": "Offline installation", "test": "tests/agent_package_test.sh"},
+    {"name": "GitHub installation", "test": "tests/phase11_linux_agent_test.py"},
+    {"name": "Agent pairing", "test": "tests/agent_secure_pairing_test.py"},
+    {"name": "Pairing token expirado", "test": "tests/agent_secure_pairing_test.py"},
+    {"name": "Pairing token reutilizado", "test": "tests/agent_secure_pairing_test.py"},
+    {"name": "Region/Datacenter", "test": "tests/phase14_15_agent_dashboard_test.py"},
+    {"name": "Agent offline", "test": "tests/agent_heartbeat_placement_test.py"},
+    {"name": "Agent sem localização", "test": "tests/placement_unavailable_test.py"},
+    {"name": "Agent sem portas", "test": "tests/phase16_17_placement_eligibility_test.py"},
+    {"name": "Placement", "test": "tests/phase16_17_placement_eligibility_test.py"},
+    {"name": "Customer contract", "test": "tests/phase22_customer_dayz_regression_test.py"},
+    {"name": "Create DayZ", "test": "tests/phase22_customer_dayz_regression_test.py"},
+    {"name": "Provision DayZ", "test": "tests/phase22_customer_dayz_regression_test.py", "note": "SteamCMD external execution is replaced by a deterministic provisioner in CI; orchestration, persistence and progress contract are real."},
+    {"name": "Reinstall Agent", "test": "tests/phase20_infrastructure_doctor_test.py"},
+    {"name": "Restart Controller", "test": "tests/phase22_customer_dayz_regression_test.py"},
+    {"name": "Upgrade Agent", "test": "tests/phase18_agent_updates_test.py"},
+    {"name": "RuntimeError never causes empty HTTP response", "test": "tests/phase22_customer_dayz_regression_test.py"}
+  ]
+}
