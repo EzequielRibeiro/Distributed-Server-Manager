@@ -213,7 +213,6 @@ STATE_FILES = {
     "metrics": STATE_DIR / "metrics_state.json",
     "monitor": STATE_DIR / "monitor_state.json",
     "alerts": STATE_DIR / "alerts_state.json",
-    "doctor": STATE_DIR / "doctor_state.json",
     "scheduler": STATE_DIR / "scheduler_state.json",
     "events": STATE_DIR / "events_state.json",
 }
@@ -272,7 +271,6 @@ API_ROUTES = {
     "metrics": "metrics.sh",
     "mods": "mods.sh",
     "backup": "backup.sh",
-    "doctor": "doctor.sh",
     "scheduler": "scheduler.sh",
     "alerts": "alerts.sh",
     "events": "events.sh",
@@ -3478,7 +3476,6 @@ def dashboard_summary():
         "metrics": STATE.cached("metrics"),
         "monitor": STATE.cached("monitor"),
         "alerts": STATE.cached("alerts"),
-        "doctor": STATE.cached("doctor"),
         "scheduler": STATE.cached("scheduler"),
         "events": STATE.cached("events"),
         "generated_at": int(time.time()),
@@ -4304,7 +4301,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_json(200, {"agents": customer_agents(user)})
             return
 
-        if path == "/api/infrastructure":
+        if path.startswith("/api/infrastructure"):
             backend = dashboard_repository(
                 DATABASE_FILE
             ).backend
