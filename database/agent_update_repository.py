@@ -12,8 +12,7 @@ from backend import DatabaseBackend
 from core.agent_health import utc_timestamp
 
 VALID_CHANNELS = {"stable", "beta", "local/manual"}
-TERMINAL = {"completed", "failed"}
-ACTIVE = {"updating", "verifying"}
+UPDATE_STATES = {"idle", "planned", "updating", "verifying", "completed", "failed"}
 
 
 class AgentUpdateRepository:
@@ -40,22 +39,20 @@ class AgentUpdateRepository:
             f"SELECT 1 FROM agent_update_state WHERE agent_id={ph}", (agent_id,)
         ).fetchone()
         if exists is None:
-            now = utc_timestamp()
             session.execute(
                 "INSERT INTO agent_update_state(agent_id,update_channel,update_status,updated_at) "
                 f"VALUES ({self.dialect.parameters(4)})",
-                (agent_id, "stable", "idle", now),
+                (agent_id, "stable", "idle", utc_timestamp()),
             )
 
     def report_version(self, agent_id: str, installed_version: str | None) -> dict[str, Any]:
         ph = self.dialect.placeholder
         version = str(installed_version or "").strip() or None
-        now = utc_timestamp()
         with self.session(transaction=True) as session:
             self._ensure(session, agent_id)
             session.execute(
                 f"UPDATE agent_update_state SET installed_version={ph},updated_at={ph} WHERE agent_id={ph}",
-                (version, now, agent_id),
+                (version, utc_timestamp(), agent_id),
             )
         return self.snapshot(agent_id)
 
@@ -86,8 +83,7 @@ class AgentUpdateRepository:
         ph = self.dialect.placeholder
         with self.session() as session:
             row = session.execute(
-                "SELECT * FROM agent_update_state " + f"WHERE agent_id={ph}",
-                (agent_id,),
+                f"SELECT * FROM agent_update_state WHERE agent_id={ph}", (agent_id,)
             ).fetchone()
         if row is None:
             return {
@@ -117,13 +113,13 @@ class AgentUpdateRepository:
         channel = str(channel).strip().lower()
         if channel not in VALID_CHANNELS:
             raise ValueError("invalid update channel")
-        desired_version = str(desired_version or "").strip()
+        desired_version = str(desired_version or "").strip().lstrip("v")
         if not desired_version:
             raise ValueError("desired_version is required")
         batch_size = int(batch_size)
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
-        clean_ids = [str(item).strip() for item in agent_ids if str(item).strip()]
+        clean_ids = list(dict.fromkeys(str(item).strip() for item in agent_ids if str(item).strip()))
         if not clean_ids:
             raise ValueError("at least one Agent is required")
 
@@ -154,11 +150,6 @@ class AgentUpdateRepository:
         }
 
     def command_for_agent(self, agent_id: str) -> dict[str, Any] | None:
-        """Release only the earliest unfinished rollout batch.
-
-        Later batches remain planned until every member of earlier batches is
-        completed. A failure blocks progression and requires administrator action.
-        """
         state = self.snapshot(agent_id)
         if state.get("update_status") not in {"planned", "updating", "verifying"}:
             return None
@@ -173,8 +164,7 @@ class AgentUpdateRepository:
                 f"WHERE rollout_id={ph} AND batch_number<{ph}",
                 (rollout_id, batch),
             ).fetchall()
-        statuses = {str(row["update_status"]) for row in blockers}
-        if "failed" in statuses or any(status != "completed" for status in statuses):
+        if any(str(row["update_status"]) != "completed" for row in blockers):
             return None
         return {
             "rollout_id": rollout_id,
@@ -192,26 +182,53 @@ class AgentUpdateRepository:
     def mark_failed(self, agent_id: str, error: str) -> dict[str, Any]:
         return self._mark(agent_id, "failed", error=error)
 
-    def reconcile_after_heartbeat(self, agent_id: str, installed_version: str | None, health_status: str) -> dict[str, Any]:
+    def reconcile_after_heartbeat(
+        self,
+        agent_id: str,
+        installed_version: str | None,
+        health_status: str,
+    ) -> dict[str, Any]:
         state = self.report_version(agent_id, installed_version)
-        desired = str(state.get("desired_version") or "").strip()
-        installed = str(installed_version or "").strip()
-        if desired and installed == desired and str(health_status).lower() == "online":
+        desired = str(state.get("desired_version") or "").strip().lstrip("v")
+        installed = str(installed_version or "").strip().lstrip("v")
+        current_status = str(state.get("update_status") or "idle")
+        if (
+            current_status in {"planned", "updating", "verifying"}
+            and desired
+            and installed == desired
+            and str(health_status).lower() == "online"
+        ):
             return self._mark(agent_id, "completed", completed=True)
-        if state.get("update_status") == "updating" and installed != desired:
+        if current_status == "updating" and installed != desired:
             return self._mark(agent_id, "verifying")
         return self.snapshot(agent_id)
 
-    def _mark(self, agent_id: str, status: str, *, error: str | None = None, completed: bool = False) -> dict[str, Any]:
+    def _mark(
+        self,
+        agent_id: str,
+        status: str,
+        *,
+        error: str | None = None,
+        completed: bool = False,
+    ) -> dict[str, Any]:
+        if status not in UPDATE_STATES:
+            raise ValueError("invalid update status")
         ph = self.dialect.placeholder
         now = utc_timestamp()
         with self.session(transaction=True) as session:
             self._ensure(session, agent_id)
-            session.execute(
-                "UPDATE agent_update_state SET "
-                f"update_status={ph},last_error={ph},last_update={ph},updated_at={ph} WHERE agent_id={ph}",
-                (status, error, now if completed else None, now, agent_id),
-            )
+            if completed:
+                session.execute(
+                    "UPDATE agent_update_state SET "
+                    f"update_status={ph},last_error={ph},last_update={ph},updated_at={ph} WHERE agent_id={ph}",
+                    (status, error, now, now, agent_id),
+                )
+            else:
+                session.execute(
+                    "UPDATE agent_update_state SET "
+                    f"update_status={ph},last_error={ph},updated_at={ph} WHERE agent_id={ph}",
+                    (status, error, now, agent_id),
+                )
         return self.snapshot(agent_id)
 
 
