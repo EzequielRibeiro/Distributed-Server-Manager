@@ -13,6 +13,7 @@ for path in (ROOT_DIR, DATABASE_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+from agent_install_command import linux_agent_install_command
 from agent_pairing_repository import AgentPairingRepository
 
 
@@ -62,7 +63,12 @@ def issue_pairing_token_for_user(
     }
     controller_url = str(payload.get("controller_url", "")).strip()
     if controller_url:
-        result["controller_url"] = controller_url.rstrip("/")
+        controller_url = controller_url.rstrip("/")
+        result["controller_url"] = controller_url
+        result["install_command"] = linux_agent_install_command(
+            controller_url=controller_url,
+            pairing_token=issued.token,
+        )
     return result
 
 
@@ -122,7 +128,6 @@ def revoke_agent_identity_for_user(
 ) -> dict[str, Any]:
     scoped = _controller_scope(user or {}, controller_id)
     repository = AgentPairingRepository(backend)
-    # Authenticate administrative ownership through the credential row before revocation.
     ph = repository.dialect.placeholder
     with backend.connect() as connection:
         from alert_repository import AlertSession
