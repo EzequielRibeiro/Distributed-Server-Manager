@@ -13,6 +13,7 @@ for path in (ROOT_DIR, DATABASE_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+from core.placement_readiness import readiness_snapshot
 from infrastructure_repository import InfrastructureRepository
 
 
@@ -20,15 +21,43 @@ class InfrastructureService:
     """Build Region -> Datacenter -> Agent views for one Controller.
 
     Persistence remains in InfrastructureRepository. This service owns tree
-    composition and keeps unplaced Agents visible without inventing a fake
-    geographic location.
+    composition, derived readiness and keeps unplaced Agents visible without
+    inventing a fake geographic location.
     """
 
     def __init__(self, repository: InfrastructureRepository):
         self.repository = repository
 
     @staticmethod
-    def _agent_node(agent: dict[str, Any], instance_count: int) -> dict[str, Any]:
+    def _location_record(agent: dict[str, Any]) -> dict[str, Any] | None:
+        if (
+            agent.get("datacenter_id") is None
+            and agent.get("location_status") is None
+        ):
+            return None
+
+        return {
+            "datacenter_id": agent.get("datacenter_id"),
+            "status": agent.get("location_status"),
+        }
+
+    @classmethod
+    def _agent_node(
+        cls,
+        controller: dict[str, Any],
+        agent: dict[str, Any],
+        datacenter: dict[str, Any] | None,
+        region: dict[str, Any] | None,
+        instance_count: int,
+    ) -> dict[str, Any]:
+        readiness = readiness_snapshot(
+            controller,
+            agent,
+            cls._location_record(agent),
+            datacenter,
+            region,
+        )
+
         return {
             "type": "agent",
             "id": agent["id"],
@@ -37,6 +66,8 @@ class InfrastructureService:
             "status": agent["status"],
             "location_status": agent.get("location_status"),
             "public_host": agent.get("public_host"),
+            "topology_state": readiness["topology_state"],
+            "placement_ready": readiness["placement_ready"],
             "children_count": instance_count,
         }
 
@@ -92,6 +123,14 @@ class InfrastructureService:
             controller_id=controller_id,
         )
 
+        region_records = {
+            region["id"]: region
+            for region in regions
+        }
+        datacenter_records = {
+            datacenter["id"]: datacenter
+            for datacenter in datacenters
+        }
         region_nodes = {
             region["id"]: self._region_node(region)
             for region in regions
@@ -110,8 +149,19 @@ class InfrastructureService:
 
         unplaced: list[dict[str, Any]] = []
         for agent in agents:
-            node = self._agent_node(agent, counts.get(str(agent["id"]), 0))
             datacenter_id = agent.get("datacenter_id")
+            datacenter_record = datacenter_records.get(datacenter_id)
+            region_record = None
+            if datacenter_record is not None:
+                region_record = region_records.get(datacenter_record["region_id"])
+
+            node = self._agent_node(
+                controller,
+                agent,
+                datacenter_record,
+                region_record,
+                counts.get(str(agent["id"]), 0),
+            )
             datacenter = datacenter_nodes.get(datacenter_id)
             if datacenter is None:
                 unplaced.append(node)
