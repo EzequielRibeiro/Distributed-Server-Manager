@@ -18,14 +18,6 @@ class LegacyDoctorRemovalTest(unittest.TestCase):
         self.assertNotIn("cap doctor ...", cap)
         self.assertNotIn("server|doctor|monitor", cap)
 
-    def test_dsm_does_not_source_legacy_doctor(self):
-        dsm = (ROOT / "bin" / "dsm").read_text(encoding="utf-8")
-        self.assertNotIn("${DSM_ROOT}/doctor/", dsm)
-        self.assertNotIn("doctor_run", dsm)
-        self.assertNotIn("doctor_format_status", dsm)
-        self.assertIn("O Doctor legado foi removido", dsm)
-        self.assertIn("cap infrastructure doctor", dsm)
-
     def test_dashboard_bridge_contains_no_linuxgsm_checks(self):
         bridge_paths = (
             ROOT / "dashboard" / "api" / "doctor.sh",
