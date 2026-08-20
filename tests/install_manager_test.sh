@@ -32,6 +32,10 @@ grep -Fq 'guard_existing_installation' "${INSTALLER}" \
     || fail "existing installation is not guarded"
 grep -Fq 'initialize_database' "${INSTALLER}" \
     || fail "installer does not initialize the database"
+grep -Fq 'initialize_infrastructure_identity' "${INSTALLER}" \
+    || fail "installer does not bootstrap infrastructure identity"
+grep -Fq 'bootstrap-profile' "${INSTALLER}" \
+    || fail "installer does not use Registry profile bootstrap"
 grep -Fq 'initialize_runtime_state' "${INSTALLER}" \
     || fail "installer does not initialize dashboard runtime state"
 grep -Fq 'mkdir -p "${SYSTEMD_DIR}"' "${INSTALLER}" \
@@ -43,6 +47,18 @@ grep -Fq 'legacy_worker_units=' "${INSTALLER}" \
 grep -Fq 'disable \' "${INSTALLER}" \
     && grep -Fq -- '--now \' "${INSTALLER}" \
     || fail "installer leaves legacy workers running"
+
+python3 - "${INSTALLER}" <<'PY' || fail "profile bootstrap is not ordered after database initialization"
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+main = text.split("main()", 1)[1]
+initialize = main.index("    initialize_database\n")
+identity = main.index("    initialize_infrastructure_identity\n")
+cli = main.index("    install_cli\n")
+assert initialize < identity < cli
+PY
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf -- "${TMP_DIR}"' EXIT
@@ -155,5 +171,7 @@ fi
     ! grep -Fq '/opt/dsm' "${rendered}" \
         || fail "rendered unit retains hard-coded /opt/dsm"
 )
+
+python3 -m unittest tests/profile_bootstrap_test.py
 
 echo "Install manager tests passed."

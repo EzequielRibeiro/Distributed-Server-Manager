@@ -8,6 +8,7 @@ import getpass
 import hashlib
 import json
 import os
+import re
 import secrets
 from contextlib import closing
 from pathlib import Path
@@ -181,6 +182,67 @@ def _repository(target: Path | DatabaseBackend) -> RegistryRepository:
     )))
 
 
+def _identity_slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", str(value).strip().lower()).strip("-")
+    return slug or "local"
+
+
+def installation_profile_identity(
+    repository: RegistryRepository,
+    *,
+    profile: str,
+    hostname: str,
+    node_id: str | None = None,
+    controller_id: str | None = None,
+    agent_id: str | None = None,
+) -> dict[str, object]:
+    """Bootstrap deterministic local infrastructure identity for install.sh."""
+    profile = str(profile).strip().lower()
+    hostname = str(hostname).strip()
+    if not hostname:
+        raise ValueError("hostname is required")
+
+    slug = _identity_slug(hostname)
+    effective_node_id = str(node_id or hostname).strip()
+    effective_controller_id = str(controller_id or f"controller-{slug}").strip()
+    effective_agent_id = str(agent_id or f"agent-{slug}").strip()
+
+    if profile == "controller":
+        return repository.bootstrap_installation_profile(
+            profile=profile,
+            node_id=effective_node_id,
+            node_name=hostname,
+            controller_id=effective_controller_id,
+            controller_name=f"Controller {hostname}",
+        )
+
+    if profile == "agent":
+        return repository.bootstrap_installation_profile(
+            profile=profile,
+            node_id=effective_node_id,
+            node_name=hostname,
+            agent_id=effective_agent_id,
+            agent_name=f"Agent {hostname}",
+        )
+
+    if profile == "hybrid":
+        return repository.bootstrap_installation_profile(
+            profile=profile,
+            node_id=effective_node_id,
+            node_name=hostname,
+            controller_id=effective_controller_id,
+            controller_name=f"Controller {hostname}",
+            agent_id=effective_agent_id,
+            agent_name=f"Agent {hostname}",
+            region_id=f"region-local-{slug}",
+            region_name=f"Local {hostname}",
+            datacenter_id=f"datacenter-local-{slug}",
+            datacenter_name=f"Local {hostname}",
+        )
+
+    raise ValueError(f"invalid installation profile: {profile}")
+
+
 def create_aurora(
     root: Path,
     database_path: Path | DatabaseBackend,
@@ -271,6 +333,19 @@ def main() -> int:
     bootstrap.add_argument("--agent-id", default="agent-main")
     bootstrap.add_argument("--agent-node-id", default="agent-node")
     bootstrap.add_argument("--agent-name", default="Agente Principal")
+    profile_bootstrap = subcommands.add_parser(
+        "bootstrap-profile",
+        help="bootstrap infrastructure identity for an installation profile",
+    )
+    profile_bootstrap.add_argument(
+        "--profile",
+        required=True,
+        choices=("controller", "agent", "hybrid"),
+    )
+    profile_bootstrap.add_argument("--hostname", required=True)
+    profile_bootstrap.add_argument("--node-id")
+    profile_bootstrap.add_argument("--controller-id")
+    profile_bootstrap.add_argument("--agent-id")
     subcommands.add_parser("bootstrap-status", help="show initial topology status")
     args = parser.parse_args()
     root = args.root.resolve()
@@ -287,6 +362,15 @@ def main() -> int:
         repository = _repository(target)
         if args.command == "bootstrap-status":
             payload = repository.topology_status()
+        elif args.command == "bootstrap-profile":
+            payload = installation_profile_identity(
+                repository,
+                profile=args.profile,
+                hostname=args.hostname,
+                node_id=args.node_id,
+                controller_id=args.controller_id,
+                agent_id=args.agent_id,
+            )
         else:
             if args.admin_password_file:
                 if not args.admin_password_file.is_file():
