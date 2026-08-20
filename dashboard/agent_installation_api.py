@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Phase 14 Agent installation planning and progress tracking."""
+"""Phase 14+ Agent installation planning and progress tracking."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from agent_install_command import linux_agent_install_command
+from windows_agent_install_command import windows_agent_install_command
 from agent_pairing_repository import AgentPairingRepository
 from alert_repository import AlertSession, dialect_for_backend
 from infrastructure_repository import InfrastructureRepository
@@ -47,6 +48,20 @@ def _location(backend, region_id: str, datacenter_id: str) -> tuple[dict[str, An
     return region, datacenter
 
 
+def _local_instruction(platform: str, controller_url: str, pairing_token: str) -> str:
+    if platform == "windows":
+        safe_url = controller_url.replace("'", "''")
+        safe_token = pairing_token.replace("'", "''")
+        return (
+            ".\\install-agent.ps1 -ControllerUrl '" + safe_url +
+            "' -PairingToken '" + safe_token + "'"
+        )
+    return (
+        "sudo ./install-agent.sh --controller-url " + controller_url +
+        " --pairing-token " + pairing_token
+    )
+
+
 def create_agent_installation_for_user(
     user: dict[str, Any] | None,
     backend,
@@ -64,8 +79,6 @@ def create_agent_installation_for_user(
 
     if platform not in {"linux", "windows"}:
         raise ValueError("unsupported Agent platform")
-    if platform == "windows":
-        raise NotImplementedError("Windows Agent ainda não está disponível")
     if method not in {"github", "local"}:
         raise ValueError("unsupported installation method")
     if not controller_url:
@@ -92,15 +105,13 @@ def create_agent_installation_for_user(
             session.close()
 
     if method == "github":
-        instruction = linux_agent_install_command(
-            controller_url=controller_url,
-            pairing_token=issued.token,
+        instruction = (
+            windows_agent_install_command(controller_url=controller_url, pairing_token=issued.token)
+            if platform == "windows"
+            else linux_agent_install_command(controller_url=controller_url, pairing_token=issued.token)
         )
     else:
-        instruction = (
-            "sudo ./install-agent.sh --controller-url " + controller_url +
-            " --pairing-token " + issued.token
-        )
+        instruction = _local_instruction(platform, controller_url, issued.token)
 
     return {
         "installation_id": issued.token_id,
@@ -163,6 +174,8 @@ def agent_installation_status_for_user(
     return {
         "installation_id": installation_id,
         "agent_id": str(row["agent_id"]) if row["agent_id"] else None,
+        "platform": str(row["platform"]) if row["platform"] else None,
+        "method": str(row["install_method"]) if row["install_method"] else None,
         "state": state,
         "state_label": label,
         "agent_status": str(agent["status"]) if agent is not None else None,
