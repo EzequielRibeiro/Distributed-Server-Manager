@@ -21,6 +21,9 @@ from agent_runtime_repository import AgentRuntimeRepository
 from backend import DatabaseConfig
 from backend_factory import create_backend
 from infrastructure_doctor import InfrastructureDoctor
+from infrastructure_doctor_api import infrastructure_doctor_for_user
+from infrastructure_doctor_contract import build_infrastructure_doctor_payload
+from infrastructure_doctor_http import dispatch_infrastructure_doctor_get
 from location_admin_api import upsert_datacenter_for_user, upsert_region_for_user
 from registry import installation_profile_identity
 from registry_repository import RegistryRepository
@@ -115,6 +118,61 @@ class Phase20InfrastructureDoctorTest(unittest.TestCase):
         self.assertEqual(statuses["Datacenters"], "OK")
         self.assertEqual(statuses["Port allocation"], "OK")
         self.assertEqual(statuses["Placement"], "READY")
+
+    def test_public_contract_is_stable_and_healthy(self):
+        self._enroll("agent-one", "sha256:one")
+        result = build_infrastructure_doctor_payload(self.backend)
+        self.assertEqual(result["schema_version"], 1)
+        self.assertEqual(result["kind"], "CapivaraInfrastructureDoctor")
+        self.assertEqual(result["scope"], "infrastructure")
+        self.assertEqual(result["status"], "healthy")
+        self.assertTrue(result["ready"])
+        self.assertTrue(result["generated_at"].endswith("Z"))
+        self.assertIn("summary", result)
+        self.assertIn("findings", result)
+        self.assertIn("placement", result)
+        self.assertIn("repairs", result)
+
+    def test_dashboard_api_uses_public_contract_and_rejects_customer(self):
+        self._enroll("agent-one", "sha256:one")
+        result = infrastructure_doctor_for_user(self.admin, self.backend)
+        self.assertEqual(result["status"], "healthy")
+        self.assertEqual(result["scope"], "infrastructure")
+        self.assertFalse(result["reconcile_mode"])
+        with self.assertRaises(PermissionError):
+            infrastructure_doctor_for_user(
+                {"role": "customer", "username": "customer"},
+                self.backend,
+            )
+
+    def test_dashboard_http_contract_has_transport_statuses(self):
+        self._enroll("agent-one", "sha256:one")
+        self.assertIsNone(
+            dispatch_infrastructure_doctor_get(
+                "/api/other",
+                user=self.admin,
+                backend=self.backend,
+            )
+        )
+        status, payload = dispatch_infrastructure_doctor_get(
+            "/api/infrastructure/doctor",
+            user=self.admin,
+            backend=self.backend,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["status"], "healthy")
+        status, _ = dispatch_infrastructure_doctor_get(
+            "/api/infrastructure/doctor",
+            user=None,
+            backend=self.backend,
+        )
+        self.assertEqual(status, 401)
+        status, _ = dispatch_infrastructure_doctor_get(
+            "/api/infrastructure/doctor",
+            user={"role": "customer", "username": "customer"},
+            backend=self.backend,
+        )
+        self.assertEqual(status, 403)
 
     def test_default_doctor_is_strictly_observational(self):
         self._enroll("agent-one", "sha256:one")
