@@ -47,8 +47,8 @@ class CreateServerWizardContractTest(unittest.TestCase):
         self.assertIn('/create-server-wizard.js', self.html)
         self.assertIn('id="runtime-placement-status"', self.html)
 
-    def test_service_uses_phase7_entrypoint(self):
-        self.assertIn("dashboard/server_part10.py", self.service)
+    def test_service_uses_current_composed_entrypoint(self):
+        self.assertIn("dashboard/server_part11.py", self.service)
 
 
 if __name__ == "__main__":
