@@ -57,14 +57,20 @@ def _post(url: str, payload: dict[str, Any], headers: dict[str, str] | None = No
 def _memory_total_bytes() -> int | None:
     try:
         import ctypes
+
         class MEMORYSTATUSEX(ctypes.Structure):
             _fields_ = [
-                ("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
-                ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
-                ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
-                ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
                 ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
             ]
+
         status = MEMORYSTATUSEX()
         status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
         if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
@@ -75,7 +81,7 @@ def _memory_total_bytes() -> int | None:
 
 
 def _inventory(config: dict[str, Any]) -> dict[str, Any]:
-    root = Path(os.environ.get("SystemDrive", "C:")) + Path("\\") if False else Path(os.environ.get("SystemDrive", "C:") + "\\")
+    root = Path(os.environ.get("SystemDrive", "C:") + "\\")
     disk = shutil.disk_usage(root)
     version_path = Path(__file__).resolve().parents[1] / "VERSION"
     try:
