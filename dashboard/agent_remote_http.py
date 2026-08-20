@@ -58,6 +58,37 @@ def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, di
     }
 
 
+def _attach_update_state(result: dict[str, Any], body: dict[str, Any], *, agent_id: str, backend) -> None:
+    """Best-effort update coordination that must never suppress Agent health."""
+    try:
+        updates = AgentUpdateRepository(backend)
+        updates.initialize()
+        update_state = updates.reconcile_after_heartbeat(
+            agent_id,
+            body.get("capivara_version"),
+            result.get("health_status", "online"),
+        )
+        update_result = body.get("update_result") if isinstance(body.get("update_result"), dict) else None
+        if update_result and str(update_result.get("status", "")).lower() == "failed":
+            update_state = updates.mark_failed(
+                agent_id,
+                str(update_result.get("error", "update failed"))[:2000],
+            )
+            command = None
+        else:
+            command = updates.command_for_agent(agent_id)
+            if command and update_state.get("update_status") == "planned":
+                update_state = updates.mark_updating(agent_id)
+            if command:
+                result["update"] = command
+        result["update_state"] = update_state
+    except Exception:
+        # Heartbeat/liveness is more fundamental than the administrative update
+        # subsystem. A migration/configuration issue must not make a healthy Agent
+        # appear disconnected. The next heartbeat retries update coordination.
+        result["update_state"] = {"update_status": "unavailable"}
+
+
 def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> tuple[int, dict[str, Any]]:
     credential_id = str(headers.get("X-Capivara-Agent-Credential", "")).strip()
     credential_secret = str(headers.get("X-Capivara-Agent-Secret", "")).strip()
@@ -74,24 +105,7 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
         if status == "pairing":
             status = AgentLifecycleRepository(backend).transition(identity["agent_id"], "active").target
         result["status"] = status
-
-        updates = AgentUpdateRepository(backend)
-        updates.initialize()
-        update_result = body.get("update_result") if isinstance(body.get("update_result"), dict) else None
-        if update_result and str(update_result.get("status", "")).lower() == "failed":
-            updates.mark_failed(identity["agent_id"], str(update_result.get("error", "update failed"))[:2000])
-        else:
-            update_state = updates.reconcile_after_heartbeat(
-                identity["agent_id"],
-                body.get("capivara_version"),
-                result.get("health_status", "online"),
-            )
-            command = updates.command_for_agent(identity["agent_id"])
-            if command and update_state.get("update_status") == "planned":
-                updates.mark_updating(identity["agent_id"])
-            if command:
-                result["update"] = command
-        result["update_state"] = updates.snapshot(identity["agent_id"])
+        _attach_update_state(result, body, agent_id=identity["agent_id"], backend=backend)
     except AgentCredentialInvalid:
         return 401, {"error": "agent_authentication_failed", "message": "Identidade do Agent inválida."}
     except Exception:
