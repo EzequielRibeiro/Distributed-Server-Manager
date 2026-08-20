@@ -169,12 +169,14 @@ def remote_agent_present(options: SSHDeployOptions, *, runner: SSHRunner = _defa
 
 def _bootstrap_stdin(controller_url: str, pairing_token: str) -> str:
     # The complete Python program, including the short-lived token, is delivered only
-    # through SSH stdin. The ssh argv contains merely `sudo -n python3 -`.
+    # through SSH stdin. The ssh argv contains merely `sudo -n python3 -`. The token is
+    # then propagated to the release bootstrap through a root-only process environment,
+    # not as a command-line argument visible in process listings.
     payload = json.dumps(
         {"controller_url": controller_url, "pairing_token": pairing_token},
         separators=(",", ":"),
     )
-    return f'''import json, os, subprocess, tempfile\npayload = json.loads({payload!r})\nurl = payload["controller_url"].rstrip("/") + "/agent/install.sh"\nfd, path = tempfile.mkstemp(prefix="capivara-agent-bootstrap-", suffix=".sh")\nos.close(fd)\ntry:\n    subprocess.run(["curl", "-fsSL", url, "-o", path], check=True)\n    os.chmod(path, 0o700)\n    subprocess.run([\n        "bash", path,\n        "--controller-url", payload["controller_url"],\n        "--pairing-token", payload["pairing_token"],\n    ], check=True)\nfinally:\n    try:\n        os.unlink(path)\n    except FileNotFoundError:\n        pass\n'''
+    return f'''import json, os, subprocess, tempfile\npayload = json.loads({payload!r})\nurl = payload["controller_url"].rstrip("/") + "/agent/install.sh"\nfd, path = tempfile.mkstemp(prefix="capivara-agent-bootstrap-", suffix=".sh")\nos.close(fd)\ntry:\n    subprocess.run(["curl", "-fsSL", url, "-o", path], check=True)\n    os.chmod(path, 0o700)\n    env = os.environ.copy()\n    env["CAPIVARA_PAIRING_TOKEN"] = payload["pairing_token"]\n    subprocess.run([\n        "bash", path,\n        "--controller-url", payload["controller_url"],\n    ], check=True, env=env)\nfinally:\n    try:\n        os.unlink(path)\n    except FileNotFoundError:\n        pass\n'''
 
 
 def bootstrap_agent(
