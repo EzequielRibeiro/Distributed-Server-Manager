@@ -82,7 +82,7 @@ case "${1:-}" in
         case "${1:-}" in
             doctor)
                 shift
-                exec python3 "${DSM_ROOT}/database/infrastructure_doctor.py" doctor "$@"
+                exec python3 "${DSM_ROOT}/database/infrastructure_doctor_contract.py" doctor "$@"
                 ;;
             role)
                 shift
