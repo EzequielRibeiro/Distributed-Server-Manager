@@ -1345,7 +1345,6 @@ import sys
 
 with open(sys.argv[1], encoding="utf-8") as f:
     release = json.load(f)
-
 tag = release.get("tag_name") or ""
 
 version = tag[1:] if tag.startswith("v") else tag
@@ -1508,6 +1507,8 @@ verify_source_tree()
         core/archive_inspector.py
         config/dsm.conf
         database/manager.py
+        database/registry.py
+        database/registry_repository.py
         database/runtime_backend.py
         database/backend_factory.py
         database/migrations/001_initial.sql
@@ -1969,6 +1970,104 @@ run_database_manager()
     python3 "${arguments[@]}" "${command}"
 }
 
+initialize_infrastructure_identity()
+{
+    section "Identidade de infraestrutura"
+
+    if (( DRY_RUN ))
+    then
+        log \
+            "[DRY-RUN] criaria/reconciliaria a identidade ${DSM_NODE_ROLE} pelo Registry."
+        return 0
+    fi
+
+    local registry="${DSM_ROOT}/database/registry.py"
+    local config="${DSM_ROOT}/config/agent.conf"
+    local host
+    local output
+    local parsed
+    local node_id
+    local controller_id
+    local agent_id
+    local agent_status
+    local placement_ready
+
+    [[ -f "${registry}" ]] \
+        || die "Registry ausente: ${registry}"
+
+    host="$(hostname)"
+
+    output="$(
+        env \
+            DSM_ROOT="${DSM_ROOT}" \
+            DSM_DATABASE_DRIVER="${DSM_DATABASE_DRIVER}" \
+            DSM_DATABASE="${DSM_DATABASE}" \
+            DSM_DATABASE_HOST="${DSM_DATABASE_HOST}" \
+            DSM_DATABASE_PORT="${DSM_DATABASE_PORT}" \
+            DSM_DATABASE_NAME="${DSM_DATABASE_NAME}" \
+            DSM_DATABASE_USER="${DSM_DATABASE_USER}" \
+            DSM_DATABASE_PASSWORD_FILE="${DSM_DATABASE_PASSWORD_FILE}" \
+            DSM_DATABASE_TLS="${DSM_DATABASE_TLS}" \
+            python3 "${registry}" \
+                --root "${DSM_ROOT}" \
+                bootstrap-profile \
+                --profile "${DSM_NODE_ROLE}" \
+                --hostname "${host}"
+    )" || die "Falha ao inicializar identidade de infraestrutura."
+
+    parsed="$(
+        python3 -c '
+import json
+import sys
+payload = json.load(sys.stdin)
+keys = ("node_id", "controller_id", "agent_id", "agent_status", "placement_ready")
+print("\t".join("" if payload.get(key) is None else str(payload.get(key)) for key in keys))
+' <<<"${output}"
+    )" || die "Resposta inválida do bootstrap de infraestrutura."
+
+    IFS=$'\t' read -r \
+        node_id controller_id agent_id agent_status placement_ready \
+        <<<"${parsed}"
+
+    [[ -n "${node_id}" ]] \
+        || die "Bootstrap não retornou DSM_NODE_ID."
+
+    set_shell_config_value \
+        "${config}" \
+        DSM_NODE_ID \
+        "${node_id}"
+
+    if [[ "${DSM_NODE_ROLE}" == "agent" \
+        || "${DSM_NODE_ROLE}" == "hybrid" ]]
+    then
+        [[ -n "${agent_id}" && -n "${agent_status}" ]] \
+            || die "Bootstrap não retornou identidade válida de Agent."
+
+        set_shell_config_value \
+            "${config}" \
+            AGENT_ID \
+            "${agent_id}"
+
+        set_shell_config_value \
+            "${config}" \
+            AGENT_NAME \
+            "Agent ${host}"
+
+        set_shell_config_value \
+            "${config}" \
+            AGENT_STATUS \
+            "${agent_status}"
+    fi
+
+    chown \
+        "${DSM_SERVICE_USER}:${DSM_SERVICE_GROUP}" \
+        "${config}"
+    chmod 640 "${config}"
+
+    log \
+        "Identidade ${DSM_NODE_ROLE} pronta: node=${node_id} controller=${controller_id:-nenhum} agent=${agent_id:-nenhum} placement_ready=${placement_ready}."
+}
+
 # =============================================================
 # CLI
 # =============================================================
@@ -2259,6 +2358,7 @@ main()
     initialize_runtime_state
 
     initialize_database
+    initialize_infrastructure_identity
 
     install_cli
     install_systemd_units
