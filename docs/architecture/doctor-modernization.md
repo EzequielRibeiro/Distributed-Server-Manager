@@ -2,13 +2,15 @@
 
 ## Decisão arquitetural
 
-O Doctor legado baseado em Bash, DayZ e LinuxGSM está em processo de extinção. O Capivara DSM não manterá LinuxGSM como camada de compatibilidade do Doctor.
+O Doctor legado baseado em Bash, DayZ e LinuxGSM foi removido do código-fonte. O Capivara DSM não mantém LinuxGSM como camada de compatibilidade do Doctor.
 
-O diagnóstico oficial passa a ser orientado aos recursos nativos do Capivara e separado por escopo:
+O diagnóstico oficial é orientado aos recursos nativos do Capivara e separado por escopo:
 
 - `cap infrastructure doctor`: infraestrutura distribuída do Controller/Hybrid;
 - `cap agent doctor`: diagnóstico local do Agent, planejado para a etapa seguinte;
 - `cap instance doctor <instance-id>`: diagnóstico de runtime/instância, planejado para evolução posterior.
+
+`cap doctor` não é um alias válido. `dsm doctor` também não executa mais o Doctor antigo e apenas informa que o administrador deve usar `cap infrastructure doctor`.
 
 ## Fronteira entre diagnóstico e mutação
 
@@ -68,11 +70,14 @@ O contrato HTTP moderno é definido por `dashboard/infrastructure_doctor_http.py
 GET /api/infrastructure/doctor
 ```
 
-Durante a transição A2.3/A2.4, o endpoint histórico `/api/doctor` continua existindo como adaptador de transporte, mas sua fonte já é o Doctor Python moderno. O arquivo `dashboard/api/doctor.sh` não lê mais `runtime/state/doctor.json`.
+A árvore histórica `doctor/` foi removida. Entretanto, `dashboard/server.py` ainda possui consumidores do estado agregado histórico. Para não deixar a Dashboard permanentemente degradada durante a extração progressiva de `server.py`, a ponte de apresentação introduzida em A2.3/A2.4 permanece temporariamente:
 
-Da mesma forma, `dashboard/workers/doctor_worker.sh` e `collect_doctor.sh` permanecem temporariamente apenas para manter consumidores antigos de `doctor_state.json`, porém já não carregam `core/lgsm.sh` nem executam checks LinuxGSM. Ambos publicam o contrato moderno.
+- `dashboard/api/doctor.sh` apenas encaminha para a API Python moderna;
+- `dashboard/workers/doctor_worker.sh` apenas publica o contrato moderno;
+- `dashboard/workers/collect_doctor.sh` apenas atualiza o cache moderno;
+- `doctor_state.json` é cache de compatibilidade, nunca fonte de verdade.
 
-A remoção física desses wrappers e da árvore Bash antiga pertence às etapas A2.5/A2.6.
+Esses arquivos não contêm checks DayZ/LinuxGSM e não fazem parte do Doctor legado. Eles serão removidos quando `/api/infrastructure/doctor` for ligado diretamente ao roteamento modular da Dashboard e o campo histórico for retirado de `dashboard/server.py`, sem aumentar ainda mais esse arquivo.
 
 ## Autorização
 
@@ -80,6 +85,10 @@ A leitura do Doctor de infraestrutura é permitida para perfis administrativos/o
 
 ## Fonte de verdade
 
-`doctor_state.json`, quando ainda produzido durante a transição, é somente cache/compatibilidade de apresentação. Ele não é fonte de verdade.
+A fonte de verdade do Doctor moderno são os repositórios e estados nativos consultados pelo engine Python. Qualquer `doctor_state.json` existente durante a transição é apenas cache de apresentação.
 
-A fonte de verdade do Doctor moderno são os repositórios e estados nativos consultados pelo engine Python.
+## Componentes removidos
+
+Foram retirados do código-fonte todos os componentes do Doctor Bash histórico, incluindo adapters, analyzers, checks de servidor/mods/keys/permissões/disco, runners, contexto de instância, relatório e regras do diretório `doctor/`.
+
+Nenhum runtime novo deve reintroduzir `LINUXGSM_PATH`, `core/lgsm.sh` ou funções `lgsm_*` como dependência do Doctor. Diagnósticos específicos de jogos pertencem ao futuro `cap instance doctor`, implementado sobre os runtimes/providers nativos do Capivara.
