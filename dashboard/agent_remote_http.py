@@ -93,15 +93,13 @@ def _attach_game_data_state(result: dict[str, Any], body: dict[str, Any], *, age
         jobs = AgentGameDataRepository(backend)
         jobs.initialize()
         reported = body.get("game_data_result") if isinstance(body.get("game_data_result"), dict) else None
-        state = jobs.apply_result(agent_id, reported) if reported else None
+        reported_state = jobs.apply_result(agent_id, reported) if reported else None
         command = jobs.command_for_agent(agent_id)
+        command_state = None
         if command:
-            state = jobs.mark_delivered(str(command["job_id"]))
+            command_state = jobs.mark_delivered(str(command["job_id"]))
             result["game_data_command"] = command
-        if state is not None:
-            result["game_data_state"] = state
-        else:
-            result["game_data_state"] = {"status": "idle"}
+        result["game_data_state"] = reported_state or command_state or {"status": "idle"}
     except Exception:
         result["game_data_state"] = {"status": "unavailable"}
 
