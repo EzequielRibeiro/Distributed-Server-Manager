@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Transport-neutral Agent inventory/heartbeat service boundary.
-
-The authenticated Agent identity is supplied by the transport layer. This
-module deliberately does not invent an authentication mechanism; secure remote
-pairing can bind credentials to ``authenticated_agent_id`` later.
-"""
+"""Transport-neutral Agent inventory/heartbeat service boundary."""
 
 from __future__ import annotations
 
@@ -42,6 +37,7 @@ def record_agent_heartbeat(
         "cpu": body.get("cpu"),
         "ram_total_bytes": body.get("ram_total_bytes"),
         "storage": body.get("storage"),
+        "network": body.get("network"),
         "heartbeat_interval_seconds": int(body.get("heartbeat_interval_seconds", 30)),
         "degraded_after_seconds": int(body.get("degraded_after_seconds", 60)),
         "offline_after_seconds": int(body.get("offline_after_seconds", 120)),
@@ -52,7 +48,7 @@ def record_agent_heartbeat(
         for name in (
             "hostname", "os_name", "architecture", "capivara_version",
             "address", "fingerprint", "capabilities", "cpu",
-            "ram_total_bytes", "storage",
+            "ram_total_bytes", "storage", "network",
         )
     ):
         repository.upsert_inventory(agent_id=agent_id, **inventory_fields)
