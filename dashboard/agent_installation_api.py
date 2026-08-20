@@ -93,6 +93,33 @@ def _ssh_options(payload: dict[str, Any]) -> SSHDeployOptions:
     return SSHDeployOptions(host=host, ssh_user=user, ssh_port=port)
 
 
+def _bootstrap_timeout(payload: dict[str, Any]) -> int:
+    try:
+        timeout = int(payload.get("bootstrap_timeout", 900) or 900)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("bootstrap_timeout must be an integer") from exc
+    if timeout < 30 or timeout > 3600:
+        raise ValueError("bootstrap_timeout must be between 30 and 3600 seconds")
+    return timeout
+
+
+def _expire_installation_token(backend, installation_id: str) -> None:
+    """Expire an unconsumed pairing token after a failed remote bootstrap."""
+    dialect = dialect_for_backend(backend)
+    ph = dialect.placeholder
+    now = dialect.current_timestamp
+    with backend.transaction() as connection:
+        session = AlertSession(backend, connection)
+        try:
+            session.execute(
+                "UPDATE agent_pairing_tokens SET expires_at=" + now +
+                " WHERE id=" + ph + " AND consumed_at IS NULL",
+                (str(installation_id),),
+            )
+        finally:
+            session.close()
+
+
 def _run_ssh_preflight(options: SSHDeployOptions, ssh_runner=None) -> dict[str, Any]:
     try:
         if ssh_runner is None:
@@ -161,8 +188,10 @@ def create_agent_installation_for_user(
 
     ssh_options = None
     ssh_preflight = None
+    bootstrap_timeout = None
     if method == "ssh":
         ssh_options = _ssh_options(payload)
+        bootstrap_timeout = _bootstrap_timeout(payload)
         # No pairing token exists until the target is reachable, compatible and
         # confirmed not to contain an existing Capivara Agent installation.
         ssh_preflight = _run_ssh_preflight(ssh_options, ssh_runner=ssh_runner)
@@ -202,18 +231,18 @@ def create_agent_installation_for_user(
     elif method == "local":
         instruction = _local_instruction(platform, controller_url, issued.token)
     else:
-        assert ssh_options is not None
+        assert ssh_options is not None and bootstrap_timeout is not None
         try:
-            bootstrap_timeout = int(payload.get("bootstrap_timeout", 900) or 900)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("bootstrap_timeout must be an integer") from exc
-        _run_ssh_bootstrap(
-            ssh_options,
-            controller_url=controller_url,
-            pairing_token=issued.token,
-            timeout=bootstrap_timeout,
-            ssh_runner=ssh_runner,
-        )
+            _run_ssh_bootstrap(
+                ssh_options,
+                controller_url=controller_url,
+                pairing_token=issued.token,
+                timeout=bootstrap_timeout,
+                ssh_runner=ssh_runner,
+            )
+        except Exception:
+            _expire_installation_token(backend, issued.token_id)
+            raise
         remote_bootstrap = {
             "state": "completed",
             "host": ssh_options.host,
