@@ -19,8 +19,14 @@ usage(){
     cat >&2 <<'EOF'
 Uso:
   cap infrastructure doctor [--reconcile] [--json]
+  cap infrastructure role show [--node-id ID] [--json]
+  cap infrastructure role set hybrid [--node-id ID] [--controller-id ID] [--agent-id ID] [--json]
 
 --reconcile aplica somente reconciliações determinísticas e seguras.
+
+A transição controller -> hybrid preserva o Node e o Controller existentes.
+A etapa de role altera apenas identidade/topologia persistida; configuração local,
+heartbeat e runtime do Agent são reconciliados em etapa separada.
 EOF
 }
 
@@ -31,6 +37,11 @@ case "${1:-}" in
             doctor)
                 shift
                 exec python3 "${DSM_ROOT}/database/infrastructure_doctor.py" doctor "$@"
+                ;;
+            role)
+                shift
+                [[ $# -gt 0 ]] || { usage; exit 2; }
+                exec python3 "${DSM_ROOT}/database/infrastructure_role_cli.py" "$@"
                 ;;
             *) usage; exit 2 ;;
         esac
