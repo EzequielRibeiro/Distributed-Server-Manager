@@ -31,4 +31,9 @@ grep -Fq 'bin/cap' "${UPDATER}" \
 grep -Fq '/usr/local/bin/cap' "${UPDATER}" \
     || fail "updater does not publish the global cap command"
 
-echo "CLI and scheduler regression tests passed."
+# A validated release must execute its own updater, not the updater from the
+# currently installed version. This is what makes new post-install rules take
+# effect during the transition that introduces them.
+bash "${ROOT}/tests/update_handoff_test.sh"
+
+echo "CLI, scheduler and updater handoff regression tests passed."

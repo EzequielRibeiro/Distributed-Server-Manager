@@ -167,6 +167,7 @@ dsm_update_check()
 dsm_update_run()
 {
     local result
+    local target_updater
 
     log_info "Iniciando atualização DSM"
 
@@ -321,16 +322,30 @@ dsm_update_run()
     echo "$PACKAGE_ROOT"
 
     # =========================================================
-    # Executa Módulo 10
+    # Executa Módulo 10 da versão alvo
     # =========================================================
 
-    echo
-    echo "Executando atualização DSM..."
+    # O Update Manager instalado é responsável por descoberta, download e
+    # validação criptográfica/estrutural da release. A partir deste ponto a
+    # versão alvo deve controlar a transação mutável (backup, staging,
+    # migrations, permissões, systemd, pós-instalação e rollback). Executar o
+    # update.sh antigo faria novas regras de instalação valerem apenas na
+    # atualização seguinte.
+    target_updater="${PACKAGE_ROOT}/update.sh"
 
-    if ! "$DSM_ROOT/update.sh" \
+    if [ ! -f "$target_updater" ]
+    then
+        log_error "Updater da versão alvo ausente: $target_updater"
+        return 1
+    fi
+
+    echo
+    echo "Executando atualização DSM com o updater da versão alvo..."
+
+    if ! /bin/bash "$target_updater" \
     "$PACKAGE_ROOT"
     then
-        log_error "Módulo 10 falhou"
+        log_error "Módulo 10 da versão alvo falhou"
 
     dsm_update_notify \
         "DSM Update" \
