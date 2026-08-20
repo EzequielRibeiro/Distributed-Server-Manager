@@ -21,6 +21,7 @@ if str(RUNTIME_DIR) not in sys.path:
 
 from capabilities import detect_capabilities
 from network_inventory import collect_network_inventory
+from update_client import clear_update_result, read_update_result, stage_update_request
 
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
 DEFAULT_HEARTBEAT_SECONDS = 30
@@ -65,29 +66,32 @@ def _memory_total_bytes() -> int | None:
 
 def _inventory(config: dict[str, Any]) -> dict[str, Any]:
     disk = shutil.disk_usage("/")
-    return {
+    version_path = Path(__file__).resolve().parents[1] / "VERSION"
+    try:
+        installed_version = version_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        installed_version = str(config.get("capivara_version", "unknown"))
+    payload = {
         "agent_id": config["agent_id"],
         "hostname": socket.gethostname(),
         "os": platform.system().lower(),
         "architecture": platform.machine(),
-        "capivara_version": str(config.get("capivara_version", "unknown")),
+        "capivara_version": installed_version,
         "address": config.get("advertise_address"),
         "fingerprint": config["fingerprint"],
         "capabilities": detect_capabilities(),
-        "cpu": {
-            "logical_cores": os.cpu_count(),
-            "machine": platform.machine(),
-        },
+        "cpu": {"logical_cores": os.cpu_count(), "machine": platform.machine()},
         "ram_total_bytes": _memory_total_bytes(),
-        "storage": {
-            "root_total_bytes": disk.total,
-            "root_free_bytes": disk.free,
-        },
+        "storage": {"root_total_bytes": disk.total, "root_free_bytes": disk.free},
         "network": collect_network_inventory(),
         "heartbeat_interval_seconds": int(config.get("heartbeat_interval_seconds", DEFAULT_HEARTBEAT_SECONDS)),
         "degraded_after_seconds": int(config.get("degraded_after_seconds", 60)),
         "offline_after_seconds": int(config.get("offline_after_seconds", 120)),
     }
+    update_result = read_update_result()
+    if update_result:
+        payload["update_result"] = update_result
+    return payload
 
 
 def enroll(config: dict[str, Any]) -> dict[str, Any]:
@@ -121,7 +125,7 @@ def enroll(config: dict[str, Any]) -> dict[str, Any]:
 
 def heartbeat(config: dict[str, Any]) -> dict[str, Any]:
     base = str(config["controller_url"]).rstrip("/")
-    return _post(
+    result = _post(
         base + "/api/agent/heartbeat",
         _inventory(config),
         headers={
@@ -130,13 +134,20 @@ def heartbeat(config: dict[str, Any]) -> dict[str, Any]:
             "X-Capivara-Agent-Fingerprint": str(config["fingerprint"]),
         },
     )
+    if result.get("update") and stage_update_request(dict(result["update"])):
+        print(
+            f"update staged version={result['update'].get('desired_version')} rollout={result['update'].get('rollout_id')}",
+            flush=True,
+        )
+    if result.get("update_state", {}).get("update_status") == "completed":
+        clear_update_result()
+    return result
 
 
 def run_forever() -> None:
     config = _load_config()
     if not config.get("credential_id") or not config.get("credential_secret"):
         config = enroll(config)
-
     interval = max(10, int(config.get("heartbeat_interval_seconds", DEFAULT_HEARTBEAT_SECONDS)))
     while True:
         try:
@@ -145,7 +156,7 @@ def run_forever() -> None:
                 f"heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} status={result.get('status')}",
                 flush=True,
             )
-        except Exception as exc:  # systemd supervises retries; never discard identity.
+        except Exception as exc:
             print(f"heartbeat failed: {exc}", file=sys.stderr, flush=True)
         time.sleep(interval)
 
