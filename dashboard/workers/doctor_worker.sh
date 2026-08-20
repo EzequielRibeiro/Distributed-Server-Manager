@@ -10,7 +10,7 @@ TMP="${OUTPUT}.tmp"
 mkdir -p "${STATE_DIR}"
 
 publish_doctor() {
-    if python3 "${DSM_ROOT}/database/infrastructure_doctor.py" doctor --json > "${TMP}"
+    if python3 "${DSM_ROOT}/database/infrastructure_doctor_contract.py" doctor --json > "${TMP}"
     then
         mv "${TMP}" "${OUTPUT}"
         return 0
