@@ -54,15 +54,15 @@ jobs:
       - name: Validate Python
         run: |
           python3 -m py_compile \
-            dashboard/server.py dashboard/server_part9.py dashboard/server_part10.py dashboard/server_part11.py dashboard/server_part12.py dashboard/server_part13.py \
-            dashboard/customer_session_auth.py dashboard/agent_update_api.py dashboard/agent_update_http.py dashboard/windows_agent_install_command.py \
-            database/manager.py database/registry.py database/placement_status_repository.py database/agent_runtime_repository.py database/agent_pairing_repository.py database/agent_port_availability.py database/agent_update_repository.py database/infrastructure_doctor.py \
+            dashboard/server.py dashboard/server_part9.py dashboard/server_part10.py dashboard/server_part11.py dashboard/server_part12.py dashboard/server_part13.py dashboard/workers/hybrid_agent_worker.py \
+            dashboard/customer_session_auth.py dashboard/agent_update_api.py dashboard/agent_update_http.py dashboard/windows_agent_install_command.py dashboard/infrastructure_role_api.py dashboard/infrastructure_role_http.py \
+            database/manager.py database/registry.py database/placement_status_repository.py database/agent_runtime_repository.py database/agent_pairing_repository.py database/agent_port_availability.py database/agent_update_repository.py database/infrastructure_doctor.py database/infrastructure_role_transition.py database/infrastructure_role_cli.py database/hybrid_local_reconciliation.py \
             core/placement_diagnostics.py core/agent_health.py core/agent_lifecycle.py core/agent_identity.py core/agent_enrollment.py core/placement_requirements.py core/agent_eligibility.py \
             dashboard/location_admin_api.py dashboard/location_admin_http.py dashboard/instance_creation_http.py dashboard/placement_errors.py dashboard/placement_service.py dashboard/placement_eligibility.py dashboard/instance_placement.py dashboard/placement_readiness_http.py dashboard/agent_heartbeat_api.py dashboard/agent_pairing_api.py dashboard/agent_authenticated_api.py dashboard/agent_remote_http.py dashboard/agent_install_command.py dashboard/agent_installation_api.py dashboard/agent_installation_http.py dashboard/agent_location_safety.py \
             agents/common/identity.py agents/linux/runtime/agent.py agents/linux/runtime/capabilities.py agents/linux/runtime/network_inventory.py agents/linux/runtime/update_client.py agents/linux/updater/updater.py \
             agents/windows/runtime/agent.py agents/windows/runtime/capabilities.py agents/windows/runtime/network_inventory.py agents/windows/runtime/update_client.py agents/windows/updater/updater.py \
             release/build_windows_agent_package.py \
-            tests/dashboard_catalog_v2_test.py tests/database_test.py tests/registry_test.py tests/location_admin_api_test.py tests/location_admin_http_test.py tests/phase4_topology_integration_test.py tests/placement_diagnostics_test.py tests/placement_status_repository_test.py tests/instance_creation_http_test.py tests/placement_unavailable_test.py tests/placement_readiness_http_test.py tests/create_server_wizard_contract_test.py tests/customer_session_auth_test.py tests/customer_deleted_backups_asset_contract_test.py tests/agent_health_test.py tests/agent_runtime_repository_test.py tests/agent_phase9_lifecycle_test.py tests/agent_heartbeat_placement_test.py tests/agent_secure_pairing_test.py tests/agent_permanent_auth_heartbeat_test.py tests/phase11_linux_agent_test.py tests/phase14_15_agent_dashboard_test.py tests/agent_dashboard_ui_contract_test.py tests/phase16_17_placement_eligibility_test.py tests/phase17_1_generic_placement_requirements_test.py tests/phase18_agent_updates_test.py tests/phase19_windows_agent_test.py tests/phase20_infrastructure_doctor_test.py tests/phase22_customer_dayz_regression_test.py
+            tests/dashboard_catalog_v2_test.py tests/database_test.py tests/registry_test.py tests/location_admin_api_test.py tests/location_admin_http_test.py tests/phase4_topology_integration_test.py tests/placement_diagnostics_test.py tests/placement_status_repository_test.py tests/instance_creation_http_test.py tests/placement_unavailable_test.py tests/placement_readiness_http_test.py tests/create_server_wizard_contract_test.py tests/customer_session_auth_test.py tests/customer_deleted_backups_asset_contract_test.py tests/agent_health_test.py tests/agent_runtime_repository_test.py tests/agent_phase9_lifecycle_test.py tests/agent_heartbeat_placement_test.py tests/agent_secure_pairing_test.py tests/agent_permanent_auth_heartbeat_test.py tests/phase11_linux_agent_test.py tests/phase14_15_agent_dashboard_test.py tests/agent_dashboard_ui_contract_test.py tests/phase16_17_placement_eligibility_test.py tests/phase17_1_generic_placement_requirements_test.py tests/phase18_agent_updates_test.py tests/phase19_windows_agent_test.py tests/phase20_infrastructure_doctor_test.py tests/phase22_customer_dayz_regression_test.py tests/infrastructure_role_transition_test.py tests/infrastructure_role_cli_test.py tests/hybrid_local_reconciliation_test.py tests/controller_to_hybrid_placement_test.py tests/infrastructure_role_dashboard_test.py tests/hybrid_agent_worker_test.py
           python3 -m unittest tests/dashboard_catalog_v2_test.py
           python3 -m unittest tests/database_test.py
           python3 -m unittest tests/registry_test.py
@@ -92,6 +92,12 @@ jobs:
           python3 -m unittest tests/phase19_windows_agent_test.py
           python3 -m unittest tests/phase20_infrastructure_doctor_test.py
           python3 -m unittest tests/phase22_customer_dayz_regression_test.py
+          python3 -m unittest tests/infrastructure_role_transition_test.py
+          python3 -m unittest tests/infrastructure_role_cli_test.py
+          python3 -m unittest tests/hybrid_local_reconciliation_test.py
+          python3 -m unittest tests/controller_to_hybrid_placement_test.py
+          python3 -m unittest tests/infrastructure_role_dashboard_test.py
+          python3 -m unittest tests/hybrid_agent_worker_test.py
 
       - name: Validate Dashboard JavaScript
         run: find dashboard/web -type f -name '*.js' -print0 | xargs -0 -n1 node --check
