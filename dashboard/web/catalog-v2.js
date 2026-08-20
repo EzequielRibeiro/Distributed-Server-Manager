@@ -3,6 +3,7 @@
 
     const state = {
         resources: [],
+        agents: [],
         catalogEnvironments: [],
         runtimeSummary: null,
         runtimes: [],
@@ -857,9 +858,16 @@
         }
     }
 
+    function availableNodeIds() {
+        const runtimeNodes = state.resources.map(item => item.server);
+        const agentNodes = state.agents
+            .filter(agent => agent && String(agent.status || "").toLowerCase() === "active")
+            .map(agent => agent.node_id);
+        return unique([...runtimeNodes, ...agentNodes]);
+    }
+
     function updateNodeOptions() {
-        const nodes = unique(state.resources.map(item => item.server));
-        fillSelect(byId("catalog-v2-node"), nodes, "Nenhum Node disponível");
+        fillSelect(byId("catalog-v2-node"), availableNodeIds(), "Nenhum Node disponível");
         updateGameOptions();
     }
 
@@ -1011,21 +1019,23 @@
     async function loadRuntimeResources() {
         try {
             setStatus("CARREGANDO", "pending");
-            const [data, catalogEnvironments] = await Promise.all([
+            const [data, catalogEnvironments, agentData] = await Promise.all([
                 request("/api/runtime/list"),
-                request("/api/catalog/runtimes")
+                request("/api/catalog/runtimes"),
+                request("/api/agents").catch(() => ({ agents: [] }))
             ]);
             state.resources = Array.isArray(data) ? data : (data.resources || []);
+            state.agents = Array.isArray(agentData) ? agentData : (agentData.agents || []);
             state.catalogEnvironments = Array.isArray(catalogEnvironments)
                 ? catalogEnvironments
                 : (catalogEnvironments.runtimes || []);
             updateNodeOptions();
 
-            if (!state.resources.length) {
+            if (!state.resources.length && !availableNodeIds().length) {
                 state.runtimes = state.catalogEnvironments;
                 state.content = [];
                 setStatus("VAZIO", "error");
-                setSummary("Nenhuma instância foi publicada no Runtime. Ambientes do catálogo disponíveis para consulta.");
+                setSummary("Nenhuma instância foi publicada no Runtime e nenhum Agent ativo está disponível.");
                 renderRuntimeSummary();
                 renderRuntimes();
                 renderContent();
