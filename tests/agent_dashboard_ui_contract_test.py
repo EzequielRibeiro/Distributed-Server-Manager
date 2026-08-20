@@ -45,7 +45,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
         self.assertIn('/agent-installation.js', self.html)
         self.assertIn('/agent-location-ui.js', self.html)
         self.assertIn('/agent-updates.js', self.html)
-        self.assertIn('dashboard/server_part13.py', self.service)
+        self.assertIn('dashboard/server_part14.py', self.service)
 
 
 if __name__ == "__main__":
