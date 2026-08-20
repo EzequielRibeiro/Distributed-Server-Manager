@@ -50,13 +50,18 @@ def validate_host(value: str) -> str:
     host = str(value or "").strip()
     if not host or not _HOST_RE.fullmatch(host):
         raise AgentDeployError("invalid SSH host")
-    # Accept hostnames as well as IP literals. Bracketed IPv6 is normalized.
     candidate = host[1:-1] if host.startswith("[") and host.endswith("]") else host
     try:
         ipaddress.ip_address(candidate)
     except ValueError:
         labels = candidate.rstrip(".").split(".")
-        if any(not label or len(label) > 63 or label.startswith("-") or label.endswith("-") for label in labels):
+        if any(
+            not label
+            or len(label) > 63
+            or label.startswith("-")
+            or label.endswith("-")
+            for label in labels
+        ):
             raise AgentDeployError("invalid SSH host")
     return candidate
 
@@ -127,12 +132,14 @@ def _run_ssh(
 
 
 def preflight_ssh(options: SSHDeployOptions, *, runner: SSHRunner = _default_runner) -> dict[str, Any]:
-    # No mutation: identify platform and ensure the tools required by the bootstrap exist.
+    # Read-only preflight. Requiring sudo -n keeps automated deployment non-interactive
+    # and avoids ever handling administrator passwords inside Capivara.
     command = (
         "set -eu; "
         "test \"$(uname -s)\" = Linux; "
         "command -v bash >/dev/null; "
         "command -v curl >/dev/null; "
+        "command -v python3 >/dev/null; "
         "command -v sudo >/dev/null; "
         "sudo -n true; "
         "printf 'CAPIVARA_PREFLIGHT_OK\\n'; uname -m"
@@ -142,7 +149,8 @@ def preflight_ssh(options: SSHDeployOptions, *, runner: SSHRunner = _default_run
         detail = (result.stderr or result.stdout).strip().splitlines()
         reason = detail[-1] if detail else "remote preflight failed"
         raise AgentDeployError(
-            "SSH preflight failed (Linux, curl, bash and non-interactive sudo are required): " + reason
+            "SSH preflight failed (Linux, curl, bash, python3 and non-interactive sudo are required): "
+            + reason
         )
     lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     architecture = lines[-1] if lines else "unknown"
@@ -157,6 +165,16 @@ def remote_agent_present(options: SSHDeployOptions, *, runner: SSHRunner = _defa
         timeout=options.connect_timeout + 5,
     )
     return result.returncode == 0
+
+
+def _bootstrap_stdin(controller_url: str, pairing_token: str) -> str:
+    # The complete Python program, including the short-lived token, is delivered only
+    # through SSH stdin. The ssh argv contains merely `sudo -n python3 -`.
+    payload = json.dumps(
+        {"controller_url": controller_url, "pairing_token": pairing_token},
+        separators=(",", ":"),
+    )
+    return f'''import json, os, subprocess, tempfile\npayload = json.loads({payload!r})\nurl = payload["controller_url"].rstrip("/") + "/agent/install.sh"\nfd, path = tempfile.mkstemp(prefix="capivara-agent-bootstrap-", suffix=".sh")\nos.close(fd)\ntry:\n    subprocess.run(["curl", "-fsSL", url, "-o", path], check=True)\n    os.chmod(path, 0o700)\n    subprocess.run([\n        "bash", path,\n        "--controller-url", payload["controller_url"],\n        "--pairing-token", payload["pairing_token"],\n    ], check=True)\nfinally:\n    try:\n        os.unlink(path)\n    except FileNotFoundError:\n        pass\n'''
 
 
 def bootstrap_agent(
@@ -174,34 +192,13 @@ def bootstrap_agent(
     if not pairing_token:
         raise AgentDeployError("pairing token is required")
 
-    # The token is never placed in the local ssh argv. It is delivered over SSH stdin.
-    # The remote wrapper keeps it out of shell history and deletes the bootstrap file.
-    payload = json.dumps({"controller_url": controller_url, "pairing_token": pairing_token})
-    wrapper = r'''set -eu
-python3 - "$1" <<'PY'
-import json, os, subprocess, sys, tempfile
-payload = json.loads(sys.argv[1])
-url = payload["controller_url"].rstrip("/") + "/agent/install.sh"
-fd, path = tempfile.mkstemp(prefix="capivara-agent-bootstrap-", suffix=".sh")
-os.close(fd)
-try:
-    subprocess.run(["curl", "-fsSL", url, "-o", path], check=True)
-    os.chmod(path, 0o700)
-    subprocess.run([
-        "sudo", "bash", path,
-        "--controller-url", payload["controller_url"],
-        "--pairing-token", payload["pairing_token"],
-    ], check=True)
-finally:
-    try: os.unlink(path)
-    except FileNotFoundError: pass
-PY
-'''
-    # JSON is stdin, not a command-line secret. The wrapper itself is sent as a quoted
-    # single argument generated locally and contains no secret.
-    import shlex
-    remote = "bash -s -- " + shlex.quote(payload)
-    result = _run_ssh(options, remote, runner=runner, stdin_text=wrapper, timeout=timeout)
+    result = _run_ssh(
+        options,
+        "sudo -n python3 -",
+        runner=runner,
+        stdin_text=_bootstrap_stdin(controller_url, pairing_token),
+        timeout=timeout,
+    )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip().splitlines()
         reason = detail[-1] if detail else "remote Agent bootstrap failed"
