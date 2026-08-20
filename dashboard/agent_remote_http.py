@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_heartbeat_api import record_agent_heartbeat
+from agent_installation_api import bind_installation_after_enrollment
 from agent_lifecycle_repository import AgentLifecycleRepository
 from agent_pairing_api import enroll_remote_agent
 from agent_pairing_repository import (
@@ -31,6 +32,18 @@ def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, di
     except Exception:
         return 500, {"error": "pairing_failed", "message": "Não foi possível concluir o pareamento."}
 
+    tracking_bound = True
+    try:
+        bind_installation_after_enrollment(
+            backend,
+            pairing_token=str((payload or {}).get("pairing_token", "")),
+            agent_id=str(result["agent_id"]),
+        )
+    except Exception:
+        # Pairing is a security boundary. A dashboard metadata failure must not
+        # invalidate a permanent identity already issued or invite token replay.
+        tracking_bound = False
+
     identity = dict(result.get("identity") or {})
     return 201, {
         "agent_id": result["agent_id"],
@@ -42,6 +55,7 @@ def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, di
         "credential_type": identity["credential_type"],
         "fingerprint": identity["fingerprint"],
         "pairing_token_consumed": bool(result.get("pairing_token_consumed")),
+        "installation_tracking_bound": tracking_bound,
     }
 
 
