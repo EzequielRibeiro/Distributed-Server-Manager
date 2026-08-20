@@ -46,6 +46,7 @@ for required in \
   manifest.json VERSION \
   agent/common/identity.py \
   agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py agent/runtime/update_client.py \
+  agent/runtime/game_data_client.py agent/runtime/game_data_executor.py \
   agent/updater/updater.py \
   services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path
 do
@@ -75,11 +76,13 @@ VERSION=$(tr -d '\r\n' < "${PACKAGE_DIR}/VERSION")
 
 id capivara-agent >/dev/null 2>&1 || useradd --system --home "${STATE_DIR}" --create-home --shell /usr/sbin/nologin capivara-agent
 install -d -m 0755 -o root -g root "${INSTALL_ROOT}" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/common" "${INSTALL_ROOT}/updater"
-install -d -m 0700 -o capivara-agent -g capivara-agent "${CONFIG_DIR}" "${STATE_DIR}"
+install -d -m 0700 -o capivara-agent -g capivara-agent "${CONFIG_DIR}" "${STATE_DIR}" "${STATE_DIR}/game-data" "${STATE_DIR}/game-data-jobs"
 install -m 0755 "${PACKAGE_DIR}/agent/runtime/agent.py" "${INSTALL_ROOT}/runtime/agent.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/capabilities.py" "${INSTALL_ROOT}/runtime/capabilities.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/network_inventory.py" "${INSTALL_ROOT}/runtime/network_inventory.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/update_client.py" "${INSTALL_ROOT}/runtime/update_client.py"
+install -m 0644 "${PACKAGE_DIR}/agent/runtime/game_data_client.py" "${INSTALL_ROOT}/runtime/game_data_client.py"
+install -m 0755 "${PACKAGE_DIR}/agent/runtime/game_data_executor.py" "${INSTALL_ROOT}/runtime/game_data_executor.py"
 install -m 0755 "${PACKAGE_DIR}/agent/updater/updater.py" "${INSTALL_ROOT}/updater/updater.py"
 install -m 0644 "${PACKAGE_DIR}/agent/common/identity.py" "${INSTALL_ROOT}/common/identity.py"
 install -m 0644 "${PACKAGE_DIR}/manifest.json" "${INSTALL_ROOT}/manifest.json"
@@ -104,4 +107,4 @@ install -m 0644 "${PACKAGE_DIR}/services/capivara-agent-update.path" "${SYSTEMD_
 systemctl daemon-reload
 systemctl enable --now capivara-agent-update.path
 systemctl enable --now capivara-agent.service
-log "Agent ${VERSION} instalado a partir do pacote local. Enrollment, heartbeat e atualização remota estão habilitados."
+log "Agent ${VERSION} instalado a partir do pacote local. Enrollment, heartbeat, game-data e atualização remota estão habilitados."
