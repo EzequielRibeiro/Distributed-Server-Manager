@@ -515,26 +515,11 @@ class RegistryRepository:
             "agent_node_id": agent_node_id,
         }
 
-    def topology_status(self) -> dict[str, int]:
-        """Return bootstrap-relevant active object counts."""
-        self.initialize()
-        with self.backend.connect() as connection:
-            session = AlertSession(self.backend, connection)
-            try:
-                result = {}
-                for name, table in (
-                    ("controllers", "controllers"),
-                    ("agents", "agents"),
-                    ("customers", "customers"),
-                    ("instances", "instances"),
-                ):
-                    row = session.execute(
-                        f"SELECT COUNT(*) AS total FROM {table}"
-                    ).fetchone()
-                    result[name] = int(row["total"])
-            finally:
-                session.close()
-        return result
+    def topology_status(self) -> dict[str, Any]:
+        """Return first-class, explainable placement readiness."""
+        from placement_status_repository import PlacementStatusRepository
+
+        return PlacementStatusRepository(self.backend).snapshot()
 
     def get_instance(self, instance_id: str) -> dict[str, Any] | None:
         self.initialize()
