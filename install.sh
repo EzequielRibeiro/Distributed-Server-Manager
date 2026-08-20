@@ -11,7 +11,9 @@ DSM_SOURCE="${INSTALLER_DIR}"
 
 DSM_ROOT="${DSM_ROOT:-/opt/dsm}"
 DSM_BIN="${DSM_ROOT}/bin/dsm"
+CAP_BIN="${DSM_ROOT}/bin/cap"
 DSM_LINK="${DSM_LINK:-/usr/local/bin/dsm}"
+CAP_LINK="${CAP_LINK:-/usr/local/bin/cap}"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 
 CAPIVARA_GITHUB_REPO="${CAPIVARA_GITHUB_REPO:-EzequielRibeiro/Distributed-Server-Manager}"
@@ -278,6 +280,7 @@ local_source_available()
 {
     [[ -f "${INSTALLER_DIR}/version" ]] \
         && [[ -f "${INSTALLER_DIR}/bin/dsm" ]] \
+        && [[ -f "${INSTALLER_DIR}/bin/cap" ]] \
         && [[ -f "${INSTALLER_DIR}/core/bootstrap.sh" ]] \
         && [[ -f "${INSTALLER_DIR}/config/dsm.conf" ]]
 }
@@ -1501,6 +1504,7 @@ verify_source_tree()
     local -a required=(
         version
         bin/dsm
+        bin/cap
         core/bootstrap.sh
         core/semver.sh
         core/archive_security.sh
@@ -1719,6 +1723,7 @@ install_project_files()
         -exec chmod +x {} \;
 
     chmod +x "${DSM_BIN}"
+    chmod +x "${CAP_BIN}"
 
     chown -R \
         "${DSM_SERVICE_USER}:${DSM_SERVICE_GROUP}" \
@@ -2075,12 +2080,21 @@ print("\t".join("" if payload.get(key) is None else str(payload.get(key)) for ke
 install_cli()
 {
     run mkdir -p "$(dirname "${DSM_LINK}")"
+    run mkdir -p "$(dirname "${CAP_LINK}")"
+
     run ln -sf \
         "${DSM_BIN}" \
         "${DSM_LINK}"
 
-    (( DRY_RUN )) \
-        || chmod +x "${DSM_LINK}"
+    run ln -sf \
+        "${CAP_BIN}" \
+        "${CAP_LINK}"
+
+    if (( ! DRY_RUN ))
+    then
+        chmod +x "${DSM_LINK}"
+        chmod +x "${CAP_LINK}"
+    fi
 }
 
 # =============================================================
@@ -2306,6 +2320,15 @@ validate_installation()
 
     [[ -x "${DSM_BIN}" ]] \
         || die "CLI ausente: ${DSM_BIN}"
+
+    [[ -x "${CAP_BIN}" ]] \
+        || die "CLI ausente: ${CAP_BIN}"
+
+    [[ -e "${DSM_LINK}" ]] \
+        || die "Comando global ausente: ${DSM_LINK}"
+
+    [[ -e "${CAP_LINK}" ]] \
+        || die "Comando global ausente: ${CAP_LINK}"
 
     run_database_manager check >/dev/null \
         || die "Banco inválido após instalação."

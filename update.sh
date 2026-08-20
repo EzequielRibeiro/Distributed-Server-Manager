@@ -52,6 +52,7 @@ BACKUP_DIR="/opt/dsm-backups"
 STAGING_DIR="/opt/dsm-update-stage"
 SYSTEMD_DIR="/etc/systemd/system"
 BIN_LINK="/usr/local/bin/dsm"
+CAP_LINK="/usr/local/bin/cap"
 
 #############################################
 # Usuário DSM | DSM User
@@ -348,6 +349,7 @@ validate_package() {
     REQUIRED_FILES=(
         "version"
         "bin/dsm"
+        "bin/cap"
         "core/bootstrap.sh"
     )
     for FILE in "${REQUIRED_FILES[@]}"
@@ -761,6 +763,7 @@ validate_staging() {
     echo "Validating new installation..."
     REQUIRED=(
         "bin/dsm"
+        "bin/cap"
         "core/bootstrap.sh"
     )
     for FILE in "${REQUIRED[@]}"
@@ -850,6 +853,7 @@ fix_permissions() {
     echo "Fixing permissions..."
     find "${INSTALL_DIR}" -type f -name "*.sh" -exec chmod +x {} \;
     chmod +x "${INSTALL_DIR}/bin/dsm"
+    chmod +x "${INSTALL_DIR}/bin/cap"
     chown -R "${DSM_USER}:${DSM_GROUP}" "${INSTALL_DIR}"
     echo
     echo "Permissões ajustadas."
@@ -857,17 +861,22 @@ fix_permissions() {
 }
 
 # =============================================================
-# Criar link global DSM | Create global DSM link
+# Criar links globais DSM/Capivara | Create global DSM/Capivara links
 # =============================================================
 install_command() {
     echo
-    echo "Atualizando comando global..."
-    echo "Updating global command..."
+    echo "Atualizando comandos globais..."
+    echo "Updating global commands."
+
     ln -sf "${INSTALL_DIR}/bin/dsm" "${BIN_LINK}"
+    ln -sf "${INSTALL_DIR}/bin/cap" "${CAP_LINK}"
+
     chmod +x "${BIN_LINK}"
+    chmod +x "${CAP_LINK}"
+
     echo
-    echo "Comando DSM atualizado."
-    echo "DSM command updated."
+    echo "Comandos DSM e Capivara atualizados."
+    echo "DSM and Capivara commands updated."
 }
 
 # =============================================================
@@ -1006,6 +1015,7 @@ validate_final_installation() {
     echo "Validating final installation..."
     REQUIRED_FILES=(
         "${INSTALL_DIR}/bin/dsm"
+        "${INSTALL_DIR}/bin/cap"
         "${INSTALL_DIR}/core/bootstrap.sh"
         "${INSTALL_DIR}/config/dsm.conf"
     )
