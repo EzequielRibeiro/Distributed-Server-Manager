@@ -16,6 +16,7 @@ for candidate in (ROOT_DIR, ROOT_DIR / "core", ROOT_DIR / "database"):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
+from agent_deploy_topology import validate_deploy_location
 from agent_pairing_repository import AgentPairingRepository
 from agent_ssh_deploy import (
     AgentDeployError,
@@ -193,6 +194,11 @@ def deploy(args: argparse.Namespace) -> dict[str, Any]:
         )
         controller_id = _active_controller_id(backend, args.controller_id)
         controller_url = _controller_url(args.host, args.controller_url)
+        region_id, datacenter_id = validate_deploy_location(
+            backend,
+            region_id=args.region_id,
+            datacenter_id=args.datacenter_id,
+        )
 
         preflight = preflight_ssh(options)
         if remote_agent_present(options):
@@ -208,8 +214,8 @@ def deploy(args: argparse.Namespace) -> dict[str, Any]:
         _annotate_pairing(
             backend,
             token_id=issued.token_id,
-            region_id=args.region_id,
-            datacenter_id=args.datacenter_id,
+            region_id=region_id,
+            datacenter_id=datacenter_id,
         )
 
         bootstrap_agent(
@@ -229,6 +235,8 @@ def deploy(args: argparse.Namespace) -> dict[str, Any]:
             "ssh_port": args.ssh_port,
             "controller_id": controller_id,
             "controller_url": controller_url,
+            "region_id": region_id,
+            "datacenter_id": datacenter_id,
             "remote_platform": preflight.get("platform"),
             "remote_architecture": preflight.get("architecture"),
             "agent_id": online.get("agent_id"),
@@ -267,6 +275,8 @@ def _print_human(payload: dict[str, Any]) -> None:
         ("SSH user", payload.get("ssh_user")),
         ("Controller", payload.get("controller_id")),
         ("Controller URL", payload.get("controller_url")),
+        ("Region", payload.get("region_id") or "unconfigured"),
+        ("Datacenter", payload.get("datacenter_id") or "unconfigured"),
         ("Remote platform", payload.get("remote_platform")),
         ("Architecture", payload.get("remote_architecture")),
         ("Agent", payload.get("agent_id")),
