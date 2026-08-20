@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
-"""Placement requirements shared by capabilities, resources and port filters."""
+"""Catalog-driven placement requirements.
+
+The placement core deliberately knows nothing about individual games. Runtime
+catalog definitions describe how software is installed/executed and may add an
+optional ``placement`` contract for requirements that cannot be inferred from
+existing generic runtime fields.
+"""
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_RUNTIME_CATALOG = PROJECT_ROOT / "catalog" / "v2" / "runtimes"
 
 
 @dataclass(frozen=True)
@@ -25,39 +36,6 @@ class PlacementRequirements:
     min_storage_free_bytes: int = 0
 
 
-# Technical execution requirements. Catalog environment ids such as
-# ``dayz.stable`` are not host capabilities and must not be compared directly
-# with Agent capability names.
-_GAME_PROFILES: dict[str, dict[str, Any]] = {
-    "dayz": {
-        "runtime_id": "native-linux",
-        "capabilities": {"native-linux", "steamcmd", "dayz"},
-        "ports": (PortRequirement("udp", 10, True),),
-    },
-    "minecraft-java": {
-        "runtime_id": "native-linux",
-        "capabilities": {"native-linux", "minecraft-java"},
-        "ports": (PortRequirement("tcp", 1, False),),
-    },
-    "minecraft": {
-        "runtime_id": "native-linux",
-        "capabilities": {"native-linux", "minecraft-java"},
-        "ports": (PortRequirement("tcp", 1, False),),
-    },
-    "minecraft-bedrock": {
-        "runtime_id": "native-linux",
-        "capabilities": {"native-linux", "minecraft-bedrock"},
-        "ports": (PortRequirement("udp", 1, False),),
-    },
-}
-
-_HOST_RUNTIME_CAPABILITIES = {
-    "native-linux",
-    "docker",
-    "wine",
-}
-
-
 def _positive_int(value: Any) -> int:
     try:
         return max(0, int(value or 0))
@@ -65,40 +43,143 @@ def _positive_int(value: Any) -> int:
         return 0
 
 
+def load_runtime_definition(
+    runtime_id: str | None,
+    *,
+    catalog_root: Path | None = None,
+) -> dict[str, Any] | None:
+    """Load one RuntimeDefinition by its catalog id without game-specific code."""
+    wanted = str(runtime_id or "").strip()
+    if not wanted:
+        return None
+    root = Path(catalog_root or DEFAULT_RUNTIME_CATALOG)
+    if not root.is_dir():
+        return None
+    for path in root.rglob("*.json"):
+        try:
+            item = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if item.get("kind") == "RuntimeDefinition" and str(item.get("id") or "") == wanted:
+            return item
+    return None
+
+
+def _inferred_capabilities(definition: dict[str, Any]) -> set[str]:
+    capabilities: set[str] = set()
+    process = definition.get("process") if isinstance(definition.get("process"), dict) else {}
+    requirements = definition.get("requirements") if isinstance(definition.get("requirements"), dict) else {}
+    artifact = definition.get("artifact") if isinstance(definition.get("artifact"), dict) else {}
+    placement = definition.get("placement") if isinstance(definition.get("placement"), dict) else {}
+
+    engine = str(process.get("engine") or "").strip().lower()
+    operating_systems = {
+        str(item).strip().lower()
+        for item in requirements.get("os", [])
+        if str(item).strip()
+    }
+    if engine == "native" and "linux" in operating_systems:
+        capabilities.add("native-linux")
+    elif engine == "java":
+        capabilities.add("java")
+    elif engine in {"docker", "container"}:
+        capabilities.add("docker")
+    elif engine in {"wine", "wine64"}:
+        capabilities.add("wine")
+
+    if str(artifact.get("provider") or "").strip().lower() == "steam":
+        capabilities.add("steamcmd")
+
+    declared = placement.get("capabilities")
+    if isinstance(declared, (list, tuple, set)):
+        capabilities.update(
+            str(item).strip().lower() for item in declared if str(item).strip()
+        )
+    return capabilities
+
+
+def _port_requirements(definition: dict[str, Any]) -> tuple[PortRequirement, ...]:
+    placement = definition.get("placement") if isinstance(definition.get("placement"), dict) else {}
+    declared = placement.get("ports")
+    if isinstance(declared, list):
+        result = []
+        for item in declared:
+            if not isinstance(item, dict):
+                continue
+            protocol = str(item.get("protocol") or "").strip().lower()
+            if protocol not in {"tcp", "udp"}:
+                continue
+            result.append(PortRequirement(protocol, max(1, _positive_int(item.get("count"))), bool(item.get("contiguous"))))
+        return tuple(result)
+
+    network = definition.get("network") if isinstance(definition.get("network"), dict) else {}
+    ports = network.get("ports") if isinstance(network.get("ports"), list) else []
+    protocols = {
+        str(item.get("protocol") or "").strip().lower()
+        for item in ports if isinstance(item, dict)
+    }
+    protocols &= {"tcp", "udp"}
+    if not protocols:
+        return ()
+
+    allocation = str(network.get("allocation") or "").strip().lower()
+    block_size = _positive_int(network.get("block_size"))
+    if allocation == "block" and block_size:
+        return tuple(PortRequirement(protocol, block_size, True) for protocol in sorted(protocols))
+
+    return tuple(
+        PortRequirement(protocol, sum(1 for item in ports if isinstance(item, dict) and str(item.get("protocol") or "").strip().lower() == protocol), False)
+        for protocol in sorted(protocols)
+    )
+
+
+def requirements_from_runtime_definition(
+    definition: dict[str, Any] | None,
+    *,
+    resources: dict[str, Any] | None = None,
+) -> PlacementRequirements:
+    definition = definition if isinstance(definition, dict) else {}
+    resource = resources if isinstance(resources, dict) else {}
+    placement = definition.get("placement") if isinstance(definition.get("placement"), dict) else {}
+    minimums = placement.get("resources") if isinstance(placement.get("resources"), dict) else {}
+    runtime_capability = str(placement.get("runtime") or "").strip().lower() or None
+    capabilities = _inferred_capabilities(definition)
+    if runtime_capability:
+        capabilities.add(runtime_capability)
+    return PlacementRequirements(
+        game_id=str(definition.get("game") or "").strip().lower() or None,
+        runtime_id=runtime_capability,
+        capabilities=frozenset(capabilities),
+        ports=_port_requirements(definition),
+        min_cpu_threads=_positive_int(resource.get("cpu_threads") or resource.get("min_cpu_threads") or minimums.get("cpu_threads")),
+        min_ram_bytes=_positive_int(resource.get("ram_bytes") or resource.get("min_ram_bytes") or minimums.get("ram_bytes")),
+        min_storage_free_bytes=_positive_int(resource.get("storage_bytes") or resource.get("min_storage_free_bytes") or minimums.get("storage_bytes")),
+    )
+
+
 def requirements_for_instance(
     *,
     game_id: str | None,
     runtime_id: str | None = None,
     resources: dict[str, Any] | None = None,
+    catalog_root: Path | None = None,
 ) -> PlacementRequirements:
-    game = str(game_id or "").strip().lower() or None
-    profile = dict(_GAME_PROFILES.get(game or "", {}))
-    resource = resources if isinstance(resources, dict) else {}
-
-    requested_runtime = str(runtime_id or "").strip().lower()
-    runtime = (
-        requested_runtime
-        if requested_runtime in _HOST_RUNTIME_CAPABILITIES
-        else str(profile.get("runtime_id") or "").strip().lower()
-    ) or None
-
-    capabilities = frozenset(
-        str(item).strip().lower()
-        for item in profile.get("capabilities", set())
-        if str(item).strip()
-    )
-    if runtime:
-        capabilities = frozenset(set(capabilities) | {runtime})
-
+    definition = load_runtime_definition(runtime_id, catalog_root=catalog_root)
+    result = requirements_from_runtime_definition(definition, resources=resources)
+    if result.game_id is not None:
+        return result
     return PlacementRequirements(
-        game_id=game,
-        runtime_id=runtime,
-        capabilities=capabilities,
-        ports=tuple(profile.get("ports", ())),
-        min_cpu_threads=_positive_int(resource.get("cpu_threads") or resource.get("min_cpu_threads")),
-        min_ram_bytes=_positive_int(resource.get("ram_bytes") or resource.get("min_ram_bytes")),
-        min_storage_free_bytes=_positive_int(resource.get("storage_bytes") or resource.get("min_storage_free_bytes")),
+        game_id=str(game_id or "").strip().lower() or None,
+        min_cpu_threads=result.min_cpu_threads,
+        min_ram_bytes=result.min_ram_bytes,
+        min_storage_free_bytes=result.min_storage_free_bytes,
     )
 
 
-__all__ = ["PlacementRequirements", "PortRequirement", "requirements_for_instance"]
+__all__ = [
+    "PlacementRequirements",
+    "PortRequirement",
+    "load_runtime_definition",
+    "requirements_for_instance",
+    "requirements_from_runtime_definition",
+]
