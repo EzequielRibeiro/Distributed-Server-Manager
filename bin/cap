@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
+export DSM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+BOOTSTRAP="${DSM_ROOT}/core/bootstrap.sh"
+if [[ ! -f "${BOOTSTRAP}" ]]; then
+    echo "Bootstrap não encontrado: ${BOOTSTRAP}" >&2
+    exit 1
+fi
+# shellcheck source=/dev/null
+source "${BOOTSTRAP}"
+export DSM_DATABASE_DRIVER DSM_DATABASE DSM_DATABASE_HOST DSM_DATABASE_PORT
+export DSM_DATABASE_NAME DSM_DATABASE_USER DSM_DATABASE_PASSWORD_FILE DSM_DATABASE_TLS
+
+usage(){
+    cat >&2 <<'EOF'
+Uso:
+  cap infrastructure doctor [--reconcile] [--json]
+
+--reconcile aplica somente reconciliações determinísticas e seguras.
+EOF
+}
+
+case "${1:-}" in
+    infrastructure)
+        shift
+        case "${1:-}" in
+            doctor)
+                shift
+                exec python3 "${DSM_ROOT}/database/infrastructure_doctor.py" doctor "$@"
+                ;;
+            *) usage; exit 2 ;;
+        esac
+        ;;
+    *) usage; exit 2 ;;
+esac
