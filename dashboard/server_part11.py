@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from urllib.parse import urlparse
 
 import server_part10 as integration
@@ -10,6 +11,26 @@ from agent_remote_http import ENROLL_PATH, HEARTBEAT_PATH, dispatch_enroll, disp
 
 legacy = integration.legacy
 _previous_post = legacy.DashboardHandler.do_POST
+_previous_get = legacy.DashboardHandler.do_GET
+AGENT_INSTALL_PATH = "/agent/install.sh"
+AGENT_INSTALL_FILE = Path(__file__).resolve().parents[1] / "agents" / "linux" / "installer" / "install-agent.sh"
+
+
+def integrated_get(self):
+    path = urlparse(self.path).path
+    if path != AGENT_INSTALL_PATH:
+        return _previous_get(self)
+    try:
+        body = AGENT_INSTALL_FILE.read_bytes()
+    except OSError:
+        self.send_error(404)
+        return
+    self.send_response(200)
+    self.send_header("Content-Type", "text/x-shellscript; charset=utf-8")
+    self.send_header("Content-Length", str(len(body)))
+    self.send_header("Cache-Control", "no-store")
+    self.end_headers()
+    self.wfile.write(body)
 
 
 def integrated_post(self):
@@ -31,6 +52,7 @@ def integrated_post(self):
     self.send_json(status, body)
 
 
+legacy.DashboardHandler.do_GET = integrated_get
 legacy.DashboardHandler.do_POST = integrated_post
 
 
