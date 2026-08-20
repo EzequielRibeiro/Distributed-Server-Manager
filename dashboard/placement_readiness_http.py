@@ -25,23 +25,17 @@ def placement_readiness_for_customer(
     repository.initialize()
     ph = repository.dialect.placeholder
 
-    with repository.backend.connect() as connection:
-        cursor = connection.cursor()
-        try:
-            cursor.execute(
-                "SELECT controller_id,status FROM customers WHERE id=" + ph,
-                (str(user["scope_id"]),),
-            )
-            row = cursor.fetchone()
-        finally:
-            cursor.close()
+    with repository.session() as session:
+        row = session.execute(
+            "SELECT controller_id,status FROM customers WHERE id=" + ph,
+            (str(user["scope_id"]),),
+        ).fetchone()
 
     if row is None or str(row["status"]).strip().lower() != "active":
         raise PermissionError("customer is not active")
 
     controller_id = str(row["controller_id"]).strip()
-    candidates = repository.candidates(controller_id)
-    ready = bool(candidates)
+    ready = bool(repository.candidates(controller_id))
 
     return {
         "placement_ready": ready,
