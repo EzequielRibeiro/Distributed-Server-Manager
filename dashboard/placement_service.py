@@ -5,8 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from core.placement import PlacementCandidate, PlacementRequest, choose_candidate
+from core.placement_requirements import PlacementRequirements
 from agent_runtime_repository import AgentRuntimeRepository
 from location_repository import LocationRepository
+from placement_eligibility import evaluate_agent_for_placement
 from placement_errors import PlacementUnavailable
 from placement_status_repository import PlacementStatusRepository
 
@@ -39,22 +41,37 @@ def choose_agent_for_instance(
     latency_ms: dict[str, float] | None = None,
     client_latitude: float | None = None,
     client_longitude: float | None = None,
+    requirements: PlacementRequirements | None = None,
 ) -> dict[str, Any]:
     repository = LocationRepository(backend)
     repository.initialize()
     agents_evaluated = _controller_agent_count(repository, controller_id)
+    requirements = requirements or PlacementRequirements()
 
     rows = repository.candidates(
         controller_id,
         region_id=(preferred_region_id if preferred_region_id and not allow_cross_region else None),
     )
 
-    # Compatibility rule: an Agent with no runtime telemetry record retains the
-    # previous placement behavior. Once it starts heartbeating, only `online`
-    # accepts new placement; degraded/offline are preserved for running servers
-    # but excluded from new allocations.
+    # Lifecycle/topology are already enforced by LocationRepository.candidates.
+    # Telemetry-aware Agents must be online; legacy Agents remain compatible
+    # only when no explicit technical evidence is required.
     health = AgentRuntimeRepository(backend).refresh_health(controller_id=controller_id)
     rows = [row for row in rows if health.get(str(row["agent_id"]), "online") == "online"]
+
+    technical_rejections: dict[str, list[str]] = {}
+    eligible_rows: list[dict[str, Any]] = []
+    for row in rows:
+        result = evaluate_agent_for_placement(
+            backend,
+            agent_id=str(row["agent_id"]),
+            requirements=requirements,
+        )
+        if result.eligible:
+            eligible_rows.append(row)
+        else:
+            technical_rejections[str(row["agent_id"])] = list(result.reasons)
+    rows = eligible_rows
 
     if not rows:
         raise PlacementUnavailable(
@@ -94,4 +111,18 @@ def choose_agent_for_instance(
         "datacenter_id": decision.candidate.datacenter_id,
         "score": decision.score,
         "reason": decision.reason,
+        "requirements": {
+            "game_id": requirements.game_id,
+            "runtime_id": requirements.runtime_id,
+            "capabilities": sorted(requirements.capabilities),
+            "ports": [
+                {
+                    "protocol": item.protocol,
+                    "count": item.count,
+                    "contiguous": item.contiguous,
+                }
+                for item in requirements.ports
+            ],
+        },
+        "technical_rejections": technical_rejections,
     }
