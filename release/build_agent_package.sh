@@ -30,11 +30,13 @@ mkdir -p "${PACKAGE_ROOT}/agent/common" "${PACKAGE_ROOT}/agent/runtime" "${PACKA
 git -C "${ROOT}" show "${REF}:agents/linux/installer/install-agent.sh" >"${PACKAGE_ROOT}/install-agent.sh"
 git -C "${ROOT}" show "${REF}:agents/common/identity.py" >"${PACKAGE_ROOT}/agent/common/identity.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/agent.py" >"${PACKAGE_ROOT}/agent/runtime/agent.py"
+git -C "${ROOT}" show "${REF}:agents/linux/runtime/capabilities.py" >"${PACKAGE_ROOT}/agent/runtime/capabilities.py"
+git -C "${ROOT}" show "${REF}:agents/linux/runtime/network_inventory.py" >"${PACKAGE_ROOT}/agent/runtime/network_inventory.py"
 git -C "${ROOT}" show "${REF}:agents/linux/services/capivara-agent.service" >"${PACKAGE_ROOT}/services/capivara-agent.service"
 printf '%s\n' "${VERSION}" >"${PACKAGE_ROOT}/VERSION"
 printf '%s\n' 'Runtime configuration is created during installation. Pairing secrets are never packaged.' >"${PACKAGE_ROOT}/config/README.md"
 chmod 0755 "${PACKAGE_ROOT}/install-agent.sh" "${PACKAGE_ROOT}/agent/runtime/agent.py"
-chmod 0644 "${PACKAGE_ROOT}/agent/common/identity.py" "${PACKAGE_ROOT}/services/capivara-agent.service" "${PACKAGE_ROOT}/VERSION" "${PACKAGE_ROOT}/config/README.md"
+chmod 0644 "${PACKAGE_ROOT}/agent/common/identity.py" "${PACKAGE_ROOT}/agent/runtime/capabilities.py" "${PACKAGE_ROOT}/agent/runtime/network_inventory.py" "${PACKAGE_ROOT}/services/capivara-agent.service" "${PACKAGE_ROOT}/VERSION" "${PACKAGE_ROOT}/config/README.md"
 
 python3 - "${PACKAGE_ROOT}" "${VERSION}" "${COMMIT}" "${CHANNEL}" <<'PY'
 import hashlib, json, pathlib, sys
@@ -44,6 +46,8 @@ required = [
     "install-agent.sh",
     "agent/common/identity.py",
     "agent/runtime/agent.py",
+    "agent/runtime/capabilities.py",
+    "agent/runtime/network_inventory.py",
     "services/capivara-agent.service",
     "VERSION",
     "config/README.md",
@@ -81,8 +85,6 @@ tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-ow
 )
 cp "${PACKAGE_ROOT}/manifest.json" "${MANIFEST_PATH}"
 
-# Optional detached signature. CI/release may inject a minisign secret key file.
-# Absence of a signing key never downgrades checksum verification: SHA-256 remains mandatory.
 if [[ -n "${CAPIVARA_MINISIGN_SECRET_KEY_FILE:-}" ]]
 then
     command -v minisign >/dev/null 2>&1 || fail "minisign key configured but minisign is unavailable"
