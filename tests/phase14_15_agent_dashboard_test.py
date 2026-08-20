@@ -61,7 +61,7 @@ class AgentDashboardPhase14And15Test(unittest.TestCase):
         self.assertEqual(status["agent_id"], "agent-remote-1")
 
         code, heartbeat = dispatch_heartbeat(
-            {"agent_id": "agent-remote-1", "hostname": "remote1"},
+            {"agent_id": "agent-remote-1", "hostname": "remote1", "capivara_version": "1.0.0"},
             headers={
                 "X-Capivara-Agent-Credential": enrolled["credential_id"],
                 "X-Capivara-Agent-Secret": enrolled["credential_secret"],
@@ -70,6 +70,7 @@ class AgentDashboardPhase14And15Test(unittest.TestCase):
         )
         self.assertEqual(code, 200)
         self.assertEqual(heartbeat["status"], "active")
+        self.assertEqual(heartbeat["update_state"]["installed_version"], "1.0.0")
         status = agent_installation_status_for_user(self.controller, self.backend, installation["installation_id"])
         self.assertEqual(status["state"], "online")
 
@@ -85,12 +86,17 @@ class AgentDashboardPhase14And15Test(unittest.TestCase):
         self.assertIn("./install-agent.sh", installation["instruction"])
         self.assertNotIn("github.com", installation["instruction"].lower())
 
-    def test_windows_is_explicitly_not_yet_available(self):
-        with self.assertRaises(NotImplementedError):
-            create_agent_installation_for_user(self.controller, self.backend, {
-                "platform": "windows", "method": "github", "region_id": "br-se", "datacenter_id": "horizon",
-                "controller_url": "https://controller.example",
-            })
+    def test_windows_uses_same_pairing_flow(self):
+        installation = create_agent_installation_for_user(self.controller, self.backend, {
+            "platform": "windows", "method": "github", "region_id": "br-se", "datacenter_id": "horizon",
+            "controller_url": "https://controller.example",
+        })
+        self.assertEqual(installation["platform"], "windows")
+        self.assertIn("/agent/install.ps1", installation["instruction"])
+        self.assertIn("PairingToken", installation["instruction"])
+        status = agent_installation_status_for_user(self.controller, self.backend, installation["installation_id"])
+        self.assertEqual(status["platform"], "windows")
+        self.assertEqual(status["state"], "waiting")
 
     def test_location_change_preserves_existing_instance(self):
         installation = create_agent_installation_for_user(self.controller, self.backend, {
