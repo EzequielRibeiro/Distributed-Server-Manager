@@ -1,5 +1,13 @@
 # DSM CHANGELOG
 
+## v1.4.6 — 2026-08-20
+
+- Corrige o bootstrap do Update Manager para executar o `update.sh` contido na release alvo já validada, em vez de continuar usando o updater da versão instalada
+- Separa a responsabilidade de descoberta/download/checksum da aplicação efetiva da nova versão, permitindo que permissões, links globais, systemd, migrations e pós-instalação sejam definidos pela release alvo
+- Adiciona regressão comportamental que distingue updater `old` e updater `target` e só passa quando o updater da release nova é realmente executado
+- Prepara as transições iniciadas a partir da 1.4.6 para aplicar corretamente mudanças futuras no próprio mecanismo de atualização
+- A atualização 1.4.5 → 1.4.6 também efetiva a correção já presente na 1.4.5 para `bin/cap` e `/usr/local/bin/cap`
+
 ## v1.4.5 — 2026-08-20
 
 - Corrige `dsm-scheduler.service` para executar a ação pública `scheduler.sh run` em vez da ação inexistente `daemon`
