@@ -9,7 +9,7 @@ TMP="${OUTPUT}.tmp"
 mkdir -p "${STATE_DIR}"
 
 set +e
-python3 "${DSM_ROOT}/database/infrastructure_doctor.py" doctor --json > "${TMP}"
+python3 "${DSM_ROOT}/database/infrastructure_doctor_contract.py" doctor --json > "${TMP}"
 rc=$?
 set -e
 
