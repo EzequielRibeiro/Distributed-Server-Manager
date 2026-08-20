@@ -12,8 +12,8 @@ bash -n "${BUILDER}"
 bash -n "${ROOT}/agents/linux/installer/bootstrap-release.sh"
 bash -n "${ROOT}/agents/linux/installer/install-agent.sh"
 
-"${BUILDER}" HEAD "${TMP}/one" >/dev/null
-"${BUILDER}" HEAD "${TMP}/two" >/dev/null
+bash "${BUILDER}" HEAD "${TMP}/one" >/dev/null
+bash "${BUILDER}" HEAD "${TMP}/two" >/dev/null
 VERSION=$(tr -d '\r\n' <"${ROOT}/version")
 ARCHIVE="capivara-agent-linux-${VERSION}.tar.gz"
 
@@ -40,7 +40,6 @@ assert manifest['version'] == (package / 'VERSION').read_text().strip()
 for relative in manifest['required_files']:
     data = (package / relative).read_bytes()
     assert hashlib.sha256(data).hexdigest() == manifest['files'][relative]['sha256']
-# Release package and local/offline package are made from the same tracked sources.
 assert (package/'agent/common/identity.py').read_bytes() == (root/'agents/common/identity.py').read_bytes()
 assert (package/'agent/runtime/agent.py').read_bytes() == (root/'agents/linux/runtime/agent.py').read_bytes()
 assert (package/'services/capivara-agent.service').read_bytes() == (root/'agents/linux/services/capivara-agent.service').read_bytes()
