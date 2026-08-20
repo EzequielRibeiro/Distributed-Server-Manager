@@ -12,6 +12,7 @@ for path in (ROOT, ROOT / "core", ROOT / "database"):
         sys.path.insert(0, str(path))
 
 from agent_deploy_cli import build_parser
+from agent_deploy_topology import validate_deploy_location
 from agent_ssh_deploy import (
     AgentDeployError,
     SSHDeployOptions,
@@ -24,6 +25,8 @@ from agent_ssh_deploy import (
     validate_ssh_user,
     wait_for_agent_online,
 )
+from backend import DatabaseConfig
+from backend_factory import create_backend
 
 
 class AgentSSHDeployTest(unittest.TestCase):
@@ -118,6 +121,8 @@ class AgentSSHDeployTest(unittest.TestCase):
         self.assertNotIn(secret, " ".join(observed["argv"]))
         self.assertIn(secret, observed["stdin"])
         self.assertEqual(observed["argv"][-1], "sudo -n python3 -")
+        self.assertIn('env["CAPIVARA_PAIRING_TOKEN"]', observed["stdin"])
+        self.assertNotIn('"--pairing-token", payload["pairing_token"]', observed["stdin"])
 
     def test_bootstrap_failure_does_not_echo_token(self):
         secret = "pairing-DO-NOT-PRINT"
@@ -141,6 +146,55 @@ class AgentSSHDeployTest(unittest.TestCase):
         ])
         result = wait_for_agent_online(lambda: next(states), timeout=2, interval=0.01)
         self.assertEqual(result["agent_id"], "agent-node02")
+
+    def test_deploy_location_requires_valid_matching_pair(self):
+        with tempfile.TemporaryDirectory() as temp:
+            backend = create_backend(
+                DatabaseConfig(driver="sqlite", database=str(Path(temp) / "capivara.db"))
+            )
+            backend.initialize()
+            try:
+                with backend.transaction() as connection:
+                    connection.execute(
+                        "INSERT INTO regions(id,name,status) VALUES (?,?,?)",
+                        ("region-a", "Region A", "active"),
+                    )
+                    connection.execute(
+                        "INSERT INTO regions(id,name,status) VALUES (?,?,?)",
+                        ("region-b", "Region B", "active"),
+                    )
+                    connection.execute(
+                        "INSERT INTO datacenters(id,region_id,name,status) VALUES (?,?,?,?)",
+                        ("dc-a", "region-a", "DC A", "active"),
+                    )
+                self.assertEqual(
+                    validate_deploy_location(
+                        backend, region_id="region-a", datacenter_id="dc-a"
+                    ),
+                    ("region-a", "dc-a"),
+                )
+                with self.assertRaises(AgentDeployError):
+                    validate_deploy_location(
+                        backend, region_id="region-b", datacenter_id="dc-a"
+                    )
+                with self.assertRaises(AgentDeployError):
+                    validate_deploy_location(
+                        backend, region_id="region-a", datacenter_id=None
+                    )
+            finally:
+                backend.close()
+
+    def test_release_bootstrap_keeps_token_out_of_child_argv(self):
+        release_bootstrap = (
+            ROOT / "agents/linux/installer/bootstrap-release.sh"
+        ).read_text(encoding="utf-8")
+        local_installer = (
+            ROOT / "agents/linux/installer/install-agent.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn('PAIRING_TOKEN="${CAPIVARA_PAIRING_TOKEN:-}"', release_bootstrap)
+        self.assertIn('CAPIVARA_PAIRING_TOKEN="${PAIRING_TOKEN}" exec', release_bootstrap)
+        self.assertNotIn('--pairing-token "${PAIRING_TOKEN}"', release_bootstrap.split("exec", 1)[-1])
+        self.assertIn('PAIRING_TOKEN="${CAPIVARA_PAIRING_TOKEN:-}"', local_installer)
 
     def test_cap_routes_agent_deploy(self):
         cap = (ROOT / "bin/cap").read_text(encoding="utf-8")
