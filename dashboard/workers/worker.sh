@@ -65,6 +65,8 @@ main()
 
     start_worker monitor_worker.sh
 
+    start_worker doctor_worker.sh
+
     start_worker mods_worker.sh
 
     start_worker alerts_worker.sh

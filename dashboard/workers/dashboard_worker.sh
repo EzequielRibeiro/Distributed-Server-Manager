@@ -3,7 +3,7 @@
 # DSM Dashboard Worker
 # dashboard_worker.sh
 # Atualiza: dashboard/state/dashboard_state.json
-# Consolida os estados produzidos pelos workers em um único arquivo.
+# Consolida todos os estados produzidos pelos workers em um único arquivo utilizado pelo Dashboard Web.
 # Intervalo: 5 segundos
 # =============================================================
 
@@ -14,18 +14,28 @@ OUTPUT="$STATE_DIR/dashboard_state.json"
 
 mkdir -p "$STATE_DIR"
 
+# -------------------------------------------------------------
+# Arquivos de estado
+# -------------------------------------------------------------
 SERVER_STATE="$STATE_DIR/server_state.json"
 METRICS_STATE="$STATE_DIR/metrics_state.json"
 MONITOR_STATE="$STATE_DIR/monitor_state.json"
 ALERTS_STATE="$STATE_DIR/alerts_state.json"
+DOCTOR_STATE="$STATE_DIR/doctor_state.json"
 SCHEDULER_STATE="$STATE_DIR/scheduler_state.json"
 EVENTS_STATE="$STATE_DIR/events_state.json"
 
-for f in "$SERVER_STATE" "$METRICS_STATE" "$MONITOR_STATE" "$ALERTS_STATE" "$SCHEDULER_STATE" "$EVENTS_STATE"
+# -------------------------------------------------------------
+# Inicializa arquivos inexistentes
+# -------------------------------------------------------------
+for f in "$SERVER_STATE" "$METRICS_STATE" "$MONITOR_STATE" "$ALERTS_STATE" "$DOCTOR_STATE" "$SCHEDULER_STATE" "$EVENTS_STATE"
 do
     [ -f "$f" ] || echo "{}" > "$f"
 done
 
+# -------------------------------------------------------------
+# Loop principal
+# -------------------------------------------------------------
 while true
 do
     TIMESTAMP="$(date '+%Y-%m-%d %H:%M:%S')"
@@ -35,6 +45,7 @@ do
         --slurpfile metrics "$METRICS_STATE" \
         --slurpfile monitor "$MONITOR_STATE" \
         --slurpfile alerts "$ALERTS_STATE" \
+        --slurpfile doctor "$DOCTOR_STATE" \
         --slurpfile scheduler "$SCHEDULER_STATE" \
         --slurpfile events "$EVENTS_STATE" \
 '
@@ -45,6 +56,7 @@ do
     metrics: ($metrics[0] // {}),
     monitor: ($monitor[0] // {}),
     alerts: ($alerts[0] // {}),
+    doctor: ($doctor[0] // {}),
     scheduler: ($scheduler[0] // {}),
     events: ($events[0] // {})
 }
