@@ -3,26 +3,22 @@ set -Eeuo pipefail
 
 CONTROLLER_URL=""
 PAIRING_TOKEN=""
-RELEASE_TAG="${CAPIVARA_RELEASE_TAG:-latest}"
-REPO="${CAPIVARA_GITHUB_REPO:-EzequielRibeiro/Distributed-Server-Manager}"
-API="${CAPIVARA_GITHUB_API:-https://api.github.com}"
+PACKAGE_DIR=""
 INSTALL_ROOT="${CAPIVARA_AGENT_ROOT:-/opt/capivara-agent}"
 CONFIG_DIR="${CAPIVARA_AGENT_CONFIG_DIR:-/etc/capivara-agent}"
 STATE_DIR="${CAPIVARA_AGENT_STATE_DIR:-/var/lib/capivara-agent}"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
-TMP=""
 
 fail(){ printf '[Capivara Agent][ERRO] %s\n' "$*" >&2; exit 1; }
 log(){ printf '[Capivara Agent] %s\n' "$*"; }
-cleanup(){ [[ -z "${TMP}" || ! -d "${TMP}" ]] || rm -rf -- "${TMP}"; }
-trap cleanup EXIT
 
 usage(){ cat <<'EOF'
 Uso:
-  sudo install-agent.sh --controller-url https://controller.exemplo --pairing-token TOKEN
+  sudo ./install-agent.sh --controller-url https://controller.exemplo --pairing-token TOKEN
+  sudo ./install-agent.sh --package-dir /caminho/capivara-agent-linux-X.Y.Z --controller-url ... --pairing-token ...
 
-O pairing token é usado somente no primeiro registro. Nenhuma senha administrativa
-é aceita ou armazenada pelo instalador.
+Este instalador opera somente sobre um pacote/diretório local já validado ou
+construído a partir do repositório oficial. Ele não clona branch e não baixa código.
 EOF
 }
 
@@ -30,7 +26,7 @@ while (( $# )); do
   case "$1" in
     --controller-url) [[ $# -ge 2 ]] || fail "--controller-url requer valor"; CONTROLLER_URL="$2"; shift 2;;
     --pairing-token) [[ $# -ge 2 ]] || fail "--pairing-token requer valor"; PAIRING_TOKEN="$2"; shift 2;;
-    --version) [[ $# -ge 2 ]] || fail "--version requer valor"; RELEASE_TAG="$2"; shift 2;;
+    --package-dir) [[ $# -ge 2 ]] || fail "--package-dir requer valor"; PACKAGE_DIR="$2"; shift 2;;
     --help|-h) usage; exit 0;;
     *) fail "opção desconhecida: $1";;
   esac
@@ -39,53 +35,60 @@ done
 [[ ${EUID} -eq 0 ]] || fail "execute como root"
 [[ "${CONTROLLER_URL}" =~ ^https?://[^[:space:]]+$ ]] || fail "Controller URL inválida"
 [[ -n "${PAIRING_TOKEN}" ]] || fail "pairing token é obrigatório"
-for cmd in curl tar sha256sum python3 install systemctl; do command -v "$cmd" >/dev/null || fail "comando necessário ausente: $cmd"; done
+for cmd in python3 install systemctl; do command -v "$cmd" >/dev/null || fail "comando necessário ausente: $cmd"; done
 
-TMP=$(mktemp -d /tmp/capivara-agent-installer.XXXXXX)
-RELEASE_JSON="${TMP}/release.json"
-if [[ "${RELEASE_TAG}" == latest ]]; then
-  curl -fsSL -H 'Accept: application/vnd.github+json' "${API}/repos/${REPO}/releases/latest" -o "${RELEASE_JSON}"
-else
-  curl -fsSL -H 'Accept: application/vnd.github+json' "${API}/repos/${REPO}/releases/tags/${RELEASE_TAG}" -o "${RELEASE_JSON}"
+if [[ -z "${PACKAGE_DIR}" ]]; then
+  PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
-python3 - "${TMP}" "${RELEASE_JSON}" <<'PY'
-import json,sys,pathlib
-root=pathlib.Path(sys.argv[1]); data=json.loads(pathlib.Path(sys.argv[2]).read_text(encoding='utf-8'))
-assets=data.get('assets') or []
-archive=next((a for a in assets if a.get('name','').endswith('.tar.gz') and not a.get('name','').endswith('.sha256')),None)
-checksum=next((a for a in assets if a.get('name','').endswith('.tar.gz.sha256')),None)
-if not archive or not checksum: raise SystemExit('release sem archive/checksum do Capivara')
-(root/'urls').write_text(archive['browser_download_url']+'\n'+checksum['browser_download_url']+'\n',encoding='utf-8')
+PACKAGE_DIR="$(cd "${PACKAGE_DIR}" && pwd)"
+
+for required in manifest.json VERSION agent/common/identity.py agent/runtime/agent.py services/capivara-agent.service; do
+  [[ -f "${PACKAGE_DIR}/${required}" ]] || fail "arquivo obrigatório ausente: ${required}"
+done
+
+python3 - "${PACKAGE_DIR}" <<'PY'
+import hashlib, json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
+if manifest.get('kind') != 'CapivaraAgentPackage' or manifest.get('platform') != 'linux':
+    raise SystemExit('manifest de Agent Linux inválido')
+version = (root / 'VERSION').read_text(encoding='utf-8').strip()
+if manifest.get('version') != version:
+    raise SystemExit('versão do pacote diverge do manifest')
+for relative in manifest.get('required_files', []):
+    path = root / relative
+    if not path.is_file():
+        raise SystemExit(f'arquivo obrigatório ausente: {relative}')
+    expected = (manifest.get('files', {}).get(relative) or {}).get('sha256')
+    if expected:
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual != expected:
+            raise SystemExit(f'hash interno inválido: {relative}')
 PY
-mapfile -t URLS < "${TMP}/urls"
-ARCHIVE="${TMP}/package.tar.gz"; CHECKSUM="${TMP}/package.tar.gz.sha256"
-log "Baixando pacote oficial..."
-curl -fsSL "${URLS[0]}" -o "${ARCHIVE}"
-curl -fsSL "${URLS[1]}" -o "${CHECKSUM}"
-EXPECTED=$(awk '{print $1}' "${CHECKSUM}"); ACTUAL=$(sha256sum "${ARCHIVE}" | awk '{print $1}')
-[[ "${EXPECTED}" == "${ACTUAL}" ]] || fail "checksum do pacote inválido"
-log "Pacote validado por SHA-256."
-mkdir "${TMP}/extract"; tar -xzf "${ARCHIVE}" -C "${TMP}/extract"
-PACKAGE_ROOT=$(find "${TMP}/extract" -mindepth 1 -maxdepth 1 -type d -name 'capivara-dsm-*' -print -quit)
-[[ -n "${PACKAGE_ROOT}" ]] || fail "raiz do pacote não encontrada"
-for required in agents/common/identity.py agents/linux/runtime/agent.py agents/linux/services/capivara-agent.service version release-manifest.json; do [[ -f "${PACKAGE_ROOT}/${required}" ]] || fail "arquivo obrigatório ausente: ${required}"; done
-VERSION=$(tr -d '\r\n' < "${PACKAGE_ROOT}/version")
+VERSION=$(tr -d '\r\n' < "${PACKAGE_DIR}/VERSION")
 
 id capivara-agent >/dev/null 2>&1 || useradd --system --home "${STATE_DIR}" --create-home --shell /usr/sbin/nologin capivara-agent
 install -d -m 0755 -o root -g root "${INSTALL_ROOT}" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/common"
 install -d -m 0700 -o capivara-agent -g capivara-agent "${CONFIG_DIR}" "${STATE_DIR}"
-install -m 0755 "${PACKAGE_ROOT}/agents/linux/runtime/agent.py" "${INSTALL_ROOT}/runtime/agent.py"
-install -m 0644 "${PACKAGE_ROOT}/agents/common/identity.py" "${INSTALL_ROOT}/common/identity.py"
-python3 - "${PACKAGE_ROOT}" "${CONFIG_DIR}/agent.json" "${CONTROLLER_URL}" "${PAIRING_TOKEN}" "${VERSION}" <<'PY'
-import importlib.util,pathlib,sys
+install -m 0755 "${PACKAGE_DIR}/agent/runtime/agent.py" "${INSTALL_ROOT}/runtime/agent.py"
+install -m 0644 "${PACKAGE_DIR}/agent/common/identity.py" "${INSTALL_ROOT}/common/identity.py"
+install -m 0644 "${PACKAGE_DIR}/manifest.json" "${INSTALL_ROOT}/manifest.json"
+printf '%s\n' "${VERSION}" >"${INSTALL_ROOT}/VERSION"
+
+python3 - "${PACKAGE_DIR}" "${CONFIG_DIR}/agent.json" "${CONTROLLER_URL}" "${PAIRING_TOKEN}" "${VERSION}" <<'PY'
+import importlib.util, pathlib, sys
 package, config_path, controller_url, token, version = sys.argv[1:]
-identity_path=pathlib.Path(package)/'agents/common/identity.py'
-spec=importlib.util.spec_from_file_location('capivara_agent_identity', identity_path); mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-identity=mod.generate_local_identity()
-config={**identity,'controller_url':controller_url.rstrip('/'),'pairing_token':token,'capivara_version':version,'heartbeat_interval_seconds':30,'degraded_after_seconds':60,'offline_after_seconds':120}
-mod.write_identity(pathlib.Path(config_path),config)
+identity_path = pathlib.Path(package) / 'agent/common/identity.py'
+spec = importlib.util.spec_from_file_location('capivara_agent_identity', identity_path)
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+identity = mod.generate_local_identity()
+config = {**identity, 'controller_url': controller_url.rstrip('/'), 'pairing_token': token, 'capivara_version': version,
+          'heartbeat_interval_seconds': 30, 'degraded_after_seconds': 60, 'offline_after_seconds': 120}
+mod.write_identity(pathlib.Path(config_path), config)
 PY
-chown capivara-agent:capivara-agent "${CONFIG_DIR}/agent.json"; chmod 0600 "${CONFIG_DIR}/agent.json"
-install -m 0644 "${PACKAGE_ROOT}/agents/linux/services/capivara-agent.service" "${SYSTEMD_DIR}/capivara-agent.service"
-systemctl daemon-reload; systemctl enable --now capivara-agent.service
-log "Agent instalado. O serviço fará enrollment, removerá o pairing token e iniciará heartbeat."
+chown capivara-agent:capivara-agent "${CONFIG_DIR}/agent.json"
+chmod 0600 "${CONFIG_DIR}/agent.json"
+install -m 0644 "${PACKAGE_DIR}/services/capivara-agent.service" "${SYSTEMD_DIR}/capivara-agent.service"
+systemctl daemon-reload
+systemctl enable --now capivara-agent.service
+log "Agent ${VERSION} instalado a partir do pacote local. O serviço fará enrollment e heartbeat."
