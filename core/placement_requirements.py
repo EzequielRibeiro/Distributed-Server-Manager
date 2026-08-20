@@ -25,14 +25,13 @@ class PlacementRequirements:
     min_storage_free_bytes: int = 0
 
 
-# These entries describe technical execution requirements, not sizing advice.
-# Resource thresholds remain request/catalog driven because memory/storage needs
-# vary by game version, maps, mods and server configuration.
+# Technical execution requirements. Catalog environment ids such as
+# ``dayz.stable`` are not host capabilities and must not be compared directly
+# with Agent capability names.
 _GAME_PROFILES: dict[str, dict[str, Any]] = {
     "dayz": {
         "runtime_id": "native-linux",
         "capabilities": {"native-linux", "steamcmd", "dayz"},
-        # DayZ policy: one 10-port UDP allocation block per instance.
         "ports": (PortRequirement("udp", 10, True),),
     },
     "minecraft-java": {
@@ -52,6 +51,12 @@ _GAME_PROFILES: dict[str, dict[str, Any]] = {
     },
 }
 
+_HOST_RUNTIME_CAPABILITIES = {
+    "native-linux",
+    "docker",
+    "wine",
+}
+
 
 def _positive_int(value: Any) -> int:
     try:
@@ -69,8 +74,22 @@ def requirements_for_instance(
     game = str(game_id or "").strip().lower() or None
     profile = dict(_GAME_PROFILES.get(game or "", {}))
     resource = resources if isinstance(resources, dict) else {}
-    runtime = str(runtime_id or profile.get("runtime_id") or "").strip().lower() or None
-    capabilities = frozenset(str(item).strip().lower() for item in profile.get("capabilities", set()) if str(item).strip())
+
+    requested_runtime = str(runtime_id or "").strip().lower()
+    runtime = (
+        requested_runtime
+        if requested_runtime in _HOST_RUNTIME_CAPABILITIES
+        else str(profile.get("runtime_id") or "").strip().lower()
+    ) or None
+
+    capabilities = frozenset(
+        str(item).strip().lower()
+        for item in profile.get("capabilities", set())
+        if str(item).strip()
+    )
+    if runtime:
+        capabilities = frozenset(set(capabilities) | {runtime})
+
     return PlacementRequirements(
         game_id=game,
         runtime_id=runtime,
