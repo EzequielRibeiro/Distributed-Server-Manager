@@ -13,6 +13,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from core.placement_diagnostics import placement_status
+from agent_runtime_repository import AgentRuntimeRepository
 from alert_repository import AlertSession
 from backend import DatabaseBackend
 
@@ -41,12 +42,13 @@ class PlacementStatusRepository:
         return 0 if row is None else int(row["total"])
 
     def snapshot(self) -> dict[str, Any]:
-        """Return counts, eligibility and stable placement blockers."""
+        """Return counts, health-aware eligibility and stable blockers."""
         self.initialize()
+        # Heartbeat age is derived at read time. This never changes agents.status.
+        AgentRuntimeRepository(self.backend).refresh_health()
 
         with self.session() as session:
             result: dict[str, Any] = {}
-
             for name, table in (
                 ("controllers", "controllers"),
                 ("agents", "agents"),
@@ -56,25 +58,29 @@ class PlacementStatusRepository:
                 ("datacenters", "datacenters"),
                 ("agent_locations", "agent_locations"),
             ):
-                result[name] = self._count(
-                    session,
-                    f"SELECT COUNT(*) AS total FROM {table}",
-                )
+                result[name] = self._count(session, f"SELECT COUNT(*) AS total FROM {table}")
 
             result["pending_agents"] = self._count(
                 session,
-                "SELECT COUNT(*) AS total FROM agents "
-                "WHERE status IN ('pending','pairing')",
+                "SELECT COUNT(*) AS total FROM agents WHERE status IN ('discovered','pending','pairing')",
             )
-
             result["unlocated_agents"] = self._count(
                 session,
-                "SELECT COUNT(*) AS total "
-                "FROM agents a "
-                "LEFT JOIN agent_locations al ON al.agent_id=a.id "
-                "WHERE al.agent_id IS NULL",
+                "SELECT COUNT(*) AS total FROM agents a "
+                "LEFT JOIN agent_locations al ON al.agent_id=a.id WHERE al.agent_id IS NULL",
             )
-
+            result["online_agents"] = self._count(
+                session,
+                "SELECT COUNT(*) AS total FROM agent_runtime_inventory WHERE health_status='online'",
+            )
+            result["degraded_agents"] = self._count(
+                session,
+                "SELECT COUNT(*) AS total FROM agent_runtime_inventory WHERE health_status='degraded'",
+            )
+            result["offline_agents"] = self._count(
+                session,
+                "SELECT COUNT(*) AS total FROM agent_runtime_inventory WHERE health_status='offline'",
+            )
             result["eligible_agents"] = self._count(
                 session,
                 "SELECT COUNT(DISTINCT a.id) AS total "
@@ -83,11 +89,10 @@ class PlacementStatusRepository:
                 "JOIN agent_locations al ON al.agent_id=a.id "
                 "JOIN datacenters d ON d.id=al.datacenter_id "
                 "JOIN regions r ON r.id=d.region_id "
-                "WHERE c.status='active' "
-                "AND a.status='active' "
-                "AND al.status='active' "
-                "AND d.status='active' "
-                "AND r.status='active'",
+                "LEFT JOIN agent_runtime_inventory ari ON ari.agent_id=a.id "
+                "WHERE c.status='active' AND a.status='active' "
+                "AND al.status='active' AND d.status='active' AND r.status='active' "
+                "AND (ari.agent_id IS NULL OR ari.health_status='online')",
             )
 
         result.update(placement_status(result))
