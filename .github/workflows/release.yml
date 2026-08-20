@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   publish:
@@ -46,9 +48,17 @@ jobs:
           bash tests/update_cli_test.sh
           bash tests/catalog_v2_test.sh
           bash tests/release_build_test.sh
+          bash tests/agent_package_test.sh
 
       - name: Build release artifacts
-        run: release/build_release.sh "${GITHUB_SHA}" dist
+        run: |
+          release/build_release.sh "${GITHUB_SHA}" dist
+          release/build_agent_package.sh "${GITHUB_SHA}" dist
+
+      - name: Attest Linux Agent package provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/capivara-agent-linux-*.tar.gz'
 
       - name: Publish GitHub Release
         env:
@@ -63,6 +73,12 @@ jobs:
           then
             RELEASE_FLAGS+=(--prerelease)
           fi
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/*.tar.gz \
+            dist/*.sha256 \
+            dist/*.manifest.json \
+            dist/*.minisig \
+            "${RELEASE_FLAGS[@]}" 2>/dev/null || \
           gh release create "${GITHUB_REF_NAME}" \
             dist/*.tar.gz \
             dist/*.sha256 \
