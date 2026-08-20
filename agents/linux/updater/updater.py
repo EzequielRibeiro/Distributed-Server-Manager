@@ -16,7 +16,7 @@ import subprocess
 import tarfile
 import tempfile
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 INSTALL_ROOT = Path(os.environ.get("CAPIVARA_AGENT_ROOT", "/opt/capivara-agent"))
@@ -36,6 +36,19 @@ def _download(url: str, path: Path) -> None:
     request = urllib.request.Request(url, headers={"User-Agent": "Capivara-Agent-Updater"})
     with urllib.request.urlopen(request, timeout=60) as response, path.open("wb") as output:
         shutil.copyfileobj(response, output)
+
+
+def _safe_extract(package: tarfile.TarFile, destination: Path) -> None:
+    """Extract only regular files/directories below destination (Python 3.9+)."""
+    members = []
+    for member in package.getmembers():
+        name = PurePosixPath(member.name)
+        if name.is_absolute() or ".." in name.parts:
+            raise RuntimeError(f"unsafe archive path: {member.name}")
+        if not (member.isfile() or member.isdir()):
+            raise RuntimeError(f"unsupported archive member: {member.name}")
+        members.append(member)
+    package.extractall(destination, members=members)
 
 
 def _verify_package(package_root: Path, version: str) -> None:
@@ -84,7 +97,7 @@ def apply_request() -> int:
         extract = work / "extract"
         extract.mkdir()
         with tarfile.open(archive, "r:gz") as package:
-            package.extractall(extract, filter="data")
+            _safe_extract(package, extract)
         package_root = extract / f"capivara-agent-linux-{plain_version}"
         _verify_package(package_root, plain_version)
 
