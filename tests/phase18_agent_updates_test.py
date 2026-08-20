@@ -10,7 +10,9 @@ for path in (ROOT, ROOT / "database", ROOT / "dashboard"):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+from agent_pairing_repository import AgentPairingRepository
 from agent_registration_repository import AgentRegistrationRepository
+from agent_remote_http import dispatch_enroll, dispatch_heartbeat
 from agent_update_repository import AgentUpdateRepository
 from backend import DatabaseConfig
 from backend_factory import create_backend
@@ -34,8 +36,6 @@ class Phase18AgentUpdatesTest(unittest.TestCase):
                 node_id=f"node-{suffix}",
                 name=f"Agent {suffix.upper()}",
             )
-        # Update rollout persistence is orthogonal to lifecycle; these rows are
-        # enough to verify batching and version state.
         self.repository = AgentUpdateRepository(self.backend)
         self.repository.initialize()
 
@@ -62,7 +62,6 @@ class Phase18AgentUpdatesTest(unittest.TestCase):
         self.assertIsNotNone(self.repository.command_for_agent("agent-b"))
         self.assertIsNone(self.repository.command_for_agent("agent-c"))
 
-        # A later heartbeat must not rewrite the completion timestamp.
         repeated = self.repository.reconcile_after_heartbeat("agent-a", "2.0.0", "online")
         self.assertEqual(repeated["last_update"], completed_at)
 
@@ -92,6 +91,66 @@ class Phase18AgentUpdatesTest(unittest.TestCase):
         state = self.repository.reconcile_after_heartbeat("agent-a", "3.0.0", "online")
         self.assertEqual(state["update_status"], "completed")
         self.assertIsNone(self.repository.command_for_agent("agent-a"))
+
+    def test_authenticated_heartbeat_delivers_update_then_verifies_new_version(self):
+        issued = AgentPairingRepository(self.backend).issue_token(
+            controller_id=self.controller_id,
+            ttl_seconds=300,
+        )
+        status, enrolled = dispatch_enroll(
+            {
+                "pairing_token": issued.token,
+                "agent_id": "agent-update-e2e",
+                "node_id": "node-update-e2e",
+                "name": "Update E2E",
+                "fingerprint": "sha256:update-e2e",
+                "hostname": "update-e2e",
+                "os": "linux",
+                "architecture": "x86_64",
+            },
+            backend=self.backend,
+        )
+        self.assertEqual(status, 201)
+        headers = {
+            "X-Capivara-Agent-Credential": enrolled["credential_id"],
+            "X-Capivara-Agent-Secret": enrolled["credential_secret"],
+            "X-Capivara-Agent-Fingerprint": "sha256:update-e2e",
+        }
+        status, initial = dispatch_heartbeat(
+            {"agent_id": "agent-update-e2e", "capivara_version": "1.0.0"},
+            headers=headers,
+            backend=self.backend,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(initial["update_state"]["installed_version"], "1.0.0")
+
+        rollout = self.repository.create_rollout(
+            ["agent-update-e2e"], desired_version="2.0.0", channel="stable", batch_size=1
+        )
+        status, commanded = dispatch_heartbeat(
+            {"agent_id": "agent-update-e2e", "capivara_version": "1.0.0"},
+            headers=headers,
+            backend=self.backend,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(commanded["update"]["rollout_id"], rollout["rollout_id"])
+        self.assertEqual(commanded["update"]["desired_version"], "2.0.0")
+        self.assertEqual(commanded["update_state"]["update_status"], "updating")
+
+        status, verified = dispatch_heartbeat(
+            {
+                "agent_id": "agent-update-e2e",
+                "capivara_version": "2.0.0",
+                "update_result": {"status": "applied", "installed_version": "2.0.0"},
+            },
+            headers=headers,
+            backend=self.backend,
+        )
+        self.assertEqual(status, 200)
+        self.assertNotIn("update", verified)
+        self.assertEqual(verified["update_state"]["update_status"], "completed")
+        self.assertEqual(verified["update_state"]["installed_version"], "2.0.0")
+        self.assertIsNotNone(verified["update_state"]["last_update"])
 
 
 if __name__ == "__main__":
