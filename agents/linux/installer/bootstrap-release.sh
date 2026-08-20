@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 CONTROLLER_URL=""
-PAIRING_TOKEN=""
+PAIRING_TOKEN="${CAPIVARA_PAIRING_TOKEN:-}"
 RELEASE_TAG="${CAPIVARA_RELEASE_TAG:-latest}"
 REPO="${CAPIVARA_GITHUB_REPO:-EzequielRibeiro/Distributed-Server-Manager}"
 API="${CAPIVARA_GITHUB_API:-https://api.github.com}"
@@ -16,6 +16,9 @@ trap cleanup EXIT
 usage(){ cat <<'EOF'
 Uso:
   sudo bootstrap-release.sh --controller-url https://controller.exemplo --pairing-token TOKEN [--version vX.Y.Z]
+
+Para automação segura, o token também pode ser fornecido pelo ambiente raiz
+CAPIVARA_PAIRING_TOKEN, evitando exposição no argv do processo.
 
 Baixa exclusivamente um pacote imutável de GitHub Release, valida SHA-256 e
 então chama o instalador local contido no próprio pacote.
@@ -35,6 +38,7 @@ done
 [[ ${EUID} -eq 0 ]] || fail "execute como root"
 [[ "${CONTROLLER_URL}" =~ ^https?://[^[:space:]]+$ ]] || fail "Controller URL inválida"
 [[ -n "${PAIRING_TOKEN}" ]] || fail "pairing token é obrigatório"
+unset CAPIVARA_PAIRING_TOKEN
 for cmd in curl tar sha256sum python3; do command -v "$cmd" >/dev/null || fail "comando necessário ausente: $cmd"; done
 
 TMP=$(mktemp -d /tmp/capivara-agent-release.XXXXXX)
@@ -78,7 +82,6 @@ mkdir "${TMP}/extract"
 tar -xzf "${ARCHIVE}" -C "${TMP}/extract"
 PACKAGE_ROOT=$(find "${TMP}/extract" -mindepth 1 -maxdepth 1 -type d -name 'capivara-agent-linux-*' -print -quit)
 [[ -n "${PACKAGE_ROOT}" && -x "${PACKAGE_ROOT}/install-agent.sh" ]] || fail "pacote Linux Agent inválido"
-exec "${PACKAGE_ROOT}/install-agent.sh" \
+CAPIVARA_PAIRING_TOKEN="${PAIRING_TOKEN}" exec "${PACKAGE_ROOT}/install-agent.sh" \
   --package-dir "${PACKAGE_ROOT}" \
-  --controller-url "${CONTROLLER_URL}" \
-  --pairing-token "${PAIRING_TOKEN}"
+  --controller-url "${CONTROLLER_URL}"
