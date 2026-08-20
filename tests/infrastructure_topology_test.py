@@ -117,6 +117,16 @@ class InfrastructureTopologyTest(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def _execute(self, sql, params=()):
+        connection = sqlite3.connect(self.database_path)
+        connection.execute(sql, params)
+        connection.commit()
+        connection.close()
+
+    def _placed_agent(self):
+        tree = self.service.controller_tree("controller-a")
+        return tree["children"][0]["children"][0]["children"][0]
+
     def test_repository_scopes_agents_and_counts_instances(self):
         agents = self.repository.agents(controller_id="controller-a")
         self.assertEqual({row["id"] for row in agents}, {"agent-a", "agent-unplaced"})
@@ -135,8 +145,37 @@ class InfrastructureTopologyTest(unittest.TestCase):
         self.assertEqual(datacenter["id"], "dc-sp")
         self.assertEqual(agent["id"], "agent-a")
         self.assertEqual(agent["children_count"], 2)
+        self.assertEqual(agent["topology_state"], "ready")
+        self.assertTrue(agent["placement_ready"])
         self.assertEqual(tree["unplaced_agent_count"], 1)
-        self.assertEqual(tree["unplaced_agents"][0]["id"], "agent-unplaced")
+        unplaced = tree["unplaced_agents"][0]
+        self.assertEqual(unplaced["id"], "agent-unplaced")
+        self.assertEqual(unplaced["topology_state"], "unconfigured")
+        self.assertFalse(unplaced["placement_ready"])
+
+    def test_inactive_controller_keeps_topology_ready_but_blocks_placement(self):
+        self._execute(
+            "UPDATE controllers SET status='disabled' WHERE id='controller-a'"
+        )
+        agent = self._placed_agent()
+        self.assertEqual(agent["topology_state"], "ready")
+        self.assertFalse(agent["placement_ready"])
+
+    def test_offline_agent_keeps_topology_ready_but_blocks_placement(self):
+        self._execute(
+            "UPDATE agents SET status='offline' WHERE id='agent-a'"
+        )
+        agent = self._placed_agent()
+        self.assertEqual(agent["topology_state"], "ready")
+        self.assertFalse(agent["placement_ready"])
+
+    def test_inactive_location_reports_partial_topology(self):
+        self._execute(
+            "UPDATE agent_locations SET status='disabled' WHERE agent_id='agent-a'"
+        )
+        agent = self._placed_agent()
+        self.assertEqual(agent["topology_state"], "partial")
+        self.assertFalse(agent["placement_ready"])
 
     def test_controller_role_cannot_expand_scope(self):
         user = {"role": "controller", "scope_id": "controller-a"}
