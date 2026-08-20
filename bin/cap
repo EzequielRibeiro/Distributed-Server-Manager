@@ -21,6 +21,19 @@ Uso:
   cap infrastructure doctor [--reconcile] [--json]
   cap infrastructure role show [--node-id ID] [--json]
   cap infrastructure role set hybrid [--node-id ID] [--controller-id ID] [--agent-id ID] [--json]
+  cap agent deploy HOST --ssh-user USER [options]
+
+Agent deploy options principais:
+  --ssh-port PORT
+  --identity-file PATH
+  --controller-id ID
+  --controller-url URL
+  --region-id ID
+  --datacenter-id ID
+  --json
+
+SSH é utilizado somente no bootstrap inicial do Agent Linux.
+Senhas SSH não são aceitas como argumento; use chave/ssh-agent.
 
 --reconcile aplica somente reconciliações determinísticas e seguras.
 
@@ -42,6 +55,16 @@ case "${1:-}" in
                 shift
                 [[ $# -gt 0 ]] || { usage; exit 2; }
                 exec python3 "${DSM_ROOT}/database/infrastructure_role_cli.py" "$@"
+                ;;
+            *) usage; exit 2 ;;
+        esac
+        ;;
+    agent)
+        shift
+        case "${1:-}" in
+            deploy)
+                shift
+                exec python3 "${DSM_ROOT}/database/agent_deploy_cli.py" "$@"
                 ;;
             *) usage; exit 2 ;;
         esac
