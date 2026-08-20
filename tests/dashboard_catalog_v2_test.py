@@ -131,7 +131,11 @@ class CatalogV2DashboardTest(unittest.TestCase):
 
     def test_catalog_is_browsable_without_runtime_instances(self):
         script = (ROOT / "dashboard" / "web" / "catalog-v2.js").read_text(encoding="utf-8")
-        self.assertIn("Ambientes do catálogo disponíveis para consulta.", script)
+        self.assertIn("Nenhuma instância foi publicada no Runtime e nenhum Agent ativo está disponível.", script)
+        self.assertIn('request("/api/agents")', script)
+        self.assertIn("function availableNodeIds()", script)
+        self.assertIn('String(agent.status || "").toLowerCase() === "active"', script)
+        self.assertIn("!state.resources.length && !availableNodeIds().length", script)
         self.assertIn("installButton.disabled = false", script)
         self.assertIn("selectedContent().length", script)
         self.assertIn("...state.catalogEnvironments.map(item => item.game)", script)
