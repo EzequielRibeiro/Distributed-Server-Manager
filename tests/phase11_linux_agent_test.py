@@ -16,6 +16,7 @@ from backend_factory import create_backend
 from agent_install_command import linux_agent_install_command
 from agent_pairing_repository import AgentPairingRepository
 from agent_remote_http import dispatch_enroll, dispatch_heartbeat
+from registry import installation_profile_identity
 from registry_repository import RegistryRepository
 
 
@@ -26,14 +27,13 @@ class Phase11LinuxAgentTest(unittest.TestCase):
             DatabaseConfig(driver="sqlite", database=str(Path(self.temp.name) / "capivara.db"))
         )
         self.backend.initialize()
-        RegistryRepository(self.backend).bootstrap_installation_profile(
+        repository = RegistryRepository(self.backend)
+        identity = installation_profile_identity(
+            repository,
             profile="controller",
-            installation_id="controller-phase11",
-            name="Controller Phase 11",
+            hostname="controller-phase11",
         )
-        with self.backend.connect() as connection:
-            row = connection.execute("SELECT id FROM controllers LIMIT 1").fetchone()
-            self.controller_id = str(row["id"])
+        self.controller_id = str(identity["controller_id"])
 
     def tearDown(self):
         self.backend.close()
