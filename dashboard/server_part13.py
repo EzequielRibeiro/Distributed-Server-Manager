@@ -15,6 +15,7 @@ from automation_http import AUTOMATION_PATH,BROADCAST_PATH,dispatch_automation_g
 from backup_http import BACKUP_PATH,dispatch_backup_get,dispatch_backup_post
 from configuration_http import CONFIGURATIONS_PATH,dispatch_configuration_get,dispatch_configuration_post
 from content_http import CONTENT_PATH,dispatch_content_get,dispatch_content_post
+from federation_http import FEDERATION_ADMIN_PATH,FEDERATION_PEER_PATHS,dispatch_federation_get,dispatch_federation_peer_post,dispatch_federation_post
 from infrastructure_role_http import INFRASTRUCTURE_ROLE_PATH,dispatch_infrastructure_role_get,dispatch_infrastructure_role_post
 from observability_http import OBSERVABILITY_PATH,dispatch_observability_get
 from realtime_http import PUBLIC_GET_PATHS,PUBLIC_POST_PATHS,SSE_EVENTS_PATH,dispatch_realtime_get,dispatch_realtime_post,serve_event_stream
@@ -56,7 +57,7 @@ def integrated_get(self):
   user=_user(self)
   if user is None:return
   status,body=dispatch_api_access_get(path,parsed.query,user=user,backend=_backend());self.send_json(status,body);return
- if path in {AUTOMATION_PATH,BROADCAST_PATH,BACKUP_PATH,CONFIGURATIONS_PATH,CONTENT_PATH,OBSERVABILITY_PATH,EVENTS_PATH,GAME_DATA_JOBS_PATH,INSTANCE_PROVISIONING_PATH,INSTANCE_RUNTIME_PATH,INFRASTRUCTURE_ROLE_PATH}:
+ if path in {AUTOMATION_PATH,BROADCAST_PATH,BACKUP_PATH,CONFIGURATIONS_PATH,CONTENT_PATH,OBSERVABILITY_PATH,EVENTS_PATH,GAME_DATA_JOBS_PATH,INSTANCE_PROVISIONING_PATH,INSTANCE_RUNTIME_PATH,INFRASTRUCTURE_ROLE_PATH,FEDERATION_ADMIN_PATH}:
   user=_user(self)
   if user is None:return
   if path in {AUTOMATION_PATH,BROADCAST_PATH}:status,body=dispatch_automation_get(path,parsed.query,user=user,backend=_backend())
@@ -68,6 +69,7 @@ def integrated_get(self):
   elif path==GAME_DATA_JOBS_PATH:status,body=dispatch_agent_game_data_get(path,parsed.query,user=user,backend=_backend())
   elif path==INSTANCE_PROVISIONING_PATH:status,body=dispatch_instance_provisioning_get(path,parsed.query,user=user,backend=_backend())
   elif path==INSTANCE_RUNTIME_PATH:status,body=dispatch_instance_runtime_get(path,parsed.query,user=user,backend=_backend())
+  elif path==FEDERATION_ADMIN_PATH:status,body=dispatch_federation_get(path,parse_qs(parsed.query),user=user,backend=_backend())
   else:
    query=parse_qs(parsed.query);status,body=dispatch_infrastructure_role_get(path,user=user,backend=_backend(),node_id=(query.get("node_id") or [None])[0])
   self.send_json(status,body);return
@@ -80,6 +82,10 @@ def _payload(self):
  except ValueError:return None,{"error":"invalid_request","message":"Requisição inválida."}
 def integrated_post(self):
  parsed=urlparse(self.path);path=parsed.path
+ if path in FEDERATION_PEER_PATHS:
+  payload,error=_payload(self)
+  if error:self.send_json(400,error);return
+  status,body=dispatch_federation_peer_post(path,payload,headers=self.headers,backend=_backend());self.send_json(status,body);return
  if path in PUBLIC_POST_PATHS:
   started=time.monotonic();principal=_api_principal(self)
   if principal is None:return
@@ -92,7 +98,7 @@ def integrated_post(self):
   payload,error=_payload(self)
   if error:self.send_json(400,error);return
   status,body=dispatch_api_access_post(path,payload,user=user,backend=_backend());self.send_json(status,body);return
- if path in {AUTOMATION_PATH,BROADCAST_PATH,BACKUP_PATH,CONFIGURATIONS_PATH,CONTENT_PATH,EVENTS_PATH,GAME_DATA_OPERATION_PATH,LEGACY_ENVIRONMENT_INSTALL_PATH,INSTANCE_PROVISIONING_PATH,INSTANCE_RUNTIME_PATH,INFRASTRUCTURE_ROLE_PATH}:
+ if path in {AUTOMATION_PATH,BROADCAST_PATH,BACKUP_PATH,CONFIGURATIONS_PATH,CONTENT_PATH,EVENTS_PATH,GAME_DATA_OPERATION_PATH,LEGACY_ENVIRONMENT_INSTALL_PATH,INSTANCE_PROVISIONING_PATH,INSTANCE_RUNTIME_PATH,INFRASTRUCTURE_ROLE_PATH,FEDERATION_ADMIN_PATH}:
   user=_user(self)
   if user is None:return
   payload,error=_payload(self)
@@ -105,6 +111,7 @@ def integrated_post(self):
   elif path in {GAME_DATA_OPERATION_PATH,LEGACY_ENVIRONMENT_INSTALL_PATH}:status,body=dispatch_agent_game_data_post(path,payload,user=user,backend=_backend(),root=ROOT_DIR)
   elif path==INSTANCE_PROVISIONING_PATH:status,body=dispatch_instance_provisioning_post(path,payload,user=user,backend=_backend())
   elif path==INSTANCE_RUNTIME_PATH:status,body=dispatch_instance_runtime_post(path,payload,user=user,backend=_backend())
+  elif path==FEDERATION_ADMIN_PATH:status,body=dispatch_federation_post(path,payload,user=user,backend=_backend())
   else:status,body=dispatch_infrastructure_role_post(path,payload,user=user,backend=_backend(),root=ROOT_DIR)
   self.send_json(status,body);return
  if path not in {ROLLOUT_PATH,CHANNEL_PATH}:return _previous_post(self)
