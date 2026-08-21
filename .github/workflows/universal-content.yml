@@ -1,0 +1,34 @@
+name: Universal Content Platform
+on:
+  pull_request:
+    paths:
+      - 'core/content_platform.py'
+      - 'database/content_*'
+      - 'database/migrations/**/035_universal_content.sql'
+      - 'database/migrations/035_universal_content.sql'
+      - 'dashboard/content_*'
+      - 'dashboard/server_part14.py'
+      - 'dashboard/agent_heartbeat_api.py'
+      - 'agents/linux/runtime/content_client.py'
+      - 'agents/linux/runtime/agent.py'
+      - 'release/build_agent_package.sh'
+      - 'bin/cap'
+      - 'tests/universal_content_platform_test.py'
+      - '.github/workflows/universal-content.yml'
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax
+        run: |
+          bash -n bin/cap release/build_agent_package.sh
+          python3 -m py_compile core/content_platform.py database/content_repository.py database/content_cli.py dashboard/content_api.py dashboard/content_http.py dashboard/server_part14.py dashboard/agent_heartbeat_api.py agents/linux/runtime/content_client.py agents/linux/runtime/agent.py
+      - name: Test Universal Content
+        run: python3 -m unittest tests/universal_content_platform_test.py
+      - name: Verify Agent package contract
+        run: |
+          grep -Fq 'agent/runtime/content_client.py' release/build_agent_package.sh
+          grep -Fq 'agent/runtime/game_data_client.py' release/build_agent_package.sh
+          grep -Fq 'agent/runtime/observability_client.py' release/build_agent_package.sh
