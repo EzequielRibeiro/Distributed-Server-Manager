@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -126,6 +126,44 @@ class EventRepository:
             limit=limit,
             newest_first=newest_first,
         )
+
+    @staticmethod
+    def _cutoff_text(cutoff: datetime) -> str:
+        if cutoff.tzinfo is None:
+            raise ValueError("event retention cutoff must be timezone-aware")
+        return cutoff.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def count_before(self, cutoff: datetime) -> int:
+        """Count universal events older than cutoff without touching legacy rows."""
+
+        self.backend.initialize()
+        sql = (
+            "SELECT COUNT(*) AS event_count FROM events "
+            f"WHERE source_type IS NOT NULL AND occurred_at < {self.placeholder}"
+        )
+        with self.backend.connect() as connection:
+            cursor = self._execute(connection, sql, (self._cutoff_text(cutoff),))
+            row = cursor.fetchone()
+            if self.backend.name == "mysql":
+                cursor.close()
+        if row is None:
+            return 0
+        return int(dict(row)["event_count"])
+
+    def delete_before(self, cutoff: datetime) -> int:
+        """Delete only universal events older than cutoff."""
+
+        self.backend.initialize()
+        sql = (
+            "DELETE FROM events "
+            f"WHERE source_type IS NOT NULL AND occurred_at < {self.placeholder}"
+        )
+        with self.backend.transaction() as connection:
+            cursor = self._execute(connection, sql, (self._cutoff_text(cutoff),))
+            deleted = int(cursor.rowcount or 0)
+            if self.backend.name == "mysql":
+                cursor.close()
+        return deleted
 
     def _query_events(
         self,
