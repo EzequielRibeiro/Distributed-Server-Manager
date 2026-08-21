@@ -1,16 +1,21 @@
 #!/bin/bash
 # =============================================================
-# bin/dsm - COMANDO PRINCIPAL DSM
+# bin/dsm - CLI de compatibilidade do Capivara DSM
 #
-# DayZ Server Manager
+# Capivara Distributed Server Manager
 #
 # Responsável por:
 #
-# - inicializar ambiente DSM
+# - inicializar o ambiente DSM
 # - carregar configurações
-# - executar módulos
+# - executar módulos de compatibilidade e baixo nível
 #
-# Fonte única:
+# CLI principal para administração e operação por role:
+#
+#   cap help
+#   cap help --all
+#
+# Fonte única de configuração:
 #
 #   /opt/dsm/config/dsm.conf
 #
@@ -112,139 +117,110 @@ section()
 
 usage()
 {
-
-cat <<EOF
+cat <<'EOF'
 
 ============================================================
- Capiva - Distributed Server Manager
+ Capivara Distributed Server Manager
+ CLI DSM de compatibilidade / baixo nível
 ============================================================
 
 Uso:
+  dsm <comando> [argumentos]
 
- dsm <comando>
+CLI principal:
+  cap help             Mostra comandos disponíveis para a role local
+  cap help --all       Mostra todos os comandos do Capivara
 
-
-Servidor:
-
- dsm server start
- dsm server stop
- dsm server restart
- dsm server status
- dsm server validate
-
+Servidor de jogo:
+  dsm server start <game> <instance>
+  dsm server stop <game> <instance>
+  dsm server restart <game> <instance>
+  dsm server status <game> <instance>
+  dsm server validate <game> <instance>
 
 Diagnóstico:
-
- dsm doctor
- dsm monitor
- dsm doctor run       Executa diagnóstico completo"
- dsm doctor status    Mostra último diagnóstico"
-
+  dsm doctor run       Executa diagnóstico completo
+  dsm doctor status    Mostra o último diagnóstico
+  dsm monitor          Executa diagnóstico do monitor local
 
 Mods:
+  dsm mods install ...
+  dsm mods update ...
+  dsm mods verify ...
+  dsm mods rollback ...
+  dsm mods keys ...
+  dsm mods state ...
 
- dsm mods install
- dsm mods update
- dsm mods verify
- dsm mods rollback
- dsm mods keys
- dsm mods state
+Backup local:
+  dsm backup create
+  dsm backup restore <arquivo>
+  dsm backup snapshot
 
-
-Backup:
-
- dsm backup create
-
-
-Configuração:
-
- dsm config show
-
-Update:
-
- dsm update check
- dsm update run
- dsm update history
-
+Configuração e atualização:
+  dsm config show
+  dsm update check
+  dsm update run
+  dsm update history
 
 Steam:
+  dsm steam auth
 
- dsm steam auth
+Runtime:
+  dsm runtime <comando> [argumentos]
 
-Runtime Manager:
-
- runtime
-
-
-Dashboard:
-
- dsm user add <usuario> <admin|operator|controller|customer> [scope]
- dsm user remove <usuario>
- dsm user passwd <usuario>
- dsm user list
+Usuários:
+  dsm user add <usuario> <admin|operator|controller|customer> [scope]
+  dsm user remove <usuario>
+  dsm user passwd <usuario>
+  dsm user list
 
 Games:
+  dsm game install <environment-id> <version|latest|current>
+  dsm game show <environment-id> <version|latest|current>
 
- dsm game install <environment-id> <version|latest|current>
- dsm game show <environment-id> <version|latest|current>
+Catálogo e conteúdo:
+  dsm catalog runtime list [game]
+  dsm catalog runtime show <runtime-id>
+  dsm catalog runtime prepare <runtime-id> <version>
+  dsm content list [game]
+  dsm content show <content-id>
+  dsm content plan <request.json> <instance-path>
+  dsm content install <request.json> <instance-path>
+  dsm content remove <instance-path> <content-id>
+  dsm content list-installed <instance-path>
+  dsm content verify <instance-path>
+  dsm content rollback <instance-path>
+  dsm compatibility check <request.json>
 
-Catálogo de Conteúdo:
+  Use --json nos comandos catalog/content/compatibility quando suportado
+  para saída estruturada destinada a scripts e APIs.
 
- dsm catalog runtime list [game]
- dsm catalog runtime show <runtime-id>
- dsm catalog runtime prepare <runtime-id> <version>
- dsm content list [game]
- dsm content show <content-id>
- dsm content plan <request.json> <instance-path>
- dsm content install <request.json> <instance-path>
- dsm content remove <instance-path> <content-id>
- dsm content list-installed <instance-path>
- dsm content verify <instance-path>
- dsm content rollback <instance-path>
- dsm compatibility check <request.json>
-
- Adicione --json a qualquer comando catalog/content/compatibility
- para saída estruturada destinada a scripts e APIs.
-
-Agents:
-
- dsm agent ports show <agent-id>
- dsm agent ports set <agent-id> <inicio> <fim> [--protocol tcp|udp|both]
- dsm agent ports check <agent-id>
-
+Agents - portas:
+  dsm agent ports show <agent-id>
+  dsm agent ports set <agent-id> <inicio> <fim> [--protocol tcp|udp|both]
+  dsm agent ports check <agent-id>
 
 Database:
-
- dsm database init
- dsm database migrate
- dsm database status
- dsm database check
- dsm database backup <arquivo.db>
- dsm database restore <arquivo> --confirm-restore
+  dsm database init
+  dsm database migrate
+  dsm database status
+  dsm database check
+  dsm database backup <arquivo>
+  dsm database restore <arquivo> --confirm-restore
 
 Operação:
+  dsm operations readiness
 
- dsm operations readiness
+Manutenção de instâncias:
+  dsm instance bootstrap ...
+  dsm instance bootstrap-status ...
+  dsm instance purge-orphan <instance-id>
 
-Instâncias:
-
- dsm instance create-aurora   Cria Controlador, Agente, Cliente e Servidor Aurora
- dsm instance purge-orphan <id>
-                              Remove somente cadastro órfão sem diretório local
-
-
-Example:
-
- dsm user add admin admin
- dsm user add aurora customer CLI-DEMO-001
- dsm user passwd carlos
- dsm user remove carlos
- dsm user list
+Administração atual de Controller, Customer, Contract, Agent e Instance:
+  use o CLI principal `cap`.
 
 ============================================================
-
 EOF
-
 }
 
 # =============================================================
@@ -352,16 +328,11 @@ doctor_command()
 {
 case "${1:-run}" in
 
-
 run)
-
     source "${DSM_ROOT}/doctor/runner.sh"
-
 ;;
 
-
 status)
-
     if [[ -f "${DSM_ROOT}/core/lib/runtime.sh" ]]
     then
         source "${DSM_ROOT}/core/lib/runtime.sh"
@@ -371,20 +342,15 @@ status)
         echo "Runtime indisponível."
         return 1
     fi
-
 ;;
 
-
 *)
-
     echo
     echo "Uso:"
     echo " dsm doctor run"
     echo " dsm doctor status"
     echo
-
     return 1
-
 ;;
 
 esac
@@ -412,8 +378,6 @@ diagnose_run "$@"
 
 # =============================================================
 # Mods
-#
-# Novo pipeline Módulo 03
 # =============================================================
 
 mods_dispatch()
@@ -550,6 +514,7 @@ steam_command()
         ;;
     esac
 }
+
 catalog_command()
 {
     exec "${DSM_ROOT}/installer/catalog.sh" "$@"
@@ -612,13 +577,11 @@ agent_command()
     esac
 }
 
-
 operations_command()
 {
     exec python3 "${DSM_ROOT}/database/operations.py" \
         --root "${DSM_ROOT}" "$@"
 }
-
 
 # =============================================================
 # Entrada principal
@@ -631,11 +594,8 @@ start|stop|restart|status)
 ;;
 
 server)
-
     shift
-
     server_command "$@"
-
 ;;
 
 doctor)
@@ -657,9 +617,7 @@ doctor)
                 exit 1
             fi
 
-
             DATA="$(runtime_get doctor)"
-
 
             if [[ -z "${DATA}" ]]
             then
@@ -669,7 +627,6 @@ doctor)
                 echo " dsm doctor run"
                 exit 1
             fi
-
 
             doctor_format_status "${DATA}"
 
@@ -703,12 +660,11 @@ backup)
 user)
     shift
     exec "$DSM_ROOT/core/user_manager.sh" "$@"
-
 ;;
 
 runtime)
     shift
-    /opt/dsm/bin/dsm-runtime "$@"
+    "${DSM_ROOT}/bin/dsm-runtime" "$@"
 ;;
 
 config)
