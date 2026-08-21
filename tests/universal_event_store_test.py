@@ -81,7 +81,7 @@ def test_event_migration_reaches_universal_store_schema(tmp_path):
     repository = _repository(tmp_path)
     status = repository.backend.initialize()
 
-    assert int(status["current_migration"]) >= 27
+    assert int(status["current_migration"]) >= 29
 
     with repository.backend.connect() as connection:
         columns = {
@@ -93,7 +93,7 @@ def test_event_migration_reaches_universal_store_schema(tmp_path):
 
 
 def test_event_store_migration_has_backend_parity():
-    migration_name = "027_universal_event_store.sql"
+    migration_name = "029_universal_event_store.sql"
     directories = (
         DATABASE_DIR / "migrations",
         DATABASE_DIR / "migrations_postgresql",
