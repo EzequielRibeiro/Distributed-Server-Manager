@@ -23,10 +23,7 @@ POLKIT_RULES_DIR = Path(os.environ.get("CAPIVARA_POLKIT_RULES_DIR", "/etc/polkit
 REQUEST_PATH = STATE_DIR / "update-request.json"
 RESULT_PATH = STATE_DIR / "update-result.json"
 HISTORY_DIR = STATE_DIR / "update-history"
-REPOSITORY = os.environ.get(
-    "CAPIVARA_AGENT_GITHUB_REPOSITORY",
-    "EzequielRibeiro/Distributed-Server-Manager",
-)
+REPOSITORY = os.environ.get("CAPIVARA_AGENT_GITHUB_REPOSITORY", "EzequielRibeiro/Distributed-Server-Manager")
 
 
 def _utc_now() -> str:
@@ -138,12 +135,15 @@ def _verify_package(package_root: Path, version: str, channel: str, external_man
 def _validate_python(package_root: Path) -> None:
     runtime = package_root / "agent" / "runtime"
     adapters = runtime / "adapters"
+    materializers = runtime / "materializers"
     files = [
         runtime / "agent.py", runtime / "capabilities.py", runtime / "network_inventory.py",
         runtime / "update_client.py", runtime / "update_state.py", runtime / "local_cli.py",
         runtime / "cap_dispatch.py", runtime / "game_data_client.py", runtime / "game_data_executor.py",
-        runtime / "game_data_state.py", runtime / "instance_runtime.py",
+        runtime / "game_data_state.py", runtime / "instance_runtime.py", runtime / "runtime_spec.py",
+        runtime / "runtime_events.py", runtime / "runtime_materialization.py",
         adapters / "__init__.py", adapters / "base.py", adapters / "registry.py", adapters / "systemd.py",
+        materializers / "__init__.py", materializers / "base.py", materializers / "registry.py", materializers / "systemd.py",
         package_root / "agent" / "common" / "identity.py", package_root / "agent" / "updater" / "updater.py",
     ]
     completed = subprocess.run(
@@ -157,6 +157,7 @@ def _validate_python(package_root: Path) -> None:
 def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
     runtime = package_root / "agent" / "runtime"
     adapters = runtime / "adapters"
+    materializers = runtime / "materializers"
     common = package_root / "agent" / "common"
     policy = package_root / "agent" / "policy"
     return [
@@ -171,10 +172,17 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
         (runtime / "game_data_executor.py", INSTALL_ROOT / "runtime" / "game_data_executor.py", 0o755, "agent/runtime/game_data_executor.py"),
         (runtime / "game_data_state.py", INSTALL_ROOT / "runtime" / "game_data_state.py", 0o644, "agent/runtime/game_data_state.py"),
         (runtime / "instance_runtime.py", INSTALL_ROOT / "runtime" / "instance_runtime.py", 0o644, "agent/runtime/instance_runtime.py"),
+        (runtime / "runtime_spec.py", INSTALL_ROOT / "runtime" / "runtime_spec.py", 0o644, "agent/runtime/runtime_spec.py"),
+        (runtime / "runtime_events.py", INSTALL_ROOT / "runtime" / "runtime_events.py", 0o644, "agent/runtime/runtime_events.py"),
+        (runtime / "runtime_materialization.py", INSTALL_ROOT / "runtime" / "runtime_materialization.py", 0o644, "agent/runtime/runtime_materialization.py"),
         (adapters / "__init__.py", INSTALL_ROOT / "runtime" / "adapters" / "__init__.py", 0o644, "agent/runtime/adapters/__init__.py"),
         (adapters / "base.py", INSTALL_ROOT / "runtime" / "adapters" / "base.py", 0o644, "agent/runtime/adapters/base.py"),
         (adapters / "registry.py", INSTALL_ROOT / "runtime" / "adapters" / "registry.py", 0o644, "agent/runtime/adapters/registry.py"),
         (adapters / "systemd.py", INSTALL_ROOT / "runtime" / "adapters" / "systemd.py", 0o644, "agent/runtime/adapters/systemd.py"),
+        (materializers / "__init__.py", INSTALL_ROOT / "runtime" / "materializers" / "__init__.py", 0o644, "agent/runtime/materializers/__init__.py"),
+        (materializers / "base.py", INSTALL_ROOT / "runtime" / "materializers" / "base.py", 0o644, "agent/runtime/materializers/base.py"),
+        (materializers / "registry.py", INSTALL_ROOT / "runtime" / "materializers" / "registry.py", 0o644, "agent/runtime/materializers/registry.py"),
+        (materializers / "systemd.py", INSTALL_ROOT / "runtime" / "materializers" / "systemd.py", 0o644, "agent/runtime/materializers/systemd.py"),
         (policy / "49-capivara-agent-instance-units.rules", POLKIT_RULES_DIR / "49-capivara-agent-instance-units.rules", 0o644, "agent/policy/49-capivara-agent-instance-units.rules"),
         (common / "identity.py", INSTALL_ROOT / "common" / "identity.py", 0o644, "agent/common/identity.py"),
         (package_root / "agent" / "updater" / "updater.py", INSTALL_ROOT / "updater" / "updater.py", 0o755, "agent/updater/updater.py"),
