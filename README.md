@@ -234,7 +234,7 @@ A alocação deve considerar:
 - requisitos específicos de cada jogo;
 - reserva atômica para evitar colisões.
 
-Para DayZ, a arquitetura prevê blocos de portas próprios por instância e preservação das reservas durante stop/restart.
+A arquitetura prevê blocos de portas definidos conforme os requisitos de cada tipo de servidor, com reservas próprias por instância e preservação dessas reservas durante stop/restart.
 
 ---
 
