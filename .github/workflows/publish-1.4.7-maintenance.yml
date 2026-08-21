@@ -1,3 +1,4 @@
+# Publication trigger revision 2: workflow now exists on default branch before this push.
 name: Publish Capivara 1.4.7 Maintenance
 
 on:
