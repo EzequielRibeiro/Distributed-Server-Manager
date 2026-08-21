@@ -35,18 +35,49 @@ def _repository(tmp_path: Path) -> EventRepository:
     return EventRepository(backend)
 
 
+def _seed_owned_instance(repository: EventRepository) -> None:
+    """Create the real ownership chain required by current instance invariants."""
+
+    with repository.backend.transaction() as connection:
+        connection.execute(
+            "INSERT INTO nodes(id, name, role, status) VALUES (?, ?, ?, ?)",
+            ("controller-node", "Controller Node", "controller", "active"),
+        )
+        connection.execute(
+            "INSERT INTO nodes(id, name, role, status) VALUES (?, ?, ?, ?)",
+            ("agent-node", "Agent Node", "agent", "active"),
+        )
+        connection.execute(
+            "INSERT INTO controllers(id, node_id, name, status) VALUES (?, ?, ?, ?)",
+            ("controller-1", "controller-node", "Controller", "active"),
+        )
+        connection.execute(
+            "INSERT INTO agents(id, controller_id, node_id, name, status) VALUES (?, ?, ?, ?, ?)",
+            ("agent-a", "controller-1", "agent-node", "Agent A", "active"),
+        )
+        connection.execute(
+            "INSERT INTO customers(id, controller_id, name, status) VALUES (?, ?, ?, ?)",
+            ("customer-1", "controller-1", "Customer", "active"),
+        )
+        connection.execute(
+            "INSERT INTO instances(id, node_id, game_id, name, controller_id, agent_id, customer_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "instance-1",
+                "agent-node",
+                "test.game",
+                "Test Instance",
+                "controller-1",
+                "agent-a",
+                "customer-1",
+            ),
+        )
+
+
 def test_repository_persists_and_rehydrates_universal_event(tmp_path):
     repository = _repository(tmp_path)
     repository.backend.initialize()
-
-    # The original events table intentionally retains its instance_id FK.
-    # Seed a real instance so the universal event test exercises that
-    # compatibility constraint instead of bypassing it.
-    with repository.backend.transaction() as connection:
-        connection.execute(
-            "INSERT INTO instances(id, game_id, name) VALUES (?, ?, ?)",
-            ("instance-1", "test.game", "Test Instance"),
-        )
+    _seed_owned_instance(repository)
 
     publisher = EventPublisher(sink=repository.store)
 
