@@ -25,7 +25,13 @@ PACKAGE_ROOT="${WORK_DIR}/${PACKAGE_NAME}"
 cleanup(){ rm -rf -- "${WORK_DIR}"; }
 trap cleanup EXIT
 
-mkdir -p "${PACKAGE_ROOT}/agent/common" "${PACKAGE_ROOT}/agent/runtime" "${PACKAGE_ROOT}/agent/updater" "${PACKAGE_ROOT}/services" "${PACKAGE_ROOT}/config"
+mkdir -p \
+    "${PACKAGE_ROOT}/agent/common" \
+    "${PACKAGE_ROOT}/agent/runtime/adapters" \
+    "${PACKAGE_ROOT}/agent/updater" \
+    "${PACKAGE_ROOT}/agent/policy" \
+    "${PACKAGE_ROOT}/services" \
+    "${PACKAGE_ROOT}/config"
 
 git -C "${ROOT}" show "${REF}:agents/linux/installer/install-agent.sh" >"${PACKAGE_ROOT}/install-agent.sh"
 git -C "${ROOT}" show "${REF}:agents/common/identity.py" >"${PACKAGE_ROOT}/agent/common/identity.py"
@@ -39,6 +45,10 @@ git -C "${ROOT}" show "${REF}:agents/linux/runtime/game_data_client.py" >"${PACK
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/game_data_executor.py" >"${PACKAGE_ROOT}/agent/runtime/game_data_executor.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/game_data_state.py" >"${PACKAGE_ROOT}/agent/runtime/game_data_state.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/instance_runtime.py" >"${PACKAGE_ROOT}/agent/runtime/instance_runtime.py"
+for file in __init__.py base.py registry.py systemd.py; do
+    git -C "${ROOT}" show "${REF}:agents/linux/runtime/adapters/${file}" >"${PACKAGE_ROOT}/agent/runtime/adapters/${file}"
+done
+git -C "${ROOT}" show "${REF}:agents/linux/policy/49-capivara-agent-instance-units.rules" >"${PACKAGE_ROOT}/agent/policy/49-capivara-agent-instance-units.rules"
 git -C "${ROOT}" show "${REF}:agents/linux/updater/updater.py" >"${PACKAGE_ROOT}/agent/updater/updater.py"
 git -C "${ROOT}" show "${REF}:agents/linux/services/capivara-agent.service" >"${PACKAGE_ROOT}/services/capivara-agent.service"
 git -C "${ROOT}" show "${REF}:agents/linux/services/capivara-agent-update.service" >"${PACKAGE_ROOT}/services/capivara-agent-update.service"
@@ -46,7 +56,8 @@ git -C "${ROOT}" show "${REF}:agents/linux/services/capivara-agent-update.path" 
 printf '%s\n' "${VERSION}" >"${PACKAGE_ROOT}/VERSION"
 printf '%s\n' 'Runtime configuration is created during installation. Pairing secrets are never packaged.' >"${PACKAGE_ROOT}/config/README.md"
 chmod 0755 "${PACKAGE_ROOT}/install-agent.sh" "${PACKAGE_ROOT}/agent/runtime/agent.py" "${PACKAGE_ROOT}/agent/runtime/local_cli.py" "${PACKAGE_ROOT}/agent/runtime/game_data_executor.py" "${PACKAGE_ROOT}/agent/updater/updater.py"
-chmod 0644 "${PACKAGE_ROOT}/agent/common/identity.py" "${PACKAGE_ROOT}/agent/runtime/capabilities.py" "${PACKAGE_ROOT}/agent/runtime/network_inventory.py" "${PACKAGE_ROOT}/agent/runtime/update_client.py" "${PACKAGE_ROOT}/agent/runtime/update_state.py" "${PACKAGE_ROOT}/agent/runtime/game_data_client.py" "${PACKAGE_ROOT}/agent/runtime/game_data_state.py" "${PACKAGE_ROOT}/agent/runtime/instance_runtime.py" "${PACKAGE_ROOT}/services/capivara-agent.service" "${PACKAGE_ROOT}/services/capivara-agent-update.service" "${PACKAGE_ROOT}/services/capivara-agent-update.path" "${PACKAGE_ROOT}/VERSION" "${PACKAGE_ROOT}/config/README.md"
+find "${PACKAGE_ROOT}/agent" -type f ! -perm -0100 -exec chmod 0644 {} +
+chmod 0644 "${PACKAGE_ROOT}/services/"* "${PACKAGE_ROOT}/VERSION" "${PACKAGE_ROOT}/config/README.md"
 
 python3 - "${PACKAGE_ROOT}" "${VERSION}" "${COMMIT}" "${CHANNEL}" <<'PY'
 import hashlib, json, pathlib, sys
@@ -65,6 +76,11 @@ required = [
     "agent/runtime/game_data_executor.py",
     "agent/runtime/game_data_state.py",
     "agent/runtime/instance_runtime.py",
+    "agent/runtime/adapters/__init__.py",
+    "agent/runtime/adapters/base.py",
+    "agent/runtime/adapters/registry.py",
+    "agent/runtime/adapters/systemd.py",
+    "agent/policy/49-capivara-agent-instance-units.rules",
     "agent/updater/updater.py",
     "services/capivara-agent.service",
     "services/capivara-agent-update.service",
