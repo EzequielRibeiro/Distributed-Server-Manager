@@ -1,5 +1,7 @@
 -- Capivara DSM - Migration 032 - SQLite
 -- Durable normalized store for the Universal Event Platform.
+-- Subject identifiers intentionally have no foreign keys: immutable event history
+-- must survive deletion or re-creation of mutable infrastructure entities.
 
 CREATE TABLE universal_events (
     event_id TEXT PRIMARY KEY,
@@ -16,9 +18,7 @@ CREATE TABLE universal_events (
     causation_id TEXT,
     actor_type TEXT,
     actor_id TEXT,
-    data_json TEXT NOT NULL DEFAULT '{}',
-    FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE SET NULL,
-    FOREIGN KEY (instance_id) REFERENCES instances(id) ON DELETE SET NULL
+    data_json TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE INDEX idx_universal_events_type_time
