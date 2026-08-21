@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - 'core/ha_dr.py'
+      - 'core/ha_dr_orchestrator.py'
       - 'database/ha_dr_*'
       - 'database/migrations/040_high_availability_disaster_recovery.sql'
       - 'database/migrations_mysql/040_high_availability_disaster_recovery.sql'
       - 'database/migrations_postgresql/040_high_availability_disaster_recovery.sql'
       - 'bin/cap'
       - 'tests/high_availability_disaster_recovery_test.py'
+      - 'tests/high_availability_failover_e2e_test.py'
       - 'docs/architecture/high-availability-disaster-recovery.md'
       - '.github/workflows/high-availability-disaster-recovery.yml'
   workflow_dispatch:
@@ -22,9 +24,11 @@ jobs:
       - name: Validate syntax
         run: |
           bash -n bin/cap
-          PYTHONPATH=database python3 -m py_compile core/ha_dr.py database/ha_dr_repository.py database/ha_dr_cli.py
+          PYTHONPATH=database python3 -m py_compile core/ha_dr.py core/ha_dr_orchestrator.py database/ha_dr_repository.py database/ha_dr_cli.py
       - name: Test E2 contracts
         run: PYTHONPATH=database:. python3 -m unittest tests/high_availability_disaster_recovery_test.py -v
+      - name: Test operational failover and split-brain protection
+        run: PYTHONPATH=database:. python3 tests/high_availability_failover_e2e_test.py
       - name: Verify migration parity
         run: |
           test -f database/migrations/040_high_availability_disaster_recovery.sql
