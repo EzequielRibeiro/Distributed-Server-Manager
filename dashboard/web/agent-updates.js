@@ -77,9 +77,19 @@
         }).observe(title, {childList: true, characterData: true, subtree: true});
     }
 
+    function loadInfrastructureUiV2() {
+        if (document.querySelector('script[data-infrastructure-ui-v2]')) return;
+        const script = document.createElement("script");
+        script.src = "/infrastructure-ui-v2.js?v=1";
+        script.defer = true;
+        script.dataset.infrastructureUiV2 = "true";
+        document.head.appendChild(script);
+    }
+
     window.addEventListener("load", () => {
         document.getElementById("agent-update-channel-form")?.addEventListener("submit", saveChannel);
         document.getElementById("agent-rollout-form")?.addEventListener("submit", createRollout);
         watchSelection();
+        loadInfrastructureUiV2();
     });
 })();
