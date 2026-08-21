@@ -14,6 +14,7 @@ on:
       - 'dashboard/server_part13.py'
       - 'release/build_agent_package.sh'
       - 'tests/agent_instance_provisioning_test.py'
+      - 'tests/instance_launch_profile_test.py'
       - '.github/workflows/agent-instance-provisioning.yml'
   push:
     branches: [main]
@@ -29,6 +30,7 @@ on:
       - 'dashboard/server_part13.py'
       - 'release/build_agent_package.sh'
       - 'tests/agent_instance_provisioning_test.py'
+      - 'tests/instance_launch_profile_test.py'
       - '.github/workflows/agent-instance-provisioning.yml'
 
 permissions:
@@ -58,9 +60,12 @@ jobs:
             dashboard/instance_launch_profile.py \
             dashboard/agent_remote_http.py \
             dashboard/server_part13.py \
-            tests/agent_instance_provisioning_test.py
+            tests/agent_instance_provisioning_test.py \
+            tests/instance_launch_profile_test.py
       - name: Run instance provisioning tests
-        run: python3 -m unittest tests/agent_instance_provisioning_test.py
+        run: |
+          python3 -m unittest tests/agent_instance_provisioning_test.py
+          python3 -m unittest tests/instance_launch_profile_test.py
       - name: Check migration parity
         run: |
           for directory in migrations migrations_mysql migrations_postgresql; do
