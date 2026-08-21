@@ -1,6 +1,9 @@
 name: Catalog Layout Compatibility
 
 on:
+  push:
+    branches:
+      - refactor/game-directory-layout
   pull_request:
     paths:
       - 'catalog/**'
