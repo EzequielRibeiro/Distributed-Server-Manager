@@ -83,7 +83,7 @@ def archive_job(job_id: str) -> dict[str, Any] | None:
     return summary
 
 
-def _active_job(job_id: str) -> dict[str, Any] | None:
+def _transient_job(job_id: str) -> dict[str, Any] | None:
     request_path, result_path, log_path = job_paths(job_id)
     request = read_json(request_path) or {}
     result = read_json(result_path) or {}
@@ -110,9 +110,9 @@ def _active_job(job_id: str) -> dict[str, Any] | None:
 
 def get_job(job_id: str) -> dict[str, Any] | None:
     safe = _safe_token(job_id, "game-data job id")
-    active = _active_job(safe)
-    if active:
-        return active
+    transient = _transient_job(safe)
+    if transient:
+        return transient
     history = read_json(HISTORY_ROOT / f"{safe}.json")
     if history:
         return {**history, "active": False}
@@ -126,8 +126,8 @@ def list_jobs(*, active_only: bool = False, limit: int = 50) -> list[dict[str, A
         ids = {path.name[: -len(".request.json")] for path in JOB_ROOT.glob("*.request.json")}
         ids.update(path.name[: -len(".result.json")] for path in JOB_ROOT.glob("*.result.json"))
         for job_id in ids:
-            payload = _active_job(job_id)
-            if not payload:
+            payload = _transient_job(job_id)
+            if not payload or (active_only and not payload.get("active")):
                 continue
             try:
                 stamp = max(
@@ -186,11 +186,13 @@ def get_game_data(game: str) -> dict[str, Any] | None:
     target = str(payload.get("target_path") or "").strip()
     if target:
         path = Path(target)
-        payload = {
-            **payload,
-            "path_exists": path.is_dir(),
-            "path_nonempty": path.is_dir() and any(path.iterdir()),
-        }
+        try:
+            exists = path.is_dir()
+            nonempty = exists and any(path.iterdir())
+        except OSError:
+            exists = False
+            nonempty = False
+        payload = {**payload, "path_exists": exists, "path_nonempty": nonempty}
     return payload
 
 
