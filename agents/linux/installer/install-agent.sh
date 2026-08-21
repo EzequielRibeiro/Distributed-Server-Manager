@@ -38,7 +38,7 @@ done
 [[ "${CONTROLLER_URL}" =~ ^https?://[^[:space:]]+$ ]] || fail "Controller URL inválida"
 [[ -n "${PAIRING_TOKEN}" ]] || fail "pairing token é obrigatório"
 unset CAPIVARA_PAIRING_TOKEN
-for cmd in python3 install systemctl; do command -v "$cmd" >/dev/null || fail "comando necessário ausente: $cmd"; done
+for cmd in python3 install systemctl systemd-analyze; do command -v "$cmd" >/dev/null || fail "comando necessário ausente: $cmd"; done
 if [[ -z "${PACKAGE_DIR}" ]]; then PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; fi
 PACKAGE_DIR="$(cd "${PACKAGE_DIR}" && pwd)"
 for required in \
@@ -46,11 +46,13 @@ for required in \
   agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py \
   agent/runtime/update_client.py agent/runtime/update_state.py agent/runtime/local_cli.py agent/runtime/cap_dispatch.py \
   agent/runtime/game_data_client.py agent/runtime/game_data_executor.py agent/runtime/game_data_state.py \
-  agent/runtime/instance_runtime.py \
+  agent/runtime/instance_runtime.py agent/runtime/instance_provisioning.py \
   agent/runtime/adapters/__init__.py agent/runtime/adapters/base.py \
   agent/runtime/adapters/registry.py agent/runtime/adapters/systemd.py \
+  agent/provisioner/provisioner.py \
   agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py \
-  services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path
+  services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path \
+  services/capivara-agent-instance-provision.service services/capivara-agent-instance-provision.path
 do [[ -f "${PACKAGE_DIR}/${required}" ]] || fail "arquivo obrigatório ausente: ${required}"; done
 python3 - "${PACKAGE_DIR}" <<'PY'
 import hashlib, json, pathlib, sys
@@ -73,11 +75,14 @@ if [[ -e "${CLI_PATH}" || -L "${CLI_PATH}" ]]; then
 fi
 id capivara-agent >/dev/null 2>&1 || useradd --system --home "${STATE_DIR}" --create-home --shell /usr/sbin/nologin capivara-agent
 install -d -m 0755 -o root -g root \
-  "${INSTALL_ROOT}" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/runtime/adapters" "${INSTALL_ROOT}/common" "${INSTALL_ROOT}/updater"
+  "${INSTALL_ROOT}" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/runtime/adapters" \
+  "${INSTALL_ROOT}/common" "${INSTALL_ROOT}/updater" "${INSTALL_ROOT}/provisioner"
 install -d -m 0700 -o capivara-agent -g capivara-agent \
   "${CONFIG_DIR}" "${STATE_DIR}" "${STATE_DIR}/game-data" "${STATE_DIR}/game-data-jobs" \
   "${STATE_DIR}/game-data-jobs/history" "${STATE_DIR}/game-data-state" "${STATE_DIR}/update-history" \
-  "${STATE_DIR}/instances" "${STATE_DIR}/instance-results" "${STATE_DIR}/instance-command-history"
+  "${STATE_DIR}/instances" "${STATE_DIR}/instance-results" "${STATE_DIR}/instance-command-history" \
+  "${STATE_DIR}/instance-provisioning"
+install -d -m 0755 -o capivara-agent -g capivara-agent "${STATE_DIR}/instance-data"
 install -m 0755 "${PACKAGE_DIR}/agent/runtime/agent.py" "${INSTALL_ROOT}/runtime/agent.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/capabilities.py" "${INSTALL_ROOT}/runtime/capabilities.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/network_inventory.py" "${INSTALL_ROOT}/runtime/network_inventory.py"
@@ -89,9 +94,11 @@ install -m 0644 "${PACKAGE_DIR}/agent/runtime/game_data_client.py" "${INSTALL_RO
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/game_data_state.py" "${INSTALL_ROOT}/runtime/game_data_state.py"
 install -m 0755 "${PACKAGE_DIR}/agent/runtime/game_data_executor.py" "${INSTALL_ROOT}/runtime/game_data_executor.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/instance_runtime.py" "${INSTALL_ROOT}/runtime/instance_runtime.py"
+install -m 0644 "${PACKAGE_DIR}/agent/runtime/instance_provisioning.py" "${INSTALL_ROOT}/runtime/instance_provisioning.py"
 for file in __init__.py base.py registry.py systemd.py; do
   install -m 0644 "${PACKAGE_DIR}/agent/runtime/adapters/${file}" "${INSTALL_ROOT}/runtime/adapters/${file}"
 done
+install -m 0755 "${PACKAGE_DIR}/agent/provisioner/provisioner.py" "${INSTALL_ROOT}/provisioner/provisioner.py"
 install -m 0755 "${PACKAGE_DIR}/agent/updater/updater.py" "${INSTALL_ROOT}/updater/updater.py"
 install -m 0644 "${PACKAGE_DIR}/agent/common/identity.py" "${INSTALL_ROOT}/common/identity.py"
 install -m 0644 "${PACKAGE_DIR}/manifest.json" "${INSTALL_ROOT}/manifest.json"
@@ -110,10 +117,14 @@ mod.write_identity(pathlib.Path(config_path), config)
 PY
 chown capivara-agent:capivara-agent "${CONFIG_DIR}/agent.json"
 chmod 0600 "${CONFIG_DIR}/agent.json"
-install -m 0644 "${PACKAGE_DIR}/services/capivara-agent.service" "${SYSTEMD_DIR}/capivara-agent.service"
-install -m 0644 "${PACKAGE_DIR}/services/capivara-agent-update.service" "${SYSTEMD_DIR}/capivara-agent-update.service"
-install -m 0644 "${PACKAGE_DIR}/services/capivara-agent-update.path" "${SYSTEMD_DIR}/capivara-agent-update.path"
+for service in \
+  capivara-agent.service capivara-agent-update.service capivara-agent-update.path \
+  capivara-agent-instance-provision.service capivara-agent-instance-provision.path
+do
+  install -m 0644 "${PACKAGE_DIR}/services/${service}" "${SYSTEMD_DIR}/${service}"
+done
 systemctl daemon-reload
 systemctl enable --now capivara-agent-update.path
+systemctl enable --now capivara-agent-instance-provision.path
 systemctl enable --now capivara-agent.service
-log "Agent ${VERSION} instalado. Instance lifecycle é limitado a units capivara-instance-*.service."
+log "Agent ${VERSION} instalado. Instance provisioning e lifecycle usam contracts estruturados e units capivara-instance-*.service."
