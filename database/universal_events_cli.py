@@ -62,6 +62,10 @@ def main(argv: list[str] | None = None) -> int:
     publish.add_argument("--data-json", default="{}")
     publish.add_argument("--json", action="store_true")
 
+    legacy = sub.add_parser("import-legacy")
+    legacy.add_argument("--limit", type=int, default=10000)
+    legacy.add_argument("--json", action="store_true")
+
     args = parser.parse_args(argv)
     repo = _repository()
 
@@ -92,6 +96,18 @@ def main(argv: list[str] | None = None) -> int:
             _print_event(event)
             print(json.dumps(event.get("data") or {}, indent=2, sort_keys=True))
         return 0
+
+    if args.command == "import-legacy":
+        result = repo.import_legacy_events(limit=args.limit)
+        if args.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(
+                "Legacy events: "
+                f"scanned={result['scanned']} created={result['created']} "
+                f"existing={result['existing']} rejected={result['rejected']}"
+            )
+        return 0 if result["rejected"] == 0 else 1
 
     try:
         data = json.loads(args.data_json)
