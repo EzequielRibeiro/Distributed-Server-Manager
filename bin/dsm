@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+
+# A self-update or reinstall can replace/remove the directory a terminal was
+# using as its current working directory. Recover before resolving paths.
+if ! pwd -P >/dev/null 2>&1
+then
+    cd /opt 2>/dev/null || cd /
+fi
+
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
 export DSM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
