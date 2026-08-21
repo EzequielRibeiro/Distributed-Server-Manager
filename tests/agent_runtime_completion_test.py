@@ -6,7 +6,6 @@ import json
 import sys
 import tempfile
 import threading
-import time
 import unittest
 from pathlib import Path
 
@@ -18,8 +17,12 @@ for path in (ROOT, ROOT / "database", ROOT / "dashboard", RUNTIME):
 
 import instance_runtime
 from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
+from agent_pairing_repository import AgentPairingRepository
+from agent_remote_http import dispatch_enroll, dispatch_heartbeat
 from backend import DatabaseConfig
 from backend_factory import create_backend
+from registry import installation_profile_identity
+from registry_repository import RegistryRepository
 from runtime_health import project_instance_health
 from runtime_limits import runtime_limits
 from runtime_lock import RuntimeLockTimeout, instance_lock
@@ -70,10 +73,12 @@ class RuntimeCompletionLocalTest(unittest.TestCase):
 
         def holder():
             with instance_lock("instance-one", "holder", timeout_seconds=1):
-                entered.set(); release.wait(2)
+                entered.set()
+                release.wait(2)
 
         thread = threading.Thread(target=holder)
-        thread.start(); self.assertTrue(entered.wait(1))
+        thread.start()
+        self.assertTrue(entered.wait(1))
         try:
             with self.assertRaises(RuntimeLockTimeout):
                 with instance_lock("instance-one", "competitor", timeout_seconds=0.1):
@@ -81,7 +86,8 @@ class RuntimeCompletionLocalTest(unittest.TestCase):
         except Exception as exc:
             errors.append(exc)
         finally:
-            release.set(); thread.join(2)
+            release.set()
+            thread.join(2)
         self.assertFalse(errors)
 
     def test_different_instances_do_not_block_each_other(self):
@@ -119,26 +125,47 @@ class RuntimeHealthProjectionTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.backend = create_backend(DatabaseConfig(driver="sqlite", database=str(Path(self.temp.name) / "capivara.db")))
         self.backend.initialize()
+        identity = installation_profile_identity(RegistryRepository(self.backend), profile="controller", hostname="b12-controller")
+        issued = AgentPairingRepository(self.backend).issue_token(controller_id=str(identity["controller_id"]), ttl_seconds=300)
+        status, enrolled = dispatch_enroll({
+            "pairing_token": issued.token, "agent_id": "agent-b12", "node_id": "node-b12", "name": "B12 Agent",
+            "fingerprint": "sha256:b12-agent", "hostname": "b12-agent", "os": "linux", "architecture": "x86_64",
+        }, backend=self.backend)
+        self.assertEqual(status, 201)
+        self.controller_id = enrolled["controller_id"]
+        self.headers = {
+            "X-Capivara-Agent-Credential": enrolled["credential_id"],
+            "X-Capivara-Agent-Secret": enrolled["credential_secret"],
+            "X-Capivara-Agent-Fingerprint": "sha256:b12-agent",
+        }
+        status, _ = dispatch_heartbeat({"agent_id": "agent-b12"}, headers=self.headers, backend=self.backend)
+        self.assertEqual(status, 200)
         with self.backend.transaction() as connection:
-            connection.execute("INSERT INTO controllers(id,name,mode) VALUES (?,?,?)", ("controller-b12", "B12", "controller"))
-            connection.execute("INSERT INTO nodes(id,controller_id,name) VALUES (?,?,?)", ("node-b12", "controller-b12", "Node"))
-            connection.execute("INSERT INTO agents(id,controller_id,node_id,name,status) VALUES (?,?,?,?,?)", ("agent-b12", "controller-b12", "node-b12", "Agent", "active"))
-            connection.execute("INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,controller_id,agent_id) VALUES (?,?,?,?,?,?,?,?)", ("instance-b12", "node-b12", "dayz", "dayz.stable", "Instance", "online", "controller-b12", "agent-b12"))
+            connection.execute("INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)", ("customer-b12", self.controller_id, "Customer", "active"))
+            connection.execute(
+                "INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,controller_id,agent_id,customer_id) VALUES (?,?,?,?,?,?,?,?,?)",
+                ("instance-b12", "node-b12", "dayz", "dayz.stable", "Instance B12", "offline", self.controller_id, "agent-b12", "customer-b12"),
+            )
         self.repo = AgentInstanceRuntimeHealthRepository(self.backend)
         self.repo.initialize()
 
     def tearDown(self):
-        self.backend.close(); self.temp.cleanup()
+        self.backend.close()
+        self.temp.cleanup()
 
-    def test_controller_persists_only_owned_health_projection(self):
-        applied = self.repo.apply_inventory("agent-b12", [{
-            "instance_id": "instance-b12", "desired_state": "running", "observed_state": "running",
-            "reconcile_status": "healthy", "health": "healthy", "operation_status": "idle",
-        }, {"instance_id": "missing", "health": "healthy"}])
-        self.assertEqual(applied, [{"instance_id": "instance-b12", "health": "healthy", "operation_status": "idle"}])
+    def test_heartbeat_persists_only_owned_health_projection(self):
+        status, _ = dispatch_heartbeat({
+            "agent_id": "agent-b12",
+            "instance_runtime_health": [{
+                "instance_id": "instance-b12", "desired_state": "running", "observed_state": "running",
+                "reconcile_status": "healthy", "health": "healthy", "operation_status": "idle",
+            }, {"instance_id": "missing", "health": "healthy"}],
+        }, headers=self.headers, backend=self.backend)
+        self.assertEqual(status, 200)
         rows = self.repo.list_for_agent("agent-b12")
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["health"], "healthy")
+        self.assertEqual(rows[0]["operation_status"], "idle")
 
 
 if __name__ == "__main__":
