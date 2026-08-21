@@ -125,6 +125,26 @@ class ControllerInstanceRuntimeQueueTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.commands.enqueue(agent_id="missing-agent", instance_id="instance-one", action="status")
 
+    def test_controller_rejects_result_metadata_mismatch(self):
+        created = self.commands.enqueue(agent_id="agent-instance", instance_id="instance-one", action="doctor")
+        with self.assertRaises(ValueError):
+            self.commands.apply_result("agent-instance", {
+                "command_id": created["command_id"],
+                "instance_id": "another-instance",
+                "action": "doctor",
+                "status": "completed",
+                "result": {"status": "healthy"},
+            })
+        with self.assertRaises(ValueError):
+            self.commands.apply_result("agent-instance", {
+                "command_id": created["command_id"],
+                "instance_id": "instance-one",
+                "action": "status",
+                "status": "completed",
+                "result": {"status": "healthy"},
+            })
+        self.assertEqual(self.commands.snapshot(created["command_id"])["status"], "queued")
+
 
 if __name__ == "__main__":
     unittest.main()
