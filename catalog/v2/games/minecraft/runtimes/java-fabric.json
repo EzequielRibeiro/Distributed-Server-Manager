@@ -1,0 +1,9 @@
+{
+  "schema_version": 2, "kind": "RuntimeDefinition", "id": "minecraft.java.fabric", "name": "Minecraft Java Fabric",
+  "game": "minecraft", "edition": "java", "variant": "fabric", "loader": "fabric",
+  "version": { "strategy": "dynamic", "resolver": "fabric_meta", "config": { "api_base": "https://meta.fabricmc.net/v2" } },
+  "process": { "engine": "java", "executable": "fabric-server-launch.jar", "artifact_mode": "file" },
+  "requirements": { "os": ["linux", "windows"], "architectures": ["x86_64", "aarch64"], "java": { "min": 17, "max": 25 } },
+  "artifact": { "provider": "http", "auth": "anonymous" },
+  "installation": { "directory": "/opt/dsm/game-data/minecraft/fabric" }
+}
