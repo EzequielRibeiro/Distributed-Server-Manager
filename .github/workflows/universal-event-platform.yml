@@ -42,6 +42,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install test runner
+        run: python3 -m pip install pytest
+
       - name: Validate Python syntax
         run: |
           python3 -m py_compile \
@@ -73,17 +76,7 @@ jobs:
             tests/universal_event_consumers_test.py
 
       - name: Run Universal Event Platform tests
-        run: |
-          python3 -m unittest \
-            tests/universal_event_contract_test.py \
-            tests/universal_event_publisher_test.py \
-            tests/universal_event_store_test.py \
-            tests/universal_event_context_test.py \
-            tests/universal_event_agent_update_producer_test.py \
-            tests/universal_event_timeline_test.py \
-            tests/universal_event_timeline_http_test.py \
-            tests/universal_event_timeline_ui_test.py \
-            tests/universal_event_consumers_test.py
+        run: python3 -m pytest -q tests/universal_event_*.py
 
       - name: Validate Timeline JavaScript
         run: node --check dashboard/web/js/timeline-ui.js
