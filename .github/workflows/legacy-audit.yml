@@ -1,0 +1,23 @@
+name: Legacy Audit
+
+on:
+  push:
+    branches: [main, 'cleanup/legacy-*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit tracked legacy artifacts
+        run: python3 tools/legacy_audit.py
+      - name: Validate remaining shell workers
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files -z '*.sh' | xargs -0 -r -n1 bash -n
