@@ -8,6 +8,7 @@ INSTALL_ROOT="${CAPIVARA_AGENT_ROOT:-/opt/capivara-agent}"
 CONFIG_DIR="${CAPIVARA_AGENT_CONFIG_DIR:-/etc/capivara-agent}"
 STATE_DIR="${CAPIVARA_AGENT_STATE_DIR:-/var/lib/capivara-agent}"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
+CLI_PATH="${CAPIVARA_AGENT_CLI_PATH:-/usr/local/bin/cap}"
 
 fail(){ printf '[Capivara Agent][ERRO] %s\n' "$*" >&2; exit 1; }
 log(){ printf '[Capivara Agent] %s\n' "$*"; }
@@ -49,7 +50,7 @@ PACKAGE_DIR="$(cd "${PACKAGE_DIR}" && pwd)"
 for required in \
   manifest.json VERSION \
   agent/common/identity.py \
-  agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py agent/runtime/update_client.py \
+  agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py agent/runtime/update_client.py agent/runtime/local_cli.py \
   agent/updater/updater.py \
   services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path
 do
@@ -77,6 +78,12 @@ for relative in manifest.get('required_files', []):
 PY
 VERSION=$(tr -d '\r\n' < "${PACKAGE_DIR}/VERSION")
 
+if [[ -e "${CLI_PATH}" || -L "${CLI_PATH}" ]]; then
+  EXISTING_CLI_TARGET="$(readlink -f "${CLI_PATH}" 2>/dev/null || true)"
+  EXPECTED_CLI_TARGET="$(readlink -f "${INSTALL_ROOT}/runtime/local_cli.py" 2>/dev/null || printf '%s' "${INSTALL_ROOT}/runtime/local_cli.py")"
+  [[ "${EXISTING_CLI_TARGET}" == "${EXPECTED_CLI_TARGET}" ]] || fail "${CLI_PATH} já existe e não pertence ao Capivara Agent"
+fi
+
 id capivara-agent >/dev/null 2>&1 || useradd --system --home "${STATE_DIR}" --create-home --shell /usr/sbin/nologin capivara-agent
 install -d -m 0755 -o root -g root "${INSTALL_ROOT}" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/common" "${INSTALL_ROOT}/updater"
 install -d -m 0700 -o capivara-agent -g capivara-agent "${CONFIG_DIR}" "${STATE_DIR}"
@@ -84,10 +91,13 @@ install -m 0755 "${PACKAGE_DIR}/agent/runtime/agent.py" "${INSTALL_ROOT}/runtime
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/capabilities.py" "${INSTALL_ROOT}/runtime/capabilities.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/network_inventory.py" "${INSTALL_ROOT}/runtime/network_inventory.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/update_client.py" "${INSTALL_ROOT}/runtime/update_client.py"
+install -m 0755 "${PACKAGE_DIR}/agent/runtime/local_cli.py" "${INSTALL_ROOT}/runtime/local_cli.py"
 install -m 0755 "${PACKAGE_DIR}/agent/updater/updater.py" "${INSTALL_ROOT}/updater/updater.py"
 install -m 0644 "${PACKAGE_DIR}/agent/common/identity.py" "${INSTALL_ROOT}/common/identity.py"
 install -m 0644 "${PACKAGE_DIR}/manifest.json" "${INSTALL_ROOT}/manifest.json"
 printf '%s\n' "${VERSION}" >"${INSTALL_ROOT}/VERSION"
+install -d -m 0755 "$(dirname "${CLI_PATH}")"
+ln -sfn "${INSTALL_ROOT}/runtime/local_cli.py" "${CLI_PATH}"
 
 python3 - "${PACKAGE_DIR}" "${CONFIG_DIR}/agent.json" "${CONTROLLER_URL}" "${PAIRING_TOKEN}" "${VERSION}" <<'PY'
 import importlib.util, pathlib, sys
@@ -108,4 +118,4 @@ install -m 0644 "${PACKAGE_DIR}/services/capivara-agent-update.path" "${SYSTEMD_
 systemctl daemon-reload
 systemctl enable --now capivara-agent-update.path
 systemctl enable --now capivara-agent.service
-log "Agent ${VERSION} instalado a partir do pacote local. Enrollment, heartbeat e atualização remota estão habilitados."
+log "Agent ${VERSION} instalado. CLI local: ${CLI_PATH} agent status. Enrollment, heartbeat e atualização remota estão habilitados."
