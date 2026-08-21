@@ -7,10 +7,10 @@ O Doctor legado baseado em Bash, DayZ e LinuxGSM foi removido do código-fonte. 
 O diagnóstico oficial é orientado aos recursos nativos do Capivara e separado por escopo:
 
 - `cap infrastructure doctor`: infraestrutura distribuída do Controller/Hybrid;
-- `cap agent doctor`: diagnóstico local do Agent, planejado para a etapa seguinte;
-- `cap instance doctor <instance-id>`: diagnóstico de runtime/instância, planejado para evolução posterior.
+- `cap agent doctor`: diagnóstico local do Agent;
+- `cap instance doctor <instance-id>`: superfície reservada à evolução do diagnóstico por instância/runtime.
 
-`cap doctor` não é um alias válido. A CLI histórica `bin/dsm` foi mantida fora desta refatoração para não misturar a modernização do Doctor com a unificação ampla da camada de compatibilidade. Ainda pode existir nela uma rota antiga `dsm doctor`, porém a implementação histórica `doctor/` não existe mais e nenhum check legado pode ser executado. A retirada desse código morto pertence à etapa própria de unificação da CLI.
+A CLI pública é `cap`. O antigo nome de comando `dsm` permanece apenas como wrapper temporário de compatibilidade e não deve ser utilizado em documentação ou novos procedimentos. Qualquer referência histórica a `dsm doctor` representa somente o período anterior à unificação e não é uma interface pública recomendada.
 
 ## Fronteira entre diagnóstico e mutação
 
@@ -99,4 +99,4 @@ Foram retirados do código-fonte todos os componentes do Doctor Bash histórico,
 
 Também foram retirados os bridges temporários da Dashboard e a dependência de `doctor_state.json`.
 
-Nenhum runtime novo deve reintroduzir `LINUXGSM_PATH`, `core/lgsm.sh` ou funções `lgsm_*` como dependência do Doctor. Diagnósticos específicos de jogos pertencem ao futuro `cap instance doctor`, implementado sobre os runtimes/providers nativos do Capivara.
+Nenhum runtime novo deve reintroduzir `LINUXGSM_PATH`, `core/lgsm.sh` ou funções `lgsm_*` como dependência do Doctor. Diagnósticos específicos de jogos pertencem à superfície de diagnóstico por instância implementada sobre os runtimes/providers nativos do Capivara.
