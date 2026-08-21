@@ -24,17 +24,20 @@ CREATE TABLE configuration_revisions (
 );
 CREATE TABLE agent_configuration_state (
     agent_id VARCHAR(191) NOT NULL,
-    configuration_id VARCHAR(191) NOT NULL,
-    desired_revision INTEGER NOT NULL,
-    applied_revision INTEGER NULL,
-    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    target_type VARCHAR(32) NOT NULL,
+    target_id VARCHAR(191) NOT NULL,
+    namespace VARCHAR(128) NOT NULL,
+    desired_revision VARCHAR(64) NOT NULL,
+    applied_revision VARCHAR(64) NULL,
+    desired_checksum VARCHAR(64) NOT NULL,
     applied_checksum VARCHAR(64) NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'pending',
     last_error TEXT NULL,
     reported_at VARCHAR(64) NULL,
     updated_at VARCHAR(64) NOT NULL,
-    PRIMARY KEY(agent_id, configuration_id),
+    PRIMARY KEY(agent_id, target_type, target_id, namespace),
     CONSTRAINT fk_agent_configuration_state_agent FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE
 );
 CREATE INDEX idx_configurations_scope_namespace ON configurations(scope_type, scope_key, namespace);
 CREATE INDEX idx_configuration_revisions_created ON configuration_revisions(configuration_id, revision);
-CREATE INDEX idx_agent_configuration_state_pending ON agent_configuration_state(agent_id, status, desired_revision);
+CREATE INDEX idx_agent_configuration_state_pending ON agent_configuration_state(agent_id, status, target_type, target_id, namespace);
