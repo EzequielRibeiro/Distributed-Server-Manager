@@ -57,7 +57,6 @@ def get_instance(instance_id: str) -> dict[str, Any] | None:
 
 
 def register_instance(record: dict[str, Any]) -> dict[str, Any]:
-    """Persist the Agent-local instance identity used by provisioning and lifecycle."""
     body = dict(record or {})
     instance_id = _token(body.get("instance_id"), "instance_id")
     body["instance_id"] = instance_id
@@ -90,13 +89,9 @@ def list_instances(config: dict[str, Any]) -> list[dict[str, Any]]:
     for path in paths:
         item = _read(path)
         if item and str(item.get("agent_id") or "") == local_agent:
-            values.append({
-                "instance_id": item.get("instance_id"),
-                "game_id": item.get("game_id"),
-                "environment_id": item.get("environment_id"),
-                "adapter": item.get("adapter"),
-                "observed_state": item.get("observed_state", "unknown"),
-            })
+            values.append({"instance_id": item.get("instance_id"), "game_id": item.get("game_id"),
+                           "environment_id": item.get("environment_id"), "adapter": item.get("adapter"),
+                           "observed_state": item.get("observed_state", "unknown")})
     return values
 
 
@@ -112,14 +107,10 @@ def _observed_state(adapter_state: dict[str, Any] | None, fallback: Any) -> str:
     if not adapter_state.get("available"):
         return "unavailable"
     active = str(adapter_state.get("active_state") or "").lower()
-    if active == "active":
-        return "running"
-    if active == "failed":
-        return "failed"
-    if active in {"inactive", "deactivating"}:
-        return "stopped"
-    if active == "activating":
-        return "starting"
+    if active == "active": return "running"
+    if active == "failed": return "failed"
+    if active in {"inactive", "deactivating"}: return "stopped"
+    if active == "activating": return "starting"
     return str(fallback or "unknown")
 
 
@@ -127,23 +118,13 @@ def status(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     record = _owned(config, instance_id)
     configured_path = str(record.get("path") or "").strip()
     adapter_state = _adapter_state(record)
-    return {
-        "schema_version": 2,
-        "kind": "CapivaraInstanceStatus",
-        "scope": "instance-local",
-        "instance_id": record["instance_id"],
-        "agent_id": record["agent_id"],
-        "game_id": record.get("game_id"),
-        "environment_id": record.get("environment_id"),
-        "runtime_id": record.get("runtime_id"),
-        "adapter": record.get("adapter"),
-        "desired_state": record.get("desired_state"),
-        "observed_state": _observed_state(adapter_state, record.get("observed_state")),
-        "adapter_state": adapter_state,
-        "path": configured_path or None,
-        "path_exists": bool(configured_path and Path(configured_path).exists()),
-        "updated_at": record.get("updated_at"),
-    }
+    return {"schema_version": 2, "kind": "CapivaraInstanceStatus", "scope": "instance-local",
+            "instance_id": record["instance_id"], "agent_id": record["agent_id"], "game_id": record.get("game_id"),
+            "environment_id": record.get("environment_id"), "runtime_id": record.get("runtime_id"),
+            "adapter": record.get("adapter"), "desired_state": record.get("desired_state"),
+            "observed_state": _observed_state(adapter_state, record.get("observed_state")), "adapter_state": adapter_state,
+            "path": configured_path or None, "path_exists": bool(configured_path and Path(configured_path).exists()),
+            "updated_at": record.get("updated_at")}
 
 
 def doctor(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
@@ -157,8 +138,7 @@ def doctor(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
         try:
             adapter_doctor = resolve_adapter(record).doctor(record)
             for item in adapter_doctor.get("findings", []):
-                if isinstance(item, dict):
-                    findings.append(dict(item))
+                if isinstance(item, dict): findings.append(dict(item))
         except AdapterError as exc:
             findings.append({"code": "adapter_error", "severity": "critical", "message": str(exc)[:2000]})
     if not view.get("runtime_id"):
@@ -167,43 +147,33 @@ def doctor(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
         findings.append({"code": "instance_path_missing", "severity": "critical", "message": "Configured instance path does not exist."})
     severities = {item["severity"] for item in findings}
     state = "critical" if "critical" in severities else "degraded" if "warning" in severities else "healthy"
-    return {
-        "schema_version": 2,
-        "kind": "CapivaraInstanceDoctor",
-        "scope": "instance-local",
-        "status": state,
-        "ready": state != "critical",
-        "instance": view,
-        "adapter_doctor": adapter_doctor,
-        "findings": findings,
-    }
+    return {"schema_version": 2, "kind": "CapivaraInstanceDoctor", "scope": "instance-local", "status": state,
+            "ready": state != "critical", "instance": view, "adapter_doctor": adapter_doctor, "findings": findings}
 
 
 def lifecycle(config: dict[str, Any], instance_id: str, action: str) -> dict[str, Any]:
     action = str(action or "").strip().lower()
     if action not in LIFECYCLE_ACTIONS:
         raise ValueError("unsupported instance lifecycle action")
-    record = _owned(config, instance_id)
-    adapter = resolve_adapter(record)
-    operation = getattr(adapter, action)
-    result = operation(record)
-    state = result.get("state") if isinstance(result, dict) else None
-    observed_state = _observed_state(state if isinstance(state, dict) else None, record.get("observed_state"))
-    updated = dict(record)
-    updated["desired_state"] = "stopped" if action == "stop" else "running"
-    updated["observed_state"] = observed_state
-    register_instance(updated)
-    return {
-        "schema_version": 1,
-        "kind": "CapivaraInstanceLifecycle",
-        "scope": "instance-local",
-        "instance_id": record["instance_id"],
-        "agent_id": record["agent_id"],
-        "adapter": adapter.name,
-        "action": action,
-        "observed_state": observed_state,
-        "operation": result,
-    }
+    from runtime_limits import runtime_limits
+    from runtime_metrics import increment
+    from runtime_operations import runtime_operation
+    limits = runtime_limits(config)
+    with runtime_operation(config, instance_id, f"lifecycle:{action}", lock_timeout_seconds=limits.lock_timeout_seconds):
+        record = _owned(config, instance_id)
+        adapter = resolve_adapter(record)
+        operation = getattr(adapter, action)
+        result = operation(record)
+        state = result.get("state") if isinstance(result, dict) else None
+        observed_state = _observed_state(state if isinstance(state, dict) else None, record.get("observed_state"))
+        updated = dict(record)
+        updated["desired_state"] = "stopped" if action == "stop" else "running"
+        updated["observed_state"] = observed_state
+        register_instance(updated)
+        increment(f"lifecycle_{action}")
+        return {"schema_version": 1, "kind": "CapivaraInstanceLifecycle", "scope": "instance-local",
+                "instance_id": record["instance_id"], "agent_id": record["agent_id"], "adapter": adapter.name,
+                "action": action, "observed_state": observed_state, "operation": result}
 
 
 def inventory(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -222,62 +192,37 @@ def handle_command(config: dict[str, Any], command: dict[str, Any]) -> dict[str,
     command_id = _token(command.get("command_id"), "command_id")
     previous = _read(_history(command_id))
     if previous is not None:
-        _write(_result(command_id), previous)
-        return previous
+        _write(_result(command_id), previous); return previous
     instance_id = str(command.get("instance_id") or "").strip()
     action = str(command.get("action") or "").strip().lower()
     try:
         _token(instance_id, "instance_id")
-        if action not in VALID_ACTIONS:
-            raise ValueError("unsupported instance action")
-        if action == "status":
-            payload = status(config, instance_id)
-        elif action == "doctor":
-            payload = doctor(config, instance_id)
-        else:
-            payload = lifecycle(config, instance_id, action)
-        result = {
-            "command_id": command_id,
-            "instance_id": instance_id,
-            "action": action,
-            "status": "completed",
-            "result": payload,
-            "generated_at": _now(),
-        }
+        if action not in VALID_ACTIONS: raise ValueError("unsupported instance action")
+        if action == "status": payload = status(config, instance_id)
+        elif action == "doctor": payload = doctor(config, instance_id)
+        else: payload = lifecycle(config, instance_id, action)
+        result = {"command_id": command_id, "instance_id": instance_id, "action": action, "status": "completed",
+                  "result": payload, "generated_at": _now()}
     except Exception as exc:
-        result = {
-            "command_id": command_id,
-            "instance_id": instance_id or None,
-            "action": action or None,
-            "status": "failed",
-            "error": str(exc)[:2000],
-            "generated_at": _now(),
-        }
-    _write(_history(command_id), result)
-    _write(_result(command_id), result)
+        result = {"command_id": command_id, "instance_id": instance_id or None, "action": action or None,
+                  "status": "failed", "error": str(exc)[:2000], "generated_at": _now()}
+    _write(_history(command_id), result); _write(_result(command_id), result)
     return result
 
 
 def read_result() -> dict[str, Any] | None:
-    try:
-        paths = sorted(RESULT_DIR.glob("*.json"))
-    except OSError:
-        paths = []
+    try: paths = sorted(RESULT_DIR.glob("*.json"))
+    except OSError: paths = []
     for path in paths:
         value = _read(path)
-        if value:
-            return value
+        if value: return value
     return None
 
 
 def clear_result(command_id: str) -> None:
-    try:
-        _result(command_id).unlink()
-    except FileNotFoundError:
-        pass
+    try: _result(command_id).unlink()
+    except FileNotFoundError: pass
 
 
-__all__ = [
-    "LIFECYCLE_ACTIONS", "VALID_ACTIONS", "clear_result", "doctor", "get_instance", "handle_command",
-    "inventory", "lifecycle", "list_instances", "read_result", "register_instance", "status",
-]
+__all__ = ["LIFECYCLE_ACTIONS", "VALID_ACTIONS", "clear_result", "doctor", "get_instance", "handle_command",
+           "inventory", "lifecycle", "list_instances", "read_result", "register_instance", "status"]
