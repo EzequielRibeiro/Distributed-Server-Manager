@@ -15,7 +15,7 @@ CORE = ROOT / "core"
 if str(CORE) not in sys.path:
     sys.path.insert(0, str(CORE))
 
-from configuration_platform import deep_merge, normalize_configuration
+from configuration_platform import ConfigurationValidationError, deep_merge, normalize_configuration
 from event_platform import utc_now
 from alert_repository import AlertSession
 
@@ -47,6 +47,29 @@ class ConfigurationRepository:
         value["kind"] = "CapivaraConfiguration"
         return value
 
+    def _entity_exists(self, table: str, entity_id: str) -> bool:
+        if table not in {"agents", "instances"}:
+            raise ValueError("unsupported entity table")
+        with self.backend.connect() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                row = session.execute(f"SELECT id FROM {table} WHERE id={self.ph}", (entity_id,)).fetchone()
+                return row is not None
+            finally:
+                session.close()
+
+    def _instance_owned_by(self, agent_id: str, instance_id: str) -> bool:
+        with self.backend.connect() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                row = session.execute(
+                    f"SELECT id FROM instances WHERE id={self.ph} AND agent_id={self.ph}",
+                    (instance_id, agent_id),
+                ).fetchone()
+                return row is not None
+            finally:
+                session.close()
+
     def get(self, *, scope_type: str, scope_id: str | None, namespace: str) -> dict[str, Any] | None:
         key = self._scope_key(scope_type, scope_id)
         with self.backend.connect() as connection:
@@ -62,6 +85,10 @@ class ConfigurationRepository:
 
     def put(self, raw: Mapping[str, Any], *, updated_by: str | None = None) -> dict[str, Any]:
         config = normalize_configuration(raw)
+        if config["scope_type"] == "agent" and not self._entity_exists("agents", str(config["scope_id"])):
+            raise ConfigurationValidationError("agent scope_id does not exist")
+        if config["scope_type"] == "instance" and not self._entity_exists("instances", str(config["scope_id"])):
+            raise ConfigurationValidationError("instance scope_id does not exist")
         existing = self.get(scope_type=config["scope_type"], scope_id=config["scope_id"], namespace=config["namespace"])
         if existing is not None and existing.get("checksum") == config["checksum"]:
             return {"configuration": existing, "changed": False}
@@ -161,11 +188,15 @@ class ConfigurationRepository:
         return resolved
 
     def resolve_for_agent(self, agent_id: str) -> list[dict[str, Any]]:
+        if not self._entity_exists("agents", agent_id):
+            raise ConfigurationValidationError("agent does not exist")
         rows = self.list_configurations(scope_type="global", limit=1000)
         rows += self.list_configurations(scope_type="agent", scope_id=agent_id, limit=1000)
         return self._merge_rows(rows, target_type="agent", target_id=agent_id)
 
     def resolve_for_instance(self, agent_id: str, instance_id: str) -> list[dict[str, Any]]:
+        if not self._instance_owned_by(agent_id, instance_id):
+            raise ConfigurationValidationError("instance does not belong to agent")
         rows = self.list_configurations(scope_type="global", limit=1000)
         rows += self.list_configurations(scope_type="agent", scope_id=agent_id, limit=1000)
         rows += self.list_configurations(scope_type="instance", scope_id=instance_id, limit=1000)
@@ -182,40 +213,89 @@ class ConfigurationRepository:
             finally:
                 session.close()
 
+    def _applied_state(self, agent_id: str) -> dict[tuple[str, str, str], tuple[str, str]]:
+        with self.backend.connect() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                rows = session.execute(
+                    f"SELECT target_type,target_id,namespace,applied_revision,applied_checksum,status FROM agent_configuration_state WHERE agent_id={self.ph}",
+                    (agent_id,),
+                ).fetchall()
+                result = {}
+                for row in rows:
+                    if str(row.get("status") if hasattr(row, "get") else row["status"]).lower() != "applied":
+                        continue
+                    item = dict(row)
+                    result[(str(item["target_type"]), str(item["target_id"]), str(item["namespace"]))] = (
+                        str(item.get("applied_revision") or ""), str(item.get("applied_checksum") or "")
+                    )
+                return result
+            finally:
+                session.close()
+
     def desired_for_agent(self, agent_id: str) -> list[dict[str, Any]]:
         commands = self.resolve_for_agent(agent_id)
         for instance_id in self.instance_ids_for_agent(agent_id):
             commands.extend(self.resolve_for_instance(agent_id, instance_id))
-        return commands
+        applied = self._applied_state(agent_id)
+        pending = []
+        for command in commands:
+            key = (str(command["target_type"]), str(command["target_id"]), str(command["namespace"]))
+            state = applied.get(key)
+            if state == (str(command["revision"]), str(command["checksum"])):
+                continue
+            pending.append(command)
+        return pending
 
-    def record_agent_state(self, agent_id: str, reports: list[Mapping[str, Any]]) -> None:
+    def record_agent_state(self, agent_id: str, reports: list[Mapping[str, Any]]) -> int:
         now = utc_now()
+        accepted = 0
         with self.backend.transaction() as connection:
             session = AlertSession(self.backend, connection)
             try:
                 for report in reports[:1000]:
-                    configuration_id = str(report.get("configuration_id") or "").strip()
-                    if not configuration_id:
+                    target_type = str(report.get("target_type") or "").strip().lower()
+                    target_id = str(report.get("target_id") or "").strip()
+                    namespace = str(report.get("namespace") or "").strip().lower()
+                    if target_type == "agent":
+                        if target_id != agent_id:
+                            continue
+                    elif target_type == "instance":
+                        if not target_id or not self._instance_owned_by(agent_id, target_id):
+                            continue
+                    else:
                         continue
-                    desired_revision = int(report.get("desired_revision") or report.get("applied_revision") or 0)
-                    applied_revision = report.get("applied_revision")
+                    if not namespace:
+                        continue
+                    desired_revision = str(report.get("desired_revision") or report.get("applied_revision") or "")
+                    applied_revision = str(report.get("applied_revision") or "") or None
+                    desired_checksum = str(report.get("desired_checksum") or report.get("applied_checksum") or "")
+                    applied_checksum = str(report.get("applied_checksum") or "") or None
+                    if not desired_revision or not desired_checksum:
+                        continue
                     existing = session.execute(
-                        f"SELECT agent_id FROM agent_configuration_state WHERE agent_id={self.ph} AND configuration_id={self.ph}",
-                        (agent_id, configuration_id),
+                        f"SELECT agent_id FROM agent_configuration_state WHERE agent_id={self.ph} AND target_type={self.ph} AND target_id={self.ph} AND namespace={self.ph}",
+                        (agent_id, target_type, target_id, namespace),
                     ).fetchone()
-                    values = (desired_revision, applied_revision, str(report.get("status") or "unknown"), report.get("applied_checksum"), report.get("last_error"), report.get("reported_at") or now, now)
+                    values = (
+                        desired_revision, applied_revision, desired_checksum, applied_checksum,
+                        str(report.get("status") or "unknown"), report.get("last_error"),
+                        report.get("reported_at") or now, now,
+                    )
                     if existing:
                         session.execute(
-                            f"UPDATE agent_configuration_state SET desired_revision={self.ph},applied_revision={self.ph},status={self.ph},applied_checksum={self.ph},last_error={self.ph},reported_at={self.ph},updated_at={self.ph} WHERE agent_id={self.ph} AND configuration_id={self.ph}",
-                            (*values, agent_id, configuration_id),
+                            f"UPDATE agent_configuration_state SET desired_revision={self.ph},applied_revision={self.ph},desired_checksum={self.ph},applied_checksum={self.ph},status={self.ph},last_error={self.ph},reported_at={self.ph},updated_at={self.ph} WHERE agent_id={self.ph} AND target_type={self.ph} AND target_id={self.ph} AND namespace={self.ph}",
+                            (*values, agent_id, target_type, target_id, namespace),
                         )
                     else:
                         session.execute(
-                            f"INSERT INTO agent_configuration_state(agent_id,configuration_id,desired_revision,applied_revision,status,applied_checksum,last_error,reported_at,updated_at) VALUES ({','.join([self.ph]*9)})",
-                            (agent_id, configuration_id, *values),
+                            f"INSERT INTO agent_configuration_state(agent_id,target_type,target_id,namespace,desired_revision,applied_revision,desired_checksum,applied_checksum,status,last_error,reported_at,updated_at) VALUES ({','.join([self.ph]*12)})",
+                            (agent_id, target_type, target_id, namespace, *values),
                         )
+                    accepted += 1
             finally:
                 session.close()
+        return accepted
 
 
 __all__ = ["ConfigurationRepository"]
