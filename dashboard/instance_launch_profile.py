@@ -70,9 +70,11 @@ def resolve_launch_profile(root: Path, runtime_id: str, *, expected_game_id: str
         "environment_id": runtime_id,
         "game_id": game_id,
         "adapter": "systemd",
-        "engine": engine,
-        "executable": executable,
-        "args": _normalize_args(process.get("args")),
+        "launch": {
+            "engine": engine,
+            "executable": executable,
+            "arguments": _normalize_args(process.get("args")),
+        },
     }
 
 
