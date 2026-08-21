@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS automation_runs (
  started_at TEXT, completed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_automation_runs_rule_created ON automation_runs(rule_id,created_at);
+CREATE TABLE IF NOT EXISTS automation_runtime_state (
+ state_key TEXT PRIMARY KEY, state_value TEXT NOT NULL, updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS broadcasts (
  broadcast_id TEXT PRIMARY KEY, scope TEXT NOT NULL, target TEXT, message TEXT NOT NULL, priority TEXT NOT NULL,
  ttl_seconds INTEGER NOT NULL, require_ack INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'pending',
