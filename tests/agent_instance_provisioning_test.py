@@ -71,17 +71,17 @@ class ProvisioningExecutorTest(unittest.TestCase):
         self.result_path = self.root / "result.json"
         self.old_content = provisioning_executor.execute_game_data
         self.old_build = provisioning_executor.game_runtime.build_runtime_spec
-        self.old_materialize = provisioning_executor.runtime_materialization.materialize
+        self.old_materialize = provisioning_executor.privileged_materialization.materialize
         self.old_reconcile = provisioning_executor.runtime_materialization.reconcile
-        self.old_remove = provisioning_executor.runtime_materialization.remove
+        self.old_remove = provisioning_executor.privileged_materialization.remove
 
     def tearDown(self):
         instance_runtime.STATE_DIR = self.old_state
         provisioning_executor.execute_game_data = self.old_content
         provisioning_executor.game_runtime.build_runtime_spec = self.old_build
-        provisioning_executor.runtime_materialization.materialize = self.old_materialize
+        provisioning_executor.privileged_materialization.materialize = self.old_materialize
         provisioning_executor.runtime_materialization.reconcile = self.old_reconcile
-        provisioning_executor.runtime_materialization.remove = self.old_remove
+        provisioning_executor.privileged_materialization.remove = self.old_remove
         self.temp.cleanup()
 
     def _wire_success(self):
@@ -93,7 +93,7 @@ class ProvisioningExecutorTest(unittest.TestCase):
             "instance_id": instance["instance_id"], "agent_id": instance["agent_id"], "runtime_id": instance["runtime_id"],
             "adapter": "systemd", "profile": "dayz", "profile_version": 1,
         }
-        provisioning_executor.runtime_materialization.materialize = lambda config, spec: {"operation": {"changed": True}}
+        provisioning_executor.privileged_materialization.materialize = lambda config, spec: {"operation": {"changed": True}}
         provisioning_executor.runtime_materialization.reconcile = lambda config, instance_id: {"observed_state": "running"}
 
     def test_pipeline_runs_content_profile_materialization_and_reconcile(self):
@@ -110,7 +110,7 @@ class ProvisioningExecutorTest(unittest.TestCase):
         self._wire_success()
         removed = []
         provisioning_executor.runtime_materialization.reconcile = lambda config, instance_id: (_ for _ in ()).throw(RuntimeError("start failed"))
-        provisioning_executor.runtime_materialization.remove = lambda config, instance_id: removed.append(instance_id) or {"operation": {"changed": True}}
+        provisioning_executor.privileged_materialization.remove = lambda config, instance_id: removed.append(instance_id) or {"operation": {"changed": True}}
         result = provisioning_executor.execute(self.config, self.request, self.result_path)
         self.assertEqual(result["status"], "failed")
         self.assertEqual(removed, ["instance-one"])
@@ -199,7 +199,7 @@ class ControllerProvisioningQueueTest(unittest.TestCase):
         self.assertNotIn("provisioning_command", completed)
 
     def test_wrong_agent_and_missing_ports_are_rejected(self):
-        with self.assertRaises(PermissionError):
+        with self.assertRaises(ValueError):
             self.jobs.enqueue(
                 agent_id="missing-agent", instance_id="instance-b10", environment_id="dayz.stable", selector="stable",
                 selection={"game": "dayz"},
