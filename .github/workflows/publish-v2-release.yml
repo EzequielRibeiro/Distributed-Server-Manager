@@ -1,0 +1,59 @@
+name: Publish Capivara 2.0.0
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'release/readiness-v2.json'
+      - 'release/RELEASE_NOTES_2.0.0.md'
+      - '.github/workflows/publish-v2-release.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release authorization
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          x=json.load(open('release/readiness-v2.json'))
+          assert x['status'] == 'release-approved'
+          assert x['release_authorized'] is True
+          assert x['release_version'] == '2.0.0'
+          assert x['tag_name'] == 'v2.0.0'
+          print('tag=v2.0.0')
+          PY
+
+      - name: Create tag and GitHub Release if absent
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; nothing to do."
+            exit 0
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title 'Capivara DSM 2.0.0' \
+              --notes-file release/RELEASE_NOTES_2.0.0.md
+          else
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title 'Capivara DSM 2.0.0' \
+              --notes-file release/RELEASE_NOTES_2.0.0.md
+          fi
