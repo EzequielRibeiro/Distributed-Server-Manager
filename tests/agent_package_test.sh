@@ -13,9 +13,11 @@ bash -n "${ROOT}/agents/linux/installer/bootstrap-release.sh"
 bash -n "${ROOT}/agents/linux/installer/install-agent.sh"
 python3 -m py_compile \
   "${ROOT}/agents/linux/runtime/local_cli.py" \
+  "${ROOT}/agents/linux/runtime/update_state.py" \
   "${ROOT}/agents/linux/runtime/game_data_client.py" \
   "${ROOT}/agents/linux/runtime/game_data_executor.py" \
-  "${ROOT}/agents/linux/runtime/game_data_state.py"
+  "${ROOT}/agents/linux/runtime/game_data_state.py" \
+  "${ROOT}/agents/linux/updater/updater.py"
 
 bash "${BUILDER}" HEAD "${TMP}/one" >/dev/null
 bash "${BUILDER}" HEAD "${TMP}/two" >/dev/null
@@ -34,7 +36,8 @@ PACKAGE="${TMP}/extract/capivara-agent-linux-${VERSION}"
 for path in \
   install-agent.sh manifest.json VERSION \
   agent/common/identity.py \
-  agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py agent/runtime/update_client.py agent/runtime/local_cli.py \
+  agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py \
+  agent/runtime/update_client.py agent/runtime/update_state.py agent/runtime/local_cli.py \
   agent/runtime/game_data_client.py agent/runtime/game_data_executor.py agent/runtime/game_data_state.py \
   agent/updater/updater.py \
   services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path \
@@ -59,6 +62,7 @@ source_map = {
     'agent/runtime/capabilities.py': root / 'agents/linux/runtime/capabilities.py',
     'agent/runtime/network_inventory.py': root / 'agents/linux/runtime/network_inventory.py',
     'agent/runtime/update_client.py': root / 'agents/linux/runtime/update_client.py',
+    'agent/runtime/update_state.py': root / 'agents/linux/runtime/update_state.py',
     'agent/runtime/local_cli.py': root / 'agents/linux/runtime/local_cli.py',
     'agent/runtime/game_data_client.py': root / 'agents/linux/runtime/game_data_client.py',
     'agent/runtime/game_data_executor.py': root / 'agents/linux/runtime/game_data_executor.py',
@@ -82,6 +86,8 @@ grep -Fq 'sha256sum' "${BOOTSTRAP}" || fail "release bootstrap does not validate
 ! grep -Fq '/main/' "${BOOTSTRAP}" || fail "release bootstrap follows mutable main"
 grep -Fq 'capivara-agent-update.path' "${INSTALLER}" || fail "installer does not enable safe remote updater"
 grep -Fq 'runtime/local_cli.py' "${INSTALLER}" || fail "installer does not install local Agent CLI"
+grep -Fq 'runtime/update_state.py' "${INSTALLER}" || fail "installer does not install update state module"
+grep -Fq 'update-history' "${INSTALLER}" || fail "installer does not create update history"
 grep -Fq 'runtime/game_data_client.py' "${INSTALLER}" || fail "installer does not install game-data client"
 grep -Fq 'runtime/game_data_executor.py' "${INSTALLER}" || fail "installer does not install game-data executor"
 grep -Fq 'runtime/game_data_state.py' "${INSTALLER}" || fail "installer does not install game-data state module"

@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -23,10 +24,15 @@ if str(RUNTIME_DIR) not in sys.path:
 from capabilities import detect_capabilities
 from game_data_state import get_game_data, get_job, list_game_data, list_jobs, summary as game_data_summary
 from network_inventory import collect_network_inventory
+from update_state import history as update_history, status as update_status
 
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
 INSTALL_ROOT = Path(os.environ.get("CAPIVARA_AGENT_ROOT", "/opt/capivara-agent"))
 SERVICE_NAME = os.environ.get("CAPIVARA_AGENT_SERVICE", "capivara-agent.service")
+REPOSITORY = os.environ.get(
+    "CAPIVARA_AGENT_GITHUB_REPOSITORY",
+    "EzequielRibeiro/Distributed-Server-Manager",
+)
 
 
 def _read_config() -> dict[str, Any]:
@@ -199,6 +205,73 @@ def _ports(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _semver_key(value: str) -> tuple[int, int, int, int, str] | None:
+    match = re.match(r"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$", value.strip())
+    if not match:
+        return None
+    major, minor, patch = (int(match.group(i)) for i in range(1, 4))
+    prerelease = match.group(4) or ""
+    return major, minor, patch, 0 if prerelease else 1, prerelease
+
+
+def _github_json(url: str) -> Any:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "Capivara-Agent-CLI",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
+        raise RuntimeError(f"GitHub Releases query failed: {exc}") from exc
+
+
+def _update_check(config: dict[str, Any], channel: str) -> dict[str, Any]:
+    channel = str(channel or "stable").lower()
+    if channel not in {"stable", "beta"}:
+        raise ValueError("update channel must be stable or beta")
+    if channel == "stable":
+        release = _github_json(f"https://api.github.com/repos/{REPOSITORY}/releases/latest")
+    else:
+        releases = _github_json(f"https://api.github.com/repos/{REPOSITORY}/releases?per_page=20")
+        if not isinstance(releases, list):
+            raise RuntimeError("invalid GitHub Releases response")
+        release = next(
+            (
+                item
+                for item in releases
+                if isinstance(item, dict)
+                and item.get("prerelease")
+                and not item.get("draft")
+            ),
+            None,
+        )
+        if release is None:
+            raise RuntimeError("no beta Agent release is available")
+    if not isinstance(release, dict):
+        raise RuntimeError("invalid GitHub release")
+    tag = str(release.get("tag_name") or "").strip()
+    latest = tag[1:] if tag.startswith("v") else tag
+    installed = _installed_version(config)
+    latest_key = _semver_key(latest)
+    installed_key = _semver_key(installed)
+    return {
+        "source": "github-releases",
+        "repository": REPOSITORY,
+        "channel": channel,
+        "installed_version": installed,
+        "latest_version": latest or None,
+        "update_available": bool(latest_key and installed_key and latest_key > installed_key),
+        "release_url": release.get("html_url"),
+        "asset_prefix": f"capivara-agent-linux-{latest}" if latest else None,
+    }
+
+
 def _doctor(config: dict[str, Any]) -> dict[str, Any]:
     identity = _identity(config)
     service = _service_state()
@@ -207,6 +280,7 @@ def _doctor(config: dict[str, Any]) -> dict[str, Any]:
     ports = _ports(config)
     host = _host()
     game_data = game_data_summary()
+    updates = update_status()
     findings: list[dict[str, str]] = []
 
     def add(code: str, severity: str, message: str) -> None:
@@ -228,6 +302,9 @@ def _doctor(config: dict[str, Any]) -> dict[str, Any]:
         add("low_disk_space", "warning", "Root filesystem has less than 5 GiB free.")
     if int(game_data.get("failed_recent_jobs", 0)):
         add("recent_game_data_failures", "warning", "One or more recent local game-data jobs failed.")
+    last_update = updates.get("last_result") or {}
+    if isinstance(last_update, dict) and last_update.get("status") == "failed":
+        add("recent_update_failure", "warning", "The most recent Agent update failed.")
 
     severities = {item["severity"] for item in findings}
     status = "critical" if "critical" in severities else "degraded" if "warning" in severities else "healthy"
@@ -244,6 +321,7 @@ def _doctor(config: dict[str, Any]) -> dict[str, Any]:
         "capabilities": capabilities,
         "ports": ports,
         "game_data": game_data,
+        "updates": updates,
         "findings": findings,
     }
 
@@ -304,6 +382,17 @@ def _parser() -> argparse.ArgumentParser:
     job_show.add_argument("job_id")
     job_show.add_argument("--json", action="store_true", dest="as_json")
 
+    update = sub.add_parser("update")
+    update_sub = update.add_subparsers(dest="update_action", required=True)
+    update_status_parser = update_sub.add_parser("status")
+    update_status_parser.add_argument("--json", action="store_true", dest="as_json")
+    update_history_parser = update_sub.add_parser("history")
+    update_history_parser.add_argument("--limit", type=int, default=20)
+    update_history_parser.add_argument("--json", action="store_true", dest="as_json")
+    update_check_parser = update_sub.add_parser("check")
+    update_check_parser.add_argument("--channel", choices=("stable", "beta"), default="stable")
+    update_check_parser.add_argument("--json", action="store_true", dest="as_json")
+
     logs = sub.add_parser("logs")
     logs.add_argument("--lines", type=int, default=200)
     logs.add_argument("--json", action="store_true", dest="as_json")
@@ -355,6 +444,13 @@ def main(argv: list[str] | None = None) -> int:
                     raise LookupError(f"job not found: {args.job_id}")
             else:
                 payload = {"jobs": list_jobs(active_only=bool(args.active), limit=args.limit)}
+        elif args.command == "update":
+            if args.update_action == "status":
+                payload = update_status()
+            elif args.update_action == "history":
+                payload = {"updates": update_history(limit=args.limit)}
+            else:
+                payload = _update_check(config, args.channel)
         elif args.command == "logs":
             payload = _logs(args.lines)
         elif args.command == "doctor":
