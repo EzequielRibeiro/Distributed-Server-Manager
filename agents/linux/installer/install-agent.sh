@@ -46,9 +46,11 @@ for required in \
   agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py \
   agent/runtime/update_client.py agent/runtime/update_state.py agent/runtime/local_cli.py agent/runtime/cap_dispatch.py \
   agent/runtime/game_data_client.py agent/runtime/game_data_executor.py agent/runtime/game_data_state.py \
-  agent/runtime/instance_runtime.py \
+  agent/runtime/instance_runtime.py agent/runtime/runtime_spec.py agent/runtime/runtime_events.py agent/runtime/runtime_materialization.py \
   agent/runtime/adapters/__init__.py agent/runtime/adapters/base.py \
   agent/runtime/adapters/registry.py agent/runtime/adapters/systemd.py \
+  agent/runtime/materializers/__init__.py agent/runtime/materializers/base.py \
+  agent/runtime/materializers/registry.py agent/runtime/materializers/systemd.py \
   agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py \
   services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path
 do [[ -f "${PACKAGE_DIR}/${required}" ]] || fail "arquivo obrigatório ausente: ${required}"; done
@@ -73,11 +75,12 @@ if [[ -e "${CLI_PATH}" || -L "${CLI_PATH}" ]]; then
 fi
 id capivara-agent >/dev/null 2>&1 || useradd --system --home "${STATE_DIR}" --create-home --shell /usr/sbin/nologin capivara-agent
 install -d -m 0755 -o root -g root \
-  "${INSTALL_ROOT}" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/runtime/adapters" "${INSTALL_ROOT}/common" "${INSTALL_ROOT}/updater"
+  "${INSTALL_ROOT}" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/runtime/adapters" \
+  "${INSTALL_ROOT}/runtime/materializers" "${INSTALL_ROOT}/common" "${INSTALL_ROOT}/updater"
 install -d -m 0700 -o capivara-agent -g capivara-agent \
   "${CONFIG_DIR}" "${STATE_DIR}" "${STATE_DIR}/game-data" "${STATE_DIR}/game-data-jobs" \
   "${STATE_DIR}/game-data-jobs/history" "${STATE_DIR}/game-data-state" "${STATE_DIR}/update-history" \
-  "${STATE_DIR}/instances" "${STATE_DIR}/instance-results" "${STATE_DIR}/instance-command-history"
+  "${STATE_DIR}/instances" "${STATE_DIR}/instance-results" "${STATE_DIR}/instance-command-history" "${STATE_DIR}/events"
 install -m 0755 "${PACKAGE_DIR}/agent/runtime/agent.py" "${INSTALL_ROOT}/runtime/agent.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/capabilities.py" "${INSTALL_ROOT}/runtime/capabilities.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/network_inventory.py" "${INSTALL_ROOT}/runtime/network_inventory.py"
@@ -89,8 +92,12 @@ install -m 0644 "${PACKAGE_DIR}/agent/runtime/game_data_client.py" "${INSTALL_RO
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/game_data_state.py" "${INSTALL_ROOT}/runtime/game_data_state.py"
 install -m 0755 "${PACKAGE_DIR}/agent/runtime/game_data_executor.py" "${INSTALL_ROOT}/runtime/game_data_executor.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/instance_runtime.py" "${INSTALL_ROOT}/runtime/instance_runtime.py"
+install -m 0644 "${PACKAGE_DIR}/agent/runtime/runtime_spec.py" "${INSTALL_ROOT}/runtime/runtime_spec.py"
+install -m 0644 "${PACKAGE_DIR}/agent/runtime/runtime_events.py" "${INSTALL_ROOT}/runtime/runtime_events.py"
+install -m 0644 "${PACKAGE_DIR}/agent/runtime/runtime_materialization.py" "${INSTALL_ROOT}/runtime/runtime_materialization.py"
 for file in __init__.py base.py registry.py systemd.py; do
   install -m 0644 "${PACKAGE_DIR}/agent/runtime/adapters/${file}" "${INSTALL_ROOT}/runtime/adapters/${file}"
+  install -m 0644 "${PACKAGE_DIR}/agent/runtime/materializers/${file}" "${INSTALL_ROOT}/runtime/materializers/${file}"
 done
 install -m 0755 "${PACKAGE_DIR}/agent/updater/updater.py" "${INSTALL_ROOT}/updater/updater.py"
 install -m 0644 "${PACKAGE_DIR}/agent/common/identity.py" "${INSTALL_ROOT}/common/identity.py"
@@ -116,4 +123,4 @@ install -m 0644 "${PACKAGE_DIR}/services/capivara-agent-update.path" "${SYSTEMD_
 systemctl daemon-reload
 systemctl enable --now capivara-agent-update.path
 systemctl enable --now capivara-agent.service
-log "Agent ${VERSION} instalado. Instance lifecycle é limitado a units capivara-instance-*.service."
+log "Agent ${VERSION} instalado. Instance lifecycle e materialization permanecem restritos a runtimes Capivara-owned."
