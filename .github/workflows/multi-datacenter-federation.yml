@@ -1,0 +1,32 @@
+name: Multi-Datacenter Federation
+on:
+  pull_request:
+    paths:
+      - 'core/federation.py'
+      - 'database/federation_*'
+      - 'database/migrations/039_multi_datacenter_federation.sql'
+      - 'database/migrations_mysql/039_multi_datacenter_federation.sql'
+      - 'database/migrations_postgresql/039_multi_datacenter_federation.sql'
+      - 'bin/cap'
+      - 'tests/multi_datacenter_federation_test.py'
+      - 'docs/architecture/multi-datacenter-federation.md'
+      - '.github/workflows/multi-datacenter-federation.yml'
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax
+        run: |
+          bash -n bin/cap
+          python3 -m py_compile core/federation.py database/federation_repository.py database/federation_cli.py
+      - name: Test E1 contracts
+        run: python3 -m unittest tests/multi_datacenter_federation_test.py
+      - name: Verify integration contracts
+        run: |
+          grep -Fq 'cap federation' bin/cap
+          grep -Fq 'federation_members' database/migrations/039_multi_datacenter_federation.sql
+          grep -Fq 'federation_members' database/migrations_mysql/039_multi_datacenter_federation.sql
+          grep -Fq 'federation_members' database/migrations_postgresql/039_multi_datacenter_federation.sql
+          test ! -e dashboard/server_part14.py
