@@ -1,0 +1,63 @@
+name: Universal Event Platform
+
+on:
+  pull_request:
+    paths:
+      - 'core/events/**'
+      - 'database/event_repository.py'
+      - 'database/migrations/**_universal_event_store.sql'
+      - 'database/migrations_mysql/**_universal_event_store.sql'
+      - 'database/migrations_postgresql/**_universal_event_store.sql'
+      - 'dashboard/timeline_http.py'
+      - 'dashboard/server_part14.py'
+      - 'dashboard/web/js/timeline-ui.js'
+      - 'tests/universal_event_*.py'
+      - '.github/workflows/universal-event-platform.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'core/events/**'
+      - 'database/event_repository.py'
+      - 'database/migrations/**_universal_event_store.sql'
+      - 'database/migrations_mysql/**_universal_event_store.sql'
+      - 'database/migrations_postgresql/**_universal_event_store.sql'
+      - 'dashboard/timeline_http.py'
+      - 'dashboard/server_part14.py'
+      - 'dashboard/web/js/timeline-ui.js'
+      - 'tests/universal_event_*.py'
+      - '.github/workflows/universal-event-platform.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: universal-events-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Python syntax
+        run: |
+          python3 -m py_compile core/events/*.py database/event_repository.py dashboard/timeline_http.py dashboard/server_part14.py tests/universal_event_*.py
+
+      - name: Run Universal Event Platform tests
+        run: |
+          python3 -m unittest \
+            tests/universal_event_contract_test.py \
+            tests/universal_event_publisher_test.py \
+            tests/universal_event_store_test.py \
+            tests/universal_event_context_test.py \
+            tests/universal_event_agent_update_producer_test.py \
+            tests/universal_event_timeline_test.py \
+            tests/universal_event_timeline_http_test.py \
+            tests/universal_event_timeline_ui_test.py \
+            tests/universal_event_consumers_test.py
+
+      - name: Validate Timeline JavaScript
+        run: node --check dashboard/web/js/timeline-ui.js
