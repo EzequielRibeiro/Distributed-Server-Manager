@@ -72,3 +72,20 @@
     .agents-header { align-items: flex-start; flex-direction: column; }
     .agent-install-progress { grid-template-columns: 1fr; }
 }
+
+/* Final v2 cascade layer: these rules intentionally come after the legacy sheet. */
+body .agents-main { margin-left:218px; padding:0 22px 40px; max-width:1800px; }
+body .agents-header { min-height:82px; margin:0 -22px 18px; padding:14px 22px; position:sticky; top:0; z-index:40; }
+body .agents-grid { grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:11px; }
+body .agent-card,
+body .agent-detail,
+body .range-card { background:linear-gradient(180deg,rgba(16,30,47,.94),rgba(12,25,40,.94)); border-color:var(--infra-border); }
+body .range-form { max-width:none; grid-template-columns:repeat(2,minmax(0,1fr)); }
+body .range-form > h3,
+body .range-form > p,
+body .range-form > fieldset,
+body .range-form > button,
+body .range-form > .location-safety-note { grid-column:1 / -1; }
+body #agent-ssh-options { max-width:none; }
+@media(max-width:1100px) { body .range-form { grid-template-columns:1fr; } }
+@media(max-width:900px) { body .agents-main { margin-left:0; padding:0 14px 28px; } body .agents-header { margin:0 -14px 14px; padding:14px; position:static; } }
