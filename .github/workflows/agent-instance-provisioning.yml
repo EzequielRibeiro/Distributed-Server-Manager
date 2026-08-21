@@ -9,6 +9,7 @@ on:
       - 'database/migrations_mysql/**'
       - 'database/migrations_postgresql/**'
       - 'dashboard/agent_instance_provisioning_*.py'
+      - 'dashboard/instance_launch_profile.py'
       - 'dashboard/agent_remote_http.py'
       - 'dashboard/server_part13.py'
       - 'release/build_agent_package.sh'
@@ -23,6 +24,7 @@ on:
       - 'database/migrations_mysql/**'
       - 'database/migrations_postgresql/**'
       - 'dashboard/agent_instance_provisioning_*.py'
+      - 'dashboard/instance_launch_profile.py'
       - 'dashboard/agent_remote_http.py'
       - 'dashboard/server_part13.py'
       - 'release/build_agent_package.sh'
@@ -53,6 +55,7 @@ jobs:
             database/agent_instance_provisioning_repository.py \
             dashboard/agent_instance_provisioning_api.py \
             dashboard/agent_instance_provisioning_http.py \
+            dashboard/instance_launch_profile.py \
             dashboard/agent_remote_http.py \
             dashboard/server_part13.py \
             tests/agent_instance_provisioning_test.py
