@@ -29,14 +29,11 @@ select_role_and_database(){
         esac
     fi
 
-    # Agent puro mantém SQLite local por padrão e não recebe perguntas de
-    # credenciais de um banco central que não administra.
     if [[ "${DSM_NODE_ROLE}" == "agent" ]]; then
         export DSM_DATABASE_DRIVER="${DSM_DATABASE_DRIVER:-sqlite}"
         return 0
     fi
 
-    # Respeita configuração explícita fornecida por automação/administrador.
     if [[ -n "${DSM_DATABASE_DRIVER+x}" ]]; then
         return 0
     fi
@@ -79,5 +76,66 @@ select_role_and_database(){
     export DSM_DATABASE_USER DSM_DATABASE_PASSWORD_FILE DSM_DATABASE_TLS
 }
 
+select_initial_topology(){
+    [[ "${DSM_NODE_ROLE:-}" == "controller" || "${DSM_NODE_ROLE:-}" == "hybrid" ]] || return 0
+
+    if [[ -n "${DSM_REGION_ID:-}" && -n "${DSM_DATACENTER_ID:-}" ]]; then
+        return 0
+    fi
+
+    is_interactive || return 0
+
+    printf '\n==============================================================\n Topologia inicial\n==============================================================\n'
+    printf 'Defina a Region e o Datacenter inicial deste Controller.\n'
+    printf 'Agents serão vinculados posteriormente a um Datacenter existente.\n\n'
+
+    read -r -p 'ID da Region [default-region]: ' DSM_REGION_ID
+    DSM_REGION_ID="${DSM_REGION_ID:-default-region}"
+    read -r -p 'Nome da Region [Region Principal]: ' DSM_REGION_NAME
+    DSM_REGION_NAME="${DSM_REGION_NAME:-Region Principal}"
+    read -r -p 'Código do país [BR]: ' DSM_REGION_COUNTRY_CODE
+    DSM_REGION_COUNTRY_CODE="${DSM_REGION_COUNTRY_CODE:-BR}"
+
+    read -r -p 'ID do Datacenter [dc01]: ' DSM_DATACENTER_ID
+    DSM_DATACENTER_ID="${DSM_DATACENTER_ID:-dc01}"
+    read -r -p 'Nome do Datacenter [Datacenter Principal]: ' DSM_DATACENTER_NAME
+    DSM_DATACENTER_NAME="${DSM_DATACENTER_NAME:-Datacenter Principal}"
+    read -r -p 'Provider (opcional): ' DSM_DATACENTER_PROVIDER
+    read -r -p 'Cidade (opcional): ' DSM_DATACENTER_CITY
+    read -r -p "Código do país [${DSM_REGION_COUNTRY_CODE}]: " DSM_DATACENTER_COUNTRY_CODE
+    DSM_DATACENTER_COUNTRY_CODE="${DSM_DATACENTER_COUNTRY_CODE:-${DSM_REGION_COUNTRY_CODE}}"
+
+    export DSM_REGION_ID DSM_REGION_NAME DSM_REGION_COUNTRY_CODE
+    export DSM_DATACENTER_ID DSM_DATACENTER_NAME DSM_DATACENTER_PROVIDER
+    export DSM_DATACENTER_CITY DSM_DATACENTER_COUNTRY_CODE
+}
+
+bootstrap_initial_topology(){
+    [[ "${DSM_NODE_ROLE:-}" == "controller" || "${DSM_NODE_ROLE:-}" == "hybrid" ]] || return 0
+    [[ -n "${DSM_REGION_ID:-}" && -n "${DSM_DATACENTER_ID:-}" ]] || return 0
+    [[ "${1:-}" != "--dry-run" ]] || return 0
+
+    local helper="${DSM_ROOT:-/opt/dsm}/database/topology_bootstrap.py"
+    [[ -f "${helper}" ]] || {
+        printf '[Capivara][ERRO] Bootstrap de topologia ausente: %s\n' "${helper}" >&2
+        return 1
+    }
+
+    python3 "${helper}" --root "${DSM_ROOT:-/opt/dsm}" \
+        --region-id "${DSM_REGION_ID}" \
+        --region-name "${DSM_REGION_NAME:-${DSM_REGION_ID}}" \
+        --region-country-code "${DSM_REGION_COUNTRY_CODE:-}" \
+        --datacenter-id "${DSM_DATACENTER_ID}" \
+        --datacenter-name "${DSM_DATACENTER_NAME:-${DSM_DATACENTER_ID}}" \
+        --datacenter-provider "${DSM_DATACENTER_PROVIDER:-}" \
+        --datacenter-city "${DSM_DATACENTER_CITY:-}" \
+        --datacenter-country-code "${DSM_DATACENTER_COUNTRY_CODE:-${DSM_REGION_COUNTRY_CODE:-}}"
+}
+
 select_role_and_database
-exec "${CORE_INSTALLER}" "$@"
+select_initial_topology
+"${CORE_INSTALLER}" "$@"
+
+if [[ " ${*} " != *" --dry-run "* ]]; then
+    bootstrap_initial_topology
+fi
