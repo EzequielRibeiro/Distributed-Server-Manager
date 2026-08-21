@@ -5,6 +5,11 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DSM_ROOT="${DSM_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 CATALOG_ROOT="${DSM_CATALOG_ROOT:-${DSM_ROOT}/catalog/v2}"
+CATALOG_PATHS="${DSM_ROOT}/installer/catalog_paths.sh"
+
+# Share the same canonical-first runtime path contract as installer/catalog.sh.
+# shellcheck source=/dev/null
+source "${CATALOG_PATHS}"
 
 compatibility_error(){ echo "[DSM][COMPATIBILITY][ERROR] $*" >&2; }
 
@@ -21,7 +26,7 @@ compatibility_check()
     trap 'rm -rf -- "${TMP_DIR}"' RETURN
     RUNTIMES="${TMP_DIR}/runtimes.json"
     CONTENT="${TMP_DIR}/content.json"
-    find "${CATALOG_ROOT}/runtimes" -type f -name '*.json' -print0 | xargs -0 -r jq -s '.' >"${RUNTIMES}"
+    catalog_runtime_definition_files | xargs -0 -r jq -s '.' >"${RUNTIMES}"
     find "${CATALOG_ROOT}/content" -type f -name '*.json' -print0 | xargs -0 -r jq -s '.' >"${CONTENT}"
 
     jq -n --slurpfile req "${REQUEST}" --slurpfile runtimes "${RUNTIMES}" --slurpfile definitions "${CONTENT}" '

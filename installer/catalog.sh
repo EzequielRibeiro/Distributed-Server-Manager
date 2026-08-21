@@ -12,7 +12,17 @@ COMPATIBILITY_RESOLVER="${DSM_ROOT}/installer/compatibility_resolver.sh"
 CONTENT_PLANNER="${DSM_ROOT}/installer/content_planner.sh"
 CONTENT_MANAGER="${DSM_ROOT}/installer/content_manager.sh"
 FORMATTER="${DSM_ROOT}/installer/catalog_formatter.sh"
+CATALOG_PATH_RESOLVER="${DSM_ROOT}/installer/catalog_paths.sh"
 OUTPUT_FORMAT="human"
+
+if [[ ! -f "${CATALOG_PATH_RESOLVER}" ]]
+then
+    echo "[DSM][CATALOG][ERROR] Catalog path resolver not found: ${CATALOG_PATH_RESOLVER}" >&2
+    exit 1
+fi
+
+# shellcheck source=/dev/null
+source "${CATALOG_PATH_RESOLVER}"
 
 CATALOG_ARGS=()
 for CATALOG_ARG in "$@"; do
@@ -57,6 +67,16 @@ catalog_show()
 {
     local ROOT="$1" ID="$2" FILE
     FILE="$(catalog_find "${ROOT}" "${ID}")" || {
+        catalog_error "Definition not found: ${ID}"
+        return 1
+    }
+    jq . "${FILE}"
+}
+
+catalog_runtime_show()
+{
+    local ID="$1" FILE
+    FILE="$(catalog_runtime_find "${ID}")" || {
         catalog_error "Definition not found: ${ID}"
         return 1
     }
@@ -145,7 +165,7 @@ catalog_resolve_environment()
 catalog_prepare_environment()
 {
     local ID="$1" SELECTOR="$2" FILE RESOLVED
-    FILE="$(catalog_find "${ENVIRONMENT_ROOT}" "${ID}")" || {
+    FILE="$(catalog_runtime_find "${ID}")" || {
         catalog_error "Execution environment not found: ${ID}"
         return 1
     }
@@ -221,8 +241,8 @@ EOF
 case "${1:-}" in
     runtime)
         case "${2:-}" in
-            list) catalog_list "${ENVIRONMENT_ROOT}" "${3:-}" | catalog_output runtime-list ;;
-            show) [[ $# -eq 3 ]] || { catalog_usage; exit 2; }; catalog_show "${ENVIRONMENT_ROOT}" "$3" | catalog_output definition ;;
+            list) catalog_runtime_list "${3:-}" | catalog_output runtime-list ;;
+            show) [[ $# -eq 3 ]] || { catalog_usage; exit 2; }; catalog_runtime_show "$3" | catalog_output definition ;;
             prepare) [[ $# -eq 4 ]] || { catalog_usage; exit 2; }; catalog_prepare_environment "$3" "$4" | catalog_output selection ;;
             *) catalog_usage; exit 2 ;;
         esac
