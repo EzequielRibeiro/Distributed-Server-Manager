@@ -37,9 +37,11 @@ class PrivilegedProvisionerTest(unittest.TestCase):
         base = Path(self.temp.name)
         self.state = base / "state"
         self.data = base / "instance-data"
+        self.game_data = base / "game-data" / "generic"
         self.systemd = base / "systemd"
         self.state.mkdir()
         self.systemd.mkdir()
+        self.game_data.mkdir(parents=True)
         self.original = (
             instance_provisioner.STATE_DIR,
             instance_provisioner.ROOT,
@@ -58,8 +60,15 @@ class PrivilegedProvisionerTest(unittest.TestCase):
         instance_provisioner.SYSTEMD_DIR = self.systemd
         self.owner = patch.object(instance_provisioner, "_state_owner", return_value=(os.getuid(), os.getgid()))
         self.owner.start()
+        self.game_state = patch.object(
+            instance_provisioner,
+            "get_game_data",
+            return_value={"game": "generic", "installed": True, "target_path": str(self.game_data)},
+        )
+        self.game_state.start()
 
     def tearDown(self):
+        self.game_state.stop()
         self.owner.stop()
         (
             instance_provisioner.STATE_DIR,
@@ -78,8 +87,11 @@ class PrivilegedProvisionerTest(unittest.TestCase):
             "environment_id": "generic.stable",
             "game_id": "generic",
             "adapter": "systemd",
-            "executable": "server-bin",
-            "args": ["--port=24000", "hello world"],
+            "launch": {
+                "engine": "native",
+                "executable": "server-bin",
+                "arguments": ["--port=24000", "hello world"],
+            },
         }
 
     def request(self, action="provision"):
@@ -92,22 +104,24 @@ class PrivilegedProvisionerTest(unittest.TestCase):
         }
 
     def _install_fake_binary(self):
-        serverfiles = self.data / "instance-one" / "serverfiles"
-        serverfiles.mkdir(parents=True)
-        binary = serverfiles / "server-bin"
+        binary = self.game_data / "server-bin"
         binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         binary.chmod(0o755)
         return binary
 
     def test_unit_is_derived_and_controller_cannot_supply_execstart(self):
-        runtime = self.runtime()
-        content = instance_provisioner.render_unit("instance-one", runtime)
+        binary = self._install_fake_binary()
+        working = self.data / "instance-one" / "serverfiles"
+        working.mkdir(parents=True)
+        runtime = instance_provisioner._runtime_contract(self.request())
+        content = instance_provisioner.render_unit("instance-one", binary, working, runtime["arguments"])
         self.assertIn("capivara", content.lower())
-        self.assertIn(str(self.data / "instance-one" / "serverfiles" / "server-bin"), content)
+        self.assertIn(str(binary), content)
         self.assertNotIn("/bin/sh -c", content)
-        unsafe = dict(runtime, executable="../../bin/sh")
+        unsafe = self.request()
+        unsafe["runtime"]["launch"]["executable"] = "../../bin/sh"
         with self.assertRaises(ValueError):
-            instance_provisioner._runtime_contract({"runtime": unsafe})
+            instance_provisioner._runtime_contract(unsafe)
         request = self.request()
         request["unit"] = "sshd.service"
         self.assertEqual(instance_provisioner.unit_for_instance(request["instance_id"]), "capivara-instance-instance-one.service")
@@ -129,12 +143,14 @@ class PrivilegedProvisionerTest(unittest.TestCase):
         unit.write_text("old unit\n", encoding="utf-8")
         calls = {"count": 0}
 
-        def runner(command, timeout=30):
+        def runner(command, timeout=30, check=True):
             if command[:2] == ["systemd-analyze", "verify"]:
                 return 0, ""
             if command[:2] == ["systemctl", "daemon-reload"]:
                 calls["count"] += 1
                 if calls["count"] == 1:
+                    if check:
+                        raise RuntimeError("reload failed")
                     return 1, "reload failed"
                 return 0, ""
             return 0, ""
@@ -145,7 +161,11 @@ class PrivilegedProvisionerTest(unittest.TestCase):
         self.assertEqual(unit.read_text(encoding="utf-8"), "old unit\n")
 
     def test_remove_preserves_instance_data(self):
-        binary = self._install_fake_binary()
+        self._install_fake_binary()
+        serverfiles = self.data / "instance-one" / "serverfiles"
+        serverfiles.mkdir(parents=True)
+        marker = serverfiles / "keep.txt"
+        marker.write_text("keep", encoding="utf-8")
         unit = self.systemd / "capivara-instance-instance-one.service"
         unit.write_text("unit\n", encoding="utf-8")
         request = self.request("remove")
@@ -154,7 +174,7 @@ class PrivilegedProvisionerTest(unittest.TestCase):
             result = instance_provisioner._materialize(request)
         self.assertTrue(result["data_preserved"])
         self.assertFalse(unit.exists())
-        self.assertTrue(binary.exists())
+        self.assertTrue(marker.exists())
 
 
 class ControllerProvisioningQueueTest(unittest.TestCase):
@@ -198,8 +218,7 @@ class ControllerProvisioningQueueTest(unittest.TestCase):
             "environment_id": "generic.stable",
             "game_id": "generic",
             "adapter": "systemd",
-            "executable": "server-bin",
-            "args": [],
+            "launch": {"engine": "native", "executable": "server-bin", "arguments": []},
         }
 
     def tearDown(self):
@@ -214,7 +233,7 @@ class ControllerProvisioningQueueTest(unittest.TestCase):
         self.assertEqual(status, 200)
         command = delivered["instance_provisioning_command"]
         self.assertEqual(command["job_id"], created["job_id"])
-        self.assertEqual(command["runtime"]["executable"], "server-bin")
+        self.assertEqual(command["runtime"]["launch"]["executable"], "server-bin")
         status, completed = dispatch_heartbeat({
             "agent_id": "agent-provision",
             "instance_provisioning_result": {
