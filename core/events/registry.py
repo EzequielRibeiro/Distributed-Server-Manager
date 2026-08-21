@@ -8,6 +8,8 @@ EVENT_TYPES: FrozenSet[str] = frozenset(
         # Agents
         "AGENT_ENROLLMENT_REQUESTED",
         "AGENT_ENROLLED",
+        "AGENT_PAIRING_STARTED",
+        "AGENT_PAIRING_FAILED",
         "AGENT_ONLINE",
         "AGENT_OFFLINE",
         "AGENT_DISABLED",
