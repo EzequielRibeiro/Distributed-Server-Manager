@@ -14,6 +14,11 @@ from agent_game_data_http import (
     dispatch_agent_game_data_get,
     dispatch_agent_game_data_post,
 )
+from agent_instance_provisioning_http import (
+    INSTANCE_PROVISIONING_PATH,
+    dispatch_instance_provisioning_get,
+    dispatch_instance_provisioning_post,
+)
 from agent_instance_runtime_http import (
     INSTANCE_RUNTIME_PATH,
     dispatch_instance_runtime_get,
@@ -86,6 +91,14 @@ def integrated_get(self):
         self.send_json(status, body)
         return
 
+    if parsed.path == INSTANCE_PROVISIONING_PATH:
+        user = _user(self)
+        if user is None:
+            return
+        status, body = dispatch_instance_provisioning_get(parsed.path, parsed.query, user=user, backend=_backend())
+        self.send_json(status, body)
+        return
+
     if parsed.path == INSTANCE_RUNTIME_PATH:
         user = _user(self)
         if user is None:
@@ -135,6 +148,19 @@ def integrated_post(self):
             self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
             return
         status, body = dispatch_agent_game_data_post(parsed.path, payload, user=user, backend=_backend(), root=ROOT_DIR)
+        self.send_json(status, body)
+        return
+
+    if parsed.path == INSTANCE_PROVISIONING_PATH:
+        user = _user(self)
+        if user is None:
+            return
+        try:
+            payload = self.read_json_body()
+        except ValueError:
+            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
+            return
+        status, body = dispatch_instance_provisioning_post(parsed.path, payload, user=user, backend=_backend())
         self.send_json(status, body)
         return
 
