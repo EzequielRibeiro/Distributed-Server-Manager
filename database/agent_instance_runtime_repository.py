@@ -110,6 +110,14 @@ class AgentInstanceRuntimeRepository:
         current = self.snapshot(command_id)
         if str(current.get("agent_id")) != str(agent_id):
             raise PermissionError("instance command belongs to another Agent")
+
+        reported_instance_id = str(result.get("instance_id") or "").strip()
+        if reported_instance_id != str(current.get("instance_id") or ""):
+            raise ValueError("instance command result instance_id mismatch")
+        reported_action = str(result.get("action") or "").strip().lower()
+        if reported_action != str(current.get("action") or "").strip().lower():
+            raise ValueError("instance command result action mismatch")
+
         status = str(result.get("status") or "").strip().lower()
         if status not in FINAL_STATES:
             raise ValueError("invalid instance command result status")
