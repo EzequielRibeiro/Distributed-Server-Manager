@@ -1,0 +1,57 @@
+name: Capivara 2.0 Release Readiness
+
+on:
+  push:
+    branches: [main, 'feature/e3-*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate release readiness contract
+        run: python3 tests/release_readiness_test.py
+      - name: Validate Python syntax
+        run: python3 -m compileall -q core database dashboard agent tests
+      - name: Validate shell syntax
+        run: |
+          find bin core agent tools -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+      - name: Reject private keys and obvious committed credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -n -I -E -- 'BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY' -- ':!tests/*' ':!docs/*'; then
+            echo 'Private key material detected in release tree' >&2
+            exit 1
+          fi
+          if git grep -n -I -E -- '(password|passwd|api[_-]?key|secret)[[:space:]]*=[[:space:]]*["'"'][^$<{][^"'"']{7,}["'"']' -- ':!tests/*' ':!docs/*' ':!*.example' ':!*.sample'; then
+            echo 'Possible hard-coded credential detected' >&2
+            exit 1
+          fi
+      - name: Validate migration ordering
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root=Path('database/migrations')
+          files=list(root.rglob('*.sql'))
+          assert files, 'no migrations found'
+          for path in files:
+              assert re.match(r'^\d{3}_.+\.sql$', path.name), f'non-versioned migration: {path}'
+          print(f'validated {len(files)} migrations')
+          PY
+      - name: Confirm release remains non-publishing
+        run: |
+          python3 - <<'PY'
+          import json
+          x=json.load(open('release/readiness-v2.json'))
+          assert x['publish_release'] is False
+          print('release publication requires explicit administrative action')
+          PY
