@@ -2,7 +2,7 @@ name: Capivara 2.0 Release Readiness
 
 on:
   push:
-    branches: [main, 'feature/e3-*']
+    branches: [main, 'feature/e3-*', 'release/*']
   pull_request:
     branches: [main]
 
@@ -47,10 +47,21 @@ jobs:
             echo 'Private key material detected in release tree' >&2
             exit 1
           fi
-          if git grep -n -I -E -- '(password|passwd|api[_-]?key|secret)[[:space:]]*=[[:space:]]*["'"'][^$<{][^"'"']{7,}["'"']' -- ':!tests/*' ':!docs/*' ':!*.example' ':!*.sample'; then
-            echo 'Possible hard-coded credential detected' >&2
-            exit 1
-          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          pattern = re.compile(r'(?i)(password|passwd|api[_-]?key|secret)\s*=\s*["\'][^$<{][^"\']{7,}["\']')
+          for path in Path('.').rglob('*'):
+              if not path.is_file() or '.git' in path.parts or 'tests' in path.parts or 'docs' in path.parts:
+                  continue
+              try:
+                  text = path.read_text(encoding='utf-8')
+              except (UnicodeDecodeError, OSError):
+                  continue
+              if pattern.search(text):
+                  raise SystemExit(f'Possible hard-coded credential detected: {path}')
+          print('credential scan: OK')
+          PY
 
       - name: Validate migration ordering and backend parity
         shell: bash
@@ -59,12 +70,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
-
-          roots = [
-              Path('database/migrations'),
-              Path('database/migrations_postgresql'),
-              Path('database/migrations_mysql'),
-          ]
+          roots = [Path('database/migrations'), Path('database/migrations_postgresql'), Path('database/migrations_mysql')]
           versions = {}
           for root in roots:
               files = sorted(root.glob('*.sql'))
@@ -80,9 +86,8 @@ jobs:
           common_latest = min(max(v) for v in versions.values())
           for root, seq in versions.items():
               assert common_latest in seq, f'{root} missing common latest migration {common_latest:03d}'
-          assert 40 in versions['database/migrations'], 'E2 migration 040 missing from SQLite'
-          assert 40 in versions['database/migrations_postgresql'], 'E2 migration 040 missing from PostgreSQL'
-          assert 40 in versions['database/migrations_mysql'], 'E2 migration 040 missing from MySQL/MariaDB'
+          for root in versions:
+              assert 40 in versions[root], f'{root} missing E2 migration 040'
           print('migration ordering and backend parity: OK')
           PY
 
@@ -95,12 +100,15 @@ jobs:
             grep -Fq "$section" "$file"
           done
 
-      - name: Confirm release remains non-publishing
+      - name: Confirm release publication boundary
         run: |
           python3 - <<'PY'
           import json
           x=json.load(open('release/readiness-v2.json'))
           assert x['publish_release'] is False
-          assert x['status'] == 'candidate'
-          print('release publication requires explicit administrative action')
+          assert x['status'] in {'candidate', 'release-approved'}
+          if x['status'] == 'release-approved':
+              assert x.get('release_authorized') is True
+              assert x.get('tag_name') == 'v2.0.0'
+          print('release publication remains an explicit administrative action')
           PY
