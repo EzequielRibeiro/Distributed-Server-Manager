@@ -1,145 +1,59 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-CONTROLLER_URL=""
-PAIRING_TOKEN="${CAPIVARA_PAIRING_TOKEN:-}"
-PACKAGE_DIR=""
-INSTALL_ROOT="${CAPIVARA_AGENT_ROOT:-/opt/capivara-agent}"
-CONFIG_DIR="${CAPIVARA_AGENT_CONFIG_DIR:-/etc/capivara-agent}"
-STATE_DIR="${CAPIVARA_AGENT_STATE_DIR:-/var/lib/capivara-agent}"
-SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
-POLKIT_RULES_DIR="${CAPIVARA_POLKIT_RULES_DIR:-/etc/polkit-1/rules.d}"
-CLI_PATH="${CAPIVARA_AGENT_CLI_PATH:-/usr/local/bin/cap}"
-
-fail(){ printf '[Capivara Agent][ERRO] %s\n' "$*" >&2; exit 1; }
-log(){ printf '[Capivara Agent] %s\n' "$*"; }
-usage(){ cat <<'EOF'
-Uso:
-  sudo ./install-agent.sh --controller-url https://controller.exemplo --pairing-token TOKEN
-  sudo ./install-agent.sh --package-dir /caminho/capivara-agent-linux-X.Y.Z --controller-url ... --pairing-token ...
-
-Para automação segura, o token também pode ser fornecido pelo ambiente raiz
-CAPIVARA_PAIRING_TOKEN, evitando exposição no argv do processo.
-
-Este instalador opera somente sobre um pacote/diretório local já validado ou
-construído a partir do repositório oficial. Ele não clona branch e não baixa código.
-EOF
-}
-while (( $# )); do
-  case "$1" in
-    --controller-url) [[ $# -ge 2 ]] || fail "--controller-url requer valor"; CONTROLLER_URL="$2"; shift 2;;
-    --pairing-token) [[ $# -ge 2 ]] || fail "--pairing-token requer valor"; PAIRING_TOKEN="$2"; shift 2;;
-    --package-dir) [[ $# -ge 2 ]] || fail "--package-dir requer valor"; PACKAGE_DIR="$2"; shift 2;;
-    --help|-h) usage; exit 0;;
-    *) fail "opção desconhecida: $1";;
-  esac
-done
+CONTROLLER_URL=""; PAIRING_TOKEN="${CAPIVARA_PAIRING_TOKEN:-}"; PACKAGE_DIR=""
+INSTALL_ROOT="${CAPIVARA_AGENT_ROOT:-/opt/capivara-agent}"; CONFIG_DIR="${CAPIVARA_AGENT_CONFIG_DIR:-/etc/capivara-agent}"
+STATE_DIR="${CAPIVARA_AGENT_STATE_DIR:-/var/lib/capivara-agent}"; SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
+POLKIT_RULES_DIR="${CAPIVARA_POLKIT_RULES_DIR:-/etc/polkit-1/rules.d}"; CLI_PATH="${CAPIVARA_AGENT_CLI_PATH:-/usr/local/bin/cap}"
+fail(){ printf '[Capivara Agent][ERRO] %s\n' "$*" >&2; exit 1; }; log(){ printf '[Capivara Agent] %s\n' "$*"; }
+usage(){ printf '%s\n' 'Uso: sudo ./install-agent.sh --controller-url https://controller.exemplo --pairing-token TOKEN [--package-dir DIR]'; }
+while (( $# )); do case "$1" in
+  --controller-url) [[ $# -ge 2 ]] || fail "--controller-url requer valor"; CONTROLLER_URL="$2"; shift 2;;
+  --pairing-token) [[ $# -ge 2 ]] || fail "--pairing-token requer valor"; PAIRING_TOKEN="$2"; shift 2;;
+  --package-dir) [[ $# -ge 2 ]] || fail "--package-dir requer valor"; PACKAGE_DIR="$2"; shift 2;;
+  --help|-h) usage; exit 0;; *) fail "opção desconhecida: $1";; esac; done
 [[ ${EUID} -eq 0 ]] || fail "execute como root"
-[[ "${CONTROLLER_URL}" =~ ^https?://[^[:space:]]+$ ]] || fail "Controller URL inválida"
-[[ -n "${PAIRING_TOKEN}" ]] || fail "pairing token é obrigatório"
+[[ "${CONTROLLER_URL}" =~ ^https?://[^[:space:]]+$ ]] || fail "Controller URL inválida"; [[ -n "${PAIRING_TOKEN}" ]] || fail "pairing token é obrigatório"
 unset CAPIVARA_PAIRING_TOKEN
 for cmd in python3 install systemctl; do command -v "$cmd" >/dev/null || fail "comando necessário ausente: $cmd"; done
-if [[ -z "${PACKAGE_DIR}" ]]; then PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; fi
-PACKAGE_DIR="$(cd "${PACKAGE_DIR}" && pwd)"
-for required in \
-  manifest.json VERSION agent/common/identity.py \
-  agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py \
-  agent/runtime/update_client.py agent/runtime/update_state.py agent/runtime/local_cli.py agent/runtime/cap_dispatch.py \
-  agent/runtime/game_data_client.py agent/runtime/game_data_executor.py agent/runtime/game_data_state.py \
-  agent/runtime/instance_runtime.py agent/runtime/runtime_spec.py agent/runtime/runtime_events.py agent/runtime/runtime_materialization.py agent/runtime/runtime_reconciler.py agent/runtime/game_runtime.py \
-  agent/runtime/provisioning_contract.py agent/runtime/provisioning_state.py agent/runtime/provisioning_client.py agent/runtime/provisioning_executor.py agent/runtime/privileged_materialization.py \
-  agent/runtime/adapters/__init__.py agent/runtime/adapters/base.py \
-  agent/runtime/adapters/registry.py agent/runtime/adapters/systemd.py \
-  agent/runtime/materializers/__init__.py agent/runtime/materializers/base.py \
-  agent/runtime/materializers/registry.py agent/runtime/materializers/systemd.py \
-  agent/runtime/profiles/__init__.py agent/runtime/profiles/base.py \
-  agent/runtime/profiles/registry.py agent/runtime/profiles/dayz.py \
-  agent/privileged/materialize_instance.py \
-  agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py \
-  services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path services/capivara-agent-materialize@.service
-do [[ -f "${PACKAGE_DIR}/${required}" ]] || fail "arquivo obrigatório ausente: ${required}"; done
+[[ -n "${PACKAGE_DIR}" ]] || PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; PACKAGE_DIR="$(cd "${PACKAGE_DIR}" && pwd)"
+
+RUNTIME_FILES=(agent.py capabilities.py network_inventory.py update_client.py update_state.py local_cli.py cap_dispatch.py game_data_client.py game_data_executor.py game_data_state.py instance_runtime.py runtime_spec.py runtime_events.py runtime_materialization.py runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py game_runtime.py provisioning_contract.py provisioning_state.py provisioning_client.py provisioning_executor.py privileged_materialization.py)
+for required in manifest.json VERSION agent/common/identity.py agent/privileged/materialize_instance.py agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path services/capivara-agent-materialize@.service; do [[ -f "${PACKAGE_DIR}/${required}" ]] || fail "arquivo obrigatório ausente: ${required}"; done
+for file in "${RUNTIME_FILES[@]}"; do [[ -f "${PACKAGE_DIR}/agent/runtime/${file}" ]] || fail "arquivo obrigatório ausente: agent/runtime/${file}"; done
+for sub in adapters materializers; do for file in __init__.py base.py registry.py systemd.py; do [[ -f "${PACKAGE_DIR}/agent/runtime/${sub}/${file}" ]] || fail "arquivo obrigatório ausente: agent/runtime/${sub}/${file}"; done; done
+for file in __init__.py base.py registry.py dayz.py; do [[ -f "${PACKAGE_DIR}/agent/runtime/profiles/${file}" ]] || fail "arquivo obrigatório ausente: agent/runtime/profiles/${file}"; done
 python3 - "${PACKAGE_DIR}" <<'PY'
-import hashlib, json, pathlib, sys
-root = pathlib.Path(sys.argv[1]); manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
-if manifest.get('kind') != 'CapivaraAgentPackage' or manifest.get('platform') != 'linux': raise SystemExit('manifest de Agent Linux inválido')
-version = (root / 'VERSION').read_text(encoding='utf-8').strip()
-if manifest.get('version') != version: raise SystemExit('versão do pacote diverge do manifest')
-for relative in manifest.get('required_files', []):
-    path = root / relative
-    if not path.is_file(): raise SystemExit(f'arquivo obrigatório ausente: {relative}')
-    expected = (manifest.get('files', {}).get(relative) or {}).get('sha256')
-    if expected and hashlib.sha256(path.read_bytes()).hexdigest() != expected: raise SystemExit(f'hash interno inválido: {relative}')
+import hashlib,json,pathlib,sys
+root=pathlib.Path(sys.argv[1]); manifest=json.loads((root/'manifest.json').read_text())
+if manifest.get('kind')!='CapivaraAgentPackage' or manifest.get('platform')!='linux': raise SystemExit('manifest de Agent Linux inválido')
+if manifest.get('version')!=(root/'VERSION').read_text().strip(): raise SystemExit('versão do pacote diverge do manifest')
+for rel in manifest.get('required_files',[]):
+ p=root/rel; expected=(manifest.get('files',{}).get(rel) or {}).get('sha256')
+ if not p.is_file() or not expected or hashlib.sha256(p.read_bytes()).hexdigest()!=expected: raise SystemExit(f'arquivo/hash inválido: {rel}')
 PY
-VERSION=$(tr -d '\r\n' < "${PACKAGE_DIR}/VERSION")
+VERSION=$(tr -d '\r\n' <"${PACKAGE_DIR}/VERSION")
 if [[ -e "${CLI_PATH}" || -L "${CLI_PATH}" ]]; then
-  EXISTING_CLI_TARGET="$(readlink -f "${CLI_PATH}" 2>/dev/null || true)"
-  OLD_CLI_TARGET="$(readlink -f "${INSTALL_ROOT}/runtime/local_cli.py" 2>/dev/null || printf '%s' "${INSTALL_ROOT}/runtime/local_cli.py")"
-  NEW_CLI_TARGET="$(readlink -f "${INSTALL_ROOT}/runtime/cap_dispatch.py" 2>/dev/null || printf '%s' "${INSTALL_ROOT}/runtime/cap_dispatch.py")"
-  [[ "${EXISTING_CLI_TARGET}" == "${OLD_CLI_TARGET}" || "${EXISTING_CLI_TARGET}" == "${NEW_CLI_TARGET}" ]] || fail "${CLI_PATH} já existe e não pertence ao Capivara Agent"
+ EXISTING="$(readlink -f "${CLI_PATH}" 2>/dev/null || true)"; OLD="${INSTALL_ROOT}/runtime/local_cli.py"; NEW="${INSTALL_ROOT}/runtime/cap_dispatch.py"
+ [[ "${EXISTING}" == "${OLD}" || "${EXISTING}" == "${NEW}" ]] || fail "${CLI_PATH} já existe e não pertence ao Capivara Agent"
 fi
 id capivara-agent >/dev/null 2>&1 || useradd --system --home "${STATE_DIR}" --create-home --shell /usr/sbin/nologin capivara-agent
-install -d -m 0755 -o root -g root \
-  "${INSTALL_ROOT}" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/runtime/adapters" \
-  "${INSTALL_ROOT}/runtime/materializers" "${INSTALL_ROOT}/runtime/profiles" "${INSTALL_ROOT}/privileged" \
-  "${INSTALL_ROOT}/common" "${INSTALL_ROOT}/updater"
-install -d -m 0700 -o capivara-agent -g capivara-agent \
-  "${CONFIG_DIR}" "${STATE_DIR}" "${STATE_DIR}/game-data" "${STATE_DIR}/game-data-jobs" \
-  "${STATE_DIR}/game-data-jobs/history" "${STATE_DIR}/game-data-state" "${STATE_DIR}/update-history" \
-  "${STATE_DIR}/instances" "${STATE_DIR}/instance-results" "${STATE_DIR}/instance-command-history" "${STATE_DIR}/events" \
-  "${STATE_DIR}/instance-provisioning" "${STATE_DIR}/instance-provisioning/history" "${STATE_DIR}/instance-workspaces" \
-  "${STATE_DIR}/privileged-materialization"
-install -m 0755 "${PACKAGE_DIR}/agent/runtime/agent.py" "${INSTALL_ROOT}/runtime/agent.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/capabilities.py" "${INSTALL_ROOT}/runtime/capabilities.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/network_inventory.py" "${INSTALL_ROOT}/runtime/network_inventory.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/update_client.py" "${INSTALL_ROOT}/runtime/update_client.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/update_state.py" "${INSTALL_ROOT}/runtime/update_state.py"
-install -m 0755 "${PACKAGE_DIR}/agent/runtime/local_cli.py" "${INSTALL_ROOT}/runtime/local_cli.py"
-install -m 0755 "${PACKAGE_DIR}/agent/runtime/cap_dispatch.py" "${INSTALL_ROOT}/runtime/cap_dispatch.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/game_data_client.py" "${INSTALL_ROOT}/runtime/game_data_client.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/game_data_state.py" "${INSTALL_ROOT}/runtime/game_data_state.py"
-install -m 0755 "${PACKAGE_DIR}/agent/runtime/game_data_executor.py" "${INSTALL_ROOT}/runtime/game_data_executor.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/instance_runtime.py" "${INSTALL_ROOT}/runtime/instance_runtime.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/runtime_spec.py" "${INSTALL_ROOT}/runtime/runtime_spec.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/runtime_events.py" "${INSTALL_ROOT}/runtime/runtime_events.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/runtime_materialization.py" "${INSTALL_ROOT}/runtime/runtime_materialization.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/runtime_reconciler.py" "${INSTALL_ROOT}/runtime/runtime_reconciler.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/game_runtime.py" "${INSTALL_ROOT}/runtime/game_runtime.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/provisioning_contract.py" "${INSTALL_ROOT}/runtime/provisioning_contract.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/provisioning_state.py" "${INSTALL_ROOT}/runtime/provisioning_state.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/provisioning_client.py" "${INSTALL_ROOT}/runtime/provisioning_client.py"
-install -m 0755 "${PACKAGE_DIR}/agent/runtime/provisioning_executor.py" "${INSTALL_ROOT}/runtime/provisioning_executor.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/privileged_materialization.py" "${INSTALL_ROOT}/runtime/privileged_materialization.py"
+install -d -m 0755 -o root -g root "${INSTALL_ROOT}" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/runtime/adapters" "${INSTALL_ROOT}/runtime/materializers" "${INSTALL_ROOT}/runtime/profiles" "${INSTALL_ROOT}/privileged" "${INSTALL_ROOT}/common" "${INSTALL_ROOT}/updater"
+install -d -m 0700 -o capivara-agent -g capivara-agent "${CONFIG_DIR}" "${STATE_DIR}" "${STATE_DIR}/game-data" "${STATE_DIR}/game-data-jobs" "${STATE_DIR}/game-data-jobs/history" "${STATE_DIR}/game-data-state" "${STATE_DIR}/update-history" "${STATE_DIR}/instances" "${STATE_DIR}/instance-results" "${STATE_DIR}/instance-command-history" "${STATE_DIR}/events" "${STATE_DIR}/instance-provisioning" "${STATE_DIR}/instance-provisioning/history" "${STATE_DIR}/instance-workspaces" "${STATE_DIR}/privileged-materialization" "${STATE_DIR}/instance-locks" "${STATE_DIR}/instance-operations" "${STATE_DIR}/metrics"
+for file in "${RUNTIME_FILES[@]}"; do mode=0644; case "$file" in agent.py|local_cli.py|cap_dispatch.py|game_data_executor.py|provisioning_executor.py) mode=0755;; esac; install -m "$mode" "${PACKAGE_DIR}/agent/runtime/${file}" "${INSTALL_ROOT}/runtime/${file}"; done
+for sub in adapters materializers; do for file in __init__.py base.py registry.py systemd.py; do install -m 0644 "${PACKAGE_DIR}/agent/runtime/${sub}/${file}" "${INSTALL_ROOT}/runtime/${sub}/${file}"; done; done
+for file in __init__.py base.py registry.py dayz.py; do install -m 0644 "${PACKAGE_DIR}/agent/runtime/profiles/${file}" "${INSTALL_ROOT}/runtime/profiles/${file}"; done
 install -m 0755 "${PACKAGE_DIR}/agent/privileged/materialize_instance.py" "${INSTALL_ROOT}/privileged/materialize_instance.py"
-for file in __init__.py base.py registry.py systemd.py; do
-  install -m 0644 "${PACKAGE_DIR}/agent/runtime/adapters/${file}" "${INSTALL_ROOT}/runtime/adapters/${file}"
-  install -m 0644 "${PACKAGE_DIR}/agent/runtime/materializers/${file}" "${INSTALL_ROOT}/runtime/materializers/${file}"
-done
-for file in __init__.py base.py registry.py dayz.py; do
-  install -m 0644 "${PACKAGE_DIR}/agent/runtime/profiles/${file}" "${INSTALL_ROOT}/runtime/profiles/${file}"
-done
 install -m 0755 "${PACKAGE_DIR}/agent/updater/updater.py" "${INSTALL_ROOT}/updater/updater.py"
-install -m 0644 "${PACKAGE_DIR}/agent/common/identity.py" "${INSTALL_ROOT}/common/identity.py"
-install -m 0644 "${PACKAGE_DIR}/manifest.json" "${INSTALL_ROOT}/manifest.json"
-printf '%s\n' "${VERSION}" >"${INSTALL_ROOT}/VERSION"
-install -d -m 0755 "${POLKIT_RULES_DIR}"
-install -m 0644 "${PACKAGE_DIR}/agent/policy/49-capivara-agent-instance-units.rules" \
-  "${POLKIT_RULES_DIR}/49-capivara-agent-instance-units.rules"
-install -d -m 0755 "$(dirname "${CLI_PATH}")"
-ln -sfn "${INSTALL_ROOT}/runtime/cap_dispatch.py" "${CLI_PATH}"
+install -m 0644 "${PACKAGE_DIR}/agent/common/identity.py" "${INSTALL_ROOT}/common/identity.py"; install -m 0644 "${PACKAGE_DIR}/manifest.json" "${INSTALL_ROOT}/manifest.json"; printf '%s\n' "${VERSION}" >"${INSTALL_ROOT}/VERSION"
+install -d -m 0755 "${POLKIT_RULES_DIR}"; install -m 0644 "${PACKAGE_DIR}/agent/policy/49-capivara-agent-instance-units.rules" "${POLKIT_RULES_DIR}/49-capivara-agent-instance-units.rules"
+install -d -m 0755 "$(dirname "${CLI_PATH}")"; ln -sfn "${INSTALL_ROOT}/runtime/cap_dispatch.py" "${CLI_PATH}"
 python3 - "${PACKAGE_DIR}" "${CONFIG_DIR}/agent.json" "${CONTROLLER_URL}" "${PAIRING_TOKEN}" "${VERSION}" <<'PY'
-import importlib.util, pathlib, sys
-package, config_path, controller_url, token, version = sys.argv[1:]
-identity_path = pathlib.Path(package) / 'agent/common/identity.py'; spec = importlib.util.spec_from_file_location('capivara_agent_identity', identity_path); mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-identity = mod.generate_local_identity(); config = {**identity, 'controller_url': controller_url.rstrip('/'), 'pairing_token': token, 'capivara_version': version, 'heartbeat_interval_seconds': 30, 'reconcile_interval_seconds': 15, 'reconcile_failure_threshold': 3, 'reconcile_base_backoff_seconds': 15, 'reconcile_max_backoff_seconds': 300, 'degraded_after_seconds': 60, 'offline_after_seconds': 120}
-mod.write_identity(pathlib.Path(config_path), config)
+import importlib.util,pathlib,sys
+package,config_path,url,token,version=sys.argv[1:]; p=pathlib.Path(package)/'agent/common/identity.py'; s=importlib.util.spec_from_file_location('identity',p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); identity=m.generate_local_identity()
+config={**identity,'controller_url':url.rstrip('/'),'pairing_token':token,'capivara_version':version,'heartbeat_interval_seconds':30,'reconcile_interval_seconds':15,'reconcile_failure_threshold':3,'reconcile_base_backoff_seconds':15,'reconcile_max_backoff_seconds':300,'runtime_lock_timeout_seconds':5,'provisioning_timeout_seconds':3600,'runtime_start_timeout_seconds':90,'runtime_stop_timeout_seconds':90,'reconcile_timeout_seconds':120,'reconcile_max_retries':5,'degraded_after_seconds':60,'offline_after_seconds':120}; m.write_identity(pathlib.Path(config_path),config)
 PY
-chown capivara-agent:capivara-agent "${CONFIG_DIR}/agent.json"
-chmod 0600 "${CONFIG_DIR}/agent.json"
-install -m 0644 "${PACKAGE_DIR}/services/capivara-agent.service" "${SYSTEMD_DIR}/capivara-agent.service"
-install -m 0644 "${PACKAGE_DIR}/services/capivara-agent-update.service" "${SYSTEMD_DIR}/capivara-agent-update.service"
-install -m 0644 "${PACKAGE_DIR}/services/capivara-agent-update.path" "${SYSTEMD_DIR}/capivara-agent-update.path"
-install -m 0644 "${PACKAGE_DIR}/services/capivara-agent-materialize@.service" "${SYSTEMD_DIR}/capivara-agent-materialize@.service"
-systemctl daemon-reload
-systemctl enable --now capivara-agent-update.path
-systemctl enable --now capivara-agent.service
-log "Agent ${VERSION} instalado. Reconciler local mantém desired/observed state com recovery seguro e backoff."
+chown capivara-agent:capivara-agent "${CONFIG_DIR}/agent.json"; chmod 0600 "${CONFIG_DIR}/agent.json"
+for file in capivara-agent.service capivara-agent-update.service capivara-agent-update.path capivara-agent-materialize@.service; do install -m 0644 "${PACKAGE_DIR}/services/${file}" "${SYSTEMD_DIR}/${file}"; done
+systemctl daemon-reload; systemctl enable --now capivara-agent-update.path; systemctl enable --now capivara-agent.service
+log "Agent ${VERSION} instalado com runtime serializado, crash-consistent e observável."
