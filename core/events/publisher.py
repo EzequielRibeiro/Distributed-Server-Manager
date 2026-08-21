@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Optional
 
+from .context import EventContext
 from .models import EventScope, EventSeverity, EventSource, UniversalEvent
 from .validator import validate_event
 
@@ -12,8 +13,9 @@ EventSink = Callable[[UniversalEvent], None]
 class EventPublisher:
     """Builds, validates and dispatches events to an optional sink.
 
-    Persistence is deliberately not part of this class yet. A later Phase 21
-    slice can provide a repository-backed sink without changing producers.
+    The publisher stays transport- and persistence-agnostic. Correlation may be
+    supplied either through an EventContext or through the legacy explicit
+    correlation_id/causation_id parameters.
     """
 
     def __init__(self, sink: Optional[EventSink] = None) -> None:
@@ -28,9 +30,19 @@ class EventPublisher:
         scope: Optional[EventScope] = None,
         data: Optional[Dict[str, Any]] = None,
         version: int = 1,
+        context: Optional[EventContext] = None,
         correlation_id: Optional[str] = None,
         causation_id: Optional[str] = None,
     ) -> UniversalEvent:
+        if context is not None:
+            if correlation_id is not None or causation_id is not None:
+                raise ValueError(
+                    "context cannot be combined with explicit "
+                    "correlation_id or causation_id"
+                )
+            correlation_id = context.correlation_id
+            causation_id = context.causation_id
+
         event = UniversalEvent(
             type=event_type,
             source=source,
@@ -60,6 +72,7 @@ def publish(
     scope: Optional[EventScope] = None,
     data: Optional[Dict[str, Any]] = None,
     version: int = 1,
+    context: Optional[EventContext] = None,
     correlation_id: Optional[str] = None,
     causation_id: Optional[str] = None,
 ) -> UniversalEvent:
@@ -70,6 +83,7 @@ def publish(
         scope=scope,
         data=data,
         version=version,
+        context=context,
         correlation_id=correlation_id,
         causation_id=causation_id,
     )
