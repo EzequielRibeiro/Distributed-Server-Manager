@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -14,14 +13,18 @@ for path in (ROOT, ROOT / "database", ROOT / "dashboard"):
         sys.path.insert(0, str(path))
 
 from admin_management_repository import AdminManagementRepository
-from backend import SQLiteBackend
+from runtime_backend import backend_from_environment
 
 
 def main() -> int:
     with tempfile.TemporaryDirectory() as temp:
-        os.environ["DSM_DB_BACKEND"] = "sqlite"
         db_path = Path(temp) / "capivara.db"
-        backend = SQLiteBackend(db_path, ROOT / "database" / "migrations")
+        backend = backend_from_environment(
+            {
+                "DSM_DATABASE_DRIVER": "sqlite",
+                "DSM_DATABASE": str(db_path),
+            }
+        )
         backend.initialize()
         repo = AdminManagementRepository(backend)
 
