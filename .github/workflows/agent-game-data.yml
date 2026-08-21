@@ -1,0 +1,58 @@
+name: Agent Game Data
+
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/**'
+      - 'dashboard/agent_game_data_*.py'
+      - 'dashboard/agent_remote_http.py'
+      - 'dashboard/hybrid_game_data_client.py'
+      - 'dashboard/server_part13.py'
+      - 'dashboard/workers/hybrid_agent_worker.py'
+      - 'dashboard/workers/hybrid_game_data_executor.py'
+      - 'dashboard/web/game-data-orchestration.js'
+      - 'dashboard/web/js/infrastructure-shell.js'
+      - 'database/agent_game_data_repository.py'
+      - 'database/migrations/025_agent_game_data_jobs.sql'
+      - 'database/migrations_mysql/025_agent_game_data_jobs.sql'
+      - 'database/migrations_postgresql/025_agent_game_data_jobs.sql'
+      - 'release/build_agent_package.sh'
+      - 'tests/agent_game_data_jobs_test.py'
+      - 'tests/agent_package_test.sh'
+      - '.github/workflows/agent-game-data.yml'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate Python
+        run: |
+          python3 -m py_compile \
+            agents/linux/runtime/agent.py \
+            agents/linux/runtime/game_data_client.py \
+            agents/linux/runtime/game_data_executor.py \
+            dashboard/agent_game_data_api.py \
+            dashboard/agent_game_data_http.py \
+            dashboard/agent_remote_http.py \
+            dashboard/hybrid_game_data_client.py \
+            dashboard/workers/hybrid_agent_worker.py \
+            dashboard/workers/hybrid_game_data_executor.py \
+            database/agent_game_data_repository.py \
+            tests/agent_game_data_jobs_test.py
+      - name: Test game-data orchestration
+        run: python3 -m unittest tests/agent_game_data_jobs_test.py
+      - name: Test Linux Agent package
+        run: bash tests/agent_package_test.sh
+      - name: Validate Dashboard JavaScript
+        run: |
+          node --check dashboard/web/game-data-orchestration.js
+          node --check dashboard/web/js/infrastructure-shell.js

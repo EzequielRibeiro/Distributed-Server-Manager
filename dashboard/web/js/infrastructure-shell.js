@@ -1,7 +1,22 @@
 (() => {
     "use strict";
 
+    function loadGameDataOrchestration() {
+        if (
+            document.querySelector('script[data-capivara-game-data]') ||
+            !document.getElementById("catalog-v2-card")
+        ) {
+            return;
+        }
+        const script = document.createElement("script");
+        script.src = "/game-data-orchestration.js";
+        script.dataset.capivaraGameData = "1";
+        script.async = true;
+        document.head.appendChild(script);
+    }
+
     function mount() {
+        loadGameDataOrchestration();
         const Explorer = window.CapivaraInfrastructureExplorer;
         const Details = window.CapivaraInfrastructureDetails;
         if (!Explorer || document.getElementById("capivara-infrastructure-shell")) return;

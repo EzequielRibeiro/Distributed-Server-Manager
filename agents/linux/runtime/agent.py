@@ -20,6 +20,7 @@ if str(RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_DIR))
 
 from capabilities import detect_capabilities
+from game_data_client import clear_game_data_result, read_game_data_result, stage_game_data_command
 from network_inventory import collect_network_inventory
 from update_client import clear_update_result, read_update_result, stage_update_request
 
@@ -91,6 +92,9 @@ def _inventory(config: dict[str, Any]) -> dict[str, Any]:
     update_result = read_update_result()
     if update_result:
         payload["update_result"] = update_result
+    game_data_result = read_game_data_result()
+    if game_data_result:
+        payload["game_data_result"] = game_data_result
     return payload
 
 
@@ -141,6 +145,15 @@ def heartbeat(config: dict[str, Any]) -> dict[str, Any]:
         )
     if result.get("update_state", {}).get("update_status") == "completed":
         clear_update_result()
+    command = result.get("game_data_command")
+    if isinstance(command, dict) and stage_game_data_command(command):
+        print(
+            f"game-data staged job={command.get('job_id')} environment={command.get('environment_id')}",
+            flush=True,
+        )
+    state = result.get("game_data_state") if isinstance(result.get("game_data_state"), dict) else {}
+    if str(state.get("status") or "").lower() in {"completed", "failed"} and state.get("job_id"):
+        clear_game_data_result(str(state["job_id"]))
     return result
 
 

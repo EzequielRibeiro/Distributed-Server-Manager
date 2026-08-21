@@ -7,6 +7,13 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import server_part12 as integration
+from agent_game_data_http import (
+    GAME_DATA_JOBS_PATH,
+    GAME_DATA_OPERATION_PATH,
+    LEGACY_ENVIRONMENT_INSTALL_PATH,
+    dispatch_agent_game_data_get,
+    dispatch_agent_game_data_post,
+)
 from agent_update_http import (
     CHANNEL_PATH,
     ROLLOUT_PATH,
@@ -30,6 +37,7 @@ WINDOWS_INSTALL_FILE = ROOT_DIR / "agents" / "windows" / "installer" / "bootstra
 VERSION_FILE = ROOT_DIR / "version"
 legacy.STATIC_FILES["/agent-updates.js"] = legacy.WEB_DIR / "agent-updates.js"
 legacy.STATIC_FILES["/infrastructure-role-ui.js"] = legacy.WEB_DIR / "infrastructure-role-ui.js"
+legacy.STATIC_FILES["/game-data-orchestration.js"] = legacy.WEB_DIR / "game-data-orchestration.js"
 
 
 def _user(self):
@@ -37,6 +45,10 @@ def _user(self):
     if user is None:
         self.unauthorized()
     return user
+
+
+def _backend():
+    return legacy.dashboard_repository(legacy.DATABASE_FILE).backend
 
 
 def _serve_windows_bootstrap(self):
@@ -60,6 +72,20 @@ def integrated_get(self):
     parsed = urlparse(self.path)
     if parsed.path == WINDOWS_INSTALL_PATH:
         return _serve_windows_bootstrap(self)
+
+    if parsed.path == GAME_DATA_JOBS_PATH:
+        user = _user(self)
+        if user is None:
+            return
+        status, body = dispatch_agent_game_data_get(
+            parsed.path,
+            parsed.query,
+            user=user,
+            backend=_backend(),
+        )
+        self.send_json(status, body)
+        return
+
     if parsed.path == INFRASTRUCTURE_ROLE_PATH:
         user = _user(self)
         if user is None:
@@ -68,7 +94,7 @@ def integrated_get(self):
         status, body = dispatch_infrastructure_role_get(
             parsed.path,
             user=user,
-            backend=legacy.dashboard_repository(legacy.DATABASE_FILE).backend,
+            backend=_backend(),
             node_id=(query.get("node_id") or [None])[0],
         )
         self.send_json(status, body)
@@ -82,7 +108,7 @@ def integrated_get(self):
     status, body = dispatch_update_get(
         parsed.path,
         user=user,
-        backend=legacy.dashboard_repository(legacy.DATABASE_FILE).backend,
+        backend=_backend(),
         agent_id=(query.get("agent_id") or [None])[0],
     )
     self.send_json(status, body)
@@ -90,6 +116,26 @@ def integrated_get(self):
 
 def integrated_post(self):
     parsed = urlparse(self.path)
+
+    if parsed.path in {GAME_DATA_OPERATION_PATH, LEGACY_ENVIRONMENT_INSTALL_PATH}:
+        user = _user(self)
+        if user is None:
+            return
+        try:
+            payload = self.read_json_body()
+        except ValueError:
+            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
+            return
+        status, body = dispatch_agent_game_data_post(
+            parsed.path,
+            payload,
+            user=user,
+            backend=_backend(),
+            root=ROOT_DIR,
+        )
+        self.send_json(status, body)
+        return
+
     if parsed.path == INFRASTRUCTURE_ROLE_PATH:
         user = _user(self)
         if user is None:
@@ -103,7 +149,7 @@ def integrated_post(self):
             parsed.path,
             payload,
             user=user,
-            backend=legacy.dashboard_repository(legacy.DATABASE_FILE).backend,
+            backend=_backend(),
             root=ROOT_DIR,
         )
         self.send_json(status, body)
@@ -122,7 +168,7 @@ def integrated_post(self):
         parsed.path,
         payload,
         user=user,
-        backend=legacy.dashboard_repository(legacy.DATABASE_FILE).backend,
+        backend=_backend(),
     )
     self.send_json(status, body)
 
