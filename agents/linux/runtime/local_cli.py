@@ -21,6 +21,7 @@ if str(RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_DIR))
 
 from capabilities import detect_capabilities
+from game_data_state import get_game_data, get_job, list_game_data, list_jobs, summary as game_data_summary
 from network_inventory import collect_network_inventory
 
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
@@ -205,6 +206,7 @@ def _doctor(config: dict[str, Any]) -> dict[str, Any]:
     capabilities = detect_capabilities()
     ports = _ports(config)
     host = _host()
+    game_data = game_data_summary()
     findings: list[dict[str, str]] = []
 
     def add(code: str, severity: str, message: str) -> None:
@@ -224,6 +226,8 @@ def _doctor(config: dict[str, Any]) -> dict[str, Any]:
         add("managed_port_conflict", "warning", "Observed sockets overlap one or more managed ranges.")
     if int(host["storage_root_free_bytes"]) < 5 * 1024**3:
         add("low_disk_space", "warning", "Root filesystem has less than 5 GiB free.")
+    if int(game_data.get("failed_recent_jobs", 0)):
+        add("recent_game_data_failures", "warning", "One or more recent local game-data jobs failed.")
 
     severities = {item["severity"] for item in findings}
     status = "critical" if "critical" in severities else "degraded" if "warning" in severities else "healthy"
@@ -239,6 +243,7 @@ def _doctor(config: dict[str, Any]) -> dict[str, Any]:
         "host": host,
         "capabilities": capabilities,
         "ports": ports,
+        "game_data": game_data,
         "findings": findings,
     }
 
@@ -262,6 +267,9 @@ def _emit(payload: Any, *, as_json: bool) -> None:
                 print(f"{key}: {json.dumps(value, ensure_ascii=False, default=str)}")
             else:
                 print(f"{key}: {value}")
+    elif isinstance(payload, list):
+        for item in payload:
+            print(json.dumps(item, ensure_ascii=False, default=str))
     else:
         print(payload)
 
@@ -272,11 +280,30 @@ def _parser() -> argparse.ArgumentParser:
     for name in ("status", "info", "health", "heartbeat", "capabilities", "network", "doctor"):
         item = sub.add_parser(name)
         item.add_argument("--json", action="store_true", dest="as_json")
+
     ports = sub.add_parser("ports")
     ports_sub = ports.add_subparsers(dest="ports_action", required=True)
     for name in ("show", "check"):
         item = ports_sub.add_parser(name)
         item.add_argument("--json", action="store_true", dest="as_json")
+
+    game_data = sub.add_parser("game-data")
+    game_data_sub = game_data.add_subparsers(dest="game_data_action", required=True)
+    game_list = game_data_sub.add_parser("list")
+    game_list.add_argument("--json", action="store_true", dest="as_json")
+    game_status = game_data_sub.add_parser("status")
+    game_status.add_argument("game")
+    game_status.add_argument("--json", action="store_true", dest="as_json")
+
+    jobs = sub.add_parser("jobs")
+    jobs.add_argument("--active", action="store_true")
+    jobs.add_argument("--limit", type=int, default=50)
+    jobs.add_argument("--json", action="store_true", dest="as_json")
+    jobs_sub = jobs.add_subparsers(dest="jobs_action")
+    job_show = jobs_sub.add_parser("show")
+    job_show.add_argument("job_id")
+    job_show.add_argument("--json", action="store_true", dest="as_json")
+
     logs = sub.add_parser("logs")
     logs.add_argument("--lines", type=int, default=200)
     logs.add_argument("--json", action="store_true", dest="as_json")
@@ -314,6 +341,20 @@ def main(argv: list[str] | None = None) -> int:
             payload = collect_network_inventory()
         elif args.command == "ports":
             payload = _ports(config)
+        elif args.command == "game-data":
+            if args.game_data_action == "list":
+                payload = {"games": list_game_data()}
+            else:
+                payload = get_game_data(args.game)
+                if payload is None:
+                    raise LookupError(f"game-data not found: {args.game}")
+        elif args.command == "jobs":
+            if args.jobs_action == "show":
+                payload = get_job(args.job_id)
+                if payload is None:
+                    raise LookupError(f"job not found: {args.job_id}")
+            else:
+                payload = {"jobs": list_jobs(active_only=bool(args.active), limit=args.limit)}
         elif args.command == "logs":
             payload = _logs(args.lines)
         elif args.command == "doctor":
@@ -324,7 +365,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "doctor" and payload.get("status") == "critical":
             return 1
         return 0
-    except RuntimeError as exc:
+    except LookupError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except (RuntimeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
