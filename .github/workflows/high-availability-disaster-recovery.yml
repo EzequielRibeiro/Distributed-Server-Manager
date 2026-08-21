@@ -1,0 +1,47 @@
+name: High Availability and Disaster Recovery
+
+on:
+  pull_request:
+    paths:
+      - 'core/ha_dr.py'
+      - 'core/ha_dr_orchestrator.py'
+      - 'database/ha_dr_*'
+      - 'dashboard/ha_dr_http.py'
+      - 'dashboard/server_part13.py'
+      - 'database/migrations/040_high_availability_disaster_recovery.sql'
+      - 'database/migrations_mysql/040_high_availability_disaster_recovery.sql'
+      - 'database/migrations_postgresql/040_high_availability_disaster_recovery.sql'
+      - 'bin/cap'
+      - 'tests/high_availability_disaster_recovery_test.py'
+      - 'tests/high_availability_failover_e2e_test.py'
+      - 'docs/architecture/high-availability-disaster-recovery.md'
+      - '.github/workflows/high-availability-disaster-recovery.yml'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax
+        run: |
+          bash -n bin/cap
+          PYTHONPATH=database python3 -m py_compile core/ha_dr.py core/ha_dr_orchestrator.py database/ha_dr_repository.py database/ha_dr_cli.py dashboard/ha_dr_http.py dashboard/server_part13.py
+      - name: Test E2 contracts
+        run: PYTHONPATH=database:. python3 -m unittest tests/high_availability_disaster_recovery_test.py -v
+      - name: Test operational failover and split-brain protection
+        run: PYTHONPATH=database:. python3 tests/high_availability_failover_e2e_test.py
+      - name: Verify migration parity
+        run: |
+          test -f database/migrations/040_high_availability_disaster_recovery.sql
+          test -f database/migrations_postgresql/040_high_availability_disaster_recovery.sql
+          test -f database/migrations_mysql/040_high_availability_disaster_recovery.sql
+          grep -Fq 'ha_failover_operations' database/migrations/040_high_availability_disaster_recovery.sql
+          grep -Fq 'fencing_epoch' database/migrations_postgresql/040_high_availability_disaster_recovery.sql
+          grep -Fq 'dr_recovery_points' database/migrations_mysql/040_high_availability_disaster_recovery.sql
+      - name: Verify integration boundaries
+        run: |
+          grep -Fq 'cap ha' bin/cap
+          grep -Fq 'HA_DR_PATH' dashboard/server_part13.py
+          grep -Fq 'fencing failed; promotion refused' core/ha_dr_orchestrator.py
+          test ! -e dashboard/server_part14.py
