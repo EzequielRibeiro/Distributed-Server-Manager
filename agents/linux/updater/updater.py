@@ -108,6 +108,7 @@ def apply_request() -> int:
             (runtime / "capabilities.py", INSTALL_ROOT / "runtime" / "capabilities.py"),
             (runtime / "network_inventory.py", INSTALL_ROOT / "runtime" / "network_inventory.py"),
             (runtime / "update_client.py", INSTALL_ROOT / "runtime" / "update_client.py"),
+            (runtime / "local_cli.py", INSTALL_ROOT / "runtime" / "local_cli.py"),
             (common / "identity.py", INSTALL_ROOT / "common" / "identity.py"),
             (package_root / "manifest.json", INSTALL_ROOT / "manifest.json"),
             (package_root / "VERSION", INSTALL_ROOT / "VERSION"),
@@ -116,6 +117,7 @@ def apply_request() -> int:
             temp = destination.with_suffix(destination.suffix + ".new")
             shutil.copy2(source, temp)
             os.replace(temp, destination)
+        os.chmod(INSTALL_ROOT / "runtime" / "local_cli.py", 0o755)
 
         new_updater = package_root / "agent" / "updater" / "updater.py"
         if new_updater.is_file():

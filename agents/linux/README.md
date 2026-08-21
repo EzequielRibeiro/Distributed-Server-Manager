@@ -11,7 +11,11 @@ agents/
     │   ├── bootstrap-release.sh
     │   └── install-agent.sh
     ├── runtime/
-    │   └── agent.py
+    │   ├── agent.py
+    │   ├── capabilities.py
+    │   ├── network_inventory.py
+    │   ├── local_cli.py
+    │   └── update_client.py
     ├── services/
     │   └── capivara-agent.service
     └── README.md
@@ -27,6 +31,31 @@ agents/
 6. Valida SHA-256 antes de extrair.
 7. Executa o `install-agent.sh` que está dentro do pacote.
 8. O Agent gera identidade, faz enrollment, remove o pairing token, inicia heartbeat e conclui `pairing -> active`.
+
+## CLI local
+
+O pacote Linux instala `local_cli.py` no runtime do Agent e expõe `/usr/local/bin/cap` como link para essa CLI. O instalador se recusa a sobrescrever um `cap` já existente que não pertença ao Agent.
+
+A superfície B1 é estritamente local/observacional:
+
+```text
+cap agent status
+cap agent info
+cap agent health
+cap agent heartbeat
+cap agent capabilities
+cap agent network
+cap agent ports show
+cap agent ports check
+cap agent logs [--lines N]
+cap agent doctor
+```
+
+Todos os comandos aceitam `--json` quando aplicável. `cap agent doctor` não usa a database do Controller, não executa migrations, não faz heartbeat e não altera configuração. Ele compõe identidade/enrollment, serviço, conectividade ao `/ping` do Controller, CPU/RAM/disco, capabilities, sockets locais e ranges de portas eventualmente cacheados.
+
+`cap agent ports show/check` é somente leitura. A autoridade para `ports set` continua no Controller/Hybrid. Enquanto o Controller ainda não sincroniza ranges gerenciados para o arquivo local do Agent, a CLI informa `configured=false` em vez de inventar um range.
+
+A CLI nunca imprime `credential_secret` nem outras credenciais permanentes.
 
 ## Desenvolvimento / offline
 
@@ -44,6 +73,10 @@ capivara-agent-linux-X.Y.Z/
 ├── install-agent.sh
 ├── agent/common/identity.py
 ├── agent/runtime/agent.py
+├── agent/runtime/capabilities.py
+├── agent/runtime/network_inventory.py
+├── agent/runtime/local_cli.py
+├── agent/runtime/update_client.py
 ├── services/capivara-agent.service
 ├── config/README.md
 ├── VERSION

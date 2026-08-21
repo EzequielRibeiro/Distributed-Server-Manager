@@ -1,0 +1,42 @@
+name: Agent Local CLI
+
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/**'
+      - 'bin/cap'
+      - 'release/build_agent_package.sh'
+      - 'tests/agent_local_cli_test.py'
+      - 'tests/agent_package_test.sh'
+      - '.github/workflows/agent-local-cli.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/linux/**'
+      - 'bin/cap'
+      - 'release/build_agent_package.sh'
+      - 'tests/agent_local_cli_test.py'
+      - 'tests/agent_package_test.sh'
+      - '.github/workflows/agent-local-cli.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate CLI syntax
+        run: |
+          bash -n bin/cap
+          bash -n agents/linux/installer/install-agent.sh
+          bash -n release/build_agent_package.sh
+          python3 -m py_compile agents/linux/runtime/local_cli.py agents/linux/runtime/capabilities.py agents/linux/runtime/network_inventory.py agents/linux/updater/updater.py tests/agent_local_cli_test.py
+      - name: Run local CLI tests
+        run: python3 -m unittest tests/agent_local_cli_test.py
+      - name: Validate Agent package
+        run: bash tests/agent_package_test.sh
