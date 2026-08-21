@@ -4,7 +4,7 @@
 
 Reduzir a dispersão de arquivos que descrevem o mesmo jogo sem quebrar os contratos atuais do catálogo, Runtime, Dashboard ou instaladores.
 
-A reorganização será incremental. Arquivos existentes não devem ser movidos até que todas as referências de código, testes e documentação tenham sido inventariadas e uma camada de compatibilidade exista quando necessária.
+A reorganização é incremental, porém a migração dos **RuntimeDefinitions distribuídos pelo repositório foi concluída para todos os jogos atuais**.
 
 ## Princípio
 
@@ -15,25 +15,42 @@ Exemplos:
 - identidade, capabilities, requisitos de rede e runtimes: específicos do jogo;
 - Steam, HTTP archive, GitHub Releases e Modrinth: providers reutilizáveis;
 - schemas: contratos compartilhados;
-- adaptadores de processo: código operacional específico do jogo, mantido em `games/`.
+- adaptadores de processo: código operacional específico do jogo, mantido no diretório de nível superior `games/`.
 
-## Estrutura alvo
+## Estrutura atual do catálogo de runtimes
 
 ```text
 catalog/v2/
 ├── games/
 │   ├── arma3/
+│   │   └── runtimes/
 │   ├── dayz/
+│   │   └── runtimes/
 │   ├── luanti/
+│   │   └── runtimes/
 │   ├── mindustry/
+│   │   └── runtimes/
 │   ├── minecraft/
+│   │   └── runtimes/
 │   └── rust/
+│       └── runtimes/
+├── content/
 ├── providers/
 ├── schemas/
 └── examples/
 ```
 
-Cada diretório de jogo poderá evoluir para:
+O caminho canônico de um RuntimeDefinition é:
+
+```text
+catalog/v2/games/<game>/runtimes/<variant>.json
+```
+
+A árvore anterior `catalog/v2/runtimes/` não faz mais parte do catálogo distribuído pelo repositório.
+
+## Estrutura futura por jogo
+
+Cada diretório poderá evoluir, conforme necessidade real, para:
 
 ```text
 catalog/v2/games/<game>/
@@ -44,22 +61,20 @@ catalog/v2/games/<game>/
 └── capabilities.json
 ```
 
-A divisão exata será consolidada somente depois do inventário de dependências. Nem todo jogo precisa possuir todos esses arquivos.
+Nem todo jogo precisa possuir todos esses arquivos. A criação de novos manifests deve ocorrer apenas quando houver informação canônica que justifique essa separação.
 
-## Responsabilidade de `games/`
+## Responsabilidade do diretório de nível superior `games/`
 
-O diretório de nível superior `games/` continua reservado a código/adaptadores operacionais de processo. Ele não é uma segunda fonte de verdade para descoberta do catálogo.
+O diretório `games/` na raiz do repositório continua reservado a código/adaptadores operacionais de processo. Ele não é uma segunda fonte de verdade para descoberta do catálogo.
 
 ```text
 games/<game>/
 └── adaptador de execução, launcher e integração operacional
 ```
 
-Metadados declarativos e itens instaláveis devem migrar progressivamente para `catalog/v2/games/<game>/`.
+Metadados declarativos pertencem ao catálogo; comportamento operacional pertence aos adaptadores.
 
-## Classificação usada durante a migração
-
-Cada arquivo relacionado a jogo deve ser classificado como uma das categorias abaixo antes de ser movido:
+## Classificação usada durante a reorganização
 
 - **CANÔNICO** — fonte de verdade declarativa do jogo;
 - **ESPECÍFICO DO JOGO** — comportamento necessário apenas para um jogo;
@@ -67,73 +82,85 @@ Cada arquivo relacionado a jogo deve ser classificado como uma das categorias ab
 - **DUPLICADO** — informação já representada por outra fonte canônica;
 - **LEGADO** — mantido apenas por compatibilidade e candidato à remoção futura.
 
-## Compatibilidade durante a transição
+## Compatibilidade de caminhos
 
-Durante a migração, o catálogo aceita simultaneamente:
+A resolução de runtimes é centralizada em `installer/catalog_paths.sh`.
+
+O catálogo do próprio repositório usa somente o namespace canônico. Entretanto, para não quebrar catálogos externos, fixtures antigas ou atualizações em transição, o resolvedor ainda aceita:
 
 ```text
-# namespace canônico novo
-catalog/v2/games/<game>/runtimes/<variant>.json
-
-# namespace legado compatível
 catalog/v2/runtimes/<game>/<variant>.json
 ```
 
-A resolução de runtimes é centralizada em `installer/catalog_paths.sh`. O namespace novo é consultado primeiro; quando o mesmo `id` existe nos dois layouts, a definição canônica vence. As listagens eliminam duplicações por `id`.
+como fallback de leitura.
 
-Os comandos `runtime list`, `runtime show` e `runtime prepare` utilizam a mesma camada de resolução. Isso permite migrar os manifests jogo a jogo sem alterar os contratos públicos do Dashboard, CLI ou instalação.
+Quando os dois layouts estão presentes em um catálogo externo, a definição em:
 
-Nenhum caminho legado deve ser removido antes de:
+```text
+catalog/v2/games/<game>/runtimes/<variant>.json
+```
 
-1. localizar referências aos caminhos atuais;
-2. adicionar testes de contrato para a nova organização;
-3. validar fallback e precedência do loader compatível;
-4. migrar um jogo piloto;
-5. validar CI e regressões;
-6. somente então migrar os demais jogos.
+tem precedência, e listagens eliminam duplicações por `id`.
 
-## Ordem proposta
+Os comandos `runtime list`, `runtime show` e `runtime prepare` usam essa mesma camada. O Dashboard e o CompatibilityResolver também compartilham o resolvedor Bash, enquanto consumidores Python usam `core/catalog_runtime_paths.py` com o mesmo contrato canônico-first.
 
-### Etapa A — estrutura e inventário
+## Migração realizada
 
-- criar `catalog/v2/games/`;
-- documentar responsabilidades;
-- inventariar arquivos por jogo;
-- identificar duplicações e caminhos consumidos pelo código.
+### Piloto
 
-### Etapa A.3 — resolução compatível de caminhos
+DayZ foi usado para validar a estratégia completa antes da migração em massa:
 
-- adicionar `installer/catalog_paths.sh`;
-- procurar primeiro `catalog/v2/games/<game>/runtimes/`;
-- fazer fallback para `catalog/v2/runtimes/<game>/`;
-- deduplicar listagens por `id`, preservando a definição canônica;
-- usar a mesma resolução em `runtime list`, `runtime show` e `runtime prepare`;
-- testar os cenários legacy-only, canonical-only, coexistência e precedência.
+1. inventário dos consumidores;
+2. resolvedor canônico + fallback;
+3. testes legacy-only e canonical-only;
+4. precedência e deduplicação;
+5. movimentação física do manifesto;
+6. regressão do Dashboard, instalação, placement e catálogo.
 
-### Etapa B — registro canônico
+### Todos os jogos atuais
 
-- introduzir identidade canônica por jogo;
-- disponibilizar listagem de jogos sem deduzi-la apenas dos runtimes;
-- preparar endpoint conceitual `/api/catalog/games`.
+Após o piloto, foram migrados:
 
-### Etapa C — migração piloto
+- Arma 3 — `arma3.stable`;
+- DayZ — `dayz.stable`;
+- Luanti — `luanti.stable`;
+- Mindustry — `mindustry.github`;
+- Minecraft — `minecraft.bedrock.vanilla`, `minecraft.java.vanilla`, `minecraft.java.paper`, `minecraft.java.fabric` e `minecraft.java.arclight`;
+- Rust — `rust.stable`.
 
-- usar DayZ como primeiro jogo piloto;
-- mover o manifesto somente após aprovação dos testes da camada de compatibilidade;
-- manter compatibilidade com os caminhos antigos durante a transição;
-- validar Dashboard, CLI e instalação.
+Os manifests foram preservados, incluindo provider, package/App ID, executável, versão/resolver, requisitos de plataforma e política de rede existente.
 
-### Etapa D — migração dos demais jogos
+## Testes de proteção
 
-- migrar jogo a jogo;
-- remover duplicações comprovadas;
-- atualizar testes e documentação.
+`tests/catalog_path_resolver_test.sh` verifica:
 
-### Etapa E — retirada do legado
+1. leitura de catálogo legacy-only externo;
+2. leitura canonical-only;
+3. precedência canônica em coexistência;
+4. deduplicação por runtime ID;
+5. `runtime prepare` usando o mesmo resolvedor;
+6. presença única de todos os runtime IDs distribuídos;
+7. ausência da árvore `catalog/v2/runtimes/` no repositório.
 
-- remover loaders e caminhos antigos apenas quando não houver consumidores restantes;
-- manter providers compartilhados fora das pastas de jogos.
+O workflow `Catalog Layout Compatibility` executa esse contrato e em seguida a regressão `tests/catalog_v2_test.sh`. O CI principal continua validando instalação, Dashboard, Python, Agents e o gate end-to-end.
+
+## Próximas etapas estruturais
+
+A conclusão da migração dos runtimes não significa mover automaticamente todos os outros arquivos. As próximas etapas devem ser independentes e protegidas por testes:
+
+- introduzir uma identidade canônica `game.json` se ela eliminar duplicação real;
+- disponibilizar uma listagem canônica de jogos sem deduzi-la apenas dos runtimes;
+- avaliar a migração de `content/` para o namespace por jogo;
+- comparar `game.conf` e manifests canônicos antes de remover duplicações;
+- mover fixtures de providers que hoje vivem sob `games/` para uma área de testes apropriada;
+- retirar fallback legado somente quando não houver necessidade de compatibilidade externa.
 
 ## Regra para novos jogos
 
-Enquanto a migração estiver em andamento, novos jogos não devem introduzir mais uma estrutura paralela. A identidade declarativa deverá seguir a organização definida em `catalog/v2/games/`, e mecanismos genéricos devem ser reutilizados em vez de copiados para cada jogo.
+Novos jogos devem criar seus RuntimeDefinitions diretamente em:
+
+```text
+catalog/v2/games/<game>/runtimes/
+```
+
+Não deve ser recriada a árvore `catalog/v2/runtimes/`. Mecanismos genéricos devem ser reutilizados em vez de copiados para cada jogo.
