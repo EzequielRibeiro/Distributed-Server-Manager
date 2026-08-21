@@ -7,6 +7,7 @@ import json
 import os
 import pwd
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,7 @@ SYSTEMD_DIR = Path(os.environ.get("CAPIVARA_SYSTEMD_DIR", "/etc/systemd/system")
 SERVICE_USER = os.environ.get("CAPIVARA_AGENT_USER", "capivara-agent")
 _TOKEN = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 VALID_ACTIONS = {"provision", "reconcile", "remove"}
+VALID_ENGINES = {"native", "java"}
 
 
 def _now() -> str:
@@ -101,6 +103,9 @@ def _runtime_contract(request: dict[str, Any]) -> dict[str, Any]:
     launch = runtime.get("launch")
     if not isinstance(launch, dict):
         raise ValueError("runtime launch profile is required")
+    engine = str(launch.get("engine") or "").strip().lower()
+    if engine not in VALID_ENGINES:
+        raise ValueError("unsupported runtime launch engine")
     executable_text = str(launch.get("executable") or "").strip()
     executable = PurePosixPath(executable_text)
     if not executable_text or executable.is_absolute() or ".." in executable.parts:
@@ -116,8 +121,12 @@ def _runtime_contract(request: dict[str, Any]) -> dict[str, Any]:
         _quote(value)
         clean_arguments.append(value)
     return {
-        "adapter": "systemd", "game_id": game_id, "runtime_id": runtime_id,
-        "environment_id": environment_id, "launch_executable": executable.as_posix(),
+        "adapter": "systemd",
+        "game_id": game_id,
+        "runtime_id": runtime_id,
+        "environment_id": environment_id,
+        "engine": engine,
+        "launch_executable": executable.as_posix(),
         "arguments": clean_arguments,
     }
 
@@ -139,8 +148,20 @@ def _daemon_reload() -> None:
     _run(["systemctl", "daemon-reload"], timeout=30)
 
 
-def render_unit(instance_id: str, executable: Path, working_dir: Path, arguments: list[str]) -> str:
-    argv = [_quote(str(executable)), *[_quote(item) for item in arguments]]
+def _launch_argv(runtime: dict[str, Any], artifact: Path) -> list[str]:
+    if runtime["engine"] == "native":
+        if not os.access(artifact, os.X_OK):
+            raise RuntimeError("native launch executable is not executable")
+        return [str(artifact), *runtime["arguments"]]
+    java = shutil.which("java")
+    if not java:
+        raise RuntimeError("Java runtime is required but was not found on the Agent")
+    return [str(Path(java).resolve()), "-jar", str(artifact), *runtime["arguments"]]
+
+
+def render_unit(instance_id: str, argv: list[str], working_dir: Path) -> str:
+    if not argv:
+        raise ValueError("launch argv is empty")
     root = instance_root(instance_id)
     return "\n".join([
         "[Unit]",
@@ -153,7 +174,7 @@ def render_unit(instance_id: str, executable: Path, working_dir: Path, arguments
         f"User={SERVICE_USER}",
         f"Group={SERVICE_USER}",
         f"WorkingDirectory={_quote(str(working_dir))}",
-        "ExecStart=" + " ".join(argv),
+        "ExecStart=" + " ".join(_quote(item) for item in argv),
         "Restart=on-failure",
         "RestartSec=5",
         "UMask=0077",
@@ -176,7 +197,7 @@ def _verify_unit(unit_name: str, content: str) -> None:
         _run(["systemd-analyze", "verify", str(candidate)], timeout=20)
 
 
-def _resolve_game_executable(runtime: dict[str, Any]) -> tuple[Path, Path]:
+def _resolve_game_artifact(runtime: dict[str, Any]) -> tuple[Path, Path]:
     state = get_game_data(runtime["game_id"])
     if not state or not state.get("installed"):
         raise RuntimeError(f"game-data is not installed: {runtime['game_id']}")
@@ -186,14 +207,14 @@ def _resolve_game_executable(runtime: dict[str, Any]) -> tuple[Path, Path]:
     target = Path(target_text).resolve()
     if not target.is_dir():
         raise RuntimeError("game-data target path is unavailable")
-    executable = (target / runtime["launch_executable"]).resolve()
+    artifact = (target / runtime["launch_executable"]).resolve()
     try:
-        executable.relative_to(target)
+        artifact.relative_to(target)
     except ValueError as exc:
-        raise RuntimeError("launch executable escapes game-data root") from exc
-    if not executable.is_file() or not os.access(executable, os.X_OK):
-        raise RuntimeError("launch executable is missing or not executable")
-    return target, executable
+        raise RuntimeError("launch artifact escapes game-data root") from exc
+    if not artifact.is_file():
+        raise RuntimeError("launch artifact is missing")
+    return target, artifact
 
 
 def _prepare_instance_dirs(instance_id: str) -> tuple[Path, Path]:
@@ -272,15 +293,22 @@ def _materialize(request: dict[str, Any]) -> dict[str, Any]:
     if action == "remove":
         removed = _remove_unit(unit_name, unit_path)
         return {
-            "job_id": job_id, "instance_id": instance_id, "agent_id": agent_id,
-            "action": action, "status": "completed", "unit": unit_name,
-            "unit_removed": removed, "data_preserved": True, "generated_at": _now(),
+            "job_id": job_id,
+            "instance_id": instance_id,
+            "agent_id": agent_id,
+            "action": action,
+            "status": "completed",
+            "unit": unit_name,
+            "unit_removed": removed,
+            "data_preserved": True,
+            "generated_at": _now(),
         }
 
     runtime = _runtime_contract(request)
-    game_data_path, executable = _resolve_game_executable(runtime)
+    game_data_path, artifact = _resolve_game_artifact(runtime)
     root, working = _prepare_instance_dirs(instance_id)
-    content = render_unit(instance_id, executable, working, runtime["arguments"])
+    argv = _launch_argv(runtime, artifact)
+    content = render_unit(instance_id, argv, working)
     _verify_unit(unit_name, content)
     old_content = unit_path.read_text(encoding="utf-8") if unit_path.is_file() else None
     if action == "reconcile" and old_content != content and _unit_active(unit_name):
@@ -300,6 +328,7 @@ def _materialize(request: dict[str, Any]) -> dict[str, Any]:
         "serverfiles_path": str(working),
         "game_data_path": str(game_data_path),
         "launch_profile": {
+            "engine": runtime["engine"],
             "executable": runtime["launch_executable"],
             "arguments": runtime["arguments"],
         },
@@ -308,9 +337,15 @@ def _materialize(request: dict[str, Any]) -> dict[str, Any]:
         "observed_state": "stopped",
     }
     return {
-        "job_id": job_id, "instance_id": instance_id, "agent_id": agent_id,
-        "action": action, "status": "completed", "unit": unit_name,
-        "unit_changed": changed, "instance_record": record, "generated_at": _now(),
+        "job_id": job_id,
+        "instance_id": instance_id,
+        "agent_id": agent_id,
+        "action": action,
+        "status": "completed",
+        "unit": unit_name,
+        "unit_changed": changed,
+        "instance_record": record,
+        "generated_at": _now(),
     }
 
 
@@ -330,8 +365,13 @@ def process_request(path: Path) -> dict[str, Any]:
         result = _materialize(request)
     except Exception as exc:
         result = {
-            "job_id": job_id, "instance_id": request.get("instance_id"), "agent_id": request.get("agent_id"),
-            "action": request.get("action"), "status": "failed", "error": str(exc)[:2000], "generated_at": _now(),
+            "job_id": job_id,
+            "instance_id": request.get("instance_id"),
+            "agent_id": request.get("agent_id"),
+            "action": request.get("action"),
+            "status": "failed",
+            "error": str(exc)[:2000],
+            "generated_at": _now(),
         }
     _write_json(result_path, result)
     _write_json(history_path, result)
