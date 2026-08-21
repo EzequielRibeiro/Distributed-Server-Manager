@@ -53,10 +53,7 @@ class ObservabilityRepository:
         return value
 
     def _instance_owned(self, session: AlertSession, agent_id: str, instance_id: str) -> bool:
-        row = session.execute(
-            f"SELECT id FROM instances WHERE id={self.ph} AND agent_id={self.ph}",
-            (instance_id, agent_id),
-        ).fetchone()
+        row = session.execute(f"SELECT id FROM instances WHERE id={self.ph} AND agent_id={self.ph}", (instance_id, agent_id)).fetchone()
         return row is not None
 
     def ingest_agent_samples(self, agent_id: str, raw_samples: list[Mapping[str, Any]]) -> dict[str, Any]:
@@ -78,9 +75,7 @@ class ObservabilityRepository:
                         continue
                     accepted += 1
                     accepted_ids.append(sample["sample_id"])
-                    exists = session.execute(
-                        f"SELECT sample_id FROM observability_samples WHERE sample_id={self.ph}", (sample["sample_id"],)
-                    ).fetchone()
+                    exists = session.execute(f"SELECT sample_id FROM observability_samples WHERE sample_id={self.ph}", (sample["sample_id"],)).fetchone()
                     dimensions_json = self._dimensions_json(sample)
                     if not exists:
                         session.execute(
@@ -127,9 +122,7 @@ class ObservabilityRepository:
         with self.backend.connect() as connection:
             session = AlertSession(self.backend, connection)
             try:
-                rows = session.execute(
-                    f"SELECT * FROM observability_samples{where} ORDER BY collected_at DESC LIMIT {self.ph}", tuple(params)
-                ).fetchall()
+                rows = session.execute(f"SELECT * FROM observability_samples{where} ORDER BY collected_at DESC LIMIT {self.ph}", tuple(params)).fetchall()
                 return [self._row(row) for row in rows]
             finally:
                 session.close()
@@ -148,13 +141,12 @@ class ObservabilityRepository:
         with self.backend.connect() as connection:
             session = AlertSession(self.backend, connection)
             try:
-                rows = session.execute(
-                    f"SELECT * FROM observability_latest{where} ORDER BY collected_at DESC LIMIT {self.ph}", tuple(params)
-                ).fetchall()
+                rows = session.execute(f"SELECT * FROM observability_latest{where} ORDER BY collected_at DESC LIMIT {self.ph}", tuple(params)).fetchall()
                 result = []
                 for row in rows:
                     item = self._row(row)
-                    item["instance_id"] = None if item.pop("subject_key") == "@agent" else item.get("subject_key")
+                    subject_key = item.pop("subject_key")
+                    item["instance_id"] = None if subject_key == "@agent" else subject_key
                     item.pop("dimensions_key", None)
                     result.append(item)
                 return result
