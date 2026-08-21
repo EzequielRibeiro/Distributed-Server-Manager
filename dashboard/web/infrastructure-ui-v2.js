@@ -3,6 +3,7 @@
 
     const API = "/api";
     const auth = () => sessionStorage.getItem("dsm_auth") || "";
+    let activeView = "agents";
 
     async function request(path) {
         const response = await fetch(`${API}${path}`, {
@@ -28,6 +29,43 @@
             if (child && typeof child === "object") collectDatacenters(child, result);
         });
         return result;
+    }
+
+    function loadTopologyModule() {
+        if (window.CapivaraInfrastructureTopologyV2 || document.getElementById("infra-topology-v2-script")) return;
+        const script = document.createElement("script");
+        script.id = "infra-topology-v2-script";
+        script.src = "/infrastructure-topology-v2.js?v=1";
+        script.defer = true;
+        document.body.appendChild(script);
+    }
+
+    function setView(view) {
+        activeView = view;
+        const list = document.getElementById("agents-list");
+        const title = document.querySelector(".infra-v2-section-title");
+        const detail = document.getElementById("agent-detail");
+        const install = document.getElementById("add-agent");
+
+        if (list) list.hidden = view !== "agents";
+        if (title) title.hidden = view !== "agents";
+        if (detail && view !== "agents") detail.hidden = true;
+        if (install && view !== "installation") install.hidden = true;
+
+        if (view === "topology") {
+            window.CapivaraInfrastructureTopologyV2?.show(true);
+        } else {
+            window.CapivaraInfrastructureTopologyV2?.show(false);
+        }
+
+        if (view === "installation" && install) {
+            install.hidden = false;
+            install.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+
+        document.querySelectorAll("[data-infra-view]").forEach(button => {
+            button.classList.toggle("active", button.dataset.infraView === view);
+        });
     }
 
     function ensureSummaryShell() {
@@ -60,28 +98,10 @@
         header.after(summary, toolbar, title);
 
         toolbar.querySelectorAll("[data-infra-view]").forEach(button => {
-            button.addEventListener("click", () => {
-                toolbar.querySelectorAll("[data-infra-view]").forEach(item => item.classList.remove("active"));
-                button.classList.add("active");
-                const view = button.dataset.infraView;
-                if (view === "installation") {
-                    showInstallation();
-                } else if (view === "agents") {
-                    document.getElementById("agents-list")?.scrollIntoView({ behavior: "smooth", block: "start" });
-                } else {
-                    document.getElementById("agent-detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
-                }
-            });
+            button.addEventListener("click", () => setView(button.dataset.infraView));
         });
 
         document.getElementById("infra-agent-search")?.addEventListener("input", filterCards);
-    }
-
-    function showInstallation() {
-        const panel = document.getElementById("add-agent");
-        if (!panel) return;
-        panel.hidden = false;
-        panel.scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
     function wireInstallToggle() {
@@ -90,10 +110,7 @@
         if (!panel || !button || button.dataset.v2Bound) return;
         button.dataset.v2Bound = "1";
         panel.hidden = true;
-        button.addEventListener("click", () => {
-            panel.hidden = !panel.hidden;
-            if (!panel.hidden) panel.scrollIntoView({ behavior: "smooth", block: "start" });
-        });
+        button.addEventListener("click", () => setView("installation"));
     }
 
     function decorateCards() {
@@ -150,8 +167,15 @@
         ensureSummaryShell();
         wireInstallToggle();
         watchAgentList();
+        loadTopologyModule();
         refreshSummary();
-        document.getElementById("refresh-agents")?.addEventListener("click", () => setTimeout(refreshSummary, 250));
+        setView("agents");
+        document.getElementById("refresh-agents")?.addEventListener("click", () => {
+            setTimeout(refreshSummary, 250);
+            if (activeView === "topology") {
+                window.CapivaraInfrastructureTopologyV2?.load();
+            }
+        });
     }
 
     if (document.readyState === "loading") {
