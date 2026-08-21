@@ -10,10 +10,9 @@ from typing import Any
 
 _TOKEN = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 _EXECUTABLE = re.compile(r"^[A-Za-z0-9._+-]{1,128}$")
-# B8 materializes executable artifacts directly from Agent-owned game-data.
-# Java runtimes require a separate trusted launcher (java + JVM args + -jar) and
-# therefore deliberately fail closed until that materializer exists.
-SUPPORTED_ENGINES = {"native"}
+# The Agent has explicit materializers for executable artifacts (native) and
+# Java artifacts (local java launcher + -jar). Neither path uses a shell.
+SUPPORTED_ENGINES = {"native", "java"}
 
 
 def _token(value: Any, label: str) -> str:
