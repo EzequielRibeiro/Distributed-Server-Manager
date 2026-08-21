@@ -19,6 +19,11 @@ Controller / Hybrid:
   cap infrastructure role show|set ...
   cap agent deploy HOST --ssh-user USER [options]
   cap agent ports show|set|check ...
+  cap customer create --id ID --name NOME --username LOGIN [--controller ID]
+  cap contract create --customer ID --game GAME [--instances N] [--id ID]
+  cap contract delete --contract ID --admin USER --yes
+  cap instance create --customer ID --contract ID --game GAME --agent AGENT [options]
+  cap instance delete --instance ID --admin USER --yes
   cap events list|show|publish|import-legacy ...
   cap config-store list|get|set|history|resolve ...
   cap content-store list|set|history ...
@@ -74,7 +79,9 @@ case "${1:-}" in
 help|--help|-h|"") role="$(local_role)"; [[ "${2:-}" == "--all" ]] && usage "${role}" 1 || usage "${role}" 0 ;;
 infrastructure) require_role "cap infrastructure" controller hybrid; shift; case "${1:-}" in doctor) shift; exec python3 "${DSM_ROOT}/database/infrastructure_doctor_contract.py" doctor "$@" ;; role) shift; exec python3 "${DSM_ROOT}/database/infrastructure_role_cli.py" "$@" ;; *) usage "$(local_role)" 0; exit 2 ;; esac ;;
 agent) shift; case "${1:-}" in deploy) require_role "cap agent deploy" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_deploy_cli.py" "$@" ;; ports) case "${2:-}" in show|check) if [[ $# -eq 2 || "${3:-}" == --* ]]; then require_role "cap agent ports ${2}" agent hybrid; agent_local_exec "$@"; else require_role "cap agent ports ${2} <agent-id>" controller hybrid; legacy_exec agent "$@"; fi ;; set) require_role "cap agent ports set" controller hybrid; legacy_exec agent "$@" ;; *) usage "$(local_role)" 0; exit 2 ;; esac ;; status|info|health|heartbeat|capabilities|network|game-data|jobs|update|logs|doctor) require_role "cap agent ${1}" agent hybrid; agent_local_exec "$@" ;; *) usage "$(local_role)" 0; exit 2 ;; esac ;;
-instance) case "${2:-}" in list|status|doctor|start|stop|restart) require_role "cap instance ${2}" agent hybrid; agent_local_exec "$@" ;; *) require_role "cap instance" controller hybrid; legacy_exec "$@" ;; esac ;;
+customer) require_role "cap customer" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/customer_cli.py" "$@" ;;
+contract) require_role "cap contract" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/contract_cli.py" "$@" ;;
+instance) case "${2:-}" in list|status|doctor|start|stop|restart) require_role "cap instance ${2}" agent hybrid; agent_local_exec "$@" ;; create|delete) require_role "cap instance ${2}" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/instance_admin_cli.py" "$@" ;; *) require_role "cap instance" controller hybrid; legacy_exec "$@" ;; esac ;;
 events) require_role "cap events" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/universal_events_cli.py" "$@" ;;
 config-store) require_role "cap config-store" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/configuration_cli.py" "$@" ;;
 content-store) require_role "cap content-store" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/content_cli.py" "$@" ;;

@@ -42,7 +42,14 @@ def choose_agent_for_instance(
     client_latitude: float | None = None,
     client_longitude: float | None = None,
     requirements: PlacementRequirements | None = None,
+    required_agent_id: str | None = None,
 ) -> dict[str, Any]:
+    """Choose an eligible Agent, optionally restricting an administrative request.
+
+    ``required_agent_id`` does not bypass placement. The requested Agent still
+    has to pass lifecycle, topology, heartbeat, capabilities, resources and port
+    eligibility checks before it can be selected.
+    """
     repository = LocationRepository(backend)
     repository.initialize()
     agents_evaluated = _controller_agent_count(repository, controller_id)
@@ -52,6 +59,9 @@ def choose_agent_for_instance(
         controller_id,
         region_id=(preferred_region_id if preferred_region_id and not allow_cross_region else None),
     )
+    if required_agent_id:
+        required_agent_id = str(required_agent_id).strip()
+        rows = [row for row in rows if str(row["agent_id"]) == required_agent_id]
 
     # Lifecycle/topology are already enforced by LocationRepository.candidates.
     # Telemetry-aware Agents must be online; legacy Agents remain compatible
@@ -74,8 +84,13 @@ def choose_agent_for_instance(
     rows = eligible_rows
 
     if not rows:
+        reason = (
+            "requested_agent_unavailable"
+            if required_agent_id
+            else _unavailable_reason(backend, preferred_region_id=preferred_region_id)
+        )
         raise PlacementUnavailable(
-            reason=_unavailable_reason(backend, preferred_region_id=preferred_region_id),
+            reason=reason,
             agents_evaluated=agents_evaluated,
             requested_region_id=preferred_region_id,
         )

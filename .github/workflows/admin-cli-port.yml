@@ -1,0 +1,51 @@
+name: Administrative CLI Port
+
+on:
+  pull_request:
+    paths:
+      - 'bin/cap'
+      - 'database/admin_cli_auth.py'
+      - 'database/admin_management_repository.py'
+      - 'database/customer_cli.py'
+      - 'database/contract_cli.py'
+      - 'database/instance_admin_cli.py'
+      - 'database/agent_instance_runtime_repository.py'
+      - 'database/migrations/041_admin_destructive_deletion.sql'
+      - 'database/migrations_postgresql/041_admin_destructive_deletion.sql'
+      - 'database/migrations_mysql/041_admin_destructive_deletion.sql'
+      - 'dashboard/placement_service.py'
+      - 'agents/linux/runtime/instance_runtime.py'
+      - 'tests/admin_management_repository_test.py'
+      - 'tests/admin_cli_routing_test.sh'
+      - '.github/workflows/admin-cli-port.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate routing and Python syntax
+        run: bash tests/admin_cli_routing_test.sh
+      - name: Validate administrative repository
+        run: python3 tests/admin_management_repository_test.py
+      - name: Validate SQLite migrations from scratch
+        run: |
+          python3 - <<'PY'
+          import sqlite3
+          import tempfile
+          from pathlib import Path
+
+          root = Path.cwd()
+          with tempfile.NamedTemporaryFile(suffix='.db') as f:
+              conn = sqlite3.connect(f.name)
+              try:
+                  for path in sorted((root / 'database' / 'migrations').glob('*.sql')):
+                      conn.executescript(path.read_text(encoding='utf-8'))
+                  conn.execute("SELECT 1")
+              finally:
+                  conn.close()
+          PY
