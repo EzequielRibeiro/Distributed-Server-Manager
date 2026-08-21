@@ -8,6 +8,7 @@ from agent_game_data_http import GAME_DATA_JOBS_PATH,GAME_DATA_OPERATION_PATH,LE
 from agent_instance_provisioning_http import INSTANCE_PROVISIONING_PATH,dispatch_instance_provisioning_get,dispatch_instance_provisioning_post
 from agent_instance_runtime_http import INSTANCE_RUNTIME_PATH,dispatch_instance_runtime_get,dispatch_instance_runtime_post
 from agent_update_http import CHANNEL_PATH,ROLLOUT_PATH,STATUS_PATH,dispatch_update_get,dispatch_update_post
+from backup_http import BACKUP_PATH,dispatch_backup_get,dispatch_backup_post
 from configuration_http import CONFIGURATIONS_PATH,dispatch_configuration_get,dispatch_configuration_post
 from content_http import CONTENT_PATH,dispatch_content_get,dispatch_content_post
 from infrastructure_role_http import INFRASTRUCTURE_ROLE_PATH,dispatch_infrastructure_role_get,dispatch_infrastructure_role_post
@@ -28,10 +29,11 @@ def _serve_windows_bootstrap(self):
 def integrated_get(self):
  parsed=urlparse(self.path);path=parsed.path
  if path==WINDOWS_INSTALL_PATH:return _serve_windows_bootstrap(self)
- if path in {CONFIGURATIONS_PATH,CONTENT_PATH,OBSERVABILITY_PATH,EVENTS_PATH,GAME_DATA_JOBS_PATH,INSTANCE_PROVISIONING_PATH,INSTANCE_RUNTIME_PATH,INFRASTRUCTURE_ROLE_PATH}:
+ if path in {BACKUP_PATH,CONFIGURATIONS_PATH,CONTENT_PATH,OBSERVABILITY_PATH,EVENTS_PATH,GAME_DATA_JOBS_PATH,INSTANCE_PROVISIONING_PATH,INSTANCE_RUNTIME_PATH,INFRASTRUCTURE_ROLE_PATH}:
   user=_user(self)
   if user is None:return
-  if path==CONFIGURATIONS_PATH:status,body=dispatch_configuration_get(path,parsed.query,user=user,backend=_backend())
+  if path==BACKUP_PATH:status,body=dispatch_backup_get(path,parsed.query,user=user,backend=_backend())
+  elif path==CONFIGURATIONS_PATH:status,body=dispatch_configuration_get(path,parsed.query,user=user,backend=_backend())
   elif path==CONTENT_PATH:status,body=dispatch_content_get(path,parsed.query,user=user,backend=_backend())
   elif path==OBSERVABILITY_PATH:status,body=dispatch_observability_get(path,parsed.query,user=user,backend=_backend())
   elif path==EVENTS_PATH:status,body=dispatch_universal_event_get(path,parsed.query,user=user,backend=_backend())
@@ -50,12 +52,13 @@ def _payload(self):
  except ValueError:return None,{"error":"invalid_request","message":"Requisição inválida."}
 def integrated_post(self):
  parsed=urlparse(self.path);path=parsed.path
- if path in {CONFIGURATIONS_PATH,CONTENT_PATH,EVENTS_PATH,GAME_DATA_OPERATION_PATH,LEGACY_ENVIRONMENT_INSTALL_PATH,INSTANCE_PROVISIONING_PATH,INSTANCE_RUNTIME_PATH,INFRASTRUCTURE_ROLE_PATH}:
+ if path in {BACKUP_PATH,CONFIGURATIONS_PATH,CONTENT_PATH,EVENTS_PATH,GAME_DATA_OPERATION_PATH,LEGACY_ENVIRONMENT_INSTALL_PATH,INSTANCE_PROVISIONING_PATH,INSTANCE_RUNTIME_PATH,INFRASTRUCTURE_ROLE_PATH}:
   user=_user(self)
   if user is None:return
   payload,error=_payload(self)
   if error:self.send_json(400,error);return
-  if path==CONFIGURATIONS_PATH:status,body=dispatch_configuration_post(path,payload,user=user,backend=_backend())
+  if path==BACKUP_PATH:status,body=dispatch_backup_post(path,payload,user=user,backend=_backend())
+  elif path==CONFIGURATIONS_PATH:status,body=dispatch_configuration_post(path,payload,user=user,backend=_backend())
   elif path==CONTENT_PATH:status,body=dispatch_content_post(path,payload,user=user,backend=_backend())
   elif path==EVENTS_PATH:status,body=dispatch_universal_event_post(path,payload,user=user,backend=_backend())
   elif path in {GAME_DATA_OPERATION_PATH,LEGACY_ENVIRONMENT_INSTALL_PATH}:status,body=dispatch_agent_game_data_post(path,payload,user=user,backend=_backend(),root=ROOT_DIR)
