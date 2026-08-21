@@ -20,6 +20,10 @@ if str(RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_DIR))
 
 from capabilities import detect_capabilities
+from instance_runtime import clear_result as clear_instance_result
+from instance_runtime import handle_command as handle_instance_command
+from instance_runtime import inventory as instance_inventory
+from instance_runtime import read_result as read_instance_result
 from network_inventory import collect_network_inventory
 from update_client import clear_update_result, read_update_result, stage_update_request
 
@@ -101,6 +105,7 @@ def _inventory(config: dict[str, Any]) -> dict[str, Any]:
         "ram_total_bytes": _memory_total_bytes(),
         "storage": {"root_total_bytes": disk.total, "root_free_bytes": disk.free},
         "network": collect_network_inventory(),
+        "instances": instance_inventory(config),
         "heartbeat_interval_seconds": int(config.get("heartbeat_interval_seconds", DEFAULT_HEARTBEAT_SECONDS)),
         "degraded_after_seconds": int(config.get("degraded_after_seconds", 60)),
         "offline_after_seconds": int(config.get("offline_after_seconds", 120)),
@@ -108,6 +113,9 @@ def _inventory(config: dict[str, Any]) -> dict[str, Any]:
     update_result = read_update_result()
     if update_result:
         payload["update_result"] = update_result
+    instance_result = read_instance_result()
+    if instance_result:
+        payload["instance_result"] = instance_result
     return payload
 
 
@@ -156,6 +164,17 @@ def heartbeat(config: dict[str, Any]) -> dict[str, Any]:
         raise SystemExit(0)
     if result.get("update_state", {}).get("update_status") == "completed":
         clear_update_result()
+
+    instance_command = result.get("instance_command")
+    if isinstance(instance_command, dict):
+        instance_result = handle_instance_command(config, instance_command)
+        print(
+            f"instance command action={instance_result.get('action')} instance={instance_result.get('instance_id')} status={instance_result.get('status')}",
+            flush=True,
+        )
+    instance_state = result.get("instance_state") if isinstance(result.get("instance_state"), dict) else {}
+    if str(instance_state.get("status") or "").lower() in {"completed", "failed"} and instance_state.get("command_id"):
+        clear_instance_result(str(instance_state["command_id"]))
     return result
 
 
