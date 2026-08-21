@@ -26,6 +26,17 @@ def require_absolute(value: Any, label: str) -> str:
     return str(Path(text))
 
 
+def require_within(root: Any, value: Any, label: str) -> str:
+    """Require an absolute path to remain inside the provisioned content root."""
+    root_path = Path(require_absolute(root, "install_path")).resolve(strict=False)
+    value_path = Path(require_absolute(value, label)).resolve(strict=False)
+    try:
+        value_path.relative_to(root_path)
+    except ValueError as exc:
+        raise ProfileError(f"{label} escapes provisioned content root") from exc
+    return str(value_path)
+
+
 def port_bindings(context: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Normalize reserved ports supplied by provisioning without allocating any port."""
     raw = context.get("ports", {})
@@ -80,5 +91,5 @@ class GameRuntimeProfile(ABC):
 
 
 __all__ = [
-    "GameRuntimeProfile", "ProfileError", "port_bindings", "require_absolute", "require_port", "require_text",
+    "GameRuntimeProfile", "ProfileError", "port_bindings", "require_absolute", "require_port", "require_text", "require_within",
 ]
