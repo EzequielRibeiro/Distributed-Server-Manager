@@ -48,10 +48,19 @@ class InstanceLaunchProfileTest(unittest.TestCase):
         self.assertEqual(profile["launch"]["executable"], "server-bin")
         self.assertEqual(profile["launch"]["arguments"], ["--safe"])
 
-    def test_java_runtime_fails_closed_until_java_materializer_exists(self):
+    def test_java_runtime_becomes_structured_artifact_profile(self):
         self._write_runtime(runtime_id="generic.java", engine="java", executable="server.jar")
+        profile = resolve_launch_profile(self.root, "generic.java")
+        self.assertEqual(profile["adapter"], "systemd")
+        self.assertEqual(profile["launch"]["engine"], "java")
+        self.assertEqual(profile["launch"]["executable"], "server.jar")
+        self.assertNotIn("/usr/bin/java", json.dumps(profile))
+        self.assertNotIn("-jar", profile["launch"]["arguments"])
+
+    def test_unsupported_engine_fails_closed(self):
+        self._write_runtime(runtime_id="generic.shell", engine="shell", executable="run.sh")
         with self.assertRaisesRegex(ValueError, "runtime engine is not supported"):
-            resolve_launch_profile(self.root, "generic.java")
+            resolve_launch_profile(self.root, "generic.shell")
 
     def test_runtime_game_mismatch_is_rejected(self):
         self._write_runtime(runtime_id="generic.native", engine="native", executable="server-bin")
