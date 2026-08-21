@@ -6,6 +6,7 @@ from pathlib import Path
 RUNTIME_DIR=Path(__file__).resolve().parent
 if str(RUNTIME_DIR) not in sys.path:sys.path.insert(0,str(RUNTIME_DIR))
 from backup_client import apply_backup_commands,backup_state
+from broadcast_client import apply_broadcast_commands,broadcast_state
 from capabilities import detect_capabilities
 from configuration_client import apply_configuration_commands,configuration_state
 from content_client import apply_content_commands,content_state
@@ -43,12 +44,12 @@ def _queue_depth():
  def count(pattern):
   try:return sum(1 for _ in Path(pattern).parent.glob(Path(pattern).name))
   except OSError:return 0
- state=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));return {"instance_results":count(str(state/"instance-results"/"*.json")),"provisioning":count(str(state/"instance-provisioning"/"*.request.json")),"game_data":count(str(state/"game-data-jobs"/"*.json")),"backup_results":count(str(state/"backup-results"/"*.json")),"runtime_events":len(read_runtime_events(state,limit=1000))}
+ state=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));return {"instance_results":count(str(state/"instance-results"/"*.json")),"provisioning":count(str(state/"instance-provisioning"/"*.request.json")),"game_data":count(str(state/"game-data-jobs"/"*.json")),"backup_results":count(str(state/"backup-results"/"*.json")),"broadcast_state":count(str(state/"broadcast-state"/"*.json")),"runtime_events":len(read_runtime_events(state,limit=1000))}
 def _inventory(config):
  disk=shutil.disk_usage("/");version_path=Path(__file__).resolve().parents[1]/"VERSION"
  try:installed_version=version_path.read_text().strip()
  except OSError:installed_version=str(config.get("capivara_version","unknown"))
- state=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));payload={"agent_id":config["agent_id"],"hostname":socket.gethostname(),"os":platform.system().lower(),"architecture":platform.machine(),"capivara_version":installed_version,"address":config.get("advertise_address"),"fingerprint":config["fingerprint"],"capabilities":detect_capabilities(),"cpu":{"logical_cores":os.cpu_count(),"machine":platform.machine()},"ram_total_bytes":_memory_total_bytes(),"storage":{"root_total_bytes":disk.total,"root_free_bytes":disk.free},"network":collect_network_inventory(),"instances":instance_inventory(config),"instance_reconciliation":reconciliation_inventory(config),"instance_runtime_health":health_inventory(config),"instance_runtime_metrics":runtime_metrics_snapshot(queue_depth=_queue_depth()),"runtime_events":read_runtime_events(state,limit=int(config.get("event_batch_size",200))),"configuration_state":configuration_state(),"content_state":content_state(),"backup_state":backup_state(),"heartbeat_interval_seconds":int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)),"degraded_after_seconds":int(config.get("degraded_after_seconds",60)),"offline_after_seconds":int(config.get("offline_after_seconds",120))}
+ state=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));payload={"agent_id":config["agent_id"],"hostname":socket.gethostname(),"os":platform.system().lower(),"architecture":platform.machine(),"capivara_version":installed_version,"address":config.get("advertise_address"),"fingerprint":config["fingerprint"],"capabilities":detect_capabilities(),"cpu":{"logical_cores":os.cpu_count(),"machine":platform.machine()},"ram_total_bytes":_memory_total_bytes(),"storage":{"root_total_bytes":disk.total,"root_free_bytes":disk.free},"network":collect_network_inventory(),"instances":instance_inventory(config),"instance_reconciliation":reconciliation_inventory(config),"instance_runtime_health":health_inventory(config),"instance_runtime_metrics":runtime_metrics_snapshot(queue_depth=_queue_depth()),"runtime_events":read_runtime_events(state,limit=int(config.get("event_batch_size",200))),"configuration_state":configuration_state(),"content_state":content_state(),"backup_state":backup_state(),"broadcast_state":broadcast_state(),"heartbeat_interval_seconds":int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)),"degraded_after_seconds":int(config.get("degraded_after_seconds",60)),"offline_after_seconds":int(config.get("offline_after_seconds",120))}
  for key,value in (("update_result",read_update_result()),("provisioning_result",read_provisioning_result()),("game_data_result",read_game_data_result()),("instance_result",read_instance_result())):
   if value:payload[key]=value
  return payload
@@ -72,6 +73,10 @@ def heartbeat(config):
  if isinstance(backup_commands,list):
   reports=apply_backup_commands(config,[x for x in backup_commands if isinstance(x,dict)])
   if reports:print(f"backup reconciled reports={len(reports)}",flush=True)
+ broadcast_commands=result.get("broadcast_commands")
+ if isinstance(broadcast_commands,list):
+  reports=apply_broadcast_commands(config,[x for x in broadcast_commands if isinstance(x,dict)])
+  if reports:print(f"broadcast reconciled reports={len(reports)}",flush=True)
  if result.get("update") and stage_update_request(dict(result["update"])):print(f"update staged version={result['update'].get('desired_version')} rollout={result['update'].get('rollout_id')}",flush=True)
  if result.get("update_state",{}).get("update_status")=="completed":clear_update_result()
  pc=result.get("provisioning_command")
