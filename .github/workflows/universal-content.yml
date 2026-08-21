@@ -16,7 +16,7 @@ on:
       - 'agents/linux/runtime/agent.py'
       - 'release/build_agent_package.sh'
       - 'bin/cap'
-      - 'tests/universal_content_platform_test.py'
+      - 'tests/universal_content_*'
       - '.github/workflows/universal-content.yml'
   workflow_dispatch:
 jobs:
@@ -29,7 +29,7 @@ jobs:
           bash -n bin/cap release/build_agent_package.sh dashboard/dashboard.sh
           python3 -m py_compile core/content_platform.py database/content_repository.py database/content_cli.py dashboard/content_api.py dashboard/content_http.py dashboard/server_part13.py dashboard/agent_heartbeat_api.py agents/linux/runtime/content_client.py agents/linux/runtime/agent.py
       - name: Test Universal Content
-        run: python3 -m unittest tests/universal_content_platform_test.py
+        run: python3 -m unittest tests/universal_content_platform_test.py tests/universal_content_http_test.py
       - name: Verify composition and Agent package contracts
         run: |
           grep -Fq 'CONTENT_PATH' dashboard/server_part13.py
