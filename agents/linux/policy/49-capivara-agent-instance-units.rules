@@ -1,5 +1,6 @@
-// Allow the unprivileged Capivara Agent to manage only Capivara-owned instance units.
-// The Controller never supplies a unit name; runtime code derives it from instance_id.
+// Allow the unprivileged Capivara Agent to manage only Capivara-owned instance units
+// and to start the dedicated root-owned materializer helper for a validated instance id.
+// The Controller never supplies an arbitrary systemd unit name.
 polkit.addRule(function(action, subject) {
     if (action.id !== "org.freedesktop.systemd1.manage-units" || subject.user !== "capivara-agent") {
         return polkit.Result.NOT_HANDLED;
@@ -7,11 +8,20 @@ polkit.addRule(function(action, subject) {
 
     var unit = action.lookup("unit");
     var verb = action.lookup("verb");
-    if (!unit || !/^capivara-instance-[A-Za-z0-9._-]{1,191}\.service$/.test(unit)) {
+    if (!unit) {
         return polkit.Result.NOT_HANDLED;
     }
-    if (verb !== "start" && verb !== "stop" && verb !== "restart") {
+
+    if (/^capivara-instance-[A-Za-z0-9._-]{1,191}\.service$/.test(unit)) {
+        if (verb === "start" || verb === "stop" || verb === "restart") {
+            return polkit.Result.YES;
+        }
         return polkit.Result.NOT_HANDLED;
     }
-    return polkit.Result.YES;
+
+    if (/^capivara-agent-materialize@[A-Za-z0-9._-]{1,191}\.service$/.test(unit) && verb === "start") {
+        return polkit.Result.YES;
+    }
+
+    return polkit.Result.NOT_HANDLED;
 });
