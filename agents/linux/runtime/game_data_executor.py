@@ -17,18 +17,11 @@ from typing import Any
 import urllib.request
 import zipfile
 
-GAME_DATA_ROOT = Path(
-    os.environ.get("CAPIVARA_AGENT_GAME_DATA_ROOT", "/var/lib/capivara-agent/game-data")
-).resolve()
+from game_data_state import GAME_DATA_ROOT, record_game_data, write_json
 
 
 def _write_result(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(temp, 0o600)
-    temp.replace(path)
-    os.chmod(path, 0o600)
+    write_json(path, payload)
 
 
 def _safe_name(value: Any, label: str) -> str:
@@ -144,8 +137,6 @@ def _extract_tar(archive: Path, target: Path) -> None:
             _safe_member(member.name)
             if not (member.isfile() or member.isdir()):
                 raise RuntimeError("unsupported archive member")
-        # Deliberately avoid the Python 3.12-only extraction filter argument;
-        # the explicit checks above preserve compatibility with Python 3.9+.
         package.extractall(target, members=members)
 
 
@@ -228,6 +219,8 @@ def main() -> int:
     result_path = Path(sys.argv[2])
     command = json.loads(request_path.read_text(encoding="utf-8"))
     job_id = str(command.get("job_id") or "").strip()
+    action = str(command.get("action") or "install").strip().lower()
+    selection = command.get("selection") if isinstance(command.get("selection"), dict) else {}
     _write_result(result_path, {"job_id": job_id, "status": "running", "progress": 5})
     try:
         detail = _execute(command)
@@ -238,10 +231,12 @@ def main() -> int:
         )
         print(f"game-data job failed: {exc}", file=sys.stderr, flush=True)
         return 1
-    _write_result(
-        result_path,
-        {"job_id": job_id, "status": "completed", "progress": 100, **detail},
-    )
+    completed = {"job_id": job_id, "status": "completed", "progress": 100, **detail}
+    _write_result(result_path, completed)
+    try:
+        record_game_data(job_id=job_id, action=action, selection=selection, result=completed)
+    except Exception as exc:
+        print(f"game-data inventory warning: {exc}", file=sys.stderr, flush=True)
     print(f"game-data job completed: {job_id}", flush=True)
     return 0
 
