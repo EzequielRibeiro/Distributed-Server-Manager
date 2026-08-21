@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Read-only local role resolution for Capivara CLI dispatch.
 
-This module deliberately avoids importing database/runtime backends.  It reads
-only explicit environment/configuration state and fails closed when a role
-cannot be determined.
+The resolver never initializes repositories, applies migrations, refreshes
+health, or writes configuration.  It consumes only explicit local state and a
+strictly read-only SQLite fallback for legacy monolithic installs.
 """
 
 from __future__ import annotations
@@ -12,6 +12,8 @@ import argparse
 import json
 import os
 import re
+import socket
+import sqlite3
 from pathlib import Path
 from typing import Mapping
 
@@ -46,20 +48,49 @@ def _shell_value(path: Path, key: str) -> str | None:
     return None
 
 
+def _sqlite_role(root: Path, dsm_conf: Path) -> str | None:
+    driver = str(_shell_value(dsm_conf, "DSM_DATABASE_DRIVER") or "sqlite").lower()
+    if driver not in {"sqlite", "sqlite3"}:
+        return None
+    configured = str(_shell_value(dsm_conf, "DSM_DATABASE") or "").strip()
+    database = Path(configured) if configured else root / "data" / "capivara.db"
+    if not database.is_absolute():
+        database = root / database
+    try:
+        connection = sqlite3.connect(f"file:{database.resolve()}?mode=ro", uri=True, timeout=1)
+    except sqlite3.Error:
+        return None
+    try:
+        connection.row_factory = sqlite3.Row
+        hostname = socket.gethostname()
+        for column in ("id", "name"):
+            try:
+                row = connection.execute(
+                    f"SELECT role FROM nodes WHERE {column}=? LIMIT 1", (hostname,)
+                ).fetchone()
+            except sqlite3.Error:
+                row = None
+            if row is not None:
+                role = _normalize(row["role"])
+                if role:
+                    return role
+        try:
+            rows = connection.execute("SELECT role FROM nodes LIMIT 2").fetchall()
+        except sqlite3.Error:
+            rows = []
+        if len(rows) == 1:
+            return _normalize(rows[0]["role"])
+        return None
+    finally:
+        connection.close()
+
+
 def resolve_local_role(
     root: Path | str,
     *,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
-    """Resolve role using only local, observational inputs.
-
-    Precedence:
-      1. CAPIVARA_NODE_ROLE / DSM_NODE_ROLE environment override;
-      2. DSM_NODE_ROLE persisted in config/dsm.conf;
-      3. standalone Linux Agent config presence;
-      4. legacy monolithic Agent identity only when unambiguous enough to
-         identify an Agent capability, otherwise return unknown.
-    """
+    """Resolve role from local observational inputs, highest confidence first."""
     env = os.environ if environ is None else environ
     root_path = Path(root).resolve()
 
@@ -81,27 +112,17 @@ def resolve_local_role(
     except (OSError, ValueError):
         payload = None
     if isinstance(payload, dict) and str(payload.get("agent_id") or "").strip():
-        return {
-            "role": "agent",
-            "source": "config:standalone-agent",
-            "root": str(root_path),
-        }
+        return {"role": "agent", "source": "config:standalone-agent", "root": str(root_path)}
 
-    # Older monolithic installs predate persisted DSM_NODE_ROLE.  A populated
-    # agent.conf proves Agent capability but does not distinguish Agent from
-    # Hybrid safely, so fail closed rather than inventing a role.
+    legacy_role = _sqlite_role(root_path, dsm_conf)
+    if legacy_role:
+        return {"role": legacy_role, "source": "legacy:sqlite-readonly", "root": str(root_path)}
+
     agent_id = _shell_value(root_path / "config" / "agent.conf", "AGENT_ID")
-    if str(agent_id or "").strip():
-        return {
-            "role": "unknown",
-            "source": "legacy:agent-identity-ambiguous",
-            "root": str(root_path),
-            "hint": "persist DSM_NODE_ROLE=agent|hybrid in config/dsm.conf",
-        }
-
+    source = "legacy:agent-identity-ambiguous" if str(agent_id or "").strip() else "unresolved"
     return {
         "role": "unknown",
-        "source": "unresolved",
+        "source": source,
         "root": str(root_path),
         "hint": "persist DSM_NODE_ROLE=controller|agent|hybrid in config/dsm.conf",
     }
