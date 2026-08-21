@@ -44,7 +44,33 @@ jobs:
 
       - name: Validate Python syntax
         run: |
-          python3 -m py_compile core/events/*.py database/event_repository.py dashboard/timeline_http.py dashboard/server_part14.py tests/universal_event_*.py
+          python3 -m py_compile \
+            core/events/__init__.py \
+            core/events/alerts.py \
+            core/events/automation.py \
+            core/events/context.py \
+            core/events/models.py \
+            core/events/observability.py \
+            core/events/publisher.py \
+            core/events/registry.py \
+            core/events/retention.py \
+            core/events/runtime.py \
+            core/events/storage.py \
+            core/events/streaming.py \
+            core/events/timeline.py \
+            core/events/validator.py \
+            database/event_repository.py \
+            dashboard/timeline_http.py \
+            dashboard/server_part14.py \
+            tests/universal_event_contract_test.py \
+            tests/universal_event_publisher_test.py \
+            tests/universal_event_store_test.py \
+            tests/universal_event_context_test.py \
+            tests/universal_event_agent_update_producer_test.py \
+            tests/universal_event_timeline_test.py \
+            tests/universal_event_timeline_http_test.py \
+            tests/universal_event_timeline_ui_test.py \
+            tests/universal_event_consumers_test.py
 
       - name: Run Universal Event Platform tests
         run: |
