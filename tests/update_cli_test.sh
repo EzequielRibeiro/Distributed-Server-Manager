@@ -3,7 +3,9 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CLI="${ROOT}/bin/dsm"
+DSM_CLI="${ROOT}/bin/dsm"
+CAP_CLI="${ROOT}/bin/cap"
+DSM_COMPAT="${ROOT}/bin/dsm-compat"
 
 fail()
 {
@@ -21,8 +23,10 @@ mkdir -p \
     "${FAKE_ROOT}/core" \
     "${FAKE_ROOT}/update-manager"
 
-cp "${CLI}" "${FAKE_ROOT}/bin/dsm"
-chmod +x "${FAKE_ROOT}/bin/dsm"
+cp "${DSM_CLI}" "${FAKE_ROOT}/bin/dsm"
+cp "${CAP_CLI}" "${FAKE_ROOT}/bin/cap"
+cp "${DSM_COMPAT}" "${FAKE_ROOT}/bin/dsm-compat"
+chmod +x "${FAKE_ROOT}/bin/dsm" "${FAKE_ROOT}/bin/cap" "${FAKE_ROOT}/bin/dsm-compat"
 
 # -------------------------------------------------------------
 # Bootstrap minimo para o teste do dispatcher CLI
@@ -32,6 +36,21 @@ cat >"${FAKE_ROOT}/core/bootstrap.sh" <<'EOF'
 #!/usr/bin/env bash
 
 export DSM_BOOTSTRAP_LOADED=1
+export DSM_DATABASE_DRIVER="sqlite"
+export DSM_DATABASE=""
+export DSM_DATABASE_HOST=""
+export DSM_DATABASE_PORT=""
+export DSM_DATABASE_NAME=""
+export DSM_DATABASE_USER=""
+export DSM_DATABASE_PASSWORD_FILE=""
+export DSM_DATABASE_TLS=""
+EOF
+
+# A CLI publica `cap` e role-aware. O fixture simula um Controller para
+# que `dsm -> cap -> dsm-compat` valide o mesmo caminho usado em producao.
+cat >"${FAKE_ROOT}/core/role_context.py" <<'EOF'
+#!/usr/bin/env python3
+print("controller")
 EOF
 
 # -------------------------------------------------------------
@@ -68,7 +87,7 @@ chmod +x "${FAKE_ROOT}/update-manager/update-manager.sh"
 # check
 # -------------------------------------------------------------
 
-OUTPUT="$("${FAKE_ROOT}/bin/dsm" update check)"
+OUTPUT="$(DSM_QUIET_DEPRECATION=1 "${FAKE_ROOT}/bin/dsm" update check)"
 STATUS=$?
 
 [[ "${STATUS}" -eq 0 ]] \
@@ -81,7 +100,7 @@ STATUS=$?
 # run
 # -------------------------------------------------------------
 
-OUTPUT="$("${FAKE_ROOT}/bin/dsm" update run)"
+OUTPUT="$(DSM_QUIET_DEPRECATION=1 "${FAKE_ROOT}/bin/dsm" update run)"
 STATUS=$?
 
 [[ "${STATUS}" -eq 0 ]] \
@@ -94,7 +113,7 @@ STATUS=$?
 # history
 # -------------------------------------------------------------
 
-OUTPUT="$("${FAKE_ROOT}/bin/dsm" update history)"
+OUTPUT="$(DSM_QUIET_DEPRECATION=1 "${FAKE_ROOT}/bin/dsm" update history)"
 STATUS=$?
 
 [[ "${STATUS}" -eq 0 ]] \
@@ -108,7 +127,7 @@ STATUS=$?
 # -------------------------------------------------------------
 
 set +e
-OUTPUT="$("${FAKE_ROOT}/bin/dsm" update invalid 2>&1)"
+OUTPUT="$(DSM_QUIET_DEPRECATION=1 "${FAKE_ROOT}/bin/dsm" update invalid 2>&1)"
 STATUS=$?
 set -e
 
@@ -129,7 +148,7 @@ grep -q 'dsm update history' <<<"${OUTPUT}" \
 # -------------------------------------------------------------
 
 set +e
-OUTPUT="$("${FAKE_ROOT}/bin/dsm" update 2>&1)"
+OUTPUT="$(DSM_QUIET_DEPRECATION=1 "${FAKE_ROOT}/bin/dsm" update 2>&1)"
 STATUS=$?
 set -e
 
