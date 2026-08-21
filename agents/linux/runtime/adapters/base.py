@@ -34,5 +34,13 @@ class InstanceRuntimeAdapter(ABC):
     def doctor(self, instance: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
 
+    def broadcast(self, instance: dict[str, Any], message: str, *, priority: str = "normal") -> dict[str, Any]:
+        """Deliver a player-visible message or fail closed when unsupported.
+
+        Game-specific adapters may override this method. The Controller never sends
+        shell commands or RCON credentials through the universal broadcast contract.
+        """
+        raise AdapterError(f"runtime adapter {self.name} does not support broadcast")
+
 
 __all__ = ["AdapterError", "InstanceRuntimeAdapter"]
