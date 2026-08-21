@@ -8,6 +8,7 @@ from typing import Any
 from agent_game_data_repository import AgentGameDataRepository
 from agent_heartbeat_api import record_agent_heartbeat
 from agent_installation_api import bind_installation_after_enrollment
+from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from agent_lifecycle_repository import AgentLifecycleRepository
 from agent_pairing_api import enroll_remote_agent
@@ -88,6 +89,23 @@ def _attach_update_state(result: dict[str, Any], body: dict[str, Any], *, agent_
         result["update_state"] = {"update_status": "unavailable"}
 
 
+def _attach_provisioning_state(result: dict[str, Any], body: dict[str, Any], *, agent_id: str, backend) -> None:
+    """Coordinate one persistent provisioning operation without coupling Agent liveness to it."""
+    try:
+        jobs = AgentInstanceProvisioningRepository(backend)
+        jobs.initialize()
+        reported = body.get("provisioning_result") if isinstance(body.get("provisioning_result"), dict) else None
+        reported_state = jobs.apply_result(agent_id, reported) if reported else None
+        command = jobs.command_for_agent(agent_id)
+        command_state = None
+        if command:
+            command_state = jobs.mark_delivered(str(command["provisioning_id"]))
+            result["provisioning_command"] = command
+        result["provisioning_state"] = reported_state or command_state or {"status": "idle"}
+    except Exception:
+        result["provisioning_state"] = {"status": "unavailable"}
+
+
 def _attach_game_data_state(result: dict[str, Any], body: dict[str, Any], *, agent_id: str, backend) -> None:
     """Best-effort game-data coordination without coupling liveness to job state."""
     try:
@@ -139,7 +157,12 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
             status = AgentLifecycleRepository(backend).transition(identity["agent_id"], "active").target
         result["status"] = status
         _attach_update_state(result, body, agent_id=identity["agent_id"], backend=backend)
-        _attach_game_data_state(result, body, agent_id=identity["agent_id"], backend=backend)
+        _attach_provisioning_state(result, body, agent_id=identity["agent_id"], backend=backend)
+        provisioning_state = result.get("provisioning_state") if isinstance(result.get("provisioning_state"), dict) else {}
+        if str(provisioning_state.get("status") or "").lower() in {"queued", "delivered", "running"}:
+            result["game_data_state"] = {"status": "deferred", "reason": "instance_provisioning_active"}
+        else:
+            _attach_game_data_state(result, body, agent_id=identity["agent_id"], backend=backend)
         _attach_instance_state(result, body, agent_id=identity["agent_id"], backend=backend)
     except AgentCredentialInvalid:
         return 401, {"error": "agent_authentication_failed", "message": "Identidade do Agent inválida."}
