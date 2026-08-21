@@ -201,6 +201,14 @@
             manage.textContent = "Gerenciar Agent";
             manage.addEventListener("click", async () => {
                 if (typeof window.loadAgent === "function") {
+                    window.CapivaraInfrastructureTopologyV2?.show(false);
+                    const list = document.getElementById("agents-list");
+                    const title = document.querySelector(".infra-v2-section-title");
+                    if (list) list.hidden = false;
+                    if (title) title.hidden = false;
+                    document.querySelectorAll("[data-infra-view]").forEach(button => {
+                        button.classList.toggle("active", button.dataset.infraView === "agents");
+                    });
                     await window.loadAgent(node.id);
                     document.getElementById("agent-detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
                 }
@@ -209,6 +217,7 @@
             install.type = "button";
             install.textContent = "Adicionar Agent";
             install.addEventListener("click", () => {
+                window.CapivaraInfrastructureTopologyV2?.show(false);
                 const panel = document.getElementById("add-agent");
                 if (panel) {
                     panel.hidden = false;
@@ -243,17 +252,26 @@
         }
     }
 
-    function show(show) {
+    function show(visible) {
+        ensureShell();
         const panel = document.getElementById("infra-topology-v2");
         if (!panel) return;
-        panel.classList.toggle("is-visible", Boolean(show));
-        if (show && !topology) loadTopology();
+        panel.classList.toggle("is-visible", Boolean(visible));
+        if (visible && !topology) loadTopology();
     }
 
-    document.addEventListener("DOMContentLoaded", () => {
+    function initialize() {
         ensureShell();
         loadTopology();
-    });
+        const activeTopology = document.querySelector('[data-infra-view="topology"].active');
+        if (activeTopology) show(true);
+    }
 
     window.CapivaraInfrastructureTopologyV2 = { show, load: loadTopology };
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", initialize, { once: true });
+    } else {
+        initialize();
+    }
 })();
