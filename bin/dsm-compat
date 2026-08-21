@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Internal compatibility shim for Capivara DSM.
+#
+# This entry point is not a public CLI. New user-facing commands belong in
+# bin/cap. It intentionally delegates to the historical implementation while
+# compatibility routes are migrated incrementally.
+set -Eeuo pipefail
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
+export DSM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# The historical implementation remains in dsm for the current migration
+# commit; CAP_DSM_INTERNAL prevents the public deprecation banner/redirect.
+export CAP_DSM_INTERNAL=1
+exec "${DSM_ROOT}/bin/dsm" "$@"
