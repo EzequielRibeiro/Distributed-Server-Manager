@@ -32,18 +32,12 @@ from registry_repository import RegistryRepository
 
 
 class CatalogLaunchProfileTest(unittest.TestCase):
-    def test_native_and_java_catalog_runtimes_become_structured_profiles(self):
+    def test_native_catalog_runtime_becomes_structured_profile(self):
         dayz = resolve_launch_profile(ROOT, "dayz.stable")
         self.assertEqual(dayz["game_id"], "dayz")
         self.assertEqual(dayz["launch"]["engine"], "native")
         self.assertEqual(dayz["launch"]["executable"], "DayZServer")
         self.assertIn("-config=serverDZ.cfg", dayz["launch"]["arguments"])
-
-        paper = resolve_launch_profile(ROOT, "minecraft.java.paper")
-        self.assertEqual(paper["game_id"], "minecraft")
-        self.assertEqual(paper["launch"]["engine"], "java")
-        self.assertEqual(paper["launch"]["executable"], "server.jar")
-        self.assertEqual(paper["launch"]["arguments"], ["nogui"])
 
     def test_unknown_catalog_runtime_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -100,14 +94,14 @@ class PrivilegedProvisionerTest(unittest.TestCase):
         ) = self.original
         self.temp.cleanup()
 
-    def runtime(self, *, engine="native", executable="server-bin"):
+    def runtime(self, *, executable="server-bin"):
         return {
             "runtime_id": "generic.stable",
             "environment_id": "generic.stable",
             "game_id": "generic",
             "adapter": "systemd",
             "launch": {
-                "engine": engine,
+                "engine": "native",
                 "executable": executable,
                 "arguments": ["--port=24000", "hello world"],
             },
@@ -147,15 +141,6 @@ class PrivilegedProvisionerTest(unittest.TestCase):
         request = self.request()
         request["unit"] = "sshd.service"
         self.assertEqual(instance_provisioner.unit_for_instance(request["instance_id"]), "capivara-instance-instance-one.service")
-
-    def test_java_engine_uses_agent_local_java_launcher(self):
-        jar = self._install_artifact("server.jar", executable=False)
-        runtime = instance_provisioner._runtime_contract(
-            self.request(runtime=self.runtime(engine="java", executable="server.jar"))
-        )
-        with patch.object(instance_provisioner.shutil, "which", return_value="/usr/bin/java"):
-            argv = instance_provisioner._launch_argv(runtime, jar)
-        self.assertEqual(argv[:3], [str(Path("/usr/bin/java").resolve()), "-jar", str(jar)])
 
     def test_provision_and_reconcile_are_deterministic(self):
         self._install_artifact()
