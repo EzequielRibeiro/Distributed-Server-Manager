@@ -122,6 +122,7 @@ class Phase18AgentUpdatesTest(unittest.TestCase):
             backend=self.backend,
         )
         self.assertEqual(status, 200)
+        self.assertEqual(initial["status"], "active")
         self.assertEqual(initial["update_state"]["installed_version"], "1.0.0")
 
         rollout = self.repository.create_rollout(
@@ -160,6 +161,7 @@ class Phase18AgentUpdatesTest(unittest.TestCase):
             ).fetchall()
 
         event_types = [str(row["event_type"]) for row in rows]
+        self.assertEqual(event_types.count("AGENT_ONLINE"), 1)
         self.assertIn("AGENT_UPDATE_STARTED", event_types)
         self.assertIn("AGENT_UPDATE_COMPLETED", event_types)
         correlations = {
