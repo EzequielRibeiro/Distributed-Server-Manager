@@ -83,6 +83,17 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         with self.assertRaises(ProfileError):
             port_bindings({"ports": {"game": 70000}})
 
+    def test_profile_rejects_executable_or_config_outside_provisioned_content(self):
+        install = self.root / "serverfiles"; install.mkdir()
+        with self.assertRaises(ProfileError):
+            game_runtime.build_runtime_spec(self.config, self.instance, {
+                "install_path": str(install), "executable": "/bin/sh", "ports": {"game": 24000},
+            })
+        with self.assertRaises(ProfileError):
+            game_runtime.build_runtime_spec(self.config, self.instance, {
+                "install_path": str(install), "config_path": "/etc/passwd", "ports": {"game": 24000},
+            })
+
     def test_agent_ownership_is_checked_before_profile_resolution(self):
         install = self.root / "serverfiles"; install.mkdir()
         foreign = {**self.instance, "agent_id": "agent-two"}
