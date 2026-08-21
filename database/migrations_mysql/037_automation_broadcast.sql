@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS automation_runs (
  context_json LONGTEXT NOT NULL, result_json LONGTEXT NOT NULL, requested_by VARCHAR(191), started_at VARCHAR(40), completed_at VARCHAR(40), created_at VARCHAR(40) NOT NULL, updated_at VARCHAR(40) NOT NULL,
  INDEX idx_automation_runs_rule_created(rule_id,created_at)
 );
+CREATE TABLE IF NOT EXISTS automation_runtime_state (
+ state_key VARCHAR(191) PRIMARY KEY, state_value LONGTEXT NOT NULL, updated_at VARCHAR(40) NOT NULL
+);
 CREATE TABLE IF NOT EXISTS broadcasts (
  broadcast_id VARCHAR(191) PRIMARY KEY, scope VARCHAR(32) NOT NULL, target VARCHAR(191), message TEXT NOT NULL, priority VARCHAR(16) NOT NULL,
  ttl_seconds INT NOT NULL, require_ack TINYINT NOT NULL DEFAULT 1, status VARCHAR(32) NOT NULL DEFAULT 'pending', requested_by VARCHAR(191), created_at VARCHAR(40) NOT NULL, expires_at VARCHAR(40) NOT NULL
