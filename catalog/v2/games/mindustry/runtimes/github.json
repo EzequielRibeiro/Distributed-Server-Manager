@@ -1,0 +1,9 @@
+{
+  "schema_version": 2, "kind": "RuntimeDefinition", "id": "mindustry.github", "name": "Mindustry Dedicated Server",
+  "game": "mindustry", "edition": "default", "variant": "dedicated-server", "loader": null,
+  "version": { "strategy": "dynamic", "resolver": "github_releases", "config": { "repository": "Anuken/Mindustry", "asset_pattern": "server-release.jar", "discovery_limit": 20 } },
+  "process": { "engine": "java", "executable": "server-release.jar", "artifact_mode": "file" },
+  "requirements": { "os": ["linux", "windows"], "architectures": ["x86_64", "aarch64"], "java": { "min": 17, "max": 25 } },
+  "artifact": { "provider": "github", "auth": "anonymous", "repository": "Anuken/Mindustry", "asset": "server-release.jar" },
+  "installation": { "directory": "/opt/dsm/game-data/mindustry/serverfiles" }
+}
