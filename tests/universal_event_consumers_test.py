@@ -19,6 +19,7 @@ from core.events.automation import AutomationEngine, AutomationRule
 from core.events.models import EventSeverity, EventSource, UniversalEvent
 from core.events.observability import EventPlatformMetrics, ObservedEventSink
 from core.events.retention import EventRetentionPolicy, EventRetentionService
+from core.events.runtime import EventPlatformRuntime
 from core.events.streaming import CompositeEventSink, EventStreamHub
 
 
@@ -42,6 +43,16 @@ class UniversalEventConsumerTest(unittest.TestCase):
 
     def test_non_alerting_event_produces_no_candidate(self):
         self.assertEqual(AlertConsumer().consume(self.event("AGENT_ONLINE")), [])
+
+    def test_alert_consumer_can_forward_policy_candidates(self):
+        forwarded = []
+        consumer = AlertConsumer(candidate_sink=forwarded.append)
+        event = self.event("AGENT_UPDATE_FAILED")
+
+        consumer(event)
+
+        self.assertEqual(len(forwarded), 1)
+        self.assertEqual(forwarded[0].event_id, event.id)
 
     def test_stream_hub_fans_out_and_unsubscribes(self):
         hub = EventStreamHub()
@@ -119,6 +130,40 @@ class UniversalEventConsumerTest(unittest.TestCase):
             ObservedEventSink(fail, metrics)(event)
         self.assertEqual(metrics.snapshot().failed_total, 1)
         self.assertFalse(metrics.snapshot().healthy)
+
+    def test_runtime_composes_store_stream_alerts_automation_and_metrics(self):
+        stored = []
+        streamed = []
+        candidates = []
+        automated = []
+        stream = EventStreamHub()
+        stream.subscribe(streamed.append)
+        alerts = AlertConsumer(candidate_sink=candidates.append)
+        automation = AutomationEngine((
+            AutomationRule.for_event_type(
+                "record-update-failure",
+                "AGENT_UPDATE_FAILED",
+                automated.append,
+            ),
+        ))
+        runtime = EventPlatformRuntime(
+            stored.append,
+            stream=stream,
+            alerts=alerts,
+            automation=automation,
+        )
+
+        event = runtime.publisher.publish(
+            "AGENT_UPDATE_FAILED",
+            source=EventSource(type="agent", id="agent-a"),
+            severity=EventSeverity.CRITICAL,
+        )
+
+        self.assertEqual(stored, [event])
+        self.assertEqual(streamed, [event])
+        self.assertEqual(candidates[0].level, AlertSeverity.WARNING)
+        self.assertEqual(automated, [event])
+        self.assertEqual(runtime.snapshot().published_total, 1)
 
 
 class UniversalEventRetentionTest(unittest.TestCase):
