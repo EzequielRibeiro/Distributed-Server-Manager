@@ -10,12 +10,12 @@ import shutil
 import sys
 from typing import Any
 
-import game_data_executor
+from game_data_executor import _execute as execute_game_data
 import game_runtime
 import instance_runtime
 import runtime_materialization
 from provisioning_contract import validate_provisioning_request
-from provisioning_state import read_json, write_json
+from provisioning_state import write_json
 from runtime_events import emit_runtime_event
 
 
@@ -104,7 +104,7 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
             "action": request["content"]["action"],
             "selection": dict(request["content"]["selection"]),
         }
-        content_result = game_data_executor.execute_game_data(content_command)
+        content_result = execute_game_data(content_command)
         install_path = str(content_result["target_path"])
         _event("INSTANCE_PROVISIONING_STEP", request, step=step, progress=60, data={"provider": content_result.get("provider")})
 
