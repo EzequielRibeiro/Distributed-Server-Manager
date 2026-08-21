@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Agent-owned, game-agnostic instance observation and command state."""
+"""Agent-owned, game-agnostic instance observation and lifecycle state."""
 
 from __future__ import annotations
 
@@ -10,12 +10,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from adapters import AdapterError, resolve_adapter
+
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 INSTANCE_DIR = STATE_DIR / "instances"
 RESULT_DIR = STATE_DIR / "instance-results"
 HISTORY_DIR = STATE_DIR / "instance-command-history"
 _TOKEN = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
-VALID_ACTIONS = {"status", "doctor"}
+VALID_ACTIONS = {"status", "doctor", "start", "stop", "restart"}
+LIFECYCLE_ACTIONS = {"start", "stop", "restart"}
 
 
 def _now() -> str:
@@ -54,7 +57,7 @@ def get_instance(instance_id: str) -> dict[str, Any] | None:
 
 
 def register_instance(record: dict[str, Any]) -> dict[str, Any]:
-    """Persist the Agent-local instance identity used by future provisioning."""
+    """Persist the Agent-local instance identity used by provisioning and lifecycle."""
     body = dict(record or {})
     instance_id = _token(body.get("instance_id"), "instance_id")
     body["instance_id"] = instance_id
@@ -97,11 +100,35 @@ def list_instances(config: dict[str, Any]) -> list[dict[str, Any]]:
     return values
 
 
+def _adapter_state(record: dict[str, Any]) -> dict[str, Any] | None:
+    if not str(record.get("adapter") or "").strip():
+        return None
+    return resolve_adapter(record).status(record)
+
+
+def _observed_state(adapter_state: dict[str, Any] | None, fallback: Any) -> str:
+    if not isinstance(adapter_state, dict):
+        return str(fallback or "unknown")
+    if not adapter_state.get("available"):
+        return "unavailable"
+    active = str(adapter_state.get("active_state") or "").lower()
+    if active == "active":
+        return "running"
+    if active == "failed":
+        return "failed"
+    if active in {"inactive", "deactivating"}:
+        return "stopped"
+    if active == "activating":
+        return "starting"
+    return str(fallback or "unknown")
+
+
 def status(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     record = _owned(config, instance_id)
     configured_path = str(record.get("path") or "").strip()
+    adapter_state = _adapter_state(record)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "CapivaraInstanceStatus",
         "scope": "instance-local",
         "instance_id": record["instance_id"],
@@ -111,7 +138,8 @@ def status(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
         "runtime_id": record.get("runtime_id"),
         "adapter": record.get("adapter"),
         "desired_state": record.get("desired_state"),
-        "observed_state": record.get("observed_state", "unknown"),
+        "observed_state": _observed_state(adapter_state, record.get("observed_state")),
+        "adapter_state": adapter_state,
         "path": configured_path or None,
         "path_exists": bool(configured_path and Path(configured_path).exists()),
         "updated_at": record.get("updated_at"),
@@ -119,10 +147,20 @@ def status(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
 
 
 def doctor(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
+    record = _owned(config, instance_id)
     view = status(config, instance_id)
     findings: list[dict[str, str]] = []
+    adapter_doctor: dict[str, Any] | None = None
     if not view.get("adapter"):
         findings.append({"code": "adapter_unconfigured", "severity": "warning", "message": "Instance runtime adapter is not configured."})
+    else:
+        try:
+            adapter_doctor = resolve_adapter(record).doctor(record)
+            for item in adapter_doctor.get("findings", []):
+                if isinstance(item, dict):
+                    findings.append(dict(item))
+        except AdapterError as exc:
+            findings.append({"code": "adapter_error", "severity": "critical", "message": str(exc)[:2000]})
     if not view.get("runtime_id"):
         findings.append({"code": "runtime_unconfigured", "severity": "warning", "message": "Instance runtime identity is not configured."})
     if view.get("path") and not view.get("path_exists"):
@@ -130,13 +168,41 @@ def doctor(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     severities = {item["severity"] for item in findings}
     state = "critical" if "critical" in severities else "degraded" if "warning" in severities else "healthy"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "CapivaraInstanceDoctor",
         "scope": "instance-local",
         "status": state,
         "ready": state != "critical",
         "instance": view,
+        "adapter_doctor": adapter_doctor,
         "findings": findings,
+    }
+
+
+def lifecycle(config: dict[str, Any], instance_id: str, action: str) -> dict[str, Any]:
+    action = str(action or "").strip().lower()
+    if action not in LIFECYCLE_ACTIONS:
+        raise ValueError("unsupported instance lifecycle action")
+    record = _owned(config, instance_id)
+    adapter = resolve_adapter(record)
+    operation = getattr(adapter, action)
+    result = operation(record)
+    state = result.get("state") if isinstance(result, dict) else None
+    observed_state = _observed_state(state if isinstance(state, dict) else None, record.get("observed_state"))
+    updated = dict(record)
+    updated["desired_state"] = "stopped" if action == "stop" else "running"
+    updated["observed_state"] = observed_state
+    register_instance(updated)
+    return {
+        "schema_version": 1,
+        "kind": "CapivaraInstanceLifecycle",
+        "scope": "instance-local",
+        "instance_id": record["instance_id"],
+        "agent_id": record["agent_id"],
+        "adapter": adapter.name,
+        "action": action,
+        "observed_state": observed_state,
+        "operation": result,
     }
 
 
@@ -164,7 +230,12 @@ def handle_command(config: dict[str, Any], command: dict[str, Any]) -> dict[str,
         _token(instance_id, "instance_id")
         if action not in VALID_ACTIONS:
             raise ValueError("unsupported instance action")
-        payload = status(config, instance_id) if action == "status" else doctor(config, instance_id)
+        if action == "status":
+            payload = status(config, instance_id)
+        elif action == "doctor":
+            payload = doctor(config, instance_id)
+        else:
+            payload = lifecycle(config, instance_id, action)
         result = {
             "command_id": command_id,
             "instance_id": instance_id,
@@ -207,6 +278,6 @@ def clear_result(command_id: str) -> None:
 
 
 __all__ = [
-    "VALID_ACTIONS", "clear_result", "doctor", "get_instance", "handle_command", "inventory",
-    "list_instances", "read_result", "register_instance", "status",
+    "LIFECYCLE_ACTIONS", "VALID_ACTIONS", "clear_result", "doctor", "get_instance", "handle_command",
+    "inventory", "lifecycle", "list_instances", "read_result", "register_instance", "status",
 ]
