@@ -69,25 +69,37 @@ class UniversalEventRepositoryTest(unittest.TestCase):
         self.backend.initialize()
         with self.backend.transaction() as connection:
             connection.execute(
-                "INSERT INTO controllers(id,name,mode) VALUES (?,?,?)",
-                ("controller-c1", "C1", "controller"),
+                "INSERT INTO nodes(id,name,role,status) VALUES (?,?,?,?)",
+                ("controller-node-c1", "Controller Node", "controller", "active"),
             )
             connection.execute(
-                "INSERT INTO nodes(id,controller_id,name) VALUES (?,?,?)",
-                ("node-c1", "controller-c1", "Node"),
+                "INSERT INTO nodes(id,name,role,status) VALUES (?,?,?,?)",
+                ("agent-node-c1", "Agent Node", "agent", "active"),
+            )
+            connection.execute(
+                "INSERT INTO nodes(id,name,role,status) VALUES (?,?,?,?)",
+                ("agent-node-other", "Other Agent Node", "agent", "active"),
+            )
+            connection.execute(
+                "INSERT INTO controllers(id,node_id,name,status) VALUES (?,?,?,?)",
+                ("controller-c1", "controller-node-c1", "C1", "active"),
             )
             connection.execute(
                 "INSERT INTO agents(id,controller_id,node_id,name,status) VALUES (?,?,?,?,?)",
-                ("agent-c1", "controller-c1", "node-c1", "Agent", "active"),
+                ("agent-c1", "controller-c1", "agent-node-c1", "Agent", "active"),
             )
             connection.execute(
                 "INSERT INTO agents(id,controller_id,node_id,name,status) VALUES (?,?,?,?,?)",
-                ("agent-other", "controller-c1", "node-c1", "Other", "active"),
+                ("agent-other", "controller-c1", "agent-node-other", "Other", "active"),
             )
             connection.execute(
-                "INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,controller_id,agent_id) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                ("instance-c1", "node-c1", "minecraft", "minecraft.bedrock.vanilla", "C1", "online", "controller-c1", "agent-c1"),
+                "INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)",
+                ("customer-c1", "controller-c1", "Customer", "active"),
+            )
+            connection.execute(
+                "INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,controller_id,agent_id,customer_id) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                ("instance-c1", "agent-node-c1", "minecraft", "minecraft.bedrock.vanilla", "C1", "online", "controller-c1", "agent-c1", "customer-c1"),
             )
         self.repo = UniversalEventRepository(self.backend)
         self.repo.initialize()
@@ -160,7 +172,7 @@ class UniversalEventRepositoryTest(unittest.TestCase):
             connection.execute(
                 "INSERT INTO events(event_id,event_type,severity,source,node_id,instance_id,payload_json) "
                 "VALUES (?,?,?,?,?,?,?)",
-                ("legacy-event", "SERVER_STARTED", "info", "legacy.runtime", "node-c1", "instance-c1", '{"port":2302}'),
+                ("legacy-event", "SERVER_STARTED", "info", "legacy.runtime", "agent-node-c1", "instance-c1", '{"port":2302}'),
             )
         first = self.repo.import_legacy_events()
         second = self.repo.import_legacy_events()
