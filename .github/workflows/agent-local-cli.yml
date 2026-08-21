@@ -7,6 +7,8 @@ on:
       - 'bin/cap'
       - 'release/build_agent_package.sh'
       - 'tests/agent_local_cli_test.py'
+      - 'tests/agent_local_game_data_state_test.py'
+      - 'tests/agent_local_game_data_cli_test.py'
       - 'tests/agent_package_test.sh'
       - '.github/workflows/agent-local-cli.yml'
   push:
@@ -16,6 +18,8 @@ on:
       - 'bin/cap'
       - 'release/build_agent_package.sh'
       - 'tests/agent_local_cli_test.py'
+      - 'tests/agent_local_game_data_state_test.py'
+      - 'tests/agent_local_game_data_cli_test.py'
       - 'tests/agent_package_test.sh'
       - '.github/workflows/agent-local-cli.yml'
 
@@ -35,8 +39,22 @@ jobs:
           bash -n bin/cap
           bash -n agents/linux/installer/install-agent.sh
           bash -n release/build_agent_package.sh
-          python3 -m py_compile agents/linux/runtime/local_cli.py agents/linux/runtime/capabilities.py agents/linux/runtime/network_inventory.py agents/linux/updater/updater.py tests/agent_local_cli_test.py
+          python3 -m py_compile \
+            agents/linux/runtime/local_cli.py \
+            agents/linux/runtime/capabilities.py \
+            agents/linux/runtime/network_inventory.py \
+            agents/linux/runtime/game_data_client.py \
+            agents/linux/runtime/game_data_executor.py \
+            agents/linux/runtime/game_data_state.py \
+            agents/linux/updater/updater.py \
+            tests/agent_local_cli_test.py \
+            tests/agent_local_game_data_state_test.py \
+            tests/agent_local_game_data_cli_test.py
       - name: Run local CLI tests
-        run: python3 -m unittest tests/agent_local_cli_test.py
+        run: |
+          python3 -m unittest \
+            tests/agent_local_cli_test.py \
+            tests/agent_local_game_data_state_test.py \
+            tests/agent_local_game_data_cli_test.py
       - name: Validate Agent package
         run: bash tests/agent_package_test.sh

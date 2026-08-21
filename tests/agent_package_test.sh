@@ -14,7 +14,8 @@ bash -n "${ROOT}/agents/linux/installer/install-agent.sh"
 python3 -m py_compile \
   "${ROOT}/agents/linux/runtime/local_cli.py" \
   "${ROOT}/agents/linux/runtime/game_data_client.py" \
-  "${ROOT}/agents/linux/runtime/game_data_executor.py"
+  "${ROOT}/agents/linux/runtime/game_data_executor.py" \
+  "${ROOT}/agents/linux/runtime/game_data_state.py"
 
 bash "${BUILDER}" HEAD "${TMP}/one" >/dev/null
 bash "${BUILDER}" HEAD "${TMP}/two" >/dev/null
@@ -34,7 +35,7 @@ for path in \
   install-agent.sh manifest.json VERSION \
   agent/common/identity.py \
   agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py agent/runtime/update_client.py agent/runtime/local_cli.py \
-  agent/runtime/game_data_client.py agent/runtime/game_data_executor.py \
+  agent/runtime/game_data_client.py agent/runtime/game_data_executor.py agent/runtime/game_data_state.py \
   agent/updater/updater.py \
   services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path \
   config/README.md
@@ -61,6 +62,7 @@ source_map = {
     'agent/runtime/local_cli.py': root / 'agents/linux/runtime/local_cli.py',
     'agent/runtime/game_data_client.py': root / 'agents/linux/runtime/game_data_client.py',
     'agent/runtime/game_data_executor.py': root / 'agents/linux/runtime/game_data_executor.py',
+    'agent/runtime/game_data_state.py': root / 'agents/linux/runtime/game_data_state.py',
     'agent/updater/updater.py': root / 'agents/linux/updater/updater.py',
     'services/capivara-agent.service': root / 'agents/linux/services/capivara-agent.service',
     'services/capivara-agent-update.service': root / 'agents/linux/services/capivara-agent-update.service',
@@ -82,6 +84,7 @@ grep -Fq 'capivara-agent-update.path' "${INSTALLER}" || fail "installer does not
 grep -Fq 'runtime/local_cli.py' "${INSTALLER}" || fail "installer does not install local Agent CLI"
 grep -Fq 'runtime/game_data_client.py' "${INSTALLER}" || fail "installer does not install game-data client"
 grep -Fq 'runtime/game_data_executor.py' "${INSTALLER}" || fail "installer does not install game-data executor"
+grep -Fq 'runtime/game_data_state.py' "${INSTALLER}" || fail "installer does not install game-data state module"
 grep -Fq '/usr/local/bin/cap' "${INSTALLER}" || fail "installer does not expose the cap command"
 
 echo "Agent package tests passed."

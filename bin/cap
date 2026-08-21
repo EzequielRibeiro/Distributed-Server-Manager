@@ -43,6 +43,10 @@ Agent local — Linux:
   cap agent heartbeat [--json]
   cap agent capabilities [--json]
   cap agent network [--json]
+  cap agent game-data list [--json]
+  cap agent game-data status <game> [--json]
+  cap agent jobs [--active] [--limit N] [--json]
+  cap agent jobs show <job-id> [--json]
   cap agent logs [--lines N] [--json]
   cap agent doctor [--json]
 
@@ -71,6 +75,7 @@ Compatibilidade curta também preservada:
 
 `cap infrastructure doctor` é o Doctor da infraestrutura distribuída.
 `cap agent doctor` é o Doctor local do Agent Linux e não consulta a database do Controller.
+`cap agent game-data` e `cap agent jobs` leem somente o estado operacional local do Agent.
 `cap` é a CLI oficial em consolidação. Nesta fase, os demais comandos operacionais
 legados são encaminhados internamente para `dsm` sem duplicação de lógica.
 EOF
@@ -123,7 +128,7 @@ case "${1:-}" in
             ports)
                 legacy_exec agent "$@"
                 ;;
-            status|info|health|heartbeat|capabilities|network|logs|doctor)
+            status|info|health|heartbeat|capabilities|network|game-data|jobs|logs|doctor)
                 agent_local_exec "$@"
                 ;;
             *) usage; exit 2 ;;
