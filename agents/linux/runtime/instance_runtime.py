@@ -17,7 +17,7 @@ INSTANCE_DIR = STATE_DIR / "instances"
 RESULT_DIR = STATE_DIR / "instance-results"
 HISTORY_DIR = STATE_DIR / "instance-command-history"
 _TOKEN = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
-VALID_ACTIONS = {"status", "doctor", "start", "stop", "restart"}
+VALID_ACTIONS = {"status", "doctor", "start", "stop", "restart", "remove"}
 LIFECYCLE_ACTIONS = {"start", "stop", "restart"}
 
 
@@ -176,6 +176,28 @@ def lifecycle(config: dict[str, Any], instance_id: str, action: str) -> dict[str
                 "action": action, "observed_state": observed_state, "operation": result}
 
 
+def remove(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
+    """Stop and remove the materialized runtime while preserving shared game data."""
+    from privileged_materialization import remove as remove_materialized_runtime
+    from runtime_limits import runtime_limits
+    from runtime_metrics import increment
+    from runtime_operations import runtime_operation
+
+    limits = runtime_limits(config)
+    with runtime_operation(config, instance_id, "remove", lock_timeout_seconds=limits.lock_timeout_seconds):
+        result = remove_materialized_runtime(config, instance_id)
+        increment("lifecycle_remove")
+        return {
+            "schema_version": 1,
+            "kind": "CapivaraInstanceRemoval",
+            "scope": "instance-local",
+            "instance_id": instance_id,
+            "agent_id": str(config.get("agent_id") or ""),
+            "shared_game_data_preserved": True,
+            "operation": result,
+        }
+
+
 def inventory(config: dict[str, Any]) -> list[dict[str, Any]]:
     return list_instances(config)
 
@@ -200,6 +222,7 @@ def handle_command(config: dict[str, Any], command: dict[str, Any]) -> dict[str,
         if action not in VALID_ACTIONS: raise ValueError("unsupported instance action")
         if action == "status": payload = status(config, instance_id)
         elif action == "doctor": payload = doctor(config, instance_id)
+        elif action == "remove": payload = remove(config, instance_id)
         else: payload = lifecycle(config, instance_id, action)
         result = {"command_id": command_id, "instance_id": instance_id, "action": action, "status": "completed",
                   "result": payload, "generated_at": _now()}
@@ -225,4 +248,4 @@ def clear_result(command_id: str) -> None:
 
 
 __all__ = ["LIFECYCLE_ACTIONS", "VALID_ACTIONS", "clear_result", "doctor", "get_instance", "handle_command",
-           "inventory", "lifecycle", "list_instances", "read_result", "register_instance", "status"]
+           "inventory", "lifecycle", "list_instances", "read_result", "register_instance", "remove", "status"]
