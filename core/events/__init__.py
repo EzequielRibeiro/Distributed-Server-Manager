@@ -7,6 +7,7 @@ or storage implementations.
 from .models import EventScope, EventSeverity, EventSource, UniversalEvent
 from .publisher import EventPublisher, publish
 from .registry import EVENT_TYPES, is_registered, require_registered
+from .storage import EventStore
 from .validator import EventValidationError, validate_event
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     "EventScope",
     "EventSeverity",
     "EventSource",
+    "EventStore",
     "EventValidationError",
     "UniversalEvent",
     "is_registered",
