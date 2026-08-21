@@ -47,14 +47,16 @@ for required in \
   agent/runtime/update_client.py agent/runtime/update_state.py agent/runtime/local_cli.py agent/runtime/cap_dispatch.py \
   agent/runtime/game_data_client.py agent/runtime/game_data_executor.py agent/runtime/game_data_state.py \
   agent/runtime/instance_runtime.py agent/runtime/runtime_spec.py agent/runtime/runtime_events.py agent/runtime/runtime_materialization.py agent/runtime/game_runtime.py \
+  agent/runtime/provisioning_contract.py agent/runtime/provisioning_state.py agent/runtime/provisioning_client.py agent/runtime/provisioning_executor.py agent/runtime/privileged_materialization.py \
   agent/runtime/adapters/__init__.py agent/runtime/adapters/base.py \
   agent/runtime/adapters/registry.py agent/runtime/adapters/systemd.py \
   agent/runtime/materializers/__init__.py agent/runtime/materializers/base.py \
   agent/runtime/materializers/registry.py agent/runtime/materializers/systemd.py \
   agent/runtime/profiles/__init__.py agent/runtime/profiles/base.py \
   agent/runtime/profiles/registry.py agent/runtime/profiles/dayz.py \
+  agent/privileged/materialize_instance.py \
   agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py \
-  services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path
+  services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path services/capivara-agent-materialize@.service
 do [[ -f "${PACKAGE_DIR}/${required}" ]] || fail "arquivo obrigatório ausente: ${required}"; done
 python3 - "${PACKAGE_DIR}" <<'PY'
 import hashlib, json, pathlib, sys
@@ -78,11 +80,14 @@ fi
 id capivara-agent >/dev/null 2>&1 || useradd --system --home "${STATE_DIR}" --create-home --shell /usr/sbin/nologin capivara-agent
 install -d -m 0755 -o root -g root \
   "${INSTALL_ROOT}" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/runtime/adapters" \
-  "${INSTALL_ROOT}/runtime/materializers" "${INSTALL_ROOT}/runtime/profiles" "${INSTALL_ROOT}/common" "${INSTALL_ROOT}/updater"
+  "${INSTALL_ROOT}/runtime/materializers" "${INSTALL_ROOT}/runtime/profiles" "${INSTALL_ROOT}/privileged" \
+  "${INSTALL_ROOT}/common" "${INSTALL_ROOT}/updater"
 install -d -m 0700 -o capivara-agent -g capivara-agent \
   "${CONFIG_DIR}" "${STATE_DIR}" "${STATE_DIR}/game-data" "${STATE_DIR}/game-data-jobs" \
   "${STATE_DIR}/game-data-jobs/history" "${STATE_DIR}/game-data-state" "${STATE_DIR}/update-history" \
-  "${STATE_DIR}/instances" "${STATE_DIR}/instance-results" "${STATE_DIR}/instance-command-history" "${STATE_DIR}/events"
+  "${STATE_DIR}/instances" "${STATE_DIR}/instance-results" "${STATE_DIR}/instance-command-history" "${STATE_DIR}/events" \
+  "${STATE_DIR}/instance-provisioning" "${STATE_DIR}/instance-provisioning/history" "${STATE_DIR}/instance-workspaces" \
+  "${STATE_DIR}/privileged-materialization"
 install -m 0755 "${PACKAGE_DIR}/agent/runtime/agent.py" "${INSTALL_ROOT}/runtime/agent.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/capabilities.py" "${INSTALL_ROOT}/runtime/capabilities.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/network_inventory.py" "${INSTALL_ROOT}/runtime/network_inventory.py"
@@ -98,6 +103,12 @@ install -m 0644 "${PACKAGE_DIR}/agent/runtime/runtime_spec.py" "${INSTALL_ROOT}/
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/runtime_events.py" "${INSTALL_ROOT}/runtime/runtime_events.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/runtime_materialization.py" "${INSTALL_ROOT}/runtime/runtime_materialization.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/game_runtime.py" "${INSTALL_ROOT}/runtime/game_runtime.py"
+install -m 0644 "${PACKAGE_DIR}/agent/runtime/provisioning_contract.py" "${INSTALL_ROOT}/runtime/provisioning_contract.py"
+install -m 0644 "${PACKAGE_DIR}/agent/runtime/provisioning_state.py" "${INSTALL_ROOT}/runtime/provisioning_state.py"
+install -m 0644 "${PACKAGE_DIR}/agent/runtime/provisioning_client.py" "${INSTALL_ROOT}/runtime/provisioning_client.py"
+install -m 0755 "${PACKAGE_DIR}/agent/runtime/provisioning_executor.py" "${INSTALL_ROOT}/runtime/provisioning_executor.py"
+install -m 0644 "${PACKAGE_DIR}/agent/runtime/privileged_materialization.py" "${INSTALL_ROOT}/runtime/privileged_materialization.py"
+install -m 0755 "${PACKAGE_DIR}/agent/privileged/materialize_instance.py" "${INSTALL_ROOT}/privileged/materialize_instance.py"
 for file in __init__.py base.py registry.py systemd.py; do
   install -m 0644 "${PACKAGE_DIR}/agent/runtime/adapters/${file}" "${INSTALL_ROOT}/runtime/adapters/${file}"
   install -m 0644 "${PACKAGE_DIR}/agent/runtime/materializers/${file}" "${INSTALL_ROOT}/runtime/materializers/${file}"
@@ -126,7 +137,8 @@ chmod 0600 "${CONFIG_DIR}/agent.json"
 install -m 0644 "${PACKAGE_DIR}/services/capivara-agent.service" "${SYSTEMD_DIR}/capivara-agent.service"
 install -m 0644 "${PACKAGE_DIR}/services/capivara-agent-update.service" "${SYSTEMD_DIR}/capivara-agent-update.service"
 install -m 0644 "${PACKAGE_DIR}/services/capivara-agent-update.path" "${SYSTEMD_DIR}/capivara-agent-update.path"
+install -m 0644 "${PACKAGE_DIR}/services/capivara-agent-materialize@.service" "${SYSTEMD_DIR}/capivara-agent-materialize@.service"
 systemctl daemon-reload
 systemctl enable --now capivara-agent-update.path
 systemctl enable --now capivara-agent.service
-log "Agent ${VERSION} instalado. Runtime profiles traduzem jogos para RuntimeSpec sem ampliar a autoridade do Controller."
+log "Agent ${VERSION} instalado. Provisionamento usa helper root dedicado sem elevar o daemon do Agent."

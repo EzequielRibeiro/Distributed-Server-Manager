@@ -26,6 +26,7 @@ from instance_runtime import handle_command as handle_instance_command
 from instance_runtime import inventory as instance_inventory
 from instance_runtime import read_result as read_instance_result
 from network_inventory import collect_network_inventory
+from provisioning_client import clear_provisioning_result, read_provisioning_result, stage_provisioning_command
 from update_client import clear_update_result, read_update_result, stage_update_request
 
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
@@ -97,6 +98,9 @@ def _inventory(config: dict[str, Any]) -> dict[str, Any]:
     update_result = read_update_result()
     if update_result:
         payload["update_result"] = update_result
+    provisioning_result = read_provisioning_result()
+    if provisioning_result:
+        payload["provisioning_result"] = provisioning_result
     game_data_result = read_game_data_result()
     if game_data_result:
         payload["game_data_result"] = game_data_result
@@ -153,6 +157,17 @@ def heartbeat(config: dict[str, Any]) -> dict[str, Any]:
         )
     if result.get("update_state", {}).get("update_status") == "completed":
         clear_update_result()
+
+    provisioning_command = result.get("provisioning_command")
+    if isinstance(provisioning_command, dict) and stage_provisioning_command(provisioning_command, config_path=CONFIG_PATH):
+        print(
+            f"provisioning staged id={provisioning_command.get('provisioning_id')} instance={provisioning_command.get('instance_id')}",
+            flush=True,
+        )
+    provisioning_state = result.get("provisioning_state") if isinstance(result.get("provisioning_state"), dict) else {}
+    if str(provisioning_state.get("status") or "").lower() in {"completed", "failed"} and provisioning_state.get("provisioning_id"):
+        clear_provisioning_result(str(provisioning_state["provisioning_id"]))
+
     command = result.get("game_data_command")
     if isinstance(command, dict) and stage_game_data_command(command):
         print(

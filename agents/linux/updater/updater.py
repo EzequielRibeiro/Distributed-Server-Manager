@@ -20,6 +20,7 @@ STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-a
 INSTALL_ROOT = Path(os.environ.get("CAPIVARA_AGENT_ROOT", "/opt/capivara-agent"))
 CLI_PATH = Path(os.environ.get("CAPIVARA_AGENT_CLI_PATH", "/usr/local/bin/cap"))
 POLKIT_RULES_DIR = Path(os.environ.get("CAPIVARA_POLKIT_RULES_DIR", "/etc/polkit-1/rules.d"))
+SYSTEMD_DIR = Path(os.environ.get("SYSTEMD_DIR", "/etc/systemd/system"))
 REQUEST_PATH = STATE_DIR / "update-request.json"
 RESULT_PATH = STATE_DIR / "update-result.json"
 HISTORY_DIR = STATE_DIR / "update-history"
@@ -143,9 +144,12 @@ def _validate_python(package_root: Path) -> None:
         runtime / "cap_dispatch.py", runtime / "game_data_client.py", runtime / "game_data_executor.py",
         runtime / "game_data_state.py", runtime / "instance_runtime.py", runtime / "runtime_spec.py",
         runtime / "runtime_events.py", runtime / "runtime_materialization.py", runtime / "game_runtime.py",
+        runtime / "provisioning_contract.py", runtime / "provisioning_state.py", runtime / "provisioning_client.py",
+        runtime / "provisioning_executor.py", runtime / "privileged_materialization.py",
         adapters / "__init__.py", adapters / "base.py", adapters / "registry.py", adapters / "systemd.py",
         materializers / "__init__.py", materializers / "base.py", materializers / "registry.py", materializers / "systemd.py",
         profiles / "__init__.py", profiles / "base.py", profiles / "registry.py", profiles / "dayz.py",
+        package_root / "agent" / "privileged" / "materialize_instance.py",
         package_root / "agent" / "common" / "identity.py", package_root / "agent" / "updater" / "updater.py",
     ]
     completed = subprocess.run(
@@ -179,6 +183,12 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
         (runtime / "runtime_events.py", INSTALL_ROOT / "runtime" / "runtime_events.py", 0o644, "agent/runtime/runtime_events.py"),
         (runtime / "runtime_materialization.py", INSTALL_ROOT / "runtime" / "runtime_materialization.py", 0o644, "agent/runtime/runtime_materialization.py"),
         (runtime / "game_runtime.py", INSTALL_ROOT / "runtime" / "game_runtime.py", 0o644, "agent/runtime/game_runtime.py"),
+        (runtime / "provisioning_contract.py", INSTALL_ROOT / "runtime" / "provisioning_contract.py", 0o644, "agent/runtime/provisioning_contract.py"),
+        (runtime / "provisioning_state.py", INSTALL_ROOT / "runtime" / "provisioning_state.py", 0o644, "agent/runtime/provisioning_state.py"),
+        (runtime / "provisioning_client.py", INSTALL_ROOT / "runtime" / "provisioning_client.py", 0o644, "agent/runtime/provisioning_client.py"),
+        (runtime / "provisioning_executor.py", INSTALL_ROOT / "runtime" / "provisioning_executor.py", 0o755, "agent/runtime/provisioning_executor.py"),
+        (runtime / "privileged_materialization.py", INSTALL_ROOT / "runtime" / "privileged_materialization.py", 0o644, "agent/runtime/privileged_materialization.py"),
+        (package_root / "agent" / "privileged" / "materialize_instance.py", INSTALL_ROOT / "privileged" / "materialize_instance.py", 0o755, "agent/privileged/materialize_instance.py"),
         (adapters / "__init__.py", INSTALL_ROOT / "runtime" / "adapters" / "__init__.py", 0o644, "agent/runtime/adapters/__init__.py"),
         (adapters / "base.py", INSTALL_ROOT / "runtime" / "adapters" / "base.py", 0o644, "agent/runtime/adapters/base.py"),
         (adapters / "registry.py", INSTALL_ROOT / "runtime" / "adapters" / "registry.py", 0o644, "agent/runtime/adapters/registry.py"),
@@ -192,6 +202,7 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
         (profiles / "registry.py", INSTALL_ROOT / "runtime" / "profiles" / "registry.py", 0o644, "agent/runtime/profiles/registry.py"),
         (profiles / "dayz.py", INSTALL_ROOT / "runtime" / "profiles" / "dayz.py", 0o644, "agent/runtime/profiles/dayz.py"),
         (policy / "49-capivara-agent-instance-units.rules", POLKIT_RULES_DIR / "49-capivara-agent-instance-units.rules", 0o644, "agent/policy/49-capivara-agent-instance-units.rules"),
+        (package_root / "services" / "capivara-agent-materialize@.service", SYSTEMD_DIR / "capivara-agent-materialize@.service", 0o644, "services/capivara-agent-materialize@.service"),
         (common / "identity.py", INSTALL_ROOT / "common" / "identity.py", 0o644, "agent/common/identity.py"),
         (package_root / "agent" / "updater" / "updater.py", INSTALL_ROOT / "updater" / "updater.py", 0o755, "agent/updater/updater.py"),
         (package_root / "manifest.json", INSTALL_ROOT / "manifest.json", 0o644, "manifest.json"),
@@ -269,6 +280,14 @@ def _apply_files(mapping: list[tuple[Path, Path, int, str]]) -> None:
         shutil.copy2(source, temp)
         os.chmod(temp, mode)
         os.replace(temp, destination)
+
+
+def _daemon_reload() -> None:
+    completed = subprocess.run(
+        ["systemctl", "daemon-reload"], capture_output=True, text=True, check=False, timeout=30,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or completed.stdout or "systemctl daemon-reload failed")[:2000])
 
 
 def _validate_installed(version: str, manifest: dict[str, Any], mapping: list[tuple[Path, Path, int, str]]) -> None:
@@ -356,6 +375,7 @@ def apply_request() -> int:
         try:
             transaction_started = True
             _apply_files(mapping)
+            _daemon_reload()
             _reconcile_cli()
             _validate_installed(plain_version, manifest, mapping)
             _restart_agent()
@@ -363,6 +383,10 @@ def apply_request() -> int:
             if transaction_started:
                 _restore_files(snapshots)
                 _restore_cli(cli_existed, old_cli_target)
+                try:
+                    _daemon_reload()
+                except Exception:
+                    pass
                 try:
                     subprocess.run(["systemctl", "restart", "capivara-agent.service"], check=False, timeout=30)
                 except (OSError, subprocess.SubprocessError):
