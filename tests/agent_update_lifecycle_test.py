@@ -132,6 +132,37 @@ class AgentUpdateLifecycleTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             updater._verify_manifest(manifest, "1.5.0", "beta")
 
+    def test_transaction_rollback_restores_file_and_removes_new_cli_link(self):
+        package = self.root / "package"
+        source = package / "agent.py"
+        source.parent.mkdir(parents=True)
+        source.write_text("new-agent\n", encoding="utf-8")
+
+        destination = self.install / "runtime" / "agent.py"
+        destination.parent.mkdir(parents=True)
+        destination.write_text("old-agent\n", encoding="utf-8")
+
+        local_cli_path = self.install / "runtime" / "local_cli.py"
+        local_cli_path.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        cli_existed, old_cli_target = updater._validate_cli_target()
+        self.assertFalse(cli_existed)
+
+        mapping = [(source, destination, 0o755, "agent/runtime/agent.py")]
+        backup_root = self.root / "rollback"
+        snapshots = updater._snapshot_files(mapping, backup_root)
+
+        updater._apply_files(mapping)
+        updater._reconcile_cli()
+        self.assertEqual(destination.read_text(encoding="utf-8"), "new-agent\n")
+        self.assertTrue(self.cli.is_symlink())
+
+        updater._restore_files(snapshots)
+        updater._restore_cli(cli_existed, old_cli_target)
+
+        self.assertEqual(destination.read_text(encoding="utf-8"), "old-agent\n")
+        self.assertFalse(self.cli.exists())
+        self.assertFalse(self.cli.is_symlink())
+
 
 if __name__ == "__main__":
     unittest.main()
