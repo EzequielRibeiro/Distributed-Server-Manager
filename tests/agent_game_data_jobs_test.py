@@ -186,11 +186,19 @@ class AgentGameDataJobsTest(unittest.TestCase):
         self.assertEqual(selection["provider"], "steam")
         self.assertEqual(str(selection["install"]["package_id"]), "223350")
 
-    def test_modern_integration_does_not_create_server_part14(self):
-        self.assertFalse((ROOT / "dashboard/server_part14.py").exists())
+    def test_game_data_remains_owned_by_server_part13(self):
         server = (ROOT / "dashboard/server_part13.py").read_text(encoding="utf-8")
         self.assertIn("dispatch_agent_game_data_get", server)
         self.assertIn("dispatch_agent_game_data_post", server)
+
+        # Later integration wrappers may exist for unrelated phases. Game-data
+        # must remain implemented in part13 rather than coupling to them.
+        part14 = ROOT / "dashboard/server_part14.py"
+        if part14.exists():
+            integration = part14.read_text(encoding="utf-8")
+            self.assertNotIn("dispatch_agent_game_data_get", integration)
+            self.assertNotIn("dispatch_agent_game_data_post", integration)
+
         package = (ROOT / "release/build_agent_package.sh").read_text(encoding="utf-8")
         self.assertIn("agent/runtime/local_cli.py", package)
         self.assertIn("agent/runtime/game_data_client.py", package)
