@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Controller-side queue for game-agnostic Agent instance observations."""
+"""Controller-side queue for game-agnostic Agent instance operations."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
 from core.agent_health import utc_timestamp
 
-VALID_ACTIONS = {"status", "doctor"}
+VALID_ACTIONS = {"status", "doctor", "start", "stop", "restart"}
 FINAL_STATES = {"completed", "failed"}
 
 

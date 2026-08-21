@@ -6,18 +6,31 @@ O Controller mantém política, placement e autorização. O Agent proprietário
 
 ## B6 foundation
 
-A primeira entrega limita o transporte remoto a ações observacionais:
+A foundation introduziu identidade local, inventário, `status`, `doctor`, fila persistente Controller→Agent, ownership e idempotência por `command_id`.
+
+## B7 — Instance Runtime Adapters
+
+A camada mutável é separada da observacional por adapters game-agnostic. O primeiro adapter é `systemd`; ele implementa:
 
 - `status`
 - `doctor`
+- `start`
+- `stop`
+- `restart`
 
-Ações de lifecycle (`start`, `stop`, `restart`) ficam fora desta primeira entrega até existir uma interface de adapter genérica e testável.
+Nenhum adapter recebe argv, script ou nome de unit vindo do Controller.
 
 ## Identidade local
 
 O Agent mantém registros em `CAPIVARA_AGENT_STATE_DIR/instances/<instance-id>.json` (padrão `/var/lib/capivara-agent`). Cada registro inclui obrigatoriamente `instance_id` e `agent_id`; campos como `game_id`, `environment_id`, `runtime_id`, `adapter`, `path`, `desired_state` e `observed_state` são game-agnostic.
 
-Somente registros cujo `agent_id` coincide com a identidade local podem ser consultados.
+Somente registros cujo `agent_id` coincide com a identidade local podem ser consultados ou operados.
+
+Para `adapter=systemd`, a unit não é configurável remotamente. Ela é sempre derivada localmente:
+
+```text
+capivara-instance-<instance-id>.service
+```
 
 ## CLI
 
@@ -25,9 +38,12 @@ Somente registros cujo `agent_id` coincide com a identidade local podem ser cons
 cap instance list
 cap instance status <instance>
 cap instance doctor <instance>
+cap instance start <instance>
+cap instance stop <instance>
+cap instance restart <instance>
 ```
 
-No Agent essas operações são locais e read-only. Em instalação Controller, os subcomandos administrativos legados de `cap instance ...` permanecem no Controller. Em Hybrid, os três subcomandos acima usam a superfície local; os demais continuam administrativos.
+`list`, `status` e `doctor` permanecem observacionais. `start`, `stop` e `restart` passam por `cap_dispatch.py`, tornando explícita a fronteira mutável. Como `agent.json` permanece protegido em `0600`, operações locais de lifecycle podem exigir `sudo`; o Agent daemon usa uma autorização restrita própria.
 
 ## Transporte
 
@@ -39,22 +55,31 @@ O Controller persiste comandos em `agent_instance_commands`. O heartbeat entrega
     "command_id": "instance-cmd-...",
     "agent_id": "agent-...",
     "instance_id": "instance-...",
-    "action": "doctor"
+    "action": "restart"
   }
 }
 ```
 
-O Agent persiste o resultado antes de reportá-lo. O histórico por `command_id` torna a execução idempotente: uma reentrega produz o mesmo resultado em vez de repetir a observação.
+O Agent persiste o resultado antes de reportá-lo. O histórico por `command_id` torna a execução idempotente: uma reentrega produz o mesmo resultado em vez de repetir a ação.
+
+## SystemdAdapter
+
+O `SystemdAdapter` executa somente uma allowlist fixa de operações. Antes e depois de lifecycle ele consulta `LoadState`, `ActiveState` e `SubState`; `start` de uma unit já ativa e `stop` de uma unit já inativa são tratados como sucesso idempotente.
+
+A autorização do processo `capivara-agent` é restrita por policy local a units cujo nome corresponda a `capivara-instance-*.service` e aos verbos `start`, `stop` e `restart`. A policy não autoriza administração genérica de systemd.
 
 ## Segurança
 
-- allowlist estrita de ações; nesta fase somente `status` e `doctor`;
+- allowlist estrita de ações e adapters;
 - nenhum argv, script ou comando shell é aceito do Controller;
-- ownership é validado no Controller antes de enfileirar e novamente no Agent antes de observar;
+- unit systemd derivada exclusivamente do `instance_id` local;
+- ownership validado no Controller e novamente no Agent;
+- resultado remoto deve corresponder a `command_id + instance_id + action`;
 - IDs usados como nomes de arquivo passam por validação de token;
 - arquivos de estado são escritos atomicamente com modo `0600`;
+- lifecycle remoto não concede ao Agent autorização genérica para administrar services;
 - falhas do canal de Instance Runtime não derrubam o heartbeat de liveness.
 
-## Próximas etapas
+## Evolução
 
-Lifecycle mutável só deve ser habilitado depois de uma interface `InstanceRuntimeAdapter` game-agnostic, com adapters explícitos (por exemplo systemd/native, Steam-based e Java) e contratos idempotentes de start/stop/restart.
+Adapters adicionais só devem ser adicionados quando houver uma necessidade real de mecanismo diferente de systemd. Eles devem implementar `InstanceRuntimeAdapter`, entrar explicitamente no registry e manter a mesma separação entre intenção remota e autoridade local.

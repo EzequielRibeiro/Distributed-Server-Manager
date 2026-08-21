@@ -25,6 +25,11 @@ cat >"${TMP}/agents/linux/runtime/local_cli.py" <<'EOF'
 import sys
 print("LOCAL:" + " ".join(sys.argv[1:]))
 EOF
+cat >"${TMP}/agents/linux/runtime/cap_dispatch.py" <<'EOF'
+#!/usr/bin/env python3
+import sys
+print("LOCAL:" + " ".join(sys.argv[1:]))
+EOF
 cat >"${TMP}/database/agent_deploy_cli.py" <<'EOF'
 #!/usr/bin/env python3
 import sys
@@ -40,10 +45,16 @@ if DSM_NODE_ROLE=controller "${TMP}/bin/cap" agent status >/dev/null 2>"${TMP}/e
     fail "controller was allowed to run local Agent status"
 fi
 grep -Fq "requer role agent ou hybrid" "${TMP}/err" || fail "controller denial lacks role message"
+if DSM_NODE_ROLE=controller "${TMP}/bin/cap" instance restart instance-one >/dev/null 2>"${TMP}/err"; then
+    fail "controller was allowed to run local instance lifecycle"
+fi
+grep -Fq "requer role agent ou hybrid" "${TMP}/err" || fail "controller instance denial lacks role message"
 
-# Agent may use local surfaces, but not Controller administration.
+# Agent may use local surfaces, including structured instance lifecycle, but not Controller administration.
 out="$(DSM_NODE_ROLE=agent "${TMP}/bin/cap" agent status --json)"
 [[ "${out}" == "LOCAL:status --json" ]] || fail "agent local status route failed"
+out="$(DSM_NODE_ROLE=agent "${TMP}/bin/cap" instance restart instance-one --json)"
+[[ "${out}" == "LOCAL:instance restart instance-one --json" ]] || fail "agent instance lifecycle route failed"
 if DSM_NODE_ROLE=agent "${TMP}/bin/cap" agent deploy node.example --ssh-user admin >/dev/null 2>"${TMP}/err"; then
     fail "agent was allowed to deploy another Agent"
 fi
@@ -58,6 +69,8 @@ out="$(DSM_NODE_ROLE=controller "${TMP}/bin/cap" agent ports show agent-remote)"
 # Hybrid gets both surfaces.
 out="$(DSM_NODE_ROLE=hybrid "${TMP}/bin/cap" agent status)"
 [[ "${out}" == "LOCAL:status" ]] || fail "hybrid local Agent route failed"
+out="$(DSM_NODE_ROLE=hybrid "${TMP}/bin/cap" instance start instance-one)"
+[[ "${out}" == "LOCAL:instance start instance-one" ]] || fail "hybrid local instance lifecycle route failed"
 out="$(DSM_NODE_ROLE=hybrid "${TMP}/bin/cap" agent ports set agent-remote 24000 24999 --protocol udp)"
 [[ "${out}" == "DSM: agent ports set agent-remote 24000 24999 --protocol udp" ]] || fail "hybrid administrative route failed"
 
