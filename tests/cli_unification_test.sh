@@ -7,6 +7,7 @@ trap 'rm -rf -- "${TMP}"' EXIT
 
 mkdir -p "${TMP}/bin" "${TMP}/core"
 cp "${ROOT}/bin/cap" "${TMP}/bin/cap"
+cp "${ROOT}/core/role_context.py" "${TMP}/core/role_context.py"
 chmod +x "${TMP}/bin/cap"
 
 cat >"${TMP}/core/bootstrap.sh" <<'EOF'
@@ -27,22 +28,24 @@ fail(){
     exit 1
 }
 
-out="$("${TMP}/bin/cap" backup create)"
+out="$(DSM_NODE_ROLE=hybrid "${TMP}/bin/cap" backup create)"
 [[ "${out}" == "DSM: backup create" ]] || fail "cap backup did not delegate to dsm"
 
-out="$("${TMP}/bin/cap" server status dayz instance-01)"
+out="$(DSM_NODE_ROLE=hybrid "${TMP}/bin/cap" server status dayz instance-01)"
 [[ "${out}" == "DSM: server status dayz instance-01" ]] || fail "cap server did not preserve arguments"
 
-out="$("${TMP}/bin/cap" agent ports show agent-node02)"
-[[ "${out}" == "DSM: agent ports show agent-node02" ]] || fail "cap agent ports did not delegate correctly"
+out="$(DSM_NODE_ROLE=controller "${TMP}/bin/cap" agent ports show agent-node02)"
+[[ "${out}" == "DSM: agent ports show agent-node02" ]] || fail "controller agent ports did not delegate correctly"
 
-help="$({ "${TMP}/bin/cap" --help; } 2>&1)"
-grep -Fq 'cap agent deploy HOST --ssh-user USER' <<<"${help}" || fail "help lost native agent deploy"
-grep -Fq 'cap backup ...' <<<"${help}" || fail "help does not expose delegated commands"
-grep -Fq '`cap` é a CLI oficial em consolidação' <<<"${help}" || fail "help does not state unification policy"
+help="$(DSM_NODE_ROLE=controller "${TMP}/bin/cap" --help 2>&1)"
+grep -Fq 'cap agent deploy HOST --ssh-user USER' <<<"${help}" || fail "controller help lost native agent deploy"
+! grep -Fq 'cap agent game-data list' <<<"${help}" || fail "controller help leaked Agent-local commands"
 
-cap_source="$(cat "${ROOT}/bin/cap")"
-grep -Fq 'exec python3 "${DSM_ROOT}/database/agent_deploy_cli.py"' <<<"${cap_source}" || fail "agent deploy is no longer native"
-grep -Fq 'legacy_exec agent "$@"' <<<"${cap_source}" || fail "agent ports compatibility routing missing"
+help_all="$(DSM_NODE_ROLE=controller "${TMP}/bin/cap" help --all 2>&1)"
+grep -Fq 'cap agent game-data list' <<<"${help_all}" || fail "help --all lacks Agent-local commands"
+
+after="$(cat "${ROOT}/bin/cap")"
+grep -Fq 'require_role "cap agent deploy" controller hybrid' <<<"${after}" || fail "agent deploy lacks role enforcement"
+grep -Fq 'ROLE_RESOLVER=' <<<"${after}" || fail "role resolver is not wired into cap"
 
 printf 'OK: cap CLI unification routing contracts\n'
