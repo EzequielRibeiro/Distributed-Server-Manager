@@ -1,0 +1,38 @@
+name: Automation and Universal Broadcast
+on:
+  pull_request:
+    paths:
+      - 'core/automation_platform.py'
+      - 'database/automation_*'
+      - 'database/migrations/037_automation_broadcast.sql'
+      - 'database/migrations_mysql/037_automation_broadcast.sql'
+      - 'database/migrations_postgresql/037_automation_broadcast.sql'
+      - 'dashboard/automation_*'
+      - 'dashboard/agent_heartbeat_api.py'
+      - 'dashboard/server_part13.py'
+      - 'agents/linux/runtime/broadcast_client.py'
+      - 'agents/linux/runtime/agent.py'
+      - 'agents/linux/runtime/adapters/base.py'
+      - 'release/build_agent_package.sh'
+      - 'bin/cap'
+      - 'tests/automation_broadcast_test.py'
+      - '.github/workflows/automation-broadcast.yml'
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax
+        run: |
+          bash -n bin/cap release/build_agent_package.sh
+          python3 -m py_compile core/automation_platform.py database/automation_repository.py database/automation_engine.py database/automation_cli.py dashboard/automation_api.py dashboard/automation_http.py dashboard/agent_heartbeat_api.py dashboard/server_part13.py agents/linux/runtime/broadcast_client.py agents/linux/runtime/agent.py agents/linux/runtime/adapters/base.py
+      - name: Test automation and broadcast
+        run: python3 -m unittest tests/automation_broadcast_test.py
+      - name: Verify integration contracts
+        run: |
+          grep -Fq 'cap automation' bin/cap
+          grep -Fq 'AUTOMATION_PATH' dashboard/server_part13.py
+          grep -Fq 'broadcast_commands' dashboard/agent_heartbeat_api.py
+          grep -Fq 'agent/runtime/broadcast_client.py' release/build_agent_package.sh
+          test ! -e dashboard/server_part14.py
