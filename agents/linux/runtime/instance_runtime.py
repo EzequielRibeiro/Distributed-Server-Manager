@@ -19,6 +19,7 @@ HISTORY_DIR = STATE_DIR / "instance-command-history"
 _TOKEN = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 VALID_ACTIONS = {"status", "doctor", "start", "stop", "restart"}
 LIFECYCLE_ACTIONS = {"start", "stop", "restart"}
+PROVISIONING_STATES = {"pending", "provisioning", "ready", "failed", "removing", "unconfigured"}
 
 
 def _now() -> str:
@@ -62,12 +63,25 @@ def register_instance(record: dict[str, Any]) -> dict[str, Any]:
     instance_id = _token(body.get("instance_id"), "instance_id")
     body["instance_id"] = instance_id
     body["agent_id"] = _token(body.get("agent_id"), "agent_id")
+    provisioning_status = str(body.get("provisioning_status") or "unconfigured").strip().lower()
+    if provisioning_status not in PROVISIONING_STATES:
+        raise ValueError("invalid instance provisioning_status")
+    body["provisioning_status"] = provisioning_status
     body.setdefault("schema_version", 1)
     body.setdefault("kind", "CapivaraAgentInstance")
     body["updated_at"] = _now()
     body.setdefault("created_at", body["updated_at"])
     _write(_instance_path(instance_id), body)
     return body
+
+
+def unregister_instance(instance_id: str) -> bool:
+    path = _instance_path(instance_id)
+    try:
+        path.unlink()
+        return True
+    except FileNotFoundError:
+        return False
 
 
 def _owned(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
@@ -95,6 +109,7 @@ def list_instances(config: dict[str, Any]) -> list[dict[str, Any]]:
                 "game_id": item.get("game_id"),
                 "environment_id": item.get("environment_id"),
                 "adapter": item.get("adapter"),
+                "provisioning_status": item.get("provisioning_status", "unconfigured"),
                 "observed_state": item.get("observed_state", "unknown"),
             })
     return values
@@ -128,7 +143,7 @@ def status(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     configured_path = str(record.get("path") or "").strip()
     adapter_state = _adapter_state(record)
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "kind": "CapivaraInstanceStatus",
         "scope": "instance-local",
         "instance_id": record["instance_id"],
@@ -137,6 +152,7 @@ def status(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
         "environment_id": record.get("environment_id"),
         "runtime_id": record.get("runtime_id"),
         "adapter": record.get("adapter"),
+        "provisioning_status": record.get("provisioning_status", "unconfigured"),
         "desired_state": record.get("desired_state"),
         "observed_state": _observed_state(adapter_state, record.get("observed_state")),
         "adapter_state": adapter_state,
@@ -151,6 +167,8 @@ def doctor(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     view = status(config, instance_id)
     findings: list[dict[str, str]] = []
     adapter_doctor: dict[str, Any] | None = None
+    if view.get("provisioning_status") != "ready":
+        findings.append({"code": "instance_not_ready", "severity": "warning", "message": "Instance provisioning is not ready."})
     if not view.get("adapter"):
         findings.append({"code": "adapter_unconfigured", "severity": "warning", "message": "Instance runtime adapter is not configured."})
     else:
@@ -168,11 +186,11 @@ def doctor(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     severities = {item["severity"] for item in findings}
     state = "critical" if "critical" in severities else "degraded" if "warning" in severities else "healthy"
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "kind": "CapivaraInstanceDoctor",
         "scope": "instance-local",
         "status": state,
-        "ready": state != "critical",
+        "ready": state != "critical" and view.get("provisioning_status") == "ready",
         "instance": view,
         "adapter_doctor": adapter_doctor,
         "findings": findings,
@@ -184,6 +202,8 @@ def lifecycle(config: dict[str, Any], instance_id: str, action: str) -> dict[str
     if action not in LIFECYCLE_ACTIONS:
         raise ValueError("unsupported instance lifecycle action")
     record = _owned(config, instance_id)
+    if action in {"start", "restart"} and str(record.get("provisioning_status") or "unconfigured") != "ready":
+        raise RuntimeError("instance provisioning is not ready")
     adapter = resolve_adapter(record)
     operation = getattr(adapter, action)
     result = operation(record)
@@ -194,7 +214,7 @@ def lifecycle(config: dict[str, Any], instance_id: str, action: str) -> dict[str
     updated["observed_state"] = observed_state
     register_instance(updated)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "CapivaraInstanceLifecycle",
         "scope": "instance-local",
         "instance_id": record["instance_id"],
@@ -236,23 +256,9 @@ def handle_command(config: dict[str, Any], command: dict[str, Any]) -> dict[str,
             payload = doctor(config, instance_id)
         else:
             payload = lifecycle(config, instance_id, action)
-        result = {
-            "command_id": command_id,
-            "instance_id": instance_id,
-            "action": action,
-            "status": "completed",
-            "result": payload,
-            "generated_at": _now(),
-        }
+        result = {"command_id": command_id, "instance_id": instance_id, "action": action, "status": "completed", "result": payload, "generated_at": _now()}
     except Exception as exc:
-        result = {
-            "command_id": command_id,
-            "instance_id": instance_id or None,
-            "action": action or None,
-            "status": "failed",
-            "error": str(exc)[:2000],
-            "generated_at": _now(),
-        }
+        result = {"command_id": command_id, "instance_id": instance_id or None, "action": action or None, "status": "failed", "error": str(exc)[:2000], "generated_at": _now()}
     _write(_history(command_id), result)
     _write(_result(command_id), result)
     return result
@@ -278,6 +284,7 @@ def clear_result(command_id: str) -> None:
 
 
 __all__ = [
-    "LIFECYCLE_ACTIONS", "VALID_ACTIONS", "clear_result", "doctor", "get_instance", "handle_command",
-    "inventory", "lifecycle", "list_instances", "read_result", "register_instance", "status",
+    "LIFECYCLE_ACTIONS", "PROVISIONING_STATES", "VALID_ACTIONS", "clear_result", "doctor", "get_instance",
+    "handle_command", "inventory", "lifecycle", "list_instances", "read_result", "register_instance", "status",
+    "unregister_instance",
 ]
