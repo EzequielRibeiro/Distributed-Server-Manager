@@ -146,11 +146,17 @@
         decorateCards();
     }
 
-    document.addEventListener("DOMContentLoaded", () => {
+    function initialize() {
         ensureSummaryShell();
         wireInstallToggle();
         watchAgentList();
         refreshSummary();
         document.getElementById("refresh-agents")?.addEventListener("click", () => setTimeout(refreshSummary, 250));
-    });
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", initialize, { once: true });
+    } else {
+        initialize();
+    }
 })();
