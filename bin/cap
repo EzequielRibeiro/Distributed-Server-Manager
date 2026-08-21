@@ -82,6 +82,9 @@ Controller / Hybrid:
   cap agent ports show <agent-id>
   cap agent ports set <agent-id> <inicio> <fim> [--protocol tcp|udp|both]
   cap agent ports check <agent-id>
+  cap events list [--type TYPE] [--agent ID] [--instance ID] [--severity LEVEL] [--limit N] [--json]
+  cap events show <event-id> [--json]
+  cap events publish <TYPE> --source SOURCE [options]
   cap user ...
   cap catalog ...
   cap database|db ...
@@ -198,6 +201,11 @@ case "${1:-}" in
                 legacy_exec "$@"
                 ;;
         esac
+        ;;
+    events)
+        require_role "cap events" controller hybrid
+        shift
+        exec python3 "${DSM_ROOT}/database/universal_events_cli.py" "$@"
         ;;
     user|catalog|database|db|operations|ops)
         require_role "cap ${1}" controller hybrid
