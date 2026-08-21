@@ -1,0 +1,63 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "dayz.stable",
+  "name": "DayZ Dedicated Server",
+  "game": "dayz",
+  "edition": "default",
+  "variant": "stable",
+  "loader": null,
+  "version": {
+    "strategy": "static",
+    "value": "current",
+    "build": "steam-current"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "DayZServer",
+    "artifact_mode": "executable",
+    "args": [
+      "-config=serverDZ.cfg"
+    ]
+  },
+  "requirements": {
+    "os": [
+      "linux",
+      "windows"
+    ],
+    "architectures": [
+      "x86_64"
+    ],
+    "java": null
+  },
+  "artifact": {
+    "provider": "steam",
+    "auth": "required",
+    "package_id": "223350"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/dayz/serverfiles"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 10,
+    "ports": [
+      {
+        "name": "game",
+        "protocol": "udp",
+        "offset": 0
+      },
+      {
+        "name": "game_aux",
+        "protocol": "udp",
+        "offset": 2
+      }
+    ],
+    "apply": [
+      {
+        "kind": "argument",
+        "template": "-port={game}"
+      }
+    ]
+  }
+}
