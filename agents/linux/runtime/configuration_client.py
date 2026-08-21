@@ -46,53 +46,6 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
             os.unlink(temp_name)
 
 
-def apply_configuration(command: dict[str, Any]) -> list[dict[str, Any]]:
-    if not isinstance(command, dict):
-        raise ValueError("configuration command must be an object")
-    value = command.get("value")
-    if not isinstance(value, dict):
-        raise ValueError("configuration value must be an object")
-    namespace = str(command.get("namespace") or "").strip()
-    checksum = str(command.get("checksum") or "").strip()
-    if not namespace or not checksum:
-        raise ValueError("configuration namespace/checksum required")
-    document = {
-        "schema_version": 1,
-        "kind": "CapivaraAppliedConfiguration",
-        "namespace": namespace,
-        "target_type": str(command.get("target_type") or "agent"),
-        "target_id": str(command.get("target_id") or ""),
-        "revision": str(command.get("revision") or ""),
-        "checksum": checksum,
-        "value": value,
-        "applied_at": _now(),
-        "configuration_refs": list(command.get("configuration_refs") or []),
-    }
-    _atomic_json(_path(command), document)
-    reports = []
-    for ref in document["configuration_refs"]:
-        if not isinstance(ref, dict) or not ref.get("configuration_id"):
-            continue
-        reports.append({
-            "configuration_id": str(ref["configuration_id"]),
-            "desired_revision": int(ref.get("revision") or 0),
-            "applied_revision": int(ref.get("revision") or 0),
-            "status": "applied",
-            "applied_checksum": str(ref.get("checksum") or ""),
-            "reported_at": document["applied_at"],
-        })
-    return reports
-
-
-def apply_configuration_commands(commands: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    reports: list[dict[str, Any]] = []
-    for command in commands[:1000]:
-        reports.extend(apply_configuration(command))
-    if reports:
-        _atomic_json(_root() / "state.json", {"reports": reports, "reported_at": _now()})
-    return reports
-
-
 def configuration_state() -> list[dict[str, Any]]:
     path = _root() / "state.json"
     try:
@@ -101,6 +54,66 @@ def configuration_state() -> list[dict[str, Any]]:
         return []
     reports = payload.get("reports") if isinstance(payload, dict) else None
     return [dict(item) for item in reports if isinstance(item, dict)] if isinstance(reports, list) else []
+
+
+def apply_configuration(command: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(command, dict):
+        raise ValueError("configuration command must be an object")
+    value = command.get("value")
+    if not isinstance(value, dict):
+        raise ValueError("configuration value must be an object")
+    namespace = str(command.get("namespace") or "").strip().lower()
+    checksum = str(command.get("checksum") or "").strip()
+    revision = str(command.get("revision") or "").strip()
+    target_type = str(command.get("target_type") or "").strip().lower()
+    target_id = str(command.get("target_id") or "").strip()
+    if target_type not in {"agent", "instance"} or not target_id:
+        raise ValueError("configuration target is invalid")
+    if not namespace or not checksum or not revision:
+        raise ValueError("configuration namespace/revision/checksum required")
+    document = {
+        "schema_version": 1,
+        "kind": "CapivaraAppliedConfiguration",
+        "namespace": namespace,
+        "target_type": target_type,
+        "target_id": target_id,
+        "revision": revision,
+        "checksum": checksum,
+        "value": value,
+        "applied_at": _now(),
+        "configuration_refs": list(command.get("configuration_refs") or []),
+    }
+    _atomic_json(_path(command), document)
+    return {
+        "target_type": target_type,
+        "target_id": target_id,
+        "namespace": namespace,
+        "desired_revision": revision,
+        "applied_revision": revision,
+        "desired_checksum": checksum,
+        "applied_checksum": checksum,
+        "status": "applied",
+        "last_error": None,
+        "reported_at": document["applied_at"],
+        "configuration_refs": document["configuration_refs"],
+    }
+
+
+def apply_configuration_commands(commands: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    states = {
+        (str(item.get("target_type") or ""), str(item.get("target_id") or ""), str(item.get("namespace") or "")): item
+        for item in configuration_state()
+    }
+    changed = False
+    for command in commands[:1000]:
+        report = apply_configuration(command)
+        key = (report["target_type"], report["target_id"], report["namespace"])
+        states[key] = report
+        changed = True
+    reports = [states[key] for key in sorted(states)]
+    if changed:
+        _atomic_json(_root() / "state.json", {"schema_version": 1, "reports": reports, "reported_at": _now()})
+    return reports
 
 
 __all__ = ["apply_configuration", "apply_configuration_commands", "configuration_state"]
