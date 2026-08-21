@@ -52,6 +52,10 @@ git -C "${ROOT}" show "${REF}:agents/linux/runtime/runtime_spec.py" >"${PACKAGE_
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/runtime_events.py" >"${PACKAGE_ROOT}/agent/runtime/runtime_events.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/runtime_materialization.py" >"${PACKAGE_ROOT}/agent/runtime/runtime_materialization.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/game_runtime.py" >"${PACKAGE_ROOT}/agent/runtime/game_runtime.py"
+git -C "${ROOT}" show "${REF}:agents/linux/runtime/provisioning_contract.py" >"${PACKAGE_ROOT}/agent/runtime/provisioning_contract.py"
+git -C "${ROOT}" show "${REF}:agents/linux/runtime/provisioning_state.py" >"${PACKAGE_ROOT}/agent/runtime/provisioning_state.py"
+git -C "${ROOT}" show "${REF}:agents/linux/runtime/provisioning_client.py" >"${PACKAGE_ROOT}/agent/runtime/provisioning_client.py"
+git -C "${ROOT}" show "${REF}:agents/linux/runtime/provisioning_executor.py" >"${PACKAGE_ROOT}/agent/runtime/provisioning_executor.py"
 for file in __init__.py base.py registry.py systemd.py; do
     git -C "${ROOT}" show "${REF}:agents/linux/runtime/adapters/${file}" >"${PACKAGE_ROOT}/agent/runtime/adapters/${file}"
     git -C "${ROOT}" show "${REF}:agents/linux/runtime/materializers/${file}" >"${PACKAGE_ROOT}/agent/runtime/materializers/${file}"
@@ -66,7 +70,7 @@ git -C "${ROOT}" show "${REF}:agents/linux/services/capivara-agent-update.servic
 git -C "${ROOT}" show "${REF}:agents/linux/services/capivara-agent-update.path" >"${PACKAGE_ROOT}/services/capivara-agent-update.path"
 printf '%s\n' "${VERSION}" >"${PACKAGE_ROOT}/VERSION"
 printf '%s\n' 'Runtime configuration is created during installation. Pairing secrets are never packaged.' >"${PACKAGE_ROOT}/config/README.md"
-chmod 0755 "${PACKAGE_ROOT}/install-agent.sh" "${PACKAGE_ROOT}/agent/runtime/agent.py" "${PACKAGE_ROOT}/agent/runtime/local_cli.py" "${PACKAGE_ROOT}/agent/runtime/cap_dispatch.py" "${PACKAGE_ROOT}/agent/runtime/game_data_executor.py" "${PACKAGE_ROOT}/agent/updater/updater.py"
+chmod 0755 "${PACKAGE_ROOT}/install-agent.sh" "${PACKAGE_ROOT}/agent/runtime/agent.py" "${PACKAGE_ROOT}/agent/runtime/local_cli.py" "${PACKAGE_ROOT}/agent/runtime/cap_dispatch.py" "${PACKAGE_ROOT}/agent/runtime/game_data_executor.py" "${PACKAGE_ROOT}/agent/runtime/provisioning_executor.py" "${PACKAGE_ROOT}/agent/updater/updater.py"
 find "${PACKAGE_ROOT}/agent" -type f ! -perm -0100 -exec chmod 0644 {} +
 chmod 0644 "${PACKAGE_ROOT}/services/"* "${PACKAGE_ROOT}/VERSION" "${PACKAGE_ROOT}/config/README.md"
 
@@ -92,6 +96,10 @@ required = [
     "agent/runtime/runtime_events.py",
     "agent/runtime/runtime_materialization.py",
     "agent/runtime/game_runtime.py",
+    "agent/runtime/provisioning_contract.py",
+    "agent/runtime/provisioning_state.py",
+    "agent/runtime/provisioning_client.py",
+    "agent/runtime/provisioning_executor.py",
     "agent/runtime/adapters/__init__.py",
     "agent/runtime/adapters/base.py",
     "agent/runtime/adapters/registry.py",
