@@ -12,7 +12,7 @@ from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
 from core.agent_health import utc_timestamp
 
-VALID_ACTIONS = {"status", "doctor", "start", "stop", "restart"}
+VALID_ACTIONS = {"status", "doctor", "start", "stop", "restart", "remove"}
 FINAL_STATES = {"completed", "failed"}
 
 
@@ -52,6 +52,15 @@ class AgentInstanceRuntimeRepository:
                 raise ValueError("Instance not found")
             if str(instance["agent_id"] or "") != agent_id:
                 raise PermissionError("Instance belongs to another Agent")
+            if action == "remove":
+                existing = session.execute(
+                    "SELECT command_id FROM agent_instance_commands "
+                    f"WHERE instance_id={ph} AND action={ph} AND status IN ('queued','delivered') "
+                    "ORDER BY created_at ASC LIMIT 1",
+                    (instance_id, action),
+                ).fetchone()
+                if existing is not None:
+                    return self.snapshot(str(existing["command_id"]))
             command_id = "instance-cmd-" + uuid.uuid4().hex
             now = utc_timestamp()
             session.execute(
@@ -125,6 +134,17 @@ class AgentInstanceRuntimeRepository:
         payload = json.dumps(result, separators=(",", ":"), sort_keys=True)
         error = str(result.get("error") or "").strip()[:2000] or None
         ph = self.dialect.placeholder
+
+        contract_id = None
+        if reported_action == "remove":
+            with self.session() as session:
+                link = session.execute(
+                    f"SELECT contract_id FROM instance_contracts WHERE instance_id={ph}",
+                    (reported_instance_id,),
+                ).fetchone()
+            if link is not None:
+                contract_id = str(link["contract_id"])
+
         with self.session(transaction=True) as session:
             session.execute(
                 "UPDATE agent_instance_commands SET "
@@ -132,7 +152,16 @@ class AgentInstanceRuntimeRepository:
                 f"WHERE command_id={ph} AND status NOT IN ('completed','failed')",
                 (status, payload, error, now, now, command_id),
             )
-        return self.snapshot(command_id)
+        completed = self.snapshot(command_id)
+
+        if reported_action == "remove" and status == "completed":
+            from admin_management_repository import AdminManagementRepository
+            from dashboard_repository import DashboardRepository
+
+            DashboardRepository(self.backend).delete_instance(reported_instance_id)
+            AdminManagementRepository(self.backend).finalize_contract_if_empty(contract_id)
+
+        return completed
 
 
 __all__ = ["AgentInstanceRuntimeRepository", "FINAL_STATES", "VALID_ACTIONS"]
