@@ -1,0 +1,79 @@
+openapi: 3.1.0
+info:
+  title: Capivara Distributed Server Manager API
+  version: 1.0.0
+  description: Stable external API introduced by D2.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/v1/status:
+    get:
+      summary: Get API and real-time platform status
+      responses:
+        '200': {description: Platform status}
+  /api/v1/events:
+    get:
+      summary: Read universal events with cursor pagination
+      parameters:
+        - {in: query, name: cursor, schema: {type: string}}
+        - {in: query, name: limit, schema: {type: integer, minimum: 1, maximum: 500}}
+        - {in: query, name: event_type, schema: {type: string}}
+        - {in: query, name: agent_id, schema: {type: string}}
+        - {in: query, name: instance_id, schema: {type: string}}
+      responses:
+        '200': {description: Event page}
+  /api/v1/observability/latest:
+    get:
+      summary: Read the latest universal observability samples
+      responses:
+        '200': {description: Latest samples}
+  /api/v1/instances:
+    get:
+      summary: Read the safe external instance inventory
+      responses:
+        '200': {description: Instance list}
+  /api/v1/stream/events:
+    get:
+      summary: Stream universal events using Server-Sent Events
+      parameters:
+        - {in: header, name: Last-Event-ID, schema: {type: string}}
+        - {in: query, name: cursor, schema: {type: string}}
+      responses:
+        '200':
+          description: text/event-stream feed
+          content:
+            text/event-stream: {}
+  /api/v1/broadcasts:
+    post:
+      summary: Request a universal broadcast
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Broadcast'}
+      responses:
+        '202': {description: Broadcast accepted}
+  /api/v1/automation/fire:
+    post:
+      summary: Fire an existing automation rule
+      responses:
+        '202': {description: Automation run accepted}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Capivara API Token
+  schemas:
+    Broadcast:
+      type: object
+      required: [scope, message]
+      properties:
+        scope: {type: string, enum: [instance, agent, game, customer, datacenter, region, global]}
+        target: {type: [string, 'null']}
+        message: {type: string, maxLength: 4000}
+        priority: {type: string, enum: [low, normal, high, critical]}
+        ttl_seconds: {type: integer, minimum: 1, maximum: 86400}
+        require_ack: {type: boolean}

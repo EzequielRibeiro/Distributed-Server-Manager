@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Agent administration, runtime orchestration and universal platform HTTP composition."""
 from __future__ import annotations
+import time
 from pathlib import Path
 from urllib.parse import parse_qs,urlparse
 import server_part12 as integration
@@ -8,12 +9,15 @@ from agent_game_data_http import GAME_DATA_JOBS_PATH,GAME_DATA_OPERATION_PATH,LE
 from agent_instance_provisioning_http import INSTANCE_PROVISIONING_PATH,dispatch_instance_provisioning_get,dispatch_instance_provisioning_post
 from agent_instance_runtime_http import INSTANCE_RUNTIME_PATH,dispatch_instance_runtime_get,dispatch_instance_runtime_post
 from agent_update_http import CHANNEL_PATH,ROLLOUT_PATH,STATUS_PATH,dispatch_update_get,dispatch_update_post
+from api_access_http import API_TOKENS_PATH,dispatch_api_access_get,dispatch_api_access_post
+from api_access_repository import ApiAccessRepository
 from automation_http import AUTOMATION_PATH,BROADCAST_PATH,dispatch_automation_get,dispatch_automation_post
 from backup_http import BACKUP_PATH,dispatch_backup_get,dispatch_backup_post
 from configuration_http import CONFIGURATIONS_PATH,dispatch_configuration_get,dispatch_configuration_post
 from content_http import CONTENT_PATH,dispatch_content_get,dispatch_content_post
 from infrastructure_role_http import INFRASTRUCTURE_ROLE_PATH,dispatch_infrastructure_role_get,dispatch_infrastructure_role_post
 from observability_http import OBSERVABILITY_PATH,dispatch_observability_get
+from realtime_http import PUBLIC_GET_PATHS,PUBLIC_POST_PATHS,SSE_EVENTS_PATH,dispatch_realtime_get,dispatch_realtime_post,serve_event_stream
 from universal_event_http import EVENTS_PATH,dispatch_universal_event_get,dispatch_universal_event_post
 legacy=integration.legacy;_previous_get=legacy.DashboardHandler.do_GET;_previous_post=legacy.DashboardHandler.do_POST;_authenticate=integration._authenticate
 ROOT_DIR=Path(__file__).resolve().parents[1];WINDOWS_INSTALL_PATH="/agent/install.ps1";WINDOWS_INSTALL_FILE=ROOT_DIR/"agents"/"windows"/"installer"/"bootstrap-release.ps1";VERSION_FILE=ROOT_DIR/"version"
@@ -23,6 +27,18 @@ def _user(self):
  if user is None:self.unauthorized()
  return user
 def _backend():return legacy.dashboard_repository(legacy.DATABASE_FILE).backend
+def _api_principal(self):
+ authorization=str(self.headers.get("Authorization") or "")
+ if not authorization.lower().startswith("bearer "):
+  self.send_json(401,{"error":"unauthorized","message":"Bearer API token required"});return None
+ try:
+  r=ApiAccessRepository(_backend());r.initialize();return r.authenticate(authorization.split(None,1)[1])
+ except Exception:
+  self.send_json(401,{"error":"unauthorized","message":"Invalid or expired API token"});return None
+def _audit_api(principal,self,status,started):
+ try:
+  r=ApiAccessRepository(_backend());r.initialize();remote=self.client_address[0] if getattr(self,"client_address",None) else None;r.record_request(token_id=principal.get("token_id") if principal else None,method=self.command,path=urlparse(self.path).path,status_code=status,latency_ms=(time.monotonic()-started)*1000,remote_address=remote)
+ except Exception:pass
 def _serve_windows_bootstrap(self):
  try:script=WINDOWS_INSTALL_FILE.read_text(encoding="utf-8");version=VERSION_FILE.read_text(encoding="utf-8").strip()
  except OSError:self.send_error(404);return
@@ -30,6 +46,16 @@ def _serve_windows_bootstrap(self):
 def integrated_get(self):
  parsed=urlparse(self.path);path=parsed.path
  if path==WINDOWS_INSTALL_PATH:return _serve_windows_bootstrap(self)
+ if path in PUBLIC_GET_PATHS or path==SSE_EVENTS_PATH:
+  started=time.monotonic();principal=_api_principal(self)
+  if principal is None:return
+  if path==SSE_EVENTS_PATH:
+   serve_event_stream(self,parsed.query,principal=principal,backend=_backend());_audit_api(principal,self,200,started);return
+  status,body=dispatch_realtime_get(path,parsed.query,principal=principal,backend=_backend());self.send_json(status,body);_audit_api(principal,self,status,started);return
+ if path==API_TOKENS_PATH:
+  user=_user(self)
+  if user is None:return
+  status,body=dispatch_api_access_get(path,parsed.query,user=user,backend=_backend());self.send_json(status,body);return
  if path in {AUTOMATION_PATH,BROADCAST_PATH,BACKUP_PATH,CONFIGURATIONS_PATH,CONTENT_PATH,OBSERVABILITY_PATH,EVENTS_PATH,GAME_DATA_JOBS_PATH,INSTANCE_PROVISIONING_PATH,INSTANCE_RUNTIME_PATH,INFRASTRUCTURE_ROLE_PATH}:
   user=_user(self)
   if user is None:return
@@ -54,6 +80,18 @@ def _payload(self):
  except ValueError:return None,{"error":"invalid_request","message":"Requisição inválida."}
 def integrated_post(self):
  parsed=urlparse(self.path);path=parsed.path
+ if path in PUBLIC_POST_PATHS:
+  started=time.monotonic();principal=_api_principal(self)
+  if principal is None:return
+  payload,error=_payload(self)
+  if error:self.send_json(400,error);_audit_api(principal,self,400,started);return
+  status,body=dispatch_realtime_post(path,payload,principal=principal,backend=_backend());self.send_json(status,body);_audit_api(principal,self,status,started);return
+ if path==API_TOKENS_PATH:
+  user=_user(self)
+  if user is None:return
+  payload,error=_payload(self)
+  if error:self.send_json(400,error);return
+  status,body=dispatch_api_access_post(path,payload,user=user,backend=_backend());self.send_json(status,body);return
  if path in {AUTOMATION_PATH,BROADCAST_PATH,BACKUP_PATH,CONFIGURATIONS_PATH,CONTENT_PATH,EVENTS_PATH,GAME_DATA_OPERATION_PATH,LEGACY_ENVIRONMENT_INSTALL_PATH,INSTANCE_PROVISIONING_PATH,INSTANCE_RUNTIME_PATH,INFRASTRUCTURE_ROLE_PATH}:
   user=_user(self)
   if user is None:return
