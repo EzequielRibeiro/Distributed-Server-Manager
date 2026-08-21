@@ -7,7 +7,13 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import server_part12 as integration
-from agent_game_data_http import dispatch_agent_game_data_get, dispatch_agent_game_data_post
+from agent_game_data_http import (
+    GAME_DATA_JOBS_PATH,
+    GAME_DATA_OPERATION_PATH,
+    LEGACY_ENVIRONMENT_INSTALL_PATH,
+    dispatch_agent_game_data_get,
+    dispatch_agent_game_data_post,
+)
 from agent_update_http import (
     CHANNEL_PATH,
     ROLLOUT_PATH,
@@ -67,24 +73,21 @@ def integrated_get(self):
     if parsed.path == WINDOWS_INSTALL_PATH:
         return _serve_windows_bootstrap(self)
 
-    user = None
-    if parsed.path.startswith("/api/agents/game-data"):
+    if parsed.path == GAME_DATA_JOBS_PATH:
         user = _user(self)
         if user is None:
             return
-        dispatched = dispatch_agent_game_data_get(
+        status, body = dispatch_agent_game_data_get(
             parsed.path,
             parsed.query,
             user=user,
             backend=_backend(),
         )
-        if dispatched is not None:
-            status, body = dispatched
-            self.send_json(status, body)
-            return
+        self.send_json(status, body)
+        return
 
     if parsed.path == INFRASTRUCTURE_ROLE_PATH:
-        user = user or _user(self)
+        user = _user(self)
         if user is None:
             return
         query = parse_qs(parsed.query)
@@ -98,7 +101,7 @@ def integrated_get(self):
         return
     if parsed.path != STATUS_PATH:
         return _previous_get(self)
-    user = user or _user(self)
+    user = _user(self)
     if user is None:
         return
     query = parse_qs(parsed.query)
@@ -114,7 +117,7 @@ def integrated_get(self):
 def integrated_post(self):
     parsed = urlparse(self.path)
 
-    if parsed.path.startswith("/api/agents/game-data") or parsed.path == "/api/catalog/environment-install":
+    if parsed.path in {GAME_DATA_OPERATION_PATH, LEGACY_ENVIRONMENT_INSTALL_PATH}:
         user = _user(self)
         if user is None:
             return
@@ -123,17 +126,15 @@ def integrated_post(self):
         except ValueError:
             self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
             return
-        dispatched = dispatch_agent_game_data_post(
+        status, body = dispatch_agent_game_data_post(
             parsed.path,
             payload,
             user=user,
             backend=_backend(),
             root=ROOT_DIR,
         )
-        if dispatched is not None:
-            status, body = dispatched
-            self.send_json(status, body)
-            return
+        self.send_json(status, body)
+        return
 
     if parsed.path == INFRASTRUCTURE_ROLE_PATH:
         user = _user(self)
