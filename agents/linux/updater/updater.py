@@ -111,6 +111,7 @@ def apply_request() -> int:
             (runtime / "local_cli.py", INSTALL_ROOT / "runtime" / "local_cli.py"),
             (runtime / "game_data_client.py", INSTALL_ROOT / "runtime" / "game_data_client.py"),
             (runtime / "game_data_executor.py", INSTALL_ROOT / "runtime" / "game_data_executor.py"),
+            (runtime / "game_data_state.py", INSTALL_ROOT / "runtime" / "game_data_state.py"),
             (common / "identity.py", INSTALL_ROOT / "common" / "identity.py"),
             (package_root / "manifest.json", INSTALL_ROOT / "manifest.json"),
             (package_root / "VERSION", INSTALL_ROOT / "VERSION"),
