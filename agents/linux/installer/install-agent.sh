@@ -46,13 +46,13 @@ for required in \
   agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py \
   agent/runtime/update_client.py agent/runtime/update_state.py agent/runtime/local_cli.py agent/runtime/cap_dispatch.py \
   agent/runtime/game_data_client.py agent/runtime/game_data_executor.py agent/runtime/game_data_state.py \
-  agent/runtime/instance_runtime.py agent/runtime/instance_provisioning.py \
+  agent/runtime/instance_runtime.py agent/runtime/instance_provisioning_client.py \
   agent/runtime/adapters/__init__.py agent/runtime/adapters/base.py \
   agent/runtime/adapters/registry.py agent/runtime/adapters/systemd.py \
-  agent/provisioner/provisioner.py \
+  agent/provisioner/instance_provisioner.py \
   agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py \
   services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path \
-  services/capivara-agent-instance-provision.service services/capivara-agent-instance-provision.path
+  services/capivara-agent-instance-provisioner.service services/capivara-agent-instance-provisioner.path
 do [[ -f "${PACKAGE_DIR}/${required}" ]] || fail "arquivo obrigatório ausente: ${required}"; done
 python3 - "${PACKAGE_DIR}" <<'PY'
 import hashlib, json, pathlib, sys
@@ -81,8 +81,9 @@ install -d -m 0700 -o capivara-agent -g capivara-agent \
   "${CONFIG_DIR}" "${STATE_DIR}" "${STATE_DIR}/game-data" "${STATE_DIR}/game-data-jobs" \
   "${STATE_DIR}/game-data-jobs/history" "${STATE_DIR}/game-data-state" "${STATE_DIR}/update-history" \
   "${STATE_DIR}/instances" "${STATE_DIR}/instance-results" "${STATE_DIR}/instance-command-history" \
-  "${STATE_DIR}/instance-provisioning"
-install -d -m 0755 -o capivara-agent -g capivara-agent "${STATE_DIR}/instance-data"
+  "${STATE_DIR}/instance-provisioning" "${STATE_DIR}/instance-provisioning/requests" \
+  "${STATE_DIR}/instance-provisioning/results" "${STATE_DIR}/instance-provisioning/history"
+install -d -m 0750 -o capivara-agent -g capivara-agent "${STATE_DIR}/instance-data"
 install -m 0755 "${PACKAGE_DIR}/agent/runtime/agent.py" "${INSTALL_ROOT}/runtime/agent.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/capabilities.py" "${INSTALL_ROOT}/runtime/capabilities.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/network_inventory.py" "${INSTALL_ROOT}/runtime/network_inventory.py"
@@ -94,18 +95,17 @@ install -m 0644 "${PACKAGE_DIR}/agent/runtime/game_data_client.py" "${INSTALL_RO
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/game_data_state.py" "${INSTALL_ROOT}/runtime/game_data_state.py"
 install -m 0755 "${PACKAGE_DIR}/agent/runtime/game_data_executor.py" "${INSTALL_ROOT}/runtime/game_data_executor.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/instance_runtime.py" "${INSTALL_ROOT}/runtime/instance_runtime.py"
-install -m 0644 "${PACKAGE_DIR}/agent/runtime/instance_provisioning.py" "${INSTALL_ROOT}/runtime/instance_provisioning.py"
+install -m 0644 "${PACKAGE_DIR}/agent/runtime/instance_provisioning_client.py" "${INSTALL_ROOT}/runtime/instance_provisioning_client.py"
 for file in __init__.py base.py registry.py systemd.py; do
   install -m 0644 "${PACKAGE_DIR}/agent/runtime/adapters/${file}" "${INSTALL_ROOT}/runtime/adapters/${file}"
 done
-install -m 0755 "${PACKAGE_DIR}/agent/provisioner/provisioner.py" "${INSTALL_ROOT}/provisioner/provisioner.py"
+install -m 0755 "${PACKAGE_DIR}/agent/provisioner/instance_provisioner.py" "${INSTALL_ROOT}/provisioner/instance_provisioner.py"
 install -m 0755 "${PACKAGE_DIR}/agent/updater/updater.py" "${INSTALL_ROOT}/updater/updater.py"
 install -m 0644 "${PACKAGE_DIR}/agent/common/identity.py" "${INSTALL_ROOT}/common/identity.py"
 install -m 0644 "${PACKAGE_DIR}/manifest.json" "${INSTALL_ROOT}/manifest.json"
 printf '%s\n' "${VERSION}" >"${INSTALL_ROOT}/VERSION"
 install -d -m 0755 "${POLKIT_RULES_DIR}"
-install -m 0644 "${PACKAGE_DIR}/agent/policy/49-capivara-agent-instance-units.rules" \
-  "${POLKIT_RULES_DIR}/49-capivara-agent-instance-units.rules"
+install -m 0644 "${PACKAGE_DIR}/agent/policy/49-capivara-agent-instance-units.rules" "${POLKIT_RULES_DIR}/49-capivara-agent-instance-units.rules"
 install -d -m 0755 "$(dirname "${CLI_PATH}")"
 ln -sfn "${INSTALL_ROOT}/runtime/cap_dispatch.py" "${CLI_PATH}"
 python3 - "${PACKAGE_DIR}" "${CONFIG_DIR}/agent.json" "${CONTROLLER_URL}" "${PAIRING_TOKEN}" "${VERSION}" <<'PY'
@@ -119,12 +119,12 @@ chown capivara-agent:capivara-agent "${CONFIG_DIR}/agent.json"
 chmod 0600 "${CONFIG_DIR}/agent.json"
 for service in \
   capivara-agent.service capivara-agent-update.service capivara-agent-update.path \
-  capivara-agent-instance-provision.service capivara-agent-instance-provision.path
+  capivara-agent-instance-provisioner.service capivara-agent-instance-provisioner.path
 do
   install -m 0644 "${PACKAGE_DIR}/services/${service}" "${SYSTEMD_DIR}/${service}"
 done
 systemctl daemon-reload
 systemctl enable --now capivara-agent-update.path
-systemctl enable --now capivara-agent-instance-provision.path
+systemctl enable --now capivara-agent-instance-provisioner.path
 systemctl enable --now capivara-agent.service
-log "Agent ${VERSION} instalado. Instance provisioning e lifecycle usam contracts estruturados e units capivara-instance-*.service."
+log "Agent ${VERSION} instalado. Provisioning e lifecycle de instâncias estão habilitados."
