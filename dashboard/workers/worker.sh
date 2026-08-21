@@ -29,7 +29,6 @@ main(){
     start_worker server_worker.sh
     start_worker metrics_worker.sh
     start_worker scheduler_worker.sh
-    start_worker events_worker.sh
     start_worker monitor_worker.sh
     start_worker mods_worker.sh
     start_worker alerts_worker.sh
