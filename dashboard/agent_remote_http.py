@@ -19,6 +19,8 @@ from agent_pairing_repository import (
     PairingTokenInvalid,
 )
 from agent_update_repository import AgentUpdateRepository
+from event_repository import EventRepository
+from core.events import EventPublisher
 
 ENROLL_PATH = "/api/agent/enroll"
 HEARTBEAT_PATH = "/api/agent/heartbeat"
@@ -62,7 +64,11 @@ def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, di
 def _attach_update_state(result: dict[str, Any], body: dict[str, Any], *, agent_id: str, backend) -> None:
     """Best-effort update coordination that must never suppress Agent health."""
     try:
-        updates = AgentUpdateRepository(backend)
+        event_store = EventRepository(backend)
+        updates = AgentUpdateRepository(
+            backend,
+            event_publisher=EventPublisher(sink=event_store.store),
+        )
         updates.initialize()
         update_state = updates.reconcile_after_heartbeat(
             agent_id,
