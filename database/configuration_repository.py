@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""Backend-neutral persistence and resolution for Universal Configuration."""
+
+from __future__ import annotations
+
+import json
+import sys
+import uuid
+from pathlib import Path
+from typing import Any, Mapping
+
+ROOT = Path(__file__).resolve().parents[1]
+CORE = ROOT / "core"
+if str(CORE) not in sys.path:
+    sys.path.insert(0, str(CORE))
+
+from configuration_platform import deep_merge, normalize_configuration
+from event_platform import utc_now
+from alert_repository import AlertSession
+
+
+class ConfigurationRepository:
+    def __init__(self, backend):
+        self.backend = backend
+
+    def initialize(self) -> None:
+        self.backend.initialize()
+
+    @property
+    def ph(self) -> str:
+        return "?" if self.backend.name == "sqlite" else "%s"
+
+    def _scope_key(self, scope_type: str, scope_id: str | None) -> str:
+        return "*" if scope_type == "global" else str(scope_id or "").strip()
+
+    def _row(self, row) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        value = dict(row)
+        value["scope_id"] = None if value.get("scope_type") == "global" else value.pop("scope_key", None)
+        try:
+            value["value"] = json.loads(value.pop("value_json"))
+        except (json.JSONDecodeError, TypeError):
+            value["value"] = {}
+        value["kind"] = "CapivaraConfiguration"
+        return value
+
+    def get(self, *, scope_type: str, scope_id: str | None, namespace: str) -> dict[str, Any] | None:
+        key = self._scope_key(scope_type, scope_id)
+        with self.backend.connect() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                row = session.execute(
+                    f"SELECT * FROM configurations WHERE scope_type={self.ph} AND scope_key={self.ph} AND namespace={self.ph}",
+                    (scope_type, key, namespace),
+                ).fetchone()
+                return self._row(row)
+            finally:
+                session.close()
+
+    def put(self, raw: Mapping[str, Any], *, updated_by: str | None = None) -> dict[str, Any]:
+        config = normalize_configuration(raw)
+        existing = self.get(scope_type=config["scope_type"], scope_id=config["scope_id"], namespace=config["namespace"])
+        if existing is not None and existing.get("checksum") == config["checksum"]:
+            return {"configuration": existing, "changed": False}
+        configuration_id = str(existing.get("configuration_id")) if existing else str(uuid.uuid4())
+        revision = int(existing.get("revision") or 0) + 1 if existing else 1
+        key = self._scope_key(config["scope_type"], config["scope_id"])
+        now = utc_now()
+        value_json = json.dumps(config["value"], sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        with self.backend.transaction() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                if existing:
+                    session.execute(
+                        f"UPDATE configurations SET schema_version={self.ph}, revision={self.ph}, value_json={self.ph}, checksum={self.ph}, updated_by={self.ph}, updated_at={self.ph} WHERE configuration_id={self.ph}",
+                        (1, revision, value_json, config["checksum"], updated_by, now, configuration_id),
+                    )
+                else:
+                    session.execute(
+                        f"INSERT INTO configurations(configuration_id,scope_type,scope_key,namespace,schema_version,revision,value_json,checksum,updated_by,created_at,updated_at) VALUES ({','.join([self.ph]*11)})",
+                        (configuration_id, config["scope_type"], key, config["namespace"], 1, revision, value_json, config["checksum"], updated_by, now, now),
+                    )
+                session.execute(
+                    f"INSERT INTO configuration_revisions(configuration_id,revision,value_json,checksum,updated_by,created_at) VALUES ({','.join([self.ph]*6)})",
+                    (configuration_id, revision, value_json, config["checksum"], updated_by, now),
+                )
+            finally:
+                session.close()
+        stored = self.get(scope_type=config["scope_type"], scope_id=config["scope_id"], namespace=config["namespace"])
+        return {"configuration": stored, "changed": True}
+
+    def list_configurations(self, *, scope_type: str | None = None, scope_id: str | None = None, namespace: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        for column, value in (("scope_type", scope_type), ("namespace", namespace)):
+            if value is not None:
+                clauses.append(f"{column}={self.ph}")
+                params.append(value)
+        if scope_id is not None:
+            clauses.append(f"scope_key={self.ph}")
+            params.append(scope_id)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        params.append(max(1, min(int(limit), 1000)))
+        with self.backend.connect() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                rows = session.execute(
+                    f"SELECT * FROM configurations{where} ORDER BY namespace,scope_type,scope_key LIMIT {self.ph}", tuple(params)
+                ).fetchall()
+                return [self._row(row) for row in rows]
+            finally:
+                session.close()
+
+    def history(self, configuration_id: str) -> list[dict[str, Any]]:
+        with self.backend.connect() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                rows = session.execute(
+                    f"SELECT * FROM configuration_revisions WHERE configuration_id={self.ph} ORDER BY revision DESC",
+                    (configuration_id,),
+                ).fetchall()
+                result = []
+                for row in rows:
+                    item = dict(row)
+                    item["value"] = json.loads(item.pop("value_json"))
+                    result.append(item)
+                return result
+            finally:
+                session.close()
+
+    def resolve_for_agent(self, agent_id: str) -> list[dict[str, Any]]:
+        namespaces: dict[str, dict[str, Any]] = {}
+        global_rows = self.list_configurations(scope_type="global", limit=1000)
+        agent_rows = self.list_configurations(scope_type="agent", scope_id=agent_id, limit=1000)
+        for row in global_rows + agent_rows:
+            name = str(row["namespace"])
+            current = namespaces.get(name, {"value": {}, "revision_parts": [], "configuration_ids": []})
+            current["value"] = deep_merge(current["value"], row["value"])
+            current["revision_parts"].append(f"{row['configuration_id']}:{row['revision']}:{row['checksum']}")
+            current["configuration_ids"].append(row["configuration_id"])
+            namespaces[name] = current
+        result = []
+        import hashlib
+        for namespace, item in sorted(namespaces.items()):
+            digest = hashlib.sha256("|".join(item["revision_parts"]).encode()).hexdigest()
+            result.append({
+                "kind": "CapivaraResolvedConfiguration",
+                "namespace": namespace,
+                "target_type": "agent",
+                "target_id": agent_id,
+                "revision": digest[:16],
+                "checksum": digest,
+                "value": item["value"],
+                "configuration_ids": item["configuration_ids"],
+            })
+        return result
+
+    def resolve_for_instance(self, agent_id: str, instance_id: str) -> list[dict[str, Any]]:
+        base = {item["namespace"]: item for item in self.resolve_for_agent(agent_id)}
+        rows = self.list_configurations(scope_type="instance", scope_id=instance_id, limit=1000)
+        import hashlib
+        for row in rows:
+            name = row["namespace"]
+            current = base.get(name, {"namespace": name, "value": {}, "configuration_ids": [], "checksum": ""})
+            current["value"] = deep_merge(current["value"], row["value"])
+            current["configuration_ids"] = list(current.get("configuration_ids") or []) + [row["configuration_id"]]
+            digest = hashlib.sha256((str(current.get("checksum") or "") + row["checksum"] + str(row["revision"])).encode()).hexdigest()
+            current.update({"kind": "CapivaraResolvedConfiguration", "target_type": "instance", "target_id": instance_id, "revision": digest[:16], "checksum": digest})
+            base[name] = current
+        return [base[name] for name in sorted(base)]
+
+    def record_agent_state(self, agent_id: str, reports: list[Mapping[str, Any]]) -> None:
+        now = utc_now()
+        with self.backend.transaction() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                for report in reports[:1000]:
+                    configuration_id = str(report.get("configuration_id") or "").strip()
+                    if not configuration_id:
+                        continue
+                    desired_revision = int(report.get("desired_revision") or report.get("applied_revision") or 0)
+                    applied_revision = report.get("applied_revision")
+                    existing = session.execute(
+                        f"SELECT agent_id FROM agent_configuration_state WHERE agent_id={self.ph} AND configuration_id={self.ph}",
+                        (agent_id, configuration_id),
+                    ).fetchone()
+                    values = (desired_revision, applied_revision, str(report.get("status") or "unknown"), report.get("applied_checksum"), report.get("last_error"), report.get("reported_at") or now, now)
+                    if existing:
+                        session.execute(
+                            f"UPDATE agent_configuration_state SET desired_revision={self.ph},applied_revision={self.ph},status={self.ph},applied_checksum={self.ph},last_error={self.ph},reported_at={self.ph},updated_at={self.ph} WHERE agent_id={self.ph} AND configuration_id={self.ph}",
+                            (*values, agent_id, configuration_id),
+                        )
+                    else:
+                        session.execute(
+                            f"INSERT INTO agent_configuration_state(agent_id,configuration_id,desired_revision,applied_revision,status,applied_checksum,last_error,reported_at,updated_at) VALUES ({','.join([self.ph]*9)})",
+                            (agent_id, configuration_id, *values),
+                        )
+            finally:
+                session.close()
+
+
+__all__ = ["ConfigurationRepository"]
