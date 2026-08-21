@@ -8,6 +8,7 @@ from ha_dr_orchestrator import HADROrchestrator,FailoverHooks,member_is_stale
 
 class Repo:
     def __init__(self,mode='automatic',quorum=True):
+        self.quorum=bool(quorum)
         self.cluster={'cluster_id':'ha1','mode':mode,'quorum_size':2,'fencing_epoch':0}
         self.members=[{'cluster_id':'ha1','controller_id':'a','role':'primary','state':'offline','priority':1,'last_seen_at':'2000-01-01T00:00:00Z'},{'cluster_id':'ha1','controller_id':'b','role':'standby','state':'healthy','priority':2,'last_seen_at':'2999-01-01T00:00:00Z'},{'cluster_id':'ha1','controller_id':'w','role':'witness','state':'healthy','priority':3,'last_seen_at':'2999-01-01T00:00:00Z'}]
         self.ops={}
