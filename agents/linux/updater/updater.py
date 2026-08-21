@@ -136,14 +136,16 @@ def _validate_python(package_root: Path) -> None:
     runtime = package_root / "agent" / "runtime"
     adapters = runtime / "adapters"
     materializers = runtime / "materializers"
+    profiles = runtime / "profiles"
     files = [
         runtime / "agent.py", runtime / "capabilities.py", runtime / "network_inventory.py",
         runtime / "update_client.py", runtime / "update_state.py", runtime / "local_cli.py",
         runtime / "cap_dispatch.py", runtime / "game_data_client.py", runtime / "game_data_executor.py",
         runtime / "game_data_state.py", runtime / "instance_runtime.py", runtime / "runtime_spec.py",
-        runtime / "runtime_events.py", runtime / "runtime_materialization.py",
+        runtime / "runtime_events.py", runtime / "runtime_materialization.py", runtime / "game_runtime.py",
         adapters / "__init__.py", adapters / "base.py", adapters / "registry.py", adapters / "systemd.py",
         materializers / "__init__.py", materializers / "base.py", materializers / "registry.py", materializers / "systemd.py",
+        profiles / "__init__.py", profiles / "base.py", profiles / "registry.py", profiles / "dayz.py",
         package_root / "agent" / "common" / "identity.py", package_root / "agent" / "updater" / "updater.py",
     ]
     completed = subprocess.run(
@@ -158,6 +160,7 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
     runtime = package_root / "agent" / "runtime"
     adapters = runtime / "adapters"
     materializers = runtime / "materializers"
+    profiles = runtime / "profiles"
     common = package_root / "agent" / "common"
     policy = package_root / "agent" / "policy"
     return [
@@ -175,6 +178,7 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
         (runtime / "runtime_spec.py", INSTALL_ROOT / "runtime" / "runtime_spec.py", 0o644, "agent/runtime/runtime_spec.py"),
         (runtime / "runtime_events.py", INSTALL_ROOT / "runtime" / "runtime_events.py", 0o644, "agent/runtime/runtime_events.py"),
         (runtime / "runtime_materialization.py", INSTALL_ROOT / "runtime" / "runtime_materialization.py", 0o644, "agent/runtime/runtime_materialization.py"),
+        (runtime / "game_runtime.py", INSTALL_ROOT / "runtime" / "game_runtime.py", 0o644, "agent/runtime/game_runtime.py"),
         (adapters / "__init__.py", INSTALL_ROOT / "runtime" / "adapters" / "__init__.py", 0o644, "agent/runtime/adapters/__init__.py"),
         (adapters / "base.py", INSTALL_ROOT / "runtime" / "adapters" / "base.py", 0o644, "agent/runtime/adapters/base.py"),
         (adapters / "registry.py", INSTALL_ROOT / "runtime" / "adapters" / "registry.py", 0o644, "agent/runtime/adapters/registry.py"),
@@ -183,6 +187,10 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
         (materializers / "base.py", INSTALL_ROOT / "runtime" / "materializers" / "base.py", 0o644, "agent/runtime/materializers/base.py"),
         (materializers / "registry.py", INSTALL_ROOT / "runtime" / "materializers" / "registry.py", 0o644, "agent/runtime/materializers/registry.py"),
         (materializers / "systemd.py", INSTALL_ROOT / "runtime" / "materializers" / "systemd.py", 0o644, "agent/runtime/materializers/systemd.py"),
+        (profiles / "__init__.py", INSTALL_ROOT / "runtime" / "profiles" / "__init__.py", 0o644, "agent/runtime/profiles/__init__.py"),
+        (profiles / "base.py", INSTALL_ROOT / "runtime" / "profiles" / "base.py", 0o644, "agent/runtime/profiles/base.py"),
+        (profiles / "registry.py", INSTALL_ROOT / "runtime" / "profiles" / "registry.py", 0o644, "agent/runtime/profiles/registry.py"),
+        (profiles / "dayz.py", INSTALL_ROOT / "runtime" / "profiles" / "dayz.py", 0o644, "agent/runtime/profiles/dayz.py"),
         (policy / "49-capivara-agent-instance-units.rules", POLKIT_RULES_DIR / "49-capivara-agent-instance-units.rules", 0o644, "agent/policy/49-capivara-agent-instance-units.rules"),
         (common / "identity.py", INSTALL_ROOT / "common" / "identity.py", 0o644, "agent/common/identity.py"),
         (package_root / "agent" / "updater" / "updater.py", INSTALL_ROOT / "updater" / "updater.py", 0o755, "agent/updater/updater.py"),
