@@ -15,6 +15,9 @@ agents/
     │   ├── capabilities.py
     │   ├── network_inventory.py
     │   ├── local_cli.py
+    │   ├── game_data_client.py
+    │   ├── game_data_executor.py
+    │   ├── game_data_state.py
     │   └── update_client.py
     ├── services/
     │   └── capivara-agent.service
@@ -36,7 +39,7 @@ agents/
 
 O pacote Linux instala `local_cli.py` no runtime do Agent e expõe `/usr/local/bin/cap` como link para essa CLI. O instalador se recusa a sobrescrever um `cap` já existente que não pertença ao Agent.
 
-A superfície B1 é estritamente local/observacional:
+A superfície local é estritamente observacional:
 
 ```text
 cap agent status
@@ -47,11 +50,19 @@ cap agent capabilities
 cap agent network
 cap agent ports show
 cap agent ports check
+cap agent game-data list
+cap agent game-data status <game>
+cap agent jobs [--active] [--limit N]
+cap agent jobs show <job-id>
 cap agent logs [--lines N]
 cap agent doctor
 ```
 
-Todos os comandos aceitam `--json` quando aplicável. `cap agent doctor` não usa a database do Controller, não executa migrations, não faz heartbeat e não altera configuração. Ele compõe identidade/enrollment, serviço, conectividade ao `/ping` do Controller, CPU/RAM/disco, capabilities, sockets locais e ranges de portas eventualmente cacheados.
+Todos os comandos aceitam `--json` quando aplicável. `cap agent doctor` não usa a database do Controller, não executa migrations, não faz heartbeat e não altera configuração. Ele compõe identidade/enrollment, serviço, conectividade ao `/ping` do Controller, CPU/RAM/disco, capabilities, sockets locais, ranges de portas e um resumo do estado local de game-data/jobs.
+
+`cap agent game-data` lê o inventário persistido pelo executor local em `game-data-state/`. `cap agent jobs` combina jobs transitórios em `game-data-jobs/` com resultados finais sanitizados em `game-data-jobs/history/`. A consulta não dispara instalação, atualização, verificação ou heartbeat.
+
+Quando o Controller confirma um resultado final, o Agent preserva somente um resumo operacional sanitizado antes de remover `request.json` e `result.json`. Logs permanecem separados. Credenciais e o `RuntimeSelection` completo não são copiados para o histórico.
 
 `cap agent ports show/check` é somente leitura. A autoridade para `ports set` continua no Controller/Hybrid. Enquanto o Controller ainda não sincroniza ranges gerenciados para o arquivo local do Agent, a CLI informa `configured=false` em vez de inventar um range.
 
@@ -77,6 +88,9 @@ capivara-agent-linux-X.Y.Z/
 ├── agent/runtime/network_inventory.py
 ├── agent/runtime/local_cli.py
 ├── agent/runtime/update_client.py
+├── agent/runtime/game_data_client.py
+├── agent/runtime/game_data_executor.py
+├── agent/runtime/game_data_state.py
 ├── services/capivara-agent.service
 ├── config/README.md
 ├── VERSION
