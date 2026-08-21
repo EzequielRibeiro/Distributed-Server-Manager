@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
+export DSM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+if [[ "${DSM_QUIET_DEPRECATION:-0}" != "1" ]]; then
+    printf '%s\n' "Aviso: 'dsm' foi descontinuado como CLI pública. Use 'cap'." >&2
+fi
+
+exec "${DSM_ROOT}/bin/cap" "$@"
