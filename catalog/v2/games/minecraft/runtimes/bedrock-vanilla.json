@@ -1,0 +1,70 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "minecraft.bedrock.vanilla",
+  "name": "Minecraft Bedrock Dedicated Server",
+  "game": "minecraft",
+  "edition": "bedrock",
+  "variant": "bedrock",
+  "loader": null,
+  "version": {
+    "strategy": "dynamic",
+    "resolver": "minecraft_bedrock",
+    "config": {
+      "download_page": "https://www.minecraft.net/en-us/download/server/bedrock",
+      "linux_base": "https://www.minecraft.net/bedrockdedicatedserver/bin-linux"
+    }
+  },
+  "process": {
+    "engine": "native",
+    "executable": "bedrock_server",
+    "artifact_mode": "executable"
+  },
+  "requirements": {
+    "os": [
+      "linux"
+    ],
+    "architectures": [
+      "x86_64"
+    ],
+    "java": null
+  },
+  "artifact": {
+    "provider": "http-archive",
+    "auth": "anonymous",
+    "archive_type": "zip"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/minecraft/bedrock"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 2,
+    "ports": [
+      {
+        "name": "game_ipv4",
+        "protocol": "udp",
+        "offset": 0
+      },
+      {
+        "name": "game_ipv6",
+        "protocol": "udp",
+        "offset": 1
+      }
+    ],
+    "apply": [
+      {
+        "kind": "property",
+        "file": "server.properties",
+        "key": "server-port",
+        "value": "{game_ipv4}"
+      },
+      {
+        "kind": "property",
+        "file": "server.properties",
+        "key": "server-portv6",
+        "value": "{game_ipv6}"
+      }
+    ]
+  }
+}
