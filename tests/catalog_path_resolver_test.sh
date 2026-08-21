@@ -14,14 +14,21 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf -- "${TMP_DIR}"' EXIT
 
 SOURCE_RUNTIME="${ROOT}/catalog/v2/games/dayz/runtimes/stable.json"
-LEGACY_DAYZ_RUNTIME="${ROOT}/catalog/v2/runtimes/dayz/stable.json"
 
 [[ -f "${SOURCE_RUNTIME}" ]] || fail "canonical DayZ runtime is missing"
-[[ ! -e "${LEGACY_DAYZ_RUNTIME}" ]] || fail "legacy DayZ runtime still exists after migration"
+[[ ! -e "${ROOT}/catalog/v2/runtimes" ]] || fail "legacy runtime tree still exists after full migration"
 
-# 1. Legacy-only lookup must remain compatible for games not yet migrated.
-# Build a temporary legacy layout from the canonical DayZ fixture so the
-# compatibility behavior is tested independently of the repository layout.
+# Every catalog game currently exposed by the dashboard must own its runtime
+# definitions in the canonical namespace.
+for GAME in arma3 dayz luanti mindustry minecraft rust
+do
+    [[ -d "${ROOT}/catalog/v2/games/${GAME}/runtimes" ]] \
+        || fail "canonical runtime directory missing for ${GAME}"
+done
+
+# 1. Legacy-only lookup remains compatible for external/older catalog roots.
+# Build a temporary legacy layout from a canonical fixture so compatibility is
+# tested independently of the repository's now fully canonical layout.
 LEGACY_ROOT="${TMP_DIR}/legacy"
 mkdir -p "${LEGACY_ROOT}/runtimes/dayz"
 cp "${SOURCE_RUNTIME}" "${LEGACY_ROOT}/runtimes/dayz/stable.json"
@@ -29,7 +36,7 @@ LEGACY_SHOW="$(DSM_CATALOG_ROOT="${LEGACY_ROOT}" "${ROOT}/installer/catalog.sh" 
 jq -e '.id == "dayz.stable" and .game == "dayz"' <<<"${LEGACY_SHOW}" >/dev/null \
     || fail "legacy-only runtime lookup failed"
 
-# 2. Canonical-only lookup must work with the migrated repository layout.
+# 2. Canonical-only lookup.
 CANONICAL_ROOT="${TMP_DIR}/canonical"
 mkdir -p "${CANONICAL_ROOT}/games/dayz/runtimes"
 cp "${SOURCE_RUNTIME}" "${CANONICAL_ROOT}/games/dayz/runtimes/stable.json"
@@ -59,13 +66,17 @@ MIXED_SELECTION="$(DSM_CATALOG_ROOT="${MIXED_ROOT}" "${ROOT}/installer/catalog.s
 jq -e '.runtime_definition == "dayz.stable" and .provider == "steam" and .install.package_id == "223350"' \
     <<<"${MIXED_SELECTION}" >/dev/null || fail "runtime prepare bypassed path resolver"
 
-# 6. The real repository catalog must expose the migrated DayZ runtime through
-# the unchanged public commands.
+# 6. Real repository catalog must expose every migrated game through unchanged
+# public commands and no duplicate runtime IDs may be present.
+ALL_RUNTIMES="$("${ROOT}/installer/catalog.sh" runtime list --json)"
+for ID in arma3.stable dayz.stable luanti.stable mindustry.github minecraft.bedrock.vanilla minecraft.java.arclight minecraft.java.fabric minecraft.java.paper minecraft.java.vanilla rust.stable
+do
+    [[ "$(jq --arg id "${ID}" '[.[] | select(.id == $id)] | length' <<<"${ALL_RUNTIMES}")" -eq 1 ]] \
+        || fail "migrated runtime ${ID} is missing or duplicated"
+done
+
 REPO_SHOW="$("${ROOT}/installer/catalog.sh" runtime show dayz.stable --json)"
 jq -e '.id == "dayz.stable" and .artifact.package_id == "223350"' <<<"${REPO_SHOW}" >/dev/null \
     || fail "repository runtime show cannot resolve migrated DayZ definition"
-REPO_LIST="$("${ROOT}/installer/catalog.sh" runtime list dayz --json)"
-[[ "$(jq '[.[] | select(.id == "dayz.stable")] | length' <<<"${REPO_LIST}")" -eq 1 ]] \
-    || fail "repository runtime list does not expose migrated DayZ exactly once"
 
 echo "Catalog path resolver compatibility tests passed."
