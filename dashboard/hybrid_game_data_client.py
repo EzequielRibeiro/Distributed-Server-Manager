@@ -71,19 +71,27 @@ def _stage(root: Path, command: dict[str, Any]) -> bool:
     if existing and str(existing.get("status") or "").lower() in {"running", "completed", "failed"}:
         return False
     _write_json(request_path, command)
+    _write_json(result_path, {"job_id": job_id, "status": "running", "progress": 0})
     executor = root / "dashboard" / "workers" / "hybrid_game_data_executor.py"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_handle = open(log_path, "ab", buffering=0)
     try:
-        subprocess.Popen(
-            [sys.executable, str(executor), str(root), str(request_path), str(result_path)],
-            stdin=subprocess.DEVNULL,
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
-            close_fds=True,
-            start_new_session=True,
-            env={**os.environ, "DSM_ROOT": str(root)},
-        )
+        try:
+            subprocess.Popen(
+                [sys.executable, str(executor), str(root), str(request_path), str(result_path)],
+                stdin=subprocess.DEVNULL,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                close_fds=True,
+                start_new_session=True,
+                env={**os.environ, "DSM_ROOT": str(root)},
+            )
+        except Exception as exc:
+            _write_json(
+                result_path,
+                {"job_id": job_id, "status": "failed", "progress": 100, "error": str(exc)[:2000]},
+            )
+            raise
     finally:
         log_handle.close()
     return True
