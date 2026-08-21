@@ -16,6 +16,7 @@ export DSM_DATABASE_DRIVER DSM_DATABASE DSM_DATABASE_HOST DSM_DATABASE_PORT
 export DSM_DATABASE_NAME DSM_DATABASE_USER DSM_DATABASE_PASSWORD_FILE DSM_DATABASE_TLS
 
 LEGACY_DSM="${DSM_ROOT}/bin/dsm"
+AGENT_LOCAL_CLI="${DSM_ROOT}/agents/linux/runtime/local_cli.py"
 
 usage(){
     cat >&2 <<'EOF'
@@ -29,11 +30,21 @@ Infraestrutura:
   cap infrastructure role show [--node-id ID] [--json]
   cap infrastructure role set hybrid [--node-id ID] [--controller-id ID] [--agent-id ID] [--json]
 
-Agents:
+Agents — Controller/Hybrid:
   cap agent deploy HOST --ssh-user USER [options]
   cap agent ports show <agent-id>
   cap agent ports set <agent-id> <inicio> <fim> [--protocol tcp|udp|both]
   cap agent ports check <agent-id>
+
+Agent local — Linux:
+  cap agent status [--json]
+  cap agent info [--json]
+  cap agent health [--json]
+  cap agent heartbeat [--json]
+  cap agent capabilities [--json]
+  cap agent network [--json]
+  cap agent logs [--lines N] [--json]
+  cap agent doctor [--json]
 
 Comandos operacionais disponíveis via camada de compatibilidade:
   cap server ...
@@ -58,7 +69,8 @@ Comandos operacionais disponíveis via camada de compatibilidade:
 Compatibilidade curta também preservada:
   cap start|stop|restart|status ...
 
-`cap infrastructure doctor` é o único Doctor oficial.
+`cap infrastructure doctor` é o Doctor da infraestrutura distribuída.
+`cap agent doctor` é o Doctor local do Agent Linux e não consulta a database do Controller.
 `cap` é a CLI oficial em consolidação. Nesta fase, os demais comandos operacionais
 legados são encaminhados internamente para `dsm` sem duplicação de lógica.
 EOF
@@ -70,6 +82,14 @@ legacy_exec(){
         exit 1
     fi
     exec "${LEGACY_DSM}" "$@"
+}
+
+agent_local_exec(){
+    if [[ ! -f "${AGENT_LOCAL_CLI}" ]]; then
+        echo "CLI local do Agent Linux não encontrada: ${AGENT_LOCAL_CLI}" >&2
+        exit 1
+    fi
+    exec python3 "${AGENT_LOCAL_CLI}" "$@"
 }
 
 case "${1:-}" in
@@ -102,6 +122,9 @@ case "${1:-}" in
                 ;;
             ports)
                 legacy_exec agent "$@"
+                ;;
+            status|info|health|heartbeat|capabilities|network|logs|doctor)
+                agent_local_exec "$@"
                 ;;
             *) usage; exit 2 ;;
         esac
