@@ -86,14 +86,7 @@ def _failure(config: dict[str, Any], record: dict[str, Any], exc: Exception, *, 
     next_retry = _stamp(_now() + timedelta(seconds=delay))
     status = "degraded" if retries >= threshold else "retry_wait"
     error = str(exc)[:2000]
-    updated = _save(
-        record,
-        status=status,
-        drift=drift,
-        retry_count=retries,
-        next_retry_at=next_retry,
-        error=error,
-    )
+    updated = _save(record, status=status, drift=drift, retry_count=retries, next_retry_at=next_retry, error=error)
     _event(
         "INSTANCE_DEGRADED" if status == "degraded" else "INSTANCE_RECONCILE_FAILED",
         updated,
@@ -205,4 +198,26 @@ def reconcile_all(config: dict[str, Any], *, force: bool = False) -> list[dict[s
     return results
 
 
-__all__ = ["reconcile_all", "reconcile_instance"]
+def reconciliation_inventory(config: dict[str, Any]) -> list[dict[str, Any]]:
+    values: list[dict[str, Any]] = []
+    for item in instance_runtime.list_instances(config):
+        instance_id = str(item.get("instance_id") or "")
+        record = instance_runtime.get_instance(instance_id) if instance_id else None
+        if not record:
+            continue
+        values.append({
+            "instance_id": instance_id,
+            "desired_state": record.get("desired_state"),
+            "observed_state": record.get("observed_state", "unknown"),
+            "reconcile_status": record.get("reconcile_status", "unknown"),
+            "retry_count": int(record.get("reconcile_retry_count") or 0),
+            "last_attempt_at": record.get("reconcile_last_attempt_at"),
+            "last_success_at": record.get("reconcile_last_success_at"),
+            "next_retry_at": record.get("reconcile_next_retry_at"),
+            "last_error": record.get("reconcile_last_error"),
+            "drift": record.get("reconcile_drift"),
+        })
+    return values
+
+
+__all__ = ["reconcile_all", "reconcile_instance", "reconciliation_inventory"]
