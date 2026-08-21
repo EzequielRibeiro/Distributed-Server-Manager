@@ -12,8 +12,12 @@ on:
       - 'agents/linux/runtime/runtime_events.py'
       - 'agents/linux/runtime/agent.py'
       - 'dashboard/agent_heartbeat_api.py'
+      - 'dashboard/universal_event_api.py'
+      - 'dashboard/universal_event_http.py'
+      - 'dashboard/server_part13.py'
       - 'bin/cap'
       - 'tests/universal_event_platform_test.py'
+      - 'tests/universal_event_http_test.py'
       - '.github/workflows/universal-event-platform.yml'
   push:
     branches: [main]
@@ -27,8 +31,12 @@ on:
       - 'agents/linux/runtime/runtime_events.py'
       - 'agents/linux/runtime/agent.py'
       - 'dashboard/agent_heartbeat_api.py'
+      - 'dashboard/universal_event_api.py'
+      - 'dashboard/universal_event_http.py'
+      - 'dashboard/server_part13.py'
       - 'bin/cap'
       - 'tests/universal_event_platform_test.py'
+      - 'tests/universal_event_http_test.py'
       - '.github/workflows/universal-event-platform.yml'
 
 permissions:
@@ -50,7 +58,11 @@ jobs:
             agents/linux/runtime/runtime_events.py \
             agents/linux/runtime/agent.py \
             dashboard/agent_heartbeat_api.py \
-            tests/universal_event_platform_test.py
+            dashboard/universal_event_api.py \
+            dashboard/universal_event_http.py \
+            dashboard/server_part13.py \
+            tests/universal_event_platform_test.py \
+            tests/universal_event_http_test.py
       - name: Validate migration parity
         run: |
           for directory in migrations migrations_mysql migrations_postgresql; do
@@ -60,9 +72,13 @@ jobs:
             grep -F 'correlation_id' "database/${directory}/032_universal_events.sql"
           done
       - name: Run Universal Event Platform tests
-        run: python3 -m unittest tests/universal_event_platform_test.py
-      - name: Validate Agent package carries event transport
         run: |
+          python3 -m unittest tests/universal_event_platform_test.py
+          python3 -m unittest tests/universal_event_http_test.py
+      - name: Validate public contracts
+        run: |
+          grep -F 'cap events list' bin/cap
+          grep -F 'EVENTS_PATH = "/api/events"' dashboard/universal_event_http.py
           grep -F 'runtime_events.py' release/build_agent_package.sh
           grep -F 'read_runtime_events' agents/linux/runtime/agent.py
           grep -F 'acknowledge_runtime_events' agents/linux/runtime/agent.py
