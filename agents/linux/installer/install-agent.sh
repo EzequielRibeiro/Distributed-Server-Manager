@@ -44,7 +44,7 @@ PACKAGE_DIR="$(cd "${PACKAGE_DIR}" && pwd)"
 for required in \
   manifest.json VERSION agent/common/identity.py \
   agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py \
-  agent/runtime/update_client.py agent/runtime/update_state.py agent/runtime/local_cli.py \
+  agent/runtime/update_client.py agent/runtime/update_state.py agent/runtime/local_cli.py agent/runtime/cap_dispatch.py \
   agent/runtime/game_data_client.py agent/runtime/game_data_executor.py agent/runtime/game_data_state.py \
   agent/runtime/instance_runtime.py \
   agent/runtime/adapters/__init__.py agent/runtime/adapters/base.py \
@@ -67,8 +67,9 @@ PY
 VERSION=$(tr -d '\r\n' < "${PACKAGE_DIR}/VERSION")
 if [[ -e "${CLI_PATH}" || -L "${CLI_PATH}" ]]; then
   EXISTING_CLI_TARGET="$(readlink -f "${CLI_PATH}" 2>/dev/null || true)"
-  EXPECTED_CLI_TARGET="$(readlink -f "${INSTALL_ROOT}/runtime/local_cli.py" 2>/dev/null || printf '%s' "${INSTALL_ROOT}/runtime/local_cli.py")"
-  [[ "${EXISTING_CLI_TARGET}" == "${EXPECTED_CLI_TARGET}" ]] || fail "${CLI_PATH} já existe e não pertence ao Capivara Agent"
+  OLD_CLI_TARGET="$(readlink -f "${INSTALL_ROOT}/runtime/local_cli.py" 2>/dev/null || printf '%s' "${INSTALL_ROOT}/runtime/local_cli.py")"
+  NEW_CLI_TARGET="$(readlink -f "${INSTALL_ROOT}/runtime/cap_dispatch.py" 2>/dev/null || printf '%s' "${INSTALL_ROOT}/runtime/cap_dispatch.py")"
+  [[ "${EXISTING_CLI_TARGET}" == "${OLD_CLI_TARGET}" || "${EXISTING_CLI_TARGET}" == "${NEW_CLI_TARGET}" ]] || fail "${CLI_PATH} já existe e não pertence ao Capivara Agent"
 fi
 id capivara-agent >/dev/null 2>&1 || useradd --system --home "${STATE_DIR}" --create-home --shell /usr/sbin/nologin capivara-agent
 install -d -m 0755 -o root -g root \
@@ -83,6 +84,7 @@ install -m 0644 "${PACKAGE_DIR}/agent/runtime/network_inventory.py" "${INSTALL_R
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/update_client.py" "${INSTALL_ROOT}/runtime/update_client.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/update_state.py" "${INSTALL_ROOT}/runtime/update_state.py"
 install -m 0755 "${PACKAGE_DIR}/agent/runtime/local_cli.py" "${INSTALL_ROOT}/runtime/local_cli.py"
+install -m 0755 "${PACKAGE_DIR}/agent/runtime/cap_dispatch.py" "${INSTALL_ROOT}/runtime/cap_dispatch.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/game_data_client.py" "${INSTALL_ROOT}/runtime/game_data_client.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/game_data_state.py" "${INSTALL_ROOT}/runtime/game_data_state.py"
 install -m 0755 "${PACKAGE_DIR}/agent/runtime/game_data_executor.py" "${INSTALL_ROOT}/runtime/game_data_executor.py"
@@ -98,7 +100,7 @@ install -d -m 0755 "${POLKIT_RULES_DIR}"
 install -m 0644 "${PACKAGE_DIR}/agent/policy/49-capivara-agent-instance-units.rules" \
   "${POLKIT_RULES_DIR}/49-capivara-agent-instance-units.rules"
 install -d -m 0755 "$(dirname "${CLI_PATH}")"
-ln -sfn "${INSTALL_ROOT}/runtime/local_cli.py" "${CLI_PATH}"
+ln -sfn "${INSTALL_ROOT}/runtime/cap_dispatch.py" "${CLI_PATH}"
 python3 - "${PACKAGE_DIR}" "${CONFIG_DIR}/agent.json" "${CONTROLLER_URL}" "${PAIRING_TOKEN}" "${VERSION}" <<'PY'
 import importlib.util, pathlib, sys
 package, config_path, controller_url, token, version = sys.argv[1:]
