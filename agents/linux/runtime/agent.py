@@ -27,6 +27,9 @@ from instance_runtime import inventory as instance_inventory
 from instance_runtime import read_result as read_instance_result
 from network_inventory import collect_network_inventory
 from provisioning_client import clear_provisioning_result, read_provisioning_result, stage_provisioning_command
+from runtime_health import health_inventory
+from runtime_metrics import increment, snapshot as runtime_metrics_snapshot
+from runtime_operations import recover_interrupted_operations
 from runtime_reconciler import reconcile_all, reconciliation_inventory
 from update_client import clear_update_result, read_update_result, stage_update_request
 
@@ -72,6 +75,20 @@ def _memory_total_bytes() -> int | None:
     return None
 
 
+def _queue_depth() -> dict[str, int]:
+    def count(pattern: str) -> int:
+        try:
+            return sum(1 for _ in Path(pattern).parent.glob(Path(pattern).name))
+        except OSError:
+            return 0
+    state = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
+    return {
+        "instance_results": count(str(state / "instance-results" / "*.json")),
+        "provisioning": count(str(state / "instance-provisioning" / "*.request.json")),
+        "game_data": count(str(state / "game-data-jobs" / "*.json")),
+    }
+
+
 def _inventory(config: dict[str, Any]) -> dict[str, Any]:
     disk = shutil.disk_usage("/")
     version_path = Path(__file__).resolve().parents[1] / "VERSION"
@@ -80,59 +97,39 @@ def _inventory(config: dict[str, Any]) -> dict[str, Any]:
     except OSError:
         installed_version = str(config.get("capivara_version", "unknown"))
     payload = {
-        "agent_id": config["agent_id"],
-        "hostname": socket.gethostname(),
-        "os": platform.system().lower(),
-        "architecture": platform.machine(),
-        "capivara_version": installed_version,
-        "address": config.get("advertise_address"),
-        "fingerprint": config["fingerprint"],
-        "capabilities": detect_capabilities(),
-        "cpu": {"logical_cores": os.cpu_count(), "machine": platform.machine()},
-        "ram_total_bytes": _memory_total_bytes(),
-        "storage": {"root_total_bytes": disk.total, "root_free_bytes": disk.free},
-        "network": collect_network_inventory(),
-        "instances": instance_inventory(config),
-        "instance_reconciliation": reconciliation_inventory(config),
+        "agent_id": config["agent_id"], "hostname": socket.gethostname(), "os": platform.system().lower(),
+        "architecture": platform.machine(), "capivara_version": installed_version,
+        "address": config.get("advertise_address"), "fingerprint": config["fingerprint"],
+        "capabilities": detect_capabilities(), "cpu": {"logical_cores": os.cpu_count(), "machine": platform.machine()},
+        "ram_total_bytes": _memory_total_bytes(), "storage": {"root_total_bytes": disk.total, "root_free_bytes": disk.free},
+        "network": collect_network_inventory(), "instances": instance_inventory(config),
+        "instance_reconciliation": reconciliation_inventory(config), "instance_runtime_health": health_inventory(config),
+        "instance_runtime_metrics": runtime_metrics_snapshot(queue_depth=_queue_depth()),
         "heartbeat_interval_seconds": int(config.get("heartbeat_interval_seconds", DEFAULT_HEARTBEAT_SECONDS)),
         "degraded_after_seconds": int(config.get("degraded_after_seconds", 60)),
         "offline_after_seconds": int(config.get("offline_after_seconds", 120)),
     }
     update_result = read_update_result()
-    if update_result:
-        payload["update_result"] = update_result
+    if update_result: payload["update_result"] = update_result
     provisioning_result = read_provisioning_result()
-    if provisioning_result:
-        payload["provisioning_result"] = provisioning_result
+    if provisioning_result: payload["provisioning_result"] = provisioning_result
     game_data_result = read_game_data_result()
-    if game_data_result:
-        payload["game_data_result"] = game_data_result
+    if game_data_result: payload["game_data_result"] = game_data_result
     instance_result = read_instance_result()
-    if instance_result:
-        payload["instance_result"] = instance_result
+    if instance_result: payload["instance_result"] = instance_result
     return payload
 
 
 def enroll(config: dict[str, Any]) -> dict[str, Any]:
     token = str(config.get("pairing_token", "")).strip()
-    if not token:
-        raise RuntimeError("Agent has no permanent credential and no pairing token")
+    if not token: raise RuntimeError("Agent has no permanent credential and no pairing token")
     base = str(config["controller_url"]).rstrip("/")
-    result = _post(
-        base + "/api/agent/enroll",
-        {
-            "pairing_token": token,
-            "agent_id": config["agent_id"],
-            "node_id": config["node_id"],
-            "name": config.get("name") or socket.gethostname(),
-            "fingerprint": config["fingerprint"],
-            "hostname": socket.gethostname(),
-            "os": platform.system().lower(),
-            "architecture": platform.machine(),
-            "capivara_version": config.get("capivara_version"),
-            "address": config.get("advertise_address"),
-        },
-    )
+    result = _post(base + "/api/agent/enroll", {
+        "pairing_token": token, "agent_id": config["agent_id"], "node_id": config["node_id"],
+        "name": config.get("name") or socket.gethostname(), "fingerprint": config["fingerprint"],
+        "hostname": socket.gethostname(), "os": platform.system().lower(), "architecture": platform.machine(),
+        "capivara_version": config.get("capivara_version"), "address": config.get("advertise_address"),
+    })
     config["controller_id"] = result["controller_id"]
     config["credential_id"] = result["credential_id"]
     config["credential_secret"] = result["credential_secret"]
@@ -144,50 +141,30 @@ def enroll(config: dict[str, Any]) -> dict[str, Any]:
 
 def heartbeat(config: dict[str, Any]) -> dict[str, Any]:
     base = str(config["controller_url"]).rstrip("/")
-    result = _post(
-        base + "/api/agent/heartbeat",
-        _inventory(config),
-        headers={
-            "X-Capivara-Agent-Credential": str(config["credential_id"]),
-            "X-Capivara-Agent-Secret": str(config["credential_secret"]),
-            "X-Capivara-Agent-Fingerprint": str(config["fingerprint"]),
-        },
-    )
+    result = _post(base + "/api/agent/heartbeat", _inventory(config), headers={
+        "X-Capivara-Agent-Credential": str(config["credential_id"]),
+        "X-Capivara-Agent-Secret": str(config["credential_secret"]),
+        "X-Capivara-Agent-Fingerprint": str(config["fingerprint"]),
+    })
     if result.get("update") and stage_update_request(dict(result["update"])):
-        print(
-            f"update staged version={result['update'].get('desired_version')} rollout={result['update'].get('rollout_id')}",
-            flush=True,
-        )
-    if result.get("update_state", {}).get("update_status") == "completed":
-        clear_update_result()
-
+        print(f"update staged version={result['update'].get('desired_version')} rollout={result['update'].get('rollout_id')}", flush=True)
+    if result.get("update_state", {}).get("update_status") == "completed": clear_update_result()
     provisioning_command = result.get("provisioning_command")
     if isinstance(provisioning_command, dict) and stage_provisioning_command(provisioning_command, config_path=CONFIG_PATH):
-        print(
-            f"provisioning staged id={provisioning_command.get('provisioning_id')} instance={provisioning_command.get('instance_id')}",
-            flush=True,
-        )
+        print(f"provisioning staged id={provisioning_command.get('provisioning_id')} instance={provisioning_command.get('instance_id')}", flush=True)
     provisioning_state = result.get("provisioning_state") if isinstance(result.get("provisioning_state"), dict) else {}
     if str(provisioning_state.get("status") or "").lower() in {"completed", "failed"} and provisioning_state.get("provisioning_id"):
         clear_provisioning_result(str(provisioning_state["provisioning_id"]))
-
     command = result.get("game_data_command")
     if isinstance(command, dict) and stage_game_data_command(command):
-        print(
-            f"game-data staged job={command.get('job_id')} environment={command.get('environment_id')}",
-            flush=True,
-        )
+        print(f"game-data staged job={command.get('job_id')} environment={command.get('environment_id')}", flush=True)
     state = result.get("game_data_state") if isinstance(result.get("game_data_state"), dict) else {}
     if str(state.get("status") or "").lower() in {"completed", "failed"} and state.get("job_id"):
         clear_game_data_result(str(state["job_id"]))
-
     instance_command = result.get("instance_command")
     if isinstance(instance_command, dict):
         instance_result = handle_instance_command(config, instance_command)
-        print(
-            f"instance command action={instance_result.get('action')} instance={instance_result.get('instance_id')} status={instance_result.get('status')}",
-            flush=True,
-        )
+        print(f"instance command action={instance_result.get('action')} instance={instance_result.get('instance_id')} status={instance_result.get('status')}", flush=True)
     instance_state = result.get("instance_state") if isinstance(result.get("instance_state"), dict) else {}
     if str(instance_state.get("status") or "").lower() in {"completed", "failed"} and instance_state.get("command_id"):
         clear_instance_result(str(instance_state["command_id"]))
@@ -196,29 +173,23 @@ def heartbeat(config: dict[str, Any]) -> dict[str, Any]:
 
 def run_forever() -> None:
     config = _load_config()
-    if not config.get("credential_id") or not config.get("credential_secret"):
-        config = enroll(config)
+    if not config.get("credential_id") or not config.get("credential_secret"): config = enroll(config)
+    interrupted = recover_interrupted_operations(config)
+    if interrupted: increment("operations_interrupted", len(interrupted))
     heartbeat_interval = max(10, int(config.get("heartbeat_interval_seconds", DEFAULT_HEARTBEAT_SECONDS)))
     reconcile_interval = max(5, int(config.get("reconcile_interval_seconds", DEFAULT_RECONCILE_SECONDS)))
-    next_heartbeat = 0.0
-    next_reconcile = 0.0
+    next_heartbeat = 0.0; next_reconcile = 0.0
     while True:
         now = time.monotonic()
         if now >= next_reconcile:
-            try:
-                reconcile_all(config)
-            except Exception as exc:
-                print(f"reconcile loop failed: {exc}", file=sys.stderr, flush=True)
+            try: reconcile_all(config)
+            except Exception as exc: print(f"reconcile loop failed: {exc}", file=sys.stderr, flush=True)
             next_reconcile = now + reconcile_interval
         if now >= next_heartbeat:
             try:
                 result = heartbeat(config)
-                print(
-                    f"heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} status={result.get('status')}",
-                    flush=True,
-                )
-            except Exception as exc:
-                print(f"heartbeat failed: {exc}", file=sys.stderr, flush=True)
+                print(f"heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} status={result.get('status')}", flush=True)
+            except Exception as exc: print(f"heartbeat failed: {exc}", file=sys.stderr, flush=True)
             next_heartbeat = now + heartbeat_interval
         sleep_for = max(0.25, min(next_reconcile, next_heartbeat) - time.monotonic())
         time.sleep(min(sleep_for, 1.0))
