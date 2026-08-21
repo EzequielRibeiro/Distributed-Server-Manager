@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_instance_reconciliation_repository import AgentInstanceReconciliationRepository
 from agent_runtime_repository import AgentRuntimeRepository
 
 
@@ -52,6 +53,12 @@ def record_agent_heartbeat(
         )
     ):
         repository.upsert_inventory(agent_id=agent_id, **inventory_fields)
+
+    reconciliation = body.get("instance_reconciliation")
+    if isinstance(reconciliation, list):
+        projections = AgentInstanceReconciliationRepository(backend)
+        projections.initialize()
+        projections.apply_inventory(agent_id, reconciliation)
 
     last_seen = repository.heartbeat(agent_id)
     return {

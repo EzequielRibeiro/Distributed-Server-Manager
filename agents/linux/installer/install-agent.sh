@@ -46,7 +46,7 @@ for required in \
   agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py \
   agent/runtime/update_client.py agent/runtime/update_state.py agent/runtime/local_cli.py agent/runtime/cap_dispatch.py \
   agent/runtime/game_data_client.py agent/runtime/game_data_executor.py agent/runtime/game_data_state.py \
-  agent/runtime/instance_runtime.py agent/runtime/runtime_spec.py agent/runtime/runtime_events.py agent/runtime/runtime_materialization.py agent/runtime/game_runtime.py \
+  agent/runtime/instance_runtime.py agent/runtime/runtime_spec.py agent/runtime/runtime_events.py agent/runtime/runtime_materialization.py agent/runtime/runtime_reconciler.py agent/runtime/game_runtime.py \
   agent/runtime/provisioning_contract.py agent/runtime/provisioning_state.py agent/runtime/provisioning_client.py agent/runtime/provisioning_executor.py agent/runtime/privileged_materialization.py \
   agent/runtime/adapters/__init__.py agent/runtime/adapters/base.py \
   agent/runtime/adapters/registry.py agent/runtime/adapters/systemd.py \
@@ -102,6 +102,7 @@ install -m 0644 "${PACKAGE_DIR}/agent/runtime/instance_runtime.py" "${INSTALL_RO
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/runtime_spec.py" "${INSTALL_ROOT}/runtime/runtime_spec.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/runtime_events.py" "${INSTALL_ROOT}/runtime/runtime_events.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/runtime_materialization.py" "${INSTALL_ROOT}/runtime/runtime_materialization.py"
+install -m 0644 "${PACKAGE_DIR}/agent/runtime/runtime_reconciler.py" "${INSTALL_ROOT}/runtime/runtime_reconciler.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/game_runtime.py" "${INSTALL_ROOT}/runtime/game_runtime.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/provisioning_contract.py" "${INSTALL_ROOT}/runtime/provisioning_contract.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/provisioning_state.py" "${INSTALL_ROOT}/runtime/provisioning_state.py"
@@ -129,7 +130,7 @@ python3 - "${PACKAGE_DIR}" "${CONFIG_DIR}/agent.json" "${CONTROLLER_URL}" "${PAI
 import importlib.util, pathlib, sys
 package, config_path, controller_url, token, version = sys.argv[1:]
 identity_path = pathlib.Path(package) / 'agent/common/identity.py'; spec = importlib.util.spec_from_file_location('capivara_agent_identity', identity_path); mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-identity = mod.generate_local_identity(); config = {**identity, 'controller_url': controller_url.rstrip('/'), 'pairing_token': token, 'capivara_version': version, 'heartbeat_interval_seconds': 30, 'degraded_after_seconds': 60, 'offline_after_seconds': 120}
+identity = mod.generate_local_identity(); config = {**identity, 'controller_url': controller_url.rstrip('/'), 'pairing_token': token, 'capivara_version': version, 'heartbeat_interval_seconds': 30, 'reconcile_interval_seconds': 15, 'reconcile_failure_threshold': 3, 'reconcile_base_backoff_seconds': 15, 'reconcile_max_backoff_seconds': 300, 'degraded_after_seconds': 60, 'offline_after_seconds': 120}
 mod.write_identity(pathlib.Path(config_path), config)
 PY
 chown capivara-agent:capivara-agent "${CONFIG_DIR}/agent.json"
@@ -141,4 +142,4 @@ install -m 0644 "${PACKAGE_DIR}/services/capivara-agent-materialize@.service" "$
 systemctl daemon-reload
 systemctl enable --now capivara-agent-update.path
 systemctl enable --now capivara-agent.service
-log "Agent ${VERSION} instalado. Provisionamento usa helper root dedicado sem elevar o daemon do Agent."
+log "Agent ${VERSION} instalado. Reconciler local mantém desired/observed state com recovery seguro e backoff."

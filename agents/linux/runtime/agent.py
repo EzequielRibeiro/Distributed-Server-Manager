@@ -27,10 +27,12 @@ from instance_runtime import inventory as instance_inventory
 from instance_runtime import read_result as read_instance_result
 from network_inventory import collect_network_inventory
 from provisioning_client import clear_provisioning_result, read_provisioning_result, stage_provisioning_command
+from runtime_reconciler import reconcile_all, reconciliation_inventory
 from update_client import clear_update_result, read_update_result, stage_update_request
 
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
 DEFAULT_HEARTBEAT_SECONDS = 30
+DEFAULT_RECONCILE_SECONDS = 15
 
 
 def _load_config() -> dict[str, Any]:
@@ -91,6 +93,7 @@ def _inventory(config: dict[str, Any]) -> dict[str, Any]:
         "storage": {"root_total_bytes": disk.total, "root_free_bytes": disk.free},
         "network": collect_network_inventory(),
         "instances": instance_inventory(config),
+        "instance_reconciliation": reconciliation_inventory(config),
         "heartbeat_interval_seconds": int(config.get("heartbeat_interval_seconds", DEFAULT_HEARTBEAT_SECONDS)),
         "degraded_after_seconds": int(config.get("degraded_after_seconds", 60)),
         "offline_after_seconds": int(config.get("offline_after_seconds", 120)),
@@ -195,17 +198,30 @@ def run_forever() -> None:
     config = _load_config()
     if not config.get("credential_id") or not config.get("credential_secret"):
         config = enroll(config)
-    interval = max(10, int(config.get("heartbeat_interval_seconds", DEFAULT_HEARTBEAT_SECONDS)))
+    heartbeat_interval = max(10, int(config.get("heartbeat_interval_seconds", DEFAULT_HEARTBEAT_SECONDS)))
+    reconcile_interval = max(5, int(config.get("reconcile_interval_seconds", DEFAULT_RECONCILE_SECONDS)))
+    next_heartbeat = 0.0
+    next_reconcile = 0.0
     while True:
-        try:
-            result = heartbeat(config)
-            print(
-                f"heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} status={result.get('status')}",
-                flush=True,
-            )
-        except Exception as exc:
-            print(f"heartbeat failed: {exc}", file=sys.stderr, flush=True)
-        time.sleep(interval)
+        now = time.monotonic()
+        if now >= next_reconcile:
+            try:
+                reconcile_all(config)
+            except Exception as exc:
+                print(f"reconcile loop failed: {exc}", file=sys.stderr, flush=True)
+            next_reconcile = now + reconcile_interval
+        if now >= next_heartbeat:
+            try:
+                result = heartbeat(config)
+                print(
+                    f"heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} status={result.get('status')}",
+                    flush=True,
+                )
+            except Exception as exc:
+                print(f"heartbeat failed: {exc}", file=sys.stderr, flush=True)
+            next_heartbeat = now + heartbeat_interval
+        sleep_for = max(0.25, min(next_reconcile, next_heartbeat) - time.monotonic())
+        time.sleep(min(sleep_for, 1.0))
 
 
 if __name__ == "__main__":
