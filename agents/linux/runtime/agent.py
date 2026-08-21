@@ -27,6 +27,7 @@ from instance_runtime import inventory as instance_inventory
 from instance_runtime import read_result as read_instance_result
 from network_inventory import collect_network_inventory
 from provisioning_client import clear_provisioning_result, read_provisioning_result, stage_provisioning_command
+from runtime_events import acknowledge_runtime_events, read_runtime_events
 from runtime_health import health_inventory
 from runtime_metrics import increment, snapshot as runtime_metrics_snapshot
 from runtime_operations import recover_interrupted_operations
@@ -86,6 +87,7 @@ def _queue_depth() -> dict[str, int]:
         "instance_results": count(str(state / "instance-results" / "*.json")),
         "provisioning": count(str(state / "instance-provisioning" / "*.request.json")),
         "game_data": count(str(state / "game-data-jobs" / "*.json")),
+        "runtime_events": len(read_runtime_events(state, limit=1000)),
     }
 
 
@@ -96,6 +98,7 @@ def _inventory(config: dict[str, Any]) -> dict[str, Any]:
         installed_version = version_path.read_text(encoding="utf-8").strip()
     except OSError:
         installed_version = str(config.get("capivara_version", "unknown"))
+    state = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
     payload = {
         "agent_id": config["agent_id"], "hostname": socket.gethostname(), "os": platform.system().lower(),
         "architecture": platform.machine(), "capivara_version": installed_version,
@@ -105,6 +108,7 @@ def _inventory(config: dict[str, Any]) -> dict[str, Any]:
         "network": collect_network_inventory(), "instances": instance_inventory(config),
         "instance_reconciliation": reconciliation_inventory(config), "instance_runtime_health": health_inventory(config),
         "instance_runtime_metrics": runtime_metrics_snapshot(queue_depth=_queue_depth()),
+        "runtime_events": read_runtime_events(state, limit=int(config.get("event_batch_size", 200))),
         "heartbeat_interval_seconds": int(config.get("heartbeat_interval_seconds", DEFAULT_HEARTBEAT_SECONDS)),
         "degraded_after_seconds": int(config.get("degraded_after_seconds", 60)),
         "offline_after_seconds": int(config.get("offline_after_seconds", 120)),
@@ -146,6 +150,10 @@ def heartbeat(config: dict[str, Any]) -> dict[str, Any]:
         "X-Capivara-Agent-Secret": str(config["credential_secret"]),
         "X-Capivara-Agent-Fingerprint": str(config["fingerprint"]),
     })
+    accepted_event_ids = result.get("accepted_event_ids")
+    if isinstance(accepted_event_ids, list):
+        state_root = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
+        acknowledge_runtime_events(state_root, accepted_event_ids)
     if result.get("update") and stage_update_request(dict(result["update"])):
         print(f"update staged version={result['update'].get('desired_version')} rollout={result['update'].get('rollout_id')}", flush=True)
     if result.get("update_state", {}).get("update_status") == "completed": clear_update_result()
