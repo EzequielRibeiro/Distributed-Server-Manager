@@ -183,6 +183,14 @@ Dashboard:
  dsm user passwd <usuario>
  dsm user list
 
+Clientes:
+
+ dsm customer create --id <cliente-id> --name <nome> --username <usuario> [--controller <controller-id>]
+
+Contratos:
+
+ dsm contract create --customer <cliente-id> --game <game-id> [--instances N] [--id <contrato-id>]
+
 Games:
 
  dsm game install <environment-id> <version|latest|current>
@@ -228,6 +236,7 @@ Operação:
 
 Instâncias:
 
+ dsm instance create --customer <cliente-id> --contract <contrato-id> --game <game-id> --agent <agent-id|endereco>
  dsm instance create-aurora   Cria Controlador, Agente, Cliente e Servidor Aurora
  dsm instance purge-orphan <id>
                               Remove somente cadastro órfão sem diretório local
@@ -235,11 +244,9 @@ Instâncias:
 
 Example:
 
- dsm user add admin admin
- dsm user add aurora customer CLI-DEMO-001
- dsm user passwd carlos
- dsm user remove carlos
- dsm user list
+ dsm customer create --id CLIENTE-001 --name "Cliente" --username cliente
+ dsm contract create --customer CLIENTE-001 --game dayz --instances 1
+ dsm instance create --customer CLIENTE-001 --contract CONTRACT-DAYZ-001 --game dayz --agent 192.168.15.45
 
 ============================================================
 
@@ -562,9 +569,22 @@ database_command()
         "$@"
 }
 
+customer_command()
+{
+    exec python3 "${DSM_ROOT}/database/customer_cli.py" "$@"
+}
+
+contract_command()
+{
+    exec python3 "${DSM_ROOT}/database/contract_cli.py" "$@"
+}
+
 instance_command()
 {
     case "${1:-}" in
+        create)
+            exec python3 "${DSM_ROOT}/database/instance_admin_cli.py" "$@"
+            ;;
         bootstrap|bootstrap-status)
             exec python3 "${DSM_ROOT}/database/registry.py" \
                 --root "${DSM_ROOT}" \
@@ -704,6 +724,16 @@ user)
     shift
     exec "$DSM_ROOT/core/user_manager.sh" "$@"
 
+;;
+
+customer)
+    shift
+    customer_command "$@"
+;;
+
+contract)
+    shift
+    contract_command "$@"
 ;;
 
 runtime)
