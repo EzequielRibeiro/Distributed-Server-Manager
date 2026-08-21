@@ -4,9 +4,12 @@ on:
   push:
     branches: [main]
     paths:
+      - 'version'
       - 'release/readiness-v2.json'
       - 'release/RELEASE_NOTES_2.0.0.md'
+      - 'release/build_release.sh'
       - '.github/workflows/publish-v2-release.yml'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -19,22 +22,49 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate release authorization
+      - name: Validate release authorization and version
         id: meta
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json
+          from pathlib import Path
           x=json.load(open('release/readiness-v2.json'))
+          version=Path('version').read_text(encoding='utf-8').strip()
           assert x['status'] == 'release-approved'
           assert x['release_authorized'] is True
           assert x['release_version'] == '2.0.0'
           assert x['tag_name'] == 'v2.0.0'
+          assert version == '2.0.0', f'version file mismatch: {version}'
           print('tag=v2.0.0')
+          print('version=2.0.0')
           PY
 
-      - name: Create tag and GitHub Release if absent
+      - name: Build official release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          bash release/build_release.sh HEAD dist
+          test -s dist/capivara-dsm-2.0.0.tar.gz
+          test -s dist/capivara-dsm-2.0.0.tar.gz.sha256
+          test -s dist/capivara-dsm-2.0.0.manifest.json
+          sha256sum -c dist/capivara-dsm-2.0.0.tar.gz.sha256
+
+      - name: Align v2.0.0 tag with release commit
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          current="$(git ls-remote --tags origin "refs/tags/$TAG" | awk '{print $1}')"
+          if [[ "$current" != "$GITHUB_SHA" ]]; then
+            git tag -f "$TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$TAG" --force
+          fi
+
+      - name: Create or update GitHub Release and upload official assets
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.meta.outputs.tag }}
@@ -42,11 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; nothing to do."
-            exit 0
-          fi
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" \
+            gh release edit "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --title 'Capivara DSM 2.0.0' \
               --notes-file release/RELEASE_NOTES_2.0.0.md
@@ -57,3 +83,19 @@ jobs:
               --title 'Capivara DSM 2.0.0' \
               --notes-file release/RELEASE_NOTES_2.0.0.md
           fi
+          gh release upload "$TAG" \
+            dist/capivara-dsm-2.0.0.tar.gz \
+            dist/capivara-dsm-2.0.0.tar.gz.sha256 \
+            dist/capivara-dsm-2.0.0.manifest.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+      - name: Verify updater-visible asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[].name' | grep -Fx 'capivara-dsm-2.0.0.tar.gz'
