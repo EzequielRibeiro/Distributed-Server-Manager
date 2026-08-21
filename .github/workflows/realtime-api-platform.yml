@@ -1,0 +1,38 @@
+name: Real-Time API Platform
+on:
+  pull_request:
+    paths:
+      - 'core/api_platform.py'
+      - 'database/api_*'
+      - 'database/realtime_repository.py'
+      - 'database/migrations/038_realtime_api_platform.sql'
+      - 'database/migrations_mysql/038_realtime_api_platform.sql'
+      - 'database/migrations_postgresql/038_realtime_api_platform.sql'
+      - 'dashboard/api_access_http.py'
+      - 'dashboard/realtime_*'
+      - 'dashboard/server_part13.py'
+      - 'bin/cap'
+      - 'tests/realtime_api_platform_test.py'
+      - 'docs/architecture/realtime-api-platform.md'
+      - '.github/workflows/realtime-api-platform.yml'
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax
+        run: |
+          bash -n bin/cap
+          python3 -m py_compile core/api_platform.py database/api_access_repository.py database/api_cli.py database/realtime_repository.py dashboard/api_access_http.py dashboard/realtime_api.py dashboard/realtime_http.py dashboard/server_part13.py
+      - name: Test D2 contracts
+        run: python3 -m unittest tests/realtime_api_platform_test.py
+      - name: Verify integration contracts
+        run: |
+          grep -Fq 'cap api' bin/cap
+          grep -Fq 'SSE_EVENTS_PATH' dashboard/server_part13.py
+          grep -Fq 'PUBLIC_GET_PATHS' dashboard/server_part13.py
+          grep -Fq 'api_request_log' database/migrations/038_realtime_api_platform.sql
+          grep -Fq 'api_request_log' database/migrations_mysql/038_realtime_api_platform.sql
+          grep -Fq 'api_request_log' database/migrations_postgresql/038_realtime_api_platform.sql
+          test ! -e dashboard/server_part14.py
