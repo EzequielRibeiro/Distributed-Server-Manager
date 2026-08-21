@@ -1,8 +1,10 @@
-# PR #69 port status
+# Administrative CLI port status
 
-Port target: current `main` (Capivara DSM 2.0 line).
+Status: integrated into current `main`.
 
-Included in this port:
+The administrative workflow originally developed in historical PR #69 was ported onto the current Capivara 2.x baseline and merged through PR #82.
+
+Available through the canonical public CLI `cap`:
 
 - customer creation with scoped login;
 - service contract create/delete;
@@ -11,8 +13,10 @@ Included in this port:
 - Agent-side runtime removal action;
 - confirmation-driven instance purge and port release;
 - contract purge only after linked instances are gone;
-- canonical `cap` routes with Controller/Hybrid role enforcement;
+- Controller/Hybrid role enforcement;
 - migration 041 parity for SQLite, PostgreSQL and MySQL/MariaDB;
-- focused CI smoke coverage.
+- focused CI coverage.
 
-The historical PR #69 remains open until this replacement port is validated and integrated.
+The historical PR #69 is closed as superseded. It must not be merged directly.
+
+`dsm` is not an administrative CLI alternative. It remains only as a temporary compatibility wrapper that forwards old invocations to `cap`. New documentation and automation must use `cap`.
