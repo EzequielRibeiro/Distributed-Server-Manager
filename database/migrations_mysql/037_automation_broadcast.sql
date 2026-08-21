@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS automation_rule_revisions (
 CREATE TABLE IF NOT EXISTS automation_runs (
  run_id VARCHAR(191) PRIMARY KEY, rule_id VARCHAR(191), trigger_type VARCHAR(32) NOT NULL, trigger_ref VARCHAR(191), status VARCHAR(32) NOT NULL DEFAULT 'pending',
  context_json LONGTEXT NOT NULL, result_json LONGTEXT NOT NULL, requested_by VARCHAR(191), started_at VARCHAR(40), completed_at VARCHAR(40), created_at VARCHAR(40) NOT NULL, updated_at VARCHAR(40) NOT NULL,
- INDEX idx_automation_runs_rule_created(rule_id,created_at)
+ INDEX idx_automation_runs_rule_created(rule_id,created_at), UNIQUE KEY uq_automation_run_trigger(rule_id,trigger_type,trigger_ref)
 );
 CREATE TABLE IF NOT EXISTS automation_runtime_state (
  state_key VARCHAR(191) PRIMARY KEY, state_value LONGTEXT NOT NULL, updated_at VARCHAR(40) NOT NULL
