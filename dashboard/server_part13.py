@@ -31,6 +31,11 @@ from agent_update_http import (
     dispatch_update_get,
     dispatch_update_post,
 )
+from configuration_http import (
+    CONFIGURATIONS_PATH,
+    dispatch_configuration_get,
+    dispatch_configuration_post,
+)
 from infrastructure_role_http import (
     INFRASTRUCTURE_ROLE_PATH,
     dispatch_infrastructure_role_get,
@@ -87,6 +92,14 @@ def integrated_get(self):
     parsed = urlparse(self.path)
     if parsed.path == WINDOWS_INSTALL_PATH:
         return _serve_windows_bootstrap(self)
+
+    if parsed.path == CONFIGURATIONS_PATH:
+        user = _user(self)
+        if user is None:
+            return
+        status, body = dispatch_configuration_get(parsed.path, parsed.query, user=user, backend=_backend())
+        self.send_json(status, body)
+        return
 
     if parsed.path == EVENTS_PATH:
         user = _user(self)
@@ -150,6 +163,19 @@ def integrated_get(self):
 
 def integrated_post(self):
     parsed = urlparse(self.path)
+
+    if parsed.path == CONFIGURATIONS_PATH:
+        user = _user(self)
+        if user is None:
+            return
+        try:
+            payload = self.read_json_body()
+        except ValueError:
+            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
+            return
+        status, body = dispatch_configuration_post(parsed.path, payload, user=user, backend=_backend())
+        self.send_json(status, body)
+        return
 
     if parsed.path == EVENTS_PATH:
         user = _user(self)
