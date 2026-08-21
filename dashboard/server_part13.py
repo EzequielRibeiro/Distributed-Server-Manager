@@ -137,7 +137,9 @@ def integrated_post(self):
             payload = self.read_json_body()
         except ValueError:
             self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."}); return
-        status, body = dispatch_instance_provisioning_post(parsed.path, payload, user=user, backend=_backend())
+        status, body = dispatch_instance_provisioning_post(
+            parsed.path, payload, user=user, backend=_backend(), root=ROOT_DIR
+        )
         self.send_json(status, body); return
     if parsed.path == INSTANCE_RUNTIME_PATH:
         user = _user(self)
