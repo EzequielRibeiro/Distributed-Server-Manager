@@ -2,7 +2,7 @@
 -- Add explicit transitional contract deletion state and Agent runtime remove action.
 
 -- Rebuild the contract tables together so the parent CHECK can be expanded
--- without leaving a foreign key pointing at a dropped table.
+-- without leaving a foreign key or trigger pointing at a dropped table.
 CREATE TABLE service_contracts_v2 (
     id TEXT PRIMARY KEY,
     customer_id TEXT NOT NULL,
@@ -35,6 +35,7 @@ SELECT instance_id,contract_id,created_at
 FROM instance_contracts;
 
 DROP TRIGGER IF EXISTS instance_contract_matches_insert;
+DROP TRIGGER IF EXISTS instances_require_contract_before_active;
 DROP TABLE instance_contracts;
 DROP TABLE service_contracts;
 ALTER TABLE service_contracts_v2 RENAME TO service_contracts;
@@ -52,6 +53,15 @@ BEGIN
         SELECT COUNT(*) FROM instance_contracts WHERE contract_id=NEW.contract_id
     ) >= (SELECT instance_limit FROM service_contracts WHERE id=NEW.contract_id)
     THEN RAISE(ABORT, 'contract_instance_limit_reached') END;
+END;
+
+CREATE TRIGGER instances_require_contract_before_active
+BEFORE UPDATE OF status ON instances
+WHEN NEW.status NOT IN ('pending','provisioning') AND NOT EXISTS (
+    SELECT 1 FROM instance_contracts WHERE instance_id=NEW.id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'instance_requires_service_contract');
 END;
 
 CREATE INDEX idx_service_contracts_customer_status
