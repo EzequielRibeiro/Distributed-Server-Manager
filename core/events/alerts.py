@@ -32,6 +32,7 @@ class AlertCandidate:
 
 
 AlertMessageFactory = Callable[[UniversalEvent], str]
+AlertCandidateSink = Callable[[AlertCandidate], None]
 
 
 @dataclass(frozen=True)
@@ -99,16 +100,27 @@ DEFAULT_ALERT_RULES: tuple[AlertRule, ...] = (
 class AlertConsumer:
     """Converts selected universal events into alert-policy candidates."""
 
-    def __init__(self, rules: tuple[AlertRule, ...] = DEFAULT_ALERT_RULES) -> None:
+    def __init__(
+        self,
+        rules: tuple[AlertRule, ...] = DEFAULT_ALERT_RULES,
+        candidate_sink: AlertCandidateSink | None = None,
+    ) -> None:
         self._rules = tuple(rules)
+        self._candidate_sink = candidate_sink
 
     def consume(self, event: UniversalEvent) -> list[AlertCandidate]:
         candidates: list[AlertCandidate] = []
         for rule in self._rules:
             candidate = rule.evaluate(event)
-            if candidate is not None:
-                candidates.append(candidate)
+            if candidate is None:
+                continue
+            candidates.append(candidate)
+            if self._candidate_sink is not None:
+                self._candidate_sink(candidate)
         return candidates
+
+    def __call__(self, event: UniversalEvent) -> None:
+        self.consume(event)
 
     def rules_by_event_type(self) -> Mapping[str, tuple[AlertRule, ...]]:
         grouped: dict[str, list[AlertRule]] = {}
@@ -119,6 +131,7 @@ class AlertConsumer:
 
 __all__ = [
     "AlertCandidate",
+    "AlertCandidateSink",
     "AlertConsumer",
     "AlertRule",
     "AlertSeverity",
