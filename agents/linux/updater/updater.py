@@ -32,13 +32,25 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _ensure_state_directory(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    if path == STATE_DIR:
+        return
+    try:
+        metadata = STATE_DIR.stat()
+        os.chown(path, metadata.st_uid, metadata.st_gid)
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
+
+
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_state_directory(path.parent)
     temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.chmod(temp, 0o600)
     try:
-        metadata = path.parent.stat()
+        metadata = STATE_DIR.stat()
         os.chown(temp, metadata.st_uid, metadata.st_gid)
     except OSError:
         pass
@@ -342,15 +354,15 @@ def apply_request() -> int:
         cli_existed, old_cli_target = _validate_cli_target()
         backup_root = work / "rollback"
         snapshots = _snapshot_files(mapping, backup_root)
-        changed = False
+        transaction_started = False
         try:
+            transaction_started = True
             _apply_files(mapping)
-            changed = True
             _reconcile_cli()
             _validate_installed(plain_version, manifest, mapping)
             _restart_agent()
         except Exception:
-            if changed:
+            if transaction_started:
                 _restore_files(snapshots)
                 _restore_cli(cli_existed, old_cli_target)
                 try:
