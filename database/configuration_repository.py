@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import uuid
@@ -37,7 +38,8 @@ class ConfigurationRepository:
         if row is None:
             return None
         value = dict(row)
-        value["scope_id"] = None if value.get("scope_type") == "global" else value.pop("scope_key", None)
+        scope_key = value.pop("scope_key", None)
+        value["scope_id"] = None if value.get("scope_type") == "global" else scope_key
         try:
             value["value"] = json.loads(value.pop("value_json"))
         except (json.JSONDecodeError, TypeError):
@@ -63,7 +65,7 @@ class ConfigurationRepository:
         existing = self.get(scope_type=config["scope_type"], scope_id=config["scope_id"], namespace=config["namespace"])
         if existing is not None and existing.get("checksum") == config["checksum"]:
             return {"configuration": existing, "changed": False}
-        configuration_id = str(existing.get("configuration_id")) if existing else str(uuid.uuid4())
+        configuration_id = str(existing["configuration_id"]) if existing else str(uuid.uuid4())
         revision = int(existing.get("revision") or 0) + 1 if existing else 1
         key = self._scope_key(config["scope_type"], config["scope_id"])
         now = utc_now()
@@ -73,7 +75,7 @@ class ConfigurationRepository:
             try:
                 if existing:
                     session.execute(
-                        f"UPDATE configurations SET schema_version={self.ph}, revision={self.ph}, value_json={self.ph}, checksum={self.ph}, updated_by={self.ph}, updated_at={self.ph} WHERE configuration_id={self.ph}",
+                        f"UPDATE configurations SET schema_version={self.ph},revision={self.ph},value_json={self.ph},checksum={self.ph},updated_by={self.ph},updated_at={self.ph} WHERE configuration_id={self.ph}",
                         (1, revision, value_json, config["checksum"], updated_by, now, configuration_id),
                     )
                 else:
@@ -129,46 +131,62 @@ class ConfigurationRepository:
             finally:
                 session.close()
 
-    def resolve_for_agent(self, agent_id: str) -> list[dict[str, Any]]:
+    def _merge_rows(self, rows: list[dict[str, Any]], *, target_type: str, target_id: str) -> list[dict[str, Any]]:
         namespaces: dict[str, dict[str, Any]] = {}
-        global_rows = self.list_configurations(scope_type="global", limit=1000)
-        agent_rows = self.list_configurations(scope_type="agent", scope_id=agent_id, limit=1000)
-        for row in global_rows + agent_rows:
+        for row in rows:
             name = str(row["namespace"])
-            current = namespaces.get(name, {"value": {}, "revision_parts": [], "configuration_ids": []})
+            current = namespaces.get(name, {"value": {}, "parts": [], "configuration_refs": []})
             current["value"] = deep_merge(current["value"], row["value"])
-            current["revision_parts"].append(f"{row['configuration_id']}:{row['revision']}:{row['checksum']}")
-            current["configuration_ids"].append(row["configuration_id"])
+            current["parts"].append(f"{row['configuration_id']}:{row['revision']}:{row['checksum']}")
+            current["configuration_refs"].append({
+                "configuration_id": row["configuration_id"],
+                "revision": int(row["revision"]),
+                "checksum": row["checksum"],
+            })
             namespaces[name] = current
-        result = []
-        import hashlib
+        resolved = []
         for namespace, item in sorted(namespaces.items()):
-            digest = hashlib.sha256("|".join(item["revision_parts"]).encode()).hexdigest()
-            result.append({
+            digest = hashlib.sha256("|".join(item["parts"]).encode()).hexdigest()
+            resolved.append({
+                "schema_version": 1,
                 "kind": "CapivaraResolvedConfiguration",
                 "namespace": namespace,
-                "target_type": "agent",
-                "target_id": agent_id,
+                "target_type": target_type,
+                "target_id": target_id,
                 "revision": digest[:16],
                 "checksum": digest,
                 "value": item["value"],
-                "configuration_ids": item["configuration_ids"],
+                "configuration_refs": item["configuration_refs"],
             })
-        return result
+        return resolved
+
+    def resolve_for_agent(self, agent_id: str) -> list[dict[str, Any]]:
+        rows = self.list_configurations(scope_type="global", limit=1000)
+        rows += self.list_configurations(scope_type="agent", scope_id=agent_id, limit=1000)
+        return self._merge_rows(rows, target_type="agent", target_id=agent_id)
 
     def resolve_for_instance(self, agent_id: str, instance_id: str) -> list[dict[str, Any]]:
-        base = {item["namespace"]: item for item in self.resolve_for_agent(agent_id)}
-        rows = self.list_configurations(scope_type="instance", scope_id=instance_id, limit=1000)
-        import hashlib
-        for row in rows:
-            name = row["namespace"]
-            current = base.get(name, {"namespace": name, "value": {}, "configuration_ids": [], "checksum": ""})
-            current["value"] = deep_merge(current["value"], row["value"])
-            current["configuration_ids"] = list(current.get("configuration_ids") or []) + [row["configuration_id"]]
-            digest = hashlib.sha256((str(current.get("checksum") or "") + row["checksum"] + str(row["revision"])).encode()).hexdigest()
-            current.update({"kind": "CapivaraResolvedConfiguration", "target_type": "instance", "target_id": instance_id, "revision": digest[:16], "checksum": digest})
-            base[name] = current
-        return [base[name] for name in sorted(base)]
+        rows = self.list_configurations(scope_type="global", limit=1000)
+        rows += self.list_configurations(scope_type="agent", scope_id=agent_id, limit=1000)
+        rows += self.list_configurations(scope_type="instance", scope_id=instance_id, limit=1000)
+        return self._merge_rows(rows, target_type="instance", target_id=instance_id)
+
+    def instance_ids_for_agent(self, agent_id: str) -> list[str]:
+        with self.backend.connect() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                rows = session.execute(
+                    f"SELECT id FROM instances WHERE agent_id={self.ph} ORDER BY id", (agent_id,)
+                ).fetchall()
+                return [str(row["id"]) for row in rows]
+            finally:
+                session.close()
+
+    def desired_for_agent(self, agent_id: str) -> list[dict[str, Any]]:
+        commands = self.resolve_for_agent(agent_id)
+        for instance_id in self.instance_ids_for_agent(agent_id):
+            commands.extend(self.resolve_for_instance(agent_id, instance_id))
+        return commands
 
     def record_agent_state(self, agent_id: str, reports: list[Mapping[str, Any]]) -> None:
         now = utc_now()
