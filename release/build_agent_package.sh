@@ -41,6 +41,7 @@ git -C "${ROOT}" show "${REF}:agents/linux/runtime/network_inventory.py" >"${PAC
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/update_client.py" >"${PACKAGE_ROOT}/agent/runtime/update_client.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/update_state.py" >"${PACKAGE_ROOT}/agent/runtime/update_state.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/local_cli.py" >"${PACKAGE_ROOT}/agent/runtime/local_cli.py"
+git -C "${ROOT}" show "${REF}:agents/linux/runtime/cap_dispatch.py" >"${PACKAGE_ROOT}/agent/runtime/cap_dispatch.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/game_data_client.py" >"${PACKAGE_ROOT}/agent/runtime/game_data_client.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/game_data_executor.py" >"${PACKAGE_ROOT}/agent/runtime/game_data_executor.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/game_data_state.py" >"${PACKAGE_ROOT}/agent/runtime/game_data_state.py"
@@ -55,7 +56,7 @@ git -C "${ROOT}" show "${REF}:agents/linux/services/capivara-agent-update.servic
 git -C "${ROOT}" show "${REF}:agents/linux/services/capivara-agent-update.path" >"${PACKAGE_ROOT}/services/capivara-agent-update.path"
 printf '%s\n' "${VERSION}" >"${PACKAGE_ROOT}/VERSION"
 printf '%s\n' 'Runtime configuration is created during installation. Pairing secrets are never packaged.' >"${PACKAGE_ROOT}/config/README.md"
-chmod 0755 "${PACKAGE_ROOT}/install-agent.sh" "${PACKAGE_ROOT}/agent/runtime/agent.py" "${PACKAGE_ROOT}/agent/runtime/local_cli.py" "${PACKAGE_ROOT}/agent/runtime/game_data_executor.py" "${PACKAGE_ROOT}/agent/updater/updater.py"
+chmod 0755 "${PACKAGE_ROOT}/install-agent.sh" "${PACKAGE_ROOT}/agent/runtime/agent.py" "${PACKAGE_ROOT}/agent/runtime/local_cli.py" "${PACKAGE_ROOT}/agent/runtime/cap_dispatch.py" "${PACKAGE_ROOT}/agent/runtime/game_data_executor.py" "${PACKAGE_ROOT}/agent/updater/updater.py"
 find "${PACKAGE_ROOT}/agent" -type f ! -perm -0100 -exec chmod 0644 {} +
 chmod 0644 "${PACKAGE_ROOT}/services/"* "${PACKAGE_ROOT}/VERSION" "${PACKAGE_ROOT}/config/README.md"
 
@@ -72,6 +73,7 @@ required = [
     "agent/runtime/update_client.py",
     "agent/runtime/update_state.py",
     "agent/runtime/local_cli.py",
+    "agent/runtime/cap_dispatch.py",
     "agent/runtime/game_data_client.py",
     "agent/runtime/game_data_executor.py",
     "agent/runtime/game_data_state.py",
