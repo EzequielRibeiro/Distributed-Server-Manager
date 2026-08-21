@@ -98,47 +98,101 @@ class EventRepository:
     def get(self, event_id: str) -> UniversalEvent | None:
         """Return one universal event by immutable event ID."""
 
+        rows = self._query_events(event_id=event_id, limit=1)
+        return rows[0] if rows else None
+
+    def list_events(
+        self,
+        *,
+        controller_id: str | None = None,
+        agent_id: str | None = None,
+        customer_id: str | None = None,
+        instance_id: str | None = None,
+        correlation_id: str | None = None,
+        event_type: str | None = None,
+        limit: int = 100,
+        newest_first: bool = True,
+    ) -> list[UniversalEvent]:
+        """List universal events using indexed timeline-oriented filters."""
+
+        limit = max(1, min(int(limit), 1000))
+        return self._query_events(
+            controller_id=controller_id,
+            agent_id=agent_id,
+            customer_id=customer_id,
+            instance_id=instance_id,
+            correlation_id=correlation_id,
+            event_type=event_type,
+            limit=limit,
+            newest_first=newest_first,
+        )
+
+    def _query_events(
+        self,
+        *,
+        event_id: str | None = None,
+        controller_id: str | None = None,
+        agent_id: str | None = None,
+        customer_id: str | None = None,
+        instance_id: str | None = None,
+        correlation_id: str | None = None,
+        event_type: str | None = None,
+        limit: int = 100,
+        newest_first: bool = True,
+    ) -> list[UniversalEvent]:
         self.backend.initialize()
+        filters = {
+            "event_id": event_id,
+            "controller_id": controller_id,
+            "agent_id": agent_id,
+            "customer_id": customer_id,
+            "instance_id": instance_id,
+            "correlation_id": correlation_id,
+            "event_type": event_type,
+        }
+        clauses: list[str] = ["source_type IS NOT NULL", "source_id IS NOT NULL", "occurred_at IS NOT NULL"]
+        parameters: list[Any] = []
+        for column, value in filters.items():
+            if value is not None:
+                clauses.append(f"{column}={self.placeholder}")
+                parameters.append(value)
+
+        direction = "DESC" if newest_first else "ASC"
+        sql = (
+            "SELECT event_id, event_type, event_version, occurred_at, "
+            "severity, source_type, source_id, controller_id, agent_id, "
+            "customer_id, instance_id, correlation_id, causation_id, payload_json "
+            "FROM events WHERE " + " AND ".join(clauses) +
+            f" ORDER BY occurred_at {direction}, id {direction} LIMIT {int(limit)}"
+        )
+
         with self.backend.connect() as connection:
-            cursor = self._execute(
-                connection,
-                "SELECT event_id, event_type, event_version, occurred_at, "
-                "severity, source_type, source_id, controller_id, agent_id, "
-                "customer_id, instance_id, correlation_id, causation_id, "
-                f"payload_json FROM events WHERE event_id={self.placeholder}",
-                (event_id,),
-            )
-            row = cursor.fetchone()
+            cursor = self._execute(connection, sql, parameters)
+            rows = cursor.fetchall()
             if self.backend.name == "mysql":
                 cursor.close()
 
-        if row is None:
-            return None
+        return [self._event_from_row(dict(row)) for row in rows]
 
-        record = dict(row)
+    @staticmethod
+    def _event_from_row(record: dict[str, Any]) -> UniversalEvent:
+        event_id = str(record["event_id"])
         if not record.get("source_type") or not record.get("source_id"):
-            raise ValueError(
-                f"event {event_id} predates the universal event contract"
-            )
+            raise ValueError(f"event {event_id} predates the universal event contract")
         if not record.get("occurred_at"):
-            raise ValueError(
-                f"event {event_id} has no universal occurrence timestamp"
-            )
+            raise ValueError(f"event {event_id} has no universal occurrence timestamp")
 
         timestamp = str(record["occurred_at"])
         if timestamp.endswith("Z"):
             timestamp = timestamp[:-1] + "+00:00"
 
         event = UniversalEvent(
-            id=str(record["event_id"]),
+            id=event_id,
             type=str(record["event_type"]),
             version=int(record["event_version"]),
             timestamp=datetime.fromisoformat(timestamp),
             severity=EventSeverity(str(record["severity"])),
-            source=EventSource(
-                type=str(record["source_type"]),
-                id=str(record["source_id"]),
-            ),
+            source=EventSource(type=str(record["source_type"]), id=str(record["source_id"])),
             scope=EventScope(
                 controller_id=record.get("controller_id"),
                 agent_id=record.get("agent_id"),
