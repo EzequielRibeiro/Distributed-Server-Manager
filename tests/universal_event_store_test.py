@@ -12,6 +12,19 @@ from event_repository import EventRepository
 from core.events import EventPublisher, EventScope, EventSeverity, EventSource
 
 
+EVENT_MIGRATION_MARKERS = {
+    "event_version",
+    "occurred_at",
+    "source_type",
+    "source_id",
+    "controller_id",
+    "agent_id",
+    "customer_id",
+    "correlation_id",
+    "causation_id",
+}
+
+
 def _repository(tmp_path: Path) -> EventRepository:
     backend = SQLiteBackend(
         DatabaseConfig(
@@ -65,14 +78,20 @@ def test_event_migration_reaches_universal_store_schema(tmp_path):
             for row in connection.execute("PRAGMA table_info(events)").fetchall()
         }
 
-    assert {
-        "event_version",
-        "occurred_at",
-        "source_type",
-        "source_id",
-        "controller_id",
-        "agent_id",
-        "customer_id",
-        "correlation_id",
-        "causation_id",
-    } <= columns
+    assert EVENT_MIGRATION_MARKERS <= columns
+
+
+def test_event_store_migration_has_backend_parity():
+    migration_name = "027_universal_event_store.sql"
+    directories = (
+        DATABASE_DIR / "migrations",
+        DATABASE_DIR / "migrations_postgresql",
+        DATABASE_DIR / "migrations_mysql",
+    )
+
+    for directory in directories:
+        migration = directory / migration_name
+        assert migration.is_file(), f"missing {migration}"
+        content = migration.read_text(encoding="utf-8").lower()
+        for marker in EVENT_MIGRATION_MARKERS:
+            assert marker in content, f"{migration} missing {marker}"
