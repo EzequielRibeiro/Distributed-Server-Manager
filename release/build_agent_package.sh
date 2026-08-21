@@ -16,6 +16,9 @@ WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/capivara-agent-package.XXXXXX"); PACKAGE_R
 cleanup(){ rm -rf -- "${WORK_DIR}"; }; trap cleanup EXIT
 mkdir -p "${PACKAGE_ROOT}/agent/common" "${PACKAGE_ROOT}/agent/runtime/adapters" "${PACKAGE_ROOT}/agent/runtime/materializers" "${PACKAGE_ROOT}/agent/runtime/profiles" "${PACKAGE_ROOT}/agent/privileged" "${PACKAGE_ROOT}/agent/updater" "${PACKAGE_ROOT}/agent/policy" "${PACKAGE_ROOT}/services" "${PACKAGE_ROOT}/config"
 copy(){ git -C "${ROOT}" show "${REF}:$1" >"${PACKAGE_ROOT}/$2"; }
+# Stable package path contracts used by CI and external validation:
+# agent/runtime/local_cli.py agent/runtime/game_data_client.py agent/runtime/game_data_executor.py
+# agent/runtime/observability_client.py agent/runtime/configuration_client.py
 copy agents/linux/installer/install-agent.sh install-agent.sh
 copy agents/common/identity.py agent/common/identity.py
 for file in agent.py capabilities.py network_inventory.py update_client.py update_state.py local_cli.py cap_dispatch.py game_data_client.py game_data_executor.py game_data_state.py instance_runtime.py runtime_spec.py runtime_events.py runtime_materialization.py runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py observability_client.py configuration_client.py game_runtime.py provisioning_contract.py provisioning_state.py provisioning_client.py provisioning_executor.py privileged_materialization.py; do copy "agents/linux/runtime/${file}" "agent/runtime/${file}"; done
