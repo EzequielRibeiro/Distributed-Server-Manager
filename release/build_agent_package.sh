@@ -18,10 +18,10 @@ mkdir -p "${PACKAGE_ROOT}/agent/common" "${PACKAGE_ROOT}/agent/runtime/adapters"
 copy(){ git -C "${ROOT}" show "${REF}:$1" >"${PACKAGE_ROOT}/$2"; }
 # Stable package path contracts used by CI and external validation:
 # agent/runtime/local_cli.py agent/runtime/game_data_client.py agent/runtime/game_data_executor.py
-# agent/runtime/observability_client.py agent/runtime/configuration_client.py agent/runtime/content_client.py
+# agent/runtime/observability_client.py agent/runtime/configuration_client.py agent/runtime/content_client.py agent/runtime/backup_client.py
 copy agents/linux/installer/install-agent.sh install-agent.sh
 copy agents/common/identity.py agent/common/identity.py
-for file in agent.py capabilities.py network_inventory.py update_client.py update_state.py local_cli.py cap_dispatch.py game_data_client.py game_data_executor.py game_data_state.py instance_runtime.py runtime_spec.py runtime_events.py runtime_materialization.py runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py observability_client.py configuration_client.py content_client.py game_runtime.py provisioning_contract.py provisioning_state.py provisioning_client.py provisioning_executor.py privileged_materialization.py; do copy "agents/linux/runtime/${file}" "agent/runtime/${file}"; done
+for file in agent.py capabilities.py network_inventory.py update_client.py update_state.py local_cli.py cap_dispatch.py game_data_client.py game_data_executor.py game_data_state.py instance_runtime.py runtime_spec.py runtime_events.py runtime_materialization.py runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py observability_client.py configuration_client.py content_client.py backup_client.py game_runtime.py provisioning_contract.py provisioning_state.py provisioning_client.py provisioning_executor.py privileged_materialization.py; do copy "agents/linux/runtime/${file}" "agent/runtime/${file}"; done
 copy agents/linux/privileged/materialize_instance.py agent/privileged/materialize_instance.py
 for file in __init__.py base.py registry.py systemd.py; do copy "agents/linux/runtime/adapters/${file}" "agent/runtime/adapters/${file}"; copy "agents/linux/runtime/materializers/${file}" "agent/runtime/materializers/${file}"; done
 for file in __init__.py base.py registry.py dayz.py; do copy "agents/linux/runtime/profiles/${file}" "agent/runtime/profiles/${file}"; done
