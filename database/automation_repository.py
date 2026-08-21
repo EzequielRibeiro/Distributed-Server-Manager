@@ -10,6 +10,7 @@ if str(CORE) not in sys.path:sys.path.insert(0,str(CORE))
 from alert_repository import AlertSession
 from automation_platform import AutomationValidationError,normalize_broadcast,normalize_rule
 from event_platform import utc_now
+MAX_BROADCAST_ATTEMPTS=5
 class AutomationRepository:
  def __init__(self,backend):self.backend=backend
  def initialize(self):self.backend.initialize()
@@ -85,15 +86,42 @@ class AutomationRepository:
    s=AlertSession(self.backend,c)
    try:return [dict(r) for r in s.execute(f"SELECT * FROM broadcasts ORDER BY created_at DESC LIMIT {self.ph}",(max(1,min(int(limit),1000)),)).fetchall()]
    finally:s.close()
+ def list_deliveries(self,broadcast_id):
+  with self.backend.connect() as c:
+   s=AlertSession(self.backend,c)
+   try:return [dict(r) for r in s.execute(f"SELECT * FROM broadcast_deliveries WHERE broadcast_id={self.ph} ORDER BY agent_id,instance_id",(broadcast_id,)).fetchall()]
+   finally:s.close()
+ def _expire(self,now):
+  with self.backend.transaction() as c:
+   s=AlertSession(self.backend,c)
+   try:
+    s.execute(f"UPDATE broadcast_deliveries SET status='expired',updated_at={self.ph} WHERE status IN ('pending','delivered','failed') AND broadcast_id IN (SELECT broadcast_id FROM broadcasts WHERE expires_at<={self.ph})",(now,now));s.execute(f"UPDATE broadcasts SET status='expired' WHERE status='pending' AND expires_at<={self.ph}",(now,))
+   finally:s.close()
  def desired_for_agent(self,agent_id,limit=200):
-  now=utc_now()
+  now=utc_now();self._expire(now)
   with self.backend.connect() as c:
    s=AlertSession(self.backend,c)
    try:
-    rows=s.execute(f"SELECT d.delivery_id,d.broadcast_id,d.instance_id,d.attempts,b.message,b.priority,b.ttl_seconds,b.require_ack,b.expires_at FROM broadcast_deliveries d JOIN broadcasts b ON b.broadcast_id=d.broadcast_id WHERE d.agent_id={self.ph} AND d.status IN ('pending','delivered') AND b.expires_at>{self.ph} ORDER BY CASE b.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,b.created_at LIMIT {self.ph}",(agent_id,now,max(1,min(int(limit),500)))).fetchall();return [dict(r) for r in rows]
+    rows=s.execute(f"SELECT d.delivery_id,d.broadcast_id,d.instance_id,d.attempts,b.message,b.priority,b.ttl_seconds,b.require_ack,b.expires_at FROM broadcast_deliveries d JOIN broadcasts b ON b.broadcast_id=d.broadcast_id WHERE d.agent_id={self.ph} AND b.expires_at>{self.ph} AND d.attempts<{self.ph} AND (d.status='pending' OR d.status='failed' OR (d.status='delivered' AND b.require_ack=1)) ORDER BY CASE b.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,b.created_at LIMIT {self.ph}",(agent_id,now,MAX_BROADCAST_ATTEMPTS,max(1,min(int(limit),500)))).fetchall();return [dict(r) for r in rows]
+   finally:s.close()
+ def _refresh_status(self,broadcast_id):
+  with self.backend.transaction() as c:
+   s=AlertSession(self.backend,c)
+   try:
+    b=s.execute(f"SELECT require_ack,expires_at FROM broadcasts WHERE broadcast_id={self.ph}",(broadcast_id,)).fetchone()
+    if not b:return
+    rows=[dict(r) for r in s.execute(f"SELECT status,attempts FROM broadcast_deliveries WHERE broadcast_id={self.ph}",(broadcast_id,)).fetchall()]
+    if not rows:status="completed"
+    elif str(dict(b).get("expires_at") or "")<=utc_now():status="expired"
+    else:
+     require_ack=bool(dict(b).get("require_ack"));success={"acknowledged"} if require_ack else {"delivered","acknowledged"}
+     terminal=lambda r:r["status"] in success or r["status"]=="expired" or (r["status"]=="failed" and int(r.get("attempts") or 0)>=MAX_BROADCAST_ATTEMPTS)
+     if all(terminal(r) for r in rows):status="failed" if any(r["status"]=="failed" for r in rows) else "completed"
+     else:status="pending"
+    s.execute(f"UPDATE broadcasts SET status={self.ph} WHERE broadcast_id={self.ph}",(status,broadcast_id))
    finally:s.close()
  def record_broadcast_state(self,agent_id,reports):
-  accepted=0;now=utc_now()
+  accepted=0;now=utc_now();affected=set()
   with self.backend.transaction() as c:
    s=AlertSession(self.backend,c)
    try:
@@ -102,10 +130,10 @@ class AutomationRepository:
      if not did or status not in {"delivered","acknowledged","failed"}:continue
      row=s.execute(f"SELECT delivery_id,broadcast_id FROM broadcast_deliveries WHERE delivery_id={self.ph} AND agent_id={self.ph}",(did,agent_id)).fetchone()
      if not row:continue
-     delivered=raw.get("delivered_at") or (now if status in {"delivered","acknowledged"} else None);ack=raw.get("acknowledged_at") or (now if status=="acknowledged" else None)
-     s.execute(f"UPDATE broadcast_deliveries SET status={self.ph},attempts=attempts+1,delivered_at=COALESCE(delivered_at,{self.ph}),acknowledged_at=COALESCE(acknowledged_at,{self.ph}),last_error={self.ph},updated_at={self.ph} WHERE delivery_id={self.ph}",(status,delivered,ack,raw.get("last_error"),now,did));accepted+=1
-    s.execute("UPDATE broadcasts SET status='completed' WHERE status!='completed' AND NOT EXISTS (SELECT 1 FROM broadcast_deliveries d WHERE d.broadcast_id=broadcasts.broadcast_id AND d.status NOT IN ('acknowledged','failed'))")
+     bid=str(dict(row)["broadcast_id"]);delivered=raw.get("delivered_at") or (now if status in {"delivered","acknowledged"} else None);ack=raw.get("acknowledged_at") or (now if status=="acknowledged" else None)
+     s.execute(f"UPDATE broadcast_deliveries SET status={self.ph},attempts=attempts+1,delivered_at=COALESCE(delivered_at,{self.ph}),acknowledged_at=COALESCE(acknowledged_at,{self.ph}),last_error={self.ph},updated_at={self.ph} WHERE delivery_id={self.ph}",(status,delivered,ack,raw.get("last_error"),now,did));accepted+=1;affected.add(bid)
    finally:s.close()
+  for bid in affected:self._refresh_status(bid)
   return accepted
  def create_run(self,*,rule_id=None,trigger_type="manual",trigger_ref=None,context=None,requested_by=None,status="completed",result=None):
   rid=str(uuid.uuid4());now=utc_now();payload=json.dumps(context or {},sort_keys=True,separators=(",",":"));out=json.dumps(result or {},sort_keys=True,separators=(",",":"))
@@ -114,4 +142,20 @@ class AutomationRepository:
    try:s.execute(f"INSERT INTO automation_runs(run_id,rule_id,trigger_type,trigger_ref,status,context_json,result_json,requested_by,started_at,completed_at,created_at,updated_at) VALUES ({','.join([self.ph]*12)})",(rid,rule_id,trigger_type,trigger_ref,status,payload,out,requested_by,now,now,now,now))
    finally:s.close()
   return rid
-__all__=["AutomationRepository"]
+ def list_runs(self,*,rule_id=None,limit=500):
+  params=[];where=""
+  if rule_id:where=f" WHERE rule_id={self.ph}";params.append(rule_id)
+  params.append(max(1,min(int(limit),2000)))
+  with self.backend.connect() as c:
+   s=AlertSession(self.backend,c)
+   try:
+    out=[]
+    for row in s.execute(f"SELECT * FROM automation_runs{where} ORDER BY created_at DESC LIMIT {self.ph}",tuple(params)).fetchall():
+     v=dict(row)
+     for col,name in (("context_json","context"),("result_json","result")):
+      try:v[name]=json.loads(v.pop(col) or "{}")
+      except Exception:v[name]={}
+     out.append(v)
+    return out
+   finally:s.close()
+__all__=["AutomationRepository","MAX_BROADCAST_ATTEMPTS"]
