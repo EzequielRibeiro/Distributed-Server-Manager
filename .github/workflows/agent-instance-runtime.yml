@@ -70,6 +70,8 @@ jobs:
             agents/linux/runtime/provisioning_state.py \
             agents/linux/runtime/provisioning_client.py \
             agents/linux/runtime/provisioning_executor.py \
+            agents/linux/runtime/privileged_materialization.py \
+            agents/linux/privileged/materialize_instance.py \
             agents/linux/runtime/adapters/__init__.py \
             agents/linux/runtime/adapters/base.py \
             agents/linux/runtime/adapters/registry.py \
@@ -123,7 +125,12 @@ jobs:
           grep -F 'content_preserved_for_retry' agents/linux/runtime/provisioning_executor.py
           grep -F 'port_reservations_preserved' agents/linux/runtime/provisioning_executor.py
           grep -F 'INSTANCE_PROVISIONING_COMPLETED' agents/linux/runtime/provisioning_executor.py
-          ! grep -F 'shell=True' agents/linux/runtime/provisioning_contract.py agents/linux/runtime/provisioning_executor.py
+          grep -F 'capivara-agent-materialize@' agents/linux/policy/49-capivara-agent-instance-units.rules
+          grep -F 'User=root' agents/linux/services/capivara-agent-materialize@.service
+          grep -F 'ReadWritePaths=/etc/systemd/system /var/lib/capivara-agent/privileged-materialization' agents/linux/services/capivara-agent-materialize@.service
+          grep -F 'User=capivara-agent' agents/linux/services/capivara-agent.service
+          ! grep -F 'User=root' agents/linux/services/capivara-agent.service
+          ! grep -F 'shell=True' agents/linux/runtime/provisioning_contract.py agents/linux/runtime/provisioning_executor.py agents/linux/runtime/privileged_materialization.py agents/linux/privileged/materialize_instance.py
       - name: Check migration parity
         run: |
           for directory in migrations migrations_mysql migrations_postgresql; do
