@@ -52,6 +52,7 @@ git -C "${ROOT}" show "${REF}:agents/linux/runtime/instance_runtime.py" >"${PACK
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/runtime_spec.py" >"${PACKAGE_ROOT}/agent/runtime/runtime_spec.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/runtime_events.py" >"${PACKAGE_ROOT}/agent/runtime/runtime_events.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/runtime_materialization.py" >"${PACKAGE_ROOT}/agent/runtime/runtime_materialization.py"
+git -C "${ROOT}" show "${REF}:agents/linux/runtime/runtime_reconciler.py" >"${PACKAGE_ROOT}/agent/runtime/runtime_reconciler.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/game_runtime.py" >"${PACKAGE_ROOT}/agent/runtime/game_runtime.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/provisioning_contract.py" >"${PACKAGE_ROOT}/agent/runtime/provisioning_contract.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/provisioning_state.py" >"${PACKAGE_ROOT}/agent/runtime/provisioning_state.py"
@@ -99,6 +100,7 @@ required = [
     "agent/runtime/runtime_spec.py",
     "agent/runtime/runtime_events.py",
     "agent/runtime/runtime_materialization.py",
+    "agent/runtime/runtime_reconciler.py",
     "agent/runtime/game_runtime.py",
     "agent/runtime/provisioning_contract.py",
     "agent/runtime/provisioning_state.py",
