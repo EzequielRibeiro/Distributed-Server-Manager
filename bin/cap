@@ -85,7 +85,7 @@ Controller / Hybrid:
   cap user ...
   cap catalog ...
   cap database|db ...
-  cap instance ...
+  cap instance <comandos administrativos> ...
   cap operations|ops ...
 EOF
     fi
@@ -111,6 +111,9 @@ Agent local / Hybrid:
   cap agent update check [--channel stable|beta] [--json]
   cap agent logs [--lines N] [--json]
   cap agent doctor [--json]
+  cap instance list [--json]
+  cap instance status <instance> [--json]
+  cap instance doctor <instance> [--json]
   cap server|monitor|mods|backup|runtime|steam|game|content|compatibility ...
   cap start|stop|restart|status ...
 EOF
@@ -207,7 +210,20 @@ case "${1:-}" in
         esac
         ;;
 
-    user|catalog|database|db|instance|operations|ops)
+    instance)
+        case "${2:-}" in
+            list|status|doctor)
+                require_role "cap instance ${2}" agent hybrid
+                agent_local_exec "$@"
+                ;;
+            *)
+                require_role "cap instance" controller hybrid
+                legacy_exec "$@"
+                ;;
+        esac
+        ;;
+
+    user|catalog|database|db|operations|ops)
         require_role "cap ${1}" controller hybrid
         legacy_exec "$@"
         ;;

@@ -152,6 +152,7 @@ def _validate_python(package_root: Path) -> None:
         runtime / "game_data_client.py",
         runtime / "game_data_executor.py",
         runtime / "game_data_state.py",
+        runtime / "instance_runtime.py",
         package_root / "agent" / "common" / "identity.py",
         package_root / "agent" / "updater" / "updater.py",
     ]
@@ -179,6 +180,7 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
         (runtime / "game_data_client.py", INSTALL_ROOT / "runtime" / "game_data_client.py", 0o644, "agent/runtime/game_data_client.py"),
         (runtime / "game_data_executor.py", INSTALL_ROOT / "runtime" / "game_data_executor.py", 0o755, "agent/runtime/game_data_executor.py"),
         (runtime / "game_data_state.py", INSTALL_ROOT / "runtime" / "game_data_state.py", 0o644, "agent/runtime/game_data_state.py"),
+        (runtime / "instance_runtime.py", INSTALL_ROOT / "runtime" / "instance_runtime.py", 0o644, "agent/runtime/instance_runtime.py"),
         (common / "identity.py", INSTALL_ROOT / "common" / "identity.py", 0o644, "agent/common/identity.py"),
         (package_root / "agent" / "updater" / "updater.py", INSTALL_ROOT / "updater" / "updater.py", 0o755, "agent/updater/updater.py"),
         (package_root / "manifest.json", INSTALL_ROOT / "manifest.json", 0o644, "manifest.json"),

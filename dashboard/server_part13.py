@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 18/19 integration: Agent update administration and Windows bootstrap."""
+"""Phase 18/19 integration: Agent administration and runtime orchestration."""
 
 from __future__ import annotations
 
@@ -13,6 +13,11 @@ from agent_game_data_http import (
     LEGACY_ENVIRONMENT_INSTALL_PATH,
     dispatch_agent_game_data_get,
     dispatch_agent_game_data_post,
+)
+from agent_instance_runtime_http import (
+    INSTANCE_RUNTIME_PATH,
+    dispatch_instance_runtime_get,
+    dispatch_instance_runtime_post,
 )
 from agent_update_http import (
     CHANNEL_PATH,
@@ -77,12 +82,15 @@ def integrated_get(self):
         user = _user(self)
         if user is None:
             return
-        status, body = dispatch_agent_game_data_get(
-            parsed.path,
-            parsed.query,
-            user=user,
-            backend=_backend(),
-        )
+        status, body = dispatch_agent_game_data_get(parsed.path, parsed.query, user=user, backend=_backend())
+        self.send_json(status, body)
+        return
+
+    if parsed.path == INSTANCE_RUNTIME_PATH:
+        user = _user(self)
+        if user is None:
+            return
+        status, body = dispatch_instance_runtime_get(parsed.path, parsed.query, user=user, backend=_backend())
         self.send_json(status, body)
         return
 
@@ -126,13 +134,20 @@ def integrated_post(self):
         except ValueError:
             self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
             return
-        status, body = dispatch_agent_game_data_post(
-            parsed.path,
-            payload,
-            user=user,
-            backend=_backend(),
-            root=ROOT_DIR,
-        )
+        status, body = dispatch_agent_game_data_post(parsed.path, payload, user=user, backend=_backend(), root=ROOT_DIR)
+        self.send_json(status, body)
+        return
+
+    if parsed.path == INSTANCE_RUNTIME_PATH:
+        user = _user(self)
+        if user is None:
+            return
+        try:
+            payload = self.read_json_body()
+        except ValueError:
+            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
+            return
+        status, body = dispatch_instance_runtime_post(parsed.path, payload, user=user, backend=_backend())
         self.send_json(status, body)
         return
 
@@ -145,13 +160,7 @@ def integrated_post(self):
         except ValueError:
             self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
             return
-        status, body = dispatch_infrastructure_role_post(
-            parsed.path,
-            payload,
-            user=user,
-            backend=_backend(),
-            root=ROOT_DIR,
-        )
+        status, body = dispatch_infrastructure_role_post(parsed.path, payload, user=user, backend=_backend(), root=ROOT_DIR)
         self.send_json(status, body)
         return
     if parsed.path not in {ROLLOUT_PATH, CHANNEL_PATH}:
@@ -164,12 +173,7 @@ def integrated_post(self):
     except ValueError:
         self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
         return
-    status, body = dispatch_update_post(
-        parsed.path,
-        payload,
-        user=user,
-        backend=_backend(),
-    )
+    status, body = dispatch_update_post(parsed.path, payload, user=user, backend=_backend())
     self.send_json(status, body)
 
 

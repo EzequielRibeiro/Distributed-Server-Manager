@@ -1,0 +1,69 @@
+name: Agent Instance Runtime
+
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/**'
+      - 'database/agent_instance_runtime_repository.py'
+      - 'database/migrations/**'
+      - 'database/migrations_mysql/**'
+      - 'database/migrations_postgresql/**'
+      - 'dashboard/agent_instance_runtime_*.py'
+      - 'dashboard/agent_remote_http.py'
+      - 'dashboard/server_part13.py'
+      - 'bin/cap'
+      - 'release/build_agent_package.sh'
+      - 'tests/agent_instance_runtime_test.py'
+      - '.github/workflows/agent-instance-runtime.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/linux/**'
+      - 'database/agent_instance_runtime_repository.py'
+      - 'database/migrations/**'
+      - 'database/migrations_mysql/**'
+      - 'database/migrations_postgresql/**'
+      - 'dashboard/agent_instance_runtime_*.py'
+      - 'dashboard/agent_remote_http.py'
+      - 'dashboard/server_part13.py'
+      - 'bin/cap'
+      - 'release/build_agent_package.sh'
+      - 'tests/agent_instance_runtime_test.py'
+      - '.github/workflows/agent-instance-runtime.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate syntax
+        run: |
+          bash -n bin/cap
+          bash -n agents/linux/installer/install-agent.sh
+          bash -n release/build_agent_package.sh
+          python3 -m py_compile \
+            agents/linux/runtime/agent.py \
+            agents/linux/runtime/local_cli.py \
+            agents/linux/runtime/instance_runtime.py \
+            agents/linux/updater/updater.py \
+            database/agent_instance_runtime_repository.py \
+            dashboard/agent_instance_runtime_api.py \
+            dashboard/agent_instance_runtime_http.py \
+            dashboard/agent_remote_http.py \
+            dashboard/server_part13.py \
+            tests/agent_instance_runtime_test.py
+      - name: Run instance runtime tests
+        run: python3 -m unittest tests/agent_instance_runtime_test.py
+      - name: Check migration parity
+        run: |
+          for directory in migrations migrations_mysql migrations_postgresql; do
+            test -f "database/${directory}/027_agent_instance_runtime_commands.sql"
+          done
+      - name: Validate Agent package
+        run: bash tests/agent_package_test.sh

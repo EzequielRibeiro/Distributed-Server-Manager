@@ -23,6 +23,9 @@ if str(RUNTIME_DIR) not in sys.path:
 
 from capabilities import detect_capabilities
 from game_data_state import get_game_data, get_job, list_game_data, list_jobs, summary as game_data_summary
+from instance_runtime import doctor as instance_doctor
+from instance_runtime import list_instances as local_instances
+from instance_runtime import status as instance_status
 from network_inventory import collect_network_inventory
 from update_state import history as update_history, status as update_status
 
@@ -396,6 +399,15 @@ def _parser() -> argparse.ArgumentParser:
     logs = sub.add_parser("logs")
     logs.add_argument("--lines", type=int, default=200)
     logs.add_argument("--json", action="store_true", dest="as_json")
+
+    instance = sub.add_parser("instance")
+    instance_sub = instance.add_subparsers(dest="instance_action", required=True)
+    instance_list = instance_sub.add_parser("list")
+    instance_list.add_argument("--json", action="store_true", dest="as_json")
+    for name in ("status", "doctor"):
+        item = instance_sub.add_parser(name)
+        item.add_argument("instance_id")
+        item.add_argument("--json", action="store_true", dest="as_json")
     return parser
 
 
@@ -455,15 +467,27 @@ def main(argv: list[str] | None = None) -> int:
             payload = _logs(args.lines)
         elif args.command == "doctor":
             payload = _doctor(config)
+        elif args.command == "instance":
+            if args.instance_action == "list":
+                payload = {"instances": local_instances(config)}
+            elif args.instance_action == "status":
+                payload = instance_status(config, args.instance_id)
+            else:
+                payload = instance_doctor(config, args.instance_id)
         else:
             raise RuntimeError("unsupported command")
         _emit(payload, as_json=bool(getattr(args, "as_json", False)))
         if args.command == "doctor" and payload.get("status") == "critical":
             return 1
+        if args.command == "instance" and args.instance_action == "doctor" and payload.get("status") == "critical":
+            return 1
         return 0
     except LookupError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    except PermissionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 3
     except (RuntimeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
