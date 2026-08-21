@@ -33,25 +33,19 @@ instance_runtime.clear_result("cmd-start");assert instance_runtime.read_result()
   with tempfile.TemporaryDirectory() as state:
    r=self._run('''
 from pathlib import Path
-import instance_runtime,runtime_reconciler,runtime_materialization
+import instance_runtime,runtime_reconciler
 from configuration_client import apply_configuration_commands,configuration_state
 from backup_client import apply_backup_commands
 import broadcast_client
 from runtime_events import emit_runtime_event,read_runtime_events,acknowledge_runtime_events
-class FakeAdapter:
- name="fake"
- def status(self,i):return {"available":True,"active_state":"inactive"}
- def start(self,i):return {"state":{"available":True,"active_state":"active"}}
- def stop(self,i):return {"state":{"available":True,"active_state":"inactive"}}
- def restart(self,i):return self.start(i)
- def doctor(self,i):return {"ready":True,"findings":[]}
+class BroadcastAdapter:
+ name="broadcast-test"
  def broadcast(self,i,message,priority="normal"):return {"message":message,"priority":priority}
-fake=FakeAdapter();instance_runtime.resolve_adapter=lambda record:fake;runtime_reconciler.resolve_adapter=lambda record:fake;runtime_materialization.resolve_adapter=lambda record:fake;broadcast_client.resolve_adapter=lambda record:fake
-config={"agent_id":"win-agent-one"};root=Path(instance_runtime.STATE_DIR)/"instance-workspaces"/"srv-one";root.mkdir(parents=True);(root/"server.txt").write_text("ok")
-instance_runtime.register_instance({"instance_id":"srv-one","agent_id":"win-agent-one","runtime_id":"svc","adapter":"fake","path":str(root),"desired_state":"stopped","observed_state":"stopped"})
+config={"agent_id":"win-agent-one"};root=Path(instance_runtime.STATE_DIR)/"instance-workspaces"/"srv-one";root.mkdir(parents=True);exe=root/"server.exe";exe.write_bytes(b"test");(root/"server.txt").write_text("ok")
+instance_runtime.register_instance({"instance_id":"srv-one","agent_id":"win-agent-one","runtime_id":"srv-one","adapter":"windows-process","path":str(root),"working_directory":str(root),"executable":str(exe),"arguments":[],"environment":{},"desired_state":"stopped","observed_state":"stopped"})
 apply_configuration_commands([{"target_type":"instance","target_id":"srv-one","namespace":"server","revision":"1","checksum":"abc","value":{"slots":10}}]);assert configuration_state()[0]["status"]=="applied"
 backup=apply_backup_commands(config,[{"command_id":"backup-1","instance_id":"srv-one","action":"create","policy":{"mode":"full","consistency":"live","compression":"gzip","retention_count":2}}])[0];assert backup["status"]=="completed" and Path(backup["artifact_path"]).is_file()
-bcast=broadcast_client.apply_broadcast_commands(config,[{"delivery_id":"delivery-1","broadcast_id":"m1","instance_id":"srv-one","message":"maintenance"}])[0];assert bcast["status"]=="acknowledged"
+broadcast_client.resolve_adapter=lambda record:BroadcastAdapter();bcast=broadcast_client.apply_broadcast_commands(config,[{"delivery_id":"delivery-1","broadcast_id":"m1","instance_id":"srv-one","message":"maintenance"}])[0];assert bcast["status"]=="acknowledged"
 rec=runtime_reconciler.reconcile_all(config,force=True)[0];assert rec["status"]=="healthy",rec
 e=emit_runtime_event(Path(instance_runtime.STATE_DIR),"TEST",agent_id="win-agent-one",instance_id="srv-one");events=read_runtime_events(Path(instance_runtime.STATE_DIR));assert e["event_id"] in {x["event_id"] for x in events};acknowledge_runtime_events(Path(instance_runtime.STATE_DIR),[e["event_id"]]);assert e["event_id"] not in {x["event_id"] for x in read_runtime_events(Path(instance_runtime.STATE_DIR))}
 ''',state_dir=state);self.assertEqual(r.returncode,0,r.stderr)
