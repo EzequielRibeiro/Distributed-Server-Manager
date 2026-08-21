@@ -1,0 +1,67 @@
+name: Agent Instance Provisioning
+
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/**'
+      - 'database/agent_instance_provisioning_repository.py'
+      - 'database/migrations/**'
+      - 'database/migrations_mysql/**'
+      - 'database/migrations_postgresql/**'
+      - 'dashboard/agent_instance_provisioning_*.py'
+      - 'dashboard/agent_remote_http.py'
+      - 'dashboard/server_part13.py'
+      - 'release/build_agent_package.sh'
+      - 'tests/agent_instance_provisioning_test.py'
+      - '.github/workflows/agent-instance-provisioning.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/linux/**'
+      - 'database/agent_instance_provisioning_repository.py'
+      - 'database/migrations/**'
+      - 'database/migrations_mysql/**'
+      - 'database/migrations_postgresql/**'
+      - 'dashboard/agent_instance_provisioning_*.py'
+      - 'dashboard/agent_remote_http.py'
+      - 'dashboard/server_part13.py'
+      - 'release/build_agent_package.sh'
+      - 'tests/agent_instance_provisioning_test.py'
+      - '.github/workflows/agent-instance-provisioning.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate syntax
+        run: |
+          bash -n agents/linux/installer/install-agent.sh
+          bash -n release/build_agent_package.sh
+          python3 -m py_compile \
+            agents/linux/runtime/agent.py \
+            agents/linux/runtime/instance_runtime.py \
+            agents/linux/runtime/instance_provisioning_client.py \
+            agents/linux/provisioner/instance_provisioner.py \
+            agents/linux/updater/updater.py \
+            database/agent_instance_provisioning_repository.py \
+            dashboard/agent_instance_provisioning_api.py \
+            dashboard/agent_instance_provisioning_http.py \
+            dashboard/agent_remote_http.py \
+            dashboard/server_part13.py \
+            tests/agent_instance_provisioning_test.py
+      - name: Run instance provisioning tests
+        run: python3 -m unittest tests/agent_instance_provisioning_test.py
+      - name: Check migration parity
+        run: |
+          for directory in migrations migrations_mysql migrations_postgresql; do
+            test -f "database/${directory}/029_agent_instance_provisioning.sql"
+          done
+      - name: Validate Agent package
+        run: bash tests/agent_package_test.sh
