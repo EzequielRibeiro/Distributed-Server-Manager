@@ -190,6 +190,7 @@ Clientes:
 Contratos:
 
  dsm contract create --customer <cliente-id> --game <game-id> [--instances N] [--id <contrato-id>]
+ dsm contract delete --contract <contrato-id> --admin <usuario-admin> --yes
 
 Games:
 
@@ -237,6 +238,7 @@ Operação:
 Instâncias:
 
  dsm instance create --customer <cliente-id> --contract <contrato-id> --game <game-id> --agent <agent-id|endereco>
+ dsm instance delete --instance <instance-id> --admin <usuario-admin> --yes
  dsm instance create-aurora   Cria Controlador, Agente, Cliente e Servidor Aurora
  dsm instance purge-orphan <id>
                               Remove somente cadastro órfão sem diretório local
@@ -247,6 +249,8 @@ Example:
  dsm customer create --id CLIENTE-001 --name "Cliente" --username cliente
  dsm contract create --customer CLIENTE-001 --game dayz --instances 1
  dsm instance create --customer CLIENTE-001 --contract CONTRACT-DAYZ-001 --game dayz --agent 192.168.15.45
+ dsm instance delete --instance cliente-001-dayz-001 --admin administrador --yes
+ dsm contract delete --contract CONTRACT-DAYZ-001 --admin administrador --yes
 
 ============================================================
 
@@ -582,7 +586,7 @@ contract_command()
 instance_command()
 {
     case "${1:-}" in
-        create)
+        create|delete)
             exec python3 "${DSM_ROOT}/database/instance_admin_cli.py" "$@"
             ;;
         bootstrap|bootstrap-status)
