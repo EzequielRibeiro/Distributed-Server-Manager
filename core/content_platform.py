@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib,json,re
 from typing import Any,Mapping
 _TOKEN=re.compile(r"^[A-Za-z0-9._:-]{1,191}$")
-_TYPES={"mod","plugin","modpack","map","asset","workshop","other"};_STATES={"installed","absent"};_PROVIDERS={"steam","http","http-archive","github","local","custom","source-build"}
+_TYPES={"mod","plugin","modpack","map","asset","workshop","other"};_STATES={"installed","absent"};_PROVIDERS={"steam","http","http-archive","github","modrinth","local","custom","source-build"}
 class ContentValidationError(ValueError):pass
 def _j(v:Any)->str:return json.dumps(v,sort_keys=True,separators=(",",":"),ensure_ascii=False)
 def _token(v:Any,label:str)->str:
