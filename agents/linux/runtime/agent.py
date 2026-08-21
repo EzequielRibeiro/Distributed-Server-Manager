@@ -21,6 +21,11 @@ if str(RUNTIME_DIR) not in sys.path:
 
 from capabilities import detect_capabilities
 from game_data_client import clear_game_data_result, read_game_data_result, stage_game_data_command
+from instance_provisioning_client import (
+    clear_instance_provisioning_result,
+    read_instance_provisioning_result,
+    stage_instance_provisioning_command,
+)
 from instance_runtime import clear_result as clear_instance_result
 from instance_runtime import handle_command as handle_instance_command
 from instance_runtime import inventory as instance_inventory
@@ -100,6 +105,9 @@ def _inventory(config: dict[str, Any]) -> dict[str, Any]:
     game_data_result = read_game_data_result()
     if game_data_result:
         payload["game_data_result"] = game_data_result
+    provisioning_result = read_instance_provisioning_result()
+    if provisioning_result:
+        payload["instance_provisioning_result"] = provisioning_result
     instance_result = read_instance_result()
     if instance_result:
         payload["instance_result"] = instance_result
@@ -147,21 +155,26 @@ def heartbeat(config: dict[str, Any]) -> dict[str, Any]:
         },
     )
     if result.get("update") and stage_update_request(dict(result["update"])):
-        print(
-            f"update staged version={result['update'].get('desired_version')} rollout={result['update'].get('rollout_id')}",
-            flush=True,
-        )
+        print(f"update staged version={result['update'].get('desired_version')} rollout={result['update'].get('rollout_id')}", flush=True)
     if result.get("update_state", {}).get("update_status") == "completed":
         clear_update_result()
+
     command = result.get("game_data_command")
     if isinstance(command, dict) and stage_game_data_command(command):
-        print(
-            f"game-data staged job={command.get('job_id')} environment={command.get('environment_id')}",
-            flush=True,
-        )
+        print(f"game-data staged job={command.get('job_id')} environment={command.get('environment_id')}", flush=True)
     state = result.get("game_data_state") if isinstance(result.get("game_data_state"), dict) else {}
     if str(state.get("status") or "").lower() in {"completed", "failed"} and state.get("job_id"):
         clear_game_data_result(str(state["job_id"]))
+
+    provisioning_command = result.get("instance_provisioning_command")
+    if isinstance(provisioning_command, dict) and stage_instance_provisioning_command(config, provisioning_command):
+        print(
+            f"instance provisioning staged job={provisioning_command.get('job_id')} action={provisioning_command.get('action')} instance={provisioning_command.get('instance_id')}",
+            flush=True,
+        )
+    provisioning_state = result.get("instance_provisioning_state") if isinstance(result.get("instance_provisioning_state"), dict) else {}
+    if str(provisioning_state.get("status") or "").lower() in {"completed", "failed"} and provisioning_state.get("job_id"):
+        clear_instance_provisioning_result(str(provisioning_state["job_id"]))
 
     instance_command = result.get("instance_command")
     if isinstance(instance_command, dict):
@@ -184,10 +197,7 @@ def run_forever() -> None:
     while True:
         try:
             result = heartbeat(config)
-            print(
-                f"heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} status={result.get('status')}",
-                flush=True,
-            )
+            print(f"heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} status={result.get('status')}", flush=True)
         except Exception as exc:
             print(f"heartbeat failed: {exc}", file=sys.stderr, flush=True)
         time.sleep(interval)
