@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "release_line": "2.0",
+  "status": "candidate",
+  "publish_release": false,
+  "required_gates": [
+    "CI",
+    "Agent Instance Runtime",
+    "Agent Game Data",
+    "Agent Local CLI",
+    "Agent SSH Deploy",
+    "CLI Unification",
+    "Universal Event Platform",
+    "Universal Configuration Platform",
+    "Universal Observability Platform",
+    "Universal Content Platform",
+    "Universal Smart Backup",
+    "Automation and Universal Broadcast",
+    "Real-Time API Platform",
+    "Multi-Datacenter Federation",
+    "High Availability and Disaster Recovery",
+    "Capivara 2.0 Release Readiness"
+  ],
+  "mandatory_capabilities": [
+    "multi-game-runtime",
+    "multi-host-placement",
+    "distributed-agent-runtime",
+    "universal-events",
+    "universal-configuration",
+    "universal-observability",
+    "universal-content",
+    "smart-backup",
+    "automation-broadcast",
+    "realtime-api",
+    "multi-datacenter-federation",
+    "high-availability-disaster-recovery"
+  ],
+  "release_invariants": {
+    "game_agnostic_core": true,
+    "active_installation_mutation": false,
+    "automatic_release_publication": false,
+    "database_migration_parity": ["sqlite", "postgresql", "mysql-mariadb"]
+  }
+}
