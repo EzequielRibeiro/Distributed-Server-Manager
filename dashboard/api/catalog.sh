@@ -12,7 +12,13 @@ CATALOG="${DSM_ROOT}/installer/catalog.sh"
 PROVIDER_LOADER="${DSM_ROOT}/installer/provider_loader.sh"
 
 CATALOG_V2_ROOT="${DSM_ROOT}/catalog/v2"
-RUNTIMES_ROOT="${CATALOG_V2_ROOT}/runtimes"
+CATALOG_ROOT="${CATALOG_V2_ROOT}"
+CATALOG_PATHS="${DSM_ROOT}/installer/catalog_paths.sh"
+
+# Runtime paths are shared with installer/catalog.sh so Dashboard discovery,
+# CLI selection and installation always consume the same canonical catalog.
+# shellcheck source=/dev/null
+source "${CATALOG_PATHS}"
 
 ACTION="${1:-list}"
 shift || true
@@ -79,66 +85,14 @@ runtime_file_by_id()
 {
     local RUNTIME_ID="${1:-}"
 
-    if [[ -z "${RUNTIME_ID}" ]]
-    then
-        return 1
-    fi
-
-    local FILE
-
-    while IFS= read -r FILE
-    do
-        if jq -e \
-            --arg id "${RUNTIME_ID}" \
-            '.id == $id' \
-            "${FILE}" \
-            >/dev/null 2>&1
-        then
-            printf '%s\n' "${FILE}"
-            return 0
-        fi
-    done < <(
-        find "${RUNTIMES_ROOT}" \
-            -type f \
-            -name '*.json' \
-            -print 2>/dev/null |
-        sort
-    )
-
-    return 1
+    [[ -n "${RUNTIME_ID}" ]] || return 1
+    catalog_runtime_find "${RUNTIME_ID}"
 }
 
 
 catalog_runtimes()
 {
-    local GAME="${1:-}"
-
-    if [[ -n "${GAME}" ]]
-    then
-        local DIRECTORY="${RUNTIMES_ROOT}/${GAME}"
-
-        if [[ ! -d "${DIRECTORY}" ]]
-        then
-            printf '[]\n'
-            return 0
-        fi
-
-        find "${DIRECTORY}" \
-            -maxdepth 1 \
-            -type f \
-            -name '*.json' \
-            -print0 |
-        sort -z |
-        xargs -0 -r jq -s '.'
-        return
-    fi
-
-    find "${RUNTIMES_ROOT}" \
-        -type f \
-        -name '*.json' \
-        -print0 |
-    sort -z |
-    xargs -0 -r jq -s '.'
+    catalog_runtime_list "${1:-}"
 }
 
 
