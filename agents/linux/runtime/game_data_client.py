@@ -77,16 +77,24 @@ def stage_game_data_command(command: dict[str, Any] | None) -> bool:
             return False
     JOB_ROOT.mkdir(parents=True, exist_ok=True)
     _write_json(request_path, command)
+    _write_json(result_path, {"job_id": job_id, "status": "running", "progress": 0})
     log_handle = open(log_path, "ab", buffering=0)
     try:
-        subprocess.Popen(
-            [sys.executable, str(EXECUTOR), str(request_path), str(result_path)],
-            stdin=subprocess.DEVNULL,
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
-            close_fds=True,
-            start_new_session=True,
-        )
+        try:
+            subprocess.Popen(
+                [sys.executable, str(EXECUTOR), str(request_path), str(result_path)],
+                stdin=subprocess.DEVNULL,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                close_fds=True,
+                start_new_session=True,
+            )
+        except Exception as exc:
+            _write_json(
+                result_path,
+                {"job_id": job_id, "status": "failed", "progress": 100, "error": str(exc)[:2000]},
+            )
+            raise
     finally:
         log_handle.close()
     return True
