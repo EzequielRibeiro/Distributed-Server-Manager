@@ -26,6 +26,11 @@ ENROLL_PATH = "/api/agent/enroll"
 HEARTBEAT_PATH = "/api/agent/heartbeat"
 
 
+def _event_publisher(backend) -> EventPublisher:
+    event_store = EventRepository(backend)
+    return EventPublisher(sink=event_store.store)
+
+
 def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, dict[str, Any]]:
     try:
         result = enroll_remote_agent(backend, payload)
@@ -64,10 +69,9 @@ def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, di
 def _attach_update_state(result: dict[str, Any], body: dict[str, Any], *, agent_id: str, backend) -> None:
     """Best-effort update coordination that must never suppress Agent health."""
     try:
-        event_store = EventRepository(backend)
         updates = AgentUpdateRepository(
             backend,
-            event_publisher=EventPublisher(sink=event_store.store),
+            event_publisher=_event_publisher(backend),
         )
         updates.initialize()
         update_state = updates.reconcile_after_heartbeat(
@@ -91,6 +95,26 @@ def _attach_update_state(result: dict[str, Any], body: dict[str, Any], *, agent_
         result["update_state"] = update_state
     except Exception:
         result["update_state"] = {"update_status": "unavailable"}
+
+
+def _activate_paired_agent(agent_id: str, *, backend) -> str:
+    """Activate a paired Agent while keeping event delivery best-effort.
+
+    Until Phase 21 gains a transactional outbox, the Agent state commit and
+    event insert are separate transactions. If the state reached ``active``
+    but event persistence failed afterwards, do not turn a healthy heartbeat
+    into a 500 response. Other lifecycle/database failures still propagate.
+    """
+    repository = AgentLifecycleRepository(
+        backend,
+        event_publisher=_event_publisher(backend),
+    )
+    try:
+        return repository.transition(agent_id, "active").target
+    except Exception:
+        if AgentLifecycleRepository(backend).status(agent_id) == "active":
+            return "active"
+        raise
 
 
 def _attach_game_data_state(result: dict[str, Any], body: dict[str, Any], *, agent_id: str, backend) -> None:
@@ -124,7 +148,7 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
         result = record_agent_heartbeat(identity["agent_id"], body, backend=backend)
         status = str(identity.get("status", "")).strip().lower()
         if status == "pairing":
-            status = AgentLifecycleRepository(backend).transition(identity["agent_id"], "active").target
+            status = _activate_paired_agent(identity["agent_id"], backend=backend)
         result["status"] = status
         _attach_update_state(result, body, agent_id=identity["agent_id"], backend=backend)
         _attach_game_data_state(result, body, agent_id=identity["agent_id"], backend=backend)
