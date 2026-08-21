@@ -204,5 +204,132 @@ class AdminManagementRepository:
             raise ValueError("agent selector is ambiguous; use the Agent ID")
         return dict(matches[0])
 
+    def begin_instance_delete(self, instance_id: str) -> dict[str, Any]:
+        """Mark one instance for Agent-confirmed removal."""
+        instance_id = self._identifier(instance_id, "instance_id")
+        ph = self.dialect.placeholder
+        with self.session(transaction=True) as session:
+            row = session.execute(
+                "SELECT i.id,i.agent_id,i.customer_id,i.status,ic.contract_id "
+                "FROM instances i LEFT JOIN instance_contracts ic ON ic.instance_id=i.id "
+                f"WHERE i.id={ph}",
+                (instance_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("instance not found")
+            agent = session.execute(
+                f"SELECT status FROM agents WHERE id={ph}", (row["agent_id"],)
+            ).fetchone()
+            if agent is None or str(agent["status"] or "").lower() != "active":
+                raise RuntimeError("owning Agent must be active before deletion can be queued")
+            previous_status = str(row["status"] or "")
+            if previous_status != "deleting":
+                session.execute(
+                    f"UPDATE instances SET status={ph} WHERE id={ph}",
+                    ("deleting", instance_id),
+                )
+        return {
+            "instance_id": instance_id,
+            "agent_id": str(row["agent_id"]),
+            "customer_id": str(row["customer_id"]),
+            "contract_id": None if row["contract_id"] is None else str(row["contract_id"]),
+            "previous_status": previous_status,
+            "status": "deleting",
+        }
+
+    def restore_instance_status(self, instance_id: str, status: str) -> None:
+        ph = self.dialect.placeholder
+        with self.session(transaction=True) as session:
+            session.execute(
+                f"UPDATE instances SET status={ph} WHERE id={ph} AND status={ph}",
+                (status or "offline", instance_id, "deleting"),
+            )
+
+    def begin_contract_delete(self, contract_id: str) -> dict[str, Any]:
+        """Mark a contract and every bound instance for cascading removal."""
+        contract_id = self._identifier(contract_id, "contract_id")
+        ph = self.dialect.placeholder
+        with self.session(transaction=True) as session:
+            contract = session.execute(
+                "SELECT id,customer_id,game_id,status FROM service_contracts "
+                f"WHERE id={ph}",
+                (contract_id,),
+            ).fetchone()
+            if contract is None:
+                raise ValueError("contract not found")
+            rows = session.execute(
+                "SELECT i.id AS instance_id,i.agent_id,i.status AS instance_status,a.status AS agent_status "
+                "FROM instance_contracts ic JOIN instances i ON i.id=ic.instance_id "
+                "LEFT JOIN agents a ON a.id=i.agent_id "
+                f"WHERE ic.contract_id={ph} ORDER BY i.id",
+                (contract_id,),
+            ).fetchall()
+            blocked = [
+                str(row["instance_id"]) for row in rows
+                if str(row["agent_status"] or "").lower() != "active"
+            ]
+            if blocked:
+                raise RuntimeError(
+                    "cannot delete contract while owning Agents are inactive: "
+                    + ", ".join(blocked)
+                )
+            if not rows:
+                session.execute(
+                    f"DELETE FROM service_contracts WHERE id={ph}", (contract_id,)
+                )
+                return {
+                    "contract_id": contract_id,
+                    "customer_id": str(contract["customer_id"]),
+                    "game_id": str(contract["game_id"]),
+                    "status": "deleted",
+                    "instances": [],
+                }
+            session.execute(
+                f"UPDATE service_contracts SET status={ph} WHERE id={ph}",
+                ("deleting", contract_id),
+            )
+            for row in rows:
+                session.execute(
+                    f"UPDATE instances SET status={ph} WHERE id={ph}",
+                    ("deleting", row["instance_id"]),
+                )
+        return {
+            "contract_id": contract_id,
+            "customer_id": str(contract["customer_id"]),
+            "game_id": str(contract["game_id"]),
+            "status": "deleting",
+            "instances": [
+                {
+                    "instance_id": str(row["instance_id"]),
+                    "agent_id": str(row["agent_id"]),
+                    "previous_status": str(row["instance_status"] or "offline"),
+                }
+                for row in rows
+            ],
+        }
+
+    def finalize_contract_if_empty(self, contract_id: str | None) -> bool:
+        if not contract_id:
+            return False
+        contract_id = self._identifier(contract_id, "contract_id")
+        ph = self.dialect.placeholder
+        with self.session(transaction=True) as session:
+            contract = session.execute(
+                f"SELECT status FROM service_contracts WHERE id={ph}",
+                (contract_id,),
+            ).fetchone()
+            if contract is None or str(contract["status"] or "").lower() != "deleting":
+                return False
+            count = session.execute(
+                f"SELECT COUNT(*) AS total FROM instance_contracts WHERE contract_id={ph}",
+                (contract_id,),
+            ).fetchone()
+            if int(count["total"] or 0) != 0:
+                return False
+            session.execute(
+                f"DELETE FROM service_contracts WHERE id={ph}", (contract_id,)
+            )
+        return True
+
 
 __all__ = ["AdminManagementRepository"]
