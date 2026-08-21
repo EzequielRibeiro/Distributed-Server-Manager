@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch Capivara Agent instance provisioning requests
+
+[Path]
+PathChanged=/var/lib/capivara-agent/instance-provisioning/requests
+Unit=capivara-agent-instance-provisioner.service
+
+[Install]
+WantedBy=multi-user.target
