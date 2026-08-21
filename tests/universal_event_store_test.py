@@ -37,6 +37,17 @@ def _repository(tmp_path: Path) -> EventRepository:
 
 def test_repository_persists_and_rehydrates_universal_event(tmp_path):
     repository = _repository(tmp_path)
+    repository.backend.initialize()
+
+    # The original events table intentionally retains its instance_id FK.
+    # Seed a real instance so the universal event test exercises that
+    # compatibility constraint instead of bypassing it.
+    with repository.backend.transaction() as connection:
+        connection.execute(
+            "INSERT INTO instances(id, game_id, name) VALUES (?, ?, ?)",
+            ("instance-1", "test.game", "Test Instance"),
+        )
+
     publisher = EventPublisher(sink=repository.store)
 
     event = publisher.publish(
