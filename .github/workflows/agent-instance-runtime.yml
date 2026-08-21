@@ -50,7 +50,12 @@ jobs:
           python3 -m py_compile \
             agents/linux/runtime/agent.py \
             agents/linux/runtime/local_cli.py \
+            agents/linux/runtime/cap_dispatch.py \
             agents/linux/runtime/instance_runtime.py \
+            agents/linux/runtime/adapters/__init__.py \
+            agents/linux/runtime/adapters/base.py \
+            agents/linux/runtime/adapters/registry.py \
+            agents/linux/runtime/adapters/systemd.py \
             agents/linux/updater/updater.py \
             database/agent_instance_runtime_repository.py \
             dashboard/agent_instance_runtime_api.py \
@@ -60,10 +65,16 @@ jobs:
             tests/agent_instance_runtime_test.py
       - name: Run instance runtime tests
         run: python3 -m unittest tests/agent_instance_runtime_test.py
+      - name: Check lifecycle policy boundary
+        run: |
+          grep -F 'capivara-instance-' agents/linux/policy/49-capivara-agent-instance-units.rules
+          ! grep -F 'ssh.service' agents/linux/policy/49-capivara-agent-instance-units.rules
       - name: Check migration parity
         run: |
           for directory in migrations migrations_mysql migrations_postgresql; do
             test -f "database/${directory}/027_agent_instance_runtime_commands.sql"
+            test -f "database/${directory}/028_agent_instance_lifecycle_actions.sql"
+            grep -F "'restart'" "database/${directory}/028_agent_instance_lifecycle_actions.sql"
           done
       - name: Validate Agent package
         run: bash tests/agent_package_test.sh
