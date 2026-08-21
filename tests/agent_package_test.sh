@@ -20,10 +20,15 @@ python3 -m py_compile \
   "${ROOT}/agents/linux/runtime/runtime_spec.py" \
   "${ROOT}/agents/linux/runtime/runtime_events.py" \
   "${ROOT}/agents/linux/runtime/runtime_materialization.py" \
+  "${ROOT}/agents/linux/runtime/game_runtime.py" \
   "${ROOT}/agents/linux/runtime/materializers/__init__.py" \
   "${ROOT}/agents/linux/runtime/materializers/base.py" \
   "${ROOT}/agents/linux/runtime/materializers/registry.py" \
   "${ROOT}/agents/linux/runtime/materializers/systemd.py" \
+  "${ROOT}/agents/linux/runtime/profiles/__init__.py" \
+  "${ROOT}/agents/linux/runtime/profiles/base.py" \
+  "${ROOT}/agents/linux/runtime/profiles/registry.py" \
+  "${ROOT}/agents/linux/runtime/profiles/dayz.py" \
   "${ROOT}/agents/linux/updater/updater.py"
 
 bash "${BUILDER}" HEAD "${TMP}/one" >/dev/null
@@ -46,9 +51,10 @@ for path in \
   agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py \
   agent/runtime/update_client.py agent/runtime/update_state.py agent/runtime/local_cli.py agent/runtime/cap_dispatch.py \
   agent/runtime/game_data_client.py agent/runtime/game_data_executor.py agent/runtime/game_data_state.py \
-  agent/runtime/instance_runtime.py agent/runtime/runtime_spec.py agent/runtime/runtime_events.py agent/runtime/runtime_materialization.py \
+  agent/runtime/instance_runtime.py agent/runtime/runtime_spec.py agent/runtime/runtime_events.py agent/runtime/runtime_materialization.py agent/runtime/game_runtime.py \
   agent/runtime/adapters/__init__.py agent/runtime/adapters/base.py agent/runtime/adapters/registry.py agent/runtime/adapters/systemd.py \
   agent/runtime/materializers/__init__.py agent/runtime/materializers/base.py agent/runtime/materializers/registry.py agent/runtime/materializers/systemd.py \
+  agent/runtime/profiles/__init__.py agent/runtime/profiles/base.py agent/runtime/profiles/registry.py agent/runtime/profiles/dayz.py \
   agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py \
   services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path \
   config/README.md
@@ -82,10 +88,15 @@ source_map = {
     'agent/runtime/runtime_spec.py': root / 'agents/linux/runtime/runtime_spec.py',
     'agent/runtime/runtime_events.py': root / 'agents/linux/runtime/runtime_events.py',
     'agent/runtime/runtime_materialization.py': root / 'agents/linux/runtime/runtime_materialization.py',
+    'agent/runtime/game_runtime.py': root / 'agents/linux/runtime/game_runtime.py',
     'agent/runtime/materializers/__init__.py': root / 'agents/linux/runtime/materializers/__init__.py',
     'agent/runtime/materializers/base.py': root / 'agents/linux/runtime/materializers/base.py',
     'agent/runtime/materializers/registry.py': root / 'agents/linux/runtime/materializers/registry.py',
     'agent/runtime/materializers/systemd.py': root / 'agents/linux/runtime/materializers/systemd.py',
+    'agent/runtime/profiles/__init__.py': root / 'agents/linux/runtime/profiles/__init__.py',
+    'agent/runtime/profiles/base.py': root / 'agents/linux/runtime/profiles/base.py',
+    'agent/runtime/profiles/registry.py': root / 'agents/linux/runtime/profiles/registry.py',
+    'agent/runtime/profiles/dayz.py': root / 'agents/linux/runtime/profiles/dayz.py',
     'agent/updater/updater.py': root / 'agents/linux/updater/updater.py',
     'services/capivara-agent.service': root / 'agents/linux/services/capivara-agent.service',
     'services/capivara-agent-update.service': root / 'agents/linux/services/capivara-agent-update.service',
@@ -112,6 +123,8 @@ grep -Fq 'runtime/game_data_executor.py' "${INSTALLER}" || fail "installer does 
 grep -Fq 'runtime/game_data_state.py' "${INSTALLER}" || fail "installer does not install game-data state module"
 grep -Fq 'runtime/runtime_materialization.py' "${INSTALLER}" || fail "installer does not install runtime materialization service"
 grep -Fq 'runtime/materializers/systemd.py' "${INSTALLER}" || fail "installer does not install systemd materializer"
+grep -Fq 'runtime/game_runtime.py' "${INSTALLER}" || fail "installer does not install game runtime orchestration"
+grep -Fq 'runtime/profiles/dayz.py' "${INSTALLER}" || fail "installer does not install DayZ runtime profile"
 grep -Fq '/usr/local/bin/cap' "${INSTALLER}" || fail "installer does not expose the cap command"
 
 echo "Agent package tests passed."
