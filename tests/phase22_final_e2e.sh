@@ -46,4 +46,10 @@ run_py "Reinstall / restore / orphan / topology reconciliation" \
 run_py "Customer contract / Create DayZ / ports / provision / progress / Controller restart / HTTP regression" \
     tests/phase22_customer_dayz_regression_test.py
 
+run_py "Admin-only instance and cascading contract deletion" \
+    tests/admin_destructive_cli_test.py
+
+run_py "Agent-confirmed runtime removal" \
+    tests/agent_instance_remove_test.py
+
 printf '\n===== PHASE 22 FINAL E2E: PASS =====\n'
