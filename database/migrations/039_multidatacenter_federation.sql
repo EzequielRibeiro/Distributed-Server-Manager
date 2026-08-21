@@ -1,0 +1,27 @@
+CREATE TABLE IF NOT EXISTS federation_controllers (
+    controller_id TEXT PRIMARY KEY,
+    region_id TEXT,
+    datacenter_id TEXT,
+    endpoint TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'datacenter',
+    status TEXT NOT NULL DEFAULT 'unknown',
+    priority INTEGER NOT NULL DEFAULT 100,
+    capabilities_json TEXT NOT NULL DEFAULT '{}',
+    last_seen_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_federation_controllers_location ON federation_controllers(region_id, datacenter_id, status);
+CREATE TABLE IF NOT EXISTS federation_credentials (credential_id TEXT PRIMARY KEY,controller_id TEXT NOT NULL,token_prefix TEXT NOT NULL UNIQUE,secret_hash TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',expires_at TEXT,last_used_at TEXT,created_at TEXT NOT NULL,revoked_at TEXT,FOREIGN KEY(controller_id) REFERENCES federation_controllers(controller_id) ON DELETE CASCADE);
+CREATE INDEX IF NOT EXISTS idx_federation_credentials_controller ON federation_credentials(controller_id,status);
+CREATE TABLE IF NOT EXISTS federation_request_nonces (controller_id TEXT NOT NULL,nonce TEXT NOT NULL,request_timestamp TEXT NOT NULL,received_at TEXT NOT NULL,PRIMARY KEY(controller_id,nonce),FOREIGN KEY(controller_id) REFERENCES federation_controllers(controller_id) ON DELETE CASCADE);
+CREATE INDEX IF NOT EXISTS idx_federation_request_nonces_received ON federation_request_nonces(received_at);
+CREATE TABLE IF NOT EXISTS federation_snapshots (snapshot_id TEXT PRIMARY KEY,controller_id TEXT NOT NULL,generated_at TEXT NOT NULL,sequence INTEGER NOT NULL,checksum TEXT NOT NULL,payload_json TEXT NOT NULL,received_at TEXT NOT NULL,UNIQUE(controller_id,sequence),FOREIGN KEY(controller_id) REFERENCES federation_controllers(controller_id) ON DELETE CASCADE);
+CREATE INDEX IF NOT EXISTS idx_federation_snapshots_controller ON federation_snapshots(controller_id,sequence DESC);
+CREATE TABLE IF NOT EXISTS federation_routes (route_id TEXT PRIMARY KEY,scope_type TEXT NOT NULL,scope_id TEXT NOT NULL,controller_id TEXT NOT NULL,priority INTEGER NOT NULL DEFAULT 100,enabled INTEGER NOT NULL DEFAULT 1,metadata_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(scope_type,scope_id,controller_id),FOREIGN KEY(controller_id) REFERENCES federation_controllers(controller_id) ON DELETE CASCADE);
+CREATE INDEX IF NOT EXISTS idx_federation_routes_scope ON federation_routes(scope_type,scope_id,enabled,priority);
+CREATE TABLE IF NOT EXISTS federation_event_cursors (controller_id TEXT PRIMARY KEY,last_sequence INTEGER NOT NULL DEFAULT -1,last_event_id TEXT,updated_at TEXT NOT NULL,FOREIGN KEY(controller_id) REFERENCES federation_controllers(controller_id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS federation_event_receipts (controller_id TEXT NOT NULL,event_id TEXT NOT NULL,checksum TEXT NOT NULL,received_at TEXT NOT NULL,PRIMARY KEY(controller_id,event_id),FOREIGN KEY(controller_id) REFERENCES federation_controllers(controller_id) ON DELETE CASCADE);
+CREATE INDEX IF NOT EXISTS idx_federation_event_receipts_time ON federation_event_receipts(received_at);
+CREATE TABLE IF NOT EXISTS federation_handoffs (handoff_id TEXT PRIMARY KEY,request_id TEXT NOT NULL UNIQUE,source_controller_id TEXT,target_controller_id TEXT NOT NULL,instance_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',checksum TEXT NOT NULL,payload_json TEXT NOT NULL,result_json TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(target_controller_id) REFERENCES federation_controllers(controller_id) ON DELETE RESTRICT);
+CREATE INDEX IF NOT EXISTS idx_federation_handoffs_target_status ON federation_handoffs(target_controller_id,status,created_at);
