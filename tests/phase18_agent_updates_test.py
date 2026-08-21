@@ -152,6 +152,23 @@ class Phase18AgentUpdatesTest(unittest.TestCase):
         self.assertEqual(verified["update_state"]["installed_version"], "2.0.0")
         self.assertIsNotNone(verified["update_state"]["last_update"])
 
+        with self.backend.connect() as connection:
+            rows = connection.execute(
+                "SELECT event_type, correlation_id FROM events "
+                "WHERE agent_id=? ORDER BY id",
+                ("agent-update-e2e",),
+            ).fetchall()
+
+        event_types = [str(row["event_type"]) for row in rows]
+        self.assertIn("AGENT_UPDATE_STARTED", event_types)
+        self.assertIn("AGENT_UPDATE_COMPLETED", event_types)
+        correlations = {
+            str(row["correlation_id"])
+            for row in rows
+            if row["event_type"] in {"AGENT_UPDATE_STARTED", "AGENT_UPDATE_COMPLETED"}
+        }
+        self.assertEqual(len(correlations), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
