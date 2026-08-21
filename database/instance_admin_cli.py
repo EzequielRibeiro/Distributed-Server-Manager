@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Administrative CLI for distributed instance creation and provisioning."""
+"""Administrative CLI for distributed instance creation, provisioning and deletion."""
 
 from __future__ import annotations
 
@@ -15,8 +15,10 @@ for path in (ROOT, ROOT / "database", ROOT / "dashboard"):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+from admin_cli_auth import require_admin
 from admin_management_repository import AdminManagementRepository
 from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
+from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from agent_runtime_repository import AgentRuntimeRepository
 from dashboard_repository import DashboardRepository
 from placement_errors import PlacementUnavailable
@@ -29,6 +31,7 @@ def build_parser():
     parser = argparse.ArgumentParser(description="Capivara DSM distributed instance administration")
     parser.add_argument("--json", action="store_true", dest="as_json")
     subparsers = parser.add_subparsers(dest="action", required=True)
+
     create = subparsers.add_parser("create")
     create.add_argument("--customer", required=True)
     create.add_argument("--contract", required=True)
@@ -38,6 +41,11 @@ def build_parser():
     create.add_argument("--name")
     create.add_argument("--owner")
     create.add_argument("--desired-state", choices=("running", "stopped"), default="running")
+
+    delete = subparsers.add_parser("delete")
+    delete.add_argument("--instance", required=True)
+    delete.add_argument("--admin", required=True, help="dashboard administrator username")
+    delete.add_argument("--yes", action="store_true", help="confirm destructive deletion")
     return parser
 
 
@@ -137,8 +145,8 @@ def _configuration(definition: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def create_instance(args) -> dict[str, Any]:
-    backend = backend_from_environment()
+def create_instance(args, *, backend=None) -> dict[str, Any]:
+    backend = backend or backend_from_environment()
     backend.initialize()
     admin = AdminManagementRepository(backend)
     admin.initialize()
@@ -173,25 +181,35 @@ def create_instance(args) -> dict[str, Any]:
         raise ValueError("selected Agent has no current OS port inventory")
 
     version = definition.get("version") if isinstance(definition.get("version"), dict) else {}
-    name = str(args.name or "").strip() or f"{game_id}-{customer_id.lower()}"
     owner = _owner(dashboard, customer_id, args.owner)
     instances_root = Path(os.environ.get("DSM_INSTANCES_ROOT", str(ROOT / "instances")))
 
     created = dashboard.create_customer_instance(
-        customer_id,
-        game_id,
-        name,
-        owner,
-        contract_id=str(args.contract).strip(),
-        selected_agent_id=str(placement["agent_id"]),
+        customer_id=customer_id,
+        username=owner,
+        game=game_id,
         runtime_id=runtime_id,
         edition=str(definition.get("edition") or "default"),
-        game_version=str(version.get("value") or definition.get("variant") or "current"),
-        build_id=str(version.get("build") or ""),
+        variant=(None if definition.get("variant") is None else str(definition.get("variant"))),
+        version=str(version.get("value") or definition.get("variant") or "current"),
+        build=str(version.get("build") or ""),
+        contract_id=str(args.contract).strip(),
+        selected_agent_id=str(placement["agent_id"]),
         instances_root=instances_root,
         network_profile=(definition.get("network") if isinstance(definition.get("network"), dict) else None),
         occupied_ports_provider=_remote_occupied_ports(snapshot),
     )
+
+    if args.name:
+        requested_name = str(args.name).strip()
+        if requested_name:
+            with dashboard.session(transaction=True) as session:
+                session.execute(
+                    f"UPDATE instances SET name={dashboard.dialect.placeholder} "
+                    f"WHERE id={dashboard.dialect.placeholder}",
+                    (requested_name, created["instance_id"]),
+                )
+            created["name"] = requested_name
 
     try:
         provisioning = AgentInstanceProvisioningRepository(backend).enqueue(
@@ -225,10 +243,38 @@ def create_instance(args) -> dict[str, Any]:
     }
 
 
+def delete_instance(args, *, backend=None) -> dict[str, Any]:
+    if not args.yes:
+        raise ValueError("instance deletion requires --yes")
+    backend = backend or backend_from_environment()
+    backend.initialize()
+    actor = require_admin(backend, args.admin)
+    repository = AdminManagementRepository(backend)
+    state = repository.begin_instance_delete(args.instance)
+    queue = AgentInstanceRuntimeRepository(backend)
+    queue.initialize()
+    try:
+        command = queue.enqueue(
+            agent_id=state["agent_id"],
+            instance_id=state["instance_id"],
+            action="remove",
+            requested_by=str(actor["username"]),
+        )
+    except Exception:
+        repository.restore_instance_status(state["instance_id"], state["previous_status"])
+        raise
+    return {
+        **state,
+        "requested_by": actor["username"],
+        "command_id": command["command_id"],
+        "command_status": command["status"],
+    }
+
+
 def main() -> int:
     args = build_parser().parse_args()
     try:
-        result = create_instance(args)
+        result = create_instance(args) if args.action == "create" else delete_instance(args)
     except PlacementUnavailable as exc:
         raise SystemExit(f"error: placement unavailable ({exc.reason})") from exc
     except (ValueError, RuntimeError, PermissionError, KeyError) as exc:
@@ -236,13 +282,18 @@ def main() -> int:
 
     if args.as_json:
         print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
-    else:
+    elif args.action == "create":
         print(f"Instance created: {result['instance_id']}")
         print(f"Agent: {result['agent_id']} ({result.get('agent_address') or 'address unavailable'})")
         print(f"Runtime: {result['runtime_id']}")
         print(f"Ports: {result['ports']}")
         print(f"Provisioning queued: {result['provisioning_id']}")
         print(f"Desired state: {result['desired_state']}")
+    else:
+        print(f"Instance deletion started: {result['instance_id']}")
+        print(f"Agent: {result['agent_id']}")
+        print(f"Removal command: {result['command_id']}")
+        print("The database record and port reservations are released after Agent confirmation.")
     return 0
 
 
