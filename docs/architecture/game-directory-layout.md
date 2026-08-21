@@ -69,13 +69,25 @@ Cada arquivo relacionado a jogo deve ser classificado como uma das categorias ab
 
 ## Compatibilidade durante a transição
 
-Nesta primeira etapa, `catalog/v2/runtimes/` e `catalog/v2/content/` permanecem funcionais e continuam sendo lidos pelas APIs atuais. A criação de `catalog/v2/games/` não altera ainda os endpoints nem os caminhos consumidos pelo Dashboard.
+Durante a migração, o catálogo aceita simultaneamente:
 
-Nenhum movimento físico de manifests deve ocorrer antes de:
+```text
+# namespace canônico novo
+catalog/v2/games/<game>/runtimes/<variant>.json
+
+# namespace legado compatível
+catalog/v2/runtimes/<game>/<variant>.json
+```
+
+A resolução de runtimes é centralizada em `installer/catalog_paths.sh`. O namespace novo é consultado primeiro; quando o mesmo `id` existe nos dois layouts, a definição canônica vence. As listagens eliminam duplicações por `id`.
+
+Os comandos `runtime list`, `runtime show` e `runtime prepare` utilizam a mesma camada de resolução. Isso permite migrar os manifests jogo a jogo sem alterar os contratos públicos do Dashboard, CLI ou instalação.
+
+Nenhum caminho legado deve ser removido antes de:
 
 1. localizar referências aos caminhos atuais;
 2. adicionar testes de contrato para a nova organização;
-3. definir o loader compatível com a estrutura nova e a antiga;
+3. validar fallback e precedência do loader compatível;
 4. migrar um jogo piloto;
 5. validar CI e regressões;
 6. somente então migrar os demais jogos.
@@ -89,6 +101,15 @@ Nenhum movimento físico de manifests deve ocorrer antes de:
 - inventariar arquivos por jogo;
 - identificar duplicações e caminhos consumidos pelo código.
 
+### Etapa A.3 — resolução compatível de caminhos
+
+- adicionar `installer/catalog_paths.sh`;
+- procurar primeiro `catalog/v2/games/<game>/runtimes/`;
+- fazer fallback para `catalog/v2/runtimes/<game>/`;
+- deduplicar listagens por `id`, preservando a definição canônica;
+- usar a mesma resolução em `runtime list`, `runtime show` e `runtime prepare`;
+- testar os cenários legacy-only, canonical-only, coexistência e precedência.
+
 ### Etapa B — registro canônico
 
 - introduzir identidade canônica por jogo;
@@ -97,8 +118,8 @@ Nenhum movimento físico de manifests deve ocorrer antes de:
 
 ### Etapa C — migração piloto
 
-- escolher um jogo com estrutura simples;
-- mover manifests para `catalog/v2/games/<game>/`;
+- usar DayZ como primeiro jogo piloto;
+- mover o manifesto somente após aprovação dos testes da camada de compatibilidade;
 - manter compatibilidade com os caminhos antigos durante a transição;
 - validar Dashboard, CLI e instalação.
 
