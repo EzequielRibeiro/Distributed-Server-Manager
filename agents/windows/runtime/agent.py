@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Any
 RUNTIME_DIR=Path(__file__).resolve().parent
 if str(RUNTIME_DIR) not in sys.path:sys.path.insert(0,str(RUNTIME_DIR))
+from backup_client import apply_backup_commands,backup_state
+from broadcast_client import apply_broadcast_commands,broadcast_state
 from capabilities import detect_capabilities
+from configuration_client import apply_configuration_commands,configuration_state
+from content_client import apply_content_commands,content_state
 from game_data_client import clear_game_data_result,read_game_data_result,stage_game_data_command
 from game_data_state import summary as game_data_summary
 from instance_runtime import clear_result as clear_instance_result
@@ -15,7 +19,7 @@ from instance_runtime import inventory as instance_inventory
 from instance_runtime import read_result as read_instance_result
 from network_inventory import collect_network_inventory
 from provisioning_client import clear_provisioning_result,read_provisioning_result,stage_provisioning_command
-from runtime_parity import acknowledge_runtime_events,apply_backup_commands,apply_broadcast_commands,apply_configuration_commands,apply_content_commands,backup_state,broadcast_state,configuration_state,content_state,health_inventory,metrics_snapshot,read_runtime_events,reconcile_all,reconciliation_inventory,recover_interrupted_operations
+from runtime_parity import acknowledge_runtime_events,health_inventory,metrics_snapshot,read_runtime_events,reconcile_all,reconciliation_inventory,recover_interrupted_operations
 from update_client import clear_update_result,read_update_result,stage_update_request
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));CONFIG_PATH=Path(os.environ.get("CAPIVARA_AGENT_CONFIG",PROGRAM_DATA/"CapivaraAgent"/"agent.json"));DEFAULT_HEARTBEAT_SECONDS=30;DEFAULT_RECONCILE_SECONDS=15
 def _load_config()->dict[str,Any]:return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
