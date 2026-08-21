@@ -20,6 +20,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
         cls.infrastructure_ui = (web / "infrastructure-ui-v2.js").read_text(encoding="utf-8")
         cls.topology = (web / "infrastructure-topology-v2.js").read_text(encoding="utf-8")
         cls.service = (ROOT / "systemd/dsm-dashboard.service").read_text(encoding="utf-8")
+        cls.entrypoint = (ROOT / "dashboard/server_part14.py").read_text(encoding="utf-8")
 
     def test_add_agent_controls_are_present(self):
         for text in (
@@ -69,7 +70,8 @@ class AgentDashboardUiContractTest(unittest.TestCase):
         self.assertIn('/agent-updates.js', self.html)
         self.assertIn('/infrastructure-ui-v2.js', self.html)
         self.assertIn('/infrastructure-topology-v2.js', self.html)
-        self.assertIn('dashboard/server_part13.py', self.service)
+        self.assertIn('dashboard/server_part14.py', self.service)
+        self.assertIn('import server_part13 as integration', self.entrypoint)
 
     def test_dashboard_v2_navigation_preserves_rbac_classes(self):
         self.assertIn('href="servers-v2.html"', self.sidebar)
