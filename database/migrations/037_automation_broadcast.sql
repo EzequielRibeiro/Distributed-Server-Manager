@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS automation_runs (
  started_at TEXT, completed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_automation_runs_rule_created ON automation_runs(rule_id,created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_automation_run_trigger ON automation_runs(rule_id,trigger_type,trigger_ref) WHERE trigger_ref IS NOT NULL;
 CREATE TABLE IF NOT EXISTS automation_runtime_state (
  state_key TEXT PRIMARY KEY, state_value TEXT NOT NULL, updated_at TEXT NOT NULL
 );
