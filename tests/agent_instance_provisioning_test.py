@@ -155,7 +155,7 @@ class PrivilegedProvisionerTest(unittest.TestCase):
         )
         with patch.object(instance_provisioner.shutil, "which", return_value="/usr/bin/java"):
             argv = instance_provisioner._launch_argv(runtime, jar)
-        self.assertEqual(argv[:3], ["/usr/bin/java", "-jar", str(jar)])
+        self.assertEqual(argv[:3], [str(Path("/usr/bin/java").resolve()), "-jar", str(jar)])
 
     def test_provision_and_reconcile_are_deterministic(self):
         self._install_artifact()
