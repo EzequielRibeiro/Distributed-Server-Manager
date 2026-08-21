@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .base import GameRuntimeProfile, ProfileError, require_absolute, require_port, require_text
+from .base import GameRuntimeProfile, ProfileError, require_absolute, require_port, require_text, require_within
 
 
 class DayZRuntimeProfile(GameRuntimeProfile):
@@ -20,9 +20,9 @@ class DayZRuntimeProfile(GameRuntimeProfile):
         instance_id = require_text(instance.get("instance_id") or instance.get("id"), "instance_id")
         agent_id = require_text(instance.get("agent_id"), "agent_id")
         install_path = require_absolute(context.get("install_path") or context.get("content_root") or instance.get("path"), "install_path")
-        working_directory = require_absolute(context.get("working_directory") or install_path, "working_directory")
-        executable = require_absolute(context.get("executable") or str(Path(install_path) / "DayZServer"), "executable")
-        config_path = require_absolute(context.get("config_path") or str(Path(working_directory) / "serverDZ.cfg"), "config_path")
+        working_directory = require_within(install_path, context.get("working_directory") or install_path, "working_directory")
+        executable = require_within(install_path, context.get("executable") or str(Path(install_path) / "DayZServer"), "executable")
+        config_path = require_within(install_path, context.get("config_path") or str(Path(working_directory) / "serverDZ.cfg"), "config_path")
         game_port = require_port(context, "game", protocol="udp")
 
         extra_arguments = context.get("arguments", [])
@@ -35,7 +35,10 @@ class DayZRuntimeProfile(GameRuntimeProfile):
                 raise ProfileError("invalid DayZ runtime argument")
             arguments.append(text)
 
-        environment = dict(context.get("environment") or {})
+        raw_environment = context.get("environment") or {}
+        if not isinstance(raw_environment, dict):
+            raise ProfileError("invalid DayZ environment")
+        environment = dict(raw_environment)
         environment.update({
             "CAPIVARA_INSTANCE_ID": instance_id,
             "CAPIVARA_GAME_ID": "dayz",
