@@ -14,8 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RUNTIME_CATALOG = PROJECT_ROOT / "catalog" / "v2" / "runtimes"
+from core.catalog_runtime_paths import runtime_definition_files
 
 
 @dataclass(frozen=True)
@@ -48,14 +47,11 @@ def load_runtime_definition(
     *,
     catalog_root: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Load one RuntimeDefinition by its catalog id without game-specific code."""
+    """Load one RuntimeDefinition by id from canonical or legacy catalog paths."""
     wanted = str(runtime_id or "").strip()
     if not wanted:
         return None
-    root = Path(catalog_root or DEFAULT_RUNTIME_CATALOG)
-    if not root.is_dir():
-        return None
-    for path in root.rglob("*.json"):
+    for path in runtime_definition_files(catalog_root):
         try:
             item = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
