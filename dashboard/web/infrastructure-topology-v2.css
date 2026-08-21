@@ -1,0 +1,164 @@
+/* Capivara DSM — Infrastructure Topology UI v2 */
+
+.infra-topology-v2 {
+    display: none;
+    grid-template-columns: minmax(0, 1.65fr) minmax(300px, .8fr);
+    gap: 14px;
+    margin-bottom: 18px;
+}
+
+.infra-topology-v2.is-visible { display: grid; }
+
+.infra-topology-tree,
+.infra-topology-detail {
+    min-width: 0;
+    padding: 16px;
+    background: linear-gradient(180deg, rgba(16, 30, 47, .96), rgba(10, 22, 36, .96));
+    border: 1px solid rgba(148, 163, 184, .14);
+    border-radius: 12px;
+}
+
+.infra-topology-titlebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.infra-topology-titlebar h2,
+.infra-topology-titlebar h3 { margin: 0; font-size: 14px; }
+.infra-topology-titlebar span { color: #8090a6; font-size: 11px; }
+
+.infra-v2-tree-list,
+.infra-v2-tree-list ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.infra-v2-tree-list ul {
+    margin-left: 17px;
+    padding-left: 13px;
+    border-left: 1px solid rgba(148, 163, 184, .13);
+}
+
+.infra-v2-tree-node { margin: 4px 0; }
+
+.infra-v2-tree-row {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 12px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 9px;
+    min-height: 44px;
+    padding: 7px 10px;
+    color: #c9d5e3;
+    text-align: left;
+    background: rgba(255, 255, 255, .018);
+    border: 1px solid transparent;
+    border-radius: 9px;
+}
+
+.infra-v2-tree-row:hover,
+.infra-v2-tree-row.is-selected {
+    color: #f2f8fc;
+    background: rgba(25, 199, 139, .075);
+    border-color: rgba(25, 199, 139, .18);
+}
+
+.infra-v2-tree-status {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #64748b;
+    box-shadow: 0 0 0 3px rgba(100,116,139,.08);
+}
+
+.infra-v2-tree-row[data-state="online"] .infra-v2-tree-status,
+.infra-v2-tree-row[data-state="active"] .infra-v2-tree-status,
+.infra-v2-tree-row[data-state="healthy"] .infra-v2-tree-status { background: #19c78b; }
+.infra-v2-tree-row[data-state="warning"] .infra-v2-tree-status,
+.infra-v2-tree-row[data-state="degraded"] .infra-v2-tree-status,
+.infra-v2-tree-row[data-state="partial"] .infra-v2-tree-status { background: #f59e0b; }
+.infra-v2-tree-row[data-state="offline"] .infra-v2-tree-status,
+.infra-v2-tree-row[data-state="critical"] .infra-v2-tree-status,
+.infra-v2-tree-row[data-state="failed"] .infra-v2-tree-status { background: #ef5350; }
+
+.infra-v2-tree-copy { min-width: 0; }
+.infra-v2-tree-copy strong,
+.infra-v2-tree-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.infra-v2-tree-copy strong { font-size: 12px; font-weight: 650; }
+.infra-v2-tree-copy small { margin-top: 2px; color: #718198; font-size: 9px; }
+
+.infra-v2-tree-badge,
+.infra-placement-badge {
+    padding: 4px 7px;
+    border-radius: 999px;
+    color: #91a0b3;
+    background: rgba(148, 163, 184, .07);
+    border: 1px solid rgba(148, 163, 184, .11);
+    font-size: 9px;
+}
+
+.infra-placement-badge.ready {
+    color: #71efc1;
+    background: rgba(25, 199, 139, .09);
+    border-color: rgba(25, 199, 139, .18);
+}
+
+.infra-placement-badge.blocked {
+    color: #ffc067;
+    background: rgba(245, 158, 11, .09);
+    border-color: rgba(245, 158, 11, .18);
+}
+
+.infra-topology-detail-body { display: grid; gap: 9px; }
+.infra-topology-detail-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 34px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(148, 163, 184, .07);
+}
+.infra-topology-detail-row span { color: #77879c; font-size: 10px; }
+.infra-topology-detail-row strong { color: #dce6f0; text-align: right; font-size: 10px; }
+
+.infra-topology-path {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-bottom: 13px;
+}
+.infra-topology-path span {
+    padding: 5px 7px;
+    color: #90a0b3;
+    background: rgba(255,255,255,.025);
+    border: 1px solid rgba(148,163,184,.09);
+    border-radius: 7px;
+    font-size: 9px;
+}
+
+.infra-topology-agent-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+}
+.infra-topology-agent-actions button {
+    min-height: 34px;
+    padding: 7px 11px;
+    font-size: 10px;
+}
+
+.infra-topology-empty {
+    padding: 26px 12px;
+    color: #718198;
+    text-align: center;
+    font-size: 11px;
+}
+
+@media (max-width: 1000px) {
+    .infra-topology-v2 { grid-template-columns: 1fr; }
+}
