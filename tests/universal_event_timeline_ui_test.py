@@ -28,7 +28,8 @@ class UniversalEventTimelineUiTest(unittest.TestCase):
         self.assertIn("legacy.STATIC_FILES[TIMELINE_UI_PATH]", wrapper)
         self.assertIn("TIMELINE_SCRIPT_TAG", wrapper)
         self.assertIn("_serve_phase21_index", wrapper)
-        self.assertNotIn("dashboard/server.py", wrapper)
+        self.assertIn("import server_part13 as integration", wrapper)
+        self.assertNotIn("import server as", wrapper)
 
     def test_visible_filters_are_universal_domains(self):
         script = (ROOT / "dashboard/web/js/timeline-ui.js").read_text(encoding="utf-8")
