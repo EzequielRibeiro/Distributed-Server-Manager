@@ -120,12 +120,7 @@ def _verify_manifest(manifest: dict[str, Any], version: str, channel: str) -> No
         raise RuntimeError("package channel mismatch")
 
 
-def _verify_package(
-    package_root: Path,
-    version: str,
-    channel: str,
-    external_manifest: dict[str, Any],
-) -> dict[str, Any]:
+def _verify_package(package_root: Path, version: str, channel: str, external_manifest: dict[str, Any]) -> dict[str, Any]:
     manifest = _load_manifest(package_root / "manifest.json")
     _verify_manifest(manifest, version, channel)
     if manifest != external_manifest:
@@ -135,8 +130,7 @@ def _verify_package(
         expected = ((manifest.get("files") or {}).get(relative) or {}).get("sha256")
         if not file_path.is_file() or not expected:
             raise RuntimeError(f"invalid package file: {relative}")
-        actual = hashlib.sha256(file_path.read_bytes()).hexdigest()
-        if actual != expected:
+        if hashlib.sha256(file_path.read_bytes()).hexdigest() != expected:
             raise RuntimeError(f"internal checksum mismatch: {relative}")
     return manifest
 
@@ -145,29 +139,16 @@ def _validate_python(package_root: Path) -> None:
     runtime = package_root / "agent" / "runtime"
     adapters = runtime / "adapters"
     files = [
-        runtime / "agent.py",
-        runtime / "capabilities.py",
-        runtime / "network_inventory.py",
-        runtime / "update_client.py",
-        runtime / "update_state.py",
-        runtime / "local_cli.py",
-        runtime / "game_data_client.py",
-        runtime / "game_data_executor.py",
-        runtime / "game_data_state.py",
-        runtime / "instance_runtime.py",
-        adapters / "__init__.py",
-        adapters / "base.py",
-        adapters / "registry.py",
-        adapters / "systemd.py",
-        package_root / "agent" / "common" / "identity.py",
-        package_root / "agent" / "updater" / "updater.py",
+        runtime / "agent.py", runtime / "capabilities.py", runtime / "network_inventory.py",
+        runtime / "update_client.py", runtime / "update_state.py", runtime / "local_cli.py",
+        runtime / "cap_dispatch.py", runtime / "game_data_client.py", runtime / "game_data_executor.py",
+        runtime / "game_data_state.py", runtime / "instance_runtime.py",
+        adapters / "__init__.py", adapters / "base.py", adapters / "registry.py", adapters / "systemd.py",
+        package_root / "agent" / "common" / "identity.py", package_root / "agent" / "updater" / "updater.py",
     ]
     completed = subprocess.run(
         ["python3", "-m", "py_compile", *[str(path) for path in files]],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
+        capture_output=True, text=True, check=False, timeout=30,
     )
     if completed.returncode != 0:
         raise RuntimeError((completed.stderr or completed.stdout or "Python validation failed")[:2000])
@@ -185,6 +166,7 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
         (runtime / "update_client.py", INSTALL_ROOT / "runtime" / "update_client.py", 0o644, "agent/runtime/update_client.py"),
         (runtime / "update_state.py", INSTALL_ROOT / "runtime" / "update_state.py", 0o644, "agent/runtime/update_state.py"),
         (runtime / "local_cli.py", INSTALL_ROOT / "runtime" / "local_cli.py", 0o755, "agent/runtime/local_cli.py"),
+        (runtime / "cap_dispatch.py", INSTALL_ROOT / "runtime" / "cap_dispatch.py", 0o755, "agent/runtime/cap_dispatch.py"),
         (runtime / "game_data_client.py", INSTALL_ROOT / "runtime" / "game_data_client.py", 0o644, "agent/runtime/game_data_client.py"),
         (runtime / "game_data_executor.py", INSTALL_ROOT / "runtime" / "game_data_executor.py", 0o755, "agent/runtime/game_data_executor.py"),
         (runtime / "game_data_state.py", INSTALL_ROOT / "runtime" / "game_data_state.py", 0o644, "agent/runtime/game_data_state.py"),
@@ -207,15 +189,18 @@ def _validate_cli_target() -> tuple[bool, str | None]:
     if not CLI_PATH.is_symlink():
         raise RuntimeError(f"{CLI_PATH} exists and is not managed by Capivara Agent")
     target = os.path.realpath(CLI_PATH)
-    expected = os.path.realpath(INSTALL_ROOT / "runtime" / "local_cli.py")
-    if target != expected:
+    allowed = {
+        os.path.realpath(INSTALL_ROOT / "runtime" / "local_cli.py"),
+        os.path.realpath(INSTALL_ROOT / "runtime" / "cap_dispatch.py"),
+    }
+    if target not in allowed:
         raise RuntimeError(f"{CLI_PATH} points outside the Capivara Agent installation")
     return True, os.readlink(CLI_PATH)
 
 
 def _reconcile_cli() -> None:
     CLI_PATH.parent.mkdir(parents=True, exist_ok=True)
-    expected = INSTALL_ROOT / "runtime" / "local_cli.py"
+    expected = INSTALL_ROOT / "runtime" / "cap_dispatch.py"
     temp = CLI_PATH.with_name(f".{CLI_PATH.name}.{os.getpid()}.new")
     try:
         temp.unlink()
@@ -234,10 +219,7 @@ def _restore_cli(existed: bool, old_target: str | None) -> None:
         os.symlink(old_target, CLI_PATH)
 
 
-def _snapshot_files(
-    mapping: list[tuple[Path, Path, int, str]],
-    backup_root: Path,
-) -> dict[Path, Path | None]:
+def _snapshot_files(mapping: list[tuple[Path, Path, int, str]], backup_root: Path) -> dict[Path, Path | None]:
     snapshots: dict[Path, Path | None] = {}
     for index, (_, destination, _, _) in enumerate(mapping):
         if destination.is_file():
@@ -273,11 +255,7 @@ def _apply_files(mapping: list[tuple[Path, Path, int, str]]) -> None:
         os.replace(temp, destination)
 
 
-def _validate_installed(
-    version: str,
-    manifest: dict[str, Any],
-    mapping: list[tuple[Path, Path, int, str]],
-) -> None:
+def _validate_installed(version: str, manifest: dict[str, Any], mapping: list[tuple[Path, Path, int, str]]) -> None:
     installed = (INSTALL_ROOT / "VERSION").read_text(encoding="utf-8").strip()
     if installed != version:
         raise RuntimeError("post-update VERSION validation failed")
@@ -288,31 +266,23 @@ def _validate_installed(
         expected = ((files.get(relative) or {}).get("sha256"))
         if not expected:
             raise RuntimeError(f"post-update manifest entry missing: {relative}")
-        actual = hashlib.sha256(destination.read_bytes()).hexdigest()
-        if actual != expected:
+        if hashlib.sha256(destination.read_bytes()).hexdigest() != expected:
             raise RuntimeError(f"post-update checksum mismatch: {relative}")
     if not CLI_PATH.is_symlink():
         raise RuntimeError("Agent CLI symlink was not reconciled")
-    if os.path.realpath(CLI_PATH) != os.path.realpath(INSTALL_ROOT / "runtime" / "local_cli.py"):
+    if os.path.realpath(CLI_PATH) != os.path.realpath(INSTALL_ROOT / "runtime" / "cap_dispatch.py"):
         raise RuntimeError("Agent CLI symlink target is invalid")
 
 
 def _restart_agent() -> None:
     completed = subprocess.run(
         ["systemctl", "restart", "capivara-agent.service"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
+        capture_output=True, text=True, check=False, timeout=30,
     )
     if completed.returncode != 0:
         raise RuntimeError((completed.stderr or completed.stdout or "Agent restart failed")[:2000])
     for _ in range(10):
-        active = subprocess.run(
-            ["systemctl", "is-active", "--quiet", "capivara-agent.service"],
-            check=False,
-            timeout=5,
-        )
+        active = subprocess.run(["systemctl", "is-active", "--quiet", "capivara-agent.service"], check=False, timeout=5)
         if active.returncode == 0:
             return
         time.sleep(0.5)
@@ -349,12 +319,9 @@ def apply_request() -> int:
         _download(f"{base}/{archive_name}", archive)
         _download(f"{base}/{archive_name}.sha256", checksum)
         _download(f"{base}/{manifest_name}", external_manifest_path)
-
         expected = checksum.read_text(encoding="utf-8").split()[0].strip().lower()
-        actual = hashlib.sha256(archive.read_bytes()).hexdigest()
-        if expected != actual:
+        if expected != hashlib.sha256(archive.read_bytes()).hexdigest():
             raise RuntimeError("release checksum mismatch")
-
         external_manifest = _load_manifest(external_manifest_path)
         _verify_manifest(external_manifest, plain_version, channel)
         extract = work / "extract"
@@ -381,23 +348,15 @@ def apply_request() -> int:
                 _restore_files(snapshots)
                 _restore_cli(cli_existed, old_cli_target)
                 try:
-                    subprocess.run(
-                        ["systemctl", "restart", "capivara-agent.service"],
-                        check=False,
-                        timeout=30,
-                    )
+                    subprocess.run(["systemctl", "restart", "capivara-agent.service"], check=False, timeout=30)
                 except (OSError, subprocess.SubprocessError):
                     pass
             raise
 
     REQUEST_PATH.unlink(missing_ok=True)
     _write_result(
-        "applied",
-        installed_version=plain_version,
-        desired_version=plain_version,
-        channel=channel,
-        rollout_id=request.get("rollout_id"),
-        batch_number=request.get("batch_number"),
+        "applied", installed_version=plain_version, desired_version=plain_version, channel=channel,
+        rollout_id=request.get("rollout_id"), batch_number=request.get("batch_number"),
         source=f"github-release:{REPOSITORY}@{tag}",
     )
     return 0
