@@ -1,0 +1,106 @@
+name: Capivara 2.0 Release Readiness
+
+on:
+  push:
+    branches: [main, 'feature/e3-*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release readiness contract
+        run: python3 tests/release_readiness_test.py
+
+      - name: Validate tracked Python syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          # core/events contains historical specification fragments with .py
+          # suffixes; it is not imported runtime code and is excluded explicitly.
+          mapfile -d '' files < <(git ls-files -z '*.py' | grep -zv '^core/events/')
+          test "${#files[@]}" -gt 0
+          python3 -m py_compile "${files[@]}"
+
+      - name: Validate tracked shell syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(git ls-files -z '*.sh' bin/cap)
+          test "${#files[@]}" -gt 0
+          for file in "${files[@]}"; do bash -n "$file"; done
+
+      - name: Reject private keys and obvious committed credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -n -I -E -- 'BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY' -- ':!tests/*' ':!docs/*'; then
+            echo 'Private key material detected in release tree' >&2
+            exit 1
+          fi
+          if git grep -n -I -E -- '(password|passwd|api[_-]?key|secret)[[:space:]]*=[[:space:]]*["'"'][^$<{][^"'"']{7,}["'"']' -- ':!tests/*' ':!docs/*' ':!*.example' ':!*.sample'; then
+            echo 'Possible hard-coded credential detected' >&2
+            exit 1
+          fi
+
+      - name: Validate migration ordering and backend parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          roots = [
+              Path('database/migrations'),
+              Path('database/migrations_postgresql'),
+              Path('database/migrations_mysql'),
+          ]
+          versions = {}
+          for root in roots:
+              files = sorted(root.glob('*.sql'))
+              assert files, f'no migrations found in {root}'
+              seq = []
+              for path in files:
+                  match = re.match(r'^(\d{3})_.+\.sql$', path.name)
+                  assert match, f'non-versioned migration: {path}'
+                  seq.append(int(match.group(1)))
+              assert len(seq) == len(set(seq)), f'duplicate migration version in {root}'
+              assert seq == sorted(seq), f'non-monotonic migration ordering in {root}'
+              versions[str(root)] = set(seq)
+          common_latest = min(max(v) for v in versions.values())
+          for root, seq in versions.items():
+              assert common_latest in seq, f'{root} missing common latest migration {common_latest:03d}'
+          assert 40 in versions['database/migrations'], 'E2 migration 040 missing from SQLite'
+          assert 40 in versions['database/migrations_postgresql'], 'E2 migration 040 missing from PostgreSQL'
+          assert 40 in versions['database/migrations_mysql'], 'E2 migration 040 missing from MySQL/MariaDB'
+          print('migration ordering and backend parity: OK')
+          PY
+
+      - name: Validate operational runbook coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          file=docs/runbooks/capivara-2.0-operations.md
+          for section in '## Install' '## Upgrade' '## Rollback boundary' '## Backup and restore' '## Federation' '## HA failover' '## Failback' '## Disaster recovery' '## Agent replacement'; do
+            grep -Fq "$section" "$file"
+          done
+
+      - name: Confirm release remains non-publishing
+        run: |
+          python3 - <<'PY'
+          import json
+          x=json.load(open('release/readiness-v2.json'))
+          assert x['publish_release'] is False
+          assert x['status'] == 'candidate'
+          print('release publication requires explicit administrative action')
+          PY
