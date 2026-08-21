@@ -106,6 +106,9 @@ Agent local / Hybrid:
   cap agent game-data status <game> [--json]
   cap agent jobs [--active] [--limit N] [--json]
   cap agent jobs show <job-id> [--json]
+  cap agent update status [--json]
+  cap agent update history [--limit N] [--json]
+  cap agent update check [--channel stable|beta] [--json]
   cap agent logs [--lines N] [--json]
   cap agent doctor [--json]
   cap server|monitor|mods|backup|runtime|steam|game|content|compatibility ...
@@ -196,7 +199,7 @@ case "${1:-}" in
                     *) usage "$(local_role)" 0; exit 2 ;;
                 esac
                 ;;
-            status|info|health|heartbeat|capabilities|network|game-data|jobs|logs|doctor)
+            status|info|health|heartbeat|capabilities|network|game-data|jobs|update|logs|doctor)
                 require_role "cap agent ${1}" agent hybrid
                 agent_local_exec "$@"
                 ;;
