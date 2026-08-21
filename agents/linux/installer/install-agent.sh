@@ -50,7 +50,8 @@ PACKAGE_DIR="$(cd "${PACKAGE_DIR}" && pwd)"
 for required in \
   manifest.json VERSION \
   agent/common/identity.py \
-  agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py agent/runtime/update_client.py agent/runtime/local_cli.py \
+  agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py \
+  agent/runtime/update_client.py agent/runtime/update_state.py agent/runtime/local_cli.py \
   agent/runtime/game_data_client.py agent/runtime/game_data_executor.py agent/runtime/game_data_state.py \
   agent/updater/updater.py \
   services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path
@@ -89,11 +90,12 @@ id capivara-agent >/dev/null 2>&1 || useradd --system --home "${STATE_DIR}" --cr
 install -d -m 0755 -o root -g root "${INSTALL_ROOT}" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/common" "${INSTALL_ROOT}/updater"
 install -d -m 0700 -o capivara-agent -g capivara-agent \
   "${CONFIG_DIR}" "${STATE_DIR}" "${STATE_DIR}/game-data" "${STATE_DIR}/game-data-jobs" \
-  "${STATE_DIR}/game-data-jobs/history" "${STATE_DIR}/game-data-state"
+  "${STATE_DIR}/game-data-jobs/history" "${STATE_DIR}/game-data-state" "${STATE_DIR}/update-history"
 install -m 0755 "${PACKAGE_DIR}/agent/runtime/agent.py" "${INSTALL_ROOT}/runtime/agent.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/capabilities.py" "${INSTALL_ROOT}/runtime/capabilities.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/network_inventory.py" "${INSTALL_ROOT}/runtime/network_inventory.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/update_client.py" "${INSTALL_ROOT}/runtime/update_client.py"
+install -m 0644 "${PACKAGE_DIR}/agent/runtime/update_state.py" "${INSTALL_ROOT}/runtime/update_state.py"
 install -m 0755 "${PACKAGE_DIR}/agent/runtime/local_cli.py" "${INSTALL_ROOT}/runtime/local_cli.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/game_data_client.py" "${INSTALL_ROOT}/runtime/game_data_client.py"
 install -m 0644 "${PACKAGE_DIR}/agent/runtime/game_data_state.py" "${INSTALL_ROOT}/runtime/game_data_state.py"
