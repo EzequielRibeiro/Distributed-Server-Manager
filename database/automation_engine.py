@@ -3,9 +3,12 @@
 from __future__ import annotations
 import operator
 from datetime import datetime,timezone
+from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from automation_execution_repository import AutomationExecutionRepository
 from automation_repository import AutomationRepository
 from backup_repository import BackupRepository
+from configuration_repository import ConfigurationRepository
+from content_repository import ContentRepository
 _OPS={">":operator.gt,">=":operator.ge,"<":operator.lt,"<=":operator.le,"==":operator.eq,"!=":operator.ne}
 def _epoch(value):
  try:return datetime.fromisoformat(str(value).replace("Z","+00:00")).timestamp()
@@ -24,7 +27,6 @@ class AutomationEngine:
   return True
  def _conditions(self,rule,context):
   for condition in rule.get("conditions") or []:
-   if not isinstance(condition,dict):return False
    field=str(condition.get("field") or "");op=str(condition.get("operator") or "==");expected=condition.get("value");actual=context.get(field)
    if op=="in":
     if actual not in (expected or []):return False
@@ -42,6 +44,28 @@ class AutomationEngine:
   runs=self.repo.list_runs(rule_id=rule.get("rule_id"),limit=1)
   if not runs:return True
   return datetime.now(timezone.utc).timestamp()-_epoch(runs[0].get("created_at"))>=cooldown
+ def _instance_agent(self,instance_id):
+  ph="?" if self.backend.name=="sqlite" else "%s"
+  from alert_repository import AlertSession
+  with self.backend.connect() as c:
+   s=AlertSession(self.backend,c)
+   try:
+    row=s.execute(f"SELECT agent_id FROM instances WHERE id={ph}",(instance_id,)).fetchone()
+    if not row:raise LookupError("instance not found")
+    return str(row["agent_id"])
+   finally:s.close()
+ def _action(self,action,requested_by):
+  atype=action.get("type")
+  if atype=="broadcast":return self.repo.create_broadcast(action["broadcast"],requested_by=requested_by)
+  if atype=="backup":
+   r=BackupRepository(self.backend);r.initialize();return r.request(action["instance_id"],reason="automation",requested_by=requested_by)
+  if atype=="instance":
+   iid=action["instance_id"];r=AgentInstanceRuntimeRepository(self.backend);r.initialize();return r.enqueue(agent_id=self._instance_agent(iid),instance_id=iid,action=action["operation"],requested_by=requested_by)
+  if atype=="content":
+   r=ContentRepository(self.backend);r.initialize();return r.put(action["assignment"],requested_by=requested_by)
+  if atype=="configuration":
+   r=ConfigurationRepository(self.backend);r.initialize();return r.put(action["configuration"],updated_by=requested_by)
+  raise ValueError("unsupported automation action")
  def execute_rule(self,rule,*,trigger_type="manual",trigger_ref=None,context=None,requested_by="automation"):
   context=dict(context or {})
   if not self._cooldown_allows(rule):return {"run_id":None,"rule_id":rule.get("rule_id"),"status":"cooldown","actions":[]}
@@ -49,12 +73,7 @@ class AutomationEngine:
   if run_id is None:return {"run_id":None,"rule_id":rule.get("rule_id"),"status":"duplicate","actions":[]}
   results=[];status="completed"
   for action in rule.get("actions") or []:
-   try:
-    atype=action.get("type")
-    if atype=="broadcast":results.append({"type":atype,"result":self.repo.create_broadcast(action["broadcast"],requested_by=requested_by)})
-    elif atype=="backup":
-     backups=BackupRepository(self.backend);backups.initialize();results.append({"type":atype,"result":backups.request(action["instance_id"],reason="automation",requested_by=requested_by)})
-    else:results.append({"type":atype,"status":"deferred","reason":"action requires its universal service dispatcher"})
+   try:results.append({"type":action.get("type"),"result":self._action(action,requested_by)})
    except Exception as exc:status="failed";results.append({"type":action.get("type"),"status":"failed","error":str(exc)[:2000]});break
   self.execution.finish(run_id,status=status,result={"actions":results})
   return {"run_id":run_id,"rule_id":rule.get("rule_id"),"status":status,"actions":results}
