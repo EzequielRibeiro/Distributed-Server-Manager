@@ -85,6 +85,11 @@ Controller / Hybrid:
   cap events list [--type TYPE] [--agent ID] [--instance ID] [--severity LEVEL] [--limit N] [--json]
   cap events show <event-id> [--json]
   cap events publish <TYPE> --source SOURCE [options]
+  cap config-store list [--scope global|agent|instance] [--scope-id ID] [--namespace NAME] [--json]
+  cap config-store get --scope SCOPE [--scope-id ID] <namespace> [--json]
+  cap config-store set --scope SCOPE [--scope-id ID] <namespace> --value-json JSON [--json]
+  cap config-store history <configuration-id> [--json]
+  cap config-store resolve --agent ID [--instance ID] [--json]
   cap user ...
   cap catalog ...
   cap database|db ...
@@ -206,6 +211,11 @@ case "${1:-}" in
         require_role "cap events" controller hybrid
         shift
         exec python3 "${DSM_ROOT}/database/universal_events_cli.py" "$@"
+        ;;
+    config-store)
+        require_role "cap config-store" controller hybrid
+        shift
+        exec python3 "${DSM_ROOT}/database/configuration_cli.py" "$@"
         ;;
     user|catalog|database|db|operations|ops)
         require_role "cap ${1}" controller hybrid
