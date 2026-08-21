@@ -13,6 +13,7 @@ from typing import Any
 from game_data_executor import _execute as execute_game_data
 import game_runtime
 import instance_runtime
+import privileged_materialization
 import runtime_materialization
 from provisioning_contract import validate_provisioning_request
 from provisioning_state import write_json
@@ -93,8 +94,6 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
 
         step = "validate_ports"
         _result(result_path, request, status="running", current_step=step, progress=25)
-        # The contract already validates every reservation. Profiles consume these
-        # reservations but never allocate replacements.
         ports = dict(request["ports"])
         _event("INSTANCE_PROVISIONING_STEP", request, step=step, progress=25, data={"port_roles": sorted(ports)})
 
@@ -111,7 +110,6 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
         step = "build_runtime_spec"
         _result(result_path, request, status="running", current_step=step, progress=70)
         context = dict(request.get("configuration") or {})
-        # Authoritative provisioning outputs override user-controlled context.
         context["install_path"] = install_path
         context["content_root"] = install_path
         context["ports"] = ports
@@ -121,7 +119,7 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
 
         step = "materialize_runtime"
         _result(result_path, request, status="running", current_step=step, progress=82)
-        materialization = runtime_materialization.materialize(config, spec)
+        materialization = privileged_materialization.materialize(config, spec)
         materialized = True
         _event("INSTANCE_PROVISIONING_STEP", request, step=step, progress=88, data={"adapter": spec.get("adapter")})
 
@@ -163,7 +161,7 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
     except Exception as exc:
         if materialized:
             try:
-                runtime_materialization.remove(config, request["instance_id"])
+                privileged_materialization.remove(config, request["instance_id"])
                 compensation.append("runtime_removed")
             except Exception:
                 compensation.append("runtime_cleanup_failed")
@@ -175,8 +173,6 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
                 compensation.append("staging_cleaned")
             except OSError:
                 compensation.append("staging_cleanup_failed")
-        # Installed game data and Controller-owned port reservations are retained
-        # intentionally so an administrator can retry without destructive churn.
         compensation.extend(["content_preserved_for_retry", "port_reservations_preserved"])
         failed = _result(
             result_path,
