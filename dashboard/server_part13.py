@@ -7,45 +7,14 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import server_part12 as integration
-from agent_game_data_http import (
-    GAME_DATA_JOBS_PATH,
-    GAME_DATA_OPERATION_PATH,
-    LEGACY_ENVIRONMENT_INSTALL_PATH,
-    dispatch_agent_game_data_get,
-    dispatch_agent_game_data_post,
-)
-from agent_instance_provisioning_http import (
-    INSTANCE_PROVISIONING_PATH,
-    dispatch_instance_provisioning_get,
-    dispatch_instance_provisioning_post,
-)
-from agent_instance_runtime_http import (
-    INSTANCE_RUNTIME_PATH,
-    dispatch_instance_runtime_get,
-    dispatch_instance_runtime_post,
-)
-from agent_update_http import (
-    CHANNEL_PATH,
-    ROLLOUT_PATH,
-    STATUS_PATH,
-    dispatch_update_get,
-    dispatch_update_post,
-)
-from configuration_http import (
-    CONFIGURATIONS_PATH,
-    dispatch_configuration_get,
-    dispatch_configuration_post,
-)
-from infrastructure_role_http import (
-    INFRASTRUCTURE_ROLE_PATH,
-    dispatch_infrastructure_role_get,
-    dispatch_infrastructure_role_post,
-)
-from universal_event_http import (
-    EVENTS_PATH,
-    dispatch_universal_event_get,
-    dispatch_universal_event_post,
-)
+from agent_game_data_http import GAME_DATA_JOBS_PATH, GAME_DATA_OPERATION_PATH, LEGACY_ENVIRONMENT_INSTALL_PATH, dispatch_agent_game_data_get, dispatch_agent_game_data_post
+from agent_instance_provisioning_http import INSTANCE_PROVISIONING_PATH, dispatch_instance_provisioning_get, dispatch_instance_provisioning_post
+from agent_instance_runtime_http import INSTANCE_RUNTIME_PATH, dispatch_instance_runtime_get, dispatch_instance_runtime_post
+from agent_update_http import CHANNEL_PATH, ROLLOUT_PATH, STATUS_PATH, dispatch_update_get, dispatch_update_post
+from configuration_http import CONFIGURATIONS_PATH, dispatch_configuration_get, dispatch_configuration_post
+from infrastructure_role_http import INFRASTRUCTURE_ROLE_PATH, dispatch_infrastructure_role_get, dispatch_infrastructure_role_post
+from observability_http import OBSERVABILITY_PATH, dispatch_observability_get
+from universal_event_http import EVENTS_PATH, dispatch_universal_event_get, dispatch_universal_event_post
 
 legacy = integration.legacy
 _previous_get = legacy.DashboardHandler.do_GET
@@ -92,165 +61,108 @@ def integrated_get(self):
     parsed = urlparse(self.path)
     if parsed.path == WINDOWS_INSTALL_PATH:
         return _serve_windows_bootstrap(self)
-
     if parsed.path == CONFIGURATIONS_PATH:
         user = _user(self)
-        if user is None:
-            return
+        if user is None: return
         status, body = dispatch_configuration_get(parsed.path, parsed.query, user=user, backend=_backend())
-        self.send_json(status, body)
-        return
-
+        self.send_json(status, body); return
+    if parsed.path == OBSERVABILITY_PATH:
+        user = _user(self)
+        if user is None: return
+        status, body = dispatch_observability_get(parsed.path, parsed.query, user=user, backend=_backend())
+        self.send_json(status, body); return
     if parsed.path == EVENTS_PATH:
         user = _user(self)
-        if user is None:
-            return
+        if user is None: return
         status, body = dispatch_universal_event_get(parsed.path, parsed.query, user=user, backend=_backend())
-        self.send_json(status, body)
-        return
-
+        self.send_json(status, body); return
     if parsed.path == GAME_DATA_JOBS_PATH:
         user = _user(self)
-        if user is None:
-            return
+        if user is None: return
         status, body = dispatch_agent_game_data_get(parsed.path, parsed.query, user=user, backend=_backend())
-        self.send_json(status, body)
-        return
-
+        self.send_json(status, body); return
     if parsed.path == INSTANCE_PROVISIONING_PATH:
         user = _user(self)
-        if user is None:
-            return
+        if user is None: return
         status, body = dispatch_instance_provisioning_get(parsed.path, parsed.query, user=user, backend=_backend())
-        self.send_json(status, body)
-        return
-
+        self.send_json(status, body); return
     if parsed.path == INSTANCE_RUNTIME_PATH:
         user = _user(self)
-        if user is None:
-            return
+        if user is None: return
         status, body = dispatch_instance_runtime_get(parsed.path, parsed.query, user=user, backend=_backend())
-        self.send_json(status, body)
-        return
-
+        self.send_json(status, body); return
     if parsed.path == INFRASTRUCTURE_ROLE_PATH:
         user = _user(self)
-        if user is None:
-            return
+        if user is None: return
         query = parse_qs(parsed.query)
-        status, body = dispatch_infrastructure_role_get(
-            parsed.path,
-            user=user,
-            backend=_backend(),
-            node_id=(query.get("node_id") or [None])[0],
-        )
-        self.send_json(status, body)
-        return
+        status, body = dispatch_infrastructure_role_get(parsed.path, user=user, backend=_backend(), node_id=(query.get("node_id") or [None])[0])
+        self.send_json(status, body); return
     if parsed.path != STATUS_PATH:
         return _previous_get(self)
     user = _user(self)
-    if user is None:
-        return
+    if user is None: return
     query = parse_qs(parsed.query)
-    status, body = dispatch_update_get(
-        parsed.path,
-        user=user,
-        backend=_backend(),
-        agent_id=(query.get("agent_id") or [None])[0],
-    )
+    status, body = dispatch_update_get(parsed.path, user=user, backend=_backend(), agent_id=(query.get("agent_id") or [None])[0])
     self.send_json(status, body)
 
 
 def integrated_post(self):
     parsed = urlparse(self.path)
-
     if parsed.path == CONFIGURATIONS_PATH:
         user = _user(self)
-        if user is None:
-            return
-        try:
-            payload = self.read_json_body()
+        if user is None: return
+        try: payload = self.read_json_body()
         except ValueError:
-            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
-            return
+            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."}); return
         status, body = dispatch_configuration_post(parsed.path, payload, user=user, backend=_backend())
-        self.send_json(status, body)
-        return
-
+        self.send_json(status, body); return
     if parsed.path == EVENTS_PATH:
         user = _user(self)
-        if user is None:
-            return
-        try:
-            payload = self.read_json_body()
+        if user is None: return
+        try: payload = self.read_json_body()
         except ValueError:
-            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
-            return
+            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."}); return
         status, body = dispatch_universal_event_post(parsed.path, payload, user=user, backend=_backend())
-        self.send_json(status, body)
-        return
-
+        self.send_json(status, body); return
     if parsed.path in {GAME_DATA_OPERATION_PATH, LEGACY_ENVIRONMENT_INSTALL_PATH}:
         user = _user(self)
-        if user is None:
-            return
-        try:
-            payload = self.read_json_body()
+        if user is None: return
+        try: payload = self.read_json_body()
         except ValueError:
-            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
-            return
+            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."}); return
         status, body = dispatch_agent_game_data_post(parsed.path, payload, user=user, backend=_backend(), root=ROOT_DIR)
-        self.send_json(status, body)
-        return
-
+        self.send_json(status, body); return
     if parsed.path == INSTANCE_PROVISIONING_PATH:
         user = _user(self)
-        if user is None:
-            return
-        try:
-            payload = self.read_json_body()
+        if user is None: return
+        try: payload = self.read_json_body()
         except ValueError:
-            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
-            return
+            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."}); return
         status, body = dispatch_instance_provisioning_post(parsed.path, payload, user=user, backend=_backend())
-        self.send_json(status, body)
-        return
-
+        self.send_json(status, body); return
     if parsed.path == INSTANCE_RUNTIME_PATH:
         user = _user(self)
-        if user is None:
-            return
-        try:
-            payload = self.read_json_body()
+        if user is None: return
+        try: payload = self.read_json_body()
         except ValueError:
-            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
-            return
+            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."}); return
         status, body = dispatch_instance_runtime_post(parsed.path, payload, user=user, backend=_backend())
-        self.send_json(status, body)
-        return
-
+        self.send_json(status, body); return
     if parsed.path == INFRASTRUCTURE_ROLE_PATH:
         user = _user(self)
-        if user is None:
-            return
-        try:
-            payload = self.read_json_body()
+        if user is None: return
+        try: payload = self.read_json_body()
         except ValueError:
-            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
-            return
+            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."}); return
         status, body = dispatch_infrastructure_role_post(parsed.path, payload, user=user, backend=_backend(), root=ROOT_DIR)
-        self.send_json(status, body)
-        return
+        self.send_json(status, body); return
     if parsed.path not in {ROLLOUT_PATH, CHANNEL_PATH}:
         return _previous_post(self)
     user = _user(self)
-    if user is None:
-        return
-    try:
-        payload = self.read_json_body()
+    if user is None: return
+    try: payload = self.read_json_body()
     except ValueError:
-        self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
-        return
+        self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."}); return
     status, body = dispatch_update_post(parsed.path, payload, user=user, backend=_backend())
     self.send_json(status, body)
 
@@ -259,9 +171,7 @@ legacy.DashboardHandler.do_GET = integrated_get
 legacy.DashboardHandler.do_POST = integrated_post
 
 
-def run():
-    legacy.run()
+def run(): legacy.run()
 
 
-if __name__ == "__main__":
-    run()
+if __name__ == "__main__": run()

@@ -1,105 +1,33 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
 export DSM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-
 BOOTSTRAP="${DSM_ROOT}/core/bootstrap.sh"
-if [[ ! -f "${BOOTSTRAP}" ]]; then
-    echo "Bootstrap não encontrado: ${BOOTSTRAP}" >&2
-    exit 1
-fi
+[[ -f "${BOOTSTRAP}" ]] || { echo "Bootstrap não encontrado: ${BOOTSTRAP}" >&2; exit 1; }
 # shellcheck source=/dev/null
 source "${BOOTSTRAP}"
-export DSM_DATABASE_DRIVER DSM_DATABASE DSM_DATABASE_HOST DSM_DATABASE_PORT
-export DSM_DATABASE_NAME DSM_DATABASE_USER DSM_DATABASE_PASSWORD_FILE DSM_DATABASE_TLS
-
-LEGACY_DSM="${DSM_ROOT}/bin/dsm"
-AGENT_LOCAL_CLI="${DSM_ROOT}/agents/linux/runtime/cap_dispatch.py"
-ROLE_RESOLVER="${DSM_ROOT}/core/role_context.py"
-CAP_ROLE_CACHE=""
-
-local_role(){
-    if [[ -n "${CAP_ROLE_CACHE}" ]]; then
-        printf '%s\n' "${CAP_ROLE_CACHE}"
-        return 0
-    fi
-    if [[ ! -f "${ROLE_RESOLVER}" ]]; then
-        CAP_ROLE_CACHE="unknown"
-    else
-        CAP_ROLE_CACHE="$(python3 "${ROLE_RESOLVER}" --root "${DSM_ROOT}" 2>/dev/null || true)"
-        CAP_ROLE_CACHE="${CAP_ROLE_CACHE:-unknown}"
-    fi
-    printf '%s\n' "${CAP_ROLE_CACHE}"
-}
-
-require_role(){
-    local command_label="$1"
-    shift
-    local role
-    local allowed
-    local allowed_text=""
-    role="$(local_role)"
-    for allowed in "$@"; do
-        if [[ "${role}" == "${allowed}" ]]; then
-            return 0
-        fi
-        if [[ -z "${allowed_text}" ]]; then
-            allowed_text="${allowed}"
-        else
-            allowed_text+=" ou ${allowed}"
-        fi
-    done
-    printf "Erro: '%s' requer role %s.\n" "${command_label}" "${allowed_text}" >&2
-    printf 'Role local detectada: %s.\n' "${role}" >&2
-    if [[ "${role}" == "unknown" ]]; then
-        printf 'Defina DSM_NODE_ROLE=controller|agent|hybrid em config/agent.conf ou config/dsm.conf.\n' >&2
-    fi
-    exit 2
-}
-
-usage(){
-    local role="${1:-unknown}"
-    local show_all="${2:-0}"
-    cat >&2 <<EOF
-Capivara Distributed Server Manager
-
-Uso:
-  cap <comando> [opções]
-
-Role local: ${role}
-EOF
-
-    if [[ "${show_all}" == "1" || "${role}" == "controller" || "${role}" == "hybrid" ]]; then
-        cat >&2 <<'EOF'
+export DSM_DATABASE_DRIVER DSM_DATABASE DSM_DATABASE_HOST DSM_DATABASE_PORT DSM_DATABASE_NAME DSM_DATABASE_USER DSM_DATABASE_PASSWORD_FILE DSM_DATABASE_TLS
+LEGACY_DSM="${DSM_ROOT}/bin/dsm"; AGENT_LOCAL_CLI="${DSM_ROOT}/agents/linux/runtime/cap_dispatch.py"; ROLE_RESOLVER="${DSM_ROOT}/core/role_context.py"; CAP_ROLE_CACHE=""
+local_role(){ [[ -z "${CAP_ROLE_CACHE}" ]] || { printf '%s\n' "${CAP_ROLE_CACHE}"; return 0; }; if [[ ! -f "${ROLE_RESOLVER}" ]]; then CAP_ROLE_CACHE="unknown"; else CAP_ROLE_CACHE="$(python3 "${ROLE_RESOLVER}" --root "${DSM_ROOT}" 2>/dev/null || true)"; CAP_ROLE_CACHE="${CAP_ROLE_CACHE:-unknown}"; fi; printf '%s\n' "${CAP_ROLE_CACHE}"; }
+require_role(){ local command_label="$1" role allowed allowed_text=""; shift; role="$(local_role)"; for allowed in "$@"; do [[ "${role}" != "${allowed}" ]] || return 0; [[ -z "${allowed_text}" ]] && allowed_text="${allowed}" || allowed_text+=" ou ${allowed}"; done; printf "Erro: '%s' requer role %s.\nRole local detectada: %s.\n" "${command_label}" "${allowed_text}" "${role}" >&2; exit 2; }
+usage(){ local role="${1:-unknown}" show_all="${2:-0}"; printf 'Capivara Distributed Server Manager\n\nUso:\n  cap <comando> [opções]\n\nRole local: %s\n' "${role}" >&2
+if [[ "${show_all}" == "1" || "${role}" == "controller" || "${role}" == "hybrid" ]]; then cat >&2 <<'EOF'
 
 Controller / Hybrid:
   cap infrastructure doctor [--reconcile] [--json]
-  cap infrastructure role show [--node-id ID] [--json]
-  cap infrastructure role set hybrid [--node-id ID] [--controller-id ID] [--agent-id ID] [--json]
+  cap infrastructure role show|set ...
   cap agent deploy HOST --ssh-user USER [options]
-  cap agent ports show <agent-id>
-  cap agent ports set <agent-id> <inicio> <fim> [--protocol tcp|udp|both]
-  cap agent ports check <agent-id>
-  cap events list [--type TYPE] [--agent ID] [--instance ID] [--severity LEVEL] [--limit N] [--json]
-  cap events show <event-id> [--json]
-  cap events publish <TYPE> --source SOURCE [options]
-  cap config-store list [--scope global|agent|instance] [--scope-id ID] [--namespace NAME] [--json]
-  cap config-store get --scope SCOPE [--scope-id ID] <namespace> [--json]
-  cap config-store set --scope SCOPE [--scope-id ID] <namespace> --value-json JSON [--json]
-  cap config-store history <configuration-id> [--json]
-  cap config-store resolve --agent ID [--instance ID] [--json]
-  cap user ...
-  cap catalog ...
-  cap database|db ...
+  cap agent ports show|set|check ...
+  cap events list|show|publish|import-legacy ...
+  cap config-store list|get|set|history|resolve ...
+  cap observe latest|history|summary [--agent ID] [--instance ID] [--metric NAME] [--json]
+  cap observe prune --before ISO8601 --yes
+  cap user|catalog|database|db|operations|ops ...
   cap instance <comandos administrativos> ...
-  cap operations|ops ...
 EOF
-    fi
-
-    if [[ "${show_all}" == "1" || "${role}" == "agent" || "${role}" == "hybrid" ]]; then
-        cat >&2 <<'EOF'
+fi
+if [[ "${show_all}" == "1" || "${role}" == "agent" || "${role}" == "hybrid" ]]; then cat >&2 <<'EOF'
 
 Agent local / Hybrid:
   cap agent status [--json]
@@ -113,10 +41,7 @@ Agent local / Hybrid:
   cap agent game-data list [--json]
   cap agent game-data status <game> [--json]
   cap agent jobs [--active] [--limit N] [--json]
-  cap agent jobs show <job-id> [--json]
   cap agent update status [--json]
-  cap agent update history [--limit N] [--json]
-  cap agent update check [--channel stable|beta] [--json]
   cap agent logs [--lines N] [--json]
   cap agent doctor [--json]
   cap instance list [--json]
@@ -128,106 +53,27 @@ Agent local / Hybrid:
   cap server|monitor|mods|backup|runtime|steam|game|content|compatibility ...
   cap start|stop|restart|status ...
 EOF
-    fi
-
-    cat >&2 <<'EOF'
+fi
+cat >&2 <<'EOF'
 
 Todas as roles conhecidas:
   cap config ...
   cap update ...
-  cap help --all        mostra a referência completa
-
-O enforcement de role ocorre antes do dispatch administrativo. O resolver é
-observacional: não inicializa database, não executa migrations e não atualiza
-health/placement. Em instalação legado SQLite, a role pode ser lida em modo
-estritamente read-only apenas para compatibilidade.
+  cap help --all
 EOF
 }
-
-legacy_exec(){
-    if [[ ! -x "${LEGACY_DSM}" ]]; then
-        echo "CLI de compatibilidade não encontrada ou não executável: ${LEGACY_DSM}" >&2
-        exit 1
-    fi
-    exec "${LEGACY_DSM}" "$@"
-}
-
-agent_local_exec(){
-    if [[ ! -f "${AGENT_LOCAL_CLI}" ]]; then
-        echo "CLI local do Agent Linux não encontrada: ${AGENT_LOCAL_CLI}" >&2
-        exit 1
-    fi
-    exec python3 "${AGENT_LOCAL_CLI}" "$@"
-}
-
+legacy_exec(){ [[ -x "${LEGACY_DSM}" ]] || { echo "CLI de compatibilidade não encontrada: ${LEGACY_DSM}" >&2; exit 1; }; exec "${LEGACY_DSM}" "$@"; }
+agent_local_exec(){ [[ -f "${AGENT_LOCAL_CLI}" ]] || { echo "CLI local do Agent Linux não encontrada: ${AGENT_LOCAL_CLI}" >&2; exit 1; }; exec python3 "${AGENT_LOCAL_CLI}" "$@"; }
 case "${1:-}" in
-    help|--help|-h|"")
-        role="$(local_role)"
-        if [[ "${2:-}" == "--all" ]]; then usage "${role}" 1; else usage "${role}" 0; fi
-        ;;
-    infrastructure)
-        require_role "cap infrastructure" controller hybrid
-        shift
-        case "${1:-}" in
-            doctor) shift; exec python3 "${DSM_ROOT}/database/infrastructure_doctor_contract.py" doctor "$@" ;;
-            role) shift; [[ $# -gt 0 ]] || { usage "$(local_role)" 0; exit 2; }; exec python3 "${DSM_ROOT}/database/infrastructure_role_cli.py" "$@" ;;
-            *) usage "$(local_role)" 0; exit 2 ;;
-        esac
-        ;;
-    agent)
-        shift
-        case "${1:-}" in
-            deploy) require_role "cap agent deploy" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_deploy_cli.py" "$@" ;;
-            ports)
-                case "${2:-}" in
-                    show|check)
-                        if [[ $# -eq 2 || "${3:-}" == --* ]]; then require_role "cap agent ports ${2}" agent hybrid; agent_local_exec "$@"
-                        else require_role "cap agent ports ${2} <agent-id>" controller hybrid; legacy_exec agent "$@"; fi
-                        ;;
-                    set) require_role "cap agent ports set" controller hybrid; legacy_exec agent "$@" ;;
-                    *) usage "$(local_role)" 0; exit 2 ;;
-                esac
-                ;;
-            status|info|health|heartbeat|capabilities|network|game-data|jobs|update|logs|doctor)
-                require_role "cap agent ${1}" agent hybrid
-                agent_local_exec "$@"
-                ;;
-            *) usage "$(local_role)" 0; exit 2 ;;
-        esac
-        ;;
-    instance)
-        case "${2:-}" in
-            list|status|doctor|start|stop|restart)
-                require_role "cap instance ${2}" agent hybrid
-                agent_local_exec "$@"
-                ;;
-            *)
-                require_role "cap instance" controller hybrid
-                legacy_exec "$@"
-                ;;
-        esac
-        ;;
-    events)
-        require_role "cap events" controller hybrid
-        shift
-        exec python3 "${DSM_ROOT}/database/universal_events_cli.py" "$@"
-        ;;
-    config-store)
-        require_role "cap config-store" controller hybrid
-        shift
-        exec python3 "${DSM_ROOT}/database/configuration_cli.py" "$@"
-        ;;
-    user|catalog|database|db|operations|ops)
-        require_role "cap ${1}" controller hybrid
-        legacy_exec "$@"
-        ;;
-    start|stop|restart|status|server|monitor|mods|backup|runtime|steam|game|content|compatibility)
-        require_role "cap ${1}" agent hybrid
-        legacy_exec "$@"
-        ;;
-    config|update)
-        require_role "cap ${1}" controller agent hybrid
-        legacy_exec "$@"
-        ;;
-    *) usage "$(local_role)" 0; exit 2 ;;
+help|--help|-h|"") role="$(local_role)"; [[ "${2:-}" == "--all" ]] && usage "${role}" 1 || usage "${role}" 0 ;;
+infrastructure) require_role "cap infrastructure" controller hybrid; shift; case "${1:-}" in doctor) shift; exec python3 "${DSM_ROOT}/database/infrastructure_doctor_contract.py" doctor "$@" ;; role) shift; exec python3 "${DSM_ROOT}/database/infrastructure_role_cli.py" "$@" ;; *) usage "$(local_role)" 0; exit 2 ;; esac ;;
+agent) shift; case "${1:-}" in deploy) require_role "cap agent deploy" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_deploy_cli.py" "$@" ;; ports) case "${2:-}" in show|check) if [[ $# -eq 2 || "${3:-}" == --* ]]; then require_role "cap agent ports ${2}" agent hybrid; agent_local_exec "$@"; else require_role "cap agent ports ${2} <agent-id>" controller hybrid; legacy_exec agent "$@"; fi ;; set) require_role "cap agent ports set" controller hybrid; legacy_exec agent "$@" ;; *) usage "$(local_role)" 0; exit 2 ;; esac ;; status|info|health|heartbeat|capabilities|network|game-data|jobs|update|logs|doctor) require_role "cap agent ${1}" agent hybrid; agent_local_exec "$@" ;; *) usage "$(local_role)" 0; exit 2 ;; esac ;;
+instance) case "${2:-}" in list|status|doctor|start|stop|restart) require_role "cap instance ${2}" agent hybrid; agent_local_exec "$@" ;; *) require_role "cap instance" controller hybrid; legacy_exec "$@" ;; esac ;;
+events) require_role "cap events" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/universal_events_cli.py" "$@" ;;
+config-store) require_role "cap config-store" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/configuration_cli.py" "$@" ;;
+observe) require_role "cap observe" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/observability_cli.py" "$@" ;;
+user|catalog|database|db|operations|ops) require_role "cap ${1}" controller hybrid; legacy_exec "$@" ;;
+start|stop|restart|status|server|monitor|mods|backup|runtime|steam|game|content|compatibility) require_role "cap ${1}" agent hybrid; legacy_exec "$@" ;;
+config|update) require_role "cap ${1}" controller agent hybrid; legacy_exec "$@" ;;
+*) usage "$(local_role)" 0; exit 2 ;;
 esac

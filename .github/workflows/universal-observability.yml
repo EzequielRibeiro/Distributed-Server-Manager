@@ -1,0 +1,44 @@
+name: Universal Observability Platform
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax
+        run: |
+          bash -n bin/cap
+          bash -n release/build_agent_package.sh
+          python3 -m py_compile \
+            core/observability_platform.py \
+            database/observability_repository.py \
+            database/observability_cli.py \
+            agents/linux/runtime/observability_client.py \
+            agents/linux/runtime/runtime_metrics.py \
+            dashboard/agent_heartbeat_api.py \
+            dashboard/observability_api.py \
+            dashboard/observability_http.py \
+            dashboard/server_part13.py \
+            tests/universal_observability_platform_test.py \
+            tests/universal_observability_http_test.py
+      - name: Validate migration parity
+        run: |
+          for directory in migrations migrations_mysql migrations_postgresql; do
+            test -f "database/${directory}/034_universal_observability.sql"
+            grep -F 'CREATE TABLE observability_samples' "database/${directory}/034_universal_observability.sql"
+            grep -F 'CREATE TABLE observability_latest' "database/${directory}/034_universal_observability.sql"
+          done
+      - name: Run Universal Observability tests
+        run: |
+          python3 -m unittest tests/universal_observability_platform_test.py
+          python3 -m unittest tests/universal_observability_http_test.py
+      - name: Validate distribution contracts
+        run: |
+          grep -F 'observability_client.py' release/build_agent_package.sh
+          grep -F 'cap observe' bin/cap
+          grep -F '/api/observability' dashboard/observability_http.py

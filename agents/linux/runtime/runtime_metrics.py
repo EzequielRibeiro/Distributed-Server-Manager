@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import instance_runtime
+from observability_client import collect_observability
 
 
 def _path() -> Path:
@@ -54,6 +55,10 @@ def snapshot(*, queue_depth: dict[str, int] | None = None) -> dict[str, Any]:
     payload = _read()
     if queue_depth is not None:
         payload["queue_depth"] = {str(key): max(0, int(value)) for key, value in queue_depth.items()}
+    samples = collect_observability({"agent_id": "local"})
+    for sample in samples:
+        sample.pop("agent_id", None)
+    payload["observability_samples"] = samples
     return payload
 
 

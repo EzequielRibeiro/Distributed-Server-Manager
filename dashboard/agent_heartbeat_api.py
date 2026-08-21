@@ -3,13 +3,66 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from agent_instance_reconciliation_repository import AgentInstanceReconciliationRepository
 from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
 from agent_runtime_repository import AgentRuntimeRepository
 from configuration_repository import ConfigurationRepository
+from observability_repository import ObservabilityRepository
 from universal_event_repository import UniversalEventRepository
+
+
+def _metric_token(value: Any) -> str:
+    text = re.sub(r"[^a-z0-9.]+", ".", str(value or "").strip().lower().replace("_", "."))
+    return text.strip(".") or "unknown"
+
+
+def _observability_from_heartbeat(agent_id: str, body: dict[str, Any]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    runtime = body.get("instance_runtime_metrics")
+    if isinstance(runtime, dict):
+        for item in runtime.get("observability_samples") or []:
+            if isinstance(item, dict):
+                value = dict(item)
+                value.pop("agent_id", None)
+                result.append(value)
+        for name, value in (runtime.get("counters") or {}).items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                result.append({"metric_name": "capivara.runtime.counter." + _metric_token(name), "metric_type": "counter", "value": value, "unit": "1", "scope_type": "agent"})
+        for name, value in (runtime.get("queue_depth") or {}).items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                result.append({"metric_name": "capivara.runtime.queue." + _metric_token(name), "metric_type": "gauge", "value": value, "unit": "items", "scope_type": "agent"})
+        for name, stats in (runtime.get("durations_ms") or {}).items():
+            if not isinstance(stats, dict):
+                continue
+            for field in ("count", "total", "max"):
+                value = stats.get(field)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    unit = "1" if field == "count" else "milliseconds"
+                    metric_type = "counter" if field in {"count", "total"} else "gauge"
+                    result.append({"metric_name": f"capivara.runtime.duration.{_metric_token(name)}.{field}", "metric_type": metric_type, "value": value, "unit": unit, "scope_type": "agent"})
+    health_map = {"healthy": 1.0, "transitioning": 0.5, "unknown": -1.0, "degraded": 0.0}
+    for item in body.get("instance_runtime_health") or []:
+        if not isinstance(item, dict) or not item.get("instance_id"):
+            continue
+        health = str(item.get("health") or "unknown").lower()
+        result.append({
+            "metric_name": "instance.health",
+            "metric_type": "gauge",
+            "scope_type": "instance",
+            "instance_id": str(item["instance_id"]),
+            "value": health_map.get(health, -1.0),
+            "unit": "state",
+            "collected_at": item.get("generated_at"),
+            "dimensions": {
+                "health": health,
+                "desired_state": str(item.get("desired_state") or "unknown"),
+                "observed_state": str(item.get("observed_state") or "unknown"),
+            },
+        })
+    return result[:2000]
 
 
 def record_agent_heartbeat(authenticated_agent_id: str, payload: dict[str, Any] | None, *, backend) -> dict[str, Any]:
@@ -58,6 +111,10 @@ def record_agent_heartbeat(authenticated_agent_id: str, payload: dict[str, Any] 
         events.initialize()
         event_result = events.ingest_agent_events(agent_id, runtime_events)
 
+    metrics = ObservabilityRepository(backend)
+    metrics.initialize()
+    metric_result = metrics.ingest_agent_samples(agent_id, _observability_from_heartbeat(agent_id, body))
+
     configurations = ConfigurationRepository(backend)
     configurations.initialize()
     configuration_state = body.get("configuration_state")
@@ -74,6 +131,9 @@ def record_agent_heartbeat(authenticated_agent_id: str, payload: dict[str, Any] 
         "events_accepted": event_result["accepted"],
         "events_created": event_result["created"],
         "events_rejected": event_result["rejected"],
+        "metrics_accepted": metric_result["accepted"],
+        "metrics_created": metric_result["created"],
+        "metrics_rejected": metric_result["rejected"],
         "configuration_commands": desired_configuration,
         "configuration_count": len(desired_configuration),
     }
