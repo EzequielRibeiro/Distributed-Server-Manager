@@ -33,7 +33,7 @@ instance_runtime.clear_result("cmd-start");assert instance_runtime.read_result()
   with tempfile.TemporaryDirectory() as state:
    r=self._run('''
 from pathlib import Path
-import instance_runtime,runtime_reconciler
+import instance_runtime,runtime_reconciler,runtime_materialization
 from configuration_client import apply_configuration_commands,configuration_state
 from backup_client import apply_backup_commands
 import broadcast_client
@@ -46,21 +46,21 @@ class FakeAdapter:
  def restart(self,i):return self.start(i)
  def doctor(self,i):return {"ready":True,"findings":[]}
  def broadcast(self,i,message,priority="normal"):return {"message":message,"priority":priority}
-fake=FakeAdapter();instance_runtime.resolve_adapter=lambda record:fake;runtime_reconciler.resolve_adapter=lambda record:fake;broadcast_client.resolve_adapter=lambda record:fake
+fake=FakeAdapter();instance_runtime.resolve_adapter=lambda record:fake;runtime_reconciler.resolve_adapter=lambda record:fake;runtime_materialization.resolve_adapter=lambda record:fake;broadcast_client.resolve_adapter=lambda record:fake
 config={"agent_id":"win-agent-one"};root=Path(instance_runtime.STATE_DIR)/"instance-workspaces"/"srv-one";root.mkdir(parents=True);(root/"server.txt").write_text("ok")
 instance_runtime.register_instance({"instance_id":"srv-one","agent_id":"win-agent-one","runtime_id":"svc","adapter":"fake","path":str(root),"desired_state":"stopped","observed_state":"stopped"})
 apply_configuration_commands([{"target_type":"instance","target_id":"srv-one","namespace":"server","revision":"1","checksum":"abc","value":{"slots":10}}]);assert configuration_state()[0]["status"]=="applied"
 backup=apply_backup_commands(config,[{"command_id":"backup-1","instance_id":"srv-one","action":"create","policy":{"mode":"full","consistency":"live","compression":"gzip","retention_count":2}}])[0];assert backup["status"]=="completed" and Path(backup["artifact_path"]).is_file()
 bcast=broadcast_client.apply_broadcast_commands(config,[{"delivery_id":"delivery-1","broadcast_id":"m1","instance_id":"srv-one","message":"maintenance"}])[0];assert bcast["status"]=="acknowledged"
-rec=runtime_reconciler.reconcile_all(config,force=True)[0];assert rec["status"]=="healthy"
-e=emit_runtime_event(Path(instance_runtime.STATE_DIR),"TEST",agent_id="win-agent-one",instance_id="srv-one");assert read_runtime_events(Path(instance_runtime.STATE_DIR));acknowledge_runtime_events(Path(instance_runtime.STATE_DIR),[e["event_id"]]);assert not read_runtime_events(Path(instance_runtime.STATE_DIR))
+rec=runtime_reconciler.reconcile_all(config,force=True)[0];assert rec["status"]=="healthy",rec
+e=emit_runtime_event(Path(instance_runtime.STATE_DIR),"TEST",agent_id="win-agent-one",instance_id="srv-one");events=read_runtime_events(Path(instance_runtime.STATE_DIR));assert e["event_id"] in {x["event_id"] for x in events};acknowledge_runtime_events(Path(instance_runtime.STATE_DIR),[e["event_id"]]);assert e["event_id"] not in {x["event_id"] for x in read_runtime_events(Path(instance_runtime.STATE_DIR))}
 ''',state_dir=state);self.assertEqual(r.returncode,0,r.stderr)
  def test_dayz_profile_and_end_to_end_provisioning(self):
   with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as install:
    executable=Path(install)/"DayZServer_x64.exe";executable.write_bytes(b"test")
    r=self._run(f'''
 from pathlib import Path
-import json,instance_runtime
+import instance_runtime
 from provisioning_executor import execute
 config={{"agent_id":"win-agent-one"}};request={{"provisioning_id":"p1","instance_id":"srv-dayz","agent_id":"win-agent-one","instance":{{"game_id":"dayz","environment_id":"dayz.stable"}},"desired_state":"stopped","configuration":{{"install_path":{str(install)!r}}},"ports":{{"game":{{"port":2302,"protocol":"udp"}}}}}}
 result_path=Path(instance_runtime.STATE_DIR)/"provision-result.json";out=execute(config,request,result_path)
