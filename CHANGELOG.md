@@ -1,5 +1,12 @@
 # DSM CHANGELOG
 
+## v1.4.7 — 2026-08-21
+
+- Publica uma release de manutenção da linha 1.4.x a partir do baseline estável `v1.4.6`
+- Mantém o comportamento de self-update handoff introduzido na 1.4.6
+- Reemite os pacotes oficiais, checksums e manifests pelo pipeline reproduzível da linha 1.4.x
+- Não incorpora o runtime distribuído 2.0; a linha 1.4.7 permanece isolada como manutenção compatível com instalações 1.4.x
+
 ## v1.4.6 — 2026-08-20
 
 - Corrige o bootstrap do Update Manager para executar o `update.sh` contido na release alvo já validada, em vez de continuar usando o updater da versão instalada
