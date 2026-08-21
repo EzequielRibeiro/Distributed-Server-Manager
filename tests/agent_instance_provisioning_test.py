@@ -21,14 +21,33 @@ for path in (
         sys.path.insert(0, str(path))
 
 import instance_provisioner
-import instance_runtime
 from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
 from agent_pairing_repository import AgentPairingRepository
 from agent_remote_http import dispatch_enroll, dispatch_heartbeat
 from backend import DatabaseConfig
 from backend_factory import create_backend
+from instance_launch_profile import resolve_launch_profile
 from registry import installation_profile_identity
 from registry_repository import RegistryRepository
+
+
+class CatalogLaunchProfileTest(unittest.TestCase):
+    def test_native_and_java_catalog_runtimes_become_structured_profiles(self):
+        dayz = resolve_launch_profile(ROOT, "dayz.stable")
+        self.assertEqual(dayz["game_id"], "dayz")
+        self.assertEqual(dayz["launch"]["engine"], "native")
+        self.assertEqual(dayz["launch"]["executable"], "DayZServer")
+        self.assertIn("-config=serverDZ.cfg", dayz["launch"]["arguments"])
+
+        paper = resolve_launch_profile(ROOT, "minecraft.java.paper")
+        self.assertEqual(paper["game_id"], "minecraft")
+        self.assertEqual(paper["launch"]["engine"], "java")
+        self.assertEqual(paper["launch"]["executable"], "server.jar")
+        self.assertEqual(paper["launch"]["arguments"], ["nogui"])
+
+    def test_unknown_catalog_runtime_is_rejected(self):
+        with self.assertRaises(ValueError):
+            resolve_launch_profile(ROOT, "missing.runtime")
 
 
 class PrivilegedProvisionerTest(unittest.TestCase):
@@ -81,42 +100,45 @@ class PrivilegedProvisionerTest(unittest.TestCase):
         ) = self.original
         self.temp.cleanup()
 
-    def runtime(self):
+    def runtime(self, *, engine="native", executable="server-bin"):
         return {
             "runtime_id": "generic.stable",
             "environment_id": "generic.stable",
             "game_id": "generic",
             "adapter": "systemd",
             "launch": {
-                "engine": "native",
-                "executable": "server-bin",
+                "engine": engine,
+                "executable": executable,
                 "arguments": ["--port=24000", "hello world"],
             },
         }
 
-    def request(self, action="provision"):
-        return {
+    def request(self, action="provision", *, runtime=None):
+        body = {
             "job_id": "job-one",
             "agent_id": "agent-one",
             "instance_id": "instance-one",
             "action": action,
-            "runtime": self.runtime(),
         }
+        if action != "remove":
+            body["runtime"] = runtime or self.runtime()
+        return body
 
-    def _install_fake_binary(self):
-        binary = self.game_data / "server-bin"
-        binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        binary.chmod(0o755)
-        return binary
+    def _install_artifact(self, name="server-bin", *, executable=True):
+        artifact = self.game_data / name
+        artifact.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        artifact.chmod(0o755 if executable else 0o644)
+        return artifact
 
     def test_unit_is_derived_and_controller_cannot_supply_execstart(self):
-        binary = self._install_fake_binary()
+        artifact = self._install_artifact()
         working = self.data / "instance-one" / "serverfiles"
         working.mkdir(parents=True)
         runtime = instance_provisioner._runtime_contract(self.request())
-        content = instance_provisioner.render_unit("instance-one", binary, working, runtime["arguments"])
+        argv = instance_provisioner._launch_argv(runtime, artifact)
+        content = instance_provisioner.render_unit("instance-one", argv, working)
         self.assertIn("capivara", content.lower())
-        self.assertIn(str(binary), content)
+        self.assertIn(str(artifact), content)
         self.assertNotIn("/bin/sh -c", content)
         unsafe = self.request()
         unsafe["runtime"]["launch"]["executable"] = "../../bin/sh"
@@ -126,9 +148,24 @@ class PrivilegedProvisionerTest(unittest.TestCase):
         request["unit"] = "sshd.service"
         self.assertEqual(instance_provisioner.unit_for_instance(request["instance_id"]), "capivara-instance-instance-one.service")
 
+    def test_java_engine_uses_agent_local_java_launcher(self):
+        jar = self._install_artifact("server.jar", executable=False)
+        runtime = instance_provisioner._runtime_contract(
+            self.request(runtime=self.runtime(engine="java", executable="server.jar"))
+        )
+        with patch.object(instance_provisioner.shutil, "which", return_value="/usr/bin/java"):
+            argv = instance_provisioner._launch_argv(runtime, jar)
+        self.assertEqual(argv[:3], ["/usr/bin/java", "-jar", str(jar)])
+
     def test_provision_and_reconcile_are_deterministic(self):
-        self._install_fake_binary()
-        with patch.object(instance_provisioner, "_run", return_value=(0, "")):
+        self._install_artifact()
+
+        def runner(command, timeout=30, check=True):
+            if command[:2] == ["systemctl", "is-active"]:
+                return 3, "inactive"
+            return 0, ""
+
+        with patch.object(instance_provisioner, "_run", side_effect=runner):
             first = instance_provisioner._materialize(self.request())
             second = instance_provisioner._materialize(self.request("reconcile"))
         self.assertEqual(first["status"], "completed")
@@ -138,7 +175,7 @@ class PrivilegedProvisionerTest(unittest.TestCase):
         self.assertTrue((self.systemd / "capivara-instance-instance-one.service").is_file())
 
     def test_unit_is_rolled_back_when_daemon_reload_fails(self):
-        self._install_fake_binary()
+        self._install_artifact()
         unit = self.systemd / "capivara-instance-instance-one.service"
         unit.write_text("old unit\n", encoding="utf-8")
         calls = {"count": 0}
@@ -146,12 +183,12 @@ class PrivilegedProvisionerTest(unittest.TestCase):
         def runner(command, timeout=30, check=True):
             if command[:2] == ["systemd-analyze", "verify"]:
                 return 0, ""
+            if command[:2] == ["systemctl", "is-active"]:
+                return 3, "inactive"
             if command[:2] == ["systemctl", "daemon-reload"]:
                 calls["count"] += 1
                 if calls["count"] == 1:
-                    if check:
-                        raise RuntimeError("reload failed")
-                    return 1, "reload failed"
+                    raise RuntimeError("reload failed")
                 return 0, ""
             return 0, ""
 
@@ -161,17 +198,20 @@ class PrivilegedProvisionerTest(unittest.TestCase):
         self.assertEqual(unit.read_text(encoding="utf-8"), "old unit\n")
 
     def test_remove_preserves_instance_data(self):
-        self._install_fake_binary()
         serverfiles = self.data / "instance-one" / "serverfiles"
         serverfiles.mkdir(parents=True)
         marker = serverfiles / "keep.txt"
         marker.write_text("keep", encoding="utf-8")
         unit = self.systemd / "capivara-instance-instance-one.service"
         unit.write_text("unit\n", encoding="utf-8")
-        request = self.request("remove")
-        request.pop("runtime")
-        with patch.object(instance_provisioner, "_run", return_value=(0, "")):
-            result = instance_provisioner._materialize(request)
+
+        def runner(command, timeout=30, check=True):
+            if command[:2] == ["systemctl", "is-active"]:
+                return 3, "inactive"
+            return 0, ""
+
+        with patch.object(instance_provisioner, "_run", side_effect=runner):
+            result = instance_provisioner._materialize(self.request("remove"))
         self.assertTrue(result["data_preserved"])
         self.assertFalse(unit.exists())
         self.assertTrue(marker.exists())
