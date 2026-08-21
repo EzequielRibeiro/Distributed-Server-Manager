@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
 
@@ -11,11 +12,18 @@ from agent_instance_provisioning_api import instance_provisioning_status, queue_
 INSTANCE_PROVISIONING_PATH = "/api/instances/provisioning"
 
 
-def dispatch_instance_provisioning_post(path: str, payload: dict[str, Any] | None, *, user, backend) -> tuple[int, dict[str, Any]]:
+def dispatch_instance_provisioning_post(
+    path: str,
+    payload: dict[str, Any] | None,
+    *,
+    user,
+    backend,
+    root: Path,
+) -> tuple[int, dict[str, Any]]:
     if path != INSTANCE_PROVISIONING_PATH:
         return 404, {"error": "not_found"}
     try:
-        return 202, queue_instance_provisioning(payload, user=user, backend=backend)
+        return 202, queue_instance_provisioning(payload, user=user, backend=backend, root=root)
     except PermissionError:
         return 403, {"error": "forbidden", "message": "Acesso administrativo necessário."}
     except (ValueError, KeyError) as exc:
