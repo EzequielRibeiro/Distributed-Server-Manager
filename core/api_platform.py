@@ -35,9 +35,12 @@ def hash_secret(secret:str)->str:return hashlib.sha256(str(secret).encode("utf-8
 def verify_secret(secret:str,digest:str)->bool:return hmac.compare_digest(hash_secret(secret),str(digest or ""))
 def split_token(value:str)->tuple[str,str]:
  text=str(value or "").strip()
- if not text.startswith("capv2_") or "_" not in text[6:]:raise ApiValidationError("invalid bearer token")
- prefix,secret=text.rsplit("_",1)
- if not prefix or not secret:raise ApiValidationError("invalid bearer token")
+ if not text.startswith("capv2_"):raise ApiValidationError("invalid bearer token")
+ rest=text[len("capv2_"):]
+ if "_" not in rest:raise ApiValidationError("invalid bearer token")
+ short,secret=rest.split("_",1)
+ prefix=f"capv2_{short}"
+ if len(short)<8 or not short.isalnum() or not secret:raise ApiValidationError("invalid bearer token")
  return prefix,secret
 
 def encode_cursor(occurred_at:str,event_id:str)->str:
