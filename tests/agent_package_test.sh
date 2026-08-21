@@ -20,6 +20,7 @@ python3 -m py_compile \
   "${ROOT}/agents/linux/runtime/runtime_spec.py" \
   "${ROOT}/agents/linux/runtime/runtime_events.py" \
   "${ROOT}/agents/linux/runtime/runtime_materialization.py" \
+  "${ROOT}/agents/linux/runtime/runtime_reconciler.py" \
   "${ROOT}/agents/linux/runtime/game_runtime.py" \
   "${ROOT}/agents/linux/runtime/provisioning_contract.py" \
   "${ROOT}/agents/linux/runtime/provisioning_state.py" \
@@ -54,7 +55,7 @@ for path in \
   agent/runtime/agent.py agent/runtime/capabilities.py agent/runtime/network_inventory.py \
   agent/runtime/update_client.py agent/runtime/update_state.py agent/runtime/local_cli.py agent/runtime/cap_dispatch.py \
   agent/runtime/game_data_client.py agent/runtime/game_data_executor.py agent/runtime/game_data_state.py \
-  agent/runtime/instance_runtime.py agent/runtime/runtime_spec.py agent/runtime/runtime_events.py agent/runtime/runtime_materialization.py agent/runtime/game_runtime.py \
+  agent/runtime/instance_runtime.py agent/runtime/runtime_spec.py agent/runtime/runtime_events.py agent/runtime/runtime_materialization.py agent/runtime/runtime_reconciler.py agent/runtime/game_runtime.py \
   agent/runtime/provisioning_contract.py agent/runtime/provisioning_state.py agent/runtime/provisioning_client.py agent/runtime/provisioning_executor.py agent/runtime/privileged_materialization.py \
   agent/privileged/materialize_instance.py \
   agent/runtime/adapters/__init__.py agent/runtime/adapters/base.py agent/runtime/adapters/registry.py agent/runtime/adapters/systemd.py \
@@ -93,6 +94,7 @@ source_map = {
     'agent/runtime/runtime_spec.py': root / 'agents/linux/runtime/runtime_spec.py',
     'agent/runtime/runtime_events.py': root / 'agents/linux/runtime/runtime_events.py',
     'agent/runtime/runtime_materialization.py': root / 'agents/linux/runtime/runtime_materialization.py',
+    'agent/runtime/runtime_reconciler.py': root / 'agents/linux/runtime/runtime_reconciler.py',
     'agent/runtime/game_runtime.py': root / 'agents/linux/runtime/game_runtime.py',
     'agent/runtime/provisioning_contract.py': root / 'agents/linux/runtime/provisioning_contract.py',
     'agent/runtime/provisioning_state.py': root / 'agents/linux/runtime/provisioning_state.py',
@@ -129,6 +131,8 @@ grep -Fq 'sha256sum' "${BOOTSTRAP}" || fail "release bootstrap does not validate
 grep -Fq 'runtime/provisioning_contract.py' "${INSTALLER}" || fail "installer does not install provisioning contract"
 grep -Fq 'runtime/provisioning_executor.py' "${INSTALLER}" || fail "installer does not install provisioning executor"
 grep -Fq 'runtime/privileged_materialization.py' "${INSTALLER}" || fail "installer does not install materialization bridge"
+grep -Fq 'runtime/runtime_reconciler.py' "${INSTALLER}" || fail "installer does not install runtime reconciler"
+grep -Fq 'runtime_reconciler.py' "${ROOT}/agents/linux/updater/updater.py" || fail "updater does not manage runtime reconciler"
 grep -Fq 'privileged/materialize_instance.py' "${INSTALLER}" || fail "installer does not install privileged materializer"
 grep -Fq 'capivara-agent-materialize@.service' "${INSTALLER}" || fail "installer does not install materializer helper service"
 grep -Fq 'instance-provisioning/history' "${INSTALLER}" || fail "installer does not create provisioning history"
