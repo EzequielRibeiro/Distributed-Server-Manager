@@ -10,7 +10,10 @@ from typing import Any
 
 _TOKEN = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 _EXECUTABLE = re.compile(r"^[A-Za-z0-9._+-]{1,128}$")
-SUPPORTED_ENGINES = {"native", "java"}
+# B8 materializes executable artifacts directly from Agent-owned game-data.
+# Java runtimes require a separate trusted launcher (java + JVM args + -jar) and
+# therefore deliberately fail closed until that materializer exists.
+SUPPORTED_ENGINES = {"native"}
 
 
 def _token(value: Any, label: str) -> str:
@@ -32,7 +35,7 @@ def _normalize_args(value: Any) -> list[str]:
     if len(values) > 64:
         raise ValueError("runtime process has too many arguments")
     for item in values:
-        if len(item) > 512 or any(char in item for char in ("\x00", "\n", "\r")):
+        if len(item) > 512 or any(char in item for char in ("\x00", "\n", "\r", "$")):
             raise ValueError("runtime process contains an invalid argument")
     return values
 
