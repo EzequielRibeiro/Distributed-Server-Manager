@@ -8,6 +8,7 @@ from typing import Any
 from agent_instance_reconciliation_repository import AgentInstanceReconciliationRepository
 from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
 from agent_runtime_repository import AgentRuntimeRepository
+from configuration_repository import ConfigurationRepository
 from universal_event_repository import UniversalEventRepository
 
 
@@ -57,6 +58,13 @@ def record_agent_heartbeat(authenticated_agent_id: str, payload: dict[str, Any] 
         events.initialize()
         event_result = events.ingest_agent_events(agent_id, runtime_events)
 
+    configurations = ConfigurationRepository(backend)
+    configurations.initialize()
+    configuration_state = body.get("configuration_state")
+    if isinstance(configuration_state, list):
+        configurations.record_agent_state(agent_id, configuration_state)
+    desired_configuration = configurations.desired_for_agent(agent_id)
+
     last_seen = repository.heartbeat(agent_id)
     return {
         "agent_id": agent_id,
@@ -66,4 +74,6 @@ def record_agent_heartbeat(authenticated_agent_id: str, payload: dict[str, Any] 
         "events_accepted": event_result["accepted"],
         "events_created": event_result["created"],
         "events_rejected": event_result["rejected"],
+        "configuration_commands": desired_configuration,
+        "configuration_count": len(desired_configuration),
     }
