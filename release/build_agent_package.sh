@@ -28,6 +28,7 @@ trap cleanup EXIT
 mkdir -p \
     "${PACKAGE_ROOT}/agent/common" \
     "${PACKAGE_ROOT}/agent/runtime/adapters" \
+    "${PACKAGE_ROOT}/agent/runtime/materializers" \
     "${PACKAGE_ROOT}/agent/updater" \
     "${PACKAGE_ROOT}/agent/policy" \
     "${PACKAGE_ROOT}/services" \
@@ -46,8 +47,12 @@ git -C "${ROOT}" show "${REF}:agents/linux/runtime/game_data_client.py" >"${PACK
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/game_data_executor.py" >"${PACKAGE_ROOT}/agent/runtime/game_data_executor.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/game_data_state.py" >"${PACKAGE_ROOT}/agent/runtime/game_data_state.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/instance_runtime.py" >"${PACKAGE_ROOT}/agent/runtime/instance_runtime.py"
+git -C "${ROOT}" show "${REF}:agents/linux/runtime/runtime_spec.py" >"${PACKAGE_ROOT}/agent/runtime/runtime_spec.py"
+git -C "${ROOT}" show "${REF}:agents/linux/runtime/runtime_events.py" >"${PACKAGE_ROOT}/agent/runtime/runtime_events.py"
+git -C "${ROOT}" show "${REF}:agents/linux/runtime/runtime_materialization.py" >"${PACKAGE_ROOT}/agent/runtime/runtime_materialization.py"
 for file in __init__.py base.py registry.py systemd.py; do
     git -C "${ROOT}" show "${REF}:agents/linux/runtime/adapters/${file}" >"${PACKAGE_ROOT}/agent/runtime/adapters/${file}"
+    git -C "${ROOT}" show "${REF}:agents/linux/runtime/materializers/${file}" >"${PACKAGE_ROOT}/agent/runtime/materializers/${file}"
 done
 git -C "${ROOT}" show "${REF}:agents/linux/policy/49-capivara-agent-instance-units.rules" >"${PACKAGE_ROOT}/agent/policy/49-capivara-agent-instance-units.rules"
 git -C "${ROOT}" show "${REF}:agents/linux/updater/updater.py" >"${PACKAGE_ROOT}/agent/updater/updater.py"
@@ -78,10 +83,17 @@ required = [
     "agent/runtime/game_data_executor.py",
     "agent/runtime/game_data_state.py",
     "agent/runtime/instance_runtime.py",
+    "agent/runtime/runtime_spec.py",
+    "agent/runtime/runtime_events.py",
+    "agent/runtime/runtime_materialization.py",
     "agent/runtime/adapters/__init__.py",
     "agent/runtime/adapters/base.py",
     "agent/runtime/adapters/registry.py",
     "agent/runtime/adapters/systemd.py",
+    "agent/runtime/materializers/__init__.py",
+    "agent/runtime/materializers/base.py",
+    "agent/runtime/materializers/registry.py",
+    "agent/runtime/materializers/systemd.py",
     "agent/policy/49-capivara-agent-instance-units.rules",
     "agent/updater/updater.py",
     "services/capivara-agent.service",
