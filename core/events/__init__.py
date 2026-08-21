@@ -12,6 +12,7 @@ from .observability import EventPlatformMetrics, EventPlatformSnapshot, Observed
 from .publisher import EventPublisher, publish
 from .registry import EVENT_TYPES, is_registered, require_registered
 from .retention import EventRetentionPolicy, EventRetentionService, RetentionResult
+from .runtime import EventPlatformRuntime
 from .storage import EventStore
 from .streaming import CompositeEventSink, EventStreamHub, Subscription
 from .timeline import TimelineConsumer, TimelineEntry, TimelineEventSource
@@ -28,6 +29,7 @@ __all__ = [
     "CompositeEventSink",
     "EventContext",
     "EventPlatformMetrics",
+    "EventPlatformRuntime",
     "EventPlatformSnapshot",
     "EventPublisher",
     "EventRetentionPolicy",
