@@ -19,6 +19,7 @@ from typing import Any
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 INSTALL_ROOT = Path(os.environ.get("CAPIVARA_AGENT_ROOT", "/opt/capivara-agent"))
 CLI_PATH = Path(os.environ.get("CAPIVARA_AGENT_CLI_PATH", "/usr/local/bin/cap"))
+POLKIT_RULES_DIR = Path(os.environ.get("CAPIVARA_POLKIT_RULES_DIR", "/etc/polkit-1/rules.d"))
 REQUEST_PATH = STATE_DIR / "update-request.json"
 RESULT_PATH = STATE_DIR / "update-result.json"
 HISTORY_DIR = STATE_DIR / "update-history"
@@ -142,6 +143,7 @@ def _verify_package(
 
 def _validate_python(package_root: Path) -> None:
     runtime = package_root / "agent" / "runtime"
+    adapters = runtime / "adapters"
     files = [
         runtime / "agent.py",
         runtime / "capabilities.py",
@@ -153,6 +155,10 @@ def _validate_python(package_root: Path) -> None:
         runtime / "game_data_executor.py",
         runtime / "game_data_state.py",
         runtime / "instance_runtime.py",
+        adapters / "__init__.py",
+        adapters / "base.py",
+        adapters / "registry.py",
+        adapters / "systemd.py",
         package_root / "agent" / "common" / "identity.py",
         package_root / "agent" / "updater" / "updater.py",
     ]
@@ -169,7 +175,9 @@ def _validate_python(package_root: Path) -> None:
 
 def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
     runtime = package_root / "agent" / "runtime"
+    adapters = runtime / "adapters"
     common = package_root / "agent" / "common"
+    policy = package_root / "agent" / "policy"
     return [
         (runtime / "agent.py", INSTALL_ROOT / "runtime" / "agent.py", 0o755, "agent/runtime/agent.py"),
         (runtime / "capabilities.py", INSTALL_ROOT / "runtime" / "capabilities.py", 0o644, "agent/runtime/capabilities.py"),
@@ -181,6 +189,11 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
         (runtime / "game_data_executor.py", INSTALL_ROOT / "runtime" / "game_data_executor.py", 0o755, "agent/runtime/game_data_executor.py"),
         (runtime / "game_data_state.py", INSTALL_ROOT / "runtime" / "game_data_state.py", 0o644, "agent/runtime/game_data_state.py"),
         (runtime / "instance_runtime.py", INSTALL_ROOT / "runtime" / "instance_runtime.py", 0o644, "agent/runtime/instance_runtime.py"),
+        (adapters / "__init__.py", INSTALL_ROOT / "runtime" / "adapters" / "__init__.py", 0o644, "agent/runtime/adapters/__init__.py"),
+        (adapters / "base.py", INSTALL_ROOT / "runtime" / "adapters" / "base.py", 0o644, "agent/runtime/adapters/base.py"),
+        (adapters / "registry.py", INSTALL_ROOT / "runtime" / "adapters" / "registry.py", 0o644, "agent/runtime/adapters/registry.py"),
+        (adapters / "systemd.py", INSTALL_ROOT / "runtime" / "adapters" / "systemd.py", 0o644, "agent/runtime/adapters/systemd.py"),
+        (policy / "49-capivara-agent-instance-units.rules", POLKIT_RULES_DIR / "49-capivara-agent-instance-units.rules", 0o644, "agent/policy/49-capivara-agent-instance-units.rules"),
         (common / "identity.py", INSTALL_ROOT / "common" / "identity.py", 0o644, "agent/common/identity.py"),
         (package_root / "agent" / "updater" / "updater.py", INSTALL_ROOT / "updater" / "updater.py", 0o755, "agent/updater/updater.py"),
         (package_root / "manifest.json", INSTALL_ROOT / "manifest.json", 0o644, "manifest.json"),
