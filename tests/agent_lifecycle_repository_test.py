@@ -15,11 +15,13 @@ from agent_lifecycle_repository import AgentLifecycleRepository, AgentNotFound
 from backend import DatabaseConfig
 from backend_factory import create_backend
 from core.agent_lifecycle import InvalidAgentTransition
+from core.events import EventPublisher, EventSeverity
 
 
 SCHEMA = """
 CREATE TABLE agents (
     id TEXT PRIMARY KEY,
+    controller_id TEXT,
     status TEXT NOT NULL
 );
 """
@@ -33,11 +35,11 @@ class AgentLifecycleRepositoryTest(unittest.TestCase):
         connection = sqlite3.connect(self.database_path)
         connection.executescript(SCHEMA)
         connection.executemany(
-            "INSERT INTO agents(id, status) VALUES (?, ?)",
+            "INSERT INTO agents(id, controller_id, status) VALUES (?, ?, ?)",
             [
-                ("agent-pending", "pending"),
-                ("agent-active", "active"),
-                ("agent-disabled", "disabled"),
+                ("agent-pending", "controller-a", "pending"),
+                ("agent-active", "controller-a", "active"),
+                ("agent-disabled", "controller-a", "disabled"),
             ],
         )
         connection.commit()
@@ -92,6 +94,48 @@ class AgentLifecycleRepositoryTest(unittest.TestCase):
             self.repository.transition("agent-active", "pairing")
 
         self.assertEqual(self.repository.status("agent-active"), "active")
+
+    def test_pairing_transition_publishes_scoped_event(self):
+        received = []
+        repository = AgentLifecycleRepository(
+            self.backend,
+            event_publisher=EventPublisher(sink=received.append),
+        )
+
+        repository.transition("agent-pending", "pairing")
+
+        self.assertEqual(len(received), 1)
+        event = received[0]
+        self.assertEqual(event.type, "AGENT_PAIRING_STARTED")
+        self.assertEqual(event.source.type, "agent")
+        self.assertEqual(event.source.id, "agent-pending")
+        self.assertEqual(event.scope.controller_id, "controller-a")
+        self.assertEqual(event.scope.agent_id, "agent-pending")
+        self.assertEqual(event.data["previous_status"], "pending")
+        self.assertEqual(event.data["status"], "pairing")
+
+    def test_offline_transition_uses_warning_severity(self):
+        received = []
+        repository = AgentLifecycleRepository(
+            self.backend,
+            event_publisher=EventPublisher(sink=received.append),
+        )
+
+        repository.transition("agent-active", "offline")
+
+        self.assertEqual(received[0].type, "AGENT_OFFLINE")
+        self.assertIs(received[0].severity, EventSeverity.WARNING)
+
+    def test_idempotent_transition_does_not_publish_duplicate_event(self):
+        received = []
+        repository = AgentLifecycleRepository(
+            self.backend,
+            event_publisher=EventPublisher(sink=received.append),
+        )
+
+        repository.transition("agent-active", "active")
+
+        self.assertEqual(received, [])
 
 
 if __name__ == "__main__":
