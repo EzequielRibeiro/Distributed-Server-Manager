@@ -9,6 +9,7 @@ from .models import EventScope, EventSeverity, EventSource, UniversalEvent
 from .publisher import EventPublisher, publish
 from .registry import EVENT_TYPES, is_registered, require_registered
 from .storage import EventStore
+from .timeline import TimelineConsumer, TimelineEntry, TimelineEventSource
 from .validator import EventValidationError, validate_event
 
 __all__ = [
@@ -20,6 +21,9 @@ __all__ = [
     "EventSource",
     "EventStore",
     "EventValidationError",
+    "TimelineConsumer",
+    "TimelineEntry",
+    "TimelineEventSource",
     "UniversalEvent",
     "is_registered",
     "publish",
