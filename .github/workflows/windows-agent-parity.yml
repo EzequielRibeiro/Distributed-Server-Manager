@@ -1,0 +1,60 @@
+name: Windows Agent Parity
+
+on:
+  pull_request:
+    paths:
+      - 'agents/windows/**'
+      - 'release/build_windows_agent_package.py'
+      - 'tests/windows_agent_runtime_parity_test.py'
+      - 'tests/phase19_windows_agent_test.py'
+      - '.github/workflows/windows-agent-parity.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/windows/**'
+      - 'release/build_windows_agent_package.py'
+      - 'tests/windows_agent_runtime_parity_test.py'
+      - 'tests/phase19_windows_agent_test.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-agent-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compile complete Windows runtime
+        run: python3 -m compileall -q agents/windows/runtime release/build_windows_agent_package.py tests/windows_agent_runtime_parity_test.py tests/phase19_windows_agent_test.py
+      - name: Validate Windows runtime parity contracts
+        run: python3 -m unittest tests/windows_agent_runtime_parity_test.py
+      - name: Validate Windows package and protocol
+        run: python3 -m unittest tests/phase19_windows_agent_test.py
+      - name: Build reproducible Windows Agent package
+        run: |
+          python3 release/build_windows_agent_package.py HEAD dist-parity
+          test -s dist-parity/capivara-agent-windows-$(cat version).zip
+
+  native-windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compile complete Windows runtime
+        shell: pwsh
+        run: python -m compileall -q agents/windows/runtime release/build_windows_agent_package.py tests/windows_agent_runtime_parity_test.py tests/phase19_windows_agent_test.py
+      - name: Validate Windows runtime parity contracts natively
+        shell: pwsh
+        run: python -m unittest tests/windows_agent_runtime_parity_test.py
+      - name: Validate Windows package and protocol natively
+        shell: pwsh
+        run: python -m unittest tests/phase19_windows_agent_test.py
