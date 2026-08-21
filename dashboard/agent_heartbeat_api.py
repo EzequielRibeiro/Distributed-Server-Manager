@@ -6,6 +6,7 @@ from typing import Any
 from agent_instance_reconciliation_repository import AgentInstanceReconciliationRepository
 from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
 from agent_runtime_repository import AgentRuntimeRepository
+from automation_repository import AutomationRepository
 from backup_repository import BackupRepository
 from configuration_repository import ConfigurationRepository
 from content_repository import ContentRepository
@@ -55,5 +56,9 @@ def record_agent_heartbeat(authenticated_agent_id:str,payload:dict[str,Any]|None
  backups=BackupRepository(backend);backups.initialize();reported_backups=body.get("backup_state")
  if isinstance(reported_backups,list):backups.record_agent_state(agent_id,reported_backups)
  backup_commands=backups.commands_for_agent(agent_id)
+ automations=AutomationRepository(backend);automations.initialize();reported_broadcasts=body.get("broadcast_state")
+ if isinstance(reported_broadcasts,list):automations.record_broadcast_state(agent_id,reported_broadcasts)
+ broadcast_commands=automations.desired_for_agent(agent_id)
+ for command in broadcast_commands:command["agent_id"]=agent_id
  last_seen=repository.heartbeat(agent_id)
- return {"agent_id":agent_id,"health_status":"online","last_seen":last_seen,"accepted_event_ids":event_result["accepted_event_ids"],"events_accepted":event_result["accepted"],"events_created":event_result["created"],"events_rejected":event_result["rejected"],"metrics_accepted":metric_result["accepted"],"metrics_created":metric_result["created"],"metrics_rejected":metric_result["rejected"],"configuration_commands":desired_configuration,"configuration_count":len(desired_configuration),"content_commands":desired_content,"content_count":len(desired_content),"backup_commands":backup_commands,"backup_count":len(backup_commands)}
+ return {"agent_id":agent_id,"health_status":"online","last_seen":last_seen,"accepted_event_ids":event_result["accepted_event_ids"],"events_accepted":event_result["accepted"],"events_created":event_result["created"],"events_rejected":event_result["rejected"],"metrics_accepted":metric_result["accepted"],"metrics_created":metric_result["created"],"metrics_rejected":metric_result["rejected"],"configuration_commands":desired_configuration,"configuration_count":len(desired_configuration),"content_commands":desired_content,"content_count":len(desired_content),"backup_commands":backup_commands,"backup_count":len(backup_commands),"broadcast_commands":broadcast_commands,"broadcast_count":len(broadcast_commands)}
