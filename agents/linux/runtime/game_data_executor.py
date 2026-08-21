@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -16,7 +17,9 @@ from typing import Any
 import urllib.request
 import zipfile
 
-GAME_DATA_ROOT = Path(os.environ.get("CAPIVARA_AGENT_GAME_DATA_ROOT", "/var/lib/capivara-agent/game-data")).resolve()
+GAME_DATA_ROOT = Path(
+    os.environ.get("CAPIVARA_AGENT_GAME_DATA_ROOT", "/var/lib/capivara-agent/game-data")
+).resolve()
 
 
 def _write_result(path: Path, payload: dict[str, Any]) -> None:
@@ -30,7 +33,8 @@ def _write_result(path: Path, payload: dict[str, Any]) -> None:
 
 def _safe_name(value: Any, label: str) -> str:
     text = str(value or "").strip()
-    if not text or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for ch in text):
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+    if not text or any(ch not in allowed for ch in text):
         raise ValueError(f"invalid {label}")
     return text
 
@@ -63,10 +67,24 @@ def _run_steam(selection: dict[str, Any], target: Path) -> None:
     else:
         login = str(os.environ.get("DSM_STEAM_USER") or "").strip()
         if not login:
-            raise RuntimeError("Steam authentication is required on this Agent; configure DSM_STEAM_USER and authenticate SteamCMD locally")
+            raise RuntimeError(
+                "Steam authentication is required on this Agent; "
+                "configure DSM_STEAM_USER and authenticate SteamCMD locally"
+            )
+
     target.mkdir(parents=True, exist_ok=True)
     completed = subprocess.run(
-        [_steamcmd(), "+force_install_dir", str(target), "+login", login, "+app_update", app_id, "validate", "+quit"],
+        [
+            _steamcmd(),
+            "+force_install_dir",
+            str(target),
+            "+login",
+            login,
+            "+app_update",
+            app_id,
+            "validate",
+            "+quit",
+        ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -113,6 +131,9 @@ def _extract_zip(archive: Path, target: Path) -> None:
     with zipfile.ZipFile(archive) as package:
         for info in package.infolist():
             _safe_member(info.filename)
+            mode = (info.external_attr >> 16) & 0xFFFF
+            if stat.S_ISLNK(mode):
+                raise RuntimeError("archive links are not allowed")
         package.extractall(target)
 
 
@@ -121,9 +142,11 @@ def _extract_tar(archive: Path, target: Path) -> None:
         members = package.getmembers()
         for member in members:
             _safe_member(member.name)
-            if member.issym() or member.islnk():
-                raise RuntimeError("archive links are not allowed")
-        package.extractall(target, members=members, filter="data")
+            if not (member.isfile() or member.isdir()):
+                raise RuntimeError("unsupported archive member")
+        # Deliberately avoid the Python 3.12-only extraction filter argument;
+        # the explicit checks above preserve compatibility with Python 3.9+.
+        package.extractall(target, members=members)
 
 
 def _run_http(selection: dict[str, Any], target: Path) -> None:
@@ -133,8 +156,10 @@ def _run_http(selection: dict[str, Any], target: Path) -> None:
     if not (url.startswith("https://") or url.startswith("http://")):
         raise ValueError("HTTP artifact URL is missing or invalid")
     expected = asset.get("sha256") or install.get("sha256")
-    archive_type = str((selection.get("archive") or {}).get("type") if isinstance(selection.get("archive"), dict) else "") or str(install.get("archive_type") or "")
+    archive = selection.get("archive") if isinstance(selection.get("archive"), dict) else {}
+    archive_type = str(archive.get("type") or install.get("archive_type") or "")
     target.mkdir(parents=True, exist_ok=True)
+
     with tempfile.TemporaryDirectory(prefix="capivara-game-data-") as temporary:
         temp = Path(temporary)
         artifact = temp / "artifact"
@@ -152,10 +177,14 @@ def _run_http(selection: dict[str, Any], target: Path) -> None:
             for entry in staging.iterdir():
                 destination = target / entry.name
                 if destination.exists():
-                    shutil.rmtree(destination) if destination.is_dir() else destination.unlink()
+                    if destination.is_dir():
+                        shutil.rmtree(destination)
+                    else:
+                        destination.unlink()
                 shutil.move(str(entry), str(destination))
         else:
-            filename = _safe_name(Path(str(asset.get("name") or install.get("asset") or selection.get("executable") or "artifact")).name, "artifact filename")
+            raw_name = asset.get("name") or install.get("asset") or selection.get("executable") or "artifact"
+            filename = _safe_name(Path(str(raw_name)).name, "artifact filename")
             destination = target / filename
             shutil.copy2(artifact, destination)
             if str(selection.get("executable") or "") == filename:
@@ -169,6 +198,7 @@ def _execute(command: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("runtime selection is missing")
     target = _target_for(selection)
     provider = str(selection.get("provider") or "").strip().lower()
+
     if action == "verify":
         if not target.is_dir() or not any(target.iterdir()):
             raise RuntimeError("game-data is not installed")
@@ -181,7 +211,13 @@ def _execute(command: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeError(f"provider not supported by standalone Linux Agent: {provider}")
     else:
         raise ValueError("unsupported game-data action")
-    return {"provider": provider, "game": selection.get("game"), "version": selection.get("version"), "target_path": str(target)}
+
+    return {
+        "provider": provider,
+        "game": selection.get("game"),
+        "version": selection.get("version"),
+        "target_path": str(target),
+    }
 
 
 def main() -> int:
@@ -196,10 +232,16 @@ def main() -> int:
     try:
         detail = _execute(command)
     except Exception as exc:
-        _write_result(result_path, {"job_id": job_id, "status": "failed", "progress": 100, "error": str(exc)[:2000]})
+        _write_result(
+            result_path,
+            {"job_id": job_id, "status": "failed", "progress": 100, "error": str(exc)[:2000]},
+        )
         print(f"game-data job failed: {exc}", file=sys.stderr, flush=True)
         return 1
-    _write_result(result_path, {"job_id": job_id, "status": "completed", "progress": 100, **detail})
+    _write_result(
+        result_path,
+        {"job_id": job_id, "status": "completed", "progress": 100, **detail},
+    )
     print(f"game-data job completed: {job_id}", flush=True)
     return 0
 
