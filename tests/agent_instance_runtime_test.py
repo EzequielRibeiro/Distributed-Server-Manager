@@ -97,6 +97,7 @@ class AgentLocalInstanceRuntimeTest(unittest.TestCase):
         instance_runtime.resolve_adapter = lambda record: FakeAdapter()
         instance_runtime.register_instance({
             "instance_id": "instance-one", "agent_id": "agent-one", "runtime_id": "runtime-one", "adapter": "fake",
+            "provisioning_status": "ready",
         })
         command = {"command_id": "cmd-start", "instance_id": "instance-one", "action": "start"}
         first = instance_runtime.handle_command(self.config, command)
