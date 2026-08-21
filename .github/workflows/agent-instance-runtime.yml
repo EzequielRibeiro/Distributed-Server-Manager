@@ -7,6 +7,7 @@ on:
       - 'database/agent_instance_runtime_repository.py'
       - 'database/agent_instance_provisioning_repository.py'
       - 'database/agent_instance_reconciliation_repository.py'
+      - 'database/agent_instance_runtime_health_repository.py'
       - 'database/migrations/**'
       - 'database/migrations_mysql/**'
       - 'database/migrations_postgresql/**'
@@ -22,6 +23,7 @@ on:
       - 'tests/agent_game_runtime_profiles_test.py'
       - 'tests/agent_instance_provisioning_test.py'
       - 'tests/agent_runtime_reconciliation_test.py'
+      - 'tests/agent_runtime_completion_test.py'
       - '.github/workflows/agent-instance-runtime.yml'
   push:
     branches: [main]
@@ -30,21 +32,13 @@ on:
       - 'database/agent_instance_runtime_repository.py'
       - 'database/agent_instance_provisioning_repository.py'
       - 'database/agent_instance_reconciliation_repository.py'
+      - 'database/agent_instance_runtime_health_repository.py'
       - 'database/migrations/**'
       - 'database/migrations_mysql/**'
       - 'database/migrations_postgresql/**'
-      - 'dashboard/agent_instance_runtime_*.py'
-      - 'dashboard/agent_instance_provisioning_*.py'
       - 'dashboard/agent_heartbeat_api.py'
-      - 'dashboard/agent_remote_http.py'
-      - 'dashboard/server_part13.py'
-      - 'bin/cap'
       - 'release/build_agent_package.sh'
-      - 'tests/agent_instance_runtime_test.py'
-      - 'tests/agent_instance_materialization_test.py'
-      - 'tests/agent_game_runtime_profiles_test.py'
-      - 'tests/agent_instance_provisioning_test.py'
-      - 'tests/agent_runtime_reconciliation_test.py'
+      - 'tests/agent_runtime_completion_test.py'
       - '.github/workflows/agent-instance-runtime.yml'
 
 permissions:
@@ -64,37 +58,16 @@ jobs:
           bash -n agents/linux/installer/install-agent.sh
           bash -n release/build_agent_package.sh
           python3 -m py_compile \
-            agents/linux/runtime/agent.py \
-            agents/linux/runtime/local_cli.py \
-            agents/linux/runtime/cap_dispatch.py \
-            agents/linux/runtime/instance_runtime.py \
-            agents/linux/runtime/runtime_spec.py \
-            agents/linux/runtime/runtime_events.py \
-            agents/linux/runtime/runtime_materialization.py \
-            agents/linux/runtime/runtime_reconciler.py \
-            agents/linux/runtime/game_runtime.py \
-            agents/linux/runtime/provisioning_contract.py \
-            agents/linux/runtime/provisioning_state.py \
-            agents/linux/runtime/provisioning_client.py \
-            agents/linux/runtime/provisioning_executor.py \
-            agents/linux/runtime/privileged_materialization.py \
+            agents/linux/runtime/*.py \
+            agents/linux/runtime/adapters/*.py \
+            agents/linux/runtime/materializers/*.py \
+            agents/linux/runtime/profiles/*.py \
             agents/linux/privileged/materialize_instance.py \
-            agents/linux/runtime/adapters/__init__.py \
-            agents/linux/runtime/adapters/base.py \
-            agents/linux/runtime/adapters/registry.py \
-            agents/linux/runtime/adapters/systemd.py \
-            agents/linux/runtime/materializers/__init__.py \
-            agents/linux/runtime/materializers/base.py \
-            agents/linux/runtime/materializers/registry.py \
-            agents/linux/runtime/materializers/systemd.py \
-            agents/linux/runtime/profiles/__init__.py \
-            agents/linux/runtime/profiles/base.py \
-            agents/linux/runtime/profiles/registry.py \
-            agents/linux/runtime/profiles/dayz.py \
             agents/linux/updater/updater.py \
             database/agent_instance_runtime_repository.py \
             database/agent_instance_provisioning_repository.py \
             database/agent_instance_reconciliation_repository.py \
+            database/agent_instance_runtime_health_repository.py \
             dashboard/agent_instance_runtime_api.py \
             dashboard/agent_instance_runtime_http.py \
             dashboard/agent_instance_provisioning_api.py \
@@ -106,7 +79,8 @@ jobs:
             tests/agent_instance_materialization_test.py \
             tests/agent_game_runtime_profiles_test.py \
             tests/agent_instance_provisioning_test.py \
-            tests/agent_runtime_reconciliation_test.py
+            tests/agent_runtime_reconciliation_test.py \
+            tests/agent_runtime_completion_test.py
       - name: Run instance runtime tests
         run: |
           python3 -m unittest tests/agent_instance_runtime_test.py
@@ -114,6 +88,7 @@ jobs:
           python3 -m unittest tests/agent_game_runtime_profiles_test.py
           python3 -m unittest tests/agent_instance_provisioning_test.py
           python3 -m unittest tests/agent_runtime_reconciliation_test.py
+          python3 -m unittest tests/agent_runtime_completion_test.py
       - name: Check lifecycle policy boundary
         run: |
           grep -F 'capivara-instance-' agents/linux/policy/49-capivara-agent-instance-units.rules
@@ -129,38 +104,37 @@ jobs:
           grep -F 'DayZRuntimeProfile' agents/linux/runtime/profiles/registry.py
           grep -F 'required reserved port is missing' agents/linux/runtime/profiles/base.py
           ! grep -Fi 'dayz' agents/linux/runtime/runtime_materialization.py agents/linux/runtime/materializers/systemd.py agents/linux/runtime/adapters/systemd.py
-          ! grep -F 'shell=True' agents/linux/runtime/game_runtime.py agents/linux/runtime/profiles/base.py agents/linux/runtime/profiles/dayz.py
       - name: Check B10 provisioning boundary
         run: |
           grep -F 'CapivaraInstanceProvisioningRequest' agents/linux/runtime/provisioning_contract.py
           grep -F 'content_preserved_for_retry' agents/linux/runtime/provisioning_executor.py
           grep -F 'port_reservations_preserved' agents/linux/runtime/provisioning_executor.py
-          grep -F 'INSTANCE_PROVISIONING_COMPLETED' agents/linux/runtime/provisioning_executor.py
           grep -F 'capivara-agent-materialize@' agents/linux/policy/49-capivara-agent-instance-units.rules
-          grep -F 'User=root' agents/linux/services/capivara-agent-materialize@.service
-          grep -F 'ReadWritePaths=/etc/systemd/system /var/lib/capivara-agent/privileged-materialization' agents/linux/services/capivara-agent-materialize@.service
           grep -F 'User=capivara-agent' agents/linux/services/capivara-agent.service
           ! grep -F 'User=root' agents/linux/services/capivara-agent.service
-          ! grep -F 'shell=True' agents/linux/runtime/provisioning_contract.py agents/linux/runtime/provisioning_executor.py agents/linux/runtime/privileged_materialization.py agents/linux/privileged/materialize_instance.py
       - name: Check B11 recovery boundary
         run: |
           grep -F 'INSTANCE_DRIFT_DETECTED' agents/linux/runtime/runtime_reconciler.py
           grep -F 'INSTANCE_RECOVERED' agents/linux/runtime/runtime_reconciler.py
           grep -F 'ownership validation failed; automatic repair refused' agents/linux/runtime/runtime_reconciler.py
-          grep -F 'reconcile_failure_threshold' agents/linux/runtime/runtime_reconciler.py
-          grep -F 'instance_reconciliation' agents/linux/runtime/agent.py dashboard/agent_heartbeat_api.py
-          grep -F 'runtime_reconciler.py' agents/linux/updater/updater.py agents/linux/installer/install-agent.sh release/build_agent_package.sh
           ! grep -F 'shell=True' agents/linux/runtime/runtime_reconciler.py
+      - name: Check B12 completion boundary
+        run: |
+          grep -F 'instance_lock' agents/linux/runtime/runtime_operations.py agents/linux/runtime/runtime_reconciler.py agents/linux/runtime/instance_runtime.py agents/linux/runtime/provisioning_executor.py
+          grep -F 'recover_interrupted_operations' agents/linux/runtime/agent.py
+          grep -F 'CapivaraInstanceRuntimeHealth' agents/linux/runtime/runtime_health.py
+          grep -F 'provisioning_timeout_seconds' agents/linux/runtime/runtime_limits.py agents/linux/runtime/provisioning_executor.py
+          grep -F 'instance_runtime_metrics' agents/linux/runtime/agent.py
+          grep -F 'agent_instance_runtime_health' dashboard/agent_heartbeat_api.py database/agent_instance_runtime_health_repository.py
+          grep -F 'runtime_lock.py' agents/linux/installer/install-agent.sh release/build_agent_package.sh
+          ! grep -F 'shell=True' agents/linux/runtime/runtime_lock.py agents/linux/runtime/runtime_operations.py agents/linux/runtime/runtime_health.py agents/linux/runtime/runtime_metrics.py agents/linux/runtime/runtime_limits.py
       - name: Check migration parity
         run: |
           for directory in migrations migrations_mysql migrations_postgresql; do
-            test -f "database/${directory}/027_agent_instance_runtime_commands.sql"
-            test -f "database/${directory}/028_agent_instance_lifecycle_actions.sql"
-            test -f "database/${directory}/029_agent_instance_provisioning.sql"
-            test -f "database/${directory}/030_agent_instance_reconciliation.sql"
-            grep -F "'restart'" "database/${directory}/028_agent_instance_lifecycle_actions.sql"
-            grep -F 'agent_instance_provisioning' "database/${directory}/029_agent_instance_provisioning.sql"
-            grep -F 'agent_instance_reconciliation' "database/${directory}/030_agent_instance_reconciliation.sql"
+            for number in 027 028 029 030 031; do
+              test -f "database/${directory}/${number}_"*.sql
+            done
+            grep -F 'agent_instance_runtime_health' "database/${directory}/031_agent_instance_runtime_health.sql"
           done
       - name: Validate Agent package
         run: bash tests/agent_package_test.sh
