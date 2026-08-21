@@ -38,15 +38,23 @@ require_role(){
     local command_label="$1"
     shift
     local role
-    role="$(local_role)"
     local allowed
+    local allowed_text=""
+    role="$(local_role)"
     for allowed in "$@"; do
-        [[ "${role}" == "${allowed}" ]] && return 0
+        if [[ "${role}" == "${allowed}" ]]; then
+            return 0
+        fi
+        if [[ -z "${allowed_text}" ]]; then
+            allowed_text="${allowed}"
+        else
+            allowed_text+=" ou ${allowed}"
+        fi
     done
-    printf "Erro: '%s' requer role %s.\n" "${command_label}" "$(IFS=' ou '; echo "$*")" >&2
+    printf "Erro: '%s' requer role %s.\n" "${command_label}" "${allowed_text}" >&2
     printf 'Role local detectada: %s.\n' "${role}" >&2
     if [[ "${role}" == "unknown" ]]; then
-        printf 'Defina DSM_NODE_ROLE=controller|agent|hybrid em config/dsm.conf.\n' >&2
+        printf 'Defina DSM_NODE_ROLE=controller|agent|hybrid em config/agent.conf ou config/dsm.conf.\n' >&2
     fi
     exit 2
 }
@@ -138,7 +146,7 @@ agent_local_exec(){
 case "${1:-}" in
     help|--help|-h|"")
         role="$(local_role)"
-        if [[ "${2:-}" == "--all" || "${1:-}" == "--all" ]]; then
+        if [[ "${2:-}" == "--all" ]]; then
             usage "${role}" 1
         else
             usage "${role}" 0
