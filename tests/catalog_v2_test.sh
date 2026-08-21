@@ -72,8 +72,8 @@ jq -e '.compatible == true and (.errors|length)==0' <<<"${ARCLIGHT_PLUGIN}" >/de
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf -- "${TMP_COMPATIBILITY}" "${TMP_DIR}"' EXIT
-mkdir -p "${TMP_DIR}/catalog/runtimes" "${TMP_DIR}/catalog/content/minecraft" "${TMP_DIR}/instance"
-cp -a "${ROOT}/catalog/v2/runtimes/." "${TMP_DIR}/catalog/runtimes/"
+mkdir -p "${TMP_DIR}/catalog/games" "${TMP_DIR}/catalog/content/minecraft" "${TMP_DIR}/instance"
+cp -a "${ROOT}/catalog/v2/games/." "${TMP_DIR}/catalog/games/"
 jq '.artifact.package_id="tests/fixtures/example-mod.jar"' \
   "${ROOT}/catalog/v2/content/minecraft/example-mod.json" >"${TMP_DIR}/catalog/content/minecraft/example-mod.json"
 jq '.id="minecraft.example.addon"|.name="Example Addon"|.artifact.package_id="tests/fixtures/example-mod.jar"|.dependencies=[{id:"minecraft.example.mod",version:">=1.0.0",required:true}]' \

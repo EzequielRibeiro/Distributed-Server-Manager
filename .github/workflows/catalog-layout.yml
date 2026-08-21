@@ -1,0 +1,42 @@
+name: Catalog Layout Compatibility
+
+on:
+  push:
+    branches:
+      - refactor/game-directory-layout
+  pull_request:
+    paths:
+      - 'catalog/**'
+      - 'installer/catalog.sh'
+      - 'installer/catalog_paths.sh'
+      - 'tests/catalog_path_resolver_test.sh'
+      - '.github/workflows/catalog-layout.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  catalog-paths:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes jq
+
+      - name: Validate Bash syntax
+        run: |
+          bash -n installer/catalog.sh
+          bash -n installer/catalog_paths.sh
+          bash -n tests/catalog_path_resolver_test.sh
+
+      - name: Test legacy and canonical catalog paths
+        run: bash tests/catalog_path_resolver_test.sh
+
+      - name: Run existing Catalog v2 regression suite
+        run: bash tests/catalog_v2_test.sh
