@@ -86,28 +86,51 @@ class ConfigurationRepositoryTest(unittest.TestCase):
         self.assertTrue(resolved[0]["value"]["logs"])
         self.assertEqual(len(resolved[0]["configuration_refs"]), 2)
 
-    def test_heartbeat_distributes_configuration_and_records_ack(self):
+    def test_unknown_scopes_are_rejected(self):
+        with self.assertRaises(ConfigurationValidationError):
+            self.repo.put({"scope_type": "agent", "scope_id": "missing-agent", "namespace": "runtime.policy", "value": {}})
+        with self.assertRaises(ConfigurationValidationError):
+            self.repo.put({"scope_type": "instance", "scope_id": "missing-instance", "namespace": "runtime.policy", "value": {}})
+
+    def test_heartbeat_distributes_configuration_records_ack_and_suppresses_replay(self):
         stored = self.repo.put({"scope_type": "agent", "scope_id": "agent-c2", "namespace": "agent.runtime", "value": {"reconcile_interval_seconds": 20}})["configuration"]
         first = record_agent_heartbeat("agent-c2", {"agent_id": "agent-c2"}, backend=self.backend)
         self.assertEqual(first["configuration_count"], 1)
         command = first["configuration_commands"][0]
-        ref = command["configuration_refs"][0]
-        self.assertEqual(ref["configuration_id"], stored["configuration_id"])
-        second = record_agent_heartbeat("agent-c2", {
-            "agent_id": "agent-c2",
-            "configuration_state": [{
-                "configuration_id": ref["configuration_id"],
-                "desired_revision": ref["revision"],
-                "applied_revision": ref["revision"],
-                "status": "applied",
-                "applied_checksum": ref["checksum"],
-            }],
-        }, backend=self.backend)
+        self.assertEqual(command["configuration_refs"][0]["configuration_id"], stored["configuration_id"])
+        report = {
+            "target_type": command["target_type"],
+            "target_id": command["target_id"],
+            "namespace": command["namespace"],
+            "desired_revision": command["revision"],
+            "applied_revision": command["revision"],
+            "desired_checksum": command["checksum"],
+            "applied_checksum": command["checksum"],
+            "status": "applied",
+        }
+        second = record_agent_heartbeat("agent-c2", {"agent_id": "agent-c2", "configuration_state": [report]}, backend=self.backend)
         self.assertEqual(second["health_status"], "online")
+        self.assertEqual(second["configuration_count"], 0)
         with self.backend.connect() as connection:
-            row = connection.execute("SELECT * FROM agent_configuration_state WHERE agent_id=? AND configuration_id=?", ("agent-c2", ref["configuration_id"])).fetchone()
+            row = connection.execute(
+                "SELECT * FROM agent_configuration_state WHERE agent_id=? AND target_type=? AND target_id=? AND namespace=?",
+                ("agent-c2", "agent", "agent-c2", "agent.runtime"),
+            ).fetchone()
         self.assertEqual(row["status"], "applied")
-        self.assertEqual(row["applied_revision"], 1)
+        self.assertEqual(row["applied_revision"], command["revision"])
+
+    def test_spoofed_agent_ack_is_ignored(self):
+        accepted = self.repo.record_agent_state("agent-c2", [{
+            "target_type": "agent",
+            "target_id": "agent-other",
+            "namespace": "runtime.policy",
+            "desired_revision": "one",
+            "applied_revision": "one",
+            "desired_checksum": "hash",
+            "applied_checksum": "hash",
+            "status": "applied",
+        }])
+        self.assertEqual(accepted, 0)
 
 
 class AgentConfigurationClientTest(unittest.TestCase):
@@ -123,7 +146,7 @@ class AgentConfigurationClientTest(unittest.TestCase):
             os.environ["CAPIVARA_AGENT_STATE_DIR"] = self.previous
         self.temp.cleanup()
 
-    def test_applies_atomically_and_reports_refs(self):
+    def test_applies_atomically_and_reports_resolved_target(self):
         reports = apply_configuration_commands([{
             "namespace": "runtime.policy",
             "target_type": "agent",
@@ -133,8 +156,9 @@ class AgentConfigurationClientTest(unittest.TestCase):
             "value": {"enabled": True},
             "configuration_refs": [{"configuration_id": "cfg-1", "revision": 3, "checksum": "hash-3"}],
         }])
-        self.assertEqual(reports[0]["configuration_id"], "cfg-1")
-        self.assertEqual(configuration_state()[0]["applied_revision"], 3)
+        self.assertEqual(reports[0]["target_id"], "agent-c2")
+        self.assertEqual(reports[0]["applied_revision"], "abc")
+        self.assertEqual(configuration_state()[0]["applied_checksum"], "digest")
         applied = Path(self.temp.name) / "managed-configuration" / "agent" / "agent-c2" / "runtime.policy.json"
         self.assertTrue(applied.is_file())
 
