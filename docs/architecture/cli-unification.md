@@ -1,52 +1,52 @@
-# CLI Unification — `cap` as the official command
+# CLI Unification — `cap` como comando oficial
 
 ## Status
 
-Phase 1 — compatibility routing.
+Concluído para a linha Capivara 2.x.
 
-## Decision
+## Decisão
 
-`cap` becomes the official Capivara DSM command-line interface.
+`cap` é a única CLI pública do Capivara Distributed Server Manager.
 
-`dsm` remains temporarily available for backward compatibility while command groups are migrated incrementally.
+`dsm` não é uma segunda CLI suportada para novos fluxos. Ele permanece apenas como wrapper temporário de compatibilidade para instalações, automações e scripts antigos e encaminha chamadas para `cap`.
 
-The project must avoid implementing new user-facing command groups only in `dsm`.
+Toda documentação nova, tutorial, runbook, exemplo de shell e automação deve usar `cap`.
 
-## Phase 1
+## Superfície pública
 
-The first unification phase does not duplicate existing operational logic.
+A superfície pública é sensível à role local e parte de:
 
-`cap` owns the new distributed-management commands directly, including:
+```text
+cap help
+cap help --all
+```
+
+Exemplos de grupos administrativos e operacionais:
 
 ```text
 cap infrastructure ...
-cap agent deploy ...
-```
-
-Existing stable operational groups are exposed through `cap` by delegating to the existing `bin/dsm` implementation:
-
-```text
+cap agent ...
+cap customer ...
+cap contract ...
+cap instance ...
+cap user ...
+cap catalog ...
+cap database ...
+cap operations ...
+cap config ...
+cap update ...
 cap server ...
-cap doctor ...
 cap monitor ...
 cap mods ...
 cap backup ...
-cap user ...
 cap runtime ...
-cap config ...
 cap steam ...
 cap game ...
-cap catalog ...
 cap content ...
 cap compatibility ...
-cap update ...
-cap database ...
-cap instance ...
-cap operations ...
-cap agent ports ...
 ```
 
-Short compatibility forms are also preserved:
+Atalhos locais continuam disponíveis quando compatíveis com a role:
 
 ```text
 cap start ...
@@ -55,107 +55,53 @@ cap restart ...
 cap status ...
 ```
 
-## Routing rule
+## Roles
 
-Native `cap` commands always take precedence over compatibility routing.
+- Controller: control plane, administração e orquestração distribuída.
+- Agent: operações locais do runtime e das instâncias hospedadas no host.
+- Hybrid: reúne as duas superfícies.
 
-For example:
+Uma role incompatível é bloqueada antes do dispatch operacional. `unknown` é fail-closed.
 
-```text
-cap agent deploy
-```
+## Compatibilidade interna
 
-is executed by the native Agent deployment implementation, while:
+Parte da implementação histórica ainda é reutilizada por módulos internos. Essa reutilização não altera a interface pública: o operador sempre deve invocar `cap`.
 
-```text
-cap agent ports
-```
+O wrapper `bin/dsm` existe somente para compatibilidade de entrada e não deve aparecer em novos procedimentos operacionais. O código histórico necessário para grupos ainda não extraídos fica isolado atrás da camada interna `bin/dsm-compat`.
 
-is delegated to the existing `dsm agent ports` implementation during Phase 1.
-
-This prevents duplicate implementations and makes the transition reversible.
-
-## Migration phases
-
-### Phase 1 — entry-point unification
-
-- expose legacy operational groups through `cap`;
-- retain `dsm` behavior unchanged;
-- add routing contract tests;
-- declare `cap` the official CLI in new documentation.
-
-### Phase 2 — extract command modules
-
-Move command implementations out of the large `bin/dsm` dispatcher into dedicated modules/scripts where practical.
-
-Both CLIs may call those modules during the transition.
-
-### Phase 3 — make `cap` the real dispatcher
-
-`cap` calls the extracted implementations directly rather than delegating to `bin/dsm`.
-
-No user-facing behavior should change solely because of this migration.
-
-### Phase 4 — invert compatibility
-
-After all supported groups are native in `cap`, `bin/dsm` becomes a thin compatibility wrapper that forwards its arguments to `cap`.
-
-Conceptually:
-
-```bash
-exec cap "$@"
-```
-
-A deprecation notice may be added, provided it does not break machine-readable output.
-
-### Phase 5 — retirement decision
-
-Keep `dsm` compatibility for multiple releases before considering removal.
-
-Removal requires a dedicated compatibility review covering scripts, documentation, installer behavior, systemd units and operator workflows.
-
-## Role-aware future CLI
-
-The unified CLI must support role-aware command availability:
-
-- Controller: administrative/orchestration commands;
-- Agent: local Agent diagnostics and resources;
-- Hybrid: both command sets.
-
-This is especially important before adding the planned Agent-local commands such as:
+Fluxo conceitual durante a transição interna:
 
 ```text
-cap agent status
-cap agent doctor
-cap agent capabilities
-cap agent network
-cap agent game-data ...
+usuário/script novo
+      │
+      ▼
+     cap
+      │
+      ├── implementação nativa
+      └── camada interna de compatibilidade, quando necessária
 ```
 
-## Compatibility requirement
+Scripts antigos que ainda chamam `dsm` entram pela camada de compatibilidade e são encaminhados ao `cap`. Isso existe para preservar compatibilidade, não para manter duas interfaces concorrentes.
 
-During migration, a command that already works through `dsm` must not silently change semantics when invoked through `cap`.
+## Regra para documentação e desenvolvimento
 
-Arguments and exit codes should be preserved by delegation unless a command is explicitly migrated and covered by tests.
+Não adicionar exemplos públicos com `dsm <comando>`.
 
-## Non-goals of Phase 1
+Quando uma referência histórica ao antigo comando for necessária, ela deve ser descrita explicitamente como legado/compatibilidade e nunca apresentada como sintaxe recomendada.
 
-Phase 1 does not:
+Novos grupos de comando devem ser integrados ao dispatcher `cap` e respeitar a matriz de roles.
 
-- remove `dsm`;
-- rewrite the existing operational modules;
-- change the active installation automatically;
-- add new release/version numbers;
-- alter command semantics;
-- migrate systemd units to invoke `cap`.
+## Testes
 
-## Test contract
+A unificação é protegida por testes e workflows que validam:
 
-`tests/cli_unification_test.sh` verifies that:
+- roteamento pelo `cap`;
+- enforcement de roles;
+- wrapper de compatibilidade `dsm -> cap`;
+- preservação de argumentos e códigos de saída onde existe compatibilidade interna;
+- Update Manager e instalação após a inversão do wrapper;
+- help público centrado em `cap`.
 
-- representative operational commands delegate through `cap` with arguments intact;
-- `cap agent ports` follows the compatibility path;
-- `cap agent deploy` remains native;
-- help output identifies `cap` as the CLI being consolidated.
+## Política de aposentadoria
 
-A dedicated `CLI Unification` GitHub Actions workflow runs this contract on relevant changes.
+A remoção futura do wrapper `dsm` exige revisão dedicada de compatibilidade para scripts antigos, instalador e ambientes atualizados a partir de releases anteriores. Até lá, ele pode permanecer como shim, mas não recebe documentação pública nova nem funcionalidades exclusivas.
