@@ -36,6 +36,11 @@ from infrastructure_role_http import (
     dispatch_infrastructure_role_get,
     dispatch_infrastructure_role_post,
 )
+from universal_event_http import (
+    EVENTS_PATH,
+    dispatch_universal_event_get,
+    dispatch_universal_event_post,
+)
 
 legacy = integration.legacy
 _previous_get = legacy.DashboardHandler.do_GET
@@ -82,6 +87,14 @@ def integrated_get(self):
     parsed = urlparse(self.path)
     if parsed.path == WINDOWS_INSTALL_PATH:
         return _serve_windows_bootstrap(self)
+
+    if parsed.path == EVENTS_PATH:
+        user = _user(self)
+        if user is None:
+            return
+        status, body = dispatch_universal_event_get(parsed.path, parsed.query, user=user, backend=_backend())
+        self.send_json(status, body)
+        return
 
     if parsed.path == GAME_DATA_JOBS_PATH:
         user = _user(self)
@@ -137,6 +150,19 @@ def integrated_get(self):
 
 def integrated_post(self):
     parsed = urlparse(self.path)
+
+    if parsed.path == EVENTS_PATH:
+        user = _user(self)
+        if user is None:
+            return
+        try:
+            payload = self.read_json_body()
+        except ValueError:
+            self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
+            return
+        status, body = dispatch_universal_event_post(parsed.path, payload, user=user, backend=_backend())
+        self.send_json(status, body)
+        return
 
     if parsed.path in {GAME_DATA_OPERATION_PATH, LEGACY_ENVIRONMENT_INSTALL_PATH}:
         user = _user(self)
