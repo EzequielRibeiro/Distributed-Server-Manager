@@ -20,6 +20,7 @@ if str(RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_DIR))
 
 from capabilities import detect_capabilities
+from configuration_client import apply_configuration_commands, configuration_state
 from game_data_client import clear_game_data_result, read_game_data_result, stage_game_data_command
 from instance_runtime import clear_result as clear_instance_result
 from instance_runtime import handle_command as handle_instance_command
@@ -109,6 +110,7 @@ def _inventory(config: dict[str, Any]) -> dict[str, Any]:
         "instance_reconciliation": reconciliation_inventory(config), "instance_runtime_health": health_inventory(config),
         "instance_runtime_metrics": runtime_metrics_snapshot(queue_depth=_queue_depth()),
         "runtime_events": read_runtime_events(state, limit=int(config.get("event_batch_size", 200))),
+        "configuration_state": configuration_state(),
         "heartbeat_interval_seconds": int(config.get("heartbeat_interval_seconds", DEFAULT_HEARTBEAT_SECONDS)),
         "degraded_after_seconds": int(config.get("degraded_after_seconds", 60)),
         "offline_after_seconds": int(config.get("offline_after_seconds", 120)),
@@ -154,6 +156,11 @@ def heartbeat(config: dict[str, Any]) -> dict[str, Any]:
     if isinstance(accepted_event_ids, list):
         state_root = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
         acknowledge_runtime_events(state_root, accepted_event_ids)
+    commands = result.get("configuration_commands")
+    if isinstance(commands, list):
+        applied = apply_configuration_commands([item for item in commands if isinstance(item, dict)])
+        if applied:
+            print(f"configuration applied reports={len(applied)}", flush=True)
     if result.get("update") and stage_update_request(dict(result["update"])):
         print(f"update staged version={result['update'].get('desired_version')} rollout={result['update'].get('rollout_id')}", flush=True)
     if result.get("update_state", {}).get("update_status") == "completed": clear_update_result()
