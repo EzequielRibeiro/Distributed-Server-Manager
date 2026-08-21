@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 EVENT_RELATIVE_PATH = Path("events") / "instance-runtime.jsonl"
+LEGACY_EVENT_NAMESPACE = uuid.UUID("f24888b7-652e-4511-a4fa-32065a32e217")
 
 
 def _now() -> str:
@@ -22,6 +23,23 @@ def _event_path(state_dir: Path) -> Path:
     path = Path(state_dir) / EVENT_RELATIVE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _event_id(value: dict[str, Any]) -> str:
+    current = str(value.get("event_id") or "").strip()
+    if current:
+        return current
+    stable_payload = {
+        "agent_id": value.get("agent_id"),
+        "instance_id": value.get("instance_id"),
+        "event_type": value.get("event_type") or value.get("type"),
+        "occurred_at": value.get("occurred_at"),
+        "data": value.get("data") or {},
+    }
+    return str(uuid.uuid5(
+        LEGACY_EVENT_NAMESPACE,
+        json.dumps(stable_payload, sort_keys=True, separators=(",", ":"), default=str),
+    ))
 
 
 def emit_runtime_event(
@@ -75,6 +93,9 @@ def read_runtime_events(state_dir: Path, *, limit: int = 200) -> list[dict[str, 
         except json.JSONDecodeError:
             continue
         if isinstance(value, dict):
+            value = dict(value)
+            value["event_id"] = _event_id(value)
+            value["event_type"] = value.get("event_type") or value.get("type")
             result.append(value)
     return result
 
@@ -100,7 +121,7 @@ def acknowledge_runtime_events(state_dir: Path, event_ids: Iterable[str]) -> int
         except json.JSONDecodeError:
             kept.append(line)
             continue
-        event_id = str(value.get("event_id") or "").strip() if isinstance(value, dict) else ""
+        event_id = _event_id(value) if isinstance(value, dict) else ""
         if event_id and event_id in accepted:
             removed += 1
         else:
