@@ -39,10 +39,8 @@ grep -Fq -- '--package-dir' "${INSTALLER}" || fail "local installer lacks --pack
 grep -Fq 'capivara-agent-linux-' "${BOOTSTRAP}" || fail "release bootstrap does not select Agent package"
 grep -Fq 'sha256sum' "${BOOTSTRAP}" || fail "release bootstrap does not validate checksum"
 ! grep -Fq '/main/' "${BOOTSTRAP}" || fail "release bootstrap follows mutable main"
-for file in runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py; do
-  grep -Fq "$file" "${INSTALLER}" || fail "installer does not install ${file}"
-  grep -Fq "$file" "${ROOT}/agents/linux/updater/updater.py" || fail "updater does not manage ${file}"
-done
+for file in runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py; do grep -Fq "$file" "${INSTALLER}" || fail "installer does not install ${file}"; done
+grep -Fq 'rglob("*.py")' "${ROOT}/agents/linux/updater/updater.py" || fail "updater does not dynamically manage runtime Python modules"
 grep -Fq 'instance-locks' "${INSTALLER}" || fail "installer does not create instance lock state"
 grep -Fq 'instance-operations' "${INSTALLER}" || fail "installer does not create operation journal state"
 grep -Fq '/usr/local/bin/cap' "${INSTALLER}" || fail "installer does not expose cap command"
