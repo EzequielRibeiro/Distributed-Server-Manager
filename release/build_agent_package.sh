@@ -29,6 +29,7 @@ mkdir -p \
     "${PACKAGE_ROOT}/agent/common" \
     "${PACKAGE_ROOT}/agent/runtime/adapters" \
     "${PACKAGE_ROOT}/agent/runtime/materializers" \
+    "${PACKAGE_ROOT}/agent/runtime/profiles" \
     "${PACKAGE_ROOT}/agent/updater" \
     "${PACKAGE_ROOT}/agent/policy" \
     "${PACKAGE_ROOT}/services" \
@@ -50,9 +51,13 @@ git -C "${ROOT}" show "${REF}:agents/linux/runtime/instance_runtime.py" >"${PACK
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/runtime_spec.py" >"${PACKAGE_ROOT}/agent/runtime/runtime_spec.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/runtime_events.py" >"${PACKAGE_ROOT}/agent/runtime/runtime_events.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/runtime_materialization.py" >"${PACKAGE_ROOT}/agent/runtime/runtime_materialization.py"
+git -C "${ROOT}" show "${REF}:agents/linux/runtime/game_runtime.py" >"${PACKAGE_ROOT}/agent/runtime/game_runtime.py"
 for file in __init__.py base.py registry.py systemd.py; do
     git -C "${ROOT}" show "${REF}:agents/linux/runtime/adapters/${file}" >"${PACKAGE_ROOT}/agent/runtime/adapters/${file}"
     git -C "${ROOT}" show "${REF}:agents/linux/runtime/materializers/${file}" >"${PACKAGE_ROOT}/agent/runtime/materializers/${file}"
+done
+for file in __init__.py base.py registry.py dayz.py; do
+    git -C "${ROOT}" show "${REF}:agents/linux/runtime/profiles/${file}" >"${PACKAGE_ROOT}/agent/runtime/profiles/${file}"
 done
 git -C "${ROOT}" show "${REF}:agents/linux/policy/49-capivara-agent-instance-units.rules" >"${PACKAGE_ROOT}/agent/policy/49-capivara-agent-instance-units.rules"
 git -C "${ROOT}" show "${REF}:agents/linux/updater/updater.py" >"${PACKAGE_ROOT}/agent/updater/updater.py"
@@ -86,6 +91,7 @@ required = [
     "agent/runtime/runtime_spec.py",
     "agent/runtime/runtime_events.py",
     "agent/runtime/runtime_materialization.py",
+    "agent/runtime/game_runtime.py",
     "agent/runtime/adapters/__init__.py",
     "agent/runtime/adapters/base.py",
     "agent/runtime/adapters/registry.py",
@@ -94,6 +100,10 @@ required = [
     "agent/runtime/materializers/base.py",
     "agent/runtime/materializers/registry.py",
     "agent/runtime/materializers/systemd.py",
+    "agent/runtime/profiles/__init__.py",
+    "agent/runtime/profiles/base.py",
+    "agent/runtime/profiles/registry.py",
+    "agent/runtime/profiles/dayz.py",
     "agent/policy/49-capivara-agent-instance-units.rules",
     "agent/updater/updater.py",
     "services/capivara-agent.service",
