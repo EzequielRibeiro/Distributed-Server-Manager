@@ -19,11 +19,15 @@ for path in (ROOT, ROOT / "database", ROOT / "dashboard"):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+from admin_management_repository import AdminManagementRepository
 from agent_port_availability import effective_port_summary
 from agent_runtime_repository import AgentRuntimeRepository
 from backend import DatabaseConfig
 from backend_factory import create_backend
+from contract_cli import build_parser as build_contract_parser
 from core.placement_requirements import requirements_for_instance
+from customer_cli import build_parser as build_customer_parser
+from instance_admin_cli import _content_selection, _remote_occupied_ports, _runtime_definition
 from instance_creation_http import INSTANCE_CREATE_PATH, dispatch_instance_create_post
 from placement_service import choose_agent_for_instance
 from registry import installation_profile_identity
@@ -62,11 +66,12 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
             os_name="linux",
             architecture="x86_64",
             capivara_version="9.9.9-test",
+            address="192.168.15.45",
             capabilities={"native-linux": True, "steamcmd": True},
             cpu={"logical_cores": 8},
             ram_total_bytes=16 * 1024**3,
             storage={"root_free_bytes": 100 * 1024**3},
-            network={"tcp_listen": [], "udp_listen": []},
+            network={"source": "ss", "tcp_listen": [8080], "udp_listen": [24000]},
         )
         runtime.heartbeat(self.agent_id)
 
@@ -242,6 +247,53 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
             ).fetchone()
         self.assertEqual(persisted["status"], "offline")
         self.assertEqual(int(persisted_ports["total"]), 10)
+
+    def test_administrative_cli_contract_and_remote_agent_selection(self):
+        customer_args = build_customer_parser().parse_args([
+            "create", "--id", "CLIENTE-CLI", "--name", "Cliente CLI", "--username", "cliente.cli"
+        ])
+        contract_args = build_contract_parser().parse_args([
+            "create", "--id", "CONTRACT-CLI-DAYZ", "--customer", "CLIENTE-CLI", "--game", "dayz", "--instances", "1"
+        ])
+        self.assertEqual(customer_args.customer_id, "CLIENTE-CLI")
+        self.assertEqual(contract_args.contract_id, "CONTRACT-CLI-DAYZ")
+
+        management = AdminManagementRepository(self.backend)
+        customer = management.create_customer(
+            customer_id=customer_args.customer_id,
+            name=customer_args.name,
+            username=customer_args.username,
+            password_hash="test-hash",
+        )
+        contract = management.create_contract(
+            customer_id=contract_args.customer,
+            game_id=contract_args.game,
+            instance_limit=contract_args.instances,
+            contract_id=contract_args.contract_id,
+        )
+        self.assertEqual(customer["controller_id"], self.controller_id)
+        self.assertEqual(contract["id"], "CONTRACT-CLI-DAYZ")
+
+        selected = management.resolve_agent(self.controller_id, "192.168.15.45")
+        self.assertEqual(selected["id"], self.agent_id)
+
+        definition = _runtime_definition("dayz", None)
+        selection = _content_selection(definition)
+        self.assertEqual(definition["id"], "dayz.stable")
+        self.assertEqual(selection["provider"], "steam")
+        self.assertEqual(selection["auth"], "required")
+        self.assertEqual(selection["install"]["package_id"], "223350")
+
+        occupied = _remote_occupied_ports(AgentRuntimeRepository(self.backend).snapshot(self.agent_id))
+        self.assertEqual(occupied(self.agent_id, self.node_id, "udp", 23990, 24010), {24000})
+
+        decision = choose_agent_for_instance(
+            self.backend,
+            controller_id=self.controller_id,
+            requirements=requirements_for_instance(game_id="dayz", runtime_id="dayz.stable"),
+            required_agent_id=self.agent_id,
+        )
+        self.assertEqual(decision["agent_id"], self.agent_id)
 
     def test_unexpected_runtime_error_is_always_an_http_response_not_empty_connection(self):
         def explode(_user, _payload):
