@@ -10,15 +10,36 @@ import uuid
 from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
 from core.agent_health import utc_timestamp
+from core.events import (
+    EventContext,
+    EventPublisher,
+    EventScope,
+    EventSeverity,
+    EventSource,
+)
 
 VALID_CHANNELS = {"stable", "beta", "local/manual"}
 UPDATE_STATES = {"idle", "planned", "updating", "verifying", "completed", "failed"}
 
 
 class AgentUpdateRepository:
-    def __init__(self, backend: DatabaseBackend):
+    """Persist Agent update state and optionally publish domain events.
+
+    Event publication is deliberately injected. Existing callers that do not
+    provide an EventPublisher keep the exact previous persistence behavior.
+    The producer knows only the universal event contract, never alerts,
+    timeline, streaming, or a concrete event database implementation.
+    """
+
+    def __init__(
+        self,
+        backend: DatabaseBackend,
+        *,
+        event_publisher: EventPublisher | None = None,
+    ):
         self.backend = backend
         self.dialect = dialect_for_backend(backend)
+        self.event_publisher = event_publisher
 
     def initialize(self):
         return self.backend.initialize()
@@ -45,6 +66,53 @@ class AgentUpdateRepository:
                 (agent_id, "stable", "idle", utc_timestamp()),
             )
 
+    @staticmethod
+    def _rollout_context(rollout_id: str | None) -> EventContext | None:
+        rollout_id = str(rollout_id or "").strip()
+        if not rollout_id:
+            return None
+        suffix = rollout_id.removeprefix("rollout-")
+        return EventContext.root(correlation_id=f"corr_{suffix}")
+
+    @staticmethod
+    def _event_data(state: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: state.get(key)
+            for key in (
+                "rollout_id",
+                "installed_version",
+                "available_version",
+                "desired_version",
+                "update_channel",
+                "update_status",
+                "batch_number",
+                "batch_position",
+                "last_error",
+            )
+            if state.get(key) is not None
+        }
+
+    def _publish(
+        self,
+        event_type: str,
+        state: dict[str, Any],
+        *,
+        severity: EventSeverity = EventSeverity.INFO,
+        context: EventContext | None = None,
+    ) -> None:
+        if self.event_publisher is None:
+            return
+
+        agent_id = str(state["agent_id"])
+        self.event_publisher.publish(
+            event_type,
+            source=EventSource(type="agent", id=agent_id),
+            severity=severity,
+            scope=EventScope(agent_id=agent_id),
+            data=self._event_data(state),
+            context=context or self._rollout_context(state.get("rollout_id")),
+        )
+
     def report_version(self, agent_id: str, installed_version: str | None) -> dict[str, Any]:
         ph = self.dialect.placeholder
         version = str(installed_version or "").strip() or None
@@ -58,13 +126,18 @@ class AgentUpdateRepository:
 
     def set_available_version(self, agent_id: str, version: str | None) -> dict[str, Any]:
         ph = self.dialect.placeholder
+        normalized = str(version or "").strip() or None
+        before = self.snapshot(agent_id)
         with self.session(transaction=True) as session:
             self._ensure(session, agent_id)
             session.execute(
                 f"UPDATE agent_update_state SET available_version={ph},updated_at={ph} WHERE agent_id={ph}",
-                (str(version or "").strip() or None, utc_timestamp(), agent_id),
+                (normalized, utc_timestamp(), agent_id),
             )
-        return self.snapshot(agent_id)
+        state = self.snapshot(agent_id)
+        if normalized is not None and before.get("available_version") != normalized:
+            self._publish("AGENT_UPDATE_AVAILABLE", state, severity=EventSeverity.NOTICE)
+        return state
 
     def set_channel(self, agent_id: str, channel: str) -> dict[str, Any]:
         channel = str(channel or "").strip().lower()
@@ -140,6 +213,16 @@ class AgentUpdateRepository:
                         batch_number, position + 1, now, None, now, agent_id,
                     ),
                 )
+
+        context = self._rollout_context(rollout_id)
+        for agent_id in clean_ids:
+            self._publish(
+                "AGENT_UPDATE_AVAILABLE",
+                self.snapshot(agent_id),
+                severity=EventSeverity.NOTICE,
+                context=context,
+            )
+
         return {
             "rollout_id": rollout_id,
             "desired_version": desired_version,
@@ -213,6 +296,8 @@ class AgentUpdateRepository:
     ) -> dict[str, Any]:
         if status not in UPDATE_STATES:
             raise ValueError("invalid update status")
+
+        before = self.snapshot(agent_id)
         ph = self.dialect.placeholder
         now = utc_timestamp()
         with self.session(transaction=True) as session:
@@ -229,7 +314,20 @@ class AgentUpdateRepository:
                     f"update_status={ph},last_error={ph},updated_at={ph} WHERE agent_id={ph}",
                     (status, error, now, agent_id),
                 )
-        return self.snapshot(agent_id)
+
+        state = self.snapshot(agent_id)
+        if before.get("update_status") != status:
+            if status == "updating":
+                self._publish("AGENT_UPDATE_STARTED", state)
+            elif status == "completed":
+                self._publish("AGENT_UPDATE_COMPLETED", state)
+            elif status == "failed":
+                self._publish(
+                    "AGENT_UPDATE_FAILED",
+                    state,
+                    severity=EventSeverity.ERROR,
+                )
+        return state
 
 
 __all__ = ["AgentUpdateRepository", "VALID_CHANNELS"]
