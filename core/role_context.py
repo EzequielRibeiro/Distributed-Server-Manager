@@ -2,8 +2,8 @@
 """Read-only local role resolution for Capivara CLI dispatch.
 
 The resolver never initializes repositories, applies migrations, refreshes
-health, or writes configuration.  It consumes only explicit local state and a
-strictly read-only SQLite fallback for legacy monolithic installs.
+health, or writes configuration. It consumes explicit local state and uses a
+strictly read-only SQLite fallback only for older monolithic installs.
 """
 
 from __future__ import annotations
@@ -78,9 +78,7 @@ def _sqlite_role(root: Path, dsm_conf: Path) -> str | None:
             rows = connection.execute("SELECT role FROM nodes LIMIT 2").fetchall()
         except sqlite3.Error:
             rows = []
-        if len(rows) == 1:
-            return _normalize(rows[0]["role"])
-        return None
+        return _normalize(rows[0]["role"]) if len(rows) == 1 else None
     finally:
         connection.close()
 
@@ -104,6 +102,13 @@ def resolve_local_role(
     if persisted:
         return {"role": persisted, "source": "config:dsm.conf", "root": str(root_path)}
 
+    # install.sh already persists DSM_NODE_ROLE in agent.conf for all three
+    # monolithic profiles. Controller -> Hybrid reconciliation also updates it.
+    agent_conf = root_path / "config" / "agent.conf"
+    persisted = _normalize(_shell_value(agent_conf, "DSM_NODE_ROLE"))
+    if persisted:
+        return {"role": persisted, "source": "config:agent.conf", "root": str(root_path)}
+
     standalone_config = Path(
         env.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json")
     )
@@ -118,13 +123,13 @@ def resolve_local_role(
     if legacy_role:
         return {"role": legacy_role, "source": "legacy:sqlite-readonly", "root": str(root_path)}
 
-    agent_id = _shell_value(root_path / "config" / "agent.conf", "AGENT_ID")
+    agent_id = _shell_value(agent_conf, "AGENT_ID")
     source = "legacy:agent-identity-ambiguous" if str(agent_id or "").strip() else "unresolved"
     return {
         "role": "unknown",
         "source": source,
         "root": str(root_path),
-        "hint": "persist DSM_NODE_ROLE=controller|agent|hybrid in config/dsm.conf",
+        "hint": "persist DSM_NODE_ROLE=controller|agent|hybrid in config/agent.conf or config/dsm.conf",
     }
 
 
