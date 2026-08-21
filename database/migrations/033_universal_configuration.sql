@@ -28,15 +28,18 @@ CREATE TABLE configuration_revisions (
 
 CREATE TABLE agent_configuration_state (
     agent_id TEXT NOT NULL,
-    configuration_id TEXT NOT NULL,
-    desired_revision INTEGER NOT NULL,
-    applied_revision INTEGER,
-    status TEXT NOT NULL DEFAULT 'pending',
+    target_type TEXT NOT NULL CHECK (target_type IN ('agent','instance')),
+    target_id TEXT NOT NULL,
+    namespace TEXT NOT NULL,
+    desired_revision TEXT NOT NULL,
+    applied_revision TEXT,
+    desired_checksum TEXT NOT NULL,
     applied_checksum TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
     last_error TEXT,
     reported_at TEXT,
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    PRIMARY KEY(agent_id, configuration_id),
+    PRIMARY KEY(agent_id, target_type, target_id, namespace),
     FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE
 );
 
@@ -45,4 +48,4 @@ CREATE INDEX idx_configurations_scope_namespace
 CREATE INDEX idx_configuration_revisions_created
     ON configuration_revisions(configuration_id, revision DESC);
 CREATE INDEX idx_agent_configuration_state_pending
-    ON agent_configuration_state(agent_id, status, desired_revision);
+    ON agent_configuration_state(agent_id, status, target_type, target_id, namespace);
