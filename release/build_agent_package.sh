@@ -47,16 +47,16 @@ git -C "${ROOT}" show "${REF}:agents/linux/runtime/game_data_client.py" >"${PACK
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/game_data_executor.py" >"${PACKAGE_ROOT}/agent/runtime/game_data_executor.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/game_data_state.py" >"${PACKAGE_ROOT}/agent/runtime/game_data_state.py"
 git -C "${ROOT}" show "${REF}:agents/linux/runtime/instance_runtime.py" >"${PACKAGE_ROOT}/agent/runtime/instance_runtime.py"
-git -C "${ROOT}" show "${REF}:agents/linux/runtime/instance_provisioning.py" >"${PACKAGE_ROOT}/agent/runtime/instance_provisioning.py"
+git -C "${ROOT}" show "${REF}:agents/linux/runtime/instance_provisioning_client.py" >"${PACKAGE_ROOT}/agent/runtime/instance_provisioning_client.py"
 for file in __init__.py base.py registry.py systemd.py; do
     git -C "${ROOT}" show "${REF}:agents/linux/runtime/adapters/${file}" >"${PACKAGE_ROOT}/agent/runtime/adapters/${file}"
 done
-git -C "${ROOT}" show "${REF}:agents/linux/provisioner/provisioner.py" >"${PACKAGE_ROOT}/agent/provisioner/provisioner.py"
+git -C "${ROOT}" show "${REF}:agents/linux/provisioner/instance_provisioner.py" >"${PACKAGE_ROOT}/agent/provisioner/instance_provisioner.py"
 git -C "${ROOT}" show "${REF}:agents/linux/policy/49-capivara-agent-instance-units.rules" >"${PACKAGE_ROOT}/agent/policy/49-capivara-agent-instance-units.rules"
 git -C "${ROOT}" show "${REF}:agents/linux/updater/updater.py" >"${PACKAGE_ROOT}/agent/updater/updater.py"
 for service in \
     capivara-agent.service capivara-agent-update.service capivara-agent-update.path \
-    capivara-agent-instance-provision.service capivara-agent-instance-provision.path
+    capivara-agent-instance-provisioner.service capivara-agent-instance-provisioner.path
 do
     git -C "${ROOT}" show "${REF}:agents/linux/services/${service}" >"${PACKAGE_ROOT}/services/${service}"
 done
@@ -68,7 +68,7 @@ chmod 0755 \
     "${PACKAGE_ROOT}/agent/runtime/local_cli.py" \
     "${PACKAGE_ROOT}/agent/runtime/cap_dispatch.py" \
     "${PACKAGE_ROOT}/agent/runtime/game_data_executor.py" \
-    "${PACKAGE_ROOT}/agent/provisioner/provisioner.py" \
+    "${PACKAGE_ROOT}/agent/provisioner/instance_provisioner.py" \
     "${PACKAGE_ROOT}/agent/updater/updater.py"
 find "${PACKAGE_ROOT}/agent" -type f ! -perm -0100 -exec chmod 0644 {} +
 chmod 0644 "${PACKAGE_ROOT}/services/"* "${PACKAGE_ROOT}/VERSION" "${PACKAGE_ROOT}/config/README.md"
@@ -91,19 +91,19 @@ required = [
     "agent/runtime/game_data_executor.py",
     "agent/runtime/game_data_state.py",
     "agent/runtime/instance_runtime.py",
-    "agent/runtime/instance_provisioning.py",
+    "agent/runtime/instance_provisioning_client.py",
     "agent/runtime/adapters/__init__.py",
     "agent/runtime/adapters/base.py",
     "agent/runtime/adapters/registry.py",
     "agent/runtime/adapters/systemd.py",
-    "agent/provisioner/provisioner.py",
+    "agent/provisioner/instance_provisioner.py",
     "agent/policy/49-capivara-agent-instance-units.rules",
     "agent/updater/updater.py",
     "services/capivara-agent.service",
     "services/capivara-agent-update.service",
     "services/capivara-agent-update.path",
-    "services/capivara-agent-instance-provision.service",
-    "services/capivara-agent-instance-provision.path",
+    "services/capivara-agent-instance-provisioner.service",
+    "services/capivara-agent-instance-provisioner.path",
     "VERSION",
     "config/README.md",
 ]
