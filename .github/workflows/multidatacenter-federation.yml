@@ -13,12 +13,23 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Compile federation module
-        run: python -m py_compile database/federation.py
-      - name: Run federation contract tests
-        run: python -m unittest tests.test_multidatacenter_federation -v
-      - name: Verify migration parity
+      - name: Validate federation Python
         run: |
-          test -f database/migrations/sqlite/039_multidatacenter_federation.sql
-          test -f database/migrations/postgresql/039_multidatacenter_federation.sql
-          test -f database/migrations/mysql/039_multidatacenter_federation.sql
+          python -m py_compile database/federation.py database/federation_repository.py database/federation_cli.py dashboard/federation_http.py dashboard/server_part13.py tests/test_multidatacenter_federation.py
+      - name: Run federation contract and persistence tests
+        run: python -m unittest tests.test_multidatacenter_federation -v
+      - name: Validate cap CLI syntax and federation route
+        run: |
+          bash -n bin/cap
+          grep -q 'federation)' bin/cap
+          grep -q 'database/federation_cli.py' bin/cap
+      - name: Verify active migration parity
+        run: |
+          test -f database/migrations/039_multidatacenter_federation.sql
+          test -f database/migrations_postgresql/039_multidatacenter_federation.sql
+          test -f database/migrations_mysql/039_multidatacenter_federation.sql
+          for table in federation_controllers federation_credentials federation_request_nonces federation_snapshots federation_routes federation_event_cursors federation_event_receipts federation_handoffs; do
+            grep -q "$table" database/migrations/039_multidatacenter_federation.sql
+            grep -q "$table" database/migrations_postgresql/039_multidatacenter_federation.sql
+            grep -q "$table" database/migrations_mysql/039_multidatacenter_federation.sql
+          done
