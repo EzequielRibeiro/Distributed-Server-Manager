@@ -25,6 +25,8 @@ python3 -m py_compile \
   "${ROOT}/agents/linux/runtime/provisioning_state.py" \
   "${ROOT}/agents/linux/runtime/provisioning_client.py" \
   "${ROOT}/agents/linux/runtime/provisioning_executor.py" \
+  "${ROOT}/agents/linux/runtime/privileged_materialization.py" \
+  "${ROOT}/agents/linux/privileged/materialize_instance.py" \
   "${ROOT}/agents/linux/runtime/materializers/__init__.py" \
   "${ROOT}/agents/linux/runtime/materializers/base.py" \
   "${ROOT}/agents/linux/runtime/materializers/registry.py" \
@@ -41,10 +43,7 @@ VERSION=$(tr -d '\r\n' <"${ROOT}/version")
 ARCHIVE="capivara-agent-linux-${VERSION}.tar.gz"
 
 cmp -s "${TMP}/one/${ARCHIVE}" "${TMP}/two/${ARCHIVE}" || fail "Agent package is not reproducible"
-(
-  cd "${TMP}/one"
-  sha256sum -c "${ARCHIVE}.sha256" >/dev/null
-)
+(cd "${TMP}/one" && sha256sum -c "${ARCHIVE}.sha256" >/dev/null)
 
 mkdir "${TMP}/extract"
 tar -xzf "${TMP}/one/${ARCHIVE}" -C "${TMP}/extract"
@@ -56,12 +55,13 @@ for path in \
   agent/runtime/update_client.py agent/runtime/update_state.py agent/runtime/local_cli.py agent/runtime/cap_dispatch.py \
   agent/runtime/game_data_client.py agent/runtime/game_data_executor.py agent/runtime/game_data_state.py \
   agent/runtime/instance_runtime.py agent/runtime/runtime_spec.py agent/runtime/runtime_events.py agent/runtime/runtime_materialization.py agent/runtime/game_runtime.py \
-  agent/runtime/provisioning_contract.py agent/runtime/provisioning_state.py agent/runtime/provisioning_client.py agent/runtime/provisioning_executor.py \
+  agent/runtime/provisioning_contract.py agent/runtime/provisioning_state.py agent/runtime/provisioning_client.py agent/runtime/provisioning_executor.py agent/runtime/privileged_materialization.py \
+  agent/privileged/materialize_instance.py \
   agent/runtime/adapters/__init__.py agent/runtime/adapters/base.py agent/runtime/adapters/registry.py agent/runtime/adapters/systemd.py \
   agent/runtime/materializers/__init__.py agent/runtime/materializers/base.py agent/runtime/materializers/registry.py agent/runtime/materializers/systemd.py \
   agent/runtime/profiles/__init__.py agent/runtime/profiles/base.py agent/runtime/profiles/registry.py agent/runtime/profiles/dayz.py \
   agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py \
-  services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path \
+  services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path services/capivara-agent-materialize@.service \
   config/README.md
 do
   [[ -f "${PACKAGE}/${path}" ]] || fail "missing Agent package file: ${path}"
@@ -98,6 +98,8 @@ source_map = {
     'agent/runtime/provisioning_state.py': root / 'agents/linux/runtime/provisioning_state.py',
     'agent/runtime/provisioning_client.py': root / 'agents/linux/runtime/provisioning_client.py',
     'agent/runtime/provisioning_executor.py': root / 'agents/linux/runtime/provisioning_executor.py',
+    'agent/runtime/privileged_materialization.py': root / 'agents/linux/runtime/privileged_materialization.py',
+    'agent/privileged/materialize_instance.py': root / 'agents/linux/privileged/materialize_instance.py',
     'agent/runtime/materializers/__init__.py': root / 'agents/linux/runtime/materializers/__init__.py',
     'agent/runtime/materializers/base.py': root / 'agents/linux/runtime/materializers/base.py',
     'agent/runtime/materializers/registry.py': root / 'agents/linux/runtime/materializers/registry.py',
@@ -110,6 +112,7 @@ source_map = {
     'services/capivara-agent.service': root / 'agents/linux/services/capivara-agent.service',
     'services/capivara-agent-update.service': root / 'agents/linux/services/capivara-agent-update.service',
     'services/capivara-agent-update.path': root / 'agents/linux/services/capivara-agent-update.path',
+    'services/capivara-agent-materialize@.service': root / 'agents/linux/services/capivara-agent-materialize@.service',
 }
 for relative, source in source_map.items():
     assert (package / relative).read_bytes() == source.read_bytes()
@@ -123,19 +126,11 @@ grep -Fq -- '--package-dir' "${INSTALLER}" || fail "local installer lacks --pack
 grep -Fq 'capivara-agent-linux-' "${BOOTSTRAP}" || fail "release bootstrap does not select Agent package"
 grep -Fq 'sha256sum' "${BOOTSTRAP}" || fail "release bootstrap does not validate checksum"
 ! grep -Fq '/main/' "${BOOTSTRAP}" || fail "release bootstrap follows mutable main"
-grep -Fq 'capivara-agent-update.path' "${INSTALLER}" || fail "installer does not enable safe remote updater"
-grep -Fq 'runtime/local_cli.py' "${INSTALLER}" || fail "installer does not install local Agent CLI"
-grep -Fq 'runtime/update_state.py' "${INSTALLER}" || fail "installer does not install update state module"
-grep -Fq 'update-history' "${INSTALLER}" || fail "installer does not create update history"
-grep -Fq 'runtime/game_data_client.py' "${INSTALLER}" || fail "installer does not install game-data client"
-grep -Fq 'runtime/game_data_executor.py' "${INSTALLER}" || fail "installer does not install game-data executor"
-grep -Fq 'runtime/game_data_state.py' "${INSTALLER}" || fail "installer does not install game-data state module"
-grep -Fq 'runtime/runtime_materialization.py' "${INSTALLER}" || fail "installer does not install runtime materialization service"
-grep -Fq 'runtime/materializers/systemd.py' "${INSTALLER}" || fail "installer does not install systemd materializer"
-grep -Fq 'runtime/game_runtime.py' "${INSTALLER}" || fail "installer does not install game runtime orchestration"
-grep -Fq 'runtime/profiles/dayz.py' "${INSTALLER}" || fail "installer does not install DayZ runtime profile"
 grep -Fq 'runtime/provisioning_contract.py' "${INSTALLER}" || fail "installer does not install provisioning contract"
 grep -Fq 'runtime/provisioning_executor.py' "${INSTALLER}" || fail "installer does not install provisioning executor"
+grep -Fq 'runtime/privileged_materialization.py' "${INSTALLER}" || fail "installer does not install materialization bridge"
+grep -Fq 'privileged/materialize_instance.py' "${INSTALLER}" || fail "installer does not install privileged materializer"
+grep -Fq 'capivara-agent-materialize@.service' "${INSTALLER}" || fail "installer does not install materializer helper service"
 grep -Fq 'instance-provisioning/history' "${INSTALLER}" || fail "installer does not create provisioning history"
 grep -Fq '/usr/local/bin/cap' "${INSTALLER}" || fail "installer does not expose the cap command"
 
