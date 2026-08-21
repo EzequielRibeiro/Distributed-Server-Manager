@@ -20,6 +20,8 @@ STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-a
 INSTALL_ROOT = Path(os.environ.get("CAPIVARA_AGENT_ROOT", "/opt/capivara-agent"))
 CLI_PATH = Path(os.environ.get("CAPIVARA_AGENT_CLI_PATH", "/usr/local/bin/cap"))
 POLKIT_RULES_DIR = Path(os.environ.get("CAPIVARA_POLKIT_RULES_DIR", "/etc/polkit-1/rules.d"))
+SYSTEMD_DIR = Path(os.environ.get("CAPIVARA_SYSTEMD_DIR", "/etc/systemd/system"))
+PROVISIONER_PATH_UNIT = "capivara-agent-instance-provisioner.path"
 REQUEST_PATH = STATE_DIR / "update-request.json"
 RESULT_PATH = STATE_DIR / "update-result.json"
 HISTORY_DIR = STATE_DIR / "update-history"
@@ -142,9 +144,11 @@ def _validate_python(package_root: Path) -> None:
         runtime / "agent.py", runtime / "capabilities.py", runtime / "network_inventory.py",
         runtime / "update_client.py", runtime / "update_state.py", runtime / "local_cli.py",
         runtime / "cap_dispatch.py", runtime / "game_data_client.py", runtime / "game_data_executor.py",
-        runtime / "game_data_state.py", runtime / "instance_runtime.py",
+        runtime / "game_data_state.py", runtime / "instance_runtime.py", runtime / "instance_provisioning_client.py",
         adapters / "__init__.py", adapters / "base.py", adapters / "registry.py", adapters / "systemd.py",
-        package_root / "agent" / "common" / "identity.py", package_root / "agent" / "updater" / "updater.py",
+        package_root / "agent" / "common" / "identity.py",
+        package_root / "agent" / "provisioner" / "instance_provisioner.py",
+        package_root / "agent" / "updater" / "updater.py",
     ]
     completed = subprocess.run(
         ["python3", "-m", "py_compile", *[str(path) for path in files]],
@@ -159,6 +163,7 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
     adapters = runtime / "adapters"
     common = package_root / "agent" / "common"
     policy = package_root / "agent" / "policy"
+    services = package_root / "services"
     return [
         (runtime / "agent.py", INSTALL_ROOT / "runtime" / "agent.py", 0o755, "agent/runtime/agent.py"),
         (runtime / "capabilities.py", INSTALL_ROOT / "runtime" / "capabilities.py", 0o644, "agent/runtime/capabilities.py"),
@@ -171,11 +176,15 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
         (runtime / "game_data_executor.py", INSTALL_ROOT / "runtime" / "game_data_executor.py", 0o755, "agent/runtime/game_data_executor.py"),
         (runtime / "game_data_state.py", INSTALL_ROOT / "runtime" / "game_data_state.py", 0o644, "agent/runtime/game_data_state.py"),
         (runtime / "instance_runtime.py", INSTALL_ROOT / "runtime" / "instance_runtime.py", 0o644, "agent/runtime/instance_runtime.py"),
+        (runtime / "instance_provisioning_client.py", INSTALL_ROOT / "runtime" / "instance_provisioning_client.py", 0o644, "agent/runtime/instance_provisioning_client.py"),
         (adapters / "__init__.py", INSTALL_ROOT / "runtime" / "adapters" / "__init__.py", 0o644, "agent/runtime/adapters/__init__.py"),
         (adapters / "base.py", INSTALL_ROOT / "runtime" / "adapters" / "base.py", 0o644, "agent/runtime/adapters/base.py"),
         (adapters / "registry.py", INSTALL_ROOT / "runtime" / "adapters" / "registry.py", 0o644, "agent/runtime/adapters/registry.py"),
         (adapters / "systemd.py", INSTALL_ROOT / "runtime" / "adapters" / "systemd.py", 0o644, "agent/runtime/adapters/systemd.py"),
+        (package_root / "agent" / "provisioner" / "instance_provisioner.py", INSTALL_ROOT / "provisioner" / "instance_provisioner.py", 0o755, "agent/provisioner/instance_provisioner.py"),
         (policy / "49-capivara-agent-instance-units.rules", POLKIT_RULES_DIR / "49-capivara-agent-instance-units.rules", 0o644, "agent/policy/49-capivara-agent-instance-units.rules"),
+        (services / "capivara-agent-instance-provisioner.service", SYSTEMD_DIR / "capivara-agent-instance-provisioner.service", 0o644, "services/capivara-agent-instance-provisioner.service"),
+        (services / "capivara-agent-instance-provisioner.path", SYSTEMD_DIR / "capivara-agent-instance-provisioner.path", 0o644, "services/capivara-agent-instance-provisioner.path"),
         (common / "identity.py", INSTALL_ROOT / "common" / "identity.py", 0o644, "agent/common/identity.py"),
         (package_root / "agent" / "updater" / "updater.py", INSTALL_ROOT / "updater" / "updater.py", 0o755, "agent/updater/updater.py"),
         (package_root / "manifest.json", INSTALL_ROOT / "manifest.json", 0o644, "manifest.json"),
@@ -274,6 +283,34 @@ def _validate_installed(version: str, manifest: dict[str, Any], mapping: list[tu
         raise RuntimeError("Agent CLI symlink target is invalid")
 
 
+def _provisioner_enabled() -> bool:
+    completed = subprocess.run(
+        ["systemctl", "is-enabled", "--quiet", PROVISIONER_PATH_UNIT],
+        check=False, timeout=10,
+    )
+    return completed.returncode == 0
+
+
+def _activate_provisioner_path() -> None:
+    reload_result = subprocess.run(["systemctl", "daemon-reload"], capture_output=True, text=True, check=False, timeout=30)
+    if reload_result.returncode != 0:
+        raise RuntimeError((reload_result.stderr or reload_result.stdout or "systemd daemon-reload failed")[:2000])
+    enabled = subprocess.run(
+        ["systemctl", "enable", "--now", PROVISIONER_PATH_UNIT],
+        capture_output=True, text=True, check=False, timeout=30,
+    )
+    if enabled.returncode != 0:
+        raise RuntimeError((enabled.stderr or enabled.stdout or "provisioner path activation failed")[:2000])
+
+
+def _restore_provisioner_path(was_enabled: bool) -> None:
+    subprocess.run(["systemctl", "daemon-reload"], check=False, timeout=30)
+    if was_enabled:
+        subprocess.run(["systemctl", "enable", "--now", PROVISIONER_PATH_UNIT], check=False, timeout=30)
+    else:
+        subprocess.run(["systemctl", "disable", "--now", PROVISIONER_PATH_UNIT], check=False, timeout=30)
+
+
 def _restart_agent() -> None:
     completed = subprocess.run(
         ["systemctl", "restart", "capivara-agent.service"],
@@ -334,6 +371,7 @@ def apply_request() -> int:
 
         mapping = _mapping(package_root)
         cli_existed, old_cli_target = _validate_cli_target()
+        provisioner_was_enabled = _provisioner_enabled()
         backup_root = work / "rollback"
         snapshots = _snapshot_files(mapping, backup_root)
         transaction_started = False
@@ -342,11 +380,16 @@ def apply_request() -> int:
             _apply_files(mapping)
             _reconcile_cli()
             _validate_installed(plain_version, manifest, mapping)
+            _activate_provisioner_path()
             _restart_agent()
         except Exception:
             if transaction_started:
                 _restore_files(snapshots)
                 _restore_cli(cli_existed, old_cli_target)
+                try:
+                    _restore_provisioner_path(provisioner_was_enabled)
+                except (OSError, subprocess.SubprocessError):
+                    pass
                 try:
                     subprocess.run(["systemctl", "restart", "capivara-agent.service"], check=False, timeout=30)
                 except (OSError, subprocess.SubprocessError):
