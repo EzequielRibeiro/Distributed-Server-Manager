@@ -21,6 +21,10 @@ python3 -m py_compile \
   "${ROOT}/agents/linux/runtime/runtime_events.py" \
   "${ROOT}/agents/linux/runtime/runtime_materialization.py" \
   "${ROOT}/agents/linux/runtime/game_runtime.py" \
+  "${ROOT}/agents/linux/runtime/provisioning_contract.py" \
+  "${ROOT}/agents/linux/runtime/provisioning_state.py" \
+  "${ROOT}/agents/linux/runtime/provisioning_client.py" \
+  "${ROOT}/agents/linux/runtime/provisioning_executor.py" \
   "${ROOT}/agents/linux/runtime/materializers/__init__.py" \
   "${ROOT}/agents/linux/runtime/materializers/base.py" \
   "${ROOT}/agents/linux/runtime/materializers/registry.py" \
@@ -52,6 +56,7 @@ for path in \
   agent/runtime/update_client.py agent/runtime/update_state.py agent/runtime/local_cli.py agent/runtime/cap_dispatch.py \
   agent/runtime/game_data_client.py agent/runtime/game_data_executor.py agent/runtime/game_data_state.py \
   agent/runtime/instance_runtime.py agent/runtime/runtime_spec.py agent/runtime/runtime_events.py agent/runtime/runtime_materialization.py agent/runtime/game_runtime.py \
+  agent/runtime/provisioning_contract.py agent/runtime/provisioning_state.py agent/runtime/provisioning_client.py agent/runtime/provisioning_executor.py \
   agent/runtime/adapters/__init__.py agent/runtime/adapters/base.py agent/runtime/adapters/registry.py agent/runtime/adapters/systemd.py \
   agent/runtime/materializers/__init__.py agent/runtime/materializers/base.py agent/runtime/materializers/registry.py agent/runtime/materializers/systemd.py \
   agent/runtime/profiles/__init__.py agent/runtime/profiles/base.py agent/runtime/profiles/registry.py agent/runtime/profiles/dayz.py \
@@ -89,6 +94,10 @@ source_map = {
     'agent/runtime/runtime_events.py': root / 'agents/linux/runtime/runtime_events.py',
     'agent/runtime/runtime_materialization.py': root / 'agents/linux/runtime/runtime_materialization.py',
     'agent/runtime/game_runtime.py': root / 'agents/linux/runtime/game_runtime.py',
+    'agent/runtime/provisioning_contract.py': root / 'agents/linux/runtime/provisioning_contract.py',
+    'agent/runtime/provisioning_state.py': root / 'agents/linux/runtime/provisioning_state.py',
+    'agent/runtime/provisioning_client.py': root / 'agents/linux/runtime/provisioning_client.py',
+    'agent/runtime/provisioning_executor.py': root / 'agents/linux/runtime/provisioning_executor.py',
     'agent/runtime/materializers/__init__.py': root / 'agents/linux/runtime/materializers/__init__.py',
     'agent/runtime/materializers/base.py': root / 'agents/linux/runtime/materializers/base.py',
     'agent/runtime/materializers/registry.py': root / 'agents/linux/runtime/materializers/registry.py',
@@ -125,6 +134,9 @@ grep -Fq 'runtime/runtime_materialization.py' "${INSTALLER}" || fail "installer 
 grep -Fq 'runtime/materializers/systemd.py' "${INSTALLER}" || fail "installer does not install systemd materializer"
 grep -Fq 'runtime/game_runtime.py' "${INSTALLER}" || fail "installer does not install game runtime orchestration"
 grep -Fq 'runtime/profiles/dayz.py' "${INSTALLER}" || fail "installer does not install DayZ runtime profile"
+grep -Fq 'runtime/provisioning_contract.py' "${INSTALLER}" || fail "installer does not install provisioning contract"
+grep -Fq 'runtime/provisioning_executor.py' "${INSTALLER}" || fail "installer does not install provisioning executor"
+grep -Fq 'instance-provisioning/history' "${INSTALLER}" || fail "installer does not create provisioning history"
 grep -Fq '/usr/local/bin/cap' "${INSTALLER}" || fail "installer does not expose the cap command"
 
 echo "Agent package tests passed."
