@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-for directory in (ROOT / "dashboard", ROOT / "database", ROOT / "core"):
+for directory in (ROOT, ROOT / "dashboard", ROOT / "database", ROOT / "core"):
     sys.path.insert(0, str(directory))
 
 from agent_heartbeat_api import _observability_from_heartbeat
