@@ -275,6 +275,21 @@ fi
 
 UPDATE_MANAGER="${ROOT}/update-manager/update-manager.sh"
 
+# An inherited bootstrap marker must not leave update logging unavailable.
+(
+    DSM_ROOT="${ROOT}"
+    DSM_BOOTSTRAP_LOADED=1
+    unset -f log_info log_error is_semver semver_compare 2>/dev/null || true
+
+    # shellcheck source=../update-manager/update-manager.sh
+    source "${UPDATE_MANAGER}"
+
+    declare -F log_info >/dev/null || fail "update manager did not recover log_info"
+    declare -F log_error >/dev/null || fail "update manager did not recover log_error"
+    declare -F is_semver >/dev/null || fail "update manager did not recover is_semver"
+    declare -F semver_compare >/dev/null || fail "update manager did not recover semver_compare"
+)
+
 (
     DSM_ROOT="${ROOT}"
 
@@ -1155,4 +1170,3 @@ echo "Update manager tests passed."
         "DSM Update" \
         "Falha simulada"
 ) || fail "missing notification backend broke update manager"
-

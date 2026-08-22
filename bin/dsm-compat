@@ -94,9 +94,9 @@ update_command()
 
         *)
             echo "Uso:" >&2
-            echo "  dsm update check" >&2
-            echo "  dsm update run" >&2
-            echo "  dsm update history" >&2
+            echo "  cap update check" >&2
+            echo "  cap update run" >&2
+            echo "  cap update history" >&2
             return 2
             ;;
     esac

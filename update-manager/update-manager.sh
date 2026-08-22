@@ -31,6 +31,31 @@ UPDATE_MANAGER_ROOT="$DSM_ROOT/update-manager"
 # shellcheck source=/dev/null
 source "$DSM_ROOT/core/bootstrap.sh"
 
+# Instalações atualizadas a partir de versões antigas podem manter o marcador
+# do bootstrap no ambiente mesmo quando logger/semver ainda não foram
+# carregados. Recarregue apenas as dependências ausentes para que o próprio
+# Update Manager consiga reparar esse estado.
+if ! declare -F log_info >/dev/null 2>&1 || ! declare -F log_error >/dev/null 2>&1
+then
+    if [ -f "$DSM_ROOT/core/logger.sh" ]
+    then
+        # shellcheck source=/dev/null
+        source "$DSM_ROOT/core/logger.sh"
+    fi
+fi
+
+if ! declare -F is_semver >/dev/null 2>&1 || ! declare -F semver_compare >/dev/null 2>&1
+then
+    if [ -f "$DSM_ROOT/core/semver.sh" ]
+    then
+        # shellcheck source=/dev/null
+        source "$DSM_ROOT/core/semver.sh"
+    fi
+fi
+
+declare -F log_info >/dev/null 2>&1 || log_info() { printf '%s\n' "$*"; }
+declare -F log_error >/dev/null 2>&1 || log_error() { printf 'Erro: %s\n' "$*" >&2; }
+
 # =============================================================
 # Configuração
 # =============================================================

@@ -134,13 +134,13 @@ set -e
 [[ "${STATUS}" -eq 2 ]] \
     || fail "acao invalida deveria retornar 2; retornou ${STATUS}"
 
-grep -q 'dsm update check' <<<"${OUTPUT}" \
+grep -q 'cap update check' <<<"${OUTPUT}" \
     || fail "usage nao contem update check"
 
-grep -q 'dsm update run' <<<"${OUTPUT}" \
+grep -q 'cap update run' <<<"${OUTPUT}" \
     || fail "usage nao contem update run"
 
-grep -q 'dsm update history' <<<"${OUTPUT}" \
+grep -q 'cap update history' <<<"${OUTPUT}" \
     || fail "usage nao contem update history"
 
 # -------------------------------------------------------------
