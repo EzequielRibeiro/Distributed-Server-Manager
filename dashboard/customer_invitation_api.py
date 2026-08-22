@@ -6,7 +6,7 @@ from customer_account_api import require_customer
 from customer_audit import audit_customer_event
 from customer_invitation_repository import CustomerInvitationRepository
 from customer_mailer import send_invitation
-from customer_team_repository import CustomerTeamRepository
+from customer_user_repository import CustomerUserRepository
 from users import hash_password
 
 TEAM_INVITATION_PATHS={
@@ -17,7 +17,7 @@ TEAM_INVITATION_PATHS={
 PUBLIC_INVITATION_PATHS={"/api/customer/invitations/accept"}
 
 def _owner(user,backend):
-    username,customer_id=require_customer(user); role=CustomerTeamRepository(backend).account_role(customer_id,username)
+    username,customer_id=require_customer(user); role=CustomerUserRepository(backend).require_membership(customer_id,username)
     if role!="owner":raise PermissionError("only the customer owner can manage invitations")
     return username,customer_id
 
@@ -38,7 +38,11 @@ def dispatch_customer_invitations(method,path,*,payload,user,backend):
             return 200,{"invitations":repo.list(customer_id)}
         if method!="POST":return 405,{"error":"method not allowed"}
         if path.endswith("/create"):
-            created=repo.create(customer_id,body.get("email"),body.get("account_role","member"),body.get("instance_access",{}),actor)
+            requested_access=body.get("instance_access",{}) or {}
+            users=CustomerUserRepository(backend)
+            for instance_id in requested_access:
+                users.require_instance(customer_id,str(instance_id))
+            created=repo.create(customer_id,body.get("email"),body.get("account_role","member"),requested_access,actor)
             delivered=send_invitation(created["email"],created["token"])
             response={"created":True,"delivered":delivered,"invitation_id":created["id"]}
             if os.environ.get("DSM_CUSTOMER_INVITATION_EXPOSE_TOKEN","").lower() in {"1","true","yes"}:response["invitation_token"]=created["token"]
