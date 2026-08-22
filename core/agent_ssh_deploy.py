@@ -132,8 +132,6 @@ def _run_ssh(
 
 
 def preflight_ssh(options: SSHDeployOptions, *, runner: SSHRunner = _default_runner) -> dict[str, Any]:
-    # Read-only preflight. Requiring sudo -n keeps automated deployment non-interactive
-    # and avoids ever handling administrator passwords inside Capivara.
     command = (
         "set -eu; "
         "test \"$(uname -s)\" = Linux; "
@@ -167,16 +165,16 @@ def remote_agent_present(options: SSHDeployOptions, *, runner: SSHRunner = _defa
     return result.returncode == 0
 
 
-def _bootstrap_stdin(controller_url: str, pairing_token: str) -> str:
-    # The complete Python program, including the short-lived token, is delivered only
-    # through SSH stdin. The ssh argv contains merely `sudo -n python3 -`. The token is
-    # then propagated to the release bootstrap through a root-only process environment,
-    # not as a command-line argument visible in process listings.
+def _bootstrap_stdin(controller_url: str, pairing_token: str, release_tag: str = "latest") -> str:
     payload = json.dumps(
-        {"controller_url": controller_url, "pairing_token": pairing_token},
+        {
+            "controller_url": controller_url,
+            "pairing_token": pairing_token,
+            "release_tag": release_tag,
+        },
         separators=(",", ":"),
     )
-    return f'''import json, os, subprocess, tempfile\npayload = json.loads({payload!r})\nurl = payload["controller_url"].rstrip("/") + "/agent/install.sh"\nfd, path = tempfile.mkstemp(prefix="capivara-agent-bootstrap-", suffix=".sh")\nos.close(fd)\ntry:\n    subprocess.run(["curl", "-fsSL", url, "-o", path], check=True)\n    os.chmod(path, 0o700)\n    env = os.environ.copy()\n    env["CAPIVARA_PAIRING_TOKEN"] = payload["pairing_token"]\n    subprocess.run([\n        "bash", path,\n        "--controller-url", payload["controller_url"],\n    ], check=True, env=env)\nfinally:\n    try:\n        os.unlink(path)\n    except FileNotFoundError:\n        pass\n'''
+    return f'''import json, os, subprocess, tempfile\npayload = json.loads({payload!r})\nurl = payload["controller_url"].rstrip("/") + "/agent/install.sh"\nfd, path = tempfile.mkstemp(prefix="capivara-agent-bootstrap-", suffix=".sh")\nos.close(fd)\ntry:\n    subprocess.run(["curl", "-fsSL", url, "-o", path], check=True)\n    os.chmod(path, 0o700)\n    env = os.environ.copy()\n    env["CAPIVARA_PAIRING_TOKEN"] = payload["pairing_token"]\n    env["CAPIVARA_RELEASE_TAG"] = payload["release_tag"]\n    subprocess.run([\n        "bash", path,\n        "--controller-url", payload["controller_url"],\n    ], check=True, env=env)\nfinally:\n    try:\n        os.unlink(path)\n    except FileNotFoundError:\n        pass\n'''
 
 
 def bootstrap_agent(
@@ -184,21 +182,25 @@ def bootstrap_agent(
     *,
     controller_url: str,
     pairing_token: str,
+    release_tag: str = "latest",
     runner: SSHRunner = _default_runner,
     timeout: int = 900,
 ) -> None:
     controller_url = str(controller_url or "").strip().rstrip("/")
     pairing_token = str(pairing_token or "").strip()
+    release_tag = str(release_tag or "latest").strip()
     if not controller_url.startswith(("http://", "https://")):
         raise AgentDeployError("controller_url must use http:// or https://")
     if not pairing_token:
         raise AgentDeployError("pairing token is required")
+    if not release_tag:
+        raise AgentDeployError("release tag is required")
 
     result = _run_ssh(
         options,
         "sudo -n python3 -",
         runner=runner,
-        stdin_text=_bootstrap_stdin(controller_url, pairing_token),
+        stdin_text=_bootstrap_stdin(controller_url, pairing_token, release_tag),
         timeout=timeout,
     )
     if result.returncode != 0:
