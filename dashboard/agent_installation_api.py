@@ -189,8 +189,12 @@ def create_agent_installation_for_user(
     release = None
     release_tag = "local"
     if method in {"github", "ssh"}:
-        release = resolve_agent_release(payload.get("release_tag"), platform)
-        release_tag = str(release["tag"])
+        requested_release_tag = str(payload.get("release_tag") or "").strip()
+        if requested_release_tag:
+            release = resolve_agent_release(requested_release_tag, platform)
+            release_tag = str(release["tag"])
+        else:
+            release_tag = "latest"
 
     preconfiguration = normalize_preconfiguration(payload)
     region, datacenter = _location(backend, region_id, datacenter_id)
