@@ -6,6 +6,8 @@ Este tutorial descreve o fluxo administrativo atual para criar um cliente, assoc
 
 > A CLI pública do Capivara é `cap`. O comando `dsm` existe apenas como camada temporária de compatibilidade para instalações e scripts antigos e não deve ser usado em documentação, novos scripts ou novos procedimentos operacionais.
 
+Para uma referência genérica, válida para qualquer jogo suportado pelo catálogo, consulte `docs/administracao-customer-contract-instance.md`.
+
 Exemplo de topologia:
 
 ```text
@@ -50,7 +52,7 @@ Usuário: joao
 Execute no Controller ou Hybrid:
 
 ```bash
-cap customer create \
+sudo cap customer create \
   --id CLIENTE-001 \
   --name "João" \
   --username joao
@@ -66,12 +68,14 @@ Confirme a senha:
 
 A senha não deve ser fornecida na linha de comando.
 
-O comando cria o Customer e o login associado de forma atômica, evitando a necessidade de cadastrar a entidade Customer e depois criar manualmente o usuário em uma etapa separada.
+O comando cria o Customer e o login associado. O login deve possuir `role=customer`, `scope_id=CLIENTE-001` e membership válido no Customer. O primeiro login operacional deve ser `owner` da conta do Customer.
+
+Não use `cap user add joao customer` sem scope. Para um login `customer`, o scope é obrigatório. `cap user add <usuario> customer <scope>` só deve ser usado quando o Customer já existe e o objetivo é adicionar outro login ao mesmo scope.
 
 ## 2. Criar um contrato DayZ para o cliente
 
 ```bash
-cap contract create \
+sudo cap contract create \
   --customer CLIENTE-001 \
   --game dayz \
   --instances 1 \
@@ -105,7 +109,7 @@ Health: online
 Crie a instância:
 
 ```bash
-cap instance create \
+sudo cap instance create \
   --customer CLIENTE-001 \
   --contract CONTRACT-DAYZ-001 \
   --game dayz \
@@ -169,6 +173,27 @@ Quando um jogo possui mais de um runtime elegível, informe explicitamente:
 --runtime <runtime-id>
 ```
 
+## 4. Acesso do cliente
+
+O login administrativo e o login do cliente são separados:
+
+```text
+/login.html           administração
+/customer-login.html  cliente
+```
+
+O usuário `joao` deve acessar `/customer-login.html`. Depois de autenticado, um usuário com `role=customer` é direcionado para `/customer.html`.
+
+A área do cliente usa as páginas:
+
+```text
+/customer.html
+/customer-members.html
+/customer-instance.html
+```
+
+Jogos sem contrato ativo não devem abrir páginas administrativas. Eles permanecem dentro da área do cliente e exibem orientação para contratação.
+
 ## Verificação
 
 Depois da criação, acompanhe a instância pelas superfícies administrativas do Controller e pelo estado reportado pelo Agent. O retorno da criação inclui, entre outros campos:
@@ -184,12 +209,26 @@ Desired state
 
 A criação é distribuída: o comando no Controller não instala arquivos do jogo localmente no Controller puro. O provisionamento é executado pelo Agent selecionado.
 
+Para verificar o login criado:
+
+```bash
+sudo cap user list
+```
+
+Resultado esperado:
+
+```text
+joao  customer  CLIENTE-001  active
+```
+
+Se as credenciais estiverem corretas mas a área do cliente informar credenciais inválidas, confira o membership em `customer_account_members`. O login precisa estar vinculado ao mesmo Customer e o primeiro usuário deve normalmente ser `owner`.
+
 ## Exclusão administrativa
 
 A exclusão também usa a CLI `cap` e é confirmação-dirigida pelo Agent:
 
 ```bash
-cap instance delete \
+sudo cap instance delete \
   --instance <instance-id> \
   --admin <usuario-admin> \
   --yes
@@ -200,7 +239,7 @@ O Controller marca a instância para remoção e envia o comando ao Agent propri
 A exclusão de contrato segue a mesma regra quando existem instâncias vinculadas:
 
 ```bash
-cap contract delete \
+sudo cap contract delete \
   --contract CONTRACT-DAYZ-001 \
   --admin <usuario-admin> \
   --yes
@@ -210,13 +249,13 @@ cap contract delete \
 
 ```bash
 # 1. Criar Customer e login
-cap customer create --id CLIENTE-001 --name "João" --username joao
+sudo cap customer create --id CLIENTE-001 --name "João" --username joao
 
 # 2. Criar contrato DayZ
-cap contract create --customer CLIENTE-001 --game dayz --instances 1 --id CONTRACT-DAYZ-001
+sudo cap contract create --customer CLIENTE-001 --game dayz --instances 1 --id CONTRACT-DAYZ-001
 
 # 3. Criar a instância no Agent remoto
-cap instance create --customer CLIENTE-001 --contract CONTRACT-DAYZ-001 --game dayz --agent agent-game-01 --name dayz-joao-01
+sudo cap instance create --customer CLIENTE-001 --contract CONTRACT-DAYZ-001 --game dayz --agent agent-game-01 --name dayz-joao-01
 ```
 
 Topologia final:
@@ -225,6 +264,7 @@ Topologia final:
 Customer CLIENTE-001
        │
        ├── Login: joao
+       │      └── Membership: owner
        │
        └── CONTRACT-DAYZ-001
                │
