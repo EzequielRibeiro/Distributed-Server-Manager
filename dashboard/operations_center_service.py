@@ -5,20 +5,15 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from alert_repository import AlertRepository
 from automation_repository import AutomationRepository
 from universal_event_repository import UniversalEventRepository
 
 ADMIN_ROLES = {"admin", "controller", "operator"}
-ADMIN_SCHEDULE_SCOPES = {"controller", "agent", "datacenter", "region"}
-ADMIN_SCHEDULE_ACTIONS = {
-    "controller_backup",
-    "infrastructure_doctor",
-    "agent_health_check",
-    "agent_update",
-    "game_data_update",
-}
+ADMIN_SCHEDULE_SCOPES = {"controller", "agent"}
+ADMIN_SCHEDULE_ACTIONS = {"infrastructure_doctor", "agent_health_check"}
 TERMINAL_MARKERS = ("COMPLETED", "SUCCEEDED", "RESOLVED", "RECOVERED", "FINISHED", "CLOSED")
 FAILURE_MARKERS = ("FAILED", "ERROR", "CRITICAL", "UNAVAILABLE", "REJECTED")
 
@@ -171,18 +166,21 @@ class OperationsCenterService:
             raise ValueError("nome do agendamento é obrigatório")
         if scope not in ADMIN_SCHEDULE_SCOPES:
             raise ValueError("escopo administrativo inválido")
-        if scope != "controller" and not target:
-            raise ValueError("alvo é obrigatório para este escopo")
+        if scope == "agent" and not target:
+            raise ValueError("Agent é obrigatório")
         if action not in ADMIN_SCHEDULE_ACTIONS:
             raise ValueError("ação administrativa inválida")
-        if not expression or len(expression) > 191:
-            raise ValueError("expressão de agendamento inválida")
-        if len(timezone_name) > 64:
-            raise ValueError("timezone inválida")
-        if action == "controller_backup" and scope != "controller":
-            raise ValueError("backup do Controller exige escopo controller")
-        if action in {"agent_health_check", "agent_update", "game_data_update"} and scope != "agent":
-            raise ValueError("esta ação exige escopo agent")
+        if action == "infrastructure_doctor" and scope != "controller":
+            raise ValueError("Infrastructure Doctor exige escopo controller")
+        if action == "agent_health_check" and scope != "agent":
+            raise ValueError("verificação de saúde exige escopo agent")
+        fields = expression.split()
+        if len(fields) != 5 or len(expression) > 191:
+            raise ValueError("agendamento deve usar uma expressão cron de 5 campos")
+        try:
+            ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("timezone inválida") from exc
         rule_id = str(payload.get("rule_id") or "").strip() or f"admin-schedule-{uuid.uuid4()}"
         raw = {
             "rule_id": rule_id,
@@ -191,14 +189,9 @@ class OperationsCenterService:
             "trigger": {"type": "schedule", "expression": expression, "timezone": timezone_name},
             "conditions": [],
             "actions": [{
-                "type": "configuration",
-                "configuration": {
-                    "kind": "CapivaraAdministrativeScheduleAction",
-                    "operation": action,
-                    "scope": scope,
-                    "target_id": target or None,
-                    "timezone": timezone_name,
-                },
+                "type": "administrative",
+                "operation": action,
+                "target_id": target or None,
             }],
             "cooldown_seconds": 0,
         }
@@ -211,8 +204,8 @@ class OperationsCenterService:
         if current is None:
             raise KeyError(rule_id)
         actions = current.get("actions") or []
-        config = actions[0].get("configuration") if actions and isinstance(actions[0], dict) else None
-        if not isinstance(config, dict) or config.get("kind") != "CapivaraAdministrativeScheduleAction":
+        first = actions[0] if actions and isinstance(actions[0], dict) else {}
+        if first.get("type") != "administrative":
             raise ValueError("a regra não é um agendamento administrativo")
         raw = {
             "rule_id": current["rule_id"],
