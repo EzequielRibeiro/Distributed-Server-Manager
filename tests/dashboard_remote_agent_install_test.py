@@ -241,9 +241,12 @@ class DashboardRemoteAgentInstallTest(unittest.TestCase):
         self.assertIn('id="agent-preconfig-port-start"', html)
         self.assertIn('id="agent-preconfig-port-end"', html)
         self.assertIn('id="agent-ssh-host"', html)
+        self.assertIn('id="agent-install-feedback"', html)
         self.assertNotIn('type="password"', html)
         self.assertIn("remote_bootstrap", js)
         self.assertIn("port_protocol", js)
+        self.assertIn("Executando bootstrap SSH...", js)
+        self.assertIn("Falha: ${error.message}", js)
 
 
 if __name__ == "__main__":

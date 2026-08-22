@@ -85,6 +85,12 @@
         }
     }
 
+    function installationFeedback(message, state = "") {
+        const feedback = document.getElementById("agent-install-feedback");
+        feedback.textContent = message;
+        feedback.dataset.state = state;
+    }
+
     function progress(state) {
         const root = document.getElementById("agent-install-progress");
         root.dataset.state = state;
@@ -135,6 +141,7 @@
 
     async function generate(event) {
         event.preventDefault();
+        errorMessage();
         const platform = document.querySelector('input[name="agent-platform"]:checked').value;
         const method = selectedMethod();
         const regionId = document.getElementById("agent-install-region").value;
@@ -167,7 +174,14 @@
         }
 
         submit.disabled = true;
+        submit.setAttribute("aria-busy", "true");
         submit.textContent = method === "ssh" ? "Executando bootstrap SSH..." : "Gerando...";
+        installationFeedback(
+            method === "ssh"
+                ? "Conectando ao Agent, validando chave SSH, host key e sudo não interativo..."
+                : "Preparando a instalação...",
+            "working"
+        );
         try {
             const result = await request("/agents/installations", {
                 method: "POST",
@@ -197,14 +211,22 @@
             }
 
             renderPreconfiguration(result.preconfiguration);
+            installationFeedback(
+                method === "ssh"
+                    ? "Bootstrap SSH concluído. Aguardando enrollment do Agent."
+                    : "Instrução de instalação gerada.",
+                "success"
+            );
             progress("waiting");
             if (pollTimer) clearInterval(pollTimer);
             pollTimer = setInterval(poll, 3000);
             await poll();
         } catch (error) {
             errorMessage(error.message);
+            installationFeedback(`Falha: ${error.message}`, "error");
         } finally {
             submit.disabled = false;
+            submit.removeAttribute("aria-busy");
             updateMethodUi();
         }
     }

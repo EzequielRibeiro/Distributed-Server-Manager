@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Central de ajuda | Capivara DSM</title>
+    <link rel="stylesheet" href="/dashboard-ui-v2.css?v=2">
+    <link rel="stylesheet" href="/dashboard-ui-v2-stage2.css?v=1">
+    <link rel="stylesheet" href="/help.css?v=1">
+</head>
+<body>
+<div id="sidebar-component"></div>
+<main class="help-main">
+    <header class="help-hero">
+        <p class="help-eyebrow">CAPIVARA DSM · DOCUMENTAÇÃO</p>
+        <h1>Central de ajuda</h1>
+        <p>Encontre procedimentos operacionais, instalação de Agents e referências técnicas.</p>
+        <label class="help-search">
+            <span>Buscar por assunto</span>
+            <input id="help-search" type="search" placeholder="Ex.: SSH, DayZ, chave pública, datacenter, backup" autocomplete="off">
+        </label>
+    </header>
+
+    <div class="help-layout">
+        <nav class="help-menu" aria-label="Assuntos da ajuda">
+            <strong>Assuntos</strong>
+            <button type="button" class="active" data-help-category="all">Todos</button>
+            <button type="button" data-help-category="agents">Agents e SSH</button>
+            <button type="button" data-help-category="games">Servidores de jogos</button>
+            <button type="button" data-help-category="operations">Operação</button>
+            <button type="button" data-help-category="reference">Referências técnicas</button>
+        </nav>
+
+        <section class="help-content" aria-live="polite">
+            <div class="help-summary">
+                <strong id="help-count">0 materiais</strong>
+                <button id="help-clear" type="button" hidden>Limpar busca</button>
+            </div>
+            <div id="help-results" class="help-results"></div>
+            <p id="help-empty" class="help-empty" hidden>Nenhum material corresponde à busca.</p>
+        </section>
+    </div>
+</main>
+<script src="/help.js?v=1"></script>
+</body>
+</html>

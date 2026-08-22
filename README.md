@@ -451,6 +451,14 @@ As próximas evoluções concentram-se em hardening contínuo, experiência oper
 
 A documentação detalhada de decisões arquiteturais fica em `docs/` e os testes do repositório representam contratos importantes do comportamento atual.
 
+### Tutoriais operacionais
+
+- [Instalar um Agent Linux remotamente via SSH](docs/tutorial-instalacao-agent-via-ssh.md)
+- [Instalar servidor DayZ para um cliente em um Agent remoto](docs/tutorial-instalacao-dayz-agent-remoto.md)
+
+Usuários autenticados também podem consultar esses procedimentos na página
+**Ajuda** da Dashboard, que oferece navegação por assunto e busca textual.
+
 ---
 
 ## Contribuição
