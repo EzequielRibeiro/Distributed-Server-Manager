@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Capivara DSM - Adicionar Agent</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/agents.css">
+    <link rel="stylesheet" href="/infrastructure-ui-v2.css?v=1">
+</head>
+<body>
+<div id="sidebar-component"></div>
+<main class="agents-main">
+    <header class="agents-header">
+        <div>
+            <h1>Adicionar Agent</h1>
+            <p>Prepare, instale e acompanhe o enrollment de um novo Agent.</p>
+        </div>
+        <div class="agents-header-actions">
+            <button id="back-to-agents" type="button">Voltar para Agents</button>
+        </div>
+    </header>
+
+    <div id="agents-error" class="agents-error" hidden></div>
+
+    <section id="add-agent" class="agent-detail add-agent-panel agent-manager-only">
+        <h2>Instalação do Agent</h2>
+        <p>Instale manualmente por instrução ou permita que o Controller faça o bootstrap Linux via SSH. A configuração administrativa pode ser preparada antes do primeiro heartbeat.</p>
+        <form id="agent-install-form" class="range-form">
+            <fieldset>
+                <legend>Sistema</legend>
+                <label class="inline-option"><input type="radio" name="agent-platform" value="linux" checked> Linux</label>
+                <label class="inline-option"><input type="radio" name="agent-platform" value="windows"> Windows</label>
+            </fieldset>
+            <fieldset>
+                <legend>Método</legend>
+                <label class="inline-option"><input type="radio" name="agent-method" value="github" checked> Gerar instrução · GitHub Release</label>
+                <label class="inline-option"><input type="radio" name="agent-method" value="local"> Gerar instrução · Pacote local</label>
+                <label class="inline-option"><input type="radio" name="agent-method" value="ssh"> Instalar remotamente via SSH</label>
+            </fieldset>
+
+            <div id="agent-ssh-options" class="range-form" hidden>
+                <h3>Bootstrap SSH pelo Controller</h3>
+                <label>Host ou IP do Agent <input id="agent-ssh-host" type="text" placeholder="192.168.15.55" autocomplete="off"></label>
+                <label>Usuário SSH <input id="agent-ssh-user" type="text" placeholder="ezequiel" autocomplete="off"></label>
+                <label>Porta SSH <input id="agent-ssh-port" type="number" min="1" max="65535" value="22"></label>
+                <label>URL do Controller alcançável pelo Agent <input id="agent-controller-url" type="url" placeholder="https://controller.exemplo"></label>
+                <p class="location-safety-note">O Dashboard não aceita senha SSH. O Controller usa sua chave/ssh-agent já configurada, preserva a verificação de host key e exige sudo não interativo no host remoto.</p>
+            </div>
+
+            <label id="agent-controller-wrapper" hidden>Controller <select id="agent-install-controller"></select></label>
+            <label>Região <select id="agent-install-region" required><option value="">Selecione uma região</option></select></label>
+            <label>Datacenter <select id="agent-install-datacenter" required><option value="">Selecione um datacenter</option></select></label>
+
+            <fieldset>
+                <legend>Pré-configuração do Agent</legend>
+                <label>Nome administrativo <input id="agent-preconfig-name" type="text" maxlength="128" placeholder="Node Limeira 01"></label>
+                <label>Protocolo da faixa
+                    <select id="agent-preconfig-protocol">
+                        <option value="both">TCP + UDP</option>
+                        <option value="udp">UDP</option>
+                        <option value="tcp">TCP</option>
+                    </select>
+                </label>
+                <label>Porta inicial <input id="agent-preconfig-port-start" type="number" min="1" max="65535" value="24000"></label>
+                <label>Porta final <input id="agent-preconfig-port-end" type="number" min="1" max="65535" value="24999"></label>
+                <p class="location-safety-note">A faixa só é criada depois do enrollment, quando o Agent já possui identidade. Isso evita reservas associadas a Agents inexistentes.</p>
+            </fieldset>
+
+            <button id="generate-agent-install" type="submit">Gerar instalação</button>
+            <p id="agent-install-feedback" class="location-safety-note" role="status" aria-live="polite"></p>
+        </form>
+
+        <div id="agent-install-result" class="agent-install-result" hidden>
+            <h3 id="agent-install-result-title">Instruções de instalação</h3>
+            <p id="agent-install-expiry"></p>
+            <textarea id="agent-install-command" readonly rows="5"></textarea>
+            <button id="copy-agent-install" type="button">Copiar instrução</button>
+            <p id="agent-remote-bootstrap-status" class="location-safety-note" hidden></p>
+            <p id="agent-preconfiguration-status" class="location-safety-note"></p>
+            <div id="agent-install-progress" class="agent-install-progress" data-state="waiting" aria-live="polite">
+                <span data-step="waiting">Aguardando Agent</span>
+                <span data-step="pairing">Pareando</span>
+                <span data-step="validating">Validando</span>
+                <span data-step="online">Online</span>
+            </div>
+        </div>
+    </section>
+</main>
+<script src="/add-agent-page.js"></script>
+<script src="/agent-installation.js"></script>
+</body>
+</html>
