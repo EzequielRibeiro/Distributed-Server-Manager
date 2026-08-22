@@ -14,4 +14,6 @@ Um Controller puro não executa runtime de jogo local. Comandos locais de lifecy
 
 ## Migração
 
-A implementação histórica fica isolada atrás de uma camada interna chamada pelo próprio `cap`. Isso permite retirar dependências gradualmente sem manter dois CLIs concorrentes. Quando essa camada deixar de ter consumidores, ela poderá ser removida em uma mudança de aposentadoria dedicada.
+A implementação histórica fica isolada atrás de uma camada interna chamada pelo próprio `cap`. Isso permite retirar dependências gradualmente sem manter duas CLIs públicas concorrentes.
+
+Enquanto a compatibilidade for necessária, o comando `dsm` pode continuar instalado para scripts e instalações antigas, mas não deve aparecer como caminho recomendado em documentação operacional nova. Quando essa camada deixar de ter consumidores, ela poderá ser removida em uma mudança de aposentadoria dedicada.
