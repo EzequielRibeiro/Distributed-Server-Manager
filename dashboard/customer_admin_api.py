@@ -10,12 +10,16 @@ CUSTOMER_ADMIN_COLLECTION = "/api/admin/customers"
 CUSTOMER_ADMIN_DETAIL = "/api/admin/customer"
 CUSTOMER_ADMIN_PASSWORD_RESET = "/api/admin/customer/password-reset"
 CUSTOMER_ADMIN_CONTRACT = "/api/admin/customer/contracts"
+CUSTOMER_ADMIN_MEMBER_ROLE = "/api/admin/customer/member-role"
+CUSTOMER_ADMIN_ACCESS = "/api/admin/customer/access"
 CUSTOMER_PASSWORD_CHANGE = "/api/customer/password/change-temporary"
 CUSTOMER_ADMIN_GET_PATHS = {CUSTOMER_ADMIN_COLLECTION, CUSTOMER_ADMIN_DETAIL}
 CUSTOMER_ADMIN_POST_PATHS = {
     CUSTOMER_ADMIN_COLLECTION,
     CUSTOMER_ADMIN_PASSWORD_RESET,
     CUSTOMER_ADMIN_CONTRACT,
+    CUSTOMER_ADMIN_MEMBER_ROLE,
+    CUSTOMER_ADMIN_ACCESS,
     CUSTOMER_PASSWORD_CHANGE,
 }
 
@@ -94,6 +98,24 @@ def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, ba
                 ends_at=(str(payload.get("ends_at") or "").strip() or None),
             )
             return 201, result
+
+        if path == CUSTOMER_ADMIN_MEMBER_ROLE:
+            repository.set_member_role(
+                str(payload.get("customer_id") or ""),
+                str(payload.get("username") or ""),
+                str(payload.get("account_role") or ""),
+            )
+            return 200, {"updated": True}
+
+        if path == CUSTOMER_ADMIN_ACCESS:
+            profile = str(payload.get("permission_profile") or "").strip() or None
+            repository.set_instance_access(
+                str(payload.get("customer_id") or ""),
+                str(payload.get("username") or ""),
+                str(payload.get("instance_id") or ""),
+                profile,
+            )
+            return 200, {"updated": True}
     except (ValueError, TypeError) as exc:
         return 400, {"error": str(exc)}
     except Exception:
