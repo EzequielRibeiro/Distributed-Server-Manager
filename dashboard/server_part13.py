@@ -22,12 +22,14 @@ from customer_team_api import CUSTOMER_TEAM_PATHS,dispatch_customer_team
 from controller_session import session_user_from_headers
 from ha_dr_http import HA_DR_PATH,dispatch_ha_get,dispatch_ha_post
 from infrastructure_role_http import INFRASTRUCTURE_ROLE_PATH,dispatch_infrastructure_role_get,dispatch_infrastructure_role_post
+from json_response import install_json_safe_responses
 from observability_http import OBSERVABILITY_PATH,dispatch_observability_get
 from realtime_http import PUBLIC_GET_PATHS,PUBLIC_POST_PATHS,SSE_EVENTS_PATH,dispatch_realtime_get,dispatch_realtime_post,serve_event_stream
 from system_user_admin_api import SYSTEM_USER_GET_PATHS,SYSTEM_USER_POST_PATHS,dispatch_system_user_get,dispatch_system_user_post
 from system_user_admin_repository import SystemUserAdminRepository
 from universal_event_http import EVENTS_PATH,dispatch_universal_event_get,dispatch_universal_event_post
 legacy=integration.legacy;_previous_get=legacy.DashboardHandler.do_GET;_previous_post=legacy.DashboardHandler.do_POST;_authenticate=integration._authenticate
+install_json_safe_responses(legacy.DashboardHandler)
 ROOT_DIR=Path(__file__).resolve().parents[1];WINDOWS_INSTALL_PATH="/agent/install.ps1";WINDOWS_INSTALL_FILE=ROOT_DIR/"agents"/"windows"/"installer"/"bootstrap-release.ps1";VERSION_FILE=ROOT_DIR/"version"
 legacy.STATIC_FILES["/agent-updates.js"]=legacy.WEB_DIR/"agent-updates.js";legacy.STATIC_FILES["/infrastructure-role-ui.js"]=legacy.WEB_DIR/"infrastructure-role-ui.js";legacy.STATIC_FILES["/game-data-orchestration.js"]=legacy.WEB_DIR/"game-data-orchestration.js"
 CUSTOMER_ADMIN_FILES={"/customers.html":legacy.WEB_DIR/"customers.html","/customers.js":legacy.WEB_DIR/"customers.js","/customer-admin.html":legacy.WEB_DIR/"customer-admin.html","/customer-admin.js":legacy.WEB_DIR/"customer-admin.js","/customer-admin.css":legacy.WEB_DIR/"customer-admin.css","/customer-change-password.html":legacy.WEB_DIR/"customer-change-password.html","/customer-change-password.js":legacy.WEB_DIR/"customer-change-password.js"}
