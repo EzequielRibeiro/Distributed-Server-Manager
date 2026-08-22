@@ -59,18 +59,18 @@
 
   <section id="schedules" class="card ops-panel">
     <div class="card-title">
-      <div><h2>Agendamentos</h2><p>Crie e gerencie rotinas administrativas do Controller e da infraestrutura.</p></div>
+      <div><h2>Agendamentos</h2><p>Crie e gerencie rotinas administrativas do Controller e dos Agents.</p></div>
       <button id="schedule-new" type="button">+ Novo agendamento</button>
     </div>
     <form id="schedule-form" class="schedule-form" hidden>
       <div class="schedule-grid">
-        <label>Nome<input id="schedule-name" required maxlength="191" placeholder="Ex.: Backup noturno do Controller"></label>
-        <label>Escopo<select id="schedule-scope"><option value="controller">Controller</option><option value="agent">Agent</option><option value="datacenter">Datacenter</option><option value="region">Region</option></select></label>
-        <label id="schedule-target-wrap" hidden>Alvo<input id="schedule-target" maxlength="191" placeholder="ID do Agent, Datacenter ou Region"></label>
-        <label>Ação<select id="schedule-action"><option value="controller_backup">Backup do Controller</option><option value="infrastructure_doctor">Infrastructure Doctor</option><option value="agent_health_check">Verificação de saúde do Agent</option><option value="agent_update">Atualização do Agent</option><option value="game_data_update">Atualização de game-data</option></select></label>
-        <label>Executar<select id="schedule-frequency"><option value="daily">Diariamente</option><option value="hourly">A cada hora</option><option value="weekly">Semanalmente</option><option value="monthly">Mensalmente</option><option value="interval">Intervalo</option></select></label>
+        <label>Nome<input id="schedule-name" required maxlength="191" placeholder="Ex.: Doctor diário do Controller"></label>
+        <label>Escopo<select id="schedule-scope"><option value="controller">Controller</option><option value="agent">Agent</option></select></label>
+        <label id="schedule-target-wrap" hidden>Agent<input id="schedule-target" maxlength="191" placeholder="ID do Agent"></label>
+        <label>Ação<select id="schedule-action"><option value="infrastructure_doctor">Infrastructure Doctor</option><option value="agent_health_check">Verificação de saúde do Agent</option></select></label>
+        <label>Executar<select id="schedule-frequency"><option value="daily">Diariamente</option><option value="hourly">A cada hora</option><option value="weekly">Semanalmente</option><option value="monthly">Mensalmente</option><option value="interval">A cada N minutos</option></select></label>
         <label id="schedule-time-wrap">Horário<input id="schedule-time" type="time" value="03:00"></label>
-        <label id="schedule-interval-wrap" hidden>Intervalo (minutos)<input id="schedule-interval" type="number" min="1" max="1440" value="60"></label>
+        <label id="schedule-interval-wrap" hidden>Intervalo (minutos)<input id="schedule-interval" type="number" min="1" max="59" value="15"></label>
         <label>Timezone<input id="schedule-timezone" maxlength="64" value="UTC"></label>
         <label class="schedule-enabled"><input id="schedule-enabled" type="checkbox" checked> Ativo</label>
       </div>
