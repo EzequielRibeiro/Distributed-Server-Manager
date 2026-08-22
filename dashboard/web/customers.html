@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Clientes | Capivara DSM</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/catalog-v2.css">
+  <link rel="stylesheet" href="/customer-admin.css">
+</head>
+<body>
+<main class="dashboard customer-page customer-admin-page">
+  <section class="card catalog-v2-card">
+    <div class="card-title">
+      <div><h1>Clientes</h1><p class="catalog-v2-subtitle">Cadastros, acessos, contratos e instâncias de cada Customer.</p></div>
+      <div class="catalog-v2-actions"><a class="customer-action-link" href="/users.html">Usuários do sistema</a><a class="customer-action-link" href="/index.html">Voltar</a></div>
+    </div>
+  </section>
+
+  <section class="card catalog-v2-card">
+    <div class="card-title"><div><h2>Localizar cliente</h2><p>Busque por ID, nome, e-mail ou login.</p></div></div>
+    <div class="customer-admin-search"><input id="customer-search" placeholder="Nome, ID, e-mail ou login"><button id="customer-search-button" class="catalog-v2-primary">Buscar</button></div>
+    <div id="customer-results" class="customer-admin-results"></div>
+  </section>
+
+  <section class="card catalog-v2-card">
+    <div class="card-title"><div><h2>Novo cliente</h2><p>O primeiro usuário será Owner e receberá uma senha provisória.</p></div></div>
+    <div class="catalog-v2-form">
+      <label>ID do cliente<input id="customer-id" maxlength="128" placeholder="CLIENTE-001"></label>
+      <label>Nome<input id="customer-name" maxlength="160" placeholder="Empresa ou responsável"></label>
+      <label>Login inicial<input id="customer-username" maxlength="64" placeholder="cliente.usuario"></label>
+      <label>E-mail<input id="customer-email" type="email" placeholder="cliente@exemplo.com"></label>
+      <label>Telefone<input id="customer-phone" placeholder="Opcional"></label>
+    </div>
+    <div class="catalog-v2-actions"><button id="customer-create" class="catalog-v2-primary">Criar cliente</button></div>
+    <div id="customer-create-result" class="customer-admin-notice"></div>
+  </section>
+</main>
+<script src="/customers.js"></script>
+</body>
+</html>
