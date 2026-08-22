@@ -1,0 +1,38 @@
+name: Infrastructure D1-D8
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feat/system-user-temporary-passwords
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infrastructure-d1-d8-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile D1-D8 Python modules
+        run: |
+          python3 -m py_compile \
+            dashboard/admin_infrastructure_service.py \
+            dashboard/agent_heartbeat_api.py \
+            dashboard/customer_admin_api.py \
+            agents/linux/runtime/resource_telemetry.py \
+            agents/linux/runtime/agent.py \
+            agents/windows/runtime/resource_telemetry.py \
+            agents/windows/runtime/agent.py
+      - name: Validate D1-D8 JavaScript
+        run: |
+          node --check dashboard/web/app.js
+          node --check dashboard/web/agents.js
+          node --check dashboard/web/customer-admin.js
+      - name: Run D1-D8 regression suite
+        run: python3 -m unittest tests/infrastructure_customer_separation_d1_d8_test.py

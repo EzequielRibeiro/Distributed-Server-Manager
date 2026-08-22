@@ -76,7 +76,7 @@ if (
     rendered="${SYSTEMD_DIR}/dsm-dashboard.service"
     grep -Fq "EnvironmentFile=-${DSM_ROOT}/config/dsm.conf" "${rendered}" \
         || fail "dashboard service does not load the installed database configuration"
-    grep -Fq "${DSM_ROOT}/dashboard/server_part13.py" "${rendered}" || fail "rendered unit does not use configured DSM_ROOT"
+    grep -Fq "${DSM_ROOT}/dashboard/server_part14.py" "${rendered}" || fail "rendered unit does not use configured DSM_ROOT"
     ! grep -Fq '/opt/dsm' "${rendered}" || fail "rendered unit retains hard-coded /opt/dsm"
 )
 python3 -m unittest tests/profile_bootstrap_test.py

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from datetime import date, datetime, time
 from typing import Any
 
 from admin_management_repository import AdminManagementRepository
@@ -12,6 +13,22 @@ from users import hash_password
 
 ACCOUNT_ROLES = {"owner", "manager", "member"}
 INSTANCE_PROFILES = {"viewer", "operator", "manager"}
+
+
+def _json_safe(value: Any) -> Any:
+    """Normalize database-native temporal values for Dashboard JSON responses.
+
+    SQLite commonly returns timestamp text while PostgreSQL returns datetime
+    objects. Customer administration must expose the same JSON contract on all
+    supported database backends.
+    """
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 class CustomerAdminRepository:
@@ -96,7 +113,7 @@ class CustomerAdminRepository:
                     "username": row["username"], "active": bool(row["active"]),
                     "account_role": row["account_role"] or "member",
                 })
-        return list(grouped.values())
+        return _json_safe(list(grouped.values()))
 
     def detail(self, customer_id: str) -> dict[str, Any]:
         self.initialize()
@@ -151,12 +168,12 @@ class CustomerAdminRepository:
             item["must_change_password"] = bool(row["must_change_password"])
             item["instance_access"] = access.get(str(row["username"]), {})
             normalized_users.append(item)
-        return {
+        return _json_safe({
             "customer": dict(customer),
             "users": normalized_users,
             "contracts": [dict(row) for row in contracts],
             "instances": [dict(row) for row in instances],
-        }
+        })
 
     def create_customer(self, *, customer_id: str, name: str, username: str,
                         email: str | None = None, phone: str | None = None,
@@ -343,4 +360,4 @@ class CustomerAdminRepository:
         return secrets.token_urlsafe(12)
 
 
-__all__ = ["CustomerAdminRepository"]
+__all__ = ["CustomerAdminRepository", "_json_safe"]

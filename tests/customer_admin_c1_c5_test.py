@@ -2,8 +2,10 @@
 """Regression coverage for Customer administration stages C1 through C5."""
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,12 +17,14 @@ from customer_admin_api import (
     CUSTOMER_ADMIN_ACCESS,
     CUSTOMER_ADMIN_COLLECTION,
     CUSTOMER_ADMIN_CONTRACT,
+    CUSTOMER_ADMIN_GAMES,
     CUSTOMER_ADMIN_MEMBER_ROLE,
     CUSTOMER_ADMIN_PASSWORD_RESET,
     CUSTOMER_PASSWORD_CHANGE,
+    dispatch_customer_admin_get,
     dispatch_customer_admin_post,
 )
-from customer_admin_repository import CustomerAdminRepository
+from customer_admin_repository import CustomerAdminRepository, _json_safe
 from runtime_backend import backend_from_environment
 from users import verify_password
 
@@ -29,10 +33,23 @@ def main() -> int:
     users_html = (ROOT / "dashboard" / "web" / "users.html").read_text(encoding="utf-8")
     sidebar = (ROOT / "dashboard" / "web" / "components" / "sidebar.html").read_text(encoding="utf-8")
     customer_auth = (ROOT / "dashboard" / "web" / "customer-auth.js").read_text(encoding="utf-8")
+    customer_admin_html = (ROOT / "dashboard" / "web" / "customer-admin.html").read_text(encoding="utf-8")
+    customer_admin_js = (ROOT / "dashboard" / "web" / "customer-admin.js").read_text(encoding="utf-8")
     assert '<option value="customer">' not in users_html
     assert "Usuários do sistema" in users_html
     assert "customers.html" in sidebar
     assert "customer-change-password.html" in customer_auth
+    assert '<select id="contract-game">' in customer_admin_html
+    assert '<input id="contract-game"' not in customer_admin_html
+    assert "/api/admin/catalog/games" in customer_admin_js
+    assert 'credentials:"same-origin"' in customer_admin_js
+
+    # PostgreSQL drivers return native datetime objects for TIMESTAMP columns;
+    # the administrative payload must remain serializable just like SQLite.
+    temporal = datetime(2026, 8, 22, 12, 44, 2, tzinfo=timezone.utc)
+    normalized = _json_safe({"customer": {"created_at": temporal}, "items": [temporal]})
+    assert normalized["customer"]["created_at"] == temporal.isoformat()
+    json.dumps(normalized)
 
     with tempfile.TemporaryDirectory() as temp:
         backend = backend_from_environment({
@@ -74,6 +91,7 @@ def main() -> int:
         assert detail["users"][0]["must_change_password"] is True
         assert repo.search("owner@example.test")[0]["id"] == "customer-c1-c5"
         assert repo.search("owner-c1-c5")[0]["id"] == "customer-c1-c5"
+        json.dumps(detail)
 
         reset = repo.reset_password("owner-c1-c5")
         assert reset["must_change_password"] is True
@@ -103,6 +121,12 @@ def main() -> int:
         admin = {"username": "admin", "role": "admin"}
         operator = {"username": "operator", "role": "operator"}
         customer = {"username": "owner-c1-c5", "role": "customer", "scope_id": "customer-c1-c5"}
+        games_status, games_payload = dispatch_customer_admin_get(
+            CUSTOMER_ADMIN_GAMES, {}, user=admin, backend=backend,
+        )
+        assert games_status == 200
+        game_ids = {item["id"] for item in games_payload["games"]}
+        assert {"dayz", "minecraft", "rust"}.issubset(game_ids)
         assert dispatch_customer_admin_post(
             CUSTOMER_ADMIN_PASSWORD_RESET, {"username": "owner-c1-c5"},
             user=operator, backend=backend,
@@ -127,6 +151,11 @@ def main() -> int:
             {"customer_id": "customer-c1-c5", "game_id": "rust", "instance_limit": 1},
             user=admin, backend=backend,
         )[0] == 201
+        assert dispatch_customer_admin_post(
+            CUSTOMER_ADMIN_CONTRACT,
+            {"customer_id": "customer-c1-c5", "game_id": "invented-game", "instance_limit": 1},
+            user=admin, backend=backend,
+        )[0] == 400
         assert dispatch_customer_admin_post(
             CUSTOMER_ADMIN_COLLECTION,
             {"id": "blocked", "name": "Blocked", "username": "blocked-user"},

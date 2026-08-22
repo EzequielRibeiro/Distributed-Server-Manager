@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Capivara DSM - Central de Operações</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/operations.css">
+</head>
+<body>
+<div id="sidebar-component"></div>
+<main class="dashboard operations-dashboard">
+  <header class="header">
+    <div class="brand"><h1>Central de Operações</h1><span>Eventos, alertas, incidentes, agendamentos e histórico operacional</span></div>
+    <button id="operations-refresh" type="button">Atualizar</button>
+  </header>
+
+  <section class="card">
+    <div class="server-info operations-summary">
+      <div class="info-box"><label>Incidentes ativos</label><strong id="ops-incidents">0</strong></div>
+      <div class="info-box"><label>Incidentes críticos</label><strong id="ops-critical-incidents">0</strong></div>
+      <div class="info-box"><label>Alertas ativos</label><strong id="ops-alerts">0</strong></div>
+      <div class="info-box"><label>Alertas críticos</label><strong id="ops-critical-alerts">0</strong></div>
+      <div class="info-box"><label>Falhas em agendamentos</label><strong id="ops-schedule-failures">0</strong></div>
+    </div>
+  </section>
+
+  <nav class="card operations-tabs" aria-label="Central de Operações">
+    <a href="#incidents">Incidentes</a>
+    <a href="#alerts">Alertas</a>
+    <a href="#events">Eventos</a>
+    <a href="#schedules">Agendamentos</a>
+    <a href="#logs">Histórico / Logs</a>
+    <a href="#controller-backup">Backup do Controller</a>
+  </nav>
+
+  <section id="incidents" class="card ops-panel">
+    <div class="card-title"><div><h2>Incidentes</h2><p>Correlação de eventos críticos pelo correlation_id, do início à resolução.</p></div></div>
+    <div id="incident-list" class="operations-list">Carregando…</div>
+    <div id="incident-detail" class="incident-detail" hidden></div>
+  </section>
+
+  <section id="alerts" class="card ops-panel">
+    <div class="card-title"><div><h2>Alertas</h2><p>Condições que requerem atenção administrativa.</p></div><label><input id="alerts-active-only" type="checkbox" checked> somente ativos</label></div>
+    <div id="alert-list" class="operations-list">Carregando…</div>
+  </section>
+
+  <section id="events" class="card ops-panel">
+    <div class="card-title"><div><h2>Eventos</h2><p>Timeline estruturada da Universal Event Platform.</p></div></div>
+    <div class="operations-filters">
+      <input id="event-type-filter" placeholder="Tipo de evento">
+      <input id="event-agent-filter" placeholder="Agent">
+      <input id="event-instance-filter" placeholder="Instância">
+      <select id="event-severity-filter"><option value="">Todas severidades</option><option>critical</option><option>warning</option><option>info</option></select>
+      <button id="event-filter-apply" type="button">Filtrar</button>
+    </div>
+    <div id="event-list" class="operations-list">Carregando…</div>
+  </section>
+
+  <section id="schedules" class="card ops-panel">
+    <div class="card-title"><div><h2>Agendamentos</h2><p>Regras e histórico de execução, incluindo falhas e resultado final.</p></div></div>
+    <div id="schedule-rules" class="operations-list">Carregando…</div>
+    <h3>Execuções recentes</h3>
+    <div id="schedule-runs" class="operations-list">Carregando…</div>
+  </section>
+
+  <section id="logs" class="card ops-panel">
+    <div class="card-title"><div><h2>Histórico / Logs</h2><p>Registro operacional estruturado derivado dos eventos persistidos.</p></div></div>
+    <div id="log-list" class="operations-list log-list">Carregando…</div>
+  </section>
+
+  <section id="controller-backup" class="card ops-panel">
+    <div class="card-title"><div><h2>Backup do Controller</h2><p>Visão administrativa do mecanismo de backup e recuperação. Backups de instância permanecem na administração do Cliente.</p></div></div>
+    <div id="controller-backup-health" class="operations-list">Carregando…</div>
+    <div id="controller-backup-jobs" class="operations-list">Carregando…</div>
+  </section>
+
+  <div id="operations-error" class="card" hidden></div>
+</main>
+<script src="/operations.js"></script>
+</body>
+</html>
