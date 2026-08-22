@@ -1,358 +1,70 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Capivara DSM - Controller</title>
-    <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="installation-events.css">
-    <link rel="stylesheet" href="catalog-v2.css">
-    <link rel="stylesheet" href="css/alerts.css">
-    <link rel="stylesheet" href="css/infrastructure-explorer.css">
-    <link rel="stylesheet" href="css/infrastructure-shell.css">
-    <link rel="stylesheet" href="css/infrastructure-details.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Capivara DSM - Infraestrutura</title>
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <div id="sidebar-component"></div>
-<div class="dashboard">
-    <header class="header">
-        <div class="brand">
-            <h1>Capivara DSM</h1>
-            <span>Distributed Server Manager · Controller</span>
-        </div>
-        <div class="header-status">
-            <span>Controller</span>
-            <strong id="system-status">ONLINE</strong>
-        </div>
-    </header>
-    <div id="alerts-component"></div>
-    <div id="cards-component"></div>
+<main class="dashboard infrastructure-dashboard">
+  <header class="header">
+    <div class="brand">
+      <h1>Capivara DSM</h1>
+      <span>Infraestrutura · Controller e Agents</span>
+    </div>
+    <div class="header-status"><span>Controller</span><strong id="system-status">ONLINE</strong></div>
+  </header>
 
-    <section class="card server-card">
-        <div class="card-title">
-            <h2>🎮 Instância</h2>
-            <span id="server-status" class="status offline">OFFLINE</span>
-        </div>
-        <div class="server-info">
-            <div class="info-box"><label>Nome</label><span id="server-name">-</span></div>
-            <div class="info-box"><label>IP / Porta</label><span id="server-ip">-</span></div>
-            <div class="info-box"><label>Players</label><span id="server-players">0</span></div>
-            <div class="info-box"><label>PID</label><span id="server-pid">-</span></div>
-            <div class="info-box"><label>Uptime</label><span id="server-uptime">-</span></div>
-        </div>
-    </section>
+  <section class="card">
+    <div class="card-title">
+      <div><h2>Visão geral da infraestrutura</h2><p>Saúde, capacidade e consumo do Controller e dos Agents. Operações de instância ficam em Clientes.</p></div>
+      <button id="infra-refresh" type="button">Atualizar</button>
+    </div>
+    <div class="server-info">
+      <div class="info-box"><label>Agents</label><span id="infra-agents-total">0</span></div>
+      <div class="info-box"><label>Online</label><span id="infra-agents-online">0</span></div>
+      <div class="info-box"><label>Degradados</label><span id="infra-agents-degraded">0</span></div>
+      <div class="info-box"><label>Offline</label><span id="infra-agents-offline">0</span></div>
+      <div class="info-box"><label>Instâncias hospedadas</label><span id="infra-instance-count">0</span></div>
+    </div>
+  </section>
 
-    <section class="resource-grid">
-        <div class="card resource-card"><h3>CPU</h3><div class="progress"><div id="cpu-bar" class="progress-value"></div></div><span id="cpu-value">0%</span></div>
-        <div class="card resource-card"><h3>RAM</h3><div class="progress"><div id="ram-bar" class="progress-value"></div></div><span id="ram-value">0%</span></div>
-        <div class="card resource-card"><h3>DISCO</h3><div class="progress"><div id="disk-bar" class="progress-value"></div></div><span id="disk-value">0%</span></div>
-    </section>
+  <section class="card system-card">
+    <div class="card-title"><div><h2>Telemetria geral do Controller</h2><p>Consumo de toda a máquina que executa o Controller.</p></div><span id="controller-collected-at">—</span></div>
+    <div class="resource-grid">
+      <div class="card resource-card"><h3>CPU</h3><div class="progress"><div id="controller-cpu-bar" class="progress-value"></div></div><span id="controller-cpu">—</span></div>
+      <div class="card resource-card"><h3>RAM</h3><div class="progress"><div id="controller-ram-bar" class="progress-value"></div></div><span id="controller-ram">—</span></div>
+      <div class="card resource-card"><h3>Disco</h3><div class="progress"><div id="controller-disk-bar" class="progress-value"></div></div><span id="controller-disk">—</span></div>
+    </div>
+    <div class="server-info">
+      <div class="info-box"><label>Load 1 / 5 / 15</label><span id="controller-load">—</span></div>
+      <div class="info-box"><label>Uptime</label><span id="controller-uptime">—</span></div>
+      <div class="info-box"><label>Dashboard CPU</label><span id="controller-process-cpu">—</span></div>
+      <div class="info-box"><label>Dashboard RAM</label><span id="controller-process-ram">—</span></div>
+    </div>
+  </section>
 
-    <section class="card system-card">
-        <div class="card-title"><h2>🖥 Controller</h2><span id="health-status" class="health-indicator">-</span></div>
-        <div class="server-info">
-            <div class="info-box"><label>Hostname</label><span id="host-name">-</span></div>
-            <div class="info-box"><label>Kernel</label><span id="kernel">-</span></div>
-            <div class="info-box"><label>Uptime do Sistema</label><span id="uptime">-</span></div>
-            <div class="info-box"><label>Processos de jogo</label><span id="dayz-processes">-</span></div>
-            <div class="info-box"><label>Memória de processos de jogo</label><span id="dayz-memory">-</span></div>
-        </div>
-    </section>
+  <section class="card">
+    <div class="card-title">
+      <div><h2>Agents</h2><p>Telemetria resumida do host e do processo Capivara Agent. Abra um Agent para diagnóstico detalhado.</p></div>
+      <a class="button" href="/agents.html">Gerenciar Agents</a>
+    </div>
+    <div id="infra-agent-list" class="agents-grid"><p>Carregando Agents…</p></div>
+  </section>
 
-    <section class="card health-card">
-        <div class="card-title"><h2>❤️ Saúde do Controller</h2></div>
-        <div class="health-content">
-            <div class="health-score"><span id="health-score">0%</span></div>
-            <div class="health-description"><p>Monitoramento geral do Capivara DSM</p><span>CPU, RAM, Disco e Serviços</span></div>
-        </div>
-    </section>
+  <section class="card">
+    <div class="card-title"><div><h2>Administração operacional</h2><p>O Dashboard de infraestrutura não controla servidores de clientes.</p></div></div>
+    <div class="server-info">
+      <a class="info-box" href="/agents.html"><label>Agents</label><span>Instalar game-data no Node, localização, atualização e diagnóstico</span></a>
+      <a class="info-box" href="/customers.html"><label>Clientes</label><span>Contratos, instâncias, lifecycle, logs, arquivos, backup e conteúdo</span></a>
+    </div>
+  </section>
 
-    <section id="current-operation-card" class="card current-operation-card operation-idle">
-        <div class="card-title current-operation-titlebar">
-            <h2>📦 Operação Atual</h2>
-            <span id="current-operation-status" class="current-operation-status">SEM OPERAÇÃO</span>
-        </div>
-        <div id="current-operation-empty" class="current-operation-empty">
-            Nenhuma instalação, atualização ou rollback registrado.
-        </div>
-        <div id="current-operation-content" class="current-operation-content" hidden>
-            <div class="current-operation-heading">
-                <div>
-                    <strong id="current-operation-title">-</strong>
-                    <span id="current-operation-code">-</span>
-                </div>
-                <time id="current-operation-time">-</time>
-            </div>
-            <div class="current-operation-grid">
-                <div><span>Node</span><strong id="current-operation-node">-</strong></div>
-                <div><span>Jogo</span><strong id="current-operation-game">-</strong></div>
-                <div><span>Instância</span><strong id="current-operation-instance">-</strong></div>
-                <div><span>Provider</span><strong id="current-operation-provider">-</strong></div>
-                <div><span>Versão</span><strong id="current-operation-version">-</strong></div>
-                <div><span>Anterior</span><strong id="current-operation-previous">-</strong></div>
-            </div>
-            <div class="current-operation-progress-wrap">
-                <div class="current-operation-progress-label">
-                    <span id="current-operation-progress-text">Aguardando estado...</span>
-                    <strong id="current-operation-progress-value">0%</strong>
-                </div>
-                <div class="current-operation-progress">
-                    <div id="current-operation-progress-bar" class="current-operation-progress-bar"></div>
-                </div>
-            </div>
-            <div id="current-operation-detail" class="current-operation-detail" hidden></div>
-        </div>
-    </section>
-
-    <section id="catalog-v2-card" class="card catalog-v2-card">
-        <div class="card-title">
-            <div>
-                <h2>🧩 Catálogo de Conteúdo e Ambientes de Execução</h2>
-                <p class="catalog-v2-subtitle">Selecione a infraestrutura e a instância publicada pelo Runtime para visualizar e administrar seu conteúdo.</p>
-            </div>
-            <div class="catalog-v2-title-actions">
-                <button id="catalog-v2-refresh" class="catalog-v2-refresh" type="button">Atualizar</button>
-                <span id="catalog-v2-status" class="catalog-v2-status">CARREGANDO</span>
-            </div>
-        </div>
-
-        <div class="catalog-v2-section">
-            <div class="catalog-v2-section-title">
-                <div>
-                    <h3>Infraestrutura e Instância</h3>
-                    <p>Base atual do Runtime. A evolução desta etapa separará explicitamente Node → Agent → Instância.</p>
-                </div>
-            </div>
-            <div class="catalog-v2-form catalog-v2-runtime-selector">
-                <label>Node / Agent<select id="catalog-v2-node"><option>Carregando...</option></select></label>
-                <label>Jogo<select id="catalog-v2-game"><option>Carregando...</option></select></label>
-                <label>Instância<select id="catalog-v2-instance"><option>Carregando...</option></select></label>
-            </div>
-
-            <div class="server-actions admin-only catalog-v2-instance-actions">
-                <button id="btn-start" type="button">INICIAR</button>
-                <button id="btn-stop" type="button">PARAR</button>
-                <button id="btn-restart" type="button">REINICIAR</button>
-            </div>
-
-            <div id="catalog-v2-runtime-summary" class="catalog-v2-runtime-summary" data-state="unknown">
-                <div><span>Estado</span><strong id="catalog-v2-runtime-state">-</strong></div>
-                <div><span>Health</span><strong id="catalog-v2-runtime-health">-</strong></div>
-                <div><span>PID</span><strong id="catalog-v2-runtime-pid">-</strong></div>
-                <div><span>Players</span><strong id="catalog-v2-runtime-players">-</strong></div>
-                <div><span>CPU</span><strong id="catalog-v2-runtime-cpu">-</strong></div>
-                <div><span>RAM</span><strong id="catalog-v2-runtime-ram">-</strong></div>
-                <div><span>Conteúdo</span><strong id="catalog-v2-runtime-mods">-</strong></div>
-                <div><span>Último backup</span><strong id="catalog-v2-runtime-backup">-</strong></div>
-            </div>
-            <div id="catalog-v2-instance-profile" class="catalog-v2-instance-profile">
-                <div class="catalog-v2-instance-logo-wrap">
-                    <img id="catalog-v2-instance-logo" class="catalog-v2-instance-logo" alt="Logo da instância" hidden>
-                    <span id="catalog-v2-instance-logo-fallback" class="catalog-v2-instance-logo-fallback">?</span>
-                </div>
-                <div class="catalog-v2-instance-profile-details">
-                    <h4 id="catalog-v2-instance-display-name">Instância</h4>
-                    <div><span>Controlador</span><strong id="catalog-v2-instance-controller">Não informado</strong></div>
-                    <div><span>Agente</span><strong id="catalog-v2-instance-agent">Não informado</strong></div>
-                    <div><span>Responsável</span><strong id="catalog-v2-instance-owner">Não informado</strong></div>
-                    <div><span>Cliente</span><strong id="catalog-v2-instance-customer">Não informado</strong></div>
-                    <div><span>Identificador do cliente</span><strong id="catalog-v2-instance-customer-id">Não informado</strong></div>
-                    <div><span>Contato</span><strong id="catalog-v2-instance-contact">Não informado</strong></div>
-                </div>
-            </div>
-        </div>
-
-        <div class="catalog-v2-section">
-            <div class="catalog-v2-section-title">
-                <div>
-                    <h3>Instalação do jogo</h3>
-                    <p>Selecione o Ambiente de Execução. Provedor, versão, sistema e arquitetura são definidos pelo catálogo.</p>
-                </div>
-            </div>
-            <div class="catalog-v2-form">
-                <label>Ambiente de Execução<select id="catalog-v2-runtime"></select></label>
-                <label>Versão do jogo
-                    <select id="catalog-v2-version" disabled>
-                        <option value="">Aguardando ambiente...</option>
-                    </select>
-                </label>
-                <label>Versão do loader / build
-                    <select id="catalog-v2-loader-version" disabled>
-                        <option value="">Aguardando versão...</option>
-                    </select>
-                </label>
-                <label>Java<input id="catalog-v2-java" type="number" disabled></label>
-                <label>Sistema<select id="catalog-v2-os" disabled><option value="">Aguardando ambiente...</option></select></label>
-                <label>Arquitetura<select id="catalog-v2-arch" disabled><option value="">Aguardando ambiente...</option></select></label>
-            </div>
-            <div class="catalog-v2-actions">
-                <button id="catalog-v2-environment-install" class="admin-only catalog-v2-primary" disabled>Instalar jogo</button>
-                <button
-                    id="catalog-v2-instance-reinstall"
-                    class="admin-only"
-                    type="button"
-                    disabled
-                >
-                    Reinstalar instância
-                </button>
-            </div>
-        </div>
-
-        <div class="catalog-v2-columns">
-            <div class="catalog-v2-content-wrap">
-                <h3>Conteúdo adicional disponível</h3>
-                <div id="catalog-v2-content" class="catalog-v2-content"><span class="catalog-v2-empty">Carregando...</span></div>
-            </div>
-            <div class="catalog-v2-installed-wrap">
-                <h3>Conteúdo adicional da instância</h3>
-                <div id="catalog-v2-installed-list" class="catalog-v2-installed-list"><span class="catalog-v2-empty">Aguardando instância...</span></div>
-            </div>
-        </div>
-
-        <div class="catalog-v2-section instance-manager-only">
-            <div class="catalog-v2-section-title">
-                <div>
-                    <h3>Arquivos de configuração da instância</h3>
-                    <p>O cliente administra somente suas instâncias; o Controlador administra todas as instâncias sob seu controle.</p>
-                </div>
-            </div>
-            <div class="catalog-v2-form">
-                <label>Arquivo<select id="catalog-v2-config-file"><option value="">Selecione uma instância</option></select></label>
-            </div>
-            <textarea id="catalog-v2-config-editor" class="catalog-v2-config-editor" spellcheck="false" disabled></textarea>
-            <div class="catalog-v2-actions">
-                <button id="catalog-v2-config-save" class="instance-manager-only catalog-v2-primary" disabled>Salvar configuração</button>
-            </div>
-        </div>
-
-        <div class="catalog-v2-actions">
-            <button id="catalog-v2-check" disabled>Verificar conteúdo adicional</button>
-            <button id="catalog-v2-plan" disabled>Gerar plano de conteúdo</button>
-            <button id="catalog-v2-installed">Ler conteúdo instalado</button>
-            <button id="catalog-v2-install" class="instance-manager-only catalog-v2-primary" disabled>Instalar conteúdo selecionado</button>
-            <button id="catalog-v2-verify" class="instance-manager-only">Verificar conteúdo instalado</button>
-            <button id="catalog-v2-rollback" class="instance-manager-only catalog-v2-danger">Reverter conteúdo</button>
-        </div>
-        <div id="catalog-v2-summary" class="catalog-v2-summary">Carregando instâncias do Runtime...</div>
-        <pre id="catalog-v2-result" class="catalog-v2-result" hidden></pre>
-    </section>
-
-    <section class="card timeline-card">
-        <div class="card-title"><h2>📅 Linha do Tempo</h2></div>
-        <div class="timeline-panel">
-            <div class="timeline-toolbar">
-                <button onclick="setTimelineFilter('all')">Todos</button>
-                <button onclick="setTimelineFilter('server')">Servidor</button>
-                <button onclick="setTimelineFilter('player')">Jogadores</button>
-                <button onclick="setTimelineFilter('combat')">Combate</button>
-                <button onclick="setTimelineFilter('mods')">Conteúdo</button>
-                <button onclick="setTimelineFilter('audit')">Segurança</button>
-            </div>
-            <div id="timeline-list" class="timeline-list"></div>
-        </div>
-    </section>
-
-    <section class="card jobs-card"><div class="card-title"><h2>⚙ Scheduler Jobs</h2><span class="health-indicator">●</span></div><div id="scheduler-list" class="jobs-list"></div></section>
-    <section class="card events-card"><div class="card-title"><h2>📢 Eventos Recentes</h2></div><div id="events-list" class="events-list"></div></section>
-    <section class="card logs-card">
-        <div class="card-title">
-            <div>
-                <h2>📄 Logs</h2>
-                <small id="logs-context">
-                    Controller
-                </small>
-            </div>
-
-            <div class="catalog-v2-title-actions">
-                <select
-                    id="log-source"
-                    aria-label="Origem do log"
-                >
-                    <option value="controller">
-                        Controller
-                    </option>
-
-                    <option value="agent">
-                        Agent / Node
-                    </option>
-
-                    <option value="instance">
-                        Instância
-                    </option>
-                </select>
-                <select id="log-agent" aria-label="Agent" hidden></select>
-
-                <button
-                    id="btn-refresh-logs"
-                    class="btn refresh"
-                    type="button"
-                >
-                    Atualizar
-                </button>
-            </div>
-        </div>
-
-        <div
-            id="logs"
-            class="logs-box"
-        >
-            Aguardando logs...
-        </div>
-    </section>
-    <section class="card mods-card"><div class="card-title"><h2>🧩 Conteúdo da Instância</h2></div><div class="server-info"><div class="info-box"><label>Itens detectados</label><span id="mods-total">0</span></div><div class="info-box"><label>Status do conteúdo</label><span id="mods-status">-</span></div></div></section>
-    <section class="card backups-card"><div class="card-title"><h2>💾 Backups</h2></div><div class="server-info"><div class="info-box"><label>Total Backups</label><span id="backup-total">0</span></div><div class="info-box"><label>Último Backup</label><span id="backup-last">-</span></div></div></section>
-
-    <section class="card chart-card">
-        <div class="card-title"><h2>📈 Histórico de Recursos do Controller</h2></div>
-        <canvas id="resource-chart" width="600" height="180"></canvas>
-        <div class="chart-info">
-            <div class="chart-legend"><span class="legend-cpu">● CPU:</span><span id="chart-cpu-value">0%</span></div>
-            <div class="chart-legend"><span class="legend-ram">● RAM:</span><span id="chart-ram-value">0%</span></div>
-            <div>Janela: <span id="chart-window">últimos 30 pontos</span></div>
-        </div>
-    </section>
-
-    <section class="card chart-card">
-        <div class="card-title">
-            <div>
-                <h2>📈 Histórico de Recursos — Node / Agent</h2>
-                <small id="node-chart-title">Nenhum Node selecionado</small>
-            </div>
-        </div>
-
-        <canvas
-            id="node-resource-chart"
-            width="600"
-            height="180">
-        </canvas>
-
-        <div class="chart-info">
-            <div class="chart-legend">
-                <span class="legend-cpu">● CPU:</span>
-                <span id="node-chart-cpu-value">0%</span>
-            </div>
-
-            <div class="chart-legend">
-                <span class="legend-ram">● RAM:</span>
-                <span id="node-chart-ram-value">0%</span>
-            </div>
-
-            <div>
-                Janela:
-                <span>últimos 30 pontos</span>
-            </div>
-        </div>
-    </section>
-
-    <footer class="footer"><span>Capivara Distributed Server Manager</span><span>Controller Dashboard</span></footer>
-</div>
-<script src="app.js?v=1786563416"></script>
-<script src="installation-events.js?v=1786563416"></script>
-<script src="catalog-v2.js?v=1786563416"></script>
-<script src="js/notifications.js"></script>
-<script src="js/dashboard-state.js"></script>
-<script src="js/infrastructure-explorer.js"></script>
-<script src="js/infrastructure-details.js"></script>
-<script src="js/infrastructure-shell.js"></script>
+  <div id="infra-error" class="card" hidden></div>
+  <footer class="footer"><span>Capivara Distributed Server Manager</span><span>Infrastructure Dashboard</span></footer>
+</main>
+<script src="/app.js"></script>
 </body>
 </html>
