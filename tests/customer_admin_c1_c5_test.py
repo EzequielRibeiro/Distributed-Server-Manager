@@ -2,8 +2,10 @@
 """Regression coverage for Customer administration stages C1 through C5."""
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +24,7 @@ from customer_admin_api import (
     dispatch_customer_admin_get,
     dispatch_customer_admin_post,
 )
-from customer_admin_repository import CustomerAdminRepository
+from customer_admin_repository import CustomerAdminRepository, _json_safe
 from runtime_backend import backend_from_environment
 from users import verify_password
 
@@ -41,6 +43,13 @@ def main() -> int:
     assert '<input id="contract-game"' not in customer_admin_html
     assert "/api/admin/catalog/games" in customer_admin_js
     assert 'credentials:"same-origin"' in customer_admin_js
+
+    # PostgreSQL drivers return native datetime objects for TIMESTAMP columns;
+    # the administrative payload must remain serializable just like SQLite.
+    temporal = datetime(2026, 8, 22, 12, 44, 2, tzinfo=timezone.utc)
+    normalized = _json_safe({"customer": {"created_at": temporal}, "items": [temporal]})
+    assert normalized["customer"]["created_at"] == temporal.isoformat()
+    json.dumps(normalized)
 
     with tempfile.TemporaryDirectory() as temp:
         backend = backend_from_environment({
@@ -82,6 +91,7 @@ def main() -> int:
         assert detail["users"][0]["must_change_password"] is True
         assert repo.search("owner@example.test")[0]["id"] == "customer-c1-c5"
         assert repo.search("owner-c1-c5")[0]["id"] == "customer-c1-c5"
+        json.dumps(detail)
 
         reset = repo.reset_password("owner-c1-c5")
         assert reset["must_change_password"] is True
