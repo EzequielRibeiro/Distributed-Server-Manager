@@ -12,9 +12,7 @@ function byId(id) {
 
 function setText(id, value, fallback = "—") {
     const element = byId(id);
-    if (element) {
-        element.textContent = value ?? fallback;
-    }
+    if (element) element.textContent = value ?? fallback;
 }
 
 function bind(id, eventName, handler) {
@@ -27,33 +25,147 @@ function bind(id, eventName, handler) {
     return true;
 }
 
+function ensureTerminalStylesheet() {
+    if (document.querySelector('link[href="/agent-terminal.css"]')) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "/agent-terminal.css";
+    document.head.appendChild(link);
+}
+
+function setupAddAgentNavigation() {
+    const panel = byId("add-agent");
+    if (panel) panel.style.display = "none";
+
+    const button = byId("add-agent-focus");
+    if (!button) return;
+
+    button.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        window.location.assign("/add-agent.html");
+    }, true);
+}
+
+function ensureAgentLogTerminal() {
+    const detail = byId("agent-detail");
+    if (!detail || byId("agent-log-terminal")) return;
+
+    const dashboard = detail.querySelector(".agent-detail-dashboard") || detail;
+    const management = dashboard.querySelector(".agent-management-panel");
+    const section = document.createElement("section");
+    section.className = "agent-log-panel";
+    section.setAttribute("aria-labelledby", "agent-log-title");
+    section.innerHTML = `
+        <div class="agent-log-toolbar">
+            <div>
+                <h3 id="agent-log-title">Log do Agent</h3>
+                <span id="agent-log-status" class="agent-log-status">Últimas linhas recebidas pelo Controller</span>
+            </div>
+            <div class="agent-log-toolbar-actions">
+                <button id="agent-log-scroll-bottom" type="button">Ir para o final</button>
+            </div>
+        </div>
+        <pre id="agent-log-terminal" class="agent-terminal" role="log" aria-live="polite"></pre>
+    `;
+
+    if (management) dashboard.insertBefore(section, management);
+    else dashboard.appendChild(section);
+
+    bind("agent-log-scroll-bottom", "click", () => {
+        const terminal = byId("agent-log-terminal");
+        if (terminal) terminal.scrollTop = terminal.scrollHeight;
+    });
+}
+
+function parseAgentMetadata(agent) {
+    const candidates = [agent?.metadata, agent?.metadata_json, agent?.metadataJson];
+    for (const value of candidates) {
+        if (value && typeof value === "object") return value;
+        if (typeof value === "string" && value.trim()) {
+            try {
+                const parsed = JSON.parse(value);
+                if (parsed && typeof parsed === "object") return parsed;
+            } catch (_) {
+                // Ignore malformed legacy metadata and continue with other sources.
+            }
+        }
+    }
+    return {};
+}
+
+function extractAgentLogs(agent, result = null) {
+    const metadata = parseAgentMetadata(agent);
+    const candidates = [
+        agent?.recent_logs,
+        agent?.agent_logs,
+        metadata.recent_logs,
+        metadata.agent_logs,
+        result?.recent_logs,
+        result?.agent_logs
+    ];
+
+    for (const value of candidates) {
+        if (Array.isArray(value)) return value.filter(line => typeof line === "string").slice(-200);
+    }
+    return [];
+}
+
+function classifyLogLine(line) {
+    const text = String(line || "").toLowerCase();
+    if (/\b(critical|fatal|panic)\b/.test(text)) return "log-critical";
+    if (/\b(error|failed|failure|exception|traceback)\b/.test(text)) return "log-error";
+    if (/\b(warn|warning)\b/.test(text)) return "log-warning";
+    if (/\b(success|successful|completed|heartbeat ok|\bok\b)\b/.test(text)) return "log-success";
+    if (/\bdebug\b/.test(text)) return "log-debug";
+    return "log-info";
+}
+
+function renderAgentLogs(agent, result = null) {
+    ensureAgentLogTerminal();
+    const terminal = byId("agent-log-terminal");
+    const status = byId("agent-log-status");
+    if (!terminal) return;
+
+    const logs = extractAgentLogs(agent, result);
+    terminal.replaceChildren();
+
+    if (!logs.length) {
+        const empty = document.createElement("span");
+        empty.className = "agent-terminal-line agent-terminal-empty";
+        empty.textContent = "$ aguardando linhas de log do Agent...";
+        terminal.appendChild(empty);
+        if (status) status.textContent = "Nenhuma linha de log disponível no último heartbeat";
+        return;
+    }
+
+    logs.forEach(line => {
+        const row = document.createElement("span");
+        row.className = `agent-terminal-line ${classifyLogLine(line)}`;
+        row.textContent = line;
+        terminal.appendChild(row);
+    });
+
+    if (status) status.textContent = `${logs.length} linha(s) recebida(s) · atualização via heartbeat`;
+    requestAnimationFrame(() => {
+        terminal.scrollTop = terminal.scrollHeight;
+    });
+}
+
 function authHeader() {
     const token = sessionStorage.getItem("dsm_auth");
     if (!token) {
         window.location.replace("/login.html");
         throw new Error("authentication required");
     }
-    return {
-        Authorization: `Basic ${token}`,
-        Accept: "application/json"
-    };
+    return {Authorization: `Basic ${token}`, Accept: "application/json"};
 }
 
 async function request(endpoint, options = {}) {
-    const headers = {
-        ...authHeader(),
-        ...(options.headers || {})
-    };
+    const headers = {...authHeader(), ...(options.headers || {})};
+    if (options.body) headers["Content-Type"] = "application/json";
 
-    if (options.body) {
-        headers["Content-Type"] = "application/json";
-    }
-
-    const response = await fetch(`${API}${endpoint}`, {
-        ...options,
-        headers
-    });
-
+    const response = await fetch(`${API}${endpoint}`, {...options, headers});
     if (response.status === 401) {
         sessionStorage.clear();
         window.location.replace("/login.html");
@@ -61,9 +173,7 @@ async function request(endpoint, options = {}) {
     }
 
     const body = await response.json();
-    if (!response.ok) {
-        throw new Error(body.error || `HTTP ${response.status}`);
-    }
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
     return body;
 }
 
@@ -80,11 +190,8 @@ function errorMessage(message = "") {
 async function loadSidebar() {
     const target = byId("sidebar-component");
     if (!target) return;
-
     const response = await fetch("/components/sidebar.html");
-    if (response.ok) {
-        target.innerHTML = await response.text();
-    }
+    if (response.ok) target.innerHTML = await response.text();
 
     const logout = byId("btn-logout");
     if (logout) {
@@ -97,21 +204,14 @@ async function loadSidebar() {
 
 function applyRole() {
     if (!currentUser) return;
-
     document.querySelectorAll(".admin-only").forEach(element => {
         element.style.display = currentUser.role === "admin" ? "" : "none";
     });
-
     document.querySelectorAll(".agent-manager-only").forEach(element => {
-        element.style.display = ["admin", "controller"].includes(currentUser.role)
-            ? ""
-            : "none";
+        element.style.display = ["admin", "controller"].includes(currentUser.role) ? "" : "none";
     });
-
     const force = byId("force-wrapper");
-    if (force) {
-        force.hidden = currentUser.role !== "admin";
-    }
+    if (force) force.hidden = currentUser.role !== "admin";
 }
 
 async function loadInfrastructure() {
@@ -136,19 +236,15 @@ function collectDatacenters(value, result = []) {
 function renderDatacenters() {
     const select = byId("agent-datacenter");
     if (!select) return;
-
     const current = select.value;
     select.replaceChildren(new Option("Selecione um datacenter", ""));
-
     const unique = new Map();
     collectDatacenters(infrastructureTopology).forEach(item => {
         if (item?.id) unique.set(String(item.id), item);
     });
-
     unique.forEach(item => {
         select.appendChild(new Option(item.name || String(item.id), String(item.id)));
     });
-
     if (current) select.value = current;
 }
 
@@ -163,9 +259,7 @@ function agentCard(agent) {
         <div class="agent-status">${agent.status || "unknown"}</div>
         <p>Agent: ${agent.id || "—"}</p>
         <p>Node: ${agent.node_id || "—"}</p>
-        <p>Instâncias: ${agent.instance_count || 0}</p>
-    `;
-
+        <p>Instâncias: ${agent.instance_count || 0}</p>`;
     const open = () => loadAgent(agent.id);
     card.addEventListener("click", open);
     card.addEventListener("keydown", event => {
@@ -182,13 +276,10 @@ async function loadAgents() {
     try {
         const result = await request("/agents");
         if (!result) return;
-
         const list = byId("agents-list");
         if (!list) throw new Error("Área de lista de Agents não encontrada no Dashboard.");
-
         list.replaceChildren();
         const agents = Array.isArray(result.agents) ? result.agents : [];
-
         if (!agents.length) {
             const empty = document.createElement("article");
             empty.className = "agent-card agent-card-empty";
@@ -196,12 +287,8 @@ async function loadAgents() {
             list.appendChild(empty);
             return;
         }
-
         agents.forEach(agent => list.appendChild(agentCard(agent)));
-
-        if (agents.length === 1 && !selectedAgent) {
-            await loadAgent(agents[0].id);
-        }
+        if (agents.length === 1 && !selectedAgent) await loadAgent(agents[0].id);
     } catch (error) {
         errorMessage(error.message);
     }
@@ -216,8 +303,7 @@ function rangeCard(item) {
         <div class="range-row"><span>Capacidade</span><strong>${item.capacity ?? 0}</strong></div>
         <div class="range-row"><span>Reservadas</span><strong>${item.reserved ?? 0}</strong></div>
         <div class="range-row"><span>Disponíveis</span><strong>${item.available ?? 0}</strong></div>
-        <div class="range-row"><span>Uso</span><strong>${item.usage_pct ?? 0}%</strong></div>
-    `;
+        <div class="range-row"><span>Uso</span><strong>${item.usage_pct ?? 0}%</strong></div>`;
     return card;
 }
 
@@ -232,13 +318,10 @@ function renderAgentSummary(agent) {
     const status = String(agent.health || agent.health_status || agent.status || "unknown");
     setText("agent-info-hostname", agent.hostname || agent.name || agent.node_id || agent.id);
     setText("agent-info-address", agent.address || agent.ip || agent.public_host || "—");
-    setText("agent-info-system", agent.system || agent.os || agent.platform || "—");
-    setText("agent-info-version", agent.version || agent.agent_version || agent.installed_version || "—");
+    setText("agent-info-system", agent.system || agent.os || agent.os_name || agent.platform || "—");
+    setText("agent-info-version", agent.version || agent.capivara_version || agent.agent_version || agent.installed_version || "—");
     setText("agent-info-health", status);
-    setText(
-        "agent-info-heartbeat",
-        formatHeartbeat(agent.last_heartbeat || agent.heartbeat_at || agent.last_seen || agent.updated_at)
-    );
+    setText("agent-info-heartbeat", formatHeartbeat(agent.last_heartbeat || agent.heartbeat_at || agent.last_seen || agent.updated_at));
 
     const badge = byId("agent-detail-health-badge");
     if (badge) {
@@ -251,26 +334,22 @@ function renderAgentSummary(agent) {
 async function loadAgent(agentId) {
     if (!agentId) return;
     errorMessage();
-
     try {
         const result = await request(`/agent/ports?agent_id=${encodeURIComponent(agentId)}`);
         if (!result?.agent) throw new Error("Resposta do Agent inválida.");
-
         selectedAgent = result.agent.id;
 
         const detail = byId("agent-detail");
         if (!detail) throw new Error("Área Informações do Agent não encontrada no Dashboard.");
         detail.hidden = false;
-
         setText("agent-detail-title", `${result.agent.name || result.agent.id} · ${result.agent.id}`);
         renderAgentSummary(result.agent);
+        renderAgentLogs(result.agent, result);
 
         const ranges = byId("agent-ranges");
         if (ranges) {
             ranges.replaceChildren();
-            (Array.isArray(result.ranges) ? result.ranges : []).forEach(item => {
-                ranges.appendChild(rangeCard(item));
-            });
+            (Array.isArray(result.ranges) ? result.ranges : []).forEach(item => ranges.appendChild(rangeCard(item)));
         }
 
         const conflicts = byId("agent-conflicts");
@@ -291,7 +370,6 @@ async function loadAgent(agentId) {
             if (start) start.value = first.start_port;
             if (end) end.value = first.end_port;
         }
-
         detail.scrollIntoView({behavior: "smooth", block: "start"});
     } catch (error) {
         errorMessage(error.message);
@@ -304,20 +382,17 @@ async function saveAgentLocation(event) {
         errorMessage("Selecione um Agent.");
         return;
     }
-
     const datacenterElement = byId("agent-datacenter");
     const latitudeElement = byId("agent-latitude");
     const longitudeElement = byId("agent-longitude");
     const publicHostElement = byId("agent-public-host");
     const statusElement = byId("agent-location-status");
-
     if (!datacenterElement) return;
     const datacenter = datacenterElement.value;
     if (!datacenter) {
         errorMessage("Selecione um datacenter.");
         return;
     }
-
     const latitude = latitudeElement?.value.trim() || "";
     const longitude = longitudeElement?.value.trim() || "";
     const payload = {
@@ -328,18 +403,12 @@ async function saveAgentLocation(event) {
         public_host: publicHostElement?.value.trim() || null,
         status: statusElement?.value || "active"
     };
-
     try {
-        const result = await request("/agent/location", {
-            method: "POST",
-            body: JSON.stringify(payload)
-        });
+        const result = await request("/agent/location", {method: "POST", body: JSON.stringify(payload)});
         errorMessage();
         await loadInfrastructure();
         renderDatacenters();
-        if (result?.datacenter_id && byId("agent-datacenter")) {
-            byId("agent-datacenter").value = result.datacenter_id;
-        }
+        if (result?.datacenter_id && byId("agent-datacenter")) byId("agent-datacenter").value = result.datacenter_id;
     } catch (error) {
         errorMessage(error.message);
     }
@@ -351,13 +420,11 @@ async function saveRange(event) {
         errorMessage("Selecione um Agent.");
         return;
     }
-
     const protocol = byId("range-protocol");
     const start = byId("range-start");
     const end = byId("range-end");
     const force = byId("range-force");
     if (!protocol || !start || !end) return;
-
     const payload = {
         agent_id: selectedAgent,
         protocol: protocol.value,
@@ -365,12 +432,8 @@ async function saveRange(event) {
         end_port: Number(end.value),
         force: Boolean(force?.checked)
     };
-
     try {
-        await request("/agent/ports/set", {
-            method: "POST",
-            body: JSON.stringify(payload)
-        });
+        await request("/agent/ports/set", {method: "POST", body: JSON.stringify(payload)});
         await loadAgent(selectedAgent);
         await loadAgents();
     } catch (error) {
@@ -380,21 +443,20 @@ async function saveRange(event) {
 
 async function initialize() {
     try {
+        ensureTerminalStylesheet();
+        setupAddAgentNavigation();
+        ensureAgentLogTerminal();
         await loadSidebar();
         currentUser = await request("/whoami");
         if (!currentUser) return;
-
         if (!["admin", "controller"].includes(currentUser.role)) {
             throw new Error("Você não possui permissão para administrar Agents.");
         }
-
         setText("current-user", `${currentUser.username} (${currentUser.role})`);
         applyRole();
-
         bind("refresh-agents", "click", loadAgents);
         bind("agent-range-form", "submit", saveRange);
         bind("agent-location-form", "submit", saveAgentLocation);
-
         await loadInfrastructure();
         renderDatacenters();
         await loadAgents();
