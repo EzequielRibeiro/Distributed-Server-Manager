@@ -70,6 +70,66 @@
         return document.querySelector('input[name="agent-method"]:checked')?.value || "github";
     }
 
+    function ensureReleaseUi() {
+        if (document.getElementById("agent-release-options")) return;
+        const fieldset = document.createElement("fieldset");
+        fieldset.id = "agent-release-options";
+        fieldset.innerHTML = `
+            <legend>Versão do Agent</legend>
+            <label>GitHub Release
+                <select id="agent-release-tag" required>
+                    <option value="">Carregando releases...</option>
+                </select>
+            </label>
+            <label class="inline-option">
+                <input id="agent-release-prereleases" type="checkbox"> Mostrar pré-lançamentos
+            </label>
+            <p id="agent-release-status" class="location-safety-note" role="status" aria-live="polite"></p>`;
+        const sshOptions = document.getElementById("agent-ssh-options");
+        sshOptions.parentNode.insertBefore(fieldset, sshOptions);
+        document.getElementById("agent-release-prereleases").addEventListener("change", loadReleases);
+    }
+
+    async function loadReleases() {
+        ensureReleaseUi();
+        const method = selectedMethod();
+        const wrapper = document.getElementById("agent-release-options");
+        const select = document.getElementById("agent-release-tag");
+        const status = document.getElementById("agent-release-status");
+        const platform = document.querySelector('input[name="agent-platform"]:checked')?.value || "linux";
+        const includePrereleases = document.getElementById("agent-release-prereleases").checked;
+
+        wrapper.hidden = method === "local";
+        if (method === "local") return;
+
+        select.disabled = true;
+        select.replaceChildren(new Option("Carregando releases...", ""));
+        status.textContent = "Consultando GitHub Releases e validando os pacotes disponíveis...";
+        try {
+            const result = await request(
+                `/agents/releases?platform=${encodeURIComponent(platform)}&include_prereleases=${includePrereleases ? "1" : "0"}`
+            );
+            select.replaceChildren();
+            const releases = result.releases || [];
+            releases.forEach((release, index) => {
+                const label = `${release.tag}${index === 0 && !release.prerelease ? " · mais recente estável" : ""}${release.prerelease ? " · pré-lançamento" : ""}`;
+                select.appendChild(new Option(label, release.tag));
+            });
+            if (!releases.length) {
+                select.appendChild(new Option(`Nenhuma release compatível para ${platform}`, ""));
+                status.textContent = "Nenhuma release publicada possui o pacote e o checksum exigidos para esta plataforma.";
+            } else {
+                select.value = result.recommended || releases[0].tag;
+                status.textContent = `${releases.length} release(s) compatível(is). A mais recente estável é selecionada por padrão.`;
+            }
+        } catch (error) {
+            select.replaceChildren(new Option("Falha ao consultar releases", ""));
+            status.textContent = `Falha ao consultar GitHub Releases: ${error.message}`;
+        } finally {
+            select.disabled = false;
+        }
+    }
+
     function updateMethodUi() {
         const method = selectedMethod();
         const ssh = method === "ssh";
@@ -77,6 +137,8 @@
         const windows = document.querySelector('input[name="agent-platform"][value="windows"]');
         const button = document.getElementById("generate-agent-install");
         document.getElementById("agent-ssh-options").hidden = !ssh;
+        const releaseOptions = document.getElementById("agent-release-options");
+        if (releaseOptions) releaseOptions.hidden = method === "local";
         windows.disabled = ssh;
         if (ssh) linux.checked = true;
         button.textContent = ssh ? "Instalar Agent via SSH" : "Gerar instalação";
@@ -144,6 +206,11 @@
         errorMessage();
         const platform = document.querySelector('input[name="agent-platform"]:checked').value;
         const method = selectedMethod();
+        const releaseTag = method === "local" ? "" : document.getElementById("agent-release-tag")?.value;
+        if (method !== "local" && !releaseTag) {
+            errorMessage("Nenhuma GitHub Release compatível está disponível para a plataforma selecionada.");
+            return;
+        }
         const regionId = document.getElementById("agent-install-region").value;
         const datacenterId = document.getElementById("agent-install-datacenter").value;
         const controllerId = currentUser.role === "controller"
@@ -156,6 +223,7 @@
         const payload = {
             platform,
             method,
+            release_tag: releaseTag || undefined,
             region_id: regionId,
             datacenter_id: datacenterId,
             controller_id: controllerId,
@@ -178,7 +246,7 @@
         submit.textContent = method === "ssh" ? "Executando bootstrap SSH..." : "Gerando...";
         installationFeedback(
             method === "ssh"
-                ? "Conectando ao Agent, validando chave SSH, host key e sudo não interativo..."
+                ? `Conectando ao Agent e preparando ${releaseTag}...`
                 : "Preparando a instalação...",
             "working"
         );
@@ -193,7 +261,7 @@
             const copy = document.getElementById("copy-agent-install");
             const remoteStatus = document.getElementById("agent-remote-bootstrap-status");
             resultRoot.hidden = false;
-            document.getElementById("agent-install-expiry").textContent = `Token válido até ${result.expires_at}. Uso único.`;
+            document.getElementById("agent-install-expiry").textContent = `Token válido até ${result.expires_at}. Uso único. Release: ${result.release_tag}.`;
 
             if (result.instruction) {
                 document.getElementById("agent-install-result-title").textContent = "Instruções de instalação";
@@ -207,7 +275,7 @@
                 copy.hidden = true;
                 remoteStatus.hidden = false;
                 const remote = result.remote_bootstrap || {};
-                remoteStatus.textContent = `Bootstrap SSH concluído em ${remote.host || payload.ssh_host}. Aguardando enrollment e heartbeat do Agent.`;
+                remoteStatus.textContent = `Bootstrap SSH de ${remote.release_tag || result.release_tag} concluído em ${remote.host || payload.ssh_host}. Aguardando enrollment e heartbeat do Agent.`;
             }
 
             renderPreconfiguration(result.preconfiguration);
@@ -237,13 +305,21 @@
         }
         if (!currentUser || !infrastructureTopology) return;
         populateTopology();
+        ensureReleaseUi();
         document.querySelectorAll('input[name="agent-method"]').forEach(input => {
-            input.addEventListener("change", updateMethodUi);
+            input.addEventListener("change", async () => {
+                updateMethodUi();
+                await loadReleases();
+            });
         });
         document.querySelectorAll('input[name="agent-platform"]').forEach(input => {
-            input.addEventListener("change", updateMethodUi);
+            input.addEventListener("change", async () => {
+                updateMethodUi();
+                await loadReleases();
+            });
         });
         updateMethodUi();
+        await loadReleases();
         document.getElementById("agent-install-form").addEventListener("submit", generate);
         document.getElementById("add-agent-focus").addEventListener("click", () => {
             document.getElementById("add-agent").scrollIntoView({behavior: "smooth", block: "start"});
