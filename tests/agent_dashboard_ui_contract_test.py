@@ -11,6 +11,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
     def setUpClass(cls):
         web = ROOT / "dashboard/web"
         cls.html = (web / "agents.html").read_text(encoding="utf-8")
+        cls.agent_script = (web / "agents.js").read_text(encoding="utf-8")
         cls.install = (web / "agent-installation.js").read_text(encoding="utf-8")
         cls.location = (web / "agent-location-ui.js").read_text(encoding="utf-8")
         cls.updates = (web / "agent-updates.js").read_text(encoding="utf-8")
@@ -22,16 +23,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
         cls.service = (ROOT / "systemd/dsm-dashboard.service").read_text(encoding="utf-8")
 
     def test_add_agent_controls_are_present(self):
-        for text in (
-            "Adicionar Agent",
-            "Linux",
-            "Windows",
-            "GitHub Release",
-            "Pacote local",
-            "Região",
-            "Datacenter",
-            "Gerar instalação",
-        ):
+        for text in ("Adicionar Agent", "Linux", "Windows", "GitHub Release", "Pacote local", "Região", "Datacenter", "Gerar instalação"):
             self.assertIn(text, self.html)
 
     def test_installation_progress_states_are_present(self):
@@ -40,24 +32,17 @@ class AgentDashboardUiContractTest(unittest.TestCase):
         self.assertIn("/agents/installations", self.install)
         self.assertIn("/agents/installations/status", self.install)
 
-    def test_location_controls_include_region_and_safety_message(self):
+    def test_location_controls_include_region_and_instance_safety_boundary(self):
         self.assertIn('id="agent-region"', self.html)
         self.assertIn('id="agent-datacenter"', self.html)
         self.assertIn('id="agent-public-host"', self.html)
         self.assertIn('id="agent-latitude"', self.html)
         self.assertIn('id="agent-longitude"', self.html)
-        self.assertIn("Instâncias existentes permanecem vinculadas ao Agent", self.html)
+        self.assertIn("Start, Stop, Restart, reinstalação, arquivos e backups são administrados em Clientes", self.html)
         self.assertIn("region_id", self.location)
 
     def test_remote_update_controls_and_batch_contract_are_present(self):
-        for text in (
-            "Versão instalada",
-            "Versão disponível",
-            "Tamanho do lote",
-            "Stable",
-            "Beta",
-            "Local / manual",
-        ):
+        for text in ("Versão instalada", "Versão disponível", "Tamanho do lote", "Stable", "Beta", "Local / manual"):
             self.assertIn(text, self.html)
         self.assertIn("/agents/updates/rollouts", self.updates)
         self.assertIn("/agents/updates/status", self.updates)
@@ -89,8 +74,16 @@ class AgentDashboardUiContractTest(unittest.TestCase):
         server = (ROOT / "dashboard/server.py").read_text(encoding="utf-8")
         for route in ("/servers-v2.html", "/servers-v2.js", "/servers-v2.css"):
             self.assertIn(route, server)
-        self.assertIn('id="log-agent"', (ROOT / "dashboard/web/index.html").read_text(encoding="utf-8"))
+        self.assertIn('id="agent-recent-logs"', self.html)
         self.assertIn('metadata["recent_logs"]', (ROOT / "dashboard/agent_heartbeat_api.py").read_text(encoding="utf-8"))
+
+    def test_agent_detail_exposes_host_agent_and_instance_telemetry(self):
+        for token in ('id="agent-host-telemetry"', 'id="agent-process-telemetry"', 'id="agent-instance-resources"', 'id="agent-game-data-panel"'):
+            self.assertIn(token, self.html)
+        self.assertIn('/admin/agent/detail?agent_id=', self.agent_script)
+        self.assertIn('/agents/game-data', self.agent_script)
+        self.assertNotIn('/instance/start', self.agent_script)
+        self.assertNotIn('/instance/stop', self.agent_script)
 
     def test_infrastructure_v2_keeps_installation_and_topology_views(self):
         for view in ('data-infra-view="agents"', 'data-infra-view="topology"', 'data-infra-view="installation"'):
@@ -111,7 +104,8 @@ class AgentDashboardUiContractTest(unittest.TestCase):
         self.assertIn('id="agent-ssh-host"', self.html)
         self.assertIn('id="agent-ssh-user"', self.html)
         self.assertIn('id="agent-ssh-port"', self.html)
-        self.assertIn("O Dashboard não aceita senha SSH", self.html)
+        self.assertIn("Controller não armazena senha SSH", self.html)
+        self.assertIn("chave/ssh-agent e host key", self.html)
 
 
 if __name__ == "__main__":
