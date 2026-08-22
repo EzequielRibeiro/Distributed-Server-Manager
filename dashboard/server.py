@@ -3057,6 +3057,7 @@ def authenticate(headers):
     try:
         decoded = base64.b64decode(auth[6:]).decode("utf-8")
         username, password = decoded.split(":", 1)
+        username = username.strip().lower()
         users = load_users()
         if username in users:
             user = users[username]

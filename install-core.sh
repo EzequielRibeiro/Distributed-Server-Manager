@@ -2417,6 +2417,13 @@ main()
         "${DSM_SERVICE_GROUP}"
     printf 'Systemd           : %s\n' "${SYSTEMD_ACTIVE}"
     printf 'Comando           : %s\n' "${DSM_LINK}"
+
+    if [[ "${DSM_NODE_ROLE}" == "controller" \
+        || "${DSM_NODE_ROLE}" == "hybrid" ]]
+    then
+        printf '\nCrie o primeiro administrador da Dashboard:\n'
+        printf '  cap user add admin admin\n'
+    fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]

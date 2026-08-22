@@ -1,5 +1,6 @@
 import io
 import json
+import base64
 import sys
 from pathlib import Path
 
@@ -10,6 +11,33 @@ if str(DASHBOARD_DIR) not in sys.path:
     sys.path.insert(0, str(DASHBOARD_DIR))
 
 import server
+
+
+def test_authenticate_normalizes_username(monkeypatch):
+    password = "CorrectHorseBatteryStaple"
+    monkeypatch.setattr(
+        server,
+        "load_users",
+        lambda: {
+            "admin": {
+                "password_hash": server.hash_password(password),
+                "role": "admin",
+                "scope_id": "",
+                "active": True,
+            }
+        },
+    )
+    credentials = base64.b64encode(
+        f" Admin :{password}".encode("utf-8")
+    ).decode("ascii")
+
+    assert server.authenticate(
+        {"Authorization": f"Basic {credentials}"}
+    ) == {
+        "username": "admin",
+        "role": "admin",
+        "scope_id": "",
+    }
 
 
 def test_unauthorized_returns_json_without_basic_auth_challenge():

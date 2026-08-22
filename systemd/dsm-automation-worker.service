@@ -9,6 +9,7 @@ Type=simple
 User={{DSM_USER}}
 Group={{DSM_GROUP}}
 Environment=DSM_ROOT=/opt/dsm
+EnvironmentFile=-/opt/dsm/config/dsm.conf
 EnvironmentFile=-/etc/default/dsm-dashboard
 WorkingDirectory=/opt/dsm
 ExecStart=/usr/bin/python3 /opt/dsm/dashboard/workers/automation_worker.py
