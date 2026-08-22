@@ -10,6 +10,9 @@ from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
 from users import hash_password
 
+ACCOUNT_ROLES = {"owner", "manager", "member"}
+INSTANCE_PROFILES = {"viewer", "operator", "manager"}
+
 
 class CustomerAdminRepository:
     def __init__(self, backend: DatabaseBackend):
@@ -19,9 +22,8 @@ class CustomerAdminRepository:
 
     def initialize(self) -> None:
         self.backend.initialize()
-        # Compatibility table for credential onboarding. It is intentionally
-        # created idempotently so existing 2.x databases gain the C3 state
-        # without depending on a historical migration chain.
+        # Existing 2.x installations do not run historical migrations. Keep
+        # temporary-password state in one small idempotent compatibility table.
         with self.backend.transaction() as connection:
             session = AlertSession(self.backend, connection)
             try:
@@ -29,15 +31,30 @@ class CustomerAdminRepository:
                     "CREATE TABLE IF NOT EXISTS customer_password_state ("
                     "username VARCHAR(128) PRIMARY KEY,"
                     "must_change_password INTEGER NOT NULL DEFAULT 0,"
-                    "updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-                    "FOREIGN KEY(username) REFERENCES dashboard_users(username) ON DELETE CASCADE"
+                    "updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"
                     ")"
                 )
+                self._backfill_single_owner(session)
             finally:
                 session.close()
 
     def _session(self, connection) -> AlertSession:
         return AlertSession(self.backend, connection)
+
+    def _backfill_single_owner(self, session: AlertSession) -> None:
+        """Repair old Customers that have exactly one login and no membership."""
+        rows = session.execute(
+            "SELECT c.id,u.username FROM customers c "
+            "JOIN dashboard_users u ON u.scope_id=c.id AND u.role='customer' "
+            "WHERE NOT EXISTS (SELECT 1 FROM customer_account_members m WHERE m.customer_id=c.id) "
+            "AND (SELECT COUNT(*) FROM dashboard_users ux WHERE ux.scope_id=c.id AND ux.role='customer')=1"
+        ).fetchall()
+        for row in rows:
+            session.execute(
+                "INSERT INTO customer_account_members(customer_id,username,account_role) "
+                f"VALUES ({self.dialect.parameters(3)})",
+                (row["id"], row["username"], "owner"),
+            )
 
     def search(self, query: str = "") -> list[dict[str, Any]]:
         self.initialize()
@@ -103,6 +120,12 @@ class CustomerAdminRepository:
                     f"WHERE u.role='customer' AND u.scope_id={ph} ORDER BY u.username",
                     (customer_id,),
                 ).fetchall()
+                access_rows = session.execute(
+                    "SELECT ia.username,ia.instance_id,ia.permission_profile "
+                    "FROM instance_access ia JOIN instances i ON i.id=ia.instance_id "
+                    f"WHERE i.customer_id={ph} ORDER BY ia.username,ia.instance_id",
+                    (customer_id,),
+                ).fetchall()
                 contracts = session.execute(
                     "SELECT c.id,c.game_id,c.status,c.instance_limit,c.starts_at,c.ends_at,c.created_at,"
                     "COUNT(ic.instance_id) AS instances_used "
@@ -118,9 +141,19 @@ class CustomerAdminRepository:
                 ).fetchall()
             finally:
                 session.close()
+        access: dict[str, dict[str, str]] = {}
+        for row in access_rows:
+            access.setdefault(str(row["username"]), {})[str(row["instance_id"])] = str(row["permission_profile"])
+        normalized_users = []
+        for row in users:
+            item = dict(row)
+            item["active"] = bool(row["active"])
+            item["must_change_password"] = bool(row["must_change_password"])
+            item["instance_access"] = access.get(str(row["username"]), {})
+            normalized_users.append(item)
         return {
             "customer": dict(customer),
-            "users": [dict(row) | {"active": bool(row["active"]), "must_change_password": bool(row["must_change_password"])} for row in users],
+            "users": normalized_users,
             "contracts": [dict(row) for row in contracts],
             "instances": [dict(row) for row in instances],
         }
@@ -140,16 +173,13 @@ class CustomerAdminRepository:
         with self.backend.transaction() as connection:
             session = self._session(connection)
             try:
-                # The first login is the Customer account owner. This also
-                # repairs the gap in the original CLI create_customer path.
                 if session.execute(
                     "SELECT 1 FROM customer_account_members "
                     f"WHERE customer_id={ph} AND username={ph}", (customer_id, username)
                 ).fetchone() is None:
                     session.execute(
                         "INSERT INTO customer_account_members(customer_id,username,account_role) "
-                        f"VALUES ({self.dialect.parameters(3)})",
-                        (customer_id, username, "owner"),
+                        f"VALUES ({self.dialect.parameters(3)})", (customer_id, username, "owner")
                     )
                 if email and session.execute(
                     f"SELECT 1 FROM customer_user_identities WHERE username={ph}", (username,)
@@ -192,8 +222,7 @@ class CustomerAdminRepository:
             session = self._session(connection)
             try:
                 row = session.execute(
-                    f"SELECT must_change_password FROM customer_password_state WHERE username={ph}",
-                    (username,),
+                    f"SELECT must_change_password FROM customer_password_state WHERE username={ph}", (username,)
                 ).fetchone()
             finally:
                 session.close()
@@ -205,9 +234,7 @@ class CustomerAdminRepository:
         with self.backend.transaction() as connection:
             session = self._session(connection)
             try:
-                row = session.execute(
-                    f"SELECT role FROM dashboard_users WHERE username={ph}", (username,)
-                ).fetchone()
+                row = session.execute(f"SELECT role FROM dashboard_users WHERE username={ph}", (username,)).fetchone()
                 if row is None or row["role"] != "customer":
                     raise ValueError("customer user not found")
                 session.execute(
@@ -215,6 +242,76 @@ class CustomerAdminRepository:
                     (hash_password(new_password), username),
                 )
                 self._set_password_state(session, username, False)
+            finally:
+                session.close()
+
+    def set_member_role(self, customer_id: str, username: str, account_role: str) -> None:
+        self.initialize()
+        account_role = str(account_role or "").lower()
+        if account_role not in ACCOUNT_ROLES:
+            raise ValueError("invalid customer account role")
+        ph = self.dialect.placeholder
+        with self.backend.transaction() as connection:
+            session = self._session(connection)
+            try:
+                member = session.execute(
+                    "SELECT account_role FROM customer_account_members "
+                    f"WHERE customer_id={ph} AND username={ph}", (customer_id, username)
+                ).fetchone()
+                if member is None:
+                    raise ValueError("customer member not found")
+                current = str(member["account_role"])
+                if current == "owner" and account_role != "owner":
+                    owners = session.execute(
+                        f"SELECT COUNT(*) AS total FROM customer_account_members WHERE customer_id={ph} AND account_role='owner'",
+                        (customer_id,),
+                    ).fetchone()
+                    if int(owners["total"] or 0) <= 1:
+                        raise ValueError("customer must keep at least one owner")
+                session.execute(
+                    f"UPDATE customer_account_members SET account_role={ph} WHERE customer_id={ph} AND username={ph}",
+                    (account_role, customer_id, username),
+                )
+            finally:
+                session.close()
+
+    def set_instance_access(self, customer_id: str, username: str, instance_id: str,
+                            permission_profile: str | None) -> None:
+        self.initialize()
+        profile = str(permission_profile or "").strip().lower()
+        if profile and profile not in INSTANCE_PROFILES:
+            raise ValueError("invalid instance permission profile")
+        ph = self.dialect.placeholder
+        with self.backend.transaction() as connection:
+            session = self._session(connection)
+            try:
+                member = session.execute(
+                    "SELECT 1 FROM customer_account_members "
+                    f"WHERE customer_id={ph} AND username={ph}", (customer_id, username)
+                ).fetchone()
+                instance = session.execute(
+                    f"SELECT 1 FROM instances WHERE id={ph} AND customer_id={ph}", (instance_id, customer_id)
+                ).fetchone()
+                if member is None or instance is None:
+                    raise ValueError("customer member or instance not found")
+                existing = session.execute(
+                    f"SELECT 1 FROM instance_access WHERE username={ph} AND instance_id={ph}", (username, instance_id)
+                ).fetchone()
+                if not profile:
+                    if existing:
+                        session.execute(
+                            f"DELETE FROM instance_access WHERE username={ph} AND instance_id={ph}", (username, instance_id)
+                        )
+                elif existing:
+                    session.execute(
+                        f"UPDATE instance_access SET permission_profile={ph} WHERE username={ph} AND instance_id={ph}",
+                        (profile, username, instance_id),
+                    )
+                else:
+                    session.execute(
+                        "INSERT INTO instance_access(username,instance_id,permission_profile) "
+                        f"VALUES ({self.dialect.parameters(3)})", (username, instance_id, profile)
+                    )
             finally:
                 session.close()
 
@@ -228,9 +325,7 @@ class CustomerAdminRepository:
 
     def _set_password_state(self, session: AlertSession, username: str, required: bool) -> None:
         ph = self.dialect.placeholder
-        exists = session.execute(
-            f"SELECT 1 FROM customer_password_state WHERE username={ph}", (username,)
-        ).fetchone()
+        exists = session.execute(f"SELECT 1 FROM customer_password_state WHERE username={ph}", (username,)).fetchone()
         value = 1 if required else 0
         if exists:
             session.execute(
@@ -245,7 +340,6 @@ class CustomerAdminRepository:
 
     @staticmethod
     def _temporary_password() -> str:
-        # 16+ chars, URL-safe and copy-friendly. Plaintext is returned once.
         return secrets.token_urlsafe(12)
 
 
