@@ -25,6 +25,7 @@ Controller / Hybrid:
   cap contract delete --contract ID --admin USER --yes
   cap instance create --customer ID --contract ID --game GAME --agent AGENT [options]
   cap instance delete --instance ID --admin USER --yes
+  cap scheduler list|show|create|update|enable|disable|delete|run|status|check ...
   cap events list|show|publish|import-legacy ...
   cap config-store list|get|set|history|resolve ...
   cap content-store list|set|history ...
@@ -104,6 +105,7 @@ agent) shift; case "${1:-}" in ssh-prepare) require_role "cap agent ssh-prepare"
 customer) require_role "cap customer" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/customer_cli.py" "$@" ;;
 contract) require_role "cap contract" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/contract_cli.py" "$@" ;;
 instance) case "${2:-}" in list|status|doctor|start|stop|restart) require_role "cap instance ${2}" agent hybrid; agent_local_exec "$@" ;; create|delete) require_role "cap instance ${2}" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/instance_admin_cli.py" "$@" ;; *) require_role "cap instance" controller hybrid; legacy_exec "$@" ;; esac ;;
+scheduler) require_role "cap scheduler" controller hybrid; shift; exec bash "${DSM_ROOT}/scheduler/cli.sh" "$@" ;;
 events) require_role "cap events" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/universal_events_cli.py" "$@" ;;
 config-store) require_role "cap config-store" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/configuration_cli.py" "$@" ;;
 content-store) require_role "cap content-store" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/content_cli.py" "$@" ;;
