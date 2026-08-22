@@ -1,0 +1,50 @@
+name: Operations Center D9-D15
+
+on:
+  push:
+    paths:
+      - 'dashboard/operations_center_service.py'
+      - 'dashboard/operations_center_http.py'
+      - 'dashboard/server_part14.py'
+      - 'dashboard/web/operations.*'
+      - 'dashboard/web/index.html'
+      - 'dashboard/web/app.js'
+      - 'dashboard/web/components/sidebar.html'
+      - 'tests/operations_center_d9_d15_test.py'
+      - 'tests/agent_dashboard_ui_contract_test.py'
+      - 'systemd/dsm-dashboard.service'
+      - '.github/workflows/operations-center-d9-d15.yml'
+  pull_request:
+    paths:
+      - 'dashboard/operations_center_service.py'
+      - 'dashboard/operations_center_http.py'
+      - 'dashboard/server_part14.py'
+      - 'dashboard/web/operations.*'
+      - 'dashboard/web/index.html'
+      - 'dashboard/web/app.js'
+      - 'dashboard/web/components/sidebar.html'
+      - 'tests/operations_center_d9_d15_test.py'
+      - 'tests/agent_dashboard_ui_contract_test.py'
+      - 'systemd/dsm-dashboard.service'
+      - '.github/workflows/operations-center-d9-d15.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Operations Center Python
+        run: |
+          python3 -m py_compile \
+            dashboard/operations_center_service.py \
+            dashboard/operations_center_http.py \
+            dashboard/server_part14.py \
+            tests/operations_center_d9_d15_test.py
+      - name: Validate Operations Center JavaScript
+        run: |
+          node --check dashboard/web/operations.js
+          node --check dashboard/web/app.js
+      - name: Run D9-D15 regression suite
+        run: |
+          python3 tests/operations_center_d9_d15_test.py
+          python3 tests/agent_dashboard_ui_contract_test.py
