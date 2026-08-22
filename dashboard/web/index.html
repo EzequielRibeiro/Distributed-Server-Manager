@@ -10,18 +10,12 @@
 <div id="sidebar-component"></div>
 <main class="dashboard infrastructure-dashboard">
   <header class="header">
-    <div class="brand">
-      <h1>Capivara DSM</h1>
-      <span>Infraestrutura · Controller e Agents</span>
-    </div>
+    <div class="brand"><h1>Capivara DSM</h1><span>Infraestrutura · Controller e Agents</span></div>
     <div class="header-status"><span>Controller</span><strong id="system-status">ONLINE</strong></div>
   </header>
 
   <section class="card">
-    <div class="card-title">
-      <div><h2>Visão geral da infraestrutura</h2><p>Saúde, capacidade e consumo do Controller e dos Agents. Operações de instância ficam em Clientes.</p></div>
-      <button id="infra-refresh" type="button">Atualizar</button>
-    </div>
+    <div class="card-title"><div><h2>Visão geral da infraestrutura</h2><p>Saúde, capacidade e consumo do Controller e dos Agents. Operações de instância ficam em Clientes.</p></div><button id="infra-refresh" type="button">Atualizar</button></div>
     <div class="server-info">
       <div class="info-box"><label>Agents</label><span id="infra-agents-total">0</span></div>
       <div class="info-box"><label>Online</label><span id="infra-agents-online">0</span></div>
@@ -29,6 +23,16 @@
       <div class="info-box"><label>Offline</label><span id="infra-agents-offline">0</span></div>
       <div class="info-box"><label>Instâncias hospedadas</label><span id="infra-instance-count">0</span></div>
     </div>
+  </section>
+
+  <section class="card" id="active-incidents-card">
+    <div class="card-title"><div><h2>Incidentes ativos</h2><p>Problemas correlacionados pela Central de Operações, do primeiro evento até a resolução.</p></div><a class="button" href="/operations.html#incidents">Central de Operações</a></div>
+    <div class="server-info">
+      <div class="info-box"><label>Ativos</label><strong id="active-incidents-count">0</strong></div>
+      <div class="info-box"><label>Críticos</label><strong id="critical-incidents-count">0</strong></div>
+      <div class="info-box"><label>Alertas ativos</label><strong id="active-alerts-count">0</strong></div>
+    </div>
+    <div id="active-incidents-list" class="agents-grid"><p>Nenhum incidente ativo.</p></div>
   </section>
 
   <section class="card system-card">
@@ -47,10 +51,7 @@
   </section>
 
   <section class="card">
-    <div class="card-title">
-      <div><h2>Agents</h2><p>Telemetria resumida do host e do processo Capivara Agent. Abra um Agent para diagnóstico detalhado.</p></div>
-      <a class="button" href="/agents.html">Gerenciar Agents</a>
-    </div>
+    <div class="card-title"><div><h2>Agents</h2><p>Telemetria resumida do host e do processo Capivara Agent. Abra um Agent para diagnóstico detalhado.</p></div><a class="button" href="/agents.html">Gerenciar Agents</a></div>
     <div id="infra-agent-list" class="agents-grid"><p>Carregando Agents…</p></div>
   </section>
 
@@ -58,6 +59,7 @@
     <div class="card-title"><div><h2>Administração operacional</h2><p>O Dashboard de infraestrutura não controla servidores de clientes.</p></div></div>
     <div class="server-info">
       <a class="info-box" href="/agents.html"><label>Agents</label><span>Instalar game-data no Node, localização, atualização e diagnóstico</span></a>
+      <a class="info-box" href="/operations.html"><label>Operações</label><span>Incidentes, alertas, eventos, agendamentos, histórico e backup do Controller</span></a>
       <a class="info-box" href="/customers.html"><label>Clientes</label><span>Contratos, instâncias, lifecycle, logs, arquivos, backup e conteúdo</span></a>
     </div>
   </section>
