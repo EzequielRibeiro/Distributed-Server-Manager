@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALLER="${ROOT}/install.sh"
+CORE_INSTALLER="${ROOT}/install-core.sh"
 UPDATER="${ROOT}/update.sh"
 SCHEDULER_UNIT="${ROOT}/systemd/dsm-scheduler.service"
 
@@ -20,11 +21,16 @@ then
     fail "scheduler unit still references unsupported daemon action"
 fi
 
-# The Capivara infrastructure CLI is part of the release contract and must be
-# published globally together with dsm on fresh installs and upgrades.
-grep -Fq 'bin/cap' "${INSTALLER}" \
+# install.sh is now the interactive/bootstrap wrapper. The installation and
+# validation contract for public CLIs lives in install-core.sh.
+grep -Fq 'install-core.sh' "${INSTALLER}" \
+    || fail "installer wrapper does not delegate to install-core.sh"
+
+# `cap` is the public CLI. `dsm` remains only as a compatibility command, but
+# both entry points must stay installable while compatibility is supported.
+grep -Fq 'bin/cap' "${CORE_INSTALLER}" \
     || fail "installer does not validate/install bin/cap"
-grep -Fq '/usr/local/bin/cap' "${INSTALLER}" \
+grep -Fq '/usr/local/bin/cap' "${CORE_INSTALLER}" \
     || fail "installer does not publish the global cap command"
 grep -Fq 'bin/cap' "${UPDATER}" \
     || fail "updater does not validate/install bin/cap"

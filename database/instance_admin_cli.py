@@ -20,6 +20,7 @@ from admin_management_repository import AdminManagementRepository
 from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from agent_runtime_repository import AgentRuntimeRepository
+from core.catalog_runtime_paths import runtime_definition_files
 from dashboard_repository import DashboardRepository
 from placement_errors import PlacementUnavailable
 from placement_service import choose_agent_for_instance
@@ -50,11 +51,8 @@ def build_parser():
 
 
 def _runtime_candidates(game_id: str) -> list[tuple[Path, dict[str, Any]]]:
-    directory = ROOT / "catalog" / "v2" / "runtimes" / game_id
     result: list[tuple[Path, dict[str, Any]]] = []
-    if not directory.is_dir():
-        return result
-    for path in sorted(directory.glob("*.json")):
+    for path in runtime_definition_files(ROOT / "catalog" / "v2"):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -220,7 +218,7 @@ def create_instance(args, *, backend=None) -> dict[str, Any]:
             selection=_content_selection(definition),
             configuration=_configuration(definition),
             desired_state=str(args.desired_state),
-            requested_by="dsm-cli",
+            requested_by="cap-cli",
         )
     except Exception:
         dashboard.delete_instance(str(created["instance_id"]))

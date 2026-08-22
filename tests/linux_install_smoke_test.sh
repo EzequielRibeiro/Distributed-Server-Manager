@@ -100,8 +100,8 @@ python3 "${DSM_ROOT}/database/operations.py" \
 
 # Render every unit against the temporary root and validate it with systemd.
 (
-    # shellcheck source=../install.sh
-    source "${DSM_ROOT}/install.sh"
+    # shellcheck source=../install-core.sh
+    source "${DSM_ROOT}/install-core.sh"
     SYSTEMD_ACTIVE=1
     systemctl(){ :; }
     install_systemd_units >/dev/null

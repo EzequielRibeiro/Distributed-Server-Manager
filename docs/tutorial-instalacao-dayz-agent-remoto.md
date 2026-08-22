@@ -2,7 +2,9 @@
 
 ## Objetivo
 
-Este tutorial descreve o fluxo administrativo desejado para criar um cliente, associar um contrato DayZ e provisionar uma instância em um Agent remoto.
+Este tutorial descreve o fluxo administrativo atual para criar um cliente, associar um contrato DayZ e provisionar uma instância em um Agent remoto usando a CLI pública oficial do Capivara.
+
+> A CLI pública do Capivara é `cap`. O comando `dsm` existe apenas como camada temporária de compatibilidade para instalações e scripts antigos e não deve ser usado em documentação, novos scripts ou novos procedimentos operacionais.
 
 Exemplo de topologia:
 
@@ -10,7 +12,7 @@ Exemplo de topologia:
 Controller Capivara
 192.168.15.35
         │
-        ├── Cliente: joao
+        ├── Cliente: CLIENTE-001
         │      └── Contrato: DayZ
         │
         └── Agent remoto
@@ -22,34 +24,36 @@ Controller Capivara
 Fluxo:
 
 ```text
-1. Criar cliente/login
+1. Criar Customer + login
         ↓
 2. Criar contrato DayZ
         ↓
 3. Criar instância no Agent escolhido
         ↓
-   Agent instala DayZ
+   Controller valida placement
+        ↓
+   Agent instala e materializa o runtime
         ↓
    Servidor pronto
 ```
 
-> **Nota sobre o estado atual da CLI:** o comando de criação de usuário já existe. Os comandos `dsm contract create` e `dsm instance create` abaixo representam a interface administrativa planejada; o modelo correspondente já existe no backend, mas esses dispatchers ainda precisam ser expostos pela CLI pública.
-
----
-
-## 1. Criar o usuário do cliente
+## 1. Criar o cliente e o login
 
 Neste exemplo:
 
 ```text
 ID do cliente: CLIENTE-001
+Nome: João
 Usuário: joao
 ```
 
-O Customer `CLIENTE-001` deve existir previamente no Controller. O login é criado com:
+Execute no Controller ou Hybrid:
 
 ```bash
-dsm user add joao customer CLIENTE-001
+cap customer create \
+  --id CLIENTE-001 \
+  --name "João" \
+  --username joao
 ```
 
 O Capivara solicitará a senha de forma interativa:
@@ -60,320 +64,176 @@ Senha:
 Confirme a senha:
 ```
 
-A senha não deve ser informada diretamente na linha de comando.
+A senha não deve ser fornecida na linha de comando.
 
-O vínculo criado é:
-
-```text
-joao
-  │
-  ├── role: customer
-  └── scope: CLIENTE-001
-```
-
-Usuários com papel `customer` precisam obrigatoriamente possuir um `scope`, que corresponde ao Customer ao qual o login pertence.
-
-> Criar o login e cadastrar a entidade Customer são operações diferentes.
-
----
+O comando cria o Customer e o login associado de forma atômica, evitando a necessidade de cadastrar a entidade Customer e depois criar manualmente o usuário em uma etapa separada.
 
 ## 2. Criar um contrato DayZ para o cliente
 
-Interface administrativa planejada:
-
 ```bash
-dsm contract create \
+cap contract create \
   --customer CLIENTE-001 \
   --game dayz \
-  --instances 1
+  --instances 1 \
+  --id CONTRACT-DAYZ-001
 ```
+
+O `--id` é opcional. Quando omitido, o Capivara gera o identificador do contrato.
 
 Resultado esperado:
 
 ```text
-Contrato criado com sucesso
-
-ID: CONTRACT-DAYZ-001
-Cliente: CLIENTE-001
-Jogo: DayZ
-Limite de instâncias: 1
-Status: active
-```
-
-Relação criada:
-
-```text
-CLIENTE-001
-      │
-      └── CONTRACT-DAYZ-001
-                │
-                ├── game: dayz
-                ├── status: active
-                └── instance_limit: 1
-```
-
-O Capivara já possui no backend o conceito de `service_contracts`, incluindo Customer, jogo, estado do contrato e limite de instâncias.
-
-### Estado atual
-
-A CLI pública atual ainda não possui o dispatcher:
-
-```bash
-dsm contract create
-```
-
-Portanto, este comando deve ser considerado a sintaxe administrativa a ser implementada, e não um comando já disponível em produção.
-
----
-
-## 3. Selecionar o Agent remoto e instalar o servidor DayZ
-
-Considere um Agent Capivara instalado e registrado em outra máquina:
-
-```text
-Agent ID: agent-game-01
-IP: 192.168.15.45
-Status: online
-```
-
-A interface administrativa planejada para criar a instância é:
-
-```bash
-dsm instance create \
-  --customer CLIENTE-001 \
-  --contract CONTRACT-DAYZ-001 \
-  --game dayz \
-  --agent agent-game-01 \
-  --name dayz-joao-01
-```
-
-O cadastro do Agent associa:
-
-```text
-agent-game-01 → 192.168.15.45
-```
-
-O Controller deverá executar o fluxo:
-
-```text
-dsm instance create
-        │
-        ▼
-Valida CLIENTE-001
-        │
-        ▼
-Valida CONTRACT-DAYZ-001
-        │
-        ▼
-Confirma autorização para DayZ
-        │
-        ▼
-Localiza agent-game-01
-        │
-        ▼
-Verifica Agent online
-        │
-        ▼
-Verifica recursos/capabilities
-        │
-        ▼
-Reserva portas
-        │
-        ▼
-Cria Instance
-        │
-        ▼
-Envia provisionamento ao Agent
-        │
-        ▼
-Agent 192.168.15.45
-        │
-        ├── prepara diretórios
-        ├── materializa runtime
-        ├── instala conteúdo DayZ
-        ├── gera configuração
-        ├── reserva recursos
-        └── inicia servidor
-        │
-        ▼
-DayZ RUNNING
-```
-
-Retorno esperado:
-
-```text
-Instância criada
-
-Instance ID: dayz-joao-01
+Contract created: CONTRACT-DAYZ-001
 Customer: CLIENTE-001
-Contract: CONTRACT-DAYZ-001
 Game: dayz
-Agent: agent-game-01
-Address: 192.168.15.45
-Status: provisioning
+Instance limit: 1
 ```
 
-Exemplo de progresso:
+O contrato passa a autorizar uma instância do jogo `dayz` para o Customer informado.
 
-```text
-[10%] Placement validado
-[20%] Agent selecionado
-[30%] Portas reservadas
-[40%] Runtime materializado
-[55%] Instalando DayZ
-[75%] Configurando servidor
-[90%] Iniciando runtime
-[100%] Servidor disponível
-```
+## 3. Selecionar o Agent remoto e criar a instância
 
----
-
-## Por que selecionar pelo ID do Agent e não pelo IP
-
-Embora seja possível imaginar uma interface como:
-
-```bash
---agent 192.168.15.45
-```
-
-o modelo preferencial deve usar o identificador permanente do Agent:
-
-```bash
---agent agent-game-01
-```
-
-O cadastro contém o endereço atual:
+Considere um Agent já instalado, registrado e online:
 
 ```text
 Agent ID: agent-game-01
-Hostname: servidor-jogos-01
-IP: 192.168.15.45
-Status: online
+IP anunciado: 192.168.15.45
+Status: active
+Health: online
 ```
 
-Se o endereço mudar posteriormente:
-
-```text
-192.168.15.45
-      ↓
-192.168.15.60
-```
-
-a instância permanece vinculada ao mesmo Agent:
-
-```text
-agent-game-01
-```
-
-Isso evita vincular permanentemente a instância a um endereço de rede que pode mudar.
-
----
-
-## Os três comandos do tutorial
-
-### 1 — Criar login do cliente
+Crie a instância:
 
 ```bash
-dsm user add joao customer CLIENTE-001
-```
-
-O Capivara solicita:
-
-```text
-Senha:
-Confirme a senha:
-```
-
-### 2 — Criar contrato DayZ
-
-```bash
-dsm contract create \
-  --customer CLIENTE-001 \
-  --game dayz \
-  --instances 1
-```
-
-Exemplo de contrato retornado:
-
-```text
-CONTRACT-DAYZ-001
-```
-
-### 3 — Criar e instalar a instância no Agent remoto
-
-```bash
-dsm instance create \
+cap instance create \
   --customer CLIENTE-001 \
   --contract CONTRACT-DAYZ-001 \
   --game dayz \
   --agent agent-game-01 \
   --name dayz-joao-01
+```
+
+O identificador permanente do Agent é preferível ao IP. O endereço anunciado também pode ser resolvido pela CLI, mas o `agent_id` continua sendo a identidade canônica.
+
+O Controller executa o fluxo:
+
+```text
+cap instance create
+        │
+        ▼
+Valida Customer
+        │
+        ▼
+Valida Contract
+        │
+        ▼
+Resolve RuntimeDefinition do jogo
+        │
+        ▼
+Resolve o Agent solicitado
+        │
+        ▼
+Placement valida topologia, lifecycle, health e capabilities
+        │
+        ▼
+Confirma inventário de portas do Agent
+        │
+        ▼
+Reserva portas persistentemente
+        │
+        ▼
+Cria a Instance
+        │
+        ▼
+Enfileira provisionamento distribuído
+        │
+        ▼
+Agent remoto
+        │
+        ├── materializa runtime
+        ├── instala conteúdo
+        ├── cria configuração
+        ├── inicia a instância, quando desired-state=running
+        └── reporta estado ao Controller
+```
+
+Por padrão, `cap instance create` solicita `desired-state=running`. Para criar a instância provisionada mas parada, use:
+
+```bash
+--desired-state stopped
+```
+
+Quando um jogo possui mais de um runtime elegível, informe explicitamente:
+
+```bash
+--runtime <runtime-id>
+```
+
+## Verificação
+
+Depois da criação, acompanhe a instância pelas superfícies administrativas do Controller e pelo estado reportado pelo Agent. O retorno da criação inclui, entre outros campos:
+
+```text
+Instance ID
+Agent
+Runtime
+Ports
+Provisioning ID
+Desired state
+```
+
+A criação é distribuída: o comando no Controller não instala arquivos do jogo localmente no Controller puro. O provisionamento é executado pelo Agent selecionado.
+
+## Exclusão administrativa
+
+A exclusão também usa a CLI `cap` e é confirmação-dirigida pelo Agent:
+
+```bash
+cap instance delete \
+  --instance <instance-id> \
+  --admin <usuario-admin> \
+  --yes
+```
+
+O Controller marca a instância para remoção e envia o comando ao Agent proprietário. O registro persistente e as reservas de portas só são liberados depois que o Agent confirma a remoção do runtime.
+
+A exclusão de contrato segue a mesma regra quando existem instâncias vinculadas:
+
+```bash
+cap contract delete \
+  --contract CONTRACT-DAYZ-001 \
+  --admin <usuario-admin> \
+  --yes
+```
+
+## Resumo rápido
+
+```bash
+# 1. Criar Customer e login
+cap customer create --id CLIENTE-001 --name "João" --username joao
+
+# 2. Criar contrato DayZ
+cap contract create --customer CLIENTE-001 --game dayz --instances 1 --id CONTRACT-DAYZ-001
+
+# 3. Criar a instância no Agent remoto
+cap instance create --customer CLIENTE-001 --contract CONTRACT-DAYZ-001 --game dayz --agent agent-game-01 --name dayz-joao-01
 ```
 
 Topologia final:
 
 ```text
-Cliente
-  CLIENTE-001
+Customer CLIENTE-001
        │
        ├── Login: joao
        │
-       └── Contrato DayZ
+       └── CONTRACT-DAYZ-001
                │
-               └── dayz-joao-01
+               └── Instance
                        │
                        ▼
                agent-game-01
                192.168.15.45
                        │
                        ▼
-                  DayZ Server
-                    RUNNING
-```
-
----
-
-## Resumo rápido
-
-```bash
-# 1. Criar login do cliente
-dsm user add joao customer CLIENTE-001
-
-# 2. Criar contrato DayZ — interface planejada
-dsm contract create --customer CLIENTE-001 --game dayz --instances 1
-
-# 3. Criar a instância no Agent remoto — interface planejada
-dsm instance create --customer CLIENTE-001 --contract CONTRACT-DAYZ-001 --game dayz --agent agent-game-01 --name dayz-joao-01
-```
-
-## Lacunas atuais da CLI
-
-Já existe atualmente:
-
-```bash
-dsm user add <usuario> customer <scope>
-```
-
-Também existem os conceitos de Customer, Contract, Agent, Instance, jogo, runtime distribuído e gerenciamento de portas.
-
-Ainda precisam ser expostos de forma completa como comandos administrativos públicos:
-
-```bash
-dsm customer ...
-dsm contract ...
-dsm instance create ...
-```
-
-A experiência administrativa final pretendida é:
-
-```text
-dsm customer create
-        ↓
-dsm user add
-        ↓
-dsm contract create
-        ↓
-dsm instance create --agent ...
-        ↓
-Servidor instalado no Agent selecionado
+                  DayZ runtime
 ```
