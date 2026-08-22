@@ -143,6 +143,7 @@ class InfrastructureTopologyTest(unittest.TestCase):
         agent = datacenter["children"][0]
         self.assertEqual(region["id"], "br-se")
         self.assertEqual(datacenter["id"], "dc-sp")
+        self.assertEqual(datacenter["region_id"], region["id"])
         self.assertEqual(agent["id"], "agent-a")
         self.assertEqual(agent["children_count"], 2)
         self.assertEqual(agent["topology_state"], "ready")

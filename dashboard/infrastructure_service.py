@@ -76,6 +76,7 @@ class InfrastructureService:
         return {
             "type": "datacenter",
             "id": datacenter["id"],
+            "region_id": datacenter["region_id"],
             "name": datacenter["name"],
             "status": datacenter["status"],
             "provider": datacenter.get("provider"),
