@@ -21,9 +21,7 @@ class InfrastructureCustomerSeparationD1D8Test(unittest.TestCase):
         script = self.source("dashboard/web/app.js")
         for token in ("btn-start", "btn-stop", "btn-restart", "catalog-v2-instance-reinstall", "catalog-v2-config-editor"):
             self.assertNotIn(token, page)
-        self.assertNotIn("/api/instance/start", script)
-        self.assertNotIn("/api/instance/stop", script)
-        self.assertNotIn("/api/instance/restart", script)
+        self.assertNotIn("/api/instance/", script)
         self.assertIn("/api/admin/infrastructure/overview", script)
 
     def test_d2_to_d4_admin_home_is_infrastructure_telemetry(self):
@@ -78,10 +76,14 @@ class InfrastructureCustomerSeparationD1D8Test(unittest.TestCase):
         script = self.source("dashboard/web/customer-admin.js")
         for label in ("Start", "Stop", "Restart", "Reinstalar", "Logs", "Configuração", "Arquivos", "Conteúdo / Mods", "Backups", "Eventos"):
             self.assertIn(label, page)
-        for path in ("/api/instance/start", "/api/instance/stop", "/api/instance/restart", "/api/instance/reinstall/v2", "/api/instance/logs", "/api/instance/backups"):
+        self.assertIn('/api/instance/${action}', script)
+        for path in ("/api/instance/reinstall/v2", "/api/instance/logs", "/api/instance/backups"):
             self.assertIn(path, script)
         self.assertIn("/api/catalog/install", script)
         self.assertIn("/api/instance/file/text", script)
+        self.assertIn('lifecycle("start")', script)
+        self.assertIn('lifecycle("stop")', script)
+        self.assertIn('lifecycle("restart")', script)
 
     def test_d8_server_composition_remains_modular(self):
         api = self.source("dashboard/customer_admin_api.py")
