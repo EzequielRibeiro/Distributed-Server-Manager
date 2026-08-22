@@ -247,6 +247,9 @@ class DashboardRemoteAgentInstallTest(unittest.TestCase):
         self.assertIn("port_protocol", js)
         self.assertIn("Executando bootstrap SSH...", js)
         self.assertIn("Falha: ${error.message}", js)
+        self.assertIn("window.isSecureContext", js)
+        self.assertIn('document.execCommand("copy")', js)
+        self.assertIn("Use Ctrl+C no texto selecionado", js)
 
 
 if __name__ == "__main__":

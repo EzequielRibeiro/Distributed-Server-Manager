@@ -153,6 +153,34 @@
         feedback.dataset.state = state;
     }
 
+    async function copyInstallationCommand() {
+        const command = document.getElementById("agent-install-command");
+        const button = document.getElementById("copy-agent-install");
+        const value = command.value;
+        if (!value) {
+            installationFeedback("Nenhuma instrução disponível para copiar.", "error");
+            return;
+        }
+        try {
+            if (window.isSecureContext && navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(value);
+            } else {
+                command.focus();
+                command.select();
+                command.setSelectionRange(0, value.length);
+                if (!document.execCommand("copy")) throw new Error("copy command was refused");
+            }
+            button.textContent = "Copiado!";
+            installationFeedback("Instrução copiada para a área de transferência.", "success");
+            window.setTimeout(() => { button.textContent = "Copiar instrução"; }, 1800);
+        } catch (_) {
+            command.focus();
+            command.select();
+            command.setSelectionRange(0, value.length);
+            installationFeedback("Não foi possível copiar automaticamente. Use Ctrl+C no texto selecionado.", "error");
+        }
+    }
+
     function progress(state) {
         const root = document.getElementById("agent-install-progress");
         root.dataset.state = state;
@@ -324,9 +352,7 @@
         document.getElementById("add-agent-focus").addEventListener("click", () => {
             document.getElementById("add-agent").scrollIntoView({behavior: "smooth", block: "start"});
         });
-        document.getElementById("copy-agent-install").addEventListener("click", async () => {
-            await navigator.clipboard.writeText(document.getElementById("agent-install-command").value);
-        });
+        document.getElementById("copy-agent-install").addEventListener("click", copyInstallationCommand);
     }
 
     window.addEventListener("load", initializePhase14);
