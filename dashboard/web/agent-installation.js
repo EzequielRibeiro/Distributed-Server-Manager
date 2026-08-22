@@ -100,6 +100,8 @@
         const includePrereleases = document.getElementById("agent-release-prereleases").checked;
 
         wrapper.hidden = method === "local";
+        select.required = method !== "local";
+        select.disabled = method === "local";
         if (method === "local") return;
 
         select.disabled = true;
@@ -138,7 +140,12 @@
         const button = document.getElementById("generate-agent-install");
         document.getElementById("agent-ssh-options").hidden = !ssh;
         const releaseOptions = document.getElementById("agent-release-options");
+        const releaseSelect = document.getElementById("agent-release-tag");
         if (releaseOptions) releaseOptions.hidden = method === "local";
+        if (releaseSelect) {
+            releaseSelect.required = method !== "local";
+            releaseSelect.disabled = method === "local";
+        }
         windows.disabled = ssh;
         if (ssh) linux.checked = true;
         button.textContent = ssh ? "Instalar Agent via SSH" : "Gerar instalação";
