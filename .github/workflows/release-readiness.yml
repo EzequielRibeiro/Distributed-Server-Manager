@@ -109,6 +109,6 @@ jobs:
           assert x['status'] in {'candidate', 'release-approved'}
           if x['status'] == 'release-approved':
               assert x.get('release_authorized') is True
-              assert x.get('tag_name') == 'v2.0.0'
+              assert x.get('tag_name') == 'v' + x.get('release_version', '')
           print('release publication remains an explicit administrative action')
           PY

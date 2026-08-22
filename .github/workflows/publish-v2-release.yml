@@ -1,14 +1,6 @@
-name: Publish Capivara 2.0.0
+name: Publish Capivara 2.0.0 (legacy manual)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'version'
-      - 'release/readiness-v2.json'
-      - 'release/RELEASE_NOTES_2.0.0.md'
-      - 'release/build_release.sh'
-      - '.github/workflows/publish-v2-release.yml'
   workflow_dispatch:
 
 permissions:

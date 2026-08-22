@@ -72,11 +72,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          VERSION=$(tr -d '\r\n' <version)
           RELEASE_FLAGS=(
             --verify-tag
-            --generate-notes
             --title "Capivara DSM ${GITHUB_REF_NAME}"
           )
+          if [[ -f "release/RELEASE_NOTES_${VERSION}.md" ]]
+          then
+            RELEASE_FLAGS+=(--notes-file "release/RELEASE_NOTES_${VERSION}.md")
+          else
+            RELEASE_FLAGS+=(--generate-notes)
+          fi
           if [[ "${GITHUB_REF_NAME}" == *-* ]]
           then
             RELEASE_FLAGS+=(--prerelease)

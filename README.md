@@ -381,7 +381,7 @@ sudo ./install.sh --remote
 Para solicitar uma tag específica:
 
 ```bash
-sudo ./install.sh --version v2.0.0
+sudo ./install.sh --version v2.0.1
 ```
 
 A instalação remota depende da existência dos assets oficiais esperados pelo instalador para aquela release.
