@@ -73,6 +73,7 @@ class OperationsCenterD9D15Test(unittest.TestCase):
         self.assertIn('id="schedule-form"', self.html)
         self.assertIn("create_schedule", self.js)
         self.assertIn("set_schedule_enabled", self.js)
+        self.assertIn('return "0 * * * *"', self.js)
         service_source = (ROOT / "dashboard" / "operations_center_service.py").read_text(encoding="utf-8")
         self.assertIn("list_runs", service_source)
         self.assertIn("create_schedule", service_source)
@@ -84,10 +85,10 @@ class OperationsCenterD9D15Test(unittest.TestCase):
         service.automation = _FakeAutomation()
         result = service.create_schedule(
             {
-                "name": "Backup noturno",
+                "name": "Doctor noturno",
                 "scope": "controller",
-                "action": "controller_backup",
-                "expression": "03:00",
+                "action": "infrastructure_doctor",
+                "expression": "0 3 * * *",
                 "timezone": "America/Sao_Paulo",
                 "enabled": True,
             },
@@ -97,9 +98,28 @@ class OperationsCenterD9D15Test(unittest.TestCase):
         self.assertTrue(result["changed"])
         self.assertTrue(raw["rule_id"].startswith("admin-schedule-"))
         self.assertEqual(raw["trigger"]["type"], "schedule")
-        self.assertEqual(raw["trigger"]["expression"], "03:00")
-        self.assertEqual(raw["actions"][0]["configuration"]["operation"], "controller_backup")
+        self.assertEqual(raw["trigger"]["expression"], "0 3 * * *")
+        self.assertEqual(raw["trigger"]["timezone"], "America/Sao_Paulo")
+        self.assertEqual(raw["actions"][0]["type"], "administrative")
+        self.assertEqual(raw["actions"][0]["operation"], "infrastructure_doctor")
         self.assertEqual(requested_by, "admin")
+
+    def test_d12_agent_schedule_requires_agent_target(self):
+        service = object.__new__(OperationsCenterService)
+        service.events = type("Events", (), {"initialize": lambda self: None})()
+        service.alerts = type("Alerts", (), {"initialize": lambda self: None})()
+        service.automation = _FakeAutomation()
+        with self.assertRaisesRegex(ValueError, "Agent é obrigatório"):
+            service.create_schedule(
+                {
+                    "name": "Agent health",
+                    "scope": "agent",
+                    "action": "agent_health_check",
+                    "expression": "*/15 * * * *",
+                    "timezone": "UTC",
+                },
+                user={"role": "admin"},
+            )
 
     def test_d13_operational_log_history_is_structured(self):
         self.assertIn("view=logs", self.js)
