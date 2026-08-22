@@ -17,3 +17,7 @@ Um Controller puro não executa runtime de jogo local. Comandos locais de lifecy
 A implementação histórica fica isolada atrás de uma camada interna chamada pelo próprio `cap`. Isso permite retirar dependências gradualmente sem manter duas CLIs públicas concorrentes.
 
 Enquanto a compatibilidade for necessária, o comando `dsm` pode continuar instalado para scripts e instalações antigas, mas não deve aparecer como caminho recomendado em documentação operacional nova. Quando essa camada deixar de ter consumidores, ela poderá ser removida em uma mudança de aposentadoria dedicada.
+
+## Regra para documentação
+
+Referências a `DSM_*`, `/opt/dsm`, nomes `dsm-*.service` e ao nome do produto Capivara DSM são identificadores técnicos e permanecem válidas. Somente exemplos e instruções de CLI para operadores devem convergir para `cap`.
