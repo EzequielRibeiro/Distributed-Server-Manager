@@ -708,15 +708,25 @@ def initialize(
     connection = connect(config)
 
     try:
-        completed = ([] if _schema_migrations_exists(connection)
-                     else apply_consolidated_schema(connection))
+        initialized = _schema_migrations_exists(connection)
+        # Psycopg starts an implicit transaction even for the detection SELECT.
+        # Commit it before opening the schema transaction; otherwise
+        # connection.transaction() becomes a savepoint and closing the outer
+        # connection silently rolls the complete schema back.
+        connection.commit()
+        completed = ([] if initialized else apply_consolidated_schema(connection))
         validate_schema(connection)
-
-        return _database_status_connection(
+        result = _database_status_connection(
             connection,
             config,
             applied_now=completed,
         )
+        connection.commit()
+        return result
+
+    except Exception:
+        connection.rollback()
+        raise
 
     finally:
         connection.close()

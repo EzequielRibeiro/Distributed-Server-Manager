@@ -2,6 +2,7 @@
 """Contract tests for clean-install consolidated schemas."""
 
 from pathlib import Path
+import re
 import sqlite3
 from contextlib import closing
 import sys
@@ -22,6 +23,12 @@ class ConsolidatedSchemaTest(unittest.TestCase):
             self.assertIn("CREATE TABLE agent_runtime_inventory", schema)
             self.assertLess(schema.index("CREATE TABLE agent_pairing_tokens"),
                             schema.index("ALTER TABLE agent_pairing_tokens ADD COLUMN platform"))
+            for table in ("nodes", "instances", "controllers", "agents",
+                          "regions", "datacenters", "dashboard_users"):
+                self.assertRegex(
+                    schema,
+                    rf"CREATE TABLE(?: IF NOT EXISTS)?\s+{re.escape(table)}\b",
+                )
 
     def test_sqlite_clean_install_is_one_baseline_and_valid(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -38,7 +45,7 @@ class ConsolidatedSchemaTest(unittest.TestCase):
             self.assertEqual(rows, [(41, "consolidated_schema")])
 
     def test_database_validation_precedes_capivara_persistence(self):
-        installer = (ROOT / "install-core.sh").read_text()
+        installer = (ROOT / "install-core.sh").read_text(encoding="utf-8")
         main = installer[installer.index("main()") :]
         self.assertLess(main.index("prevalidate_database"),
                         main.index("ensure_service_account"))
@@ -47,9 +54,16 @@ class ConsolidatedSchemaTest(unittest.TestCase):
         self.assertLess(main.index("initialize_database"),
                         main.index("install_systemd_units"))
 
+    def test_network_preflight_validates_consolidated_schema(self):
+        setup = (ROOT / "installer" / "database_setup.sh").read_text(encoding="utf-8")
+        preflight = setup[setup.index("prevalidate_database()") :]
+        self.assertLess(preflight.index("run_source_database_manager check"),
+                        preflight.index("run_source_database_manager init"))
+        self.assertIn("Schema do banco ausente, parcial ou incompatível", preflight)
+
     def test_secret_contract_is_automatic_and_never_prints_value(self):
-        entrypoint = (ROOT / "install.sh").read_text()
-        setup = (ROOT / "installer" / "database_setup.sh").read_text()
+        entrypoint = (ROOT / "install.sh").read_text(encoding="utf-8")
+        setup = (ROOT / "installer" / "database_setup.sh").read_text(encoding="utf-8")
         self.assertIn("/etc/capivara/secrets/database-password", entrypoint)
         self.assertIn("read -r -s", entrypoint)
         self.assertIn("install -d -m 700", entrypoint)

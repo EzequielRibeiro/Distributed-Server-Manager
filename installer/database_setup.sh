@@ -175,6 +175,12 @@ prevalidate_database()
         check_remote_endpoint
         run_source_database_manager check >/dev/null \
             || die "Conexão real ao banco falhou; nenhuma instalação do Capivara foi iniciada."
+        # A conexão isolada não basta: um banco parcialmente inicializado
+        # precisa ser recusado antes de criar conta, /opt/dsm ou systemd.
+        # Em banco vazio, init aplica o baseline consolidado; em banco já
+        # inicializado, ele valida a presença das tabelas obrigatórias.
+        run_source_database_manager init >/dev/null \
+            || die "Schema do banco ausente, parcial ou incompatível; nenhuma instalação do Capivara foi iniciada."
     fi
     DATABASE_CONNECTION_STATUS=operacional
     log "Banco validado com os parâmetros exatos informados."
