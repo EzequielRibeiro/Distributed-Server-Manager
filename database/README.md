@@ -1,12 +1,30 @@
 # Capivara DSM persistence
 
-The persistence layer uses SQLite from the Python standard library. It does
-not require a separate database server and is suitable for Controller, Agent
-and hybrid installations.
+The persistence layer supports SQLite, PostgreSQL and MySQL/MariaDB through the
+backend abstraction. Clean installations use one complete schema per backend
+from `database/schemas`; historical incremental migrations and upgrades of
+databases created by old releases are unsupported.
 
-The default database is stored at `data/capivara.db`. Clean installations use
-one complete schema per backend from `database/schemas`. Historical incremental
-migrations and upgrades of databases created by old releases are unsupported.
+## Customer user lifecycle
+
+The historical 006/007 migration responsibilities are represented in the
+consolidated schemas. The supported Customer identity chain is:
+
+`customers -> dashboard_users(scope_id) -> customer_account_members -> instance_access`
+
+A Customer login is valid only when the authenticated `dashboard_users` row is
+scoped to the Customer and a matching `customer_account_members` row exists.
+Account roles are `owner`, `manager` and `member`. They are deliberately
+separate from the per-instance `viewer`, `operator` and `manager` permission
+profiles. Customer-facing requests derive the Customer ID from the authenticated
+session; callers cannot select another Customer scope.
+
+`database/customer_user_repository.py` is the canonical persistence facade for
+Customer users, memberships and instance grants. The older
+`customer_team_repository.py` remains the lower-level compatibility
+implementation while callers migrate to the canonical facade. The last owner is
+protected, and every instance grant must resolve to an instance belonging to the
+same Customer.
 
 Dashboard users are stored exclusively in the `dashboard_users` table. Create
 the first administrator interactively from the console:
@@ -16,8 +34,8 @@ cap user add admin admin
 ```
 
 The `cap instance create-aurora` demonstration command creates the active
-`aurora` customer user and its ownership links in SQLite. There is no
-`users.conf` authentication fallback.
+`aurora` customer user and its ownership links. There is no `users.conf`
+authentication fallback.
 
 ```bash
 dsm database init
