@@ -109,72 +109,145 @@
     <section id="agents-list" class="agents-grid"></section>
 
     <section id="agent-detail" class="agent-detail" hidden>
-        <h2 id="agent-detail-title">Agent</h2>
-        <div id="agent-ranges" class="range-grid"></div>
-        <div id="agent-conflicts" class="conflict-box"></div>
+        <div class="agent-detail-dashboard">
+            <header class="agent-detail-topbar">
+                <h2 id="agent-detail-title">Informações do Agent</h2>
+                <span id="agent-detail-health-badge" class="agent-online-badge">Online</span>
+            </header>
 
-        <section class="range-form agent-manager-only" id="agent-update-panel">
-            <h3>Atualização remota</h3>
-            <div class="range-grid">
-                <article class="range-card"><span>Versão instalada</span><strong id="agent-installed-version">—</strong></article>
-                <article class="range-card"><span>Versão disponível</span><strong id="agent-available-version">—</strong></article>
-                <article class="range-card"><span>Status</span><strong id="agent-update-status">—</strong></article>
-                <article class="range-card"><span>Última atualização</span><strong id="agent-last-update">—</strong></article>
+            <section class="agent-summary-grid" aria-label="Resumo do Agent">
+                <article class="agent-summary-card"><span>Hostname</span><strong id="agent-info-hostname">—</strong></article>
+                <article class="agent-summary-card"><span>Endereço</span><strong id="agent-info-address">—</strong></article>
+                <article class="agent-summary-card"><span>Sistema</span><strong id="agent-info-system">—</strong></article>
+                <article class="agent-summary-card"><span>Versão</span><strong id="agent-info-version">—</strong></article>
+                <article class="agent-summary-card"><span>Saúde</span><strong id="agent-info-health">—</strong></article>
+                <article class="agent-summary-card"><span>Último heartbeat</span><strong id="agent-info-heartbeat">—</strong></article>
+            </section>
+
+            <section class="agent-telemetry-section" aria-labelledby="host-telemetry-title">
+                <div class="agent-section-heading">
+                    <div>
+                        <h3 id="host-telemetry-title">Telemetria do computador</h3>
+                        <p>Consumo total do host físico ou virtual onde o Agent está executando.</p>
+                    </div>
+                </div>
+                <div class="agent-telemetry-grid">
+                    <article class="telemetry-card cpu"><span class="metric-label">CPU</span><strong id="agent-host-cpu" class="metric-value">0.0%</strong><span class="metric-subvalue">Uso do processador</span><canvas id="agent-host-cpu-chart" aria-label="Histórico de CPU"></canvas></article>
+                    <article class="telemetry-card memory"><span class="metric-label">Memória (RAM)</span><strong id="agent-host-memory" class="metric-value">0 B / 0 B</strong><span class="metric-subvalue">Memória utilizada e total</span><canvas id="agent-host-memory-chart" aria-label="Histórico de memória"></canvas></article>
+                    <article class="telemetry-card disk"><span class="metric-label">Disco</span><strong id="agent-host-disk" class="metric-value">0.0%</strong><span class="metric-subvalue">Uso do armazenamento</span><canvas id="agent-host-disk-chart" aria-label="Histórico de disco"></canvas></article>
+                    <article class="telemetry-card load"><span class="metric-label">Load Average</span><strong id="agent-host-load" class="metric-value">0.00 / 0.00 / 0.00</strong><span class="metric-subvalue">1, 5 e 15 minutos</span><canvas id="agent-host-load-chart" aria-label="Histórico de load average"></canvas></article>
+                    <article class="telemetry-card uptime"><span class="metric-label">Uptime</span><strong id="agent-host-uptime" class="metric-value">0h 0m</strong><span class="metric-subvalue">Desde o último boot</span><canvas id="agent-host-uptime-chart" aria-label="Histórico de uptime"></canvas></article>
+                    <article class="telemetry-card network-in"><span class="metric-label">Rede recebida</span><strong id="agent-host-network-in" class="metric-value">0 B/s</strong><span class="metric-subvalue">Tráfego recebido</span><canvas id="agent-host-network-in-chart" aria-label="Histórico de rede recebida"></canvas></article>
+                    <article class="telemetry-card network-out"><span class="metric-label">Rede enviada</span><strong id="agent-host-network-out" class="metric-value">0 B/s</strong><span class="metric-subvalue">Tráfego enviado</span><canvas id="agent-host-network-out-chart" aria-label="Histórico de rede enviada"></canvas></article>
+                    <article class="telemetry-card temperature"><span class="metric-label">Temperatura (CPU)</span><strong id="agent-host-temperature" class="metric-value">N/D</strong><span class="metric-subvalue">Sensor do sistema</span><canvas id="agent-host-temperature-chart" aria-label="Histórico de temperatura"></canvas></article>
+                </div>
+            </section>
+
+            <section class="agent-telemetry-section" aria-labelledby="process-telemetry-title">
+                <div class="agent-section-heading">
+                    <div>
+                        <h3 id="process-telemetry-title">Telemetria do Capivara Agent</h3>
+                        <p>Consumo exclusivo do processo do Agent, separado do restante da máquina.</p>
+                    </div>
+                </div>
+                <div class="agent-telemetry-grid">
+                    <article class="telemetry-card agent-cpu"><span class="metric-label">CPU do Agent</span><strong id="agent-process-cpu" class="metric-value">0.0%</strong><span class="metric-subvalue">Uso do processo</span><canvas id="agent-process-cpu-chart" aria-label="Histórico de CPU do Agent"></canvas></article>
+                    <article class="telemetry-card agent-memory"><span class="metric-label">Memória do Agent (RAM)</span><strong id="agent-process-memory" class="metric-value">0 B</strong><span class="metric-subvalue">Memória residente do processo</span><canvas id="agent-process-memory-chart" aria-label="Histórico de memória do Agent"></canvas></article>
+                    <article class="telemetry-card agent-threads"><span class="metric-label">Threads do Agent</span><strong id="agent-process-threads" class="metric-value">—</strong><span class="metric-subvalue">Threads ativas</span><canvas id="agent-process-threads-chart" aria-label="Histórico de threads do Agent"></canvas></article>
+                    <article class="telemetry-card agent-pid"><span class="metric-label">PID do Agent</span><strong id="agent-process-pid" class="metric-value">—</strong><span class="metric-subvalue">Identificador do processo</span><canvas id="agent-process-pid-chart" aria-label="Histórico do PID do Agent"></canvas></article>
+                </div>
+            </section>
+
+            <section class="agent-bottom-grid">
+                <article class="agent-process-panel">
+                    <h3>Processos do Agent (Top 5 por CPU)</h3>
+                    <table class="agent-process-table">
+                        <thead><tr><th>Processo</th><th>PID</th><th>CPU %</th><th>RAM</th><th>Threads</th></tr></thead>
+                        <tbody id="agent-process-table-body"><tr class="empty-row"><td colspan="5">Aguardando telemetria do Agent.</td></tr></tbody>
+                    </table>
+                </article>
+                <aside class="agent-help-panel">
+                    <h3>Entenda os gráficos</h3>
+                    <ul>
+                        <li>Os gráficos representam a evolução das métricas recebidas pelo Controller.</li>
+                        <li>CPU, memória, disco e rede pertencem ao host do Agent.</li>
+                        <li>A telemetria do Capivara Agent representa apenas o processo do Agent.</li>
+                        <li>Load Average corresponde às médias de 1, 5 e 15 minutos.</li>
+                    </ul>
+                </aside>
+            </section>
+
+            <section class="agent-management-panel">
+                <h3>Portas administradas</h3>
+                <div id="agent-ranges" class="range-grid"></div>
+                <div id="agent-conflicts" class="conflict-box"></div>
+            </section>
+
+            <div class="agent-management-stack">
+                <section class="range-form agent-manager-only agent-management-panel" id="agent-update-panel">
+                    <h3>Atualização remota</h3>
+                    <div class="range-grid">
+                        <article class="range-card"><span>Versão instalada</span><strong id="agent-installed-version">—</strong></article>
+                        <article class="range-card"><span>Versão disponível</span><strong id="agent-available-version">—</strong></article>
+                        <article class="range-card"><span>Status</span><strong id="agent-update-status">—</strong></article>
+                        <article class="range-card"><span>Última atualização</span><strong id="agent-last-update">—</strong></article>
+                    </div>
+                    <form id="agent-update-channel-form" class="range-form">
+                        <label>Canal
+                            <select id="agent-update-channel">
+                                <option value="stable">Stable</option>
+                                <option value="beta">Beta</option>
+                                <option value="local/manual">Local / manual</option>
+                            </select>
+                        </label>
+                        <button type="submit">Salvar canal</button>
+                    </form>
+                    <form id="agent-rollout-form" class="range-form">
+                        <label>Agents do rollout
+                            <textarea id="agent-rollout-agents" rows="3" placeholder="agent-a, agent-b"></textarea>
+                        </label>
+                        <label>Versão desejada <input id="agent-rollout-version" type="text" placeholder="1.5.0" required></label>
+                        <label>Tamanho do lote <input id="agent-rollout-batch-size" type="number" min="1" value="1" required></label>
+                        <label>Canal
+                            <select id="agent-rollout-channel">
+                                <option value="stable">Stable</option>
+                                <option value="beta">Beta</option>
+                                <option value="local/manual">Local / manual</option>
+                            </select>
+                        </label>
+                        <p>O próximo lote só é liberado quando todos os Agents dos lotes anteriores voltarem online na versão esperada.</p>
+                        <button type="submit">Criar rollout</button>
+                    </form>
+                </section>
+
+                <form id="agent-location-form" class="range-form agent-management-panel">
+                    <h3>Localização do Agent</h3>
+                    <label>Região
+                        <select id="agent-region" required><option value="">Selecione uma região</option></select>
+                    </label>
+                    <label>Datacenter
+                        <select id="agent-datacenter" required><option value="">Selecione um datacenter</option></select>
+                    </label>
+                    <label>Latitude <input id="agent-latitude" type="number" min="-90" max="90" step="any"></label>
+                    <label>Longitude <input id="agent-longitude" type="number" min="-180" max="180" step="any"></label>
+                    <label>Host público <input id="agent-public-host" type="text"></label>
+                    <label>Status
+                        <select id="agent-location-status"><option value="active">Ativo</option><option value="disabled">Desabilitado</option></select>
+                    </label>
+                    <p class="location-safety-note">Alterar Região/Datacenter modifica apenas metadados de localização. Instâncias existentes permanecem vinculadas ao Agent.</p>
+                    <button type="submit">Salvar localização</button>
+                </form>
+
+                <form id="agent-range-form" class="range-form agent-management-panel">
+                    <h3>Alterar faixa administrada</h3>
+                    <label>Protocolo<select id="range-protocol"><option value="both">TCP + UDP</option><option value="udp">UDP</option><option value="tcp">TCP</option></select></label>
+                    <label>Porta inicial<input id="range-start" type="number" min="1" max="65535" required></label>
+                    <label>Porta final<input id="range-end" type="number" min="1" max="65535" required></label>
+                    <label id="force-wrapper" class="force-option" hidden><input id="range-force" type="checkbox"> Confirmação administrativa para manter reservas fora da nova faixa</label>
+                    <button type="submit">Salvar faixa</button>
+                </form>
             </div>
-            <form id="agent-update-channel-form" class="range-form">
-                <label>Canal
-                    <select id="agent-update-channel">
-                        <option value="stable">Stable</option>
-                        <option value="beta">Beta</option>
-                        <option value="local/manual">Local / manual</option>
-                    </select>
-                </label>
-                <button type="submit">Salvar canal</button>
-            </form>
-            <form id="agent-rollout-form" class="range-form">
-                <label>Agents do rollout
-                    <textarea id="agent-rollout-agents" rows="3" placeholder="agent-a, agent-b"></textarea>
-                </label>
-                <label>Versão desejada <input id="agent-rollout-version" type="text" placeholder="1.5.0" required></label>
-                <label>Tamanho do lote <input id="agent-rollout-batch-size" type="number" min="1" value="1" required></label>
-                <label>Canal
-                    <select id="agent-rollout-channel">
-                        <option value="stable">Stable</option>
-                        <option value="beta">Beta</option>
-                        <option value="local/manual">Local / manual</option>
-                    </select>
-                </label>
-                <p>O próximo lote só é liberado quando todos os Agents dos lotes anteriores voltarem online na versão esperada.</p>
-                <button type="submit">Criar rollout</button>
-            </form>
-        </section>
-
-        <form id="agent-location-form" class="range-form">
-            <h3>Localização do Agent</h3>
-            <label>Região
-                <select id="agent-region" required><option value="">Selecione uma região</option></select>
-            </label>
-            <label>Datacenter
-                <select id="agent-datacenter" required><option value="">Selecione um datacenter</option></select>
-            </label>
-            <label>Latitude <input id="agent-latitude" type="number" min="-90" max="90" step="any"></label>
-            <label>Longitude <input id="agent-longitude" type="number" min="-180" max="180" step="any"></label>
-            <label>Host público <input id="agent-public-host" type="text"></label>
-            <label>Status
-                <select id="agent-location-status"><option value="active">Ativo</option><option value="disabled">Desabilitado</option></select>
-            </label>
-            <p class="location-safety-note">Alterar Região/Datacenter modifica apenas metadados de localização. Instâncias existentes permanecem vinculadas ao Agent.</p>
-            <button type="submit">Salvar localização</button>
-        </form>
-
-        <form id="agent-range-form" class="range-form">
-            <h3>Alterar faixa administrada</h3>
-            <label>Protocolo<select id="range-protocol"><option value="both">TCP + UDP</option><option value="udp">UDP</option><option value="tcp">TCP</option></select></label>
-            <label>Porta inicial<input id="range-start" type="number" min="1" max="65535" required></label>
-            <label>Porta final<input id="range-end" type="number" min="1" max="65535" required></label>
-            <label id="force-wrapper" class="force-option" hidden><input id="range-force" type="checkbox"> Confirmação administrativa para manter reservas fora da nova faixa</label>
-            <button type="submit">Salvar faixa</button>
-        </form>
+        </div>
     </section>
 </main>
 <script src="/agents.js"></script>
