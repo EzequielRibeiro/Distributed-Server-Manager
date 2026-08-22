@@ -7,7 +7,7 @@ ROOT=Path(__file__).resolve().parents[1]
 for path in (ROOT/"core",ROOT/"database",ROOT/"dashboard",ROOT/"dashboard"/"workers"):
  if str(path) not in sys.path:sys.path.insert(0,str(path))
 from automation_repository import AutomationRepository
-from automation_worker import AutomationWorker,cron_matches
+from automation_worker import AutomationWorker,cron_matches,schedule_time
 from backend import DatabaseConfig
 from backend_factory import create_backend
 from universal_event_repository import UniversalEventRepository
@@ -27,4 +27,9 @@ class AutomationWorkerTest(unittest.TestCase):
  def test_schedule_minute_is_idempotent(self):
   self.repo.put_rule({"rule_id":"schedule-w","trigger":{"type":"schedule","expression":"0 19 * * *"},"actions":[{"type":"broadcast","broadcast":{"scope":"instance","target":"instance-w","message":"scheduled"}}]})
   dt=datetime(2026,8,21,19,0,tzinfo=timezone.utc);self.assertEqual(self.worker.process_schedules(dt),1);self.assertEqual(self.worker.process_schedules(dt),0);self.assertEqual(len(self.repo.list_broadcasts()),1)
+ def test_schedule_timezone_is_applied_before_cron_match(self):
+  trigger={"type":"schedule","expression":"0 3 * * *","timezone":"America/Sao_Paulo"};dt=datetime(2026,8,22,6,0,tzinfo=timezone.utc);local=schedule_time(trigger,dt);self.assertIsNotNone(local);self.assertEqual((local.hour,local.minute),(3,0));self.assertTrue(cron_matches(trigger["expression"],local))
+ def test_administrative_doctor_schedule_executes(self):
+  self.repo.put_rule({"rule_id":"doctor-w","trigger":{"type":"schedule","expression":"0 3 * * *","timezone":"America/Sao_Paulo"},"actions":[{"type":"administrative","operation":"infrastructure_doctor"}]})
+  dt=datetime(2026,8,22,6,0,tzinfo=timezone.utc);self.assertEqual(self.worker.process_schedules(dt),1);runs=self.repo.list_runs(rule_id="doctor-w",limit=1);self.assertEqual(len(runs),1);self.assertEqual(runs[0]["status"],"completed")
 if __name__=="__main__":unittest.main()
