@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import instance_runtime
+from host_telemetry import collect_host_telemetry
 from observability_client import collect_observability
 
 
@@ -59,6 +60,7 @@ def snapshot(*, queue_depth: dict[str, int] | None = None) -> dict[str, Any]:
     for sample in samples:
         sample.pop("agent_id", None)
     payload["observability_samples"] = samples
+    payload["telemetry"] = collect_host_telemetry()
     return payload
 
 
