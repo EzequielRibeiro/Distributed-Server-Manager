@@ -40,6 +40,57 @@ MYSQL_TLS_MODES = {
     "verify-full",
 }
 
+CONSOLIDATED_SCHEMA_VERSION = 41
+CONSOLIDATED_SCHEMA_NAME = "consolidated_schema"
+REQUIRED_SCHEMA_TABLES = {
+    "agents", "controllers", "agent_pairing_tokens", "agent_credentials",
+    "agent_runtime_inventory", "schema_migrations",
+}
+
+
+def consolidated_schema_path(driver: str = "mysql") -> Path:
+    backend = "mariadb" if driver.strip().lower() == "mariadb" else "mysql"
+    return Path(__file__).resolve().parent / "schemas" / f"{backend}.sql"
+
+
+def apply_consolidated_schema(connection: Any, driver: str = "mysql") -> list[int]:
+    path = consolidated_schema_path(driver)
+    if not path.is_file():
+        raise DatabaseMigrationError(f"consolidated MySQL schema not found: {path}")
+    sql = path.read_text(encoding="utf-8")
+    checksum = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+    try:
+        _execute_script(connection, sql)
+        cursor = connection.cursor()
+        try:
+            cursor.execute(SCHEMA_MIGRATIONS_SQL)
+            cursor.execute(
+                "INSERT INTO schema_migrations(version,name,checksum) VALUES (%s,%s,%s)",
+                (CONSOLIDATED_SCHEMA_VERSION, CONSOLIDATED_SCHEMA_NAME, checksum),
+            )
+        finally:
+            cursor.close()
+        connection.commit()
+    except Exception as exc:
+        try:
+            connection.rollback()
+        except Exception:
+            pass
+        raise DatabaseMigrationError(f"consolidated MySQL schema failed: {exc}") from exc
+    return [CONSOLIDATED_SCHEMA_VERSION]
+
+
+def validate_schema(connection: Any) -> None:
+    cursor = _dictionary_cursor(connection)
+    try:
+        cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE()")
+        names = {str(row["table_name"]) for row in cursor.fetchall()}
+    finally:
+        cursor.close()
+    missing = sorted(REQUIRED_SCHEMA_TABLES - names)
+    if missing:
+        raise DatabaseMigrationError("incomplete MySQL/MariaDB schema; missing: " + ", ".join(missing))
+
 
 @dataclass(frozen=True)
 class Migration:
@@ -1031,11 +1082,9 @@ def initialize(
     )
 
     try:
-        completed = (
-            apply_migrations(
-                connection
-            )
-        )
+        completed = ([] if _schema_migrations_exists(connection)
+                     else apply_consolidated_schema(connection, config.driver))
+        validate_schema(connection)
 
         return _database_status_connection(
             connection,

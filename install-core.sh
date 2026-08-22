@@ -48,6 +48,7 @@ DSM_DATABASE_NAME="${DSM_DATABASE_NAME:-capivara}"
 DSM_DATABASE_USER="${DSM_DATABASE_USER:-}"
 DSM_DATABASE_PASSWORD_FILE="${DSM_DATABASE_PASSWORD_FILE:-}"
 DSM_DATABASE_TLS="${DSM_DATABASE_TLS:-preferred}"
+DATABASE_CONNECTION_STATUS="${DATABASE_CONNECTION_STATUS:-pendente}"
 
 NON_INTERACTIVE="${DSM_NON_INTERACTIVE:-0}"
 
@@ -60,6 +61,9 @@ RELEASE_VERSION=""
 RELEASE_ARCHIVE=""
 RELEASE_MANIFEST=""
 RELEASE_ROOT=""
+
+# shellcheck source=installer/database_setup.sh
+source "${INSTALLER_DIR}/installer/database_setup.sh"
 
 # =============================================================
 # Output
@@ -645,6 +649,12 @@ validate_database_settings()
         || die "DSM_DATABASE_NAME é obrigatório para ${DSM_DATABASE_DRIVER}."
     [[ -n "${DSM_DATABASE_USER}" ]] \
         || die "DSM_DATABASE_USER é obrigatório para ${DSM_DATABASE_DRIVER}."
+    [[ "${DSM_DATABASE_NAME}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] \
+        || die "DSM_DATABASE_NAME deve ser um identificador SQL simples."
+    [[ "${DSM_DATABASE_USER}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] \
+        || die "DSM_DATABASE_USER deve ser um identificador SQL simples."
+    [[ "${DSM_DATABASE_USER,,}" != postgres && "${DSM_DATABASE_USER,,}" != root ]] \
+        || die "Use uma conta dedicada de aplicação; postgres/root não são permitidos."
     [[ "${DSM_DATABASE_PORT}" =~ ^[0-9]+$ ]] \
         && (( DSM_DATABASE_PORT >= 1 && DSM_DATABASE_PORT <= 65535 )) \
         || die "DSM_DATABASE_PORT deve estar entre 1 e 65535."
@@ -657,8 +667,9 @@ validate_database_settings()
             ;;
     esac
 
-    if [[ -n "${DSM_DATABASE_PASSWORD_FILE}" ]]
-    then
+    [[ -n "${DSM_DATABASE_PASSWORD_FILE}" ]] \
+        || die "O arquivo protegido da senha é obrigatório para ${DSM_DATABASE_DRIVER}."
+    if [[ -n "${DSM_DATABASE_PASSWORD_FILE}" ]]; then
         [[ -f "${DSM_DATABASE_PASSWORD_FILE}" ]] \
             || die "Arquivo de senha do banco não encontrado: ${DSM_DATABASE_PASSWORD_FILE}"
         [[ -r "${DSM_DATABASE_PASSWORD_FILE}" ]] \
@@ -915,7 +926,8 @@ system_requirements_preflight()
     check_architecture || true
     check_bash_version || true
     check_python || true
-    check_python_database_driver || true
+    # Database drivers are installed/validated by prevalidate_database after
+    # the selected source has been acquired and before Capivara persistence.
 
     printf '\nFerramentas obrigatórias:\n'
 
@@ -993,9 +1005,9 @@ show_plan()
         printf 'Nome do banco      : %s\n' "${DSM_DATABASE_NAME}"
         printf 'Usuário do banco   : %s\n' "${DSM_DATABASE_USER}"
         printf 'TLS do banco       : %s\n' "${DSM_DATABASE_TLS}"
-        printf 'Senha              : %s\n' \
-            "$([[ -n "${DSM_DATABASE_PASSWORD_FILE}" ]] && printf 'arquivo protegido' || printf 'não configurada')"
+        printf 'Secret             : %s\n' "${DSM_DATABASE_PASSWORD_FILE}"
     fi
+    printf 'Conexão            : %s\n' "${DATABASE_CONNECTION_STATUS}"
 
     if is_interactive && (( ! DRY_RUN ))
     then
@@ -1515,6 +1527,11 @@ verify_source_tree()
         database/registry_repository.py
         database/runtime_backend.py
         database/backend_factory.py
+        database/schemas/sqlite.sql
+        database/schemas/postgresql.sql
+        database/schemas/mysql.sql
+        database/schemas/mariadb.sql
+        installer/database_setup.sh
         database/migrations/001_initial.sql
         database/migrations_postgresql/001_initial.sql
         database/migrations_mysql/001_initial.sql
@@ -1927,7 +1944,7 @@ initialize_database()
     if (( DRY_RUN ))
     then
         log \
-            "[DRY-RUN] inicializaria/aplicaria migrações no backend ${DSM_DATABASE_DRIVER}"
+            "[DRY-RUN] aplicaria o schema consolidado no backend ${DSM_DATABASE_DRIVER}"
 
         return 0
     fi
@@ -2365,15 +2382,20 @@ main()
 
     # Ainda não altera o sistema.
     system_requirements_preflight
-    show_plan
 
     acquire_source
     verify_source_tree
+
+    # Pacotes/servidor/banco podem ser preparados, mas nenhum arquivo ou
+    # serviço do Capivara é persistido antes deste teste real ter sucesso.
+    prevalidate_database
+    show_plan
 
     guard_existing_installation
 
     # Alterações persistentes começam daqui.
     ensure_service_account
+    transfer_database_secret_ownership
     install_project_files
 
     write_dsm_config

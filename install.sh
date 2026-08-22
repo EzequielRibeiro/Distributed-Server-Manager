@@ -11,6 +11,28 @@ CORE_INSTALLER="${ROOT}/install-core.sh"
 
 is_interactive(){ [[ "${DSM_NON_INTERACTIVE:-0}" != "1" && -t 0 && -t 1 ]]; }
 
+create_database_password_secret(){
+    local secret_path="${DSM_DATABASE_PASSWORD_FILE:-/etc/capivara/secrets/database-password}"
+    local password confirmation
+    printf '\n==============================================================\n Credencial do banco de dados\n==============================================================\n'
+    printf 'O Capivara criará um arquivo protegido para a senha do banco.\n'
+    printf 'A senha não aparecerá na tela, histórico ou logs; o Controller\n'
+    printf 'usará esse arquivo exclusivamente para autenticação.\nArquivo: %s\n\n' "${secret_path}"
+    while true; do
+        IFS= read -r -s -p 'Senha do usuário do banco: ' password; printf '\n'
+        IFS= read -r -s -p 'Confirme a senha: ' confirmation; printf '\n'
+        [[ -n "${password}" ]] || { printf '[Capivara][ERRO] A senha não pode ser vazia.\n' >&2; continue; }
+        [[ "${password}" == "${confirmation}" ]] && break
+        printf '[Capivara][ERRO] As senhas informadas não coincidem.\n' >&2
+    done
+    install -d -m 700 -o root -g root "$(dirname "${secret_path}")"
+    (umask 077; printf '%s' "${password}" >"${secret_path}")
+    chown root:root "${secret_path}"
+    chmod 600 "${secret_path}"
+    unset password confirmation
+    export DSM_DATABASE_PASSWORD_FILE="${secret_path}"
+}
+
 select_role_and_database(){
     is_interactive || return 0
 
@@ -34,40 +56,36 @@ select_role_and_database(){
         return 0
     fi
 
-    if [[ -n "${DSM_DATABASE_DRIVER+x}" ]]; then
-        return 0
+    if [[ -z "${DSM_DATABASE_DRIVER+x}" ]]; then
+        printf '\n==============================================================\n Banco de dados do Controller\n==============================================================\n'
+        printf '  1) SQLite      - padrão simples/local\n  2) PostgreSQL  - recomendado para produção\n  3) MySQL\n  4) MariaDB\n\n'
+        local db_answer
+        read -r -p 'Banco [1]: ' db_answer
+        case "${db_answer:-1}" in
+            1|sqlite) export DSM_DATABASE_DRIVER=sqlite ;;
+            2|postgres|postgresql) export DSM_DATABASE_DRIVER=postgresql ;;
+            3|mysql) export DSM_DATABASE_DRIVER=mysql ;;
+            4|mariadb) export DSM_DATABASE_DRIVER=mariadb ;;
+            *) printf '[Capivara][ERRO] Banco inválido: %s\n' "${db_answer}" >&2; exit 1 ;;
+        esac
     fi
-
-    printf '\n==============================================================\n Banco de dados do Controller\n==============================================================\n'
-    printf '  1) SQLite      - padrão simples/local\n'
-    printf '  2) PostgreSQL  - recomendado para produção e maior escala\n'
-    printf '  3) MySQL\n'
-    printf '  4) MariaDB\n\n'
-
-    local db_answer
-    read -r -p 'Banco [1]: ' db_answer
-    case "${db_answer:-1}" in
-        1|sqlite) export DSM_DATABASE_DRIVER=sqlite ;;
-        2|postgres|postgresql) export DSM_DATABASE_DRIVER=postgresql ;;
-        3|mysql) export DSM_DATABASE_DRIVER=mysql ;;
-        4|mariadb) export DSM_DATABASE_DRIVER=mariadb ;;
-        *) printf '[Capivara][ERRO] Banco inválido: %s\n' "${db_answer}" >&2; exit 1 ;;
-    esac
 
     [[ "${DSM_DATABASE_DRIVER}" != "sqlite" ]] || return 0
 
     local default_port=3306
     [[ "${DSM_DATABASE_DRIVER}" != "postgresql" ]] || default_port=5432
 
-    read -r -p 'Host do banco: ' DSM_DATABASE_HOST
+    read -r -p 'Host do banco [localhost]: ' DSM_DATABASE_HOST
+    DSM_DATABASE_HOST="${DSM_DATABASE_HOST:-localhost}"
     read -r -p "Porta [${default_port}]: " DSM_DATABASE_PORT
     DSM_DATABASE_PORT="${DSM_DATABASE_PORT:-${default_port}}"
     read -r -p 'Nome do banco [capivara]: ' DSM_DATABASE_NAME
     DSM_DATABASE_NAME="${DSM_DATABASE_NAME:-capivara}"
-    read -r -p 'Usuário do banco: ' DSM_DATABASE_USER
-    read -r -p 'Arquivo protegido contendo a senha (opcional): ' DSM_DATABASE_PASSWORD_FILE
+    read -r -p 'Usuário dedicado do banco [capivara]: ' DSM_DATABASE_USER
+    DSM_DATABASE_USER="${DSM_DATABASE_USER:-capivara}"
     read -r -p 'TLS [preferred]: ' DSM_DATABASE_TLS
     DSM_DATABASE_TLS="${DSM_DATABASE_TLS:-preferred}"
+    create_database_password_secret
 
     [[ -n "${DSM_DATABASE_HOST}" ]] || { printf '[Capivara][ERRO] Host do banco é obrigatório.\n' >&2; exit 1; }
     [[ -n "${DSM_DATABASE_USER}" ]] || { printf '[Capivara][ERRO] Usuário do banco é obrigatório.\n' >&2; exit 1; }

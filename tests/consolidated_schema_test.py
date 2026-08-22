@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Contract tests for clean-install consolidated schemas."""
+
+from pathlib import Path
+import sqlite3
+from contextlib import closing
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "database"))
+import sqlite_engine  # noqa: E402
+
+
+class ConsolidatedSchemaTest(unittest.TestCase):
+    def test_all_supported_backends_have_complete_schema(self):
+        for backend in ("sqlite", "postgresql", "mysql", "mariadb"):
+            schema = (ROOT / "database" / "schemas" / f"{backend}.sql").read_text()
+            self.assertIn("CREATE TABLE agent_pairing_tokens", schema)
+            self.assertIn("CREATE TABLE agent_credentials", schema)
+            self.assertIn("CREATE TABLE agent_runtime_inventory", schema)
+            self.assertLess(schema.index("CREATE TABLE agent_pairing_tokens"),
+                            schema.index("ALTER TABLE agent_pairing_tokens ADD COLUMN platform"))
+
+    def test_sqlite_clean_install_is_one_baseline_and_valid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "capivara.db"
+            first = sqlite_engine.initialize(database)
+            second = sqlite_engine.initialize(database)
+            self.assertEqual(first["applied_now"], [41])
+            self.assertEqual(second["applied_now"], [])
+            self.assertTrue(sqlite_engine.check_database(database)["valid"])
+            with closing(sqlite3.connect(database)) as connection:
+                rows = connection.execute(
+                    "SELECT version,name FROM schema_migrations"
+                ).fetchall()
+            self.assertEqual(rows, [(41, "consolidated_schema")])
+
+    def test_database_validation_precedes_capivara_persistence(self):
+        installer = (ROOT / "install-core.sh").read_text()
+        main = installer[installer.index("main()") :]
+        self.assertLess(main.index("prevalidate_database"),
+                        main.index("ensure_service_account"))
+        self.assertLess(main.index("prevalidate_database"),
+                        main.index("install_project_files"))
+        self.assertLess(main.index("initialize_database"),
+                        main.index("install_systemd_units"))
+
+    def test_secret_contract_is_automatic_and_never_prints_value(self):
+        entrypoint = (ROOT / "install.sh").read_text()
+        setup = (ROOT / "installer" / "database_setup.sh").read_text()
+        self.assertIn("/etc/capivara/secrets/database-password", entrypoint)
+        self.assertIn("read -r -s", entrypoint)
+        self.assertIn("install -d -m 700", entrypoint)
+        self.assertIn("chmod 600", entrypoint)
+        self.assertNotIn("Arquivo protegido contendo a senha", entrypoint)
+        self.assertIn("chown \"${DSM_SERVICE_USER}:${DSM_SERVICE_GROUP}\"", setup)
+
+
+if __name__ == "__main__":
+    unittest.main()

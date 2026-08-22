@@ -28,6 +28,37 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 )
 """
 
+CONSOLIDATED_SCHEMA_VERSION = 41
+CONSOLIDATED_SCHEMA_NAME = "consolidated_schema"
+REQUIRED_SCHEMA_TABLES = {
+    "agents", "controllers", "agent_pairing_tokens", "agent_credentials",
+    "agent_runtime_inventory", "schema_migrations",
+}
+
+
+def consolidated_schema_path() -> Path:
+    return Path(__file__).resolve().parent / "schemas" / "sqlite.sql"
+
+
+def apply_consolidated_schema(connection: sqlite3.Connection) -> list[int]:
+    """Create a new database from the supported complete schema."""
+    path = consolidated_schema_path()
+    if not path.is_file():
+        raise DatabaseError(f"consolidated SQLite schema not found: {path}")
+    sql = path.read_text(encoding="utf-8")
+    checksum = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+    script = (
+        "BEGIN IMMEDIATE;\n" + sql + "\n" + SCHEMA_MIGRATIONS_SQL + ";\n"
+        "INSERT INTO schema_migrations(version,name,checksum) VALUES ("
+        f"{CONSOLIDATED_SCHEMA_VERSION},'{CONSOLIDATED_SCHEMA_NAME}','{checksum}');\nCOMMIT;\n"
+    )
+    try:
+        connection.executescript(script)
+    except sqlite3.Error as exc:
+        connection.rollback()
+        raise DatabaseError(f"consolidated SQLite schema failed: {exc}") from exc
+    return [CONSOLIDATED_SCHEMA_VERSION]
+
 
 class DatabaseError(RuntimeError):
     """Raised when SQLite initialization or validation cannot continue."""
@@ -277,9 +308,9 @@ def initialize(
             "PRAGMA synchronous = NORMAL"
         )
 
-        completed = apply_migrations(
-            connection
-        )
+        tables = set(_table_names(connection))
+        completed = ([] if "schema_migrations" in tables
+                     else apply_consolidated_schema(connection))
 
     return database_status(
         database,
@@ -397,10 +428,8 @@ def check_database(
 
     status["kind"] = "DatabaseCheck"
 
-    status["valid"] = bool(
-        status["initialized"]
-        and status["health"] == "ok"
-    )
+    status["valid"] = bool(status["initialized"] and status["health"] == "ok"
+                           and REQUIRED_SCHEMA_TABLES.issubset(status["tables"]))
 
     return status
 

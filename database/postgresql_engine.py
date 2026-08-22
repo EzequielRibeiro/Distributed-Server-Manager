@@ -45,6 +45,46 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 )
 """
 
+CONSOLIDATED_SCHEMA_VERSION = 41
+CONSOLIDATED_SCHEMA_NAME = "consolidated_schema"
+REQUIRED_SCHEMA_TABLES = {
+    "agents", "controllers", "agent_pairing_tokens", "agent_credentials",
+    "agent_runtime_inventory", "schema_migrations",
+}
+
+
+def consolidated_schema_path() -> Path:
+    return Path(__file__).resolve().parent / "schemas" / "postgresql.sql"
+
+
+def apply_consolidated_schema(connection: Any) -> list[int]:
+    path = consolidated_schema_path()
+    if not path.is_file():
+        raise DatabaseMigrationError(f"consolidated PostgreSQL schema not found: {path}")
+    sql = path.read_text(encoding="utf-8")
+    checksum = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+    try:
+        with connection.transaction():
+            connection.execute(sql)
+            connection.execute(SCHEMA_MIGRATIONS_SQL)
+            connection.execute(
+                "INSERT INTO schema_migrations(version,name,checksum) VALUES (%s,%s,%s)",
+                (CONSOLIDATED_SCHEMA_VERSION, CONSOLIDATED_SCHEMA_NAME, checksum),
+            )
+    except Exception as exc:
+        raise DatabaseMigrationError(f"consolidated PostgreSQL schema failed: {exc}") from exc
+    return [CONSOLIDATED_SCHEMA_VERSION]
+
+
+def validate_schema(connection: Any) -> None:
+    rows = connection.execute(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
+    ).fetchall()
+    names = {str(row["table_name"]) for row in rows}
+    missing = sorted(REQUIRED_SCHEMA_TABLES - names)
+    if missing:
+        raise DatabaseMigrationError("incomplete PostgreSQL schema; missing: " + ", ".join(missing))
+
 
 @dataclass(frozen=True)
 class Migration:
@@ -662,9 +702,9 @@ def initialize(
     connection = connect(config)
 
     try:
-        completed = apply_migrations(
-            connection
-        )
+        completed = ([] if _schema_migrations_exists(connection)
+                     else apply_consolidated_schema(connection))
+        validate_schema(connection)
 
         return _database_status_connection(
             connection,

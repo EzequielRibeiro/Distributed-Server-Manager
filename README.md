@@ -194,6 +194,26 @@ MariaDB
 
 Na instalação interativa de Controller/Hybrid, o banco pode ser escolhido durante o setup. SQLite continua sendo a opção local simples; PostgreSQL é a opção recomendada para ambientes de produção e maior escala.
 
+### Instalação automática do banco do Controller
+
+Em instalações novas, o instalador oferece SQLite, PostgreSQL, MySQL e MariaDB e cria o schema completo consolidado do backend escolhido. A cadeia histórica de migrations não é executada e bancos antigos não recebem upgrade incremental.
+
+Para PostgreSQL, MySQL e MariaDB, informe host, porta, database, usuário dedicado e modo TLS. Não use postgres ou root como conta da aplicação. O instalador explica o tratamento da credencial, solicita e confirma a senha sem eco e cria automaticamente /etc/capivara/secrets/database-password.
+
+O diretório usa permissão 0700 e o arquivo 0600. Ambos começam como root:root e passam com segurança para a conta de serviço selecionada depois que ela existe. A senha não é exibida, registrada em logs nem gravada na configuração principal; não é mais necessário criar ou informar manualmente um arquivo secreto.
+
+Antes de copiar arquivos para /opt/dsm ou criar serviços systemd, o instalador:
+
+- valida o driver e as dependências do backend;
+- testa transação e integridade no SQLite;
+- para banco local em Ubuntu/Debian, instala servidor/driver ausentes, habilita o serviço e cria idempotentemente database e usuário dedicado;
+- para banco remoto, valida DNS e TCP sem tentar instalar nada no host remoto;
+- abre uma conexão real usando exatamente host, porta, database, usuário, TLS e a senha do secret.
+
+A instalação só continua quando o banco está operacional. Em seguida o schema consolidado é aplicado e validado antes de qualquer serviço do Capivara ser iniciado. Falhas de DNS, TCP, TLS, autenticação, database ou schema encerram o processo com diagnóstico, sem iniciar a instalação persistente do Capivara.
+
+Para automação não interativa, forneça os parâmetros DSM_DATABASE_* e um arquivo já protegido em DSM_DATABASE_PASSWORD_FILE; o modo interativo sempre cria o caminho padrão automaticamente.
+
 ---
 
 ## Jogos e providers

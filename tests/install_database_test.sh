@@ -5,6 +5,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALLER="${ROOT}/install.sh"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf -- "${TMP_DIR}"' EXIT
+TEST_PASSWORD_FILE="${TMP_DIR}/database-password"
+printf '%s' 'test-secret' >"${TEST_PASSWORD_FILE}"
+chmod 600 "${TEST_PASSWORD_FILE}"
 
 fail(){ echo "FAIL: $*" >&2; exit 1; }
 
@@ -18,8 +21,10 @@ source_installer()
             *) command id "$@" ;;
         esac
     }
+    export -f id
     DSM_SERVICE_USER="dsmtest"
     DSM_SERVICE_GROUP="dsmtest"
+    DSM_DATABASE_PASSWORD_FILE="${TEST_PASSWORD_FILE}"
     # shellcheck source=../install.sh
     source "${INSTALLER}"
 }
@@ -41,7 +46,7 @@ source_installer()
     DSM_DATABASE_PORT=""
     DSM_DATABASE_NAME="capivara"
     DSM_DATABASE_USER="capivara"
-    DSM_DATABASE_PASSWORD_FILE=""
+    DSM_DATABASE_PASSWORD_FILE="${TEST_PASSWORD_FILE}"
     DSM_DATABASE_TLS="require"
     validate_database_settings
     [[ "${DSM_DATABASE_DRIVER}" == "postgresql" ]] || fail "PostgreSQL alias not normalized"
@@ -55,7 +60,7 @@ source_installer()
     DSM_DATABASE_PORT=""
     DSM_DATABASE_NAME="capivara"
     DSM_DATABASE_USER="capivara"
-    DSM_DATABASE_PASSWORD_FILE=""
+    DSM_DATABASE_PASSWORD_FILE="${TEST_PASSWORD_FILE}"
     DSM_DATABASE_TLS="preferred"
     validate_database_settings
     [[ "${DSM_DATABASE_PORT}" == "3306" ]] || fail "MariaDB default port incorrect"

@@ -7,7 +7,6 @@ import sys
 import tempfile
 import unittest
 from contextlib import closing
-from dataclasses import replace
 from pathlib import Path
 
 
@@ -43,7 +42,7 @@ class DatabaseManagerTest(unittest.TestCase):
 
         self.assertTrue(first["initialized"])
         self.assertEqual(first["current_migration"], self.current_migration)
-        self.assertEqual(first["applied_now"], self.expected_migration_versions)
+        self.assertEqual(first["applied_now"], [self.current_migration])
         self.assertEqual(second["applied_now"], [])
         self.assertTrue(
             {
@@ -133,13 +132,13 @@ class DatabaseManagerTest(unittest.TestCase):
         with self.assertRaisesRegex(DB.DatabaseError, "already exists"):
             DB.backup_database(self.database, backup)
 
-    def test_changed_applied_migration_is_rejected(self):
+    def test_new_install_uses_one_consolidated_baseline(self):
         DB.initialize(self.database)
-        migration = self.migrations[0]
-        changed = replace(migration, checksum="0" * 64)
         with closing(DB.connect(self.database)) as connection:
-            with self.assertRaisesRegex(DB.DatabaseError, "checksum does not match"):
-                DB.apply_migrations(connection, [changed])
+            rows = connection.execute(
+                "SELECT version,name FROM schema_migrations"
+            ).fetchall()
+        self.assertEqual([(row[0], row[1]) for row in rows], [(41, "consolidated_schema")])
 
     def test_cli_status_returns_json(self):
         DB.initialize(self.database)
