@@ -24,6 +24,17 @@ from runtime_operations import recover_interrupted_operations
 from runtime_reconciler import reconcile_all,reconciliation_inventory
 from update_client import clear_update_result,read_update_result,stage_update_request
 CONFIG_PATH=Path(os.environ.get("CAPIVARA_AGENT_CONFIG","/etc/capivara-agent/agent.json"));DEFAULT_HEARTBEAT_SECONDS=30;DEFAULT_RECONCILE_SECONDS=15
+STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));AGENT_LOG=STATE_DIR/"agent-runtime.log"
+def _log(message,error=False):
+ line=f"{time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())} {'ERROR' if error else 'INFO'} {message}";print(message,file=sys.stderr if error else sys.stdout,flush=True)
+ try:
+  STATE_DIR.mkdir(parents=True,exist_ok=True)
+  if AGENT_LOG.exists() and AGENT_LOG.stat().st_size>262144:AGENT_LOG.replace(AGENT_LOG.with_suffix(".log.1"))
+  with AGENT_LOG.open("a",encoding="utf-8") as handle:handle.write(line+"\n")
+ except OSError:pass
+def _recent_logs(limit=200):
+ try:return AGENT_LOG.read_text(encoding="utf-8",errors="replace").splitlines()[-limit:]
+ except OSError:return []
 def _load_config():return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 def _write_config(config):
  temp=CONFIG_PATH.with_suffix(".tmp");temp.write_text(json.dumps(config,indent=2,sort_keys=True)+"\n",encoding="utf-8");os.chmod(temp,0o600);temp.replace(CONFIG_PATH);os.chmod(CONFIG_PATH,0o600)
@@ -50,6 +61,7 @@ def _inventory(config):
  try:installed_version=version_path.read_text().strip()
  except OSError:installed_version=str(config.get("capivara_version","unknown"))
  state=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));payload={"agent_id":config["agent_id"],"hostname":socket.gethostname(),"os":platform.system().lower(),"architecture":platform.machine(),"capivara_version":installed_version,"address":config.get("advertise_address"),"fingerprint":config["fingerprint"],"capabilities":detect_capabilities(),"cpu":{"logical_cores":os.cpu_count(),"machine":platform.machine()},"ram_total_bytes":_memory_total_bytes(),"storage":{"root_total_bytes":disk.total,"root_free_bytes":disk.free},"network":collect_network_inventory(),"instances":instance_inventory(config),"instance_reconciliation":reconciliation_inventory(config),"instance_runtime_health":health_inventory(config),"instance_runtime_metrics":runtime_metrics_snapshot(queue_depth=_queue_depth()),"runtime_events":read_runtime_events(state,limit=int(config.get("event_batch_size",200))),"configuration_state":configuration_state(),"content_state":content_state(),"backup_state":backup_state(),"broadcast_state":broadcast_state(),"heartbeat_interval_seconds":int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)),"degraded_after_seconds":int(config.get("degraded_after_seconds",60)),"offline_after_seconds":int(config.get("offline_after_seconds",120))}
+ payload["agent_logs"]=_recent_logs()
  for key,value in (("update_result",read_update_result()),("provisioning_result",read_provisioning_result()),("game_data_result",read_game_data_result()),("instance_result",read_instance_result())):
   if value:payload[key]=value
  return payload
@@ -103,12 +115,12 @@ def run_forever():
   now=time.monotonic()
   if now>=next_reconcile:
    try:reconcile_all(config)
-   except Exception as exc:print(f"reconcile loop failed: {exc}",file=sys.stderr,flush=True)
+   except Exception as exc:_log(f"reconcile loop failed: {exc}",True)
    next_reconcile=now+reconcile_interval
   if now>=next_heartbeat:
    try:
-    result=heartbeat(config);print(f"heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} status={result.get('status')}",flush=True)
-   except Exception as exc:print(f"heartbeat failed: {exc}",file=sys.stderr,flush=True)
+    result=heartbeat(config);_log(f"heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} status={result.get('status')}")
+   except Exception as exc:_log(f"heartbeat failed: {exc}",True)
    next_heartbeat=now+heartbeat_interval
   time.sleep(min(max(.25,min(next_reconcile,next_heartbeat)-time.monotonic()),1.0))
 if __name__=="__main__":run_forever()

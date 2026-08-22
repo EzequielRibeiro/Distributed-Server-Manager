@@ -102,6 +102,8 @@ def restricted_sudo_command(remote_user: str) -> str:
     rule_name = shlex.quote(f"/etc/sudoers.d/capivara-agent-{remote_user}")
     return (
         "set -eu; TRUE_BIN=$(command -v true); PYTHON_BIN=$(command -v python3); "
+        "case \"$TRUE_BIN\" in /*) ;; *) for CANDIDATE in /usr/bin/true /bin/true; do test -x \"$CANDIDATE\" && TRUE_BIN=\"$CANDIDATE\" && break; done ;; esac; "
+        "case \"$PYTHON_BIN\" in /*) ;; *) exit 1 ;; esac; "
         "command -v sudo >/dev/null; command -v visudo >/dev/null; "
         "RULE_TMP=$(mktemp); trap 'rm -f \"$RULE_TMP\"' EXIT; sudo -v; "
         f"printf '%s ALL=(root) NOPASSWD: %s, %s -\\n' {user} \"$TRUE_BIN\" \"$PYTHON_BIN\" "

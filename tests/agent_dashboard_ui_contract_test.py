@@ -86,6 +86,11 @@ class AgentDashboardUiContractTest(unittest.TestCase):
         self.assertIn("/api/agents", self.servers_js)
         self.assertIn("48", self.servers_js)
         self.assertIn("Visão Geral das Instâncias", self.servers_html)
+        server = (ROOT / "dashboard/server.py").read_text(encoding="utf-8")
+        for route in ("/servers-v2.html", "/servers-v2.js", "/servers-v2.css"):
+            self.assertIn(route, server)
+        self.assertIn('id="log-agent"', (ROOT / "dashboard/web/index.html").read_text(encoding="utf-8"))
+        self.assertIn('metadata["recent_logs"]', (ROOT / "dashboard/agent_heartbeat_api.py").read_text(encoding="utf-8"))
 
     def test_infrastructure_v2_keeps_installation_and_topology_views(self):
         for view in ('data-infra-view="agents"', 'data-infra-view="topology"', 'data-infra-view="installation"'):

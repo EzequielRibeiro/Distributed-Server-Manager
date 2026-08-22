@@ -319,10 +319,16 @@ async function loadLogs() {
             ?.value ||
         "controller";
 
-    const server =
-        document.getElementById("catalog-v2-node")
-            ?.value ||
-        "";
+    const agentSelect = document.getElementById("log-agent");
+    if (agentSelect) agentSelect.hidden = source !== "agent";
+    if (source === "agent" && agentSelect && !agentSelect.options.length) {
+        const response = await apiGet("agents");
+        const agents = response?.agents || [];
+        agents.forEach(agent => agentSelect.add(new Option(agent.name || agent.id, agent.id)));
+    }
+    const server = source === "agent"
+        ? (agentSelect?.value || "")
+        : (document.getElementById("catalog-v2-node")?.value || "");
 
     const game =
         document.getElementById("catalog-v2-game")
@@ -617,11 +623,24 @@ async function loadNodeMetricsHistory() {
             "catalog-v2-instance"
         )?.value || "";
 
-    if (
-        !server ||
-        !game ||
-        !instance
-    ) {
+    if (!server) {
+        return;
+    }
+    if (!game || !instance) {
+        const agentsResponse = await apiGet("agents");
+        const agent = (agentsResponse?.agents || []).find(item =>
+            [item.id, item.agent_id, item.node_id].map(String).includes(String(server))
+        );
+        if (!agent) return;
+        const response = await apiGet(`observability?mode=history&agent_id=${encodeURIComponent(agent.id)}&limit=120`);
+        const rows = response?.metrics || [];
+        const latest = name => rows.find(row => row.metric_name === name)?.value;
+        nodeCpuHistory.push(Math.max(0, Math.min(100, Number(latest("system.load.per_core") || 0) * 100)));
+        nodeRamHistory.push(Math.max(0, Math.min(100, Number(latest("memory.used_ratio") || 0) * 100)));
+        if (nodeCpuHistory.length > MAX_POINTS) nodeCpuHistory.shift();
+        if (nodeRamHistory.length > MAX_POINTS) nodeRamHistory.shift();
+        setText("node-chart-title", `${agent.name || agent.id} · ${server}`);
+        renderNodeChart();
         return;
     }
 
@@ -971,6 +990,8 @@ document.addEventListener("DOMContentLoaded", async () => {
             () => loadLogs()
         );
     }
+    const logAgent = document.getElementById("log-agent");
+    if (logAgent) logAgent.addEventListener("change", () => loadLogs());
 
     await loadUser();
     await refreshDashboard();

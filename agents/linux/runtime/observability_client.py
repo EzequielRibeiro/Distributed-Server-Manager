@@ -69,8 +69,8 @@ def collect_observability(config: dict[str, Any], *, instance_health: list[dict[
             _sample(agent_id, "system.load.15", load15, "load", collected_at=at),
             _sample(agent_id, "system.load.per_core", load1 / cores, "ratio", collected_at=at),
         ])
-    except OSError:
-        pass
+    except (OSError, AttributeError):
+        samples.append(_sample(agent_id, "system.load.per_core", 0, "ratio", collected_at=at))
     mem = _meminfo()
     total = mem.get("MemTotal")
     available = mem.get("MemAvailable")

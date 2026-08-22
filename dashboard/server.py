@@ -248,6 +248,9 @@ STATIC_FILES = {
     "/agents.html": WEB_DIR / "agents.html",
     "/agents.js": WEB_DIR / "agents.js",
     "/agents.css": WEB_DIR / "agents.css",
+    "/servers-v2.html": WEB_DIR / "servers-v2.html",
+    "/servers-v2.js": WEB_DIR / "servers-v2.js",
+    "/servers-v2.css": WEB_DIR / "servers-v2.css",
     "/help.html": WEB_DIR / "help.html",
     "/help.css": WEB_DIR / "help.css",
     "/help.js": WEB_DIR / "help.js",
@@ -3342,32 +3345,25 @@ def api_log_viewer(
         ]
 
     elif source in {"agent", "node"}:
-        if not server or not game or not instance:
-            raise ValueError(
-                "Selecione Node, jogo e instância para identificar o Agent."
-            )
-
-        instance_path = (
-            INSTANCE_ROOT
-            / server
-            / game
-            / instance
-        )
-
-        if not can_access_instance(
-            user,
-            instance_path,
-        ):
-            raise PermissionError(
-                "Acesso negado à instância."
-            )
-
-        candidates = [
-            DSM_ROOT / "logs" / "metrics_worker.log",
-            DSM_ROOT / "logs" / "monitor_worker.log",
-            DSM_ROOT / "logs" / "server_worker.log",
-            DSM_ROOT / "logs" / "dashboard_worker.log",
-        ]
+        if not server:
+            raise ValueError("Selecione um Agent.")
+        backend = dashboard_repository(DATABASE_FILE).backend
+        allowed = {str(item.get("id") or item.get("agent_id")) for item in list_agents_for_user(user, backend)}
+        if server not in allowed:
+            raise PermissionError("Acesso negado ao Agent.")
+        dialect = dialect_for_backend(backend)
+        with backend.connect() as connection:
+            session = AlertSession(backend, connection)
+            try:
+                row = session.execute(
+                    "SELECT metadata_json FROM agents WHERE id=" + dialect.placeholder,
+                    (server,),
+                ).fetchone()
+            finally:
+                session.close()
+        metadata = json.loads(str(row["metadata_json"] or "{}")) if row else {}
+        logs = metadata.get("recent_logs") if isinstance(metadata, dict) else []
+        return {"source": source, "file": "authenticated-heartbeat", "logs": [str(line) for line in (logs or [])][-limit:]}
 
     elif source == "instance":
         if not server or not game or not instance:
