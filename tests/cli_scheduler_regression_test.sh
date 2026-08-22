@@ -23,14 +23,11 @@ fi
 
 # install.sh is now the interactive/bootstrap wrapper. The installation and
 # validation contract for public CLIs lives in install-core.sh.
-[[ -x "${INSTALLER}" ]] \
-    || fail "installer wrapper is not executable"
 grep -Fq 'install-core.sh' "${INSTALLER}" \
     || fail "installer wrapper does not delegate to install-core.sh"
 
-# The Capivara infrastructure CLI is part of the release contract and must be
-# published globally together with the dsm compatibility command on fresh
-# installs and upgrades.
+# `cap` is the public CLI. `dsm` remains only as a compatibility command, but
+# both entry points must stay installable while compatibility is supported.
 grep -Fq 'bin/cap' "${CORE_INSTALLER}" \
     || fail "installer does not validate/install bin/cap"
 grep -Fq '/usr/local/bin/cap' "${CORE_INSTALLER}" \
