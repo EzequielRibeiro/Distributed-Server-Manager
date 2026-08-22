@@ -15,7 +15,9 @@ for path in (ROOT, DATABASE):
 from backend import DatabaseConfig
 from backend_factory import create_backend
 from agent_runtime_repository import AgentRuntimeRepository
+from alert_repository import AlertRepository
 from registry_repository import RegistryRepository
+from universal_event_repository import UniversalEventRepository
 
 
 class AgentRuntimeRepositoryTest(unittest.TestCase):
@@ -89,6 +91,47 @@ class AgentRuntimeRepositoryTest(unittest.TestCase):
         much_later = now + timedelta(seconds=130)
         self.assertEqual(self.runtime.snapshot("agent-main", now=much_later)["health_status"], "offline")
         self.assertEqual(self.agent_status(), "active")
+
+    def test_health_transitions_publish_event_alert_and_recovery(self):
+        now = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+        self.runtime.heartbeat("agent-main", observed_at=now)
+
+        degraded_at = now + timedelta(seconds=70)
+        self.runtime.refresh_health(now=degraded_at)
+        events = UniversalEventRepository(self.backend).list_events(agent_id="agent-main", limit=20)
+        self.assertEqual(events[0]["event_type"], "AGENT_DEGRADED")
+        self.assertEqual(events[0]["severity"], "warning")
+        correlation_id = events[0]["correlation_id"]
+        self.assertTrue(correlation_id.startswith("agent-health:agent-main:"))
+
+        alert = AlertRepository(self.backend).get_alert("agent-health:agent-main")
+        self.assertIsNotNone(alert)
+        self.assertEqual(alert["state"], "OPEN")
+        self.assertEqual(alert["level"], "WARNING")
+
+        offline_at = now + timedelta(seconds=130)
+        self.runtime.refresh_health(now=offline_at)
+        events = UniversalEventRepository(self.backend).list_events(agent_id="agent-main", limit=20)
+        self.assertEqual(events[0]["event_type"], "AGENT_OFFLINE")
+        self.assertEqual(events[0]["severity"], "critical")
+        self.assertEqual(events[0]["correlation_id"], correlation_id)
+        alert = AlertRepository(self.backend).get_alert("agent-health:agent-main")
+        self.assertEqual(alert["state"], "OPEN")
+        self.assertEqual(alert["level"], "CRITICAL")
+
+        count_before = len(events)
+        self.runtime.refresh_health(now=offline_at + timedelta(seconds=30))
+        events = UniversalEventRepository(self.backend).list_events(agent_id="agent-main", limit=20)
+        self.assertEqual(len(events), count_before)
+
+        recovered_at = offline_at + timedelta(seconds=31)
+        self.runtime.heartbeat("agent-main", observed_at=recovered_at)
+        events = UniversalEventRepository(self.backend).list_events(agent_id="agent-main", limit=20)
+        self.assertEqual(events[0]["event_type"], "AGENT_RECOVERED")
+        self.assertEqual(events[0]["correlation_id"], correlation_id)
+        alert = AlertRepository(self.backend).get_alert("agent-health:agent-main")
+        self.assertEqual(alert["state"], "RESOLVED")
+        self.assertEqual(self.runtime.snapshot("agent-main", now=recovered_at)["health_status"], "online")
 
 
 if __name__ == "__main__":
