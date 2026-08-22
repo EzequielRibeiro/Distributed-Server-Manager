@@ -140,6 +140,7 @@ def command_history(args):
 
 def build_parser():
     parser = argparse.ArgumentParser(
+        prog="cap alerts",
         description=(
             "Capivara DSM Alert Store CLI"
         )
