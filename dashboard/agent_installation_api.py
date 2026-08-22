@@ -12,6 +12,7 @@ from agent_installation_preconfiguration import (
     AgentInstallationPreconfigurationRepository,
     normalize_preconfiguration,
 )
+from agent_release_service import resolve_agent_release
 from alert_repository import AlertSession, dialect_for_backend
 from infrastructure_repository import InfrastructureRepository
 from core.agent_ssh_deploy import (
@@ -140,6 +141,7 @@ def _run_ssh_bootstrap(
     *,
     controller_url: str,
     pairing_token: str,
+    release_tag: str,
     timeout: int,
     ssh_runner=None,
 ) -> None:
@@ -147,6 +149,7 @@ def _run_ssh_bootstrap(
         kwargs = {
             "controller_url": controller_url,
             "pairing_token": pairing_token,
+            "release_tag": release_tag,
             "timeout": timeout,
         }
         if ssh_runner is None:
@@ -183,6 +186,12 @@ def create_agent_installation_for_user(
     if not controller_url.startswith(("http://", "https://")):
         raise ValueError("controller_url must use http:// or https://")
 
+    release = None
+    release_tag = "local"
+    if method in {"github", "ssh"}:
+        release = resolve_agent_release(payload.get("release_tag"), platform)
+        release_tag = str(release["tag"])
+
     preconfiguration = normalize_preconfiguration(payload)
     region, datacenter = _location(backend, region_id, datacenter_id)
 
@@ -192,8 +201,6 @@ def create_agent_installation_for_user(
     if method == "ssh":
         ssh_options = _ssh_options(payload)
         bootstrap_timeout = _bootstrap_timeout(payload)
-        # No pairing token exists until the target is reachable, compatible and
-        # confirmed not to contain an existing Capivara Agent installation.
         ssh_preflight = _run_ssh_preflight(ssh_options, ssh_runner=ssh_runner)
 
     issued = AgentPairingRepository(backend).issue_token(
@@ -224,9 +231,17 @@ def create_agent_installation_for_user(
     remote_bootstrap = None
     if method == "github":
         instruction = (
-            windows_agent_install_command(controller_url=controller_url, pairing_token=issued.token)
+            windows_agent_install_command(
+                controller_url=controller_url,
+                pairing_token=issued.token,
+                release_tag=release_tag,
+            )
             if platform == "windows"
-            else linux_agent_install_command(controller_url=controller_url, pairing_token=issued.token)
+            else linux_agent_install_command(
+                controller_url=controller_url,
+                pairing_token=issued.token,
+                release_tag=release_tag,
+            )
         )
     elif method == "local":
         instruction = _local_instruction(platform, controller_url, issued.token)
@@ -237,6 +252,7 @@ def create_agent_installation_for_user(
                 ssh_options,
                 controller_url=controller_url,
                 pairing_token=issued.token,
+                release_tag=release_tag,
                 timeout=bootstrap_timeout,
                 ssh_runner=ssh_runner,
             )
@@ -250,6 +266,7 @@ def create_agent_installation_for_user(
             "ssh_port": ssh_options.ssh_port,
             "platform": ssh_preflight.get("platform") if ssh_preflight else "linux",
             "architecture": ssh_preflight.get("architecture") if ssh_preflight else None,
+            "release_tag": release_tag,
         }
 
     return {
@@ -257,6 +274,8 @@ def create_agent_installation_for_user(
         "controller_id": controller_id,
         "platform": platform,
         "method": method,
+        "release_tag": release_tag,
+        "release": release,
         "region": {"id": region["id"], "name": region["name"]},
         "datacenter": {"id": datacenter["id"], "name": datacenter["name"]},
         "expires_at": issued.expires_at,
@@ -359,9 +378,6 @@ def bind_installation_after_enrollment(backend, *, pairing_token: str, agent_id:
             status="active",
         )
 
-    # Enrollment itself must not be rolled back if an optional administrative
-    # preconfiguration cannot be applied. The repository records the safe error
-    # so the Controller Dashboard can surface and retry it explicitly later.
     try:
         AgentInstallationPreconfigurationRepository(backend).apply(str(row["id"]), agent_id)
     except Exception:
