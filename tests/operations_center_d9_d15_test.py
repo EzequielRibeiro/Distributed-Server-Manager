@@ -7,11 +7,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD = ROOT / "dashboard"
 DATABASE = ROOT / "database"
-for value in (str(DASHBOARD), str(DATABASE)):
+for value in (str(ROOT), str(DASHBOARD), str(DATABASE)):
     if value not in sys.path:
         sys.path.insert(0, value)
 
 from operations_center_service import OperationsCenterService
+
+
+class _FakeAutomation:
+    def __init__(self):
+        self.saved = None
+
+    def initialize(self):
+        return None
+
+    def put_rule(self, raw, *, requested_by=None):
+        self.saved = (raw, requested_by)
+        return {"rule": raw, "changed": True}
 
 
 class OperationsCenterD9D15Test(unittest.TestCase):
@@ -53,12 +65,41 @@ class OperationsCenterD9D15Test(unittest.TestCase):
         self.assertIn("acknowledge_alert", self.js)
         self.assertIn("resolve_alert", self.js)
 
-    def test_d12_scheduler_execution_history_is_visible(self):
+    def test_d12_scheduler_execution_history_and_creation_are_available(self):
         self.assertIn("view=schedules", self.js)
         self.assertIn('id="schedule-rules"', self.html)
         self.assertIn('id="schedule-runs"', self.html)
+        self.assertIn('id="schedule-new"', self.html)
+        self.assertIn('id="schedule-form"', self.html)
+        self.assertIn("create_schedule", self.js)
+        self.assertIn("set_schedule_enabled", self.js)
         service_source = (ROOT / "dashboard" / "operations_center_service.py").read_text(encoding="utf-8")
         self.assertIn("list_runs", service_source)
+        self.assertIn("create_schedule", service_source)
+
+    def test_d12_administrative_schedule_is_persisted_as_canonical_rule(self):
+        service = object.__new__(OperationsCenterService)
+        service.events = type("Events", (), {"initialize": lambda self: None})()
+        service.alerts = type("Alerts", (), {"initialize": lambda self: None})()
+        service.automation = _FakeAutomation()
+        result = service.create_schedule(
+            {
+                "name": "Backup noturno",
+                "scope": "controller",
+                "action": "controller_backup",
+                "expression": "03:00",
+                "timezone": "America/Sao_Paulo",
+                "enabled": True,
+            },
+            user={"role": "admin", "username": "admin"},
+        )
+        raw, requested_by = service.automation.saved
+        self.assertTrue(result["changed"])
+        self.assertTrue(raw["rule_id"].startswith("admin-schedule-"))
+        self.assertEqual(raw["trigger"]["type"], "schedule")
+        self.assertEqual(raw["trigger"]["expression"], "03:00")
+        self.assertEqual(raw["actions"][0]["configuration"]["operation"], "controller_backup")
+        self.assertEqual(requested_by, "admin")
 
     def test_d13_operational_log_history_is_structured(self):
         self.assertIn("view=logs", self.js)
