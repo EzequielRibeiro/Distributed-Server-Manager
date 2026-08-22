@@ -15,6 +15,9 @@ from automation_http import AUTOMATION_PATH,BROADCAST_PATH,dispatch_automation_g
 from backup_http import BACKUP_PATH,dispatch_backup_get,dispatch_backup_post
 from configuration_http import CONFIGURATIONS_PATH,dispatch_configuration_get,dispatch_configuration_post
 from content_http import CONTENT_PATH,dispatch_content_get,dispatch_content_post
+from customer_admin_api import CUSTOMER_ADMIN_GET_PATHS,CUSTOMER_ADMIN_POST_PATHS,dispatch_customer_admin_get,dispatch_customer_admin_post
+from customer_admin_repository import CustomerAdminRepository
+from controller_session import session_user_from_headers
 from ha_dr_http import HA_DR_PATH,dispatch_ha_get,dispatch_ha_post
 from infrastructure_role_http import INFRASTRUCTURE_ROLE_PATH,dispatch_infrastructure_role_get,dispatch_infrastructure_role_post
 from observability_http import OBSERVABILITY_PATH,dispatch_observability_get
@@ -23,11 +26,16 @@ from universal_event_http import EVENTS_PATH,dispatch_universal_event_get,dispat
 legacy=integration.legacy;_previous_get=legacy.DashboardHandler.do_GET;_previous_post=legacy.DashboardHandler.do_POST;_authenticate=integration._authenticate
 ROOT_DIR=Path(__file__).resolve().parents[1];WINDOWS_INSTALL_PATH="/agent/install.ps1";WINDOWS_INSTALL_FILE=ROOT_DIR/"agents"/"windows"/"installer"/"bootstrap-release.ps1";VERSION_FILE=ROOT_DIR/"version"
 legacy.STATIC_FILES["/agent-updates.js"]=legacy.WEB_DIR/"agent-updates.js";legacy.STATIC_FILES["/infrastructure-role-ui.js"]=legacy.WEB_DIR/"infrastructure-role-ui.js";legacy.STATIC_FILES["/game-data-orchestration.js"]=legacy.WEB_DIR/"game-data-orchestration.js"
+CUSTOMER_ADMIN_FILES={"/customers.html":legacy.WEB_DIR/"customers.html","/customers.js":legacy.WEB_DIR/"customers.js","/customer-admin.html":legacy.WEB_DIR/"customer-admin.html","/customer-admin.js":legacy.WEB_DIR/"customer-admin.js","/customer-admin.css":legacy.WEB_DIR/"customer-admin.css","/customer-change-password.html":legacy.WEB_DIR/"customer-change-password.html","/customer-change-password.js":legacy.WEB_DIR/"customer-change-password.js"}
+CUSTOMER_PASSWORD_GATED_PAGES={"/customer.html","/customer-members.html","/customer-instance.html"}
+legacy.STATIC_FILES.update(CUSTOMER_ADMIN_FILES)
 def _user(self):
  user=_authenticate(self.headers)
  if user is None:self.unauthorized()
  return user
 def _backend():return legacy.dashboard_repository(legacy.DATABASE_FILE).backend
+def _redirect(self,location):
+ self.send_response(302);self.send_header("Location",location);self.send_header("Cache-Control","no-store");self.send_header("Content-Length","0");self.end_headers()
 def _api_principal(self):
  authorization=str(self.headers.get("Authorization") or "")
  if not authorization.lower().startswith("bearer "):
@@ -44,8 +52,34 @@ def _serve_windows_bootstrap(self):
  try:script=WINDOWS_INSTALL_FILE.read_text(encoding="utf-8");version=VERSION_FILE.read_text(encoding="utf-8").strip()
  except OSError:self.send_error(404);return
  prefix=f'$env:CAPIVARA_RELEASE_TAG = if ($env:CAPIVARA_RELEASE_TAG) {{ $env:CAPIVARA_RELEASE_TAG }} else {{ "v{version}" }}\r\n';body=(prefix+script).encode();self.send_response(200);self.send_header("Content-Type","text/plain; charset=utf-8");self.send_header("Content-Length",str(len(body)));self.send_header("Cache-Control","no-store");self.end_headers();self.wfile.write(body)
+def _require_session_page(self,path):
+ user=session_user_from_headers(self.headers)
+ if user is None:
+  _redirect(self,"/login.html" if path!="/customer-change-password.html" else "/customer-login.html");return None
+ allowed={"customer"} if path=="/customer-change-password.html" else {"admin","controller","operator"}
+ if user.get("role") not in allowed:self.forbidden();return None
+ return user
+def _require_customer_password_rotation(self,path):
+ if path not in CUSTOMER_PASSWORD_GATED_PAGES:return True
+ user=session_user_from_headers(self.headers)
+ if user is None:return True
+ if user.get("role")!="customer":return True
+ try:required=CustomerAdminRepository(_backend()).password_change_required(str(user.get("username") or ""))
+ except Exception:required=False
+ if required:_redirect(self,"/customer-change-password.html");return False
+ return True
 def integrated_get(self):
  parsed=urlparse(self.path);path=parsed.path
+ if not _require_customer_password_rotation(self,path):return
+ if path in {"/customers.html","/customer-admin.html","/customer-change-password.html"}:
+  if _require_session_page(self,path) is None:return
+  self.send_file(CUSTOMER_ADMIN_FILES[path]);return
+ if path in {"/customers.js","/customer-admin.js","/customer-admin.css","/customer-change-password.js"}:
+  self.send_file(CUSTOMER_ADMIN_FILES[path]);return
+ if path in CUSTOMER_ADMIN_GET_PATHS:
+  user=_user(self)
+  if user is None:return
+  status,body=dispatch_customer_admin_get(path,parse_qs(parsed.query),user=user,backend=_backend());self.send_json(status,body);return
  if path==WINDOWS_INSTALL_PATH:return _serve_windows_bootstrap(self)
  if path in PUBLIC_GET_PATHS or path==SSE_EVENTS_PATH:
   started=time.monotonic();principal=_api_principal(self)
@@ -82,6 +116,12 @@ def _payload(self):
  except ValueError:return None,{"error":"invalid_request","message":"Requisição inválida."}
 def integrated_post(self):
  parsed=urlparse(self.path);path=parsed.path
+ if path in CUSTOMER_ADMIN_POST_PATHS:
+  user=_user(self)
+  if user is None:return
+  payload,error=_payload(self)
+  if error:self.send_json(400,error);return
+  status,body=dispatch_customer_admin_post(path,payload,user=user,backend=_backend());self.send_json(status,body);return
  if path in PUBLIC_POST_PATHS:
   started=time.monotonic();principal=_api_principal(self)
   if principal is None:return

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from customer_account_api import member_capabilities, require_customer
+from customer_admin_repository import CustomerAdminRepository
 from customer_team_repository import CustomerTeamRepository
 
 CUSTOMER_AUTH_PATHS = {"/api/customer/auth/me"}
@@ -16,12 +17,14 @@ def customer_auth_me(user: dict[str, Any] | None, backend) -> dict[str, Any]:
     account_role = repository.account_role(customer_id, username)
     if account_role is None:
         raise PermissionError("customer account membership is required")
+    password_admin = CustomerAdminRepository(backend)
     return {
         "authenticated": True,
         "username": username,
         "role": "customer",
         "customer_id": customer_id,
         "scope_id": customer_id,
+        "must_change_password": password_admin.password_change_required(username),
         "account": member_capabilities(account_role),
     }
 

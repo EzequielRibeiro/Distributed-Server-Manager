@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SMTP delivery for customer verification and invitation links."""
+"""SMTP delivery for customer onboarding, verification and invitations."""
 from __future__ import annotations
 import os,smtplib,ssl
 from email.message import EmailMessage
@@ -24,3 +24,11 @@ def send_verification(email,token):
 def send_invitation(email,token):
     cfg=_settings(); base=(cfg or {}).get("base",os.environ.get("DSM_PUBLIC_BASE_URL","").rstrip("/")); link=f"{base}/customer-invitation.html?{urlencode({'token':token})}" if base else ""
     return _send(email,"Convite para equipe — Capivara DSM",f"Você foi convidado para uma equipe no Capivara DSM:\n\n{link}\n")
+def send_temporary_password(email,username,password,*,reset=False):
+    cfg=_settings(); base=(cfg or {}).get("base",os.environ.get("DSM_PUBLIC_BASE_URL","").rstrip("/")); link=f"{base}/customer-login.html" if base else ""
+    subject="Nova senha provisória — Capivara DSM" if reset else "Acesso ao Capivara DSM"
+    action="Sua senha foi redefinida pelo administrador." if reset else "Seu acesso ao Capivara DSM foi criado."
+    text=(f"{action}\n\nLogin: {username}\nSenha provisória: {password}\n\n"
+          "No primeiro acesso você deverá criar uma nova senha.\n"
+          + (f"\nAcesse: {link}\n" if link else ""))
+    return _send(email,subject,text)
