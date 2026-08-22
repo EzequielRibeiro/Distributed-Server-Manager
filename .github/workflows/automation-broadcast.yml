@@ -8,10 +8,13 @@ on:
       - 'database/migrations_mysql/037_automation_broadcast.sql'
       - 'database/migrations_postgresql/037_automation_broadcast.sql'
       - 'dashboard/automation_*'
+      - 'dashboard/operations_center_*'
+      - 'dashboard/web/operations.*'
       - 'dashboard/workers/automation_worker.py'
       - 'dashboard/workers/worker.sh'
       - 'dashboard/agent_heartbeat_api.py'
       - 'dashboard/server_part13.py'
+      - 'dashboard/server_part14.py'
       - 'agents/linux/runtime/broadcast_client.py'
       - 'agents/linux/runtime/agent.py'
       - 'agents/linux/runtime/adapters/base.py'
@@ -20,6 +23,7 @@ on:
       - 'bin/cap'
       - 'tests/automation_broadcast_test.py'
       - 'tests/automation_worker_test.py'
+      - 'tests/operations_center_d9_d15_test.py'
       - 'docs/architecture/automation-broadcast-platform.md'
       - '.github/workflows/automation-broadcast.yml'
   workflow_dispatch:
@@ -31,9 +35,10 @@ jobs:
       - name: Validate syntax
         run: |
           bash -n bin/cap release/build_agent_package.sh dashboard/workers/worker.sh
-          python3 -m py_compile core/automation_platform.py database/automation_repository.py database/automation_execution_repository.py database/automation_engine.py database/automation_cli.py dashboard/automation_api.py dashboard/automation_http.py dashboard/workers/automation_worker.py dashboard/agent_heartbeat_api.py dashboard/server_part13.py agents/linux/runtime/broadcast_client.py agents/linux/runtime/agent.py agents/linux/runtime/adapters/base.py
+          python3 -m py_compile core/automation_platform.py database/automation_repository.py database/automation_execution_repository.py database/automation_engine.py database/automation_cli.py dashboard/automation_api.py dashboard/automation_http.py dashboard/operations_center_service.py dashboard/operations_center_http.py dashboard/workers/automation_worker.py dashboard/agent_heartbeat_api.py dashboard/server_part13.py dashboard/server_part14.py agents/linux/runtime/broadcast_client.py agents/linux/runtime/agent.py agents/linux/runtime/adapters/base.py
+          node --check dashboard/web/operations.js
       - name: Test automation and broadcast
-        run: python3 -m unittest tests/automation_broadcast_test.py tests/automation_worker_test.py
+        run: python3 -m unittest tests/automation_broadcast_test.py tests/automation_worker_test.py tests/operations_center_d9_d15_test.py
       - name: Verify integration contracts
         run: |
           grep -Fq 'cap automation' bin/cap
@@ -43,4 +48,5 @@ jobs:
           grep -Fq 'automation_worker.py' systemd/dsm-automation-worker.service
           grep -Fq 'agent/runtime/broadcast_client.py' release/build_agent_package.sh
           grep -Fq 'InstanceRuntimeAdapter' agents/linux/runtime/adapters/base.py
-          test ! -e dashboard/server_part14.py
+          grep -Fq 'OPERATIONS_PATH' dashboard/server_part14.py
+          grep -Fq 'create_schedule' dashboard/operations_center_http.py
