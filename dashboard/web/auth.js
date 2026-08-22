@@ -43,6 +43,41 @@ function logout() {
 }
 
 
+function destinationForRole(role) {
+    if (role === "customer") {
+        return "/customer.html";
+    }
+
+    if (["admin", "controller", "operator"].includes(role)) {
+        return "/index.html";
+    }
+
+    return null;
+}
+
+
+async function loadAuthenticatedIdentity(token) {
+    const response = await fetch(
+        "/api/whoami",
+        {
+            method: "GET",
+            headers: {
+                "Authorization": `Basic ${token}`,
+                "Accept": "application/json"
+            },
+            credentials: "same-origin",
+            cache: "no-store"
+        }
+    );
+
+    if (!response.ok) {
+        throw new Error(`whoami HTTP ${response.status}`);
+    }
+
+    return await response.json();
+}
+
+
 async function login() {
     const usernameInput = document.getElementById("username");
     const passwordInput = document.getElementById("password");
@@ -100,10 +135,22 @@ async function login() {
         // ainda utilizam Basic Authentication.
         saveSession(user, password);
 
-        window.location.replace("/index.html");
+        const identity = await loadAuthenticatedIdentity(token);
+        const destination = destinationForRole(identity?.role);
+
+        if (!destination) {
+            clearSession();
+            showError(
+                "Perfil de acesso não reconhecido. | Unknown access profile."
+            );
+            return;
+        }
+
+        window.location.replace(destination);
 
     } catch (error) {
         console.error("Login error:", error);
+        clearSession();
 
         showError(
             "Erro de comunicação com servidor. | Server communication error."
