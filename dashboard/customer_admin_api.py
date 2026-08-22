@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from customer_admin_repository import CustomerAdminRepository
+from customer_mailer import send_temporary_password
 
 CUSTOMER_ADMIN_COLLECTION = "/api/admin/customers"
 CUSTOMER_ADMIN_DETAIL = "/api/admin/customer"
@@ -34,6 +35,17 @@ def _admin_read(user: dict[str, Any] | None) -> bool:
 
 def _admin_write(user: dict[str, Any] | None) -> bool:
     return _role(user) in {"admin", "controller"}
+
+
+def _deliver_temporary_password(email: str | None, username: str, password: str, *, reset: bool) -> bool:
+    if not email:
+        return False
+    try:
+        return bool(send_temporary_password(email, username, password, reset=reset))
+    except Exception:
+        # Credential creation/reset remains authoritative even if SMTP is
+        # temporarily unavailable. The administrator receives the password once.
+        return False
 
 
 def dispatch_customer_admin_get(path: str, query: dict[str, list[str]], *, user, backend):
@@ -75,18 +87,39 @@ def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, ba
             return 403, {"error": "administrative write access required"}
 
         if path == CUSTOMER_ADMIN_COLLECTION:
+            email = str(payload.get("email") or "").strip() or None
             result = repository.create_customer(
                 customer_id=str(payload.get("id") or ""),
                 name=str(payload.get("name") or ""),
                 username=str(payload.get("username") or ""),
-                email=(str(payload.get("email") or "").strip() or None),
+                email=email,
                 phone=(str(payload.get("phone") or "").strip() or None),
                 controller_id=(str(payload.get("controller_id") or "").strip() or None),
+            )
+            result["delivered"] = _deliver_temporary_password(
+                email,
+                str(result["username"]),
+                str(result["temporary_password"]),
+                reset=False,
             )
             return 201, result
 
         if path == CUSTOMER_ADMIN_PASSWORD_RESET:
-            return 200, repository.reset_password(str(payload.get("username") or ""))
+            username = str(payload.get("username") or "")
+            matches = repository.search(username)
+            email = None
+            for customer in matches:
+                if any(str(member.get("username")) == username.lower() for member in customer.get("users", [])):
+                    email = customer.get("email")
+                    break
+            result = repository.reset_password(username)
+            result["delivered"] = _deliver_temporary_password(
+                email,
+                str(result["username"]),
+                str(result["temporary_password"]),
+                reset=True,
+            )
+            return 200, result
 
         if path == CUSTOMER_ADMIN_CONTRACT:
             limit = int(payload.get("instance_limit") or 1)
