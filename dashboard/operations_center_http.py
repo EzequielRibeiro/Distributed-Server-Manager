@@ -62,15 +62,26 @@ def dispatch_operations_post(path, payload, *, user, backend):
     body = dict(payload or {})
     operation = str(body.get("operation") or "").lower()
     try:
+        service = OperationsCenterService(backend)
         if operation in {"acknowledge_alert", "resolve_alert"}:
             action = "acknowledge" if operation == "acknowledge_alert" else "resolve"
-            alert = OperationsCenterService(backend).transition_alert(str(body.get("alert_id") or ""), action, user=user)
+            alert = service.transition_alert(str(body.get("alert_id") or ""), action, user=user)
             return 200, {"alert": alert}
+        if operation == "create_schedule":
+            result = service.create_schedule(body.get("schedule") or {}, user=user)
+            return 201, result
+        if operation == "set_schedule_enabled":
+            result = service.set_schedule_enabled(
+                str(body.get("rule_id") or ""),
+                bool(body.get("enabled")),
+                user=user,
+            )
+            return 200, result
         return 400, {"error": "invalid_request", "message": "operation inválida"}
     except PermissionError as exc:
         return 403, {"error": "forbidden", "message": str(exc)}
     except KeyError:
-        return 404, {"error": "not_found", "message": "Alerta não encontrado."}
+        return 404, {"error": "not_found", "message": "Registro não encontrado."}
     except (ValueError, TypeError) as exc:
         return 400, {"error": "invalid_request", "message": str(exc)}
     except Exception:
