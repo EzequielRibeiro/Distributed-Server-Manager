@@ -41,6 +41,10 @@ out="$(DSM_NODE_ROLE=controller "${TMP}/bin/cap" agent ports show agent-node02)"
 
 help="$(DSM_NODE_ROLE=controller "${TMP}/bin/cap" --help 2>&1)"
 grep -Fq 'cap agent deploy HOST --ssh-user USER' <<<"${help}" || fail "controller help lost native agent deploy"
+grep -Fq 'cap user add <usuário> <admin|operator|controller|customer> [scope]' <<<"${help}" \
+    || fail "controller help does not document user creation"
+grep -Fq 'cap user passwd <usuário>' <<<"${help}" \
+    || fail "controller help does not document password management"
 ! grep -Fq 'cap agent game-data list' <<<"${help}" || fail "controller help leaked Agent-local commands"
 
 help_all="$(DSM_NODE_ROLE=controller "${TMP}/bin/cap" help --all 2>&1)"

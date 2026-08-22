@@ -103,25 +103,55 @@ select_initial_topology(){
 
     is_interactive || return 0
 
-    printf '\n==============================================================\n Topologia inicial\n==============================================================\n'
-    printf 'Defina a Region e o Datacenter inicial deste Controller.\n'
-    printf 'Agents serão vinculados posteriormente a um Datacenter existente.\n\n'
-
-    read -r -p 'ID da Region [default-region]: ' DSM_REGION_ID
     DSM_REGION_ID="${DSM_REGION_ID:-default-region}"
-    read -r -p 'Nome da Region [Region Principal]: ' DSM_REGION_NAME
     DSM_REGION_NAME="${DSM_REGION_NAME:-Region Principal}"
-    read -r -p 'Código do país [BR]: ' DSM_REGION_COUNTRY_CODE
     DSM_REGION_COUNTRY_CODE="${DSM_REGION_COUNTRY_CODE:-BR}"
-
-    read -r -p 'ID do Datacenter [dc01]: ' DSM_DATACENTER_ID
     DSM_DATACENTER_ID="${DSM_DATACENTER_ID:-dc01}"
-    read -r -p 'Nome do Datacenter [Datacenter Principal]: ' DSM_DATACENTER_NAME
     DSM_DATACENTER_NAME="${DSM_DATACENTER_NAME:-Datacenter Principal}"
-    read -r -p 'Provider (opcional): ' DSM_DATACENTER_PROVIDER
-    read -r -p 'Cidade (opcional): ' DSM_DATACENTER_CITY
-    read -r -p "Código do país [${DSM_REGION_COUNTRY_CODE}]: " DSM_DATACENTER_COUNTRY_CODE
-    DSM_DATACENTER_COUNTRY_CODE="${DSM_DATACENTER_COUNTRY_CODE:-${DSM_REGION_COUNTRY_CODE}}"
+    DSM_DATACENTER_PROVIDER="${DSM_DATACENTER_PROVIDER:-}"
+    DSM_DATACENTER_CITY="${DSM_DATACENTER_CITY:-}"
+    DSM_DATACENTER_COUNTRY_CODE="${DSM_DATACENTER_COUNTRY_CODE:-}"
+
+    local value confirmation
+    while true; do
+        printf '\n==============================================================\n Topologia inicial\n==============================================================\n'
+        printf 'Defina a Region e o Datacenter inicial deste Controller.\n'
+        printf 'Agents serão vinculados posteriormente a um Datacenter existente.\n\n'
+
+        read -r -p "ID da Region [${DSM_REGION_ID}]: " value
+        DSM_REGION_ID="${value:-${DSM_REGION_ID}}"
+        read -r -p "Nome da Region [${DSM_REGION_NAME}]: " value
+        DSM_REGION_NAME="${value:-${DSM_REGION_NAME}}"
+        read -r -p "Código do país [${DSM_REGION_COUNTRY_CODE}]: " value
+        DSM_REGION_COUNTRY_CODE="${value:-${DSM_REGION_COUNTRY_CODE}}"
+
+        read -r -p "ID do Datacenter [${DSM_DATACENTER_ID}]: " value
+        DSM_DATACENTER_ID="${value:-${DSM_DATACENTER_ID}}"
+        read -r -p "Nome do Datacenter [${DSM_DATACENTER_NAME}]: " value
+        DSM_DATACENTER_NAME="${value:-${DSM_DATACENTER_NAME}}"
+        read -r -p "Provider [${DSM_DATACENTER_PROVIDER:-não informado}]: " value
+        DSM_DATACENTER_PROVIDER="${value:-${DSM_DATACENTER_PROVIDER}}"
+        read -r -p "Cidade [${DSM_DATACENTER_CITY:-não informada}]: " value
+        DSM_DATACENTER_CITY="${value:-${DSM_DATACENTER_CITY}}"
+        DSM_DATACENTER_COUNTRY_CODE="${DSM_DATACENTER_COUNTRY_CODE:-${DSM_REGION_COUNTRY_CODE}}"
+        read -r -p "Código do país [${DSM_DATACENTER_COUNTRY_CODE}]: " value
+        DSM_DATACENTER_COUNTRY_CODE="${value:-${DSM_DATACENTER_COUNTRY_CODE}}"
+
+        printf '\n==============================================================\n Revisão da topologia inicial\n==============================================================\n'
+        printf 'Region ID          : %s\n' "${DSM_REGION_ID}"
+        printf 'Region nome        : %s\n' "${DSM_REGION_NAME}"
+        printf 'Region país        : %s\n' "${DSM_REGION_COUNTRY_CODE}"
+        printf 'Datacenter ID      : %s\n' "${DSM_DATACENTER_ID}"
+        printf 'Datacenter nome    : %s\n' "${DSM_DATACENTER_NAME}"
+        printf 'Provider           : %s\n' "${DSM_DATACENTER_PROVIDER:-não informado}"
+        printf 'Cidade             : %s\n' "${DSM_DATACENTER_CITY:-não informada}"
+        printf 'Datacenter país    : %s\n' "${DSM_DATACENTER_COUNTRY_CODE}"
+        read -r -p 'Os dados estão corretos? [S/n]: ' confirmation
+        case "${confirmation:-s}" in
+            s|S|sim|SIM|y|Y|yes|YES) break ;;
+            *) printf '\nRevise os dados da topologia. Enter mantém o valor atual.\n' ;;
+        esac
+    done
 
     export DSM_REGION_ID DSM_REGION_NAME DSM_REGION_COUNTRY_CODE
     export DSM_DATACENTER_ID DSM_DATACENTER_NAME DSM_DATACENTER_PROVIDER

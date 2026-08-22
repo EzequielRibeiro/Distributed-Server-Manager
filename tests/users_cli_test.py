@@ -94,7 +94,7 @@ class UsersCliTest(unittest.TestCase):
             result.stderr,
         )
         self.assertIn(
-            "dsm user add <usuario> customer <scope>",
+            "cap user add <usuario> customer <scope>",
             result.stderr,
         )
         self.assertNotIn(

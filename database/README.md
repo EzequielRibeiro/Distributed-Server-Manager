@@ -12,10 +12,10 @@ Dashboard users are stored exclusively in the `dashboard_users` table. Create
 the first administrator interactively from the console:
 
 ```bash
-dsm user add admin admin
+cap user add admin admin
 ```
 
-The `dsm instance create-aurora` demonstration command creates the active
+The `cap instance create-aurora` demonstration command creates the active
 `aurora` customer user and its ownership links in SQLite. There is no
 `users.conf` authentication fallback.
 

@@ -71,6 +71,14 @@ class ConsolidatedSchemaTest(unittest.TestCase):
         self.assertNotIn("Arquivo protegido contendo a senha", entrypoint)
         self.assertIn("chown \"${DSM_SERVICE_USER}:${DSM_SERVICE_GROUP}\"", setup)
 
+    def test_interactive_topology_has_review_and_confirmation(self):
+        entrypoint = (ROOT / "install.sh").read_text(encoding="utf-8")
+        topology = entrypoint[entrypoint.index("select_initial_topology()") :
+                              entrypoint.index("bootstrap_initial_topology()")]
+        self.assertIn("Revisão da topologia inicial", topology)
+        self.assertIn("Os dados estão corretos? [S/n]", topology)
+        self.assertIn("while true", topology)
+
 
 if __name__ == "__main__":
     unittest.main()
