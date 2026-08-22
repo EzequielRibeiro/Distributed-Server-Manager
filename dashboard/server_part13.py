@@ -17,6 +17,8 @@ from configuration_http import CONFIGURATIONS_PATH,dispatch_configuration_get,di
 from content_http import CONTENT_PATH,dispatch_content_get,dispatch_content_post
 from customer_admin_api import CUSTOMER_ADMIN_GET_PATHS,CUSTOMER_ADMIN_POST_PATHS,dispatch_customer_admin_get,dispatch_customer_admin_post
 from customer_admin_repository import CustomerAdminRepository
+from customer_invitation_api import PUBLIC_INVITATION_PATHS,TEAM_INVITATION_PATHS,dispatch_customer_invitations
+from customer_team_api import CUSTOMER_TEAM_PATHS,dispatch_customer_team
 from controller_session import session_user_from_headers
 from ha_dr_http import HA_DR_PATH,dispatch_ha_get,dispatch_ha_post
 from infrastructure_role_http import INFRASTRUCTURE_ROLE_PATH,dispatch_infrastructure_role_get,dispatch_infrastructure_role_post
@@ -27,8 +29,9 @@ legacy=integration.legacy;_previous_get=legacy.DashboardHandler.do_GET;_previous
 ROOT_DIR=Path(__file__).resolve().parents[1];WINDOWS_INSTALL_PATH="/agent/install.ps1";WINDOWS_INSTALL_FILE=ROOT_DIR/"agents"/"windows"/"installer"/"bootstrap-release.ps1";VERSION_FILE=ROOT_DIR/"version"
 legacy.STATIC_FILES["/agent-updates.js"]=legacy.WEB_DIR/"agent-updates.js";legacy.STATIC_FILES["/infrastructure-role-ui.js"]=legacy.WEB_DIR/"infrastructure-role-ui.js";legacy.STATIC_FILES["/game-data-orchestration.js"]=legacy.WEB_DIR/"game-data-orchestration.js"
 CUSTOMER_ADMIN_FILES={"/customers.html":legacy.WEB_DIR/"customers.html","/customers.js":legacy.WEB_DIR/"customers.js","/customer-admin.html":legacy.WEB_DIR/"customer-admin.html","/customer-admin.js":legacy.WEB_DIR/"customer-admin.js","/customer-admin.css":legacy.WEB_DIR/"customer-admin.css","/customer-change-password.html":legacy.WEB_DIR/"customer-change-password.html","/customer-change-password.js":legacy.WEB_DIR/"customer-change-password.js"}
+CUSTOMER_TEAM_FILES={"/customer-members.html":legacy.WEB_DIR/"customer-members.html","/customer-members.js":legacy.WEB_DIR/"customer-members.js","/customer-team.css":legacy.WEB_DIR/"customer-team.css"}
 CUSTOMER_PASSWORD_GATED_PAGES={"/customer.html","/customer-members.html","/customer-instance.html"}
-legacy.STATIC_FILES.update(CUSTOMER_ADMIN_FILES)
+legacy.STATIC_FILES.update(CUSTOMER_ADMIN_FILES);legacy.STATIC_FILES.update(CUSTOMER_TEAM_FILES)
 def _user(self):
  user=_authenticate(self.headers)
  if user is None:self.unauthorized()
@@ -55,8 +58,8 @@ def _serve_windows_bootstrap(self):
 def _require_session_page(self,path):
  user=session_user_from_headers(self.headers)
  if user is None:
-  _redirect(self,"/login.html" if path!="/customer-change-password.html" else "/customer-login.html");return None
- allowed={"customer"} if path=="/customer-change-password.html" else {"admin","controller","operator"}
+  _redirect(self,"/customer-login.html" if path in {"/customer-change-password.html","/customer-members.html"} else "/login.html");return None
+ allowed={"customer"} if path in {"/customer-change-password.html","/customer-members.html"} else {"admin","controller","operator"}
  if user.get("role") not in allowed:self.forbidden();return None
  return user
 def _require_customer_password_rotation(self,path):
@@ -68,18 +71,33 @@ def _require_customer_password_rotation(self,path):
  except Exception:required=False
  if required:_redirect(self,"/customer-change-password.html");return False
  return True
+def _customer_api_user(self):
+ user=_user(self)
+ if user is None:return None
+ if user.get("role")!="customer":self.forbidden();return None
+ return user
 def integrated_get(self):
  parsed=urlparse(self.path);path=parsed.path
  if not _require_customer_password_rotation(self,path):return
- if path in {"/customers.html","/customer-admin.html","/customer-change-password.html"}:
+ if path in {"/customers.html","/customer-admin.html","/customer-change-password.html","/customer-members.html"}:
   if _require_session_page(self,path) is None:return
-  self.send_file(CUSTOMER_ADMIN_FILES[path]);return
- if path in {"/customers.js","/customer-admin.js","/customer-admin.css","/customer-change-password.js"}:
-  self.send_file(CUSTOMER_ADMIN_FILES[path]);return
+  source=CUSTOMER_TEAM_FILES.get(path) or CUSTOMER_ADMIN_FILES[path];self.send_file(source);return
+ if path in set(CUSTOMER_ADMIN_FILES)|set(CUSTOMER_TEAM_FILES):
+  self.send_file((CUSTOMER_TEAM_FILES.get(path) or CUSTOMER_ADMIN_FILES[path]));return
  if path in CUSTOMER_ADMIN_GET_PATHS:
   user=_user(self)
   if user is None:return
   status,body=dispatch_customer_admin_get(path,parse_qs(parsed.query),user=user,backend=_backend());self.send_json(status,body);return
+ if path in CUSTOMER_TEAM_PATHS:
+  user=_customer_api_user(self)
+  if user is None:return
+  result=dispatch_customer_team("GET",path,payload=None,user=user,backend=_backend())
+  if result is not None:status,body=result;self.send_json(status,body);return
+ if path in TEAM_INVITATION_PATHS:
+  user=_customer_api_user(self)
+  if user is None:return
+  result=dispatch_customer_invitations("GET",path,payload=None,user=user,backend=_backend())
+  if result is not None:status,body=result;self.send_json(status,body);return
  if path==WINDOWS_INSTALL_PATH:return _serve_windows_bootstrap(self)
  if path in PUBLIC_GET_PATHS or path==SSE_EVENTS_PATH:
   started=time.monotonic();principal=_api_principal(self)
@@ -116,6 +134,18 @@ def _payload(self):
  except ValueError:return None,{"error":"invalid_request","message":"Requisição inválida."}
 def integrated_post(self):
  parsed=urlparse(self.path);path=parsed.path
+ if path in PUBLIC_INVITATION_PATHS:
+  payload,error=_payload(self)
+  if error:self.send_json(400,error);return
+  result=dispatch_customer_invitations("POST",path,payload=payload,user=None,backend=_backend())
+  if result is not None:status,body=result;self.send_json(status,body);return
+ if path in CUSTOMER_TEAM_PATHS or path in TEAM_INVITATION_PATHS:
+  user=_customer_api_user(self)
+  if user is None:return
+  payload,error=_payload(self)
+  if error:self.send_json(400,error);return
+  result=(dispatch_customer_team("POST",path,payload=payload,user=user,backend=_backend()) if path in CUSTOMER_TEAM_PATHS else dispatch_customer_invitations("POST",path,payload=payload,user=user,backend=_backend()))
+  if result is not None:status,body=result;self.send_json(status,body);return
  if path in CUSTOMER_ADMIN_POST_PATHS:
   user=_user(self)
   if user is None:return
