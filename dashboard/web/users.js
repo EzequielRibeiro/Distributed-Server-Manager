@@ -1,5 +1,7 @@
 (function () {
     "use strict";
+    // Compatibility note: /api/users/save was replaced by /api/system-users/save
+    // so administrator-defined passwords can be tracked as temporary credentials.
     const byId = id => document.getElementById(id);
     const auth = sessionStorage.getItem("dsm_auth") || "";
     let users = [];
