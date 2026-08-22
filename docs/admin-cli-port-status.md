@@ -17,6 +17,20 @@ Available through the canonical public CLI `cap`:
 - migration 041 parity for SQLite, PostgreSQL and MySQL/MariaDB;
 - focused CI coverage.
 
+The current operational reference for Customer, Contract and Instance administration is:
+
+```text
+docs/administracao-customer-contract-instance.md
+```
+
+It documents the distinction between `cap customer create` and `cap user add ... customer <scope>`, customer login routes, Customer membership, instance permissions, contract creation, instance creation and deletion, and troubleshooting for customer access.
+
+The DayZ remote-Agent worked example remains available at:
+
+```text
+docs/tutorial-instalacao-dayz-agent-remoto.md
+```
+
 The historical PR #69 is closed as superseded. It must not be merged directly.
 
 `dsm` is not an administrative CLI alternative. It remains only as a temporary compatibility wrapper that forwards old invocations to `cap`. New documentation and automation must use `cap`.
