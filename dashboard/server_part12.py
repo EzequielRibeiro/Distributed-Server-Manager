@@ -9,6 +9,7 @@ import server_part11 as integration
 from agent_installation_http import (
     AGENT_INSTALLATIONS_PATH,
     AGENT_INSTALLATION_STATUS_PATH,
+    AGENT_RELEASES_PATH,
     dispatch_agent_installation_get,
     dispatch_agent_installation_post,
 )
@@ -30,17 +31,22 @@ def _user(self):
 
 def integrated_get(self):
     parsed = urlparse(self.path)
-    if parsed.path != AGENT_INSTALLATION_STATUS_PATH:
+    if parsed.path not in {AGENT_INSTALLATION_STATUS_PATH, AGENT_RELEASES_PATH}:
         return _previous_get(self)
     user = _user(self)
     if user is None:
         return
     query = parse_qs(parsed.query)
+    include_prereleases = str((query.get("include_prereleases") or ["0"])[0]).lower() in {
+        "1", "true", "yes", "on"
+    }
     result = dispatch_agent_installation_get(
         parsed.path,
         user=user,
         backend=legacy.dashboard_repository(legacy.DATABASE_FILE).backend,
         installation_id=(query.get("installation_id") or [None])[0],
+        platform=(query.get("platform") or [None])[0],
+        include_prereleases=include_prereleases,
     )
     status, body = result
     self.send_json(status, body)
