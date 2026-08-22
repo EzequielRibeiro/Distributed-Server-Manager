@@ -1,0 +1,21 @@
+name: Customer C10-C12
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate customer lifecycle Python
+        run: python3 -m py_compile database/customer_user_repository.py dashboard/customer_team_api.py tests/customer_team_c10_c12_test.py
+      - name: Validate customer team JavaScript
+        run: node --check dashboard/web/customer-members.js
+      - name: Run C10-C12 regression
+        run: python3 -m unittest tests/customer_team_c10_c12_test.py
