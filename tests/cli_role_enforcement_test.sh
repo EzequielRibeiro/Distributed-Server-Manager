@@ -35,11 +35,18 @@ cat >"${TMP}/database/agent_deploy_cli.py" <<'EOF'
 import sys
 print("DEPLOY:" + " ".join(sys.argv[1:]))
 EOF
+cat >"${TMP}/database/agent_ssh_prepare_cli.py" <<'EOF'
+#!/usr/bin/env python3
+import sys
+print("SSH-PREPARE:" + " ".join(sys.argv[1:]))
+EOF
 
 fail(){ printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
 out="$(DSM_NODE_ROLE=controller "${TMP}/bin/cap" agent deploy node.example --ssh-user admin)"
 [[ "${out}" == "DEPLOY:node.example --ssh-user admin" ]] || fail "controller deploy route failed"
+out="$(DSM_NODE_ROLE=controller "${TMP}/bin/cap" agent ssh-prepare admin@node.example)"
+[[ "${out}" == "SSH-PREPARE:admin@node.example" ]] || fail "controller ssh-prepare route failed"
 if DSM_NODE_ROLE=controller "${TMP}/bin/cap" agent status >/dev/null 2>"${TMP}/err"; then fail "controller was allowed to run local Agent status"; fi
 grep -Fq "requer role agent ou hybrid" "${TMP}/err" || fail "controller denial lacks role message"
 if DSM_NODE_ROLE=controller "${TMP}/bin/cap" instance restart instance-one >/dev/null 2>"${TMP}/err"; then fail "controller was allowed to run local instance lifecycle"; fi
@@ -51,6 +58,8 @@ out="$(DSM_NODE_ROLE=agent "${TMP}/bin/cap" instance restart instance-one --json
 [[ "${out}" == "LOCAL:instance restart instance-one --json" ]] || fail "agent instance lifecycle route failed"
 if DSM_NODE_ROLE=agent "${TMP}/bin/cap" agent deploy node.example --ssh-user admin >/dev/null 2>"${TMP}/err"; then fail "agent was allowed to deploy another Agent"; fi
 grep -Fq "requer role controller ou hybrid" "${TMP}/err" || fail "agent denial lacks role message"
+if DSM_NODE_ROLE=agent "${TMP}/bin/cap" agent ssh-prepare admin@node.example >/dev/null 2>"${TMP}/err"; then fail "agent was allowed to prepare Controller SSH"; fi
+grep -Fq "requer role controller ou hybrid" "${TMP}/err" || fail "agent ssh-prepare denial lacks role message"
 
 out="$(DSM_NODE_ROLE=agent "${TMP}/bin/cap" agent ports show --json)"
 [[ "${out}" == "LOCAL:ports show --json" ]] || fail "local ports show did not route to local CLI"

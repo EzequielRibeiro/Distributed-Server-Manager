@@ -12,6 +12,11 @@ for path in (ROOT, ROOT / "core", ROOT / "database"):
         sys.path.insert(0, str(path))
 
 from agent_deploy_cli import build_parser
+from agent_ssh_prepare_cli import (
+    build_parser as build_prepare_parser,
+    parse_target,
+    restricted_sudo_command,
+)
 from agent_deploy_topology import validate_deploy_location
 from agent_ssh_deploy import (
     AgentDeployError,
@@ -44,6 +49,19 @@ class AgentSSHDeployTest(unittest.TestCase):
         self.assertEqual(args.ssh_user, "ezequiel")
         self.assertEqual(args.ssh_port, 2222)
         self.assertEqual(args.controller_url, "http://192.168.15.35:8080")
+
+    def test_ssh_prepare_cli_contract_and_restricted_rule(self):
+        args = build_prepare_parser().parse_args([
+            "mine@192.168.15.55", "--ssh-port", "2222"
+        ])
+        self.assertEqual(parse_target(args.target), ("mine", "192.168.15.55"))
+        self.assertEqual(args.ssh_port, 2222)
+        command = restricted_sudo_command("mine")
+        self.assertIn("NOPASSWD: %s, %s -", command)
+        self.assertIn("capivara-agent-mine", command)
+        self.assertNotIn("NOPASSWD: ALL", command)
+        with self.assertRaises(AgentDeployError):
+            parse_target("mine;id@192.168.15.55")
 
     def test_host_and_user_validation(self):
         self.assertEqual(validate_host("192.168.15.55"), "192.168.15.55")
@@ -202,6 +220,8 @@ class AgentSSHDeployTest(unittest.TestCase):
         self.assertIn('deploy)', cap)
         self.assertIn('database/agent_deploy_cli.py', cap)
         self.assertIn('cap agent deploy HOST --ssh-user USER', cap)
+        self.assertIn('cap agent ssh-prepare USER@HOST', cap)
+        self.assertIn('database/agent_ssh_prepare_cli.py', cap)
 
 
 if __name__ == "__main__":

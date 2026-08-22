@@ -6,6 +6,30 @@ Este tutorial prepara o Controller para instalar um Agent Linux pela página **I
 
 A Dashboard não recebe nem armazena senha SSH. O serviço `dsm-dashboard` conecta ao host remoto usando a chave privada da conta que executa a Dashboard, valida o host e exige `sudo` não interativo. Depois do bootstrap e do enrollment, SSH deixa de ser o canal operacional; o Agent passa a usar o protocolo autenticado do Capivara.
 
+## Preparação simplificada (recomendada)
+
+No Controller, execute uma única vez para cada usuário/host remoto:
+
+```bash
+sudo cap agent ssh-prepare mine@192.168.15.55
+```
+
+Para uma porta SSH diferente:
+
+```bash
+sudo cap agent ssh-prepare mine@192.168.15.55 --ssh-port 2222
+```
+
+O assistente descobre a conta do serviço `dsm-dashboard`, cria ou preserva sua chave padrão `id_ed25519`, registra e valida a chave do host, copia a chave pública e instala uma regra sudoers limitada aos dois comandos necessários pelo bootstrap. A senha SSH e a senha de sudo do host remoto podem ser solicitadas uma vez pelos próprios programas `ssh` e `sudo`; elas não são recebidas, armazenadas ou registradas pelo Capivara.
+
+Somente prossiga para a Dashboard quando o comando terminar com:
+
+```text
+SSH_READY mine@192.168.15.55
+```
+
+As etapas manuais abaixo permanecem como referência e alternativa para diagnóstico.
+
 ## 1. Identificar a conta da Dashboard
 
 No Controller:

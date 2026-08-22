@@ -7,10 +7,13 @@ const materials = [
         category: "agents",
         tag: "Tutorial",
         title: "Instalar um Agent Linux remotamente via SSH",
-        description: "Configure a chave do serviço da Dashboard, autorize o Agent, valide sudo não interativo e execute o bootstrap.",
-        keywords: "ssh chave publica publickey sudo capivara mine controller agent datacenter host key permission denied",
+        description: "Prepare automaticamente a chave da Dashboard, o acesso ao Agent e o sudo restrito necessário ao bootstrap.",
+        keywords: "ssh ssh-prepare chave publica publickey sudo capivara mine controller agent datacenter host key permission denied SSH_READY",
         content: `
-            <h3>1. Descubra a conta da Dashboard</h3>
+            <h3>Preparação automática recomendada</h3>
+            <pre>sudo cap agent ssh-prepare mine@192.168.15.55</pre>
+            <p>Informe a senha SSH e a senha de sudo do Agent quando solicitadas. O acesso estará pronto quando aparecer <code>SSH_READY mine@192.168.15.55</code>.</p>
+            <h3>Alternativa manual: 1. Descubra a conta da Dashboard</h3>
             <pre>systemctl show dsm-dashboard.service -p User --value
 getent passwd capivara</pre>
             <h3>2. Crie a chave da conta de serviço</h3>
