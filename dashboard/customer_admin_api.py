@@ -2,6 +2,7 @@
 """Administrative API for Customer lifecycle, credentials and contracts."""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from customer_admin_repository import CustomerAdminRepository
@@ -9,12 +10,17 @@ from customer_mailer import send_temporary_password
 
 CUSTOMER_ADMIN_COLLECTION = "/api/admin/customers"
 CUSTOMER_ADMIN_DETAIL = "/api/admin/customer"
+CUSTOMER_ADMIN_GAMES = "/api/admin/catalog/games"
 CUSTOMER_ADMIN_PASSWORD_RESET = "/api/admin/customer/password-reset"
 CUSTOMER_ADMIN_CONTRACT = "/api/admin/customer/contracts"
 CUSTOMER_ADMIN_MEMBER_ROLE = "/api/admin/customer/member-role"
 CUSTOMER_ADMIN_ACCESS = "/api/admin/customer/access"
 CUSTOMER_PASSWORD_CHANGE = "/api/customer/password/change-temporary"
-CUSTOMER_ADMIN_GET_PATHS = {CUSTOMER_ADMIN_COLLECTION, CUSTOMER_ADMIN_DETAIL}
+CUSTOMER_ADMIN_GET_PATHS = {
+    CUSTOMER_ADMIN_COLLECTION,
+    CUSTOMER_ADMIN_DETAIL,
+    CUSTOMER_ADMIN_GAMES,
+}
 CUSTOMER_ADMIN_POST_PATHS = {
     CUSTOMER_ADMIN_COLLECTION,
     CUSTOMER_ADMIN_PASSWORD_RESET,
@@ -22,6 +28,17 @@ CUSTOMER_ADMIN_POST_PATHS = {
     CUSTOMER_ADMIN_MEMBER_ROLE,
     CUSTOMER_ADMIN_ACCESS,
     CUSTOMER_PASSWORD_CHANGE,
+}
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+CATALOG_GAMES_DIR = ROOT_DIR / "catalog" / "v2" / "games"
+GAME_LABELS = {
+    "arma3": "Arma 3",
+    "dayz": "DayZ",
+    "luanti": "Luanti",
+    "mindustry": "Mindustry",
+    "minecraft": "Minecraft",
+    "rust": "Rust",
 }
 
 
@@ -35,6 +52,26 @@ def _admin_read(user: dict[str, Any] | None) -> bool:
 
 def _admin_write(user: dict[str, Any] | None) -> bool:
     return _role(user) in {"admin", "controller"}
+
+
+def _catalog_games() -> list[dict[str, str]]:
+    """Return games from the canonical Catalog v2 directory.
+
+    Customer administration must never maintain its own handwritten game list.
+    A game becomes selectable when it has a canonical game directory containing
+    a runtimes directory.
+    """
+    if not CATALOG_GAMES_DIR.is_dir():
+        return []
+    games: list[dict[str, str]] = []
+    for path in sorted(CATALOG_GAMES_DIR.iterdir(), key=lambda item: item.name):
+        if not path.is_dir() or not (path / "runtimes").is_dir():
+            continue
+        game_id = path.name.strip().lower()
+        if not game_id:
+            continue
+        games.append({"id": game_id, "name": GAME_LABELS.get(game_id, game_id.replace("-", " ").title())})
+    return games
 
 
 def _deliver_temporary_password(email: str | None, username: str, password: str, *, reset: bool) -> bool:
@@ -54,6 +91,8 @@ def dispatch_customer_admin_get(path: str, query: dict[str, list[str]], *, user,
     if not _admin_read(user):
         return 403, {"error": "access denied"}
     try:
+        if path == CUSTOMER_ADMIN_GAMES:
+            return 200, {"games": _catalog_games()}
         repository = CustomerAdminRepository(backend)
         if path == CUSTOMER_ADMIN_COLLECTION:
             term = str((query.get("q") or [""])[0])
@@ -123,9 +162,13 @@ def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, ba
 
         if path == CUSTOMER_ADMIN_CONTRACT:
             limit = int(payload.get("instance_limit") or 1)
+            game_id = str(payload.get("game_id") or "").strip().lower()
+            catalog_ids = {item["id"] for item in _catalog_games()}
+            if game_id not in catalog_ids:
+                raise ValueError("game is not available in Catalog v2")
             result = repository.create_contract(
                 customer_id=str(payload.get("customer_id") or ""),
-                game_id=str(payload.get("game_id") or ""),
+                game_id=game_id,
                 instance_limit=limit,
                 contract_id=(str(payload.get("id") or "").strip() or None),
                 ends_at=(str(payload.get("ends_at") or "").strip() or None),
