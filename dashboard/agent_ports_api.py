@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 from typing import Any
 
 from agent_port_availability import effective_port_summary
 from agent_port_repository import AgentPortRepository
+from alert_repository import AlertSession, dialect_for_backend
 
 
 def _json_ready(value: Any) -> Any:
@@ -26,6 +28,27 @@ def _repository(backend):
     repository = AgentPortRepository(backend)
     repository.initialize()
     return repository
+
+
+def _agent_metadata(backend, agent_id: str) -> dict[str, Any]:
+    dialect = dialect_for_backend(backend)
+    ph = dialect.placeholder
+    with backend.connect() as connection:
+        session = AlertSession(backend, connection)
+        try:
+            row = session.execute(
+                f"SELECT metadata_json FROM agents WHERE id={ph}",
+                (agent_id,),
+            ).fetchone()
+        finally:
+            session.close()
+    if not row:
+        return {}
+    try:
+        value = json.loads(str(row["metadata_json"] or "{}"))
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def _allowed(user: dict[str, Any] | None, agent: dict[str, Any]) -> bool:
@@ -57,7 +80,17 @@ def agent_ports_for_user(user, backend, agent_id):
         raise ValueError("agent not found")
     if not _allowed(user, agent):
         raise PermissionError("agent is outside user scope")
-    return _json_ready(effective_port_summary(backend, agent["id"]))
+
+    result = effective_port_summary(backend, agent["id"])
+    metadata = _agent_metadata(backend, agent["id"])
+    result_agent = result.get("agent") if isinstance(result.get("agent"), dict) else {}
+    result_agent["metadata"] = metadata
+    result_agent["recent_logs"] = metadata.get("recent_logs", [])
+    result_agent["telemetry"] = metadata.get("telemetry", {})
+    result["agent"] = result_agent
+    result["recent_logs"] = metadata.get("recent_logs", [])
+    result["telemetry"] = metadata.get("telemetry", {})
+    return _json_ready(result)
 
 
 def set_agent_ports_for_user(user, backend, payload):
