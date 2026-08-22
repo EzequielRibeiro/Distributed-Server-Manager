@@ -198,6 +198,8 @@ Na instalação interativa de Controller/Hybrid, o banco pode ser escolhido dura
 
 Em instalações novas, o instalador oferece SQLite, PostgreSQL, MySQL e MariaDB e cria o schema completo consolidado do backend escolhido. A cadeia histórica de migrations não é executada e bancos antigos não recebem upgrade incremental.
 
+Os antigos diretórios `database/migrations*` foram removidos. A fonte única de verdade para instalações e pacotes novos é `database/schemas/`, com um arquivo completo por backend.
+
 Para PostgreSQL, MySQL e MariaDB, informe host, porta, database, usuário dedicado e modo TLS. Não use postgres ou root como conta da aplicação. O instalador explica o tratamento da credencial, solicita e confirma a senha sem eco e cria automaticamente /etc/capivara/secrets/database-password.
 
 O diretório usa permissão 0700 e o arquivo 0600. Ambos começam como root:root e passam com segurança para a conta de serviço selecionada depois que ela existe. A senha não é exibida, registrada em logs nem gravada na configuração principal; não é mais necessário criar ou informar manualmente um arquivo secreto.

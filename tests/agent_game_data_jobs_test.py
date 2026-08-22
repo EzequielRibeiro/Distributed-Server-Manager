@@ -195,8 +195,9 @@ class AgentGameDataJobsTest(unittest.TestCase):
         self.assertIn("agent/runtime/local_cli.py", package)
         self.assertIn("agent/runtime/game_data_client.py", package)
         self.assertIn("agent/runtime/game_data_executor.py", package)
-        for directory in ("migrations", "migrations_mysql", "migrations_postgresql"):
-            self.assertTrue((ROOT / "database" / directory / "025_agent_game_data_jobs.sql").is_file())
+        for backend in ("sqlite", "postgresql", "mysql", "mariadb"):
+            schema = (ROOT / "database" / "schemas" / f"{backend}.sql").read_text()
+            self.assertIn("agent_game_data_jobs", schema)
 
 
 if __name__ == "__main__":

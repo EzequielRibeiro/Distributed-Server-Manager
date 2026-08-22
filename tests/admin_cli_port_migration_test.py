@@ -4,11 +4,8 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-files = [
-    ROOT / "database/migrations/041_admin_destructive_deletion.sql",
-    ROOT / "database/migrations_postgresql/041_admin_destructive_deletion.sql",
-    ROOT / "database/migrations_mysql/041_admin_destructive_deletion.sql",
-]
+files = [ROOT / "database/schemas" / f"{backend}.sql"
+         for backend in ("sqlite", "postgresql", "mysql", "mariadb")]
 for path in files:
     text = path.read_text(encoding="utf-8")
     assert "deleting" in text, path

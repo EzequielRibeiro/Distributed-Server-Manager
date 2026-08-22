@@ -24,7 +24,7 @@ def main():
     assert inv["game_agnostic_core"] is True
     assert inv["active_installation_mutation"] is False
     assert inv["automatic_release_publication"] is False
-    assert set(inv["database_migration_parity"]) == {"sqlite", "postgresql", "mysql-mariadb"}
+    assert set(inv["database_schema_parity"]) == {"sqlite", "postgresql", "mysql-mariadb"}
     doc = (ROOT / "docs" / "architecture" / "e3-final-consolidation-release-readiness.md").read_text(encoding="utf-8")
     for phrase in ("Upgrade and migration readiness", "Security hardening", "Reliability and scale", "Release candidate gate"):
         assert phrase in doc

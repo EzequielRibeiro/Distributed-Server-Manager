@@ -104,12 +104,9 @@ class Migration:
 
 
 def migration_directory() -> Path:
-    """Return the MySQL/MariaDB migration directory."""
+    """Return the consolidated MySQL schema directory."""
 
-    return (
-        Path(__file__).resolve().parent
-        / "migrations_mysql"
-    )
+    return consolidated_schema_path().parent
 
 
 def load_migrations(
@@ -117,10 +114,16 @@ def load_migrations(
 ) -> list[Migration]:
     """Load MySQL/MariaDB migrations in version order."""
 
-    directory = (
-        directory
-        or migration_directory()
-    )
+    if directory is None:
+        path = consolidated_schema_path()
+        sql = path.read_text(encoding="utf-8")
+        return [Migration(
+            version=CONSOLIDATED_SCHEMA_VERSION,
+            name=CONSOLIDATED_SCHEMA_NAME,
+            path=path,
+            sql=sql,
+            checksum=hashlib.sha256(sql.encode("utf-8")).hexdigest(),
+        )]
 
     if not directory.is_dir():
         raise DatabaseConfigurationError(

@@ -1532,9 +1532,6 @@ verify_source_tree()
         database/schemas/mysql.sql
         database/schemas/mariadb.sql
         installer/database_setup.sh
-        database/migrations/001_initial.sql
-        database/migrations_postgresql/001_initial.sql
-        database/migrations_mysql/001_initial.sql
         systemd/dsm-dashboard.service
     )
 

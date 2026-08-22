@@ -189,7 +189,7 @@ This keeps placement logic reusable by the dashboard, CLI and future Controller 
 This phase intentionally does not:
 
 - change the candidate-selection query;
-- add or alter database migrations;
+- add or alter consolidated database schemas;
 - persist a `placement_ready` flag;
 - modify Agent lifecycle behavior;
 - enforce new Agent status values at database level;
@@ -200,9 +200,10 @@ This phase intentionally does not:
 
 The contract was reconciled against the repository state on 2026-08-19, including:
 
-- `database/migrations/003_controller_agent_customer_model.sql`
-- `database/migrations/004_instance_service_contracts.sql`
-- `database/migrations/012_location_topology.sql`
+- `database/schemas/sqlite.sql`
+- `database/schemas/postgresql.sql`
+- `database/schemas/mysql.sql`
+- `database/schemas/mariadb.sql`
 - `database/infrastructure_repository.py`
 - `database/location_repository.py`
 

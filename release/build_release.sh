@@ -110,9 +110,10 @@ REQUIRED_FILES=(
     database/manager.py
     database/runtime_backend.py
     database/operations.py
-    database/migrations/001_initial.sql
-    database/migrations_postgresql/001_initial.sql
-    database/migrations_mysql/001_initial.sql
+    database/schemas/sqlite.sql
+    database/schemas/postgresql.sql
+    database/schemas/mysql.sql
+    database/schemas/mariadb.sql
     installer/catalog.sh
     installer/compatibility_resolver.sh
     catalog/v2/schemas/runtime-definition.schema.json
@@ -122,23 +123,6 @@ for relative_path in "${REQUIRED_FILES[@]}"
 do
     [[ -f "${PACKAGE_ROOT}/${relative_path}" ]] \
         || fail "required release file missing: ${relative_path}"
-done
-
-# Every SQL migration tracked by the release commit is part of the
-# database upgrade contract and must be present in the package.
-mapfile -t MIGRATION_FILES < <(
-    git -C "${ROOT}" ls-tree -r --name-only "${COMMIT}" -- \
-        database/migrations database/migrations_postgresql database/migrations_mysql \
-        | grep -E '^database/migrations(_postgresql|_mysql)?/[0-9]{3}_[a-z0-9_]+\.sql$'
-)
-
-(( ${#MIGRATION_FILES[@]} > 0 )) \
-    || fail "no database migrations found in release commit"
-
-for relative_path in "${MIGRATION_FILES[@]}"
-do
-    [[ -f "${PACKAGE_ROOT}/${relative_path}" ]] \
-        || fail "required database migration missing: ${relative_path}"
 done
 
 FILE_COUNT=$(find "${PACKAGE_ROOT}" -type f | wc -l | tr -d ' ')
@@ -179,9 +163,10 @@ manifest = {
         "database/manager.py",
         "database/runtime_backend.py",
         "database/operations.py",
-        "database/migrations/001_initial.sql",
-        "database/migrations_postgresql/001_initial.sql",
-        "database/migrations_mysql/001_initial.sql",
+        "database/schemas/sqlite.sql",
+        "database/schemas/postgresql.sql",
+        "database/schemas/mysql.sql",
+        "database/schemas/mariadb.sql",
         "installer/catalog.sh",
         "installer/compatibility_resolver.sh",
         "catalog/v2/schemas/runtime-definition.schema.json",

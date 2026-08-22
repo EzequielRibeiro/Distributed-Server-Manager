@@ -44,23 +44,15 @@ for relative_path in \
     agents/windows/runtime/agent.py agents/windows/runtime/capabilities.py agents/windows/runtime/network_inventory.py agents/windows/runtime/update_client.py \
     agents/windows/updater/updater.py agents/windows/service/register-task.ps1 \
     release/build_windows_agent_package.py \
-    database/migrations/001_initial.sql \
-    database/migrations_postgresql/001_initial.sql \
-    database/migrations_mysql/001_initial.sql release-manifest.json
+    database/schemas/sqlite.sql database/schemas/postgresql.sql \
+    database/schemas/mysql.sql database/schemas/mariadb.sql release-manifest.json
 do
     [[ -f "${PACKAGE_ROOT}/${relative_path}" ]] || fail "required packaged file missing: ${relative_path}"
 done
-mapfile -t EXPECTED_MIGRATIONS < <(
-    git -C "${ROOT}" ls-tree -r --name-only "${COMMIT}" -- database/migrations database/migrations_postgresql database/migrations_mysql \
-        | grep -E '^database/migrations(_postgresql|_mysql)?/[0-9]{3}_[a-z0-9_]+\.sql$'
-)
-(( ${#EXPECTED_MIGRATIONS[@]} > 0 )) || fail "release commit contains no database migrations"
-for relative_path in "${EXPECTED_MIGRATIONS[@]}"; do [[ -f "${PACKAGE_ROOT}/${relative_path}" ]] || fail "packaged database migration missing: ${relative_path}"; done
-mapfile -t PACKAGED_MIGRATIONS < <(
-    for directory in migrations migrations_postgresql migrations_mysql; do find "${PACKAGE_ROOT}/database/${directory}" -maxdepth 1 -type f -name '*.sql' -printf "database/${directory}/%f\n"; done | sort
-)
-mapfile -t EXPECTED_MIGRATIONS_SORTED < <(printf '%s\n' "${EXPECTED_MIGRATIONS[@]}" | sort)
-[[ "$(printf '%s\n' "${PACKAGED_MIGRATIONS[@]}")" == "$(printf '%s\n' "${EXPECTED_MIGRATIONS_SORTED[@]}")" ]] || fail "packaged database migration set differs from release commit"
+for backend in sqlite postgresql mysql mariadb; do
+    [[ -f "${PACKAGE_ROOT}/database/schemas/${backend}.sql" ]] \
+        || fail "packaged consolidated schema missing: ${backend}"
+done
 for forbidden_path in .git .idea .artifacts cache logs packages instances tools/steamcmd runtime/state dashboard/state/dashboard_state.json; do [[ ! -e "${PACKAGE_ROOT}/${forbidden_path}" ]] || fail "generated or machine-local path was packaged: ${forbidden_path}"; done
 "${PYTHON_BIN}" - "${TMP_DIR}/first/${MANIFEST_NAME}" "${PACKAGE_ROOT}/release-manifest.json" "${VERSION}" "${COMMIT}" <<'PY'
 import json,pathlib,sys

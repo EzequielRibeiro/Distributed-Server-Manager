@@ -98,9 +98,9 @@ def default_database(root: Path) -> Path:
 
 
 def migration_directory() -> Path:
-    """Return the current SQLite migration directory."""
+    """Return the consolidated SQLite schema directory."""
 
-    return Path(__file__).resolve().parent / "migrations"
+    return consolidated_schema_path().parent
 
 
 def load_migrations(
@@ -108,7 +108,16 @@ def load_migrations(
 ) -> list[Migration]:
     """Load and validate migrations in version order."""
 
-    directory = directory or migration_directory()
+    if directory is None:
+        path = consolidated_schema_path()
+        sql = path.read_text(encoding="utf-8")
+        return [Migration(
+            version=CONSOLIDATED_SCHEMA_VERSION,
+            name=CONSOLIDATED_SCHEMA_NAME,
+            path=path,
+            sql=sql,
+            checksum=hashlib.sha256(sql.encode("utf-8")).hexdigest(),
+        )]
 
     migrations: list[Migration] = []
     seen_versions: set[int] = set()

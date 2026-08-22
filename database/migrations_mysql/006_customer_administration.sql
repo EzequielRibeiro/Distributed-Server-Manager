@@ -1,7 +1,0 @@
--- =============================================================
--- Capivara Distributed Server Manager
--- MySQL / MariaDB Migration 006
--- Customer administration
---
--- Historical migration intentionally contains no schema changes.
--- =============================================================

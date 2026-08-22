@@ -4,8 +4,9 @@ The persistence layer uses SQLite from the Python standard library. It does
 not require a separate database server and is suitable for Controller, Agent
 and hybrid installations.
 
-The default database is stored at `data/capivara.db`. Migration files are
-immutable and live in `database/migrations`.
+The default database is stored at `data/capivara.db`. Clean installations use
+one complete schema per backend from `database/schemas`. Historical incremental
+migrations and upgrades of databases created by old releases are unsupported.
 
 Dashboard users are stored exclusively in the `dashboard_users` table. Create
 the first administrator interactively from the console:
@@ -26,9 +27,10 @@ dsm database check
 dsm database backup /path/capivara-backup.db
 ```
 
-The installer initializes the database after writing the machine-specific
-configuration. The updater applies pending migrations before restarting the
-services. A migration failure therefore uses the existing updater rollback.
+The installer validates connectivity before persistent installation, then
+applies and validates the consolidated schema before starting services. The
+`migrate` command is retained as an idempotent schema-validation alias; it does
+not execute a historical upgrade chain.
 
 JSON runtime files remain supported during the transition. Consumers will be
 migrated incrementally rather than changing their storage contracts at once.

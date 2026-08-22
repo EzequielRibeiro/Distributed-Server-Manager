@@ -42,6 +42,6 @@
     "game_agnostic_core": true,
     "active_installation_mutation": false,
     "automatic_release_publication": false,
-    "database_migration_parity": ["sqlite", "postgresql", "mysql-mariadb"]
+    "database_schema_parity": ["sqlite", "postgresql", "mysql-mariadb"]
   }
 }

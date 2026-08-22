@@ -453,19 +453,19 @@ def build_parser() -> argparse.ArgumentParser:
         "init",
         help=(
             "create/initialize database "
-            "and apply migrations"
+            "from the consolidated schema"
         ),
     )
 
     subparsers.add_parser(
         "migrate",
-        help="apply pending migrations",
+        help="validate/apply the consolidated schema idempotently",
     )
 
     subparsers.add_parser(
         "status",
         help=(
-            "show migration and database status"
+            "show consolidated schema and database status"
         ),
     )
 
