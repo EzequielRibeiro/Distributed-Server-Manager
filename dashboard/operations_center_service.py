@@ -2,6 +2,7 @@
 """Administrative Operations Center: events, alerts, incidents, schedules and history."""
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -10,6 +11,14 @@ from automation_repository import AutomationRepository
 from universal_event_repository import UniversalEventRepository
 
 ADMIN_ROLES = {"admin", "controller", "operator"}
+ADMIN_SCHEDULE_SCOPES = {"controller", "agent", "datacenter", "region"}
+ADMIN_SCHEDULE_ACTIONS = {
+    "controller_backup",
+    "infrastructure_doctor",
+    "agent_health_check",
+    "agent_update",
+    "game_data_update",
+}
 TERMINAL_MARKERS = ("COMPLETED", "SUCCEEDED", "RESOLVED", "RECOVERED", "FINISHED", "CLOSED")
 FAILURE_MARKERS = ("FAILED", "ERROR", "CRITICAL", "UNAVAILABLE", "REJECTED")
 
@@ -50,6 +59,14 @@ def _failure(event_type: str) -> bool:
 
 def _severity_rank(value: str) -> int:
     return {"critical": 4, "error": 3, "warning": 2, "warn": 2, "info": 1}.get(str(value or "").lower(), 0)
+
+
+def _requested_by(user: dict[str, Any]) -> str | None:
+    for key in ("username", "user_id", "id", "name"):
+        value = str(user.get(key) or "").strip()
+        if value:
+            return value[:191]
+    return None
 
 
 class OperationsCenterService:
@@ -140,6 +157,74 @@ class OperationsCenterService:
         failed = [run for run in runs if str(run.get("status") or "").lower() in {"failed", "error"}]
         return {"rules": rules, "runs": runs, "failed_runs": len(failed)}
 
+    def create_schedule(self, payload: dict[str, Any], *, user):
+        _require_admin(user)
+        self.initialize()
+        name = str(payload.get("name") or "").strip()
+        scope = str(payload.get("scope") or "controller").strip().lower()
+        target = str(payload.get("target_id") or "").strip()
+        action = str(payload.get("action") or "").strip().lower()
+        expression = str(payload.get("expression") or "").strip()
+        timezone_name = str(payload.get("timezone") or "UTC").strip() or "UTC"
+        enabled = bool(payload.get("enabled", True))
+        if not name:
+            raise ValueError("nome do agendamento é obrigatório")
+        if scope not in ADMIN_SCHEDULE_SCOPES:
+            raise ValueError("escopo administrativo inválido")
+        if scope != "controller" and not target:
+            raise ValueError("alvo é obrigatório para este escopo")
+        if action not in ADMIN_SCHEDULE_ACTIONS:
+            raise ValueError("ação administrativa inválida")
+        if not expression or len(expression) > 191:
+            raise ValueError("expressão de agendamento inválida")
+        if len(timezone_name) > 64:
+            raise ValueError("timezone inválida")
+        if action == "controller_backup" and scope != "controller":
+            raise ValueError("backup do Controller exige escopo controller")
+        if action in {"agent_health_check", "agent_update", "game_data_update"} and scope != "agent":
+            raise ValueError("esta ação exige escopo agent")
+        rule_id = str(payload.get("rule_id") or "").strip() or f"admin-schedule-{uuid.uuid4()}"
+        raw = {
+            "rule_id": rule_id,
+            "name": name,
+            "enabled": enabled,
+            "trigger": {"type": "schedule", "expression": expression, "timezone": timezone_name},
+            "conditions": [],
+            "actions": [{
+                "type": "configuration",
+                "configuration": {
+                    "kind": "CapivaraAdministrativeScheduleAction",
+                    "operation": action,
+                    "scope": scope,
+                    "target_id": target or None,
+                    "timezone": timezone_name,
+                },
+            }],
+            "cooldown_seconds": 0,
+        }
+        return self.automation.put_rule(raw, requested_by=_requested_by(user))
+
+    def set_schedule_enabled(self, rule_id: str, enabled: bool, *, user):
+        _require_admin(user)
+        self.initialize()
+        current = self.automation.get_rule(str(rule_id or "").strip())
+        if current is None:
+            raise KeyError(rule_id)
+        actions = current.get("actions") or []
+        config = actions[0].get("configuration") if actions and isinstance(actions[0], dict) else None
+        if not isinstance(config, dict) or config.get("kind") != "CapivaraAdministrativeScheduleAction":
+            raise ValueError("a regra não é um agendamento administrativo")
+        raw = {
+            "rule_id": current["rule_id"],
+            "name": current.get("name") or current["rule_id"],
+            "enabled": bool(enabled),
+            "trigger": current.get("trigger") or {},
+            "conditions": current.get("conditions") or [],
+            "actions": actions,
+            "cooldown_seconds": current.get("cooldown_seconds") or 0,
+        }
+        return self.automation.put_rule(raw, requested_by=_requested_by(user))
+
     def logs(self, *, user, limit=300):
         events = self.list_events(user=user, limit=limit)
         return [{
@@ -187,4 +272,4 @@ class OperationsCenterService:
         raise ValueError("action deve ser acknowledge ou resolve")
 
 
-__all__ = ["OperationsCenterService", "ADMIN_ROLES"]
+__all__ = ["OperationsCenterService", "ADMIN_ROLES", "ADMIN_SCHEDULE_SCOPES", "ADMIN_SCHEDULE_ACTIONS"]
