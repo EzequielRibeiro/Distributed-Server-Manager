@@ -15,9 +15,11 @@ from customer_admin_api import (
     CUSTOMER_ADMIN_ACCESS,
     CUSTOMER_ADMIN_COLLECTION,
     CUSTOMER_ADMIN_CONTRACT,
+    CUSTOMER_ADMIN_GAMES,
     CUSTOMER_ADMIN_MEMBER_ROLE,
     CUSTOMER_ADMIN_PASSWORD_RESET,
     CUSTOMER_PASSWORD_CHANGE,
+    dispatch_customer_admin_get,
     dispatch_customer_admin_post,
 )
 from customer_admin_repository import CustomerAdminRepository
@@ -29,10 +31,16 @@ def main() -> int:
     users_html = (ROOT / "dashboard" / "web" / "users.html").read_text(encoding="utf-8")
     sidebar = (ROOT / "dashboard" / "web" / "components" / "sidebar.html").read_text(encoding="utf-8")
     customer_auth = (ROOT / "dashboard" / "web" / "customer-auth.js").read_text(encoding="utf-8")
+    customer_admin_html = (ROOT / "dashboard" / "web" / "customer-admin.html").read_text(encoding="utf-8")
+    customer_admin_js = (ROOT / "dashboard" / "web" / "customer-admin.js").read_text(encoding="utf-8")
     assert '<option value="customer">' not in users_html
     assert "Usuários do sistema" in users_html
     assert "customers.html" in sidebar
     assert "customer-change-password.html" in customer_auth
+    assert '<select id="contract-game">' in customer_admin_html
+    assert '<input id="contract-game"' not in customer_admin_html
+    assert "/api/admin/catalog/games" in customer_admin_js
+    assert 'credentials:"same-origin"' in customer_admin_js
 
     with tempfile.TemporaryDirectory() as temp:
         backend = backend_from_environment({
@@ -103,6 +111,12 @@ def main() -> int:
         admin = {"username": "admin", "role": "admin"}
         operator = {"username": "operator", "role": "operator"}
         customer = {"username": "owner-c1-c5", "role": "customer", "scope_id": "customer-c1-c5"}
+        games_status, games_payload = dispatch_customer_admin_get(
+            CUSTOMER_ADMIN_GAMES, {}, user=admin, backend=backend,
+        )
+        assert games_status == 200
+        game_ids = {item["id"] for item in games_payload["games"]}
+        assert {"dayz", "minecraft", "rust"}.issubset(game_ids)
         assert dispatch_customer_admin_post(
             CUSTOMER_ADMIN_PASSWORD_RESET, {"username": "owner-c1-c5"},
             user=operator, backend=backend,
@@ -127,6 +141,11 @@ def main() -> int:
             {"customer_id": "customer-c1-c5", "game_id": "rust", "instance_limit": 1},
             user=admin, backend=backend,
         )[0] == 201
+        assert dispatch_customer_admin_post(
+            CUSTOMER_ADMIN_CONTRACT,
+            {"customer_id": "customer-c1-c5", "game_id": "invented-game", "instance_limit": 1},
+            user=admin, backend=backend,
+        )[0] == 400
         assert dispatch_customer_admin_post(
             CUSTOMER_ADMIN_COLLECTION,
             {"id": "blocked", "name": "Blocked", "username": "blocked-user"},
