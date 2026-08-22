@@ -57,6 +57,49 @@
   </main>
 </div>
 <script src="/customer.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  function showCustomerMessage(text) {
+    const node = document.getElementById("customer-message");
+    if (!node) return;
+    node.textContent = text;
+    node.classList.add("show");
+    window.clearTimeout(showCustomerMessage.timer);
+    showCustomerMessage.timer = window.setTimeout(() => node.classList.remove("show"), 5000);
+  }
+
+  document.addEventListener("click", event => {
+    const button = event.target.closest("#customer-catalog .catalog-game.locked");
+    if (!button) return;
+
+    const game = button.querySelector("strong")?.textContent?.trim() || "este jogo";
+    const instanceGames = Array.from(
+      document.querySelectorAll("#customer-servers .server-card .game")
+    ).filter(node => node.textContent?.trim() === game);
+
+    // Preserve the existing direct-navigation behavior when exactly one
+    // customer instance for the game exists.
+    if (instanceGames.length === 1) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    if (instanceGames.length > 1) {
+      showCustomerMessage(
+        `Você possui mais de uma instância de ${game}. Selecione a instância em “Instâncias existentes”.`
+      );
+      document.getElementById("customer-servers")?.scrollIntoView({behavior: "smooth"});
+      return;
+    }
+
+    showCustomerMessage(
+      `Você não possui um contrato ativo para ${game}. Entre em contato com o administrador para contratar este jogo.`
+    );
+  }, true);
+})();
+</script>
 <script src="/runtime-selector.js"></script>
 <script src="/create-server-wizard.js"></script>
 </body>
