@@ -1,0 +1,17 @@
+.agent-log-panel{margin-top:14px;border:1px solid #24344f;border-radius:14px;background:#0a0d12;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02)}
+.agent-log-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:#111722;border-bottom:1px solid #24344f}
+.agent-log-toolbar h3{margin:0;font-size:1rem;color:#f5f7fb}
+.agent-log-toolbar-actions{display:flex;align-items:center;gap:8px}
+.agent-log-toolbar button{border:1px solid #33445f;background:#172033;color:#dfe8f7;border-radius:8px;padding:7px 10px;cursor:pointer}
+.agent-log-toolbar button:hover{background:#202b40}
+.agent-terminal{margin:0;min-height:240px;max-height:420px;overflow:auto;padding:16px 18px;background:#05070a;color:#c9d1d9;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;white-space:pre-wrap;word-break:break-word;tab-size:4}
+.agent-terminal-line{display:block;min-height:1.55em}
+.agent-terminal-line.log-error,.agent-terminal-line.log-critical,.agent-terminal-line.log-fatal{color:#ff6b6b}
+.agent-terminal-line.log-warn,.agent-terminal-line.log-warning{color:#ffd166}
+.agent-terminal-line.log-success,.agent-terminal-line.log-ok{color:#57e389}
+.agent-terminal-line.log-debug{color:#76b7ff}
+.agent-terminal-line.log-info{color:#d7e0ea}
+.agent-terminal-empty{color:#7f8a99;font-style:italic}
+.agent-terminal-prompt{color:#57e389}
+.agent-log-status{font-size:.78rem;color:#8fa4bf}
+@media(max-width:720px){.agent-log-toolbar{align-items:flex-start;flex-direction:column}.agent-terminal{max-height:320px;font-size:12px}}
