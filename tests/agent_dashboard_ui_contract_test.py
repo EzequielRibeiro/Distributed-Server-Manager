@@ -54,14 +54,21 @@ class AgentDashboardUiContractTest(unittest.TestCase):
         self.assertIn('/agent-updates.js', self.html)
         self.assertIn('/infrastructure-ui-v2.js', self.html)
         self.assertIn('/infrastructure-topology-v2.js', self.html)
-        self.assertIn('dashboard/server_part13.py', self.service)
+        self.assertIn('dashboard/server_part14.py', self.service)
 
-    def test_dashboard_v2_navigation_preserves_rbac_classes(self):
-        self.assertIn('href="servers-v2.html"', self.sidebar)
+    def test_admin_navigation_is_infrastructure_and_operations_oriented(self):
         self.assertIn('href="agents.html"', self.sidebar)
+        self.assertIn('href="operations.html"', self.sidebar)
+        self.assertIn('operations.html#incidents', self.sidebar)
+        self.assertIn('operations.html#alerts', self.sidebar)
+        self.assertIn('operations.html#events', self.sidebar)
+        self.assertIn('operations.html#schedules', self.sidebar)
+        self.assertIn('operations.html#logs', self.sidebar)
+        self.assertIn('operations.html#controller-backup', self.sidebar)
         self.assertIn('class="admin-only"', self.sidebar)
         self.assertIn('agent-manager-only', self.sidebar)
-        self.assertIn('instance-manager-only', self.sidebar)
+        self.assertNotIn('index.html#backup-total', self.sidebar)
+        self.assertNotIn('index.html#scheduler-list', self.sidebar)
         self.assertIn('dashboard-ui-v2.css', self.sidebar)
         self.assertIn('dashboard-ui-v2-stage2.css', self.sidebar)
 
