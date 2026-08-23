@@ -32,7 +32,7 @@ UNIT_PREFIX="dsm-homologation-${TEST_ID}"
 RESULT_FILE="${EVIDENCE_DIR}/result.env"
 UPDATE_LOG="${EVIDENCE_DIR}/successful-update.log"
 ROLLBACK_LOG="${EVIDENCE_DIR}/rollback-update.log"
-DIAGNOSTICS_BEFORE=""
+ROLLBACK_DIAGNOSTIC_DIR=""
 CONFIG_BEFORE=""
 VERSION_BEFORE="$(tr -d '\r\n' </opt/dsm/version)"
 PACKAGE_VERSION="$(tr -d '\r\n' <"${PACKAGE_ROOT}/version")"
@@ -217,8 +217,6 @@ write_unit rollback rollback
 systemctl daemon-reload
 systemctl enable --now "$(unit_name rollback)"
 assert_active "$(unit_name rollback)"
-DIAGNOSTICS_BEFORE="$(find /opt/dsm-backups -maxdepth 1 -type d \
-    -name 'update-diagnostics-*' -printf '%f\n' 2>/dev/null | sort || true)"
 if DSM_UPDATE_READINESS_TIMEOUT=10 DSM_UPDATE_READINESS_INTERVAL=1 \
     bash "${PACKAGE_ROOT}/update.sh" --yes --allow-same-version "${PACKAGE_ROOT}" \
     >"${ROLLBACK_LOG}" 2>&1
@@ -236,12 +234,17 @@ grep -q 'FALHA DURANTE A ATUALIZAÇÃO' "${ROLLBACK_LOG}" \
     || fail "failure path was not recorded"
 grep -q 'Rollback concluído' "${ROLLBACK_LOG}" \
     || fail "rollback completion was not recorded"
-DIAGNOSTICS_AFTER="$(find /opt/dsm-backups -maxdepth 1 -type d \
-    -name 'update-diagnostics-*' -printf '%f\n' 2>/dev/null | sort || true)"
-[[ "${DIAGNOSTICS_AFTER}" != "${DIAGNOSTICS_BEFORE}" ]] \
-    || fail "failure diagnostics did not survive rollback"
-comm -13 <(printf '%s\n' "${DIAGNOSTICS_BEFORE}") \
-    <(printf '%s\n' "${DIAGNOSTICS_AFTER}") \
+ROLLBACK_DIAGNOSTIC_DIR="$(sed -n \
+    's|^.*Diagnostics saved: \(/.*\)$|\1|p' "${ROLLBACK_LOG}" | tail -1)"
+[[ -n "${ROLLBACK_DIAGNOSTIC_DIR}" ]] \
+    || fail "failure diagnostics path was not reported"
+[[ "${ROLLBACK_DIAGNOSTIC_DIR}" == /opt/dsm-backups/update-diagnostics-* ]] \
+    || fail "failure diagnostics were stored inside the installation"
+[[ -d "${ROLLBACK_DIAGNOSTIC_DIR}" ]] \
+    || fail "failure diagnostics did not survive rollback: ${ROLLBACK_DIAGNOSTIC_DIR}"
+[[ -s "${ROLLBACK_DIAGNOSTIC_DIR}/transaction.txt" ]] \
+    || fail "failure transaction diagnostic is missing"
+printf '%s\n' "${ROLLBACK_DIAGNOSTIC_DIR}" \
     >"${EVIDENCE_DIR}/rollback-diagnostic-directories.txt"
 capture_dsm_health after-rollback
 capture_host_state after

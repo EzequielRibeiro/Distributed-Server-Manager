@@ -1475,7 +1475,7 @@ collect_failure_diagnostics() {
     local ERROR_LINE="$1"
     # Keep diagnostics outside INSTALL_DIR because rollback replaces that
     # directory from the pre-update archive.
-    local DIAGNOSTIC_DIR="${BACKUP_DIR}/update-diagnostics-$(date '+%Y%m%d-%H%M%S')"
+    local DIAGNOSTIC_DIR="${BACKUP_DIR}/update-diagnostics-$(date '+%Y%m%d-%H%M%S')-$$"
     local SERVICE_NAME
 
     mkdir -p "${DIAGNOSTIC_DIR}" 2>/dev/null || return 0
