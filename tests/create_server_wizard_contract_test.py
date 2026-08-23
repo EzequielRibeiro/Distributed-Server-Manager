@@ -15,15 +15,7 @@ class CreateServerWizardContractTest(unittest.TestCase):
         cls.service = (ROOT / "systemd" / "dsm-dashboard.service").read_text(encoding="utf-8")
 
     def test_all_required_states_are_present(self):
-        for label in (
-            "Verificando ambientes...",
-            "Ambiente disponível",
-            "Nenhum ambiente disponível",
-            "Criando servidor...",
-            "Provisionando...",
-            "Concluído",
-            "Falha",
-        ):
+        for label in ("Verificando ambientes...", "Ambiente disponível", "Nenhum ambiente disponível", "Criando servidor...", "Provisionando...", "Concluído", "Falha"):
             self.assertIn(label, self.script)
 
     def test_unavailable_message_is_explicit(self):
@@ -45,7 +37,9 @@ class CreateServerWizardContractTest(unittest.TestCase):
         self.assertIn('id="runtime-placement-status"', self.html)
 
     def test_service_uses_current_composed_entrypoint(self):
-        self.assertIn("dashboard/server_part13.py", self.service)
+        self.assertIn("dashboard/server_part14.py", self.service)
+        composition = (ROOT / "dashboard" / "server_part14.py").read_text(encoding="utf-8")
+        self.assertIn("import server_part13 as integration", composition)
 
 
 if __name__ == "__main__":
