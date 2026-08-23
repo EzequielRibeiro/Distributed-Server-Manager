@@ -41,6 +41,8 @@ A CLI pública do projeto é **`cap`**. O comando histórico `dsm` permanece som
 
 A base funcional inclui Controller/Agent/Hybrid, Agents Linux e Windows, enrollment e heartbeat, Regions/Datacenters, placement distribuído, clientes e contratos, runtime multi-game, portas por Agent, catálogo v2, providers, SteamCMD, game-data distribuído, observabilidade, eventos, configuração, conteúdo, backup, automação, API em tempo real, RBAC, atualização de Agents e Dashboard Web v3.
 
+A arquitetura de **Catálogo → Game Data → Runtime/Resource Profile → Contrato → Instance** está concluída nas dez etapas planejadas, incluindo parâmetros de startup, templates, perfis de recursos, reutilização sob demanda, integridade, repair, reconciliação e File Manager seguro com paridade Linux/Windows.
+
 ---
 
 ## Dashboard Web v3
@@ -53,20 +55,22 @@ Regions, Datacenters e Placement possuem visão própria. A página **Agents** r
 
 ### Instâncias
 
-A página de Instâncias representa apenas servidores já materializados. A criação de nova instância deve partir do **contexto do cliente e de um contrato válido**, e não do Catálogo de Jogos.
+A página de Instâncias representa apenas servidores já materializados. A criação de nova instância parte do **contexto do cliente e de um contrato válido**, e não do Catálogo de Jogos.
 
 ### Catálogo de Jogos
 
 O Catálogo é uma ferramenta administrativa do Control Plane. Ele **não cria instâncias de clientes**. Sua responsabilidade é definir e preparar tudo que pode ser reutilizado quando um contrato solicita uma nova instância:
 
 - definição do jogo/runtime, provider e versão;
-- instalação, atualização e verificação de **game-data** nos Agents;
-- parâmetros de processo/startup;
-- templates de configuração;
+- instalação, atualização, verificação e reparo de **game-data** nos Agents;
+- File Manager de game-data confinado à raiz do runtime;
+- parâmetros de processo/startup persistentes;
+- environment, variáveis, shutdown e timeouts;
+- templates de configuração materializados na instância;
 - perfis de recursos;
 - conteúdo adicional compatível;
-- disponibilidade por Agent;
-- versões e integridade.
+- disponibilidade e inventário por Agent;
+- versões, integridade, reconciliação e recuperação.
 
 A arquitetura separa quatro entidades:
 
@@ -74,7 +78,7 @@ A arquitetura separa quatro entidades:
 Game Catalog Definition
         │
         ├── Runtime Definition
-        ├── Configuration Profile
+        ├── Runtime Policy / Templates
         └── Resource Profiles
                 │
                 ▼
@@ -84,14 +88,19 @@ Agent / game-data compartilhado
 Cliente → Contrato → Criar Instância
                 │
                 ▼
-Placement → reutilizar ou instalar game-data → materializar instância
+Placement → ensure game-data → materializar instância
+                │
+                ├── reutiliza base íntegra existente
+                └── instala/repara quando ausente ou inválida
 ```
 
-Quando o game-data necessário já existe no Agent escolhido, ele é reutilizado. Quando não existe, o provisionamento deve instalar o conteúdo sob demanda antes da materialização. A base de game-data não pertence ao cliente e não substitui os arquivos privados da instância.
+A operação de provisionamento usa `ensure`: quando o game-data necessário já está íntegro no Agent escolhido, ele é reutilizado sem reinstalação. Quando está ausente ou inválido, o provider instala/repara antes da materialização.
 
-Perfis de recursos são definidos tecnicamente pelo Catálogo e autorizados comercial/operacionalmente pelo contrato. Exemplo: um único Minecraft pode oferecer `standard` com 8 GB de RAM e 25 GB de armazenamento e `large` com 16 GB de RAM e 30 GB, sem duplicar o jogo no catálogo.
+O File Manager administrativo suporta listar, ler, editar, criar, renomear, enviar e excluir dentro do game-data, com proteção contra path traversal e symlink escape, limite de 1 MiB para edição textual e 32 MiB para upload.
 
-A especificação detalhada está em [Catálogo, Game Data, Runtime e Perfis de Recursos](docs/architecture/catalog-game-data-runtime-resource-architecture.md) e o plano de implantação em [Cronograma da arquitetura de Catálogo](docs/roadmaps/catalog-game-data-architecture-implementation-plan.md).
+Perfis de recursos são definidos tecnicamente pelo Catálogo e autorizados pelo contrato. Exemplo: um único Minecraft pode oferecer `standard` com 8 GB de RAM e 25 GB de armazenamento e `large` com 16 GB de RAM e 30 GB, sem duplicar o jogo no catálogo. O perfil acompanha o provisionamento e fica disponível para Placement e Runtime Policy.
+
+A especificação detalhada está em [Catálogo, Game Data, Runtime e Perfis de Recursos](docs/architecture/catalog-game-data-runtime-resource-architecture.md) e o histórico de implantação em [Cronograma da arquitetura de Catálogo](docs/roadmaps/catalog-game-data-architecture-implementation-plan.md).
 
 ---
 
@@ -111,7 +120,7 @@ Executa Controller e Agent na mesma máquina mantendo os mesmos contratos distri
 
 ### Placement
 
-Um Agent só é candidato quando topologia, saúde, capabilities, portas e recursos são compatíveis. A evolução dos perfis de recursos adiciona ao placement a obrigação de verificar capacidade suficiente para o perfil solicitado pelo contrato.
+Um Agent só é candidato quando topologia, saúde, capabilities, portas e recursos são compatíveis. O perfil de recursos resolvido pelo contrato acompanha a solicitação para impedir que uma instância seja provisionada com orçamento fora do permitido.
 
 ---
 
@@ -127,13 +136,13 @@ Instalações novas usam o schema consolidado em `database/schemas/`. Credenciai
 
 O Runtime é genérico. Entre os fluxos existentes estão DayZ/Steam, Minecraft Java com múltiplos runtimes/providers, Minecraft Bedrock e uma arquitetura extensível para novos jogos.
 
-O `RuntimeDefinition` v2 já descreve processo, requisitos, artifact/provider, instalação e rede. O `ConfigurationProfile` descreve arquivos conhecidos/editáveis. `GameResourceProfiles` passa a definir limites técnicos reutilizáveis de memória, armazenamento, CPU e limites opcionais.
+O `RuntimeDefinition` v2 descreve processo, requisitos, artifact/provider, instalação e rede. `CatalogRuntimePolicy` acrescenta argumentos, environment, variáveis, templates, shutdown e timeouts administráveis. `ConfigurationProfile` continua descrevendo arquivos conhecidos/editáveis. `GameResourceProfiles` define limites técnicos reutilizáveis de memória, armazenamento, CPU e limites opcionais.
 
 ---
 
 ## Segurança
 
-O projeto inclui autenticação do Dashboard, RBAC, pairing seguro de Agents, validação de releases, auditoria, proteção de persistência e isolamento progressivo. Operações futuras do gerenciador de arquivos de game-data devem ser confinadas à raiz derivada do runtime, rejeitar traversal/symlink escape, impor limites de payload e produzir eventos de auditoria/integridade.
+O projeto inclui autenticação do Dashboard, RBAC, pairing seguro de Agents, validação de releases, auditoria, proteção de persistência e isolamento progressivo. O Game Data File Manager é confinado à raiz derivada do runtime, rejeita traversal e symlink escape e limita payloads. Runtime Policy usa vetor de argumentos em vez de exigir shell arbitrário e templates são materializados apenas dentro da árvore privada da instância.
 
 ---
 
@@ -187,13 +196,15 @@ cap help --all
 
 ## Desenvolvimento e qualidade
 
-O CI valida Bash, PowerShell, JSON, Python, JavaScript, installer/updater, CLI, catálogo, builds de release, Agents Linux/Windows, placement, RBAC e cenários end-to-end. Novas responsabilidades devem ser implementadas em módulos específicos em vez de aumentar arquivos centrais extensos como `dashboard/server.py`.
+O CI valida Bash, PowerShell, JSON, Python, JavaScript, installer/updater, CLI, catálogo, builds de release, Agents Linux/Windows, placement, RBAC e cenários end-to-end. O workflow **Catalog Architecture** adiciona um gate dedicado às etapas 5–10, incluindo Runtime Policy, templates, integrity/reconciliation e paridade do Game Data File Manager.
+
+Novas responsabilidades devem ser implementadas em módulos específicos em vez de aumentar arquivos centrais extensos como `dashboard/server.py`.
 
 ---
 
 ## Roadmap
 
-A arquitetura distribuída principal está consolidada. O roadmap específico do novo ciclo do Catálogo possui dez etapas: auditoria/modelo, remodelagem da UI, game-data distribuído, gerenciador seguro de arquivos, parâmetros/templates, perfis de recursos, integração com contratos, placement e instalação sob demanda, integridade/auditoria e validação E2E/rollout.
+O ciclo de arquitetura do Catálogo foi concluído em **10/10 etapas**: auditoria/modelo, remodelagem da UI, inventário distribuído, File Manager seguro, parâmetros de runtime, materialização de templates, manutenção/integridade, integração com provisionamento, reconciliação/recuperação e paridade Linux/Windows com gate final.
 
 Consulte [docs/roadmaps/catalog-game-data-architecture-implementation-plan.md](docs/roadmaps/catalog-game-data-architecture-implementation-plan.md).
 
