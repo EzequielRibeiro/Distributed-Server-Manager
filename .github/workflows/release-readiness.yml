@@ -50,7 +50,10 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
-          pattern = re.compile(r'(?i)(password|passwd|api[_-]?key|secret)\s*=\s*["\'][^$<{][^"\']{7,}["\']')
+          # Require the first character inside the quoted value to be neither
+          # a quote nor a common runtime/template marker. This avoids treating
+          # patterns such as password='';other='...' as one credential.
+          pattern = re.compile(r'(?i)(password|passwd|api[_-]?key|secret)\s*=\s*["\'][^"\'$<{][^"\']{7,}["\']')
           for path in Path('.').rglob('*'):
               if not path.is_file() or '.git' in path.parts or 'tests' in path.parts or 'docs' in path.parts:
                   continue

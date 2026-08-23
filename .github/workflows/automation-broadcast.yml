@@ -12,6 +12,7 @@ on:
       - 'dashboard/workers/worker.sh'
       - 'dashboard/agent_heartbeat_api.py'
       - 'dashboard/server_part13.py'
+      - 'dashboard/server_part17.py'
       - 'agents/linux/runtime/broadcast_client.py'
       - 'agents/linux/runtime/agent.py'
       - 'agents/linux/runtime/adapters/base.py'
@@ -31,7 +32,7 @@ jobs:
       - name: Validate syntax
         run: |
           bash -n bin/cap release/build_agent_package.sh dashboard/workers/worker.sh
-          python3 -m py_compile core/automation_platform.py database/automation_repository.py database/automation_execution_repository.py database/automation_engine.py database/automation_cli.py dashboard/automation_api.py dashboard/automation_http.py dashboard/workers/automation_worker.py dashboard/agent_heartbeat_api.py dashboard/server_part13.py agents/linux/runtime/broadcast_client.py agents/linux/runtime/agent.py agents/linux/runtime/adapters/base.py
+          python3 -m py_compile core/automation_platform.py database/automation_repository.py database/automation_execution_repository.py database/automation_engine.py database/automation_cli.py dashboard/automation_api.py dashboard/automation_http.py dashboard/workers/automation_worker.py dashboard/agent_heartbeat_api.py dashboard/server_part13.py dashboard/server_part17.py agents/linux/runtime/broadcast_client.py agents/linux/runtime/agent.py agents/linux/runtime/adapters/base.py
       - name: Test automation and broadcast
         run: python3 -m unittest tests/automation_broadcast_test.py tests/automation_worker_test.py
       - name: Verify integration contracts
@@ -43,4 +44,4 @@ jobs:
           grep -Fq 'automation_worker.py' systemd/dsm-automation-worker.service
           grep -Fq 'agent/runtime/broadcast_client.py' release/build_agent_package.sh
           grep -Fq 'InstanceRuntimeAdapter' agents/linux/runtime/adapters/base.py
-          test ! -e dashboard/server_part14.py
+          grep -Fq 'import server_part16 as integration' dashboard/server_part17.py

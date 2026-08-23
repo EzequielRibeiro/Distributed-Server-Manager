@@ -11,6 +11,7 @@ on:
       - 'dashboard/backup_*'
       - 'dashboard/agent_heartbeat_api.py'
       - 'dashboard/server_part13.py'
+      - 'dashboard/server_part17.py'
       - 'agents/linux/runtime/backup_client.py'
       - 'agents/linux/runtime/agent.py'
       - 'release/build_agent_package.sh'
@@ -28,7 +29,7 @@ jobs:
       - name: Validate syntax
         run: |
           bash -n bin/cap release/build_agent_package.sh
-          python3 -m py_compile core/backup_platform.py core/backup_intelligence.py database/backup_repository.py database/backup_cli.py dashboard/backup_api.py dashboard/backup_http.py dashboard/agent_heartbeat_api.py dashboard/server_part13.py agents/linux/runtime/backup_client.py agents/linux/runtime/agent.py
+          python3 -m py_compile core/backup_platform.py core/backup_intelligence.py database/backup_repository.py database/backup_cli.py dashboard/backup_api.py dashboard/backup_http.py dashboard/agent_heartbeat_api.py dashboard/server_part13.py dashboard/server_part17.py agents/linux/runtime/backup_client.py agents/linux/runtime/agent.py
       - name: Test Universal Smart Backup
         run: |
           python3 -m unittest tests/universal_smart_backup_test.py
@@ -36,7 +37,7 @@ jobs:
       - name: Verify composition and package contracts
         run: |
           grep -Fq 'BACKUP_PATH' dashboard/server_part13.py
-          test ! -e dashboard/server_part14.py
+          grep -Fq 'import server_part16 as integration' dashboard/server_part17.py
           grep -Fq 'agent/runtime/backup_client.py' release/build_agent_package.sh
           grep -Fq 'backup-store' bin/cap
           grep -Fq 'preset-apply' bin/cap

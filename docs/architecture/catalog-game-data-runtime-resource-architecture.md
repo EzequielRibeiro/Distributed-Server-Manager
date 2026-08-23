@@ -1,47 +1,58 @@
 # Catálogo, Game Data, Runtime e Perfis de Recursos
 
-## Objetivo
+## Estado
 
-Separar definitivamente quatro domínios que antes apareciam misturados na interface: definição do jogo, arquivos compartilhados de game-data, parâmetros/perfis técnicos de execução e instâncias pertencentes aos contratos dos clientes.
+A arquitetura está implementada de ponta a ponta nas etapas 1–10. O Catálogo é o control plane administrativo do jogo; Cliente → Contrato continua sendo a única origem de criação de instâncias.
 
 ## Regra de domínio
 
-O Catálogo é uma ferramenta administrativa. Ele não cria instâncias de clientes. A criação de instâncias ocorre no contexto Cliente → Contrato.
+Quatro domínios permanecem separados:
 
-O Catálogo administra:
+1. **Game Catalog Definition** — define o jogo e seus runtimes.
+2. **Game Data** — arquivos-base compartilhados instalados nos Agents.
+3. **Runtime / Resource Profile** — define startup, templates e orçamento técnico.
+4. **Instance** — materialização privada pertencente a um contrato.
 
-- definições de jogos e runtimes;
-- disponibilidade de game-data nos Agents;
-- instalação, atualização e verificação de game-data;
-- parâmetros de processo/startup;
-- templates de configuração;
-- perfis de recursos;
-- conteúdo adicional compatível;
-- versões e integridade.
+O Catálogo nunca cria uma instância de cliente e o filesystem de `game-data` nunca substitui a árvore privada de uma instância.
 
-## Entidades
+## Game Catalog Definition
 
-### Game Catalog Definition
+A fonte declarativa principal continua sendo `catalog/v2/games/<game>/runtimes/*.json`. O `RuntimeDefinition` define provider, versão, requisitos, artefato e processo-base. A política administrativa editável fica separada em `config/catalog-runtime/<runtime_id>.json`, preservada em reinstalações.
 
-Descreve jogo, edição, variante, provider, versão, requisitos, processo e rede. O `RuntimeDefinition` v2 existente continua sendo a fonte principal para provider, executable, argumentos, requisitos e diretório de instalação.
+## Runtime Policy — Etapa 5
 
-### Game Data
+`CatalogRuntimePolicy` acrescenta uma camada validada sobre o `RuntimeDefinition` com:
 
-É a base compartilhada instalada no Agent, por exemplo `/opt/dsm/game-data/minecraft/vanilla`. Não pertence a um cliente e não deve ser confundida com a árvore de arquivos de uma instância.
+- executable;
+- argumentos como vetor, sem shell intermediário;
+- working directory relativo à instância;
+- environment;
+- variáveis com default/required/descrição;
+- shutdown (`signal`, `command` ou `stdin`);
+- timeout de start e stop;
+- templates de configuração confinados à instância.
 
-Operações administrativas previstas: instalar, atualizar, verificar, reparar, remover, listar arquivos, ler, editar, criar, renomear, enviar e excluir. Escritas devem ser confinadas ao diretório de game-data autorizado, auditadas e marcar o conteúdo como modificado quando divergirem da base verificada.
+Placeholders `{{VAR}}` e `${VAR}` são resolvidos no Agent. A API é `/api/catalog/runtime-policy`; leitura é administrativa e gravação exige `admin`.
 
-### Runtime / Resource Profile
+## Materialização — Etapa 6
 
-O runtime define como o jogo executa. O perfil de recursos define quanto uma instância daquele jogo pode consumir. Perfis possuem identificadores estáveis e limites em unidades explícitas (`memory_mb`, `storage_mb`, CPU e limites opcionais).
+O Controller injeta `catalog_runtime_policy` e `resource_profile` no contrato de provisionamento. O Agent aplica a política ao RuntimeSpec antes da validação final. No Linux, o helper privilegiado escreve templates somente depois que a raiz da instância é materializada, mantendo contenção por path e evitando que templates sejam escritos no `game-data` compartilhado.
 
-Exemplo: Minecraft `standard` = 8192 MB RAM / 25600 MB armazenamento; `large` = 16384 MB RAM / 30720 MB armazenamento.
+Variáveis derivadas automaticamente incluem `INSTANCE_ID`, `GAME_ID`, `MEMORY_MB` e portas reservadas no formato `PORT_<ROLE>`.
 
-### Instance
+## Game Data — Etapa 7
 
-É a materialização concreta pertencente a um contrato. A instância referencia runtime e perfil permitidos, recebe portas, configuração e filesystem próprios. Ela nunca altera silenciosamente a base compartilhada de game-data.
+O Agent aceita as operações:
 
-## Fluxo de criação pelo contrato
+- `install`;
+- `update`;
+- `verify`;
+- `repair`;
+- operações seguras de arquivos `list/read/write/create/mkdir/rename/delete/upload`.
+
+`verify` produz um inventário limitado contendo quantidade de arquivos, bytes, digest estrutural e presença do executável esperado. `repair` reaplica o provider oficial. O File Manager limita texto a 1 MiB e upload a 32 MiB e rejeita path absoluto, traversal e escape por symlink.
+
+## Provisionamento sob demanda — Etapa 8
 
 ```text
 Cliente → Contrato → Criar Instância
@@ -50,43 +61,93 @@ Cliente → Contrato → Criar Instância
                     ↓
                Agent elegível
                     ↓
-            game-data disponível?
-              ├─ sim → reutilizar
-              └─ não → instalar sob demanda
+          content.action = ensure
                     ↓
-             materializar instância
+       game-data íntegro já existe?
+          ├─ sim → reuse, sem reinstalar
+          └─ não → provider instala/repara
+                    ↓
+         aplicar Runtime Policy
+                    ↓
+       materializar runtime + templates
                     ↓
        aplicar recursos + portas + config
                     ↓
-                 startup
+                  startup
 ```
 
-O contrato determina quais jogos e perfis de recursos o cliente pode selecionar. O Placement deve considerar capacidade livre suficiente para o perfil solicitado.
+`catalog_provisioning_resolver.py` resolve RuntimeSelection, Runtime Policy e Resource Profile antes de enfileirar a operação. Se o contrato fornecer `allowed_resource_profiles`, qualquer perfil fora da lista é rejeitado.
 
-## Parâmetros de execução
+## Inventário, consistência e recuperação — Etapa 9
 
-A administração de parâmetros pertence ao detalhe do jogo no Catálogo, não à tela de uma instância. A definição deve evoluir o `process` do RuntimeDefinition para representar de forma validável: executable, argumentos/comando, diretório de trabalho, variáveis, ambiente, arquivo principal, shutdown, timeout e regras de entrada. Valores dinâmicos de instância são resolvidos apenas na materialização.
+`game_data_state.py` permanece a persistência local do Agent. `game_data_integrity.py` calcula o estado físico e `game_data_reconcile.py` reconcilia estado persistido com o filesystem, classificando bases `ok`, `missing`, `empty`, `degraded`, `unsafe` e diretórios `orphaned`.
 
-## Configuração
+Jobs distribuídos continuam idempotentes e os resultados finais são arquivados após a limpeza dos payloads transitórios. A combinação de `ensure`, `verify`, `repair`, state persistente e reconciliação permite recuperação após reinício sem depender de lógica especial de jogo.
 
-O `ConfigurationProfile` existente já modela arquivos conhecidos e editáveis. Ele deve continuar representando quais arquivos podem ser gerados/editados, enquanto templates e valores default são aplicados à instância sem converter game-data em configuração privada do cliente.
+## Paridade Linux / Windows — Etapa 10
 
-## Segurança do gerenciador de arquivos de game-data
+Os dois Agents possuem:
 
-O futuro endpoint de escrita deve exigir função administrativa, resolver caminhos com `Path.resolve()`, rejeitar `..`, symlinks que escapem da raiz, arquivos protegidos e payloads acima dos limites definidos. Cada mutação deve produzir evento/auditoria contendo Agent, runtime, caminho, usuário, operação e estado de integridade resultante.
+- executor de Game Data;
+- `ensure/install/update/verify/repair`;
+- inventário de integridade;
+- File Manager seguro;
+- aplicação de Catalog Runtime Policy no RuntimeSpec;
+- suporte aos mesmos providers já disponíveis em cada plataforma.
 
-## Componentes existentes reutilizados
+O build do Agent Linux inclui explicitamente os novos módulos. O build Windows descobre automaticamente todos os módulos Python em `agents/windows/runtime`.
 
-- Catalog v2 e `RuntimeDefinition`;
-- `ConfigurationProfile`;
-- `agent_game_data_api.py` e `agent_game_data_http.py` para fila/status de instalação de game-data;
-- provider/resolver do instalador;
-- Agent Game Data Repository e jobs distribuídos;
-- placement e inventário/capabilities dos Agents;
-- Universal Configuration, Content, Events e Observability;
-- RBAC do Controller;
-- infraestrutura Dashboard v3.
+## Perfis de recursos
 
-## Limites desta fundação
+Perfis ficam em `catalog/v2/games/<game>/resource-profiles.json`, por exemplo:
 
-Esta mudança estabelece o modelo, os perfis de recursos e a nova experiência administrativa do Catálogo. O gerenciador remoto de arquivos com mutação e a aplicação coercitiva dos perfis pelo runtime devem ser implementados nas etapas específicas do roadmap, com testes de segurança e E2E antes de ativação em produção.
+- Minecraft `standard`: 8192 MB RAM / 25600 MB armazenamento;
+- Minecraft `large`: 16384 MB RAM / 30720 MB armazenamento.
+
+O Catálogo determina quais perfis existem. O contrato determina quais são permitidos ao cliente. O perfil resolvido acompanha o provisionamento e é exposto ao Runtime Policy (`MEMORY_MB`) e ao Placement/runtime para enforcement dos limites.
+
+## Dashboard
+
+A página **Catálogo de Jogos** contém as áreas:
+
+- Visão geral;
+- Game Data;
+- Parâmetros;
+- Configuração;
+- Recursos;
+- Conteúdo;
+- Agents;
+- Versões.
+
+A aba Game Data instala, atualiza, verifica, repara e manipula arquivos. Parâmetros edita a Runtime Policy. Configuração edita templates. Recursos mostra os perfis técnicos. Agents e Versões mostram disponibilidade, jobs e integridade. Nenhuma dessas áreas cria instância.
+
+## Segurança e invariantes
+
+- políticas persistentes são validadas antes da gravação;
+- startup é vetor de argumentos, não comando shell arbitrário;
+- working directory e templates não podem escapar da instância;
+- Game Data File Manager não pode escapar da raiz do runtime;
+- symlinks externos são recusados;
+- mutações de Game Data exigem administrador no Controller;
+- o Agent valida ownership da instância e identidade do Agent novamente;
+- perfis fora da autorização do contrato são recusados;
+- o helper privilegiado recebe somente RuntimeSpec previamente validado.
+
+## Gate de validação
+
+`.github/workflows/catalog-architecture.yml` valida Python, JavaScript, testes das etapas 5–10 e os pacotes Linux/Windows. A suíte principal continua cobrindo instalação real Linux, Catalog v2, pacotes e Fase 22 E2E.
+
+## Cronograma concluído
+
+| Etapa | Entrega | Estado |
+|---|---|---|
+| 1 | Auditoria e modelo de domínio | ✅ |
+| 2 | Remodelagem do Catálogo | ✅ |
+| 3 | Inventário de Game Data por Agent | ✅ |
+| 4 | File Manager seguro de Game Data | ✅ |
+| 5 | Runtime parameters / startup policy | ✅ |
+| 6 | Materialização de templates e configuração | ✅ |
+| 7 | Manutenção, verify e repair | ✅ |
+| 8 | Provisionamento com reuse/install sob demanda | ✅ |
+| 9 | Reconciliação, consistência e recuperação | ✅ |
+| 10 | Paridade Linux/Windows e gate final | ✅ |
