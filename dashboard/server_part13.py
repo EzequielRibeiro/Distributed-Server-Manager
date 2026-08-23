@@ -29,10 +29,12 @@ legacy=integration.legacy;_previous_get=legacy.DashboardHandler.do_GET;_previous
 ROOT_DIR=Path(__file__).resolve().parents[1];WINDOWS_INSTALL_PATH="/agent/install.ps1";WINDOWS_INSTALL_FILE=ROOT_DIR/"agents"/"windows"/"installer"/"bootstrap-release.ps1";VERSION_FILE=ROOT_DIR/"version"
 legacy.STATIC_FILES["/agent-updates.js"]=legacy.WEB_DIR/"agent-updates.js";legacy.STATIC_FILES["/infrastructure-role-ui.js"]=legacy.WEB_DIR/"infrastructure-role-ui.js";legacy.STATIC_FILES["/game-data-orchestration.js"]=legacy.WEB_DIR/"game-data-orchestration.js"
 legacy.STATIC_FILES["/agent-terminal.css"] = legacy.WEB_DIR / "agent-terminal.css"
+CONTROLLER_DASHBOARD_FILES={"/":legacy.WEB_DIR/"controller-dashboard.html","/index.html":legacy.WEB_DIR/"controller-dashboard.html","/controller-dashboard.js":legacy.WEB_DIR/"controller-dashboard.js","/controller-dashboard.css":legacy.WEB_DIR/"controller-dashboard.css"}
+INSTANCE_EVENT_FILES={"/customer-instance-events.js":legacy.WEB_DIR/"customer-instance-events.js","/customer-instance-events.css":legacy.WEB_DIR/"customer-instance-events.css"}
 CUSTOMER_ADMIN_FILES={"/customers.html":legacy.WEB_DIR/"customers.html","/customers.js":legacy.WEB_DIR/"customers.js","/customer-admin.html":legacy.WEB_DIR/"customer-admin.html","/customer-admin.js":legacy.WEB_DIR/"customer-admin.js","/customer-admin.css":legacy.WEB_DIR/"customer-admin.css","/customer-change-password.html":legacy.WEB_DIR/"customer-change-password.html","/customer-change-password.js":legacy.WEB_DIR/"customer-change-password.js"}
 CUSTOMER_TEAM_FILES={"/customer-members.html":legacy.WEB_DIR/"customer-members.html","/customer-members.js":legacy.WEB_DIR/"customer-members.js","/customer-team.css":legacy.WEB_DIR/"customer-team.css"}
 CUSTOMER_PASSWORD_GATED_PAGES={"/customer.html","/customer-members.html","/customer-instance.html"}
-legacy.STATIC_FILES.update(CUSTOMER_ADMIN_FILES);legacy.STATIC_FILES.update(CUSTOMER_TEAM_FILES)
+legacy.STATIC_FILES.update(CONTROLLER_DASHBOARD_FILES);legacy.STATIC_FILES.update(INSTANCE_EVENT_FILES);legacy.STATIC_FILES.update(CUSTOMER_ADMIN_FILES);legacy.STATIC_FILES.update(CUSTOMER_TEAM_FILES)
 def _user(self):
  user=_authenticate(self.headers)
  if user is None:self.unauthorized()
