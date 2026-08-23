@@ -49,7 +49,7 @@ function destinationForRole(role) {
     }
 
     if (["admin", "controller", "operator"].includes(role)) {
-        return "/index.html";
+        return "/dashboard-v3.html";
     }
 
     return null;
