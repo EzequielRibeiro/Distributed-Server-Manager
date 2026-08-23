@@ -11,13 +11,14 @@
     </div>
 
     <nav aria-label="Navegação principal">
-        <a class="active" href="index.html"><span class="cap-nav-icon">⌂</span><span>Visão Geral</span></a>
+        <a class="active" href="dashboard-v3.html"><span class="cap-nav-icon">⌂</span><span>Visão Geral</span></a>
         <a href="servers-v2.html"><span class="cap-nav-icon">▤</span><span>Servidores</span></a>
         <a href="console.html"><span class="cap-nav-icon">›_</span><span>Console</span></a>
         <a href="index.html#catalog-v2-config-editor" class="instance-manager-only"><span class="cap-nav-icon">▰</span><span>Arquivos</span></a>
         <a href="index.html#catalog-v2-content" class="instance-manager-only"><span class="cap-nav-icon">✣</span><span>Mods & Plugins</span></a>
-        <a href="index.html#backup-total" class="instance-manager-only"><span class="cap-nav-icon">◉</span><span>Backups</span></a>
-        <a href="index.html#scheduler-list"><span class="cap-nav-icon">▣</span><span>Agendamentos</span></a>
+        <a href="operations.html#backups" class="instance-manager-only"><span class="cap-nav-icon">◉</span><span>Backups</span></a>
+        <a href="operations.html#scheduler"><span class="cap-nav-icon">▣</span><span>Agendamentos</span></a>
+        <a href="operations.html#updates" class="agent-manager-only"><span class="cap-nav-icon">↻</span><span>Atualizações</span></a>
         <a href="index.html#catalog-v2-runtime-summary"><span class="cap-nav-icon">⌘</span><span>Rede</span></a>
         <a href="index.html#events-list"><span class="cap-nav-icon">⚑</span><span>Eventos</span></a>
         <a href="index.html#alerts-component"><span class="cap-nav-icon">♢</span><span>Alertas</span></a>
@@ -36,15 +37,8 @@
     </div>
 
     <div class="sidebar-session">
-        <div class="card-title">
-            <h2>Sessão DSM</h2>
-        </div>
-        <div class="server-info">
-            <div class="info-box">
-                <label>Usuário</label>
-                <span id="current-user">-</span>
-            </div>
-        </div>
+        <div class="card-title"><h2>Sessão DSM</h2></div>
+        <div class="server-info"><div class="info-box"><label>Usuário</label><span id="current-user">-</span></div></div>
         <button id="btn-logout" class="logout-btn" type="button">Sair</button>
     </div>
 </aside>
