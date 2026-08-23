@@ -59,12 +59,18 @@ class AgentGameDataJobsTest(unittest.TestCase):
         completed = self.jobs.apply_result("agent-game-data", {"job_id":created["job_id"],"status":"completed","progress":100}); self.assertEqual(completed["status"], "completed")
         self.assertIsNone(self.jobs.command_for_agent("agent-game-data"))
 
-    def test_file_job_delivers_operation(self):
-        selection = self.selection(); selection["_file_operation"] = {"action":"list","path":""}
-        created = self.jobs.enqueue(agent_id="agent-game-data",action="file-list",environment_id="dayz.stable",selector="current",selection=selection,requested_by="admin")
+    def test_file_job_uses_compatible_transport_and_delivers_operation(self):
+        selection = self.selection(); selection["_file_operation"] = {"action":"write","path":"server.cfg","content":"password=secret"}
+        created = self.jobs.enqueue(agent_id="agent-game-data",action="file-write",environment_id="dayz.stable",selector="current",selection=selection,requested_by="admin")
+        self.assertEqual(created["action"], "file-write")
+        self.assertEqual(created["transport_action"], "verify")
         command = self.jobs.command_for_agent("agent-game-data")
         self.assertEqual(command["job_id"], created["job_id"])
-        self.assertEqual(command["file_operation"], {"action":"list","path":""})
+        self.assertEqual(command["action"], "file-write")
+        self.assertEqual(command["file_operation"]["content"], "password=secret")
+        final = self.jobs.apply_result("agent-game-data", {"job_id":created["job_id"],"status":"completed","progress":100,"file_result":{"operation":"write","path":"server.cfg","modified":True}})
+        self.assertEqual(final["action"], "file-write")
+        self.assertNotIn("content", final["selection"]["_file_operation"])
 
     def test_authenticated_heartbeat_delivers_and_acknowledges_job(self):
         created = self.jobs.enqueue(agent_id="agent-game-data",action="install",environment_id="dayz.stable",selector="current",selection=self.selection())
