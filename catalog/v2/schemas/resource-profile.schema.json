@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capivara-dsm.local/schemas/v2/resource-profile.schema.json",
+  "title": "GameResourceProfiles",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "game", "profiles"],
+  "properties": {
+    "schema_version": {"const": 2},
+    "kind": {"const": "GameResourceProfiles"},
+    "game": {"type": "string", "minLength": 1},
+    "profiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "memory_mb", "storage_mb"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+          "name": {"type": "string", "minLength": 1},
+          "description": {"type": "string"},
+          "memory_mb": {"type": "integer", "minimum": 256},
+          "storage_mb": {"type": "integer", "minimum": 1024},
+          "cpu_cores": {"type": "number", "exclusiveMinimum": 0},
+          "swap_mb": {"type": "integer", "minimum": 0},
+          "pids_limit": {"type": "integer", "minimum": 1},
+          "io_weight": {"type": "integer", "minimum": 1, "maximum": 10000}
+        }
+      }
+    }
+  }
+}

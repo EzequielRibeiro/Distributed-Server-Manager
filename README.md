@@ -16,11 +16,7 @@
 
 ## Sobre o projeto
 
-O **Capivara DSM (Distributed Server Manager)** é um gerenciador distribuído de servidores de jogos.
-
-O projeto começou como um gerenciador dedicado ao DayZ e evoluiu para uma arquitetura **multi-game, multi-host e multi-datacenter**, com separação entre **Controller**, **Agents** e instâncias de jogos.
-
-O Controller mantém a visão administrativa e coordena a infraestrutura. Os Agents executam as operações nos hosts responsáveis pelas instâncias. O modo **Híbrido** permite que a mesma máquina atue como Controller e Agent.
+O **Capivara DSM (Distributed Server Manager)** é um gerenciador distribuído de servidores de jogos. O projeto começou como um gerenciador dedicado ao DayZ e evoluiu para uma arquitetura **multi-game, multi-host e multi-datacenter**, com separação entre **Controller**, **Agents**, catálogo técnico e instâncias pertencentes aos contratos dos clientes.
 
 ```text
 Cliente / Administrador
@@ -31,6 +27,7 @@ Cliente / Administrador
         ├── Region
         │    └── Datacenter
         │         └── Agent
+        │              ├── game-data compartilhado
         │              └── Instâncias de jogos
         │
         └── Clientes / Contratos / Alertas / Eventos
@@ -42,82 +39,59 @@ A CLI pública do projeto é **`cap`**. O comando histórico `dsm` permanece som
 
 ## Estado atual
 
-O Capivara DSM possui uma base funcional para gerenciamento distribuído, incluindo:
-
-- Controller, Agent e modo Híbrido;
-- Agents Linux e Windows;
-- enrollment, pairing seguro e heartbeat de Agents;
-- localização de Agents por região e datacenter;
-- placement distribuído;
-- criação e gerenciamento de instâncias;
-- reservas e administração de portas por Agent;
-- runtime multi-game;
-- catálogo de jogos e providers;
-- instalação e gerenciamento via SteamCMD quando aplicável;
-- observabilidade de CPU, memória, disco, rede e runtime;
-- Universal Event Platform;
-- Universal Configuration Platform;
-- Universal Content Platform;
-- Universal Smart Backup;
-- Automation & Universal Broadcast;
-- API em tempo real;
-- Multi-Datacenter Federation;
-- High Availability e Disaster Recovery;
-- RBAC para administração e clientes;
-- painel separado para clientes;
-- instalação remota de Agents Linux via SSH;
-- atualização e rollout de Agents;
-- Update Manager com validação de releases;
-- Dashboard Web v2.
+A base funcional inclui Controller/Agent/Hybrid, Agents Linux e Windows, enrollment e heartbeat, Regions/Datacenters, placement distribuído, clientes e contratos, runtime multi-game, portas por Agent, catálogo v2, providers, SteamCMD, game-data distribuído, observabilidade, eventos, configuração, conteúdo, backup, automação, API em tempo real, RBAC, atualização de Agents e Dashboard Web v3.
 
 ---
 
-## Dashboard Web v2
+## Dashboard Web v3
 
-A interface atual foi reorganizada para uma operação mais próxima de painéis modernos de hospedagem de jogos.
-
-### Visão Geral
-
-- resumo operacional da instância ativa;
-- CPU, RAM e disco;
-- status do servidor;
-- console/logs em destaque;
-- ações de iniciar, reiniciar e parar;
-- informações de Runtime e saúde operacional.
-
-### Servidores
-
-A página de servidores apresenta uma visão consolidada das instâncias publicadas pelo Runtime:
-
-- status Online / Offline / Atenção;
-- jogo e nome da instância;
-- jogadores;
-- CPU e RAM;
-- Agent responsável;
-- localização;
-- filtros e pesquisa;
-- atalhos para Console e gerenciamento.
+A interface administrativa usa navegação lateral e áreas separadas para Visão Geral, Administração, Infraestrutura, Servidores, Operações, Observabilidade e Sistema.
 
 ### Infraestrutura
 
-A área de infraestrutura centraliza:
+Regions, Datacenters e Placement possuem visão própria. A página **Agents** representa a frota; **Adicionar Agent** concentra enrollment/instalação; o detalhe do Agent concentra telemetria e operações específicas.
 
-- Regions e Datacenters;
-- Agents;
-- instalação de novos Agents;
-- instalação remota via SSH;
-- atualização e rollout;
-- faixas de portas;
-- localização;
-- topologia visual.
+### Instâncias
+
+A página de Instâncias representa apenas servidores já materializados. A criação de nova instância deve partir do **contexto do cliente e de um contrato válido**, e não do Catálogo de Jogos.
+
+### Catálogo de Jogos
+
+O Catálogo é uma ferramenta administrativa do Control Plane. Ele **não cria instâncias de clientes**. Sua responsabilidade é definir e preparar tudo que pode ser reutilizado quando um contrato solicita uma nova instância:
+
+- definição do jogo/runtime, provider e versão;
+- instalação, atualização e verificação de **game-data** nos Agents;
+- parâmetros de processo/startup;
+- templates de configuração;
+- perfis de recursos;
+- conteúdo adicional compatível;
+- disponibilidade por Agent;
+- versões e integridade.
+
+A arquitetura separa quatro entidades:
 
 ```text
-Controller
-   └── Region
-        └── Datacenter
-             └── Agent
-                  └── Instâncias
+Game Catalog Definition
+        │
+        ├── Runtime Definition
+        ├── Configuration Profile
+        └── Resource Profiles
+                │
+                ▼
+Agent / game-data compartilhado
+                │
+                ▼
+Cliente → Contrato → Criar Instância
+                │
+                ▼
+Placement → reutilizar ou instalar game-data → materializar instância
 ```
+
+Quando o game-data necessário já existe no Agent escolhido, ele é reutilizado. Quando não existe, o provisionamento deve instalar o conteúdo sob demanda antes da materialização. A base de game-data não pertence ao cliente e não substitui os arquivos privados da instância.
+
+Perfis de recursos são definidos tecnicamente pelo Catálogo e autorizados comercial/operacionalmente pelo contrato. Exemplo: um único Minecraft pode oferecer `standard` com 8 GB de RAM e 25 GB de armazenamento e `large` com 16 GB de RAM e 30 GB, sem duplicar o jogo no catálogo.
+
+A especificação detalhada está em [Catálogo, Game Data, Runtime e Perfis de Recursos](docs/architecture/catalog-game-data-runtime-resource-architecture.md) e o plano de implantação em [Cronograma da arquitetura de Catálogo](docs/roadmaps/catalog-game-data-architecture-implementation-plan.md).
 
 ---
 
@@ -125,218 +99,74 @@ Controller
 
 ### Controller
 
-Responsável por:
-
-- autenticação e RBAC;
-- clientes e contratos;
-- visão global dos Agents;
-- topologia;
-- placement;
-- coordenação de criação de instâncias;
-- alertas, eventos e auditoria;
-- Dashboard Web;
-- distribuição de operações para os Agents.
+Responsável por autenticação/RBAC, clientes e contratos, catálogo, topologia, placement, coordenação de provisionamento, persistência, eventos, alertas, Dashboard e distribuição de operações para Agents.
 
 ### Agent
 
-Responsável pelo host onde as cargas realmente executam:
-
-- instalação e operação dos servidores de jogos;
-- runtime local;
-- métricas e inventário;
-- portas e disponibilidade de rede;
-- SteamCMD quando necessário;
-- atualização do próprio Agent;
-- comunicação autenticada com o Controller.
+Responsável pelo host que executa as cargas: inventário, game-data compartilhado, runtime local das instâncias, métricas, portas, providers locais como SteamCMD quando aplicável e comunicação autenticada com o Controller.
 
 ### Híbrido
 
-Executa Controller e Agent na mesma máquina, mantendo os mesmos contratos de comunicação e placement utilizados por Agents remotos.
+Executa Controller e Agent na mesma máquina mantendo os mesmos contratos distribuídos.
 
----
+### Placement
 
-## Topologia e placement
-
-O Capivara DSM não considera a simples existência de um Agent como suficiente para receber uma instância.
-
-O placement considera a validade da infraestrutura e o estado operacional disponível:
-
-```text
-Controller válido
-+
-Region válida
-+
-Datacenter válido
-+
-Agent elegível/ativo
-+
-Localização e requisitos do jogo
-=
-Agent candidato ao placement
-```
-
-Na instalação interativa de um **Controller** ou **Hybrid**, o instalador permite definir a Region e o Datacenter iniciais. Um **Agent puro** é associado posteriormente a uma topologia já existente pelo Controller.
+Um Agent só é candidato quando topologia, saúde, capabilities, portas e recursos são compatíveis. A evolução dos perfis de recursos adiciona ao placement a obrigação de verificar capacidade suficiente para o perfil solicitado pelo contrato.
 
 ---
 
 ## Banco de dados
 
-O Controller utiliza uma camada de persistência para informações administrativas e operacionais, incluindo entidades como controllers, agents, customers, contracts, instances, ports, regions, datacenters, alerts, events e audit log.
+O Controller usa uma camada de persistência para controllers, agents, customers, contracts, instances, ports, regions, datacenters, alerts, events e auditoria. O instalador suporta **SQLite, PostgreSQL, MySQL e MariaDB**. PostgreSQL é recomendado para produção e maior escala.
 
-Os backends suportados pelo instalador são:
-
-```text
-SQLite
-PostgreSQL
-MySQL
-MariaDB
-```
-
-Na instalação interativa de Controller/Hybrid, o banco pode ser escolhido durante o setup. SQLite continua sendo a opção local simples; PostgreSQL é a opção recomendada para ambientes de produção e maior escala.
-
-### Instalação automática do banco do Controller
-
-Em instalações novas, o instalador oferece SQLite, PostgreSQL, MySQL e MariaDB e cria o schema completo consolidado do backend escolhido. A cadeia histórica de migrations não é executada e bancos antigos não recebem upgrade incremental.
-
-Os antigos diretórios `database/migrations*` foram removidos. A fonte única de verdade para instalações e pacotes novos é `database/schemas/`, com um arquivo completo por backend.
-
-Para PostgreSQL, MySQL e MariaDB, informe host, porta, database, usuário dedicado e modo TLS. Não use postgres ou root como conta da aplicação. O instalador explica o tratamento da credencial, solicita e confirma a senha sem eco e cria automaticamente /etc/capivara/secrets/database-password.
-
-O diretório usa permissão 0700 e o arquivo 0600. Ambos começam como root:root e passam com segurança para a conta de serviço selecionada depois que ela existe. A senha não é exibida, registrada em logs nem gravada na configuração principal; não é mais necessário criar ou informar manualmente um arquivo secreto.
-
-Antes de copiar arquivos para /opt/dsm ou criar serviços systemd, o instalador:
-
-- valida o driver e as dependências do backend;
-- testa transação e integridade no SQLite;
-- para banco local em Ubuntu/Debian, instala servidor/driver ausentes, habilita o serviço e cria idempotentemente database e usuário dedicado;
-- para banco remoto, valida DNS e TCP sem tentar instalar nada no host remoto;
-- abre uma conexão real usando exatamente host, porta, database, usuário, TLS e a senha do secret.
-
-A instalação só continua quando o banco está operacional. Em seguida o schema consolidado é aplicado e validado antes de qualquer serviço do Capivara ser iniciado. Falhas de DNS, TCP, TLS, autenticação, database ou schema encerram o processo com diagnóstico, sem iniciar a instalação persistente do Capivara.
-
-Para automação não interativa, forneça os parâmetros DSM_DATABASE_* e um arquivo já protegido em DSM_DATABASE_PASSWORD_FILE; o modo interativo sempre cria o caminho padrão automaticamente.
+Instalações novas usam o schema consolidado em `database/schemas/`. Credenciais de bancos de rede são mantidas em arquivo protegido e não são exibidas ou gravadas na configuração principal.
 
 ---
 
 ## Jogos e providers
 
-O Runtime foi desenhado para não ficar limitado a um jogo específico.
+O Runtime é genérico. Entre os fluxos existentes estão DayZ/Steam, Minecraft Java com múltiplos runtimes/providers, Minecraft Bedrock e uma arquitetura extensível para novos jogos.
 
-Entre os fluxos já trabalhados no projeto estão:
-
-- **DayZ** — Steam / SteamCMD;
-- **Minecraft Java** — catálogo e providers, incluindo Modrinth;
-- **Minecraft Bedrock** — provider de arquivo HTTP e resolver oficial;
-- arquitetura extensível para novos jogos e providers.
-
-A disponibilidade efetiva de cada operação depende do catálogo e do provider implementado para o jogo.
-
----
-
-## Agents
-
-### Linux
-
-O Agent Linux pode ser instalado e pareado com o Controller. O Dashboard também suporta bootstrap remoto via SSH.
-
-### Windows
-
-O projeto possui Agent Windows próprio, com runtime, capabilities, inventário de rede e mecanismo de atualização correspondente.
-
----
-
-## Portas de rede
-
-As portas são administradas por Agent.
-
-A alocação considera:
-
-- faixa configurada para o Agent;
-- reservas persistidas;
-- portas realmente ocupadas no sistema operacional;
-- requisitos do runtime/jogo;
-- reserva atômica para evitar colisões.
-
-A arquitetura prevê blocos de portas definidos conforme os requisitos de cada tipo de servidor, com reservas próprias por instância e preservação dessas reservas durante stop/restart.
+O `RuntimeDefinition` v2 já descreve processo, requisitos, artifact/provider, instalação e rede. O `ConfigurationProfile` descreve arquivos conhecidos/editáveis. `GameResourceProfiles` passa a definir limites técnicos reutilizáveis de memória, armazenamento, CPU e limites opcionais.
 
 ---
 
 ## Segurança
 
-O projeto inclui mecanismos como:
-
-- autenticação do Dashboard;
-- RBAC;
-- pairing seguro de Agents;
-- autenticação permanente para heartbeat;
-- separação de permissões por função;
-- validação de releases e atualização;
-- auditoria de operações;
-- proteção de migrations e restore;
-- fencing e proteção contra split-brain em HA;
-- isolamento progressivo entre Controller, Agent e cliente.
+O projeto inclui autenticação do Dashboard, RBAC, pairing seguro de Agents, validação de releases, auditoria, proteção de persistência e isolamento progressivo. Operações futuras do gerenciador de arquivos de game-data devem ser confinadas à raiz derivada do runtime, rejeitar traversal/symlink escape, impor limites de payload e produzir eventos de auditoria/integridade.
 
 ---
 
-## Estrutura principal do repositório
+## Estrutura principal
 
 ```text
 Distributed-Server-Manager/
 ├── agents/                 # Agents Linux e Windows
 ├── backup/                 # Backup e restore
-├── catalog/                # Catálogo de jogos
+├── catalog/                # Catálogo v2, runtimes, schemas e perfis
 ├── core/                   # Núcleo e regras compartilhadas
-├── dashboard/              # Backend e interface Web
-│   └── web/                # Frontend do Dashboard
-├── database/               # Persistência, migrations e repositories
-├── docs/                   # Documentação arquitetural
-├── games/                  # Definições e suporte aos jogos
+├── dashboard/              # Backend e Dashboard Web v3
+├── database/               # Persistência e schemas
+├── docs/                   # Arquitetura, roadmaps e runbooks
+├── installer/              # Providers e instalação de conteúdo
 ├── release/                # Build e empacotamento
 ├── runtime/                # Runtime e estado operacional
 ├── systemd/                # Serviços Linux
-├── tests/                  # Testes e gates de regressão
-├── bin/                    # CLI cap e compatibilidade interna
-├── install.sh              # Entrada do instalador
-└── install-core.sh         # Núcleo da instalação Linux
+├── tests/                  # Contratos e gates E2E
+├── bin/                    # CLI cap
+├── install.sh
+└── install-core.sh
 ```
 
 ---
 
-# Instalação rápida
-
-O instalador oferece três papéis:
-
-```text
-Controller  - Control Plane; não executa servidores de jogos localmente
-Agent       - hospeda e executa as instâncias
-Hybrid      - Controller + Agent na mesma máquina
-```
-
-> Os comandos abaixo são exemplos para Linux. Revise os requisitos e a release desejada antes de usar em produção.
-
-## Opção 1 — instalar clonando o repositório
-
-Instale Git caso ainda não esteja disponível e clone o projeto:
+## Instalação rápida
 
 ```bash
 git clone https://github.com/EzequielRibeiro/Distributed-Server-Manager.git
 cd Distributed-Server-Manager
-```
-
-Opcionalmente, confira a branch/commit que será instalado:
-
-```bash
-git status
-git log -1 --oneline
-```
-
-Execute o instalador usando os arquivos do checkout local:
-
-```bash
 sudo ./install.sh --local
 ```
-
-O modo interativo solicitará as informações pertinentes ao papel escolhido. Em Controller/Hybrid, isso inclui seleção do banco de dados e configuração inicial de Region/Datacenter.
 
 Para validar o plano sem modificar o sistema:
 
@@ -344,120 +174,33 @@ Para validar o plano sem modificar o sistema:
 ./install.sh --dry-run --local
 ```
 
-## Opção 2 — instalar a partir de um arquivo/pasta local
+O instalador oferece os papéis `controller`, `agent` e `hybrid`. Em Controller/Hybrid também configura banco e topologia inicial. Para releases, `sudo ./install.sh --remote` usa os assets oficiais esperados pelo instalador.
 
-Se você recebeu o código-fonte ou um pacote extraído localmente, entre no diretório que contém `install.sh` e `install-core.sh`:
-
-```bash
-cd /caminho/para/Distributed-Server-Manager
-```
-
-Garanta que o instalador está executável:
-
-```bash
-chmod +x install.sh install-core.sh
-```
-
-Execute usando exclusivamente os arquivos locais:
-
-```bash
-sudo ./install.sh --local
-```
-
-Também é possível testar primeiro em dry-run:
-
-```bash
-./install.sh --dry-run --local
-```
-
-## Instalação a partir de uma GitHub Release
-
-Quando o `install.sh` estiver disponível localmente, ele também pode buscar uma release oficial:
-
-```bash
-sudo ./install.sh --remote
-```
-
-Para solicitar uma tag específica:
-
-```bash
-sudo ./install.sh --version v2.0.3
-```
-
-A instalação remota depende da existência dos assets oficiais esperados pelo instalador para aquela release.
-
-## Instalação não interativa
-
-Os principais valores também podem ser definidos por variáveis de ambiente, por exemplo:
-
-```bash
-sudo env \
-  DSM_NODE_ROLE=controller \
-  DSM_DATABASE_DRIVER=sqlite \
-  DSM_NON_INTERACTIVE=1 \
-  ./install.sh --local
-```
-
-Para bancos de rede, utilize as variáveis documentadas pelo instalador, como `DSM_DATABASE_HOST`, `DSM_DATABASE_PORT`, `DSM_DATABASE_NAME`, `DSM_DATABASE_USER`, `DSM_DATABASE_PASSWORD_FILE` e `DSM_DATABASE_TLS`.
-
-## Depois da instalação
-
-A CLI pública é:
+Depois da instalação, use:
 
 ```bash
 cap help
-```
-
-Para visualizar todos os comandos disponíveis:
-
-```bash
 cap help --all
 ```
-
-O comando `dsm` existe apenas como compatibilidade temporária para instalações/scripts antigos e não deve ser usado como CLI principal em novas automações.
 
 ---
 
 ## Desenvolvimento e qualidade
 
-O repositório possui CI automatizado com validações de:
-
-- sintaxe Bash;
-- PowerShell;
-- JSON;
-- Python;
-- JavaScript do Dashboard;
-- installer;
-- updater;
-- CLI e scheduler;
-- catálogo;
-- migrations e múltiplos backends;
-- build de release;
-- pacotes dos Agents Linux e Windows;
-- placement, infraestrutura e RBAC;
-- regressões e cenários end-to-end;
-- auditoria de componentes legados;
-- release readiness.
-
-O desenvolvimento prioriza modularização. Novas responsabilidades devem ser implementadas em módulos específicos em vez de aumentar arquivos centrais já extensos.
+O CI valida Bash, PowerShell, JSON, Python, JavaScript, installer/updater, CLI, catálogo, builds de release, Agents Linux/Windows, placement, RBAC e cenários end-to-end. Novas responsabilidades devem ser implementadas em módulos específicos em vez de aumentar arquivos centrais extensos como `dashboard/server.py`.
 
 ---
 
 ## Roadmap
 
-A arquitetura v3 consolidou os principais blocos distribuídos: runtime, plataformas universais, automação, API em tempo real, federação multi-datacenter e HA/DR.
+A arquitetura distribuída principal está consolidada. O roadmap específico do novo ciclo do Catálogo possui dez etapas: auditoria/modelo, remodelagem da UI, game-data distribuído, gerenciador seguro de arquivos, parâmetros/templates, perfis de recursos, integração com contratos, placement e instalação sob demanda, integridade/auditoria e validação E2E/rollout.
 
-As próximas evoluções concentram-se em hardening contínuo, experiência operacional, expansão do catálogo multi-game, observabilidade, eficiência de escala e redução progressiva das camadas temporárias de compatibilidade.
-
-A documentação detalhada de decisões arquiteturais fica em `docs/` e os testes do repositório representam contratos importantes do comportamento atual.
+Consulte [docs/roadmaps/catalog-game-data-architecture-implementation-plan.md](docs/roadmaps/catalog-game-data-architecture-implementation-plan.md).
 
 ### Tutoriais operacionais
 
 - [Instalar um Agent Linux remotamente via SSH](docs/tutorial-instalacao-agent-via-ssh.md)
 - [Instalar servidor DayZ para um cliente em um Agent remoto](docs/tutorial-instalacao-dayz-agent-remoto.md)
-
-Usuários autenticados também podem consultar esses procedimentos na página
-**Ajuda** da Dashboard, que oferece navegação por assunto e busca textual.
 
 ---
 
@@ -470,8 +213,6 @@ Issues e Pull Requests são bem-vindos. Para mudanças estruturais, prefira alte
 ## Licença
 
 Consulte o arquivo de licença disponível no repositório para os termos aplicáveis ao projeto.
-
----
 
 <div align="center">
 

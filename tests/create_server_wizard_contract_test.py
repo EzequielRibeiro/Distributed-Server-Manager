@@ -37,9 +37,9 @@ class CreateServerWizardContractTest(unittest.TestCase):
         self.assertIn('id="runtime-placement-status"', self.html)
 
     def test_service_uses_current_composed_entrypoint(self):
-        self.assertIn("dashboard/server_part14.py", self.service)
-        composition = (ROOT / "dashboard" / "server_part14.py").read_text(encoding="utf-8")
-        self.assertIn("import server_part13 as integration", composition)
+        self.assertIn("dashboard/server_part15.py", self.service)
+        composition = (ROOT / "dashboard" / "server_part15.py").read_text(encoding="utf-8")
+        self.assertIn("import server_part14 as integration", composition)
 
 
 if __name__ == "__main__":
