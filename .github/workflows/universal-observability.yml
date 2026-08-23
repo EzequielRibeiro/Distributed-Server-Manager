@@ -26,12 +26,15 @@ jobs:
             dashboard/server_part13.py \
             tests/universal_observability_platform_test.py \
             tests/universal_observability_http_test.py
-      - name: Validate migration parity
+      - name: Validate consolidated schema parity
         run: |
-          for directory in migrations migrations_mysql migrations_postgresql; do
-            test -f "database/${directory}/034_universal_observability.sql"
-            grep -F 'CREATE TABLE observability_samples' "database/${directory}/034_universal_observability.sql"
-            grep -F 'CREATE TABLE observability_latest' "database/${directory}/034_universal_observability.sql"
+          set -euo pipefail
+          for schema in sqlite postgresql mysql mariadb; do
+            file="database/schemas/${schema}.sql"
+            test -f "$file"
+            grep -F -- '-- source: 034_universal_observability.sql' "$file"
+            grep -F 'CREATE TABLE observability_samples' "$file"
+            grep -F 'CREATE TABLE observability_latest' "$file"
           done
       - name: Run Universal Observability tests
         run: |
