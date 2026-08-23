@@ -10,17 +10,51 @@ import server_part13 as integration
 legacy = integration.legacy
 
 DASHBOARD_V3_FILES = {
-    "/servers.html": legacy.WEB_DIR / "servers.html",
-    "/servers.js": legacy.WEB_DIR / "servers.js",
-    "/servers.css": legacy.WEB_DIR / "servers.css",
+    # Shared v3 shell.
+    "/dashboard-v3.html": legacy.WEB_DIR / "dashboard-v3.html",
+    "/dashboard-home-v3.css": legacy.WEB_DIR / "dashboard-home-v3.css",
+    "/dashboard-home-v3.js": legacy.WEB_DIR / "dashboard-home-v3.js",
+    "/components/sidebar-v3.html": legacy.WEB_DIR / "components" / "sidebar-v3.html",
+
+    # Administration.
+    "/customers.html": legacy.WEB_DIR / "customers.html",
+    "/customers.js": legacy.WEB_DIR / "customers.js",
+    "/users.html": legacy.WEB_DIR / "users.html",
+    "/users.js": legacy.WEB_DIR / "users.js",
+    "/system.html": legacy.WEB_DIR / "system.html",
+    "/system.css": legacy.WEB_DIR / "system.css",
+    "/system.js": legacy.WEB_DIR / "system.js",
+
+    # Infrastructure.
+    "/infrastructure.html": legacy.WEB_DIR / "infrastructure.html",
+    "/infrastructure-v3.css": legacy.WEB_DIR / "infrastructure-v3.css",
+    "/infrastructure-v3.js": legacy.WEB_DIR / "infrastructure-v3.js",
     "/agents.html": legacy.WEB_DIR / "agents.html",
     "/agents-v3.js": legacy.WEB_DIR / "agents-v3.js",
     "/agents-v3.css": legacy.WEB_DIR / "agents-v3.css",
     "/add-agent.html": legacy.WEB_DIR / "add-agent.html",
     "/add-agent-v3.css": legacy.WEB_DIR / "add-agent-v3.css",
+    "/add-agent-page.js": legacy.WEB_DIR / "add-agent-page.js",
+    "/agent-installation.js": legacy.WEB_DIR / "agent-installation.js",
     "/agent-details.html": legacy.WEB_DIR / "agent-details.html",
     "/agent-details.js": legacy.WEB_DIR / "agent-details.js",
     "/agent-details.css": legacy.WEB_DIR / "agent-details.css",
+
+    # Servers and catalog.
+    "/servers.html": legacy.WEB_DIR / "servers.html",
+    "/servers.js": legacy.WEB_DIR / "servers.js",
+    "/servers.css": legacy.WEB_DIR / "servers.css",
+    "/catalog.html": legacy.WEB_DIR / "catalog.html",
+    "/catalog-page.css": legacy.WEB_DIR / "catalog-page.css",
+    "/catalog-page.js": legacy.WEB_DIR / "catalog-page.js",
+
+    # Operations and observability.
+    "/operations.html": legacy.WEB_DIR / "operations.html",
+    "/operations.css": legacy.WEB_DIR / "operations.css",
+    "/operations.js": legacy.WEB_DIR / "operations.js",
+    "/observability.html": legacy.WEB_DIR / "observability.html",
+    "/observability.css": legacy.WEB_DIR / "observability.css",
+    "/observability.js": legacy.WEB_DIR / "observability.js",
 }
 
 legacy.STATIC_FILES.update(DASHBOARD_V3_FILES)
