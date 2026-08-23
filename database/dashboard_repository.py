@@ -7,6 +7,7 @@ import json
 import re
 import sys
 from contextlib import contextmanager
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -22,6 +23,17 @@ from core.network.port_profile import PortProfile
 
 from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
+
+
+def _json_ready_value(value: Any) -> Any:
+    """Normalize backend-native temporal values at the HTTP repository edge."""
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return value
+
+
+def _json_ready_row(row: Any) -> dict[str, Any]:
+    return {key: _json_ready_value(value) for key, value in dict(row).items()}
 
 
 class DashboardRepository:
@@ -64,7 +76,7 @@ class DashboardRepository:
                 f"WHERE c.customer_id={ph} GROUP BY c.id ORDER BY c.created_at",
                 (customer_id,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [_json_ready_row(row) for row in rows]
 
     def create_customer_instance(
         self,

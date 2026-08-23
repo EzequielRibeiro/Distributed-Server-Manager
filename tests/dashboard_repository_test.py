@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
+import json
 import sys
 import tempfile
 import unittest
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,7 +12,7 @@ sys.path.insert(0, str(ROOT / "database"))
 
 from backend import DatabaseConfig
 from backend_factory import create_backend
-from dashboard_repository import DashboardRepository
+from dashboard_repository import DashboardRepository, _json_ready_row
 from registry_repository import RegistryRepository
 
 
@@ -31,6 +33,17 @@ class DashboardRepositoryTest(unittest.TestCase):
     def tearDown(self):
         self.repository.close()
         self.temp.cleanup()
+
+    def test_postgresql_temporal_values_are_json_ready(self):
+        row = _json_ready_row({
+            "starts_at": datetime(2026, 8, 23, 5, 0, tzinfo=timezone.utc),
+            "ends_at": date(2026, 9, 23),
+            "instances_used": 0,
+        })
+        self.assertEqual(row["starts_at"], "2026-08-23T05:00:00+00:00")
+        self.assertEqual(row["ends_at"], "2026-09-23")
+        self.assertEqual(row["instances_used"], 0)
+        json.dumps({"contracts": [row]})
 
     def test_instance_status_context_and_registry(self):
         self.assertEqual(self.repository.update_instance_status("cliente-demo", "online"), 1)

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real database integration tests for DashboardRepository."""
 
+import json
 import os
 import sys
 import tempfile
@@ -100,6 +101,11 @@ class DashboardRepositoryIntegrationTest(unittest.TestCase):
             (self.ids["agent_node"], "minecraft", self.instance_id),
             self.repository.registered_instances(),
         )
+
+    def test_customer_contracts_are_json_serializable(self):
+        contracts = self.repository.customer_contracts(self.ids["customer"])
+        self.assertEqual(contracts[0]["id"], self.ids["contract"])
+        json.dumps({"contracts": contracts})
 
     def test_users_scopes_and_audit(self):
         self.repository.save_user(
