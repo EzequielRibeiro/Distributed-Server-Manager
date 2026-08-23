@@ -4,270 +4,55 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Capivara DSM - Agents</title>
-    <link rel="stylesheet" href="/style.css">
-    <link rel="stylesheet" href="/agents.css">
-    <link rel="stylesheet" href="/agent-terminal.css">
-    <link rel="stylesheet" href="/infrastructure-ui-v2.css?v=1">
-    <link rel="stylesheet" href="/infrastructure-topology-v2.css?v=1">
+    <link rel="stylesheet" href="dashboard-home-v3.css">
+    <link rel="stylesheet" href="agents-v3.css?v=2">
 </head>
-<body>
+<body class="cap-home cap-agents-shell">
 <div id="sidebar-component"></div>
-<main class="agents-main">
-    <header class="agents-header">
-        <div><h1>Infraestrutura · Agents</h1><p>Instalação, localização, atualização e administração dos Agents gerenciados pelo Controller.</p></div>
-        <div class="agents-header-actions">
-            <button id="add-agent-focus" type="button">Adicionar Agent</button>
-            <button id="refresh-agents" type="button">Atualizar</button>
+<main class="cap-home-main cap-agents-page">
+    <header class="cap-home-topbar">
+        <div class="cap-home-title">
+            <button id="agents-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button>
+            <div><h1>Agents</h1><p>Frota de execução conectada ao Controller.</p></div>
+        </div>
+        <div class="cap-top-status">
+            <div class="cap-controller-state"><i></i><span>Controller Online</span></div>
+            <div class="cap-user"><strong id="agents-user-name">—</strong><span id="agents-user-role">—</span></div>
         </div>
     </header>
 
-    <div id="agents-error" class="agents-error" hidden></div>
+    <div class="cap-home-content cap-agents-content">
+        <div id="agents-error" class="cap-agents-error" hidden></div>
 
-    <section id="add-agent" class="agent-detail add-agent-panel agent-manager-only">
-        <h2>Adicionar Agent</h2>
-        <p>Instale manualmente ou permita que o Controller faça o bootstrap Linux via SSH e Windows via WinRM HTTPS.</p>
-        <form id="agent-install-form" class="range-form">
-            <fieldset>
-                <legend>Sistema</legend>
-                <label class="inline-option"><input type="radio" name="agent-platform" value="linux" checked> Linux</label>
-                <label class="inline-option"><input type="radio" name="agent-platform" value="windows"> Windows</label>
-            </fieldset>
-            <fieldset>
-                <legend>Método</legend>
-                <label class="inline-option"><input type="radio" name="agent-method" value="github" checked> Gerar instrução · GitHub Release</label>
-                <label class="inline-option"><input type="radio" name="agent-method" value="local"> Gerar instrução · Pacote local</label>
-                <label class="inline-option"><input type="radio" name="agent-method" value="ssh"> Instalar remotamente via SSH</label>
-                <label class="inline-option"><input type="radio" name="agent-method" value="winrm"> Instalar Windows via WinRM</label>
-            </fieldset>
-
-            <div id="agent-ssh-options" class="range-form" hidden>
-                <h3>Bootstrap SSH pelo Controller</h3>
-                <label>Host ou IP do Agent
-                    <input id="agent-ssh-host" type="text" placeholder="192.168.15.55" autocomplete="off">
-                </label>
-                <label>Usuário SSH
-                    <input id="agent-ssh-user" type="text" placeholder="ezequiel" autocomplete="off">
-                </label>
-                <label>Porta SSH
-                    <input id="agent-ssh-port" type="number" min="1" max="65535" value="22">
-                </label>
-                <label>URL do Controller alcançável pelo Agent
-                    <input id="agent-controller-url" type="url" placeholder="https://controller.exemplo">
-                </label>
-                <p class="location-safety-note">O Dashboard não aceita senha SSH. O Controller usa sua chave/ssh-agent já configurada, preserva a verificação de host key e exige sudo não interativo no host remoto.</p>
-            </div>
-            <div id="agent-winrm-options" class="range-form" hidden>
-                <h3>Bootstrap WinRM pelo Controller</h3>
-                <label>Host ou IP do Agent Windows
-                    <input id="agent-winrm-host" type="text" placeholder="node1.exemplo.local" autocomplete="off">
-                </label>
-                <label>URL do Controller alcançável pelo Agent
-                    <input id="agent-winrm-controller-url" type="url" placeholder="https://controller.exemplo">
-                </label>
-                <p class="location-safety-note">A senha não é enviada à Dashboard. Prepare este host uma vez com <code>sudo cap agent winrm-prepare Administrator@HOST</code>; depois a autenticação usa certificado via HTTPS.</p>
-            </div>
-
-            <label id="agent-controller-wrapper" hidden>Controller
-                <select id="agent-install-controller"></select>
-            </label>
-            <label>Região
-                <select id="agent-install-region" required><option value="">Selecione uma região</option></select>
-            </label>
-            <label>Datacenter
-                <select id="agent-install-datacenter" required><option value="">Selecione um datacenter</option></select>
-            </label>
-
-            <fieldset>
-                <legend>Pré-configuração do Agent</legend>
-                <label>Nome administrativo
-                    <input id="agent-preconfig-name" type="text" maxlength="128" placeholder="Node Limeira 01">
-                </label>
-                <label>Protocolo da faixa
-                    <select id="agent-preconfig-protocol">
-                        <option value="both">TCP + UDP</option>
-                        <option value="udp">UDP</option>
-                        <option value="tcp">TCP</option>
-                    </select>
-                </label>
-                <label>Porta inicial
-                    <input id="agent-preconfig-port-start" type="number" min="1" max="65535" value="24000">
-                </label>
-                <label>Porta final
-                    <input id="agent-preconfig-port-end" type="number" min="1" max="65535" value="24999">
-                </label>
-                <p class="location-safety-note">A faixa só é criada depois do enrollment, quando o Agent já possui identidade. Isso evita reservas associadas a Agents inexistentes.</p>
-            </fieldset>
-
-            <button id="generate-agent-install" type="submit">Gerar instalação</button>
-            <p id="agent-install-feedback" class="location-safety-note" role="status" aria-live="polite"></p>
-        </form>
-
-        <div id="agent-install-result" class="agent-install-result" hidden>
-            <h3 id="agent-install-result-title">Instruções de instalação</h3>
-            <p id="agent-install-expiry"></p>
-            <textarea id="agent-install-command" readonly rows="5"></textarea>
-            <button id="copy-agent-install" type="button">Copiar instrução</button>
-            <p id="agent-remote-bootstrap-status" class="location-safety-note" hidden></p>
-            <p id="agent-preconfiguration-status" class="location-safety-note"></p>
-            <div id="agent-install-progress" class="agent-install-progress" data-state="waiting" aria-live="polite">
-                <span data-step="waiting">Aguardando Agent</span>
-                <span data-step="pairing">Pareando</span>
-                <span data-step="validating">Validando</span>
-                <span data-step="online">Online</span>
-            </div>
+        <div class="cap-agents-toolbar">
+            <label class="cap-agent-search"><span>⌕</span><input id="agent-search" type="search" placeholder="Buscar Agent, Node, IP ou Datacenter"></label>
+            <a class="cap-btn cap-btn-primary agent-manager-only" href="add-agent.html">+ Adicionar Agent</a>
+            <button id="refresh-agents" class="cap-btn cap-btn-secondary" type="button">Atualizar</button>
         </div>
-    </section>
 
-    <section id="agents-list" class="agents-grid"></section>
+        <section class="cap-agent-summary" aria-label="Resumo da frota">
+            <article><span>Agents</span><strong id="agents-total">0</strong><small>registrados</small></article>
+            <article><span>Online</span><strong id="agents-online">0</strong><small>saudáveis</small></article>
+            <article><span>Offline</span><strong id="agents-offline">0</strong><small>sem heartbeat</small></article>
+            <article><span>Instâncias</span><strong id="agents-instances">0</strong><small>distribuídas</small></article>
+        </section>
 
-    <section id="agent-detail" class="agent-detail" hidden>
-        <div class="agent-detail-dashboard">
-            <header class="agent-detail-topbar">
-                <h2 id="agent-detail-title">Informações do Agent</h2>
-                <span id="agent-detail-health-badge" class="agent-online-badge">Online</span>
-            </header>
-
-            <section class="agent-summary-grid" aria-label="Resumo do Agent">
-                <article class="agent-summary-card"><span>Hostname</span><strong id="agent-info-hostname">—</strong></article>
-                <article class="agent-summary-card"><span>Endereço</span><strong id="agent-info-address">—</strong></article>
-                <article class="agent-summary-card"><span>Sistema</span><strong id="agent-info-system">—</strong></article>
-                <article class="agent-summary-card"><span>Versão</span><strong id="agent-info-version">—</strong></article>
-                <article class="agent-summary-card"><span>Saúde</span><strong id="agent-info-health">—</strong></article>
-                <article class="agent-summary-card"><span>Último heartbeat</span><strong id="agent-info-heartbeat">—</strong></article>
-            </section>
-
-            <section class="agent-telemetry-section" aria-labelledby="host-telemetry-title">
-                <div class="agent-section-heading">
-                    <div>
-                        <h3 id="host-telemetry-title">Telemetria do computador</h3>
-                        <p>Consumo total do host físico ou virtual onde o Agent está executando.</p>
-                    </div>
+        <section class="cap-agents-panel">
+            <div class="cap-agents-panel-heading">
+                <div><h2>Frota de Agents</h2><p id="agents-summary-text">Carregando Agents...</p></div>
+                <div class="cap-agent-filters" aria-label="Filtro de saúde">
+                    <button class="cap-agent-filter active" data-filter="all" type="button">Todos</button>
+                    <button class="cap-agent-filter" data-filter="online" type="button">Online</button>
+                    <button class="cap-agent-filter" data-filter="offline" type="button">Offline</button>
                 </div>
-                <div class="agent-telemetry-grid">
-                    <article class="telemetry-card cpu"><span class="metric-label">CPU</span><strong id="agent-host-cpu" class="metric-value">0.0%</strong><span class="metric-subvalue">Uso do processador</span><canvas id="agent-host-cpu-chart" aria-label="Histórico de CPU"></canvas></article>
-                    <article class="telemetry-card memory"><span class="metric-label">Memória (RAM)</span><strong id="agent-host-memory" class="metric-value">0 B / 0 B</strong><span class="metric-subvalue">Memória utilizada e total</span><canvas id="agent-host-memory-chart" aria-label="Histórico de memória"></canvas></article>
-                    <article class="telemetry-card disk"><span class="metric-label">Disco</span><strong id="agent-host-disk" class="metric-value">0.0%</strong><span class="metric-subvalue">Uso do armazenamento</span><canvas id="agent-host-disk-chart" aria-label="Histórico de disco"></canvas></article>
-                    <article class="telemetry-card load"><span class="metric-label">Load Average</span><strong id="agent-host-load" class="metric-value">0.00 / 0.00 / 0.00</strong><span class="metric-subvalue">1, 5 e 15 minutos</span><canvas id="agent-host-load-chart" aria-label="Histórico de load average"></canvas></article>
-                    <article class="telemetry-card uptime"><span class="metric-label">Uptime</span><strong id="agent-host-uptime" class="metric-value">0h 0m</strong><span class="metric-subvalue">Desde o último boot</span><canvas id="agent-host-uptime-chart" aria-label="Histórico de uptime"></canvas></article>
-                    <article class="telemetry-card network-in"><span class="metric-label">Rede recebida</span><strong id="agent-host-network-in" class="metric-value">0 B/s</strong><span class="metric-subvalue">Tráfego recebido</span><canvas id="agent-host-network-in-chart" aria-label="Histórico de rede recebida"></canvas></article>
-                    <article class="telemetry-card network-out"><span class="metric-label">Rede enviada</span><strong id="agent-host-network-out" class="metric-value">0 B/s</strong><span class="metric-subvalue">Tráfego enviado</span><canvas id="agent-host-network-out-chart" aria-label="Histórico de rede enviada"></canvas></article>
-                    <article class="telemetry-card temperature"><span class="metric-label">Temperatura (CPU)</span><strong id="agent-host-temperature" class="metric-value">N/D</strong><span class="metric-subvalue">Sensor do sistema</span><canvas id="agent-host-temperature-chart" aria-label="Histórico de temperatura"></canvas></article>
-                </div>
-            </section>
-
-            <section class="agent-telemetry-section" aria-labelledby="process-telemetry-title">
-                <div class="agent-section-heading">
-                    <div>
-                        <h3 id="process-telemetry-title">Telemetria do Capivara Agent</h3>
-                        <p>Consumo exclusivo do processo do Agent, separado do restante da máquina.</p>
-                    </div>
-                </div>
-                <div class="agent-telemetry-grid">
-                    <article class="telemetry-card agent-cpu"><span class="metric-label">CPU do Agent</span><strong id="agent-process-cpu" class="metric-value">0.0%</strong><span class="metric-subvalue">Uso do processo</span><canvas id="agent-process-cpu-chart" aria-label="Histórico de CPU do Agent"></canvas></article>
-                    <article class="telemetry-card agent-memory"><span class="metric-label">Memória do Agent (RAM)</span><strong id="agent-process-memory" class="metric-value">0 B</strong><span class="metric-subvalue">Memória residente do processo</span><canvas id="agent-process-memory-chart" aria-label="Histórico de memória do Agent"></canvas></article>
-                    <article class="telemetry-card agent-threads"><span class="metric-label">Threads do Agent</span><strong id="agent-process-threads" class="metric-value">—</strong><span class="metric-subvalue">Threads ativas</span><canvas id="agent-process-threads-chart" aria-label="Histórico de threads do Agent"></canvas></article>
-                    <article class="telemetry-card agent-pid"><span class="metric-label">PID do Agent</span><strong id="agent-process-pid" class="metric-value">—</strong><span class="metric-subvalue">Identificador do processo</span><canvas id="agent-process-pid-chart" aria-label="Histórico do PID do Agent"></canvas></article>
-                </div>
-            </section>
-
-            <section class="agent-bottom-grid">
-                <article class="agent-process-panel">
-                    <h3>Processos do Agent (Top 5 por CPU)</h3>
-                    <table class="agent-process-table">
-                        <thead><tr><th>Processo</th><th>PID</th><th>CPU %</th><th>RAM</th><th>Threads</th></tr></thead>
-                        <tbody id="agent-process-table-body"><tr class="empty-row"><td colspan="5">Aguardando telemetria do Agent.</td></tr></tbody>
-                    </table>
-                </article>
-                <aside class="agent-help-panel">
-                    <h3>Entenda os gráficos</h3>
-                    <ul>
-                        <li>Os gráficos representam a evolução das métricas recebidas pelo Controller.</li>
-                        <li>CPU, memória, disco e rede pertencem ao host do Agent.</li>
-                        <li>A telemetria do Capivara Agent representa apenas o processo do Agent.</li>
-                        <li>Load Average corresponde às médias de 1, 5 e 15 minutos.</li>
-                    </ul>
-                </aside>
-            </section>
-
-            <section class="agent-management-panel">
-                <h3>Portas administradas</h3>
-                <div id="agent-ranges" class="range-grid"></div>
-                <div id="agent-conflicts" class="conflict-box"></div>
-            </section>
-
-            <div class="agent-management-stack">
-                <section class="range-form agent-manager-only agent-management-panel" id="agent-update-panel">
-                    <h3>Atualização remota</h3>
-                    <div class="range-grid">
-                        <article class="range-card"><span>Versão instalada</span><strong id="agent-installed-version">—</strong></article>
-                        <article class="range-card"><span>Versão disponível</span><strong id="agent-available-version">—</strong></article>
-                        <article class="range-card"><span>Status</span><strong id="agent-update-status">—</strong></article>
-                        <article class="range-card"><span>Última atualização</span><strong id="agent-last-update">—</strong></article>
-                    </div>
-                    <form id="agent-update-channel-form" class="range-form">
-                        <label>Canal
-                            <select id="agent-update-channel">
-                                <option value="stable">Stable</option>
-                                <option value="beta">Beta</option>
-                                <option value="local/manual">Local / manual</option>
-                            </select>
-                        </label>
-                        <button type="submit">Salvar canal</button>
-                    </form>
-                    <form id="agent-rollout-form" class="range-form">
-                        <label>Agents do rollout
-                            <textarea id="agent-rollout-agents" rows="3" placeholder="agent-a, agent-b"></textarea>
-                        </label>
-                        <label>Versão desejada <input id="agent-rollout-version" type="text" placeholder="1.5.0" required></label>
-                        <label>Tamanho do lote <input id="agent-rollout-batch-size" type="number" min="1" value="1" required></label>
-                        <label>Canal
-                            <select id="agent-rollout-channel">
-                                <option value="stable">Stable</option>
-                                <option value="beta">Beta</option>
-                                <option value="local/manual">Local / manual</option>
-                            </select>
-                        </label>
-                        <p>O próximo lote só é liberado quando todos os Agents dos lotes anteriores voltarem online na versão esperada.</p>
-                        <button type="submit">Criar rollout</button>
-                    </form>
-                </section>
-
-                <form id="agent-location-form" class="range-form agent-management-panel">
-                    <h3>Localização do Agent</h3>
-                    <label>Região
-                        <select id="agent-region" required><option value="">Selecione uma região</option></select>
-                    </label>
-                    <label>Datacenter
-                        <select id="agent-datacenter" required><option value="">Selecione um datacenter</option></select>
-                    </label>
-                    <label>Latitude <input id="agent-latitude" type="number" min="-90" max="90" step="any"></label>
-                    <label>Longitude <input id="agent-longitude" type="number" min="-180" max="180" step="any"></label>
-                    <label>Host público <input id="agent-public-host" type="text"></label>
-                    <label>Status
-                        <select id="agent-location-status"><option value="active">Ativo</option><option value="disabled">Desabilitado</option></select>
-                    </label>
-                    <p class="location-safety-note">Alterar Região/Datacenter modifica apenas metadados de localização. Instâncias existentes permanecem vinculadas ao Agent.</p>
-                    <button type="submit">Salvar localização</button>
-                </form>
-
-                <form id="agent-range-form" class="range-form agent-management-panel">
-                    <h3>Alterar faixa administrada</h3>
-                    <label>Protocolo<select id="range-protocol"><option value="both">TCP + UDP</option><option value="udp">UDP</option><option value="tcp">TCP</option></select></label>
-                    <label>Porta inicial<input id="range-start" type="number" min="1" max="65535" required></label>
-                    <label>Porta final<input id="range-end" type="number" min="1" max="65535" required></label>
-                    <label id="force-wrapper" class="force-option" hidden><input id="range-force" type="checkbox"> Confirmação administrativa para manter reservas fora da nova faixa</label>
-                    <button type="submit">Salvar faixa</button>
-                </form>
             </div>
-        </div>
-    </section>
+            <div id="agents-list" class="cap-agent-grid" aria-live="polite"></div>
+            <div id="agents-empty" class="cap-agent-empty" hidden><strong>Nenhum Agent encontrado.</strong><span>Adicione um Agent ou ajuste o filtro atual.</span></div>
+        </section>
+    </div>
+    <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="/agents.js"></script>
-<script src="/agent-installation.js"></script>
-<script src="/agent-location-ui.js"></script>
-<script src="/agent-updates.js"></script>
+<script src="agents-v3.js?v=2"></script>
 <script src="/infrastructure-role-ui.js"></script>
-<script src="/infrastructure-ui-v2.js?v=2"></script>
-<script src="/infrastructure-topology-v2.js?v=1"></script>
 </body>
 </html>
