@@ -87,7 +87,9 @@ fi
 grep -Fq 'id -u "${DSM_USER}"' "${UPDATE}" || fail "DSM user existence is not checked"
 grep -Fq 'getent group "${DSM_GROUP}"' "${UPDATE}" || fail "DSM group existence is not checked"
 grep -Fq 'capture_service_state' "${UPDATE}" || fail "active service state is not captured"
-grep -Fq 'for SERVICE_NAME in "${ACTIVE_SERVICES[@]}"' "${UPDATE}" || fail "service restart state is not preserved"
+grep -Fq 'for SERVICE_NAME in "${RESTORE_SERVICES[@]}"' "${UPDATE}" || fail "service restore policy is not preserved"
+grep -Fq 'validate_runtime_readiness' "${UPDATE}" || fail "post-update readiness gate is missing"
+grep -Fq 'collect_failure_diagnostics' "${UPDATE}" || fail "failure diagnostics are missing"
 if grep -Fq 'systemctl enable "${SERVICE_NAME}"' "${UPDATE}"; then
     fail "update manager enables every discovered service"
 fi
@@ -189,30 +191,90 @@ fi
     SYSTEMCTL_LOG="${TMP_DIR}/systemctl.log"
     mkdir -p "${SYSTEMD_DIR}"
     : >"${SYSTEMD_DIR}/dsm-active.service"
-    : >"${SYSTEMD_DIR}/dsm-inactive.service"
+    : >"${SYSTEMD_DIR}/dsm-activating.service"
+    : >"${SYSTEMD_DIR}/dsm-failed.service"
+    : >"${SYSTEMD_DIR}/dsm-disabled.service"
     : >"${SYSTEMCTL_LOG}"
     systemctl() {
-        if [[ "$1" == "is-active" ]]
-        then
-            [[ "$3" == "dsm-active.service" ]]
-            return
-        fi
+        local service="${2:-}"
+        case "$1" in
+            show)
+                case "$service:${3:-}" in
+                    dsm-active.service:--property=ActiveState) echo active ;;
+                    dsm-activating.service:--property=ActiveState) echo activating ;;
+                    dsm-failed.service:--property=ActiveState) echo failed ;;
+                    dsm-disabled.service:--property=ActiveState) echo active ;;
+                    *:--property=SubState) echo running ;;
+                    *:--property=Type) echo simple ;;
+                    *:--property=Restart) echo always ;;
+                    *:--property=Result) echo success ;;
+                esac
+                return 0
+                ;;
+            is-enabled)
+                [[ "$service" == "dsm-disabled.service" ]] && { echo disabled; return 1; }
+                echo enabled
+                return 0
+                ;;
+        esac
         printf '%s\n' "$*" >>"${SYSTEMCTL_LOG}"
     }
 
     capture_service_state >/dev/null
-    [[ "${#ACTIVE_SERVICES[@]}" -eq 1 ]] || fail "incorrect number of active services captured"
-    [[ "${ACTIVE_SERVICES[0]}" == "dsm-active.service" ]] || fail "inactive service was captured"
+    [[ "${#STOP_SERVICES[@]}" -eq 3 ]] || fail "active/activating services were not captured for stop"
+    [[ "${#RESTORE_SERVICES[@]}" -eq 3 ]] \
+        || fail "enabled active/activating/failed restore count is incorrect"
+    for expected in dsm-active.service dsm-activating.service dsm-failed.service; do
+        [[ " ${RESTORE_SERVICES[*]} " == *" ${expected} "* ]] \
+            || fail "restore policy omitted ${expected}"
+    done
 
     stop_services >/dev/null
     restart_services >/dev/null
     grep -q '^stop dsm-active.service$' "${SYSTEMCTL_LOG}" || fail "active service was not stopped"
-    grep -q '^start dsm-active.service$' "${SYSTEMCTL_LOG}" || fail "active service was not restarted"
-    if grep -q 'dsm-inactive.service' "${SYSTEMCTL_LOG}"
-    then
-        fail "inactive service state was changed"
+    grep -q '^stop dsm-activating.service$' "${SYSTEMCTL_LOG}" || fail "activating service was not stopped"
+    grep -q '^start dsm-failed.service$' "${SYSTEMCTL_LOG}" || fail "failed enabled service was not retried"
+    grep -q '^stop dsm-disabled.service$' "${SYSTEMCTL_LOG}" || fail "running disabled service was not stopped"
+    if grep -q '^start dsm-disabled.service$' "${SYSTEMCTL_LOG}"; then
+        fail "disabled service was started automatically"
     fi
 )
+
+(
+    source "${UPDATE}"
+    READINESS_TIMEOUT=0
+    READINESS_INTERVAL=0
+    systemctl() {
+        case "${2:-}:${3:-}" in
+            dsm-ready.service:--property=ActiveState) echo active ;;
+            dsm-oneshot.service:--property=ActiveState) echo inactive ;;
+            dsm-oneshot.service:--property=Type) echo oneshot ;;
+            dsm-oneshot.service:--property=Result) echo success ;;
+            dsm-broken.service:--property=ActiveState) echo failed ;;
+            dsm-broken.service:--property=Type) echo simple ;;
+            dsm-broken.service:--property=Result) echo exit-code ;;
+        esac
+    }
+    wait_for_service_readiness dsm-ready.service >/dev/null \
+        || fail "active service failed readiness"
+    wait_for_service_readiness dsm-oneshot.service >/dev/null \
+        || fail "successful oneshot failed readiness"
+    if wait_for_service_readiness dsm-broken.service >/dev/null 2>&1; then
+        fail "failed service passed readiness"
+    fi
+)
+
+if (
+    source "${UPDATE}"
+    SYSTEMD_ENABLED=1
+    RESTORE_SERVICES=(dsm-broken.service)
+    systemctl() {
+        [[ "$1" != "start" ]]
+    }
+    restart_services >/dev/null 2>&1
+); then
+    fail "service start failure did not fail the update transaction"
+fi
 
 (
     source "${UPDATE}"
@@ -231,7 +293,7 @@ fi
         : >"${SYSTEMD_DIR}/${unit}"
     done
     : >"${SYSTEMCTL_LOG}"
-    ACTIVE_SERVICES=(
+    RESTORE_SERVICES=(
         dsm-metrics-worker.service
         dsm-event-queue-worker.service
     )
@@ -1232,4 +1294,3 @@ EOF_RELEASE
 # from a normal repository checkout/release.
 [[ -x "${ROOT}/bin/cap" ]] \
     || fail "bin/cap is not executable"
-

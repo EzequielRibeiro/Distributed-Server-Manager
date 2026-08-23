@@ -97,6 +97,16 @@ BACKUP_PROCESS_PID=""
 DATABASE_BACKUP_FILE=""
 UPDATE_TRANSACTION_STARTED=0
 ACTIVE_SERVICES=()
+STOP_SERVICES=()
+RESTORE_SERVICES=()
+DISCOVERED_SERVICES=()
+SERVICE_ACTIVE_STATES=()
+SERVICE_SUB_STATES=()
+SERVICE_UNIT_STATES=()
+SERVICE_TYPES=()
+SERVICE_RESTART_POLICIES=()
+READINESS_TIMEOUT="${DSM_UPDATE_READINESS_TIMEOUT:-60}"
+READINESS_INTERVAL="${DSM_UPDATE_READINESS_INTERVAL:-2}"
 OLD_VERSION=""
 NEW_VERSION=""
 
@@ -651,20 +661,66 @@ run_process_guard()
 capture_service_state() {
     local SERVICE_FILE
     local SERVICE_NAME
+    local ACTIVE_STATE
+    local SUB_STATE
+    local UNIT_STATE
+    local SERVICE_TYPE
+    local RESTART_POLICY
 
     ACTIVE_SERVICES=()
+    STOP_SERVICES=()
+    RESTORE_SERVICES=()
+    DISCOVERED_SERVICES=()
+    SERVICE_ACTIVE_STATES=()
+    SERVICE_SUB_STATES=()
+    SERVICE_UNIT_STATES=()
+    SERVICE_TYPES=()
+    SERVICE_RESTART_POLICIES=()
     for SERVICE_FILE in "${SYSTEMD_DIR}"/dsm-*.service
     do
         [[ -e "${SERVICE_FILE}" ]] || continue
         SERVICE_NAME=$(basename "${SERVICE_FILE}")
-        if systemctl is-active --quiet "${SERVICE_NAME}"
-        then
-            ACTIVE_SERVICES+=("${SERVICE_NAME}")
-        fi
+        ACTIVE_STATE=$(systemctl show "${SERVICE_NAME}" --property=ActiveState --value 2>/dev/null) \
+            || ACTIVE_STATE="${ACTIVE_STATE:-unknown}"
+        SUB_STATE=$(systemctl show "${SERVICE_NAME}" --property=SubState --value 2>/dev/null) \
+            || SUB_STATE="${SUB_STATE:-unknown}"
+        SERVICE_TYPE=$(systemctl show "${SERVICE_NAME}" --property=Type --value 2>/dev/null) \
+            || SERVICE_TYPE="${SERVICE_TYPE:-unknown}"
+        RESTART_POLICY=$(systemctl show "${SERVICE_NAME}" --property=Restart --value 2>/dev/null) \
+            || RESTART_POLICY="${RESTART_POLICY:-no}"
+        UNIT_STATE=$(systemctl is-enabled "${SERVICE_NAME}" 2>/dev/null) \
+            || UNIT_STATE="${UNIT_STATE:-unknown}"
+
+        DISCOVERED_SERVICES+=("${SERVICE_NAME}")
+        SERVICE_ACTIVE_STATES+=("${ACTIVE_STATE}")
+        SERVICE_SUB_STATES+=("${SUB_STATE}")
+        SERVICE_UNIT_STATES+=("${UNIT_STATE}")
+        SERVICE_TYPES+=("${SERVICE_TYPE}")
+        SERVICE_RESTART_POLICIES+=("${RESTART_POLICY}")
+
+        case "${ACTIVE_STATE}" in
+            active|activating)
+                ACTIVE_SERVICES+=("${SERVICE_NAME}")
+                STOP_SERVICES+=("${SERVICE_NAME}")
+                ;;
+        esac
+
+        # Disabled services are never started by an update, even when they
+        # happened to be running manually. Failed enabled units are retried.
+        case "${UNIT_STATE}:${ACTIVE_STATE}" in
+            enabled:active|enabled:activating|enabled:failed|enabled-runtime:active|enabled-runtime:activating|enabled-runtime:failed)
+                RESTORE_SERVICES+=("${SERVICE_NAME}")
+                ;;
+        esac
+
+        printf '  %s active=%s sub=%s enabled=%s type=%s restart=%s\n' \
+            "${SERVICE_NAME}" "${ACTIVE_STATE}" "${SUB_STATE}" "${UNIT_STATE}" \
+            "${SERVICE_TYPE}" "${RESTART_POLICY}"
     done
 
     echo
-    echo "Serviços ativos registrados | Active services recorded: ${#ACTIVE_SERVICES[@]}"
+    echo "Serviços registrados | Services recorded: ${#DISCOVERED_SERVICES[@]}"
+    echo "Serviços a restaurar | Services to restore: ${#RESTORE_SERVICES[@]}"
 }
 
 stop_services() {
@@ -673,7 +729,7 @@ stop_services() {
     echo
     echo "Parando serviços DSM..."
     echo "Stopping DSM services..."
-    for SERVICE_NAME in "${ACTIVE_SERVICES[@]}"
+    for SERVICE_NAME in "${STOP_SERVICES[@]}"
     do
         echo "Parando | Stopping ${SERVICE_NAME}"
         systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
@@ -918,6 +974,7 @@ migrate_dashboard_worker_services() {
     local service_name
     local active_service
     local aggregate_recorded=0
+    local legacy_restore_required=0
     local legacy_worker_units=(
         dsm-backup-worker.service
         dsm-events-worker.service
@@ -942,22 +999,23 @@ migrate_dashboard_worker_services() {
         fi
     done
 
-    for active_service in "${ACTIVE_SERVICES[@]}"
+    for active_service in "${RESTORE_SERVICES[@]}"
     do
         case " ${legacy_worker_units[*]} " in
-            *" ${active_service} "*) continue ;;
+            *" ${active_service} "*) legacy_restore_required=1; continue ;;
         esac
         migrated_active_services+=("${active_service}")
         [[ "${active_service}" == "${aggregate_unit}" ]] && aggregate_recorded=1
     done
 
-    if [[ "${aggregate_recorded}" -eq 0 ]]
+    if [[ "${legacy_restore_required}" -eq 1 && "${aggregate_recorded}" -eq 0 ]]
     then
         migrated_active_services+=("${aggregate_unit}")
+        systemctl enable "${aggregate_unit}"
     fi
-    ACTIVE_SERVICES=("${migrated_active_services[@]}")
+    RESTORE_SERVICES=("${migrated_active_services[@]}")
+    ACTIVE_SERVICES=("${RESTORE_SERVICES[@]}")
 
-    systemctl enable "${aggregate_unit}"
     echo "[OK] Workers consolidados em ${aggregate_unit}."
 }
 
@@ -979,7 +1037,7 @@ restart_services() {
         echo "Services will not be started."
         return 0
     fi
-    if [[ "${#ACTIVE_SERVICES[@]}" -eq 0 ]]
+    if [[ "${#RESTORE_SERVICES[@]}" -eq 0 ]]
     then
         echo
         echo "Nenhum serviço estava ativo antes da atualização."
@@ -988,22 +1046,102 @@ restart_services() {
     fi
 
     systemctl daemon-reload
-    for SERVICE_NAME in "${ACTIVE_SERVICES[@]}"
+    for SERVICE_NAME in "${RESTORE_SERVICES[@]}"
     do
         echo
         echo "Iniciando serviço | Starting service: ${SERVICE_NAME}"
-        if systemctl start "${SERVICE_NAME}"
-        then
-            echo "[OK] ${SERVICE_NAME} iniciado | started."
-        else
-            echo "[WARN] Falha ao iniciar | Failed to start ${SERVICE_NAME}."
-            echo "Verifique com | Check with:"
-            echo "systemctl status ${SERVICE_NAME}"
-        fi
+        systemctl start "${SERVICE_NAME}" || {
+            echo "[ERROR] Falha ao iniciar | Failed to start ${SERVICE_NAME}." >&2
+            return 1
+        }
+        echo "[OK] ${SERVICE_NAME} iniciado | started."
     done
     echo
     echo "Processo de inicialização concluído."
     echo "Startup process completed."
+}
+
+service_ready() {
+    local SERVICE_NAME="$1"
+    local ACTIVE_STATE
+    local SERVICE_TYPE
+    local RESULT
+
+    ACTIVE_STATE=$(systemctl show "${SERVICE_NAME}" --property=ActiveState --value 2>/dev/null || true)
+    [[ "${ACTIVE_STATE}" == "active" ]] && return 0
+
+    SERVICE_TYPE=$(systemctl show "${SERVICE_NAME}" --property=Type --value 2>/dev/null || true)
+    RESULT=$(systemctl show "${SERVICE_NAME}" --property=Result --value 2>/dev/null || true)
+    [[ "${SERVICE_TYPE}" == "oneshot" && "${ACTIVE_STATE}" == "inactive" && "${RESULT}" == "success" ]]
+}
+
+wait_for_service_readiness() {
+    local SERVICE_NAME="$1"
+    local DEADLINE=$((SECONDS + READINESS_TIMEOUT))
+
+    until service_ready "${SERVICE_NAME}"
+    do
+        if (( SECONDS >= DEADLINE ))
+        then
+            echo "[ERROR] Timeout aguardando serviço | waiting for service: ${SERVICE_NAME}" >&2
+            return 1
+        fi
+        sleep "${READINESS_INTERVAL}"
+    done
+    echo "[OK] Serviço pronto | Service ready: ${SERVICE_NAME}"
+}
+
+wait_for_dashboard_readiness() {
+    local DASHBOARD_URL="$1"
+    local DEADLINE=$((SECONDS + READINESS_TIMEOUT))
+
+    until curl --fail --silent --show-error --max-time 5 "${DASHBOARD_URL}" >/dev/null
+    do
+        if (( SECONDS >= DEADLINE ))
+        then
+            echo "[ERROR] Timeout aguardando Dashboard | waiting for Dashboard: ${DASHBOARD_URL}" >&2
+            return 1
+        fi
+        sleep "${READINESS_INTERVAL}"
+    done
+}
+
+validate_runtime_readiness() {
+    local SERVICE_NAME
+    local DASHBOARD_RESTORED=0
+    local DASHBOARD_PORT_VALUE="8080"
+
+    echo
+    echo "Validando readiness pós-atualização..."
+    echo "Validating post-update readiness..."
+    for SERVICE_NAME in "${RESTORE_SERVICES[@]}"
+    do
+        wait_for_service_readiness "${SERVICE_NAME}"
+        [[ "${SERVICE_NAME}" == "dsm-dashboard.service" ]] && DASHBOARD_RESTORED=1
+    done
+
+    [[ -x "${INSTALL_DIR}/bin/cap" ]] || {
+        echo "[ERROR] CLI cap não está executável | cap CLI is not executable." >&2
+        return 1
+    }
+    "${INSTALL_DIR}/bin/cap" --help >/dev/null
+    echo "[OK] CLI cap"
+
+    python3 "${INSTALL_DIR}/database/manager.py" --root "${INSTALL_DIR}" check >/dev/null
+    echo "[OK] Database (${DSM_DATABASE_DRIVER})"
+
+    if [[ "${DASHBOARD_RESTORED}" -eq 1 ]]
+    then
+        if [[ -r "${INSTALL_DIR}/dashboard/config/dashboard.conf" ]]
+        then
+            DASHBOARD_PORT_VALUE=$(awk -F= '$1 == "PORT" {gsub(/[^0-9]/, "", $2); print $2; exit}' \
+                "${INSTALL_DIR}/dashboard/config/dashboard.conf")
+            DASHBOARD_PORT_VALUE="${DASHBOARD_PORT_VALUE:-8080}"
+        fi
+        wait_for_dashboard_readiness \
+            "http://127.0.0.1:${DASHBOARD_PORT_VALUE}/health"
+        echo "[OK] Dashboard HTTP /health"
+    fi
 }
 
 # =============================================================
@@ -1074,7 +1212,7 @@ check_services() {
     echo
     echo "Verificando serviços DSM..."
     echo "Checking DSM services..."
-    for SERVICE_NAME in "${ACTIVE_SERVICES[@]}"
+    for SERVICE_NAME in "${RESTORE_SERVICES[@]}"
     do
         if systemctl is-active --quiet "${SERVICE_NAME}"
         then
@@ -1292,6 +1430,7 @@ main() {
     restart_services
     # Validação | Validation
     validate_final_installation
+    validate_runtime_readiness
     run_doctor
     check_services
     # Finalização | Finalization
@@ -1312,6 +1451,7 @@ update_failed() {
     echo "======================================"
     echo
     echo "Linha do erro | Error line: ${ERROR_LINE}"
+    collect_failure_diagnostics "${ERROR_LINE}"
     echo
     cleanup_partial_backup
     # Só executa rollback se existir backup | Only run rollback if backup exists
@@ -1329,6 +1469,27 @@ update_failed() {
     echo "Processo interrompido."
     echo "Process interrupted."
     exit 1
+}
+
+collect_failure_diagnostics() {
+    local ERROR_LINE="$1"
+    local DIAGNOSTIC_DIR="${LOG_DIR}/update-diagnostics-$(date '+%Y%m%d-%H%M%S')"
+    local SERVICE_NAME
+
+    mkdir -p "${DIAGNOSTIC_DIR}" 2>/dev/null || return 0
+    {
+        printf 'error_line=%s\n' "${ERROR_LINE}"
+        printf 'old_version=%s\nnew_version=%s\n' "${OLD_VERSION}" "${NEW_VERSION}"
+        printf 'restore_services=%s\n' "${RESTORE_SERVICES[*]}"
+    } >"${DIAGNOSTIC_DIR}/transaction.txt" 2>/dev/null || true
+    for SERVICE_NAME in "${DISCOVERED_SERVICES[@]}"
+    do
+        systemctl status --no-pager --full "${SERVICE_NAME}" \
+            >"${DIAGNOSTIC_DIR}/${SERVICE_NAME}.status.txt" 2>&1 || true
+        journalctl -u "${SERVICE_NAME}" --no-pager -n 100 \
+            >"${DIAGNOSTIC_DIR}/${SERVICE_NAME}.journal.txt" 2>&1 || true
+    done
+    echo "Diagnóstico preservado | Diagnostics saved: ${DIAGNOSTIC_DIR}"
 }
 
 update_interrupted() {
@@ -1384,6 +1545,12 @@ rollback() {
         echo "Restaurando permissões..."
         echo "Restoring permissions..."
         chown -R "${DSM_USER}:${DSM_GROUP}" "${INSTALL_DIR}" 2>/dev/null || true
+    fi
+    # Restore the unit files shipped by the previous installation before
+    # reloading systemd; otherwise rollback can run old code with new units.
+    if [[ -d "${INSTALL_DIR}/systemd" ]]
+    then
+        cp "${INSTALL_DIR}/systemd/"*.service "${SYSTEMD_DIR}/" 2>/dev/null || true
     fi
     # Atualizar Systemd | Update Systemd
     echo
