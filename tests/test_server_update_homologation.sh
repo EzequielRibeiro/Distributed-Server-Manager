@@ -38,6 +38,7 @@ VERSION_BEFORE="$(tr -d '\r\n' </opt/dsm/version)"
 PACKAGE_VERSION="$(tr -d '\r\n' <"${PACKAGE_ROOT}/version")"
 SUCCESS_UPDATE_DONE=0
 ROLLBACK_TEST_DONE=0
+CURRENT_PHASE="initialization"
 
 set -a
 # shellcheck source=/dev/null
@@ -59,10 +60,11 @@ unexpected_failure() {
     local status="$2"
     local command="$3"
     trap - ERR
-    printf 'FAIL: unexpected command failure at line %s (exit %s): %s\n' \
-        "${line}" "${status}" "${command}" >&2
-    printf 'status=failed\nline=%q\nexit_status=%q\ncommand=%q\n' \
-        "${line}" "${status}" "${command}" >"${RESULT_FILE}" 2>/dev/null || true
+    printf 'FAIL: phase=%s line=%s exit=%s command=%s\n' \
+        "${CURRENT_PHASE}" "${line}" "${status}" "${command}" >/dev/tty 2>/dev/null || true
+    printf 'status=failed\nphase=%q\nline=%q\nexit_status=%q\ncommand=%q\n' \
+        "${CURRENT_PHASE}" "${line}" "${status}" "${command}" \
+        >"${RESULT_FILE}" 2>/dev/null || true
     exit "${status}"
 }
 
@@ -184,6 +186,7 @@ assert_active() { systemctl is-active --quiet "$1" || fail "$1 is not active"; }
 assert_inactive() { ! systemctl is-active --quiet "$1" || fail "$1 was started unexpectedly"; }
 
 cleanup() {
+    local exit_status=$?
     local role unit
     trap - EXIT
     for role in active activating failed disabled rollback
@@ -196,15 +199,24 @@ cleanup() {
     systemctl reset-failed >/dev/null 2>&1 || true
     [[ "${RUNTIME_DIR}" == /var/tmp/dsm-update-homologation-runtime-* ]] \
         && rm -rf -- "${RUNTIME_DIR}"
+    if [[ "${exit_status}" -ne 0 ]]
+    then
+        printf 'FAIL: phase=%s exit=%s evidence=%s\n' \
+            "${CURRENT_PHASE}" "${exit_status}" "${EVIDENCE_DIR}" \
+            >/dev/tty 2>/dev/null || true
+    fi
+    return "${exit_status}"
 }
 trap cleanup EXIT
 
+CURRENT_PHASE="preflight-health"
 capture_host_state before
 capture_dsm_health before
 CONFIG_BEFORE="$(sha256sum /opt/dsm/config/dsm.conf | awk '{print $1}')"
 write_runner
 
 # Success matrix: active, activating, failed+enabled and disabled+active.
+CURRENT_PHASE="service-state-fixtures"
 write_unit active normal
 write_unit activating activating
 write_unit failed recover
@@ -222,6 +234,7 @@ wait_for_state "$(unit_name disabled)" active
 [[ "$(systemctl is-enabled "$(unit_name disabled)" 2>/dev/null || true)" == disabled ]] \
     || fail "disabled fixture is not disabled"
 
+CURRENT_PHASE="successful-update"
 DSM_UPDATE_READINESS_TIMEOUT=90 DSM_UPDATE_READINESS_INTERVAL=1 \
     bash "${PACKAGE_ROOT}/update.sh" --yes --allow-same-version "${PACKAGE_ROOT}" \
     >"${UPDATE_LOG}" 2>&1 || fail "successful update scenario failed"
@@ -235,14 +248,17 @@ assert_inactive "$(unit_name disabled)"
     || fail "update changed disabled unit enablement"
 [[ "$(sha256sum /opt/dsm/config/dsm.conf | awk '{print $1}')" == "${CONFIG_BEFORE}" ]] \
     || fail "configuration changed during same-version update"
+CURRENT_PHASE="successful-update-health"
 capture_dsm_health after-success
 
 # Rollback matrix: active+enabled on first start, fails during post-update
 # restart, then succeeds when rollback restores the previous installation.
+CURRENT_PHASE="rollback-fixture"
 write_unit rollback rollback
 systemctl daemon-reload
 systemctl enable --now "$(unit_name rollback)"
 assert_active "$(unit_name rollback)"
+CURRENT_PHASE="controlled-failure-and-rollback"
 if DSM_UPDATE_READINESS_TIMEOUT=10 DSM_UPDATE_READINESS_INTERVAL=1 \
     bash "${PACKAGE_ROOT}/update.sh" --yes --allow-same-version "${PACKAGE_ROOT}" \
     >"${ROLLBACK_LOG}" 2>&1
@@ -275,8 +291,13 @@ esac
     || fail "failure transaction diagnostic is missing"
 printf '%s\n' "${ROLLBACK_DIAGNOSTIC_DIR}" \
     >"${EVIDENCE_DIR}/rollback-diagnostic-directories.txt"
+CURRENT_PHASE="rollback-health"
 capture_dsm_health after-rollback
-capture_host_state after
+CURRENT_PHASE="final-host-state"
+if ! capture_host_state after
+then
+    fail "final host-state capture failed"
+fi
 
 cat >"${RESULT_FILE}" <<EOF_RESULT
 status=passed
@@ -288,4 +309,7 @@ rollback_test_done=${ROLLBACK_TEST_DONE}
 evidence_dir=${EVIDENCE_DIR}
 EOF_RESULT
 
-printf 'PASS: DSM update homologation completed. Evidence: %s\n' "${EVIDENCE_DIR}"
+CURRENT_PHASE="complete"
+printf 'PASS: DSM update homologation completed. Evidence: %s\n' "${EVIDENCE_DIR}" \
+    >/dev/tty 2>/dev/null \
+    || printf 'PASS: DSM update homologation completed. Evidence: %s\n' "${EVIDENCE_DIR}"
