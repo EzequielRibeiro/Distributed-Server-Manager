@@ -48,10 +48,25 @@ mkdir -p "${EVIDENCE_DIR}" "${RUNTIME_DIR}"
 chmod 700 "${EVIDENCE_DIR}" "${RUNTIME_DIR}"
 
 fail() {
+    trap - ERR
     printf 'FAIL: %s\n' "$*" >&2
     printf 'status=failed\nreason=%q\n' "$*" >"${RESULT_FILE}"
     exit 1
 }
+
+unexpected_failure() {
+    local line="$1"
+    local status="$2"
+    local command="$3"
+    trap - ERR
+    printf 'FAIL: unexpected command failure at line %s (exit %s): %s\n' \
+        "${line}" "${status}" "${command}" >&2
+    printf 'status=failed\nline=%q\nexit_status=%q\ncommand=%q\n' \
+        "${line}" "${status}" "${command}" >"${RESULT_FILE}" 2>/dev/null || true
+    exit "${status}"
+}
+
+trap 'unexpected_failure "${LINENO}" "$?" "${BASH_COMMAND}"' ERR
 
 unit_name() { printf '%s-%s.service\n' "${UNIT_PREFIX}" "$1"; }
 
@@ -72,9 +87,15 @@ capture_host_state() {
 capture_dsm_health() {
     local label="$1"
     local dashboard_port="8080"
+    local deadline
     /opt/dsm/bin/cap --help >"${EVIDENCE_DIR}/${label}-cap-help.txt" 2>&1
-    python3 /opt/dsm/database/manager.py --root /opt/dsm check \
+    deadline=$((SECONDS + 60))
+    until python3 /opt/dsm/database/manager.py --root /opt/dsm check \
         >"${EVIDENCE_DIR}/${label}-database.json" 2>&1
+    do
+        (( SECONDS < deadline )) || fail "database did not become ready (${label})"
+        sleep 2
+    done
     if systemctl is-active --quiet dsm-dashboard.service
     then
         if [[ -r /opt/dsm/dashboard/config/dashboard.conf ]]
@@ -83,9 +104,14 @@ capture_dsm_health() {
                 /opt/dsm/dashboard/config/dashboard.conf)"
             dashboard_port="${dashboard_port:-8080}"
         fi
-        curl --fail --silent --show-error --max-time 10 \
+        deadline=$((SECONDS + 60))
+        until curl --fail --silent --show-error --max-time 10 \
             "http://127.0.0.1:${dashboard_port}/health" \
-            >"${EVIDENCE_DIR}/${label}-dashboard-health.json"
+            >"${EVIDENCE_DIR}/${label}-dashboard-health.json" 2>&1
+        do
+            (( SECONDS < deadline )) || fail "dashboard did not become ready (${label})"
+            sleep 2
+        done
     fi
 }
 
