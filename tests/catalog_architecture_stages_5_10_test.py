@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib.util
 import os
 from pathlib import Path
-import sys
 import tempfile
 import unittest
 ROOT=Path(__file__).resolve().parents[1]
@@ -11,7 +10,7 @@ def load(name,path):
  spec=importlib.util.spec_from_file_location(name,path);module=importlib.util.module_from_spec(spec);assert spec and spec.loader;spec.loader.exec_module(module);return module
 class CatalogArchitectureStages5To10Test(unittest.TestCase):
  def test_stage5_runtime_policy_validation_and_persistence(self):
-  sys.path.insert(0,str(ROOT/"dashboard"));import catalog_runtime_policy as policy
+  policy=load("dashboard_catalog_runtime_policy",ROOT/"dashboard/catalog_runtime_policy.py")
   runtime={"id":"minecraft.java.vanilla","process":{"executable":"server.jar","args":["nogui"]}}
   with tempfile.TemporaryDirectory() as td:
    old=os.environ.get("CAPIVARA_CATALOG_POLICY_ROOT");os.environ["CAPIVARA_CATALOG_POLICY_ROOT"]=td
@@ -23,7 +22,7 @@ class CatalogArchitectureStages5To10Test(unittest.TestCase):
     if old is None:os.environ.pop("CAPIVARA_CATALOG_POLICY_ROOT",None)
     else:os.environ["CAPIVARA_CATALOG_POLICY_ROOT"]=old
  def test_stage6_linux_policy_and_templates_materialize_without_shell(self):
-  sys.path.insert(0,str(ROOT/"agents/linux/runtime"));import catalog_runtime_policy as runtime_policy
+  runtime_policy=load("linux_catalog_runtime_policy",ROOT/"agents/linux/runtime/catalog_runtime_policy.py")
   with tempfile.TemporaryDirectory() as td:
    base=Path(td);content=base/"content";work=base/"instance";content.mkdir();work.mkdir();(content/"server.jar").write_text("jar")
    instance={"instance_id":"i1","game_id":"minecraft"};context={"content_root":str(content),"ports":{"game":{"port":25565}},"resource_profile":{"memory_mb":8192},"catalog_runtime_policy":{"runtime_id":"minecraft.java.vanilla","executable":"server.jar","arguments":["-Xmx{{MEMORY_MB}}M","--port","{{PORT_GAME}}"],"environment":{},"variables":[],"templates":[{"path":"server.properties","content":"server-port={{PORT_GAME}}"}]}}
@@ -38,7 +37,7 @@ class CatalogArchitectureStages5To10Test(unittest.TestCase):
   repository=(ROOT/"database/agent_instance_provisioning_repository.py").read_text();contract=(ROOT/"agents/linux/runtime/provisioning_contract.py").read_text();resolver=(ROOT/"dashboard/catalog_provisioning_resolver.py").read_text()
   self.assertIn('"content":{"action":"ensure"',repository);self.assertIn('"ensure"',contract);self.assertIn('catalog_runtime_policy',resolver);self.assertIn('resource_profile',resolver);self.assertIn('allowed_resource_profiles',resolver)
  def test_stage10_windows_file_manager_is_confined_and_integrity_exists(self):
-  sys.path.insert(0,str(ROOT/"agents/windows/runtime"));module=load("windows_files",ROOT/"agents/windows/runtime/game_data_files.py")
+  module=load("windows_files",ROOT/"agents/windows/runtime/game_data_files.py")
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);created=module.execute_file_operation(root,{"action":"create","path":"config/server.txt","content":"ok"});self.assertEqual(created["size"],2);self.assertEqual(module.execute_file_operation(root,{"action":"read","path":"config/server.txt"})["content"],"ok")
    with self.assertRaises(ValueError):module.execute_file_operation(root,{"action":"read","path":"../outside"})
