@@ -1,5 +1,6 @@
 # Capivara is deployed on Linux. Keep executable/configuration text portable.
 *.sh      text eol=lf
+*.task    text eol=lf
 *.service text eol=lf
 *.py      text eol=lf
 *.json    text eol=lf

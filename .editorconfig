@@ -9,7 +9,7 @@ end_of_line = lf
 insert_final_newline = true
 trim_trailing_whitespace = true
 
-[*.{sh,service,py,json,conf,cfg,js,css,html,yml,yaml,sql}]
+[*.{sh,task,service,py,json,conf,cfg,js,css,html,yml,yaml,sql}]
 charset = utf-8
 end_of_line = lf
 insert_final_newline = true
