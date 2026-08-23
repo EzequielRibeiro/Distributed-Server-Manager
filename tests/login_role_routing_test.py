@@ -13,7 +13,7 @@ class LoginRoleRoutingContractTest(unittest.TestCase):
         self.assertIn('role === "customer"', text)
         self.assertIn('return "/customer.html";', text)
         self.assertIn('["admin", "controller", "operator"].includes(role)', text)
-        self.assertIn('return "/index.html";', text)
+        self.assertIn('return "/dashboard-v3.html";', text)
         self.assertIn('"/api/whoami"', text)
         self.assertIn('window.location.replace(destination);', text)
 
@@ -21,6 +21,8 @@ class LoginRoleRoutingContractTest(unittest.TestCase):
         text = SERVER_PART8.read_text(encoding="utf-8")
         self.assertIn('CUSTOMER_PROTECTED_PAGES=', text)
         self.assertIn('CONTROLLER_PROTECTED_PAGES=', text)
+        self.assertIn('CONTROLLER_DASHBOARD_FILES=', text)
+        self.assertIn('"/dashboard-v3.html"', text)
         self.assertIn('{"customer"}', text)
         self.assertIn('{"admin","controller","operator"}', text.replace(" ", "").replace("\n", ""))
         self.assertIn('Location","/customer-login.html"', text)
