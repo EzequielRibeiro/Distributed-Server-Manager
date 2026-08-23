@@ -89,7 +89,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
         server = (ROOT / "dashboard/server.py").read_text(encoding="utf-8")
         for route in ("/servers-v2.html", "/servers-v2.js", "/servers-v2.css"):
             self.assertIn(route, server)
-        self.assertIn('id="log-agent"', (ROOT / "dashboard/web/index.html").read_text(encoding="utf-8"))
+        self.assertIn('id="log-agent"', (ROOT / "dashboard/web/observability.html").read_text(encoding="utf-8"))
         self.assertIn('metadata["recent_logs"]', (ROOT / "dashboard/agent_heartbeat_api.py").read_text(encoding="utf-8"))
 
     def test_infrastructure_v2_keeps_installation_and_topology_views(self):
