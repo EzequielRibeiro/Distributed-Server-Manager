@@ -46,5 +46,96 @@ class AgentHeartbeatTelemetryContractTest(unittest.TestCase):
             self.assertIn(expected, names)
 
 
+
+class AgentHeartbeatPostgresqlMetadataCompatibilityTest(unittest.TestCase):
+    def test_metadata_json_already_decoded_as_dict_is_supported(self):
+        from dashboard.agent_heartbeat_api import _store_agent_metadata
+
+        class Row(dict):
+            pass
+
+        class Result:
+            def fetchone(self):
+                return Row({
+                    "metadata_json": {
+                        "existing": "preserved",
+                        "telemetry": {
+                            "host": {
+                                "cpu_usage_pct": 1.0
+                            }
+                        }
+                    }
+                })
+
+        class Session:
+            def __init__(self):
+                self.updated = None
+
+            def execute(self, sql, params=()):
+                if sql.lstrip().upper().startswith("SELECT"):
+                    return Result()
+
+                if sql.lstrip().upper().startswith("UPDATE"):
+                    self.updated = params
+                    return None
+
+            def close(self):
+                pass
+
+        class Transaction:
+            def __enter__(self):
+                return object()
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        class Dialect:
+            placeholder = "%s"
+
+        class Backend:
+            def __init__(self):
+                self.session = Session()
+
+            def transaction(self):
+                return Transaction()
+
+        backend = Backend()
+
+        import dashboard.agent_heartbeat_api as module
+
+        original_session = module.AlertSession
+        original_dialect = module.dialect_for_backend
+
+        try:
+            module.AlertSession = lambda backend, connection: backend.session
+            module.dialect_for_backend = lambda backend: Dialect()
+
+            _store_agent_metadata(
+                "agent-test",
+                {
+                    "telemetry": {
+                        "host": {
+                            "cpu_usage_pct": 42.5
+                        }
+                    }
+                },
+                backend=backend,
+            )
+        finally:
+            module.AlertSession = original_session
+            module.dialect_for_backend = original_dialect
+
+        self.assertIsNotNone(backend.session.updated)
+
+        import json
+        metadata = json.loads(backend.session.updated[0])
+
+        self.assertEqual(metadata["existing"], "preserved")
+        self.assertEqual(
+            metadata["telemetry"]["host"]["cpu_usage_pct"],
+            42.5,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

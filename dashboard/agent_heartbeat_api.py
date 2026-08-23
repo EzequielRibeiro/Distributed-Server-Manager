@@ -55,7 +55,25 @@ def _store_agent_metadata(agent_id: str, body: dict[str, Any], *, backend) -> No
                 f"SELECT metadata_json FROM agents WHERE id={ph}",
                 (agent_id,),
             ).fetchone()
-            metadata = json.loads(str(row["metadata_json"] or "{}")) if row else {}
+            raw_metadata = row["metadata_json"] if row else None
+
+            if raw_metadata is None:
+                metadata = {}
+            elif isinstance(raw_metadata, dict):
+                metadata = dict(raw_metadata)
+            elif isinstance(raw_metadata, (bytes, bytearray)):
+                try:
+                    metadata = json.loads(raw_metadata.decode("utf-8"))
+                except (UnicodeDecodeError, TypeError, ValueError):
+                    metadata = {}
+            else:
+                try:
+                    metadata = json.loads(str(raw_metadata))
+                except (TypeError, ValueError):
+                    metadata = {}
+
+            if not isinstance(metadata, dict):
+                metadata = {}
             if safe_logs is not None:
                 metadata["recent_logs"] = safe_logs
             if telemetry is not None:

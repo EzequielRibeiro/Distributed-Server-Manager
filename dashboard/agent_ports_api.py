@@ -44,11 +44,29 @@ def _agent_metadata(backend, agent_id: str) -> dict[str, Any]:
             session.close()
     if not row:
         return {}
-    try:
-        value = json.loads(str(row["metadata_json"] or "{}"))
-    except (TypeError, ValueError):
+
+    raw = row["metadata_json"]
+
+    if raw is None:
         return {}
-    return value if isinstance(value, dict) else {}
+
+    if isinstance(raw, dict):
+        return raw
+
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            raw = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return {}
+
+    if isinstance(raw, str):
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    return {}
 
 
 def _allowed(user: dict[str, Any] | None, agent: dict[str, Any]) -> bool:
