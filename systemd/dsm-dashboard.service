@@ -12,7 +12,7 @@ Environment=DSM_ROOT=/opt/dsm
 EnvironmentFile=-/opt/dsm/config/dsm.conf
 EnvironmentFile=-/etc/default/dsm-dashboard
 WorkingDirectory=/opt/dsm/dashboard
-ExecStart=/usr/bin/python3 /opt/dsm/dashboard/server_part15.py
+ExecStart=/usr/bin/python3 /opt/dsm/dashboard/server_part16.py
 Restart=always
 RestartSec=5
 TimeoutStopSec=30
