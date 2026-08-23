@@ -13,12 +13,7 @@ for path in (ROOT, ROOT / "database", ROOT / "dashboard"):
         sys.path.insert(0, str(path))
 
 from agent_game_data_api import prepare_runtime_selection
-from agent_game_data_http import (
-    GAME_DATA_FILES_PATH,
-    GAME_DATA_JOBS_PATH,
-    GAME_DATA_OPERATION_PATH,
-    dispatch_agent_game_data_get,
-)
+from agent_game_data_http import GAME_DATA_FILES_PATH, GAME_DATA_JOBS_PATH, GAME_DATA_OPERATION_PATH, dispatch_agent_game_data_get
 from agent_game_data_repository import AgentGameDataRepository
 from agent_pairing_repository import AgentPairingRepository
 from agent_remote_http import dispatch_enroll, dispatch_heartbeat
@@ -93,15 +88,16 @@ class AgentGameDataJobsTest(unittest.TestCase):
         self.assertEqual(selection["kind"], "RuntimeSelection"); self.assertEqual(selection["game"], "dayz"); self.assertEqual(selection["provider"], "steam"); self.assertEqual(str(selection["install"]["package_id"]), "223350")
 
     def test_modern_integration_is_layered_without_growing_legacy_server(self):
-        self.assertTrue((ROOT / "dashboard/server_part14.py").is_file())
-        self.assertTrue((ROOT / "dashboard/server_part15.py").is_file())
-        self.assertTrue((ROOT / "dashboard/server_part16.py").is_file())
+        for part in (14, 15, 16, 17):
+            self.assertTrue((ROOT / f"dashboard/server_part{part}.py").is_file())
         server = (ROOT / "dashboard/server_part13.py").read_text(encoding="utf-8")
         self.assertIn("dispatch_agent_game_data_get", server); self.assertIn("dispatch_agent_game_data_post", server)
-        latest = (ROOT / "dashboard/server_part16.py").read_text(encoding="utf-8")
-        self.assertIn("GAME_DATA_FILES_PATH", latest)
+        file_layer = (ROOT / "dashboard/server_part16.py").read_text(encoding="utf-8")
+        self.assertIn("GAME_DATA_FILES_PATH", file_layer)
         package = (ROOT / "release/build_agent_package.sh").read_text(encoding="utf-8")
-        self.assertIn("agent/runtime/local_cli.py", package); self.assertIn("agent/runtime/game_data_client.py", package); self.assertIn("agent/runtime/game_data_executor.py", package); self.assertIn("game_data_files.py", package)
+        for filename in ("local_cli.py", "game_data_client.py", "game_data_executor.py", "game_data_files.py", "game_data_integrity.py", "game_data_reconcile.py"):
+            self.assertIn(filename, package)
+        self.assertIn('"agent/runtime/${file}"', package)
         for backend in ("sqlite", "postgresql", "mysql", "mariadb"):
             schema = (ROOT / "database" / "schemas" / f"{backend}.sql").read_text(); self.assertIn("agent_game_data_jobs", schema)
 
