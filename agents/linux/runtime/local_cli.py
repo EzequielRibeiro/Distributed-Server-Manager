@@ -338,21 +338,86 @@ def _logs(lines: int) -> dict[str, Any]:
     return {"service": SERVICE_NAME, "ok": code == 0, "lines": output.splitlines() if output else []}
 
 
+def _human_scalar(value: Any) -> str:
+    """Return a compact, predictable representation for terminal output."""
+    if value is None:
+        return "-"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _emit_human_list(values: list[Any], *, indent: int = 0) -> None:
+    prefix = " " * indent
+
+    if not values:
+        print(f"{prefix}(none)")
+        return
+
+    for item in values:
+        if isinstance(item, dict):
+            print(f"{prefix}-")
+            _emit_human_mapping(item, indent=indent + 2)
+        elif isinstance(item, list):
+            print(f"{prefix}-")
+            _emit_human_list(item, indent=indent + 2)
+        else:
+            print(f"{prefix}- {_human_scalar(item)}")
+
+
+def _emit_human_mapping(payload: dict[str, Any], *, indent: int = 0) -> None:
+    prefix = " " * indent
+
+    if not payload:
+        print(f"{prefix}(none)")
+        return
+
+    for key, value in payload.items():
+        if isinstance(value, dict):
+            print(f"{prefix}{key}:")
+            _emit_human_mapping(value, indent=indent + 2)
+        elif isinstance(value, list):
+            print(f"{prefix}{key}:")
+            _emit_human_list(value, indent=indent + 2)
+        else:
+            print(f"{prefix}{key}: {_human_scalar(value)}")
+
+
 def _emit(payload: Any, *, as_json: bool) -> None:
+    """Render machine-readable JSON or a terminal-friendly human view."""
     if as_json:
         print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
         return
-    if isinstance(payload, dict):
-        for key, value in payload.items():
-            if isinstance(value, (dict, list)):
-                print(f"{key}: {json.dumps(value, ensure_ascii=False, default=str)}")
+
+    # journalctl output is already formatted text. Printing it through the
+    # generic list renderer would add bullets and a synthetic "lines:" label.
+    if isinstance(payload, dict) and isinstance(payload.get("lines"), list):
+        log_lines = payload.get("lines", [])
+        if all(isinstance(line, str) for line in log_lines):
+            metadata = {
+                key: value
+                for key, value in payload.items()
+                if key != "lines"
+            }
+
+            if metadata:
+                _emit_human_mapping(metadata)
+
+            print()
+
+            if log_lines:
+                for line in log_lines:
+                    print(line)
             else:
-                print(f"{key}: {value}")
+                print("(no log lines)")
+            return
+
+    if isinstance(payload, dict):
+        _emit_human_mapping(payload)
     elif isinstance(payload, list):
-        for item in payload:
-            print(json.dumps(item, ensure_ascii=False, default=str))
+        _emit_human_list(payload)
     else:
-        print(payload)
+        print(_human_scalar(payload))
 
 
 def _parser() -> argparse.ArgumentParser:

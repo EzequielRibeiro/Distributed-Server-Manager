@@ -117,5 +117,84 @@ class AgentLocalCliTest(unittest.TestCase):
         self.assertTrue(payload["controller_reachable"])
 
 
+    def test_human_emit_formats_nested_structures(self):
+        payload = {
+            "identity": {
+                "agent_id": "agent-one",
+                "enrolled": True,
+            },
+            "ports": [
+                {
+                    "protocol": "udp",
+                    "start_port": 24000,
+                    "end_port": 24999,
+                    "occupied": [24005, 24006],
+                }
+            ],
+            "note": None,
+        }
+
+        output = StringIO()
+        with redirect_stdout(output):
+            local_cli._emit(payload, as_json=False)
+
+        rendered = output.getvalue()
+
+        self.assertIn("identity:\n", rendered)
+        self.assertIn("  agent_id: agent-one\n", rendered)
+        self.assertIn("  enrolled: true\n", rendered)
+        self.assertIn("ports:\n", rendered)
+        self.assertIn("  -\n", rendered)
+        self.assertIn("    protocol: udp\n", rendered)
+        self.assertIn("    occupied:\n", rendered)
+        self.assertIn("      - 24005\n", rendered)
+        self.assertIn("      - 24006\n", rendered)
+        self.assertIn("note: -\n", rendered)
+
+        self.assertNotIn('{"agent_id":', rendered)
+        self.assertNotIn('[{"protocol":', rendered)
+
+    def test_human_emit_logs_are_printed_as_terminal_lines(self):
+        payload = {
+            "service": "capivara-agent.service",
+            "ok": True,
+            "lines": [
+                "2026-08-22T03:48:51+00:00 Node1 systemd[1]: Started capivara-agent.service",
+                "2026-08-22T03:48:52+00:00 Node1 python3[6097]: heartbeat ok",
+            ],
+        }
+
+        output = StringIO()
+        with redirect_stdout(output):
+            local_cli._emit(payload, as_json=False)
+
+        rendered = output.getvalue()
+
+        self.assertEqual(
+            rendered,
+            "service: capivara-agent.service\n"
+            "ok: true\n"
+            "\n"
+            "2026-08-22T03:48:51+00:00 Node1 systemd[1]: Started capivara-agent.service\n"
+            "2026-08-22T03:48:52+00:00 Node1 python3[6097]: heartbeat ok\n",
+        )
+        self.assertNotIn("lines:", rendered)
+        self.assertNotIn('["2026-', rendered)
+
+    def test_json_emit_preserves_structured_payload(self):
+        payload = {
+            "service": "capivara-agent.service",
+            "ok": True,
+            "lines": ["line-one", "line-two"],
+        }
+
+        output = StringIO()
+        with redirect_stdout(output):
+            local_cli._emit(payload, as_json=True)
+
+        rendered = json.loads(output.getvalue())
+
+        self.assertEqual(rendered, payload)
+
 if __name__ == "__main__":
     unittest.main()
