@@ -17,7 +17,10 @@ from typing import Any
 import urllib.request
 import zipfile
 
+from game_data_files import execute_file_operation
 from game_data_state import GAME_DATA_ROOT, record_game_data, write_json
+
+FILE_ACTIONS = {"file-list", "file-read", "file-write", "file-create", "file-mkdir", "file-rename", "file-delete", "file-upload"}
 
 
 def _write_result(path: Path, payload: dict[str, Any]) -> None:
@@ -60,32 +63,14 @@ def _run_steam(selection: dict[str, Any], target: Path) -> None:
     else:
         login = str(os.environ.get("DSM_STEAM_USER") or "").strip()
         if not login:
-            raise RuntimeError(
-                "Steam authentication is required on this Agent; "
-                "configure DSM_STEAM_USER and authenticate SteamCMD locally"
-            )
-
+            raise RuntimeError("Steam authentication is required on this Agent; configure DSM_STEAM_USER and authenticate SteamCMD locally")
     target.mkdir(parents=True, exist_ok=True)
-    completed = subprocess.run(
-        [
-            _steamcmd(),
-            "+force_install_dir",
-            str(target),
-            "+login",
-            login,
-            "+app_update",
-            app_id,
-            "validate",
-            "+quit",
-        ],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        timeout=7200,
-        check=False,
-        env={**os.environ, "HOME": os.environ.get("HOME", "/var/lib/capivara-agent")},
-    )
+    completed = subprocess.run([
+        _steamcmd(), "+force_install_dir", str(target), "+login", login,
+        "+app_update", app_id, "validate", "+quit",
+    ], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+       text=True, timeout=7200, check=False,
+       env={**os.environ, "HOME": os.environ.get("HOME", "/var/lib/capivara-agent")})
     output = completed.stdout or ""
     print(output, end="" if output.endswith("\n") else "\n", flush=True)
     if completed.returncode != 0:
@@ -150,34 +135,24 @@ def _run_http(selection: dict[str, Any], target: Path) -> None:
     archive = selection.get("archive") if isinstance(selection.get("archive"), dict) else {}
     archive_type = str(archive.get("type") or install.get("archive_type") or "")
     target.mkdir(parents=True, exist_ok=True)
-
     with tempfile.TemporaryDirectory(prefix="capivara-game-data-") as temporary:
-        temp = Path(temporary)
-        artifact = temp / "artifact"
-        _download(url, artifact)
-        _verify_sha256(artifact, expected)
+        temp = Path(temporary); artifact = temp / "artifact"
+        _download(url, artifact); _verify_sha256(artifact, expected)
         if archive_type or zipfile.is_zipfile(artifact) or tarfile.is_tarfile(artifact):
-            staging = temp / "extract"
-            staging.mkdir()
-            if zipfile.is_zipfile(artifact):
-                _extract_zip(artifact, staging)
-            elif tarfile.is_tarfile(artifact):
-                _extract_tar(artifact, staging)
-            else:
-                raise RuntimeError(f"unsupported archive type: {archive_type}")
+            staging = temp / "extract"; staging.mkdir()
+            if zipfile.is_zipfile(artifact): _extract_zip(artifact, staging)
+            elif tarfile.is_tarfile(artifact): _extract_tar(artifact, staging)
+            else: raise RuntimeError(f"unsupported archive type: {archive_type}")
             for entry in staging.iterdir():
                 destination = target / entry.name
                 if destination.exists():
-                    if destination.is_dir():
-                        shutil.rmtree(destination)
-                    else:
-                        destination.unlink()
+                    if destination.is_dir(): shutil.rmtree(destination)
+                    else: destination.unlink()
                 shutil.move(str(entry), str(destination))
         else:
             raw_name = asset.get("name") or install.get("asset") or selection.get("executable") or "artifact"
             filename = _safe_name(Path(str(raw_name)).name, "artifact filename")
-            destination = target / filename
-            shutil.copy2(artifact, destination)
+            destination = target / filename; shutil.copy2(artifact, destination)
             if str(selection.get("executable") or "") == filename:
                 destination.chmod(destination.stat().st_mode | 0o111)
 
@@ -189,34 +164,31 @@ def _execute(command: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("runtime selection is missing")
     target = _target_for(selection)
     provider = str(selection.get("provider") or "").strip().lower()
-
     if action == "verify":
         if not target.is_dir() or not any(target.iterdir()):
             raise RuntimeError("game-data is not installed")
     elif action in {"install", "update"}:
-        if provider == "steam":
-            _run_steam(selection, target)
-        elif provider in {"http", "http-archive", "github"}:
-            _run_http(selection, target)
-        else:
-            raise RuntimeError(f"provider not supported by standalone Linux Agent: {provider}")
+        if provider == "steam": _run_steam(selection, target)
+        elif provider in {"http", "http-archive", "github"}: _run_http(selection, target)
+        else: raise RuntimeError(f"provider not supported by standalone Linux Agent: {provider}")
+    elif action in FILE_ACTIONS:
+        operation = command.get("file_operation")
+        if not isinstance(operation, dict):
+            raise ValueError("file operation payload is missing")
+        expected = "file-" + str(operation.get("action") or "").strip().lower()
+        if expected != action:
+            raise ValueError("file operation action mismatch")
+        file_result = execute_file_operation(target, operation)
+        return {"provider": provider, "game": selection.get("game"), "version": selection.get("version"), "target_path": str(target), "file_result": file_result}
     else:
         raise ValueError("unsupported game-data action")
-
-    return {
-        "provider": provider,
-        "game": selection.get("game"),
-        "version": selection.get("version"),
-        "target_path": str(target),
-    }
+    return {"provider": provider, "game": selection.get("game"), "version": selection.get("version"), "target_path": str(target)}
 
 
 def main() -> int:
     if len(sys.argv) != 3:
-        print("usage: game_data_executor.py REQUEST RESULT", file=sys.stderr)
-        return 2
-    request_path = Path(sys.argv[1])
-    result_path = Path(sys.argv[2])
+        print("usage: game_data_executor.py REQUEST RESULT", file=sys.stderr); return 2
+    request_path = Path(sys.argv[1]); result_path = Path(sys.argv[2])
     command = json.loads(request_path.read_text(encoding="utf-8"))
     job_id = str(command.get("job_id") or "").strip()
     action = str(command.get("action") or "install").strip().lower()
@@ -225,20 +197,16 @@ def main() -> int:
     try:
         detail = _execute(command)
     except Exception as exc:
-        _write_result(
-            result_path,
-            {"job_id": job_id, "status": "failed", "progress": 100, "error": str(exc)[:2000]},
-        )
-        print(f"game-data job failed: {exc}", file=sys.stderr, flush=True)
-        return 1
+        _write_result(result_path, {"job_id": job_id, "status": "failed", "progress": 100, "error": str(exc)[:2000]})
+        print(f"game-data job failed: {exc}", file=sys.stderr, flush=True); return 1
     completed = {"job_id": job_id, "status": "completed", "progress": 100, **detail}
     _write_result(result_path, completed)
-    try:
-        record_game_data(job_id=job_id, action=action, selection=selection, result=completed)
-    except Exception as exc:
-        print(f"game-data inventory warning: {exc}", file=sys.stderr, flush=True)
-    print(f"game-data job completed: {job_id}", flush=True)
-    return 0
+    if action in {"install", "update", "verify"}:
+        try:
+            record_game_data(job_id=job_id, action=action, selection=selection, result=completed)
+        except Exception as exc:
+            print(f"game-data inventory warning: {exc}", file=sys.stderr, flush=True)
+    print(f"game-data job completed: {job_id}", flush=True); return 0
 
 
 if __name__ == "__main__":

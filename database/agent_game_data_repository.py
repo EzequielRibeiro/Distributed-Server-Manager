@@ -1,20 +1,39 @@
 #!/usr/bin/env python3
 """Persistence and delivery coordination for Agent-owned game-data jobs."""
-
 from __future__ import annotations
-
 from contextlib import contextmanager
 import json
 from typing import Any, Iterator
 import uuid
-
 from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
 from core.agent_health import utc_timestamp
 
 FINAL_STATES = {"completed", "failed"}
-VALID_ACTIONS = {"install", "update", "verify"}
+FILE_ACTIONS = {"file-list", "file-read", "file-write", "file-create", "file-mkdir", "file-rename", "file-delete", "file-upload"}
+VALID_ACTIONS = {"install", "update", "verify", *FILE_ACTIONS}
 VALID_STATES = {"queued", "delivered", "running", *FINAL_STATES}
+
+
+def _logical_action(selection: Any, stored_action: str) -> str:
+    if isinstance(selection, dict):
+        value = str(selection.get("_job_action") or "").strip().lower()
+        if value in FILE_ACTIONS:
+            return value
+    return stored_action
+
+
+def _redacted_selection(selection: Any) -> Any:
+    if not isinstance(selection, dict):
+        return selection
+    value = dict(selection)
+    operation = value.get("_file_operation")
+    if isinstance(operation, dict):
+        operation = dict(operation)
+        operation.pop("content", None)
+        operation.pop("content_base64", None)
+        value["_file_operation"] = operation
+    return value
 
 
 class AgentGameDataRepository:
@@ -56,9 +75,19 @@ class AgentGameDataRepository:
         if not isinstance(selection, dict) or not selection:
             raise ValueError("runtime selection is required")
 
+        stored_selection = dict(selection)
+        # Migration 025 intentionally constrains the persisted transport action to
+        # install/update/verify. Preserve compatibility with already-installed DBs
+        # by transporting file operations through the existing verify lane while
+        # retaining the logical action in selection metadata.
+        stored_action = action
+        if action in FILE_ACTIONS:
+            stored_action = "verify"
+            stored_selection["_job_action"] = action
+
         job_id = "game-data-" + uuid.uuid4().hex
         now = utc_timestamp()
-        payload = json.dumps(selection, separators=(",", ":"), sort_keys=True)
+        payload = json.dumps(stored_selection, separators=(",", ":"), sort_keys=True)
         with self.session(transaction=True) as session:
             status = self._agent_status(session, agent_id)
             if status is None:
@@ -68,7 +97,7 @@ class AgentGameDataRepository:
             session.execute(
                 "INSERT INTO agent_game_data_jobs(job_id,agent_id,action,environment_id,selector,selection_json,status,progress,requested_by,created_at,updated_at) "
                 f"VALUES ({self.dialect.parameters(11)})",
-                (job_id, agent_id, action, environment_id, selector, payload, "queued", 0, str(requested_by or "").strip() or None, now, now),
+                (job_id, agent_id, stored_action, environment_id, selector, payload, "queued", 0, str(requested_by or "").strip() or None, now, now),
             )
         return self.snapshot(job_id)
 
@@ -79,6 +108,7 @@ class AgentGameDataRepository:
         if row is None:
             raise KeyError(job_id)
         result = dict(row)
+        stored_action = str(result.get("action") or "").strip().lower()
         for key in ("selection_json", "result_json"):
             raw = result.pop(key, None)
             target = "selection" if key == "selection_json" else "result"
@@ -86,6 +116,10 @@ class AgentGameDataRepository:
                 result[target] = json.loads(raw) if raw else None
             except (TypeError, ValueError):
                 result[target] = None
+        logical_action = _logical_action(result.get("selection"), stored_action)
+        if logical_action != stored_action:
+            result["transport_action"] = stored_action
+            result["action"] = logical_action
         return result
 
     def list_for_agent(self, agent_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
@@ -110,7 +144,11 @@ class AgentGameDataRepository:
         if row is None:
             return None
         state = self.snapshot(str(row["job_id"]))
-        return {key: state[key] for key in ("job_id", "agent_id", "action", "environment_id", "selector", "selection")}
+        command = {key: state[key] for key in ("job_id", "agent_id", "action", "environment_id", "selector", "selection")}
+        selection = command.get("selection") if isinstance(command.get("selection"), dict) else {}
+        if isinstance(selection.get("_file_operation"), dict):
+            command["file_operation"] = dict(selection["_file_operation"])
+        return command
 
     def mark_delivered(self, job_id: str) -> dict[str, Any]:
         ph = self.dialect.placeholder
@@ -155,13 +193,14 @@ class AgentGameDataRepository:
                     (status, progress, now, result_json, error, now, job_id),
                 )
             else:
+                selection_json = json.dumps(_redacted_selection(current.get("selection")), separators=(",", ":"), sort_keys=True)
                 session.execute(
                     "UPDATE agent_game_data_jobs SET "
-                    f"status={ph},progress={ph},result_json={ph},last_error={ph},completed_at={ph},updated_at={ph} "
+                    f"status={ph},progress={ph},selection_json={ph},result_json={ph},last_error={ph},completed_at={ph},updated_at={ph} "
                     f"WHERE job_id={ph} AND status NOT IN ('completed','failed')",
-                    (status, progress, result_json, error, now, now, job_id),
+                    (status, progress, selection_json, result_json, error, now, now, job_id),
                 )
         return self.snapshot(job_id)
 
 
-__all__ = ["AgentGameDataRepository", "FINAL_STATES", "VALID_ACTIONS", "VALID_STATES"]
+__all__ = ["AgentGameDataRepository", "FILE_ACTIONS", "FINAL_STATES", "VALID_ACTIONS", "VALID_STATES"]
