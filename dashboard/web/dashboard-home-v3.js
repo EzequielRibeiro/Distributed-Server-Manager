@@ -40,13 +40,15 @@ function text(id, value, fallback = "—") {
 }
 
 function escapeHtml(value) {
-    return String(value ?? "").replace(/[&<>"']/g, char => ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        "\"": "&quot;",
-        "'": "&#39;"
-    })[char]);
+    return String(value ?? "").replace(/[&<>"']/g, char => {
+        switch (char) {
+            case "&": return "&amp;";
+            case "<": return "&lt;";
+            case ">": return "&gt;";
+            case "\"": return "&quot;";
+            default: return "&#39;";
+        }
+    });
 }
 
 function isOnline(agent) {
