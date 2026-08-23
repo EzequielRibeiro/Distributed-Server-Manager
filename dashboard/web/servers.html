@@ -5,16 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Capivara DSM - Instâncias</title>
     <link rel="stylesheet" href="dashboard-home-v3.css">
-    <link rel="stylesheet" href="servers.css?v=3">
+    <style>:root{--cap-bg:var(--bg);--cap-panel:var(--panel);--cap-panel-2:var(--panel2);--cap-border:var(--line);--cap-border-strong:#3a4a62;--cap-text:var(--text);--cap-muted:var(--muted);--cap-green:var(--green);--cap-green-soft:rgba(57,208,111,.12);--cap-amber:var(--orange);--cap-red:var(--red)}</style>
+    <link rel="stylesheet" href="servers.css?v=5">
 </head>
 <body class="cap-home cap-servers-shell">
 <div id="sidebar-component"></div>
 <main class="cap-home-main cap-servers-page">
-    <header class="cap-home-topbar cap-servers-topbar"><div class="cap-home-title"><button id="servers-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1>Instâncias</h1><p>Visão operacional dos servidores publicados pelo Runtime.</p></div></div><div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="servers-user-name">—</strong><span id="servers-user-role">—</span></div></div></header>
+    <header class="cap-home-topbar cap-servers-topbar"><div class="cap-home-title"><button id="servers-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1>Instâncias</h1><p>Visão operacional dos servidores publicados pelo Runtime.</p></div></div><div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="servers-user-name">—</strong><span id="servers-user-role">—</span></div></div></header>
     <div class="cap-home-content cap-servers-content"><div class="cap-servers-toolbar"><label class="cap-server-search"><span>⌕</span><input id="instance-search" type="search" placeholder="Buscar instância, jogo, Agent ou localização"></label><a class="cap-btn cap-btn-secondary instance-manager-only" href="catalog.html">Criar instância</a><button id="refresh-instances" class="cap-btn cap-btn-secondary" type="button">Atualizar</button></div>
     <section class="cap-fleet-summary" aria-label="Resumo das instâncias"><article><span>Instâncias</span><strong id="fleet-total">0</strong><small>publicadas</small></article><article><span>Online</span><strong id="fleet-online">0</strong><small>em execução</small></article><article><span>Offline</span><strong id="fleet-offline">0</strong><small>paradas</small></article><article><span>Agents</span><strong id="fleet-agents">0</strong><small>com instâncias</small></article></section>
     <section class="cap-instance-section"><div class="cap-section-title"><div><h2>Visão Geral das Instâncias</h2><p id="instance-summary-text">Carregando instâncias...</p></div><div class="cap-filter-group" aria-label="Filtro de status"><button class="cap-filter active" data-filter="all" type="button">Todas</button><button class="cap-filter" data-filter="online" type="button">Online</button><button class="cap-filter" data-filter="offline" type="button">Offline</button><button class="cap-filter" data-filter="attention" type="button">Atenção</button></div></div><div id="instance-grid" class="cap-instance-grid" aria-live="polite"></div><div id="instance-empty" class="cap-instance-empty" hidden><strong>Nenhuma instância encontrada.</strong><span>O Runtime ainda não publicou instâncias compatíveis com o filtro atual.</span></div></section></div>
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="servers.js?v=3"></script>
+<script>
+document.addEventListener('DOMContentLoaded',function(){const b=document.getElementById('servers-menu-toggle');if(!b)return;b.addEventListener('click',function(e){e.stopImmediatePropagation();if(window.innerWidth<=860){document.body.classList.toggle('sidebar-open');return;}const collapsed=!document.body.classList.contains('cap-sidebar-collapsed');document.body.classList.toggle('cap-sidebar-collapsed',collapsed);localStorage.setItem('cap_sidebar_collapsed',collapsed?'1':'0');},true);});
+</script>
+<script src="servers.js?v=5"></script>
 </body></html>
