@@ -18,7 +18,8 @@ class AgentDashboardUiContractTest(unittest.TestCase):
   for text in ("Detalhes do Agent","Portas administradas","Localização e Placement","Monitoramento"):self.assertIn(text,self.detail)
   self.assertIn("/api/agent/ports",self.detail_js);self.assertIn("agent-details.html?agent_id=",self.fleet_js)
  def test_dashboard_v3_navigation_preserves_rbac_and_add_agent(self):
-  for text in ('href="servers.html"','href="agents.html"','href="add-agent.html"','admin-only','agent-manager-only','instance-manager-only','href="catalog.html"','href="observability.html#alerts"','href="operations.html#backups"'):self.assertIn(text,self.sidebar)
+  for text in ('href="servers.html"','href="agents.html"','href="add-agent.html"','admin-only','agent-manager-only','href="catalog.html"','href="observability.html#alerts"','href="operations.html#backups"'):self.assertIn(text,self.sidebar)
+  self.assertNotIn("Criar instância",self.sidebar)
  def test_agent_v3_routes_are_registered_in_composition_layer(self):
   for route in ("/agents.html","/agents-v3.js","/agents-v3.css","/add-agent.html","/add-agent-v3.css","/agent-details.html","/agent-details.js","/agent-details.css"):self.assertIn(route,self.composition)
   self.assertIn('dashboard/server_part17.py',self.service);self.assertIn('import server_part14 as integration',self.resource_composition);self.assertIn('import server_part15 as integration',self.file_composition);self.assertIn('import server_part16 as integration',self.latest_composition)
