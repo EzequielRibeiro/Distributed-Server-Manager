@@ -5,15 +5,21 @@ Status desta fundação: iniciado em 2026-08-23.
 | Etapa | Entrega | Estado | Critério de conclusão |
 |---|---|---|---|
 | 1 | Auditoria e modelo de domínio | Concluída | Componentes reutilizáveis e fronteiras Catálogo/Contrato/Instância documentados |
-| 2 | Remodelagem da página Catálogo | Concluída nesta fundação | Interface não seleciona nem administra instância e expõe áreas de Game Data, Parâmetros, Configuração, Recursos, Conteúdo, Agents e Versões |
-| 3 | Inventário e instalação de game-data | Base existente / integração em andamento | Admin consegue disparar instalação e consultar jobs por Agent usando a plataforma distribuída existente |
-| 4 | Gerenciador seguro de arquivos de game-data | Planejada | list/read/create/write/rename/upload/delete confinados à raiz autorizada, RBAC e auditoria |
+| 2 | Remodelagem da página Catálogo | Concluída | Interface não seleciona nem administra instância e expõe áreas de Game Data, Parâmetros, Configuração, Recursos, Conteúdo, Agents e Versões |
+| 3 | Inventário e instalação de game-data | Concluída | Admin dispara install/update/verify, consulta jobs e vê por Agent os ambientes já confirmados pelos resultados do runtime distribuído |
+| 4 | Gerenciador seguro de arquivos de game-data | Próxima | list/read/create/write/rename/upload/delete confinados à raiz autorizada, RBAC e auditoria |
 | 5 | Parâmetros de runtime e templates | Planejada | RuntimeDefinition suporta startup/vars/shutdown/working directory e UI persiste definição validada |
 | 6 | Perfis de recursos | Fundação concluída | Schema e perfis de catálogo existem; próxima entrega aplica persistência/edição pela UI |
 | 7 | Contratos × perfis permitidos | Planejada | contrato lista profiles permitidos e criação de instância rejeita perfil fora do contrato |
 | 8 | Placement + instalação sob demanda | Planejada | placement considera recursos; ausência de game-data cria job e provisionamento aguarda conclusão |
 | 9 | Integridade, auditoria e versionamento | Planejada | alterações de game-data geram estado MODIFIED, eventos, verify/repair/revert |
 | 10 | E2E e rollout | Planejada | fluxo Catálogo→Agent→Contrato→Placement→Instância validado em Linux/Windows conforme suporte do runtime |
+
+## Etapa 3 — resultado
+
+O Controller já possui a fila persistente de jobs de game-data e recebe do Agent o resultado real de install/update/verify. A Dashboard agora consolida esses resultados em `/api/agents/game-data/inventory`, permitindo selecionar um Agent e identificar se o ambiente de execução está instalado, sua versão conhecida, caminho reportado, último estado e quantidade de jobs ativos.
+
+Esse inventário representa o último estado confirmado pelo Agent por meio de uma operação distribuída. A etapa 4 acrescentará leitura e mutação segura da árvore de arquivos e a etapa 9 acrescentará verificação contínua de integridade/deriva.
 
 ## Ordem técnica
 
