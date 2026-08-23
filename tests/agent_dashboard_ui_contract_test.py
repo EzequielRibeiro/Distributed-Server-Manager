@@ -114,5 +114,34 @@ class AgentDashboardUiContractTest(unittest.TestCase):
         self.assertIn("O Dashboard não aceita senha SSH", self.html)
 
 
+    def test_agent_terminal_stylesheet_is_registered_and_loaded(self):
+        html = (ROOT / "dashboard" / "web" / "agents.html").read_text(
+            encoding="utf-8"
+        )
+        server = (ROOT / "dashboard" / "server_part13.py").read_text(
+            encoding="utf-8"
+        )
+        css = (ROOT / "dashboard" / "web" / "agent-terminal.css").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            'href="/agent-terminal.css"',
+            html,
+        )
+        self.assertIn(
+            'legacy.STATIC_FILES["/agent-terminal.css"]',
+            server,
+        )
+        self.assertIn(
+            ".agent-terminal-line",
+            css,
+        )
+        self.assertIn(
+            "display: block",
+            css,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
