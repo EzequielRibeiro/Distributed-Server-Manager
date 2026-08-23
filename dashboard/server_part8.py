@@ -13,7 +13,8 @@ from customer_security import customer_rate_limiter,remote_identity
 from customer_team_api import CUSTOMER_TEAM_PATHS,dispatch_customer_team
 from customer_team_repository import CustomerTeamRepository
 from customer_verification_api import CUSTOMER_VERIFICATION_PATHS,dispatch_customer_verification
-from controller_session import create_session,cookie_header,session_user_from_headers
+from controller_session import create_session,cookie_header,expired_cookie_header,revoke_session,session_token_from_headers,session_user_from_headers
+from login_credentials import authenticate_login_credentials
 from deleted_instance_backup import complete_deleted_instance_backup_download,pending_deleted_backups,resolve_deleted_instance_backup
 from instance_deletion_api import begin_deletion,deletion_status
 from instance_lifecycle_http import dispatch_instance_lifecycle_get,dispatch_instance_lifecycle_post,dispatch_instance_reinstall_post
@@ -38,6 +39,18 @@ def integrated_authenticate(headers):
     if user is not None:return user
     try:return authenticate_customer(headers,_backend())
     except Exception:return None
+def credential_authenticate(headers):
+    return authenticate_login_credentials(
+        headers,
+        controller_authenticator=_original_authenticate,
+        customer_authenticator=lambda request_headers: authenticate_customer(request_headers,_backend()),
+    )
+def reject_login(self):
+    token=session_token_from_headers(self.headers);revoke_session(token)
+    body=b'{"error":"unauthorized"}'
+    self.send_response(401);self.send_header("Content-Type","application/json; charset=utf-8")
+    self.send_header("Set-Cookie",expired_cookie_header());self.send_header("Cache-Control","no-store")
+    self.send_header("Content-Length",str(len(body)));self.end_headers();self.wfile.write(body)
 def _require_area_role(handler,user,allowed_roles):
     if user is None:handler.unauthorized();return False
     if user.get("role") not in allowed_roles:handler.forbidden();return False
@@ -177,9 +190,9 @@ def integrated_post(self):
         except (ValueError,OSError) as exc:self.send_json(400,{"error":str(exc)})
         return
     if path=="/api/auth/login":
-        user=integrated_authenticate(self.headers)
+        user=credential_authenticate(self.headers)
         if user is None:
-            self.unauthorized()
+            reject_login(self)
             return
         if user.get("role") not in {"admin","controller","operator","customer"}:
             self.forbidden()
