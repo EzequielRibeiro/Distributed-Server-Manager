@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Catálogo e Conteúdo | Capivara DSM</title>
+  <link rel="stylesheet" href="/dashboard-home-v3.css">
+  <link rel="stylesheet" href="/catalog-v2.css">
+  <link rel="stylesheet" href="/catalog-page.css">
+</head>
+<body class="cap-home cap-catalog-shell">
+<div id="sidebar-component"></div>
+<main class="cap-home-main cap-catalog-page">
+  <header class="cap-home-topbar">
+    <div class="cap-home-title"><button id="catalog-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1>Catálogo e Conteúdo</h1><p>Ambientes de execução, versões, conteúdo adicional e configuração das instâncias.</p></div></div>
+    <div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="catalog-user-name">—</strong><span id="catalog-user-role">—</span></div></div>
+  </header>
+
+  <div class="cap-home-content cap-catalog-content">
+    <section id="catalog-v2-card" class="catalog-v2-card">
+      <div class="card-title"><div><h2>Catálogo universal</h2><p class="catalog-v2-subtitle">Selecione Agent, jogo e instância para administrar o ambiente e seu conteúdo.</p></div><div class="catalog-v2-title-actions"><button id="catalog-v2-refresh" class="catalog-v2-refresh" type="button">Atualizar</button><span id="catalog-v2-status" class="catalog-v2-status">CARREGANDO</span></div></div>
+
+      <div class="catalog-v2-section">
+        <div class="catalog-v2-section-title"><div><h3>Infraestrutura e instância</h3><p>Seleção baseada nas instâncias publicadas pelo Runtime.</p></div></div>
+        <div class="catalog-v2-form catalog-v2-runtime-selector"><label>Node / Agent<select id="catalog-v2-node"><option>Carregando...</option></select></label><label>Jogo<select id="catalog-v2-game"><option>Carregando...</option></select></label><label>Instância<select id="catalog-v2-instance"><option>Carregando...</option></select></label></div>
+        <div id="catalog-v2-runtime-summary" class="catalog-v2-runtime-summary" data-state="unknown"><div><span>Estado</span><strong id="catalog-v2-runtime-state">-</strong></div><div><span>Health</span><strong id="catalog-v2-runtime-health">-</strong></div><div><span>PID</span><strong id="catalog-v2-runtime-pid">-</strong></div><div><span>Players</span><strong id="catalog-v2-runtime-players">-</strong></div><div><span>CPU</span><strong id="catalog-v2-runtime-cpu">-</strong></div><div><span>RAM</span><strong id="catalog-v2-runtime-ram">-</strong></div><div><span>Conteúdo</span><strong id="catalog-v2-runtime-mods">-</strong></div><div><span>Último backup</span><strong id="catalog-v2-runtime-backup">-</strong></div></div>
+        <div id="catalog-v2-instance-profile" class="catalog-v2-instance-profile"><div class="catalog-v2-instance-logo-wrap"><img id="catalog-v2-instance-logo" class="catalog-v2-instance-logo" alt="Logo da instância" hidden><span id="catalog-v2-instance-logo-fallback" class="catalog-v2-instance-logo-fallback">?</span></div><div class="catalog-v2-instance-profile-details"><h4 id="catalog-v2-instance-display-name">Instância</h4><div><span>Controlador</span><strong id="catalog-v2-instance-controller">Não informado</strong></div><div><span>Agente</span><strong id="catalog-v2-instance-agent">Não informado</strong></div><div><span>Responsável</span><strong id="catalog-v2-instance-owner">Não informado</strong></div><div><span>Cliente</span><strong id="catalog-v2-instance-customer">Não informado</strong></div><div><span>Identificador do cliente</span><strong id="catalog-v2-instance-customer-id">Não informado</strong></div><div><span>Contato</span><strong id="catalog-v2-instance-contact">Não informado</strong></div></div></div>
+      </div>
+
+      <div class="catalog-v2-section">
+        <div class="catalog-v2-section-title"><div><h3>Ambiente de execução</h3><p>Provider, versão, sistema operacional e arquitetura são definidos pelo catálogo.</p></div></div>
+        <div class="catalog-v2-form"><label>Ambiente de Execução<select id="catalog-v2-runtime"></select></label><label>Versão do jogo<select id="catalog-v2-version" disabled><option value="">Aguardando ambiente...</option></select></label><label>Loader / build<select id="catalog-v2-loader-version" disabled><option value="">Aguardando versão...</option></select></label><label>Java<input id="catalog-v2-java" type="number" disabled></label><label>Sistema<select id="catalog-v2-os" disabled><option value="">Aguardando ambiente...</option></select></label><label>Arquitetura<select id="catalog-v2-arch" disabled><option value="">Aguardando ambiente...</option></select></label></div>
+        <div class="catalog-v2-actions"><button id="catalog-v2-environment-install" class="admin-only catalog-v2-primary" disabled>Instalar jogo</button><button id="catalog-v2-instance-reinstall" class="admin-only" type="button" disabled>Reinstalar instância</button></div>
+      </div>
+
+      <div class="catalog-v2-columns"><div class="catalog-v2-content-wrap"><h3>Conteúdo adicional disponível</h3><div id="catalog-v2-content" class="catalog-v2-content"><span class="catalog-v2-empty">Carregando...</span></div></div><div class="catalog-v2-installed-wrap"><h3>Conteúdo adicional da instância</h3><div id="catalog-v2-installed-list" class="catalog-v2-installed-list"><span class="catalog-v2-empty">Aguardando instância...</span></div></div></div>
+
+      <div class="catalog-v2-section instance-manager-only"><div class="catalog-v2-section-title"><div><h3>Arquivos de configuração</h3><p>Gerenciamento limitado às instâncias autorizadas pelo RBAC.</p></div></div><div class="catalog-v2-form"><label>Arquivo<select id="catalog-v2-config-file"><option value="">Selecione uma instância</option></select></label></div><textarea id="catalog-v2-config-editor" class="catalog-v2-config-editor" spellcheck="false" disabled></textarea><div class="catalog-v2-actions"><button id="catalog-v2-config-save" class="instance-manager-only catalog-v2-primary" disabled>Salvar configuração</button></div></div>
+
+      <div class="catalog-v2-actions"><button id="catalog-v2-check" disabled>Verificar conteúdo</button><button id="catalog-v2-plan" disabled>Gerar plano</button><button id="catalog-v2-installed">Ler instalados</button><button id="catalog-v2-install" class="instance-manager-only catalog-v2-primary" disabled>Instalar selecionados</button><button id="catalog-v2-verify" class="instance-manager-only">Verificar instalados</button><button id="catalog-v2-rollback" class="instance-manager-only catalog-v2-danger">Reverter conteúdo</button></div>
+      <div id="catalog-v2-summary" class="catalog-v2-summary">Carregando instâncias do Runtime...</div><pre id="catalog-v2-result" class="catalog-v2-result" hidden></pre>
+    </section>
+  </div>
+  <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
+</main>
+<script src="/catalog-page.js"></script>
+<script src="/catalog-v2.js"></script>
+</body>
+</html>
