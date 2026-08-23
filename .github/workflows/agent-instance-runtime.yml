@@ -8,9 +8,7 @@ on:
       - 'database/agent_instance_provisioning_repository.py'
       - 'database/agent_instance_reconciliation_repository.py'
       - 'database/agent_instance_runtime_health_repository.py'
-      - 'database/migrations/**'
-      - 'database/migrations_mysql/**'
-      - 'database/migrations_postgresql/**'
+      - 'database/schemas/**'
       - 'dashboard/agent_instance_runtime_*.py'
       - 'dashboard/agent_instance_provisioning_*.py'
       - 'dashboard/agent_heartbeat_api.py'
@@ -33,9 +31,7 @@ on:
       - 'database/agent_instance_provisioning_repository.py'
       - 'database/agent_instance_reconciliation_repository.py'
       - 'database/agent_instance_runtime_health_repository.py'
-      - 'database/migrations/**'
-      - 'database/migrations_mysql/**'
-      - 'database/migrations_postgresql/**'
+      - 'database/schemas/**'
       - 'dashboard/agent_heartbeat_api.py'
       - 'release/build_agent_package.sh'
       - 'tests/agent_runtime_completion_test.py'
@@ -128,13 +124,16 @@ jobs:
           grep -F 'agent_instance_runtime_health' dashboard/agent_heartbeat_api.py database/agent_instance_runtime_health_repository.py
           grep -F 'runtime_lock.py' agents/linux/installer/install-agent.sh release/build_agent_package.sh
           ! grep -F 'shell=True' agents/linux/runtime/runtime_lock.py agents/linux/runtime/runtime_operations.py agents/linux/runtime/runtime_health.py agents/linux/runtime/runtime_metrics.py agents/linux/runtime/runtime_limits.py
-      - name: Check migration parity
+      - name: Check consolidated schema parity
         run: |
-          for directory in migrations migrations_mysql migrations_postgresql; do
+          set -euo pipefail
+          for schema in sqlite postgresql mysql mariadb; do
+            file="database/schemas/${schema}.sql"
+            test -f "$file"
             for number in 027 028 029 030 031; do
-              test -f "database/${directory}/${number}_"*.sql
+              grep -E -- "-- source: ${number}_.+\\.sql" "$file"
             done
-            grep -F 'agent_instance_runtime_health' "database/${directory}/031_agent_instance_runtime_health.sql"
+            grep -F 'agent_instance_runtime_health' "$file"
           done
       - name: Validate Agent package
         run: bash tests/agent_package_test.sh
