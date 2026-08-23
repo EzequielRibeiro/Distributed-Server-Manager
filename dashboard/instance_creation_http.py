@@ -78,6 +78,7 @@ def dispatch_instance_create_post(
     create_instance: Callable[[dict[str, Any] | None, dict[str, Any]], dict[str, Any]],
     contract_resolver: Callable[[dict[str, Any] | None, str], str | None] | None = None,
     log: Callable[[str], None] | None = None,
+    failure_reporter: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[int, dict[str, Any]] | None:
     """Handle ``POST /api/instance/create`` without leaking domain failures."""
 
@@ -99,29 +100,50 @@ def dispatch_instance_create_post(
             contract_resolver=contract_resolver,
             log=log,
         )
+        _report_failure(failure_reporter, user, payload, "placement_unavailable", str(exc))
         return 409, {
             "error": "placement_unavailable",
             "message": PLACEMENT_UNAVAILABLE_MESSAGE,
         }
 
-    except PermissionError:
+    except PermissionError as exc:
+        _report_failure(failure_reporter, user, payload, "forbidden", str(exc))
         return 403, {
             "error": "forbidden",
             "message": "Operação não permitida.",
         }
 
     except ValueError as exc:
+        _report_failure(failure_reporter, user, payload, "invalid_request", str(exc))
         return 400, {
             "error": "invalid_request",
             "message": str(exc),
         }
 
-    except Exception:
+    except Exception as exc:
         _LOGGER.exception("instance creation failed at HTTP boundary")
+        _report_failure(failure_reporter, user, payload, "instance_creation_failed", str(exc))
         return 500, {
             "error": "instance_creation_failed",
             "message": "Não foi possível criar o servidor.",
         }
+
+
+def _report_failure(reporter, user, payload, code: str, reason: str) -> None:
+    if reporter is None:
+        return
+    try:
+        reporter({
+            "code": code,
+            "reason": reason,
+            "username": None if not user else user.get("username"),
+            "customer_id": None if not user else user.get("scope_id"),
+            "contract_id": str(payload.get("contract_id") or "").strip() or None,
+            "game": str(payload.get("game") or "").strip().lower() or None,
+            "placement": payload.get("placement") if isinstance(payload.get("placement"), dict) else {},
+        })
+    except Exception:
+        _LOGGER.exception("could not persist instance creation failure")
 
 
 __all__ = [

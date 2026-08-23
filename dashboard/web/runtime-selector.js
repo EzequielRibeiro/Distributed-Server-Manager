@@ -194,9 +194,9 @@
             if (
                 data
                 && typeof data === "object"
-                && data.error
+                && (data.message || data.error)
             ) {
-                errorMessage = data.error;
+                errorMessage = data.message || data.error;
             } else if (
                 typeof data === "string"
                 && data.trim()

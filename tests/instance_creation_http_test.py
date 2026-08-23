@@ -91,6 +91,8 @@ class InstanceCreationHttpTest(unittest.TestCase):
         self.assertEqual(body["instance_id"], "srv-001")
 
     def test_permission_error_is_controlled(self):
+        failures = []
+
         def create_instance(user, payload):
             raise PermissionError("internal permission detail")
 
@@ -99,9 +101,24 @@ class InstanceCreationHttpTest(unittest.TestCase):
             self.payload,
             user=self.user,
             create_instance=create_instance,
+            failure_reporter=failures.append,
         )
         self.assertEqual(status, 403)
         self.assertEqual(body["error"], "forbidden")
+        self.assertEqual(failures[0]["code"], "forbidden")
+        self.assertEqual(failures[0]["customer_id"], "customer-001")
+        self.assertEqual(failures[0]["game"], "dayz")
+
+    def test_failure_reporter_cannot_break_api_response(self):
+        status, body = dispatch_instance_create_post(
+            "/api/instance/create",
+            self.payload,
+            user=self.user,
+            create_instance=lambda user, payload: (_ for _ in ()).throw(ValueError("bad build")),
+            failure_reporter=lambda failure: (_ for _ in ()).throw(OSError("audit unavailable")),
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["message"], "bad build")
 
     def test_other_path_is_not_handled(self):
         result = dispatch_instance_create_post(
