@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sistema | Capivara DSM</title>
+  <link rel="stylesheet" href="/dashboard-home-v3.css">
+  <link rel="stylesheet" href="/system.css">
+</head>
+<body class="cap-home cap-system-shell">
+<div id="sidebar-component"></div>
+<main class="cap-home-main cap-system-page">
+  <header class="cap-home-topbar">
+    <div class="cap-home-title">
+      <button id="system-menu-toggle" type="button" aria-label="Recolher menu">☰</button>
+      <div><h1>Sistema</h1><p>Configurações, acesso à API, segurança e auditoria do Control Plane.</p></div>
+    </div>
+    <div class="cap-top-status">
+      <div class="cap-controller-state"><i></i><span>Controller Online</span></div>
+      <div class="cap-user"><strong id="system-user-name">—</strong><span id="system-user-role">—</span></div>
+    </div>
+  </header>
+
+  <div class="cap-home-content cap-system-content">
+    <section class="cap-system-summary" aria-label="Resumo do sistema">
+      <article><span>Configurações</span><strong id="system-config-total">0</strong><small>registros</small></article>
+      <article><span>Tokens API</span><strong id="system-token-total">0</strong><small>credenciais</small></article>
+      <article><span>Auditoria</span><strong id="system-audit-total">0</strong><small>eventos recentes</small></article>
+      <article><span>Segurança</span><strong id="system-security-state">Ativa</strong><small>controle administrativo</small></article>
+    </section>
+
+    <section id="configuration" class="cap-system-card">
+      <div class="cap-section-heading"><div><h2>Configurações</h2><p>Visão consolidada da Universal Configuration Platform.</p></div><button id="system-refresh" type="button">Atualizar</button></div>
+      <div id="system-config-list" class="cap-system-list" aria-live="polite"><div class="cap-empty-state">Carregando configurações...</div></div>
+    </section>
+
+    <section id="api-security" class="cap-system-card">
+      <div class="cap-section-heading"><div><h2>API e Segurança</h2><p>Credenciais administrativas registradas no Controller.</p></div></div>
+      <div id="system-token-list" class="cap-system-list" aria-live="polite"><div class="cap-empty-state">Carregando tokens...</div></div>
+      <p class="cap-system-note">Segredos completos não são exibidos nesta página. Criação e revogação continuam protegidas pelas permissões administrativas da API.</p>
+    </section>
+
+    <section id="audit" class="cap-system-card">
+      <div class="cap-section-heading"><div><h2>Auditoria</h2><p>Eventos recentes relevantes para rastreabilidade do Control Plane.</p></div><a class="cap-system-link" href="/observability.html#events">Abrir Observabilidade</a></div>
+      <div id="system-audit-list" class="cap-system-list" aria-live="polite"><div class="cap-empty-state">Carregando auditoria...</div></div>
+    </section>
+  </div>
+  <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
+</main>
+<script src="/system.js"></script>
+</body>
+</html>
