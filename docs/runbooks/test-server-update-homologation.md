@@ -65,6 +65,7 @@ diretório completo junto com o snapshot e a identificação da release.
 - resposta `/health` do Dashboard, quando aplicável;
 - log integral do update bem-sucedido;
 - log integral da falha e rollback controlados;
+- diretório de diagnóstico externo à instalação, sob o `BACKUP_DIR` configurado;
 - `result.env` com versão, identificador e resultado final.
 
 ## Recuperação se o teste for interrompido

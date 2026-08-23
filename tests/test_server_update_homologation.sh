@@ -238,8 +238,11 @@ ROLLBACK_DIAGNOSTIC_DIR="$(sed -n \
     's|^.*Diagnostics saved: \(/.*\)$|\1|p' "${ROLLBACK_LOG}" | tail -1)"
 [[ -n "${ROLLBACK_DIAGNOSTIC_DIR}" ]] \
     || fail "failure diagnostics path was not reported"
-[[ "${ROLLBACK_DIAGNOSTIC_DIR}" == /opt/dsm-backups/update-diagnostics-* ]] \
-    || fail "failure diagnostics were stored inside the installation"
+case "${ROLLBACK_DIAGNOSTIC_DIR}" in
+    /opt/dsm|/opt/dsm/*)
+        fail "failure diagnostics were stored inside the installation: ${ROLLBACK_DIAGNOSTIC_DIR}"
+        ;;
+esac
 [[ -d "${ROLLBACK_DIAGNOSTIC_DIR}" ]] \
     || fail "failure diagnostics did not survive rollback: ${ROLLBACK_DIAGNOSTIC_DIR}"
 [[ -s "${ROLLBACK_DIAGNOSTIC_DIR}/transaction.txt" ]] \
