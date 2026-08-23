@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Capivara DSM - Controller</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/controller-dashboard.css">
+</head>
+<body>
+<div id="sidebar-component"></div>
+<main class="dashboard controller-dashboard">
+  <header class="header">
+    <div class="brand">
+      <h1>Capivara DSM</h1>
+      <span>Distributed Server Manager · Controller</span>
+    </div>
+    <div class="header-status">
+      <span>Controller</span>
+      <strong id="system-status">CARREGANDO</strong>
+    </div>
+  </header>
+
+  <section class="controller-hero card">
+    <div>
+      <span class="controller-eyebrow">VISÃO DO CONTROLLER</span>
+      <h2>Infraestrutura, saúde e operações globais</h2>
+      <p>A administração de contratos e instâncias fica nas áreas dedicadas. Esta página acompanha somente o Controller e a infraestrutura global.</p>
+    </div>
+    <nav class="controller-shortcuts" aria-label="Áreas administrativas">
+      <a href="/customers.html">Clientes e contratos</a>
+      <a href="/agents.html">Agents</a>
+      <a href="/servers-v2.html">Instâncias</a>
+      <a href="/operations.html">Operações</a>
+    </nav>
+  </section>
+
+  <section class="resource-grid controller-resource-grid">
+    <article class="card resource-card"><h3>CPU do Controller</h3><div class="progress"><div id="cpu-bar" class="progress-value"></div></div><span id="cpu-value">0%</span></article>
+    <article class="card resource-card"><h3>RAM do Controller</h3><div class="progress"><div id="ram-bar" class="progress-value"></div></div><span id="ram-value">0%</span></article>
+    <article class="card resource-card"><h3>Disco do Controller</h3><div class="progress"><div id="disk-bar" class="progress-value"></div></div><span id="disk-value">0%</span></article>
+  </section>
+
+  <section class="card system-card">
+    <div class="card-title"><h2>Controller</h2><span id="health-status" class="health-indicator">-</span></div>
+    <div class="server-info controller-system-info">
+      <div class="info-box"><label>Hostname</label><span id="host-name">-</span></div>
+      <div class="info-box"><label>Kernel</label><span id="kernel">-</span></div>
+      <div class="info-box"><label>Uptime</label><span id="uptime">-</span></div>
+      <div class="info-box"><label>Health</label><span id="health-score">-</span></div>
+    </div>
+  </section>
+
+  <section class="controller-columns">
+    <article class="card">
+      <div class="card-title"><h2>Linha do tempo global</h2><button id="timeline-refresh" type="button">Atualizar</button></div>
+      <div id="timeline-list" class="controller-timeline"><p>Carregando eventos…</p></div>
+    </article>
+    <article class="card">
+      <div class="card-title"><h2>Scheduler</h2><span class="health-indicator">●</span></div>
+      <div id="scheduler-list" class="jobs-list"><p>Carregando jobs…</p></div>
+    </article>
+  </section>
+
+  <section class="card logs-card">
+    <div class="card-title">
+      <div><h2>Logs do Controller</h2><small>Somente logs globais; logs de Agent e instância permanecem em suas páginas dedicadas.</small></div>
+      <button id="controller-log-refresh" type="button">Atualizar</button>
+    </div>
+    <div id="controller-logs" class="logs-box"><div>Carregando logs…</div></div>
+  </section>
+
+  <footer class="footer"><span>Capivara Distributed Server Manager</span><span>Controller Dashboard</span></footer>
+</main>
+<script src="/controller-dashboard.js"></script>
+</body>
+</html>
