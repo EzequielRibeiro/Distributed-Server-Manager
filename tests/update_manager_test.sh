@@ -1170,3 +1170,66 @@ echo "Update manager tests passed."
         "DSM Update" \
         "Falha simulada"
 ) || fail "missing notification backend broke update manager"
+
+# Regression: an update package must never replace the installed operational
+# database configuration. The installed config is authoritative.
+(
+    # shellcheck source=../update.sh
+    source "${UPDATE}"
+
+    CASE_ROOT="$(mktemp -d)"
+    trap 'rm -rf -- "${CASE_ROOT}"' EXIT
+
+    INSTALL_DIR="${CASE_ROOT}/installed"
+    STAGING_DIR="${CASE_ROOT}/staging"
+    NEW_SRC="${CASE_ROOT}/release"
+
+    mkdir -p \
+        "${INSTALL_DIR}/config" \
+        "${NEW_SRC}/config"
+
+    cat >"${INSTALL_DIR}/config/dsm.conf" <<'EOF_INSTALLED'
+DSM_DATABASE_DRIVER="postgresql"
+DSM_DATABASE=""
+DSM_DATABASE_HOST="localhost"
+DSM_DATABASE_PORT="5432"
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER="capivara"
+DSM_DATABASE_PASSWORD_FILE="/etc/capivara/secrets/database-password"
+DSM_DATABASE_TLS="preferred"
+EOF_INSTALLED
+
+    cat >"${NEW_SRC}/config/dsm.conf" <<'EOF_RELEASE'
+DSM_DATABASE_DRIVER="sqlite"
+DSM_DATABASE="/opt/dsm/data/capivara.db"
+DSM_DATABASE_HOST=""
+DSM_DATABASE_PORT=""
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER=""
+DSM_DATABASE_PASSWORD_FILE=""
+DSM_DATABASE_TLS="preferred"
+EOF_RELEASE
+
+    create_staging >/dev/null
+    preserve_data >/dev/null
+
+    grep -q '^DSM_DATABASE_DRIVER="postgresql"$' \
+        "${STAGING_DIR}/config/dsm.conf" \
+        || fail "installed PostgreSQL configuration was replaced by release defaults"
+
+    grep -q '^DSM_DATABASE_HOST="localhost"$' \
+        "${STAGING_DIR}/config/dsm.conf" \
+        || fail "installed database host was not preserved"
+
+    if grep -q '^DSM_DATABASE_DRIVER="sqlite"$' \
+        "${STAGING_DIR}/config/dsm.conf"
+    then
+        fail "release SQLite configuration leaked into operational configuration"
+    fi
+)
+
+# bin/cap is a public CLI entrypoint and must remain executable directly
+# from a normal repository checkout/release.
+[[ -x "${ROOT}/bin/cap" ]] \
+    || fail "bin/cap is not executable"
+
