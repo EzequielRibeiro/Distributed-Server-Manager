@@ -1,8 +1,28 @@
 <!doctype html>
 <html lang="pt-BR">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Usuários do sistema | Capivara DSM</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/catalog-v2.css"></head>
-<body><main class="dashboard customer-page">
-<section class="card catalog-v2-card"><div class="card-title"><div><h1>Administração de usuários do sistema</h1><p class="catalog-v2-subtitle">Acessos administrativos, Controladores e operadores. Contas de clientes são gerenciadas separadamente.</p></div><div class="catalog-v2-actions"><a class="customer-action-link" href="/customers.html">Clientes</a><a class="customer-action-link" href="/index.html">Voltar</a><button id="users-logout">Sair</button></div></div></section>
-<section class="card catalog-v2-card"><div class="card-title"><h2 id="user-form-title">Novo usuário do sistema</h2></div><div class="catalog-v2-form"><label>Login<input id="user-name" maxlength="64" placeholder="nome.usuario"></label><label>Perfil<select id="user-role"><option value="controller">Controlador</option><option value="operator">Operador</option><option value="admin">Administrador</option></select></label><label>Vínculo<select id="user-scope"><option value="">Selecione o perfil</option></select></label><label>Senha<input id="user-password" type="password" minlength="8" placeholder="Obrigatória para novo acesso"></label><label>Estado<select id="user-active"><option value="true">Ativo</option><option value="false">Desativado</option></select></label></div><div class="catalog-v2-actions"><button id="user-save" class="catalog-v2-primary">Salvar usuário</button><button id="user-cancel" hidden>Cancelar edição</button></div><div id="users-message" class="catalog-v2-summary"></div></section>
-<section class="card catalog-v2-card"><div class="card-title"><h2>Contas administrativas</h2></div><div class="users-table-wrap"><table class="users-table"><thead><tr><th>Login</th><th>Perfil</th><th>Vínculo</th><th>Estado</th><th>Ações</th></tr></thead><tbody id="users-table"></tbody></table></div></section>
-</main><script src="/users.js"></script></body></html>
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Usuários do sistema | Capivara DSM</title>
+  <link rel="stylesheet" href="/dashboard-home-v3.css">
+  <link rel="stylesheet" href="/catalog-v2.css">
+  <link rel="stylesheet" href="/customer-admin.css">
+</head>
+<body class="cap-home cap-admin-shell">
+<div id="sidebar-component"></div>
+<main class="cap-home-main customer-admin-page">
+  <header class="cap-home-topbar cap-admin-topbar">
+    <div class="cap-home-title"><button id="admin-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1>Administração de usuários do sistema</h1><p>Acessos administrativos, Controllers e operadores.</p></div></div>
+    <div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="admin-user-name">—</strong><span id="admin-user-role">—</span></div></div>
+  </header>
+  <div class="cap-home-content cap-admin-content">
+    <section class="card catalog-v2-card cap-admin-card">
+      <div class="card-title"><div><h2 id="user-form-title">Novo usuário do sistema</h2><p>Contas de clientes são administradas separadamente na área Clientes.</p></div></div>
+      <div class="catalog-v2-form"><label>Login<input id="user-name" maxlength="64" placeholder="nome.usuario"></label><label>Perfil<select id="user-role"><option value="controller">Controlador</option><option value="operator">Operador</option><option value="admin">Administrador</option></select></label><label>Vínculo<select id="user-scope"><option value="">Selecione o perfil</option></select></label><label>Senha<input id="user-password" type="password" minlength="8" placeholder="Obrigatória para novo acesso"></label><label>Estado<select id="user-active"><option value="true">Ativo</option><option value="false">Desativado</option></select></label></div>
+      <div class="catalog-v2-actions"><button id="user-save" class="catalog-v2-primary">Salvar usuário</button><button id="user-cancel" hidden>Cancelar edição</button></div><div id="users-message" class="catalog-v2-summary"></div>
+    </section>
+    <section class="card catalog-v2-card cap-admin-card"><div class="card-title"><h2>Contas administrativas</h2></div><div class="users-table-wrap"><table class="users-table"><thead><tr><th>Login</th><th>Perfil</th><th>Vínculo</th><th>Estado</th><th>Ações</th></tr></thead><tbody id="users-table"></tbody></table></div></section>
+  </div>
+  <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
+</main>
+<script src="/users.js"></script>
+</body></html>
