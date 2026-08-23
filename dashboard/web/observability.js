@@ -135,6 +135,57 @@ function renderHealth(result) {
   document.querySelector(".cap-controller-state")?.classList.toggle("cap-controller-failed", failed);
 }
 
+async function loadAgentsForLogs() {
+  const select = byId("log-agent");
+  if (!select || select.options.length) return;
+  const response = await get("/agents");
+  const agents = response?.agents || [];
+  agents.forEach(agent => select.add(new Option(agent.name || agent.id, agent.id)));
+}
+
+function syncLogSource() {
+  const source = byId("log-source")?.value || "controller";
+  const isAgent = source === "agent";
+  const isInstance = source === "instance";
+  const agentWrap = byId("log-agent-wrap");
+  const serverWrap = byId("log-server-wrap");
+  const gameWrap = byId("log-game-wrap");
+  const instanceWrap = byId("log-instance-wrap");
+  if (agentWrap) agentWrap.hidden = !isAgent;
+  if (serverWrap) serverWrap.hidden = !isInstance;
+  if (gameWrap) gameWrap.hidden = !isInstance;
+  if (instanceWrap) instanceWrap.hidden = !isInstance;
+  if (isAgent) loadAgentsForLogs();
+}
+
+async function loadLogs() {
+  const target = byId("logs");
+  if (!target) return;
+  const source = byId("log-source")?.value || "controller";
+  const server = source === "agent" ? (byId("log-agent")?.value || "") : (byId("log-server")?.value || "");
+  const game = source === "instance" ? (byId("log-game")?.value || "") : "";
+  const instance = source === "instance" ? (byId("log-instance")?.value || "") : "";
+  const params = new URLSearchParams({source, server, game, instance, limit:"500"});
+  const response = await get(`/log-viewer?${params.toString()}`);
+  const data = response?.data || response || {};
+  const logs = Array.isArray(data.logs) ? data.logs : [];
+  text("logs-context", source === "controller" ? "Controller" : source === "agent" ? `Agent / Node ${server || ""}` : (instance || "Instância"));
+  target.replaceChildren();
+  if (!logs.length) {
+    const empty = document.createElement("div");
+    empty.className = "cap-empty-state";
+    empty.textContent = data.message || "Nenhum log disponível.";
+    target.appendChild(empty);
+    return;
+  }
+  logs.forEach(line => {
+    const div = document.createElement("div");
+    div.className = "cap-log-line";
+    div.textContent = line;
+    target.appendChild(div);
+  });
+}
+
 async function refresh() {
   const [user, timeline, metrics, doctor, health] = await Promise.all([
     get("/whoami"),
@@ -173,6 +224,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     else document.body.classList.toggle("cap-sidebar-collapsed");
   });
   byId("observability-refresh")?.addEventListener("click", refresh);
+  byId("btn-refresh-logs")?.addEventListener("click", loadLogs);
+  byId("log-source")?.addEventListener("change", () => { syncLogSource(); loadLogs(); });
+  byId("log-agent")?.addEventListener("change", loadLogs);
+  syncLogSource();
   await refresh();
+  await loadLogs();
   window.setInterval(refresh, 30000);
 });
