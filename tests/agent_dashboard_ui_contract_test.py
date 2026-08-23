@@ -21,7 +21,8 @@ class AgentDashboardUiContractTest(unittest.TestCase):
         cls.servers_js = (web / "servers.js").read_text(encoding="utf-8")
         cls.service = (ROOT / "systemd/dsm-dashboard.service").read_text(encoding="utf-8")
         cls.composition = (ROOT / "dashboard/server_part14.py").read_text(encoding="utf-8")
-        cls.latest_composition = (ROOT / "dashboard/server_part15.py").read_text(encoding="utf-8")
+        cls.resource_composition = (ROOT / "dashboard/server_part15.py").read_text(encoding="utf-8")
+        cls.latest_composition = (ROOT / "dashboard/server_part16.py").read_text(encoding="utf-8")
 
     def test_agents_page_is_fleet_only_and_uses_v3_shell(self):
         self.assertIn("dashboard-home-v3.css", self.html)
@@ -66,8 +67,9 @@ class AgentDashboardUiContractTest(unittest.TestCase):
             "/add-agent-v3.css", "/agent-details.html", "/agent-details.js", "/agent-details.css"
         ):
             self.assertIn(route, self.composition)
-        self.assertIn('dashboard/server_part15.py', self.service)
-        self.assertIn('import server_part14 as integration', self.latest_composition)
+        self.assertIn('dashboard/server_part16.py', self.service)
+        self.assertIn('import server_part14 as integration', self.resource_composition)
+        self.assertIn('import server_part15 as integration', self.latest_composition)
 
     def test_servers_uses_runtime_and_agent_apis(self):
         self.assertIn("/api/runtime/list", self.servers_js)
