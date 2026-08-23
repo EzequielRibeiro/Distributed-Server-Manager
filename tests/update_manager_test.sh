@@ -90,6 +90,8 @@ grep -Fq 'capture_service_state' "${UPDATE}" || fail "active service state is no
 grep -Fq 'for SERVICE_NAME in "${RESTORE_SERVICES[@]}"' "${UPDATE}" || fail "service restore policy is not preserved"
 grep -Fq 'validate_runtime_readiness' "${UPDATE}" || fail "post-update readiness gate is missing"
 grep -Fq 'collect_failure_diagnostics' "${UPDATE}" || fail "failure diagnostics are missing"
+grep -Fq 'DIAGNOSTIC_DIR="${BACKUP_DIR}/update-diagnostics-' "${UPDATE}" \
+    || fail "failure diagnostics would be deleted by rollback"
 if grep -Fq 'systemctl enable "${SERVICE_NAME}"' "${UPDATE}"; then
     fail "update manager enables every discovered service"
 fi
