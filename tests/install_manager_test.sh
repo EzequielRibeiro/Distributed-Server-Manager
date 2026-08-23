@@ -56,6 +56,28 @@ TMP_DIR="$(mktemp -d)"; trap 'rm -rf -- "${TMP_DIR}"' EXIT
     grep -q '^LOCAL_SETTING="preserved"$' "${DSM_ROOT}/config/dsm.conf" || fail "local setting overwritten"
 )
 (
+    id(){ case "$1" in -un|-gn) printf 'capivara\n';; *) return 1;; esac; }
+    source "${CORE_INSTALLER}"
+    hostname(){ printf 'horizon-server\n'; }
+    chown(){ :; }
+    chmod(){ :; }
+    DSM_ROOT="${TMP_DIR}/agent-config-root"
+    DSM_NODE_ROLE="controller"
+    DSM_SERVICE_USER="capivara"
+    DSM_SERVICE_GROUP="capivara"
+    STEAMCMD_ROOT="${DSM_ROOT}/tools/steamcmd"
+    mkdir -p "${DSM_ROOT}/config"
+    printf 'DSM_NODE_ID=""\nDSM_NODE_ROLE=""\nAGENT_ID=""\n' \
+        >"${DSM_ROOT}/config/agent.conf"
+    write_agent_config
+    grep -q '^DSM_NODE_ID="horizon-server"$' "${DSM_ROOT}/config/agent.conf" \
+        || fail "reinstall did not repair the local Node identity"
+    grep -q '^DSM_NODE_ROLE="controller"$' "${DSM_ROOT}/config/agent.conf" \
+        || fail "reinstall did not repair the local Node role"
+    grep -q '^AGENT_ID=""$' "${DSM_ROOT}/config/agent.conf" \
+        || fail "Controller reinstall changed the Agent identity"
+)
+(
     id(){ case "$1" in -un) printf 'node1\n';; -gn) printf 'node1\n';; *) return 1;; esac; }
     source "${CORE_INSTALLER}"; is_interactive(){ return 0; }; INSTALL_MODE="remote"; INSTALL_MODE_EXPLICIT=0
     select_installation_source >/dev/null <<<"1"; [[ "${INSTALL_MODE}" == "local" ]] || fail "interactive local source was not selected"

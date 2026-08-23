@@ -1890,6 +1890,11 @@ EOF_AGENT
     else
         set_shell_config_value \
             "${config}" \
+            DSM_NODE_ID \
+            "$(hostname)"
+
+        set_shell_config_value \
+            "${config}" \
             DSM_NODE_ROLE \
             "${DSM_NODE_ROLE}"
 
