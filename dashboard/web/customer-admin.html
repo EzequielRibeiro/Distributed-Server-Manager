@@ -1,9 +1,26 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cliente | Capivara DSM</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/catalog-v2.css"><link rel="stylesheet" href="/customer-admin.css"></head>
-<body><main class="dashboard customer-page customer-admin-page">
-<section class="card catalog-v2-card"><div class="card-title"><div><p class="catalog-v2-subtitle">CLIENTE</p><h1 id="detail-name">Carregando…</h1><p id="detail-meta"></p></div><div class="catalog-v2-actions"><a class="customer-action-link" href="/customers.html">Clientes</a><a class="customer-action-link" href="/index.html">Dashboard</a></div></div></section>
-<section class="card catalog-v2-card"><div class="card-title"><div><h2>Dados cadastrais</h2><p>Identificação e situação do Customer.</p></div></div><div id="detail-data" class="customer-admin-grid"></div></section>
-<section class="card catalog-v2-card"><div class="card-title"><div><h2>Usuários do cliente</h2><p>Owners, managers e members vinculados a este Customer.</p></div></div><div id="detail-users" class="customer-admin-results"></div><div id="password-result" class="customer-admin-notice"></div></section>
-<section class="card catalog-v2-card"><div class="card-title"><div><h2>Contratos</h2><p>Crie quantos contratos forem necessários para este cliente.</p></div></div><div class="catalog-v2-form"><label>Jogo<input id="contract-game" placeholder="dayz"></label><label>Limite de instâncias<input id="contract-limit" type="number" min="1" value="1"></label><label>ID opcional<input id="contract-id" placeholder="Gerado automaticamente"></label><label>Validade opcional<input id="contract-ends" type="datetime-local"></label></div><div class="catalog-v2-actions"><button id="contract-create" class="catalog-v2-primary">Criar contrato</button></div><div id="contract-result" class="customer-admin-notice"></div><div id="detail-contracts" class="customer-admin-results"></div></section>
-<section class="card catalog-v2-card"><div class="card-title"><div><h2>Instâncias</h2><p>Visão vinculada ao cliente. A administração operacional completa será consolidada nesta área nas próximas etapas.</p></div></div><div id="detail-instances" class="customer-admin-results"></div></section>
-</main><script src="/customer-admin.js"></script></body></html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Cliente | Capivara DSM</title>
+  <link rel="stylesheet" href="/dashboard-home-v3.css">
+  <link rel="stylesheet" href="/catalog-v2.css">
+  <link rel="stylesheet" href="/customer-admin.css">
+</head>
+<body class="cap-home cap-admin-shell">
+<div id="sidebar-component"></div>
+<main class="cap-home-main customer-admin-page">
+  <header class="cap-home-topbar cap-admin-topbar">
+    <div class="cap-home-title"><button id="admin-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1 id="detail-name">Carregando…</h1><p id="detail-meta">Cliente</p></div></div>
+    <div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="admin-user-name">—</strong><span id="admin-user-role">—</span></div></div>
+  </header>
+  <div class="cap-home-content cap-admin-content">
+    <section class="card catalog-v2-card cap-admin-card"><div class="card-title"><div><h2>Dados cadastrais</h2><p>Identificação e situação do Customer.</p></div></div><div id="detail-data" class="customer-admin-grid"></div></section>
+    <section class="card catalog-v2-card cap-admin-card"><div class="card-title"><div><h2>Usuários do cliente</h2><p>Owners, managers e members vinculados a este Customer.</p></div></div><div id="detail-users" class="customer-admin-results"></div><div id="password-result" class="customer-admin-notice"></div></section>
+    <section class="card catalog-v2-card cap-admin-card" id="contracts"><div class="card-title"><div><h2>Contratos</h2><p>Crie e acompanhe os contratos deste cliente.</p></div></div><div class="catalog-v2-form"><label>Jogo<input id="contract-game" placeholder="game-id"></label><label>Limite de instâncias<input id="contract-limit" type="number" min="1" value="1"></label><label>ID opcional<input id="contract-id" placeholder="Gerado automaticamente"></label><label>Validade opcional<input id="contract-ends" type="datetime-local"></label></div><div class="catalog-v2-actions"><button id="contract-create" class="catalog-v2-primary">Criar contrato</button></div><div id="contract-result" class="customer-admin-notice"></div><div id="detail-contracts" class="customer-admin-results"></div></section>
+    <section class="card catalog-v2-card cap-admin-card"><div class="card-title"><div><h2>Instâncias</h2><p>Instâncias vinculadas a este cliente e seus respectivos Agents e contratos.</p></div></div><div id="detail-instances" class="customer-admin-results"></div></section>
+  </div>
+  <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
+</main>
+<script src="/customer-admin.js"></script>
+</body></html>
