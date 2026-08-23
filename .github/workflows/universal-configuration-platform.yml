@@ -6,9 +6,7 @@ on:
       - 'core/configuration_platform.py'
       - 'database/configuration_repository.py'
       - 'database/configuration_cli.py'
-      - 'database/migrations/**'
-      - 'database/migrations_mysql/**'
-      - 'database/migrations_postgresql/**'
+      - 'database/schemas/**'
       - 'agents/linux/runtime/configuration_client.py'
       - 'agents/linux/runtime/agent.py'
       - 'dashboard/agent_heartbeat_api.py'
@@ -26,9 +24,7 @@ on:
       - 'core/configuration_platform.py'
       - 'database/configuration_repository.py'
       - 'database/configuration_cli.py'
-      - 'database/migrations/**'
-      - 'database/migrations_mysql/**'
-      - 'database/migrations_postgresql/**'
+      - 'database/schemas/**'
       - 'agents/linux/runtime/configuration_client.py'
       - 'agents/linux/runtime/agent.py'
       - 'dashboard/agent_heartbeat_api.py'
@@ -66,11 +62,13 @@ jobs:
             dashboard/server_part13.py \
             tests/universal_configuration_platform_test.py \
             tests/universal_configuration_http_test.py
-      - name: Validate migration parity
+      - name: Validate consolidated schema parity
         run: |
-          for directory in migrations migrations_mysql migrations_postgresql; do
-            file="database/${directory}/033_universal_configuration.sql"
+          set -euo pipefail
+          for schema in sqlite postgresql mysql mariadb; do
+            file="database/schemas/${schema}.sql"
             test -f "$file"
+            grep -F -- '-- source: 033_universal_configuration.sql' "$file"
             grep -F 'CREATE TABLE configurations' "$file"
             grep -F 'CREATE TABLE configuration_revisions' "$file"
             grep -F 'CREATE TABLE agent_configuration_state' "$file"
