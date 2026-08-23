@@ -12,10 +12,30 @@
         if (options.body) headers["Content-Type"] = "application/json";
         const response = await fetch(path, { ...options, headers });
         if (response.status === 401) { sessionStorage.removeItem("dsm_auth"); location.href = "/login.html"; throw new Error("Sessão encerrada"); }
-        if (response.status === 403) { location.href = "/index.html"; throw new Error("Acesso exclusivo do administrador"); }
+        if (response.status === 403) { location.href = "/dashboard-v3.html"; throw new Error("Acesso exclusivo do administrador"); }
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
         return data;
+    }
+
+    async function loadAdminShell() {
+        const host = byId("sidebar-component");
+        if (host) {
+            const response = await fetch("/components/sidebar-v3.html");
+            host.innerHTML = await response.text();
+            host.querySelectorAll("nav a").forEach(a => a.classList.toggle("active", a.getAttribute("href") === "users.html"));
+            const logout = byId("btn-logout");
+            if (logout) logout.onclick = () => { sessionStorage.clear(); location.replace("/login.html"); };
+        }
+        const who = await request("/api/whoami");
+        byId("admin-user-name").textContent = who.username || "—";
+        byId("admin-user-role").textContent = who.role || "—";
+        document.querySelectorAll(".admin-only").forEach(x => x.style.display = who.role === "admin" ? "" : "none");
+        document.querySelectorAll(".agent-manager-only").forEach(x => x.style.display = ["admin", "controller"].includes(who.role) ? "" : "none");
+        document.querySelectorAll(".instance-manager-only").forEach(x => x.style.display = ["admin", "controller", "operator"].includes(who.role) ? "" : "none");
+        const toggle = byId("admin-menu-toggle");
+        if (toggle) toggle.onclick = () => { if (innerWidth <= 900) document.body.classList.toggle("sidebar-open"); else { document.body.classList.toggle("sidebar-collapsed"); localStorage.setItem("cap_sidebar_collapsed", document.body.classList.contains("sidebar-collapsed") ? "1" : "0"); } };
+        if (localStorage.getItem("cap_sidebar_collapsed") === "1" && innerWidth > 900) document.body.classList.add("sidebar-collapsed");
     }
 
     function syncScope() {
@@ -72,9 +92,13 @@
         byId("users-message").textContent = "Usuário removido."; resetForm(); await load();
     }
 
-    byId("user-role").addEventListener("change", syncScope);
-    byId("user-save").addEventListener("click", () => save().catch(error => { byId("users-message").textContent = error.message; }));
-    byId("user-cancel").addEventListener("click", resetForm);
-    byId("users-logout").addEventListener("click", () => { sessionStorage.removeItem("dsm_auth"); location.href = "/login.html"; });
-    if (!auth) location.href = "/login.html"; else load().catch(error => { byId("users-message").textContent = error.message; });
+    async function init() {
+        if (!auth) { location.href = "/login.html"; return; }
+        await loadAdminShell();
+        byId("user-role").addEventListener("change", syncScope);
+        byId("user-save").addEventListener("click", () => save().catch(error => { byId("users-message").textContent = error.message; }));
+        byId("user-cancel").addEventListener("click", resetForm);
+        await load();
+    }
+    document.addEventListener("DOMContentLoaded", () => init().catch(error => { byId("users-message").textContent = error.message; }));
 })();
