@@ -7,14 +7,119 @@
 
     async function request(path) {
         const response = await fetch(`${API}${path}`, {
-            headers: { Authorization: `Basic ${auth()}`, Accept: "application/json" }
+            headers: { Authorization: `Basic ${auth()}`, Accept: "application/json" },
+            cache: "no-store"
         });
+        if (response.status === 401) {
+            sessionStorage.clear();
+            window.location.replace("/login.html");
+            throw new Error("authentication required");
+        }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.json();
     }
 
     function normalizeState(value) {
         return String(value || "unknown").trim().toLowerCase();
+    }
+
+    function ensureDashboardStyles() {
+        if (document.querySelector('link[href="/dashboard-home-v3.css"]')) return;
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = "/dashboard-home-v3.css";
+        document.head.appendChild(link);
+    }
+
+    function ensureV3Topbar() {
+        const main = document.querySelector(".agents-main");
+        if (!main || document.getElementById("infra-v3-topbar")) return;
+        const topbar = document.createElement("header");
+        topbar.id = "infra-v3-topbar";
+        topbar.className = "infra-v3-topbar";
+        topbar.innerHTML = `
+            <div class="infra-v3-topbar-title">
+                <button id="infra-v3-menu" type="button" aria-label="Recolher menu">☰</button>
+                <div><strong>Infraestrutura</strong><span>Regions · Datacenters · Agents · Placement</span></div>
+            </div>
+            <div class="infra-v3-session">
+                <span class="infra-v3-controller"><i></i> Controller Online</span>
+                <div><strong id="infra-v3-user">—</strong><small id="infra-v3-role">—</small></div>
+            </div>`;
+        main.before(topbar);
+    }
+
+    function applyRoleVisibility(user) {
+        const role = String(user?.role || "");
+        document.querySelectorAll(".admin-only").forEach(element => {
+            element.style.display = role === "admin" ? "" : "none";
+        });
+        document.querySelectorAll(".agent-manager-only").forEach(element => {
+            element.style.display = ["admin", "controller"].includes(role) ? "" : "none";
+        });
+        const name = document.getElementById("infra-v3-user");
+        const roleLabel = document.getElementById("infra-v3-role");
+        if (name) name.textContent = user?.username || "Usuário";
+        if (roleLabel) roleLabel.textContent = role || "—";
+        const current = document.getElementById("current-user");
+        if (current) current.textContent = user?.username || "Sessão ativa";
+    }
+
+    function activateInfrastructureNav() {
+        document.querySelectorAll(".cap-sidebar-v3 a").forEach(link => link.classList.remove("active"));
+        const candidates = [...document.querySelectorAll(".cap-sidebar-v3 a")];
+        const agentLink = candidates.find(link => link.textContent.trim() === "Agents") ||
+            candidates.find(link => String(link.getAttribute("href") || "").includes("agents.html"));
+        if (agentLink) agentLink.classList.add("active");
+    }
+
+    async function loadV3Sidebar() {
+        const target = document.getElementById("sidebar-component");
+        if (!target) return;
+        const response = await fetch("/components/sidebar-v3.html", {
+            headers: auth() ? { Authorization: `Basic ${auth()}` } : {},
+            cache: "no-store"
+        });
+        if (!response.ok) throw new Error(`sidebar HTTP ${response.status}`);
+        target.innerHTML = await response.text();
+        activateInfrastructureNav();
+        const logout = document.getElementById("btn-logout");
+        if (logout) logout.onclick = () => {
+            sessionStorage.clear();
+            window.location.replace("/login.html");
+        };
+    }
+
+    function wireV3Shell() {
+        const menu = document.getElementById("infra-v3-menu");
+        if (!menu || menu.dataset.bound) return;
+        menu.dataset.bound = "1";
+        menu.addEventListener("click", () => {
+            if (window.innerWidth <= 760) {
+                document.body.classList.toggle("sidebar-open");
+            } else {
+                document.body.classList.toggle("cap-sidebar-collapsed");
+            }
+        });
+        document.addEventListener("click", event => {
+            if (window.innerWidth > 760 || !document.body.classList.contains("sidebar-open")) return;
+            if (event.target.closest("#sidebar-component") || event.target.closest("#infra-v3-menu")) return;
+            document.body.classList.remove("sidebar-open");
+        });
+    }
+
+    async function prepareV3Shell() {
+        document.body.classList.add("cap-home", "cap-infra-v3");
+        ensureDashboardStyles();
+        ensureV3Topbar();
+        wireV3Shell();
+        try {
+            await loadV3Sidebar();
+            const user = await request("/whoami");
+            applyRoleVisibility(user);
+        } catch (error) {
+            console.warn("[Capivara][InfrastructureV3] shell:", error);
+        }
     }
 
     function collectDatacenters(value, result = new Map()) {
@@ -138,7 +243,7 @@
                 request("/infrastructure?active_only=true").catch(() => null)
             ]);
             const agents = Array.isArray(agentsData) ? agentsData : (agentsData.agents || []);
-            const online = agents.filter(agent => ["active", "online"].includes(normalizeState(agent.status))).length;
+            const online = agents.filter(agent => ["active", "online", "healthy"].includes(normalizeState(agent.health_status || agent.health || agent.status))).length;
             const instances = agents.reduce((total, agent) => total + Number(agent.instance_count || 0), 0);
             const dcs = collectDatacenters(topology).size;
             const values = {
@@ -163,7 +268,8 @@
         decorateCards();
     }
 
-    function initialize() {
+    async function initialize() {
+        await prepareV3Shell();
         ensureSummaryShell();
         wireInstallToggle();
         watchAgentList();

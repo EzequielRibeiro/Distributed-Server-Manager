@@ -1,4 +1,4 @@
-/* Capivara DSM — Infrastructure UI v2 */
+/* Capivara DSM — Infrastructure UI v2 + Dashboard v3 shell */
 :root {
     --infra-bg: #07111d;
     --infra-panel: #0d1928;
@@ -190,6 +190,108 @@ body { background: var(--infra-bg); color: var(--infra-text); }
 
 .agents-error { color:#ffc0bd; background:rgba(239,83,80,.09); border:1px solid rgba(239,83,80,.18); }
 
+/* Dashboard v3 shell for the infrastructure workspace. */
+body.cap-infra-v3 {
+    --sidebar: 236px;
+    padding-left: 0 !important;
+    background: #0b111b !important;
+}
+.cap-infra-v3 #sidebar-component {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: var(--sidebar);
+    z-index: 80;
+}
+.cap-infra-v3 .infra-v3-topbar {
+    min-height: 70px;
+    margin-left: var(--sidebar);
+    padding: 0 22px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    position: sticky;
+    top: 0;
+    z-index: 70;
+    border-bottom: 1px solid #1c2737;
+    background: #0e1622;
+}
+.infra-v3-topbar-title,
+.infra-v3-session,
+.infra-v3-controller {
+    display: flex;
+    align-items: center;
+}
+.infra-v3-topbar-title { gap: 14px; }
+.infra-v3-topbar-title button {
+    border: 0;
+    background: transparent;
+    color: #8d9aaf;
+    font-size: 23px;
+    cursor: pointer;
+}
+.infra-v3-topbar-title strong { display: block; font-size: 18px; }
+.infra-v3-topbar-title span { display: block; margin-top: 2px; color: #7f8da2; font-size: 11px; }
+.infra-v3-session { gap: 18px; color: #cbd5e1; }
+.infra-v3-session > div { padding-left: 17px; border-left: 1px solid #263246; }
+.infra-v3-session strong,
+.infra-v3-session small { display: block; }
+.infra-v3-session small { margin-top: 2px; color: #8d9aaf; font-size: 11px; }
+.infra-v3-controller { gap: 8px; font-size: 12px; }
+.infra-v3-controller i {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #39d06f;
+    box-shadow: 0 0 9px rgba(57,208,111,.38);
+}
+.cap-infra-v3 .agents-main {
+    width: auto !important;
+    max-width: 1800px !important;
+    margin: 0 auto 0 var(--sidebar) !important;
+    padding: 22px 24px 40px !important;
+}
+.cap-infra-v3 .agents-header {
+    min-height: 0;
+    margin: 0 0 18px;
+    padding: 0;
+    position: static;
+    background: transparent;
+    backdrop-filter: none;
+    border: 0;
+}
+.cap-infra-v3 .agents-header h1 { font-size: 22px; }
+.cap-infra-v3 .agents-header p { max-width: 860px; line-height: 1.55; }
+.cap-infra-v3 .infra-v2-stat,
+.cap-infra-v3 .infra-v2-toolbar,
+.cap-infra-v3 .agent-card,
+.cap-infra-v3 .agent-detail,
+.cap-infra-v3 .range-card {
+    border-color: #263246;
+    background: linear-gradient(180deg, #172233, #121b29);
+    box-shadow: 0 7px 24px rgba(0,0,0,.12);
+}
+.cap-infra-v3 .infra-v2-stat { border-radius: 6px; min-height: 112px; }
+.cap-infra-v3 .infra-v2-stat span { color: #9aa8bb; }
+.cap-infra-v3 .infra-v2-stat strong { font-size: 28px; }
+.cap-infra-v3 .infra-v2-toolbar { border-radius: 6px; background: #111b2a; }
+.cap-infra-v3 .infra-v2-toolbar button.active {
+    color: #dcecff;
+    border-color: #315d98;
+    background: #1d3e6f;
+}
+.cap-infra-v3 .agent-card { border-radius: 7px; }
+.cap-infra-v3 .agent-card:hover { border-color: #3b82f6; }
+.cap-infra-v3 #add-agent-focus { background: #315fae; color: #f1f6ff; border-color: #4777ca; }
+.cap-infra-v3 #refresh-agents { background: #111b2a; border-color: #263246; }
+.cap-infra-v3.cap-sidebar-collapsed { --sidebar: 68px; }
+.cap-infra-v3.cap-sidebar-collapsed .cap-sidebar-v3 .cap-brand span,
+.cap-infra-v3.cap-sidebar-collapsed .cap-sidebar-v3 .cap-brand strong,
+.cap-infra-v3.cap-sidebar-collapsed .cap-sidebar-v3 .cap-nav-group-title,
+.cap-infra-v3.cap-sidebar-collapsed .cap-sidebar-v3 a span:not(.cap-nav-icon),
+.cap-infra-v3.cap-sidebar-collapsed .cap-sidebar-session { display: none; }
+.cap-infra-v3.cap-sidebar-collapsed .cap-sidebar-v3 a { justify-content: center; }
+
 @media(max-width:1100px) {
     .infra-v2-summary { grid-template-columns:repeat(2,1fr); }
     .range-form, #agent-ssh-options { grid-template-columns:1fr; }
@@ -200,8 +302,23 @@ body { background: var(--infra-bg); color: var(--infra-text); }
     .infra-v2-toolbar { flex-wrap:wrap; }
     .infra-v2-toolbar input { width:100%; }
 }
+@media(max-width:760px) {
+    body.cap-infra-v3 { --sidebar: 0px; }
+    .cap-infra-v3 #sidebar-component {
+        width: 250px;
+        transform: translateX(-100%);
+        transition: transform .2s ease;
+    }
+    .cap-infra-v3.sidebar-open #sidebar-component { transform: translateX(0); }
+    .cap-infra-v3 .infra-v3-topbar { margin-left: 0; padding: 0 14px; }
+    .cap-infra-v3 .agents-main { margin-left: 0 !important; padding: 16px 14px 30px !important; }
+    .cap-infra-v3 .infra-v3-controller { display: none; }
+    .cap-infra-v3 .agents-header { margin: 0 0 14px; padding: 0; }
+}
 @media(max-width:620px) {
     .infra-v2-summary { grid-template-columns:1fr 1fr; }
     .agents-header-actions { width:100%; }
     .agents-header-actions button { flex:1; }
+    .infra-v3-topbar-title span { display: none; }
+    .infra-v3-session > div { display: none; }
 }
