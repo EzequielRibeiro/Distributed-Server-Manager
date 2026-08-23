@@ -8,6 +8,7 @@ from typing import Any
 
 from agent_port_availability import effective_port_summary
 from agent_port_repository import AgentPortRepository
+from agent_runtime_repository import AgentRuntimeRepository, AgentRuntimeNotFound
 from alert_repository import AlertSession, dialect_for_backend
 
 
@@ -85,10 +86,24 @@ def list_agents_for_user(user, backend):
         raise PermissionError("authentication required")
     repository = _repository(backend)
     if user.get("role") == "admin":
-        return _json_ready(repository.list_agents())
-    if user.get("role") == "controller" and user.get("scope_id"):
-        return _json_ready(repository.list_agents(user["scope_id"]))
-    raise PermissionError("agent administration is not permitted")
+        agents = repository.list_agents()
+    elif user.get("role") == "controller" and user.get("scope_id"):
+        agents = repository.list_agents(user["scope_id"])
+    else:
+        raise PermissionError("agent administration is not permitted")
+    runtime = AgentRuntimeRepository(backend)
+    runtime.refresh_health(controller_id=user.get("scope_id") if user.get("role") == "controller" else None)
+    enriched = []
+    for agent in agents:
+        item = dict(agent)
+        try:
+            snapshot = runtime.snapshot(str(item["id"]), refresh_health=False)
+        except AgentRuntimeNotFound:
+            snapshot = {}
+        item["health_status"] = snapshot.get("health_status") or "offline"
+        item["last_seen"] = snapshot.get("last_seen")
+        enriched.append(item)
+    return _json_ready(enriched)
 
 
 def agent_ports_for_user(user, backend, agent_id):

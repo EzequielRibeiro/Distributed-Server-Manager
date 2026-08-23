@@ -174,7 +174,7 @@ The **Adicionar Agent** panel becomes a small installation wizard containing:
 - managed port protocol/start/end;
 - installation progress.
 
-When SSH is selected, Windows is disabled because the first remote bootstrap implementation is Linux/OpenSSH only.
+When SSH is selected, Windows is disabled; when WinRM is selected, Linux is disabled. Windows remote bootstrap uses the prepared HTTPS certificate profile.
 
 ## Initial implementation trade-off
 
@@ -203,7 +203,7 @@ Migration 025 is intentionally left available for the already-open Agent game-da
 
 This first version does not add:
 
-- Windows remote bootstrap;
+- Windows remote bootstrap is implemented by the WinRM HTTPS flow documented in `windows-winrm-remote-deploy.md`;
 - SSH password storage;
 - private-key upload through the Dashboard;
 - host-key bypass;

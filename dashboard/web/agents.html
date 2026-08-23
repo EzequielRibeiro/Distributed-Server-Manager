@@ -25,7 +25,7 @@
 
     <section id="add-agent" class="agent-detail add-agent-panel agent-manager-only">
         <h2>Adicionar Agent</h2>
-        <p>Instale manualmente por instrução ou permita que o Controller faça o bootstrap Linux via SSH. A configuração administrativa pode ser preparada antes do primeiro heartbeat.</p>
+        <p>Instale manualmente ou permita que o Controller faça o bootstrap Linux via SSH e Windows via WinRM HTTPS.</p>
         <form id="agent-install-form" class="range-form">
             <fieldset>
                 <legend>Sistema</legend>
@@ -37,6 +37,7 @@
                 <label class="inline-option"><input type="radio" name="agent-method" value="github" checked> Gerar instrução · GitHub Release</label>
                 <label class="inline-option"><input type="radio" name="agent-method" value="local"> Gerar instrução · Pacote local</label>
                 <label class="inline-option"><input type="radio" name="agent-method" value="ssh"> Instalar remotamente via SSH</label>
+                <label class="inline-option"><input type="radio" name="agent-method" value="winrm"> Instalar Windows via WinRM</label>
             </fieldset>
 
             <div id="agent-ssh-options" class="range-form" hidden>
@@ -54,6 +55,16 @@
                     <input id="agent-controller-url" type="url" placeholder="https://controller.exemplo">
                 </label>
                 <p class="location-safety-note">O Dashboard não aceita senha SSH. O Controller usa sua chave/ssh-agent já configurada, preserva a verificação de host key e exige sudo não interativo no host remoto.</p>
+            </div>
+            <div id="agent-winrm-options" class="range-form" hidden>
+                <h3>Bootstrap WinRM pelo Controller</h3>
+                <label>Host ou IP do Agent Windows
+                    <input id="agent-winrm-host" type="text" placeholder="node1.exemplo.local" autocomplete="off">
+                </label>
+                <label>URL do Controller alcançável pelo Agent
+                    <input id="agent-winrm-controller-url" type="url" placeholder="https://controller.exemplo">
+                </label>
+                <p class="location-safety-note">A senha não é enviada à Dashboard. Prepare este host uma vez com <code>sudo cap agent winrm-prepare Administrator@HOST</code>; depois a autenticação usa certificado via HTTPS.</p>
             </div>
 
             <label id="agent-controller-wrapper" hidden>Controller

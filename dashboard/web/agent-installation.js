@@ -135,10 +135,12 @@
     function updateMethodUi() {
         const method = selectedMethod();
         const ssh = method === "ssh";
+        const winrm = method === "winrm";
         const linux = document.querySelector('input[name="agent-platform"][value="linux"]');
         const windows = document.querySelector('input[name="agent-platform"][value="windows"]');
         const button = document.getElementById("generate-agent-install");
         document.getElementById("agent-ssh-options").hidden = !ssh;
+        document.getElementById("agent-winrm-options").hidden = !winrm;
         const releaseOptions = document.getElementById("agent-release-options");
         const releaseSelect = document.getElementById("agent-release-tag");
         if (releaseOptions) releaseOptions.hidden = method === "local";
@@ -147,10 +149,15 @@
             releaseSelect.disabled = method === "local";
         }
         windows.disabled = ssh;
+        linux.disabled = winrm;
         if (ssh) linux.checked = true;
-        button.textContent = ssh ? "Instalar Agent via SSH" : "Gerar instalação";
+        if (winrm) windows.checked = true;
+        button.textContent = ssh ? "Instalar Agent via SSH" : winrm ? "Instalar Agent via WinRM" : "Gerar instalação";
         if (ssh && !document.getElementById("agent-controller-url").value) {
             document.getElementById("agent-controller-url").value = window.location.origin;
+        }
+        if (winrm && !document.getElementById("agent-winrm-controller-url").value) {
+            document.getElementById("agent-winrm-controller-url").value = window.location.origin;
         }
     }
 
@@ -262,9 +269,8 @@
             region_id: regionId,
             datacenter_id: datacenterId,
             controller_id: controllerId,
-            controller_url: method === "ssh"
-                ? document.getElementById("agent-controller-url").value
-                : window.location.origin,
+            controller_url: method === "ssh" ? document.getElementById("agent-controller-url").value
+                : method === "winrm" ? document.getElementById("agent-winrm-controller-url").value : window.location.origin,
             agent_name: document.getElementById("agent-preconfig-name").value,
             port_protocol: document.getElementById("agent-preconfig-protocol").value,
             port_start: portStart,
@@ -275,12 +281,13 @@
             payload.ssh_user = document.getElementById("agent-ssh-user").value;
             payload.ssh_port = document.getElementById("agent-ssh-port").value;
         }
+        if (method === "winrm") payload.winrm_host = document.getElementById("agent-winrm-host").value;
 
         submit.disabled = true;
         submit.setAttribute("aria-busy", "true");
-        submit.textContent = method === "ssh" ? "Executando bootstrap SSH..." : "Gerando...";
+        submit.textContent = method === "ssh" ? "Executando bootstrap SSH..." : method === "winrm" ? "Executando bootstrap WinRM..." : "Gerando...";
         installationFeedback(
-            method === "ssh"
+            method === "ssh" || method === "winrm"
                 ? `Conectando ao Agent e preparando ${releaseTag}...`
                 : "Preparando a instalação...",
             "working"
@@ -310,13 +317,14 @@
                 copy.hidden = true;
                 remoteStatus.hidden = false;
                 const remote = result.remote_bootstrap || {};
-                remoteStatus.textContent = `Bootstrap SSH de ${remote.release_tag || result.release_tag} concluído em ${remote.host || payload.ssh_host}. Aguardando enrollment e heartbeat do Agent.`;
+                const transport = method === "winrm" ? "WinRM" : "SSH";
+                remoteStatus.textContent = `Bootstrap ${transport} de ${remote.release_tag || result.release_tag} concluído em ${remote.host || payload.ssh_host || payload.winrm_host}. Aguardando enrollment e heartbeat do Agent.`;
             }
 
             renderPreconfiguration(result.preconfiguration);
             installationFeedback(
-                method === "ssh"
-                    ? "Bootstrap SSH concluído. Aguardando enrollment do Agent."
+                method === "ssh" || method === "winrm"
+                    ? `Bootstrap ${method === "winrm" ? "WinRM" : "SSH"} concluído. Aguardando enrollment do Agent.`
                     : "Instrução de instalação gerada.",
                 "success"
             );

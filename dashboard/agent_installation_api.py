@@ -22,6 +22,13 @@ from core.agent_ssh_deploy import (
     preflight_ssh,
     remote_agent_present,
 )
+from core.agent_winrm_deploy import (
+    WinRMDeployError,
+    bootstrap_windows_agent,
+    load_winrm_profile,
+    preflight_winrm,
+    remote_windows_agent_present,
+)
 
 
 def _role(user: dict[str, Any] | None) -> str:
@@ -166,6 +173,7 @@ def create_agent_installation_for_user(
     payload: dict[str, Any] | None,
     *,
     ssh_runner=None,
+    winrm_runner=None,
 ) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("payload must be an object")
@@ -179,16 +187,18 @@ def create_agent_installation_for_user(
 
     if platform not in {"linux", "windows"}:
         raise ValueError("unsupported Agent platform")
-    if method not in {"github", "local", "ssh"}:
+    if method not in {"github", "local", "ssh", "winrm"}:
         raise ValueError("unsupported installation method")
     if method == "ssh" and platform != "linux":
         raise ValueError("remote SSH installation currently supports Linux Agents only")
+    if method == "winrm" and platform != "windows":
+        raise ValueError("remote WinRM installation supports Windows Agents only")
     if not controller_url.startswith(("http://", "https://")):
         raise ValueError("controller_url must use http:// or https://")
 
     release = None
     release_tag = "local"
-    if method in {"github", "ssh"}:
+    if method in {"github", "ssh", "winrm"}:
         requested_release_tag = str(payload.get("release_tag") or "").strip()
         if requested_release_tag:
             release = resolve_agent_release(requested_release_tag, platform)
@@ -206,6 +216,22 @@ def create_agent_installation_for_user(
         ssh_options = _ssh_options(payload)
         bootstrap_timeout = _bootstrap_timeout(payload)
         ssh_preflight = _run_ssh_preflight(ssh_options, ssh_runner=ssh_runner)
+
+    winrm_options = None
+    winrm_preflight = None
+    if method == "winrm":
+        host = str(payload.get("winrm_host", "") or "").strip()
+        if not host:
+            raise ValueError("winrm_host is required for remote installation")
+        if payload.get("password") not in (None, "") or payload.get("winrm_password") not in (None, ""):
+            raise ValueError("Windows passwords are not accepted by the Dashboard")
+        try:
+            winrm_options = load_winrm_profile(host)
+            winrm_preflight = preflight_winrm(winrm_options, runner=winrm_runner)
+            if remote_windows_agent_present(winrm_options, runner=winrm_runner):
+                raise ValueError("Capivara Agent already detected on Windows host; automatic reinstall was refused")
+        except WinRMDeployError as exc:
+            raise ValueError(str(exc)) from exc
 
     issued = AgentPairingRepository(backend).issue_token(
         controller_id=controller_id,
@@ -249,7 +275,7 @@ def create_agent_installation_for_user(
         )
     elif method == "local":
         instruction = _local_instruction(platform, controller_url, issued.token)
-    else:
+    elif method == "ssh":
         assert ssh_options is not None and bootstrap_timeout is not None
         try:
             _run_ssh_bootstrap(
@@ -270,6 +296,26 @@ def create_agent_installation_for_user(
             "ssh_port": ssh_options.ssh_port,
             "platform": ssh_preflight.get("platform") if ssh_preflight else "linux",
             "architecture": ssh_preflight.get("architecture") if ssh_preflight else None,
+            "release_tag": release_tag,
+        }
+    else:
+        assert winrm_options is not None
+        try:
+            bootstrap_windows_agent(
+                winrm_options,
+                controller_url=controller_url,
+                pairing_token=issued.token,
+                release_tag=release_tag,
+                runner=winrm_runner,
+            )
+        except Exception:
+            _expire_installation_token(backend, issued.token_id)
+            raise
+        remote_bootstrap = {
+            "state": "completed", "host": winrm_options.host,
+            "winrm_port": winrm_options.port, "transport": "winrm-https-certificate",
+            "platform": "windows",
+            "architecture": winrm_preflight.get("architecture") if winrm_preflight else None,
             "release_tag": release_tag,
         }
 

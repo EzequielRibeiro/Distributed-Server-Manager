@@ -455,7 +455,7 @@ Um teste de integração real poderá existir separadamente para ambientes prepa
 
 A primeira versão de `cap agent deploy` terá foco em Agents Linux via OpenSSH.
 
-Windows remoto poderá utilizar posteriormente outro transporte apropriado, como WinRM/OpenSSH, sem alterar o contrato lógico de enrollment do Agent.
+Windows remoto usa WinRM sobre HTTPS com certificado de cliente, sem alterar o contrato lógico de enrollment do Agent. Consulte `windows-winrm-remote-deploy.md`.
 
 
 ## Future work
@@ -470,7 +470,7 @@ Possíveis extensões futuras:
 - jump host / ProxyJump;
 - políticas de bastion;
 - rotação automática da chave SSH de bootstrap;
-- instalação Windows remota;
+- instalação Windows remota via WinRM HTTPS (implementada separadamente deste contrato SSH);
 - confirmação explícita de fingerprint via modo não interativo;
 - deploy por APIs de provedores cloud.
 

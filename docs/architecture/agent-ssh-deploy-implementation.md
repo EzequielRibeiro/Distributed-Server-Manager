@@ -58,7 +58,7 @@ No new functionality was added to `dashboard/server.py`.
 
 ## Explicit non-goals for v1
 
-- remote Windows deployment;
+- remote Windows deployment is provided by the separate WinRM HTTPS implementation;
 - password arguments;
 - automatic host-key bypass;
 - automatic reinstall of an existing Agent;

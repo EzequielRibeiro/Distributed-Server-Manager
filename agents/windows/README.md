@@ -1,5 +1,7 @@
 # Capivara DSM Windows Agent
 
+Instalação remota segura: consulte [o tutorial WinRM](../../docs/tutorial-instalacao-agent-windows-via-winrm.md).
+
 Estrutura:
 
 ```text

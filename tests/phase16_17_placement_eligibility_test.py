@@ -76,6 +76,17 @@ class Phase1617PlacementEligibilityTest(unittest.TestCase):
         self.assertEqual(udp["largest_contiguous_available"], 999)
         self.assertEqual(summary["observed_conflict_count"], 1)
 
+    def test_effective_summary_exposes_derived_offline_health(self):
+        repository = AgentRuntimeRepository(self.backend)
+        from datetime import datetime, timedelta, timezone
+        observed = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+        repository.heartbeat(self.agent_id, observed_at=observed)
+        summary = effective_port_summary(self.backend, self.agent_id)
+        # The fixed historical heartbeat is stale relative to the current test run.
+        self.assertEqual(summary["agent"]["status"], "active")
+        self.assertEqual(summary["agent"]["health_status"], "offline")
+        self.assertEqual(summary["agent"]["last_seen"], observed.isoformat().replace("+00:00", "Z"))
+
     def test_steam_native_runtime_requires_catalog_declared_infrastructure(self):
         requirements = requirements_for_instance(game_id="dayz", runtime_id="dayz.stable")
         self.assertEqual(requirements.capabilities, frozenset({"native-linux", "steamcmd"}))

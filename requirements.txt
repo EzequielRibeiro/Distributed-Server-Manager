@@ -1,6 +1,7 @@
 # DSM Dashboard Python Requirements
-# O Dashboard utiliza apenas bibliotecas padrão do Python 3.9+
-# Dashboard uses only Python 3.9+ standard libraries
+# Dependência opcional do Controller para instalação remota de Agents Windows.
+# Recursos que não usam WinRM continuam baseados apenas na biblioteca padrão.
+pywinrm>=0.4.3,<0.6
 
 # Requisito Mínimo: Python 3.9
 # Minimum Requirement: Python 3.9

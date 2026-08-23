@@ -37,6 +37,7 @@
                 <label class="inline-option"><input type="radio" name="agent-method" value="github" checked> Gerar instrução · GitHub Release</label>
                 <label class="inline-option"><input type="radio" name="agent-method" value="local"> Gerar instrução · Pacote local</label>
                 <label class="inline-option"><input type="radio" name="agent-method" value="ssh"> Instalar remotamente via SSH</label>
+                <label class="inline-option"><input type="radio" name="agent-method" value="winrm"> Instalar Windows via WinRM</label>
             </fieldset>
 
             <div id="agent-ssh-options" class="range-form" hidden>
@@ -46,6 +47,16 @@
                 <label>Porta SSH <input id="agent-ssh-port" type="number" min="1" max="65535" value="22"></label>
                 <label>URL do Controller alcançável pelo Agent <input id="agent-controller-url" type="url" placeholder="https://controller.exemplo"></label>
                 <p class="location-safety-note">O Dashboard não aceita senha SSH. O Controller usa sua chave/ssh-agent já configurada, preserva a verificação de host key e exige sudo não interativo no host remoto.</p>
+            </div>
+            <div id="agent-winrm-options" class="range-form" hidden>
+                <h3>Bootstrap WinRM pelo Controller</h3>
+                <label>Host ou IP do Agent Windows
+                    <input id="agent-winrm-host" type="text" placeholder="node1.exemplo.local" autocomplete="off">
+                </label>
+                <label>URL do Controller alcançável pelo Agent
+                    <input id="agent-winrm-controller-url" type="url" placeholder="https://controller.exemplo">
+                </label>
+                <p class="location-safety-note">Prepare uma vez com <code>sudo cap agent winrm-prepare Administrator@HOST</code>. A Dashboard usa certificado e nunca recebe a senha.</p>
             </div>
 
             <label id="agent-controller-wrapper" hidden>Controller <select id="agent-install-controller"></select></label>

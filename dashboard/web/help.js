@@ -6,6 +6,20 @@ const materials = [
     {
         category: "agents",
         tag: "Tutorial",
+        title: "Instalar um Agent Windows remotamente via WinRM",
+        description: "Prepare autenticação por certificado uma vez e instale o Agent Windows pela Dashboard sem armazenar senha.",
+        keywords: "windows winrm powershell certificado https agent instalação remota WINRM_READY",
+        content: `
+            <h3>Preparação única no Controller</h3>
+            <pre>sudo cap agent winrm-prepare Administrator@node1.exemplo.local</pre>
+            <p>A senha é usada somente durante a preparação. Prossiga quando aparecer <code>WINRM_READY</code>.</p>
+            <h3>Instalação</h3>
+            <p>Abra <strong>Infraestrutura → Agents → Adicionar Agent</strong>, selecione <strong>Windows</strong> e <strong>Instalar Windows via WinRM</strong>.</p>
+            <p><a href="${HELP_REPOSITORY}docs/tutorial-instalacao-agent-windows-via-winrm.md" target="_blank" rel="noopener">Abrir tutorial completo no GitHub</a></p>`
+    },
+    {
+        category: "agents",
+        tag: "Tutorial",
         title: "Instalar um Agent Linux remotamente via SSH",
         description: "Prepare automaticamente a chave da Dashboard, o acesso ao Agent e o sudo restrito necessário ao bootstrap.",
         keywords: "ssh ssh-prepare chave publica publickey sudo capivara mine controller agent datacenter host key permission denied SSH_READY",

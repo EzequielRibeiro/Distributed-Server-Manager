@@ -256,7 +256,7 @@ function agentCard(agent) {
     card.setAttribute("aria-label", `Abrir informações do Agent ${agent.name || agent.id}`);
     card.innerHTML = `
         <h2>${agent.name || agent.id}</h2>
-        <div class="agent-status">${agent.status || "unknown"}</div>
+        <div class="agent-status">${agent.health_status || "offline"}</div>
         <p>Agent: ${agent.id || "—"}</p>
         <p>Node: ${agent.node_id || "—"}</p>
         <p>Instâncias: ${agent.instance_count || 0}</p>`;
@@ -331,7 +331,7 @@ function renderAgentSummary(agent) {
     }
 }
 
-async function loadAgent(agentId) {
+async function loadAgent(agentId, scrollToDetail = true) {
     if (!agentId) return;
     errorMessage();
     try {
@@ -370,7 +370,7 @@ async function loadAgent(agentId) {
             if (start) start.value = first.start_port;
             if (end) end.value = first.end_port;
         }
-        detail.scrollIntoView({behavior: "smooth", block: "start"});
+        if (scrollToDetail) detail.scrollIntoView({behavior: "smooth", block: "start"});
     } catch (error) {
         errorMessage(error.message);
     }
@@ -460,6 +460,11 @@ async function initialize() {
         await loadInfrastructure();
         renderDatacenters();
         await loadAgents();
+        window.setInterval(async () => {
+            if (document.hidden) return;
+            if (selectedAgent) await loadAgent(selectedAgent, false);
+            await loadAgents();
+        }, 15000);
     } catch (error) {
         errorMessage(error.message);
     }

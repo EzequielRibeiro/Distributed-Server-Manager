@@ -20,7 +20,9 @@ class Phase19WindowsAgentTest(unittest.TestCase):
    with zipfile.ZipFile(archive_one) as package:
     root=f"capivara-agent-windows-{version}/";manifest=json.loads(package.read(root+"manifest.json"));self.assertEqual(manifest["platform"],"windows");self.assertEqual(manifest["kind"],"CapivaraAgentPackage");required=set(manifest["required_files"])
     expected_runtime=("agent/runtime/agent.py","agent/runtime/instance_runtime.py","agent/runtime/runtime_spec.py","agent/runtime/runtime_materialization.py","agent/runtime/runtime_reconciler.py","agent/runtime/runtime_operations.py","agent/runtime/runtime_lock.py","agent/runtime/runtime_events.py","agent/runtime/runtime_health.py","agent/runtime/runtime_metrics.py","agent/runtime/provisioning_client.py","agent/runtime/provisioning_executor.py","agent/runtime/game_data_client.py","agent/runtime/game_data_executor.py","agent/runtime/configuration_client.py","agent/runtime/content_client.py","agent/runtime/backup_client.py","agent/runtime/broadcast_client.py","agent/runtime/adapters/windows_process.py","agent/runtime/adapters/windows_service.py","agent/runtime/profiles/dayz.py")
-    for path in ("install-agent.ps1","agent/common/identity.py","agent/updater/updater.py","service/register-task.ps1",*expected_runtime):
+    expected_files=["install-agent.ps1","agent/common/identity.py","agent/updater/updater.py","service/register-task.ps1",*expected_runtime]
+    if (ROOT/"agents/windows/installer/repair-agent.ps1").exists() and subprocess.run(["git","-C",str(ROOT),"cat-file","-e","HEAD:agents/windows/installer/repair-agent.ps1"],capture_output=True).returncode==0:expected_files.append("repair-agent.ps1")
+    for path in expected_files:
      self.assertIn(path,required);data=package.read(root+path);self.assertEqual(hashlib.sha256(data).hexdigest(),manifest["files"][path]["sha256"])
  def test_windows_and_linux_use_same_remote_protocol_paths(self):
   windows_runtime=(ROOT/"agents"/"windows"/"runtime"/"agent.py").read_text(encoding="utf-8");linux_runtime=(ROOT/"agents"/"linux"/"runtime"/"agent.py").read_text(encoding="utf-8")
