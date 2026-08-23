@@ -33,6 +33,18 @@ class ControllerCustomerInstanceSeparationTest(unittest.TestCase):
         self.assertIn('"Administrar instância"', script)
         self.assertIn('"/customer-instance.html?"', script)
 
+    def test_runtime_list_and_instance_files_keep_existing_access_guards(self):
+        server = (ROOT / "dashboard" / "server.py").read_text(encoding="utf-8")
+        runtime_list = server.index('if path == "/api/runtime/list":')
+        config = server.index('if path == "/api/instance/config":', runtime_list)
+        runtime_block = server[runtime_list:config]
+        self.assertIn('if user["role"] != "admin":', runtime_block)
+        self.assertIn("can_access_instance(", runtime_block)
+        self.assertIn("INSTANCE_ROOT", runtime_block)
+        config_end = server.index('if path in {', config)
+        config_block = server[config:config_end]
+        self.assertIn('has_instance_permission(user, instance, "game.files.read")', config_block)
+
     def test_instance_page_owns_runtime_content_files_backups_logs_and_events(self):
         html = (WEB / "customer-instance.html").read_text(encoding="utf-8")
         for view in ("overview", "logs", "events", "config", "files", "content", "backups", "danger"):
