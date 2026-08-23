@@ -3,58 +3,66 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Capivara DSM - Servidores</title>
-    <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="dashboard-ui-v2.css?v=2">
-    <link rel="stylesheet" href="dashboard-ui-v2-stage2.css?v=2">
-    <link rel="stylesheet" href="servers-v2.css?v=1">
+    <title>Capivara DSM - Instâncias</title>
+    <link rel="stylesheet" href="dashboard-home-v3.css">
+    <link rel="stylesheet" href="servers-v2.css?v=2">
 </head>
-<body>
+<body class="cap-home cap-servers-shell">
 <div id="sidebar-component"></div>
-<main class="cap-servers-page">
-    <header class="cap-servers-header">
-        <div>
-            <span class="cap-eyebrow">CAPIVARA DSM</span>
-            <h1>Servidores</h1>
-            <p>Visão operacional das instâncias publicadas pelo Runtime.</p>
+<main class="cap-home-main cap-servers-page">
+    <header class="cap-home-topbar cap-servers-topbar">
+        <div class="cap-home-title">
+            <button id="servers-menu-toggle" type="button" aria-label="Recolher menu">☰</button>
+            <div>
+                <h1>Instâncias</h1>
+                <p>Visão operacional dos servidores publicados pelo Runtime.</p>
+            </div>
         </div>
-        <div class="cap-servers-header-actions">
-            <label class="cap-server-search">
-                <span>⌕</span>
-                <input id="instance-search" type="search" placeholder="Buscar instância, jogo ou Agent">
-            </label>
-            <button id="refresh-instances" class="cap-btn cap-btn-secondary" type="button">Atualizar</button>
+        <div class="cap-top-status">
+            <div class="cap-controller-state"><i></i><span>Controller Online</span></div>
+            <div class="cap-user"><strong id="servers-user-name">—</strong><span id="servers-user-role">—</span></div>
         </div>
     </header>
 
-    <section class="cap-fleet-summary" aria-label="Resumo da infraestrutura">
-        <article><span>Instâncias</span><strong id="fleet-total">0</strong><small>publicadas</small></article>
-        <article><span>Online</span><strong id="fleet-online">0</strong><small>em execução</small></article>
-        <article><span>Offline</span><strong id="fleet-offline">0</strong><small>paradas</small></article>
-        <article><span>Agents</span><strong id="fleet-agents">0</strong><small>com instâncias</small></article>
-    </section>
-
-    <section class="cap-instance-section">
-        <div class="cap-section-title">
-            <div>
-                <h2>Visão Geral das Instâncias</h2>
-                <p id="instance-summary-text">Carregando instâncias...</p>
-            </div>
-            <div class="cap-filter-group" aria-label="Filtro de status">
-                <button class="cap-filter active" data-filter="all" type="button">Todas</button>
-                <button class="cap-filter" data-filter="online" type="button">Online</button>
-                <button class="cap-filter" data-filter="offline" type="button">Offline</button>
-                <button class="cap-filter" data-filter="attention" type="button">Atenção</button>
-            </div>
+    <div class="cap-home-content cap-servers-content">
+        <div class="cap-servers-toolbar">
+            <label class="cap-server-search">
+                <span>⌕</span>
+                <input id="instance-search" type="search" placeholder="Buscar instância, jogo, Agent ou localização">
+            </label>
+            <button id="refresh-instances" class="cap-btn cap-btn-secondary" type="button">Atualizar</button>
         </div>
 
-        <div id="instance-grid" class="cap-instance-grid" aria-live="polite"></div>
-        <div id="instance-empty" class="cap-instance-empty" hidden>
-            <strong>Nenhuma instância encontrada.</strong>
-            <span>O Runtime ainda não publicou instâncias compatíveis com o filtro atual.</span>
-        </div>
-    </section>
+        <section class="cap-fleet-summary" aria-label="Resumo das instâncias">
+            <article><span>Instâncias</span><strong id="fleet-total">0</strong><small>publicadas</small></article>
+            <article><span>Online</span><strong id="fleet-online">0</strong><small>em execução</small></article>
+            <article><span>Offline</span><strong id="fleet-offline">0</strong><small>paradas</small></article>
+            <article><span>Agents</span><strong id="fleet-agents">0</strong><small>com instâncias</small></article>
+        </section>
+
+        <section class="cap-instance-section">
+            <div class="cap-section-title">
+                <div>
+                    <h2>Visão Geral das Instâncias</h2>
+                    <p id="instance-summary-text">Carregando instâncias...</p>
+                </div>
+                <div class="cap-filter-group" aria-label="Filtro de status">
+                    <button class="cap-filter active" data-filter="all" type="button">Todas</button>
+                    <button class="cap-filter" data-filter="online" type="button">Online</button>
+                    <button class="cap-filter" data-filter="offline" type="button">Offline</button>
+                    <button class="cap-filter" data-filter="attention" type="button">Atenção</button>
+                </div>
+            </div>
+
+            <div id="instance-grid" class="cap-instance-grid" aria-live="polite"></div>
+            <div id="instance-empty" class="cap-instance-empty" hidden>
+                <strong>Nenhuma instância encontrada.</strong>
+                <span>O Runtime ainda não publicou instâncias compatíveis com o filtro atual.</span>
+            </div>
+        </section>
+    </div>
+    <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="servers-v2.js?v=1"></script>
+<script src="servers-v2.js?v=2"></script>
 </body>
 </html>
