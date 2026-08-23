@@ -4,20 +4,19 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Central de ajuda | Capivara DSM</title>
-    <link rel="stylesheet" href="/dashboard-ui-v2.css?v=2">
-    <link rel="stylesheet" href="/dashboard-ui-v2-stage2.css?v=1">
+    <link rel="stylesheet" href="/dashboard-home-v3.css?v=1">
     <link rel="stylesheet" href="/help.css?v=1">
 </head>
-<body>
+<body class="cap-home">
 <div id="sidebar-component"></div>
-<main class="help-main">
+<main class="cap-home-main help-main">
     <header class="help-hero">
         <p class="help-eyebrow">CAPIVARA DSM · DOCUMENTAÇÃO</p>
         <h1>Central de ajuda</h1>
         <p>Encontre procedimentos operacionais, instalação de Agents e referências técnicas.</p>
         <label class="help-search">
             <span>Buscar por assunto</span>
-            <input id="help-search" type="search" placeholder="Ex.: SSH, DayZ, chave pública, datacenter, backup" autocomplete="off">
+            <input id="help-search" type="search" placeholder="Ex.: SSH, Agent, chave pública, datacenter, backup" autocomplete="off">
         </label>
     </header>
 
@@ -25,7 +24,7 @@
         <nav class="help-menu" aria-label="Assuntos da ajuda">
             <strong>Assuntos</strong>
             <button type="button" class="active" data-help-category="all">Todos</button>
-            <button type="button" data-help-category="agents">Agents e SSH</button>
+            <button type="button" data-help-category="agents">Agents e acesso remoto</button>
             <button type="button" data-help-category="games">Servidores de jogos</button>
             <button type="button" data-help-category="operations">Operação</button>
             <button type="button" data-help-category="reference">Referências técnicas</button>
@@ -41,6 +40,6 @@
         </section>
     </div>
 </main>
-<script src="/help.js?v=1"></script>
+<script src="/help.js?v=2"></script>
 </body>
 </html>
