@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import instance_runtime
+from catalog_runtime_policy import apply_policy
 from profiles import resolve_profile
 from runtime_events import emit_runtime_event
 from runtime_materialization import materialize
@@ -23,15 +24,15 @@ def build_runtime_spec(config: dict[str, Any], instance: dict[str, Any], context
         raise PermissionError("instance belongs to another Agent")
     profile = resolve_profile(instance)
     raw = profile.build_runtime_spec(dict(instance), dict(context))
+    raw = apply_policy(raw, instance, context)
     normalized = validate_runtime_spec(raw, expected_agent_id=agent_id)
     normalized["game_id"] = str(raw.get("game_id") or instance.get("game_id") or "").strip().lower()
     normalized["environment_id"] = str(raw.get("environment_id") or instance.get("environment_id") or "").strip()
     normalized["profile"] = str(raw.get("profile") or normalized["game_id"])
     normalized["profile_version"] = int(raw.get("profile_version") or 1)
-    if "ports" in raw:
-        normalized["ports"] = raw["ports"]
-    if "config_path" in raw:
-        normalized["config_path"] = raw["config_path"]
+    for key in ("ports", "config_path", "catalog_runtime_policy", "catalog_templates", "catalog_variables"):
+        if key in raw:
+            normalized[key] = raw[key]
     emit_runtime_event(
         Path(instance_runtime.STATE_DIR),
         "INSTANCE_RUNTIME_PROFILE_RESOLVED",
@@ -42,13 +43,13 @@ def build_runtime_spec(config: dict[str, Any], instance: dict[str, Any], context
             "environment_id": normalized["environment_id"],
             "profile": normalized["profile"],
             "profile_version": normalized["profile_version"],
+            "catalog_policy": bool(context.get("catalog_runtime_policy")),
         },
     )
     return normalized
 
 
 def materialize_profile(config: dict[str, Any], instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-    """Build a validated RuntimeSpec and hand it to the game-agnostic B8 materializer."""
     spec = build_runtime_spec(config, instance, context)
     result = materialize(config, spec)
     result["profile"] = {"name": spec["profile"], "version": spec["profile_version"]}
