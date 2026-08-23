@@ -63,32 +63,30 @@ jobs:
           print('credential scan: OK')
           PY
 
-      - name: Validate migration ordering and backend parity
+      - name: Validate consolidated schema backend parity
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          import re
-          roots = [Path('database/migrations'), Path('database/migrations_postgresql'), Path('database/migrations_mysql')]
-          versions = {}
-          for root in roots:
-              files = sorted(root.glob('*.sql'))
-              assert files, f'no migrations found in {root}'
-              seq = []
-              for path in files:
-                  match = re.match(r'^(\d{3})_.+\.sql$', path.name)
-                  assert match, f'non-versioned migration: {path}'
-                  seq.append(int(match.group(1)))
-              assert len(seq) == len(set(seq)), f'duplicate migration version in {root}'
-              assert seq == sorted(seq), f'non-monotonic migration ordering in {root}'
-              versions[str(root)] = set(seq)
-          common_latest = min(max(v) for v in versions.values())
-          for root, seq in versions.items():
-              assert common_latest in seq, f'{root} missing common latest migration {common_latest:03d}'
-          for root in versions:
-              assert 40 in versions[root], f'{root} missing E2 migration 040'
-          print('migration ordering and backend parity: OK')
+          schemas = [
+              Path('database/schemas/sqlite.sql'),
+              Path('database/schemas/postgresql.sql'),
+              Path('database/schemas/mysql.sql'),
+              Path('database/schemas/mariadb.sql'),
+          ]
+          for path in schemas:
+              assert path.is_file(), f'missing consolidated schema: {path}'
+              text = path.read_text(encoding='utf-8')
+              assert 'complete schema v41' in text, f'{path} is not schema v41'
+              assert '-- source: 040_' in text, f'{path} missing E2 migration 040 source block'
+              for marker in (
+                  'CREATE TABLE configurations',
+                  'CREATE TABLE observability_samples',
+                  'agent_instance_runtime_health',
+              ):
+                  assert marker in text, f'{path} missing consolidated contract: {marker}'
+          print('consolidated schema backend parity: OK')
           PY
 
       - name: Validate operational runbook coverage
