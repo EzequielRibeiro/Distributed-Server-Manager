@@ -13,7 +13,7 @@
   <header class="cap-home-topbar cap-observability-topbar">
     <div class="cap-home-title">
       <button id="observability-menu-toggle" type="button" aria-label="Recolher menu">☰</button>
-      <div><h1>Observabilidade</h1><p>Eventos, alertas, métricas e diagnóstico da infraestrutura distribuída.</p></div>
+      <div><h1>Observabilidade</h1><p>Eventos, alertas, métricas, logs e diagnóstico da infraestrutura distribuída.</p></div>
     </div>
     <div class="cap-top-status">
       <div class="cap-controller-state"><i></i><span id="observability-controller-status">Controller Online</span></div>
@@ -42,6 +42,19 @@
     <section id="monitoring" class="cap-observability-card">
       <div class="cap-section-heading"><div><h2>Monitoramento</h2><p>Métricas mais recentes publicadas pela plataforma universal de observabilidade.</p></div></div>
       <div id="observability-metrics" class="cap-metric-grid"><div class="cap-empty-state">Carregando métricas...</div></div>
+    </section>
+
+    <section id="logs-panel" class="cap-observability-card">
+      <div class="cap-section-heading"><div><h2>Logs</h2><p>Consulta centralizada de logs do Controller, Agents e instâncias.</p></div><button id="btn-refresh-logs" type="button">Atualizar logs</button></div>
+      <div class="cap-log-toolbar">
+        <label>Origem<select id="log-source"><option value="controller">Controller</option><option value="agent">Agent / Node</option><option value="instance">Instância</option></select></label>
+        <label id="log-agent-wrap" hidden>Agent<select id="log-agent" aria-label="Agent"></select></label>
+        <label id="log-server-wrap" hidden>Node / Agent<input id="log-server" type="text" placeholder="agent-id"></label>
+        <label id="log-game-wrap" hidden>Jogo<input id="log-game" type="text" placeholder="game-id"></label>
+        <label id="log-instance-wrap" hidden>Instância<input id="log-instance" type="text" placeholder="instance-id"></label>
+      </div>
+      <small id="logs-context">Controller</small>
+      <div id="logs" class="cap-log-box" aria-live="polite">Aguardando logs...</div>
     </section>
 
     <section id="diagnostics" class="cap-observability-card agent-manager-only">
