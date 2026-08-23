@@ -5,13 +5,14 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Capivara DSM - Detalhes do Agent</title>
     <link rel="stylesheet" href="dashboard-home-v3.css">
-    <link rel="stylesheet" href="agent-details.css?v=1">
+    <link rel="stylesheet" href="agent-details.css?v=2">
+    <link rel="stylesheet" href="telemetry-widgets.css?v=1">
 </head>
 <body class="cap-home cap-agent-detail-shell">
 <div id="sidebar-component"></div>
 <main class="cap-home-main cap-agent-detail-page">
     <header class="cap-home-topbar">
-        <div class="cap-home-title"><button id="agent-detail-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1 id="agent-detail-title">Detalhes do Agent</h1><p>Saúde, identidade, portas e operação do node selecionado.</p></div></div>
+        <div class="cap-home-title"><button id="agent-detail-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1 id="agent-detail-title">Detalhes do Agent</h1><p>Saúde, identidade, telemetria, portas e operação do node selecionado.</p></div></div>
         <div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="agent-detail-user">—</strong><span id="agent-detail-role">—</span></div></div>
     </header>
     <div class="cap-home-content cap-agent-detail-content">
@@ -20,6 +21,7 @@
         <section class="cap-detail-summary">
             <article><span>Hostname</span><strong id="detail-hostname">—</strong></article><article><span>Endereço</span><strong id="detail-address">—</strong></article><article><span>Sistema</span><strong id="detail-system">—</strong></article><article><span>Versão</span><strong id="detail-version">—</strong></article><article><span>Saúde</span><strong id="detail-health">—</strong></article><article><span>Último heartbeat</span><strong id="detail-heartbeat">—</strong></article>
         </section>
+        <section id="agent-telemetry" class="cap-telemetry-section" aria-label="Telemetria do Agent"><div class="cap-telemetry-empty">Carregando telemetria...</div></section>
         <section class="cap-detail-grid">
             <article class="cap-detail-panel"><div class="cap-detail-heading"><div><h2>Portas administradas</h2><p>Faixas publicadas pelo Agent e conflitos persistentes.</p></div></div><div id="detail-ranges" class="cap-range-grid"></div><div id="detail-conflicts" class="cap-detail-note"></div></article>
             <article class="cap-detail-panel"><div class="cap-detail-heading"><div><h2>Localização e Placement</h2><p>Identidade geográfica usada pelo Controller.</p></div></div><dl class="cap-detail-list"><div><dt>Datacenter</dt><dd id="detail-datacenter">—</dd></div><div><dt>Region</dt><dd id="detail-region">—</dd></div><div><dt>Public host</dt><dd id="detail-public-host">—</dd></div><div><dt>Node</dt><dd id="detail-node">—</dd></div></dl></article>
@@ -28,6 +30,7 @@
     </div>
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="agent-details.js?v=1"></script>
+<script src="telemetry-widgets.js?v=1"></script>
+<script src="agent-details.js?v=2"></script>
 </body>
 </html>
