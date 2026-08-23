@@ -14,7 +14,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
         cls.install = (web / "agent-installation.js").read_text(encoding="utf-8")
         cls.location = (web / "agent-location-ui.js").read_text(encoding="utf-8")
         cls.updates = (web / "agent-updates.js").read_text(encoding="utf-8")
-        cls.sidebar = (web / "components/sidebar.html").read_text(encoding="utf-8")
+        cls.sidebar = (web / "components/sidebar-v3.html").read_text(encoding="utf-8")
         cls.servers_html = (web / "servers-v2.html").read_text(encoding="utf-8")
         cls.servers_js = (web / "servers-v2.js").read_text(encoding="utf-8")
         cls.infrastructure_ui = (web / "infrastructure-ui-v2.js").read_text(encoding="utf-8")
@@ -71,14 +71,15 @@ class AgentDashboardUiContractTest(unittest.TestCase):
         self.assertIn('/infrastructure-topology-v2.js', self.html)
         self.assertIn('dashboard/server_part13.py', self.service)
 
-    def test_dashboard_v2_navigation_preserves_rbac_classes(self):
+    def test_dashboard_v3_navigation_preserves_rbac_classes(self):
         self.assertIn('href="servers-v2.html"', self.sidebar)
         self.assertIn('href="agents.html"', self.sidebar)
-        self.assertIn('class="admin-only"', self.sidebar)
+        self.assertIn('admin-only', self.sidebar)
         self.assertIn('agent-manager-only', self.sidebar)
         self.assertIn('instance-manager-only', self.sidebar)
-        self.assertIn('dashboard-ui-v2.css', self.sidebar)
-        self.assertIn('dashboard-ui-v2-stage2.css', self.sidebar)
+        self.assertIn('href="catalog.html"', self.sidebar)
+        self.assertIn('href="observability.html#alerts"', self.sidebar)
+        self.assertIn('href="operations.html#backups"', self.sidebar)
 
     def test_servers_v2_uses_runtime_and_agent_apis(self):
         self.assertIn("/api/runtime/list", self.servers_js)
@@ -112,7 +113,6 @@ class AgentDashboardUiContractTest(unittest.TestCase):
         self.assertIn('id="agent-ssh-user"', self.html)
         self.assertIn('id="agent-ssh-port"', self.html)
         self.assertIn("O Dashboard não aceita senha SSH", self.html)
-
 
     def test_agent_terminal_stylesheet_is_registered_and_loaded(self):
         html = (ROOT / "dashboard" / "web" / "agents.html").read_text(
