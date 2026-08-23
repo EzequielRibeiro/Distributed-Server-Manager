@@ -180,11 +180,11 @@ class CatalogV2DashboardTest(unittest.TestCase):
     def test_dashboard_exposes_scoped_instance_management(self):
         html = (ROOT / "dashboard" / "web" / "catalog.html").read_text(encoding="utf-8")
         script = (ROOT / "dashboard" / "web" / "catalog-v2.js").read_text(encoding="utf-8")
-        app = (ROOT / "dashboard" / "web" / "app.js").read_text(encoding="utf-8")
+        shell = (ROOT / "dashboard" / "web" / "catalog-page.js").read_text(encoding="utf-8")
         self.assertIn('id="catalog-v2-config-editor"', html)
         self.assertIn("/api/instance/config", script)
         self.assertIn("/api/catalog/remove", script)
-        self.assertIn("instance-manager-only", app)
+        self.assertIn("instance-manager-only", shell)
 
     def test_aurora_customer_login_and_page_are_scoped(self):
         temporary = tempfile.TemporaryDirectory()
