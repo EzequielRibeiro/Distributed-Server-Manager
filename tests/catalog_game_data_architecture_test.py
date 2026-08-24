@@ -37,6 +37,8 @@ class CatalogGameDataArchitectureTest(unittest.TestCase):
         self.assertIn("Nenhuma nova instalação foi iniciada", script)
         self.assertIn("Object.hasOwn(operationLabels", script)
         self.assertIn("Consultando arquivos", script)
+        self.assertIn("fileReadToken", script)
+        self.assertIn("Aguardando o Agent enviar o conteúdo", script)
         self.assertIn("Ver detalhes técnicos do erro", html)
         self.assertIn("DSM_STEAM_USER", script)
         self.assertIn("Steam Guard", script)
