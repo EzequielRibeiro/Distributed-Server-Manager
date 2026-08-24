@@ -1,6 +1,7 @@
 [Unit]
 Description=Capivara DSM Linux Agent
-After=network-online.target
+Requires=capivara-agent-runtime-identity.service
+After=network-online.target capivara-agent-runtime-identity.service
 Wants=network-online.target
 
 [Service]
