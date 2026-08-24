@@ -24,6 +24,8 @@ class DayZRuntimeProfile(GameRuntimeProfile):
         executable = require_within(install_path, context.get("executable") or str(Path(install_path) / "DayZServer"), "executable")
         config_path = require_within(install_path, context.get("config_path") or str(Path(working_directory) / "serverDZ.cfg"), "config_path")
         game_port = require_port(context, "game", protocol="udp")
+        game_aux_port = require_port(context, "game_aux", protocol="udp")
+        steam_query_port = require_port(context, "steam_query", protocol="udp")
 
         extra_arguments = context.get("arguments", [])
         if not isinstance(extra_arguments, list):
@@ -43,6 +45,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             "CAPIVARA_INSTANCE_ID": instance_id,
             "CAPIVARA_GAME_ID": "dayz",
             "CAPIVARA_GAME_PORT": str(game_port),
+            "CAPIVARA_STEAM_QUERY_PORT": str(steam_query_port),
         })
         return {
             "instance_id": instance_id,
@@ -58,8 +61,12 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             "user": str(context.get("user") or "capivara-instance"),
             "desired_state": str(instance.get("desired_state") or context.get("desired_state") or "stopped"),
             "profile": "dayz",
-            "profile_version": 1,
-            "ports": {"game": {"port": game_port, "protocol": "udp"}},
+            "profile_version": 2,
+            "ports": {
+                "game": {"port": game_port, "protocol": "udp"},
+                "game_aux": {"port": game_aux_port, "protocol": "udp"},
+                "steam_query": {"port": steam_query_port, "protocol": "udp"},
+            },
             "config_path": config_path,
         }
 

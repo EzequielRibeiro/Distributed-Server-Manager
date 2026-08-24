@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 import instance_runtime
+from catalog_runtime_policy import materialize_network_properties
 from adapters import resolve_adapter
 from runtime_events import emit_runtime_event
 from runtime_spec import validate_runtime_spec
@@ -21,7 +22,7 @@ def _validate_materialization(spec:dict[str,Any])->dict[str,Any]:
 def materialize(config:dict[str,Any],spec:dict[str,Any])->dict[str,Any]:
  agent_id=str(config.get("agent_id") or "").strip();normalized=validate_runtime_spec(spec,expected_agent_id=agent_id);emit_runtime_event(_events(),"INSTANCE_RUNTIME_MATERIALIZING",agent_id=agent_id,instance_id=normalized["instance_id"])
  try:
-  operation=_validate_materialization(normalized);record=instance_runtime.register_instance({**normalized,"observed_state":"unknown","materialized":True});event=emit_runtime_event(_events(),"INSTANCE_RUNTIME_READY",agent_id=agent_id,instance_id=normalized["instance_id"],data={"adapter":normalized["adapter"],"changed":True});return {"spec":normalized,"instance":record,"operation":{"action":"materialize","changed":True,"state":operation},"event":event}
+  operation=_validate_materialization(normalized);properties=materialize_network_properties(spec);record=instance_runtime.register_instance({**normalized,"observed_state":"unknown","materialized":True});event=emit_runtime_event(_events(),"INSTANCE_RUNTIME_READY",agent_id=agent_id,instance_id=normalized["instance_id"],data={"adapter":normalized["adapter"],"changed":True});return {"spec":normalized,"instance":record,"operation":{"action":"materialize","changed":True,"state":operation,"network_properties":properties},"event":event}
  except Exception as exc:
   emit_runtime_event(_events(),"INSTANCE_RUNTIME_FAILED",agent_id=agent_id,instance_id=normalized["instance_id"],data={"phase":"materialize","error":str(exc)[:2000]});raise
 def reconcile(config:dict[str,Any],instance_id:str)->dict[str,Any]:

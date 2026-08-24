@@ -14,6 +14,44 @@ _VAR_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 _MAX_TEMPLATE_BYTES = 1024 * 1024
 
 
+def _network_variable_template(value: object) -> str:
+    """Translate Catalog ``{role}`` placeholders to Agent runtime variables."""
+    text = str(value)
+    return re.sub(
+        r"\{([a-z][a-z0-9_]{0,63})\}",
+        lambda match: "{{PORT_" + match.group(1).upper() + "}}",
+        text,
+    )
+
+
+def _enforce_network_policy(runtime: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+    """Network bindings declared by the Catalog cannot be removed by UI overrides."""
+    result = dict(policy)
+    arguments = list(result.get("arguments") or [])
+    properties = [dict(item) for item in result.get("network_properties") or [] if isinstance(item, dict)]
+    network = runtime.get("network") if isinstance(runtime.get("network"), dict) else {}
+    for application in network.get("apply") or []:
+        if not isinstance(application, dict):
+            continue
+        kind = str(application.get("kind") or "").strip().lower()
+        if kind == "argument":
+            required = _network_variable_template(application.get("template") or "")
+            if required and required not in arguments:
+                arguments.append(required)
+        elif kind == "property":
+            required = {
+                "path": str(application.get("file") or ""),
+                "key": str(application.get("key") or ""),
+                "value": _network_variable_template(application.get("value") or ""),
+                "syntax": str(application.get("syntax") or "equals"),
+            }
+            properties = [item for item in properties if (item.get("path"), item.get("key")) != (required["path"], required["key"])]
+            properties.append(required)
+    result["arguments"] = arguments
+    result["network_properties"] = properties
+    return result
+
+
 def _state_root(root: Path) -> Path:
     configured = os.environ.get("CAPIVARA_CATALOG_POLICY_ROOT", "").strip()
     return Path(configured).resolve() if configured else (Path(root) / "config" / "catalog-runtime").resolve()
@@ -32,8 +70,8 @@ def _runtime_path(root: Path, runtime_id: str) -> Path:
 def default_policy(runtime: dict[str, Any]) -> dict[str, Any]:
     process = runtime.get("process") if isinstance(runtime.get("process"), dict) else {}
     executable = str(process.get("executable") or "").strip()
-    arguments = process.get("args") if isinstance(process.get("args"), list) else []
-    return {
+    arguments = list(process.get("args")) if isinstance(process.get("args"), list) else []
+    return _enforce_network_policy(runtime, {
         "schema_version": 1,
         "kind": "CatalogRuntimePolicy",
         "runtime_id": str(runtime.get("id") or ""),
@@ -46,7 +84,8 @@ def default_policy(runtime: dict[str, Any]) -> dict[str, Any]:
         "stop_timeout_seconds": 30,
         "variables": [],
         "templates": [],
-    }
+        "network_properties": [],
+    })
 
 
 def validate_policy(payload: dict[str, Any], *, runtime_id: str) -> dict[str, Any]:
@@ -123,6 +162,25 @@ def validate_policy(payload: dict[str, Any], *, runtime_id: str) -> dict[str, An
             raise ValueError("template exceeds 1 MiB")
         normalized_templates.append({"path": relative, "content": content, "mode": str(item.get("mode") or "0644")})
     result["templates"] = normalized_templates
+    properties = result.get("network_properties", [])
+    if not isinstance(properties, list) or len(properties) > 128:
+        raise ValueError("invalid network properties")
+    normalized_properties = []
+    for item in properties:
+        if not isinstance(item, dict):
+            raise ValueError("invalid network property")
+        relative = str(item.get("path") or "").strip().replace("\\", "/")
+        candidate = Path(relative)
+        key = str(item.get("key") or "").strip()
+        syntax = str(item.get("syntax") or "equals").strip().lower()
+        if not relative or candidate.is_absolute() or ".." in candidate.parts:
+            raise ValueError("network property path must stay inside the instance")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]{0,127}", key):
+            raise ValueError("invalid network property key")
+        if syntax not in {"equals", "semicolon"}:
+            raise ValueError("invalid network property syntax")
+        normalized_properties.append({"path": relative, "key": key, "value": str(item.get("value") or ""), "syntax": syntax})
+    result["network_properties"] = normalized_properties
     return result
 
 
@@ -134,6 +192,7 @@ def load_policy(root: Path, runtime: dict[str, Any]) -> dict[str, Any]:
         stored = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(stored, dict):
             policy.update(stored)
+    policy = _enforce_network_policy(runtime, policy)
     return validate_policy(policy, runtime_id=runtime_id)
 
 

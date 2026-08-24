@@ -68,13 +68,16 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         install = self.root / "serverfiles"; install.mkdir()
         spec = game_runtime.build_runtime_spec(self.config, self.instance, {
             "install_path": str(install),
-            "ports": {"game": {"port": 24010, "protocol": "udp"}, "game_aux": {"port": 24012, "protocol": "udp"}},
+            "ports": {"game": {"port": 24010, "protocol": "udp"}, "game_aux": {"port": 24012, "protocol": "udp"}, "steam_query": {"port": 24013, "protocol": "udp"}},
         })
         self.assertEqual(spec["executable"], str(install / "DayZServer"))
         self.assertIn("-port=24010", spec["arguments"])
         self.assertIn(f"-config={install / 'serverDZ.cfg'}", spec["arguments"])
         self.assertEqual(spec["environment"]["CAPIVARA_GAME_PORT"], "24010")
+        self.assertEqual(spec["environment"]["CAPIVARA_STEAM_QUERY_PORT"], "24013")
         self.assertEqual(spec["ports"]["game"], {"port": 24010, "protocol": "udp"})
+        self.assertEqual(spec["ports"]["game_aux"], {"port": 24012, "protocol": "udp"})
+        self.assertEqual(spec["ports"]["steam_query"], {"port": 24013, "protocol": "udp"})
 
     def test_profile_does_not_allocate_or_invent_required_port(self):
         install = self.root / "serverfiles"; install.mkdir()
@@ -103,7 +106,7 @@ class GameRuntimeProfilesTest(unittest.TestCase):
     def test_two_profiles_converge_to_same_game_agnostic_runtime_contract(self):
         first_root = self.root / "one"; first_root.mkdir()
         dayz = game_runtime.build_runtime_spec(self.config, self.instance, {
-            "install_path": str(first_root), "ports": {"game": {"port": 24000, "protocol": "udp"}},
+            "install_path": str(first_root), "ports": {"game": {"port": 24000, "protocol": "udp"}, "game_aux": {"port": 24002, "protocol": "udp"}, "steam_query": {"port": 24003, "protocol": "udp"}},
         })
         second_root = self.root / "two"; second_root.mkdir()
         other_raw = ExampleSecondGameProfile().build_runtime_spec(

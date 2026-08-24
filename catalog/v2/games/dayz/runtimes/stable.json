@@ -51,12 +51,29 @@
         "name": "game_aux",
         "protocol": "udp",
         "offset": 2
+      },
+      {
+        "name": "steam_query",
+        "protocol": "udp",
+        "offset": 3
       }
     ],
     "apply": [
       {
         "kind": "argument",
         "template": "-port={game}"
+      },
+      {
+        "kind": "derived",
+        "port": "game_aux",
+        "from": "game"
+      },
+      {
+        "kind": "property",
+        "file": "serverDZ.cfg",
+        "key": "steamQueryPort",
+        "value": "{steam_query}",
+        "syntax": "semicolon"
       }
     ]
   }

@@ -28,6 +28,8 @@ class NetworkApplication:
     file: str | None = None
     key: str | None = None
     value: str | None = None
+    port: str | None = None
+    derived_from: str | None = None
 
 
 @dataclass(frozen=True)
@@ -274,10 +276,32 @@ class PortProfile:
                     )
                 )
 
+            elif kind == "derived":
+                port = str(item.get("port", "")).strip().lower()
+                derived_from = str(item.get("from", "")).strip().lower()
+                if port not in names or derived_from not in names or port == derived_from:
+                    raise ValueError("derived network application requires valid port and from roles")
+                applications.append(NetworkApplication(kind=kind, port=port, derived_from=derived_from))
+
             else:
                 raise ValueError(
                     f"unsupported network application: {kind}"
                 )
+
+        if "apply" in raw:
+            referenced: set[str] = set()
+            for application in applications:
+                if application.kind == "derived" and application.port:
+                    referenced.add(application.port)
+                    continue
+                source = application.template if application.kind == "argument" else application.value
+                referenced.update(re.findall(r"\{([a-z][a-z0-9_]{0,63})\}", source or ""))
+            unknown = referenced - names
+            if unknown:
+                raise ValueError("network application references unknown ports: " + ", ".join(sorted(unknown)))
+            unused = names - referenced
+            if unused:
+                raise ValueError("network ports are reserved but not applied: " + ", ".join(sorted(unused)))
 
         return cls(
             allocation=allocation,

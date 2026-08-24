@@ -33,10 +33,8 @@ abriu:
     24100
     24102
 
-Também foram observadas outras portas auxiliares utilizadas pelo
-processo DayZ, incluindo portas relacionadas aos serviços Steam/query.
-Essas portas deverão ser consideradas separadamente antes que a
-política completa de portas DayZ seja considerada definitiva.
+O perfil também configura uma porta Steam Query independente, usada
+para publicar a instância no navegador de servidores.
 
 
 ## Problem
@@ -73,6 +71,10 @@ A porta UDP observada em P + 2 será chamada:
 
     game_aux
 
+A porta configurável de consulta e publicação Steam será chamada:
+
+    steam_query
+
 A política inicial utilizará espaçamento de 10 portas entre as bases
 dos blocos.
 
@@ -85,21 +87,25 @@ Exemplo:
 
         game      UDP 24000
         game_aux  UDP 24002
+        steam_query UDP 24003
 
     Instance B
 
         game      UDP 24010
         game_aux  UDP 24012
+        steam_query UDP 24013
 
     Instance C
 
         game      UDP 24020
         game_aux  UDP 24022
+        steam_query UDP 24023
 
     Instance D
 
         game      UDP 24030
         game_aux  UDP 24032
+        steam_query UDP 24033
 
 
 ## Block size
@@ -144,42 +150,46 @@ O alocador DayZ deve obedecer às seguintes regras:
 
        game + 2
 
-4. As bases válidas seguem o intervalo configurado de blocos:
+4. A porta `steam_query` corresponde a:
+
+       game + 3
+
+5. As bases válidas seguem o intervalo configurado de blocos:
 
        24000
        24010
        24020
        ...
 
-5. O alocador deve verificar reservas existentes no banco
+6. O alocador deve verificar reservas existentes no banco
    `instance_ports`.
 
-6. O alocador também deve verificar sockets realmente ocupados no
+7. O alocador também deve verificar sockets realmente ocupados no
    sistema operacional.
 
-7. Um bloco somente pode ser atribuído quando todas as portas
+8. Um bloco somente pode ser atribuído quando todas as portas
    obrigatórias estiverem disponíveis.
 
-8. A reserva deve ser atômica.
+9. A reserva deve ser atômica.
 
    Ou todas as portas necessárias são reservadas ou nenhuma alteração
    permanece no banco.
 
-9. Uma operação Stop não libera as portas da instância.
+10. Uma operação Stop não libera as portas da instância.
 
-10. Uma operação Restart não altera as portas da instância.
+11. Uma operação Restart não altera as portas da instância.
 
-11. A instância deve reutilizar o mesmo bloco após novos Starts.
+12. A instância deve reutilizar o mesmo bloco após novos Starts.
 
-12. A liberação do bloco ocorre quando a instância é removida ou por
+13. A liberação do bloco ocorre quando a instância é removida ou por
     uma operação administrativa explícita de realocação.
 
-13. A unicidade das portas é considerada dentro do Node.
+14. A unicidade das portas é considerada dentro do Node.
 
-14. O alocador nunca deve confiar somente no banco de dados para
+15. O alocador nunca deve confiar somente no banco de dados para
     determinar se uma porta está disponível.
 
-15. Falha ao consultar o estado real das portas do sistema operacional
+16. Falha ao consultar o estado real das portas do sistema operacional
     deve interromper a alocação em vez de assumir que a porta está
     livre.
 
@@ -203,16 +213,19 @@ Para DayZ, inicialmente serão persistidas:
 
     game
     game_aux
+    steam_query
 
 
 ## Runtime configuration
 
-Após a alocação, a porta `game` deve ser utilizada para gerar a
-configuração de execução da instância.
+Após a alocação, `game` deve ser aplicado ao processo e `steam_query`
+deve ser gravado em `serverDZ.cfg`. A porta `game_aux` é derivada pelo
+processo a partir da porta principal, mas continua reservada e monitorada.
 
 Exemplo:
 
     ARGS="-port=24000 -config=serverDZ.cfg"
+    steamQueryPort = 24003;
 
 O usuário não deve precisar escolher manualmente a porta durante o
 provisionamento normal.
@@ -320,14 +333,8 @@ reservada.
 
 ## Future work
 
-A política deverá evoluir para representar explicitamente todas as
-portas necessárias ao DayZ.
-
-Os testes já observaram portas adicionais associadas aos processos
-DayZ.
-
-Antes de incorporá-las ao modelo persistente será necessário
-determinar:
+Novas portas somente poderão ser incorporadas ao modelo persistente
+depois de determinar:
 
 - finalidade de cada porta;
 - relação com a porta principal;

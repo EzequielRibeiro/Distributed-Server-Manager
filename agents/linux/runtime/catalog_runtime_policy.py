@@ -25,6 +25,8 @@ def _values(instance: dict[str, Any], context: dict[str, Any], policy: dict[str,
     for role, item in ports.items():
         if isinstance(item, dict) and item.get("port"):
             values[f"PORT_{str(role).upper().replace('-', '_')}"] = str(item["port"])
+    if "PORT_STEAM_QUERY" not in values and "PORT_GAME_AUX" in values:
+        values["PORT_STEAM_QUERY"] = values["PORT_GAME_AUX"]
     return values
 
 
@@ -61,6 +63,7 @@ def apply_policy(spec: dict[str, Any], instance: dict[str, Any], context: dict[s
         "stop_timeout_seconds": policy.get("stop_timeout_seconds"),
     }
     result["catalog_templates"] = list(policy.get("templates") or [])
+    result["catalog_network_properties"] = list(policy.get("network_properties") or [])
     result["catalog_variables"] = values
     return result
 
@@ -91,4 +94,33 @@ def materialize_templates(spec: dict[str, Any]) -> list[str]:
     return written
 
 
-__all__ = ["apply_policy", "materialize_templates", "render"]
+def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
+    properties = spec.get("catalog_network_properties") if isinstance(spec.get("catalog_network_properties"), list) else []
+    root = Path(str(spec.get("working_directory") or spec.get("path") or "")).resolve()
+    values = dict(spec.get("catalog_variables") or {})
+    written: list[str] = []
+    for item in properties:
+        if not isinstance(item, dict):
+            continue
+        relative = Path(str(item.get("path") or ""))
+        if not str(relative) or relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("invalid network property path")
+        target = (root / relative).resolve()
+        target.relative_to(root)
+        if target.is_symlink():
+            raise ValueError("network property file cannot be a symbolic link")
+        key = str(item.get("key") or "")
+        value = render(item.get("value") or "", values)
+        syntax = str(item.get("syntax") or "equals")
+        separator = r"\s*=\s*"
+        pattern = re.compile(rf"(?m)^\s*{re.escape(key)}{separator}[^\r\n;]*(?:;)?\s*$")
+        line = f"{key} = {value};" if syntax == "semicolon" else f"{key}={value}"
+        text = target.read_text(encoding="utf-8", errors="replace") if target.exists() else ""
+        text = pattern.sub(line, text, count=1) if pattern.search(text) else text.rstrip("\n") + ("\n" if text else "") + line + "\n"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        written.append(relative.as_posix())
+    return written
+
+
+__all__ = ["apply_policy", "materialize_network_properties", "materialize_templates", "render"]

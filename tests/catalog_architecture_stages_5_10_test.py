@@ -28,6 +28,29 @@ class CatalogArchitectureStages5To10Test(unittest.TestCase):
    instance={"instance_id":"i1","game_id":"minecraft"};context={"content_root":str(content),"ports":{"game":{"port":25565}},"resource_profile":{"memory_mb":8192},"catalog_runtime_policy":{"runtime_id":"minecraft.java.vanilla","executable":"server.jar","arguments":["-Xmx{{MEMORY_MB}}M","--port","{{PORT_GAME}}"],"environment":{},"variables":[],"templates":[{"path":"server.properties","content":"server-port={{PORT_GAME}}"}]}}
    spec=runtime_policy.apply_policy({"executable":str(content/"server.jar"),"working_directory":str(work),"arguments":[],"environment":{}},instance,context)
    self.assertEqual(spec["arguments"],["-Xmx8192M","--port","25565"]);self.assertEqual(runtime_policy.materialize_templates(spec),["server.properties"]);self.assertEqual((work/"server.properties").read_text(),"server-port=25565")
+ def test_dayz_network_policy_applies_process_and_server_browser_ports(self):
+  controller_policy=load("dayz_controller_runtime_policy",ROOT/"dashboard/catalog_controller_runtime_policy.py")
+  runtime_policy=load("dayz_linux_runtime_policy",ROOT/"agents/linux/runtime/catalog_runtime_policy.py")
+  runtime=__import__("json").loads((ROOT/"catalog/v2/games/dayz/runtimes/stable.json").read_text())
+  policy=controller_policy.default_policy(runtime)
+  self.assertIn("-port={{PORT_GAME}}",policy["arguments"])
+  self.assertEqual(policy["network_properties"][0]["key"],"steamQueryPort")
+  with tempfile.TemporaryDirectory() as td:
+   old=os.environ.get("CAPIVARA_CATALOG_POLICY_ROOT");os.environ["CAPIVARA_CATALOG_POLICY_ROOT"]=td
+   try:
+    controller_policy.save_policy(ROOT,runtime["id"],{**policy,"arguments":["-config=custom.cfg"],"network_properties":[]})
+    enforced=controller_policy.load_policy(ROOT,runtime)
+    self.assertIn("-port={{PORT_GAME}}",enforced["arguments"]);self.assertEqual(enforced["network_properties"][0]["key"],"steamQueryPort")
+   finally:
+    if old is None:os.environ.pop("CAPIVARA_CATALOG_POLICY_ROOT",None)
+    else:os.environ["CAPIVARA_CATALOG_POLICY_ROOT"]=old
+  with tempfile.TemporaryDirectory() as td:
+   work=Path(td);config=work/"serverDZ.cfg";config.write_text('hostname = "Capivara";\nsteamQueryPort = 2305;\n')
+   context={"content_root":str(work),"ports":{"game":{"port":24000},"steam_query":{"port":24003}},"catalog_runtime_policy":policy}
+   spec=runtime_policy.apply_policy({"executable":str(work/"DayZServer"),"working_directory":str(work),"arguments":[],"environment":{}},{"instance_id":"i1","game_id":"dayz"},context)
+   self.assertIn("-port=24000",spec["arguments"])
+   self.assertEqual(runtime_policy.materialize_network_properties(spec),["serverDZ.cfg"])
+   text=config.read_text();self.assertIn('hostname = "Capivara";',text);self.assertIn("steamQueryPort = 24003;",text)
  def test_stage7_and_9_integrity_detects_missing_and_healthy(self):
   module=load("linux_integrity",ROOT/"agents/linux/runtime/game_data_integrity.py")
   with tempfile.TemporaryDirectory() as td:

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 INSTALL_ROOT=Path(os.environ.get("CAPIVARA_AGENT_ROOT","/opt/capivara-agent"));RUNTIME_DIR=INSTALL_ROOT/"runtime"
 if str(RUNTIME_DIR) not in sys.path:sys.path.insert(0,str(RUNTIME_DIR))
-from catalog_runtime_policy import materialize_templates
+from catalog_runtime_policy import materialize_network_properties,materialize_templates
 from materializers import resolve_materializer
 from runtime_spec import validate_runtime_spec
 STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));CONFIG_PATH=Path(os.environ.get("CAPIVARA_AGENT_CONFIG","/etc/capivara-agent/agent.json"));REQUEST_ROOT=STATE_DIR/"privileged-materialization"
@@ -32,7 +32,7 @@ def run(instance_id:str)->dict[str,Any]:
  if spec["instance_id"]!=instance_id:raise RuntimeError("runtime spec instance_id mismatch")
  action=str(request.get("action") or "").strip().lower();materializer=resolve_materializer(spec);templates=[]
  if action=="apply":
-  operation=materializer.apply(spec);templates=materialize_templates(spec)
+  operation=materializer.apply(spec);templates=materialize_templates(spec);templates.extend(materialize_network_properties(spec))
  elif action=="remove":operation=materializer.remove(spec)
  else:raise RuntimeError("unsupported privileged materialization action")
  result={"status":"completed","action":action,"instance_id":instance_id,"agent_id":local_agent_id,"operation":operation,"templates":templates};_write_result(result_path,result);return result

@@ -66,10 +66,30 @@
       }
     ],
     "apply": [
-      {
-        "kind": "argument",
-        "template": "-port={game}"
-      }
+    {
+      "kind": "argument",
+      "template": "-port={game}"
+    },
+    {
+      "kind": "derived",
+      "port": "steam_query",
+      "from": "game"
+    },
+    {
+      "kind": "derived",
+      "port": "steam_master",
+      "from": "game"
+    },
+    {
+      "kind": "derived",
+      "port": "von_reserved",
+      "from": "game"
+    },
+    {
+      "kind": "derived",
+      "port": "battleye",
+      "from": "game"
+    }
     ]
   }
 }

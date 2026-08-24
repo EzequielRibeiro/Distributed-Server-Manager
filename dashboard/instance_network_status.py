@@ -17,7 +17,7 @@ CUSTOMER_VISIBLE_NAMES = {
 
 DEFAULT_PURPOSES = {
     "game": "Porta principal do jogo",
-    "game_aux": "Porta auxiliar do jogo",
+    "game_aux": "Steam Query (reserva legada)",
     "game_ipv4": "Porta principal IPv4",
     "game_ipv6": "Porta principal IPv6",
     "steam_query": "Steam Query",
