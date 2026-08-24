@@ -4,20 +4,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_materializer_does_not_manage_system_accounts():
+def test_materializer_does_not_manage_system_accounts_or_state_permissions():
     source = (ROOT / "agents/linux/privileged/materialize_instance.py").read_text(encoding="utf-8")
     assert "useradd" not in source
     assert "usermod" not in source
     assert "runtime user does not exist" in source
+    assert "_grant_runtime_access" not in source
+    assert "os.chmod(state" not in source
+    assert "os.chown(state" not in source
+    assert "_validate_runtime_access" in source
 
 
-def test_identity_bootstrap_owns_account_creation():
+def test_identity_bootstrap_owns_account_creation_and_base_permissions():
     source = (ROOT / "agents/linux/privileged/reconcile_runtime_identity.py").read_text(encoding="utf-8")
     assert 'RUNTIME_USER = "capivara-instance"' in source
     assert 'AGENT_GROUP = "capivara-agent"' in source
     assert '"useradd"' in source
     assert '"usermod"' in source
     assert 'STATE_DIR / "game-data"' in source
+    assert "os.chmod(STATE_DIR" in source
+    assert "os.chmod(game_data" in source
 
 
 def test_materializer_returns_to_strict_filesystem_sandbox():
