@@ -44,13 +44,54 @@
         return Number.isNaN(date.getTime()) ? String(input) : date.toLocaleString("pt-BR");
     }
 
-    function item(label, content, detail = "") {
+    const decimal = new Intl.NumberFormat("pt-BR", {maximumFractionDigits: 2});
+    const integer = new Intl.NumberFormat("pt-BR", {maximumFractionDigits: 0});
+
+    function formatBytes(input, suffix = "") {
+        const number = Number(input);
+        if (!Number.isFinite(number)) return value(input);
+        const units = ["bytes", "KB", "MB", "GB", "TB", "PB"];
+        let amount = Math.abs(number);
+        let index = 0;
+        while (amount >= 1024 && index < units.length - 1) {
+            amount /= 1024;
+            index += 1;
+        }
+        const signed = number < 0 ? -amount : amount;
+        return `${decimal.format(signed)} ${units[index]}${suffix}`;
+    }
+
+    function formatDuration(input) {
+        const seconds = Number(input);
+        if (!Number.isFinite(seconds)) return value(input);
+        if (seconds < 60) return `${decimal.format(seconds)} s`;
+        if (seconds < 3600) return `${integer.format(Math.floor(seconds / 60))} min ${integer.format(Math.floor(seconds % 60))} s`;
+        if (seconds < 86400) return `${integer.format(Math.floor(seconds / 3600))} h ${integer.format(Math.floor((seconds % 3600) / 60))} min`;
+        return `${integer.format(Math.floor(seconds / 86400))} d ${integer.format(Math.floor((seconds % 86400) / 3600))} h`;
+    }
+
+    function formatMetric(input, unit = "") {
+        const normalized = String(unit || "").trim().toLowerCase();
+        const number = Number(input);
+        if (!Number.isFinite(number)) return value(input);
+        if (["byte", "bytes"].includes(normalized)) return formatBytes(number);
+        if (["byte_per_second", "bytes_per_second", "bytes/second", "b/s"].includes(normalized)) return formatBytes(number, "/s");
+        if (["percent", "percentage", "%"].includes(normalized)) return `${decimal.format(number)}%`;
+        if (["second", "seconds", "s"].includes(normalized)) return formatDuration(number);
+        if (["celsius", "°c", "c"].includes(normalized)) return `${decimal.format(number)} °C`;
+        if (["pid", "threads", "items", "count"].includes(normalized)) return integer.format(number);
+        if (["load", "ratio"].includes(normalized)) return decimal.format(number);
+        return `${decimal.format(number)}${normalized ? ` ${unit}` : ""}`;
+    }
+
+    function item(label, content, detail = "", rawValue = "") {
         const article = document.createElement("article");
         article.className = "cap-agent-context-item";
         const name = document.createElement("span");
         const strong = document.createElement("strong");
         name.textContent = label;
         strong.textContent = value(content);
+        if (rawValue !== "") strong.title = `Valor bruto: ${rawValue}`;
         article.append(name, strong);
         if (detail) {
             const small = document.createElement("small");
@@ -89,11 +130,15 @@
     async function loadMonitoring() {
         const result = await request(`/api/observability?mode=latest&agent_id=${encodeURIComponent(agentId)}&limit=200`);
         const metrics = Array.isArray(result.metrics) ? result.metrics : [];
-        const nodes = metrics.map(metric => item(
-            metric.metric_name || metric.name || metric.key || "Métrica",
-            metric.value ?? metric.metric_value ?? metric.latest ?? metric.status,
-            [metric.unit, metric.timestamp ? time(metric.timestamp) : ""].filter(Boolean).join(" · "),
-        ));
+        const nodes = metrics.map(metric => {
+            const raw = metric.value ?? metric.metric_value ?? metric.latest ?? metric.status;
+            return item(
+                metric.metric_name || metric.name || metric.key || "Métrica",
+                formatMetric(raw, metric.unit),
+                metric.timestamp ? time(metric.timestamp) : "",
+                raw,
+            );
+        });
         setContent(nodes.length ? grid(nodes) : empty("Nenhuma métrica publicada por este Agent."));
     }
 

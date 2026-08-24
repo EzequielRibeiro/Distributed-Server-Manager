@@ -19,6 +19,7 @@ def test_agent_context_page_has_no_agent_search_and_exposes_five_scoped_views():
     html = (WEB / "agent-observability.html").read_text(encoding="utf-8")
     assert 'href="dashboard-home-v3.css"' in html
     assert 'href="dashboard-v3.css"' not in html
+    assert 'src="agent-observability.js?v=2"' in html
     assert 'id="agent-context-nav"' in html
     assert 'id="agent-view-content"' in html
     assert "Agent / Node" not in html
@@ -36,6 +37,11 @@ def test_agent_context_client_filters_every_api_by_url_agent_id():
     assert 'source: "agent", server: agentId' in script
     assert "/api/log-viewer?" in script
     assert "setTimeout(refresh" in script
+    assert 'new Intl.NumberFormat("pt-BR"' in script
+    assert "formatBytes" in script
+    assert "formatDuration" in script
+    assert "bytes_per_second" in script
+    assert "Valor bruto:" in script
 
 
 def test_agent_context_assets_are_registered_in_composition_layer():
