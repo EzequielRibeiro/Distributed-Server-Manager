@@ -22,7 +22,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
  def test_controller_telemetry_is_on_dashboard_home(self):
   self.assertIn('id="controller-telemetry"',self.home);self.assertIn("telemetry-widgets.js",self.home);self.assertIn("/controller/telemetry?window_seconds=3600",self.home_js);self.assertIn("/api/controller/telemetry",self.latest_composition);self.assertIn("telemetry-widgets.css",self.latest_composition)
  def test_dashboard_v3_navigation_preserves_rbac_and_add_agent(self):
-  for text in ('href="servers.html"','href="agents.html"','href="add-agent.html"','admin-only','agent-manager-only','href="catalog.html"','href="observability.html#alerts"','href="operations.html#backups"'):self.assertIn(text,self.sidebar)
+  for text in ('href="servers.html"','href="agents.html"','href="add-agent.html"','admin-only','agent-manager-only','href="catalog.html"','href="game-profiles.html"','href="observability.html#alerts"','href="operations.html#backups"'):self.assertIn(text,self.sidebar)
   self.assertNotIn("Criar instância",self.sidebar)
  def test_agent_v3_routes_are_registered_in_composition_layer(self):
   for route in ("/agents.html","/agents-v3.js","/agents-v3.css","/agent-steam-status.css","/add-agent.html","/add-agent-v3.css","/agent-details.html","/agent-details.js","/agent-details.css","/catalog-installation.css"):self.assertIn(route,self.composition)

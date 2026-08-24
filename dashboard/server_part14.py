@@ -54,6 +54,9 @@ DASHBOARD_V3_FILES = {
     "/catalog-page.css": legacy.WEB_DIR / "catalog-page.css",
     "/catalog-installation.css": legacy.WEB_DIR / "catalog-installation.css",
     "/catalog-page.js": legacy.WEB_DIR / "catalog-page.js",
+    "/game-profiles.html": legacy.WEB_DIR / "game-profiles.html",
+    "/game-profiles.css": legacy.WEB_DIR / "game-profiles.css",
+    "/game-profiles.js": legacy.WEB_DIR / "game-profiles.js",
 
     # Operations and observability.
     "/operations.html": legacy.WEB_DIR / "operations.html",

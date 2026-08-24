@@ -9,8 +9,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD = ROOT / "dashboard"
-if str(DASHBOARD) not in sys.path:
-    sys.path.insert(0, str(DASHBOARD))
+for source in (DASHBOARD, ROOT / "database"):
+    if str(source) not in sys.path:
+        sys.path.insert(0, str(source))
 
 from catalog_resource_profiles_http import (
     catalog_resource_profiles,
@@ -27,6 +28,23 @@ class CatalogGameDataArchitectureTest(unittest.TestCase):
         self.assertNotIn("Reinstalar instância", html)
         for label in ("Game Data", "Parâmetros", "Configuração", "Recursos", "Agents", "Versões"):
             self.assertIn(label, html)
+
+    def test_game_profiles_have_a_dedicated_navigation_area(self):
+        catalog = (ROOT / "dashboard/web/catalog.html").read_text(encoding="utf-8")
+        page = (ROOT / "dashboard/web/game-profiles.html").read_text(encoding="utf-8")
+        script = (ROOT / "dashboard/web/game-profiles.js").read_text(encoding="utf-8")
+        sidebar = (ROOT / "dashboard/web/components/sidebar-v3.html").read_text(encoding="utf-8")
+        self.assertIn('href="game-profiles.html"', sidebar)
+        self.assertIn("Perfis de jogos", sidebar)
+        self.assertIn('href="/game-profiles.html"', catalog)
+        self.assertNotIn('id="catalog-resource-add"', catalog)
+        self.assertNotIn('id="catalog-resource-save"', catalog)
+        self.assertIn('id="profiles-game"', page)
+        self.assertIn('id="profiles-add"', page)
+        self.assertIn('id="profiles-save"', page)
+        self.assertIn("default_profile_id", script)
+        self.assertIn("state.canEdit", script)
+        self.assertIn("state.canSetDefault", script)
 
     def test_game_installation_has_live_progress_and_error_details(self):
         html = (ROOT / "dashboard/web/catalog.html").read_text(encoding="utf-8")
