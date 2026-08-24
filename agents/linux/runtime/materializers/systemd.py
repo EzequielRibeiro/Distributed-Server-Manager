@@ -27,6 +27,15 @@ def _quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def _working_directory(value: Any) -> str:
+    path = str(value or "").strip()
+    if not path.startswith("/"):
+        raise MaterializerError("systemd WorkingDirectory must be an absolute path")
+    if any(character in path for character in ("\x00", "\n", "\r")):
+        raise MaterializerError("systemd WorkingDirectory contains invalid characters")
+    return path
+
+
 def _unit_dir() -> Path:
     return Path(os.environ.get("CAPIVARA_INSTANCE_SYSTEMD_DIR", "/etc/systemd/system"))
 
@@ -53,7 +62,7 @@ def render_unit(spec: dict[str, Any]) -> str:
         "[Service]",
         "Type=simple",
         f"User={spec['user']}",
-        f"WorkingDirectory={_quote(str(spec['working_directory']))}",
+        f"WorkingDirectory={_working_directory(spec['working_directory'])}",
         "ExecStart=" + " ".join(_quote(item) for item in argv),
         "Restart=no",
         "KillSignal=SIGTERM",
