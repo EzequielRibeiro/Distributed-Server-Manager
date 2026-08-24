@@ -7,6 +7,7 @@ import re
 import subprocess
 from typing import Any
 from agent_game_data_repository import AgentGameDataRepository
+from agent_runtime_repository import AgentRuntimeNotFound, AgentRuntimeRepository
 
 _ENVIRONMENT_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _SELECTOR = re.compile(r"^[A-Za-z0-9._@-]{1,128}$")
@@ -50,11 +51,30 @@ def _repository(backend) -> AgentGameDataRepository:
     repository = AgentGameDataRepository(backend); repository.initialize(); return repository
 
 
+def _require_runtime_prerequisites(backend, agent_id: str, selection: dict[str, Any]) -> None:
+    if str(selection.get("provider") or "").strip().lower() != "steam":
+        return
+    try:
+        snapshot = AgentRuntimeRepository(backend).snapshot(agent_id, refresh_health=False)
+    except AgentRuntimeNotFound as exc:
+        raise ValueError("Agent not found") from exc
+    capabilities = snapshot.get("capabilities") if isinstance(snapshot.get("capabilities"), dict) else {}
+    detail = capabilities.get("steamcmd_status") if isinstance(capabilities.get("steamcmd_status"), dict) else {}
+    if not (detail.get("functional") is True or capabilities.get("steamcmd") is True):
+        raise RuntimeError("SteamCMD is not installed or is not functioning on this Agent")
+
+
 def queue_game_data_operation(user: dict[str, Any] | None, payload: dict[str, Any] | None, *, backend, root: Path) -> dict[str, Any]:
     _require_admin(user); body = payload if isinstance(payload, dict) else {}
     agent_id = str(body.get("agent_id") or "").strip(); environment_id = str(body.get("environment_id") or "").strip(); selector = str(body.get("selector") or "current").strip(); action = str(body.get("action") or "install").strip().lower()
     if not agent_id: raise ValueError("agent_id is required")
-    selection = prepare_runtime_selection(root, environment_id, selector)
+    if action == "install-steamcmd":
+        environment_id = "_system.steamcmd"
+        selector = "current"
+        selection = {"schema_version": 1, "kind": "ToolSelection", "tool": "steamcmd"}
+    else:
+        selection = prepare_runtime_selection(root, environment_id, selector)
+        _require_runtime_prerequisites(backend, agent_id, selection)
     return _repository(backend).enqueue(agent_id=agent_id, action=action, environment_id=environment_id, selector=selector, selection=selection, requested_by=str(user.get("username") or user.get("id") or "admin"))
 
 

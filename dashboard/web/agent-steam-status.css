@@ -1,0 +1,6 @@
+.cap-steam-status { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; padding: 10px 12px; border: 1px solid var(--line, #263246); border-radius: 9px; background: var(--bg, #0b111b); font-size: 13px; font-weight: 700; }
+.cap-steam-status[data-state="ready"] { color: var(--green, #39d06f); border-color: var(--green, #39d06f); }
+.cap-steam-status[data-state="missing"] { color: var(--orange, #f59e42); border-color: var(--orange, #f59e42); }
+.cap-steam-status[data-state="error"] { color: var(--red, #f05b62); border-color: var(--red, #f05b62); }
+.cap-steam-status button { border: 1px solid currentColor; border-radius: 7px; padding: 7px 10px; background: transparent; color: inherit; cursor: pointer; font-weight: 700; }
+.cap-steam-status button:disabled { opacity: .6; cursor: wait; }

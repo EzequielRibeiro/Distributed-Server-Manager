@@ -32,6 +32,7 @@ DASHBOARD_V3_FILES = {
     "/agents.html": legacy.WEB_DIR / "agents.html",
     "/agents-v3.js": legacy.WEB_DIR / "agents-v3.js",
     "/agents-v3.css": legacy.WEB_DIR / "agents-v3.css",
+    "/agent-steam-status.css": legacy.WEB_DIR / "agent-steam-status.css",
     "/agent-updates-v3.css": legacy.WEB_DIR / "agent-updates-v3.css",
     "/agent-updates-v3.js": legacy.WEB_DIR / "agent-updates-v3.js",
     "/add-agent.html": legacy.WEB_DIR / "add-agent.html",
@@ -51,6 +52,7 @@ DASHBOARD_V3_FILES = {
     "/servers.css": legacy.WEB_DIR / "servers.css",
     "/catalog.html": legacy.WEB_DIR / "catalog.html",
     "/catalog-page.css": legacy.WEB_DIR / "catalog-page.css",
+    "/catalog-installation.css": legacy.WEB_DIR / "catalog-installation.css",
     "/catalog-page.js": legacy.WEB_DIR / "catalog-page.js",
 
     # Operations and observability.

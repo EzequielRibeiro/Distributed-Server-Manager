@@ -15,9 +15,24 @@ def _safe_name(value:Any,label:str)->str:
 def _target_for(selection:dict[str,Any])->Path:
  game=_safe_name(selection.get("game"),"game");declared=Path(str(selection.get("install_dir") or "serverfiles"));leaf=_safe_name(declared.name if declared.name not in {"",".","/"} else "serverfiles","install target");target=(GAME_DATA_ROOT/game/leaf).resolve();target.relative_to(GAME_DATA_ROOT);return target
 def _steamcmd()->str:
- for candidate in (shutil.which("steamcmd"),"/usr/games/steamcmd"):
+ managed=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"))/"tools"/"steamcmd"/"steamcmd.sh"
+ for candidate in (shutil.which("steamcmd"),"/usr/games/steamcmd",str(managed)):
   if candidate and Path(candidate).is_file():return str(candidate)
  raise RuntimeError("SteamCMD is not available on this Agent")
+def _install_steamcmd()->dict[str,Any]:
+ root=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"))/"tools"/"steamcmd";root.mkdir(parents=True,exist_ok=True)
+ url="https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz"
+ with tempfile.TemporaryDirectory(prefix="capivara-steamcmd-") as td:
+  archive=Path(td)/"steamcmd_linux.tar.gz";_download(url,archive);_extract_tar(archive,root)
+ binary=root/"steamcmd.sh"
+ if not binary.is_file():raise RuntimeError("SteamCMD installer did not provide steamcmd.sh")
+ binary.chmod(binary.stat().st_mode|0o111)
+ completed=subprocess.run([str(binary),"+quit"],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=300,check=False,env={**os.environ,"HOME":str(Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent")))})
+ if completed.returncode!=0:raise RuntimeError((completed.stdout or f"SteamCMD validation failed with exit code {completed.returncode}")[-2000:])
+ cache=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"))/"capabilities"/"steamcmd.json"
+ try:cache.unlink(missing_ok=True)
+ except OSError:pass
+ return {"tool":"steamcmd","path":str(binary),"functional":True}
 def _run_steam(selection:dict[str,Any],target:Path)->None:
  install=selection.get("install") if isinstance(selection.get("install"),dict) else {};app_id=str(install.get("package_id") or "").strip()
  if not app_id.isdigit():raise ValueError("Steam package_id is missing or invalid")
@@ -79,6 +94,7 @@ def _install(selection:dict[str,Any],target:Path,provider:str)->None:
  else:raise RuntimeError(f"provider not supported by standalone Linux Agent: {provider}")
 def _execute(command:dict[str,Any])->dict[str,Any]:
  action=str(command.get("action") or "install").lower();selection=command.get("selection")
+ if action=="install-steamcmd":return _install_steamcmd()
  if not isinstance(selection,dict):raise ValueError("runtime selection is missing")
  target=_target_for(selection);provider=str(selection.get("provider") or "").strip().lower();reused=False
  if action=="ensure":

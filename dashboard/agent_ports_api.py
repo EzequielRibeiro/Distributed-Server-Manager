@@ -102,6 +102,10 @@ def list_agents_for_user(user, backend):
             snapshot = {}
         item["health_status"] = snapshot.get("health_status") or "offline"
         item["last_seen"] = snapshot.get("last_seen")
+        item["capabilities"] = snapshot.get("capabilities") or {}
+        item["os_name"] = snapshot.get("os_name")
+        item["architecture"] = snapshot.get("architecture")
+        item["capivara_version"] = snapshot.get("capivara_version")
         enriched.append(item)
     return _json_ready(enriched)
 
@@ -117,6 +121,16 @@ def agent_ports_for_user(user, backend, agent_id):
     result = effective_port_summary(backend, agent["id"])
     metadata = _agent_metadata(backend, agent["id"])
     result_agent = result.get("agent") if isinstance(result.get("agent"), dict) else {}
+    try:
+        runtime = AgentRuntimeRepository(backend).snapshot(str(agent["id"]), refresh_health=False)
+    except AgentRuntimeNotFound:
+        runtime = {}
+    result_agent.update({
+        "capabilities": runtime.get("capabilities") or {},
+        "os_name": runtime.get("os_name"),
+        "architecture": runtime.get("architecture"),
+        "capivara_version": runtime.get("capivara_version"),
+    })
     result_agent["metadata"] = metadata
     result_agent["recent_logs"] = metadata.get("recent_logs", [])
     result_agent["telemetry"] = metadata.get("telemetry", {})

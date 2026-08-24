@@ -8,6 +8,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
   web=ROOT/"dashboard/web";cls.html=(web/"agents.html").read_text();cls.add_agent=(web/"add-agent.html").read_text();cls.detail=(web/"agent-details.html").read_text();cls.fleet_js=(web/"agents-v3.js").read_text();cls.detail_js=(web/"agent-details.js").read_text();cls.install=(web/"agent-installation.js").read_text();cls.sidebar=(web/"components/sidebar-v3.html").read_text();cls.servers_html=(web/"servers.html").read_text();cls.servers_js=(web/"servers.js").read_text();cls.home=(web/"dashboard-v3.html").read_text();cls.home_js=(web/"dashboard-home-v3.js").read_text();cls.telemetry_js=(web/"telemetry-widgets.js").read_text();cls.service=(ROOT/"systemd/dsm-dashboard.service").read_text();cls.composition=(ROOT/"dashboard/server_part14.py").read_text();cls.resource_composition=(ROOT/"dashboard/server_part15.py").read_text();cls.file_composition=(ROOT/"dashboard/server_part16.py").read_text();cls.latest_composition=(ROOT/"dashboard/server_part17.py").read_text()
  def test_agents_page_is_fleet_only_and_uses_v3_shell(self):
   for text in ("dashboard-home-v3.css","agents-v3.css","agents-v3.js","Frota de Agents",'href="add-agent.html"'):self.assertIn(text,self.html)
+  for text in ("SteamCMD funcionando","SteamCMD não instalado","data-install-steamcmd","install-steamcmd"):self.assertIn(text,self.fleet_js)
   self.assertNotIn('id="agent-install-form"',self.html);self.assertNotIn('id="agent-detail"',self.html)
  def test_add_agent_controls_live_on_dedicated_page(self):
   for text in ("Adicionar Agent","Linux","Windows","GitHub Release","Pacote local","Região","Datacenter","Gerar instalação"):self.assertIn(text,self.add_agent)
@@ -24,7 +25,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
   for text in ('href="servers.html"','href="agents.html"','href="add-agent.html"','admin-only','agent-manager-only','href="catalog.html"','href="observability.html#alerts"','href="operations.html#backups"'):self.assertIn(text,self.sidebar)
   self.assertNotIn("Criar instância",self.sidebar)
  def test_agent_v3_routes_are_registered_in_composition_layer(self):
-  for route in ("/agents.html","/agents-v3.js","/agents-v3.css","/add-agent.html","/add-agent-v3.css","/agent-details.html","/agent-details.js","/agent-details.css"):self.assertIn(route,self.composition)
+  for route in ("/agents.html","/agents-v3.js","/agents-v3.css","/agent-steam-status.css","/add-agent.html","/add-agent-v3.css","/agent-details.html","/agent-details.js","/agent-details.css","/catalog-installation.css"):self.assertIn(route,self.composition)
   self.assertIn('dashboard/server_part17.py',self.service);self.assertIn('import server_part14 as integration',self.resource_composition);self.assertIn('import server_part15 as integration',self.file_composition);self.assertIn('import server_part16 as integration',self.latest_composition)
  def test_servers_uses_runtime_and_agent_apis(self):
   for text in ("/api/runtime/list","/api/runtime?","/api/agents","48"):self.assertIn(text,self.servers_js)

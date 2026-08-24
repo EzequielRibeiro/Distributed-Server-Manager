@@ -80,6 +80,19 @@ class AgentGameDataJobsTest(unittest.TestCase):
         self.assertEqual(created["transport_action"], "update")
         self.assertEqual(self.jobs.command_for_agent("agent-game-data")["action"], "repair")
 
+    def test_steamcmd_install_is_a_supported_agent_tool_operation(self):
+        created = self.jobs.enqueue(
+            agent_id="agent-game-data",
+            action="install-steamcmd",
+            environment_id="_system.steamcmd",
+            selector="current",
+            selection={"kind": "ToolSelection", "tool": "steamcmd"},
+            requested_by="admin",
+        )
+        self.assertEqual(created["action"], "install-steamcmd")
+        self.assertEqual(created["transport_action"], "update")
+        self.assertEqual(self.jobs.command_for_agent("agent-game-data")["action"], "install-steamcmd")
+
     def test_authenticated_heartbeat_delivers_and_acknowledges_job(self):
         created = self.jobs.enqueue(agent_id="agent-game-data",action="install",environment_id="dayz.stable",selector="current",selection=self.selection())
         status, delivered = dispatch_heartbeat({"agent_id":"agent-game-data"}, headers=self.headers, backend=self.backend)
