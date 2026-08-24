@@ -4,15 +4,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_materializer_does_not_manage_system_accounts_or_state_permissions():
+def test_materializer_does_not_manage_system_accounts_or_agent_base_permissions():
     source = (ROOT / "agents/linux/privileged/materialize_instance.py").read_text(encoding="utf-8")
     assert "useradd" not in source
     assert "usermod" not in source
     assert "runtime user does not exist" in source
     assert "_grant_runtime_access" not in source
-    assert "os.chmod(state" not in source
-    assert "os.chown(state" not in source
     assert "_validate_runtime_access" in source
+    assert 'INSTANCE_STATE_BASE = Path("/var/lib/capivara-instances")' in source
+    assert "_prepare_private_state" in source
 
 
 def test_identity_bootstrap_owns_account_creation_home_and_base_permissions():
@@ -29,10 +29,15 @@ def test_identity_bootstrap_owns_account_creation_home_and_base_permissions():
     assert "os.chmod(game_data" in source
 
 
-def test_materializer_returns_to_strict_filesystem_sandbox():
+def test_materializer_keeps_strict_filesystem_sandbox_with_explicit_instance_state_boundary():
     unit = (ROOT / "agents/linux/services/capivara-agent-materialize@.service").read_text(encoding="utf-8")
     assert "ProtectSystem=strict" in unit
-    assert "ReadWritePaths=/etc/systemd/system /var/lib/capivara-agent/privileged-materialization /var/lib/capivara-agent/game-data" in unit
+    assert (
+        "ReadWritePaths=/etc/systemd/system "
+        "/var/lib/capivara-agent/privileged-materialization "
+        "/var/lib/capivara-agent/game-data "
+        "/var/lib/capivara-instances"
+    ) in unit
     assert "ReadWritePaths=/etc " not in unit
 
 
