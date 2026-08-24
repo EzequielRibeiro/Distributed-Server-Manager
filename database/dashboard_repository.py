@@ -84,6 +84,7 @@ class DashboardRepository:
             except (TypeError, ValueError):
                 metadata = {}
             item["resource_profile_id"] = metadata.get("resource_profile_id")
+            item["resource_profile_source"] = metadata.get("resource_profile_source")
             result.append(item)
         return result
 
@@ -174,6 +175,9 @@ class DashboardRepository:
                 contract_metadata = {}
             contracted_profile_id = str(
                 contract_metadata.get("resource_profile_id") or ""
+            ).strip().lower()
+            contracted_profile_source = str(
+                contract_metadata.get("resource_profile_source") or "selected"
             ).strip().lower()
             requested_profile_id = str(resource_profile_id or "").strip().lower()
             if contracted_profile_id and requested_profile_id and requested_profile_id != contracted_profile_id:
@@ -269,6 +273,7 @@ class DashboardRepository:
             if contracted_profile_id:
                 metadata["resource_profile_id"] = contracted_profile_id
                 metadata["allowed_resource_profiles"] = [contracted_profile_id]
+                metadata["resource_profile_source"] = contracted_profile_source
             metadata_path = instance_path / ".dsm" / "instance-metadata.json"
             session.execute(
                 "INSERT INTO instances(id,node_id,game_id,name,status,manifest_path,"

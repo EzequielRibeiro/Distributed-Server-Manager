@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 from catalog_controller_runtime_policy import load_policy
 from agent_game_data_api import prepare_runtime_selection
+from catalog_resource_profiles_http import catalog_resource_profiles
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -15,12 +16,6 @@ def _runtime(runtime_id: str, root: Path = ROOT) -> dict[str, Any]:
         except (OSError, ValueError): continue
         if isinstance(payload, dict) and str(payload.get("id") or "") == str(runtime_id): return payload
     raise ValueError("runtime not found in Catalog")
-
-def _profiles(game: str, root: Path = ROOT) -> list[dict[str, Any]]:
-    path = root / "catalog" / "v2" / "games" / str(game) / "resource-profiles.json"
-    if not path.is_file(): return []
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return [dict(item) for item in payload.get("profiles", []) if isinstance(item, dict)] if isinstance(payload, dict) else []
 
 def resolve_catalog_provisioning(*, environment_id: str, selector: str, selection: dict[str, Any] | None, configuration: dict[str, Any] | None, root: Path = ROOT) -> tuple[dict[str, Any], dict[str, Any]]:
     runtime = _runtime(environment_id, root)
@@ -32,7 +27,9 @@ def resolve_catalog_provisioning(*, environment_id: str, selector: str, selectio
     config = dict(configuration or {})
     policy = load_policy(root, runtime)
     config["catalog_runtime_policy"] = policy
-    profiles = _profiles(str(runtime.get("game") or ""), root)
+    profile_catalog = catalog_resource_profiles(root, str(runtime.get("game") or ""))
+    profiles = [dict(item) for item in profile_catalog.get("profiles", []) if isinstance(item, dict)]
+    default_profile_id = str(profile_catalog.get("default_profile_id") or "").strip()
     requested = str(config.get("resource_profile_id") or "").strip()
     allowed = config.get("allowed_resource_profiles")
     if allowed is not None:
@@ -40,7 +37,8 @@ def resolve_catalog_provisioning(*, environment_id: str, selector: str, selectio
         allowed_ids = {str(item) for item in allowed}
         if requested and requested not in allowed_ids: raise PermissionError("resource profile is not allowed by contract")
     if profiles:
-        profile = next((item for item in profiles if str(item.get("id") or "") == requested), None) if requested else profiles[0]
+        resolved_profile_id = requested or default_profile_id
+        profile = next((item for item in profiles if str(item.get("id") or "") == resolved_profile_id), None)
         if profile is None: raise ValueError("resource profile not found in Catalog")
         if allowed is not None and str(profile.get("id") or "") not in {str(item) for item in allowed}: raise PermissionError("resource profile is not allowed by contract")
         config["resource_profile_id"] = str(profile.get("id") or "")

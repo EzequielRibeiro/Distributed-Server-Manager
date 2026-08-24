@@ -123,11 +123,20 @@ def main() -> int:
             {"password": "NovaSenha-456", "password_confirmation": "NovaSenha-456"},
             user=customer, backend=backend,
         )[0] == 200
-        assert dispatch_customer_admin_post(
+        status, default_contract = dispatch_customer_admin_post(
             CUSTOMER_ADMIN_CONTRACT,
-            {"customer_id": "customer-c1-c5", "game_id": "minecraft", "resource_profile_id": "standard", "instance_limit": 1},
+            {"customer_id": "customer-c1-c5", "game_id": "minecraft", "instance_limit": 1},
             user=operator, backend=backend,
-        )[0] == 201
+        )
+        assert status == 201
+        assert default_contract["resource_profile_id"] == "standard"
+        assert default_contract["resource_profile_source"] == "game_default"
+        stored_default = next(
+            item for item in repo.detail("customer-c1-c5")["contracts"]
+            if item["id"] == default_contract["id"]
+        )
+        assert stored_default["resource_profile_id"] == "standard"
+        assert stored_default["resource_profile_source"] == "game_default"
         assert dispatch_customer_admin_post(
             CUSTOMER_ADMIN_COLLECTION,
             {"id": "blocked", "name": "Blocked", "username": "blocked-user"},

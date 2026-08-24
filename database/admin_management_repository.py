@@ -124,6 +124,7 @@ class AdminManagementRepository:
         contract_id: str | None = None,
         ends_at: str | None = None,
         resource_profile_id: str | None = None,
+        resource_profile_source: str | None = None,
     ) -> dict[str, Any]:
         customer_id = self._identifier(customer_id, "customer_id")
         game_id = str(game_id or "").strip().lower()
@@ -160,7 +161,9 @@ class AdminManagementRepository:
                 "id,customer_id,game_id,status,instance_limit,ends_at,metadata_json"
                 ") VALUES (" + self.dialect.parameters(7) + ")",
                 (contract_id, customer_id, game_id, "active", instance_limit, ends_at,
-                 json.dumps({"resource_profile_id": resource_profile_id}, separators=(",", ":")) if resource_profile_id else "{}"),
+                 json.dumps({"resource_profile_id": resource_profile_id,
+                             "resource_profile_source": resource_profile_source or "selected"},
+                            separators=(",", ":")) if resource_profile_id else "{}"),
             )
 
         return {
@@ -171,6 +174,7 @@ class AdminManagementRepository:
             "instance_limit": instance_limit,
             "ends_at": ends_at,
             "resource_profile_id": resource_profile_id,
+            "resource_profile_source": resource_profile_source,
         }
 
     def customer_controller(self, customer_id: str) -> str:

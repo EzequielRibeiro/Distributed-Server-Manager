@@ -65,6 +65,8 @@
 .catalog-resource-edit { border: 1px solid var(--line,#263246); border-radius: 11px; padding: 15px; background: var(--bg,#0b111b); }
 .catalog-resource-edit-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 13px; }
 .catalog-resource-edit-head span { color: #75a7ff; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.catalog-profile-default { display: inline-flex; align-items: center; gap: 8px; color: #75a7ff; font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; cursor: pointer; }
+.catalog-profile-default input { accent-color: var(--blue,#3b82f6); }
 .catalog-resource-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
 .catalog-resource-fields label { display: grid; gap: 5px; color: var(--muted,#9aa9bd); font-size: 12px; font-weight: 700; }
 .catalog-resource-fields label.span-2 { grid-column: span 2; }

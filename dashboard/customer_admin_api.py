@@ -129,11 +129,16 @@ def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, ba
         if path == CUSTOMER_ADMIN_CONTRACT:
             limit = int(payload.get("instance_limit") or 1)
             game_id = str(payload.get("game_id") or "").strip().lower()
-            resource_profile_id = str(payload.get("resource_profile_id") or "").strip().lower()
-            profiles = catalog_resource_profiles(ROOT, game_id).get("profiles", [])
+            profile_catalog = catalog_resource_profiles(ROOT, game_id)
+            requested_profile_id = str(payload.get("resource_profile_id") or "").strip().lower()
+            resource_profile_id = requested_profile_id or str(
+                profile_catalog.get("default_profile_id") or ""
+            ).strip().lower()
+            profiles = profile_catalog.get("profiles", [])
             profile = next((item for item in profiles if str(item.get("id")) == resource_profile_id), None)
             if profile is None:
-                raise ValueError("select a valid resource profile for this game")
+                raise ValueError("select a valid resource profile or configure the game default")
+            resource_profile_source = "selected" if requested_profile_id else "game_default"
             result = repository.create_contract(
                 customer_id=str(payload.get("customer_id") or ""),
                 game_id=game_id,
@@ -141,6 +146,7 @@ def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, ba
                 contract_id=(str(payload.get("id") or "").strip() or None),
                 ends_at=(str(payload.get("ends_at") or "").strip() or None),
                 resource_profile_id=resource_profile_id,
+                resource_profile_source=resource_profile_source,
             )
             return 201, result
 

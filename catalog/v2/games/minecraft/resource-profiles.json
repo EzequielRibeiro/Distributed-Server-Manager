@@ -2,6 +2,7 @@
   "schema_version": 2,
   "kind": "GameResourceProfiles",
   "game": "minecraft",
+  "default_profile_id": "standard",
   "profiles": [
     {"id":"standard","name":"Standard","description":"Perfil padrão para servidores Minecraft de porte médio.","memory_mb":8192,"storage_mb":25600,"cpu_cores":4,"swap_mb":2048,"pids_limit":512},
     {"id":"large","name":"Large","description":"Perfil ampliado para mundos, plugins ou modpacks mais exigentes.","memory_mb":16384,"storage_mb":30720,"cpu_cores":6,"swap_mb":4096,"pids_limit":768}

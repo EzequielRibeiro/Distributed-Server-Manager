@@ -535,7 +535,11 @@
       const description = document.createElement("span");
       const specifications = document.createElement("dl");
       name.textContent = profile.name || profile.id;
-      description.textContent = profile.description || "Perfil de recursos contratado.";
+      description.textContent = `${
+        contract.resource_profile_source === "game_default"
+          ? "Padrão do jogo aplicado na contratação. "
+          : "Perfil selecionado no contrato. "
+      }${profile.description || "Perfil de recursos contratado."}`;
       [
         ["CPU", `${profile.cpu_cores || "—"} núcleos`],
         ["Memória", `${memory.toLocaleString("pt-BR")} GB`],

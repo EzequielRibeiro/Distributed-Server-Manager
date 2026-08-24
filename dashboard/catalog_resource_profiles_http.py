@@ -12,6 +12,24 @@ RESOURCE_PROFILES_PATH = "/api/catalog/resource-profiles"
 _GAME_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
+def _comparable_profiles(profiles: Any) -> list[dict[str, Any]] | None:
+    if not isinstance(profiles, list):
+        return None
+    try:
+        return [{
+            "id": str(item.get("id") or "").strip().lower(),
+            "name": str(item.get("name") or "").strip(),
+            "description": str(item.get("description") or "").strip(),
+            "memory_mb": int(item.get("memory_mb")),
+            "storage_mb": int(item.get("storage_mb")),
+            "cpu_cores": float(item.get("cpu_cores")),
+            "swap_mb": int(item.get("swap_mb") or 0),
+            "pids_limit": int(item.get("pids_limit") or 512),
+        } for item in profiles if isinstance(item, dict)]
+    except (TypeError, ValueError):
+        return None
+
+
 def catalog_resource_profiles(root: Path, game: str) -> dict[str, Any]:
     game = str(game or "").strip().lower()
     if not _GAME_ID.fullmatch(game):
@@ -27,14 +45,25 @@ def catalog_resource_profiles(root: Path, game: str) -> dict[str, Any]:
     except ValueError as exc:
         raise ValueError("invalid catalog path") from exc
     if not path.is_file():
-        return {"schema_version": 2, "kind": "GameResourceProfiles", "game": game, "profiles": []}
+        return {"schema_version": 2, "kind": "GameResourceProfiles", "game": game,
+                "default_profile_id": None, "profiles": []}
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or payload.get("kind") != "GameResourceProfiles" or payload.get("game") != game:
         raise RuntimeError("invalid resource profile catalog")
+    profiles = payload.get("profiles") if isinstance(payload.get("profiles"), list) else []
+    identifiers = {str(item.get("id") or "") for item in profiles if isinstance(item, dict)}
+    default_profile_id = str(payload.get("default_profile_id") or "").strip().lower()
+    if not default_profile_id and profiles:
+        default_profile_id = str(profiles[0].get("id") or "").strip().lower()
+    if default_profile_id and default_profile_id not in identifiers:
+        raise RuntimeError("invalid default resource profile")
+    payload["default_profile_id"] = default_profile_id or None
     return payload
 
 
-def save_catalog_resource_profiles(root: Path, game: str, profiles: Any) -> dict[str, Any]:
+def save_catalog_resource_profiles(
+    root: Path, game: str, profiles: Any, default_profile_id: Any = None,
+) -> dict[str, Any]:
     game = str(game or "").strip().lower()
     if not _GAME_ID.fullmatch(game):
         raise ValueError("valid game is required")
@@ -68,7 +97,13 @@ def save_catalog_resource_profiles(root: Path, game: str, profiles: Any) -> dict
         normalized.append({"id": identifier, "name": name, "description": str(item.get("description") or "").strip(),
                            "memory_mb": memory_mb, "storage_mb": storage_mb, "cpu_cores": cpu_cores,
                            "swap_mb": swap_mb, "pids_limit": pids_limit})
-    payload = {"schema_version": 2, "kind": "GameResourceProfiles", "game": game, "profiles": normalized}
+    default_profile_id = str(default_profile_id or "").strip().lower()
+    if not default_profile_id:
+        default_profile_id = normalized[0]["id"]
+    if default_profile_id not in identifiers:
+        raise ValueError("default resource profile must reference an existing profile")
+    payload = {"schema_version": 2, "kind": "GameResourceProfiles", "game": game,
+               "default_profile_id": default_profile_id, "profiles": normalized}
     target = root / "config" / "catalog-resource-profiles" / f"{game}.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(".tmp")
@@ -96,11 +131,18 @@ def dispatch_catalog_resource_profiles_get(path: str, query_string: str, *, user
 def dispatch_catalog_resource_profiles_put(path: str, payload: dict[str, Any] | None, *, user: dict[str, Any] | None, root: Path):
     if path != RESOURCE_PROFILES_PATH:
         return None
-    if not user or str(user.get("role") or "").lower() not in {"admin", "controller"}:
+    role = str((user or {}).get("role") or "").lower()
+    if role not in {"admin", "controller", "operator"}:
         return 403, {"error": "forbidden", "message": "catalog write access required"}
     body = payload if isinstance(payload, dict) else {}
     try:
-        return 200, save_catalog_resource_profiles(root, body.get("game"), body.get("profiles"))
+        if role == "operator":
+            current = catalog_resource_profiles(root, body.get("game"))
+            if _comparable_profiles(body.get("profiles")) != _comparable_profiles(current.get("profiles")):
+                return 403, {"error": "forbidden", "message": "operators can only change the default profile"}
+        return 200, save_catalog_resource_profiles(
+            root, body.get("game"), body.get("profiles"), body.get("default_profile_id")
+        )
     except ValueError as exc:
         return 400, {"error": "invalid_request", "message": str(exc)}
     except Exception:

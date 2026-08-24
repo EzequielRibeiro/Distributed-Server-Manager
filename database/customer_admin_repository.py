@@ -158,6 +158,7 @@ class CustomerAdminRepository:
             try: metadata = json.loads(item.pop("metadata_json", "{}") or "{}")
             except (TypeError, ValueError): metadata = {}
             item["resource_profile_id"] = metadata.get("resource_profile_id")
+            item["resource_profile_source"] = metadata.get("resource_profile_source")
             normalized_contracts.append(item)
         return {
             "customer": dict(customer),
@@ -325,12 +326,14 @@ class CustomerAdminRepository:
 
     def create_contract(self, *, customer_id: str, game_id: str, instance_limit: int,
                         contract_id: str | None = None, ends_at: str | None = None,
-                        resource_profile_id: str | None = None) -> dict[str, Any]:
+                        resource_profile_id: str | None = None,
+                        resource_profile_source: str | None = None) -> dict[str, Any]:
         self.initialize()
         return self.admin.create_contract(
             customer_id=customer_id, game_id=game_id, instance_limit=instance_limit,
             contract_id=contract_id, ends_at=ends_at,
             resource_profile_id=resource_profile_id,
+            resource_profile_source=resource_profile_source,
         )
 
     def _set_password_state(self, session: AlertSession, username: str, required: bool) -> None:

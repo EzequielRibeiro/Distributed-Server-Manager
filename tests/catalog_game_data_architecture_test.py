@@ -17,6 +17,7 @@ from catalog_resource_profiles_http import (
     dispatch_catalog_resource_profiles_get,
     dispatch_catalog_resource_profiles_put,
 )
+from catalog_provisioning_resolver import resolve_catalog_provisioning
 
 
 class CatalogGameDataArchitectureTest(unittest.TestCase):
@@ -67,6 +68,17 @@ class CatalogGameDataArchitectureTest(unittest.TestCase):
         self.assertEqual(profiles["large"]["memory_mb"], 16384)
         self.assertEqual(profiles["large"]["storage_mb"], 30720)
 
+    def test_provisioning_without_selection_uses_the_game_default_profile(self):
+        _, configuration = resolve_catalog_provisioning(
+            environment_id="minecraft.java.vanilla",
+            selector="current",
+            selection={"environment_id": "minecraft.java.vanilla"},
+            configuration={},
+            root=ROOT,
+        )
+        self.assertEqual(configuration["resource_profile_id"], "standard")
+        self.assertEqual(configuration["resource_profile"]["name"], "Standard")
+
     def test_resource_profile_reader_rejects_path_traversal(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError):
@@ -78,6 +90,7 @@ class CatalogGameDataArchitectureTest(unittest.TestCase):
             (root / "catalog/v2/games/example").mkdir(parents=True)
             payload = catalog_resource_profiles(root, "example")
             self.assertEqual(payload["profiles"], [])
+            self.assertIsNone(payload["default_profile_id"])
 
     def test_resource_profiles_can_be_saved_and_read_by_customer(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -91,11 +104,12 @@ class CatalogGameDataArchitectureTest(unittest.TestCase):
             }
             status, saved = dispatch_catalog_resource_profiles_put(
                 "/api/catalog/resource-profiles",
-                {"game": "example", "profiles": [profile]},
+                {"game": "example", "profiles": [profile], "default_profile_id": "standard"},
                 user={"role": "admin"}, root=root,
             )
             self.assertEqual(status, 200)
             self.assertEqual(saved["profiles"][0]["id"], "standard")
+            self.assertEqual(saved["default_profile_id"], "standard")
             self.assertTrue((root / "config/catalog-resource-profiles/example.json").is_file())
             status, loaded = dispatch_catalog_resource_profiles_get(
                 "/api/catalog/resource-profiles", "game=example",
@@ -104,13 +118,37 @@ class CatalogGameDataArchitectureTest(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertEqual(loaded, saved)
 
-    def test_operator_cannot_change_resource_profiles(self):
-        status, payload = dispatch_catalog_resource_profiles_put(
-            "/api/catalog/resource-profiles", {},
-            user={"role": "operator"}, root=ROOT,
-        )
-        self.assertEqual(status, 403)
-        self.assertEqual(payload["error"], "forbidden")
+    def test_operator_can_change_only_the_default_resource_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            game_dir = root / "catalog/v2/games/example"
+            game_dir.mkdir(parents=True)
+            profiles = [
+                {"id": "small", "name": "Small", "cpu_cores": 1,
+                 "memory_mb": 1024, "storage_mb": 1024, "swap_mb": 0, "pids_limit": 128},
+                {"id": "large", "name": "Large", "cpu_cores": 2,
+                 "memory_mb": 2048, "storage_mb": 2048, "swap_mb": 0, "pids_limit": 256},
+            ]
+            dispatch_catalog_resource_profiles_put(
+                "/api/catalog/resource-profiles",
+                {"game": "example", "profiles": profiles, "default_profile_id": "small"},
+                user={"role": "admin"}, root=root,
+            )
+            status, payload = dispatch_catalog_resource_profiles_put(
+                "/api/catalog/resource-profiles",
+                {"game": "example", "profiles": profiles, "default_profile_id": "large"},
+                user={"role": "operator"}, root=root,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(payload["default_profile_id"], "large")
+            changed = [dict(profiles[0], memory_mb=8192), profiles[1]]
+            status, payload = dispatch_catalog_resource_profiles_put(
+                "/api/catalog/resource-profiles",
+                {"game": "example", "profiles": changed, "default_profile_id": "small"},
+                user={"role": "operator"}, root=root,
+            )
+            self.assertEqual(status, 403)
+            self.assertEqual(payload["error"], "forbidden")
 
     def test_dashboard_uses_latest_composition_layer(self):
         service = (ROOT / "systemd/dsm-dashboard.service").read_text(encoding="utf-8")
