@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Root-owned helper that applies/removes only validated Capivara instance runtimes."""
 from __future__ import annotations
-import json, os, pwd, sys
+import grp, json, os, pwd, stat, subprocess, sys
 from pathlib import Path
 from typing import Any
 INSTALL_ROOT=Path(os.environ.get("CAPIVARA_AGENT_ROOT","/opt/capivara-agent"));RUNTIME_DIR=INSTALL_ROOT/"runtime"
@@ -10,6 +10,7 @@ from catalog_runtime_policy import materialize_network_properties,materialize_te
 from materializers import resolve_materializer
 from runtime_spec import validate_runtime_spec
 STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));CONFIG_PATH=Path(os.environ.get("CAPIVARA_AGENT_CONFIG","/etc/capivara-agent/agent.json"));REQUEST_ROOT=STATE_DIR/"privileged-materialization"
+_DEFAULT_RUNTIME_USER="capivara-instance";_AGENT_GROUP="capivara-agent"
 def _token(value:Any)->str:
  text=str(value or "").strip();allowed="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
  if not text or len(text)>191 or any(ch not in allowed for ch in text):raise ValueError("invalid instance_id")
@@ -20,6 +21,36 @@ def _write_result(path:Path,payload:dict[str,Any])->None:
   account=pwd.getpwnam("capivara-agent");os.chown(temp,account.pw_uid,account.pw_gid)
  except (KeyError,OSError):pass
  os.replace(temp,path)
+def _run_admin(command:list[str])->None:
+ completed=subprocess.run(command,capture_output=True,text=True,check=False,timeout=30)
+ if completed.returncode!=0:raise RuntimeError((completed.stderr or completed.stdout or f"command failed: {' '.join(command)}")[:2000])
+def _ensure_runtime_user(user:str)->None:
+ try:group=grp.getgrnam(_AGENT_GROUP)
+ except KeyError as exc:raise RuntimeError("capivara-agent group is unavailable") from exc
+ try:account=pwd.getpwnam(user)
+ except KeyError:
+  if user!=_DEFAULT_RUNTIME_USER:raise RuntimeError(f"runtime user does not exist: {user}")
+  _run_admin(["useradd","--system","--gid",_AGENT_GROUP,"--home-dir","/nonexistent","--no-create-home","--shell","/usr/sbin/nologin",user]);account=pwd.getpwnam(user)
+ if user==_DEFAULT_RUNTIME_USER and account.pw_gid!=group.gr_gid:
+  _run_admin(["usermod","-a","-G",_AGENT_GROUP,user])
+def _grant_runtime_access(working_directory:str,user:str)->None:
+ if user!=_DEFAULT_RUNTIME_USER:return
+ try:group=grp.getgrnam(_AGENT_GROUP)
+ except KeyError as exc:raise RuntimeError("capivara-agent group is unavailable") from exc
+ state=STATE_DIR.resolve();game_data=(STATE_DIR/"game-data").resolve();working=Path(working_directory).resolve()
+ try:relative=working.relative_to(game_data)
+ except ValueError:return
+ paths=[state,game_data];current=game_data
+ for part in relative.parts:
+  current=current/part
+  if current.is_dir():paths.append(current)
+ if state.is_dir():
+  os.chown(state,-1,group.gr_gid);os.chmod(state,stat.S_IMODE(state.stat().st_mode)|stat.S_IXGRP)
+ for path in paths[1:]:
+  if not path.is_dir():continue
+  os.chown(path,-1,group.gr_gid);os.chmod(path,stat.S_IMODE(path.stat().st_mode)|stat.S_IRGRP|stat.S_IXGRP)
+def _ensure_runtime_identity(spec:dict[str,Any])->None:
+ user=str(spec.get("user") or _DEFAULT_RUNTIME_USER);_ensure_runtime_user(user);_grant_runtime_access(str(spec["working_directory"]),user)
 def run(instance_id:str)->dict[str,Any]:
  if os.geteuid()!=0:raise RuntimeError("privileged materializer helper must run as root")
  instance_id=_token(instance_id);request_path=REQUEST_ROOT/f"{instance_id}.request.json";result_path=REQUEST_ROOT/f"{instance_id}.result.json";request=json.loads(request_path.read_text(encoding="utf-8"))
@@ -32,7 +63,7 @@ def run(instance_id:str)->dict[str,Any]:
  if spec["instance_id"]!=instance_id:raise RuntimeError("runtime spec instance_id mismatch")
  action=str(request.get("action") or "").strip().lower();materializer=resolve_materializer(spec);templates=[]
  if action=="apply":
-  operation=materializer.apply(spec);templates=materialize_templates(spec);templates.extend(materialize_network_properties(spec))
+  _ensure_runtime_identity(spec);operation=materializer.apply(spec);templates=materialize_templates(spec);templates.extend(materialize_network_properties(spec))
  elif action=="remove":operation=materializer.remove(spec)
  else:raise RuntimeError("unsupported privileged materialization action")
  result={"status":"completed","action":action,"instance_id":instance_id,"agent_id":local_agent_id,"operation":operation,"templates":templates};_write_result(result_path,result);return result
