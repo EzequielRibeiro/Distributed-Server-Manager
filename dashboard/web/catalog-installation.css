@@ -34,3 +34,4 @@
 .catalog-command-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .catalog-command-heading button { border: 1px solid var(--blue, #3b82f6); border-radius: 7px; padding: 7px 10px; background: transparent; color: var(--blue, #3b82f6); cursor: pointer; font-weight: 700; }
 .catalog-steam-auth-help pre { max-height: 320px; overflow: auto; white-space: pre-wrap; margin: 10px 0 0; padding: 12px; border-radius: 8px; background: var(--bg, #0b111b); color: var(--text, #eef3fb); }
+.catalog-file-list[aria-busy="true"] { opacity: .65; pointer-events: none; }
