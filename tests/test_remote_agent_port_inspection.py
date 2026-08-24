@@ -39,6 +39,9 @@ def _snapshot(**overrides):
             "source": "ss",
             "tcp_listen": [8080, 25565],
             "udp_listen": [2302, 2304, 27016],
+            "tcp_complete": True,
+            "udp_complete": True,
+            "complete": True,
         },
     }
     value.update(overrides)
@@ -59,7 +62,6 @@ def _provider(monkeypatch, snapshot=None):
 
 def test_controller_uses_remote_agent_inventory(monkeypatch):
     provider = _provider(monkeypatch)
-
     occupied = provider(
         "agent-remote",
         "node-remote",
@@ -67,7 +69,6 @@ def test_controller_uses_remote_agent_inventory(monkeypatch):
         2300,
         2310,
     )
-
     assert occupied == {2302, 2304}
 
 
@@ -76,7 +77,6 @@ def test_remote_agent_inventory_fails_closed_when_offline(monkeypatch):
         monkeypatch,
         _snapshot(health_status="offline"),
     )
-
     with pytest.raises(PortInspectionError, match="stale|not online"):
         provider("agent-remote", "node-remote", "udp", 2300, 2310)
 
@@ -86,7 +86,6 @@ def test_remote_agent_inventory_rejects_node_identity_mismatch(monkeypatch):
         monkeypatch,
         _snapshot(node_id="unexpected-node"),
     )
-
     with pytest.raises(PortInspectionError, match="node mismatch"):
         provider("agent-remote", "node-remote", "udp", 2300, 2310)
 
@@ -94,11 +93,48 @@ def test_remote_agent_inventory_rejects_node_identity_mismatch(monkeypatch):
 def test_remote_agent_inventory_fails_closed_when_protocol_data_missing(monkeypatch):
     provider = _provider(
         monkeypatch,
-        _snapshot(network={"source": "ss", "tcp_listen": []}),
+        _snapshot(
+            network={
+                "source": "ss",
+                "tcp_listen": [],
+                "tcp_complete": True,
+                "udp_complete": True,
+            }
+        ),
     )
-
     with pytest.raises(PortInspectionError, match="udp port inventory is unavailable"):
         provider("agent-remote", "node-remote", "udp", 2300, 2310)
+
+
+def test_remote_agent_inventory_fails_closed_when_collection_failed(monkeypatch):
+    snapshot = _snapshot()
+    snapshot["network"] = dict(snapshot["network"])
+    snapshot["network"]["udp_listen"] = []
+    snapshot["network"]["udp_complete"] = False
+    provider = _provider(monkeypatch, snapshot)
+
+    with pytest.raises(PortInspectionError, match="udp port inventory is incomplete"):
+        provider("agent-remote", "node-remote", "udp", 2300, 2310)
+
+
+def test_remote_agent_inventory_rejects_unknown_source(monkeypatch):
+    snapshot = _snapshot()
+    snapshot["network"] = dict(snapshot["network"])
+    snapshot["network"]["source"] = "arbitrary"
+    provider = _provider(monkeypatch, snapshot)
+
+    with pytest.raises(PortInspectionError, match="source is not trusted"):
+        provider("agent-remote", "node-remote", "udp", 2300, 2310)
+
+
+def test_remote_agent_inventory_rejects_boolean_ports(monkeypatch):
+    snapshot = _snapshot()
+    snapshot["network"] = dict(snapshot["network"])
+    snapshot["network"]["udp_listen"] = [True]
+    provider = _provider(monkeypatch, snapshot)
+
+    with pytest.raises(PortInspectionError, match="malformed"):
+        provider("agent-remote", "node-remote", "udp", 1, 10)
 
 
 def test_local_node_keeps_direct_os_inspection(monkeypatch):
@@ -117,9 +153,6 @@ def test_local_node_keeps_direct_os_inspection(monkeypatch):
 
     monkeypatch.setattr(instance_network, "AgentRuntimeRepository", FailIfConstructed)
     monkeypatch.setattr(instance_network, "LocalPortInspector", FakeLocalInspector)
-
-    # Construction itself must remain side-effect-free for the remote repository.
-    # The backend object is only consumed if remote placement is actually used.
     original_repository = instance_network.AgentRuntimeRepository
 
     class LazyRepository:
