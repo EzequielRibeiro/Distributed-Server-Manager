@@ -18,6 +18,14 @@
         updates: ["Atualizações", "Estado do rollout e versões deste Agent."],
         logs: ["Log", "Saída recente enviada por este Agent ao Controller."],
     };
+    const queueLabels = {
+        "capivara.runtime.queue.runtime.events": "Eventos pendentes",
+        "capivara.runtime.queue.broadcast.state": "Broadcasts pendentes",
+        "capivara.runtime.queue.backup.results": "Resultados de backup",
+        "capivara.runtime.queue.game.data": "Tarefas de dados de jogos",
+        "capivara.runtime.queue.provisioning": "Provisionamentos pendentes",
+        "capivara.runtime.queue.instance.results": "Resultados de instâncias",
+    };
 
     async function request(path) {
         const response = await fetch(path, {
@@ -118,6 +126,46 @@
         return container;
     }
 
+    function queueSummary(metrics) {
+        const entries = metrics.map(metric => {
+            const name = metric.metric_name || metric.name || metric.key || "";
+            const raw = metric.value ?? metric.metric_value ?? metric.latest ?? 0;
+            return {name, label: queueLabels[name] || name, value: Number(raw) || 0};
+        });
+        const total = entries.reduce((sum, entry) => sum + entry.value, 0);
+        const card = document.createElement("section");
+        card.className = "cap-agent-queue-summary";
+        card.dataset.state = total > 0 ? "pending" : "healthy";
+        const heading = document.createElement("div");
+        const copy = document.createElement("div");
+        const title = document.createElement("span");
+        const status = document.createElement("strong");
+        const badge = document.createElement("b");
+        title.textContent = "Filas operacionais";
+        status.textContent = total > 0 ? `${integer.format(total)} pendência(s)` : "Sem pendências";
+        badge.textContent = total > 0 ? "ATENÇÃO" : "SAUDÁVEL";
+        copy.append(title, status);
+        heading.append(copy, badge);
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        const list = document.createElement("div");
+        summary.textContent = "Ver detalhes das filas";
+        list.className = "cap-agent-queue-list";
+        entries.forEach(entry => {
+            const row = document.createElement("div");
+            const label = document.createElement("span");
+            const count = document.createElement("strong");
+            label.textContent = entry.label;
+            label.title = entry.name;
+            count.textContent = integer.format(entry.value);
+            row.append(label, count);
+            list.append(row);
+        });
+        details.append(summary, list);
+        card.append(heading, details);
+        return card;
+    }
+
     async function loadIdentity() {
         const result = await request(`/api/agent/ports?agent_id=${encodeURIComponent(agentId)}`);
         agent = result.agent || {};
@@ -130,7 +178,9 @@
     async function loadMonitoring() {
         const result = await request(`/api/observability?mode=latest&agent_id=${encodeURIComponent(agentId)}&limit=200`);
         const metrics = Array.isArray(result.metrics) ? result.metrics : [];
-        const nodes = metrics.map(metric => {
+        const queueMetrics = metrics.filter(metric => queueLabels[metric.metric_name || metric.name || metric.key]);
+        const regularMetrics = metrics.filter(metric => !queueLabels[metric.metric_name || metric.name || metric.key]);
+        const nodes = regularMetrics.map(metric => {
             const raw = metric.value ?? metric.metric_value ?? metric.latest ?? metric.status;
             return item(
                 metric.metric_name || metric.name || metric.key || "Métrica",
@@ -139,7 +189,10 @@
                 raw,
             );
         });
-        setContent(nodes.length ? grid(nodes) : empty("Nenhuma métrica publicada por este Agent."));
+        const sections = [];
+        if (queueMetrics.length) sections.push(queueSummary(queueMetrics));
+        if (nodes.length) sections.push(grid(nodes));
+        setContent(...(sections.length ? sections : [empty("Nenhuma métrica publicada por este Agent.")]));
     }
 
     function eventMessage(event) {
