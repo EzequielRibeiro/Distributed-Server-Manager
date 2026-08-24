@@ -6,6 +6,7 @@
     <title>Capivara DSM - Agents</title>
     <link rel="stylesheet" href="dashboard-home-v3.css">
     <link rel="stylesheet" href="agents-v3.css?v=2">
+    <link rel="stylesheet" href="agent-updates-v3.css?v=3">
 </head>
 <body class="cap-home cap-agents-shell">
 <div id="sidebar-component"></div>
@@ -49,10 +50,57 @@
             <div id="agents-list" class="cap-agent-grid" aria-live="polite"></div>
             <div id="agents-empty" class="cap-agent-empty" hidden><strong>Nenhum Agent encontrado.</strong><span>Adicione um Agent ou ajuste o filtro atual.</span></div>
         </section>
+
+        <section id="agent-update-panel" class="cap-agents-panel agent-manager-only">
+            <div class="cap-agents-panel-heading">
+                <div><h2>Atualizações de Agents</h2><p>Planeje um rollout controlado e acompanhe o estado do Agent selecionado.</p></div>
+            </div>
+            <div id="agent-update-error" class="cap-agents-error" hidden></div>
+            <label class="cap-update-agent">Agent
+                <select id="agent-update-selector"><option value="">Selecione um Agent</option></select>
+            </label>
+            <div class="cap-update-summary">
+                <article><span>Versão instalada</span><strong id="agent-installed-version">—</strong></article>
+                <article><span>Versão disponível</span><strong id="agent-available-version">—</strong></article>
+                <article id="agent-update-status-card"><span>Status</span><strong id="agent-update-status">—</strong></article>
+                <article><span>Última atualização</span><strong id="agent-last-update">—</strong></article>
+            </div>
+            <div id="agent-update-progress" class="cap-update-progress" data-state="idle" hidden aria-live="polite">
+                <div class="cap-update-progress-heading">
+                    <strong id="agent-update-progress-title">Preparando atualização</strong>
+                    <span id="agent-update-progress-value">0%</span>
+                </div>
+                <div class="cap-update-progress-track" role="progressbar" aria-label="Progresso da atualização" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                    <span id="agent-update-progress-bar"></span>
+                </div>
+                <p id="agent-update-progress-message">Aguardando o Controller iniciar o rollout.</p>
+                <details id="agent-update-error-details" class="cap-update-error-details" hidden>
+                    <summary>Ver detalhes do erro</summary>
+                    <pre id="agent-update-error-detail-content"></pre>
+                </details>
+            </div>
+            <div class="cap-update-forms">
+                <form id="agent-update-channel-form" class="cap-update-form">
+                    <h3>Canal do Agent</h3>
+                    <label>Canal<select id="agent-update-channel"><option value="stable">Stable</option><option value="beta">Beta</option><option value="local/manual">Local / manual</option></select></label>
+                    <button class="cap-btn cap-btn-secondary" type="submit">Salvar canal</button>
+                </form>
+                <form id="agent-rollout-form" class="cap-update-form">
+                    <h3>Criar rollout</h3>
+                    <label>Agents do rollout<textarea id="agent-rollout-agents" rows="3" placeholder="agent-a, agent-b" required></textarea></label>
+                    <label>Versão desejada<input id="agent-rollout-version" type="text" placeholder="2.0.3" required></label>
+                    <label>Tamanho do lote<input id="agent-rollout-batch-size" type="number" min="1" value="1" required></label>
+                    <label>Canal<select id="agent-rollout-channel"><option value="stable">Stable</option><option value="beta">Beta</option><option value="local/manual">Local / manual</option></select></label>
+                    <p>O próximo lote só é liberado quando os lotes anteriores retornarem online na versão esperada.</p>
+                    <button id="agent-rollout-submit" class="cap-btn cap-btn-primary" type="submit">Criar rollout</button>
+                </form>
+            </div>
+        </section>
     </div>
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
 <script src="agents-v3.js?v=2"></script>
+<script src="agent-updates-v3.js?v=3"></script>
 <script src="/infrastructure-role-ui.js"></script>
 </body>
 </html>

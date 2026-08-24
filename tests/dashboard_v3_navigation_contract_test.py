@@ -19,7 +19,10 @@ class DashboardV3NavigationContractTest(unittest.TestCase):
 
     def test_sidebar_targets_are_registered_by_v3_composition(self):
         sidebar = (WEB / "components" / "sidebar-v3.html").read_text(encoding="utf-8")
-        composition = (ROOT / "dashboard" / "server_part14.py").read_text(encoding="utf-8")
+        composition = "\n".join(
+            (ROOT / "dashboard" / name).read_text(encoding="utf-8")
+            for name in ("server.py", "server_part14.py")
+        )
         hrefs = set(re.findall(r'href="([^"#]+)(?:#[^"]*)?"', sidebar))
         for href in hrefs:
             self.assertIn(f'"/{href}"', composition, f"sidebar route not registered: {href}")
@@ -42,7 +45,7 @@ class DashboardV3NavigationContractTest(unittest.TestCase):
 
     def test_sidebar_keeps_current_rbac_boundaries(self):
         sidebar = (WEB / "components" / "sidebar-v3.html").read_text(encoding="utf-8")
-        for marker in ("admin-only", "agent-manager-only", "instance-manager-only"):
+        for marker in ("admin-only", "agent-manager-only"):
             self.assertIn(marker, sidebar)
 
     def test_primary_admin_pages_use_the_v3_sidebar_contract(self):

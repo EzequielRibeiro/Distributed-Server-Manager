@@ -10,7 +10,7 @@ def load(name,path):
  spec=importlib.util.spec_from_file_location(name,path);module=importlib.util.module_from_spec(spec);assert spec and spec.loader;spec.loader.exec_module(module);return module
 class CatalogArchitectureStages5To10Test(unittest.TestCase):
  def test_stage5_runtime_policy_validation_and_persistence(self):
-  policy=load("dashboard_catalog_runtime_policy",ROOT/"dashboard/catalog_runtime_policy.py")
+  policy=load("dashboard_catalog_controller_runtime_policy",ROOT/"dashboard/catalog_controller_runtime_policy.py")
   runtime={"id":"minecraft.java.vanilla","process":{"executable":"server.jar","args":["nogui"]}}
   with tempfile.TemporaryDirectory() as td:
    old=os.environ.get("CAPIVARA_CATALOG_POLICY_ROOT");os.environ["CAPIVARA_CATALOG_POLICY_ROOT"]=td
@@ -43,7 +43,7 @@ class CatalogArchitectureStages5To10Test(unittest.TestCase):
    with self.assertRaises(ValueError):module.execute_file_operation(root,{"action":"read","path":"../outside"})
   self.assertTrue((ROOT/"agents/windows/runtime/game_data_integrity.py").is_file());self.assertIn("FILE_ACTIONS",(ROOT/"agents/windows/runtime/game_data_executor.py").read_text())
  def test_dashboard_and_packaging_contracts_cover_completed_architecture(self):
-  html=(ROOT/"dashboard/web/catalog.html").read_text();js=(ROOT/"dashboard/web/catalog-page.js").read_text();service=(ROOT/"systemd/dsm-dashboard.service").read_text();build=(ROOT/"release/build_agent_package.sh").read_text()
+  html=(ROOT/"dashboard/web/catalog.html").read_text(encoding="utf-8");js=(ROOT/"dashboard/web/catalog-page.js").read_text(encoding="utf-8");service=(ROOT/"systemd/dsm-dashboard.service").read_text(encoding="utf-8");build=(ROOT/"release/build_agent_package.sh").read_text(encoding="utf-8")
   for text in ("Parâmetros de execução","Templates de configuração","Reparar","Linux + Windows"):self.assertIn(text,html)
   for text in ("/api/catalog/runtime-policy","gameData('repair')","saveRuntimePolicy"):self.assertIn(text,js)
   self.assertIn("dashboard/server_part17.py",service)

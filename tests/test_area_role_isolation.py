@@ -28,12 +28,13 @@ def test_customer_pages_are_server_side_protected():
 
 
 def test_controller_pages_are_application_shells():
-    assert (
-        'CONTROLLER_PROTECTED_PAGES={'
-        '"/","/index.html","/console.html","/settings.html",'
-        '"/users.html","/agents.html","/contract-demo.html"}'
-        in SOURCE
-    )
+    assert "CONTROLLER_PROTECTED_PAGES={" in SOURCE
+    for page in (
+        "/", "/index.html", "/console.html", "/settings.html",
+        "/users.html", "/agents.html", "/contract-demo.html",
+    ):
+        assert f'"{page}"' in SOURCE
+    assert "*CONTROLLER_DASHBOARD_FILES.keys()" in SOURCE
 
     assert "if path in CONTROLLER_PROTECTED_PAGES:" in SOURCE
     assert 'if path in {"/","/index.html"}:' in SOURCE

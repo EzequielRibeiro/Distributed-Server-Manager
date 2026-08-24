@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from catalog_runtime_policy import load_policy
+from catalog_controller_runtime_policy import load_policy
 from agent_game_data_api import prepare_runtime_selection
 
 ROOT = Path(__file__).resolve().parents[1]

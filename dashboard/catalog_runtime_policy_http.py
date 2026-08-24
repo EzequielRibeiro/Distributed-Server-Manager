@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
 
-from catalog_runtime_policy import load_policy, save_policy
+from catalog_controller_runtime_policy import load_policy, save_policy
 
 RUNTIME_POLICY_PATH = "/api/catalog/runtime-policy"
 

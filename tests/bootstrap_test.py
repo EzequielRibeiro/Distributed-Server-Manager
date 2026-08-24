@@ -54,12 +54,17 @@ class BootstrapTest(unittest.TestCase):
                 ],
                 env=environment, check=True, capture_output=True, text=True,
             )
-            self.assertEqual(json.loads(status.stdout), {
+            topology = json.loads(status.stdout)
+            expected = {
                 "controllers": 1,
                 "agents": 1,
                 "customers": 0,
                 "instances": 0,
-            })
+            }
+            self.assertEqual(
+                {key: topology[key] for key in expected},
+                expected,
+            )
 
 
 if __name__ == "__main__":

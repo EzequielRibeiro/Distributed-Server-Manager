@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persistent, validated runtime/startup policy for Catalog runtimes."""
+"""Controller-side persistent runtime/startup policy for Catalog runtimes."""
 from __future__ import annotations
 
 import json

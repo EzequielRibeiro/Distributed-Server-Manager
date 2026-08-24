@@ -72,7 +72,14 @@ def _attach_update_state(result: dict[str, Any], body: dict[str, Any], *, agent_
             result.get("health_status", "online"),
         )
         update_result = body.get("update_result") if isinstance(body.get("update_result"), dict) else None
-        if update_result and str(update_result.get("status", "")).lower() == "failed":
+        failed_rollout_id = str((update_result or {}).get("rollout_id") or "").strip()
+        active_rollout_id = str(update_state.get("rollout_id") or "").strip()
+        if (
+            update_result
+            and str(update_result.get("status", "")).lower() == "failed"
+            and failed_rollout_id
+            and failed_rollout_id == active_rollout_id
+        ):
             update_state = updates.mark_failed(
                 agent_id,
                 str(update_result.get("error", "update failed"))[:2000],

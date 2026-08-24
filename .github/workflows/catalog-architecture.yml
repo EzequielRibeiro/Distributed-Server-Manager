@@ -3,7 +3,8 @@ name: Catalog Architecture
 on:
   pull_request:
     paths:
-      - 'dashboard/catalog_runtime_policy*.py'
+      - 'dashboard/catalog_controller_runtime_policy.py'
+      - 'dashboard/catalog_runtime_policy_http.py'
       - 'dashboard/catalog_provisioning_resolver.py'
       - 'dashboard/agent_instance_provisioning_api.py'
       - 'dashboard/server_part17.py'
@@ -33,7 +34,7 @@ jobs:
       - name: Validate Python
         run: |
           python3 -m py_compile \
-            dashboard/catalog_runtime_policy.py \
+            dashboard/catalog_controller_runtime_policy.py \
             dashboard/catalog_runtime_policy_http.py \
             dashboard/catalog_provisioning_resolver.py \
             dashboard/agent_instance_provisioning_api.py \

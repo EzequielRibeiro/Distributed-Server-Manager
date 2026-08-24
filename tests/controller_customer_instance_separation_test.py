@@ -12,9 +12,8 @@ class ControllerCustomerInstanceSeparationTest(unittest.TestCase):
         self.assertNotIn('id="btn-stop"', html)
         self.assertNotIn('id="btn-restart"', html)
         self.assertNotIn('id="catalog-v2-instance"', html)
-        self.assertIn('href="/customers.html"', html)
-        self.assertIn('href="/agents.html"', html)
-        self.assertIn('href="/servers-v2.html"', html)
+        self.assertIn('url=/dashboard-v3.html', html)
+        self.assertIn("window.location.replace('/dashboard-v3.html')", html)
 
     def test_controller_entrypoint_routes_index_to_dedicated_page(self):
         server = (ROOT / "dashboard" / "server_part13.py").read_text(encoding="utf-8")
@@ -63,11 +62,11 @@ class ControllerCustomerInstanceSeparationTest(unittest.TestCase):
         self.assertIn('identity.instance', script)
 
     def test_responsive_styles_avoid_global_horizontal_overflow(self):
-        controller_css = (WEB / "controller-dashboard.css").read_text(encoding="utf-8")
+        controller_css = (WEB / "dashboard-home-v3.css").read_text(encoding="utf-8")
         events_css = (WEB / "customer-instance-events.css").read_text(encoding="utf-8")
         self.assertIn("overflow-x:hidden", controller_css)
         self.assertIn("minmax(0,1fr)", controller_css)
-        self.assertIn("overflow-wrap:anywhere", controller_css)
+        self.assertIn(".cap-panel{min-width:0;overflow:hidden}", controller_css)
         self.assertIn("overflow-wrap:anywhere", events_css)
 
 

@@ -132,6 +132,25 @@ class AgentUpdateLifecycleTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             updater._verify_manifest(manifest, "1.5.0", "beta")
 
+    def test_updater_service_can_write_every_managed_system_path(self):
+        unit = (
+            ROOT / "agents" / "linux" / "services" / "capivara-agent-update.service"
+        ).read_text(encoding="utf-8")
+        read_write_paths = next(
+            line.split("=", 1)[1].split()
+            for line in unit.splitlines()
+            if line.startswith("ReadWritePaths=")
+        )
+        self.assertTrue(
+            {
+                "/opt/capivara-agent",
+                "/var/lib/capivara-agent",
+                "/etc/systemd/system",
+                "/etc/polkit-1/rules.d",
+                "/usr/local/bin",
+            }.issubset(read_write_paths)
+        )
+
     def test_transaction_rollback_restores_file_and_removes_new_cli_link(self):
         package = self.root / "package"
         source = package / "agent.py"

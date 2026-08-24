@@ -44,11 +44,11 @@ class AgentLocationHttpTest(
 
     @patch(
         "agent_location_http."
-        "set_agent_location_for_user"
+        "safely_set_agent_location_for_user"
     )
     def test_dispatches_agent_location(
         self,
-        set_agent_location_for_user,
+        safely_set_agent_location_for_user,
     ):
         payload = {
             "agent_id": "agent-demo",
@@ -66,7 +66,7 @@ class AgentLocationHttpTest(
             "status": "active",
         }
 
-        set_agent_location_for_user.return_value = (
+        safely_set_agent_location_for_user.return_value = (
             expected
         )
 
@@ -90,7 +90,7 @@ class AgentLocationHttpTest(
             expected,
         )
 
-        set_agent_location_for_user.assert_called_once_with(
+        safely_set_agent_location_for_user.assert_called_once_with(
             {
                 "role": "admin",
             },
@@ -100,13 +100,13 @@ class AgentLocationHttpTest(
 
     @patch(
         "agent_location_http."
-        "set_agent_location_for_user"
+        "safely_set_agent_location_for_user"
     )
     def test_maps_permission_error_to_403(
         self,
-        set_agent_location_for_user,
+        safely_set_agent_location_for_user,
     ):
-        set_agent_location_for_user.side_effect = (
+        safely_set_agent_location_for_user.side_effect = (
             PermissionError(
                 "agent is outside user scope"
             )
@@ -138,13 +138,13 @@ class AgentLocationHttpTest(
 
     @patch(
         "agent_location_http."
-        "set_agent_location_for_user"
+        "safely_set_agent_location_for_user"
     )
     def test_maps_validation_error_to_400(
         self,
-        set_agent_location_for_user,
+        safely_set_agent_location_for_user,
     ):
-        set_agent_location_for_user.side_effect = (
+        safely_set_agent_location_for_user.side_effect = (
             ValueError(
                 "datacenter_id is required"
             )
@@ -174,13 +174,13 @@ class AgentLocationHttpTest(
 
     @patch(
         "agent_location_http."
-        "set_agent_location_for_user"
+        "safely_set_agent_location_for_user"
     )
     def test_maps_unexpected_error_to_500(
         self,
-        set_agent_location_for_user,
+        safely_set_agent_location_for_user,
     ):
-        set_agent_location_for_user.side_effect = (
+        safely_set_agent_location_for_user.side_effect = (
             RuntimeError(
                 "database unavailable"
             )
@@ -208,7 +208,7 @@ class AgentLocationHttpTest(
             body,
             {
                 "error":
-                    "failed to update agent location",
+                    "failed to update agent location safely",
             },
         )
 

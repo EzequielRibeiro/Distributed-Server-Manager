@@ -235,7 +235,7 @@ class DashboardRemoteAgentInstallTest(unittest.TestCase):
         self.assertIsNone(status["preconfiguration"]["apply_error"])
 
     def test_ui_exposes_ssh_and_preconfiguration_without_password_field(self):
-        html = (ROOT / "dashboard/web/agents.html").read_text(encoding="utf-8")
+        html = (ROOT / "dashboard/web/add-agent.html").read_text(encoding="utf-8")
         js = (ROOT / "dashboard/web/agent-installation.js").read_text(encoding="utf-8")
         self.assertIn('value="ssh"', html)
         self.assertIn('id="agent-preconfig-port-start"', html)

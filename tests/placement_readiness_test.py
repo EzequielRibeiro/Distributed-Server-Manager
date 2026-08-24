@@ -33,6 +33,7 @@ class PlacementReadinessTest(unittest.TestCase):
             AGENT_STATES,
             frozenset(
                 {
+                    "discovered",
                     "pending",
                     "pairing",
                     "active",

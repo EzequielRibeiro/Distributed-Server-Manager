@@ -32,6 +32,8 @@ DASHBOARD_V3_FILES = {
     "/agents.html": legacy.WEB_DIR / "agents.html",
     "/agents-v3.js": legacy.WEB_DIR / "agents-v3.js",
     "/agents-v3.css": legacy.WEB_DIR / "agents-v3.css",
+    "/agent-updates-v3.css": legacy.WEB_DIR / "agent-updates-v3.css",
+    "/agent-updates-v3.js": legacy.WEB_DIR / "agent-updates-v3.js",
     "/add-agent.html": legacy.WEB_DIR / "add-agent.html",
     "/add-agent-v3.css": legacy.WEB_DIR / "add-agent-v3.css",
     "/add-agent-page.js": legacy.WEB_DIR / "add-agent-page.js",

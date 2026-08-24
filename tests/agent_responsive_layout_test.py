@@ -10,10 +10,14 @@ class AgentResponsiveLayoutTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.css = (ROOT / "dashboard/web/agents.css").read_text(encoding="utf-8")
-        cls.shell = (ROOT / "dashboard/web/dashboard-ui-v2.css").read_text(encoding="utf-8")
+        cls.shell = (ROOT / "dashboard/web/dashboard-home-v3.css").read_text(encoding="utf-8")
 
     def test_agents_page_does_not_reserve_sidebar_twice(self):
-        self.assertIn("padding-left: var(--cap-sidebar);", self.shell)
+        self.assertIn(".cap-home-main{margin-left:var(--sidebar);", self.shell)
+        self.assertIn(".cap-home #sidebar-component{position:fixed;", self.shell)
+        compact = self.css.replace(" ", "")
+        self.assertNotIn("padding-left:var(--sidebar)", compact)
+        self.assertNotIn("margin-left:var(--sidebar)", compact)
         self.assertIn(".agents-main {", self.css)
         self.assertIn("margin-left: 0;", self.css)
         self.assertIn("max-width: 100%;", self.css)

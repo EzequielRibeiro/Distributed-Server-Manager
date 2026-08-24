@@ -87,6 +87,7 @@ import alerts as alert_store
 from backend import DatabaseConfig
 from backend_factory import create_backend
 from dashboard_repository import DashboardRepository
+from alert_repository import AlertSession, dialect_for_backend
 from runtime_backend import backend_from_environment
 from instance_network import (
     apply_instance_network,

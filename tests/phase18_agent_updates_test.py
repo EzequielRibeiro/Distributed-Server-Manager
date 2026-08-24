@@ -152,6 +152,56 @@ class Phase18AgentUpdatesTest(unittest.TestCase):
         self.assertEqual(verified["update_state"]["installed_version"], "2.0.0")
         self.assertIsNotNone(verified["update_state"]["last_update"])
 
+    def test_stale_failed_result_does_not_block_a_new_rollout(self):
+        issued = AgentPairingRepository(self.backend).issue_token(
+            controller_id=self.controller_id,
+            ttl_seconds=300,
+        )
+        status, enrolled = dispatch_enroll(
+            {
+                "pairing_token": issued.token,
+                "agent_id": "agent-update-retry",
+                "node_id": "node-update-retry",
+                "name": "Update Retry",
+                "fingerprint": "sha256:update-retry",
+                "hostname": "update-retry",
+                "os": "linux",
+                "architecture": "x86_64",
+            },
+            backend=self.backend,
+        )
+        self.assertEqual(status, 201)
+        headers = {
+            "X-Capivara-Agent-Credential": enrolled["credential_id"],
+            "X-Capivara-Agent-Secret": enrolled["credential_secret"],
+            "X-Capivara-Agent-Fingerprint": "sha256:update-retry",
+        }
+        first = self.repository.create_rollout(
+            ["agent-update-retry"], desired_version="2.0.3", batch_size=1
+        )
+        self.repository.mark_failed("agent-update-retry", "read-only file system")
+        second = self.repository.create_rollout(
+            ["agent-update-retry"], desired_version="2.0.3", batch_size=1
+        )
+
+        status, heartbeat = dispatch_heartbeat(
+            {
+                "agent_id": "agent-update-retry",
+                "capivara_version": "2.0.2",
+                "update_result": {
+                    "status": "failed",
+                    "rollout_id": first["rollout_id"],
+                    "error": "read-only file system",
+                },
+            },
+            headers=headers,
+            backend=self.backend,
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(heartbeat["update"]["rollout_id"], second["rollout_id"])
+        self.assertEqual(heartbeat["update_state"]["update_status"], "updating")
+
 
 if __name__ == "__main__":
     unittest.main()

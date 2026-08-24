@@ -45,7 +45,7 @@ class CatalogGameDataArchitectureTest(unittest.TestCase):
 
     def test_dashboard_uses_latest_composition_layer(self):
         service = (ROOT / "systemd/dsm-dashboard.service").read_text(encoding="utf-8")
-        self.assertIn("server_part15.py", service)
+        self.assertIn("server_part17.py", service)
 
 
 if __name__ == "__main__":

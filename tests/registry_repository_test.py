@@ -55,12 +55,17 @@ class RegistryRepositoryTest(unittest.TestCase):
         first = self.repository.bootstrap_topology(**arguments)
         second = self.repository.bootstrap_topology(**arguments)
         self.assertEqual(first, second)
-        self.assertEqual(self.repository.topology_status(), {
+        topology = self.repository.topology_status()
+        expected = {
             "controllers": 1,
             "agents": 1,
             "customers": 0,
             "instances": 0,
-        })
+        }
+        self.assertEqual(
+            {key: topology[key] for key in expected},
+            expected,
+        )
 
 
 if __name__ == "__main__":

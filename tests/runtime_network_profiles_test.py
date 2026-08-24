@@ -27,7 +27,7 @@ class RuntimeNetworkProfilesTest(
             ROOT
             / "catalog"
             / "v2"
-            / "runtimes"
+            / "games"
         )
 
         found = 0
