@@ -1,0 +1,11 @@
+.tabs button:disabled,
+.tabs button[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+.tabs button:disabled:hover,
+.tabs button[aria-disabled="true"]:hover {
+  transform: none;
+}
