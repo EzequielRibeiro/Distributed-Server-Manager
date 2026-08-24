@@ -18,7 +18,7 @@ from core.network.port_inspector import (
     RemoteAgentPortInspector,
 )
 from core.network.port_profile import PortProfile
-from agent_port_inspection import HeartbeatAgentPortInspectionTransport
+from dashboard.agent_port_inspection import HeartbeatAgentPortInspectionTransport
 
 
 def occupied_ports_for_agent(
