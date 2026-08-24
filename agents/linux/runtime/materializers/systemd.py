@@ -74,10 +74,12 @@ def render_unit(spec: dict[str, Any]) -> str:
         f"User={spec['user']}",
         f"StateDirectory={state_directory}",
         "StateDirectoryMode=0700",
-        f"BindPaths={_quote(f'{private_state_path}:{_RUNTIME_ACCOUNT_HOME}')}",
+        f"BindPaths={_quote(private_state_path + ':' + _RUNTIME_ACCOUNT_HOME)}",
     ]
     for binding in spec.get("bind_paths", []):
-        lines.append(f"BindPaths={_quote(f'{binding['source']}:{binding['target']}')}")
+        source = str(binding["source"])
+        target = str(binding["target"])
+        lines.append(f"BindPaths={_quote(source + ':' + target)}")
     lines.extend([
         f"WorkingDirectory={_working_directory(spec['working_directory'])}",
         f"Environment={_quote(f'HOME={_RUNTIME_ACCOUNT_HOME}')}",
