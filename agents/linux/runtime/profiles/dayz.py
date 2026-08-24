@@ -15,10 +15,38 @@ from typing import Any
 from .base import GameRuntimeProfile, ProfileError, require_absolute, require_port, require_text, require_within
 
 _MISSION = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+_PROFILE_OWNED_ARGUMENTS = ("-config=", "-port=", "-profiles=")
 
 
 class DayZRuntimeProfile(GameRuntimeProfile):
     game_ids = ("dayz", "dayz.stable")
+    profile_version = 3
+
+    def migration_context(self, record: dict[str, Any]) -> dict[str, Any]:
+        """Reconstruct a v3 context from a pre-private-state DayZ RuntimeSpec."""
+        install_path = str(record.get("working_directory") or record.get("path") or "").strip()
+        if not install_path:
+            raise ProfileError("legacy DayZ runtime is missing install_path")
+        ports = dict(record.get("ports") or {})
+        if "steam_query" not in ports and isinstance(ports.get("game_aux"), dict):
+            ports["steam_query"] = dict(ports["game_aux"])
+        arguments = []
+        for item in record.get("arguments") or []:
+            text = str(item)
+            if any(text.lower().startswith(prefix) for prefix in _PROFILE_OWNED_ARGUMENTS):
+                continue
+            arguments.append(text)
+        return {
+            "install_path": install_path,
+            "content_root": install_path,
+            "working_directory": install_path,
+            "executable": str(record.get("executable") or Path(install_path) / "DayZServer"),
+            "ports": ports,
+            "environment": dict(record.get("environment") or {}),
+            "arguments": arguments,
+            "user": str(record.get("user") or "capivara-instance"),
+            "instance_state_root": str(record.get("instance_state_root") or f"/var/lib/capivara-instances/{record['instance_id']}"),
+        }
 
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         instance_id = require_text(instance.get("instance_id") or instance.get("id"), "instance_id")
@@ -80,7 +108,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             "user": str(context.get("user") or "capivara-instance"),
             "desired_state": str(instance.get("desired_state") or context.get("desired_state") or "stopped"),
             "profile": "dayz",
-            "profile_version": 3,
+            "profile_version": self.profile_version,
             "ports": {
                 "game": {"port": game_port, "protocol": "udp"},
                 "game_aux": {"port": game_aux_port, "protocol": "udp"},
