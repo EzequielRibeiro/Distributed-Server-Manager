@@ -12,6 +12,7 @@ from pathlib import Path
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 RUNTIME_USER = "capivara-instance"
 AGENT_GROUP = "capivara-agent"
+RUNTIME_HOME = STATE_DIR / "runtime-home"
 
 
 def _run(command: list[str]) -> None:
@@ -28,19 +29,30 @@ def reconcile() -> None:
     except KeyError as exc:
         raise RuntimeError("capivara-agent group is unavailable") from exc
 
+    runtime_home = str(RUNTIME_HOME)
     try:
         account = pwd.getpwnam(RUNTIME_USER)
     except KeyError:
         _run([
             "useradd", "--system", "--gid", AGENT_GROUP,
-            "--home-dir", "/nonexistent", "--no-create-home",
+            "--home-dir", runtime_home, "--no-create-home",
             "--shell", "/usr/sbin/nologin", RUNTIME_USER,
         ])
+        account = pwd.getpwnam(RUNTIME_USER)
+
+    if account.pw_dir != runtime_home:
+        _run(["usermod", "--home", runtime_home, RUNTIME_USER])
         account = pwd.getpwnam(RUNTIME_USER)
 
     memberships = set(os.getgrouplist(RUNTIME_USER, account.pw_gid))
     if group.gr_gid not in memberships:
         _run(["usermod", "-a", "-G", AGENT_GROUP, RUNTIME_USER])
+
+    # Stable mountpoint for per-instance private homes. It stays root-owned outside
+    # instance units; systemd bind-mounts each unit's StateDirectory over it.
+    RUNTIME_HOME.mkdir(parents=True, exist_ok=True)
+    os.chown(RUNTIME_HOME, 0, group.gr_gid)
+    os.chmod(RUNTIME_HOME, 0o755)
 
     game_data = STATE_DIR / "game-data"
     if STATE_DIR.is_dir():

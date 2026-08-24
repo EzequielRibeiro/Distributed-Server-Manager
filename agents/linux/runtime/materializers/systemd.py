@@ -13,6 +13,7 @@ from .base import InstanceRuntimeMaterializer, MaterializerError
 
 Runner = Callable[[list[str], int], tuple[int, str, str]]
 _GENERATED_BY = "capivara-instance-runtime-v1"
+_RUNTIME_ACCOUNT_HOME = "/var/lib/capivara-agent/runtime-home"
 
 
 def _default_runner(command: list[str], timeout: int) -> tuple[int, str, str]:
@@ -56,7 +57,7 @@ def render_unit(spec: dict[str, Any]) -> str:
     instance_id = str(spec["instance_id"])
     agent_id = str(spec["agent_id"])
     runtime_id = str(spec["runtime_id"])
-    state_directory, home_directory = _instance_state(instance_id)
+    state_directory, private_state_path = _instance_state(instance_id)
     argv = [str(spec["executable"]), *[str(item) for item in spec.get("arguments", [])]]
     lines = [
         "[Unit]",
@@ -73,11 +74,12 @@ def render_unit(spec: dict[str, Any]) -> str:
         f"User={spec['user']}",
         f"StateDirectory={state_directory}",
         "StateDirectoryMode=0700",
+        f"BindPaths={private_state_path}:{_RUNTIME_ACCOUNT_HOME}",
         f"WorkingDirectory={_working_directory(spec['working_directory'])}",
-        f"Environment={_quote(f'HOME={home_directory}')}",
-        f"Environment={_quote(f'XDG_DATA_HOME={home_directory}/.local/share')}",
-        f"Environment={_quote(f'XDG_CACHE_HOME={home_directory}/.cache')}",
-        f"Environment={_quote(f'XDG_CONFIG_HOME={home_directory}/.config')}",
+        f"Environment={_quote(f'HOME={_RUNTIME_ACCOUNT_HOME}')}",
+        f"Environment={_quote(f'XDG_DATA_HOME={_RUNTIME_ACCOUNT_HOME}/.local/share')}",
+        f"Environment={_quote(f'XDG_CACHE_HOME={_RUNTIME_ACCOUNT_HOME}/.cache')}",
+        f"Environment={_quote(f'XDG_CONFIG_HOME={_RUNTIME_ACCOUNT_HOME}/.config')}",
         "ExecStart=" + " ".join(_quote(item) for item in argv),
         "Restart=no",
         "KillSignal=SIGTERM",

@@ -55,22 +55,27 @@ def test_working_directory_rejects_line_breaks():
         render_unit(_spec(working_directory="/var/lib/capivara-agent\nInjected=true"))
 
 
-def test_instance_gets_isolated_writable_home_managed_by_systemd():
+def test_instance_gets_isolated_writable_home_visible_through_passwd_path():
     unit = render_unit(_spec())
 
     assert "StateDirectory=capivara-instances/aurora-dayz-002\n" in unit
     assert "StateDirectoryMode=0700\n" in unit
-    assert 'Environment="HOME=/var/lib/capivara-instances/aurora-dayz-002"' in unit
     assert (
-        'Environment="XDG_DATA_HOME=/var/lib/capivara-instances/aurora-dayz-002/.local/share"'
+        "BindPaths=/var/lib/capivara-instances/aurora-dayz-002:"
+        "/var/lib/capivara-agent/runtime-home\n"
+        in unit
+    )
+    assert 'Environment="HOME=/var/lib/capivara-agent/runtime-home"' in unit
+    assert (
+        'Environment="XDG_DATA_HOME=/var/lib/capivara-agent/runtime-home/.local/share"'
         in unit
     )
     assert (
-        'Environment="XDG_CACHE_HOME=/var/lib/capivara-instances/aurora-dayz-002/.cache"'
+        'Environment="XDG_CACHE_HOME=/var/lib/capivara-agent/runtime-home/.cache"'
         in unit
     )
     assert (
-        'Environment="XDG_CONFIG_HOME=/var/lib/capivara-instances/aurora-dayz-002/.config"'
+        'Environment="XDG_CONFIG_HOME=/var/lib/capivara-agent/runtime-home/.config"'
         in unit
     )
     assert "/nonexistent" not in unit
