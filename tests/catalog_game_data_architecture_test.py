@@ -28,9 +28,15 @@ class CatalogGameDataArchitectureTest(unittest.TestCase):
         script = (ROOT / "dashboard/web/catalog-page.js").read_text(encoding="utf-8")
         self.assertIn('id="catalog-operation-progress"', html)
         self.assertIn('id="catalog-error-details"', html)
+        self.assertIn('id="catalog-steam-auth-help"', html)
+        self.assertIn('id="catalog-copy-steam-auth"', html)
         self.assertIn("followJob", script)
         self.assertIn("resumeAgentJob", script)
-        self.assertIn("Ver detalhes do erro", html)
+        self.assertIn("Ver detalhes técnicos do erro", html)
+        self.assertIn("DSM_STEAM_USER", script)
+        self.assertIn("Steam Guard", script)
+        self.assertIn("navigator.clipboard.writeText", script)
+        self.assertNotIn("DSM_STEAM_PASSWORD", script)
 
     def test_resource_profile_sample_uses_explicit_units(self):
         payload = json.loads((ROOT / "catalog/v2/games/minecraft/resource-profiles.json").read_text(encoding="utf-8"))
