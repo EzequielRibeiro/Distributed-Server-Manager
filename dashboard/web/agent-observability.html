@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Agent · Operação</title>
+    <link rel="stylesheet" href="dashboard-v3.css">
+    <link rel="stylesheet" href="agent-observability.css?v=1">
+</head>
+<body class="cap-home cap-agent-context-shell">
+<aside id="sidebar-component"></aside>
+<main class="cap-home-main cap-agent-context-page">
+    <header class="cap-home-topbar">
+        <div class="cap-home-title">
+            <button id="agent-context-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button>
+            <div><h1 id="agent-context-title">Agent</h1><p id="agent-context-subtitle">Carregando contexto operacional…</p></div>
+        </div>
+        <div class="cap-agent-context-user"><strong id="agent-context-user">—</strong><span id="agent-context-role">—</span></div>
+    </header>
+    <div class="cap-home-content cap-agent-context-content">
+        <div class="cap-agent-context-actions">
+            <a id="agent-context-back" class="cap-agent-context-back" href="agents.html">← Voltar aos detalhes</a>
+            <button id="agent-context-refresh" type="button">Atualizar</button>
+        </div>
+        <nav id="agent-context-nav" class="cap-agent-context-nav" aria-label="Operação do Agent">
+            <a data-view="monitoring" href="#">Monitoramento</a>
+            <a data-view="events" href="#">Eventos</a>
+            <a data-view="diagnostics" href="#">Diagnóstico</a>
+            <a data-view="updates" href="#">Atualizações</a>
+            <a data-view="logs" href="#">Log</a>
+        </nav>
+        <div id="agent-context-error" class="cap-agent-context-error" hidden></div>
+        <section class="cap-agent-context-card">
+            <div class="cap-agent-context-heading"><div><h2 id="agent-view-title">Carregando…</h2><p id="agent-view-description"></p></div><span id="agent-view-live-state" aria-live="polite">Atualizando</span></div>
+            <div id="agent-view-content" aria-live="polite"><div class="cap-agent-context-empty">Carregando informações do Agent…</div></div>
+        </section>
+    </div>
+    <footer class="cap-home-footer">Capivara Distributed Server Manager · Agent Context</footer>
+</main>
+<script src="agent-observability.js?v=1"></script>
+</body>
+</html>
