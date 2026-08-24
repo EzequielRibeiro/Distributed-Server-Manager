@@ -6,7 +6,8 @@ from __future__ import annotations
 import subprocess
 
 
-def _parse_ss(args: list[str]) -> list[int]:
+def _parse_ss(args: list[str]) -> tuple[list[int], bool]:
+    """Return observed ports and whether the socket query completed reliably."""
     try:
         completed = subprocess.run(
             ["ss", "-H", "-l", "-n", *args],
@@ -16,7 +17,7 @@ def _parse_ss(args: list[str]) -> list[int]:
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
-        return []
+        return [], False
 
     ports: set[int] = set()
     for line in completed.stdout.splitlines():
@@ -32,15 +33,20 @@ def _parse_ss(args: list[str]) -> list[int]:
             continue
         if 1 <= port <= 65535:
             ports.add(port)
-    return sorted(ports)
+    return sorted(ports), True
 
 
 def collect_network_inventory() -> dict[str, object]:
-    """Return listening/claimed TCP and UDP sockets observed by ``ss``."""
+    """Return listening/claimed sockets plus collection-completeness markers."""
+    tcp_ports, tcp_complete = _parse_ss(["-t"])
+    udp_ports, udp_complete = _parse_ss(["-u"])
     return {
         "source": "ss",
-        "tcp_listen": _parse_ss(["-t"]),
-        "udp_listen": _parse_ss(["-u"]),
+        "tcp_listen": tcp_ports,
+        "udp_listen": udp_ports,
+        "tcp_complete": tcp_complete,
+        "udp_complete": udp_complete,
+        "complete": tcp_complete and udp_complete,
     }
 
 

@@ -1,4 +1,3 @@
-
 """Network integration between RuntimeDefinition and an instance."""
 
 from __future__ import annotations
@@ -85,10 +84,10 @@ def _remote_inventory_response(
     """Build a trustworthy inspection response from the latest heartbeat.
 
     Agents publish the output of ``network_inventory.collect_network_inventory``
-    with every heartbeat.  The Controller only accepts an online Agent, a
-    matching Agent/node identity and a protocol inventory with a known source.
-    Missing or malformed data fails closed rather than being interpreted as an
-    empty host.
+    with every heartbeat. The Controller only accepts an online Agent, a
+    matching Agent/node identity and a complete protocol inventory with a known
+    source. Missing, incomplete or malformed data fails closed rather than
+    being interpreted as an empty host.
     """
 
     try:
@@ -132,6 +131,15 @@ def _remote_inventory_response(
             f"unsupported port inspection protocol: {request.protocol}"
         )
 
+    complete_key = {
+        "tcp": "tcp_complete",
+        "udp": "udp_complete",
+    }[protocol]
+    if network.get(complete_key) is not True:
+        raise PortInspectionError(
+            f"remote Agent {protocol} port inventory is incomplete"
+        )
+
     raw_ports = network.get(key)
     if not isinstance(raw_ports, list):
         raise PortInspectionError(
@@ -169,7 +177,7 @@ def _remote_inventory_response(
 def occupied_ports_provider_for_backend(backend) -> OccupiedPortsProvider:
     """Return a port provider suitable for Controller, Agent or hybrid roles.
 
-    Local/hybrid placement retains direct operating-system inspection.  When
+    Local/hybrid placement retains direct operating-system inspection. When
     the selected node is remote (or this process is a pure Controller with no
     local node identity), the Controller consumes the selected Agent's latest
     persisted network inventory from the configured database backend.

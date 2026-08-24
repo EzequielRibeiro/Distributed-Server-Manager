@@ -6,7 +6,8 @@ from __future__ import annotations
 import subprocess
 
 
-def _parse_netstat(protocol: str) -> list[int]:
+def _parse_netstat(protocol: str) -> tuple[list[int], bool]:
+    """Return observed ports and whether the socket query completed reliably."""
     try:
         completed = subprocess.run(
             ["netstat", "-ano", "-p", protocol],
@@ -16,7 +17,8 @@ def _parse_netstat(protocol: str) -> list[int]:
             timeout=10,
         )
     except (OSError, subprocess.SubprocessError):
-        return []
+        return [], False
+
     ports: set[int] = set()
     for raw in completed.stdout.splitlines():
         line = raw.strip()
@@ -33,14 +35,20 @@ def _parse_netstat(protocol: str) -> list[int]:
             continue
         if 1 <= port <= 65535:
             ports.add(port)
-    return sorted(ports)
+    return sorted(ports), True
 
 
 def collect_network_inventory() -> dict[str, object]:
+    """Return listening/claimed sockets plus collection-completeness markers."""
+    tcp_ports, tcp_complete = _parse_netstat("tcp")
+    udp_ports, udp_complete = _parse_netstat("udp")
     return {
         "source": "netstat",
-        "tcp_listen": _parse_netstat("tcp"),
-        "udp_listen": _parse_netstat("udp"),
+        "tcp_listen": tcp_ports,
+        "udp_listen": udp_ports,
+        "tcp_complete": tcp_complete,
+        "udp_complete": udp_complete,
+        "complete": tcp_complete and udp_complete,
     }
 
 

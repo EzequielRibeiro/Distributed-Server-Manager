@@ -39,6 +39,9 @@ def _snapshot(**overrides):
             "source": "ss",
             "tcp_listen": [8080, 25565],
             "udp_listen": [2302, 2304, 27016],
+            "tcp_complete": True,
+            "udp_complete": True,
+            "complete": True,
         },
     }
     value.update(overrides)
@@ -94,11 +97,64 @@ def test_remote_agent_inventory_rejects_node_identity_mismatch(monkeypatch):
 def test_remote_agent_inventory_fails_closed_when_protocol_data_missing(monkeypatch):
     provider = _provider(
         monkeypatch,
-        _snapshot(network={"source": "ss", "tcp_listen": []}),
+        _snapshot(
+            network={
+                "source": "ss",
+                "tcp_listen": [],
+                "tcp_complete": True,
+                "udp_complete": True,
+            }
+        ),
     )
 
     with pytest.raises(PortInspectionError, match="udp port inventory is unavailable"):
         provider("agent-remote", "node-remote", "udp", 2300, 2310)
+
+
+def test_remote_agent_inventory_rejects_incomplete_protocol(monkeypatch):
+    provider = _provider(
+        monkeypatch,
+        _snapshot(
+            network={
+                "source": "ss",
+                "udp_listen": [],
+                "udp_complete": False,
+            }
+        ),
+    )
+
+    with pytest.raises(PortInspectionError, match="udp port inventory is incomplete"):
+        provider("agent-remote", "node-remote", "udp", 2300, 2310)
+
+
+def test_remote_agent_inventory_rejects_missing_completeness_marker(monkeypatch):
+    provider = _provider(
+        monkeypatch,
+        _snapshot(
+            network={
+                "source": "ss",
+                "udp_listen": [],
+            }
+        ),
+    )
+
+    with pytest.raises(PortInspectionError, match="udp port inventory is incomplete"):
+        provider("agent-remote", "node-remote", "udp", 2300, 2310)
+
+
+def test_remote_agent_inventory_accepts_complete_empty_protocol(monkeypatch):
+    provider = _provider(
+        monkeypatch,
+        _snapshot(
+            network={
+                "source": "ss",
+                "udp_listen": [],
+                "udp_complete": True,
+            }
+        ),
+    )
+
+    assert provider("agent-remote", "node-remote", "udp", 2300, 2310) == set()
 
 
 def test_local_node_keeps_direct_os_inspection(monkeypatch):
