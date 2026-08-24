@@ -67,6 +67,10 @@
 .catalog-resource-edit-head span { color: #75a7ff; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .catalog-profile-default { display: inline-flex; align-items: center; gap: 8px; color: #75a7ff; font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; cursor: pointer; }
 .catalog-profile-default input { accent-color: var(--blue,#3b82f6); }
+.catalog-default-profile-picker { display: grid; grid-template-columns: minmax(240px,1fr) auto auto; gap: 12px; align-items: end; margin: 16px 0; padding: 16px; border: 1px solid var(--line,#263246); border-radius: 11px; background: var(--bg,#0b111b); }
+.catalog-default-profile-picker label { display: grid; gap: 6px; color: var(--muted,#9aa9bd); font-size: 12px; font-weight: 700; }
+.catalog-default-profile-picker select { width: 100%; }
+@media (max-width: 760px) { .catalog-default-profile-picker { grid-template-columns: 1fr; align-items: stretch; } }
 .catalog-resource-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
 .catalog-resource-fields label { display: grid; gap: 5px; color: var(--muted,#9aa9bd); font-size: 12px; font-weight: 700; }
 .catalog-resource-fields label.span-2 { grid-column: span 2; }
