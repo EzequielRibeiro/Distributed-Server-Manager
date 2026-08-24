@@ -36,6 +36,14 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             if any(text.lower().startswith(prefix) for prefix in _PROFILE_OWNED_ARGUMENTS):
                 continue
             arguments.append(text)
+        network_properties = record.get("catalog_network_properties")
+        if not isinstance(network_properties, list) or not network_properties:
+            network_properties = [{
+                "path": "serverDZ.cfg",
+                "key": "steamQueryPort",
+                "value": "{{PORT_STEAM_QUERY}}",
+                "syntax": "semicolon",
+            }]
         return {
             "install_path": install_path,
             "content_root": install_path,
@@ -46,6 +54,13 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             "arguments": arguments,
             "user": str(record.get("user") or "capivara-instance"),
             "instance_state_root": str(record.get("instance_state_root") or f"/var/lib/capivara-instances/{record['instance_id']}"),
+            "catalog_runtime_policy": {
+                "runtime_id": record.get("runtime_id"),
+                "arguments": [],
+                "environment": {},
+                "templates": [],
+                "network_properties": network_properties,
+            },
         }
 
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
