@@ -14,6 +14,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from instance_network import occupied_ports_provider_for_backend
+
 
 def runtime_directory(root: Path, game: str) -> Path:
     """Return the canonical RuntimeDefinition directory for ``game``."""
@@ -95,6 +97,9 @@ def install_customer_instance_creation(legacy) -> None:
         repository = legacy.dashboard_repository(database_path)
         placement = legacy.resolve_instance_placement(user, payload, repository)
         contract_id = str(payload.get("contract_id", "")).strip() or None
+        occupied_ports_provider = occupied_ports_provider_for_backend(
+            repository.backend
+        )
 
         plan = repository.create_customer_instance(
             customer_id=user["scope_id"],
@@ -109,7 +114,7 @@ def install_customer_instance_creation(legacy) -> None:
             contract_id=contract_id,
             selected_agent_id=placement["agent_id"],
             network_profile=runtime_def.get("network"),
-            occupied_ports_provider=legacy.occupied_ports_for_agent,
+            occupied_ports_provider=occupied_ports_provider,
             resource_profile_id=(
                 str(payload.get("resource_profile_id") or "").strip() or None
             ),
