@@ -2,8 +2,8 @@
 """Canonical Catalog v2 customer instance creation integration.
 
 The legacy dashboard still contains the pre-migration runtime path
-``catalog/v2/runtimes/<game>``.  Current Catalog v2 stores RuntimeDefinitions
-under ``catalog/v2/games/<game>/runtimes``.  This module keeps the customer
+``catalog/v2/runtimes/<game>``. Current Catalog v2 stores RuntimeDefinitions
+under ``catalog/v2/games/<game>/runtimes``. This module keeps the customer
 creation flow on the canonical layout without reintroducing a second catalog.
 """
 from __future__ import annotations
@@ -38,12 +38,7 @@ def runtime_definition(root: Path, game: str, runtime_id: str) -> dict[str, Any]
 
 
 def install_customer_instance_creation(legacy) -> None:
-    """Install the canonical customer creation flow into the legacy module.
-
-    ``DashboardHandler.do_POST`` resolves ``create_customer_instance`` from the
-    legacy module globals at request time, so replacing that symbol here keeps
-    the composition layers small while the monolithic dashboard is retired.
-    """
+    """Install the canonical customer creation flow into the legacy module."""
 
     def create_customer_instance(
         user,
@@ -96,6 +91,22 @@ def install_customer_instance_creation(legacy) -> None:
         placement = legacy.resolve_instance_placement(user, payload, repository)
         contract_id = str(payload.get("contract_id", "")).strip() or None
 
+        def occupied_ports_provider(
+            agent_id: str,
+            node_id: str,
+            protocol: str,
+            start_port: int,
+            end_port: int,
+        ) -> set[int]:
+            return legacy.occupied_ports_for_agent(
+                agent_id,
+                node_id,
+                protocol,
+                start_port,
+                end_port,
+                backend=repository.backend,
+            )
+
         plan = repository.create_customer_instance(
             customer_id=user["scope_id"],
             username=user["username"],
@@ -109,7 +120,7 @@ def install_customer_instance_creation(legacy) -> None:
             contract_id=contract_id,
             selected_agent_id=placement["agent_id"],
             network_profile=runtime_def.get("network"),
-            occupied_ports_provider=legacy.occupied_ports_for_agent,
+            occupied_ports_provider=occupied_ports_provider,
             resource_profile_id=(
                 str(payload.get("resource_profile_id") or "").strip() or None
             ),
