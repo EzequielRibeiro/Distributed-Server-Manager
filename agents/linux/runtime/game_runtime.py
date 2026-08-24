@@ -30,7 +30,11 @@ def build_runtime_spec(config: dict[str, Any], instance: dict[str, Any], context
     normalized["environment_id"] = str(raw.get("environment_id") or instance.get("environment_id") or "").strip()
     normalized["profile"] = str(raw.get("profile") or normalized["game_id"])
     normalized["profile_version"] = int(raw.get("profile_version") or 1)
-    for key in ("ports", "config_path", "catalog_runtime_policy", "catalog_templates", "catalog_network_properties", "catalog_variables"):
+    for key in (
+        "ports", "config_path", "configuration_root", "instance_state_root",
+        "seed_files", "writable_directories", "bind_paths",
+        "catalog_runtime_policy", "catalog_templates", "catalog_network_properties", "catalog_variables",
+    ):
         if key in raw:
             normalized[key] = raw[key]
     emit_runtime_event(
