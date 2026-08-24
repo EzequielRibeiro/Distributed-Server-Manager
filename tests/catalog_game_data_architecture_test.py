@@ -32,6 +32,8 @@ class CatalogGameDataArchitectureTest(unittest.TestCase):
         self.assertIn('id="catalog-copy-steam-auth"', html)
         self.assertIn("followJob", script)
         self.assertIn("resumeAgentJob", script)
+        self.assertIn("Carregando arquivos do Agent", script)
+        self.assertIn("if(byId('catalog-agent').value)loadFiles()", script)
         self.assertIn("Ver detalhes técnicos do erro", html)
         self.assertIn("DSM_STEAM_USER", script)
         self.assertIn("Steam Guard", script)
