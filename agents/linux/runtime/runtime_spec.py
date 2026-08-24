@@ -25,9 +25,17 @@ def _token(value: Any, label: str) -> str:
 
 def _absolute(value: Any, label: str) -> str:
     text = str(value or "").strip()
-    if not text or not os.path.isabs(text) or "\n" in text or "\r" in text:
+    if not text or not os.path.isabs(text) or "\x00" in text or "\n" in text or "\r" in text:
         raise RuntimeSpecError(f"invalid {label}")
     return str(Path(text))
+
+
+def _absolute_list(value: Any, label: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 128:
+        raise RuntimeSpecError(f"invalid {label}")
+    return [_absolute(item, label) for item in value]
 
 
 def validate_runtime_spec(spec: dict[str, Any], *, expected_agent_id: str | None = None) -> dict[str, Any]:
@@ -75,6 +83,37 @@ def validate_runtime_spec(spec: dict[str, Any], *, expected_agent_id: str | None
     if desired not in VALID_DESIRED_STATES:
         raise RuntimeSpecError("invalid desired_state")
     result["desired_state"] = desired
+
+    if result.get("instance_state_root") is not None:
+        result["instance_state_root"] = _absolute(result["instance_state_root"], "instance_state_root")
+    if result.get("configuration_root") is not None:
+        result["configuration_root"] = _absolute(result["configuration_root"], "configuration_root")
+    if result.get("config_path") is not None:
+        result["config_path"] = _absolute(result["config_path"], "config_path")
+    result["writable_directories"] = _absolute_list(result.get("writable_directories"), "writable_directories")
+
+    seed_files = result.get("seed_files") or []
+    if not isinstance(seed_files, list) or len(seed_files) > 128:
+        raise RuntimeSpecError("invalid seed_files")
+    result["seed_files"] = [
+        {"source": _absolute(item.get("source"), "seed source"), "target": _absolute(item.get("target"), "seed target")}
+        for item in seed_files
+        if isinstance(item, dict)
+    ]
+    if len(result["seed_files"]) != len(seed_files):
+        raise RuntimeSpecError("invalid seed_files")
+
+    bind_paths = result.get("bind_paths") or []
+    if not isinstance(bind_paths, list) or len(bind_paths) > 128:
+        raise RuntimeSpecError("invalid bind_paths")
+    result["bind_paths"] = [
+        {"source": _absolute(item.get("source"), "bind source"), "target": _absolute(item.get("target"), "bind target")}
+        for item in bind_paths
+        if isinstance(item, dict)
+    ]
+    if len(result["bind_paths"]) != len(bind_paths):
+        raise RuntimeSpecError("invalid bind_paths")
+
     result["path"] = result["working_directory"]
     return result
 
