@@ -31,8 +31,9 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             context.get("instance_state_root") or f"/var/lib/capivara-instances/{instance_id}",
             "instance_state_root",
         )
-        configuration_root = str(Path(instance_state_root) / "config")
-        config_path = str(Path(configuration_root) / "serverDZ.cfg")
+        default_config = str(Path(instance_state_root) / "config" / "serverDZ.cfg")
+        config_path = require_within(instance_state_root, context.get("config_path") or default_config, "config_path")
+        configuration_root = str(Path(config_path).parent)
         profile_path = str(Path(instance_state_root) / "profiles")
         persistence_path = str(Path(instance_state_root) / "storage_1")
 
