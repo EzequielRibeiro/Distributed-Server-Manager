@@ -74,7 +74,13 @@ def render_unit(spec: dict[str, Any]) -> str:
         f"User={spec['user']}",
         f"StateDirectory={state_directory}",
         "StateDirectoryMode=0700",
-        f"BindPaths={private_state_path}:{_RUNTIME_ACCOUNT_HOME}",
+        f"BindPaths={_quote(private_state_path + ':' + _RUNTIME_ACCOUNT_HOME)}",
+    ]
+    for binding in spec.get("bind_paths", []):
+        source = str(binding["source"])
+        target = str(binding["target"])
+        lines.append(f"BindPaths={_quote(source + ':' + target)}")
+    lines.extend([
         f"WorkingDirectory={_working_directory(spec['working_directory'])}",
         f"Environment={_quote(f'HOME={_RUNTIME_ACCOUNT_HOME}')}",
         f"Environment={_quote(f'XDG_DATA_HOME={_RUNTIME_ACCOUNT_HOME}/.local/share')}",
@@ -84,7 +90,7 @@ def render_unit(spec: dict[str, Any]) -> str:
         "Restart=no",
         "KillSignal=SIGTERM",
         "TimeoutStopSec=60",
-    ]
+    ])
     for key, value in sorted(dict(spec.get("environment", {})).items()):
         lines.append(f"Environment={_quote(f'{key}={value}')}")
     lines.extend(["", "[Install]", "WantedBy=multi-user.target", ""])

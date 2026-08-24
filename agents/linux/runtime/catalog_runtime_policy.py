@@ -40,6 +40,26 @@ def render(text: Any, values: dict[str, str]) -> str:
     return _TOKEN.sub(repl, raw)
 
 
+def _argument_key(value: str) -> str:
+    text = str(value)
+    if text.startswith("-") and "=" in text:
+        return text.split("=", 1)[0].lower()
+    return text.lower()
+
+
+def _merge_arguments(required: list[Any], policy_arguments: list[Any], values: dict[str, str]) -> list[str]:
+    merged = [str(item) for item in required]
+    owned = {_argument_key(item) for item in merged}
+    for item in policy_arguments:
+        rendered = render(item, values)
+        key = _argument_key(rendered)
+        if key in owned:
+            continue
+        merged.append(rendered)
+        owned.add(key)
+    return merged
+
+
 def apply_policy(spec: dict[str, Any], instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     policy = context.get("catalog_runtime_policy")
     if not isinstance(policy, dict) or not policy:
@@ -50,8 +70,8 @@ def apply_policy(spec: dict[str, Any], instance: dict[str, Any], context: dict[s
     executable = render(policy.get("executable") or Path(str(result["executable"])).name, values)
     executable_path = Path(executable)
     result["executable"] = str(executable_path if executable_path.is_absolute() else (content_root / executable_path).resolve())
-    arguments = policy.get("arguments") if isinstance(policy.get("arguments"), list) else result.get("arguments", [])
-    result["arguments"] = [render(value, values) for value in arguments]
+    policy_arguments = policy.get("arguments") if isinstance(policy.get("arguments"), list) else []
+    result["arguments"] = _merge_arguments(list(result.get("arguments") or []), policy_arguments, values)
     environment = dict(result.get("environment") or {})
     for key, value in (policy.get("environment") or {}).items():
         environment[str(key)] = render(value, values)
@@ -68,11 +88,15 @@ def apply_policy(spec: dict[str, Any], instance: dict[str, Any], context: dict[s
     return result
 
 
+def _configuration_root(spec: dict[str, Any]) -> Path:
+    return Path(str(spec.get("configuration_root") or spec.get("working_directory") or spec.get("path") or "")).resolve()
+
+
 def materialize_templates(spec: dict[str, Any]) -> list[str]:
     templates = spec.get("catalog_templates") if isinstance(spec.get("catalog_templates"), list) else []
     if not templates:
         return []
-    root = Path(str(spec.get("working_directory") or spec.get("path") or "")).resolve()
+    root = _configuration_root(spec)
     values = dict(spec.get("catalog_variables") or {})
     written: list[str] = []
     for item in templates:
@@ -96,7 +120,7 @@ def materialize_templates(spec: dict[str, Any]) -> list[str]:
 
 def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
     properties = spec.get("catalog_network_properties") if isinstance(spec.get("catalog_network_properties"), list) else []
-    root = Path(str(spec.get("working_directory") or spec.get("path") or "")).resolve()
+    root = _configuration_root(spec)
     values = dict(spec.get("catalog_variables") or {})
     written: list[str] = []
     for item in properties:

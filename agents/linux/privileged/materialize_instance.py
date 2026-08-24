@@ -6,6 +6,7 @@ import grp
 import json
 import os
 import pwd
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from runtime_spec import validate_runtime_spec
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
 REQUEST_ROOT = STATE_DIR / "privileged-materialization"
+INSTANCE_STATE_BASE = Path("/var/lib/capivara-instances")
 _DEFAULT_RUNTIME_USER = "capivara-instance"
 _AGENT_GROUP = "capivara-agent"
 
@@ -47,7 +49,7 @@ def _write_result(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temp, path)
 
 
-def _validate_runtime_user(user: str) -> None:
+def _validate_runtime_user(user: str) -> pwd.struct_passwd:
     try:
         group = grp.getgrnam(_AGENT_GROUP)
     except KeyError as exc:
@@ -60,6 +62,7 @@ def _validate_runtime_user(user: str) -> None:
         memberships = set(os.getgrouplist(user, account.pw_gid))
         if group.gr_gid not in memberships:
             raise RuntimeError("capivara-instance is not associated with capivara-agent group")
+    return account
 
 
 def _validate_runtime_access(working_directory: str, user: str) -> None:
@@ -82,10 +85,64 @@ def _validate_runtime_access(working_directory: str, user: str) -> None:
         raise RuntimeError("game-data is not readable/traversable by runtime group")
 
 
+def _within(root: Path, value: str, label: str) -> Path:
+    root = root.resolve()
+    path = Path(value).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise RuntimeError(f"{label} escapes its allowed root") from exc
+    return path
+
+
+def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd) -> None:
+    raw_root = spec.get("instance_state_root")
+    if not raw_root:
+        return
+    expected = (INSTANCE_STATE_BASE / spec["instance_id"]).resolve()
+    state_root = Path(str(raw_root)).resolve()
+    if state_root != expected:
+        raise RuntimeError("instance state root does not match instance identity")
+    INSTANCE_STATE_BASE.mkdir(parents=True, exist_ok=True)
+    os.chmod(INSTANCE_STATE_BASE, 0o711)
+    state_root.mkdir(parents=True, exist_ok=True)
+    os.chown(state_root, account.pw_uid, account.pw_gid)
+    os.chmod(state_root, 0o700)
+
+    working_root = Path(str(spec["working_directory"])).resolve()
+    for item in spec.get("writable_directories", []):
+        path = _within(state_root, str(item), "writable directory")
+        path.mkdir(parents=True, exist_ok=True)
+        os.chown(path, account.pw_uid, account.pw_gid)
+        os.chmod(path, 0o700)
+
+    for item in spec.get("seed_files", []):
+        source = _within(working_root, str(item["source"]), "seed source")
+        target = _within(state_root, str(item["target"]), "seed target")
+        if not source.is_file():
+            raise RuntimeError(f"seed source is unavailable: {source}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.chown(target.parent, account.pw_uid, account.pw_gid)
+        os.chmod(target.parent, 0o700)
+        if not target.exists():
+            shutil.copy2(source, target)
+        os.chown(target, account.pw_uid, account.pw_gid)
+        os.chmod(target, 0o600)
+
+    for item in spec.get("bind_paths", []):
+        source = _within(state_root, str(item["source"]), "bind source")
+        target = _within(working_root, str(item["target"]), "bind target")
+        source.mkdir(parents=True, exist_ok=True)
+        os.chown(source, account.pw_uid, account.pw_gid)
+        os.chmod(source, 0o700)
+        target.mkdir(parents=True, exist_ok=True)
+
+
 def _ensure_runtime_identity(spec: dict[str, Any]) -> None:
     user = str(spec.get("user") or _DEFAULT_RUNTIME_USER)
-    _validate_runtime_user(user)
+    account = _validate_runtime_user(user)
     _validate_runtime_access(str(spec["working_directory"]), user)
+    _prepare_private_state(spec, account)
 
 
 def run(instance_id: str) -> dict[str, Any]:
@@ -113,9 +170,9 @@ def run(instance_id: str) -> dict[str, Any]:
     templates: list[Any] = []
     if action == "apply":
         _ensure_runtime_identity(spec)
-        operation = materializer.apply(spec)
         templates = materialize_templates(spec)
         templates.extend(materialize_network_properties(spec))
+        operation = materializer.apply(spec)
     elif action == "remove":
         operation = materializer.remove(spec)
     else:

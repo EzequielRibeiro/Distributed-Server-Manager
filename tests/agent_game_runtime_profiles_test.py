@@ -57,6 +57,13 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         instance_runtime.STATE_DIR = self.old_state
         self.temp.cleanup()
 
+    def ports(self, base=24010):
+        return {
+            "game": {"port": base, "protocol": "udp"},
+            "game_aux": {"port": base + 2, "protocol": "udp"},
+            "steam_query": {"port": base + 3, "protocol": "udp"},
+        }
+
     def test_registry_resolves_dayz_explicitly(self):
         self.assertEqual(resolve_profile(self.instance).__class__.__name__, "DayZRuntimeProfile")
         self.assertIn("dayz", supported_profiles())
@@ -64,20 +71,37 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         with self.assertRaises(ProfileError):
             resolve_profile({"game_id": "unknown-game"})
 
-    def test_dayz_profile_binds_reserved_game_port_and_paths(self):
+    def test_dayz_profile_binds_reserved_game_port_and_private_paths(self):
         install = self.root / "serverfiles"; install.mkdir()
         spec = game_runtime.build_runtime_spec(self.config, self.instance, {
-            "install_path": str(install),
-            "ports": {"game": {"port": 24010, "protocol": "udp"}, "game_aux": {"port": 24012, "protocol": "udp"}, "steam_query": {"port": 24013, "protocol": "udp"}},
+            "install_path": str(install), "ports": self.ports(),
         })
+        private = Path("/var/lib/capivara-instances/dayz-one")
         self.assertEqual(spec["executable"], str(install / "DayZServer"))
+        self.assertEqual(spec["working_directory"], str(install))
         self.assertIn("-port=24010", spec["arguments"])
-        self.assertIn(f"-config={install / 'serverDZ.cfg'}", spec["arguments"])
+        self.assertIn(f"-config={private / 'config/serverDZ.cfg'}", spec["arguments"])
+        self.assertIn(f"-profiles={private / 'profiles'}", spec["arguments"])
+        self.assertEqual(spec["config_path"], str(private / "config/serverDZ.cfg"))
+        self.assertEqual(spec["seed_files"], [{"source": str(install / "serverDZ.cfg"), "target": str(private / "config/serverDZ.cfg")}])
+        self.assertEqual(spec["bind_paths"], [{
+            "source": str(private / "storage_1"),
+            "target": str(install / "mpmissions/dayzOffline.chernarusplus/storage_1"),
+        }])
         self.assertEqual(spec["environment"]["CAPIVARA_GAME_PORT"], "24010")
         self.assertEqual(spec["environment"]["CAPIVARA_STEAM_QUERY_PORT"], "24013")
-        self.assertEqual(spec["ports"]["game"], {"port": 24010, "protocol": "udp"})
-        self.assertEqual(spec["ports"]["game_aux"], {"port": 24012, "protocol": "udp"})
-        self.assertEqual(spec["ports"]["steam_query"], {"port": 24013, "protocol": "udp"})
+        self.assertEqual(spec["profile_version"], 3)
+
+    def test_two_dayz_instances_never_share_config_profiles_or_persistence(self):
+        install = self.root / "serverfiles"; install.mkdir()
+        first = game_runtime.build_runtime_spec(self.config, self.instance, {"install_path": str(install), "ports": self.ports(24010)})
+        second_instance = {**self.instance, "instance_id": "dayz-two"}
+        second = game_runtime.build_runtime_spec(self.config, second_instance, {"install_path": str(install), "ports": self.ports(24110)})
+        self.assertNotEqual(first["config_path"], second["config_path"])
+        self.assertNotEqual(first["bind_paths"][0]["source"], second["bind_paths"][0]["source"])
+        self.assertEqual(first["bind_paths"][0]["target"], second["bind_paths"][0]["target"])
+        self.assertIn("-port=24010", first["arguments"])
+        self.assertIn("-port=24110", second["arguments"])
 
     def test_profile_does_not_allocate_or_invent_required_port(self):
         install = self.root / "serverfiles"; install.mkdir()
@@ -86,27 +110,27 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         with self.assertRaises(ProfileError):
             port_bindings({"ports": {"game": 70000}})
 
-    def test_profile_rejects_executable_or_config_outside_provisioned_content(self):
+    def test_profile_rejects_executable_or_config_outside_allowed_roots(self):
         install = self.root / "serverfiles"; install.mkdir()
         with self.assertRaises(ProfileError):
             game_runtime.build_runtime_spec(self.config, self.instance, {
-                "install_path": str(install), "executable": "/bin/sh", "ports": {"game": 24000},
+                "install_path": str(install), "executable": "/bin/sh", "ports": self.ports(24000),
             })
         with self.assertRaises(ProfileError):
             game_runtime.build_runtime_spec(self.config, self.instance, {
-                "install_path": str(install), "config_path": "/etc/passwd", "ports": {"game": 24000},
+                "install_path": str(install), "config_path": "/etc/passwd", "ports": self.ports(24000),
             })
 
     def test_agent_ownership_is_checked_before_profile_resolution(self):
         install = self.root / "serverfiles"; install.mkdir()
         foreign = {**self.instance, "agent_id": "agent-two"}
         with self.assertRaises(PermissionError):
-            game_runtime.build_runtime_spec(self.config, foreign, {"install_path": str(install), "ports": {"game": 24000}})
+            game_runtime.build_runtime_spec(self.config, foreign, {"install_path": str(install), "ports": self.ports(24000)})
 
     def test_two_profiles_converge_to_same_game_agnostic_runtime_contract(self):
         first_root = self.root / "one"; first_root.mkdir()
         dayz = game_runtime.build_runtime_spec(self.config, self.instance, {
-            "install_path": str(first_root), "ports": {"game": {"port": 24000, "protocol": "udp"}, "game_aux": {"port": 24002, "protocol": "udp"}, "steam_query": {"port": 24003, "protocol": "udp"}},
+            "install_path": str(first_root), "ports": self.ports(24000),
         })
         second_root = self.root / "two"; second_root.mkdir()
         other_raw = ExampleSecondGameProfile().build_runtime_spec(
