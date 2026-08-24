@@ -18,8 +18,10 @@ from typing import Any
 
 DSM_ROOT = Path(os.environ.get("DSM_ROOT", Path(__file__).resolve().parents[1])).resolve()
 DATABASE_DIR = DSM_ROOT / "database"
-if str(DATABASE_DIR) not in sys.path:
-    sys.path.insert(0, str(DATABASE_DIR))
+for import_path in (DSM_ROOT, DATABASE_DIR):
+    import_path_text = str(import_path)
+    if import_path_text not in sys.path:
+        sys.path.insert(0, import_path_text)
 
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from runtime_backend import backend_from_environment

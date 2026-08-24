@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import importlib
-import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -135,3 +135,18 @@ def test_instance_shell_contains_no_local_process_fallback():
     forbidden = ("process_start", "process_stop", "process_restart", "pid.sh", "tree.sh", "process.sh")
     assert all(token not in script for token in forbidden)
     assert "instance_runtime_command.py" in script
+
+
+def test_runtime_command_script_imports_from_clean_python_process():
+    script = ROOT / "dashboard" / "instance_runtime_command.py"
+    completed = subprocess.run(
+        [sys.executable, str(script)],
+        cwd="/tmp",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "usage: instance_runtime_command.py" in completed.stderr
+    assert "ModuleNotFoundError" not in completed.stderr
