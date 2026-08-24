@@ -54,3 +54,9 @@ def test_install_and_update_reconcile_identity_before_runtime_use():
     updater = (ROOT / "agents/linux/updater/updater.py").read_text(encoding="utf-8")
     assert "systemctl start capivara-agent-runtime-identity.service" in installer
     assert '"systemctl", "start", "capivara-agent-runtime-identity.service"' in updater
+
+
+def test_agent_service_requires_runtime_identity_before_reconciliation_can_start():
+    unit = (ROOT / "agents/linux/services/capivara-agent.service").read_text(encoding="utf-8")
+    assert "Requires=capivara-agent-runtime-identity.service" in unit
+    assert "After=network-online.target capivara-agent-runtime-identity.service" in unit
