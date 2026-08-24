@@ -36,6 +36,14 @@ def _working_directory(value: Any) -> str:
     return path
 
 
+def _instance_state(instance_id: str) -> tuple[str, str]:
+    token = str(instance_id or "").strip()
+    if not token or any(character in token for character in ("/", "\\", "\x00", "\n", "\r")):
+        raise MaterializerError("invalid systemd instance state directory")
+    relative = f"capivara-instances/{token}"
+    return relative, f"/var/lib/{relative}"
+
+
 def _unit_dir() -> Path:
     return Path(os.environ.get("CAPIVARA_INSTANCE_SYSTEMD_DIR", "/etc/systemd/system"))
 
@@ -48,6 +56,7 @@ def render_unit(spec: dict[str, Any]) -> str:
     instance_id = str(spec["instance_id"])
     agent_id = str(spec["agent_id"])
     runtime_id = str(spec["runtime_id"])
+    state_directory, home_directory = _instance_state(instance_id)
     argv = [str(spec["executable"]), *[str(item) for item in spec.get("arguments", [])]]
     lines = [
         "[Unit]",
@@ -62,7 +71,13 @@ def render_unit(spec: dict[str, Any]) -> str:
         "[Service]",
         "Type=simple",
         f"User={spec['user']}",
+        f"StateDirectory={state_directory}",
+        "StateDirectoryMode=0700",
         f"WorkingDirectory={_working_directory(spec['working_directory'])}",
+        f"Environment={_quote(f'HOME={home_directory}')}",
+        f"Environment={_quote(f'XDG_DATA_HOME={home_directory}/.local/share')}",
+        f"Environment={_quote(f'XDG_CACHE_HOME={home_directory}/.cache')}",
+        f"Environment={_quote(f'XDG_CONFIG_HOME={home_directory}/.config')}",
         "ExecStart=" + " ".join(_quote(item) for item in argv),
         "Restart=no",
         "KillSignal=SIGTERM",
