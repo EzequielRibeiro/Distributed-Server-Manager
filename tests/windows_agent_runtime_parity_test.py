@@ -56,7 +56,7 @@ e=emit_runtime_event(Path(instance_runtime.STATE_DIR),"TEST",agent_id="win-agent
 from pathlib import Path
 import instance_runtime
 from provisioning_executor import execute
-config={{"agent_id":"win-agent-one"}};request={{"provisioning_id":"p1","instance_id":"srv-dayz","agent_id":"win-agent-one","instance":{{"game_id":"dayz","environment_id":"dayz.stable"}},"desired_state":"stopped","configuration":{{"install_path":{str(install)!r}}},"ports":{{"game":{{"port":2302,"protocol":"udp"}}}}}}
+config={{"agent_id":"win-agent-one"}};request={{"provisioning_id":"p1","instance_id":"srv-dayz","agent_id":"win-agent-one","instance":{{"game_id":"dayz","environment_id":"dayz.stable"}},"desired_state":"stopped","configuration":{{"install_path":{str(install)!r}}},"ports":{{"game":{{"port":2302,"protocol":"udp"}},"game_aux":{{"port":2304,"protocol":"udp"}},"steam_query":{{"port":2305,"protocol":"udp"}}}}}}
 result_path=Path(instance_runtime.STATE_DIR)/"provision-result.json";out=execute(config,request,result_path)
 assert out["status"]=="completed",out
 assert out["runtime"]["adapter"]=="windows-process"
