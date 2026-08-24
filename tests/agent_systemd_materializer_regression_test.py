@@ -48,3 +48,8 @@ def test_working_directory_is_rendered_as_absolute_path_without_quotes():
 def test_working_directory_rejects_relative_path():
     with pytest.raises(MaterializerError, match="absolute path"):
         render_unit(_spec(working_directory="relative/serverfiles"))
+
+
+def test_working_directory_rejects_line_breaks():
+    with pytest.raises(MaterializerError, match="invalid characters"):
+        render_unit(_spec(working_directory="/var/lib/capivara-agent\nInjected=true"))
