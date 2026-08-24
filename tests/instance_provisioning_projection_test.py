@@ -66,6 +66,21 @@ class ProvisioningProjectionTest(unittest.TestCase):
                         "customer-projection",
                     ),
                 )
+                connection.execute(
+                    "INSERT INTO service_contracts(id,customer_id,game_id,status,instance_limit) "
+                    "VALUES (?,?,?,?,?)",
+                    (
+                        "contract-projection",
+                        "customer-projection",
+                        "dayz",
+                        "active",
+                        1,
+                    ),
+                )
+                connection.execute(
+                    "INSERT INTO instance_contracts(instance_id,contract_id) VALUES (?,?)",
+                    ("instance-projection", "contract-projection"),
+                )
             resource = root / "runtime" / "resources" / node_id / "dayz" / "instance-projection"
             resource.mkdir(parents=True)
 
