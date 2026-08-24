@@ -36,6 +36,8 @@ class CatalogGameDataArchitectureTest(unittest.TestCase):
         self.assertIn("DSM_STEAM_USER", script)
         self.assertIn("Steam Guard", script)
         self.assertIn("navigator.clipboard.writeText", script)
+        self.assertIn("document.execCommand('copy')", script)
+        self.assertIn("window.isSecureContext", script)
         self.assertNotIn("DSM_STEAM_PASSWORD", script)
 
     def test_resource_profile_sample_uses_explicit_units(self):
