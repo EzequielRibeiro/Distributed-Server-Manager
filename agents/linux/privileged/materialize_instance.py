@@ -6,7 +6,6 @@ import grp
 import json
 import os
 import pwd
-import stat
 import sys
 from pathlib import Path
 from typing import Any
@@ -63,40 +62,30 @@ def _validate_runtime_user(user: str) -> None:
             raise RuntimeError("capivara-instance is not associated with capivara-agent group")
 
 
-def _grant_runtime_access(working_directory: str, user: str) -> None:
+def _validate_runtime_access(working_directory: str, user: str) -> None:
     if user != _DEFAULT_RUNTIME_USER:
         return
-    try:
-        group = grp.getgrnam(_AGENT_GROUP)
-    except KeyError as exc:
-        raise RuntimeError("capivara-agent group is unavailable") from exc
     state = STATE_DIR.resolve()
     game_data = (STATE_DIR / "game-data").resolve()
     working = Path(working_directory).resolve()
     try:
-        relative = working.relative_to(game_data)
+        working.relative_to(game_data)
     except ValueError:
         return
-    paths = [state, game_data]
-    current = game_data
-    for part in relative.parts:
-        current = current / part
-        if current.is_dir():
-            paths.append(current)
-    if state.is_dir():
-        os.chown(state, -1, group.gr_gid)
-        os.chmod(state, stat.S_IMODE(state.stat().st_mode) | stat.S_IXGRP)
-    for path in paths[1:]:
-        if not path.is_dir():
-            continue
-        os.chown(path, -1, group.gr_gid)
-        os.chmod(path, stat.S_IMODE(path.stat().st_mode) | stat.S_IRGRP | stat.S_IXGRP)
+    if not state.is_dir() or not game_data.is_dir() or not working.is_dir():
+        raise RuntimeError("runtime working directory is unavailable")
+    state_mode = state.stat().st_mode
+    game_data_mode = game_data.stat().st_mode
+    if not (state_mode & 0o010):
+        raise RuntimeError("Agent state root is not traversable by runtime group")
+    if (game_data_mode & 0o050) != 0o050:
+        raise RuntimeError("game-data is not readable/traversable by runtime group")
 
 
 def _ensure_runtime_identity(spec: dict[str, Any]) -> None:
     user = str(spec.get("user") or _DEFAULT_RUNTIME_USER)
     _validate_runtime_user(user)
-    _grant_runtime_access(str(spec["working_directory"]), user)
+    _validate_runtime_access(str(spec["working_directory"]), user)
 
 
 def run(instance_id: str) -> dict[str, Any]:
