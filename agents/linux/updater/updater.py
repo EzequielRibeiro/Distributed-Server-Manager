@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Privileged, rollback-safe Linux Agent updater."""
-
 from __future__ import annotations
 
 import hashlib
@@ -114,8 +113,10 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
     fixed = [
         (package_root / "agent/common/identity.py", INSTALL_ROOT / "common/identity.py", 0o644, "agent/common/identity.py"),
         (package_root / "agent/privileged/materialize_instance.py", INSTALL_ROOT / "privileged/materialize_instance.py", 0o755, "agent/privileged/materialize_instance.py"),
+        (package_root / "agent/privileged/reconcile_runtime_identity.py", INSTALL_ROOT / "privileged/reconcile_runtime_identity.py", 0o755, "agent/privileged/reconcile_runtime_identity.py"),
         (package_root / "agent/policy/49-capivara-agent-instance-units.rules", POLKIT_RULES_DIR / "49-capivara-agent-instance-units.rules", 0o644, "agent/policy/49-capivara-agent-instance-units.rules"),
         (package_root / "services/capivara-agent-materialize@.service", SYSTEMD_DIR / "capivara-agent-materialize@.service", 0o644, "services/capivara-agent-materialize@.service"),
+        (package_root / "services/capivara-agent-runtime-identity.service", SYSTEMD_DIR / "capivara-agent-runtime-identity.service", 0o644, "services/capivara-agent-runtime-identity.service"),
         (package_root / "agent/updater/updater.py", INSTALL_ROOT / "updater/updater.py", 0o755, "agent/updater/updater.py"),
         (package_root / "manifest.json", INSTALL_ROOT / "manifest.json", 0o644, "manifest.json"),
         (package_root / "VERSION", INSTALL_ROOT / "VERSION", 0o644, "VERSION"),
@@ -173,6 +174,11 @@ def _daemon_reload() -> None:
     if completed.returncode != 0: raise RuntimeError((completed.stderr or completed.stdout or "systemctl daemon-reload failed")[:2000])
 
 
+def _reconcile_runtime_identity() -> None:
+    completed = subprocess.run(["systemctl", "start", "capivara-agent-runtime-identity.service"], capture_output=True, text=True, check=False, timeout=30)
+    if completed.returncode != 0: raise RuntimeError((completed.stderr or completed.stdout or "runtime identity reconciliation failed")[:2000])
+
+
 def _validate_installed(version: str, manifest: dict[str, Any], mapping: list[tuple[Path, Path, int, str]]) -> None:
     if (INSTALL_ROOT / "VERSION").read_text(encoding="utf-8").strip() != version: raise RuntimeError("post-update VERSION validation failed")
     files = manifest.get("files") or {}
@@ -211,7 +217,7 @@ def apply_request() -> int:
         root = extract / package_name; manifest = _verify_package(root, plain, channel, external); _validate_python(root)
         mapping = _mapping(root); cli_existed, old_cli_target = _validate_cli_target(); snapshots = _snapshot_files(mapping, work / "rollback")
         try:
-            _apply_files(mapping); _daemon_reload(); _reconcile_cli(); _validate_installed(plain, manifest, mapping); _restart_agent()
+            _apply_files(mapping); _daemon_reload(); _reconcile_runtime_identity(); _reconcile_cli(); _validate_installed(plain, manifest, mapping); _restart_agent()
         except Exception:
             _restore_files(snapshots); _restore_cli(cli_existed, old_cli_target)
             try: _daemon_reload()

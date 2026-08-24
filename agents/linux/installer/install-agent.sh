@@ -25,17 +25,13 @@ install_runtime_dependencies(){
   if command -v apt-get >/dev/null 2>&1; then
     log "Validando dependências do Agent e compatibilidade SteamCMD..."
     DEBIAN_FRONTEND=noninteractive apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates libc6-i386 lib32gcc-s1 lib32stdc++6
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates libc6-i386 lib32gcc-s1 lib32stdc++6
   elif command -v dnf >/dev/null 2>&1; then
-    log "Validando compatibilidade SteamCMD para Fedora/RHEL..."
-    dnf install -y ca-certificates glibc.i686 libgcc.i686 libstdc++.i686
+    log "Validando compatibilidade SteamCMD para Fedora/RHEL..."; dnf install -y ca-certificates glibc.i686 libgcc.i686 libstdc++.i686
   elif command -v yum >/dev/null 2>&1; then
-    log "Validando compatibilidade SteamCMD para RHEL/CentOS..."
-    yum install -y ca-certificates glibc.i686 libgcc.i686 libstdc++.i686
+    log "Validando compatibilidade SteamCMD para RHEL/CentOS..."; yum install -y ca-certificates glibc.i686 libgcc.i686 libstdc++.i686
   elif command -v zypper >/dev/null 2>&1; then
-    log "Validando compatibilidade SteamCMD para openSUSE..."
-    zypper --non-interactive install ca-certificates glibc-32bit libgcc_s1-32bit libstdc++6-32bit
+    log "Validando compatibilidade SteamCMD para openSUSE..."; zypper --non-interactive install ca-certificates glibc-32bit libgcc_s1-32bit libstdc++6-32bit
   else
     log "Gerenciador de pacotes não reconhecido; dependências opcionais serão reportadas pelo diagnóstico do Agent."
   fi
@@ -45,7 +41,7 @@ for cmd in python3 install systemctl; do command -v "$cmd" >/dev/null || fail "c
 [[ -n "${PACKAGE_DIR}" ]] || PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; PACKAGE_DIR="$(cd "${PACKAGE_DIR}" && pwd)"
 
 RUNTIME_FILES=(agent.py capabilities.py network_inventory.py host_telemetry.py update_client.py update_state.py local_cli.py cap_dispatch.py game_data_client.py game_data_executor.py game_data_state.py instance_runtime.py runtime_spec.py runtime_events.py runtime_materialization.py runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py observability_client.py configuration_client.py content_client.py backup_client.py broadcast_client.py game_runtime.py provisioning_contract.py provisioning_state.py provisioning_client.py provisioning_executor.py privileged_materialization.py)
-for required in manifest.json VERSION agent/common/identity.py agent/privileged/materialize_instance.py agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path services/capivara-agent-materialize@.service; do [[ -f "${PACKAGE_DIR}/${required}" ]] || fail "arquivo obrigatório ausente: ${required}"; done
+for required in manifest.json VERSION agent/common/identity.py agent/privileged/materialize_instance.py agent/privileged/reconcile_runtime_identity.py agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path services/capivara-agent-materialize@.service services/capivara-agent-runtime-identity.service; do [[ -f "${PACKAGE_DIR}/${required}" ]] || fail "arquivo obrigatório ausente: ${required}"; done
 for file in "${RUNTIME_FILES[@]}"; do [[ -f "${PACKAGE_DIR}/agent/runtime/${file}" ]] || fail "arquivo obrigatório ausente: agent/runtime/${file}"; done
 for sub in adapters materializers; do for file in __init__.py base.py registry.py systemd.py; do [[ -f "${PACKAGE_DIR}/agent/runtime/${sub}/${file}" ]] || fail "arquivo obrigatório ausente: agent/runtime/${sub}/${file}"; done; done
 for file in __init__.py base.py registry.py dayz.py; do [[ -f "${PACKAGE_DIR}/agent/runtime/profiles/${file}" ]] || fail "arquivo obrigatório ausente: agent/runtime/profiles/${file}"; done
@@ -70,6 +66,7 @@ for file in "${RUNTIME_FILES[@]}"; do mode=0644; case "$file" in agent.py|local_
 for sub in adapters materializers; do for file in __init__.py base.py registry.py systemd.py; do install -m 0644 "${PACKAGE_DIR}/agent/runtime/${sub}/${file}" "${INSTALL_ROOT}/runtime/${sub}/${file}"; done; done
 for file in __init__.py base.py registry.py dayz.py; do install -m 0644 "${PACKAGE_DIR}/agent/runtime/profiles/${file}" "${INSTALL_ROOT}/runtime/profiles/${file}"; done
 install -m 0755 "${PACKAGE_DIR}/agent/privileged/materialize_instance.py" "${INSTALL_ROOT}/privileged/materialize_instance.py"
+install -m 0755 "${PACKAGE_DIR}/agent/privileged/reconcile_runtime_identity.py" "${INSTALL_ROOT}/privileged/reconcile_runtime_identity.py"
 install -m 0755 "${PACKAGE_DIR}/agent/updater/updater.py" "${INSTALL_ROOT}/updater/updater.py"
 install -m 0644 "${PACKAGE_DIR}/agent/common/identity.py" "${INSTALL_ROOT}/common/identity.py"; install -m 0644 "${PACKAGE_DIR}/manifest.json" "${INSTALL_ROOT}/manifest.json"; printf '%s\n' "${VERSION}" >"${INSTALL_ROOT}/VERSION"
 install -d -m 0755 "${POLKIT_RULES_DIR}"; install -m 0644 "${PACKAGE_DIR}/agent/policy/49-capivara-agent-instance-units.rules" "${POLKIT_RULES_DIR}/49-capivara-agent-instance-units.rules"
@@ -80,6 +77,9 @@ package,config_path,url,token,version=sys.argv[1:]; p=pathlib.Path(package)/'age
 config={**identity,'controller_url':url.rstrip('/'),'pairing_token':token,'capivara_version':version,'heartbeat_interval_seconds':30,'reconcile_interval_seconds':15,'reconcile_failure_threshold':3,'reconcile_base_backoff_seconds':15,'reconcile_max_backoff_seconds':300,'runtime_lock_timeout_seconds':5,'provisioning_timeout_seconds':3600,'runtime_start_timeout_seconds':90,'runtime_stop_timeout_seconds':90,'reconcile_timeout_seconds':120,'reconcile_max_retries':5,'degraded_after_seconds':60,'offline_after_seconds':120}; m.write_identity(pathlib.Path(config_path),config)
 PY
 chown capivara-agent:capivara-agent "${CONFIG_DIR}/agent.json"; chmod 0600 "${CONFIG_DIR}/agent.json"
-for file in capivara-agent.service capivara-agent-update.service capivara-agent-update.path capivara-agent-materialize@.service; do install -m 0644 "${PACKAGE_DIR}/services/${file}" "${SYSTEMD_DIR}/${file}"; done
-systemctl daemon-reload; systemctl enable --now capivara-agent-update.path; systemctl enable --now capivara-agent.service
+for file in capivara-agent.service capivara-agent-update.service capivara-agent-update.path capivara-agent-materialize@.service capivara-agent-runtime-identity.service; do install -m 0644 "${PACKAGE_DIR}/services/${file}" "${SYSTEMD_DIR}/${file}"; done
+systemctl daemon-reload
+systemctl start capivara-agent-runtime-identity.service
+systemctl enable --now capivara-agent-update.path
+systemctl enable --now capivara-agent.service
 log "Agent ${VERSION} instalado com runtime serializado, crash-consistent e observável."
