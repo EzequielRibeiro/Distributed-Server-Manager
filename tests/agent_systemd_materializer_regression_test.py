@@ -53,3 +53,29 @@ def test_working_directory_rejects_relative_path():
 def test_working_directory_rejects_line_breaks():
     with pytest.raises(MaterializerError, match="invalid characters"):
         render_unit(_spec(working_directory="/var/lib/capivara-agent\nInjected=true"))
+
+
+def test_instance_gets_isolated_writable_home_managed_by_systemd():
+    unit = render_unit(_spec())
+
+    assert "StateDirectory=capivara-instances/aurora-dayz-002\n" in unit
+    assert "StateDirectoryMode=0700\n" in unit
+    assert 'Environment="HOME=/var/lib/capivara-instances/aurora-dayz-002"' in unit
+    assert (
+        'Environment="XDG_DATA_HOME=/var/lib/capivara-instances/aurora-dayz-002/.local/share"'
+        in unit
+    )
+    assert (
+        'Environment="XDG_CACHE_HOME=/var/lib/capivara-instances/aurora-dayz-002/.cache"'
+        in unit
+    )
+    assert (
+        'Environment="XDG_CONFIG_HOME=/var/lib/capivara-instances/aurora-dayz-002/.config"'
+        in unit
+    )
+    assert "/nonexistent" not in unit
+
+
+def test_instance_state_directory_rejects_path_injection():
+    with pytest.raises(MaterializerError, match="instance state directory"):
+        render_unit(_spec(instance_id="../../escape"))
