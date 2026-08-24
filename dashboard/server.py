@@ -88,6 +88,7 @@ from backend import DatabaseConfig
 from backend_factory import create_backend
 from dashboard_repository import DashboardRepository
 from alert_repository import AlertSession, dialect_for_backend
+from log_viewer_metadata import decode_agent_metadata
 from runtime_backend import backend_from_environment
 from instance_network import (
     apply_instance_network,
@@ -3362,7 +3363,7 @@ def api_log_viewer(
                 ).fetchone()
             finally:
                 session.close()
-        metadata = json.loads(str(row["metadata_json"] or "{}")) if row else {}
+        metadata = decode_agent_metadata(row["metadata_json"] if row else None)
         logs = metadata.get("recent_logs") if isinstance(metadata, dict) else []
         return {"source": source, "file": "authenticated-heartbeat", "logs": [str(line) for line in (logs or [])][-limit:]}
 
