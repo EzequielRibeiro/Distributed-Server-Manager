@@ -355,6 +355,9 @@
     }
 
     async function loadLogs() {
+        const previous = $("agent-view-content").querySelector(".cap-agent-log");
+        const previousScrollTop = previous?.scrollTop || 0;
+        const wasFollowingLatest = !previous || previous.scrollHeight - previous.scrollTop - previous.clientHeight < 32;
         const query = new URLSearchParams({source: "agent", server: agentId, game: "", instance: "", limit: "500"});
         const response = await request(`/api/log-viewer?${query}`);
         const data = response.data || response || {};
@@ -369,6 +372,8 @@
             box.append(row);
         });
         setContent(box);
+        if (wasFollowingLatest) box.scrollTop = box.scrollHeight;
+        else box.scrollTop = Math.min(previousScrollTop, box.scrollHeight - box.clientHeight);
     }
 
     function empty(message) {

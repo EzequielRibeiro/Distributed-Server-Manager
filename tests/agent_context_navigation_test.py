@@ -19,7 +19,7 @@ def test_agent_context_page_has_no_agent_search_and_exposes_five_scoped_views():
     html = (WEB / "agent-observability.html").read_text(encoding="utf-8")
     assert 'href="dashboard-home-v3.css"' in html
     assert 'href="dashboard-v3.css"' not in html
-    assert 'src="agent-observability.js?v=4"' in html
+    assert 'src="agent-observability.js?v=5"' in html
     assert 'href="agent-observability.css?v=3"' in html
     assert 'id="agent-context-nav"' in html
     assert 'id="agent-view-content"' in html
@@ -52,6 +52,9 @@ def test_agent_context_client_filters_every_api_by_url_agent_id():
     assert "Uso da CPU" in script
     assert "Processo do Agent" in script
     assert 'metricName.endsWith("_ratio")' in script
+    assert "wasFollowingLatest" in script
+    assert "previousScrollTop" in script
+    assert "box.scrollTop = box.scrollHeight" in script
 
 
 def test_agent_context_assets_are_registered_in_composition_layer():
