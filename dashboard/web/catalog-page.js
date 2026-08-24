@@ -23,7 +23,7 @@ const operationLabels={install:'Instalação',update:'Atualização',verify:'Ver
 const steamAuthCommand=`bash <<'STEAM_AUTH'
 set -euo pipefail
 
-read -rp "Usuário da conta Steam dedicada: " STEAM_ACCOUNT
+read -rp "Nome da conta Steam dedicada (não o e-mail): " STEAM_ACCOUNT < /dev/tty
 
 case "$STEAM_ACCOUNT" in
   (*[!A-Za-z0-9_.-]*|'')
@@ -43,7 +43,7 @@ sudo -u capivara-agent \\
   env HOME=/var/lib/capivara-agent \\
   /var/lib/capivara-agent/tools/steamcmd/steamcmd.sh \\
   +login "$STEAM_ACCOUNT" \\
-  +quit
+  +quit < /dev/tty
 
 sudo systemctl daemon-reload
 sudo systemctl restart capivara-agent.service
