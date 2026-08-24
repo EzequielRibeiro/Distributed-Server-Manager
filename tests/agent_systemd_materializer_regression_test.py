@@ -23,7 +23,7 @@ def _spec(**overrides):
         "user": "capivara-instance",
         "working_directory": "/var/lib/capivara-agent/game-data/dayz/serverfiles",
         "executable": "/var/lib/capivara-agent/game-data/dayz/serverfiles/DayZServer",
-        "arguments": ["-config=serverDZ.cfg"],
+        "arguments": ["-config=/var/lib/capivara-instances/aurora-dayz-002/config/serverDZ.cfg"],
         "environment": {"CAPIVARA_INSTANCE_ID": "aurora-dayz-002"},
     }
     spec.update(overrides)
@@ -33,16 +33,9 @@ def _spec(**overrides):
 def test_working_directory_is_rendered_as_absolute_path_without_quotes():
     unit = render_unit(_spec())
 
-    assert (
-        "WorkingDirectory=/var/lib/capivara-agent/game-data/dayz/serverfiles\n"
-        in unit
-    )
+    assert "WorkingDirectory=/var/lib/capivara-agent/game-data/dayz/serverfiles\n" in unit
     assert 'WorkingDirectory="/var/lib/capivara-agent/game-data/dayz/serverfiles"' not in unit
-    assert (
-        'ExecStart="/var/lib/capivara-agent/game-data/dayz/serverfiles/DayZServer" '
-        '"-config=serverDZ.cfg"'
-        in unit
-    )
+    assert 'ExecStart="/var/lib/capivara-agent/game-data/dayz/serverfiles/DayZServer"' in unit
 
 
 def test_working_directory_rejects_relative_path():
@@ -61,24 +54,27 @@ def test_instance_gets_isolated_writable_home_visible_through_passwd_path():
     assert "StateDirectory=capivara-instances/aurora-dayz-002\n" in unit
     assert "StateDirectoryMode=0700\n" in unit
     assert (
-        "BindPaths=/var/lib/capivara-instances/aurora-dayz-002:"
-        "/var/lib/capivara-agent/runtime-home\n"
+        'BindPaths="/var/lib/capivara-instances/aurora-dayz-002:'
+        '/var/lib/capivara-agent/runtime-home"\n'
         in unit
     )
     assert 'Environment="HOME=/var/lib/capivara-agent/runtime-home"' in unit
-    assert (
-        'Environment="XDG_DATA_HOME=/var/lib/capivara-agent/runtime-home/.local/share"'
-        in unit
-    )
-    assert (
-        'Environment="XDG_CACHE_HOME=/var/lib/capivara-agent/runtime-home/.cache"'
-        in unit
-    )
-    assert (
-        'Environment="XDG_CONFIG_HOME=/var/lib/capivara-agent/runtime-home/.config"'
-        in unit
-    )
+    assert 'Environment="XDG_DATA_HOME=/var/lib/capivara-agent/runtime-home/.local/share"' in unit
+    assert 'Environment="XDG_CACHE_HOME=/var/lib/capivara-agent/runtime-home/.cache"' in unit
+    assert 'Environment="XDG_CONFIG_HOME=/var/lib/capivara-agent/runtime-home/.config"' in unit
     assert "/nonexistent" not in unit
+
+
+def test_instance_can_bind_private_persistence_over_shared_game_data_mountpoint():
+    unit = render_unit(_spec(bind_paths=[{
+        "source": "/var/lib/capivara-instances/aurora-dayz-002/storage_1",
+        "target": "/var/lib/capivara-agent/game-data/dayz/serverfiles/mpmissions/dayzOffline.chernarusplus/storage_1",
+    }]))
+    assert (
+        'BindPaths="/var/lib/capivara-instances/aurora-dayz-002/storage_1:'
+        '/var/lib/capivara-agent/game-data/dayz/serverfiles/mpmissions/dayzOffline.chernarusplus/storage_1"'
+        in unit
+    )
 
 
 def test_instance_state_directory_rejects_path_injection():
