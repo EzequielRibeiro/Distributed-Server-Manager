@@ -7,9 +7,11 @@ from urllib.parse import parse_qs, urlparse
 import server_part16 as integration
 from catalog_runtime_policy_http import RUNTIME_POLICY_PATH, dispatch_catalog_runtime_policy_get, dispatch_catalog_runtime_policy_put
 from controller_telemetry import controller_telemetry
+from customer_instance_creation import install_customer_instance_creation
 from json_serialization import normalize_json_value
 
 legacy = integration.legacy
+install_customer_instance_creation(legacy)
 _previous_get = legacy.DashboardHandler.do_GET
 _previous_put = getattr(legacy.DashboardHandler, "do_PUT", None)
 _previous_send_json = legacy.DashboardHandler.send_json
