@@ -26,6 +26,44 @@
         "capivara.runtime.queue.provisioning": "Provisionamentos pendentes",
         "capivara.runtime.queue.instance.results": "Resultados de instâncias",
     };
+    const metricPresentation = {
+        "system.load.15": ["Carga média (15 min)", "Sistema"],
+        "system.load.5": ["Carga média (5 min)", "Sistema"],
+        "system.load.per_core": ["Carga por núcleo", "Sistema"],
+        "system.uptime_seconds": ["Tempo ligado", "Sistema"],
+        "memory.total_bytes": ["Memória total", "Memória"],
+        "memory.available_bytes": ["Memória disponível", "Memória"],
+        "disk.root.free_bytes": ["Espaço livre em disco", "Armazenamento"],
+        "disk.root.used_ratio": ["Uso do disco", "Armazenamento"],
+        "network.receive_bytes": ["Dados recebidos", "Rede"],
+        "capivara.agent.pid": ["Identificador do processo", "Processo do Agent"],
+        "capivara.agent.threads": ["Threads do processo", "Processo do Agent"],
+        "capivara.agent.memory.rss_bytes": ["Memória usada pelo Agent", "Processo do Agent"],
+        "capivara.agent.cpu.usage_pct": ["CPU usada pelo Agent", "Processo do Agent"],
+        "capivara.host.network.tx_bytes_per_second": ["Velocidade de envio", "Rede"],
+        "capivara.host.network.rx_bytes_per_second": ["Velocidade de recebimento", "Rede"],
+        "capivara.host.network.tx_bytes": ["Total enviado", "Rede"],
+        "capivara.host.network.rx_bytes": ["Total recebido", "Rede"],
+        "capivara.host.uptime_seconds": ["Tempo ligado", "Sistema"],
+        "capivara.host.load.15m": ["Carga média (15 min)", "Sistema"],
+        "capivara.host.load.5m": ["Carga média (5 min)", "Sistema"],
+        "capivara.host.load.1m": ["Carga média (1 min)", "Sistema"],
+        "capivara.host.disk.total_bytes": ["Capacidade total", "Armazenamento"],
+        "capivara.host.disk.used_bytes": ["Espaço utilizado", "Armazenamento"],
+        "capivara.host.disk.usage_pct": ["Uso do disco", "Armazenamento"],
+        "capivara.host.memory.total_bytes": ["Memória total", "Memória"],
+        "capivara.host.memory.used_bytes": ["Memória utilizada", "Memória"],
+        "capivara.host.memory.usage_pct": ["Uso da memória", "Memória"],
+        "capivara.host.cpu.usage_pct": ["Uso da CPU", "Sistema"],
+    };
+    const legacyMetricReplacement = {
+        "system.load.15": "capivara.host.load.15m",
+        "system.load.5": "capivara.host.load.5m",
+        "system.uptime_seconds": "capivara.host.uptime_seconds",
+        "memory.total_bytes": "capivara.host.memory.total_bytes",
+        "network.receive_bytes": "capivara.host.network.rx_bytes",
+        "disk.root.used_ratio": "capivara.host.disk.usage_pct",
+    };
 
     async function request(path) {
         const response = await fetch(path, {
@@ -78,13 +116,16 @@
         return `${integer.format(Math.floor(seconds / 86400))} d ${integer.format(Math.floor((seconds % 86400) / 3600))} h`;
     }
 
-    function formatMetric(input, unit = "") {
+    function formatMetric(input, unit = "", metricName = "") {
         const normalized = String(unit || "").trim().toLowerCase();
         const number = Number(input);
         if (!Number.isFinite(number)) return value(input);
         if (["byte", "bytes"].includes(normalized)) return formatBytes(number);
         if (["byte_per_second", "bytes_per_second", "bytes/second", "b/s"].includes(normalized)) return formatBytes(number, "/s");
-        if (["percent", "percentage", "%"].includes(normalized)) return `${decimal.format(number)}%`;
+        if (metricName.endsWith("_ratio")) return `${decimal.format(number * 100)}%`;
+        if (metricName.endsWith("_pct") || ["percent", "percentage", "%"].includes(normalized)) return `${decimal.format(number)}%`;
+        if (metricName.endsWith("_bytes")) return formatBytes(number);
+        if (metricName.endsWith("_seconds")) return formatDuration(number);
         if (["second", "seconds", "s"].includes(normalized)) return formatDuration(number);
         if (["celsius", "°c", "c"].includes(normalized)) return `${decimal.format(number)} °C`;
         if (["pid", "threads", "items", "count"].includes(normalized)) return integer.format(number);
@@ -124,6 +165,27 @@
         container.className = "cap-agent-context-grid";
         container.append(...nodes);
         return container;
+    }
+
+    function humanMetricName(name) {
+        if (metricPresentation[name]) return metricPresentation[name][0];
+        return String(name || "Métrica")
+            .replace(/^capivara\./, "")
+            .replace(/[._]+/g, " ")
+            .replace(/\b\w/g, letter => letter.toUpperCase());
+    }
+
+    function metricGroup(name) {
+        return metricPresentation[name]?.[1] || "Outras métricas";
+    }
+
+    function metricSection(name, nodes) {
+        const section = document.createElement("section");
+        section.className = "cap-agent-metric-section";
+        const title = document.createElement("h3");
+        title.textContent = name;
+        section.append(title, grid(nodes));
+        return section;
     }
 
     function queueSummary(metrics) {
@@ -179,19 +241,32 @@
         const result = await request(`/api/observability?mode=latest&agent_id=${encodeURIComponent(agentId)}&limit=200`);
         const metrics = Array.isArray(result.metrics) ? result.metrics : [];
         const queueMetrics = metrics.filter(metric => queueLabels[metric.metric_name || metric.name || metric.key]);
-        const regularMetrics = metrics.filter(metric => !queueLabels[metric.metric_name || metric.name || metric.key]);
-        const nodes = regularMetrics.map(metric => {
+        const availableNames = new Set(metrics.map(metric => metric.metric_name || metric.name || metric.key));
+        const regularMetrics = metrics.filter(metric => {
+            const name = metric.metric_name || metric.name || metric.key;
+            return !queueLabels[name] && !(legacyMetricReplacement[name] && availableNames.has(legacyMetricReplacement[name]));
+        });
+        const grouped = new Map();
+        regularMetrics.forEach(metric => {
+            const name = metric.metric_name || metric.name || metric.key || "Métrica";
             const raw = metric.value ?? metric.metric_value ?? metric.latest ?? metric.status;
-            return item(
-                metric.metric_name || metric.name || metric.key || "Métrica",
-                formatMetric(raw, metric.unit),
+            const node = item(
+                humanMetricName(name),
+                formatMetric(raw, metric.unit, name),
                 metric.timestamp ? time(metric.timestamp) : "",
                 raw,
             );
+            node.title = `${name} · Valor bruto: ${raw}`;
+            const group = metricGroup(name);
+            if (!grouped.has(group)) grouped.set(group, []);
+            grouped.get(group).push(node);
         });
         const sections = [];
         if (queueMetrics.length) sections.push(queueSummary(queueMetrics));
-        if (nodes.length) sections.push(grid(nodes));
+        ["Sistema", "Memória", "Armazenamento", "Rede", "Processo do Agent", "Outras métricas"].forEach(group => {
+            const nodes = grouped.get(group);
+            if (nodes?.length) sections.push(metricSection(group, nodes));
+        });
         setContent(...(sections.length ? sections : [empty("Nenhuma métrica publicada por este Agent.")]));
     }
 

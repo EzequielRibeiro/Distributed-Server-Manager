@@ -19,8 +19,8 @@ def test_agent_context_page_has_no_agent_search_and_exposes_five_scoped_views():
     html = (WEB / "agent-observability.html").read_text(encoding="utf-8")
     assert 'href="dashboard-home-v3.css"' in html
     assert 'href="dashboard-v3.css"' not in html
-    assert 'src="agent-observability.js?v=3"' in html
-    assert 'href="agent-observability.css?v=2"' in html
+    assert 'src="agent-observability.js?v=4"' in html
+    assert 'href="agent-observability.css?v=3"' in html
     assert 'id="agent-context-nav"' in html
     assert 'id="agent-view-content"' in html
     assert "Agent / Node" not in html
@@ -47,6 +47,11 @@ def test_agent_context_client_filters_every_api_by_url_agent_id():
     assert "Sem pendências" in script
     assert "Ver detalhes das filas" in script
     assert "capivara.runtime.queue.provisioning" in script
+    assert "metricPresentation" in script
+    assert "legacyMetricReplacement" in script
+    assert "Uso da CPU" in script
+    assert "Processo do Agent" in script
+    assert 'metricName.endsWith("_ratio")' in script
 
 
 def test_agent_context_assets_are_registered_in_composition_layer():
