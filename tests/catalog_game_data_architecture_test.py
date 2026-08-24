@@ -12,7 +12,11 @@ DASHBOARD = ROOT / "dashboard"
 if str(DASHBOARD) not in sys.path:
     sys.path.insert(0, str(DASHBOARD))
 
-from catalog_resource_profiles_http import catalog_resource_profiles
+from catalog_resource_profiles_http import (
+    catalog_resource_profiles,
+    dispatch_catalog_resource_profiles_get,
+    dispatch_catalog_resource_profiles_put,
+)
 
 
 class CatalogGameDataArchitectureTest(unittest.TestCase):
@@ -74,6 +78,39 @@ class CatalogGameDataArchitectureTest(unittest.TestCase):
             (root / "catalog/v2/games/example").mkdir(parents=True)
             payload = catalog_resource_profiles(root, "example")
             self.assertEqual(payload["profiles"], [])
+
+    def test_resource_profiles_can_be_saved_and_read_by_customer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "catalog/v2/games/example").mkdir(parents=True)
+            profile = {
+                "id": "standard", "name": "Standard",
+                "description": "Perfil recomendado.", "cpu_cores": 2,
+                "memory_mb": 4096, "storage_mb": 20480,
+                "swap_mb": 1024, "pids_limit": 512,
+            }
+            status, saved = dispatch_catalog_resource_profiles_put(
+                "/api/catalog/resource-profiles",
+                {"game": "example", "profiles": [profile]},
+                user={"role": "admin"}, root=root,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(saved["profiles"][0]["id"], "standard")
+            self.assertTrue((root / "config/catalog-resource-profiles/example.json").is_file())
+            status, loaded = dispatch_catalog_resource_profiles_get(
+                "/api/catalog/resource-profiles", "game=example",
+                user={"role": "customer"}, root=root,
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(loaded, saved)
+
+    def test_operator_cannot_change_resource_profiles(self):
+        status, payload = dispatch_catalog_resource_profiles_put(
+            "/api/catalog/resource-profiles", {},
+            user={"role": "operator"}, root=ROOT,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(payload["error"], "forbidden")
 
     def test_dashboard_uses_latest_composition_layer(self):
         service = (ROOT / "systemd/dsm-dashboard.service").read_text(encoding="utf-8")

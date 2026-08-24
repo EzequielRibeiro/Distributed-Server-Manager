@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+import json
 from typing import Any
 
 from admin_management_repository import AdminManagementRepository
@@ -127,10 +128,10 @@ class CustomerAdminRepository:
                     (customer_id,),
                 ).fetchall()
                 contracts = session.execute(
-                    "SELECT c.id,c.game_id,c.status,c.instance_limit,c.starts_at,c.ends_at,c.created_at,"
+                    "SELECT c.id,c.game_id,c.status,c.instance_limit,c.starts_at,c.ends_at,c.created_at,c.metadata_json,"
                     "COUNT(ic.instance_id) AS instances_used "
                     "FROM service_contracts c LEFT JOIN instance_contracts ic ON ic.contract_id=c.id "
-                    f"WHERE c.customer_id={ph} GROUP BY c.id,c.game_id,c.status,c.instance_limit,c.starts_at,c.ends_at,c.created_at "
+                    f"WHERE c.customer_id={ph} GROUP BY c.id,c.game_id,c.status,c.instance_limit,c.starts_at,c.ends_at,c.created_at,c.metadata_json "
                     "ORDER BY c.created_at DESC,c.id",
                     (customer_id,),
                 ).fetchall()
@@ -151,10 +152,17 @@ class CustomerAdminRepository:
             item["must_change_password"] = bool(row["must_change_password"])
             item["instance_access"] = access.get(str(row["username"]), {})
             normalized_users.append(item)
+        normalized_contracts = []
+        for row in contracts:
+            item = dict(row)
+            try: metadata = json.loads(item.pop("metadata_json", "{}") or "{}")
+            except (TypeError, ValueError): metadata = {}
+            item["resource_profile_id"] = metadata.get("resource_profile_id")
+            normalized_contracts.append(item)
         return {
             "customer": dict(customer),
             "users": normalized_users,
-            "contracts": [dict(row) for row in contracts],
+            "contracts": normalized_contracts,
             "instances": [dict(row) for row in instances],
         }
 
@@ -316,11 +324,13 @@ class CustomerAdminRepository:
                 session.close()
 
     def create_contract(self, *, customer_id: str, game_id: str, instance_limit: int,
-                        contract_id: str | None = None, ends_at: str | None = None) -> dict[str, Any]:
+                        contract_id: str | None = None, ends_at: str | None = None,
+                        resource_profile_id: str | None = None) -> dict[str, Any]:
         self.initialize()
         return self.admin.create_contract(
             customer_id=customer_id, game_id=game_id, instance_limit=instance_limit,
             contract_id=contract_id, ends_at=ends_at,
+            resource_profile_id=resource_profile_id,
         )
 
     def _set_password_state(self, session: AlertSession, username: str, required: bool) -> None:

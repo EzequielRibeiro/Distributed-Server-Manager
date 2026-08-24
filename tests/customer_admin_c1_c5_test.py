@@ -96,9 +96,10 @@ def main() -> int:
             game_id="dayz",
             instance_limit=2,
             contract_id="contract-c1-c5",
+            resource_profile_id="standard",
         )
         assert contract["instance_limit"] == 2
-        assert repo.detail("customer-c1-c5")["contracts"][0]["id"] == "contract-c1-c5"
+        assert repo.detail("customer-c1-c5")["contracts"][0]["resource_profile_id"] == "standard"
 
         admin = {"username": "admin", "role": "admin"}
         operator = {"username": "operator", "role": "operator"}
@@ -124,8 +125,8 @@ def main() -> int:
         )[0] == 200
         assert dispatch_customer_admin_post(
             CUSTOMER_ADMIN_CONTRACT,
-            {"customer_id": "customer-c1-c5", "game_id": "rust", "instance_limit": 1},
-            user=admin, backend=backend,
+            {"customer_id": "customer-c1-c5", "game_id": "minecraft", "resource_profile_id": "standard", "instance_limit": 1},
+            user=operator, backend=backend,
         )[0] == 201
         assert dispatch_customer_admin_post(
             CUSTOMER_ADMIN_COLLECTION,

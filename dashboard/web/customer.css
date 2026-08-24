@@ -201,3 +201,17 @@
     margin-top: 10px;
     color: var(--muted);
 }
+
+.contract-profile { margin: 15px 0; padding: 14px; border: 1px solid #315148; border-radius: 11px; background: #091b18; }
+.contract-profile > strong, .contract-profile > span { display: block; }
+.contract-profile > strong { color: var(--lime); font-size: 15px; }
+.contract-profile > span { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.contract-profile dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 13px 0 0; }
+.contract-profile dl div { padding: 9px; border-radius: 8px; background: #102822; }
+.contract-profile dt { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+.contract-profile dd { margin: 4px 0 0; font-weight: 800; }
+.contract-profile.unavailable { color: var(--yellow); }
+
+@media (max-width: 520px) {
+    .contract-profile dl { grid-template-columns: 1fr; }
+}

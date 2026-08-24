@@ -1836,6 +1836,9 @@
             contract_id:
                 state.contract.id,
 
+            resource_profile_id:
+                state.contract.resource_profile_id || null,
+
             runtime_id:
                 state.runtime.id,
 

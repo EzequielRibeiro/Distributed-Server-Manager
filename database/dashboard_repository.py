@@ -70,13 +70,22 @@ class DashboardRepository:
         ph = self.dialect.placeholder
         with self.session() as session:
             rows = session.execute(
-                "SELECT c.id,c.game_id,c.status,c.instance_limit,c.starts_at,c.ends_at,"
+                "SELECT c.id,c.game_id,c.status,c.instance_limit,c.starts_at,c.ends_at,c.metadata_json,"
                 "COUNT(ic.instance_id) AS instances_used FROM service_contracts c "
                 "LEFT JOIN instance_contracts ic ON ic.contract_id=c.id "
                 f"WHERE c.customer_id={ph} GROUP BY c.id ORDER BY c.created_at",
                 (customer_id,),
             ).fetchall()
-        return [_json_ready_row(row) for row in rows]
+        result = []
+        for row in rows:
+            item = _json_ready_row(row)
+            try:
+                metadata = json.loads(item.pop("metadata_json", "{}") or "{}")
+            except (TypeError, ValueError):
+                metadata = {}
+            item["resource_profile_id"] = metadata.get("resource_profile_id")
+            result.append(item)
+        return result
 
     def create_customer_instance(
         self,
@@ -96,6 +105,7 @@ class DashboardRepository:
         occupied_ports_provider=None,
         unavailable_ports: set[int] | None = None,
         unavailable_ports_provider=None,
+        resource_profile_id: str | None = None,
     ) -> dict[str, Any]:
         """Reserve ownership, contract capacity and runtime network ports."""
         self.initialize()
@@ -112,7 +122,7 @@ class DashboardRepository:
                 raise PermissionError("customer is not active")
             if contract_id:
                 contract = session.execute(
-                    "SELECT c.id,c.game_id,c.status,c.instance_limit,c.ends_at,"
+                    "SELECT c.id,c.game_id,c.status,c.instance_limit,c.ends_at,c.metadata_json,"
                     "COUNT(ic.instance_id) AS instances_used "
                     "FROM service_contracts c "
                     "LEFT JOIN instance_contracts ic ON ic.contract_id=c.id "
@@ -131,7 +141,7 @@ class DashboardRepository:
                 ).fetchone()
             else:
                 contract = session.execute(
-                    "SELECT c.id,c.game_id,c.status,c.instance_limit,c.ends_at,"
+                    "SELECT c.id,c.game_id,c.status,c.instance_limit,c.ends_at,c.metadata_json,"
                     "COUNT(ic.instance_id) AS instances_used "
                     "FROM service_contracts c "
                     "LEFT JOIN instance_contracts ic ON ic.contract_id=c.id "
@@ -158,6 +168,18 @@ class DashboardRepository:
                 raise PermissionError(
                     "no contracted instance slot is available for this game"
                 )
+            try:
+                contract_metadata = json.loads(contract["metadata_json"] or "{}")
+            except (TypeError, ValueError):
+                contract_metadata = {}
+            contracted_profile_id = str(
+                contract_metadata.get("resource_profile_id") or ""
+            ).strip().lower()
+            requested_profile_id = str(resource_profile_id or "").strip().lower()
+            if contracted_profile_id and requested_profile_id and requested_profile_id != contracted_profile_id:
+                raise PermissionError("requested resource profile is not allowed by the contract")
+            if requested_profile_id and not contracted_profile_id:
+                raise PermissionError("contract does not allow a resource profile")
             if selected_agent_id:
                 agent = session.execute(
                     "SELECT a.id,a.node_id,a.name,a.status,"
@@ -244,6 +266,9 @@ class DashboardRepository:
                     "email": customer["email"], "phone": customer["phone"],
                 },
             }
+            if contracted_profile_id:
+                metadata["resource_profile_id"] = contracted_profile_id
+                metadata["allowed_resource_profiles"] = [contracted_profile_id]
             metadata_path = instance_path / ".dsm" / "instance-metadata.json"
             session.execute(
                 "INSERT INTO instances(id,node_id,game_id,name,status,manifest_path,"

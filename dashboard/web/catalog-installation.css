@@ -61,3 +61,14 @@
 .catalog-template-footer p { margin: 0 !important; color: var(--muted, #9aa9bd); font-size: 12px; }
 .catalog-template-footer p strong { color: var(--text, #eef3fb); }
 @media (max-width: 720px) { .catalog-template-item-head { grid-template-columns: 1fr; } .catalog-template-toolbar,.catalog-template-footer { align-items: stretch; flex-direction: column; } }
+.catalog-resource-editor { display: grid; grid-template-columns: repeat(auto-fit,minmax(310px,1fr)); gap: 14px; }
+.catalog-resource-edit { border: 1px solid var(--line,#263246); border-radius: 11px; padding: 15px; background: var(--bg,#0b111b); }
+.catalog-resource-edit-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 13px; }
+.catalog-resource-edit-head span { color: #75a7ff; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.catalog-resource-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.catalog-resource-fields label { display: grid; gap: 5px; color: var(--muted,#9aa9bd); font-size: 12px; font-weight: 700; }
+.catalog-resource-fields label.span-2 { grid-column: span 2; }
+.catalog-resource-fields input,.catalog-resource-fields textarea { box-sizing: border-box; width: 100%; border: 1px solid var(--line,#263246); border-radius: 8px; padding: 9px 10px; background: #080f1a; color: var(--text,#eef3fb); }
+.catalog-resource-fields textarea { min-height: 72px; resize: vertical; }
+.catalog-resource-fields input:focus,.catalog-resource-fields textarea:focus { outline: 2px solid rgba(59,130,246,.35); border-color: var(--blue,#3b82f6); }
+@media (max-width: 560px) { .catalog-resource-fields { grid-template-columns: 1fr; } .catalog-resource-fields label.span-2 { grid-column: auto; } }

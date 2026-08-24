@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from typing import Any
+from pathlib import Path
 
 from customer_admin_repository import CustomerAdminRepository
 from customer_mailer import send_temporary_password
+from catalog_resource_profiles_http import catalog_resource_profiles
+
+ROOT = Path(__file__).resolve().parents[1]
 
 CUSTOMER_ADMIN_COLLECTION = "/api/admin/customers"
 CUSTOMER_ADMIN_DETAIL = "/api/admin/customer"
@@ -83,7 +87,8 @@ def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, ba
             repository.change_temporary_password(str(user.get("username") or ""), password)
             return 200, {"changed": True, "must_change_password": False}
 
-        if not _admin_write(user):
+        contract_operator = path == CUSTOMER_ADMIN_CONTRACT and _role(user) == "operator"
+        if not _admin_write(user) and not contract_operator:
             return 403, {"error": "administrative write access required"}
 
         if path == CUSTOMER_ADMIN_COLLECTION:
@@ -123,12 +128,19 @@ def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, ba
 
         if path == CUSTOMER_ADMIN_CONTRACT:
             limit = int(payload.get("instance_limit") or 1)
+            game_id = str(payload.get("game_id") or "").strip().lower()
+            resource_profile_id = str(payload.get("resource_profile_id") or "").strip().lower()
+            profiles = catalog_resource_profiles(ROOT, game_id).get("profiles", [])
+            profile = next((item for item in profiles if str(item.get("id")) == resource_profile_id), None)
+            if profile is None:
+                raise ValueError("select a valid resource profile for this game")
             result = repository.create_contract(
                 customer_id=str(payload.get("customer_id") or ""),
-                game_id=str(payload.get("game_id") or ""),
+                game_id=game_id,
                 instance_limit=limit,
                 contract_id=(str(payload.get("id") or "").strip() or None),
                 ends_at=(str(payload.get("ends_at") or "").strip() or None),
+                resource_profile_id=resource_profile_id,
             )
             return 201, result
 

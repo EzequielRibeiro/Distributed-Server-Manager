@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import json
 import uuid
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -122,6 +123,7 @@ class AdminManagementRepository:
         instance_limit: int = 1,
         contract_id: str | None = None,
         ends_at: str | None = None,
+        resource_profile_id: str | None = None,
     ) -> dict[str, Any]:
         customer_id = self._identifier(customer_id, "customer_id")
         game_id = str(game_id or "").strip().lower()
@@ -155,9 +157,10 @@ class AdminManagementRepository:
 
             session.execute(
                 "INSERT INTO service_contracts("
-                "id,customer_id,game_id,status,instance_limit,ends_at"
-                ") VALUES (" + self.dialect.parameters(6) + ")",
-                (contract_id, customer_id, game_id, "active", instance_limit, ends_at),
+                "id,customer_id,game_id,status,instance_limit,ends_at,metadata_json"
+                ") VALUES (" + self.dialect.parameters(7) + ")",
+                (contract_id, customer_id, game_id, "active", instance_limit, ends_at,
+                 json.dumps({"resource_profile_id": resource_profile_id}, separators=(",", ":")) if resource_profile_id else "{}"),
             )
 
         return {
@@ -167,6 +170,7 @@ class AdminManagementRepository:
             "status": "active",
             "instance_limit": instance_limit,
             "ends_at": ends_at,
+            "resource_profile_id": resource_profile_id,
         }
 
     def customer_controller(self, customer_id: str) -> str:

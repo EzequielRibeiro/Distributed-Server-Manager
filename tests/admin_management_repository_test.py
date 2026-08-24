@@ -53,9 +53,11 @@ def main() -> int:
             game_id="dayz",
             instance_limit=2,
             contract_id="contract-1",
+            resource_profile_id="standard",
         )
         assert contract["id"] == "contract-1"
         assert contract["instance_limit"] == 2
+        assert contract["resource_profile_id"] == "standard"
         assert repo.customer_controller("customer-1") == "controller-1"
 
         with repo.session() as session:

@@ -17,6 +17,7 @@
   let resources = [];
   let contracts = [];
   let catalog = [];
+  let resourceProfiles = new Map();
 
   // =========================================================
   // HTTP
@@ -520,6 +521,42 @@
     detail.textContent =
       "Você possui uma vaga contratada. Escolha o tipo de servidor antes da criação da instância.";
 
+    const profile =
+      (resourceProfiles.get(contract.game_id) || [])
+      .find(item => item.id === contract.resource_profile_id);
+
+    const profileBox = document.createElement("div");
+    profileBox.className = "contract-profile";
+
+    if (profile) {
+      const memory = Number(profile.memory_mb || 0) / 1024;
+      const storage = Number(profile.storage_mb || 0) / 1024;
+      const name = document.createElement("strong");
+      const description = document.createElement("span");
+      const specifications = document.createElement("dl");
+      name.textContent = profile.name || profile.id;
+      description.textContent = profile.description || "Perfil de recursos contratado.";
+      [
+        ["CPU", `${profile.cpu_cores || "—"} núcleos`],
+        ["Memória", `${memory.toLocaleString("pt-BR")} GB`],
+        ["Armazenamento", `${storage.toLocaleString("pt-BR")} GB`],
+      ].forEach(([label, value]) => {
+        const item = document.createElement("div");
+        const term = document.createElement("dt");
+        const detail = document.createElement("dd");
+        term.textContent = label;
+        detail.textContent = value;
+        item.append(term, detail);
+        specifications.append(item);
+      });
+      profileBox.append(name, description, specifications);
+    } else {
+      profileBox.classList.add("unavailable");
+      profileBox.textContent = contract.resource_profile_id
+        ? `Perfil contratado: ${contract.resource_profile_id}`
+        : "O contrato ainda não possui um perfil de recursos definido.";
+    }
+
 
     const usage =
       document.createElement(
@@ -599,6 +636,7 @@
       label,
       title,
       detail,
+      profileBox,
       usage,
       actions
     );
@@ -1102,6 +1140,22 @@
       contractData
       .contracts ||
       [];
+
+    resourceProfiles = new Map();
+    await Promise.all(
+      [...new Set(contracts.map(item => item.game_id).filter(Boolean))]
+      .map(async game => {
+        try {
+          const data = await request(
+            `/api/catalog/resource-profiles?game=${encodeURIComponent(game)}`
+          );
+          resourceProfiles.set(game, Array.isArray(data.profiles) ? data.profiles : []);
+        } catch (error) {
+          console.error(error);
+          resourceProfiles.set(game, []);
+        }
+      })
+    );
 
 
     catalog =

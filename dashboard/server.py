@@ -541,6 +541,7 @@ def create_customer_instance(
         selected_agent_id=placement["agent_id"],
         network_profile=runtime_def.get("network"),
         occupied_ports_provider=occupied_ports_for_agent,
+        resource_profile_id=str(payload.get("resource_profile_id") or "").strip() or None,
     )
     instance_path = plan["instance_path"]
     metadata_path = plan["metadata_path"]
