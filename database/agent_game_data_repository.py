@@ -11,14 +11,14 @@ from core.agent_health import utc_timestamp
 
 FINAL_STATES = {"completed", "failed"}
 FILE_ACTIONS = {"file-list", "file-read", "file-write", "file-create", "file-mkdir", "file-rename", "file-delete", "file-upload"}
-VALID_ACTIONS = {"install", "update", "verify", *FILE_ACTIONS}
+VALID_ACTIONS = {"install", "update", "verify", "repair", *FILE_ACTIONS}
 VALID_STATES = {"queued", "delivered", "running", *FINAL_STATES}
 
 
 def _logical_action(selection: Any, stored_action: str) -> str:
     if isinstance(selection, dict):
         value = str(selection.get("_job_action") or "").strip().lower()
-        if value in FILE_ACTIONS:
+        if value in {*FILE_ACTIONS, "repair"}:
             return value
     return stored_action
 
@@ -76,13 +76,15 @@ class AgentGameDataRepository:
             raise ValueError("runtime selection is required")
 
         stored_selection = dict(selection)
-        # Migration 025 intentionally constrains the persisted transport action to
-        # install/update/verify. Preserve compatibility with already-installed DBs
-        # by transporting file operations through the existing verify lane while
-        # retaining the logical action in selection metadata.
+        # The consolidated schemas intentionally constrain the persisted transport
+        # action to install/update/verify. Preserve compatibility with deployed
+        # databases by retaining newer logical actions in selection metadata.
         stored_action = action
         if action in FILE_ACTIONS:
             stored_action = "verify"
+            stored_selection["_job_action"] = action
+        elif action == "repair":
+            stored_action = "update"
             stored_selection["_job_action"] = action
 
         job_id = "game-data-" + uuid.uuid4().hex

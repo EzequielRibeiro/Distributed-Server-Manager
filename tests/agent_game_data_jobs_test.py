@@ -67,6 +67,19 @@ class AgentGameDataJobsTest(unittest.TestCase):
         self.assertEqual(final["action"], "file-write")
         self.assertNotIn("content", final["selection"]["_file_operation"])
 
+    def test_repair_is_a_supported_game_data_operation(self):
+        created = self.jobs.enqueue(
+            agent_id="agent-game-data",
+            action="repair",
+            environment_id="dayz.stable",
+            selector="current",
+            selection=self.selection(),
+            requested_by="admin",
+        )
+        self.assertEqual(created["action"], "repair")
+        self.assertEqual(created["transport_action"], "update")
+        self.assertEqual(self.jobs.command_for_agent("agent-game-data")["action"], "repair")
+
     def test_authenticated_heartbeat_delivers_and_acknowledges_job(self):
         created = self.jobs.enqueue(agent_id="agent-game-data",action="install",environment_id="dayz.stable",selector="current",selection=self.selection())
         status, delivered = dispatch_heartbeat({"agent_id":"agent-game-data"}, headers=self.headers, backend=self.backend)

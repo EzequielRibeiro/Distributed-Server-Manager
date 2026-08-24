@@ -23,6 +23,15 @@ class CatalogGameDataArchitectureTest(unittest.TestCase):
         for label in ("Game Data", "Parâmetros", "Configuração", "Recursos", "Agents", "Versões"):
             self.assertIn(label, html)
 
+    def test_game_installation_has_live_progress_and_error_details(self):
+        html = (ROOT / "dashboard/web/catalog.html").read_text(encoding="utf-8")
+        script = (ROOT / "dashboard/web/catalog-page.js").read_text(encoding="utf-8")
+        self.assertIn('id="catalog-operation-progress"', html)
+        self.assertIn('id="catalog-error-details"', html)
+        self.assertIn("followJob", script)
+        self.assertIn("resumeAgentJob", script)
+        self.assertIn("Ver detalhes do erro", html)
+
     def test_resource_profile_sample_uses_explicit_units(self):
         payload = json.loads((ROOT / "catalog/v2/games/minecraft/resource-profiles.json").read_text(encoding="utf-8"))
         profiles = {item["id"]: item for item in payload["profiles"]}
