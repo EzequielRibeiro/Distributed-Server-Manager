@@ -305,6 +305,11 @@ def _doctor(config: dict[str, Any]) -> dict[str, Any]:
         add("low_disk_space", "warning", "Root filesystem has less than 5 GiB free.")
     if int(game_data.get("failed_recent_jobs", 0)):
         add("recent_game_data_failures", "warning", "One or more recent local game-data jobs failed.")
+    steamcmd = capabilities.get("steamcmd_status") if isinstance(capabilities.get("steamcmd_status"), dict) else {}
+    if steamcmd.get("installed") and not steamcmd.get("runtime_32bit", True):
+        add("steamcmd_32bit_runtime_missing", "warning", "SteamCMD requires the Linux 32-bit compatibility runtime.")
+    elif steamcmd.get("installed") and not steamcmd.get("functional"):
+        add("steamcmd_not_functional", "warning", "SteamCMD is installed but failed its validation probe.")
     last_update = updates.get("last_result") or {}
     if isinstance(last_update, dict) and last_update.get("status") == "failed":
         add("recent_update_failure", "warning", "The most recent Agent update failed.")

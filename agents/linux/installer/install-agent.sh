@@ -15,6 +15,32 @@ while (( $# )); do case "$1" in
 [[ ${EUID} -eq 0 ]] || fail "execute como root"
 [[ "${CONTROLLER_URL}" =~ ^https?://[^[:space:]]+$ ]] || fail "Controller URL inválida"; [[ -n "${PAIRING_TOKEN}" ]] || fail "pairing token é obrigatório"
 unset CAPIVARA_PAIRING_TOKEN
+install_runtime_dependencies(){
+  local machine
+  machine="$(uname -m)"
+  [[ "${machine}" == "x86_64" || "${machine}" == "amd64" ]] || {
+    log "Arquitetura ${machine}: dependências SteamCMD de 32 bits não são aplicáveis."
+    return 0
+  }
+  if command -v apt-get >/dev/null 2>&1; then
+    log "Validando dependências do Agent e compatibilidade SteamCMD..."
+    DEBIAN_FRONTEND=noninteractive apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates libc6-i386 lib32gcc-s1 lib32stdc++6
+  elif command -v dnf >/dev/null 2>&1; then
+    log "Validando compatibilidade SteamCMD para Fedora/RHEL..."
+    dnf install -y ca-certificates glibc.i686 libgcc.i686 libstdc++.i686
+  elif command -v yum >/dev/null 2>&1; then
+    log "Validando compatibilidade SteamCMD para RHEL/CentOS..."
+    yum install -y ca-certificates glibc.i686 libgcc.i686 libstdc++.i686
+  elif command -v zypper >/dev/null 2>&1; then
+    log "Validando compatibilidade SteamCMD para openSUSE..."
+    zypper --non-interactive install ca-certificates glibc-32bit libgcc_s1-32bit libstdc++6-32bit
+  else
+    log "Gerenciador de pacotes não reconhecido; dependências opcionais serão reportadas pelo diagnóstico do Agent."
+  fi
+}
+install_runtime_dependencies
 for cmd in python3 install systemctl; do command -v "$cmd" >/dev/null || fail "comando necessário ausente: $cmd"; done
 [[ -n "${PACKAGE_DIR}" ]] || PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; PACKAGE_DIR="$(cd "${PACKAGE_DIR}" && pwd)"
 
