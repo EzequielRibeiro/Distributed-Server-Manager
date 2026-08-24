@@ -84,6 +84,15 @@ class GameRuntimeProfile(ABC):
     """Translate one game's structured provisioning context into a RuntimeSpec."""
 
     game_ids: tuple[str, ...] = ()
+    profile_version: int = 1
+
+    def migration_context(self, record: dict[str, Any]) -> dict[str, Any]:
+        """Reconstruct the minimum safe context needed to rebuild a persisted spec.
+
+        Profiles that have changed their runtime layout must override this method.
+        Returning an empty object keeps migration opt-in for each game profile.
+        """
+        return {}
 
     @abstractmethod
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
