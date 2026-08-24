@@ -21,6 +21,7 @@ from agent_pairing_repository import (
     PairingTokenInvalid,
 )
 from agent_update_repository import AgentUpdateRepository
+from instance_provisioning_projection import project_agent_provisioning
 
 ENROLL_PATH = "/api/agent/enroll"
 HEARTBEAT_PATH = "/api/agent/heartbeat"
@@ -108,7 +109,15 @@ def _attach_provisioning_state(result: dict[str, Any], body: dict[str, Any], *, 
         if command:
             command_state = jobs.mark_delivered(str(command["provisioning_id"]))
             result["provisioning_command"] = command
-        result["provisioning_state"] = reported_state or command_state or {"status": "idle"}
+        effective_state = reported_state or command_state
+        if effective_state:
+            try:
+                project_agent_provisioning(backend, effective_state)
+            except Exception:
+                # The projection is a compatibility read model.  Never reject
+                # an Agent heartbeat or suppress B10 state because it failed.
+                pass
+        result["provisioning_state"] = effective_state or {"status": "idle"}
     except Exception:
         result["provisioning_state"] = {"status": "unavailable"}
 
