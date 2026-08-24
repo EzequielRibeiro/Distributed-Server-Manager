@@ -34,8 +34,8 @@
         document.querySelectorAll(".agent-manager-only").forEach(x => x.style.display = ["admin", "controller"].includes(who.role) ? "" : "none");
         document.querySelectorAll(".instance-manager-only").forEach(x => x.style.display = ["admin", "controller", "operator"].includes(who.role) ? "" : "none");
         const toggle = byId("admin-menu-toggle");
-        if (toggle) toggle.onclick = () => { if (innerWidth <= 900) document.body.classList.toggle("sidebar-open"); else { document.body.classList.toggle("sidebar-collapsed"); localStorage.setItem("cap_sidebar_collapsed", document.body.classList.contains("sidebar-collapsed") ? "1" : "0"); } };
-        if (localStorage.getItem("cap_sidebar_collapsed") === "1" && innerWidth > 900) document.body.classList.add("sidebar-collapsed");
+        if (toggle) toggle.onclick = () => { if (innerWidth <= 760) document.body.classList.toggle("sidebar-open"); else { document.body.classList.toggle("cap-sidebar-collapsed"); localStorage.setItem("cap_sidebar_collapsed", document.body.classList.contains("cap-sidebar-collapsed") ? "1" : "0"); } };
+        if (localStorage.getItem("cap_sidebar_collapsed") === "1" && innerWidth > 760) document.body.classList.add("cap-sidebar-collapsed");
     }
 
     function syncScope() {
