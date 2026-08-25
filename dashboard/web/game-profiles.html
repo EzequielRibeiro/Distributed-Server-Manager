@@ -5,18 +5,18 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Perfis de jogos | Capivara DSM</title>
   <link rel="stylesheet" href="/dashboard-home-v3.css">
-  <link rel="stylesheet" href="/game-profiles.css?v=1">
+  <link rel="stylesheet" href="/game-profiles.css?v=2">
 </head>
 <body class="cap-home game-profiles-shell">
 <div id="sidebar-component"></div>
 <main class="cap-home-main game-profiles-page">
   <header class="cap-home-topbar">
-    <div class="cap-home-title"><button id="profiles-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1>Perfis de jogos</h1><p>Opções de recursos oferecidas em contratos e aplicadas às novas instâncias.</p></div></div>
+    <div class="cap-home-title"><button id="profiles-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1>Perfis de jogos</h1><p>Cadastre e mantenha as opções de recursos oferecidas nos contratos.</p></div></div>
     <div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="profiles-user-name">—</strong><span id="profiles-user-role">—</span></div></div>
   </header>
   <div class="cap-home-content game-profiles-content">
     <section class="profiles-hero">
-      <div><span>CATÁLOGO COMERCIAL</span><h2>Um lugar único para administrar os perfis</h2><p>O operador encontra estas opções ao criar o contrato. Quando nenhuma for escolhida, o perfil padrão vigente é registrado no novo contrato.</p></div>
+      <div><span>CATÁLOGO COMERCIAL</span><h2>Perfis persistidos por jogo</h2><p>Criar acrescenta um novo perfil. Editar ou excluir afeta somente o perfil selecionado. Os demais permanecem intactos.</p></div>
       <a href="/catalog.html" class="profiles-secondary">Abrir catálogo técnico</a>
     </section>
 
@@ -27,20 +27,20 @@
     </section>
 
     <section class="profiles-guidance">
-      <article><strong>Perfis disponíveis</strong><p>São exibidos ao operador durante a contratação e ao cliente no contrato adquirido.</p></article>
-      <article><strong>Padrão do jogo</strong><p>É usado para novos contratos sem escolha manual. Contratos existentes não são alterados.</p></article>
-      <article><strong>Configuração de fábrica</strong><p>Arquivos e parâmetros originais do jogo continuam independentes destes limites de recursos.</p></article>
+      <article><strong>Lista persistida</strong><p>Todos os perfis existentes do jogo aparecem abaixo e podem ser consultados individualmente.</p></article>
+      <article><strong>Padrão do jogo</strong><p>Defina o padrão separadamente. Um perfil padrão não pode ser excluído antes da escolha de outro.</p></article>
+      <article><strong>Contratos existentes</strong><p>Alterações no catálogo não trocam automaticamente o perfil já registrado em contratos existentes.</p></article>
     </section>
 
     <section class="profiles-editor-card">
-      <div class="profiles-editor-heading"><div><h2>Perfis cadastrados</h2><p id="profiles-permission-note">Selecione um jogo para começar.</p></div><button id="profiles-add" class="profiles-secondary profile-editor-only" type="button">+ Criar perfil</button></div>
+      <div class="profiles-editor-heading"><div><h2>Perfis cadastrados</h2><p id="profiles-permission-note">Selecione um jogo para consultar os perfis.</p></div><button id="profiles-add" class="profiles-secondary profile-editor-only" type="button">+ Criar perfil</button></div>
       <div id="profiles-message" class="profiles-message" hidden></div>
       <div id="profiles-list" class="profiles-list"><div class="profiles-empty">Selecione um jogo catalogado.</div></div>
-      <div class="profiles-actions"><p><strong>Atenção:</strong> somente novas contratações sem seleção usam o padrão atualizado.</p><button id="profiles-save" class="profiles-primary" type="button">Salvar perfis e padrão</button></div>
+      <div class="profiles-actions"><p><strong>Operações independentes:</strong> cada inclusão, edição, exclusão ou mudança de padrão é salva imediatamente no perfil selecionado.</p></div>
     </section>
   </div>
   <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="/game-profiles.js?v=1"></script>
+<script src="/game-profiles.js?v=2"></script>
 </body>
 </html>
