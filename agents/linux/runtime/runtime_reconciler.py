@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 from typing import Any
 
+import game_runtime
 import instance_runtime
 import privileged_materialization
 import runtime_materialization
@@ -103,6 +104,27 @@ def _reconcile_locked(config: dict[str, Any], record: dict[str, Any], normalized
     recovered = False
     recovery_action: str | None = None
     try:
+        migrated_spec, migrated = game_runtime.migrate_runtime_spec(config, record)
+        if migrated:
+            from_version = int(record.get("profile_version") or 1)
+            to_version = int(migrated_spec.get("profile_version") or 1)
+            drift = "profile_outdated"
+            increment("drift_detected")
+            _event("INSTANCE_DRIFT_DETECTED", record, {
+                "drift": drift, "profile": migrated_spec.get("profile"),
+                "from_version": from_version, "to_version": to_version,
+            })
+            materialized_profile = privileged_materialization.materialize(config, migrated_spec)
+            record = instance_runtime._owned(config, normalized["instance_id"])
+            normalized = validate_runtime_spec(record, expected_agent_id=str(config.get("agent_id") or ""))
+            recovered = True
+            recovery_action = "profile_migrate"
+            increment("runtime_profile_migrated")
+            _event("INSTANCE_RUNTIME_PROFILE_MIGRATED", record, {
+                "profile": record.get("profile"), "from_version": from_version, "to_version": to_version,
+                "changed": bool((materialized_profile.get("operation") or {}).get("changed")),
+            })
+
         materializer = resolve_materializer(normalized)
         materialized = materializer.inspect(normalized)
         if materialized.get("exists") and not materialized.get("owned"):
@@ -114,7 +136,7 @@ def _reconcile_locked(config: dict[str, Any], record: dict[str, Any], normalized
             drift = "runtime_missing"
         elif not materialized.get("matches"):
             drift = "runtime_modified"
-        if drift:
+        if drift and drift != "profile_outdated":
             increment("drift_detected")
             _event("INSTANCE_DRIFT_DETECTED", normalized, {"drift": drift})
             privileged_materialization.materialize(config, normalized)
@@ -130,14 +152,16 @@ def _reconcile_locked(config: dict[str, Any], record: dict[str, Any], normalized
                 drift = "process_not_running"
                 increment("drift_detected")
                 _event("INSTANCE_DRIFT_DETECTED", normalized, {"drift": drift, "observed_state": observed_before})
-            recovery_action = "start"
+            if recovery_action is None:
+                recovery_action = "start"
             recovered = True
         elif desired == "stopped" and observed_before == "running":
             if drift is None:
                 drift = "unexpected_running"
                 increment("drift_detected")
                 _event("INSTANCE_DRIFT_DETECTED", normalized, {"drift": drift, "observed_state": observed_before})
-            recovery_action = "stop"
+            if recovery_action is None:
+                recovery_action = "stop"
             recovered = True
 
         result = runtime_materialization.reconcile(config, normalized["instance_id"])
