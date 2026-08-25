@@ -62,7 +62,7 @@ def test_customer_table_is_created_in_final_shape_once():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="exit criterion: customer_code must exist in every backend baseline",
+    reason="exit criterion: Customer v2 fields must exist in every backend baseline",
 )
 def test_customer_baseline_contract_tokens():
     required = (
@@ -70,8 +70,25 @@ def test_customer_baseline_contract_tokens():
         "customer_account_members",
         "service_contracts",
         "customer_invitations",
+        "billing_provider",
+        "billing_customer_id",
+        "billing_status",
+        "billing_synced_at",
     )
     for name in BACKENDS:
         sql = _sql(name).lower()
         for token in required:
             assert token in sql, f"{name} missing {token}"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="exit criterion: billing provider/customer identity must be unique in every backend",
+)
+def test_billing_identity_has_composite_uniqueness():
+    for name in BACKENDS:
+        normalized = re.sub(r"\s+", " ", _sql(name).lower())
+        assert re.search(
+            r"unique\s*\(\s*billing_provider\s*,\s*billing_customer_id\s*\)",
+            normalized,
+        ), f"{name} missing unique billing identity constraint"
