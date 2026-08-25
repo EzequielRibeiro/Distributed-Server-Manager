@@ -68,6 +68,28 @@ def test_customer_baseline_contract_tokens():
             assert token in sql, f"{backend} missing {token}"
 
 
+def test_customer_code_allocation_is_backend_portable():
+    for backend in BACKENDS:
+        normalized = re.sub(r"\s+", " ", _sql(backend).lower())
+        match = re.search(
+            r"create table customers\s*\((.*?)\)\s*(?:engine|;)",
+            normalized,
+            re.IGNORECASE | re.DOTALL,
+        )
+        assert match is not None, backend
+        body = match.group(1)
+        assert "customer_code" in body
+        assert "unique" in body
+        if backend in {"mysql", "mariadb"}:
+            customer_code = re.search(r"customer_code\s+varchar\(32\)(.*?),", body)
+            assert customer_code is not None, backend
+            assert "generated" not in customer_code.group(1), (
+                f"{backend} cannot derive customer_code from AUTO_INCREMENT"
+            )
+        else:
+            assert "customer_code" in body and "generated always" in body, backend
+
+
 def test_system_user_functional_identity_exists_in_every_backend():
     required = (
         "full_name",
