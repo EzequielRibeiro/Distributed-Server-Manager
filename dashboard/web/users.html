@@ -16,22 +16,27 @@
   </header>
   <div class="cap-home-content cap-admin-content">
     <section class="card catalog-v2-card cap-admin-card">
-      <div class="card-title"><div><h2 id="user-form-title">Novo usuário do sistema</h2><p>O Capivara gera uma senha temporária automaticamente. O usuário será obrigado a substituí-la no primeiro acesso.</p></div></div>
+      <div class="card-title"><div><h2 id="user-form-title">Novo usuário do sistema</h2><p>O administrador cadastra a identidade funcional e o Capivara gera uma senha temporária automaticamente. O usuário deverá substituí-la no primeiro acesso.</p></div></div>
       <div class="catalog-v2-form">
-        <label>Login<input id="user-name" maxlength="64" placeholder="nome.usuario" autocomplete="off"></label>
-        <label>Perfil<select id="user-role"><option value="controller">Controlador</option><option value="operator">Operador</option><option value="admin">Administrador</option></select></label>
+        <label>Nome completo *<input id="user-full-name" maxlength="255" placeholder="Nome e sobrenome" autocomplete="name"></label>
+        <label>E-mail corporativo *<input id="user-email" type="email" maxlength="320" placeholder="usuario@empresa.com" autocomplete="email"></label>
+        <label>Telefone<input id="user-phone" maxlength="128" placeholder="Opcional" autocomplete="tel"></label>
+        <label>Cargo / função<input id="user-job-title" maxlength="255" placeholder="Ex.: Operador NOC"></label>
+        <label>Departamento / equipe<input id="user-department" maxlength="255" placeholder="Ex.: Infraestrutura"></label>
+        <label>Login *<input id="user-name" maxlength="64" placeholder="nome.usuario" autocomplete="off"></label>
+        <label>Perfil *<select id="user-role"><option value="controller">Controlador</option><option value="operator">Operador</option><option value="admin">Administrador</option></select></label>
         <label>Vínculo<select id="user-scope"><option value="">Selecione o perfil</option></select></label>
         <label>Estado<select id="user-active"><option value="true">Ativo</option><option value="false">Desativado</option></select></label>
       </div>
-      <div class="catalog-v2-summary"><strong>Dados funcionais previstos no cadastro:</strong> nome completo, e-mail corporativo, telefone, cargo/função e departamento/equipe. Esses campos serão persistidos no baseline do banco, sem arquivo paralelo.</div>
-      <div class="catalog-v2-actions"><button id="user-save" class="catalog-v2-primary">Salvar usuário</button><button id="user-cancel" hidden>Cancelar edição</button></div><div id="users-message" class="catalog-v2-summary"></div>
+      <div class="catalog-v2-summary"><strong>Senha:</strong> não é definida pelo administrador. O sistema gera uma senha temporária de uso único, mostra-a somente após o cadastro e exige uma nova senha no primeiro acesso.</div>
+      <div class="catalog-v2-actions"><button id="user-save" class="catalog-v2-primary">Criar usuário</button><button id="user-cancel" hidden>Cancelar edição</button></div><div id="users-message" class="catalog-v2-summary"></div>
     </section>
     <section class="card catalog-v2-card cap-admin-card">
-      <div class="card-title"><div><h2>Contas administrativas</h2><p id="admin-protection-note">O último administrador do sistema é protegido contra exclusão e perda do perfil Admin.</p></div></div>
-      <div class="users-table-wrap"><table class="users-table"><thead><tr><th>Login</th><th>Perfil</th><th>Vínculo</th><th>Estado</th><th>Senha</th><th>Ações</th></tr></thead><tbody id="users-table"></tbody></table></div>
+      <div class="card-title"><div><h2>Contas do sistema</h2><p id="admin-protection-note">O último administrador do sistema é protegido contra exclusão e perda do perfil Admin.</p></div></div>
+      <div class="users-table-wrap"><table class="users-table"><thead><tr><th>Usuário</th><th>Função</th><th>Perfil</th><th>Vínculo</th><th>Estado</th><th>Senha</th><th>Ações</th></tr></thead><tbody id="users-table"></tbody></table></div>
     </section>
   </div>
   <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="/users.js?v=3"></script>
+<script src="/users.js?v=4"></script>
 </body></html>
