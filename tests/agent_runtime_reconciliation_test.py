@@ -163,6 +163,7 @@ class ControllerProjectionTest(unittest.TestCase):
         }, backend=self.backend)
         self.assertEqual(status, 201)
         self.controller_id = enrolled["controller_id"]
+        self.customer_id = 1
         self.headers = {
             "X-Capivara-Agent-Credential": enrolled["credential_id"],
             "X-Capivara-Agent-Secret": enrolled["credential_secret"],
@@ -171,10 +172,10 @@ class ControllerProjectionTest(unittest.TestCase):
         status, _ = dispatch_heartbeat({"agent_id": "agent-b11"}, headers=self.headers, backend=self.backend)
         self.assertEqual(status, 200)
         with self.backend.transaction() as conn:
-            conn.execute("INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)", ("customer-b11", self.controller_id, "Customer", "active"))
+            conn.execute("INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)", (self.customer_id, self.controller_id, "Customer", "active"))
             conn.execute(
                 "INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,controller_id,agent_id,customer_id) VALUES (?,?,?,?,?,?,?,?,?)",
-                ("instance-b11", "node-b11", "dayz", "dayz.stable", "Instance B11", "offline", self.controller_id, "agent-b11", "customer-b11"),
+                ("instance-b11", "node-b11", "dayz", "dayz.stable", "Instance B11", "offline", self.controller_id, "agent-b11", self.customer_id),
             )
 
     def tearDown(self):
