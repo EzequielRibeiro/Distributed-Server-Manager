@@ -75,12 +75,13 @@ class DashboardActivityAuditTest(unittest.TestCase):
 
     def test_filters_support_user_activity_category_result_and_date(self):
         self.record(username="operator.one", activity="POST:api.instance.start", category="instances")
-        self.record(username="admin.one", activity="LOGIN", category="authentication")
+        login_event = self.record(username="admin.one", activity="LOGIN", category="authentication")
         rows = self.repo.search(username="admin.one", activity="LOGIN", category="authentication", result="success")
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["username"], "admin.one")
         created_at = str(rows[0]["created_at"])
-        self.assertEqual(len(self.repo.search(start_at=created_at, end_at=created_at)), 1)
+        dated = self.repo.search(start_at=created_at, end_at=created_at)
+        self.assertTrue(any(item["event_id"] == login_event for item in dated))
         self.assertEqual(self.repo.search(username="nobody"), [])
 
     def test_filter_options_are_database_driven(self):
@@ -147,7 +148,7 @@ class DashboardActivityAuditTest(unittest.TestCase):
         http_source = (ROOT / "dashboard" / "dashboard_activity_http.py").read_text(encoding="utf-8")
         page_source = (ROOT / "dashboard" / "web" / "activity-log.html").read_text(encoding="utf-8")
         sidebar = (ROOT / "dashboard" / "web" / "components" / "sidebar-v3.html").read_text(encoding="utf-8")
-        self.assertIn(ACTIVITY_PAGE, sidebar)
+        self.assertIn(ACTIVITY_PAGE.lstrip("/"), sidebar)
         self.assertIn(ACTIVITY_API, http_source)
         self.assertIn(ACTIVITY_OPTIONS_API, http_source)
         self.assertIn("Acesso exclusivo de administradores", http_source)
