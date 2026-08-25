@@ -13,6 +13,7 @@ from automation_repository import AutomationRepository
 from backup_repository import BackupRepository
 from configuration_repository import ConfigurationRepository
 from content_repository import ContentRepository
+from instance_file_repository import InstanceFileRepository
 from instance_workspace_repository import InstanceWorkspaceRepository
 from observability_repository import ObservabilityRepository
 from universal_event_repository import UniversalEventRepository
@@ -120,6 +121,14 @@ def _console_exchange(agent_id: str, body: dict[str, Any], *, backend) -> tuple[
     return command,state
 
 
+def _file_exchange(agent_id: str, body: dict[str, Any], *, backend) -> tuple[dict[str,Any]|None,dict[str,Any]|None]:
+    repository=InstanceFileRepository(backend);repository.initialize();state=None
+    reported=body.get("file_result")
+    if isinstance(reported,dict):state=repository.apply_result(agent_id,reported)
+    command=repository.command_for_agent(agent_id)
+    return command,state
+
+
 def record_agent_heartbeat(authenticated_agent_id: str, payload: dict[str, Any] | None, *, backend) -> dict[str, Any]:
     agent_id=str(authenticated_agent_id or "").strip()
     if not agent_id: raise PermissionError("authenticated Agent identity required")
@@ -150,5 +159,6 @@ def record_agent_heartbeat(authenticated_agent_id: str, payload: dict[str, Any] 
     broadcast_commands=automations.desired_for_agent(agent_id)
     for command in broadcast_commands:command["agent_id"]=agent_id
     console_command,console_state=_console_exchange(agent_id,body,backend=backend)
+    file_command,file_state=_file_exchange(agent_id,body,backend=backend)
     last_seen=repository.heartbeat(agent_id)
-    return {"agent_id":agent_id,"health_status":"online","last_seen":last_seen,"accepted_event_ids":event_result["accepted_event_ids"],"events_accepted":event_result["accepted"],"events_created":event_result["created"],"events_rejected":event_result["rejected"],"metrics_accepted":metric_result["accepted"],"metrics_created":metric_result["created"],"metrics_rejected":metric_result["rejected"],"instance_telemetry_accepted":telemetry_count,"configuration_commands":desired_configuration,"configuration_count":len(desired_configuration),"content_commands":desired_content,"content_count":len(desired_content),"backup_commands":backup_commands,"backup_count":len(backup_commands),"broadcast_commands":broadcast_commands,"broadcast_count":len(broadcast_commands),"console_command":console_command,"console_state":console_state}
+    return {"agent_id":agent_id,"health_status":"online","last_seen":last_seen,"accepted_event_ids":event_result["accepted_event_ids"],"events_accepted":event_result["accepted"],"events_created":event_result["created"],"events_rejected":event_result["rejected"],"metrics_accepted":metric_result["accepted"],"metrics_created":metric_result["created"],"metrics_rejected":metric_result["rejected"],"instance_telemetry_accepted":telemetry_count,"configuration_commands":desired_configuration,"configuration_count":len(desired_configuration),"content_commands":desired_content,"content_count":len(desired_content),"backup_commands":backup_commands,"backup_count":len(backup_commands),"broadcast_commands":broadcast_commands,"broadcast_count":len(broadcast_commands),"console_command":console_command,"console_state":console_state,"file_command":file_command,"file_state":file_state}
