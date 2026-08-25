@@ -12,24 +12,24 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .base import GameRuntimeProfile, ProfileError, require_absolute, require_port, require_text, require_within
+from .base import GameRuntimeProfile, ProfileError, port_bindings, require_absolute, require_port, require_text, require_within
 
 _MISSION = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _PROFILE_OWNED_ARGUMENTS = ("-config=", "-port=", "-profiles=")
+_LEGACY_GAME_AUX_OFFSET = 2
+_STEAM_QUERY_OFFSET = 3
 
 
 class DayZRuntimeProfile(GameRuntimeProfile):
     game_ids = ("dayz", "dayz.stable")
-    profile_version = 3
+    profile_version = 4
 
     def migration_context(self, record: dict[str, Any]) -> dict[str, Any]:
-        """Reconstruct a v3 context from a pre-private-state DayZ RuntimeSpec."""
+        """Reconstruct a modern context from a pre-private-state DayZ RuntimeSpec."""
         install_path = str(record.get("working_directory") or record.get("path") or "").strip()
         if not install_path:
             raise ProfileError("legacy DayZ runtime is missing install_path")
         ports = dict(record.get("ports") or {})
-        if "steam_query" not in ports and isinstance(ports.get("game_aux"), dict):
-            ports["steam_query"] = dict(ports["game_aux"])
         arguments = []
         for item in record.get("arguments") or []:
             text = str(item)
@@ -63,6 +63,43 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             },
         }
 
+    def upgrade_migration_context(
+        self,
+        record: dict[str, Any],
+        context: dict[str, Any],
+        stored_version: int,
+    ) -> dict[str, Any]:
+        """Repair the v1-v3 DayZ port-role representation without reallocating ports.
+
+        The catalog reserves DayZ as a block with game at +0, game_aux at +2 and
+        steam_query at +3. Legacy RuntimeSpecs either omitted steam_query or, during
+        the v3 migration, incorrectly aliased it to game_aux. Only that recognized
+        legacy topology is repaired; already-distinct query reservations are kept.
+        """
+        upgraded = dict(context)
+        ports = dict(upgraded.get("ports") or {})
+        normalized = port_bindings({"ports": ports})
+        game = normalized.get("game")
+        game_aux = normalized.get("game_aux")
+        steam_query = normalized.get("steam_query")
+        if not game or not game_aux:
+            return upgraded
+
+        game_port = int(game["port"])
+        aux_port = int(game_aux["port"])
+        if aux_port != game_port + _LEGACY_GAME_AUX_OFFSET:
+            if steam_query and int(steam_query["port"]) == aux_port:
+                raise ProfileError("legacy DayZ port topology cannot be repaired safely")
+            return upgraded
+
+        if steam_query is None or int(steam_query["port"]) == aux_port:
+            query_port = game_port + _STEAM_QUERY_OFFSET
+            if query_port > 65535:
+                raise ProfileError("legacy DayZ steam query port is outside valid range")
+            ports["steam_query"] = {"port": query_port, "protocol": "udp"}
+            upgraded["ports"] = ports
+        return upgraded
+
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         instance_id = require_text(instance.get("instance_id") or instance.get("id"), "instance_id")
         agent_id = require_text(instance.get("agent_id"), "agent_id")
@@ -88,6 +125,8 @@ class DayZRuntimeProfile(GameRuntimeProfile):
         game_port = require_port(context, "game", protocol="udp")
         game_aux_port = require_port(context, "game_aux", protocol="udp")
         steam_query_port = require_port(context, "steam_query", protocol="udp")
+        if len({game_port, game_aux_port, steam_query_port}) != 3:
+            raise ProfileError("DayZ reserved port roles must use distinct ports")
 
         extra_arguments = context.get("arguments", [])
         if not isinstance(extra_arguments, list):
