@@ -12,9 +12,10 @@
         if (options.body) headers["Content-Type"] = "application/json";
         const response = await fetch(path, { ...options, headers });
         if (response.status === 401) { sessionStorage.removeItem("dsm_auth"); location.href = "/login.html"; throw new Error("Sessão encerrada"); }
-        if (response.status === 403) { location.href = "/dashboard-v3.html"; throw new Error("Acesso exclusivo do administrador"); }
+        if (response.status === 403) { location.href = "/dashboard-v3.html"; throw new Error("Acesso exclusivo de administradores"); }
+        if (response.status === 428) { location.href = "/system-change-password.html"; throw new Error("Troca de senha obrigatória"); }
         const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+        if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
         return data;
     }
 
@@ -28,11 +29,13 @@
             if (logout) logout.onclick = () => { sessionStorage.clear(); location.replace("/login.html"); };
         }
         const who = await request("/api/whoami");
+        if (String(who.role || "").toLowerCase() !== "admin") {
+            location.replace("/dashboard-v3.html");
+            throw new Error("Acesso exclusivo de administradores");
+        }
         byId("admin-user-name").textContent = who.username || "—";
         byId("admin-user-role").textContent = who.role || "—";
-        document.querySelectorAll(".admin-only").forEach(x => x.style.display = who.role === "admin" ? "" : "none");
-        document.querySelectorAll(".agent-manager-only").forEach(x => x.style.display = ["admin", "controller"].includes(who.role) ? "" : "none");
-        document.querySelectorAll(".instance-manager-only").forEach(x => x.style.display = ["admin", "controller", "operator"].includes(who.role) ? "" : "none");
+        document.querySelectorAll(".admin-only,.agent-manager-only,.instance-manager-only").forEach(x => x.style.display = "");
         const toggle = byId("admin-menu-toggle");
         if (toggle) toggle.onclick = () => { if (innerWidth <= 760) document.body.classList.toggle("sidebar-open"); else { document.body.classList.toggle("cap-sidebar-collapsed"); localStorage.setItem("cap_sidebar_collapsed", document.body.classList.contains("cap-sidebar-collapsed") ? "1" : "0"); } };
         if (localStorage.getItem("cap_sidebar_collapsed") === "1" && innerWidth > 760) document.body.classList.add("cap-sidebar-collapsed");
@@ -48,12 +51,18 @@
 
     function render() {
         const body = byId("users-table"); body.replaceChildren();
+        const adminCount = users.filter(user => user.role === "admin").length;
         users.forEach(user => {
             const row = document.createElement("tr");
-            [user.username, user.role, user.scope_id || "-", user.active ? "Ativo" : "Desativado"].forEach(value => { const cell = document.createElement("td"); cell.textContent = value; row.appendChild(cell); });
+            const passwordState = user.must_change_password ? "Temporária · troca obrigatória" : "Definida";
+            [user.username, user.role, user.scope_id || "-", user.active ? "Ativo" : "Desativado", passwordState].forEach(value => { const cell = document.createElement("td"); cell.textContent = value; row.appendChild(cell); });
             const actions = document.createElement("td");
             const edit = document.createElement("button"); edit.textContent = "Editar"; edit.addEventListener("click", () => editUser(user));
-            const remove = document.createElement("button"); remove.textContent = "Remover"; remove.className = "catalog-v2-danger"; remove.addEventListener("click", () => deleteUser(user.username));
+            const remove = document.createElement("button"); remove.textContent = "Remover"; remove.className = "catalog-v2-danger";
+            const protectedAdmin = user.role === "admin" && (user.delete_allowed === false || adminCount <= 1);
+            remove.disabled = protectedAdmin;
+            remove.title = protectedAdmin ? "O último administrador do sistema não pode ser excluído." : "Remover usuário";
+            remove.addEventListener("click", () => { if (!remove.disabled) deleteUser(user.username); });
             actions.append(edit, remove); row.appendChild(actions); body.appendChild(row);
         });
     }
@@ -63,12 +72,12 @@
         editing = user.username; byId("user-form-title").textContent = `Editar ${user.username}`;
         byId("user-name").value = user.username; byId("user-name").disabled = true;
         byId("user-role").value = user.role; syncScope(); byId("user-scope").value = user.scope_id || "";
-        byId("user-password").value = ""; byId("user-active").value = String(user.active); byId("user-cancel").hidden = false;
+        byId("user-active").value = String(user.active); byId("user-cancel").hidden = false;
     }
 
     function resetForm() {
         editing = null; byId("user-form-title").textContent = "Novo usuário do sistema";
-        byId("user-name").disabled = false; byId("user-name").value = ""; byId("user-password").value = "";
+        byId("user-name").disabled = false; byId("user-name").value = "";
         byId("user-role").value = "controller"; byId("user-active").value = "true"; syncScope(); byId("user-cancel").hidden = true;
     }
 
@@ -76,14 +85,21 @@
         const data = await request("/api/users");
         users = (data.users || []).filter(user => SYSTEM_ROLES.has(user.role));
         scopes = { controllers: (data.scopes || {}).controllers || [] }; syncScope(); render();
+        const security = data.security || {};
+        if (byId("admin-protection-note")) byId("admin-protection-note").textContent = `${security.admin_count || users.filter(user => user.role === "admin").length} administrador(es) cadastrado(s). O último Admin é protegido contra exclusão, desativação e mudança de perfil.`;
     }
 
     async function save() {
         const role = byId("user-role").value;
-        if (!SYSTEM_ROLES.has(role)) throw new Error("Perfis de cliente devem ser administrados na página Clientes.");
-        const payload = { username: editing || byId("user-name").value.trim(), role, scope_id: byId("user-scope").value, password: byId("user-password").value, active: byId("user-active").value === "true" };
-        await request("/api/users/save", { method: "POST", body: JSON.stringify(payload) });
-        byId("users-message").textContent = "Usuário do sistema salvo com sucesso."; resetForm(); await load();
+        if (!SYSTEM_ROLES.has(role)) throw new Error("Perfil inválido para usuário do sistema.");
+        const payload = { username: editing || byId("user-name").value.trim(), role, scope_id: byId("user-scope").value, active: byId("user-active").value === "true" };
+        const data = await request("/api/users/save", { method: "POST", body: JSON.stringify(payload) });
+        if (data.created && data.temporary_password) {
+            byId("users-message").textContent = `Usuário criado. Senha temporária: ${data.temporary_password} — copie agora; ela deve ser substituída no primeiro acesso.`;
+        } else {
+            byId("users-message").textContent = "Usuário do sistema atualizado com sucesso.";
+        }
+        resetForm(); await load();
     }
 
     async function deleteUser(username) {
@@ -100,5 +116,5 @@
         byId("user-cancel").addEventListener("click", resetForm);
         await load();
     }
-    document.addEventListener("DOMContentLoaded", () => init().catch(error => { byId("users-message").textContent = error.message; }));
+    document.addEventListener("DOMContentLoaded", () => init().catch(error => { if (byId("users-message")) byId("users-message").textContent = error.message; }));
 })();
