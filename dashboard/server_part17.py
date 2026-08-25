@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import parse_qs,urlparse
 import server_part16 as integration
+from artifact_transfer_http import install_artifact_transfer_http
 from catalog_runtime_policy_http import RUNTIME_POLICY_PATH,dispatch_catalog_runtime_policy_get,dispatch_catalog_runtime_policy_put
 from contract_upgrade_http import install_contract_upgrade_api
 from controller_telemetry import controller_telemetry
@@ -50,6 +51,7 @@ install_system_user_administration(legacy,_authenticate)
 install_customer_instance_workspace(legacy,_authenticate)
 install_customer_instance_team(legacy,_authenticate)
 install_contract_upgrade_api(legacy,_authenticate,_ROOT)
+install_artifact_transfer_http(legacy,_authenticate)
 install_dashboard_activity_audit(legacy,_authenticate)
 def run():legacy.run()
 if __name__=="__main__":run()
