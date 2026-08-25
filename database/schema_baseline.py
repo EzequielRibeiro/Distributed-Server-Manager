@@ -10,6 +10,7 @@ from pathlib import Path
 from baseline_backend_compat import finalize_baseline_sql
 from baseline_v2_compiler import compile_baseline_v2
 from dashboard_activity_schema import ensure_dashboard_activity_schema
+from instance_workspace_schema import ensure_instance_workspace_schema
 
 DATABASE_DIR = Path(__file__).resolve().parent
 SCHEMA_DIR = DATABASE_DIR / "schemas"
@@ -58,6 +59,7 @@ def load_schema_baseline(backend: str) -> SchemaBaseline:
     sql = compile_baseline_v2(source_sql, normalized)
     sql = finalize_baseline_sql(sql, normalized)
     sql = ensure_dashboard_activity_schema(sql, normalized)
+    sql = ensure_instance_workspace_schema(sql, normalized)
     checksum = hashlib.sha256(sql.encode("utf-8")).hexdigest()
     return SchemaBaseline(
         backend=normalized,
