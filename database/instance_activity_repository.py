@@ -25,7 +25,7 @@ class InstanceActivityRepository:
                activity:str|None=None, result:str|None=None, start_at:str|None=None,
                end_at:str|None=None, limit:int=200)->list[dict[str,Any]]:
         self.audit.initialize(); ph=self.dialect.placeholder
-        clauses=[f"target_type={ph}",f"target_id={ph}"];params:[Any]=["instance",str(instance_id)]
+        clauses=[f"target_type={ph}",f"target_id={ph}"];params:list[Any]=["instance",str(instance_id)]
         for column,value in (("username",username),("category",category),("activity",activity),("result",result)):
             value=str(value or "").strip()
             if value: clauses.append(f"{column}={ph}");params.append(value)
