@@ -15,6 +15,7 @@ for path in (ROOT, RUNTIME):
 
 import game_runtime
 import instance_runtime
+import provisioning_state
 from materializers.systemd import render_unit
 from profiles.base import GameRuntimeProfile, ProfileError, port_bindings
 from profiles.registry import resolve_profile, supported_profiles
@@ -43,7 +44,9 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.old_state = instance_runtime.STATE_DIR
+        self.old_history = provisioning_state.HISTORY_ROOT
         instance_runtime.STATE_DIR = self.root / "state"
+        provisioning_state.HISTORY_ROOT = self.root / "instance-provisioning" / "history"
         self.config = {"agent_id": "agent-one"}
         self.instance = {
             "instance_id": "dayz-one",
@@ -55,6 +58,7 @@ class GameRuntimeProfilesTest(unittest.TestCase):
 
     def tearDown(self):
         instance_runtime.STATE_DIR = self.old_state
+        provisioning_state.HISTORY_ROOT = self.old_history
         self.temp.cleanup()
 
     def ports(self, base=24010):
@@ -91,6 +95,47 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         self.assertEqual(spec["environment"]["CAPIVARA_GAME_PORT"], "24010")
         self.assertEqual(spec["environment"]["CAPIVARA_STEAM_QUERY_PORT"], "24013")
         self.assertEqual(spec["profile_version"], 3)
+
+    def test_legacy_dayz_migration_recovers_missing_ports_from_provisioning_history(self):
+        install = self.root / "serverfiles"; install.mkdir()
+        history = provisioning_state.HISTORY_ROOT
+        history.mkdir(parents=True, exist_ok=True)
+        provisioning_state.write_json(history / "legacy.request.json", {
+            "provisioning_id": "legacy",
+            "instance_id": "dayz-one",
+            "ports": {
+                "game": {"bind_address": "0.0.0.0", "port": 24010, "protocol": "udp"},
+                "game_aux": {"bind_address": "0.0.0.0", "port": 24012, "protocol": "udp"},
+            },
+        })
+        legacy = {
+            "instance_id": "dayz-one",
+            "agent_id": "agent-one",
+            "game_id": "dayz",
+            "environment_id": "dayz.stable",
+            "runtime_id": "dayz.stable",
+            "adapter": "systemd",
+            "working_directory": str(install),
+            "path": str(install),
+            "executable": str(install / "DayZServer"),
+            "arguments": ["-config=serverDZ.cfg"],
+            "environment": {},
+            "user": "capivara-instance",
+            "desired_state": "running",
+            "observed_state": "failed",
+            "profile": "dayz",
+            "profile_version": 1,
+            "ports": {"game": {"port": 24010, "protocol": "udp"}},
+        }
+        migrated, changed = game_runtime.migrate_runtime_spec(self.config, legacy)
+        self.assertTrue(changed)
+        self.assertEqual(migrated["profile_version"], 3)
+        self.assertEqual(migrated["profile_migrated_from_version"], 1)
+        self.assertEqual(migrated["ports"]["game_aux"]["port"], 24012)
+        self.assertEqual(migrated["ports"]["steam_query"]["port"], 24012)
+        self.assertIn("-port=24010", migrated["arguments"])
+        self.assertTrue(migrated["config_path"].endswith("/dayz-one/config/serverDZ.cfg"))
+        self.assertEqual(len(migrated["bind_paths"]), 1)
 
     def test_two_dayz_instances_never_share_config_profiles_or_persistence(self):
         install = self.root / "serverfiles"; install.mkdir()
