@@ -10,13 +10,22 @@
     async function request(path, options = {}) {
         const headers = { Authorization: `Basic ${auth}`, Accept: "application/json" };
         if (options.body) headers["Content-Type"] = "application/json";
-        const response = await fetch(path, { ...options, headers });
+        const response = await fetch(path, { ...options, headers, credentials: "same-origin" });
         if (response.status === 401) { sessionStorage.removeItem("dsm_auth"); location.href = "/login.html"; throw new Error("Sessão encerrada"); }
         if (response.status === 403) { location.href = "/dashboard-v3.html"; throw new Error("Acesso exclusivo de administradores"); }
         if (response.status === 428) { location.href = "/system-change-password.html"; throw new Error("Troca de senha obrigatória"); }
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
         return data;
+    }
+
+    async function logoutSession() {
+        try {
+            if (auth) await fetch("/api/auth/logout", { method: "POST", headers: { Authorization: `Basic ${auth}`, Accept: "application/json" }, credentials: "same-origin", cache: "no-store" });
+        } catch (_error) {
+        } finally {
+            sessionStorage.clear(); location.replace("/login.html");
+        }
     }
 
     async function loadAdminShell() {
@@ -26,7 +35,7 @@
             host.innerHTML = await response.text();
             host.querySelectorAll("nav a").forEach(a => a.classList.toggle("active", a.getAttribute("href") === "users.html"));
             const logout = byId("btn-logout");
-            if (logout) logout.onclick = () => { sessionStorage.clear(); location.replace("/login.html"); };
+            if (logout) logout.onclick = logoutSession;
         }
         const who = await request("/api/whoami");
         if (String(who.role || "").toLowerCase() !== "admin") {
