@@ -28,7 +28,7 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
  def test_baseline_has_workspace_distributed_queues(self):
   for backend in ("sqlite","postgresql","mysql","mariadb"):
    sql=load_schema_baseline(backend).sql
-   for table in ("instance_permission_grants","instance_file_commands","instance_console_commands","instance_resource_commands","instance_backup_policy","contract_change_requests","service_contract_revisions","deleted_instance_backups","artifact_transfers"):
+   for table in ("instance_permission_grants","instance_file_commands","instance_console_commands","instance_resource_commands","instance_backup_policy","contract_change_requests","service_contract_revisions","deleted_instance_backups","artifact_transfers","instance_backup_clones"):
     self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}",sql)
  def test_customer_workspace_replaced_legacy_tabs_and_loads_backup_transfer(self):
   html=(ROOT/"dashboard/web/customer-instance.html").read_text(encoding="utf-8")
@@ -38,6 +38,15 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   transfer=(ROOT/"dashboard/web/customer-backup-transfer.js").read_text(encoding="utf-8")
   for route in ("/api/customer/artifacts/backup-export","/api/customer/artifacts/backup-import","/api/customer/artifacts/upload","/api/customer/artifacts/restore-import"):
    self.assertIn(route,transfer)
+ def test_create_from_retained_backup_reuses_normal_instance_creation(self):
+  creation=(ROOT/"dashboard/customer_instance_creation.py").read_text(encoding="utf-8")
+  self.assertIn('source_vault_id',creation);self.assertIn('InstanceBackupCloneRepository',creation);self.assertIn('backup_clone',creation);self.assertIn('_queue_agent_provisioning',creation)
+  vault_ui=(ROOT/"dashboard/web/customer-deleted-backups.js").read_text(encoding="utf-8")
+  self.assertIn("Criar servidor deste backup",vault_ui);self.assertIn("capivara_backup_clone_source",vault_ui)
+  wizard=(ROOT/"dashboard/web/create-server-wizard.js").read_text(encoding="utf-8")
+  self.assertIn("source_vault_id",wizard);self.assertIn("/api/customer/backup-clones/status",wizard)
+  clone_http=(ROOT/"dashboard/backup_clone_http.py").read_text(encoding="utf-8")
+  self.assertIn('/api/customer/backup-clones',clone_http);self.assertIn('repo.reconcile',clone_http)
  def test_agents_have_distributed_file_console_resource_backup_and_artifact_clients(self):
   for platform in ("linux","windows"):
    runtime=ROOT/"agents"/platform/"runtime";agent=(runtime/"agent.py").read_text(encoding="utf-8")
