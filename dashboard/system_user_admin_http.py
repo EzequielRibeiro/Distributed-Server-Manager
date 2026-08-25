@@ -52,15 +52,17 @@ def _active_admin_count(users: dict[str, dict[str, Any]]) -> int:
     )
 
 
-def _safe_user(item: dict[str, Any], *, admin_count: int) -> dict[str, Any]:
+def _safe_user(item: dict[str, Any], *, admin_count: int, active_admin_count: int) -> dict[str, Any]:
     role = str(item.get("role") or "").lower()
+    active = bool(item.get("active", True))
+    protected_admin = role == "admin" and (admin_count <= 1 or (active and active_admin_count <= 1))
     return {
         "username": str(item.get("username") or ""),
         "role": role,
         "scope_id": item.get("scope_id") or "",
-        "active": bool(item.get("active", True)),
+        "active": active,
         "must_change_password": is_temporary_password_hash(item.get("password_hash")),
-        "delete_allowed": not (role == "admin" and admin_count <= 1),
+        "delete_allowed": not protected_admin,
     }
 
 
@@ -154,11 +156,16 @@ def install_system_user_administration(legacy, authenticate) -> None:
             repo = repository()
             users = _users_by_name(repo)
             count = _admin_count(users)
+            active_count = _active_admin_count(users)
             scopes = legacy.user_scope_options()
             body = {
-                "users": [_safe_user(item, admin_count=count) for item in users.values() if str(item.get("role") or "").lower() in SYSTEM_ROLES],
+                "users": [
+                    _safe_user(item, admin_count=count, active_admin_count=active_count)
+                    for item in users.values()
+                    if str(item.get("role") or "").lower() in SYSTEM_ROLES
+                ],
                 "scopes": {"controllers": scopes.get("controllers", [])},
-                "security": {"admin_count": count, "active_admin_count": _active_admin_count(users)},
+                "security": {"admin_count": count, "active_admin_count": active_count},
             }
             self.send_json(200, body)
             return
@@ -224,8 +231,11 @@ def install_system_user_administration(legacy, authenticate) -> None:
                         raise ValueError("Usuário não encontrado.")
                     if username == current_username:
                         raise ValueError("O administrador conectado não pode excluir a própria conta.")
+                    projected = {key: dict(value) for key, value in users.items() if key != username}
                     if str(existing.get("role") or "").lower() == "admin" and _admin_count(users) <= 1:
                         raise ValueError("O último administrador do sistema não pode ser excluído.")
+                    if _active_admin_count(projected) < 1:
+                        raise ValueError("A exclusão deixaria o sistema sem administrador ativo.")
                     repo.delete_user(username)
                     self.send_json(200, {"deleted": True, "username": username})
                     return
