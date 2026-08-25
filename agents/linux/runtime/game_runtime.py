@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import instance_runtime
+import provisioning_state
 from catalog_runtime_policy import apply_policy
 from profiles import resolve_profile
 from runtime_events import emit_runtime_event
@@ -23,6 +24,70 @@ _PROFILE_CONTEXT_KEYS = (
 def _profile_context(context: dict[str, Any]) -> dict[str, Any]:
     """Persist only the structured inputs required to rebuild a RuntimeSpec later."""
     return {key: context[key] for key in _PROFILE_CONTEXT_KEYS if key in context}
+
+
+def _historical_provisioning_context(instance_id: str) -> dict[str, Any]:
+    """Recover structured inputs that pre-profile RuntimeSpecs may have discarded.
+
+    The provisioning request is authoritative for reserved ports because those values
+    were assigned before runtime materialization. Newest matching history wins and
+    existing RuntimeSpec values are never overwritten by this fallback.
+    """
+    root = Path(provisioning_state.HISTORY_ROOT)
+    try:
+        candidates = sorted(
+            root.glob("*.request.json"),
+            key=lambda path: path.stat().st_mtime_ns,
+            reverse=True,
+        )
+    except OSError:
+        return {}
+    for path in candidates:
+        payload = provisioning_state.read_json(path)
+        if not isinstance(payload, dict):
+            continue
+        if str(payload.get("instance_id") or "").strip() != instance_id:
+            continue
+        recovered: dict[str, Any] = {}
+        ports = payload.get("ports")
+        if isinstance(ports, dict) and ports:
+            recovered["ports"] = dict(ports)
+        for key in (
+            "environment_id", "runtime_id", "catalog_runtime_policy", "mission", "dayz_mission",
+            "resource_profile", "resource_profile_id",
+        ):
+            if key in payload:
+                recovered[key] = payload[key]
+        return recovered
+    return {}
+
+
+def _hydrate_legacy_context(record: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    """Fill only missing migration context from the matching provisioning history."""
+    instance_id = str(record.get("instance_id") or record.get("id") or "").strip()
+    if not instance_id:
+        return context
+    historical = _historical_provisioning_context(instance_id)
+    if not historical:
+        return context
+
+    hydrated = dict(context)
+    current_ports = hydrated.get("ports")
+    merged_ports = dict(current_ports) if isinstance(current_ports, dict) else {}
+    historical_ports = historical.get("ports")
+    if isinstance(historical_ports, dict):
+        for role, binding in historical_ports.items():
+            if role not in merged_ports and isinstance(binding, dict):
+                merged_ports[role] = dict(binding)
+    if merged_ports:
+        hydrated["ports"] = merged_ports
+
+    for key, value in historical.items():
+        if key == "ports":
+            continue
+        if key not in hydrated or hydrated.get(key) in (None, "", [], {}):
+            hydrated[key] = value
+    return hydrated
 
 
 def build_runtime_spec(config: dict[str, Any], instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -93,6 +158,7 @@ def migrate_runtime_spec(config: dict[str, Any], record: dict[str, Any]) -> tupl
             f"runtime profile migration unavailable: profile={record.get('profile') or record.get('game_id')} "
             f"persisted={stored_version} installed={current_version}"
         )
+    context = _hydrate_legacy_context(record, context)
 
     instance = dict(record)
     instance["desired_state"] = str(record.get("desired_state") or "stopped")
