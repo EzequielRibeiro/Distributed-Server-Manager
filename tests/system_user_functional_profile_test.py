@@ -82,10 +82,40 @@ class SystemUserFunctionalProfileTest(unittest.TestCase):
                 require_functional_identity=True,
             )
 
-    def test_last_active_admin_cannot_be_deleted(self):
-        self.create("admin.one", "admin.one@example.com")
-        with self.assertRaisesRegex(ValueError, "último administrador ativo"):
+    def test_last_admin_cannot_be_deleted_demoted_or_disabled(self):
+        admin = self.create("admin.one", "admin.one@example.com")
+        with self.assertRaisesRegex(ValueError, "último administrador do sistema"):
             self.repo.delete("admin.one")
+        with self.assertRaisesRegex(ValueError, "último administrador"):
+            self.repo.save(
+                username="admin.one",
+                password_hash=admin["password_hash"],
+                role="operator",
+                scope_id=None,
+                active=True,
+                full_name=admin["full_name"],
+                corporate_email=admin["corporate_email"],
+                phone=admin["phone"],
+                job_title=admin["job_title"],
+                department=admin["department"],
+                created_by=admin["created_by"],
+                require_functional_identity=True,
+            )
+        with self.assertRaisesRegex(ValueError, "último administrador ativo"):
+            self.repo.save(
+                username="admin.one",
+                password_hash=admin["password_hash"],
+                role="admin",
+                scope_id=None,
+                active=False,
+                full_name=admin["full_name"],
+                corporate_email=admin["corporate_email"],
+                phone=admin["phone"],
+                job_title=admin["job_title"],
+                department=admin["department"],
+                created_by=admin["created_by"],
+                require_functional_identity=True,
+            )
         self.create("admin.two", "admin.two@example.com")
         self.repo.delete("admin.one")
         self.assertIsNone(self.repo.get("admin.one"))
