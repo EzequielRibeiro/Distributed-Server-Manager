@@ -6,19 +6,28 @@ from pathlib import Path
 from typing import Any
 RUNTIME_DIR=Path(__file__).resolve().parent
 if str(RUNTIME_DIR) not in sys.path:sys.path.insert(0,str(RUNTIME_DIR))
+from artifact_transfer_client import clear_result as clear_artifact_result
+from artifact_transfer_client import handle_command as handle_artifact_command,read_result as read_artifact_result
 from backup_client import apply_backup_commands,backup_state
 from broadcast_client import apply_broadcast_commands,broadcast_state
 from capabilities import detect_capabilities
 from configuration_client import apply_configuration_commands,configuration_state
+from console_client import clear_result as clear_console_result
+from console_client import console_state,handle_command as handle_console_command,read_result as read_console_result
 from content_client import apply_content_commands,content_state
 from game_data_client import clear_game_data_result,read_game_data_result,stage_game_data_command
 from game_data_state import summary as game_data_summary
+from instance_files_client import clear_result as clear_file_result
+from instance_files_client import handle_command as handle_file_command,read_result as read_file_result
 from instance_runtime import clear_result as clear_instance_result
 from instance_runtime import handle_command as handle_instance_command
 from instance_runtime import inventory as instance_inventory
 from instance_runtime import read_result as read_instance_result
+from instance_telemetry import collect_instance_telemetry
 from network_inventory import collect_network_inventory
 from provisioning_client import clear_provisioning_result,read_provisioning_result,stage_provisioning_command
+from resource_profile_client import apply as apply_resource_profile
+from resource_profile_client import clear_result as clear_resource_result,read_result as read_resource_result
 from runtime_events import acknowledge_runtime_events,read_runtime_events
 from runtime_health import health_inventory
 from runtime_metrics import snapshot as runtime_metrics_snapshot
@@ -47,13 +56,13 @@ def _queue_depth():
  def count(path:Path,pattern:str)->int:
   try:return sum(1 for _ in path.glob(pattern))
   except OSError:return 0
- return {"instance_results":count(STATE_DIR/"instance-results","*.json"),"provisioning":count(STATE_DIR/"instance-provisioning","*.request.json"),"game_data":count(STATE_DIR/"game-data-jobs","*.json"),"backup_results":count(STATE_DIR/"backup-results","*.json"),"broadcast_state":count(STATE_DIR/"broadcast-state","*.json"),"runtime_events":len(read_runtime_events(STATE_DIR,limit=1000))}
+ return {"instance_results":count(STATE_DIR/"instance-results","*.json"),"console_results":count(STATE_DIR/"console-results","*.json"),"file_results":count(STATE_DIR/"file-results","*.json"),"resource_results":count(STATE_DIR/"resource-results","*.json"),"artifact_results":count(STATE_DIR/"artifact-results","*.json"),"provisioning":count(STATE_DIR/"instance-provisioning","*.request.json"),"game_data":count(STATE_DIR/"game-data-jobs","*.json"),"backup_results":count(STATE_DIR/"backup-results","*.json"),"broadcast_state":count(STATE_DIR/"broadcast-state","*.json"),"runtime_events":len(read_runtime_events(STATE_DIR,limit=1000))}
 def _inventory(config):
  root=Path(os.environ.get("SystemDrive","C:")+"\\");disk=shutil.disk_usage(root);version_path=Path(__file__).resolve().parents[1]/"VERSION"
  try:version=version_path.read_text(encoding="utf-8").strip()
  except OSError:version=str(config.get("capivara_version","unknown"))
- payload={"agent_id":config["agent_id"],"hostname":socket.gethostname(),"os":"windows","architecture":platform.machine(),"capivara_version":version,"address":config.get("advertise_address"),"fingerprint":config["fingerprint"],"capabilities":detect_capabilities(),"cpu":{"logical_cores":os.cpu_count(),"machine":platform.machine()},"ram_total_bytes":_memory_total_bytes(),"storage":{"root_total_bytes":disk.total,"root_free_bytes":disk.free},"network":collect_network_inventory(),"instances":instance_inventory(config),"instance_reconciliation":reconciliation_inventory(config),"instance_runtime_health":health_inventory(config),"instance_runtime_metrics":runtime_metrics_snapshot(queue_depth=_queue_depth()),"runtime_events":read_runtime_events(STATE_DIR,limit=int(config.get("event_batch_size",200))),"configuration_state":configuration_state(),"content_state":content_state(),"backup_state":backup_state(),"broadcast_state":broadcast_state(),"game_data":game_data_summary(),"heartbeat_interval_seconds":int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)),"degraded_after_seconds":int(config.get("degraded_after_seconds",60)),"offline_after_seconds":int(config.get("offline_after_seconds",120))}
- for key,value in (("update_result",read_update_result()),("provisioning_result",read_provisioning_result()),("game_data_result",read_game_data_result()),("instance_result",read_instance_result())):
+ payload={"agent_id":config["agent_id"],"hostname":socket.gethostname(),"os":"windows","architecture":platform.machine(),"capivara_version":version,"address":config.get("advertise_address"),"fingerprint":config["fingerprint"],"capabilities":detect_capabilities(),"cpu":{"logical_cores":os.cpu_count(),"machine":platform.machine()},"ram_total_bytes":_memory_total_bytes(),"storage":{"root_total_bytes":disk.total,"root_free_bytes":disk.free},"network":collect_network_inventory(),"instances":instance_inventory(config),"instance_reconciliation":reconciliation_inventory(config),"instance_runtime_health":health_inventory(config),"instance_telemetry":collect_instance_telemetry(config),"instance_console_state":console_state(config),"instance_runtime_metrics":runtime_metrics_snapshot(queue_depth=_queue_depth()),"runtime_events":read_runtime_events(STATE_DIR,limit=int(config.get("event_batch_size",200))),"configuration_state":configuration_state(),"content_state":content_state(),"backup_state":backup_state(),"broadcast_state":broadcast_state(),"game_data":game_data_summary(),"heartbeat_interval_seconds":int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)),"degraded_after_seconds":int(config.get("degraded_after_seconds",60)),"offline_after_seconds":int(config.get("offline_after_seconds",120))}
+ for key,value in (("update_result",read_update_result()),("provisioning_result",read_provisioning_result()),("game_data_result",read_game_data_result()),("instance_result",read_instance_result()),("console_result",read_console_result()),("file_result",read_file_result()),("resource_result",read_resource_result()),("artifact_result",read_artifact_result())):
   if value:payload[key]=value
  return payload
 def enroll(config):
@@ -87,6 +96,26 @@ def heartbeat(config):
   ir=handle_instance_command(config,ic);print(f"instance command action={ir.get('action')} instance={ir.get('instance_id')} status={ir.get('status')}",flush=True)
  ins=result.get("instance_state") if isinstance(result.get("instance_state"),dict) else {}
  if str(ins.get("status") or "").lower() in {"completed","failed"} and ins.get("command_id"):clear_instance_result(str(ins["command_id"]))
+ cc=result.get("console_command")
+ if isinstance(cc,dict):
+  cr=handle_console_command(config,cc);print(f"console command instance={cr.get('instance_id')} status={cr.get('status')}",flush=True)
+ cs=result.get("console_state") if isinstance(result.get("console_state"),dict) else {}
+ if str(cs.get("status") or "").lower() in {"completed","failed"} and cs.get("command_id"):clear_console_result(str(cs["command_id"]))
+ fc=result.get("file_command")
+ if isinstance(fc,dict):
+  fr=handle_file_command(config,fc);print(f"file command action={fr.get('action')} instance={fr.get('instance_id')} status={fr.get('status')}",flush=True)
+ fs=result.get("file_state") if isinstance(result.get("file_state"),dict) else {}
+ if str(fs.get("status") or "").lower() in {"completed","failed"} and fs.get("command_id"):clear_file_result(str(fs["command_id"]))
+ rc=result.get("resource_command")
+ if isinstance(rc,dict):
+  rr=apply_resource_profile(config,rc);print(f"resource profile instance={rr.get('instance_id')} status={rr.get('status')}",flush=True)
+ rs=result.get("resource_state") if isinstance(result.get("resource_state"),dict) else {}
+ if str(rs.get("status") or "").lower() in {"completed","failed"} and rs.get("command_id"):clear_resource_result(str(rs["command_id"]))
+ ac=result.get("artifact_command")
+ if isinstance(ac,dict):
+  ar=handle_artifact_command(config,ac);print(f"artifact transfer={ar.get('transfer_id')} instance={ar.get('instance_id')} status={ar.get('status')}",flush=True)
+ ast=result.get("artifact_state") if isinstance(result.get("artifact_state"),dict) else {}
+ if str(ast.get("status") or "").lower() in {"completed","failed"} and ast.get("transfer_id"):clear_artifact_result(str(ast["transfer_id"]))
  return result
 def run_forever():
  config=_load_config()

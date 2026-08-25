@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+import io,sys,tempfile,unittest
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[1]
+for path in (ROOT/"database",ROOT/"dashboard",ROOT/"core"):
+ if str(path) not in sys.path:sys.path.insert(0,str(path))
+from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
+from backend import DatabaseConfig
+from backend_factory import create_backend
+from deleted_backup_vault_repository import DeletedBackupVaultRepository
+from instance_backup_clone_repository import InstanceBackupCloneRepository
+class CustomerBackupCloneE2ETest(unittest.TestCase):
+ def setUp(self):
+  self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name);self.backend=create_backend(DatabaseConfig(driver="sqlite",database=str(self.root/"capivara.db")));self.backend.initialize()
+  with self.backend.transaction() as c:
+   c.execute("INSERT INTO nodes(id,name,role,status) VALUES (?,?,?,?)",("controller-node","Controller","controller","active"));c.execute("INSERT INTO nodes(id,name,role,status) VALUES (?,?,?,?)",("agent-node-a","Agent A","agent","active"));c.execute("INSERT INTO nodes(id,name,role,status) VALUES (?,?,?,?)",("agent-node-b","Agent B","agent","active"));c.execute("INSERT INTO controllers(id,node_id,name,status) VALUES (?,?,?,?)",("controller-one","controller-node","Controller","active"));c.execute("INSERT INTO agents(id,controller_id,node_id,name,status) VALUES (?,?,?,?,?)",("agent-a","controller-one","agent-node-a","Agent A","active"));c.execute("INSERT INTO agents(id,controller_id,node_id,name,status) VALUES (?,?,?,?,?)",("agent-b","controller-one","agent-node-b","Agent B","active"));c.execute("INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)",(1,"controller-one","Customer","active"));c.execute("INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,controller_id,agent_id,customer_id) VALUES (?,?,?,?,?,?,?,?,?)",("source-instance","agent-node-a","minecraft","minecraft.java.vanilla","Old Server","offline","controller-one","agent-a",1));c.execute("INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,controller_id,agent_id,customer_id) VALUES (?,?,?,?,?,?,?,?,?)",("target-instance","agent-node-b","minecraft","minecraft.java.vanilla","Restored Server","offline","controller-one","agent-b",1));c.execute("INSERT INTO instance_ports(instance_id,node_id,name,protocol,port,bind_address) VALUES (?,?,?,?,?,?)",("target-instance","agent-node-b","game","tcp",25565,"0.0.0.0"))
+  self.vault=DeletedBackupVaultRepository(self.backend,self.root);self.vault.initialize();self.provisioning=AgentInstanceProvisioningRepository(self.backend);self.provisioning.initialize();self.provision=self.provisioning.enqueue(agent_id="agent-b",instance_id="target-instance",environment_id="minecraft.java.vanilla",selector="1.21.8",selection={"provider":"test"},configuration={},desired_state="stopped",requested_by="owner");self.clones=InstanceBackupCloneRepository(self.backend,self.root);self.clones.initialize()
+ def tearDown(self):self.backend.close();self.temp.cleanup()
+ def _produce_deleted_source_backup(self):
+  item,_=self.vault.start("source-instance",requested_by="owner");self.vault.backups.record_agent_state("agent-a",[{"command_id":item["backup_job_id"],"instance_id":"source-instance","action":"create","status":"completed","backup_id":"backup-final","artifact_path":"/agent/backups/source-instance/backup-final.tar.gz","size_bytes":15,"sha256":"agent-sha"}]);item=self.vault.reconcile(item["vault_id"]);self.assertEqual(item["status"],"export_pending");payload=b"capivara-backup";self.vault.artifacts.receive_from_agent(item["transfer_id"],"agent-a",io.BytesIO(payload),len(payload));item=self.vault.reconcile(item["vault_id"]);self.assertEqual(item["status"],"removal_pending");source_path=Path(item["artifact_path"]);self.assertEqual(source_path.read_bytes(),payload)
+  with self.backend.transaction() as c:c.execute("DELETE FROM instances WHERE id=?",("source-instance",))
+  item=self.vault.reconcile(item["vault_id"]);self.assertEqual(item["status"],"ready");self.assertTrue(source_path.exists());return item,source_path
+ def test_full_cross_agent_delete_vault_clone_restore_complete(self):
+  source,source_path=self._produce_deleted_source_backup();clone,idempotent=self.clones.start(customer_id=1,source_vault_id=source["vault_id"],target_instance_id="target-instance",target_agent_id="agent-b",provisioning_id=self.provision["provisioning_id"],requested_by="owner");self.assertFalse(idempotent);self.assertEqual(clone["status"],"provisioning")
+  self.provisioning.apply_result("agent-b",{"provisioning_id":self.provision["provisioning_id"],"instance_id":"target-instance","status":"completed","progress":100,"current_step":"completed"});clone=self.clones.reconcile(clone["clone_id"]);self.assertEqual(clone["status"],"transferring");transfer=self.clones.artifacts.get(clone["transfer_id"]);self.assertEqual(transfer["agent_id"],"agent-b");self.assertEqual(transfer["direction"],"controller_to_agent");self.assertEqual(transfer["purpose"],"backup_clone");staged_path=Path(transfer["controller_path"]);self.assertEqual(staged_path.read_bytes(),source_path.read_bytes());self.assertEqual(transfer["sha256"],source["sha256"])
+  self.clones.artifacts.apply_agent_result("agent-b",{"transfer_id":clone["transfer_id"],"status":"completed","transferred_bytes":transfer["size_bytes"]});clone=self.clones.reconcile(clone["clone_id"]);self.assertEqual(clone["status"],"restoring");job=self.clones.backups.get_job(clone["restore_job_id"]);self.assertEqual(job["instance_id"],"target-instance");self.assertEqual(job["action"],"restore");self.assertEqual(job["backup_id"],clone["imported_backup_id"])
+  self.clones.backups.record_agent_state("agent-b",[{"command_id":clone["restore_job_id"],"instance_id":"target-instance","action":"restore","backup_id":clone["imported_backup_id"],"status":"completed","size_bytes":transfer["size_bytes"],"sha256":transfer["sha256"]}]);clone=self.clones.reconcile(clone["clone_id"]);self.assertEqual(clone["status"],"completed");self.assertIsNotNone(clone["completed_at"]);self.assertTrue(source_path.exists());same,again=self.clones.start(customer_id=1,source_vault_id=source["vault_id"],target_instance_id="target-instance",target_agent_id="agent-b",provisioning_id=self.provision["provisioning_id"],requested_by="owner");self.assertTrue(again);self.assertEqual(same["clone_id"],clone["clone_id"])
+ def test_source_policy_rejects_wrong_customer_game_and_runtime(self):
+  source,_=self._produce_deleted_source_backup()
+  with self.assertRaises(PermissionError):self.clones.validate_source(source["vault_id"],2,"minecraft","minecraft.java.vanilla")
+  with self.assertRaises(ValueError):self.clones.validate_source(source["vault_id"],1,"dayz","dayz.stable")
+  with self.assertRaises(ValueError):self.clones.validate_source(source["vault_id"],1,"minecraft","minecraft.java.paper")
+ def test_heartbeat_layer_reconciles_clone_after_agent_results(self):
+  text=(ROOT/"dashboard/agent_remote_http.py").read_text(encoding="utf-8");self.assertIn("InstanceBackupCloneRepository",text);self.assertIn("reconcile_for_agent",text);self.assertIn("backup_clone_states",text);self.assertIn("cleanup_expired",text)
+if __name__=="__main__":unittest.main()

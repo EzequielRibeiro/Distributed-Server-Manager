@@ -132,6 +132,7 @@ class ControllerProvisioningQueueTest(unittest.TestCase):
         }, backend=self.backend)
         self.assertEqual(status, 201)
         self.controller_id = enrolled["controller_id"]
+        self.customer_id = 1
         self.headers = {
             "X-Capivara-Agent-Credential": enrolled["credential_id"],
             "X-Capivara-Agent-Secret": enrolled["credential_secret"],
@@ -141,10 +142,10 @@ class ControllerProvisioningQueueTest(unittest.TestCase):
         self.assertEqual(status, 200)
         with self.backend.transaction() as conn:
             cur = conn.cursor()
-            cur.execute("INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)", ("customer-b10", self.controller_id, "Customer", "active"))
+            cur.execute("INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)", (self.customer_id, self.controller_id, "Customer", "active"))
             cur.execute(
                 "INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,controller_id,agent_id,customer_id) VALUES (?,?,?,?,?,?,?,?,?)",
-                ("instance-b10", "node-b10", "dayz", "dayz.stable", "Instance B10", "offline", self.controller_id, "agent-b10", "customer-b10"),
+                ("instance-b10", "node-b10", "dayz", "dayz.stable", "Instance B10", "offline", self.controller_id, "agent-b10", self.customer_id),
             )
             cur.execute(
                 "INSERT INTO instance_ports(instance_id,node_id,name,protocol,port) VALUES (?,?,?,?,?)",

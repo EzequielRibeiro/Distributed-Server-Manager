@@ -1,0 +1,125 @@
+name: Customer Instance Workspace v2
+
+on:
+  pull_request:
+    paths:
+      - 'dashboard/customer_instance_*.py'
+      - 'dashboard/artifact_transfer_http.py'
+      - 'dashboard/deleted_backup_vault_http.py'
+      - 'dashboard/backup_clone_http.py'
+      - 'dashboard/agent_remote_http.py'
+      - 'dashboard/server_part17.py'
+      - 'dashboard/web/customer-instance*'
+      - 'dashboard/web/customer-backup-transfer.js'
+      - 'dashboard/web/customer-deleted-backups.js'
+      - 'dashboard/web/create-server-wizard.js'
+      - 'database/instance_workspace_*.py'
+      - 'database/instance_activity_repository.py'
+      - 'database/instance_resource_repository.py'
+      - 'database/instance_backup_clone_repository.py'
+      - 'database/artifact_transfer_*.py'
+      - 'database/deleted_backup_vault_repository.py'
+      - 'agents/linux/runtime/artifact_transfer_client.py'
+      - 'agents/linux/runtime/agent.py'
+      - 'agents/windows/runtime/artifact_transfer_client.py'
+      - 'agents/windows/runtime/agent.py'
+      - 'release/build_agent_package.sh'
+      - 'release/build_windows_agent_package.py'
+      - 'tests/customer_instance_workspace_v2_test.py'
+      - 'tests/customer_instance_activity_test.py'
+      - 'tests/customer_workspace_architecture_boundary_test.py'
+      - 'tests/deleted_backup_vault_test.py'
+      - 'tests/customer_backup_clone_e2e_test.py'
+      - '.github/workflows/customer-instance-workspace-v2.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/customer_instance_*.py'
+      - 'dashboard/artifact_transfer_http.py'
+      - 'dashboard/deleted_backup_vault_http.py'
+      - 'dashboard/backup_clone_http.py'
+      - 'dashboard/agent_remote_http.py'
+      - 'dashboard/server_part17.py'
+      - 'dashboard/web/customer-instance*'
+      - 'dashboard/web/customer-backup-transfer.js'
+      - 'dashboard/web/customer-deleted-backups.js'
+      - 'dashboard/web/create-server-wizard.js'
+      - 'database/instance_workspace_*.py'
+      - 'database/instance_activity_repository.py'
+      - 'database/instance_resource_repository.py'
+      - 'database/instance_backup_clone_repository.py'
+      - 'database/artifact_transfer_*.py'
+      - 'database/deleted_backup_vault_repository.py'
+      - 'agents/linux/runtime/artifact_transfer_client.py'
+      - 'agents/linux/runtime/agent.py'
+      - 'agents/windows/runtime/artifact_transfer_client.py'
+      - 'agents/windows/runtime/agent.py'
+      - 'release/build_agent_package.sh'
+      - 'release/build_windows_agent_package.py'
+      - 'tests/customer_instance_workspace_v2_test.py'
+      - 'tests/customer_instance_activity_test.py'
+      - 'tests/customer_workspace_architecture_boundary_test.py'
+      - 'tests/deleted_backup_vault_test.py'
+      - 'tests/customer_backup_clone_e2e_test.py'
+      - '.github/workflows/customer-instance-workspace-v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate Python
+        run: |
+          python3 -m py_compile \
+            dashboard/customer_instance_creation.py \
+            dashboard/customer_instance_workspace_http.py \
+            dashboard/customer_instance_workspace_service.py \
+            dashboard/customer_instance_activity_http.py \
+            dashboard/artifact_transfer_http.py \
+            dashboard/deleted_backup_vault_http.py \
+            dashboard/backup_clone_http.py \
+            dashboard/agent_remote_http.py \
+            dashboard/server_part17.py \
+            database/instance_activity_repository.py \
+            database/artifact_transfer_schema.py \
+            database/artifact_transfer_repository.py \
+            database/deleted_backup_vault_repository.py \
+            database/instance_backup_clone_repository.py \
+            database/instance_resource_repository.py \
+            database/instance_workspace_extended_schema.py \
+            agents/linux/runtime/artifact_transfer_client.py \
+            agents/linux/runtime/agent.py \
+            agents/windows/runtime/artifact_transfer_client.py \
+            agents/windows/runtime/agent.py \
+            tests/customer_instance_workspace_v2_test.py \
+            tests/customer_instance_activity_test.py \
+            tests/customer_workspace_architecture_boundary_test.py \
+            tests/deleted_backup_vault_test.py \
+            tests/customer_backup_clone_e2e_test.py
+      - name: Validate Customer JavaScript
+        run: |
+          node --check dashboard/web/customer-instance-v2.js
+          node --check dashboard/web/customer-instance-activity.js
+          node --check dashboard/web/customer-backup-transfer.js
+          node --check dashboard/web/customer-instance-delete.js
+          node --check dashboard/web/customer-deleted-backups.js
+          node --check dashboard/web/create-server-wizard.js
+      - name: Run Workspace tests
+        run: |
+          python3 -m unittest tests/customer_instance_workspace_v2_test.py
+          python3 -m unittest tests/customer_instance_activity_test.py
+          python3 -m unittest tests/customer_workspace_architecture_boundary_test.py
+          python3 -m unittest tests/deleted_backup_vault_test.py
+          python3 -m unittest tests/customer_backup_clone_e2e_test.py
+      - name: Validate Linux Agent package
+        run: |
+          bash tests/agent_package_test.sh
+          grep -F 'artifact_transfer_client.py' release/build_agent_package.sh
+      - name: Validate Windows Agent package
+        run: python3 -m unittest tests/phase19_windows_agent_test.py
