@@ -39,10 +39,11 @@ class LastRowIdSession:
 
 
 def _create(session, backend_name="postgresql", **kwargs):
+    parameters = "%s,%s,%s,%s,%s,%s,%s,%s" if backend_name in {"postgresql", "mysql", "mariadb"} else "?,?,?,?,?,?,?,?"
     return insert_customer(
         session,
         backend_name=backend_name,
-        parameters="%s,%s,%s,%s,%s,%s,%s,%s",
+        parameters=parameters,
         controller_id="controller-1",
         name="Aurora",
         email="aurora@example.invalid",
@@ -59,15 +60,30 @@ def test_postgresql_uses_returning_and_formats_public_code():
     assert created.billing.linked is False
     assert "RETURNING id" in session.calls[0][0]
     assert "customers(id" not in session.calls[0][0].lower()
+    assert len(session.calls) == 1
 
 
-def test_sqlite_mysql_family_uses_lastrowid():
-    for backend in ("sqlite", "mysql", "mariadb"):
+def test_sqlite_uses_lastrowid_and_generated_public_code():
+    session = LastRowIdSession(8)
+    created = _create(session, "sqlite")
+    assert created.id == 8
+    assert created.customer_code == "CLI-000008"
+    assert "RETURNING" not in session.calls[0][0]
+    assert len(session.calls) == 1
+
+
+def test_mysql_family_persists_public_code_after_auto_increment_allocation():
+    for backend in ("mysql", "mariadb"):
         session = LastRowIdSession(8)
         created = _create(session, backend)
         assert created.id == 8
         assert created.customer_code == "CLI-000008"
         assert "RETURNING" not in session.calls[0][0]
+        assert len(session.calls) == 2
+        assert session.calls[1] == (
+            "UPDATE customers SET customer_code=%s WHERE id=%s",
+            ("CLI-000008", 8),
+        )
 
 
 def test_no_customer_id_is_part_of_insert_parameters():
