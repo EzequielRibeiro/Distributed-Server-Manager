@@ -186,6 +186,24 @@ def _dashboard_customer_fk(sql: str, backend: str) -> str:
     return sql[:match.start()] + match.group(1) + body + match.group(3) + sql[match.end():]
 
 
+def _rewrite_legacy_customer_scope_joins(sql: str) -> str:
+    """Point legacy Customer-owner backfills at the numeric FK.
+
+    Historical consolidated schemas associated Customer dashboard users through
+    ``scope_id``. Baseline v2 keeps ``scope_id`` as text for non-Customer scopes
+    and adds ``dashboard_users.customer_id`` as the canonical numeric relation.
+    Rewriting only the Customer join preserves the harmless backfill while
+    preventing BIGINT=TEXT comparisons on PostgreSQL and the wrong identity
+    relation on every backend.
+    """
+    return re.sub(
+        r"(\bON\s+c\.id\s*=\s*u\.)scope_id\b",
+        r"\1customer_id",
+        sql,
+        flags=re.IGNORECASE,
+    )
+
+
 def _dashboard_system_user_identity(sql: str, backend: str) -> str:
     pattern = _table_pattern("dashboard_users")
     match = pattern.search(sql)
@@ -242,6 +260,7 @@ def compile_baseline_v2(sql: str, backend: str) -> str:
     result = _replace_customer_table(result, backend)
     result = _numeric_customer_foreign_keys(result, backend)
     result = _dashboard_customer_fk(result, backend)
+    result = _rewrite_legacy_customer_scope_joins(result)
     result = _dashboard_system_user_identity(result, backend)
     result = _remove_schema_migration_ledger(result)
     result = _ensure_password_state(result, backend)
