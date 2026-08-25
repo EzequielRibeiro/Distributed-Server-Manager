@@ -1,0 +1,56 @@
+name: PostgreSQL Baseline v2 Isolated Deployment
+
+on:
+  pull_request:
+    paths:
+      - 'database/**'
+      - 'dashboard/**'
+      - 'tests/postgresql_baseline_v2_isolated_deployment_test.py'
+      - '.github/workflows/postgresql-baseline-v2-isolated-deployment.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-postgresql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: capivara_test
+          POSTGRES_PASSWORD: capivara_test_password
+          POSTGRES_DB: capivara_baseline_v2_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U capivara_test -d capivara_baseline_v2_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      CAPIVARA_ALLOW_ISOLATED_DB_TEST: '1'
+      DSM_DATABASE_DRIVER: postgresql
+      DSM_DATABASE_HOST: 127.0.0.1
+      DSM_DATABASE_PORT: '5432'
+      DSM_DATABASE_NAME: capivara_baseline_v2_test
+      DSM_DATABASE_USER: capivara_test
+      DSM_DATABASE_PASSWORD_FILE: /tmp/capivara-postgres-test-password
+      DSM_DATABASE_TLS: disable
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL Python driver
+        run: python3 -m pip install 'psycopg[binary]>=3.1,<4'
+      - name: Create protected password file
+        run: |
+          printf '%s\n' 'capivara_test_password' > /tmp/capivara-postgres-test-password
+          chmod 600 /tmp/capivara-postgres-test-password
+      - name: Run destructive isolated Baseline v2 bootstrap
+        run: python3 tests/postgresql_baseline_v2_isolated_deployment_test.py
+      - name: Run Customer Workspace v2 contract tests
+        run: |
+          python3 -m unittest tests/customer_instance_workspace_v2_test.py
+          python3 -m unittest tests/customer_instance_activity_test.py
+          python3 -m unittest tests/customer_workspace_architecture_boundary_test.py
