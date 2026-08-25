@@ -52,10 +52,24 @@ class InstanceResourceRepository:
         if str(report.get("instance_id") or "")!=str(item.get("instance_id") or ""):raise ValueError("resource result instance mismatch")
         status=str(report.get("status") or "").lower()
         if status not in {"completed","failed"}:raise ValueError("invalid resource command result")
-        ph=self.dialect.placeholder
+        ph=self.dialect.placeholder;error=str(report.get("error") or "")[:2000] or None
         with self.backend.transaction() as c:
             s=self._session(c)
-            try:s.execute(f"UPDATE instance_resource_commands SET status={ph},result_json={ph},last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE command_id={ph}",(status,json.dumps(report.get("result") or {},separators=(",",":"),sort_keys=True),str(report.get("error") or "")[:2000] or None,item["command_id"]))
+            try:
+                s.execute(f"UPDATE instance_resource_commands SET status={ph},result_json={ph},last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE command_id={ph}",(status,json.dumps(report.get("result") or {},separators=(",",":"),sort_keys=True),error,item["command_id"]))
+                # Complete only the matching applying request. This keeps Billing
+                # confirmation separate from actual distributed enforcement.
+                target_status="applied" if status=="completed" else "failed"
+                row=s.execute(
+                    "SELECT request_id FROM contract_change_requests "
+                    f"WHERE instance_id={ph} AND requested_profile_id={ph} AND status='applying' ORDER BY requested_at DESC LIMIT 1",
+                    (item["instance_id"],item["resource_profile_id"]),
+                ).fetchone()
+                if row is not None:
+                    if target_status=="applied":
+                        s.execute(f"UPDATE contract_change_requests SET status='applied',applied_at=COALESCE(applied_at,{self.dialect.current_timestamp}),updated_at={self.dialect.current_timestamp} WHERE request_id={ph}",(row["request_id"],))
+                    else:
+                        s.execute(f"UPDATE contract_change_requests SET status='failed',failure_reason={ph},updated_at={self.dialect.current_timestamp} WHERE request_id={ph}",(error or "Agent resource reconciliation failed",row["request_id"]))
             finally:s.close()
         return self.snapshot(item["command_id"])
 
