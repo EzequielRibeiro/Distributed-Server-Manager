@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import parse_qs,urlparse
 import server_part16 as integration
 from artifact_transfer_http import install_artifact_transfer_http
+from backup_clone_http import install_backup_clone_http
 from catalog_runtime_policy_http import RUNTIME_POLICY_PATH,dispatch_catalog_runtime_policy_get,dispatch_catalog_runtime_policy_put
 from contract_upgrade_http import install_contract_upgrade_api
 from controller_telemetry import controller_telemetry
@@ -48,12 +49,12 @@ def catalog_architecture_put(self):
  status,body=dispatch_catalog_runtime_policy_put(parsed.path,payload,user=user,root=_ROOT);self.send_json(status,body)
 legacy.DashboardHandler.send_json=json_safe_send_json;legacy.DashboardHandler.do_GET=catalog_architecture_get;legacy.DashboardHandler.do_PUT=catalog_architecture_put
 install_system_user_administration(legacy,_authenticate)
-# Install every human-facing module before the outer audit wrapper.
 install_customer_instance_workspace(legacy,_authenticate)
 install_customer_instance_team(legacy,_authenticate)
 install_contract_upgrade_api(legacy,_authenticate,_ROOT)
 install_artifact_transfer_http(legacy,_authenticate)
 install_deleted_backup_vault_http(legacy,_authenticate)
+install_backup_clone_http(legacy,_authenticate)
 install_dashboard_activity_audit(legacy,_authenticate)
 def run():legacy.run()
 if __name__=="__main__":run()
