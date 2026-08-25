@@ -68,6 +68,31 @@ def test_customer_baseline_contract_tokens():
             assert token in sql, f"{backend} missing {token}"
 
 
+def test_system_user_functional_identity_exists_in_every_backend():
+    required = (
+        "full_name",
+        "corporate_email",
+        "phone",
+        "job_title",
+        "department",
+        "created_by",
+    )
+    for backend in BACKENDS:
+        sql = _sql(backend).lower()
+        match = re.search(
+            r"create\s+table\s+dashboard_users\s*\((.*?)\n\);",
+            sql,
+            re.IGNORECASE | re.DOTALL,
+        )
+        assert match is not None, f"{backend} missing dashboard_users"
+        body = match.group(1)
+        for token in required:
+            assert token in body, f"{backend} dashboard_users missing {token}"
+        assert re.search(r"corporate_email\s+[^,\n]+\s+unique\b", body), (
+            f"{backend} corporate_email must be unique"
+        )
+
+
 def test_customer_relational_keys_are_numeric():
     for backend in BACKENDS:
         sql = _sql(backend)
