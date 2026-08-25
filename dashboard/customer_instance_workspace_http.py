@@ -9,7 +9,7 @@ ROUTES={PREFIX,PREFIX+"/telemetry",PREFIX+"/console",PREFIX+"/startup",PREFIX+"/
 
 def install_customer_instance_workspace(legacy,authenticate):
  previous_get=legacy.DashboardHandler.do_GET;previous_post=legacy.DashboardHandler.do_POST;previous_patch=getattr(legacy.DashboardHandler,"do_PATCH",None)
- legacy.STATIC_FILES.update({"/customer-instance.html":legacy.WEB_DIR/"customer-instance.html","/customer-instance-v2.js":legacy.WEB_DIR/"customer-instance-v2.js","/customer-instance-v2.css":legacy.WEB_DIR/"customer-instance-v2.css","/customer-backup-transfer.js":legacy.WEB_DIR/"customer-backup-transfer.js"})
+ legacy.STATIC_FILES.update({"/customer-instance.html":legacy.WEB_DIR/"customer-instance.html","/customer-instance-v2.js":legacy.WEB_DIR/"customer-instance-v2.js","/customer-instance-v2.css":legacy.WEB_DIR/"customer-instance-v2.css","/customer-backup-transfer.js":legacy.WEB_DIR/"customer-backup-transfer.js","/customer-instance-delete.js":legacy.WEB_DIR/"customer-instance-delete.js"})
  def service():return CustomerInstanceWorkspaceService(legacy.dashboard_repository(legacy.DATABASE_FILE).backend,legacy.DSM_ROOT)
  def user_for(self):
   value=session_user_from_headers(self.headers)
