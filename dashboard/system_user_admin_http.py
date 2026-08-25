@@ -82,6 +82,7 @@ def install_system_user_administration(legacy, authenticate) -> None:
     previous_get = legacy.DashboardHandler.do_GET
     previous_post = legacy.DashboardHandler.do_POST
     previous_put = getattr(legacy.DashboardHandler, "do_PUT", None)
+    previous_delete = getattr(legacy.DashboardHandler, "do_DELETE", None)
 
     legacy.STATIC_FILES.update({
         CHANGE_PASSWORD_PAGE: legacy.WEB_DIR / "system-change-password.html",
@@ -160,6 +161,11 @@ def install_system_user_administration(legacy, authenticate) -> None:
             return
         user = authenticate(self.headers)
         if user is not None and temporary_required(user.get("username")):
+            if path == "/api/whoami":
+                return previous_get(self)
+            if path.startswith("/api/"):
+                self.send_json(428, {"error": "password_change_required", "message": "Troque a senha temporária antes de continuar."})
+                return
             if path.endswith(".html") or path in {"/", "/index.html"}:
                 redirect(self, CHANGE_PASSWORD_PAGE)
                 return
@@ -314,9 +320,19 @@ def install_system_user_administration(legacy, authenticate) -> None:
             return previous_put(self)
         self.send_json(404, {"error": "not_found"})
 
+    def do_delete(self):
+        user = authenticate(self.headers)
+        if user is not None and temporary_required(user.get("username")):
+            self.send_json(428, {"error": "password_change_required", "message": "Troque a senha temporária antes de continuar."})
+            return
+        if previous_delete is not None:
+            return previous_delete(self)
+        self.send_json(404, {"error": "not_found"})
+
     legacy.DashboardHandler.do_GET = do_get
     legacy.DashboardHandler.do_POST = do_post
     legacy.DashboardHandler.do_PUT = do_put
+    legacy.DashboardHandler.do_DELETE = do_delete
 
 
 __all__ = [
