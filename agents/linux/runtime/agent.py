@@ -9,12 +9,15 @@ from backup_client import apply_backup_commands,backup_state
 from broadcast_client import apply_broadcast_commands,broadcast_state
 from capabilities import detect_capabilities
 from configuration_client import apply_configuration_commands,configuration_state
+from console_client import clear_result as clear_console_result
+from console_client import console_state,handle_command as handle_console_command,read_result as read_console_result
 from content_client import apply_content_commands,content_state
 from game_data_client import clear_game_data_result,read_game_data_result,stage_game_data_command
 from instance_runtime import clear_result as clear_instance_result
 from instance_runtime import handle_command as handle_instance_command
 from instance_runtime import inventory as instance_inventory
 from instance_runtime import read_result as read_instance_result
+from instance_telemetry import collect_instance_telemetry
 from network_inventory import collect_network_inventory
 from provisioning_client import clear_provisioning_result,read_provisioning_result,stage_provisioning_command
 from runtime_events import acknowledge_runtime_events,read_runtime_events
@@ -55,14 +58,14 @@ def _queue_depth():
  def count(pattern):
   try:return sum(1 for _ in Path(pattern).parent.glob(Path(pattern).name))
   except OSError:return 0
- state=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));return {"instance_results":count(str(state/"instance-results"/"*.json")),"provisioning":count(str(state/"instance-provisioning"/"*.request.json")),"game_data":count(str(state/"game-data-jobs"/"*.json")),"backup_results":count(str(state/"backup-results"/"*.json")),"broadcast_state":count(str(state/"broadcast-state"/"*.json")),"runtime_events":len(read_runtime_events(state,limit=1000))}
+ state=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));return {"instance_results":count(str(state/"instance-results"/"*.json")),"console_results":count(str(state/"console-results"/"*.json")),"provisioning":count(str(state/"instance-provisioning"/"*.request.json")),"game_data":count(str(state/"game-data-jobs"/"*.json")),"backup_results":count(str(state/"backup-results"/"*.json")),"broadcast_state":count(str(state/"broadcast-state"/"*.json")),"runtime_events":len(read_runtime_events(state,limit=1000))}
 def _inventory(config):
  disk=shutil.disk_usage("/");version_path=Path(__file__).resolve().parents[1]/"VERSION"
  try:installed_version=version_path.read_text().strip()
  except OSError:installed_version=str(config.get("capivara_version","unknown"))
- state=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));payload={"agent_id":config["agent_id"],"hostname":socket.gethostname(),"os":platform.system().lower(),"architecture":platform.machine(),"capivara_version":installed_version,"address":config.get("advertise_address"),"fingerprint":config["fingerprint"],"capabilities":detect_capabilities(),"cpu":{"logical_cores":os.cpu_count(),"machine":platform.machine()},"ram_total_bytes":_memory_total_bytes(),"storage":{"root_total_bytes":disk.total,"root_free_bytes":disk.free},"network":collect_network_inventory(),"instances":instance_inventory(config),"instance_reconciliation":reconciliation_inventory(config),"instance_runtime_health":health_inventory(config),"instance_runtime_metrics":runtime_metrics_snapshot(queue_depth=_queue_depth()),"runtime_events":read_runtime_events(state,limit=int(config.get("event_batch_size",200))),"configuration_state":configuration_state(),"content_state":content_state(),"backup_state":backup_state(),"broadcast_state":broadcast_state(),"heartbeat_interval_seconds":int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)),"degraded_after_seconds":int(config.get("degraded_after_seconds",60)),"offline_after_seconds":int(config.get("offline_after_seconds",120))}
+ state=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));payload={"agent_id":config["agent_id"],"hostname":socket.gethostname(),"os":platform.system().lower(),"architecture":platform.machine(),"capivara_version":installed_version,"address":config.get("advertise_address"),"fingerprint":config["fingerprint"],"capabilities":detect_capabilities(),"cpu":{"logical_cores":os.cpu_count(),"machine":platform.machine()},"ram_total_bytes":_memory_total_bytes(),"storage":{"root_total_bytes":disk.total,"root_free_bytes":disk.free},"network":collect_network_inventory(),"instances":instance_inventory(config),"instance_reconciliation":reconciliation_inventory(config),"instance_runtime_health":health_inventory(config),"instance_telemetry":collect_instance_telemetry(config),"instance_console_state":console_state(config),"instance_runtime_metrics":runtime_metrics_snapshot(queue_depth=_queue_depth()),"runtime_events":read_runtime_events(state,limit=int(config.get("event_batch_size",200))),"configuration_state":configuration_state(),"content_state":content_state(),"backup_state":backup_state(),"broadcast_state":broadcast_state(),"heartbeat_interval_seconds":int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)),"degraded_after_seconds":int(config.get("degraded_after_seconds",60)),"offline_after_seconds":int(config.get("offline_after_seconds",120))}
  payload["agent_logs"]=_recent_logs()
- for key,value in (("update_result",read_update_result()),("provisioning_result",read_provisioning_result()),("game_data_result",read_game_data_result()),("instance_result",read_instance_result())):
+ for key,value in (("update_result",read_update_result()),("provisioning_result",read_provisioning_result()),("game_data_result",read_game_data_result()),("instance_result",read_instance_result()),("console_result",read_console_result())):
   if value:payload[key]=value
  return payload
 def enroll(config):
@@ -104,6 +107,11 @@ def heartbeat(config):
   ir=handle_instance_command(config,ic);print(f"instance command action={ir.get('action')} instance={ir.get('instance_id')} status={ir.get('status')}",flush=True)
  ins=result.get("instance_state") if isinstance(result.get("instance_state"),dict) else {}
  if str(ins.get("status") or "").lower() in {"completed","failed"} and ins.get("command_id"):clear_instance_result(str(ins["command_id"]))
+ cc=result.get("console_command")
+ if isinstance(cc,dict):
+  cr=handle_console_command(config,cc);print(f"console command instance={cr.get('instance_id')} status={cr.get('status')}",flush=True)
+ cs=result.get("console_state") if isinstance(result.get("console_state"),dict) else {}
+ if str(cs.get("status") or "").lower() in {"completed","failed"} and cs.get("command_id"):clear_console_result(str(cs["command_id"]))
  return result
 def run_forever():
  config=_load_config()
