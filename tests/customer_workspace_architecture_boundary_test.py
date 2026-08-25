@@ -27,7 +27,10 @@ class CustomerWorkspaceArchitectureBoundaryTest(unittest.TestCase):
    DASHBOARD/"backup_clone_http.py",
    DASHBOARD/"contract_upgrade_http.py",
   ]
-  forbidden={"unlink","rmdir","mkdir","write_text","write_bytes","rename","replace"}
+  # These methods are unambiguous direct filesystem mutations in the HTTP/service
+  # layers. `replace` is deliberately excluded because normal string sanitization
+  # uses str.replace(); Path.replace ownership is covered by the repository checks.
+  forbidden={"unlink","rmdir","mkdir","write_text","write_bytes","rename"}
   for path in paths:
    tree=ast.parse(path.read_text(encoding="utf-8"),filename=str(path))
    bad=[]
