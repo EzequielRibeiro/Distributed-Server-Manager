@@ -56,9 +56,10 @@ def authenticate_customer(headers, backend):
                 "role": "customer",
                 "customer_id": customer_id,
                 "customer_code": customer_code,
-                # Compatibility for presentation/runtime metadata. Relational
-                # repositories must use customer_id instead.
-                "scope_id": customer_code,
+                # Legacy dashboard helpers still accept scope_id. Keep that
+                # compatibility value numeric; the public CLI-* identity stays
+                # exclusively in customer_code.
+                "scope_id": customer_id,
                 "active": True,
             }
         finally:
