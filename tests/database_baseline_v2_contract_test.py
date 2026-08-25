@@ -68,6 +68,53 @@ def test_customer_baseline_contract_tokens():
             assert token in sql, f"{backend} missing {token}"
 
 
+def test_customer_code_allocation_is_backend_portable():
+    for backend in BACKENDS:
+        normalized = re.sub(r"\s+", " ", _sql(backend).lower())
+        match = re.search(
+            r"create table customers\s*\((.*?)\)\s*(?:engine|;)",
+            normalized,
+            re.IGNORECASE | re.DOTALL,
+        )
+        assert match is not None, backend
+        body = match.group(1)
+        assert "customer_code" in body
+        assert "unique" in body
+        if backend in {"mysql", "mariadb"}:
+            customer_code = re.search(r"customer_code\s+varchar\(32\)(.*?),", body)
+            assert customer_code is not None, backend
+            assert "generated" not in customer_code.group(1), (
+                f"{backend} cannot derive customer_code from AUTO_INCREMENT"
+            )
+        else:
+            assert "customer_code" in body and "generated always" in body, backend
+
+
+def test_system_user_functional_identity_exists_in_every_backend():
+    required = (
+        "full_name",
+        "corporate_email",
+        "phone",
+        "job_title",
+        "department",
+        "created_by",
+    )
+    for backend in BACKENDS:
+        sql = _sql(backend).lower()
+        match = re.search(
+            r"create\s+table\s+(?:if\s+not\s+exists\s+)?dashboard_users\s*\((.*?)\n\)",
+            sql,
+            re.IGNORECASE | re.DOTALL,
+        )
+        assert match is not None, f"{backend} missing dashboard_users"
+        body = match.group(1)
+        for token in required:
+            assert token in body, f"{backend} dashboard_users missing {token}"
+        assert re.search(r"corporate_email\s+[^,\n]+\s+unique\b", body), (
+            f"{backend} corporate_email must be unique"
+        )
+
+
 def test_customer_relational_keys_are_numeric():
     for backend in BACKENDS:
         sql = _sql(backend)

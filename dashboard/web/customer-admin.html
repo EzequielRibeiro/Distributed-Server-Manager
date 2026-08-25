@@ -1,26 +1,46 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Cliente | Capivara DSM</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Dados do cliente | Capivara DSM</title>
   <link rel="stylesheet" href="/dashboard-home-v3.css">
   <link rel="stylesheet" href="/catalog-v2.css">
-  <link rel="stylesheet" href="/customer-admin.css?v=3">
+  <link rel="stylesheet" href="/customer-management.css?v=1">
 </head>
 <body class="cap-home cap-admin-shell">
 <div id="sidebar-component"></div>
-<main class="cap-home-main customer-admin-page">
+<main class="cap-home-main customer-management-page">
   <header class="cap-home-topbar cap-admin-topbar">
-    <div class="cap-home-title"><button id="admin-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1 id="detail-name">Carregando…</h1><p id="detail-meta">Cliente</p></div></div>
+    <div class="cap-home-title"><button id="admin-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1 id="detail-name">Cliente</h1><p id="detail-meta">Carregando dados…</p></div></div>
     <div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="admin-user-name">—</strong><span id="admin-user-role">—</span></div></div>
   </header>
-  <div class="cap-home-content cap-admin-content">
-    <section class="card catalog-v2-card cap-admin-card"><div class="card-title"><div><h2>Dados cadastrais</h2><p>Identificação e situação do Customer.</p></div></div><div id="detail-data" class="customer-admin-grid"></div></section>
-    <section class="card catalog-v2-card cap-admin-card"><div class="card-title"><div><h2>Usuários do cliente</h2><p>Owners, managers e members vinculados a este Customer.</p></div></div><div id="detail-users" class="customer-admin-results"></div><div id="password-result" class="customer-admin-notice"></div></section>
-    <section class="card catalog-v2-card cap-admin-card" id="contracts"><div class="card-title"><div><h2>Contratos</h2><p>Escolha um perfil ou deixe o padrão do jogo ser resolvido e registrado no contrato.</p></div></div><div class="catalog-v2-form"><label>Jogo<select id="contract-game"><option value="">Selecione um jogo</option></select></label><label>Perfil do jogo (opcional)<select id="contract-resource-profile" disabled><option value="">Selecione o jogo primeiro</option></select></label><label>Limite de instâncias<input id="contract-limit" type="number" min="1" value="1"></label><label>ID opcional<input id="contract-id" placeholder="Gerado automaticamente"></label><label>Validade opcional<input id="contract-ends" type="datetime-local"></label></div><div id="contract-profile-summary" class="customer-admin-notice">O perfil padrão será usado quando nenhuma opção específica for escolhida.</div><div class="catalog-v2-actions"><button id="contract-create" class="catalog-v2-primary">Criar contrato</button></div><div id="contract-result" class="customer-admin-notice"></div><div id="detail-contracts" class="customer-admin-results"></div></section>
-    <section class="card catalog-v2-card cap-admin-card"><div class="card-title"><div><h2>Instâncias</h2><p>Instâncias vinculadas a este cliente e seus respectivos Agents e contratos.</p></div></div><div id="detail-instances" class="customer-admin-results"></div></section>
+  <div class="cap-home-content customer-management-content">
+    <section class="card catalog-v2-card customer-management-card">
+      <div class="card-title"><div><h2>Identificação e cadastro</h2><p>Dados completos do Customer localizado.</p></div><div class="customer-navigation"><a href="/customers.html">Nova consulta</a><a id="new-contract-link" href="/customer-contract-create.html">Criar contrato</a></div></div>
+      <div id="detail-data" class="customer-data-grid"></div>
+    </section>
+    <section class="card catalog-v2-card customer-management-card">
+      <div class="card-title"><div><h2>Acesso do cliente</h2><p>Identidades de login e situação da senha.</p></div></div>
+      <div id="detail-users" class="customer-list"></div>
+    </section>
+    <section class="card catalog-v2-card customer-management-card">
+      <div class="card-title"><div><h2>Billing</h2><p>Identidade externa e status financeiro sincronizado.</p></div></div>
+      <div id="detail-billing" class="customer-data-grid"></div>
+    </section>
+    <section class="card catalog-v2-card customer-management-card">
+      <div class="card-title"><div><h2>Contratos</h2><p>Contratos do cliente, limites e status atuais.</p></div></div>
+      <div id="detail-contracts" class="customer-list"></div>
+    </section>
+    <section class="card catalog-v2-card customer-management-card">
+      <div class="card-title"><div><h2>Instâncias</h2><p>Servidores associados aos contratos deste cliente.</p></div></div>
+      <div id="detail-instances" class="customer-list"></div>
+    </section>
+    <div id="detail-error" class="customer-notice"></div>
   </div>
   <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="/customer-admin.js?v=4"></script>
-</body></html>
+<script src="/customer-management-shell.js?v=1"></script>
+<script src="/customer-admin.js?v=5"></script>
+</body>
+</html>

@@ -24,6 +24,7 @@ SCRYPT_R = 8
 SCRYPT_P = 1
 PASSWORD_MIN_LENGTH = 8
 PASSWORD_REQUIREMENTS = f"Requisitos da senha: no mínimo {PASSWORD_MIN_LENGTH} caracteres."
+TEMPORARY_PASSWORD_PREFIX = "temporary$"
 
 
 def hash_password(password: str) -> str:
@@ -36,8 +37,26 @@ def hash_password(password: str) -> str:
     return f"scrypt${SCRYPT_N}${SCRYPT_R}${SCRYPT_P}${salt.hex()}${digest.hex()}"
 
 
+def hash_temporary_password(password: str) -> str:
+    """Hash a first-access password without persisting the secret itself."""
+    return TEMPORARY_PASSWORD_PREFIX + hash_password(password)
+
+
+def is_temporary_password_hash(encoded: str | None) -> bool:
+    return isinstance(encoded, str) and encoded.startswith(TEMPORARY_PASSWORD_PREFIX)
+
+
+def _password_hash_payload(encoded: str | None) -> str:
+    if not isinstance(encoded, str):
+        return ""
+    if is_temporary_password_hash(encoded):
+        return encoded[len(TEMPORARY_PASSWORD_PREFIX):]
+    return encoded
+
+
 def verify_password(password: str, encoded: str) -> bool:
     try:
+        encoded = _password_hash_payload(encoded)
         algorithm, raw_n, raw_r, raw_p, raw_salt, raw_digest = encoded.split("$", 5)
         if algorithm != "scrypt":
             return False
@@ -48,6 +67,11 @@ def verify_password(password: str, encoded: str) -> bool:
         return hmac.compare_digest(digest, bytes.fromhex(raw_digest))
     except (TypeError, ValueError):
         return False
+
+
+def generate_temporary_password() -> str:
+    """Return a high-entropy password intended to be shown exactly once."""
+    return secrets.token_urlsafe(15)
 
 
 def _repository(target: Path | DatabaseBackend) -> UserRepository:

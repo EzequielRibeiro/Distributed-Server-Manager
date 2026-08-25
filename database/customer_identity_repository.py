@@ -50,6 +50,18 @@ def _identity(customer_id: Any, billing: BillingIdentity) -> CreatedCustomerIden
     )
 
 
+def _single_placeholder(parameters: str) -> str:
+    return "%s" if "%s" in parameters else "?"
+
+
+def _persist_public_code(session: Any, identity: CreatedCustomerIdentity, parameters: str) -> None:
+    ph = _single_placeholder(parameters)
+    session.execute(
+        f"UPDATE customers SET customer_code={ph} WHERE id={ph}",
+        (identity.customer_code, identity.id),
+    )
+
+
 def insert_customer(
     session: Any,
     *,
@@ -71,11 +83,10 @@ def insert_customer(
     INSERT statement. No MAX(id), COUNT(*) or reusable application counter is
     permitted.
 
-    External billing identity is optional. When supplied, provider and external
-    customer id are validated as an atomic pair and persisted in the same
-    Customer INSERT. The provider's id never becomes a Capivara primary key.
+    MySQL and MariaDB cannot derive a generated column from AUTO_INCREMENT.
+    Their public `customer_code` is therefore written immediately after the id
+    allocation, inside the caller's same database transaction.
     """
-
     billing = normalize_billing_identity(
         provider=billing_provider,
         customer_id=billing_customer_id,
@@ -97,8 +108,8 @@ def insert_customer(
         billing.status,
     )
     base_sql = f"INSERT INTO customers({columns}) VALUES ({parameters})"
-
     backend = str(backend_name or "").strip().lower()
+
     if backend == "postgresql":
         row = session.execute(base_sql + " RETURNING id", values).fetchone()
         if row is None:
@@ -109,11 +120,13 @@ def insert_customer(
     customer_id = getattr(cursor, "lastrowid", None)
     if customer_id is None:
         raise RuntimeError("database driver did not expose the new customer id")
-    return _identity(customer_id, billing)
+    identity = _identity(customer_id, billing)
+    if backend in {"mysql", "mariadb"}:
+        _persist_public_code(session, identity, parameters)
+    return identity
 
 
 def public_customer_reference(customer_id: Any) -> dict[str, Any]:
-    """Return the canonical API/UI identity pair for an existing Customer."""
     numeric_id = _positive_id(customer_id)
     return {
         "id": numeric_id,

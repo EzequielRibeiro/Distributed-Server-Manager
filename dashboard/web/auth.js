@@ -37,9 +37,30 @@ function clearSession() {
 }
 
 
-function logout() {
-    clearSession();
-    window.location.href = "/login.html";
+async function logout() {
+    const token = getSession();
+
+    try {
+        if (token) {
+            await fetch(
+                "/api/auth/logout",
+                {
+                    method: "POST",
+                    headers: {
+                        "Authorization": `Basic ${token}`,
+                        "Accept": "application/json"
+                    },
+                    credentials: "same-origin",
+                    cache: "no-store"
+                }
+            );
+        }
+    } catch (error) {
+        console.warn("Logout audit request failed:", error);
+    } finally {
+        clearSession();
+        window.location.href = "/login.html";
+    }
 }
 
 

@@ -1,0 +1,39 @@
+name: Dashboard Activity Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dashboard-activity-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Python
+        run: |
+          python3 -m py_compile \
+            database/dashboard_activity_repository.py \
+            database/dashboard_activity_schema.py \
+            dashboard/dashboard_activity_http.py \
+            tests/dashboard_activity_audit_test.py
+
+      - name: Validate JavaScript
+        run: |
+          node --check dashboard/web/activity-log.js
+          node --check dashboard/web/auth.js
+          node --check dashboard/web/customer-management-shell.js
+          node --check dashboard/web/users.js
+
+      - name: Test Dashboard activity audit
+        run: python3 -m unittest -v tests.dashboard_activity_audit_test

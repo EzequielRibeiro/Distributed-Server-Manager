@@ -8,10 +8,14 @@ import server_part16 as integration
 from catalog_runtime_policy_http import RUNTIME_POLICY_PATH, dispatch_catalog_runtime_policy_get, dispatch_catalog_runtime_policy_put
 from controller_telemetry import controller_telemetry
 from customer_instance_creation import install_customer_instance_creation
+from customer_management_http import install_customer_management_dashboard
+from dashboard_activity_http import install_dashboard_activity_audit
 from json_serialization import normalize_json_value
+from system_user_admin_http import install_system_user_administration
 
 legacy = integration.legacy
 install_customer_instance_creation(legacy)
+install_customer_management_dashboard(legacy)
 _previous_get = legacy.DashboardHandler.do_GET
 _previous_put = getattr(legacy.DashboardHandler, "do_PUT", None)
 _previous_send_json = legacy.DashboardHandler.send_json
@@ -76,6 +80,10 @@ def catalog_architecture_put(self):
 legacy.DashboardHandler.send_json = json_safe_send_json
 legacy.DashboardHandler.do_GET = catalog_architecture_get
 legacy.DashboardHandler.do_PUT = catalog_architecture_put
+install_system_user_administration(legacy, _authenticate)
+# Must be installed last so all Dashboard pages and human-facing APIs are
+# automatically covered, including modules added by future composition layers.
+install_dashboard_activity_audit(legacy, _authenticate)
 
 
 def run():

@@ -5,24 +5,38 @@
   <title>Usuários do sistema | Capivara DSM</title>
   <link rel="stylesheet" href="/dashboard-home-v3.css">
   <link rel="stylesheet" href="/catalog-v2.css">
-  <link rel="stylesheet" href="/customer-admin.css?v=3">
+  <link rel="stylesheet" href="/customer-admin.css?v=4">
 </head>
 <body class="cap-home cap-admin-shell">
 <div id="sidebar-component"></div>
 <main class="cap-home-main customer-admin-page">
   <header class="cap-home-topbar cap-admin-topbar">
-    <div class="cap-home-title"><button id="admin-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1>Administração de usuários do sistema</h1><p>Acessos administrativos, Controllers e operadores.</p></div></div>
+    <div class="cap-home-title"><button id="admin-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1>Administração de usuários do sistema</h1><p>Área de segurança exclusiva de administradores. Gerencia acessos administrativos, Controllers e operadores.</p></div></div>
     <div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="admin-user-name">—</strong><span id="admin-user-role">—</span></div></div>
   </header>
   <div class="cap-home-content cap-admin-content">
     <section class="card catalog-v2-card cap-admin-card">
-      <div class="card-title"><div><h2 id="user-form-title">Novo usuário do sistema</h2><p>Contas de clientes são administradas separadamente na área Clientes.</p></div></div>
-      <div class="catalog-v2-form"><label>Login<input id="user-name" maxlength="64" placeholder="nome.usuario"></label><label>Perfil<select id="user-role"><option value="controller">Controlador</option><option value="operator">Operador</option><option value="admin">Administrador</option></select></label><label>Vínculo<select id="user-scope"><option value="">Selecione o perfil</option></select></label><label>Senha<input id="user-password" type="password" minlength="8" placeholder="Obrigatória para novo acesso"></label><label>Estado<select id="user-active"><option value="true">Ativo</option><option value="false">Desativado</option></select></label></div>
-      <div class="catalog-v2-actions"><button id="user-save" class="catalog-v2-primary">Salvar usuário</button><button id="user-cancel" hidden>Cancelar edição</button></div><div id="users-message" class="catalog-v2-summary"></div>
+      <div class="card-title"><div><h2 id="user-form-title">Novo usuário do sistema</h2><p>O administrador cadastra a identidade funcional e o Capivara gera uma senha temporária automaticamente. O usuário deverá substituí-la no primeiro acesso.</p></div></div>
+      <div class="catalog-v2-form">
+        <label>Nome completo *<input id="user-full-name" maxlength="255" placeholder="Nome e sobrenome" autocomplete="name"></label>
+        <label>E-mail corporativo *<input id="user-email" type="email" maxlength="320" placeholder="usuario@empresa.com" autocomplete="email"></label>
+        <label>Telefone<input id="user-phone" maxlength="128" placeholder="Opcional" autocomplete="tel"></label>
+        <label>Cargo / função<input id="user-job-title" maxlength="255" placeholder="Ex.: Operador NOC"></label>
+        <label>Departamento / equipe<input id="user-department" maxlength="255" placeholder="Ex.: Infraestrutura"></label>
+        <label>Login *<input id="user-name" maxlength="64" placeholder="nome.usuario" autocomplete="off"></label>
+        <label>Perfil *<select id="user-role"><option value="controller">Controlador</option><option value="operator">Operador</option><option value="admin">Administrador</option></select></label>
+        <label>Vínculo<select id="user-scope"><option value="">Selecione o perfil</option></select></label>
+        <label>Estado<select id="user-active"><option value="true">Ativo</option><option value="false">Desativado</option></select></label>
+      </div>
+      <div class="catalog-v2-summary"><strong>Senha:</strong> não é definida pelo administrador. O sistema gera uma senha temporária de uso único, mostra-a somente após o cadastro e exige uma nova senha no primeiro acesso.</div>
+      <div class="catalog-v2-actions"><button id="user-save" class="catalog-v2-primary">Criar usuário</button><button id="user-cancel" hidden>Cancelar edição</button></div><div id="users-message" class="catalog-v2-summary"></div>
     </section>
-    <section class="card catalog-v2-card cap-admin-card"><div class="card-title"><h2>Contas administrativas</h2></div><div class="users-table-wrap"><table class="users-table"><thead><tr><th>Login</th><th>Perfil</th><th>Vínculo</th><th>Estado</th><th>Ações</th></tr></thead><tbody id="users-table"></tbody></table></div></section>
+    <section class="card catalog-v2-card cap-admin-card">
+      <div class="card-title"><div><h2>Contas do sistema</h2><p id="admin-protection-note">O último administrador do sistema é protegido contra exclusão e perda do perfil Admin.</p></div></div>
+      <div class="users-table-wrap"><table class="users-table"><thead><tr><th>Usuário</th><th>Função</th><th>Perfil</th><th>Vínculo</th><th>Estado</th><th>Senha</th><th>Ações</th></tr></thead><tbody id="users-table"></tbody></table></div>
+    </section>
   </div>
   <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="/users.js?v=2"></script>
+<script src="/users.js?v=4"></script>
 </body></html>

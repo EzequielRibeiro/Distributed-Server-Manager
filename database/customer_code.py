@@ -8,7 +8,10 @@ import re
 
 CUSTOMER_CODE_PREFIX = "CLI-"
 CUSTOMER_CODE_WIDTH = 6
-_CUSTOMER_CODE_RE = re.compile(r"^CLI-([1-9][0-9]*)$", re.IGNORECASE)
+# The public format is zero-padded (CLI-000001). Parse the digit payload first
+# and then require an exact round trip through format_customer_code(). This also
+# supports IDs wider than six digits without accepting non-canonical variants.
+_CUSTOMER_CODE_RE = re.compile(r"^CLI-([0-9]+)$", re.IGNORECASE)
 
 
 def format_customer_code(customer_id: int) -> str:
@@ -25,12 +28,14 @@ def format_customer_code(customer_id: int) -> str:
 
 
 def parse_customer_code(value: str) -> int:
-    """Resolve a public `CLI-NNNNNN` code to its numeric Customer PK."""
+    """Resolve one canonical public ``CLI-NNNNNN`` code to its Customer PK."""
     normalized = str(value or "").strip()
     match = _CUSTOMER_CODE_RE.fullmatch(normalized)
     if match is None:
         raise ValueError("invalid customer code")
     numeric_id = int(match.group(1))
+    if numeric_id <= 0:
+        raise ValueError("invalid customer code")
     canonical = format_customer_code(numeric_id)
     if normalized.upper() != canonical:
         raise ValueError("invalid customer code")
