@@ -89,18 +89,29 @@ CREATE TABLE IF NOT EXISTS deleted_instance_backups (
     source_instance_name {medium},
     game_id {ident} NOT NULL,
     runtime_id {ident},
+    agent_id {ident} NOT NULL,
     backup_id {ident},
-    artifact_path {medium} NOT NULL,
+    backup_job_id {ident},
+    transfer_id {ident},
+    remove_command_id {ident},
+    status {short} NOT NULL DEFAULT 'backup_pending',
+    artifact_path {medium},
     size_bytes {bigint},
     sha256 {short},
     manifest_json {json_type},
+    requested_by {ident},
+    last_error {medium},
     created_at {timestamp},
     expires_at {timestamp_null},
     deleted_at {timestamp_null},
-    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+    downloaded_at {timestamp_null},
+    updated_at {timestamp},
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+    FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
 );
 {index} idx_deleted_instance_backups_customer_expiry ON deleted_instance_backups(customer_id,expires_at);
 {index} idx_deleted_instance_backups_source ON deleted_instance_backups(source_instance_id,created_at);
+{index} idx_deleted_instance_backups_status ON deleted_instance_backups(status,created_at);
 """
     return sql.rstrip()+ddl+"\n"
 
