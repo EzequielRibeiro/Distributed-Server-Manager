@@ -62,9 +62,17 @@ def build_runtime_spec(config: dict[str, Any], instance: dict[str, Any], context
 
 
 def migrate_runtime_spec(config: dict[str, Any], record: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """Rebuild a persisted RuntimeSpec when its registered profile is older than the installed profile."""
+    """Rebuild a persisted RuntimeSpec when its registered profile is older than the installed profile.
+
+    Records created before game-profile orchestration may not carry any game/profile
+    identity at all. Those generic B8/B11 records remain valid and are reconciled
+    unchanged; migration only applies once an instance identifies a game profile.
+    """
     if not isinstance(record, dict):
         raise ValueError("runtime record must be an object")
+    if not any(str(record.get(key) or "").strip() for key in ("game_id", "environment_id", "profile")):
+        return record, False
+
     profile = resolve_profile(record)
     current_version = int(getattr(profile, "profile_version", 1))
     stored_version = int(record.get("profile_version") or 1)
