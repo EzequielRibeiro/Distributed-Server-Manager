@@ -94,6 +94,21 @@ class GameRuntimeProfile(ABC):
         """
         return {}
 
+    def upgrade_migration_context(
+        self,
+        record: dict[str, Any],
+        context: dict[str, Any],
+        stored_version: int,
+    ) -> dict[str, Any]:
+        """Repair persisted profile context before rebuilding a newer RuntimeSpec.
+
+        This hook is intentionally separate from ``migration_context`` because modern
+        RuntimeSpecs may already carry ``profile_context``. Profiles can use it to
+        repair a known historical representation without changing correct reserved
+        resources or moving allocation policy into the runtime layer.
+        """
+        return dict(context)
+
     @abstractmethod
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
