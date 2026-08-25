@@ -10,7 +10,7 @@ from backup_repository import BackupRepository
 from controller_session import session_user_from_headers
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 
-AGENT_UPLOAD="/api/agent/artifacts/upload";AGENT_DOWNLOAD="/api/agent/artifacts/download";CUSTOMER_PREFIX="/api/customer/artifacts";CUSTOMER_STATUS=CUSTOMER_PREFIX+"/status";CUSTOMER_DOWNLOAD=CUSTOMER_PREFIX+"/download";CUSTOMER_EXPORT=CUSTOMER_PREFIX+"/backup-export";CUSTOMER_IMPORT=CUSTOMER_PREFIX+"/backup-import";CUSTOMER_UPLOAD=CUSTOMER_PREFIX+"/upload"
+AGENT_UPLOAD="/api/agent/artifacts/upload";AGENT_DOWNLOAD="/api/agent/artifacts/download";CUSTOMER_PREFIX="/api/customer/artifacts";CUSTOMER_STATUS=CUSTOMER_PREFIX+"/status";CUSTOMER_DOWNLOAD=CUSTOMER_PREFIX+"/download";CUSTOMER_EXPORT=CUSTOMER_PREFIX+"/backup-export";CUSTOMER_IMPORT=CUSTOMER_PREFIX+"/backup-import";CUSTOMER_UPLOAD=CUSTOMER_PREFIX+"/upload";CUSTOMER_RESTORE=CUSTOMER_PREFIX+"/restore-import"
 
 def install_artifact_transfer_http(legacy,authenticate):
  previous_get=legacy.DashboardHandler.do_GET;previous_post=legacy.DashboardHandler.do_POST;previous_put=getattr(legacy.DashboardHandler,"do_PUT",None)
@@ -45,6 +45,7 @@ def install_artifact_transfer_http(legacy,authenticate):
   item=repo().get(transfer_id);iid=str(item.get("instance_id") or "")
   if not iid:raise PermissionError("transfer is not attached to an instance")
   workspace().require(user,iid,permission);return item
+ def transfer_view(item):return {k:item.get(k) for k in ("transfer_id","instance_id","direction","purpose","filename","status","size_bytes","transferred_bytes","sha256","last_error","expires_at","destination_ref")}
  def get(self):
   parsed=urlparse(self.path);path=parsed.path
   if path==AGENT_DOWNLOAD:
@@ -61,18 +62,29 @@ def install_artifact_transfer_http(legacy,authenticate):
   if user is None:return self.unauthorized()
   try:
    tid=one(parsed,"transfer_id");item=repo().get(tid);purpose=str(item.get("purpose") or "");permission="backup.restore" if purpose in {"backup_import","backup_clone"} else "backup.download";customer_transfer(user,tid,permission)
-   if path==CUSTOMER_STATUS:return self.send_json(200,{k:item.get(k) for k in ("transfer_id","instance_id","direction","purpose","filename","status","size_bytes","transferred_bytes","sha256","last_error","expires_at","destination_ref")})
+   if path==CUSTOMER_STATUS:return self.send_json(200,transfer_view(item))
    if str(item.get("status"))!="completed" or item.get("direction")!="agent_to_controller":raise FileNotFoundError("artifact not ready")
    artifact,_=repo().controller_artifact(tid);return send_binary(self,artifact,item)
   except PermissionError:return self.send_json(403,{"error":"forbidden"})
   except (KeyError,FileNotFoundError,ValueError):return self.send_json(404,{"error":"artifact_not_ready"})
  def post(self):
   parsed=urlparse(self.path);path=parsed.path
-  if path not in {CUSTOMER_EXPORT,CUSTOMER_IMPORT}:return previous_post(self)
+  if path not in {CUSTOMER_EXPORT,CUSTOMER_IMPORT,CUSTOMER_RESTORE}:return previous_post(self)
   user=actor(self)
   if user is None:return self.unauthorized()
   try:
-   body=self.read_json_body();iid=str(body.get("instance_id") or "").strip();context=workspace().require(user,iid,"backup.download" if path==CUSTOMER_EXPORT else "backup.restore");agent_id=str(context.get("agent_id") or "")
+   body=self.read_json_body()
+   if path==CUSTOMER_RESTORE:
+    tid=str(body.get("transfer_id") or "").strip();item=customer_transfer(user,tid,"backup.restore")
+    if item.get("direction")!="controller_to_agent" or item.get("purpose")!="backup_import":raise ValueError("transfer is not an imported backup")
+    if str(item.get("status") or "")!="completed":raise ValueError("backup transfer is not completed")
+    iid=str(item.get("instance_id") or "");backup_id=str(item.get("destination_ref") or "").strip()
+    if not backup_id:raise ValueError("imported backup identifier is missing")
+    backups=BackupRepository(backend());backups.initialize();existing=next((job for job in backups.list_jobs(instance_id=iid,limit=200) if job.get("action")=="restore" and str(job.get("backup_id") or "")==backup_id and str(job.get("status") or "") in {"pending","running","completed"}),None)
+    job=existing or backups.request(iid,action="restore",backup_id=backup_id,reason="artifact_import",requested_by=str(user.get("username") or ""))
+    return self.send_json(202,{"transfer":transfer_view(item),"restore_job":job,"idempotent":existing is not None})
+   iid=str(body.get("instance_id") or "").strip();context=workspace().require(user,iid,"backup.download" if path==CUSTOMER_EXPORT else "backup.restore");agent_id=str(context.get("agent_id") or "")
+   if not agent_id:raise ValueError("instance has no Agent")
    if path==CUSTOMER_EXPORT:
     backup_id=str(body.get("backup_id") or "").strip();backups=BackupRepository(backend());backups.initialize();job=next((x for x in backups.list_jobs(instance_id=iid,limit=200) if str(x.get("backup_id") or "")==backup_id and x.get("action")=="create" and x.get("status")=="completed"),None)
     if job is None:raise LookupError("completed backup not found")
@@ -81,9 +93,9 @@ def install_artifact_transfer_http(legacy,authenticate):
     filename=Path(str(body.get("filename") or "backup-upload.tar.gz")).name
     if not filename.lower().endswith((".tar",".tar.gz",".tgz")):raise ValueError("unsupported backup archive")
     backup_id="import-"+uuid.uuid4().hex;item=repo().create(agent_id=agent_id,instance_id=iid,customer_id=context.get("customer_id"),direction="controller_to_agent",purpose="backup_import",filename=filename,destination_ref=backup_id,requested_by=str(user.get("username") or ""),ttl_hours=24)
-   return self.send_json(201,{k:item.get(k) for k in ("transfer_id","instance_id","direction","purpose","filename","status","destination_ref","expires_at")})
+   return self.send_json(201,transfer_view(item))
   except PermissionError:return self.send_json(403,{"error":"forbidden"})
-  except (ValueError,LookupError) as exc:return self.send_json(400,{"error":"invalid_request","message":str(exc)})
+  except (KeyError,ValueError,LookupError) as exc:return self.send_json(400,{"error":"invalid_request","message":str(exc)})
  def put(self):
   parsed=urlparse(self.path);path=parsed.path
   if path==AGENT_UPLOAD:
@@ -102,10 +114,11 @@ def install_artifact_transfer_http(legacy,authenticate):
   if user is None:return self.unauthorized()
   try:
    tid=one(parsed,"transfer_id");item=customer_transfer(user,tid,"backup.restore")
-   if item.get("direction")!="controller_to_agent":raise ValueError("invalid upload transfer direction")
-   saved=repo().stage_from_controller(tid,self.rfile,content_length(self));return self.send_json(201,{"transfer_id":tid,"status":saved.get("status"),"size_bytes":saved.get("size_bytes"),"sha256":saved.get("sha256"),"destination_ref":saved.get("destination_ref")})
+   if item.get("direction")!="controller_to_agent" or item.get("purpose")!="backup_import":raise ValueError("invalid upload transfer direction")
+   if str(item.get("status") or "") not in {"queued"}:raise ValueError("artifact upload is not pending")
+   saved=repo().stage_from_controller(tid,self.rfile,content_length(self));return self.send_json(201,transfer_view(saved))
   except PermissionError:return self.send_json(403,{"error":"forbidden"})
   except (KeyError,ValueError) as exc:return self.send_json(400,{"error":"invalid_transfer","message":str(exc)})
  legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post;legacy.DashboardHandler.do_PUT=put
 
-__all__=["AGENT_UPLOAD","AGENT_DOWNLOAD","CUSTOMER_PREFIX","install_artifact_transfer_http"]
+__all__=["AGENT_UPLOAD","AGENT_DOWNLOAD","CUSTOMER_PREFIX","CUSTOMER_RESTORE","install_artifact_transfer_http"]
