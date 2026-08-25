@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Catalog architecture stages 5-10 and telemetry composition layer."""
+"""Catalog architecture stages 5-10, Customer Workspace and final audit layer."""
 from __future__ import annotations
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -8,6 +8,8 @@ import server_part16 as integration
 from catalog_runtime_policy_http import RUNTIME_POLICY_PATH, dispatch_catalog_runtime_policy_get, dispatch_catalog_runtime_policy_put
 from controller_telemetry import controller_telemetry
 from customer_instance_creation import install_customer_instance_creation
+from customer_instance_team_http import install_customer_instance_team
+from customer_instance_workspace_http import install_customer_instance_workspace
 from customer_management_http import install_customer_management_dashboard
 from dashboard_activity_http import install_dashboard_activity_audit
 from json_serialization import normalize_json_value
@@ -30,7 +32,6 @@ legacy.STATIC_FILES.update({
 
 
 def json_safe_send_json(self, code, payload):
-    """Serialize DB-native dates consistently across supported backends."""
     return _previous_send_json(self, code, normalize_json_value(payload))
 
 
@@ -41,10 +42,8 @@ def _controller_telemetry_get(self, parsed):
     if str(user.get("role") or "").lower() not in {"admin", "controller"}:
         self.send_json(403, {"error": "forbidden"}); return
     values = parse_qs(parsed.query or "")
-    try:
-        window = int((values.get("window_seconds") or ["3600"])[0])
-    except ValueError:
-        window = 3600
+    try: window = int((values.get("window_seconds") or ["3600"])[0])
+    except ValueError: window = 3600
     self.send_json(200, controller_telemetry(window))
 
 
@@ -70,8 +69,7 @@ def catalog_architecture_put(self):
     user = _authenticate(self.headers)
     if user is None:
         self.unauthorized(); return
-    try:
-        payload = self.read_json_body()
+    try: payload = self.read_json_body()
     except ValueError:
         self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."}); return
     status, body = dispatch_catalog_runtime_policy_put(parsed.path, payload, user=user, root=_ROOT)
@@ -81,8 +79,10 @@ legacy.DashboardHandler.send_json = json_safe_send_json
 legacy.DashboardHandler.do_GET = catalog_architecture_get
 legacy.DashboardHandler.do_PUT = catalog_architecture_put
 install_system_user_administration(legacy, _authenticate)
-# Must be installed last so all Dashboard pages and human-facing APIs are
-# automatically covered, including modules added by future composition layers.
+# Workspace modules are installed before the audit wrapper so their page/API
+# activity is covered by the same Admin-only audit trail as the rest of the UI.
+install_customer_instance_workspace(legacy, _authenticate)
+install_customer_instance_team(legacy, _authenticate)
 install_dashboard_activity_audit(legacy, _authenticate)
 
 
