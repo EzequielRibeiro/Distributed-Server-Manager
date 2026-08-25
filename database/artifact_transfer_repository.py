@@ -10,7 +10,10 @@ from alert_repository import AlertSession,dialect_for_backend
 
 FINAL={"completed","failed","cancelled","expired"};ACTIVE={"queued","delivered","transferring"}
 class ArtifactTransferRepository:
- def __init__(self,backend,root:Path):self.backend=backend;self.dialect=dialect_for_backend(backend);self.root=Path(root);self.spool=(self.root/"runtime"/"artifact-transfers").resolve()
+ def __init__(self,backend,root:Path):
+  self.backend=backend;self.dialect=dialect_for_backend(backend);candidate=Path(root)
+  if str(candidate) in {"","."}:candidate=Path(__file__).resolve().parents[1]
+  self.root=candidate.resolve();self.spool=(self.root/"runtime"/"artifact-transfers").resolve();self.spool.relative_to(self.root)
  @contextmanager
  def session(self,transaction=False):
   context=self.backend.transaction() if transaction else self.backend.connect()
