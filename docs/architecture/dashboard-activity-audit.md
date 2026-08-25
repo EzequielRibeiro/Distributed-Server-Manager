@@ -53,6 +53,14 @@ Cada atividade contém, quando aplicável:
 - `details_json` — detalhes estruturados não sensíveis;
 - `created_at` — timestamp do banco.
 
+## Ciclo da sessão
+
+O login gera `LOGIN`, cria a sessão normal do Controller e correlaciona o evento ao identificador seguro derivado da sessão. Navegações HTML são identificadas pelo cookie de sessão; APIs também podem usar a autenticação Basic existente durante a transição do modelo de autenticação.
+
+O botão **Sair** chama `/api/auth/logout`, revoga a sessão no servidor, expira o cookie e gera `LOGOUT`. O token real da sessão nunca é armazenado na auditoria.
+
+Fechar o navegador, perder a rede ou deixar a sessão expirar não deve ser falsamente registrado como `LOGOUT`, pois não houve essa ação do usuário. Uma futura persistência explícita do ciclo de vida das sessões poderá produzir `SESSION_EXPIRED` separadamente.
+
 ## Mapeamento das funcionalidades
 
 ### Autenticação e sessão — `authentication`
