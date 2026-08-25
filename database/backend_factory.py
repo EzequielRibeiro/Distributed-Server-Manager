@@ -3,19 +3,9 @@
 
 from __future__ import annotations
 
-from backend import (
-    DatabaseBackend,
-    DatabaseConfig,
-    DatabaseConfigurationError,
-)
+from backend import DatabaseBackend, DatabaseConfig, DatabaseConfigurationError
 
-
-SUPPORTED_DATABASE_DRIVERS = (
-    "sqlite",
-    "postgresql",
-    "mysql",
-)
-
+SUPPORTED_DATABASE_DRIVERS = ("sqlite", "postgresql", "mysql")
 
 DATABASE_DRIVER_ALIASES = {
     "sqlite3": "sqlite",
@@ -26,47 +16,24 @@ DATABASE_DRIVER_ALIASES = {
 
 
 def normalize_database_driver(driver: str) -> str:
-    """Return the canonical Capivara database driver name."""
-
     if not isinstance(driver, str):
-        raise DatabaseConfigurationError(
-            "database driver must be a string"
-        )
-
+        raise DatabaseConfigurationError("database driver must be a string")
     normalized = driver.strip().lower()
-
     if not normalized:
-        raise DatabaseConfigurationError(
-            "database driver is required"
-        )
-
-    normalized = DATABASE_DRIVER_ALIASES.get(
-        normalized,
-        normalized,
-    )
-
+        raise DatabaseConfigurationError("database driver is required")
+    normalized = DATABASE_DRIVER_ALIASES.get(normalized, normalized)
     if normalized not in SUPPORTED_DATABASE_DRIVERS:
         raise DatabaseConfigurationError(
             "unsupported database driver: "
-            f"{driver}. Supported drivers: "
-            + ", ".join(SUPPORTED_DATABASE_DRIVERS)
+            f"{driver}. Supported drivers: " + ", ".join(SUPPORTED_DATABASE_DRIVERS)
         )
-
     return normalized
 
 
-def canonicalize_database_config(
-    config: DatabaseConfig,
-) -> DatabaseConfig:
-    """Return a config using the canonical driver name."""
-
-    normalized_driver = normalize_database_driver(
-        config.driver
-    )
-
+def canonicalize_database_config(config: DatabaseConfig) -> DatabaseConfig:
+    normalized_driver = normalize_database_driver(config.driver)
     if normalized_driver == config.driver:
         return config
-
     return DatabaseConfig(
         driver=normalized_driver,
         database=config.database,
@@ -79,39 +46,27 @@ def canonicalize_database_config(
     )
 
 
-def create_backend(
-    config: DatabaseConfig,
-) -> DatabaseBackend:
-    """Instantiate the configured Capivara database backend."""
-
+def create_backend(config: DatabaseConfig) -> DatabaseBackend:
+    """Instantiate the configured migration-free Baseline v2 backend."""
     config = canonicalize_database_config(config)
-
     if config.driver == "sqlite":
-        from backends.sqlite_backend import SQLiteBackend
+        from backends.baseline_sqlite_backend import BaselineSQLiteBackend
 
-        return SQLiteBackend(config)
-
+        return BaselineSQLiteBackend(config)
     if config.driver == "postgresql":
         try:
-            from backends.postgresql_backend import PostgreSQLBackend
+            from backends.baseline_postgresql_backend import BaselinePostgreSQLBackend
         except ImportError as exc:
             raise DatabaseConfigurationError(
                 "PostgreSQL backend is not installed yet"
             ) from exc
-
-        return PostgreSQLBackend(config)
-
+        return BaselinePostgreSQLBackend(config)
     if config.driver == "mysql":
         try:
-            from backends.mysql_backend import MySQLBackend
+            from backends.baseline_mysql_backend import BaselineMySQLBackend
         except ImportError as exc:
             raise DatabaseConfigurationError(
                 "MySQL/MariaDB backend is not installed yet"
             ) from exc
-
-        return MySQLBackend(config)
-
-    # normalize_database_driver() prevents this branch.
-    raise DatabaseConfigurationError(
-        f"unsupported database driver: {config.driver}"
-    )
+        return BaselineMySQLBackend(config)
+    raise DatabaseConfigurationError(f"unsupported database driver: {config.driver}")
