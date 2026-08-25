@@ -141,10 +141,10 @@ class RuntimeHealthProjectionTest(unittest.TestCase):
         status, _ = dispatch_heartbeat({"agent_id": "agent-b12"}, headers=self.headers, backend=self.backend)
         self.assertEqual(status, 200)
         with self.backend.transaction() as connection:
-            connection.execute("INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)", ("customer-b12", self.controller_id, "Customer", "active"))
+            connection.execute("INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)", (1, self.controller_id, "Customer", "active"))
             connection.execute(
                 "INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,controller_id,agent_id,customer_id) VALUES (?,?,?,?,?,?,?,?,?)",
-                ("instance-b12", "node-b12", "dayz", "dayz.stable", "Instance B12", "offline", self.controller_id, "agent-b12", "customer-b12"),
+                ("instance-b12", "node-b12", "dayz", "dayz.stable", "Instance B12", "offline", self.controller_id, "agent-b12", 1),
             )
         self.repo = AgentInstanceRuntimeHealthRepository(self.backend)
         self.repo.initialize()
