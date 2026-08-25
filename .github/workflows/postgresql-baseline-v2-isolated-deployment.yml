@@ -6,6 +6,7 @@ on:
       - 'database/**'
       - 'dashboard/**'
       - 'tests/postgresql_baseline_v2_isolated_deployment_test.py'
+      - 'tests/baseline_v2_customer_scope_join_test.py'
       - '.github/workflows/postgresql-baseline-v2-isolated-deployment.yml'
   workflow_dispatch:
 
@@ -47,6 +48,8 @@ jobs:
         run: |
           printf '%s\n' 'capivara_test_password' > /tmp/capivara-postgres-test-password
           chmod 600 /tmp/capivara-postgres-test-password
+      - name: Validate numeric Customer join contract
+        run: python3 -m unittest tests/baseline_v2_customer_scope_join_test.py
       - name: Run destructive isolated Baseline v2 bootstrap
         run: python3 tests/postgresql_baseline_v2_isolated_deployment_test.py
       - name: Run Customer Workspace v2 contract tests
