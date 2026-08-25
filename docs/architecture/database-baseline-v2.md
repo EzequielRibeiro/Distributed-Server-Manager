@@ -25,6 +25,48 @@ Examples:
 
 Deleted numeric keys are not reused. Consequently, deleted public Customer codes are not reused.
 
+## Customer billing contract
+
+Billing identity is external metadata linked to a Capivara Customer; it is never the Customer primary key.
+
+- `billing_provider`: normalized provider identifier such as `stripe`, `asaas` or `mercadopago`.
+- `billing_customer_id`: immutable customer identifier assigned by that external provider.
+- `billing_status`: normalized integration/billing state.
+- `billing_synced_at`: last successful synchronization timestamp.
+- `(billing_provider, billing_customer_id)` is unique when both values are present.
+
+A Customer may exist without external billing. When billing is supplied during registration, `billing_provider` and `billing_customer_id` are an atomic pair: partial billing identity is invalid. The canonical application layer validates the pair before the Customer INSERT, and the database unique constraint is the final protection against linking one external billing Customer to multiple Capivara Customers.
+
+Customer creation therefore has two supported forms:
+
+```text
+administrative customer
+    -> database allocates customers.id
+    -> Capivara exposes CLI-NNNNNN
+    -> no external billing identity
+```
+
+```text
+commercial/billing customer
+    -> billing system submits provider + external customer id
+    -> database allocates customers.id
+    -> Capivara exposes CLI-NNNNNN
+    -> external billing identity is stored in the same Customer registration
+```
+
+External APIs should return the Capivara public identity separately from billing identity:
+
+```json
+{
+  "customer_code": "CLI-000027",
+  "billing": {
+    "provider": "stripe",
+    "customer_id": "cus_ABC123",
+    "status": "active"
+  }
+}
+```
+
 ## Canonical Customer table
 
 ### PostgreSQL
@@ -63,7 +105,15 @@ CREATE TABLE customers (
     CONSTRAINT fk_customers_controller
         FOREIGN KEY (controller_id)
         REFERENCES controllers(id)
-        ON DELETE RESTRICT
+        ON DELETE RESTRICT,
+    CONSTRAINT ck_customers_billing_identity
+        CHECK (
+            (billing_provider IS NULL AND billing_customer_id IS NULL)
+            OR
+            (billing_provider IS NOT NULL AND billing_customer_id IS NOT NULL)
+        ),
+    CONSTRAINT uq_customers_billing_identity
+        UNIQUE (billing_provider, billing_customer_id)
 );
 ```
 
@@ -104,18 +154,19 @@ The files below are authoritative complete-schema snapshots, not migration histo
 
 They must not contain historical markers such as `source: 003_...`, `Migration 014`, or a chain of `ALTER TABLE` statements whose only purpose is reconstructing an old release sequence. A table should be declared once in its final form whenever dependency ordering permits it.
 
-`dsm database init` applies the complete backend schema to an empty database. `dsm database migrate` remains only an idempotent schema-validation alias and does not support upgrading historical database layouts.
+`dsm database init` applies the complete backend schema to an empty database. Historical database upgrades are not part of this baseline contract.
 
 ## Implementation sequence
 
 1. Introduce the numeric Customer identity contract and Customer-code helpers.
-2. Rebuild Customer-related definitions in all four canonical schemas.
-3. Convert all Customer foreign keys to numeric keys.
-4. Update repositories to accept public Customer codes at external boundaries and resolve them internally.
-5. Remove the editable Customer ID field from the Dashboard and API create payloads.
-6. Rebuild all four schema files as clean final snapshots with no historical migration narrative.
-7. Update schema parity checks and tests for PostgreSQL, SQLite, MySQL and MariaDB.
-8. Validate a clean install and the full Customer -> Contract -> Instance lifecycle.
+2. Introduce provider-neutral Customer billing identity validation.
+3. Rebuild Customer-related definitions in all four canonical schemas.
+4. Convert all Customer foreign keys to numeric keys.
+5. Update repositories to accept public Customer codes at external boundaries and resolve them internally.
+6. Remove the editable Customer ID field from the Dashboard and API create payloads.
+7. Rebuild all four schema files as clean final snapshots with no historical migration narrative.
+8. Update schema parity checks and tests for PostgreSQL, SQLite, MySQL and MariaDB.
+9. Validate a clean install and the full Customer -> Billing -> Contract -> Instance lifecycle.
 
 ## Compatibility policy
 
