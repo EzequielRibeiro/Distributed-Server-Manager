@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
-"""Transport-neutral customer self-service API logic.
-
-HTTP routing remains a thin adapter in dashboard/server.py; business rules live here.
-"""
+"""Transport-neutral Customer self-service API logic."""
 from __future__ import annotations
 
 from typing import Any, Callable
 
 from customer_account_service import may_manage_members, normalize_registration, permissions_for
+from customer_reference import resolve_customer_reference
 
 
-def require_customer(user: dict[str, Any] | None) -> tuple[str, str]:
-    if not user or user.get("role") != "customer" or not user.get("scope_id"):
+def require_customer(user: dict[str, Any] | None) -> tuple[str, int]:
+    if not user or user.get("role") != "customer":
         raise PermissionError("customer authentication required")
-    return str(user["username"]), str(user["scope_id"])
+    raw_id = user.get("customer_id")
+    if raw_id is not None:
+        customer_id = resolve_customer_reference(raw_id)
+    else:
+        raw_code = user.get("customer_code") or user.get("scope_id")
+        if not raw_code:
+            raise PermissionError("customer authentication required")
+        customer_id = resolve_customer_reference(raw_code, public_only=True)
+    return str(user["username"]), customer_id
 
 
 def member_capabilities(account_role: str) -> dict[str, Any]:
@@ -24,7 +30,9 @@ def member_capabilities(account_role: str) -> dict[str, Any]:
     }
 
 
-def registration_payload(payload: dict[str, Any], normalize_email: Callable[[str], str]) -> dict[str, str]:
+def registration_payload(
+    payload: dict[str, Any], normalize_email: Callable[[str], str]
+) -> dict[str, str]:
     request = normalize_registration(payload)
     password = str(payload.get("password", ""))
     if len(password) < 8:
