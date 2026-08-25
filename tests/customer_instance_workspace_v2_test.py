@@ -51,7 +51,9 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   linux=(ROOT/"release/build_agent_package.sh").read_text(encoding="utf-8")
   windows=(ROOT/"release/build_windows_agent_package.py").read_text(encoding="utf-8")
   self.assertIn("artifact_transfer_client.py",linux)
-  self.assertIn('runtime_dir.glob("*.py")',windows)
+  self.assertIn('_runtime_sources(ref)',windows)
+  self.assertIn('"agents/windows/runtime"',windows)
+  self.assertIn('source.endswith(".py")',windows)
  def test_artifact_http_requires_completed_import_before_restore(self):
   text=(ROOT/"dashboard/artifact_transfer_http.py").read_text(encoding="utf-8")
   self.assertIn('CUSTOMER_RESTORE=CUSTOMER_PREFIX+"/restore-import"',text)
