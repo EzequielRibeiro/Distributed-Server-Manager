@@ -57,6 +57,21 @@ class SystemUserRepository:
             finally:
                 session.close()
 
+    def _administrator_counts(self, session: AlertSession) -> tuple[int, int]:
+        active_literal = "TRUE" if self.backend.name == "postgresql" else "1"
+        if self.backend.name in {"postgresql", "mysql", "mariadb"}:
+            session.execute(
+                "SELECT username FROM dashboard_users WHERE role='admin' FOR UPDATE"
+            ).fetchall()
+        total = session.execute(
+            "SELECT COUNT(*) AS total FROM dashboard_users WHERE role='admin'"
+        ).fetchone()
+        active = session.execute(
+            "SELECT COUNT(*) AS total FROM dashboard_users "
+            f"WHERE role='admin' AND active={active_literal}"
+        ).fetchone()
+        return int(total["total"] or 0), int(active["total"] or 0)
+
     def list_users(self) -> list[dict[str, Any]]:
         self.initialize()
         with self.session() as session:
@@ -126,9 +141,17 @@ class SystemUserRepository:
             if duplicate_email is not None:
                 raise ValueError("e-mail corporativo já cadastrado")
             current = session.execute(
-                f"SELECT username,created_by FROM dashboard_users WHERE username={ph}",
+                f"SELECT username,role,active,created_by FROM dashboard_users WHERE username={ph}",
                 (username,),
             ).fetchone()
+            if current is not None and str(current["role"] or "").lower() == "admin":
+                total_admins, active_admins = self._administrator_counts(session)
+                removing_admin_role = role != "admin"
+                disabling_active_admin = bool(current["active"]) and not bool(active)
+                if removing_admin_role and total_admins <= 1:
+                    raise ValueError("o último administrador não pode perder o perfil Admin")
+                if bool(current["active"]) and (removing_admin_role or disabling_active_admin) and active_admins <= 1:
+                    raise ValueError("o último administrador ativo não pode ser desativado ou rebaixado")
             now = self.dialect.current_timestamp
             if current is None:
                 session.execute(
@@ -169,11 +192,10 @@ class SystemUserRepository:
             if row is None or str(row["role"] or "").lower() not in SYSTEM_ROLES:
                 raise ValueError("usuário do sistema não encontrado")
             if str(row["role"] or "").lower() == "admin":
-                count = session.execute(
-                    "SELECT COUNT(*) AS total FROM dashboard_users "
-                    "WHERE role='admin' AND active=" + ("TRUE" if self.backend.name == "postgresql" else "1")
-                ).fetchone()
-                if bool(row["active"]) and int(count["total"] or 0) <= 1:
+                total_admins, active_admins = self._administrator_counts(session)
+                if total_admins <= 1:
+                    raise ValueError("o último administrador do sistema não pode ser excluído")
+                if bool(row["active"]) and active_admins <= 1:
                     raise ValueError("o último administrador ativo não pode ser excluído")
             session.execute(f"DELETE FROM dashboard_users WHERE username={ph}", (username,))
 
