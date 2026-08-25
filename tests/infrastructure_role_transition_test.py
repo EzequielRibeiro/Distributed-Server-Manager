@@ -42,23 +42,28 @@ class ControllerToHybridTransitionTest(unittest.TestCase):
         self.agent_id = "agent-horizon-server"
 
         with self.backend.transaction() as connection:
-            connection.execute(
-                "INSERT INTO customers(id,controller_id,name,status,metadata_json) "
-                "VALUES (?,?,?,?,?)",
+            cursor = connection.execute(
+                "INSERT INTO customers(controller_id,name,status,metadata_json) "
+                "VALUES (?,?,?,?)",
                 (
-                    "customer-preserved",
                     self.controller_id,
                     "Customer Preserved",
                     "active",
                     "{}",
                 ),
             )
+            self.customer_id = int(cursor.lastrowid)
+            customer = connection.execute(
+                "SELECT customer_code FROM customers WHERE id=?",
+                (self.customer_id,),
+            ).fetchone()
+            self.customer_code = str(customer["customer_code"])
             connection.execute(
                 "INSERT INTO service_contracts(id,customer_id,game_id,status,instance_limit,metadata_json) "
                 "VALUES (?,?,?,?,?,?)",
                 (
                     "contract-preserved",
-                    "customer-preserved",
+                    self.customer_id,
                     "dayz",
                     "active",
                     1,
@@ -108,8 +113,8 @@ class ControllerToHybridTransitionTest(unittest.TestCase):
             (self.agent_id,),
         )
         customer = self._one(
-            "SELECT id,controller_id,status FROM customers WHERE id=?",
-            ("customer-preserved",),
+            "SELECT id,customer_code,controller_id,status FROM customers WHERE id=?",
+            (self.customer_id,),
         )
         contract = self._one(
             "SELECT id,customer_id,status FROM service_contracts WHERE id=?",
@@ -121,7 +126,8 @@ class ControllerToHybridTransitionTest(unittest.TestCase):
         self.assertEqual(agent["controller_id"], self.controller_id)
         self.assertEqual(agent["node_id"], self.node_id)
         self.assertEqual(customer["controller_id"], self.controller_id)
-        self.assertEqual(contract["customer_id"], "customer-preserved")
+        self.assertEqual(customer["customer_code"], self.customer_code)
+        self.assertEqual(int(contract["customer_id"]), self.customer_id)
 
     def test_transition_is_idempotent(self):
         first = self._promote()
