@@ -2,9 +2,9 @@
 """Database schema extension for Customer Instance Workspace v2.
 
 The workspace schema is appended to the migration-free Baseline v2 for every
-supported backend.  It intentionally stores policy, granular grants, telemetry,
-console commands and commercial profile-change state in the database instead
-of creating parallel JSON sources of truth.
+supported backend. It stores policy, granular grants, telemetry, console
+commands and commercial profile-change state in the database instead of
+creating parallel JSON sources of truth.
 """
 from __future__ import annotations
 
@@ -18,32 +18,32 @@ def ensure_instance_workspace_schema(sql: str, backend: str) -> str:
         ident = "VARCHAR(191)"
         short = "VARCHAR(128)"
         medium = "VARCHAR(512)"
-        boolean = "TINYINT NOT NULL DEFAULT 0"
         timestamp = "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"
         timestamp_null = "TIMESTAMP NULL"
         json_type = "LONGTEXT"
         bigint = "BIGINT"
         auto_id = "BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY"
+        index = "CREATE INDEX"
     elif backend == "postgresql":
         ident = "TEXT"
         short = "TEXT"
         medium = "TEXT"
-        boolean = "BOOLEAN NOT NULL DEFAULT FALSE"
         timestamp = "TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP"
         timestamp_null = "TIMESTAMPTZ"
         json_type = "TEXT"
         bigint = "BIGINT"
         auto_id = "BIGSERIAL PRIMARY KEY"
+        index = "CREATE INDEX IF NOT EXISTS"
     else:
         ident = "TEXT"
         short = "TEXT"
         medium = "TEXT"
-        boolean = "INTEGER NOT NULL DEFAULT 0 CHECK ({name} IN (0,1))"
         timestamp = "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
         timestamp_null = "TEXT"
         json_type = "TEXT"
         bigint = "INTEGER"
         auto_id = "INTEGER PRIMARY KEY AUTOINCREMENT"
+        index = "CREATE INDEX IF NOT EXISTS"
 
     def bool_col(name: str, default: bool = False) -> str:
         if backend == "postgresql":
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS instance_permission_grants (
     FOREIGN KEY (instance_id) REFERENCES instances(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_instance_permission_grants_instance
+{index} idx_instance_permission_grants_instance
     ON instance_permission_grants(instance_id, username);
 
 CREATE TABLE IF NOT EXISTS instance_workspace_policy (
@@ -117,9 +117,9 @@ CREATE TABLE IF NOT EXISTS contract_change_requests (
     FOREIGN KEY (instance_id) REFERENCES instances(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_contract_change_instance_status
+{index} idx_contract_change_instance_status
     ON contract_change_requests(instance_id, status, requested_at);
-CREATE INDEX IF NOT EXISTS idx_contract_change_customer_status
+{index} idx_contract_change_customer_status
     ON contract_change_requests(customer_id, status, requested_at);
 
 CREATE TABLE IF NOT EXISTS instance_console_commands (
@@ -139,9 +139,9 @@ CREATE TABLE IF NOT EXISTS instance_console_commands (
     FOREIGN KEY (instance_id) REFERENCES instances(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_instance_console_agent_status
+{index} idx_instance_console_agent_status
     ON instance_console_commands(agent_id, status, created_at);
-CREATE INDEX IF NOT EXISTS idx_instance_console_instance_created
+{index} idx_instance_console_instance_created
     ON instance_console_commands(instance_id, created_at);
 
 CREATE TABLE IF NOT EXISTS instance_console_output (
@@ -153,7 +153,7 @@ CREATE TABLE IF NOT EXISTS instance_console_output (
     FOREIGN KEY (instance_id) REFERENCES instances(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_instance_console_output_instance
+{index} idx_instance_console_output_instance
     ON instance_console_output(instance_id, created_at);
 
 CREATE TABLE IF NOT EXISTS instance_telemetry_samples (
@@ -171,7 +171,7 @@ CREATE TABLE IF NOT EXISTS instance_telemetry_samples (
     FOREIGN KEY (instance_id) REFERENCES instances(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_instance_telemetry_instance_sampled
+{index} idx_instance_telemetry_instance_sampled
     ON instance_telemetry_samples(instance_id, sampled_at);
 """
     return sql.rstrip() + ddl + "\n"
