@@ -6,9 +6,8 @@ on:
       - 'core/event_platform.py'
       - 'database/universal_event_repository.py'
       - 'database/universal_events_cli.py'
-      - 'database/migrations/**'
-      - 'database/migrations_mysql/**'
-      - 'database/migrations_postgresql/**'
+      - 'database/schemas/**'
+      - 'database/schema_baseline.py'
       - 'agents/linux/runtime/runtime_events.py'
       - 'agents/linux/runtime/agent.py'
       - 'dashboard/agent_heartbeat_api.py'
@@ -21,23 +20,6 @@ on:
       - '.github/workflows/universal-event-platform.yml'
   push:
     branches: [main]
-    paths:
-      - 'core/event_platform.py'
-      - 'database/universal_event_repository.py'
-      - 'database/universal_events_cli.py'
-      - 'database/migrations/**'
-      - 'database/migrations_mysql/**'
-      - 'database/migrations_postgresql/**'
-      - 'agents/linux/runtime/runtime_events.py'
-      - 'agents/linux/runtime/agent.py'
-      - 'dashboard/agent_heartbeat_api.py'
-      - 'dashboard/universal_event_api.py'
-      - 'dashboard/universal_event_http.py'
-      - 'dashboard/server_part13.py'
-      - 'bin/cap'
-      - 'tests/universal_event_platform_test.py'
-      - 'tests/universal_event_http_test.py'
-      - '.github/workflows/universal-event-platform.yml'
 
 permissions:
   contents: read
@@ -51,26 +33,17 @@ jobs:
       - name: Validate syntax
         run: |
           bash -n bin/cap
-          python3 -m py_compile \
-            core/event_platform.py \
-            database/universal_event_repository.py \
-            database/universal_events_cli.py \
-            agents/linux/runtime/runtime_events.py \
-            agents/linux/runtime/agent.py \
-            dashboard/agent_heartbeat_api.py \
-            dashboard/universal_event_api.py \
-            dashboard/universal_event_http.py \
-            dashboard/server_part13.py \
-            tests/universal_event_platform_test.py \
-            tests/universal_event_http_test.py
-      - name: Validate migration parity
+          python3 -m py_compile core/event_platform.py database/universal_event_repository.py database/universal_events_cli.py agents/linux/runtime/runtime_events.py agents/linux/runtime/agent.py dashboard/agent_heartbeat_api.py dashboard/universal_event_api.py dashboard/universal_event_http.py dashboard/server_part13.py tests/universal_event_platform_test.py tests/universal_event_http_test.py
+      - name: Validate Database Baseline v2 parity
         run: |
-          for directory in migrations migrations_mysql migrations_postgresql; do
-            test -f "database/${directory}/032_universal_events.sql"
-            grep -F 'CREATE TABLE universal_events' "database/${directory}/032_universal_events.sql"
-            grep -F 'event_id' "database/${directory}/032_universal_events.sql"
-            grep -F 'correlation_id' "database/${directory}/032_universal_events.sql"
-          done
+          PYTHONPATH=database python3 - <<'PY'
+          from schema_baseline import load_schema_baseline
+          for backend in ("sqlite", "postgresql", "mysql", "mariadb"):
+              sql = load_schema_baseline(backend).sql
+              assert "CREATE TABLE universal_events" in sql
+              assert "event_id" in sql
+              assert "correlation_id" in sql
+          PY
       - name: Run Universal Event Platform tests
         run: |
           python3 -m unittest tests/universal_event_platform_test.py
