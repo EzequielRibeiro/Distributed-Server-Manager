@@ -3,67 +3,53 @@
 
 from pathlib import Path
 import re
-
-import pytest
-
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMAS = ROOT / "database" / "schemas"
-BACKENDS = ("postgresql.sql", "sqlite.sql", "mysql.sql", "mariadb.sql")
+DATABASE = ROOT / "database"
+if str(DATABASE) not in sys.path:
+    sys.path.insert(0, str(DATABASE))
 
+from schema_baseline import load_schema_baseline, schema_path
+
+BACKENDS = ("postgresql", "sqlite", "mysql", "mariadb")
 HISTORICAL_SOURCE = re.compile(r"--\s*source:\s*[0-9]{3}_", re.IGNORECASE)
 HISTORICAL_MIGRATION = re.compile(r"\bmigration\s+[0-9]{3}\b", re.IGNORECASE)
 
 
-def _sql(name: str) -> str:
-    return (SCHEMAS / name).read_text(encoding="utf-8")
+def _sql(backend: str) -> str:
+    return load_schema_baseline(backend).sql
 
 
-def test_baseline_files_exist():
-    for name in BACKENDS:
-        path = SCHEMAS / name
-        assert path.is_file(), name
-        assert path.stat().st_size > 0, name
+def test_baseline_source_files_exist():
+    for backend in BACKENDS:
+        path = schema_path(backend)
+        assert path.is_file(), backend
+        assert path.stat().st_size > 0, backend
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="exit criterion: rewrite all four schemas as migration-free baselines",
-)
-def test_final_baselines_must_not_carry_historical_source_markers():
+def test_runtime_baselines_do_not_carry_historical_migration_narrative():
     offenders = []
-    for name in BACKENDS:
-        sql = _sql(name)
+    for backend in BACKENDS:
+        sql = _sql(backend)
         if HISTORICAL_SOURCE.search(sql) or HISTORICAL_MIGRATION.search(sql):
-            offenders.append(name)
-    assert not offenders, (
-        "Database Baseline v2 still contains historical migration narrative: "
-        + ", ".join(offenders)
-    )
+            offenders.append(backend)
+        if "schema_migrations" in sql.lower():
+            offenders.append(backend + ":schema_migrations")
+    assert not offenders, ", ".join(offenders)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="exit criterion: customers must be declared directly in final shape",
-)
-def test_customer_table_is_created_in_final_shape_once():
+def test_customers_are_declared_once_in_final_shape():
     offenders = []
-    for name in BACKENDS:
-        sql = _sql(name).lower()
+    for backend in BACKENDS:
+        sql = _sql(backend).lower()
         create_count = len(re.findall(r"create\s+table\s+customers\b", sql))
         alters = len(re.findall(r"alter\s+table\s+customers\b", sql))
         if create_count != 1 or alters != 0:
-            offenders.append(f"{name}(create={create_count}, alter={alters})")
-    assert not offenders, (
-        "customers must be declared once in final shape with no historical ALTERs: "
-        + ", ".join(offenders)
-    )
+            offenders.append(f"{backend}(create={create_count}, alter={alters})")
+    assert not offenders, ", ".join(offenders)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="exit criterion: Customer v2 fields must exist in every backend baseline",
-)
 def test_customer_baseline_contract_tokens():
     required = (
         "customer_code",
@@ -74,21 +60,43 @@ def test_customer_baseline_contract_tokens():
         "billing_customer_id",
         "billing_status",
         "billing_synced_at",
+        "customer_password_state",
     )
-    for name in BACKENDS:
-        sql = _sql(name).lower()
+    for backend in BACKENDS:
+        sql = _sql(backend).lower()
         for token in required:
-            assert token in sql, f"{name} missing {token}"
+            assert token in sql, f"{backend} missing {token}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="exit criterion: billing provider/customer identity must be unique in every backend",
-)
-def test_billing_identity_has_composite_uniqueness():
-    for name in BACKENDS:
-        normalized = re.sub(r"\s+", " ", _sql(name).lower())
+def test_customer_relational_keys_are_numeric():
+    for backend in BACKENDS:
+        sql = _sql(backend)
+        declarations = re.findall(
+            r"\bcustomer_id\s+(BIGINT|INTEGER|TEXT|VARCHAR\s*\([^)]*\)|CHAR\s*\([^)]*\))",
+            sql,
+            re.IGNORECASE,
+        )
+        assert declarations, f"{backend} has no customer_id declarations"
+        expected = "INTEGER" if backend == "sqlite" else "BIGINT"
+        assert {item.upper() for item in declarations} == {expected}, (
+            backend,
+            declarations,
+        )
+
+
+def test_billing_identity_has_composite_uniqueness_and_atomic_pair_check():
+    for backend in BACKENDS:
+        normalized = re.sub(r"\s+", " ", _sql(backend).lower())
         assert re.search(
             r"unique\s*\(\s*billing_provider\s*,\s*billing_customer_id\s*\)",
             normalized,
-        ), f"{name} missing unique billing identity constraint"
+        ), f"{backend} missing unique billing identity constraint"
+        assert "ck_customers_billing_pair" in normalized
+
+
+def test_dashboard_customer_scope_has_typed_fk():
+    for backend in BACKENDS:
+        normalized = re.sub(r"\s+", " ", _sql(backend).lower())
+        expected = "integer" if backend == "sqlite" else "bigint"
+        assert re.search(rf"customer_id\s+{expected}\b", normalized)
+        assert "fk_dashboard_users_customer" in normalized
