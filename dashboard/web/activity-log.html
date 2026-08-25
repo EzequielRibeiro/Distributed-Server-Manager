@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Registro de atividades | Capivara DSM</title>
+  <link rel="stylesheet" href="/dashboard-home-v3.css">
+  <link rel="stylesheet" href="/catalog-v2.css">
+  <link rel="stylesheet" href="/customer-admin.css?v=4">
+</head>
+<body class="cap-home cap-admin-shell">
+<div id="sidebar-component"></div>
+<main class="cap-home-main customer-admin-page">
+  <header class="cap-home-topbar cap-admin-topbar">
+    <div class="cap-home-title"><button id="admin-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1>Registro de atividades</h1><p>Auditoria administrativa da Dashboard. Acesso exclusivo de administradores.</p></div></div>
+    <div class="cap-top-status"><div class="cap-user"><strong id="admin-user-name">—</strong><span id="admin-user-role">—</span></div></div>
+  </header>
+  <div class="cap-home-content cap-admin-content">
+    <section class="card catalog-v2-card cap-admin-card">
+      <div class="card-title"><div><h2>Consulta</h2><p>Filtre logins e atividades por período, usuário, categoria, atividade ou resultado.</p></div></div>
+      <div class="catalog-v2-form">
+        <label>Data inicial<input id="activity-start" type="datetime-local"></label>
+        <label>Data final<input id="activity-end" type="datetime-local"></label>
+        <label>Usuário<select id="activity-user"><option value="">Todos</option></select></label>
+        <label>Categoria<select id="activity-category"><option value="">Todas</option></select></label>
+        <label>Atividade<select id="activity-name"><option value="">Todas</option></select></label>
+        <label>Resultado<select id="activity-result"><option value="">Todos</option><option value="success">Sucesso</option><option value="denied">Negado</option><option value="error">Erro</option></select></label>
+        <label>Limite<select id="activity-limit"><option>100</option><option selected>200</option><option>500</option><option>1000</option></select></label>
+      </div>
+      <div class="catalog-v2-actions"><button id="activity-search" class="catalog-v2-primary">Consultar</button><button id="activity-clear">Limpar filtros</button></div>
+      <div id="activity-message" class="catalog-v2-summary"></div>
+    </section>
+    <section class="card catalog-v2-card cap-admin-card">
+      <div class="card-title"><div><h2>Atividades registradas</h2><p>Senhas, hashes, tokens, cookies e corpos de requisição não são armazenados neste registro.</p></div></div>
+      <div class="users-table-wrap"><table class="users-table"><thead><tr><th>Data</th><th>Usuário</th><th>Atividade</th><th>Categoria</th><th>Resultado</th><th>Rota</th><th>IP</th><th>Sessão</th></tr></thead><tbody id="activity-table"></tbody></table></div>
+    </section>
+  </div>
+  <footer class="cap-home-footer">Capivara Distributed Server Manager · Audit Trail</footer>
+</main>
+<script src="/activity-log.js?v=1"></script>
+</body>
+</html>
