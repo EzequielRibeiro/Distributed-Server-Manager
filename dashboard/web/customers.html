@@ -3,42 +3,33 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Clientes | Capivara DSM</title>
+  <title>Consultar clientes | Capivara DSM</title>
   <link rel="stylesheet" href="/dashboard-home-v3.css">
   <link rel="stylesheet" href="/catalog-v2.css">
-  <link rel="stylesheet" href="/customer-admin.css?v=4">
+  <link rel="stylesheet" href="/customer-management.css?v=1">
 </head>
 <body class="cap-home cap-admin-shell">
 <div id="sidebar-component"></div>
-<main class="cap-home-main customer-admin-page">
+<main class="cap-home-main customer-management-page">
   <header class="cap-home-topbar cap-admin-topbar">
-    <div class="cap-home-title"><button id="admin-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1>Clientes</h1><p>Cadastros, acessos, contratos e instâncias de cada Customer.</p></div></div>
+    <div class="cap-home-title"><button id="admin-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1>Consultar clientes</h1><p>Localize uma conta usando um único critério por vez.</p></div></div>
     <div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="admin-user-name">—</strong><span id="admin-user-role">—</span></div></div>
   </header>
-  <div class="cap-home-content cap-admin-content">
-    <section class="card catalog-v2-card cap-admin-card">
-      <div class="card-title"><div><h2>Localizar cliente</h2><p>Busque por código CLI, nome, e-mail, login ou ID do billing.</p></div></div>
-      <div class="customer-admin-search"><input id="customer-search" placeholder="CLI-000001, nome, e-mail ou login"><button id="customer-search-button" class="catalog-v2-primary">Buscar</button></div>
-      <div id="customer-results" class="customer-admin-results"></div>
-    </section>
-    <section class="card catalog-v2-card cap-admin-card">
-      <div class="card-title"><div><h2>Novo cliente</h2><p>O código do cliente é gerado automaticamente a partir da chave primária. O primeiro usuário será Owner e receberá uma senha provisória.</p></div></div>
-      <div class="customer-admin-notice"><strong>ID do cliente:</strong> gerado automaticamente no formato <code>CLI-000001</code>.</div>
-      <div class="catalog-v2-form">
-        <label>Nome<input id="customer-name" maxlength="160" placeholder="Empresa ou responsável"></label>
-        <label>Login inicial<input id="customer-username" maxlength="64" placeholder="cliente.usuario"></label>
-        <label>E-mail<input id="customer-email" type="email" placeholder="cliente@exemplo.com"></label>
-        <label>Telefone<input id="customer-phone" placeholder="Opcional"></label>
-        <label>Billing provider<input id="customer-billing-provider" maxlength="64" placeholder="Opcional: stripe, asaas, mercado-pago..."></label>
-        <label>ID no billing<input id="customer-billing-id" maxlength="255" placeholder="Opcional; informe junto com o provider"></label>
-        <label>Status do billing<select id="customer-billing-status"><option value="">Automático</option><option value="pending">pending</option><option value="active">active</option><option value="past_due">past_due</option><option value="suspended">suspended</option><option value="cancelled">cancelled</option></select></label>
+  <div class="cap-home-content customer-management-content">
+    <section class="card catalog-v2-card customer-management-card">
+      <div class="card-title"><div><h2>Busca de cliente</h2><p>Escolha nome, e-mail, documento ou código do cliente.</p></div><div class="customer-navigation"><a href="/customer-create.html">Novo cliente</a><a href="/customer-contract-create.html">Novo contrato</a></div></div>
+      <div class="customer-search-row">
+        <select id="customer-search-field" aria-label="Critério de busca"><option value="name">Nome</option><option value="email">E-mail</option><option value="document">Documento</option><option value="customer_code">Código do cliente</option></select>
+        <input id="customer-search" autocomplete="off" placeholder="Digite o valor da consulta">
+        <button id="customer-search-button" class="customer-primary" type="button">Localizar</button>
       </div>
-      <div class="catalog-v2-actions"><button id="customer-create" class="catalog-v2-primary">Criar cliente</button></div>
-      <div id="customer-create-result" class="customer-admin-notice"></div>
+      <div id="customer-search-message" class="customer-notice"></div>
+      <div id="customer-results" class="customer-results"></div>
     </section>
   </div>
   <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="/customers.js?v=3"></script>
+<script src="/customer-management-shell.js?v=1"></script>
+<script src="/customers.js?v=4"></script>
 </body>
 </html>
