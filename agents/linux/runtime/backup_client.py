@@ -6,7 +6,7 @@ from datetime import datetime,timezone
 from pathlib import Path
 from typing import Any
 from instance_runtime import get_instance,lifecycle,status
-STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));BACKUP_ROOT=Path(os.environ.get("CAPIVARA_BACKUP_ROOT",str(STATE_ROOT/"backups"))).resolve();RESULT_ROOT=STATE_ROOT/"backup-results"
+STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));BACKUP_ROOT=Path(os.environ.get("CAPIVARA_BACKUP_ROOT",str(STATE_ROOT/"backups"))).resolve();RESULT_ROOT=STATE_ROOT/"backup-results";MANIFEST_NAME=".capivara-backup-manifest.json"
 def _now():return datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
 def _safe(v):
  s=str(v or "").strip()
@@ -36,49 +36,79 @@ def _selected(root,policy):
    if p.exists():candidates.append(p)
  else:candidates=[root]
  def excluded(p):
-  rel=p.relative_to(root).as_posix()
-  return any(fnmatch.fnmatch(rel,pat) or fnmatch.fnmatch(rel+"/",pat.rstrip("/")+"/") for pat in excludes)
+  rel=p.relative_to(root).as_posix();return any(fnmatch.fnmatch(rel,pat) or fnmatch.fnmatch(rel+"/",pat.rstrip("/")+"/") for pat in excludes)
  return [p for p in candidates if not excluded(p)]
-def _create_archive(root,paths,dest,compression):
+def _manifest(record,backup_id):
+ return {"schema_version":1,"kind":"CapivaraInstanceBackup","backup_format":"capivara-instance","backup_id":backup_id,"source_instance":record.get("instance_id"),"game_id":record.get("game_id"),"runtime_id":record.get("runtime_id"),"game_version":record.get("game_version") or record.get("version"),"created_at":_now()}
+def _create_archive(root,paths,dest,compression,manifest):
  mode="w:gz" if compression=="gzip" else "w";dest.parent.mkdir(parents=True,exist_ok=True)
  with tarfile.open(dest,mode,dereference=False) as tar:
+  encoded=(json.dumps(manifest,sort_keys=True,indent=2)+"\n").encode();info=tarfile.TarInfo(MANIFEST_NAME);info.size=len(encoded);info.mode=0o600;tar.addfile(info,__import__("io").BytesIO(encoded))
   for p in paths:
    arc="." if p==root else p.relative_to(root).as_posix();tar.add(p,arcname=arc,recursive=True,filter=lambda info:None if info.issym() or info.islnk() else info)
 def _safe_extract(archive,dest):
+ manifest=None
  with tarfile.open(archive,"r:*") as tar:
   members=tar.getmembers();base=dest.resolve()
   for m in members:
-   if m.issym() or m.islnk():raise ValueError("backup contains links")
+   if m.issym() or m.islnk() or m.isdev():raise ValueError("backup contains links or devices")
    target=(base/m.name).resolve();target.relative_to(base)
+   if m.name==MANIFEST_NAME:
+    handle=tar.extractfile(m)
+    if handle:
+     try:manifest=json.loads(handle.read().decode("utf-8"))
+     except Exception as exc:raise ValueError("backup manifest is invalid") from exc
   tar.extractall(base,members=members,filter="data")
+ if manifest is not None and (manifest.get("kind")!="CapivaraInstanceBackup" or manifest.get("backup_format")!="capivara-instance"):raise ValueError("unsupported backup manifest")
+ return manifest
 def _retention(instance_dir,keep):
  archives=sorted([p for p in instance_dir.glob("*.tar*") if p.is_file()],key=lambda p:p.stat().st_mtime,reverse=True)
  for old in archives[max(1,int(keep)):]:old.unlink(missing_ok=True)
 def _create(config,cmd):
- iid=str(cmd["instance_id"]);_,root=_owned(config,iid);policy=dict(cmd.get("policy") or {});cons=str(policy.get("consistency") or "live");was_running=False
+ iid=str(cmd["instance_id"]);record,root=_owned(config,iid);policy=dict(cmd.get("policy") or {});cons=str(policy.get("consistency") or "live");was_running=False
  if cons=="quiesced":raise RuntimeError("quiesced backup requires a game-specific consistency hook")
  if cons=="stopped":
   was_running=status(config,iid).get("observed_state")=="running"
   if was_running:lifecycle(config,iid,"stop")
  try:
-  bid=str(uuid.uuid4());idir=BACKUP_ROOT/_safe(iid);suffix=".tar.gz" if str(policy.get("compression") or "gzip")=="gzip" else ".tar";path=idir/f"{bid}{suffix}";_create_archive(root,_selected(root,policy),path,str(policy.get("compression") or "gzip"));size=path.stat().st_size;sha=_digest(path);_retention(idir,int(policy.get("retention_count") or 7));return {"backup_id":bid,"artifact_path":str(path),"size_bytes":size,"sha256":sha}
+  bid=str(uuid.uuid4());idir=BACKUP_ROOT/_safe(iid);suffix=".tar.gz" if str(policy.get("compression") or "gzip")=="gzip" else ".tar";path=idir/f"{bid}{suffix}";manifest=_manifest(record,bid);_create_archive(root,_selected(root,policy),path,str(policy.get("compression") or "gzip"),manifest);size=path.stat().st_size;sha=_digest(path);manifest["files_checksum"]=sha;_retention(idir,int(policy.get("retention_count") or 7));return {"backup_id":bid,"artifact_path":str(path),"size_bytes":size,"sha256":sha,"manifest":manifest}
  finally:
   if cons=="stopped" and was_running:lifecycle(config,iid,"start")
 def _artifact(iid,bid):
  idir=(BACKUP_ROOT/_safe(iid)).resolve();idir.relative_to(BACKUP_ROOT);matches=list(idir.glob(f"{_safe(bid)}.tar*"))
  if len(matches)!=1:raise FileNotFoundError("backup artifact not found")
  return matches[0]
+def _validate_manifest(record,manifest):
+ if not manifest:return
+ if str(manifest.get("game_id") or "") and str(manifest.get("game_id"))!=str(record.get("game_id") or ""):raise ValueError("backup game is incompatible with this instance")
+ source_runtime=str(manifest.get("runtime_id") or "");target_runtime=str(record.get("runtime_id") or "")
+ if source_runtime and target_runtime and source_runtime!=target_runtime:raise ValueError("backup runtime is incompatible with this instance")
 def _restore(config,cmd):
- iid=str(cmd["instance_id"]);_,root=_owned(config,iid);artifact=_artifact(iid,str(cmd.get("backup_id") or ""));was_running=status(config,iid).get("observed_state")=="running"
+ iid=str(cmd["instance_id"]);record,root=_owned(config,iid);artifact=_artifact(iid,str(cmd.get("backup_id") or ""));was_running=status(config,iid).get("observed_state")=="running"
  if was_running:lifecycle(config,iid,"stop")
- stage=Path(tempfile.mkdtemp(prefix=f".{root.name}.restore-",dir=str(root.parent)))
+ stage=Path(tempfile.mkdtemp(prefix=f".{root.name}.restore-",dir=str(root.parent)));previous=root.with_name(root.name+".c5-previous");swapped=False
  try:
-  _safe_extract(artifact,stage);previous=root.with_name(root.name+".c5-previous")
+  manifest=_safe_extract(artifact,stage);_validate_manifest(record,manifest)
+  manifest_path=stage/MANIFEST_NAME
+  if manifest_path.exists():manifest_path.unlink()
   if previous.exists():shutil.rmtree(previous)
-  os.replace(root,previous);os.replace(stage,root);shutil.rmtree(previous,ignore_errors=True)
- finally:
-  shutil.rmtree(stage,ignore_errors=True)
-  if was_running:lifecycle(config,iid,"start")
+  os.replace(root,previous);os.replace(stage,root);swapped=True
+  if was_running:
+   lifecycle(config,iid,"start")
+   after=status(config,iid)
+   if after.get("observed_state")!="running":raise RuntimeError("restored server did not become healthy enough to run")
+  shutil.rmtree(previous,ignore_errors=True)
+ except Exception:
+  if swapped:
+   try:
+    if root.exists():shutil.rmtree(root,ignore_errors=True)
+    if previous.exists():os.replace(previous,root)
+    if was_running:
+     try:lifecycle(config,iid,"start")
+     except Exception:pass
+   except Exception:pass
+  raise
+ finally:shutil.rmtree(stage,ignore_errors=True)
  return {"backup_id":str(cmd.get("backup_id")),"artifact_path":str(artifact),"size_bytes":artifact.stat().st_size,"sha256":_digest(artifact)}
 def _delete(config,cmd):
  iid=str(cmd["instance_id"]);_owned(config,iid);artifact=_artifact(iid,str(cmd.get("backup_id") or ""));artifact.unlink();return {"backup_id":str(cmd.get("backup_id")),"artifact_path":str(artifact)}
@@ -86,8 +116,7 @@ def apply_backup_commands(config:dict[str,Any],commands:list[dict[str,Any]])->li
  reports=[]
  for cmd in commands[:20]:
   cid=_safe(cmd.get("command_id"));path=RESULT_ROOT/f"{cid}.json"
-  try:
-   previous=json.loads(path.read_text()) if path.exists() else {}
+  try:previous=json.loads(path.read_text()) if path.exists() else {}
   except Exception:previous={}
   if previous.get("status") in {"completed","failed"}:reports.append(previous);continue
   started=_now();_write(path,{"command_id":cid,"status":"running","started_at":started})
