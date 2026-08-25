@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Novo cliente | Capivara DSM</title>
+  <link rel="stylesheet" href="/dashboard-home-v3.css">
+  <link rel="stylesheet" href="/catalog-v2.css">
+  <link rel="stylesheet" href="/customer-management.css?v=1">
+</head>
+<body class="cap-home cap-admin-shell">
+<div id="sidebar-component"></div>
+<main class="cap-home-main customer-management-page">
+  <header class="cap-home-topbar cap-admin-topbar">
+    <div class="cap-home-title"><button id="admin-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1>Novo cliente</h1><p>Cadastro de identidade, acesso inicial e vínculo opcional com Billing.</p></div></div>
+    <div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="admin-user-name">—</strong><span id="admin-user-role">—</span></div></div>
+  </header>
+  <div class="cap-home-content customer-management-content">
+    <section class="card catalog-v2-card customer-management-card">
+      <div class="card-title"><div><h2>Conta do cliente</h2><p>O código CLI e a senha provisória são gerados pelo Capivara. Usuário e e-mail devem ser exclusivos.</p></div></div>
+      <form id="customer-create-form" class="customer-form" autocomplete="off">
+        <div class="customer-section-title">Identificação</div>
+        <label>Nome / nome fantasia<input id="customer-name" name="name" maxlength="255" required placeholder="Nome usado na Dashboard"></label>
+        <label>Razão social / nome legal<input id="customer-legal-name" name="legal_name" maxlength="255" placeholder="Opcional quando igual ao nome"></label>
+        <label>Tipo de documento<select id="customer-document-type" name="document_type" required><option value="cpf">CPF</option><option value="cnpj">CNPJ</option><option value="other">Outro</option></select></label>
+        <label>Número do documento<input id="customer-document-number" name="document_number" maxlength="64" required placeholder="CPF, CNPJ ou documento equivalente"></label>
+        <label>Telefone<input id="customer-phone" name="phone" maxlength="64" placeholder="Opcional"></label>
+        <label>Controller<select id="customer-controller" name="controller_id"><option value="">Carregando…</option></select></label>
+
+        <div class="customer-section-title">Credenciais de acesso</div>
+        <label>Nome de usuário<input id="customer-username" name="username" maxlength="128" required autocomplete="off" placeholder="cliente.usuario"></label>
+        <label>E-mail de login<input id="customer-email" name="email" type="email" maxlength="320" required autocomplete="off" placeholder="cliente@exemplo.com"></label>
+        <div class="wide customer-notice">O cliente poderá entrar usando <strong>nome de usuário ou e-mail</strong>. A senha inicial será provisória e o primeiro acesso obrigará a definição de uma nova senha.</div>
+
+        <div class="customer-section-title">Billing (opcional)</div>
+        <label>Provider<input id="customer-billing-provider" name="billing_provider" maxlength="64" placeholder="stripe, asaas, mercado-pago..."></label>
+        <label>ID externo do cliente<input id="customer-billing-id" name="billing_customer_id" maxlength="255" placeholder="Informe junto com o provider"></label>
+        <label>Status<select id="customer-billing-status" name="billing_status"><option value="">Automático</option></select></label>
+      </form>
+      <div class="customer-actions"><button id="customer-create-button" class="customer-primary" type="button">Criar conta do cliente</button><a class="customer-secondary" href="/customers.html">Cancelar</a></div>
+      <div id="customer-create-result" class="customer-notice"></div>
+    </section>
+  </div>
+  <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
+</main>
+<script src="/customer-management-shell.js?v=1"></script>
+<script src="/customer-create.js?v=1"></script>
+</body>
+</html>
