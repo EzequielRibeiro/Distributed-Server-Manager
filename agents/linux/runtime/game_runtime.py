@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import instance_runtime
+import provisioning_state
 from catalog_runtime_policy import apply_policy
 from profiles import resolve_profile
 from runtime_events import emit_runtime_event
@@ -23,6 +24,75 @@ _PROFILE_CONTEXT_KEYS = (
 def _profile_context(context: dict[str, Any]) -> dict[str, Any]:
     """Persist only the structured inputs required to rebuild a RuntimeSpec later."""
     return {key: context[key] for key in _PROFILE_CONTEXT_KEYS if key in context}
+
+
+def _historical_provisioning_context(instance_id: str) -> dict[str, Any]:
+    """Recover structured inputs that pre-profile RuntimeSpecs may have discarded.
+
+    The provisioning request is authoritative for reserved ports because those values
+    were assigned before runtime materialization. Newest matching history wins and
+    existing RuntimeSpec values are never overwritten by this fallback.
+    """
+    root = Path(provisioning_state.HISTORY_ROOT)
+    try:
+        candidates = sorted(
+            root.glob("*.request.json"),
+            key=lambda path: path.stat().st_mtime_ns,
+            reverse=True,
+        )
+    except OSError:
+        return {}
+    for path in candidates:
+        payload = provisioning_state.read_json(path)
+        if not isinstance(payload, dict):
+            continue
+        if str(payload.get("instance_id") or "").strip() != instance_id:
+            continue
+        recovered: dict[str, Any] = {}
+        ports = payload.get("ports")
+        if isinstance(ports, dict) and ports:
+            recovered["ports"] = dict(ports)
+        for key in (
+            "environment_id", "runtime_id", "catalog_runtime_policy", "mission", "dayz_mission",
+            "resource_profile", "resource_profile_id",
+        ):
+            if key in payload:
+                recovered[key] = payload[key]
+        return recovered
+    return {}
+
+
+def _merge_historical_context(current: dict[str, Any], historical: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(current)
+    current_ports = merged.get("ports")
+    ports = dict(current_ports) if isinstance(current_ports, dict) else {}
+    historical_ports = historical.get("ports")
+    if isinstance(historical_ports, dict):
+        for role, binding in historical_ports.items():
+            if role not in ports and isinstance(binding, dict):
+                ports[role] = dict(binding)
+    if ports:
+        merged["ports"] = ports
+    for key, value in historical.items():
+        if key == "ports":
+            continue
+        if key not in merged or merged.get(key) in (None, "", [], {}):
+            merged[key] = value
+    return merged
+
+
+def _hydrate_legacy_record(record: dict[str, Any]) -> dict[str, Any]:
+    instance_id = str(record.get("instance_id") or record.get("id") or "").strip()
+    if not instance_id:
+        return dict(record)
+    return _merge_historical_context(record, _historical_provisioning_context(instance_id))
+
+
+def _hydrate_legacy_context(record: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    instance_id = str(record.get("instance_id") or record.get("id") or "").strip()
+    if not instance_id:
+        return dict(context)
+    return _merge_historical_context(context, _historical_provisioning_context(instance_id))
 
 
 def build_runtime_spec(config: dict[str, Any], instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -83,18 +153,19 @@ def migrate_runtime_spec(config: dict[str, Any], record: dict[str, Any]) -> tupl
     if stored_version == current_version:
         return record, False
 
+    hydrated_record = _hydrate_legacy_record(record)
     persisted_context = record.get("profile_context")
     if isinstance(persisted_context, dict) and persisted_context:
-        context = dict(persisted_context)
+        context = _hydrate_legacy_context(record, dict(persisted_context))
     else:
-        context = profile.migration_context(dict(record))
+        context = profile.migration_context(hydrated_record)
     if not isinstance(context, dict) or not context:
         raise RuntimeError(
             f"runtime profile migration unavailable: profile={record.get('profile') or record.get('game_id')} "
             f"persisted={stored_version} installed={current_version}"
         )
 
-    instance = dict(record)
+    instance = dict(hydrated_record)
     instance["desired_state"] = str(record.get("desired_state") or "stopped")
     rebuilt = build_runtime_spec(config, instance, context)
     rebuilt_version = int(rebuilt.get("profile_version") or 1)
