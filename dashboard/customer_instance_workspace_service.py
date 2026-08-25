@@ -8,7 +8,8 @@ from typing import Any
 
 from alert_repository import AlertSession, dialect_for_backend
 from catalog_resource_profiles_http import catalog_resource_profiles
-from instance_workspace_policy import effective_content_policy, require_permission, validate_startup_values
+from instance_file_repository import InstanceFileRepository
+from instance_workspace_policy import INSTANCE_PERMISSIONS, effective_content_policy, require_permission, validate_startup_values
 from instance_workspace_repository import InstanceWorkspaceRepository
 from runtime_workspace_catalog import allowed_runtimes, contract_entitlements, runtime_workspace_capabilities
 
@@ -22,22 +23,22 @@ def _json(value, default):
 
 class CustomerInstanceWorkspaceService:
     def __init__(self, backend, root: Path):
-        self.backend=backend;self.root=Path(root);self.repo=InstanceWorkspaceRepository(backend);self.dialect=dialect_for_backend(backend)
+        self.backend=backend;self.root=Path(root);self.repo=InstanceWorkspaceRepository(backend);self.files=InstanceFileRepository(backend);self.dialect=dialect_for_backend(backend)
 
     def _session(self, connection): return AlertSession(self.backend,connection)
 
     def permissions(self,user:dict[str,Any],instance_id:str)->set[str]:
         role=str((user or {}).get("role") or "").lower()
-        if role in {"admin","controller"}: return set(__import__("instance_workspace_policy").INSTANCE_PERMISSIONS)
+        if role in {"admin","controller"}: return set(INSTANCE_PERMISSIONS)
         if role!="customer": return set()
+        # Instance grants are intentionally independent from the user's primary
+        # Customer account. A person may own one account and administer an
+        # instance shared by another Customer.
         return self.repo.effective_permissions_for(str(user.get("username") or ""),instance_id)
 
     def require(self,user,instance_id,permission):
         require_permission(self.permissions(user,instance_id),permission)
-        context=self.repo.instance_context(instance_id)
-        if str((user or {}).get("role") or "").lower()=="customer" and int(context.get("customer_id") or 0)!=int((user or {}).get("scope_id") or 0):
-            raise PermissionError("instance is outside customer scope")
-        return context
+        return self.repo.instance_context(instance_id)
 
     def _ports(self,instance_id):
         ph=self.dialect.placeholder
@@ -67,7 +68,7 @@ class CustomerInstanceWorkspaceService:
         metadata=context.get("contract_metadata") or {};runtime_id=str(context.get("runtime_id") or "")
         capabilities=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),runtime_id) if runtime_id else {}
         entitlements=contract_entitlements(metadata)
-        # persisted policy can only further restrict the commercial entitlements
+        # Persisted policy can only further restrict commercial entitlements.
         for key,column in (("mods","mods_allowed"),("plugins","plugins_allowed"),("workshop","workshop_allowed"),("external_upload","external_upload_allowed"),("custom_runtime","custom_runtime_allowed")):
             if column in policy:entitlements[key]=bool(entitlements.get(key)) and bool(policy.get(column))
         return capabilities,effective_content_policy(entitlements,capabilities)
@@ -79,16 +80,18 @@ class CustomerInstanceWorkspaceService:
         for item in agent_meta.get("instance_telemetry") or []:
             if isinstance(item,dict) and str(item.get("instance_id"))==instance_id:latest_from_agent=item
         telemetry={**latest_from_agent,**telemetry}
-        storage_limit=policy.get("storage_limit_bytes")
-        used=telemetry.get("storage_used_bytes")
+        storage_limit=policy.get("storage_limit_bytes");used=telemetry.get("storage_used_bytes")
         storage_pct=(float(used)/float(storage_limit)*100.0) if used is not None and storage_limit else None
-        provision=(context.get("instance_metadata") or {}).get("provision") if isinstance(context.get("instance_metadata"),dict) else None
+        metadata=context.get("instance_metadata") if isinstance(context.get("instance_metadata"),dict) else {}
+        provision=metadata.get("provision") if isinstance(metadata,dict) else None
+        completed=bool(isinstance(provision,dict) and str(provision.get("stage") or "").lower()=="completed" and int(provision.get("progress") or 0)>=100)
+        if completed: provision=None
         return {
             "instance":{k:context.get(k) for k in ("id","name","game_id","edition","runtime_id","variant","game_version","status","agent_id","contract_id")},
             "permissions":sorted(permissions),"policy":policy,"content_policy":content.as_dict(),"content_sections":[x for x in ("mods","plugins","workshop") if content.as_dict().get(f"{x}_allowed")],
             "runtime_capabilities":capabilities,"ports":self._ports(instance_id),"location":{k:location.get(k) for k in ("public_host","datacenter_id","datacenter_name","city","country_code","region_id","region_name","region_country_code","agent_name")},
             "telemetry":telemetry,"storage":{"used_bytes":used,"limit_bytes":storage_limit,"percent":storage_pct},"provision":provision,
-            "console":{"read": "console.read" in permissions,"execute":"console.execute" in permissions,"supported":bool((capabilities.get("console") or {}).get("supported"))},
+            "console":{"read":"console.read" in permissions,"execute":"console.execute" in permissions,"supported":bool((capabilities.get("console") or {}).get("supported"))},
             "upgrade":{"allowed":"contract.upgrade" in permissions,"current_profile_id":policy.get("resource_profile_id")},
         }
 
@@ -109,6 +112,35 @@ class CustomerInstanceWorkspaceService:
 
     def save_startup(self,user,instance_id,values):
         context=self.require(user,instance_id,"startup.write");policy=self.repo.workspace_policy(instance_id);caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));policy["startup"]=validate_startup_values(values,caps.get("startup_parameters") or {});return self.repo.save_workspace_policy(instance_id,policy)
+
+    # ----------------------------------------------------------- File Manager v2
+    def _file_command_policy(self, context, policy):
+        capabilities,content=self._contract_policy(context,policy)
+        return {
+            "storage_limit_bytes":policy.get("storage_limit_bytes"),
+            "content_policy":content.as_dict(),
+            "file_policy":dict(capabilities.get("file_policy") or {}),
+        }
+
+    def queue_file(self,user,instance_id,action,*,path=None,target_path=None,payload=None):
+        action=str(action or "").strip().lower()
+        required={
+            "list":"files.read","usage":"files.read","read_text":"files.read","download":"files.download",
+            "write_text":"files.edit","upload":"files.upload","mkdir":"files.upload","delete":"files.delete",
+            "rename":"files.move","move":"files.move","extract":"files.extract",
+        }.get(action)
+        if required is None:raise ValueError("invalid file action")
+        context=self.require(user,instance_id,required);policy=self.repo.workspace_policy(instance_id)
+        return self.files.enqueue(
+            agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action=action,
+            requested_by=str(user.get("username") or ""),path=path,target_path=target_path,
+            payload=payload if isinstance(payload,dict) else {},policy=self._file_command_policy(context,policy),
+        )
+
+    def file_status(self,user,instance_id,command_id):
+        self.require(user,instance_id,"files.read");state=self.files.snapshot(str(command_id or ""))
+        if str(state.get("instance_id") or "")!=str(instance_id):raise PermissionError("file command belongs to another instance")
+        return state
 
     def backup_policy(self,user,instance_id):self.require(user,instance_id,"backup.read");return self.repo.backup_policy(instance_id)
     def save_backup_policy(self,user,instance_id,body):self.require(user,instance_id,"backup.create");return self.repo.save_backup_policy(instance_id,enabled=bool(body.get("enabled",True)),schedule_time=body.get("schedule_time") or "04:00",healthy_only=True)
