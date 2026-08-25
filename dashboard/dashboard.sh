@@ -1,12 +1,12 @@
 #!/bin/bash
 # =============================================================
 # dashboard/dashboard.sh - Dashboard launcher compatibility
-# Canonical composition entrypoint: dashboard/server_part13.py
+# Canonical composition entrypoint: dashboard/server_part17.py
 # =============================================================
 LOG_MODULE="dashboard"
 DSM_ROOT="${DSM_ROOT:-/opt/dsm}"
 DASHBOARD_PID_DIR="${DSM_ROOT}/tmp";DASHBOARD_PID_FILE="${DASHBOARD_PID_DIR}/dashboard.pid";DASHBOARD_PORT="${DASHBOARD_PORT:-8080}"
-DASHBOARD_SERVER="${DSM_ROOT}/dashboard/server_part13.py";DASHBOARD_LOG="${DSM_ROOT}/logs/dashboard.log"
+DASHBOARD_SERVER="${DSM_ROOT}/dashboard/server_part17.py";DASHBOARD_LOG="${DSM_ROOT}/logs/dashboard.log"
 dashboard_init(){ mkdir -p "$DASHBOARD_PID_DIR" "$(dirname "$DASHBOARD_LOG")"; }
 dashboard_running(){ [[ -f "$DASHBOARD_PID_FILE" ]] || return 1; local PID;PID=$(cat "$DASHBOARD_PID_FILE" 2>/dev/null);[[ -n "$PID" ]] || return 1;kill -0 "$PID" 2>/dev/null; }
 dashboard_run_foreground(){ dashboard_init;export DASHBOARD_PORT;exec python3 "$DASHBOARD_SERVER"; }
