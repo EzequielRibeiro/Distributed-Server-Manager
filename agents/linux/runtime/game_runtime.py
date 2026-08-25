@@ -62,32 +62,37 @@ def _historical_provisioning_context(instance_id: str) -> dict[str, Any]:
     return {}
 
 
-def _hydrate_legacy_context(record: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-    """Fill only missing migration context from the matching provisioning history."""
-    instance_id = str(record.get("instance_id") or record.get("id") or "").strip()
-    if not instance_id:
-        return context
-    historical = _historical_provisioning_context(instance_id)
-    if not historical:
-        return context
-
-    hydrated = dict(context)
-    current_ports = hydrated.get("ports")
-    merged_ports = dict(current_ports) if isinstance(current_ports, dict) else {}
+def _merge_historical_context(current: dict[str, Any], historical: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(current)
+    current_ports = merged.get("ports")
+    ports = dict(current_ports) if isinstance(current_ports, dict) else {}
     historical_ports = historical.get("ports")
     if isinstance(historical_ports, dict):
         for role, binding in historical_ports.items():
-            if role not in merged_ports and isinstance(binding, dict):
-                merged_ports[role] = dict(binding)
-    if merged_ports:
-        hydrated["ports"] = merged_ports
-
+            if role not in ports and isinstance(binding, dict):
+                ports[role] = dict(binding)
+    if ports:
+        merged["ports"] = ports
     for key, value in historical.items():
         if key == "ports":
             continue
-        if key not in hydrated or hydrated.get(key) in (None, "", [], {}):
-            hydrated[key] = value
-    return hydrated
+        if key not in merged or merged.get(key) in (None, "", [], {}):
+            merged[key] = value
+    return merged
+
+
+def _hydrate_legacy_record(record: dict[str, Any]) -> dict[str, Any]:
+    instance_id = str(record.get("instance_id") or record.get("id") or "").strip()
+    if not instance_id:
+        return dict(record)
+    return _merge_historical_context(record, _historical_provisioning_context(instance_id))
+
+
+def _hydrate_legacy_context(record: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    instance_id = str(record.get("instance_id") or record.get("id") or "").strip()
+    if not instance_id:
+        return dict(context)
+    return _merge_historical_context(context, _historical_provisioning_context(instance_id))
 
 
 def build_runtime_spec(config: dict[str, Any], instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -148,19 +153,19 @@ def migrate_runtime_spec(config: dict[str, Any], record: dict[str, Any]) -> tupl
     if stored_version == current_version:
         return record, False
 
+    hydrated_record = _hydrate_legacy_record(record)
     persisted_context = record.get("profile_context")
     if isinstance(persisted_context, dict) and persisted_context:
-        context = dict(persisted_context)
+        context = _hydrate_legacy_context(record, dict(persisted_context))
     else:
-        context = profile.migration_context(dict(record))
+        context = profile.migration_context(hydrated_record)
     if not isinstance(context, dict) or not context:
         raise RuntimeError(
             f"runtime profile migration unavailable: profile={record.get('profile') or record.get('game_id')} "
             f"persisted={stored_version} installed={current_version}"
         )
-    context = _hydrate_legacy_context(record, context)
 
-    instance = dict(record)
+    instance = dict(hydrated_record)
     instance["desired_state"] = str(record.get("desired_state") or "stopped")
     rebuilt = build_runtime_spec(config, instance, context)
     rebuilt_version = int(rebuilt.get("profile_version") or 1)
