@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Novo contrato | Capivara DSM</title>
+  <link rel="stylesheet" href="/dashboard-home-v3.css">
+  <link rel="stylesheet" href="/catalog-v2.css">
+  <link rel="stylesheet" href="/customer-management.css?v=1">
+</head>
+<body class="cap-home cap-admin-shell">
+<div id="sidebar-component"></div>
+<main class="cap-home-main customer-management-page">
+  <header class="cap-home-topbar cap-admin-topbar">
+    <div class="cap-home-title"><button id="admin-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1>Novo contrato</h1><p>Criação de contrato baseada nos perfis técnicos do jogo.</p></div></div>
+    <div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="admin-user-name">—</strong><span id="admin-user-role">—</span></div></div>
+  </header>
+  <div class="cap-home-content customer-management-content">
+    <section class="card catalog-v2-card customer-management-card">
+      <div class="card-title"><div><h2>Contrato do cliente</h2><p>Informe o código CLI do cliente e selecione o jogo e o perfil de recursos.</p></div></div>
+      <form id="contract-create-form" class="customer-form" autocomplete="off">
+        <label class="wide">Código do cliente<input id="contract-customer-code" name="customer_code" required placeholder="CLI-000001"></label>
+        <div id="contract-customer-summary" class="wide customer-notice"></div>
+        <label>Jogo<select id="contract-game" name="game_id" required><option value="">Carregando jogos…</option></select></label>
+        <label>Perfil do jogo<select id="contract-profile" name="resource_profile_id" required disabled><option value="">Selecione o jogo primeiro</option></select></label>
+        <label>Limite de instâncias<input id="contract-limit" name="instance_limit" type="number" min="1" value="1" required></label>
+        <label>Validade<input id="contract-ends" name="ends_at" type="datetime-local"><span>Deixe em branco para contrato sem vencimento.</span></label>
+      </form>
+      <div id="contract-profile-summary" class="customer-profile-summary">Selecione um jogo para visualizar os perfis disponíveis.</div>
+      <div class="customer-actions"><button id="contract-create-button" class="customer-primary" type="button">Criar contrato</button><a class="customer-secondary" href="/customers.html">Voltar para consulta</a></div>
+      <div id="contract-result" class="customer-notice"></div>
+    </section>
+  </div>
+  <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
+</main>
+<script src="/customer-management-shell.js?v=1"></script>
+<script src="/customer-contract-create.js?v=1"></script>
+</body>
+</html>
