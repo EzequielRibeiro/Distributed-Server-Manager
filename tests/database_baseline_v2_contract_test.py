@@ -80,7 +80,7 @@ def test_system_user_functional_identity_exists_in_every_backend():
     for backend in BACKENDS:
         sql = _sql(backend).lower()
         match = re.search(
-            r"create\s+table\s+dashboard_users\s*\((.*?)\n\);",
+            r"create\s+table\s+(?:if\s+not\s+exists\s+)?dashboard_users\s*\((.*?)\n\)",
             sql,
             re.IGNORECASE | re.DOTALL,
         )
