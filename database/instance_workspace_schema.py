@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS instance_backup_policy (
     instance_id {ident} PRIMARY KEY,
     enabled {bool_col('enabled', True)},
     schedule_time {short} NOT NULL DEFAULT '04:00',
+    schedule_timezone {short} NOT NULL DEFAULT 'UTC',
     healthy_only {bool_col('healthy_only', True)},
     keep_single_operational {bool_col('keep_single_operational', True)},
     updated_at {timestamp},
