@@ -15,6 +15,7 @@ on:
       - 'dashboard/web/create-server-wizard.js'
       - 'database/instance_workspace_*.py'
       - 'database/instance_activity_repository.py'
+      - 'database/instance_resource_repository.py'
       - 'database/instance_backup_clone_repository.py'
       - 'database/artifact_transfer_*.py'
       - 'database/deleted_backup_vault_repository.py'
@@ -26,6 +27,7 @@ on:
       - 'release/build_windows_agent_package.py'
       - 'tests/customer_instance_workspace_v2_test.py'
       - 'tests/customer_instance_activity_test.py'
+      - 'tests/customer_workspace_architecture_boundary_test.py'
       - 'tests/deleted_backup_vault_test.py'
       - 'tests/customer_backup_clone_e2e_test.py'
       - '.github/workflows/customer-instance-workspace-v2.yml'
@@ -44,6 +46,7 @@ on:
       - 'dashboard/web/create-server-wizard.js'
       - 'database/instance_workspace_*.py'
       - 'database/instance_activity_repository.py'
+      - 'database/instance_resource_repository.py'
       - 'database/instance_backup_clone_repository.py'
       - 'database/artifact_transfer_*.py'
       - 'database/deleted_backup_vault_repository.py'
@@ -55,6 +58,7 @@ on:
       - 'release/build_windows_agent_package.py'
       - 'tests/customer_instance_workspace_v2_test.py'
       - 'tests/customer_instance_activity_test.py'
+      - 'tests/customer_workspace_architecture_boundary_test.py'
       - 'tests/deleted_backup_vault_test.py'
       - 'tests/customer_backup_clone_e2e_test.py'
       - '.github/workflows/customer-instance-workspace-v2.yml'
@@ -87,6 +91,7 @@ jobs:
             database/artifact_transfer_repository.py \
             database/deleted_backup_vault_repository.py \
             database/instance_backup_clone_repository.py \
+            database/instance_resource_repository.py \
             database/instance_workspace_extended_schema.py \
             agents/linux/runtime/artifact_transfer_client.py \
             agents/linux/runtime/agent.py \
@@ -94,6 +99,7 @@ jobs:
             agents/windows/runtime/agent.py \
             tests/customer_instance_workspace_v2_test.py \
             tests/customer_instance_activity_test.py \
+            tests/customer_workspace_architecture_boundary_test.py \
             tests/deleted_backup_vault_test.py \
             tests/customer_backup_clone_e2e_test.py
       - name: Validate Customer JavaScript
@@ -108,6 +114,7 @@ jobs:
         run: |
           python3 -m unittest tests/customer_instance_workspace_v2_test.py
           python3 -m unittest tests/customer_instance_activity_test.py
+          python3 -m unittest tests/customer_workspace_architecture_boundary_test.py
           python3 -m unittest tests/deleted_backup_vault_test.py
           python3 -m unittest tests/customer_backup_clone_e2e_test.py
       - name: Validate Linux Agent package
