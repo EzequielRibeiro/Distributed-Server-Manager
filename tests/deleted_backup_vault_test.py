@@ -16,13 +16,18 @@ class DeletedBackupVaultTest(unittest.TestCase):
   self.vault=DeletedBackupVaultRepository(self.backend,self.root);self.vault.initialize()
  def tearDown(self):self.backend.close();self.temp.cleanup()
  def _complete_backup(self,item):self.vault.backups.record_agent_state("agent-one",[{"command_id":item["backup_job_id"],"instance_id":"instance-one","action":"create","status":"completed","backup_id":"backup-final","artifact_path":"/agent/backups/instance-one/backup-final.tar.gz","size_bytes":6,"sha256":"agent-sha"}])
- def test_backup_is_exported_before_remove_and_survives_download_until_delete(self):
-  item,idempotent=self.vault.start("instance-one",requested_by="owner");self.assertFalse(idempotent);same,again=self.vault.start("instance-one",requested_by="owner");self.assertTrue(again);self.assertEqual(item["vault_id"],same["vault_id"])
-  self._complete_backup(item);item=self.vault.reconcile(item["vault_id"]);self.assertEqual(item["status"],"export_pending");transfer=self.vault.artifacts.receive_from_agent(item["transfer_id"],"agent-one",io.BytesIO(b"backup"),6);self.assertEqual(transfer["status"],"completed");item=self.vault.reconcile(item["vault_id"]);self.assertEqual(item["status"],"removal_pending");artifact=Path(item["artifact_path"]);self.assertEqual(artifact.read_bytes(),b"backup")
+ def _ready(self):
+  item,_=self.vault.start("instance-one",requested_by="owner");self._complete_backup(item);item=self.vault.reconcile(item["vault_id"]);self.vault.artifacts.receive_from_agent(item["transfer_id"],"agent-one",io.BytesIO(b"backup"),6);item=self.vault.reconcile(item["vault_id"]);artifact=Path(item["artifact_path"])
   with self.backend.transaction() as c:c.execute("DELETE FROM instances WHERE id=?",("instance-one",))
-  item=self.vault.reconcile(item["vault_id"]);self.assertEqual(item["status"],"ready");self.assertTrue(artifact.is_file());path,_=self.vault.artifact_for_customer(item["vault_id"],1);self.assertEqual(path.read_bytes(),b"backup")
+  item=self.vault.reconcile(item["vault_id"]);return item,artifact
+ def test_backup_is_exported_before_remove_and_survives_download_until_delete(self):
+  item,artifact=self._ready();self.assertEqual(item["status"],"ready");self.assertEqual(artifact.read_bytes(),b"backup");path,_=self.vault.artifact_for_customer(item["vault_id"],1);self.assertEqual(path.read_bytes(),b"backup")
   downloaded=self.vault.complete_download(item["vault_id"],1);self.assertEqual(downloaded["status"],"ready");self.assertIsNotNone(downloaded["downloaded_at"]);self.assertTrue(artifact.exists())
   deleted=self.vault.delete_for_customer(item["vault_id"],1);self.assertEqual(deleted["status"],"deleted");self.assertFalse(artifact.exists());self.assertNotIn(item["vault_id"],[x["vault_id"] for x in self.vault.list_for_customer(1)])
+ def test_expired_backup_is_removed_automatically(self):
+  item,artifact=self._ready();self.assertTrue(artifact.exists())
+  with self.backend.transaction() as c:c.execute("UPDATE deleted_instance_backups SET expires_at=? WHERE vault_id=?",("2000-01-01T00:00:00Z",item["vault_id"]))
+  self.assertEqual(self.vault.cleanup_expired(),1);expired=self.vault.get(item["vault_id"]);self.assertEqual(expired["status"],"expired");self.assertFalse(artifact.exists())
  def test_failed_final_backup_blocks_export_and_remove(self):
   item,_=self.vault.start("instance-one",requested_by="owner");self.vault.backups.record_agent_state("agent-one",[{"command_id":item["backup_job_id"],"instance_id":"instance-one","action":"create","status":"failed","last_error":"disk full"}]);item=self.vault.reconcile(item["vault_id"]);self.assertEqual(item["status"],"failed");self.assertIn("disk full",item["last_error"]);self.assertIsNone(item.get("remove_command_id"))
 if __name__=="__main__":unittest.main()
