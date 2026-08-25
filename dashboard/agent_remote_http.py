@@ -2,6 +2,7 @@
 """HTTP-safe service contract for remote Agent enrollment and heartbeat."""
 from __future__ import annotations
 from pathlib import Path
+import time
 from typing import Any
 from agent_game_data_repository import AgentGameDataRepository
 from agent_heartbeat_api import record_agent_heartbeat
@@ -12,9 +13,10 @@ from agent_lifecycle_repository import AgentLifecycleRepository
 from agent_pairing_api import enroll_remote_agent
 from agent_pairing_repository import AgentCredentialInvalid,AgentPairingRepository,PairingRegistrationConflict,PairingTokenConsumed,PairingTokenExpired,PairingTokenInvalid
 from agent_update_repository import AgentUpdateRepository
+from deleted_backup_vault_repository import DeletedBackupVaultRepository
 from instance_backup_clone_repository import InstanceBackupCloneRepository
 from instance_provisioning_projection import project_agent_provisioning
-ENROLL_PATH="/api/agent/enroll";HEARTBEAT_PATH="/api/agent/heartbeat";ROOT=Path(__file__).resolve().parents[1]
+ENROLL_PATH="/api/agent/enroll";HEARTBEAT_PATH="/api/agent/heartbeat";ROOT=Path(__file__).resolve().parents[1];_LAST_VAULT_CLEANUP=0.0
 
 def dispatch_enroll(payload:dict[str,Any]|None,*,backend)->tuple[int,dict[str,Any]]:
  try:result=enroll_remote_agent(backend,payload)
@@ -64,8 +66,12 @@ def _attach_instance_state(result,body,*,agent_id,backend):
  except Exception:result["instance_state"]={"status":"unavailable"}
 
 def _attach_backup_clone_state(result,*,agent_id,backend):
+ global _LAST_VAULT_CLEANUP
  try:
-  clones=InstanceBackupCloneRepository(backend,ROOT);clones.initialize();states=clones.reconcile_for_agent(agent_id);result["backup_clone_states"]=states
+  now=time.monotonic()
+  if now-_LAST_VAULT_CLEANUP>=300:
+   DeletedBackupVaultRepository(backend,ROOT).cleanup_expired();_LAST_VAULT_CLEANUP=now
+  clones=InstanceBackupCloneRepository(backend,ROOT);clones.initialize();result["backup_clone_states"]=clones.reconcile_for_agent(agent_id)
  except Exception:result["backup_clone_states"]=[]
 
 def dispatch_heartbeat(payload:dict[str,Any]|None,*,headers,backend)->tuple[int,dict[str,Any]]:
