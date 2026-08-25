@@ -67,6 +67,7 @@ class UniversalEventRepositoryTest(unittest.TestCase):
             database=str(Path(self.temp.name) / "capivara.db"),
         ))
         self.backend.initialize()
+        self.customer_id = 1
         with self.backend.transaction() as connection:
             connection.execute(
                 "INSERT INTO nodes(id,name,role,status) VALUES (?,?,?,?)",
@@ -94,12 +95,12 @@ class UniversalEventRepositoryTest(unittest.TestCase):
             )
             connection.execute(
                 "INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)",
-                ("customer-c1", "controller-c1", "Customer", "active"),
+                (self.customer_id, "controller-c1", "Customer", "active"),
             )
             connection.execute(
                 "INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,controller_id,agent_id,customer_id) "
                 "VALUES (?,?,?,?,?,?,?,?,?)",
-                ("instance-c1", "agent-node-c1", "minecraft", "minecraft.bedrock.vanilla", "C1", "online", "controller-c1", "agent-c1", "customer-c1"),
+                ("instance-c1", "agent-node-c1", "minecraft", "minecraft.bedrock.vanilla", "C1", "online", "controller-c1", "agent-c1", self.customer_id),
             )
         self.repo = UniversalEventRepository(self.backend)
         self.repo.initialize()
