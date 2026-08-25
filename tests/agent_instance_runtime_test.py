@@ -161,10 +161,10 @@ class ControllerInstanceRuntimeQueueTest(unittest.TestCase):
         self.assertEqual(status, 200)
         with self.backend.transaction() as conn:
             cur = conn.cursor()
-            cur.execute("INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)", ("customer-instance", self.controller_id, "Customer", "active"))
+            cur.execute("INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)", (1, self.controller_id, "Customer", "active"))
             cur.execute(
                 "INSERT INTO instances(id,node_id,game_id,name,status,controller_id,agent_id,customer_id) VALUES (?,?,?,?,?,?,?,?)",
-                ("instance-one", "node-instance", "generic-game", "Instance One", "offline", self.controller_id, "agent-instance", "customer-instance"),
+                ("instance-one", "node-instance", "generic-game", "Instance One", "offline", self.controller_id, "agent-instance", 1),
             )
             cur.close()
         self.commands = AgentInstanceRuntimeRepository(self.backend); self.commands.initialize()
