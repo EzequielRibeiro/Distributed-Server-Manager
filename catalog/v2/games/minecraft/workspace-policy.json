@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "kind": "GameWorkspacePolicy",
+  "game": "minecraft",
+  "products": {
+    "standard": {
+      "label": "Minecraft Padrão",
+      "entitlements": {"mods": false, "plugins": false, "workshop": false, "external_upload": true, "custom_runtime": false},
+      "allowed_runtimes": ["minecraft.java.vanilla", "minecraft.bedrock.vanilla"]
+    },
+    "modified": {
+      "label": "Minecraft Modificado",
+      "entitlements": {"mods": true, "plugins": true, "workshop": true, "external_upload": true, "custom_runtime": false},
+      "allowed_runtimes": ["minecraft.java.vanilla", "minecraft.java.paper", "minecraft.java.fabric", "minecraft.java.arclight", "minecraft.bedrock.vanilla"]
+    }
+  },
+  "runtimes": {
+    "minecraft.java.vanilla": {
+      "label": "Java Vanilla",
+      "family": "java",
+      "mods": false,
+      "plugins": false,
+      "workshop": false,
+      "external_upload": true,
+      "custom_runtime": false,
+      "console": {"supported": true},
+      "startup_parameters": {
+        "java_version": {"type": "select", "allowed": [17, 21, 25], "customer_editable": true},
+        "online_mode": {"type": "boolean", "customer_editable": true}
+      },
+      "file_policy": {"protected_paths": ["runtime", ".dsm"], "mod_paths": ["mods"], "plugin_paths": ["plugins"], "runtime_extensions": [".jar"]}
+    },
+    "minecraft.java.paper": {
+      "label": "Java Paper",
+      "family": "java",
+      "mods": false,
+      "plugins": true,
+      "workshop": false,
+      "external_upload": true,
+      "custom_runtime": false,
+      "console": {"supported": true},
+      "startup_parameters": {"java_version": {"type": "select", "allowed": [17, 21, 25], "customer_editable": true}},
+      "file_policy": {"protected_paths": ["runtime", ".dsm"], "plugin_paths": ["plugins"], "runtime_extensions": [".jar"]}
+    },
+    "minecraft.java.fabric": {
+      "label": "Java Fabric",
+      "family": "java",
+      "mods": true,
+      "plugins": false,
+      "workshop": false,
+      "external_upload": true,
+      "custom_runtime": false,
+      "console": {"supported": true},
+      "startup_parameters": {"java_version": {"type": "select", "allowed": [17, 21, 25], "customer_editable": true}},
+      "file_policy": {"protected_paths": ["runtime", ".dsm"], "mod_paths": ["mods"], "runtime_extensions": [".jar"]}
+    },
+    "minecraft.java.arclight": {
+      "label": "Java Arclight",
+      "family": "java",
+      "mods": true,
+      "plugins": true,
+      "workshop": false,
+      "external_upload": true,
+      "custom_runtime": false,
+      "console": {"supported": true},
+      "startup_parameters": {"java_version": {"type": "select", "allowed": [17, 21, 25], "customer_editable": true}},
+      "file_policy": {"protected_paths": ["runtime", ".dsm"], "mod_paths": ["mods"], "plugin_paths": ["plugins"], "runtime_extensions": [".jar"]}
+    },
+    "minecraft.bedrock.vanilla": {
+      "label": "Bedrock / Windows",
+      "family": "bedrock",
+      "mods": false,
+      "plugins": false,
+      "workshop": false,
+      "external_upload": true,
+      "custom_runtime": false,
+      "console": {"supported": true},
+      "startup_parameters": {},
+      "file_policy": {"protected_paths": ["runtime", ".dsm"]}
+    }
+  }
+}
