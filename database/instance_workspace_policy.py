@@ -15,18 +15,19 @@ INSTANCE_PERMISSIONS = frozenset({
     "content.read", "content.install", "content.remove",
     "team.read", "team.manage",
     "contract.read", "contract.upgrade",
+    "activity.read",
 })
 
 PERMISSION_PRESETS = {
     "viewer": frozenset({
         "instance.view", "console.read", "files.read", "files.download", "backup.read",
-        "startup.read", "content.read", "team.read", "contract.read",
+        "startup.read", "content.read", "team.read", "contract.read", "activity.read",
     }),
     "operator": frozenset({
         "instance.view", "instance.start", "instance.stop", "instance.restart", "console.read",
         "files.read", "files.download", "files.upload", "files.edit", "backup.read", "backup.create",
         "backup.download", "startup.read", "content.read", "content.install", "content.remove",
-        "team.read", "contract.read",
+        "team.read", "contract.read", "activity.read",
     }),
     "manager": INSTANCE_PERMISSIONS,
 }
