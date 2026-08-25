@@ -6,7 +6,12 @@ import base64
 import hashlib
 from urllib.parse import parse_qs, urlparse
 
-from controller_session import expired_cookie_header, revoke_session, session_token_from_headers
+from controller_session import (
+    expired_cookie_header,
+    revoke_session,
+    session_token_from_headers,
+    session_user_from_headers,
+)
 from dashboard_activity_repository import DashboardActivityRepository
 
 ACTIVITY_PAGE = "/activity-log.html"
@@ -116,6 +121,13 @@ def install_dashboard_activity_audit(legacy, authenticate) -> None:
     def repository():
         return DashboardActivityRepository(backend())
 
+    def identity(headers):
+        """Resolve browser navigation by cookie and API activity by Basic auth."""
+        session_user = session_user_from_headers(headers)
+        if session_user is not None:
+            return session_user
+        return authenticate(headers)
+
     def send_response(self, code, message=None):
         self._activity_status_code = int(code)
         return previous_send_response(self, code, message)
@@ -131,7 +143,7 @@ def install_dashboard_activity_audit(legacy, authenticate) -> None:
     legacy.DashboardHandler.send_header = send_header
 
     def _admin(self):
-        user = authenticate(self.headers)
+        user = identity(self.headers)
         if user is None:
             self.unauthorized()
             return None
@@ -142,7 +154,7 @@ def install_dashboard_activity_audit(legacy, authenticate) -> None:
 
     def _record(self, method: str, path: str, user_before, requested_username: str | None):
         status = int(getattr(self, "_activity_status_code", 500))
-        user_after = authenticate(self.headers)
+        user_after = identity(self.headers)
         user = user_after or user_before
         username = (user or {}).get("username") or requested_username
         role = (user or {}).get("role")
@@ -174,7 +186,7 @@ def install_dashboard_activity_audit(legacy, authenticate) -> None:
         self._activity_status_code = 500
         self._activity_response_session = None
         path = urlparse(self.path).path
-        user = authenticate(self.headers)
+        user = identity(self.headers)
         requested = _requested_username(self.headers)
         return path, user, requested
 
