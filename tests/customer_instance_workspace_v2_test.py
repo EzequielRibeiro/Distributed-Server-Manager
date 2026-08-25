@@ -28,20 +28,35 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
  def test_baseline_has_workspace_distributed_queues(self):
   for backend in ("sqlite","postgresql","mysql","mariadb"):
    sql=load_schema_baseline(backend).sql
-   for table in ("instance_permission_grants","instance_file_commands","instance_console_commands","instance_resource_commands","instance_backup_policy","contract_change_requests","service_contract_revisions","deleted_instance_backups"):
+   for table in ("instance_permission_grants","instance_file_commands","instance_console_commands","instance_resource_commands","instance_backup_policy","contract_change_requests","service_contract_revisions","deleted_instance_backups","artifact_transfers"):
     self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}",sql)
- def test_customer_workspace_replaced_legacy_tabs(self):
+ def test_customer_workspace_replaced_legacy_tabs_and_loads_backup_transfer(self):
   html=(ROOT/"dashboard/web/customer-instance.html").read_text(encoding="utf-8")
   self.assertIn('data-view="console"',html);self.assertIn('data-view="team"',html);self.assertIn('data-view="upgrade"',html)
   self.assertNotIn("Log em tempo real",html);self.assertNotIn('data-view="events"',html)
-  self.assertIn("customer-instance-v2.js",html)
- def test_agents_have_distributed_file_console_resource_clients(self):
+  self.assertIn("customer-instance-v2.js",html);self.assertIn("customer-backup-transfer.js",html)
+  transfer=(ROOT/"dashboard/web/customer-backup-transfer.js").read_text(encoding="utf-8")
+  for route in ("/api/customer/artifacts/backup-export","/api/customer/artifacts/backup-import","/api/customer/artifacts/upload","/api/customer/artifacts/restore-import"):
+   self.assertIn(route,transfer)
+ def test_agents_have_distributed_file_console_resource_backup_and_artifact_clients(self):
   for platform in ("linux","windows"):
    runtime=ROOT/"agents"/platform/"runtime";agent=(runtime/"agent.py").read_text(encoding="utf-8")
-   for filename in ("console_client.py","instance_files_client.py","resource_profile_client.py","backup_client.py"):
+   for filename in ("console_client.py","instance_files_client.py","resource_profile_client.py","backup_client.py","artifact_transfer_client.py"):
     self.assertTrue((runtime/filename).is_file(),f"{platform}: {filename}")
-   self.assertIn("resource_command",agent);self.assertIn("file_command",agent);self.assertIn("console_command",agent)
+   for token in ("resource_command","file_command","console_command","artifact_command","artifact_result"):
+    self.assertIn(token,agent)
   win=(ROOT/"agents/windows/runtime/adapters/windows_process.py").read_text(encoding="utf-8")
   self.assertIn("apply_process_limits",win);self.assertTrue((ROOT/"agents/windows/runtime/windows_job_limits.py").is_file())
+ def test_agent_packages_include_artifact_transfer_client(self):
+  linux=(ROOT/"release/build_agent_package.sh").read_text(encoding="utf-8")
+  windows=(ROOT/"release/build_windows_agent_package.py").read_text(encoding="utf-8")
+  self.assertIn("artifact_transfer_client.py",linux)
+  self.assertIn('runtime_dir.glob("*.py")',windows)
+ def test_artifact_http_requires_completed_import_before_restore(self):
+  text=(ROOT/"dashboard/artifact_transfer_http.py").read_text(encoding="utf-8")
+  self.assertIn('CUSTOMER_RESTORE=CUSTOMER_PREFIX+"/restore-import"',text)
+  self.assertIn('item.get("direction")!="controller_to_agent"',text)
+  self.assertIn('str(item.get("status") or "")!="completed"',text)
+  self.assertIn('action="restore",backup_id=backup_id',text)
 
 if __name__=="__main__":unittest.main()
