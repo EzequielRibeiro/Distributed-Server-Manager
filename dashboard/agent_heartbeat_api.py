@@ -33,18 +33,18 @@ def _store_agent_metadata(agent_id,body,*,backend):
   s=AlertSession(backend,c)
   try:
    row=s.execute(f"SELECT metadata_json FROM agents WHERE id={ph}",(agent_id,)).fetchone();raw=row["metadata_json"] if row else None
-   if raw is None:meta={}
-   elif isinstance(raw,dict):meta=dict(raw)
+   if raw is None:metadata={}
+   elif isinstance(raw,dict):metadata=dict(raw)
    elif isinstance(raw,(bytes,bytearray)):
-    try:meta=json.loads(raw.decode("utf-8"))
-    except Exception:meta={}
+    try:metadata=json.loads(raw.decode("utf-8"))
+    except Exception:metadata={}
    else:
-    try:meta=json.loads(str(raw))
-    except Exception:meta={}
-   if not isinstance(meta,dict):meta={}
-   if safe_logs is not None:meta["recent_logs"]=safe_logs
-   if telemetry is not None:meta["telemetry"]=telemetry
-   if instance_telemetry is not None:meta["instance_telemetry"]=[dict(x) for x in instance_telemetry[-500:] if isinstance(x,dict)]
+    try:metadata=json.loads(str(raw))
+    except Exception:metadata={}
+   if not isinstance(metadata,dict):metadata={}
+   if safe_logs is not None:metadata["recent_logs"]=safe_logs
+   if telemetry is not None:metadata["telemetry"]=telemetry
+   if instance_telemetry is not None:metadata["instance_telemetry"]=[dict(x) for x in instance_telemetry[-500:] if isinstance(x,dict)]
    if console_state is not None:
     safe=[]
     for item in console_state[-200:]:
@@ -52,8 +52,8 @@ def _store_agent_metadata(agent_id,body,*,backend):
      value={k:item.get(k) for k in ("instance_id","supported","transport")};output=item.get("output")
      if isinstance(output,list):value["output"]=[str(line).replace("\x00","")[:2000] for line in output[-200:]]
      safe.append(value)
-    meta["instance_console_state"]=safe
-   s.execute(f"UPDATE agents SET metadata_json={ph} WHERE id={ph}",(json.dumps(meta,separators=(",",":")),agent_id))
+    metadata["instance_console_state"]=safe
+   s.execute(f"UPDATE agents SET metadata_json={ph} WHERE id={ph}",(json.dumps(metadata,separators=(",",":")),agent_id))
   finally:s.close()
 def _observability_from_heartbeat(agent_id,body):
  result=[];runtime=body.get("instance_runtime_metrics")
