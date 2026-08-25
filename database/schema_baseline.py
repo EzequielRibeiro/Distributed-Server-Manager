@@ -7,6 +7,7 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
+from baseline_backend_compat import finalize_baseline_sql
 from baseline_v2_compiler import compile_baseline_v2
 
 DATABASE_DIR = Path(__file__).resolve().parent
@@ -45,7 +46,7 @@ def schema_path(backend: str) -> Path:
 
 
 def load_schema_baseline(backend: str) -> SchemaBaseline:
-    """Load and compile one complete final-state backend snapshot."""
+    """Load, compile and finalize one complete backend snapshot."""
     normalized = normalize_backend_name(backend)
     path = schema_path(normalized)
     if not path.is_file():
@@ -54,6 +55,7 @@ def load_schema_baseline(backend: str) -> SchemaBaseline:
     if not source_sql.strip():
         raise ValueError(f"database schema baseline is empty: {path}")
     sql = compile_baseline_v2(source_sql, normalized)
+    sql = finalize_baseline_sql(sql, normalized)
     checksum = hashlib.sha256(sql.encode("utf-8")).hexdigest()
     return SchemaBaseline(
         backend=normalized,
