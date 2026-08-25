@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+import sys
+from pathlib import Path
+import unittest
+ROOT=Path(__file__).resolve().parents[1]
+for path in (ROOT/"dashboard",ROOT/"database",ROOT/"core"):
+ if str(path) not in sys.path:sys.path.insert(0,str(path))
+from customer_instance_policy import effective_permissions,enforce_content_upload,effective_content_policy
+from instance_team_repository import InstanceTeamRepository
+from runtime_workspace_catalog import allowed_runtimes,runtime_allowed_by_contract
+from schema_baseline import load_schema_baseline
+
+class CustomerWorkspaceV2Test(unittest.TestCase):
+ def test_exact_team_permissions_and_console_dependency(self):
+  grants=InstanceTeamRepository._exact_grants({"console.execute":True,"files.read":True})
+  self.assertTrue(grants["instance.view"]);self.assertTrue(grants["console.read"]);self.assertTrue(grants["console.execute"]);self.assertFalse(grants["instance.delete"])
+  permissions=effective_permissions("custom",grants)
+  self.assertIn("console.execute",permissions);self.assertNotIn("instance.delete",permissions)
+ def test_standard_contract_cannot_bypass_mod_plugin_paths(self):
+  policy=effective_content_policy({"mods":False,"plugins":False,"external_upload":True},{"mods":True,"plugins":True,"external_upload":True})
+  with self.assertRaises(PermissionError):enforce_content_upload("mods/example.jar",policy=policy,runtime_rules={"mod_paths":["mods"],"runtime_extensions":[".jar"]})
+  with self.assertRaises(PermissionError):enforce_content_upload("plugins/example.jar",policy=policy,runtime_rules={"plugin_paths":["plugins"],"runtime_extensions":[".jar"]})
+ def test_minecraft_standard_and_modified_runtime_choices(self):
+  standard={"product_variant":"standard"};modified={"product_variant":"modified","entitlements":{"mods":True,"plugins":True,"workshop":True,"external_upload":True}}
+  self.assertTrue(runtime_allowed_by_contract(ROOT,"minecraft","minecraft.java.vanilla",standard));self.assertFalse(runtime_allowed_by_contract(ROOT,"minecraft","minecraft.java.paper",standard));self.assertTrue(runtime_allowed_by_contract(ROOT,"minecraft","minecraft.java.paper",modified))
+  self.assertGreater(len(allowed_runtimes(ROOT,"minecraft",modified)),len(allowed_runtimes(ROOT,"minecraft",standard)))
+ def test_baseline_has_workspace_distributed_queues(self):
+  for backend in ("sqlite","postgresql","mysql","mariadb"):
+   sql=load_schema_baseline(backend).sql
+   for table in ("instance_permission_grants","instance_file_commands","instance_console_commands","instance_resource_commands","instance_backup_policy","contract_change_requests","service_contract_revisions","deleted_instance_backups"):
+    self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}",sql)
+ def test_customer_workspace_replaced_legacy_tabs(self):
+  html=(ROOT/"dashboard/web/customer-instance.html").read_text(encoding="utf-8")
+  self.assertIn('data-view="console"',html);self.assertIn('data-view="team"',html);self.assertIn('data-view="upgrade"',html)
+  self.assertNotIn("Log em tempo real",html);self.assertNotIn('data-view="events"',html)
+  self.assertIn("customer-instance-v2.js",html)
+ def test_agents_have_distributed_file_console_resource_clients(self):
+  for platform in ("linux","windows"):
+   runtime=ROOT/"agents"/platform/"runtime";agent=(runtime/"agent.py").read_text(encoding="utf-8")
+   for filename in ("console_client.py","instance_files_client.py","resource_profile_client.py","backup_client.py"):
+    self.assertTrue((runtime/filename).is_file(),f"{platform}: {filename}")
+   self.assertIn("resource_command",agent);self.assertIn("file_command",agent);self.assertIn("console_command",agent)
+  win=(ROOT/"agents/windows/runtime/adapters/windows_process.py").read_text(encoding="utf-8")
+  self.assertIn("apply_process_limits",win);self.assertTrue((ROOT/"agents/windows/runtime/windows_job_limits.py").is_file())
+
+if __name__=="__main__":unittest.main()
