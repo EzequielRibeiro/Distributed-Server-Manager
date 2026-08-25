@@ -37,6 +37,20 @@ def _working_directory(value: Any) -> str:
     return path
 
 
+def _bind_path(source: Any, target: Any) -> str:
+    source_path = str(source or "").strip()
+    target_path = str(target or "").strip()
+    for label, path in (("source", source_path), ("target", target_path)):
+        if not path.startswith("/"):
+            raise MaterializerError(f"systemd BindPaths {label} must be an absolute path")
+        if any(character in path for character in (":", " ", "\t", "\x00", "\n", "\r")):
+            raise MaterializerError(f"systemd BindPaths {label} contains unsupported characters")
+    # Do not quote the complete source:target pair. systemd 259 parses a quoted
+    # pair as a single path token and duplicates source/target internally, which
+    # later fails with status=226/NAMESPACE even though both paths exist.
+    return f"{source_path}:{target_path}"
+
+
 def _instance_state(instance_id: str) -> tuple[str, str]:
     token = str(instance_id or "").strip()
     if not token or any(character in token for character in ("/", "\\", "\x00", "\n", "\r")):
@@ -74,12 +88,10 @@ def render_unit(spec: dict[str, Any]) -> str:
         f"User={spec['user']}",
         f"StateDirectory={state_directory}",
         "StateDirectoryMode=0700",
-        f"BindPaths={_quote(private_state_path + ':' + _RUNTIME_ACCOUNT_HOME)}",
+        f"BindPaths={_bind_path(private_state_path, _RUNTIME_ACCOUNT_HOME)}",
     ]
     for binding in spec.get("bind_paths", []):
-        source = str(binding["source"])
-        target = str(binding["target"])
-        lines.append(f"BindPaths={_quote(source + ':' + target)}")
+        lines.append(f"BindPaths={_bind_path(binding['source'], binding['target'])}")
     lines.extend([
         f"WorkingDirectory={_working_directory(spec['working_directory'])}",
         f"Environment={_quote(f'HOME={_RUNTIME_ACCOUNT_HOME}')}",

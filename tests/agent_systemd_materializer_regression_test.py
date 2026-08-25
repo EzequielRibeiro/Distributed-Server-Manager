@@ -54,10 +54,11 @@ def test_instance_gets_isolated_writable_home_visible_through_passwd_path():
     assert "StateDirectory=capivara-instances/aurora-dayz-002\n" in unit
     assert "StateDirectoryMode=0700\n" in unit
     assert (
-        'BindPaths="/var/lib/capivara-instances/aurora-dayz-002:'
-        '/var/lib/capivara-agent/runtime-home"\n'
+        "BindPaths=/var/lib/capivara-instances/aurora-dayz-002:"
+        "/var/lib/capivara-agent/runtime-home\n"
         in unit
     )
+    assert 'BindPaths="/var/lib/capivara-instances/aurora-dayz-002:' not in unit
     assert 'Environment="HOME=/var/lib/capivara-agent/runtime-home"' in unit
     assert 'Environment="XDG_DATA_HOME=/var/lib/capivara-agent/runtime-home/.local/share"' in unit
     assert 'Environment="XDG_CACHE_HOME=/var/lib/capivara-agent/runtime-home/.cache"' in unit
@@ -71,10 +72,19 @@ def test_instance_can_bind_private_persistence_over_shared_game_data_mountpoint(
         "target": "/var/lib/capivara-agent/game-data/dayz/serverfiles/mpmissions/dayzOffline.chernarusplus/storage_1",
     }]))
     assert (
-        'BindPaths="/var/lib/capivara-instances/aurora-dayz-002/storage_1:'
-        '/var/lib/capivara-agent/game-data/dayz/serverfiles/mpmissions/dayzOffline.chernarusplus/storage_1"'
+        "BindPaths=/var/lib/capivara-instances/aurora-dayz-002/storage_1:"
+        "/var/lib/capivara-agent/game-data/dayz/serverfiles/mpmissions/dayzOffline.chernarusplus/storage_1"
         in unit
     )
+    assert 'BindPaths="/var/lib/capivara-instances/aurora-dayz-002/storage_1:' not in unit
+
+
+def test_bind_paths_reject_unsupported_pair_characters():
+    with pytest.raises(MaterializerError, match="unsupported characters"):
+        render_unit(_spec(bind_paths=[{
+            "source": "/var/lib/capivara-instances/aurora-dayz-002/storage 1",
+            "target": "/var/lib/capivara-agent/game-data/dayz/storage_1",
+        }]))
 
 
 def test_instance_state_directory_rejects_path_injection():
