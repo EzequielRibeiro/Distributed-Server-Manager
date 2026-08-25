@@ -2206,7 +2206,9 @@ def control_instance(
     relative = instance.relative_to(INSTANCE_ROOT)
 
     if len(relative.parts) != 3:
-        raise ValueError("instance path must identify " "server, game and instance")
+        raise ValueError(
+            "instance path must identify server, game and instance"
+        )
 
     node_id, game, instance_id = relative.parts
 
@@ -2218,6 +2220,32 @@ def control_instance(
     )
 
     if success:
+        raw_state = ""
+
+        if isinstance(result, dict):
+            raw_state = str(
+                result.get("observed_state")
+                or (
+                    result.get("result", {}).get("observed_state")
+                    if isinstance(result.get("result"), dict)
+                    else ""
+                )
+                or ""
+            ).strip().lower()
+
+        if raw_state in {"running", "online"}:
+            state = "online"
+            health = "healthy"
+        elif raw_state in {"stopped", "offline"}:
+            state = "offline"
+            health = "offline"
+        elif raw_state == "failed":
+            state = "failed"
+            health = "degraded"
+        else:
+            state = "offline"
+            health = "unknown"
+
         resource = (
             DSM_ROOT
             / "runtime"
@@ -2227,33 +2255,34 @@ def control_instance(
             / instance_id
         )
 
-        #
-        # O instance.sh publica o estado observado através
-        # de process_running(). Esse estado é a fonte de
-        # verdade após a operação.
-        #
         server_state = read_json(
             resource / "server.json",
             {},
         )
 
-        status = server_state.get(
-            "status",
-            {},
+        server_state["status"] = {
+            "state": state,
+            "health": health,
+        }
+
+        # PID pertence ao Agent remoto. O Controller não deve
+        # representar PID local para uma instância distribuída.
+        server_state["pid"] = None
+        server_state["source"] = "agent"
+        server_state["identity"] = {
+            "server": node_id,
+            "game": game,
+            "instance": instance_id,
+        }
+
+        write_json(
+            resource / "server.json",
+            server_state,
         )
 
-        state = status.get(
-            "state",
-            "offline",
-        )
-
-        if state not in {
-            "online",
-            "offline",
-        }:
-            state = "offline"
-
-        dashboard_repository(database_path).update_instance_status(
+        dashboard_repository(
+            database_path
+        ).update_instance_status(
             instance_id,
             state,
         )
@@ -2263,7 +2292,11 @@ def control_instance(
         f"instance.{action}",
         ("success" if success else "error"),
         instance_id,
-        (result.get("error") if isinstance(result, dict) else None),
+        (
+            result.get("error")
+            if isinstance(result, dict)
+            else None
+        ),
         database_path=database_path,
     )
 
@@ -2371,9 +2404,7 @@ def api_runtime_summary(server, game, instance):
         {},
     )
 
-    if not valid_instance_metadata(
-        instance_metadata
-    ):
+    if not valid_instance_metadata(instance_metadata):
         return {
             "error": "instance ownership metadata is incomplete",
             "server": server,
@@ -2381,95 +2412,117 @@ def api_runtime_summary(server, game, instance):
             "instance": instance,
         }
 
-    instance_path = (
-        INSTANCE_ROOT
-        / server
-        / game
-        / instance
-    )
-
-    # ---------------------------------------------------------
-    # Estado real da instância
-    #
-    # server.json é apenas estado persistido e pode ficar
-    # obsoleto. O processo real tem prioridade.
-    # ---------------------------------------------------------
-
     server_state = read_json(
         base / "server.json",
         {},
     )
 
-    live_pid = None
+    agent_id = str(
+        instance_metadata.get("agent_id") or ""
+    ).strip()
 
-    pid_file = (
-        instance_path
-        / "runtime"
-        / "process.pid"
-    )
+    observed_state = None
+    observed_health = None
+    reported_at = None
 
-    if pid_file.is_file():
+    #
+    # O Agent é a autoridade do runtime.
+    #
+    # O Controller não pode inferir o runtime por processos locais
+    # para decidir se uma instância executada em outro host está
+    # online.
+    #
+    if agent_id:
         try:
-            pid = int(
-                pid_file.read_text(
-                    encoding="utf-8",
-                    errors="ignore",
-                ).strip()
+            from agent_instance_runtime_health_repository import (
+                AgentInstanceRuntimeHealthRepository,
             )
 
-            proc_path = Path(
-                f"/proc/{pid}"
-            )
-
-            cmdline_path = (
-                proc_path
-                / "cmdline"
-            )
-
-            if (
-                pid > 0
-                and proc_path.is_dir()
-                and cmdline_path.is_file()
-            ):
-                cmdline = (
-                    cmdline_path
-                    .read_bytes()
-                    .replace(
-                        b"\\x00",
-                        b" ",
-                    )
-                    .decode(
-                        "utf-8",
-                        errors="replace",
-                    )
+            health_repository = (
+                AgentInstanceRuntimeHealthRepository(
+                    backend_from_environment()
                 )
+            )
 
+            health_repository.initialize()
+
+            for item in health_repository.list_for_agent(
+                agent_id
+            ):
                 if (
-                    str(instance_path)
-                    in cmdline
+                    str(item.get("instance_id") or "")
+                    == instance
                 ):
-                    live_pid = pid
+                    observed_state = str(
+                        item.get("observed_state")
+                        or ""
+                    ).strip().lower()
 
-        except (
-            ValueError,
-            OSError,
-        ):
-            live_pid = None
+                    observed_health = str(
+                        item.get("health")
+                        or ""
+                    ).strip().lower()
+
+                    reported_at = (
+                        item.get("reported_at")
+                        or item.get("updated_at")
+                    )
+
+                    break
+
+        except Exception:
+            # A leitura da Dashboard continua possível com a
+            # última projeção persistida.
+            pass
+
+    if observed_state in {"running", "online"}:
+        state = "online"
+    elif observed_state in {"stopped", "offline"}:
+        state = "offline"
+    elif observed_state == "failed":
+        state = "failed"
+    else:
+        raw_status = server_state.get(
+            "status",
+            {},
+        )
+
+        if isinstance(raw_status, dict):
+            state = str(
+                raw_status.get("state")
+                or "offline"
+            ).lower()
+        else:
+            state = str(
+                raw_status or "offline"
+            ).lower()
+
+    if observed_health:
+        health = observed_health
+    elif state == "online":
+        health = "healthy"
+    elif state == "offline":
+        health = "offline"
+    else:
+        health = "unknown"
 
     server_state["status"] = {
-        "state": (
-            "online"
-            if live_pid is not None
-            else "offline"
-        ),
-        "health": (
-            "healthy"
-            if live_pid is not None
-            else "offline"
-        ),
+        "state": state,
+        "health": health,
     }
 
-    server_state["pid"] = live_pid
+    server_state["pid"] = None
+    server_state["source"] = (
+        "agent"
+        if observed_state
+        else server_state.get(
+            "source",
+            "persisted",
+        )
+    )
+
+    if reported_at is not None:
+        server_state["reported_at"] = reported_at
 
     server_state["identity"] = {
         "server": server,
@@ -2477,35 +2530,19 @@ def api_runtime_summary(server, game, instance):
         "instance": instance,
     }
 
-    #
-    # Reconciliação do estado persistido.
-    #
-    # O processo observado acima é a fonte de verdade.
-    # server.json e instances.status são projeções desse
-    # estado e podem ter ficado obsoletos após uma queda
-    # espontânea do processo.
-    #
-    observed_state = (
-        "online"
-        if live_pid is not None
-        else "offline"
-    )
-
     write_json(
         base / "server.json",
         server_state,
     )
 
     try:
-        dashboard_repository(DATABASE_FILE).reconcile_instance_status(
+        dashboard_repository(
+            DATABASE_FILE
+        ).reconcile_instance_status(
             instance,
-            observed_state,
+            state,
         )
     except Exception:
-        #
-        # A leitura do runtime deve continuar disponível
-        # mesmo se a persistência do estado falhar.
-        #
         pass
 
     mods = read_json(
@@ -2513,21 +2550,11 @@ def api_runtime_summary(server, game, instance):
         {},
     )
 
-    if not isinstance(
-        mods,
-        dict,
-    ):
+    if not isinstance(mods, dict):
         mods = {}
 
-    mods.setdefault(
-        "server",
-        server,
-    )
-
-    mods.setdefault(
-        "instance",
-        instance,
-    )
+    mods.setdefault("server", server)
+    mods.setdefault("instance", instance)
 
     metrics = read_json(
         base / "metrics.json",
@@ -2539,19 +2566,12 @@ def api_runtime_summary(server, game, instance):
         [],
     )
 
-    # ---------------------------------------------------------
-    # Backup mais recente
-    # ---------------------------------------------------------
-
     backup = read_json(
         base / "backup.json",
         {},
     )
 
-    if not isinstance(
-        backup,
-        dict,
-    ):
+    if not isinstance(backup, dict):
         backup = {}
 
     backup_dir = (
@@ -2565,13 +2585,10 @@ def api_runtime_summary(server, game, instance):
         if backup_dir.is_dir():
             candidates = [
                 item
-                for item
-                in backup_dir.iterdir()
+                for item in backup_dir.iterdir()
                 if (
                     item.is_file()
-                    and not item.name.endswith(
-                        ".part"
-                    )
+                    and not item.name.endswith(".part")
                 )
             ]
 
@@ -2582,17 +2599,13 @@ def api_runtime_summary(server, game, instance):
                         item.stat().st_mtime,
                 )
 
-                latest_stat = (
-                    latest.stat()
-                )
+                latest_stat = latest.stat()
 
                 backup.update({
                     "last_backup":
                         latest.name,
                     "created_at":
-                        int(
-                            latest_stat.st_mtime
-                        ),
+                        int(latest_stat.st_mtime),
                     "size":
                         latest_stat.st_size,
                 })
