@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Administrative API for Customer lifecycle, credentials and contracts."""
+"""Administrative API for Customer lifecycle, credentials, billing and contracts."""
 from __future__ import annotations
 
 from typing import Any
@@ -47,9 +47,16 @@ def _deliver_temporary_password(email: str | None, username: str, password: str,
     try:
         return bool(send_temporary_password(email, username, password, reset=reset))
     except Exception:
-        # Credential creation/reset remains authoritative even if SMTP is
-        # temporarily unavailable. The administrator receives the password once.
         return False
+
+
+def _customer_code(payload: dict[str, Any], *, required: bool = True) -> str | None:
+    value = str(payload.get("customer_code") or "").strip().upper()
+    if not value:
+        if required:
+            raise ValueError("customer_code is required")
+        return None
+    return value
 
 
 def dispatch_customer_admin_get(path: str, query: dict[str, list[str]], *, user, backend):
@@ -62,10 +69,10 @@ def dispatch_customer_admin_get(path: str, query: dict[str, list[str]], *, user,
         if path == CUSTOMER_ADMIN_COLLECTION:
             term = str((query.get("q") or [""])[0])
             return 200, {"customers": repository.search(term)}
-        customer_id = str((query.get("id") or [""])[0]).strip()
-        if not customer_id:
-            return 400, {"error": "customer id is required"}
-        return 200, repository.detail(customer_id)
+        customer_code = str((query.get("customer_code") or [""])[0]).strip().upper()
+        if not customer_code:
+            return 400, {"error": "customer_code is required"}
+        return 200, repository.detail(customer_code)
     except ValueError as exc:
         return 404, {"error": str(exc)}
     except Exception:
@@ -92,14 +99,19 @@ def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, ba
             return 403, {"error": "administrative write access required"}
 
         if path == CUSTOMER_ADMIN_COLLECTION:
+            # Baseline v2 deliberately ignores/rejects administrator supplied IDs.
+            if str(payload.get("id") or payload.get("customer_id") or "").strip():
+                raise ValueError("customer id is generated automatically; do not supply id/customer_id")
             email = str(payload.get("email") or "").strip() or None
             result = repository.create_customer(
-                customer_id=str(payload.get("id") or ""),
                 name=str(payload.get("name") or ""),
                 username=str(payload.get("username") or ""),
                 email=email,
                 phone=(str(payload.get("phone") or "").strip() or None),
                 controller_id=(str(payload.get("controller_id") or "").strip() or None),
+                billing_provider=(str(payload.get("billing_provider") or "").strip() or None),
+                billing_customer_id=(str(payload.get("billing_customer_id") or "").strip() or None),
+                billing_status=(str(payload.get("billing_status") or "").strip() or None),
             )
             result["delivered"] = _deliver_temporary_password(
                 email,
@@ -140,7 +152,7 @@ def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, ba
                 raise ValueError("select a valid resource profile or configure the game default")
             resource_profile_source = "selected" if requested_profile_id else "game_default"
             result = repository.create_contract(
-                customer_id=str(payload.get("customer_id") or ""),
+                customer_code=_customer_code(payload),
                 game_id=game_id,
                 instance_limit=limit,
                 contract_id=(str(payload.get("id") or "").strip() or None),
@@ -152,7 +164,7 @@ def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, ba
 
         if path == CUSTOMER_ADMIN_MEMBER_ROLE:
             repository.set_member_role(
-                str(payload.get("customer_id") or ""),
+                _customer_code(payload),
                 str(payload.get("username") or ""),
                 str(payload.get("account_role") or ""),
             )
@@ -161,7 +173,7 @@ def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, ba
         if path == CUSTOMER_ADMIN_ACCESS:
             profile = str(payload.get("permission_profile") or "").strip() or None
             repository.set_instance_access(
-                str(payload.get("customer_id") or ""),
+                _customer_code(payload),
                 str(payload.get("username") or ""),
                 str(payload.get("instance_id") or ""),
                 profile,
