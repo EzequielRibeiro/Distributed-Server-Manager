@@ -23,6 +23,7 @@ from core.network.port_profile import PortProfile
 
 from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
+from customer_reference import resolve_customer_reference
 
 
 def _json_ready_value(value: Any) -> Any:
@@ -34,6 +35,13 @@ def _json_ready_value(value: Any) -> Any:
 
 def _json_ready_row(row: Any) -> dict[str, Any]:
     return {key: _json_ready_value(value) for key, value in dict(row).items()}
+
+
+def _customer_pk(reference: Any) -> int:
+    return resolve_customer_reference(
+        reference,
+        public_only=isinstance(reference, str),
+    )
 
 
 class DashboardRepository:
@@ -54,7 +62,8 @@ class DashboardRepository:
             finally:
                 session.close()
 
-    def customer_agents(self, customer_id: str) -> list[dict[str, Any]]:
+    def customer_agents(self, customer_id: Any) -> list[dict[str, Any]]:
+        customer_id = _customer_pk(customer_id)
         ph = self.dialect.placeholder
         with self.session() as session:
             rows = session.execute(
@@ -66,7 +75,8 @@ class DashboardRepository:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def customer_contracts(self, customer_id: str) -> list[dict[str, Any]]:
+    def customer_contracts(self, customer_id: Any) -> list[dict[str, Any]]:
+        customer_id = _customer_pk(customer_id)
         ph = self.dialect.placeholder
         with self.session() as session:
             rows = session.execute(
@@ -91,7 +101,7 @@ class DashboardRepository:
     def create_customer_instance(
         self,
         *,
-        customer_id: str,
+        customer_id: Any,
         username: str,
         game: str,
         runtime_id: str,
@@ -110,12 +120,13 @@ class DashboardRepository:
     ) -> dict[str, Any]:
         """Reserve ownership, contract capacity and runtime network ports."""
         self.initialize()
+        customer_id = _customer_pk(customer_id)
         ph = self.dialect.placeholder
         now = self.dialect.current_timestamp
         unavailable_ports = unavailable_ports or set()
         with self.session(transaction=True) as session:
             customer = session.execute(
-                "SELECT id,controller_id,name,email,phone,status FROM customers "
+                "SELECT id,customer_code,controller_id,name,email,phone,status FROM customers "
                 f"WHERE id={ph}",
                 (customer_id,),
             ).fetchone()
@@ -180,8 +191,14 @@ class DashboardRepository:
                 contract_metadata.get("resource_profile_source") or "selected"
             ).strip().lower()
             requested_profile_id = str(resource_profile_id or "").strip().lower()
-            if contracted_profile_id and requested_profile_id and requested_profile_id != contracted_profile_id:
-                raise PermissionError("requested resource profile is not allowed by the contract")
+            if (
+                contracted_profile_id
+                and requested_profile_id
+                and requested_profile_id != contracted_profile_id
+            ):
+                raise PermissionError(
+                    "requested resource profile is not allowed by the contract"
+                )
             if requested_profile_id and not contracted_profile_id:
                 raise PermissionError("contract does not allow a resource profile")
             if selected_agent_id:
@@ -232,7 +249,7 @@ class DashboardRepository:
             ).fetchone()
             sequence = int(sequence_row["sequence"])
             customer_prefix = re.sub(
-                r"[^a-z0-9]+", "-", customer["id"].lower()
+                r"[^a-z0-9]+", "-", str(customer["customer_code"]).lower()
             ).strip("-")[:36] or "cliente"
             game_prefix = re.sub(r"[^a-z0-9]+", "-", game).strip("-")[:16]
             while True:
@@ -244,8 +261,11 @@ class DashboardRepository:
                     break
                 sequence += 1
             game_name = {
-                "dayz": "DayZ", "arma3": "Arma 3", "rust": "Rust",
-                "minecraft": "Minecraft", "mindustry": "Mindustry",
+                "dayz": "DayZ",
+                "arma3": "Arma 3",
+                "rust": "Rust",
+                "minecraft": "Minecraft",
+                "mindustry": "Mindustry",
             }.get(game, game.title())
             name = f"Servidor {game_name} {sequence:03d}"
             instance_path = (
@@ -257,17 +277,25 @@ class DashboardRepository:
                 "agent_id": agent["id"],
                 "game": {"id": game},
                 "runtime": {
-                    "id": runtime_id, "edition": edition, "variant": variant,
-                    "version": version, "build": build,
+                    "id": runtime_id,
+                    "edition": edition,
+                    "variant": variant,
+                    "version": version,
+                    "build": build,
                 },
                 "runtime_selection": {
-                    "runtime_id": runtime_id, "edition": edition,
-                    "version": version, "build": build,
+                    "runtime_id": runtime_id,
+                    "edition": edition,
+                    "version": version,
+                    "build": build,
                 },
                 "owner": {"username": username},
                 "customer": {
-                    "id": customer["id"], "name": customer["name"],
-                    "email": customer["email"], "phone": customer["phone"],
+                    "id": str(customer["customer_code"]),
+                    "customer_code": str(customer["customer_code"]),
+                    "name": customer["name"],
+                    "email": customer["email"],
+                    "phone": customer["phone"],
                 },
             }
             if contracted_profile_id:
@@ -280,10 +308,23 @@ class DashboardRepository:
                 "metadata_json,controller_id,agent_id,customer_id,runtime_id,edition,"
                 "variant,game_version,build_id) VALUES "
                 f"({self.dialect.parameters(15)})",
-                (instance_id, agent["node_id"], game, name, "provisioning",
-                 str(metadata_path), json.dumps(metadata, ensure_ascii=False),
-                 customer["controller_id"], agent["id"], customer["id"],
-                 runtime_id, edition, variant, version, build),
+                (
+                    instance_id,
+                    agent["node_id"],
+                    game,
+                    name,
+                    "provisioning",
+                    str(metadata_path),
+                    json.dumps(metadata, ensure_ascii=False),
+                    customer["controller_id"],
+                    agent["id"],
+                    customer["id"],
+                    runtime_id,
+                    edition,
+                    variant,
+                    version,
+                    build,
+                ),
             )
             session.execute(
                 "INSERT INTO instance_contracts(instance_id,contract_id) VALUES "
@@ -294,22 +335,14 @@ class DashboardRepository:
             port = None
 
             if network_profile is not None:
-                profile = PortProfile.from_mapping(
-                    network_profile
-                )
+                profile = PortProfile.from_mapping(network_profile)
 
                 if profile is None:
-                    raise RuntimeError(
-                        "invalid empty network profile"
-                    )
+                    raise RuntimeError("invalid empty network profile")
 
-                if (
-                    self.backend.name
-                    in {"postgresql", "mysql"}
-                ):
+                if self.backend.name in {"postgresql", "mysql"}:
                     session.execute(
-                        "SELECT id FROM agents "
-                        f"WHERE id={ph} FOR UPDATE",
+                        "SELECT id FROM agents " f"WHERE id={ph} FOR UPDATE",
                         (agent["id"],),
                     ).fetchone()
 
@@ -349,11 +382,7 @@ class DashboardRepository:
                 }
 
                 for row in reserved_rows:
-                    reserved[
-                        row["protocol"]
-                    ].add(
-                        int(row["port"])
-                    )
+                    reserved[row["protocol"]].add(int(row["port"]))
 
                 occupied: dict[str, set[int]] = {
                     "tcp": set(),
@@ -362,13 +391,8 @@ class DashboardRepository:
 
                 provider = occupied_ports_provider
 
-                if (
-                    provider is None
-                    and unavailable_ports_provider is not None
-                ):
-                    legacy = set(
-                        unavailable_ports_provider()
-                    )
+                if provider is None and unavailable_ports_provider is not None:
+                    legacy = set(unavailable_ports_provider())
 
                     def provider(
                         agent_id,
@@ -388,17 +412,14 @@ class DashboardRepository:
 
                 if provider is None:
                     raise RuntimeError(
-                        "operating-system port inspection "
-                        "provider is required"
+                        "operating-system port inspection provider is required"
                     )
 
                 for item in ranges:
                     if item.protocol not in profile.protocols:
                         continue
 
-                    occupied[
-                        item.protocol
-                    ].update(
+                    occupied[item.protocol].update(
                         provider(
                             agent["id"],
                             agent["node_id"],
@@ -415,9 +436,7 @@ class DashboardRepository:
                     occupied=occupied,
                 )
 
-                ports = dict(
-                    allocation.ports
-                )
+                ports = dict(allocation.ports)
 
                 requirements = {
                     requirement.name: requirement
@@ -425,9 +444,7 @@ class DashboardRepository:
                 }
 
                 for name, reserved_port in ports.items():
-                    requirement = requirements[
-                        name
-                    ]
+                    requirement = requirements[name]
 
                     session.execute(
                         "INSERT INTO instance_ports("
@@ -445,32 +462,29 @@ class DashboardRepository:
                         ),
                     )
 
-                metadata["network"] = {
-                    "ports": ports,
-                }
+                metadata["network"] = {"ports": ports}
 
                 session.execute(
                     "UPDATE instances "
                     f"SET metadata_json={ph} "
                     f"WHERE id={ph}",
                     (
-                        json.dumps(
-                            metadata,
-                            ensure_ascii=False,
-                        ),
+                        json.dumps(metadata, ensure_ascii=False),
                         instance_id,
                     ),
                 )
 
-                port = ports.get(
-                    "game"
-                )
+                port = ports.get("game")
 
         return {
-            "instance_id": instance_id, "name": name,
-            "instance_path": instance_path, "metadata_path": metadata_path,
-            "metadata": metadata, "agent_id": agent["id"],
-            "node_id": agent["node_id"], "contract_id": contract["id"],
+            "instance_id": instance_id,
+            "name": name,
+            "instance_path": instance_path,
+            "metadata_path": metadata_path,
+            "metadata": metadata,
+            "agent_id": agent["id"],
+            "node_id": agent["node_id"],
+            "contract_id": contract["id"],
             "game_port": port,
             "ports": ports,
         }
@@ -493,7 +507,9 @@ class DashboardRepository:
             ).fetchone()
         return None if row is None else dict(row)
 
-    def instance_port(self, instance_id: str, name="game", protocol="udp") -> int | None:
+    def instance_port(
+        self, instance_id: str, name="game", protocol="udp"
+    ) -> int | None:
         ph = self.dialect.placeholder
         with self.session() as session:
             row = session.execute(
@@ -515,10 +531,7 @@ class DashboardRepository:
                 (instance_id,),
             ).fetchall()
 
-        return {
-            row["name"]: int(row["port"])
-            for row in rows
-        }
+        return {row["name"]: int(row["port"]) for row in rows}
 
     def permission_profile(self, username: str, instance_id: str) -> str | None:
         ph = self.dialect.placeholder
@@ -530,8 +543,14 @@ class DashboardRepository:
             ).fetchone()
         return None if row is None else row["permission_profile"]
 
-    def write_audit(self, username: str, instance_id: str | None,
-                    action: str, result: str, details: str | None) -> None:
+    def write_audit(
+        self,
+        username: str,
+        instance_id: str | None,
+        action: str,
+        result: str,
+        details: str | None,
+    ) -> None:
         with self.session(transaction=True) as session:
             session.execute(
                 "INSERT INTO audit_log(username,instance_id,action,result,details) "
@@ -540,34 +559,17 @@ class DashboardRepository:
             )
 
     def delete_instance(self, instance_id: str) -> int:
-        """
-        Remove uma instância e suas relações operacionais de forma
-        transacional.
-
-        Relações configuradas com ON DELETE CASCADE são eliminadas pelo
-        banco. Alertas, porém, são preservados como histórico do nó para
-        que uma instância removida não continue sendo referenciada por FK.
-        """
+        """Remove one instance and its operational relations transactionally."""
         ph = self.dialect.placeholder
 
         with self.session(transaction=True) as session:
             instance = session.execute(
-                "SELECT id,node_id FROM instances "
-                f"WHERE id={ph}",
+                "SELECT id,node_id FROM instances " f"WHERE id={ph}",
                 (instance_id,),
             ).fetchone()
 
             if instance is None:
                 return 0
-
-            # -----------------------------------------------------
-            # Preservar alertas como histórico.
-            #
-            # alerts.instance_id possui ON DELETE RESTRICT.
-            # O trigger também proíbe scope='instance' sem instance_id.
-            # Portanto o alerta passa a ser histórico do nó antes da
-            # exclusão da instância.
-            # -----------------------------------------------------
 
             session.execute(
                 "UPDATE alerts "
@@ -598,20 +600,43 @@ class DashboardRepository:
 
     def registered_instances(self) -> set[tuple[str, str, str]]:
         with self.session() as session:
-            rows = session.execute("SELECT id,node_id,game_id FROM instances").fetchall()
+            rows = session.execute(
+                "SELECT id,node_id,game_id FROM instances"
+            ).fetchall()
         return {(row["node_id"], row["game_id"], row["id"]) for row in rows}
 
     def load_users(self) -> list[dict[str, Any]]:
         with self.session() as session:
             rows = session.execute(
-                "SELECT username,password_hash,role,scope_id,active "
-                "FROM dashboard_users ORDER BY username"
+                "SELECT u.username,u.password_hash,u.role,u.scope_id,u.customer_id,"
+                "u.active,c.customer_code FROM dashboard_users u "
+                "LEFT JOIN customers c ON c.id=u.customer_id ORDER BY u.username"
             ).fetchall()
-        return [dict(row) for row in rows]
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            if item.get("role") == "customer" and item.get("customer_id") is not None:
+                item["scope_id"] = int(item["customer_id"])
+                item["customer_code"] = item.get("customer_code")
+            result.append(item)
+        return result
 
-    def save_user(self, username: str, password_hash: str, role: str,
-                  scope_id: str | None, active: bool) -> None:
+    def save_user(
+        self,
+        username: str,
+        password_hash: str,
+        role: str,
+        scope_id: Any,
+        active: bool,
+    ) -> None:
         ph = self.dialect.placeholder
+        customer_id = None
+        generic_scope = scope_id
+        if role == "customer":
+            customer_id = _customer_pk(scope_id)
+            generic_scope = None
+        elif role != "controller":
+            generic_scope = None
         with self.session(transaction=True) as session:
             exists = session.execute(
                 f"SELECT 1 FROM dashboard_users WHERE username={ph}",
@@ -620,16 +645,33 @@ class DashboardRepository:
             active_value = active if self.backend.name == "postgresql" else int(active)
             if exists is None:
                 session.execute(
-                    "INSERT INTO dashboard_users(username,password_hash,role,scope_id,active) "
-                    f"VALUES ({self.dialect.parameters(5)})",
-                    (username, password_hash, role, scope_id, active_value),
+                    "INSERT INTO dashboard_users("
+                    "username,password_hash,role,scope_id,customer_id,active"
+                    ") VALUES "
+                    f"({self.dialect.parameters(6)})",
+                    (
+                        username,
+                        password_hash,
+                        role,
+                        generic_scope,
+                        customer_id,
+                        active_value,
+                    ),
                 )
             else:
                 session.execute(
                     f"UPDATE dashboard_users SET password_hash={ph},role={ph},"
-                    f"scope_id={ph},active={ph},updated_at={self.dialect.current_timestamp} "
+                    f"scope_id={ph},customer_id={ph},active={ph},"
+                    f"updated_at={self.dialect.current_timestamp} "
                     f"WHERE username={ph}",
-                    (password_hash, role, scope_id, active_value, username),
+                    (
+                        password_hash,
+                        role,
+                        generic_scope,
+                        customer_id,
+                        active_value,
+                        username,
+                    ),
                 )
 
     def delete_user(self, username: str) -> int:
@@ -682,8 +724,11 @@ class DashboardRepository:
     def reconcile_instance_status(self, instance_id: str, status: str) -> int:
         ph = self.dialect.placeholder
         protected = (
-            "queued", "provisioning", "installing",
-            "pending_steam_auth", "failed",
+            "queued",
+            "provisioning",
+            "installing",
+            "pending_steam_auth",
+            "failed",
         )
         with self.session(transaction=True) as session:
             cursor = session.execute(
@@ -699,7 +744,7 @@ class DashboardRepository:
                 "SELECT id,name,status FROM controllers ORDER BY name"
             ).fetchall()
             customers = session.execute(
-                "SELECT id,name,status FROM customers ORDER BY name"
+                "SELECT id,customer_code,name,status FROM customers ORDER BY name"
             ).fetchall()
         return {
             "controllers": [dict(row) for row in controllers],
