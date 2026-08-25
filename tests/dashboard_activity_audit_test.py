@@ -152,6 +152,7 @@ class DashboardActivityAuditTest(unittest.TestCase):
         self.assertIn(ACTIVITY_API, http_source)
         self.assertIn(ACTIVITY_OPTIONS_API, http_source)
         self.assertIn("Acesso exclusivo de administradores", http_source)
+        self.assertIn("session_user_from_headers", http_source)
         self.assertIn("Senhas, hashes, tokens, cookies", page_source)
         self.assertNotIn("details_json = self.read_json_body", http_source)
 
