@@ -40,12 +40,36 @@ def _read(path: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def _existing_owner(path: Path) -> tuple[int, int] | None:
+    try:
+        current = path.stat()
+    except FileNotFoundError:
+        return None
+    return current.st_uid, current.st_gid
+
+
+def _preserve_owner(temp: Path, owner: tuple[int, int] | None) -> None:
+    if owner is None:
+        return
+    current = temp.stat()
+    if (current.st_uid, current.st_gid) != owner:
+        os.chown(temp, owner[0], owner[1])
+
+
 def _write(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    owner = _existing_owner(path)
     temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(temp, 0o600)
-    os.replace(temp, path)
+    try:
+        temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.chmod(temp, 0o600)
+        _preserve_owner(temp, owner)
+        os.replace(temp, path)
+    finally:
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _instance_path(instance_id: str) -> Path:
