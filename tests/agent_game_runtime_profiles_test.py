@@ -94,7 +94,8 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         }])
         self.assertEqual(spec["environment"]["CAPIVARA_GAME_PORT"], "24010")
         self.assertEqual(spec["environment"]["CAPIVARA_STEAM_QUERY_PORT"], "24013")
-        self.assertEqual(spec["profile_version"], 3)
+        self.assertEqual(spec["profile_version"], 4)
+        self.assertEqual(spec["ports"], self.ports())
 
     def test_legacy_dayz_migration_recovers_missing_ports_from_provisioning_history(self):
         install = self.root / "serverfiles"; install.mkdir()
@@ -129,13 +130,75 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         }
         migrated, changed = game_runtime.migrate_runtime_spec(self.config, legacy)
         self.assertTrue(changed)
-        self.assertEqual(migrated["profile_version"], 3)
+        self.assertEqual(migrated["profile_version"], 4)
         self.assertEqual(migrated["profile_migrated_from_version"], 1)
         self.assertEqual(migrated["ports"]["game_aux"]["port"], 24012)
-        self.assertEqual(migrated["ports"]["steam_query"]["port"], 24012)
+        self.assertEqual(migrated["ports"]["steam_query"]["port"], 24013)
         self.assertIn("-port=24010", migrated["arguments"])
         self.assertTrue(migrated["config_path"].endswith("/dayz-one/config/serverDZ.cfg"))
         self.assertEqual(len(migrated["bind_paths"]), 1)
+
+    def test_dayz_v3_aliased_query_port_migrates_to_v4_catalog_topology(self):
+        install = self.root / "serverfiles"; install.mkdir()
+        private = "/var/lib/capivara-instances/dayz-one"
+        bad_ports = {
+            "game": {"port": 24010, "protocol": "udp"},
+            "game_aux": {"port": 24012, "protocol": "udp"},
+            "steam_query": {"port": 24012, "protocol": "udp"},
+        }
+        v3 = {
+            "instance_id": "dayz-one",
+            "agent_id": "agent-one",
+            "game_id": "dayz",
+            "environment_id": "dayz.stable",
+            "runtime_id": "dayz.stable",
+            "adapter": "systemd",
+            "working_directory": str(install),
+            "executable": str(install / "DayZServer"),
+            "arguments": [f"-config={private}/config/serverDZ.cfg", "-port=24010", f"-profiles={private}/profiles"],
+            "environment": {"CAPIVARA_STEAM_QUERY_PORT": "24012"},
+            "user": "capivara-instance",
+            "desired_state": "running",
+            "observed_state": "running",
+            "profile": "dayz",
+            "profile_version": 3,
+            "ports": bad_ports,
+            "instance_state_root": private,
+            "config_path": f"{private}/config/serverDZ.cfg",
+            "profile_context": {
+                "install_path": str(install),
+                "working_directory": str(install),
+                "executable": str(install / "DayZServer"),
+                "ports": bad_ports,
+                "environment": {"CAPIVARA_STEAM_QUERY_PORT": "24012"},
+                "instance_state_root": private,
+                "config_path": f"{private}/config/serverDZ.cfg",
+            },
+        }
+        migrated, changed = game_runtime.migrate_runtime_spec(self.config, v3)
+        self.assertTrue(changed)
+        self.assertEqual(migrated["profile_version"], 4)
+        self.assertEqual(migrated["profile_migrated_from_version"], 3)
+        self.assertEqual(migrated["ports"]["game"]["port"], 24010)
+        self.assertEqual(migrated["ports"]["game_aux"]["port"], 24012)
+        self.assertEqual(migrated["ports"]["steam_query"]["port"], 24013)
+        self.assertEqual(migrated["environment"]["CAPIVARA_STEAM_QUERY_PORT"], "24013")
+        self.assertEqual(migrated["profile_context"]["ports"]["steam_query"]["port"], 24013)
+
+    def test_dayz_migration_preserves_already_distinct_query_reservation(self):
+        profile = resolve_profile(self.instance)
+        context = {"ports": self.ports(24010)}
+        upgraded = profile.upgrade_migration_context(self.instance, context, 3)
+        self.assertEqual(upgraded["ports"], self.ports(24010))
+
+    def test_dayz_profile_rejects_aliased_reserved_port_roles(self):
+        install = self.root / "serverfiles"; install.mkdir()
+        bad = self.ports(24010)
+        bad["steam_query"] = dict(bad["game_aux"])
+        with self.assertRaisesRegex(ProfileError, "distinct ports"):
+            game_runtime.build_runtime_spec(self.config, self.instance, {
+                "install_path": str(install), "ports": bad,
+            })
 
     def test_two_dayz_instances_never_share_config_profiles_or_persistence(self):
         install = self.root / "serverfiles"; install.mkdir()

@@ -164,6 +164,12 @@ def migrate_runtime_spec(config: dict[str, Any], record: dict[str, Any]) -> tupl
             f"runtime profile migration unavailable: profile={record.get('profile') or record.get('game_id')} "
             f"persisted={stored_version} installed={current_version}"
         )
+    context = profile.upgrade_migration_context(hydrated_record, context, stored_version)
+    if not isinstance(context, dict) or not context:
+        raise RuntimeError(
+            f"runtime profile migration context upgrade failed: profile={record.get('profile') or record.get('game_id')} "
+            f"persisted={stored_version} installed={current_version}"
+        )
 
     instance = dict(hydrated_record)
     instance["desired_state"] = str(record.get("desired_state") or "stopped")
