@@ -17,7 +17,7 @@ def ensure_instance_workspace_extended_schema(sql: str, backend: str) -> str:
 
     ddl=f"""
 
--- Customer Instance Workspace v2: distributed files, upgrade history and deleted backup vault
+-- Customer Instance Workspace v2: distributed files/resources, upgrade history and deleted backup vault
 CREATE TABLE IF NOT EXISTS instance_file_commands (
     command_id {ident} PRIMARY KEY,
     agent_id {ident} NOT NULL,
@@ -40,6 +40,26 @@ CREATE TABLE IF NOT EXISTS instance_file_commands (
 );
 {index} idx_instance_file_agent_status ON instance_file_commands(agent_id,status,created_at);
 {index} idx_instance_file_instance_created ON instance_file_commands(instance_id,created_at);
+
+CREATE TABLE IF NOT EXISTS instance_resource_commands (
+    command_id {ident} PRIMARY KEY,
+    agent_id {ident} NOT NULL,
+    instance_id {ident} NOT NULL,
+    resource_profile_id {ident} NOT NULL,
+    resources_json {json_type} NOT NULL,
+    status {short} NOT NULL DEFAULT 'queued',
+    requested_by {ident},
+    result_json {json_type},
+    last_error {medium},
+    created_at {timestamp},
+    delivered_at {timestamp_null},
+    completed_at {timestamp_null},
+    updated_at {timestamp},
+    FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE,
+    FOREIGN KEY (instance_id) REFERENCES instances(id) ON DELETE CASCADE
+);
+{index} idx_instance_resource_agent_status ON instance_resource_commands(agent_id,status,created_at);
+{index} idx_instance_resource_instance_created ON instance_resource_commands(instance_id,created_at);
 
 CREATE TABLE IF NOT EXISTS service_contract_revisions (
     revision_id {ident} PRIMARY KEY,
