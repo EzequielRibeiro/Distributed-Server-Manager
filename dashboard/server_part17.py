@@ -13,6 +13,7 @@ from customer_instance_team_http import install_customer_instance_team
 from customer_instance_workspace_http import install_customer_instance_workspace
 from customer_management_http import install_customer_management_dashboard
 from dashboard_activity_http import install_dashboard_activity_audit
+from deleted_backup_vault_http import install_deleted_backup_vault_http
 from json_serialization import normalize_json_value
 from system_user_admin_http import install_system_user_administration
 legacy=integration.legacy
@@ -52,6 +53,7 @@ install_customer_instance_workspace(legacy,_authenticate)
 install_customer_instance_team(legacy,_authenticate)
 install_contract_upgrade_api(legacy,_authenticate,_ROOT)
 install_artifact_transfer_http(legacy,_authenticate)
+install_deleted_backup_vault_http(legacy,_authenticate)
 install_dashboard_activity_audit(legacy,_authenticate)
 def run():legacy.run()
 if __name__=="__main__":run()
