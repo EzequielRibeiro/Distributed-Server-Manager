@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Administrative persistence for customers, contracts and Agent resolution."""
+"""Administrative persistence for Customers, contracts and Agent resolution."""
 
 from __future__ import annotations
 
-import re
 import json
+import re
 import uuid
 from contextlib import contextmanager
 from typing import Any, Iterator
 
 from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
+from customer_billing import normalize_billing_identity
+from customer_identity_repository import insert_customer
+from customer_reference import customer_pk
 
 _ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{1,127}")
 _GAME_RE = re.compile(r"[a-z0-9][a-z0-9_-]{1,63}")
@@ -46,17 +49,14 @@ class AdminManagementRepository:
         if controller_id:
             controller_id = self._identifier(controller_id, "controller_id")
             row = session.execute(
-                "SELECT id,name,status FROM controllers "
-                f"WHERE id={ph}",
+                "SELECT id,name,status FROM controllers " f"WHERE id={ph}",
                 (controller_id,),
             ).fetchone()
             if row is None or str(row["status"]).lower() != "active":
                 raise ValueError("controller not found or inactive")
             return row
-
         rows = session.execute(
-            "SELECT id,name,status FROM controllers "
-            "WHERE status='active' ORDER BY id"
+            "SELECT id,name,status FROM controllers WHERE status='active' ORDER BY id"
         ).fetchall()
         if not rows:
             raise ValueError("no active controller is registered")
@@ -67,58 +67,78 @@ class AdminManagementRepository:
     def create_customer(
         self,
         *,
-        customer_id: str,
         name: str,
         username: str,
         password_hash: str,
         controller_id: str | None = None,
         email: str | None = None,
         phone: str | None = None,
+        billing_provider: str | None = None,
+        billing_customer_id: str | None = None,
+        billing_status: str | None = None,
     ) -> dict[str, Any]:
-        customer_id = self._identifier(customer_id, "customer_id")
         username = self._identifier(username, "username").lower()
         name = str(name or "").strip()
         if not name:
             raise ValueError("customer name is required")
         if not password_hash:
             raise ValueError("password hash is required")
-
+        billing = normalize_billing_identity(
+            provider=billing_provider,
+            customer_id=billing_customer_id,
+            status=billing_status,
+        )
         ph = self.dialect.placeholder
         with self.session(transaction=True) as session:
             controller = self._resolve_controller(session, controller_id)
             if session.execute(
-                f"SELECT 1 FROM customers WHERE id={ph}", (customer_id,)
-            ).fetchone() is not None:
-                raise ValueError("customer already exists")
-            if session.execute(
-                f"SELECT 1 FROM dashboard_users WHERE username={ph}", (username,)
+                f"SELECT 1 FROM dashboard_users WHERE username={ph}",
+                (username,),
             ).fetchone() is not None:
                 raise ValueError("username already exists")
+            if billing is not None and session.execute(
+                "SELECT 1 FROM customers WHERE billing_provider=" + ph +
+                " AND billing_customer_id=" + ph,
+                (billing.provider, billing.customer_id),
+            ).fetchone() is not None:
+                raise ValueError("billing customer already linked")
 
-            session.execute(
-                "INSERT INTO customers(id,controller_id,name,email,phone,status) "
-                f"VALUES ({self.dialect.parameters(6)})",
-                (customer_id, controller["id"], name, email, phone, "active"),
+            identity = insert_customer(
+                session,
+                backend_name=self.backend.name,
+                parameters=self.dialect.parameters(8),
+                controller_id=str(controller["id"]),
+                name=name,
+                email=email,
+                phone=phone,
+                status="active",
+                billing_provider=None if billing is None else billing.provider,
+                billing_customer_id=None if billing is None else billing.customer_id,
+                billing_status=None if billing is None else billing.status,
             )
             active_value = True if self.backend.name == "postgresql" else 1
             session.execute(
-                "INSERT INTO dashboard_users(username,password_hash,role,scope_id,active) "
+                "INSERT INTO dashboard_users(username,password_hash,role,customer_id,active) "
                 f"VALUES ({self.dialect.parameters(5)})",
-                (username, password_hash, "customer", customer_id, active_value),
+                (username, password_hash, "customer", identity.id, active_value),
             )
 
         return {
-            "id": customer_id,
+            "id": identity.id,
+            "customer_code": identity.customer_code,
             "name": name,
             "username": username,
             "controller_id": str(controller["id"]),
             "status": "active",
+            "billing_provider": None if billing is None else billing.provider,
+            "billing_customer_id": None if billing is None else billing.customer_id,
+            "billing_status": None if billing is None else billing.status,
         }
 
     def create_contract(
         self,
         *,
-        customer_id: str,
+        customer_id: int,
         game_id: str,
         instance_limit: int = 1,
         contract_id: str | None = None,
@@ -126,7 +146,7 @@ class AdminManagementRepository:
         resource_profile_id: str | None = None,
         resource_profile_source: str | None = None,
     ) -> dict[str, Any]:
-        customer_id = self._identifier(customer_id, "customer_id")
+        customer_id = customer_pk(customer_id)
         game_id = str(game_id or "").strip().lower()
         if not _GAME_RE.fullmatch(game_id):
             raise ValueError("invalid game_id")
@@ -136,39 +156,45 @@ class AdminManagementRepository:
             raise ValueError("instances must be a positive integer") from exc
         if instance_limit <= 0:
             raise ValueError("instances must be a positive integer")
-        if contract_id:
-            contract_id = self._identifier(contract_id, "contract_id")
-        else:
-            slug = re.sub(r"[^a-z0-9]+", "-", customer_id.lower()).strip("-")[:36]
-            contract_id = f"contract-{slug}-{game_id}-{uuid.uuid4().hex[:8]}"
-
         ph = self.dialect.placeholder
         with self.session(transaction=True) as session:
             customer = session.execute(
-                "SELECT id,status FROM customers "
-                f"WHERE id={ph}",
+                "SELECT id,customer_code,status FROM customers " f"WHERE id={ph}",
                 (customer_id,),
             ).fetchone()
             if customer is None or str(customer["status"]).lower() != "active":
                 raise ValueError("customer not found or inactive")
+            if contract_id:
+                contract_id = self._identifier(contract_id, "contract_id")
+            else:
+                slug = str(customer["customer_code"]).lower()
+                contract_id = f"contract-{slug}-{game_id}-{uuid.uuid4().hex[:8]}"
             if session.execute(
-                f"SELECT 1 FROM service_contracts WHERE id={ph}", (contract_id,)
+                f"SELECT 1 FROM service_contracts WHERE id={ph}",
+                (contract_id,),
             ).fetchone() is not None:
                 raise ValueError("contract already exists")
-
+            metadata = (
+                json.dumps(
+                    {
+                        "resource_profile_id": resource_profile_id,
+                        "resource_profile_source": resource_profile_source or "selected",
+                    },
+                    separators=(",", ":"),
+                )
+                if resource_profile_id
+                else "{}"
+            )
             session.execute(
                 "INSERT INTO service_contracts("
                 "id,customer_id,game_id,status,instance_limit,ends_at,metadata_json"
                 ") VALUES (" + self.dialect.parameters(7) + ")",
-                (contract_id, customer_id, game_id, "active", instance_limit, ends_at,
-                 json.dumps({"resource_profile_id": resource_profile_id,
-                             "resource_profile_source": resource_profile_source or "selected"},
-                            separators=(",", ":")) if resource_profile_id else "{}"),
+                (contract_id, customer_id, game_id, "active", instance_limit, ends_at, metadata),
             )
-
         return {
             "id": contract_id,
             "customer_id": customer_id,
+            "customer_code": str(customer["customer_code"]),
             "game_id": game_id,
             "status": "active",
             "instance_limit": instance_limit,
@@ -177,13 +203,12 @@ class AdminManagementRepository:
             "resource_profile_source": resource_profile_source,
         }
 
-    def customer_controller(self, customer_id: str) -> str:
-        customer_id = self._identifier(customer_id, "customer_id")
+    def customer_controller(self, customer_id: int) -> str:
+        customer_id = customer_pk(customer_id)
         ph = self.dialect.placeholder
         with self.session() as session:
             row = session.execute(
-                "SELECT controller_id,status FROM customers "
-                f"WHERE id={ph}",
+                "SELECT controller_id,status FROM customers " f"WHERE id={ph}",
                 (customer_id,),
             ).fetchone()
         if row is None or str(row["status"]).lower() != "active":
@@ -202,7 +227,6 @@ class AdminManagementRepository:
                 f"WHERE a.controller_id={ph} ORDER BY a.id",
                 (controller_id,),
             ).fetchall()
-
         direct = [row for row in rows if str(row["id"]) == selector]
         address = [row for row in rows if str(row["address"] or "").strip() == selector]
         matches = direct or address
@@ -213,7 +237,6 @@ class AdminManagementRepository:
         return dict(matches[0])
 
     def begin_instance_delete(self, instance_id: str) -> dict[str, Any]:
-        """Mark one instance for Agent-confirmed removal."""
         instance_id = self._identifier(instance_id, "instance_id")
         ph = self.dialect.placeholder
         with self.session(transaction=True) as session:
@@ -226,7 +249,8 @@ class AdminManagementRepository:
             if row is None:
                 raise ValueError("instance not found")
             agent = session.execute(
-                f"SELECT status FROM agents WHERE id={ph}", (row["agent_id"],)
+                f"SELECT status FROM agents WHERE id={ph}",
+                (row["agent_id"],),
             ).fetchone()
             if agent is None or str(agent["status"] or "").lower() != "active":
                 raise RuntimeError("owning Agent must be active before deletion can be queued")
@@ -239,7 +263,7 @@ class AdminManagementRepository:
         return {
             "instance_id": instance_id,
             "agent_id": str(row["agent_id"]),
-            "customer_id": str(row["customer_id"]),
+            "customer_id": int(row["customer_id"]),
             "contract_id": None if row["contract_id"] is None else str(row["contract_id"]),
             "previous_status": previous_status,
             "status": "deleting",
@@ -254,13 +278,11 @@ class AdminManagementRepository:
             )
 
     def begin_contract_delete(self, contract_id: str) -> dict[str, Any]:
-        """Mark a contract and every bound instance for cascading removal."""
         contract_id = self._identifier(contract_id, "contract_id")
         ph = self.dialect.placeholder
         with self.session(transaction=True) as session:
             contract = session.execute(
-                "SELECT id,customer_id,game_id,status FROM service_contracts "
-                f"WHERE id={ph}",
+                "SELECT id,customer_id,game_id,status FROM service_contracts " f"WHERE id={ph}",
                 (contract_id,),
             ).fetchone()
             if contract is None:
@@ -278,16 +300,13 @@ class AdminManagementRepository:
             ]
             if blocked:
                 raise RuntimeError(
-                    "cannot delete contract while owning Agents are inactive: "
-                    + ", ".join(blocked)
+                    "cannot delete contract while owning Agents are inactive: " + ", ".join(blocked)
                 )
             if not rows:
-                session.execute(
-                    f"DELETE FROM service_contracts WHERE id={ph}", (contract_id,)
-                )
+                session.execute(f"DELETE FROM service_contracts WHERE id={ph}", (contract_id,))
                 return {
                     "contract_id": contract_id,
-                    "customer_id": str(contract["customer_id"]),
+                    "customer_id": int(contract["customer_id"]),
                     "game_id": str(contract["game_id"]),
                     "status": "deleted",
                     "instances": [],
@@ -303,7 +322,7 @@ class AdminManagementRepository:
                 )
         return {
             "contract_id": contract_id,
-            "customer_id": str(contract["customer_id"]),
+            "customer_id": int(contract["customer_id"]),
             "game_id": str(contract["game_id"]),
             "status": "deleting",
             "instances": [
@@ -334,9 +353,7 @@ class AdminManagementRepository:
             ).fetchone()
             if int(count["total"] or 0) != 0:
                 return False
-            session.execute(
-                f"DELETE FROM service_contracts WHERE id={ph}", (contract_id,)
-            )
+            session.execute(f"DELETE FROM service_contracts WHERE id={ph}", (contract_id,))
         return True
 
 
