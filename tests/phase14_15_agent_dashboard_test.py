@@ -109,14 +109,15 @@ class AgentDashboardPhase14And15Test(unittest.TestCase):
             "fingerprint": "sha256:safe", "hostname": "safe", "os": "linux", "architecture": "x86_64",
         }, backend=self.backend)
         with self.backend.transaction() as connection:
-            connection.execute(
-                "INSERT INTO customers(id,controller_id,name,status,metadata_json) VALUES (?,?,?,?,?)",
-                ("customer-safe", self.controller_id, "Customer", "active", "{}"),
+            cursor = connection.execute(
+                "INSERT INTO customers(controller_id,name,status,metadata_json) VALUES (?,?,?,?)",
+                (self.controller_id, "Customer", "active", "{}"),
             )
+            customer_id = int(cursor.lastrowid)
             connection.execute(
                 "INSERT INTO instances(id,node_id,game_id,name,status,metadata_json,controller_id,agent_id,customer_id) "
                 "VALUES (?,?,?,?,?,?,?,?,?)",
-                ("instance-safe", "node-safe", "minecraft", "Instance", "offline", "{}", self.controller_id, "agent-safe", "customer-safe"),
+                ("instance-safe", "node-safe", "minecraft", "Instance", "offline", "{}", self.controller_id, "agent-safe", customer_id),
             )
         result = safely_set_agent_location_for_user(self.controller, self.backend, {
             "agent_id": "agent-safe", "datacenter_id": "horizon-2", "public_host": "games.example",
