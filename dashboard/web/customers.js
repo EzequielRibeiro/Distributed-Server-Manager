@@ -1,16 +1,34 @@
 (function(){
 "use strict";
-const $=id=>document.getElementById(id);const auth=()=>sessionStorage.getItem("dsm_auth")||"";
-async function request(path,options={}){const headers={Authorization:`Basic ${auth()}`,Accept:"application/json"};if(options.body)headers["Content-Type"]="application/json";const response=await fetch(path,{...options,headers});if(response.status===401){sessionStorage.removeItem("dsm_auth");location.href="/login.html";throw new Error("Sessão encerrada")};const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||`HTTP ${response.status}`);return data}
-async function loadAdminShell(active="customers.html"){
- const host=$("sidebar-component");if(host){const r=await fetch("/components/sidebar-v3.html");host.innerHTML=await r.text();host.querySelectorAll("nav a").forEach(a=>a.classList.toggle("active",a.getAttribute("href")===active));const out=$("btn-logout");if(out)out.onclick=()=>{sessionStorage.clear();location.replace("/login.html")};}
- const who=await request("/api/whoami");$("admin-user-name").textContent=who.username||"—";$("admin-user-role").textContent=who.role||"—";document.querySelectorAll(".admin-only").forEach(x=>x.style.display=who.role==="admin"?"":"none");document.querySelectorAll(".agent-manager-only").forEach(x=>x.style.display=["admin","controller"].includes(who.role)?"":"none");document.querySelectorAll(".instance-manager-only").forEach(x=>x.style.display=["admin","controller","operator"].includes(who.role)?"":"none");
- const toggle=$("admin-menu-toggle");if(toggle)toggle.onclick=()=>{if(innerWidth<=760)document.body.classList.toggle("sidebar-open");else{document.body.classList.toggle("cap-sidebar-collapsed");localStorage.setItem("cap_sidebar_collapsed",document.body.classList.contains("cap-sidebar-collapsed")?"1":"0")}};if(localStorage.getItem("cap_sidebar_collapsed")==="1"&&innerWidth>760)document.body.classList.add("cap-sidebar-collapsed");
+const $=id=>document.getElementById(id);const app=window.CapCustomerManagement;
+function render(items){
+  const root=$("customer-results");root.replaceChildren();
+  if(!items.length){const empty=document.createElement("div");empty.className="customer-empty";empty.textContent="Nenhum cliente encontrado.";root.append(empty);return;}
+  for(const item of items){
+    const card=document.createElement("article");card.className="customer-result";
+    const body=document.createElement("div");
+    const title=document.createElement("h3");title.textContent=item.name||item.customer_code;
+    const identity=document.createElement("p");identity.innerHTML=`<span class="customer-code"></span> · ${item.document_type?String(item.document_type).toUpperCase():"Documento"} ${app.formatDocument(item.document_type,item.document_number)}`;identity.querySelector(".customer-code").textContent=item.customer_code||"—";
+    const contact=document.createElement("p");contact.textContent=`${item.email||"Sem e-mail"}${item.phone?` · ${item.phone}`:""}`;
+    const state=document.createElement("small");state.textContent=`Conta ${item.status||"—"} · Cadastro ${item.registration_status||"—"} · Billing ${item.billing_status||"não vinculado"}`;
+    body.append(title,identity,contact,state);
+    const open=document.createElement("button");open.type="button";open.className="customer-secondary";open.textContent="Ver dados completos";open.onclick=()=>location.href=`/customer-admin.html?customer_code=${encodeURIComponent(item.customer_code)}`;
+    card.append(body,open);root.append(card);
+  }
 }
-function show(text){$("customer-create-result").textContent=text}
-function render(items){const root=$("customer-results");root.replaceChildren();for(const item of items){const code=item.customer_code||`#${item.id}`;const card=document.createElement("article");card.className="customer-admin-result";const title=document.createElement("h3");title.textContent=item.name||code;const meta=document.createElement("p");meta.textContent=`${code} · ${item.status||"—"}${item.email?` · ${item.email}`:""}${item.billing_customer_id?` · billing ${item.billing_customer_id}`:""}`;const users=document.createElement("small");users.textContent=(item.users||[]).map(user=>`${user.username} (${user.account_role})`).join(" · ")||"Sem usuários";const open=document.createElement("button");open.type="button";open.textContent="Abrir cliente";open.addEventListener("click",()=>{location.href=`/customer-admin.html?customer_code=${encodeURIComponent(code)}`});card.append(title,meta,users,open);root.append(card)}if(!items.length)root.textContent="Nenhum cliente encontrado."}
-async function search(){const q=$("customer-search").value.trim();const data=await request(`/api/admin/customers?q=${encodeURIComponent(q)}`);render(data.customers||[])}
-async function create(){const payload={name:$("customer-name").value.trim(),username:$("customer-username").value.trim(),email:$("customer-email").value.trim(),phone:$("customer-phone").value.trim(),billing_provider:$("customer-billing-provider").value.trim(),billing_customer_id:$("customer-billing-id").value.trim(),billing_status:$("customer-billing-status").value};const data=await request("/api/admin/customers",{method:"POST",body:JSON.stringify(payload)});const delivery=data.delivered?" A senha provisória foi enviada ao e-mail cadastrado.":" O envio automático não foi realizado; comunique a senha provisória ao cliente por um canal seguro.";show(`Cliente ${data.customer_code} criado. Login: ${data.username}. Senha provisória: ${data.temporary_password}.${delivery}`);await search()}
-async function init(){if(!auth()){location.href="/login.html";return}await loadAdminShell();$("customer-search-button").addEventListener("click",()=>search().catch(error=>show(error.message)));$("customer-search").addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();search().catch(error=>show(error.message))}});$("customer-create").addEventListener("click",()=>create().catch(error=>show(error.message)));await search()}
-document.addEventListener("DOMContentLoaded",()=>init().catch(error=>show(error.message)));
+async function search(){
+  const field=$("customer-search-field").value,q=$("customer-search").value.trim();
+  if(!q){app.setNotice("customer-search-message","Informe um valor para localizar o cliente.","error");render([]);return;}
+  app.setNotice("customer-search-message","Consultando…");
+  try{
+    const data=await app.request(`/api/admin/customers?field=${encodeURIComponent(field)}&q=${encodeURIComponent(q)}`);
+    app.setNotice("customer-search-message",`${(data.customers||[]).length} cliente(s) encontrado(s).`,"success");render(data.customers||[]);
+  }catch(error){app.setNotice("customer-search-message",error.message,"error");render([]);}
+}
+async function init(){
+  await app.loadShell("customers.html");
+  $("customer-search-button").addEventListener("click",search);
+  $("customer-search").addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();search();}});
+}
+document.addEventListener("DOMContentLoaded",()=>init().catch(error=>app.setNotice("customer-search-message",error.message,"error")));
 })();
