@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Canonical migration-free database schema baseline contract.
-
-Database Baseline v2 treats each backend schema as a complete snapshot of the
-current Capivara persistence model. Historical migration numbers are not part
-of the runtime contract and must not be used to determine database validity.
-"""
+"""Canonical migration-free database schema baseline contract."""
 
 from __future__ import annotations
 
@@ -12,6 +7,7 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
+from baseline_v2_compiler import compile_baseline_v2
 
 DATABASE_DIR = Path(__file__).resolve().parent
 SCHEMA_DIR = DATABASE_DIR / "schemas"
@@ -27,8 +23,6 @@ _SCHEMA_FILES = {
 
 @dataclass(frozen=True)
 class SchemaBaseline:
-    """One complete backend schema snapshot."""
-
     backend: str
     name: str
     path: Path
@@ -51,15 +45,15 @@ def schema_path(backend: str) -> Path:
 
 
 def load_schema_baseline(backend: str) -> SchemaBaseline:
-    """Load the complete schema for one backend."""
-
+    """Load and compile one complete final-state backend snapshot."""
     normalized = normalize_backend_name(backend)
     path = schema_path(normalized)
     if not path.is_file():
         raise FileNotFoundError(f"database schema baseline not found: {path}")
-    sql = path.read_text(encoding="utf-8")
-    if not sql.strip():
+    source_sql = path.read_text(encoding="utf-8")
+    if not source_sql.strip():
         raise ValueError(f"database schema baseline is empty: {path}")
+    sql = compile_baseline_v2(source_sql, normalized)
     checksum = hashlib.sha256(sql.encode("utf-8")).hexdigest()
     return SchemaBaseline(
         backend=normalized,
@@ -71,13 +65,7 @@ def load_schema_baseline(backend: str) -> SchemaBaseline:
 
 
 def baseline_marker_sql(backend: str) -> str:
-    """Return backend-specific DDL for schema metadata.
-
-    This is intentionally metadata about the installed baseline, not a migration
-    ledger. There is one row per database, replaced when a new clean baseline is
-    installed.
-    """
-
+    """Return the one-row installed-baseline metadata DDL."""
     normalized = normalize_backend_name(backend)
     if normalized == "postgresql":
         return """
