@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Customer team and per-instance access persistence for Capivara DSM."""
+"""Customer team and per-instance access persistence for Baseline v2."""
 from __future__ import annotations
 
 from typing import Any
 
 from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
+from customer_reference import resolve_customer_reference
 
 ACCOUNT_ROLES = {"owner", "manager", "member"}
 DELEGABLE_ACCOUNT_ROLES = {"manager", "member"}
@@ -20,7 +21,15 @@ class CustomerTeamRepository:
     def _session(self, connection: Any) -> AlertSession:
         return AlertSession(self.backend, connection)
 
-    def account_role(self, customer_id: str, username: str) -> str | None:
+    @staticmethod
+    def _pk(customer_reference: Any) -> int:
+        return resolve_customer_reference(
+            customer_reference,
+            public_only=isinstance(customer_reference, str),
+        )
+
+    def account_role(self, customer_reference: Any, username: str) -> str | None:
+        customer_id = self._pk(customer_reference)
         self.backend.initialize(); ph = self.dialect.placeholder
         with self.backend.connect() as connection:
             session = self._session(connection)
@@ -33,7 +42,8 @@ class CustomerTeamRepository:
             finally:
                 session.close()
 
-    def list_instances(self, customer_id: str) -> list[dict[str, Any]]:
+    def list_instances(self, customer_reference: Any) -> list[dict[str, Any]]:
+        customer_id = self._pk(customer_reference)
         self.backend.initialize(); ph = self.dialect.placeholder
         with self.backend.connect() as connection:
             session = self._session(connection)
@@ -47,7 +57,8 @@ class CustomerTeamRepository:
             finally:
                 session.close()
 
-    def list_members(self, customer_id: str) -> list[dict[str, Any]]:
+    def list_members(self, customer_reference: Any) -> list[dict[str, Any]]:
+        customer_id = self._pk(customer_reference)
         self.backend.initialize(); ph = self.dialect.placeholder
         with self.backend.connect() as connection:
             session = self._session(connection)
@@ -62,7 +73,7 @@ class CustomerTeamRepository:
                 access_rows = session.execute(
                     "SELECT ia.username,ia.instance_id,ia.permission_profile FROM instance_access ia "
                     "JOIN dashboard_users u ON u.username=ia.username "
-                    f"WHERE u.role='customer' AND u.scope_id={ph} ORDER BY ia.username,ia.instance_id",
+                    f"WHERE u.role='customer' AND u.customer_id={ph} ORDER BY ia.username,ia.instance_id",
                     (customer_id,),
                 ).fetchall()
             finally:
@@ -77,24 +88,33 @@ class CustomerTeamRepository:
             result.append(item)
         return result
 
-    def create_member(self, customer_id: str, username: str, password_hash: str, account_role: str = "member") -> None:
+    def create_member(
+        self,
+        customer_reference: Any,
+        username: str,
+        password_hash: str,
+        account_role: str = "member",
+    ) -> None:
+        customer_id = self._pk(customer_reference)
         if account_role not in DELEGABLE_ACCOUNT_ROLES:
             raise ValueError("invalid delegated account role")
         self.backend.initialize(); ph = self.dialect.placeholder
         username = username.strip().lower()
+        active_value = True if self.backend.name == "postgresql" else 1
         with self.backend.transaction() as connection:
             session = self._session(connection)
             try:
                 existing = session.execute(
-                    f"SELECT role,scope_id FROM dashboard_users WHERE username={ph}", (username,)
+                    f"SELECT role,customer_id FROM dashboard_users WHERE username={ph}",
+                    (username,),
                 ).fetchone()
                 if existing is None:
                     session.execute(
-                        "INSERT INTO dashboard_users(username,password_hash,role,scope_id,active) "
-                        f"VALUES ({self.dialect.parameters(4)},TRUE)",
-                        (username, password_hash, "customer", customer_id),
+                        "INSERT INTO dashboard_users(username,password_hash,role,customer_id,active) "
+                        f"VALUES ({self.dialect.parameters(5)})",
+                        (username, password_hash, "customer", customer_id, active_value),
                     )
-                elif existing["role"] != "customer" or existing["scope_id"] != customer_id:
+                elif existing["role"] != "customer" or int(existing["customer_id"] or 0) != customer_id:
                     raise ValueError("username is already linked to another account")
                 member = session.execute(
                     f"SELECT account_role FROM customer_account_members WHERE customer_id={ph} AND username={ph}",
@@ -110,7 +130,8 @@ class CustomerTeamRepository:
             finally:
                 session.close()
 
-    def set_account_role(self, customer_id: str, username: str, account_role: str) -> None:
+    def set_account_role(self, customer_reference: Any, username: str, account_role: str) -> None:
+        customer_id = self._pk(customer_reference)
         if account_role not in DELEGABLE_ACCOUNT_ROLES:
             raise ValueError("invalid delegated account role")
         self.backend.initialize(); ph = self.dialect.placeholder
@@ -133,7 +154,14 @@ class CustomerTeamRepository:
             finally:
                 session.close()
 
-    def set_instance_access(self, customer_id: str, username: str, instance_id: str, permission_profile: str | None) -> None:
+    def set_instance_access(
+        self,
+        customer_reference: Any,
+        username: str,
+        instance_id: str,
+        permission_profile: str | None,
+    ) -> None:
+        customer_id = self._pk(customer_reference)
         if permission_profile not in INSTANCE_PROFILES | {None}:
             raise ValueError("invalid instance permission profile")
         self.backend.initialize(); ph = self.dialect.placeholder
@@ -177,7 +205,13 @@ class CustomerTeamRepository:
             finally:
                 session.close()
 
-    def permission_profile(self, customer_id: str, username: str, instance_id: str) -> str | None:
+    def permission_profile(
+        self,
+        customer_reference: Any,
+        username: str,
+        instance_id: str,
+    ) -> str | None:
+        customer_id = self._pk(customer_reference)
         self.backend.initialize(); ph = self.dialect.placeholder
         with self.backend.connect() as connection:
             session = self._session(connection)
@@ -186,14 +220,15 @@ class CustomerTeamRepository:
                     "SELECT ia.permission_profile FROM instance_access ia "
                     "JOIN dashboard_users u ON u.username=ia.username "
                     f"JOIN instances i ON i.id=ia.instance_id WHERE ia.username={ph} AND ia.instance_id={ph} "
-                    f"AND u.role='customer' AND u.scope_id={ph} AND i.customer_id={ph}",
+                    f"AND u.role='customer' AND u.customer_id={ph} AND i.customer_id={ph}",
                     (username, instance_id, customer_id, customer_id),
                 ).fetchone()
                 return None if row is None else str(row["permission_profile"])
             finally:
                 session.close()
 
-    def remove_member(self, customer_id: str, username: str) -> None:
+    def remove_member(self, customer_reference: Any, username: str) -> None:
+        customer_id = self._pk(customer_reference)
         self.backend.initialize(); ph = self.dialect.placeholder
         with self.backend.transaction() as connection:
             session = self._session(connection)
@@ -207,7 +242,8 @@ class CustomerTeamRepository:
                 if row["account_role"] == "owner":
                     raise PermissionError("owner cannot be removed from the customer account")
                 session.execute(
-                    f"DELETE FROM instance_access WHERE username={ph} AND instance_id IN (SELECT id FROM instances WHERE customer_id={ph})",
+                    f"DELETE FROM instance_access WHERE username={ph} AND instance_id IN "
+                    f"(SELECT id FROM instances WHERE customer_id={ph})",
                     (username, customer_id),
                 )
                 session.execute(
@@ -215,7 +251,7 @@ class CustomerTeamRepository:
                     (customer_id, username),
                 )
                 session.execute(
-                    f"DELETE FROM dashboard_users WHERE username={ph} AND role='customer' AND scope_id={ph}",
+                    f"DELETE FROM dashboard_users WHERE username={ph} AND role='customer' AND customer_id={ph}",
                     (username, customer_id),
                 )
             finally:

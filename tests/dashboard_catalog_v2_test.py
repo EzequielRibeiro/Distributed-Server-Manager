@@ -14,10 +14,12 @@ os.environ["DSM_ROOT"] = str(ROOT)
 SPEC = importlib.util.spec_from_file_location("dashboard_server", ROOT / "dashboard" / "server.py")
 SERVER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SERVER)
-sys.path.insert(0, str(ROOT / "database"))
-REGISTRY_SPEC = importlib.util.spec_from_file_location("dashboard_registry", ROOT / "database" / "registry.py")
-REGISTRY = importlib.util.module_from_spec(REGISTRY_SPEC)
-REGISTRY_SPEC.loader.exec_module(REGISTRY)
+for path in (ROOT, ROOT / "database", ROOT / "dashboard"):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+from admin_management_repository import AdminManagementRepository
+from runtime_backend import backend_from_environment
 
 
 class CatalogV2DashboardTest(unittest.TestCase):
@@ -119,7 +121,28 @@ class CatalogV2DashboardTest(unittest.TestCase):
     def test_customer_contract_remains_instance_creation_context(self):
         temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
         root = Path(temporary.name); database = root / "data/capivara.db"
-        REGISTRY.create_aurora(root, database)
+        backend = backend_from_environment({
+            "DSM_DATABASE_DRIVER": "sqlite",
+            "DSM_DATABASE": str(database),
+        })
+        backend.initialize()
+        repo = AdminManagementRepository(backend)
+        with repo.session(transaction=True) as session:
+            session.execute(
+                "INSERT INTO nodes(id,name,role,status) VALUES (?,?,?,?)",
+                ("controller-demo", "Controller Demo", "controller", "active"),
+            )
+            session.execute(
+                "INSERT INTO controllers(id,node_id,name,status) VALUES (?,?,?,?)",
+                ("controller-demo", "controller-demo", "Controller Demo", "active"),
+            )
+        customer = repo.create_customer(
+            name="Aurora Games Ltda.",
+            username="aurora",
+            password_hash="test-hash",
+            controller_id="controller-demo",
+        )
+        self.assertEqual(customer["customer_code"], "CLI-000001")
         user = SERVER.load_users(database)["aurora"]
         page = (ROOT / "dashboard/web/customer.html").read_text(encoding="utf-8")
         customer_script = (ROOT / "dashboard/web/customer.js").read_text(encoding="utf-8")

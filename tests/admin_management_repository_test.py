@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression coverage for administrative customer and contract management."""
+"""Regression coverage for Baseline v2 Customer and contract management."""
 
 from __future__ import annotations
 
@@ -39,35 +39,38 @@ def main() -> int:
             )
 
         customer = repo.create_customer(
-            customer_id="customer-1",
             name="Customer 1",
             username="customer-user",
             password_hash="hash",
             controller_id="controller-1",
         )
-        assert customer["id"] == "customer-1"
+        assert customer["id"] == 1
+        assert customer["customer_code"] == "CLI-000001"
         assert customer["username"] == "customer-user"
 
         contract = repo.create_contract(
-            customer_id="customer-1",
+            customer_id=customer["id"],
             game_id="dayz",
             instance_limit=2,
             contract_id="contract-1",
             resource_profile_id="standard",
         )
         assert contract["id"] == "contract-1"
+        assert contract["customer_id"] == 1
+        assert contract["customer_code"] == "CLI-000001"
         assert contract["instance_limit"] == 2
         assert contract["resource_profile_id"] == "standard"
-        assert repo.customer_controller("customer-1") == "controller-1"
+        assert repo.customer_controller(customer["id"]) == "controller-1"
 
         with repo.session() as session:
             row = session.execute(
-                "SELECT role,scope_id,active FROM dashboard_users WHERE username=?",
+                "SELECT role,scope_id,customer_id,active FROM dashboard_users WHERE username=?",
                 ("customer-user",),
             ).fetchone()
         assert row is not None
         assert row["role"] == "customer"
-        assert row["scope_id"] == "customer-1"
+        assert row["scope_id"] is None
+        assert int(row["customer_id"]) == 1
         assert bool(row["active"])
 
     print("admin_management_repository_test: ok")

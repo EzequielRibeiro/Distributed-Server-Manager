@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Customer account identity helpers for Capivara DSM.
 
-This module keeps customer self-service identity rules outside dashboard/server.py.
-It provides deterministic, Linux-safe SFTP username seeds derived from the
-customer e-mail address and collision-safe allocation against the database.
+Self-service identity rules stay outside dashboard/server.py. Public Customer
+references are resolved to numeric Baseline v2 primary keys before persistence.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from typing import Any
 
 from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
-
+from customer_reference import resolve_customer_reference
 
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 SFTP_USERNAME_RE = re.compile(r"^[a-z][a-z0-9._-]{2,31}$")
@@ -32,17 +31,13 @@ def _ascii_slug(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value)
     ascii_value = normalized.encode("ascii", "ignore").decode("ascii").lower()
     slug = re.sub(r"[^a-z0-9._-]+", "-", ascii_value)
-    slug = re.sub(r"[-._]{2,}", "-", slug).strip("-._")
-    return slug
+    return re.sub(r"[-._]{2,}", "-", slug).strip("-._")
 
 
 def sftp_username_seed(email: str) -> str:
-    """Return a stable Linux-safe username seed based on the e-mail local part."""
     normalized = normalize_email(email)
     local_part = normalized.split("@", 1)[0]
-    seed = _ascii_slug(local_part)
-    if not seed:
-        seed = "user"
+    seed = _ascii_slug(local_part) or "user"
     if not seed[0].isalpha():
         seed = f"u-{seed}"
     seed = seed[:32].rstrip("-._")
@@ -60,19 +55,15 @@ def collision_suffix(email: str, attempt: int = 0) -> str:
 
 
 class CustomerIdentityService:
-    """Backend-independent customer account identity operations."""
-
     def __init__(self, backend: DatabaseBackend):
         self.backend = backend
         self.dialect = dialect_for_backend(backend)
 
     def _username_exists(self, session: AlertSession, username: str) -> bool:
         ph = self.dialect.placeholder
-        row = session.execute(
-            f"SELECT 1 FROM customers WHERE sftp_username={ph}",
-            (username,),
-        ).fetchone()
-        return row is not None
+        return session.execute(
+            f"SELECT 1 FROM customers WHERE sftp_username={ph}", (username,)
+        ).fetchone() is not None
 
     def allocate_sftp_username(self, session: AlertSession, email: str) -> str:
         seed = sftp_username_seed(email)
@@ -86,24 +77,19 @@ class CustomerIdentityService:
                 return candidate
         raise RuntimeError("unable to allocate unique SFTP username")
 
-    def assign_identity(self, customer_id: str, email: str) -> dict[str, str]:
-        """Assign normalized account e-mail and generated SFTP username.
-
-        Existing identities are returned unchanged, making the operation
-        idempotent for registration workflows.
-        """
+    def assign_identity(self, customer_reference: Any, email: str) -> dict[str, str]:
         self.backend.initialize()
-        customer_id = str(customer_id or "").strip()
-        if not customer_id:
-            raise ValueError("customer id is required")
+        customer_id = resolve_customer_reference(
+            customer_reference,
+            public_only=isinstance(customer_reference, str),
+        )
         normalized = normalize_email(email)
         ph = self.dialect.placeholder
         with self.backend.transaction() as connection:
             session = AlertSession(self.backend, connection)
             try:
                 row = session.execute(
-                    "SELECT account_email,sftp_username FROM customers "
-                    f"WHERE id={ph}",
+                    "SELECT account_email,sftp_username FROM customers " f"WHERE id={ph}",
                     (customer_id,),
                 ).fetchone()
                 if row is None:

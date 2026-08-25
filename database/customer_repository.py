@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Backend-independent customer administration queries."""
+"""Backend-independent Customer administration queries for Baseline v2."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Any, Iterator
 
 from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
-
+from customer_reference import resolve_customer_reference
 
 DOCUMENT_RE = re.compile(r"\D+")
 VALID_STATUSES = {"active", "suspended", "cancelled"}
@@ -57,8 +57,12 @@ class CustomerRepository:
                 session.close()
 
     def search_customers(
-        self, *, query: str = "", status: str = "",
-        limit: int = 50, offset: int = 0,
+        self,
+        *,
+        query: str = "",
+        status: str = "",
+        limit: int = 50,
+        offset: int = 0,
     ) -> dict[str, Any]:
         self.initialize()
         query = str(query or "").strip()
@@ -75,8 +79,12 @@ class CustomerRepository:
         if query:
             like = f"%{query.lower()}%"
             columns = (
-                "c.id", "c.name", "c.legal_name", "c.email",
-                "c.phone", "c.billing_customer_id",
+                "c.customer_code",
+                "c.name",
+                "c.legal_name",
+                "c.email",
+                "c.phone",
+                "c.billing_customer_id",
             )
             search = [f"LOWER(COALESCE({column}, '')) LIKE {ph}" for column in columns]
             values = [like] * len(columns)
@@ -95,7 +103,7 @@ class CustomerRepository:
         active = "du.active" if self.backend.name == "postgresql" else "du.active = 1"
         count_sql = "SELECT COUNT(*) AS total FROM customers c" + where
         search_sql = f"""
-            SELECT c.id,c.controller_id,c.name,c.legal_name,c.email,c.phone,
+            SELECT c.id,c.customer_code,c.controller_id,c.name,c.legal_name,c.email,c.phone,
                    c.document_type,c.document_number,c.status,c.billing_provider,
                    c.billing_customer_id,c.billing_status,c.billing_synced_at,
                    c.created_at,c.updated_at,
@@ -105,9 +113,9 @@ class CustomerRepository:
             FROM customers c
             LEFT JOIN instances i ON i.customer_id=c.id
             LEFT JOIN service_contracts sc ON sc.customer_id=c.id
-            LEFT JOIN dashboard_users du ON du.role='customer' AND du.scope_id=c.id
+            LEFT JOIN dashboard_users du ON du.role='customer' AND du.customer_id=c.id
             {where}
-            GROUP BY c.id
+            GROUP BY c.id,c.customer_code
             ORDER BY LOWER(c.name),c.id
             LIMIT {ph} OFFSET {ph}
         """
@@ -115,24 +123,33 @@ class CustomerRepository:
             total = int(session.execute(count_sql, parameters).fetchone()["total"])
             rows = session.execute(search_sql, (*parameters, limit, offset)).fetchall()
         items = [customer_to_public(row) for row in rows]
-        return {"items": items, "total": total, "count": len(items),
-                "limit": limit, "offset": offset,
-                "has_more": offset + len(items) < total}
+        return {
+            "items": items,
+            "total": total,
+            "count": len(items),
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + len(items) < total,
+        }
 
-    def get_customer(self, customer_id: str) -> dict[str, Any] | None:
+    def get_customer(self, customer_reference: Any) -> dict[str, Any] | None:
         self.initialize()
-        customer_id = str(customer_id or "").strip()
-        if not customer_id:
+        try:
+            customer_id = resolve_customer_reference(
+                customer_reference,
+                public_only=isinstance(customer_reference, str),
+            )
+        except ValueError:
             return None
         ph = self.dialect.placeholder
         queries = {
-            "customer": f"""SELECT c.id,c.controller_id,c.name,c.legal_name,c.email,c.phone,
+            "customer": f"""SELECT c.id,c.customer_code,c.controller_id,c.name,c.legal_name,c.email,c.phone,
                 c.document_type,c.document_number,c.status,c.billing_provider,
                 c.billing_customer_id,c.billing_status,c.billing_synced_at,
                 c.created_at,c.updated_at,ctrl.name AS controller_name,
                 ctrl.status AS controller_status FROM customers c
                 LEFT JOIN controllers ctrl ON ctrl.id=c.controller_id WHERE c.id={ph}""",
-            "users": f"SELECT username,role,active,created_at,updated_at FROM dashboard_users WHERE role='customer' AND scope_id={ph} ORDER BY username",
+            "users": f"SELECT username,role,active,created_at,updated_at FROM dashboard_users WHERE role='customer' AND customer_id={ph} ORDER BY username",
             "contracts": f"""SELECT sc.id,sc.game_id,sc.status,sc.instance_limit,sc.starts_at,
                 sc.ends_at,sc.created_at,COUNT(ic.instance_id) AS instances_used
                 FROM service_contracts sc LEFT JOIN instance_contracts ic ON ic.contract_id=sc.id
@@ -144,10 +161,10 @@ class CustomerRepository:
                 ORDER BY LOWER(i.name),i.id""",
             "permissions": f"""SELECT ia.username,ia.instance_id,ia.permission_profile
                 FROM instance_access ia INNER JOIN dashboard_users du ON du.username=ia.username
-                WHERE du.role='customer' AND du.scope_id={ph} ORDER BY ia.username,ia.instance_id""",
+                WHERE du.role='customer' AND du.customer_id={ph} ORDER BY ia.username,ia.instance_id""",
             "audit": f"""SELECT al.username,al.instance_id,al.action,al.result,al.details
                 FROM audit_log al WHERE al.username IN (SELECT username FROM dashboard_users
-                WHERE role='customer' AND scope_id={ph}) OR al.instance_id IN
+                WHERE role='customer' AND customer_id={ph}) OR al.instance_id IN
                 (SELECT id FROM instances WHERE customer_id={ph})
                 ORDER BY al.created_at DESC,al.id DESC LIMIT 100""",
         }
@@ -157,12 +174,16 @@ class CustomerRepository:
                 return None
             result = customer_to_public(customer)
             for name in ("users", "contracts", "instances", "permissions"):
-                result[name] = [dict(row) for row in session.execute(
-                    queries[name], (customer_id,)
-                ).fetchall()]
-            result["audit"] = [dict(row) for row in session.execute(
-                queries["audit"], (customer_id, customer_id)
-            ).fetchall()]
+                result[name] = [
+                    dict(row)
+                    for row in session.execute(queries[name], (customer_id,)).fetchall()
+                ]
+            result["audit"] = [
+                dict(row)
+                for row in session.execute(
+                    queries["audit"], (customer_id, customer_id)
+                ).fetchall()
+            ]
         return result
 
     def close(self) -> None:

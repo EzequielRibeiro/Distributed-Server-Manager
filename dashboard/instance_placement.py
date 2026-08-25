@@ -1,13 +1,23 @@
-"""Placement bridge for customer instance creation."""
+"""Placement bridge for Customer instance creation."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from core.placement_requirements import requirements_for_instance
+from customer_reference import resolve_customer_reference
 from placement_errors import PlacementUnavailable
 from placement_service import choose_agent_for_instance
 from region_preference_api import region_preference_for_creation
+
+
+def _customer_id(user: dict[str, Any]) -> int:
+    if user.get("customer_id") is not None:
+        return resolve_customer_reference(user["customer_id"])
+    public = user.get("customer_code") or user.get("scope_id")
+    if not public:
+        raise PermissionError("only a scoped customer can resolve instance placement")
+    return resolve_customer_reference(public, public_only=True)
 
 
 def resolve_instance_placement(
@@ -15,26 +25,17 @@ def resolve_instance_placement(
     payload: dict[str, Any] | None,
     repository,
 ) -> dict[str, Any]:
-    """Resolve an eligible Agent for a customer instance.
-
-    The customer never selects an Agent directly. Lifecycle, health, topology,
-    capabilities, runtime compatibility, resource capacity and port capacity are
-    evaluated before the normal placement scorer chooses among eligible Agents.
-    """
-    if (
-        not user
-        or str(user.get("role", "")).lower() != "customer"
-        or not user.get("scope_id")
-    ):
+    """Resolve an eligible Agent for a Customer instance."""
+    if not user or str(user.get("role", "")).lower() != "customer":
         raise PermissionError("only a scoped customer can resolve instance placement")
 
     payload = payload or {}
-    customer_id = str(user["scope_id"]).strip()
+    customer_id = _customer_id(user)
     ph = repository.dialect.placeholder
 
     with repository.session() as session:
         customer = session.execute(
-            "SELECT id,controller_id,status FROM customers "
+            "SELECT id,customer_code,controller_id,status FROM customers "
             f"WHERE id={ph}",
             (customer_id,),
         ).fetchone()
@@ -55,7 +56,11 @@ def resolve_instance_placement(
 
     game_id = payload.get("game_id") or payload.get("game")
     runtime_id = payload.get("runtime_id") or payload.get("runtime")
-    resources = payload.get("resources") if isinstance(payload.get("resources"), dict) else None
+    resources = (
+        payload.get("resources")
+        if isinstance(payload.get("resources"), dict)
+        else None
+    )
     requirements = requirements_for_instance(
         game_id=game_id,
         runtime_id=runtime_id,
@@ -77,6 +82,8 @@ def resolve_instance_placement(
         )
 
     return {
+        "customer_id": customer_id,
+        "customer_code": str(customer["customer_code"]),
         "controller_id": controller_id,
         "agent_id": str(decision["agent_id"]),
         "node_id": decision.get("node_id"),

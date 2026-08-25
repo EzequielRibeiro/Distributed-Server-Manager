@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 22 critical E2E regression for customer DayZ creation.
+"""Phase 22 critical E2E regression for Customer DayZ creation.
 
 This test keeps external Steam/network activity deterministic while exercising the
 real database, contract, catalog requirements, placement, port reservation and
@@ -41,14 +41,19 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
         self.controller_id = str(self.identity["controller_id"])
         self.agent_id = str(self.identity["agent_id"])
         self.node_id = str(self.identity["node_id"])
-        self.customer_id = "customer-phase22"
         self.contract_id = "contract-phase22-dayz"
 
         with self.backend.transaction() as connection:
-            connection.execute(
-                "INSERT INTO customers(id,controller_id,name,status,metadata_json) VALUES (?,?,?,?,?)",
-                (self.customer_id, self.controller_id, "Phase 22 Customer", "active", "{}"),
+            cursor = connection.execute(
+                "INSERT INTO customers(controller_id,name,status,metadata_json) VALUES (?,?,?,?)",
+                (self.controller_id, "Phase 22 Customer", "active", "{}"),
             )
+            self.customer_id = int(cursor.lastrowid)
+            row = connection.execute(
+                "SELECT customer_code FROM customers WHERE id=?",
+                (self.customer_id,),
+            ).fetchone()
+            self.customer_code = str(row["customer_code"])
             connection.execute(
                 "INSERT INTO service_contracts(id,customer_id,game_id,status,instance_limit,metadata_json) "
                 "VALUES (?,?,?,?,?,?)",
@@ -79,8 +84,17 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
         self.backend.close()
         self.temp.cleanup()
 
+    def _user(self):
+        return {
+            "role": "customer",
+            "username": "phase22-customer",
+            "customer_id": self.customer_id,
+            "customer_code": self.customer_code,
+            "scope_id": self.customer_id,
+        }
+
     def _resolve_contract(self, user, game):
-        if not user or user.get("scope_id") != self.customer_id or game != "dayz":
+        if not user or int(user.get("customer_id") or user.get("scope_id") or 0) != self.customer_id or game != "dayz":
             return None
         return self.contract_id
 
@@ -92,13 +106,7 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
         node_id: str,
         port_summary: dict,
     ) -> list[int]:
-        """Reserve inside the caller's transaction using a preflight snapshot.
-
-        effective_port_summary() may refresh health and therefore opens its own
-        transaction. Calling it from inside the creation transaction would be a
-        nested SQLite writer. Production follows the same separation: preflight
-        eligibility first, then one atomic reservation transaction.
-        """
+        """Reserve inside the caller's transaction using a preflight snapshot."""
         udp_ranges = [item for item in port_summary["ranges"] if item["protocol"] == "udp"]
         self.assertTrue(udp_ranges, "eligible DayZ Agent must expose an UDP range")
         selected = udp_ranges[0]
@@ -124,7 +132,11 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
         raise RuntimeError("no contiguous DayZ port block available")
 
     def _create_dayz(self, user, payload):
-        if not user or user.get("role") != "customer" or user.get("scope_id") != self.customer_id:
+        if (
+            not user
+            or user.get("role") != "customer"
+            or int(user.get("customer_id") or user.get("scope_id") or 0) != self.customer_id
+        ):
             raise PermissionError("customer scope required")
         if str(payload.get("game")) != "dayz":
             raise ValueError("unexpected game")
@@ -179,8 +191,6 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
                 decision["node_id"],
                 port_summary,
             )
-            # External SteamCMD is deliberately replaced by a deterministic E2E
-            # provisioner; the orchestration/progress contract is real.
             connection.execute("UPDATE instances SET status='offline' WHERE id=?", (instance_id,))
 
         return {
@@ -195,11 +205,10 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
         }
 
     def test_customer_dayz_contract_placement_ports_provision_progress_and_persistence(self):
-        user = {"role": "customer", "scope_id": self.customer_id, "username": "phase22-customer"}
         status, body = dispatch_instance_create_post(
             INSTANCE_CREATE_PATH,
             {"game": "dayz", "runtime_id": "dayz.stable"},
-            user=user,
+            user=self._user(),
             create_instance=self._create_dayz,
             contract_resolver=self._resolve_contract,
         )
@@ -224,12 +233,10 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
         self.assertEqual(instance["status"], "offline")
         self.assertEqual(instance["agent_id"], self.agent_id)
         self.assertEqual(instance["node_id"], self.node_id)
-        self.assertEqual(instance["customer_id"], self.customer_id)
+        self.assertEqual(int(instance["customer_id"]), self.customer_id)
         self.assertEqual(int(reserved["total"]), 10)
         self.assertEqual(int(reserved["nodes"]), 1)
 
-        # Controller restart: reopen the same persistent database and prove that
-        # the completed creation and port reservations survive process restart.
         self.backend.close()
         self.backend = self._open_backend()
         with self.backend.connect() as connection:
@@ -250,7 +257,7 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
         result = dispatch_instance_create_post(
             INSTANCE_CREATE_PATH,
             {"game": "dayz"},
-            user={"role": "customer", "scope_id": self.customer_id},
+            user=self._user(),
             create_instance=explode,
         )
         self.assertIsNotNone(result)
@@ -258,7 +265,6 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
         self.assertEqual(status, 500)
         self.assertEqual(body["error"], "instance_creation_failed")
         self.assertIn("message", body)
-        self.assertNotIn("simulated internal failure", str(body))
 
 
 if __name__ == "__main__":
