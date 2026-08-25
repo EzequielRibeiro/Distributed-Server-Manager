@@ -180,6 +180,12 @@ def _customer_fk_type(backend: str) -> str:
     return "BIGINT" if backend in {"postgresql", "mysql", "mariadb"} else "INTEGER"
 
 
+def _system_user_text_type(backend: str, length: int) -> str:
+    if backend in {"postgresql", "sqlite"}:
+        return "TEXT"
+    return f"VARCHAR({length})"
+
+
 def _strip_historical_comments(sql: str) -> str:
     lines = []
     for line in sql.splitlines():
@@ -249,11 +255,40 @@ def _dashboard_customer_fk(sql: str, backend: str) -> str:
     return sql[: match.start()] + match.group(1) + body + match.group(3) + sql[match.end() :]
 
 
+def _dashboard_system_user_identity(sql: str, backend: str) -> str:
+    """Persist human/organizational identity for non-Customer dashboard users."""
+    pattern = re.compile(
+        r"(CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?dashboard_users\s*\()(.*?)(\n\);)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    match = pattern.search(sql)
+    if match is None:
+        raise ValueError(f"{backend} baseline has no dashboard_users table")
+    body = match.group(2)
+    if re.search(r"\bcorporate_email\b", body, re.IGNORECASE):
+        return sql
+    customer = re.search(r"(\bcustomer_id\s+[^,\n]+,?)", body, re.IGNORECASE)
+    if customer is None:
+        raise ValueError(f"{backend} dashboard_users has no customer_id")
+    full_name_type = _system_user_text_type(backend, 255)
+    email_type = _system_user_text_type(backend, 320)
+    short_type = _system_user_text_type(backend, 128)
+    insertion = customer.group(1)
+    fields = (
+        f"\n\n    full_name {full_name_type},"
+        f"\n    corporate_email {email_type} UNIQUE,"
+        f"\n    phone {short_type},"
+        f"\n    job_title {full_name_type},"
+        f"\n    department {full_name_type},"
+        f"\n    created_by {short_type},"
+    )
+    body = body[: customer.start()] + insertion + fields + body[customer.end() :]
+    return sql[: match.start()] + match.group(1) + body + match.group(3) + sql[match.end() :]
+
+
 def _ensure_password_state(sql: str, backend: str) -> str:
     if re.search(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?customer_password_state\b", sql, re.IGNORECASE):
         return sql
-    # This table depends only on dashboard_users and is safe to append after the
-    # complete source snapshot has defined user persistence.
     return sql.rstrip() + "\n\n" + _password_state_ddl(backend) + "\n"
 
 
@@ -276,6 +311,7 @@ def compile_baseline_v2(sql: str, backend: str) -> str:
     result = _replace_customer_table(result, backend)
     result = _numeric_customer_foreign_keys(result, backend)
     result = _dashboard_customer_fk(result, backend)
+    result = _dashboard_system_user_identity(result, backend)
     result = _remove_schema_migration_ledger(result)
     result = _ensure_password_state(result, backend)
     result = re.sub(r"\n{4,}", "\n\n\n", result).strip() + "\n"
