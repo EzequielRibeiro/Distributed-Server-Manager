@@ -54,7 +54,7 @@ def render_unit(spec):
  for binding in spec.get("bind_paths",[]):lines.append(f"BindPaths={_bind_path(binding['source'],binding['target'])}")
  lines.extend([f"WorkingDirectory={_working_directory(spec['working_directory'])}",f"Environment={_quote(f'HOME={_RUNTIME_ACCOUNT_HOME}')}",f"Environment={_quote(f'XDG_DATA_HOME={_RUNTIME_ACCOUNT_HOME}/.local/share')}",f"Environment={_quote(f'XDG_CACHE_HOME={_RUNTIME_ACCOUNT_HOME}/.cache')}",f"Environment={_quote(f'XDG_CONFIG_HOME={_RUNTIME_ACCOUNT_HOME}/.config')}"])
  lines.extend(_resource_lines(spec));lines.extend(["ExecStart="+" ".join(_quote(x) for x in argv),"Restart=no","KillSignal=SIGTERM","TimeoutStopSec=60"])
- for key,value in sorted(dict(spec.get("environment",{})).items()):lines.append(f"Environment={_quote(f'{key}={value')}")
+ for key,value in sorted(dict(spec.get("environment",{})).items()):lines.append(f"Environment={_quote(f'{key}={value}')}")
  lines.extend(["","[Install]","WantedBy=multi-user.target",""]);return "\n".join(lines)
 def _owned_content(content,spec):
  required={f"X-Capivara-GeneratedBy={_GENERATED_BY}",f"X-Capivara-Instance={spec['instance_id']}",f"X-Capivara-Agent={spec['agent_id']}"};lines={line.strip() for line in content.splitlines()};return required.issubset(lines)
