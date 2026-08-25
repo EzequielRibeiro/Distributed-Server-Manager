@@ -13,6 +13,7 @@ ROUTES={
     PREFIX+"/telemetry",
     PREFIX+"/console",
     PREFIX+"/startup",
+    PREFIX+"/files/status",
     PREFIX+"/backup-policy",
     PREFIX+"/upgrade-options",
     PREFIX+"/upgrade",
@@ -43,7 +44,7 @@ def install_customer_instance_workspace(legacy, authenticate) -> None:
     def instance(parsed,body=None):return str((body or {}).get("instance_id") or one(parsed,"instance_id","") or "").strip()
     def send_error(self,exc):
         if isinstance(exc,PermissionError):self.send_json(403,{"error":"forbidden","message":str(exc)});return
-        if isinstance(exc,KeyError):self.send_json(404,{"error":"not_found","message":"Instância não encontrada."});return
+        if isinstance(exc,KeyError):self.send_json(404,{"error":"not_found","message":"Registro não encontrado."});return
         if isinstance(exc,(ValueError,LookupError)):self.send_json(400,{"error":"invalid_request","message":str(exc)});return
         self.send_json(500,{"error":"workspace_failed","message":"Não foi possível concluir a operação da instância."})
     def get(self):
@@ -58,6 +59,7 @@ def install_customer_instance_workspace(legacy, authenticate) -> None:
             elif path==PREFIX+"/telemetry":data={"samples":api.telemetry(user,iid,int(one(parsed,"limit",240) or 240))}
             elif path==PREFIX+"/console":data={"lines":api.console_output(user,iid,int(one(parsed,"limit",300) or 300))}
             elif path==PREFIX+"/startup":data=api.startup(user,iid)
+            elif path==PREFIX+"/files/status":data=api.file_status(user,iid,one(parsed,"command_id",""))
             elif path==PREFIX+"/backup-policy":data=api.backup_policy(user,iid)
             elif path==PREFIX+"/upgrade-options":data=api.upgrade_options(user,iid)
             elif path==PREFIX+"/runtime-options":data={"runtimes":api.runtime_options(user,iid)}
@@ -67,12 +69,13 @@ def install_customer_instance_workspace(legacy, authenticate) -> None:
         except Exception as exc:send_error(self,exc)
     def post(self):
         parsed=urlparse(self.path);path=parsed.path
-        if path not in {PREFIX+"/console",PREFIX+"/upgrade"}:return previous_post(self)
+        if path not in {PREFIX+"/console",PREFIX+"/upgrade",PREFIX+"/files"}:return previous_post(self)
         user=require_user(self)
         if user is None:return
         try:
             body=self.read_json_body();iid=instance(parsed,body);api=service()
             if path==PREFIX+"/console":data=api.send_console(user,iid,body.get("command"));code=202
+            elif path==PREFIX+"/files":data=api.queue_file(user,iid,body.get("action"),path=body.get("path"),target_path=body.get("target_path"),payload=body.get("payload"));code=202
             else:data=api.request_upgrade(user,iid,body.get("profile_id"));code=202
             self.send_json(code,data)
         except Exception as exc:send_error(self,exc)
