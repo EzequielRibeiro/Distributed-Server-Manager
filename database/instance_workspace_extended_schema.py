@@ -112,6 +112,30 @@ CREATE TABLE IF NOT EXISTS deleted_instance_backups (
 {index} idx_deleted_instance_backups_customer_expiry ON deleted_instance_backups(customer_id,expires_at);
 {index} idx_deleted_instance_backups_source ON deleted_instance_backups(source_instance_id,created_at);
 {index} idx_deleted_instance_backups_status ON deleted_instance_backups(status,created_at);
+
+CREATE TABLE IF NOT EXISTS instance_backup_clones (
+    clone_id {ident} PRIMARY KEY,
+    customer_id {bigint} NOT NULL,
+    source_vault_id {ident} NOT NULL,
+    target_instance_id {ident} NOT NULL,
+    target_agent_id {ident} NOT NULL,
+    provisioning_id {ident} NOT NULL,
+    transfer_id {ident},
+    imported_backup_id {ident},
+    restore_job_id {ident},
+    status {short} NOT NULL DEFAULT 'provisioning',
+    requested_by {ident},
+    last_error {medium},
+    created_at {timestamp},
+    completed_at {timestamp_null},
+    updated_at {timestamp},
+    UNIQUE (target_instance_id),
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+    FOREIGN KEY (target_instance_id) REFERENCES instances(id) ON DELETE CASCADE,
+    FOREIGN KEY (target_agent_id) REFERENCES agents(id) ON DELETE CASCADE
+);
+{index} idx_instance_backup_clones_customer ON instance_backup_clones(customer_id,created_at);
+{index} idx_instance_backup_clones_status ON instance_backup_clones(status,created_at);
 """
     return sql.rstrip()+ddl+"\n"
 
