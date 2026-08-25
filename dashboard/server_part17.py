@@ -10,6 +10,7 @@ from controller_telemetry import controller_telemetry
 from customer_instance_creation import install_customer_instance_creation
 from customer_management_http import install_customer_management_dashboard
 from json_serialization import normalize_json_value
+from system_user_admin_http import install_system_user_administration
 
 legacy = integration.legacy
 install_customer_instance_creation(legacy)
@@ -78,6 +79,7 @@ def catalog_architecture_put(self):
 legacy.DashboardHandler.send_json = json_safe_send_json
 legacy.DashboardHandler.do_GET = catalog_architecture_get
 legacy.DashboardHandler.do_PUT = catalog_architecture_put
+install_system_user_administration(legacy, _authenticate)
 
 
 def run():
