@@ -34,6 +34,10 @@ PY
 
 INSTALLER="${PACKAGE}/install-agent.sh"; BOOTSTRAP="${ROOT}/agents/linux/installer/bootstrap-release.sh"
 grep -Fq -- '--package-dir' "${INSTALLER}" || fail "local installer lacks --package-dir"
+grep -Fq -- '--instance-storage-root' "${INSTALLER}" || fail "local installer lacks --instance-storage-root"
+grep -Fq 'CAPIVARA_INSTANCE_STORAGE_ROOT' "${INSTALLER}" || fail "installer lacks instance storage root environment override"
+grep -Fq "'instance_storage_root'" "${INSTALLER}" || fail "installer does not persist instance_storage_root"
+grep -Fq 'install -d -m 0711 -o root -g root "${INSTANCE_STORAGE_ROOT}"' "${INSTALLER}" || fail "installer does not prepare instance storage root"
 ! grep -Fq 'api.github.com' "${INSTALLER}" || fail "local installer depends on GitHub"
 ! grep -Fq 'git clone' "${INSTALLER}" || fail "local installer clones source"
 grep -Fq 'capivara-agent-linux-' "${BOOTSTRAP}" || fail "release bootstrap does not select Agent package"
