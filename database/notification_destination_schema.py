@@ -22,7 +22,7 @@ CREATE TABLE notification_routes (
     route_id TEXT PRIMARY KEY,
     destination_id TEXT NOT NULL REFERENCES notification_destinations(destination_id) ON DELETE RESTRICT,
     event_type TEXT,
-    minimum_severity TEXT NOT NULL DEFAULT 'warning' CHECK (minimum_severity IN ('info','warning','critical')),
+    minimum_severity TEXT NOT NULL DEFAULT 'warning' CHECK (minimum_severity IN ('debug','info','warning','error','critical')),
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -45,7 +45,7 @@ CREATE TABLE notification_routes (
     route_id TEXT PRIMARY KEY,
     destination_id TEXT NOT NULL REFERENCES notification_destinations(destination_id) ON DELETE RESTRICT,
     event_type TEXT,
-    minimum_severity TEXT NOT NULL DEFAULT 'warning' CHECK (minimum_severity IN ('info','warning','critical')),
+    minimum_severity TEXT NOT NULL DEFAULT 'warning' CHECK (minimum_severity IN ('debug','info','warning','error','critical')),
     enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -74,7 +74,7 @@ CREATE TABLE notification_routes (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_notification_routes_match (enabled,event_type,minimum_severity),
     CONSTRAINT fk_notification_routes_destination FOREIGN KEY (destination_id) REFERENCES notification_destinations(destination_id) ON DELETE RESTRICT,
-    CONSTRAINT ck_notification_routes_severity CHECK (minimum_severity IN ('info','warning','critical')),
+    CONSTRAINT ck_notification_routes_severity CHECK (minimum_severity IN ('debug','info','warning','error','critical')),
     CONSTRAINT ck_notification_routes_enabled CHECK (enabled IN (0,1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"""
 
