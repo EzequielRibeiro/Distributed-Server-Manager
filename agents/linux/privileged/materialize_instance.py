@@ -203,18 +203,33 @@ def _verify_tree(source: Path, target: Path) -> tuple[int, int]:
 def _migrate_storage_copy(
     config: dict[str, Any],
     spec: dict[str, Any],
-    target_storage_pool_id: Any,
-    migration_id: Any,
+    *,
+    target_storage_pool_id: Any = None,
+    migration_id: Any = None,
+    target_root_value: Any = None,
 ) -> dict[str, Any]:
     source_pool_id = str(spec.get("storage_pool_id") or "").strip() or None
-    target_pool_id = _token(target_storage_pool_id, "target_storage_pool_id", 64)
-    migration_token = _token(migration_id, "migration_id")
     source_root = _instance_storage_root(config, source_pool_id)
-    target_root = _instance_storage_root(config, target_pool_id)
-    if source_pool_id == target_pool_id or source_root == target_root:
-        return {"changed": False, "source_storage_pool_id": source_pool_id, "target_storage_pool_id": target_pool_id,
-                "source": str(source_root), "target": str(target_root), "verified_files": 0,
-                "verified_bytes": 0, "source_preserved": True}
+    if target_storage_pool_id is not None:
+        target_pool_id = _token(target_storage_pool_id, "target_storage_pool_id", 64)
+        target_root = _instance_storage_root(config, target_pool_id)
+        migration_token = _token(migration_id, "migration_id")
+    else:
+        target_pool_id = None
+        target_root = _storage_root(target_root_value, "target storage root")
+        migration_token = "root-migration"
+
+    if source_root == target_root:
+        return {
+            "changed": False,
+            "source_storage_pool_id": source_pool_id,
+            "target_storage_pool_id": target_pool_id,
+            "source": str(source_root),
+            "target": str(target_root),
+            "verified_files": 0,
+            "verified_bytes": 0,
+            "source_preserved": True,
+        }
 
     instance_id = spec["instance_id"]
     source = (source_root / instance_id).resolve(strict=False)
@@ -296,8 +311,9 @@ def run(instance_id: str) -> dict[str, Any]:
         operation = _migrate_storage_copy(
             config,
             spec,
-            request.get("target_storage_pool_id"),
-            request.get("migration_id"),
+            target_storage_pool_id=request.get("target_storage_pool_id"),
+            migration_id=request.get("migration_id"),
+            target_root_value=request.get("target_root"),
         )
     else:
         raise RuntimeError("unsupported privileged materialization action")
