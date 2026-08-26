@@ -26,16 +26,19 @@ jobs:
             database/activity_audit_repository.py \
             database/activity_audit_schema.py \
             database/event_consumer_schema.py \
+            database/notification_destination_schema.py \
             database/notification_outbox_repository.py \
             database/notification_outbox_schema.py \
+            database/notification_routing_repository.py \
             dashboard/activity_humanizer.py \
             dashboard/dashboard_activity_http.py \
             dashboard/alert_management_http.py \
             monitor/alert_engine.py \
-            tests/database_audit_alerts_test.py
+            tests/database_audit_alerts_test.py \
+            tests/notification_routing_test.py
 
       - name: Validate JavaScript
         run: node --check dashboard/web/activity-log.js
 
       - name: Test semantic database audit and alerts
-        run: python3 -m unittest -v tests.database_audit_alerts_test
+        run: python3 -m unittest -v tests.database_audit_alerts_test tests.notification_routing_test
