@@ -59,10 +59,10 @@ def install_customer_instance_creation(legacy)->None:
    if instance_path.exists():shutil.rmtree(instance_path)
    if resource.exists():shutil.rmtree(resource)
    raise
-  # The Controller owns physical placement. Customer responses expose only the
-  # requested geography and the public instance identity; Agent/Node identity
-  # remains internal to placement, provisioning and persistence.
-  result={"created":True,"instance_id":plan["instance_id"],"name":plan["name"],"instance":str(instance_path),"game":game,"contract_id":plan["contract_id"],"placement":{"region_id":placement.get("region_id"),"datacenter_id":placement.get("datacenter_id"),"score":placement.get("score"),"reason":placement.get("reason")},"provision":provision}
+  # The Controller owns physical placement and filesystem layout. Customer
+  # responses expose only the public instance identity and requested geography;
+  # Agent/Node identities and internal instance paths remain private.
+  result={"created":True,"instance_id":plan["instance_id"],"name":plan["name"],"game":game,"contract_id":plan["contract_id"],"placement":{"region_id":placement.get("region_id"),"datacenter_id":placement.get("datacenter_id"),"score":placement.get("score"),"reason":placement.get("reason")},"provision":provision}
   if source_vault_id:result["backup_clone"]={"clone_id":clone["clone_id"],"source_vault_id":source_vault_id,"status":clone["status"]}
   return result
  def retry_instance_provisioning(user,instance_path,database_path=None):
