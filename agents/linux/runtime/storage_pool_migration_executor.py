@@ -128,7 +128,7 @@ def execute(config: dict[str, Any], command: dict[str, Any], result_path: Path) 
 
             _result(result_path, command, status="running", step="copy_verify", progress=20)
             _event(config, command, "INSTANCE_STORAGE_POOL_MIGRATION_PROGRESS", step="copy_verify", progress=20)
-            copied = privileged_materialization.migrate_storage_copy(
+            copied = privileged_materialization.migrate_storage_pool_copy(
                 config,
                 original,
                 target_storage_pool_id=command["target_storage_pool_id"],
