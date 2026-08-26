@@ -8,9 +8,8 @@ on:
       - 'database/ha_dr_*'
       - 'dashboard/ha_dr_http.py'
       - 'dashboard/server_part13.py'
-      - 'database/migrations/040_high_availability_disaster_recovery.sql'
-      - 'database/migrations_mysql/040_high_availability_disaster_recovery.sql'
-      - 'database/migrations_postgresql/040_high_availability_disaster_recovery.sql'
+      - 'database/schema_baseline.py'
+      - 'database/schemas/**'
       - 'bin/cap'
       - 'tests/high_availability_disaster_recovery_test.py'
       - 'tests/high_availability_failover_e2e_test.py'
@@ -31,14 +30,16 @@ jobs:
         run: PYTHONPATH=database:. python3 -m unittest tests/high_availability_disaster_recovery_test.py -v
       - name: Test operational failover and split-brain protection
         run: PYTHONPATH=database:. python3 tests/high_availability_failover_e2e_test.py
-      - name: Verify migration parity
+      - name: Verify baseline parity
         run: |
-          test -f database/migrations/040_high_availability_disaster_recovery.sql
-          test -f database/migrations_postgresql/040_high_availability_disaster_recovery.sql
-          test -f database/migrations_mysql/040_high_availability_disaster_recovery.sql
-          grep -Fq 'ha_failover_operations' database/migrations/040_high_availability_disaster_recovery.sql
-          grep -Fq 'fencing_epoch' database/migrations_postgresql/040_high_availability_disaster_recovery.sql
-          grep -Fq 'dr_recovery_points' database/migrations_mysql/040_high_availability_disaster_recovery.sql
+          PYTHONPATH=database python3 - <<'PY'
+          from schema_baseline import load_schema_baseline
+          required = ('ha_failover_operations', 'fencing_epoch', 'dr_recovery_points')
+          for backend in ('sqlite', 'postgresql', 'mysql'):
+              sql = load_schema_baseline(backend).sql
+              for token in required:
+                  assert token in sql, f'{backend} baseline missing {token}'
+          PY
       - name: Verify integration boundaries
         run: |
           grep -Fq 'cap ha' bin/cap
