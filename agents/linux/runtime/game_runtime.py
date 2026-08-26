@@ -14,39 +14,33 @@ from profiles import resolve_profile
 from runtime_events import emit_runtime_event
 from runtime_materialization import materialize
 from runtime_spec import validate_runtime_spec
+from storage_pools import instance_storage_root as _pool_storage_root
+from storage_pools import resolve_storage_pool
 
-_DEFAULT_INSTANCE_STORAGE_ROOT = Path("/var/lib/capivara-instances")
 _INSTANCE_ID = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 _PROFILE_CONTEXT_KEYS = (
     "install_path", "content_root", "working_directory", "executable", "ports", "environment", "arguments", "user",
-    "desired_state", "instance_state_root", "config_path", "mission", "dayz_mission", "catalog_runtime_policy",
+    "desired_state", "instance_state_root", "storage_pool_id", "config_path", "mission", "dayz_mission", "catalog_runtime_policy",
     "variables", "runtime_variables", "resource_profile",
 )
 
 
-def instance_storage_root(config: dict[str, Any]) -> Path:
-    """Return the administrator-controlled root used for mutable per-instance state."""
-    raw = str(config.get("instance_storage_root") or _DEFAULT_INSTANCE_STORAGE_ROOT).strip()
-    path = Path(raw)
-    if not raw or not path.is_absolute():
-        raise ValueError("Agent instance_storage_root must be an absolute path")
-    resolved = path.resolve(strict=False)
-    if resolved == Path("/"):
-        raise ValueError("Agent instance_storage_root cannot be filesystem root")
-    return resolved
+def instance_storage_root(config: dict[str, Any], storage_pool_id: str | None = None) -> Path:
+    """Return the administrator-controlled root for the selected Agent storage pool."""
+    return _pool_storage_root(config, storage_pool_id)
 
 
-def instance_state_root(config: dict[str, Any], instance_id: str) -> Path:
-    """Derive a safe instance directory from Agent policy; clients cannot choose it."""
+def instance_state_root(config: dict[str, Any], instance_id: str, storage_pool_id: str | None = None) -> Path:
+    """Derive a safe instance directory from Agent pool policy; clients cannot choose it."""
     token = str(instance_id or "").strip()
     if not _INSTANCE_ID.fullmatch(token):
         raise ValueError("invalid instance_id")
-    root = instance_storage_root(config)
+    root = instance_storage_root(config, storage_pool_id)
     path = (root / token).resolve(strict=False)
     try:
         path.relative_to(root)
     except ValueError as exc:
-        raise ValueError("instance path escapes Agent instance_storage_root") from exc
+        raise ValueError("instance path escapes Agent storage pool") from exc
     return path
 
 
@@ -83,7 +77,7 @@ def _historical_provisioning_context(instance_id: str) -> dict[str, Any]:
             recovered["ports"] = dict(ports)
         for key in (
             "environment_id", "runtime_id", "catalog_runtime_policy", "mission", "dayz_mission",
-            "resource_profile", "resource_profile_id",
+            "resource_profile", "resource_profile_id", "storage_pool_id",
         ):
             if key in payload:
                 recovered[key] = payload[key]
@@ -134,9 +128,12 @@ def build_runtime_spec(config: dict[str, Any], instance: dict[str, Any], context
         raise PermissionError("instance belongs to another Agent")
 
     instance_id = str(instance.get("instance_id") or instance.get("id") or "").strip()
+    requested_pool = str(context.get("storage_pool_id") or instance.get("storage_pool_id") or "").strip() or None
+    pool = resolve_storage_pool(config, requested_pool)
     effective_context = dict(context)
+    effective_context["storage_pool_id"] = pool["id"]
     if not effective_context.get("instance_state_root"):
-        effective_context["instance_state_root"] = str(instance_state_root(config, instance_id))
+        effective_context["instance_state_root"] = str(instance_state_root(config, instance_id, pool["id"]))
 
     profile = resolve_profile(instance)
     raw = profile.build_runtime_spec(dict(instance), effective_context)
@@ -146,6 +143,7 @@ def build_runtime_spec(config: dict[str, Any], instance: dict[str, Any], context
     normalized["environment_id"] = str(raw.get("environment_id") or instance.get("environment_id") or "").strip()
     normalized["profile"] = str(raw.get("profile") or normalized["game_id"])
     normalized["profile_version"] = int(raw.get("profile_version") or getattr(profile, "profile_version", 1))
+    normalized["storage_pool_id"] = pool["id"]
     normalized["profile_context"] = _profile_context(effective_context)
     for key in ("ports", "catalog_runtime_policy", "catalog_templates", "catalog_network_properties", "catalog_variables"):
         if key in raw:
@@ -161,7 +159,8 @@ def build_runtime_spec(config: dict[str, Any], instance: dict[str, Any], context
             "profile": normalized["profile"],
             "profile_version": normalized["profile_version"],
             "catalog_policy": bool(effective_context.get("catalog_runtime_policy")),
-            "instance_storage_root": str(instance_storage_root(config)),
+            "storage_pool_id": pool["id"],
+            "instance_storage_root": pool["root_path"],
         },
     )
     return normalized

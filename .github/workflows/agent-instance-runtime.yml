@@ -23,6 +23,7 @@ on:
       - 'tests/agent_runtime_reconciliation_test.py'
       - 'tests/agent_runtime_completion_test.py'
       - 'tests/agent_instance_storage_root_test.py'
+      - 'tests/agent_storage_pools_test.py'
       - '.github/workflows/agent-instance-runtime.yml'
   push:
     branches: [main]
@@ -37,6 +38,7 @@ on:
       - 'release/build_agent_package.sh'
       - 'tests/agent_runtime_completion_test.py'
       - 'tests/agent_instance_storage_root_test.py'
+      - 'tests/agent_storage_pools_test.py'
       - '.github/workflows/agent-instance-runtime.yml'
 
 permissions:
@@ -79,7 +81,8 @@ jobs:
             tests/agent_instance_provisioning_test.py \
             tests/agent_runtime_reconciliation_test.py \
             tests/agent_runtime_completion_test.py \
-            tests/agent_instance_storage_root_test.py
+            tests/agent_instance_storage_root_test.py \
+            tests/agent_storage_pools_test.py
       - name: Run instance runtime tests
         run: |
           python3 -m unittest tests/agent_instance_runtime_test.py
@@ -89,6 +92,7 @@ jobs:
           python3 -m unittest tests/agent_runtime_reconciliation_test.py
           python3 -m unittest tests/agent_runtime_completion_test.py
           python3 -m unittest tests/agent_instance_storage_root_test.py
+          python3 -m unittest tests/agent_storage_pools_test.py
       - name: Check lifecycle policy boundary
         run: |
           grep -F 'capivara-instance-' agents/linux/policy/49-capivara-agent-instance-units.rules
@@ -128,6 +132,11 @@ jobs:
           grep -F 'agent_instance_runtime_health' dashboard/agent_heartbeat_api.py database/agent_instance_runtime_health_repository.py
           grep -F 'runtime_lock.py' agents/linux/installer/install-agent.sh release/build_agent_package.sh
           ! grep -F 'shell=True' agents/linux/runtime/runtime_lock.py agents/linux/runtime/runtime_operations.py agents/linux/runtime/runtime_health.py agents/linux/runtime/runtime_metrics.py agents/linux/runtime/runtime_limits.py
+      - name: Check storage pool boundary
+        run: |
+          grep -F 'storage_pool_id' agents/linux/runtime/game_runtime.py agents/linux/runtime/runtime_spec.py
+          grep -F 'resolve_storage_pool' agents/linux/privileged/materialize_instance.py
+          grep -F 'storage_pools.py' agents/linux/installer/install-agent.sh release/build_agent_package.sh
       - name: Check consolidated schema parity
         run: |
           set -euo pipefail

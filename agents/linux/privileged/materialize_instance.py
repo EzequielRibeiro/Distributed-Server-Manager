@@ -20,6 +20,7 @@ if str(RUNTIME_DIR) not in sys.path:
 from catalog_runtime_policy import materialize_network_properties, materialize_templates
 from materializers import resolve_materializer
 from runtime_spec import validate_runtime_spec
+from storage_pools import resolve_storage_pool
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
@@ -55,8 +56,12 @@ def _storage_root(value: Any, label: str) -> Path:
     return resolved
 
 
-def _instance_storage_root(config: dict[str, Any]) -> Path:
-    return _storage_root(config.get("instance_storage_root") or _DEFAULT_INSTANCE_STORAGE_ROOT, "Agent instance_storage_root")
+def _instance_storage_root(config: dict[str, Any], storage_pool_id: str | None = None) -> Path:
+    try:
+        pool = resolve_storage_pool(config, storage_pool_id)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
+    return _storage_root(pool["root_path"], f"Agent storage pool {pool['id']} root")
 
 
 def _write_result(path: Path, payload: dict[str, Any]) -> None:
@@ -125,7 +130,7 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
     expected = (storage_root / spec["instance_id"]).resolve()
     state_root = Path(str(raw_root)).resolve()
     if state_root != expected:
-        raise RuntimeError("instance state root does not match Agent instance_storage_root policy")
+        raise RuntimeError("instance state root does not match Agent storage pool policy")
     storage_root.mkdir(parents=True, exist_ok=True)
     os.chmod(storage_root, 0o711)
     state_root.mkdir(parents=True, exist_ok=True)
@@ -165,7 +170,7 @@ def _ensure_runtime_identity(spec: dict[str, Any], config: dict[str, Any]) -> No
     user = str(spec.get("user") or _DEFAULT_RUNTIME_USER)
     account = _validate_runtime_user(user)
     _validate_runtime_access(str(spec["working_directory"]), user)
-    _prepare_private_state(spec, account, _instance_storage_root(config))
+    _prepare_private_state(spec, account, _instance_storage_root(config, spec.get("storage_pool_id")))
 
 
 def _reject_symlinks(root: Path) -> None:
@@ -201,7 +206,7 @@ def _verify_tree(source: Path, target: Path) -> tuple[int, int]:
 
 
 def _migrate_storage_copy(config: dict[str, Any], spec: dict[str, Any], target_value: Any) -> dict[str, Any]:
-    source_root = _instance_storage_root(config)
+    source_root = _instance_storage_root(config, spec.get("storage_pool_id"))
     target_root = _storage_root(target_value, "target storage root")
     if source_root == target_root:
         return {"changed": False, "source": str(source_root), "target": str(target_root), "verified_files": 0, "verified_bytes": 0, "source_preserved": True}
@@ -209,7 +214,7 @@ def _migrate_storage_copy(config: dict[str, Any], spec: dict[str, Any], target_v
     source = (source_root / instance_id).resolve(strict=False)
     expected = Path(str(spec.get("instance_state_root") or source)).resolve(strict=False)
     if source != expected:
-        raise RuntimeError("instance source state root does not match current Agent storage root")
+        raise RuntimeError("instance source state root does not match current Agent storage pool")
     target = (target_root / instance_id).resolve(strict=False)
     target.relative_to(target_root)
     if source.exists():
