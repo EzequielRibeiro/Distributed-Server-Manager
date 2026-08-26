@@ -2,6 +2,7 @@
 """Administrative API for separated Customer management workflows."""
 from __future__ import annotations
 
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,17 @@ def _admin_write(user: dict[str, Any] | None) -> bool:
     return _role(user) in {"admin", "controller"}
 
 
+def _json_safe(value: Any) -> Any:
+    """Normalize database-native temporal values before HTTP JSON encoding."""
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 def _deliver_temporary_password(
     email: str | None,
     username: str,
@@ -85,15 +97,15 @@ def dispatch_customer_admin_get(
     try:
         repository = CustomerManagementRepository(backend)
         if path == CUSTOMER_ADMIN_OPTIONS:
-            return 200, repository.creation_options()
+            return 200, _json_safe(repository.creation_options())
         if path == CUSTOMER_ADMIN_COLLECTION:
             term = str((query.get("q") or [""])[0])
             field = str((query.get("field") or ["all"])[0])
-            return 200, {"customers": repository.search(term, field)}
+            return 200, _json_safe({"customers": repository.search(term, field)})
         customer_code = str((query.get("customer_code") or [""])[0]).strip().upper()
         if not customer_code:
             return 400, {"error": "customer_code is required"}
-        return 200, repository.detail(customer_code)
+        return 200, _json_safe(repository.detail(customer_code))
     except ValueError as exc:
         status = 404 if path == CUSTOMER_ADMIN_DETAIL else 400
         return status, {"error": str(exc)}
@@ -156,7 +168,7 @@ def dispatch_customer_admin_post(
                 str(result["temporary_password"]),
                 reset=False,
             )
-            return 201, result
+            return 201, _json_safe(result)
 
         if path == CUSTOMER_ADMIN_PASSWORD_RESET:
             username = str(payload.get("username") or "").strip().lower()
@@ -176,7 +188,7 @@ def dispatch_customer_admin_post(
                 str(result["temporary_password"]),
                 reset=True,
             )
-            return 200, result
+            return 200, _json_safe(result)
 
         if path == CUSTOMER_ADMIN_CONTRACT:
             limit = int(payload.get("instance_limit") or 1)
@@ -212,7 +224,7 @@ def dispatch_customer_admin_post(
                 resource_profile_id=resource_profile_id,
                 resource_profile_source=resource_profile_source,
             )
-            return 201, result
+            return 201, _json_safe(result)
 
         if path == CUSTOMER_ADMIN_MEMBER_ROLE:
             password_repository.set_member_role(
