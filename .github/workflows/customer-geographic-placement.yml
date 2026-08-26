@@ -5,6 +5,7 @@ on:
     paths:
       - 'dashboard/customer_placement_locations.py'
       - 'dashboard/customer_placement_locations_http.py'
+      - 'dashboard/customer_instance_creation.py'
       - 'dashboard/server_part17.py'
       - 'dashboard/web/customer.html'
       - 'dashboard/web/customer-placement-selector.js'
@@ -15,6 +16,7 @@ on:
     paths:
       - 'dashboard/customer_placement_locations.py'
       - 'dashboard/customer_placement_locations_http.py'
+      - 'dashboard/customer_instance_creation.py'
       - 'dashboard/server_part17.py'
       - 'dashboard/web/customer.html'
       - 'dashboard/web/customer-placement-selector.js'
@@ -31,7 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate Python syntax
-        run: python3 -m py_compile dashboard/customer_placement_locations.py dashboard/customer_placement_locations_http.py tests/customer_geographic_placement_test.py
+        run: python3 -m py_compile dashboard/customer_placement_locations.py dashboard/customer_placement_locations_http.py dashboard/customer_instance_creation.py tests/customer_geographic_placement_test.py
       - name: Validate JavaScript syntax
         run: node --check dashboard/web/customer-placement-selector.js
       - name: Run geographic placement regressions
