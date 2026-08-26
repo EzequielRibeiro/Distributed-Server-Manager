@@ -37,10 +37,11 @@ jobs:
             dashboard/workers/notification_dispatcher.py \
             monitor/alert_engine.py \
             tests/database_audit_alerts_test.py \
+            tests/notification_configuration_test.py \
             tests/notification_routing_test.py
 
       - name: Validate JavaScript
         run: node --check dashboard/web/activity-log.js
 
       - name: Test semantic database audit, alerts and notification delivery
-        run: python3 -m unittest -v tests.database_audit_alerts_test tests.notification_routing_test
+        run: python3 -m unittest -v tests.database_audit_alerts_test tests.notification_configuration_test tests.notification_routing_test
