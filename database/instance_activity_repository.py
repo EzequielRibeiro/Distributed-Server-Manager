@@ -76,6 +76,12 @@ class InstanceActivityRepository:
         )
         out: list[dict[str, Any]] = []
         for item in rows:
+            resource_name = item.get("target_name")
+            details = {
+                "changes": item.get("changes") or {},
+                "resource_name": resource_name,
+                "resource_type": "instance",
+            }
             out.append({
                 "event_id": item.get("activity_id"),
                 "username": item.get("actor_id"),
@@ -85,9 +91,9 @@ class InstanceActivityRepository:
                 "result": item.get("result"),
                 "target_type": item.get("target_type"),
                 "target_id": item.get("target_id"),
-                "target_name": item.get("target_name"),
+                "target_name": resource_name,
                 "summary": item.get("summary"),
-                "details": {"changes": item.get("changes") or {}},
+                "details": details,
                 "created_at": item.get("occurred_at"),
             })
         return out
