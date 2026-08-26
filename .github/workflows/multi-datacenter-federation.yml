@@ -22,10 +22,11 @@ jobs:
           python3 -m py_compile core/federation.py database/federation_repository.py database/federation_cli.py
       - name: Test E1 contracts
         run: python3 -m unittest tests/multi_datacenter_federation_test.py
-      - name: Verify integration contracts
+      - name: Verify baseline and integration contracts
         run: |
           grep -Fq 'cap federation' bin/cap
-          grep -Fq 'federation_members' database/schemas/sqlite.sql
-          grep -Fq 'federation_members' database/schemas/mysql.sql
-          grep -Fq 'federation_members' database/schemas/postgresql.sql
-          test ! -e dashboard/server_part14.py
+          PYTHONPATH=database python3 - <<'PY'
+          from schema_baseline import load_schema_baseline
+          for backend in ('sqlite', 'postgresql', 'mysql'):
+              assert 'federation_members' in load_schema_baseline(backend).sql
+          PY
