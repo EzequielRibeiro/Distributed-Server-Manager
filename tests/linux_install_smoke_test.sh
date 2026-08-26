@@ -113,7 +113,8 @@ then
         "${SYSTEMD_DIR}"/*.service "${SYSTEMD_DIR}"/*.timer
 fi
 
-# Start the installed dashboard and exercise its unauthenticated health probe.
+# Start the installed dashboard through the same entrypoint used by systemd
+# and exercise its unauthenticated health probe.
 export DASHBOARD_HOST="127.0.0.1"
 export DASHBOARD_PORT="18080"
 systemctl show-environment >/dev/null 2>&1 \
@@ -133,7 +134,7 @@ systemd-run \
     --setenv="DSM_DATABASE_TLS=${DSM_DATABASE_TLS:-}" \
     --setenv="DASHBOARD_HOST=${DASHBOARD_HOST}" \
     --setenv="DASHBOARD_PORT=${DASHBOARD_PORT}" \
-    /usr/bin/python3 "${DSM_ROOT}/dashboard/server_part8.py"
+    /usr/bin/python3 "${DSM_ROOT}/dashboard/server_part17.py"
 for _ in {1..30}
 do
     if curl --fail --silent "http://127.0.0.1:18080/health" \
