@@ -20,6 +20,7 @@ from customer_profile_admin_http import install_customer_profile_administration
 from dashboard_activity_http import install_dashboard_activity_audit
 from deleted_backup_vault_http import install_deleted_backup_vault_http
 from json_serialization import normalize_json_value
+from notification_management_http import install_notification_management
 from system_user_admin_http import install_system_user_administration
 legacy=integration.legacy
 install_customer_instance_creation(legacy);install_customer_management_dashboard(legacy)
@@ -62,6 +63,7 @@ install_deleted_backup_vault_http(legacy,_authenticate)
 install_backup_clone_http(legacy,_authenticate)
 install_dashboard_activity_audit(legacy,_authenticate)
 install_alert_management(legacy,_authenticate)
+install_notification_management(legacy,_authenticate)
 install_agent_administration(legacy,_authenticate)
 install_customer_profile_administration(legacy,_authenticate)
 def run():legacy.run()
