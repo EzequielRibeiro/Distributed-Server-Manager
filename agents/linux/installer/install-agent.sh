@@ -22,29 +22,21 @@ unset CAPIVARA_PAIRING_TOKEN
 install_runtime_dependencies(){
   local machine
   machine="$(uname -m)"
-  [[ "${machine}" == "x86_64" || "${machine}" == "amd64" ]] || {
-    log "Arquitetura ${machine}: dependências SteamCMD de 32 bits não são aplicáveis."
-    return 0
-  }
+  [[ "${machine}" == "x86_64" || "${machine}" == "amd64" ]] || { log "Arquitetura ${machine}: dependências SteamCMD de 32 bits não são aplicáveis."; return 0; }
   if command -v apt-get >/dev/null 2>&1; then
     log "Validando dependências do Agent e compatibilidade SteamCMD..."
     DEBIAN_FRONTEND=noninteractive apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates libc6-i386 lib32gcc-s1 lib32stdc++6
-  elif command -v dnf >/dev/null 2>&1; then
-    log "Validando compatibilidade SteamCMD para Fedora/RHEL..."; dnf install -y ca-certificates glibc.i686 libgcc.i686 libstdc++.i686
-  elif command -v yum >/dev/null 2>&1; then
-    log "Validando compatibilidade SteamCMD para RHEL/CentOS..."; yum install -y ca-certificates glibc.i686 libgcc.i686 libstdc++.i686
-  elif command -v zypper >/dev/null 2>&1; then
-    log "Validando compatibilidade SteamCMD para openSUSE..."; zypper --non-interactive install ca-certificates glibc-32bit libgcc_s1-32bit libstdc++6-32bit
-  else
-    log "Gerenciador de pacotes não reconhecido; dependências opcionais serão reportadas pelo diagnóstico do Agent."
-  fi
+  elif command -v dnf >/dev/null 2>&1; then dnf install -y ca-certificates glibc.i686 libgcc.i686 libstdc++.i686
+  elif command -v yum >/dev/null 2>&1; then yum install -y ca-certificates glibc.i686 libgcc.i686 libstdc++.i686
+  elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install ca-certificates glibc-32bit libgcc_s1-32bit libstdc++6-32bit
+  else log "Gerenciador de pacotes não reconhecido; dependências opcionais serão reportadas pelo diagnóstico do Agent."; fi
 }
 install_runtime_dependencies
 for cmd in python3 install systemctl; do command -v "$cmd" >/dev/null || fail "comando necessário ausente: $cmd"; done
 [[ -n "${PACKAGE_DIR}" ]] || PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; PACKAGE_DIR="$(cd "${PACKAGE_DIR}" && pwd)"
 
-RUNTIME_FILES=(agent.py capabilities.py network_inventory.py host_telemetry.py update_client.py update_state.py local_cli.py cap_dispatch.py game_data_client.py game_data_executor.py game_data_state.py instance_runtime.py runtime_spec.py runtime_events.py runtime_materialization.py runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py observability_client.py configuration_client.py content_client.py backup_client.py broadcast_client.py game_runtime.py provisioning_contract.py provisioning_state.py provisioning_client.py provisioning_executor.py privileged_materialization.py)
+RUNTIME_FILES=(agent.py capabilities.py network_inventory.py host_telemetry.py update_client.py update_state.py local_cli.py cap_dispatch.py game_data_client.py game_data_executor.py game_data_state.py instance_runtime.py runtime_spec.py runtime_events.py runtime_materialization.py runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py observability_client.py configuration_client.py content_client.py backup_client.py broadcast_client.py game_runtime.py provisioning_contract.py provisioning_state.py provisioning_client.py provisioning_executor.py privileged_materialization.py storage_migration_client.py)
 for required in manifest.json VERSION agent/common/identity.py agent/privileged/materialize_instance.py agent/privileged/reconcile_runtime_identity.py agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path services/capivara-agent-materialize@.service services/capivara-agent-runtime-identity.service; do [[ -f "${PACKAGE_DIR}/${required}" ]] || fail "arquivo obrigatório ausente: ${required}"; done
 for file in "${RUNTIME_FILES[@]}"; do [[ -f "${PACKAGE_DIR}/agent/runtime/${file}" ]] || fail "arquivo obrigatório ausente: agent/runtime/${file}"; done
 for sub in adapters materializers; do for file in __init__.py base.py registry.py systemd.py; do [[ -f "${PACKAGE_DIR}/agent/runtime/${sub}/${file}" ]] || fail "arquivo obrigatório ausente: agent/runtime/${sub}/${file}"; done; done
@@ -55,14 +47,12 @@ root=pathlib.Path(sys.argv[1]); manifest=json.loads((root/'manifest.json').read_
 if manifest.get('kind')!='CapivaraAgentPackage' or manifest.get('platform')!='linux': raise SystemExit('manifest de Agent Linux inválido')
 if manifest.get('version')!=(root/'VERSION').read_text().strip(): raise SystemExit('versão do pacote diverge do manifest')
 for rel in manifest.get('required_files',[]):
- p=root/rel; expected=(manifest.get('files',{}).get(rel) or {}).get('sha256')
+ p=root/rel; expected=(manifest.get('files',{}).get(rel) or {}).get('sha256'
+ )
  if not p.is_file() or not expected or hashlib.sha256(p.read_bytes()).hexdigest()!=expected: raise SystemExit(f'arquivo/hash inválido: {rel}')
 PY
 VERSION=$(tr -d '\r\n' <"${PACKAGE_DIR}/VERSION")
-if [[ -e "${CLI_PATH}" || -L "${CLI_PATH}" ]]; then
- EXISTING="$(readlink -f "${CLI_PATH}" 2>/dev/null || true)"; OLD="${INSTALL_ROOT}/runtime/local_cli.py"; NEW="${INSTALL_ROOT}/runtime/cap_dispatch.py"
- [[ "${EXISTING}" == "${OLD}" || "${EXISTING}" == "${NEW}" ]] || fail "${CLI_PATH} já existe e não pertence ao Capivara Agent"
-fi
+if [[ -e "${CLI_PATH}" || -L "${CLI_PATH}" ]]; then EXISTING="$(readlink -f "${CLI_PATH}" 2>/dev/null || true)"; OLD="${INSTALL_ROOT}/runtime/local_cli.py"; NEW="${INSTALL_ROOT}/runtime/cap_dispatch.py"; [[ "${EXISTING}" == "${OLD}" || "${EXISTING}" == "${NEW}" ]] || fail "${CLI_PATH} já existe e não pertence ao Capivara Agent"; fi
 id capivara-agent >/dev/null 2>&1 || useradd --system --home "${STATE_DIR}" --create-home --shell /usr/sbin/nologin capivara-agent
 install -d -m 0755 -o root -g root "${INSTALL_ROOT}" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/runtime/adapters" "${INSTALL_ROOT}/runtime/materializers" "${INSTALL_ROOT}/runtime/profiles" "${INSTALL_ROOT}/privileged" "${INSTALL_ROOT}/common" "${INSTALL_ROOT}/updater"
 install -d -m 0711 -o root -g root "${INSTANCE_STORAGE_ROOT}"
