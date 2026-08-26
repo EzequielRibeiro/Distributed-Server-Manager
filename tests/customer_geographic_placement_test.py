@@ -71,7 +71,7 @@ class _Repository:
         return [row for row in rows if region_id is None or row["region_id"] == region_id]
 
 
-def _decision(**kwargs):
+def _decision(*_args, **kwargs):
     region = kwargs.get("preferred_region_id")
     if region == "us-east":
         return {"score": 10.0, "agent_id": "secret-agent-us", "node_id": "secret-node-us", "region_id": region, "datacenter_id": "secret-dc-us"}
@@ -110,10 +110,10 @@ class CustomerGeographicPlacementTest(unittest.TestCase):
             self.assertNotIn(secret, serialized)
 
     def test_unavailable_region_is_not_recommended(self):
-        def choose(**kwargs):
+        def choose(*args, **kwargs):
             if kwargs.get("preferred_region_id") == "us-east":
                 raise PlacementUnavailable(reason="requested_region_unavailable", agents_evaluated=2, requested_region_id="us-east")
-            return _decision(**kwargs)
+            return _decision(*args, **kwargs)
 
         with patch("customer_placement_locations.LocationRepository", _Repository), \
              patch("customer_placement_locations.requirements_for_instance", return_value=PlacementRequirements()), \
