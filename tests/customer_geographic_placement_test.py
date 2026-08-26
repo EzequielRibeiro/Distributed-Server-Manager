@@ -24,11 +24,24 @@ class _Row(dict):
 
 
 class _Session:
-    def execute(self, _sql, _params):
+    def __init__(self):
+        self.sql = ""
+
+    def execute(self, sql, _params):
+        self.sql = sql
         return self
 
     def fetchone(self):
-        return _Row(controller_id="controller-a", status="active")
+        if "service_contracts" in self.sql:
+            return _Row(
+                id="contract-1",
+                customer_id=42,
+                status="active",
+                metadata_json=json.dumps({
+                    "resources": {"cpu_cores": 4, "memory_bytes": 8589934592, "storage_bytes": 53687091200}
+                }),
+            )
+        return _Row(id=42, controller_id="controller-a", status="active")
 
 
 class _Repository:
@@ -68,13 +81,14 @@ def _decision(**kwargs):
 class CustomerGeographicPlacementTest(unittest.TestCase):
     def test_customer_receives_only_public_logical_locations(self):
         with patch("customer_placement_locations.LocationRepository", _Repository), \
-             patch("customer_placement_locations.requirements_for_instance", return_value=PlacementRequirements()), \
+             patch("customer_placement_locations.requirements_for_instance", return_value=PlacementRequirements()) as requirements, \
              patch("customer_placement_locations.choose_agent_for_instance", side_effect=_decision):
             payload = customer_placement_locations(
                 {"role": "customer", "scope_id": "42"},
                 object(),
                 game_id="dayz",
                 runtime_id="dayz.stable",
+                contract_id="contract-1",
                 client_latitude=-23.55,
                 client_longitude=-46.63,
             )
@@ -85,6 +99,8 @@ class CustomerGeographicPlacementTest(unittest.TestCase):
         self.assertEqual(payload["locations"][0]["region_id"], "br-sudeste")
         self.assertEqual(payload["locations"][0]["latency"]["kind"], "estimated")
         self.assertIsInstance(payload["locations"][0]["latency"]["value_ms"], int)
+        self.assertEqual(requirements.call_args.kwargs["resources"]["cpu_cores"], 4)
+        self.assertEqual(requirements.call_args.kwargs["resources"]["memory_bytes"], 8589934592)
 
         serialized = json.dumps(payload)
         for secret in (
@@ -130,9 +146,20 @@ class CustomerGeographicPlacementTest(unittest.TestCase):
         self.assertLess(html.index("/customer-placement-selector.js"), html.index("/runtime-selector.js"))
         script = (ROOT / "dashboard" / "web" / "customer-placement-selector.js").read_text(encoding="utf-8")
         self.assertIn("/api/customer/placement/locations", script)
+        self.assertIn('params.set("contract"', script)
         self.assertNotIn("agent_id", script)
         self.assertNotIn("public_host", script)
         self.assertNotIn("fingerprint", script)
+
+    def test_customer_creation_response_does_not_publish_internal_placement(self):
+        source = (ROOT / "dashboard" / "customer_instance_creation.py").read_text(encoding="utf-8")
+        public_result = source[source.index('result={"created"'):source.index('if source_vault_id:result')]
+        self.assertNotIn('"agent_id"', public_result)
+        self.assertNotIn('"node_id"', public_result)
+        self.assertNotIn('"datacenter_id"', public_result)
+        self.assertNotIn('"instance":', public_result)
+        self.assertIn('"correlation_id"', public_result)
+        self.assertIn('"region_id"', public_result)
 
 
 if __name__ == "__main__":
