@@ -13,6 +13,7 @@ for path in (ROOT / "core", ROOT / "database", ROOT / "dashboard", ROOT / "monit
 
 from activity_audit_repository import ActivityAuditRepository, sanitize_changes
 from activity_humanizer import humanize
+from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
 from alert_engine import DatabaseAlertEngine
 from alert_repository import AlertRepository
 from backend import DatabaseConfig
@@ -108,6 +109,48 @@ class DatabaseAlertEngineTest(DatabaseFixture):
         self.assertEqual(alerts[0]["rule_id"], "INSTANCE_PROVISION_FAILED")
         self.assertEqual(alerts[0]["message"], "Falha ao provisionar o servidor")
 
+    def test_provision_completed_resolves_failure_and_steam_alerts(self):
+        events = UniversalEventRepository(self.backend)
+        engine = DatabaseAlertEngine(self.backend)
+        engine.cycle()
+        common = {
+            "source": "controller.provisioning",
+            "severity": "critical",
+            "agent_id": "agent-1",
+            "instance_id": "instance-1",
+        }
+        events.publish({
+            **common,
+            "event_id": "failure-event-2",
+            "event_type": "INSTANCE_PROVISION_FAILED",
+            "data": {"message": "Falha no provisionamento"},
+        })
+        events.publish({
+            **common,
+            "event_id": "steam-event-1",
+            "event_type": "STEAM_AUTH_REQUIRED",
+            "data": {"message": "Autenticação Steam necessária"},
+        })
+        self.assertEqual(engine.cycle(), 2)
+        self.assertEqual(
+            len(AlertRepository(self.backend).list_alerts(active_only=True, instance_id="instance-1")),
+            2,
+        )
+        events.publish({
+            "event_id": "completed-event-1",
+            "event_type": "INSTANCE_PROVISION_COMPLETED",
+            "source": "controller.provisioning",
+            "severity": "info",
+            "agent_id": "agent-1",
+            "instance_id": "instance-1",
+            "data": {"message": "Provisionamento concluído"},
+        })
+        self.assertEqual(engine.cycle(), 1)
+        self.assertEqual(
+            AlertRepository(self.backend).list_alerts(active_only=True, instance_id="instance-1"),
+            [],
+        )
+
     def test_info_event_does_not_open_alert(self):
         events = UniversalEventRepository(self.backend)
         engine = DatabaseAlertEngine(self.backend)
@@ -124,6 +167,12 @@ class DatabaseAlertEngineTest(DatabaseFixture):
         engine.cycle()
         alerts = AlertRepository(self.backend).list_alerts(active_only=True)
         self.assertEqual(alerts, [])
+
+    def test_steam_auth_detection_is_explicit_and_not_generic_auth_text(self):
+        detector = AgentInstanceProvisioningRepository._steam_auth_required
+        self.assertTrue(detector("Steam Guard code required", {}))
+        self.assertTrue(detector("", {"steam_auth_required": True}))
+        self.assertFalse(detector("generic authentication failure", {}))
 
 
 if __name__ == "__main__":
