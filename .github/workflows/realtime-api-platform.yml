@@ -5,9 +5,8 @@ on:
       - 'core/api_platform.py'
       - 'database/api_*'
       - 'database/realtime_repository.py'
-      - 'database/migrations/038_realtime_api_platform.sql'
-      - 'database/migrations_mysql/038_realtime_api_platform.sql'
-      - 'database/migrations_postgresql/038_realtime_api_platform.sql'
+      - 'database/schema_baseline.py'
+      - 'database/schemas/**'
       - 'dashboard/api_access_http.py'
       - 'dashboard/realtime_*'
       - 'dashboard/server_part13.py'
@@ -27,12 +26,13 @@ jobs:
           python3 -m py_compile core/api_platform.py database/api_access_repository.py database/api_cli.py database/realtime_repository.py dashboard/api_access_http.py dashboard/realtime_api.py dashboard/realtime_http.py dashboard/server_part13.py
       - name: Test D2 contracts
         run: python3 -m unittest tests/realtime_api_platform_test.py
-      - name: Verify integration contracts
+      - name: Verify baseline and integration contracts
         run: |
           grep -Fq 'cap api' bin/cap
           grep -Fq 'SSE_EVENTS_PATH' dashboard/server_part13.py
           grep -Fq 'PUBLIC_GET_PATHS' dashboard/server_part13.py
-          grep -Fq 'api_request_log' database/migrations/038_realtime_api_platform.sql
-          grep -Fq 'api_request_log' database/migrations_mysql/038_realtime_api_platform.sql
-          grep -Fq 'api_request_log' database/migrations_postgresql/038_realtime_api_platform.sql
-          test ! -e dashboard/server_part14.py
+          PYTHONPATH=database python3 - <<'PY'
+          from schema_baseline import load_schema_baseline
+          for backend in ('sqlite', 'postgresql', 'mysql'):
+              assert 'api_request_log' in load_schema_baseline(backend).sql
+          PY

@@ -616,7 +616,7 @@ def main(
     )
 
     if (
-        args.command == "check"
+        args.command in {"check", "migrate"}
         and not payload.get("valid", False)
     ):
         return 1

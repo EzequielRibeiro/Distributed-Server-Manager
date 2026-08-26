@@ -8,7 +8,6 @@ import json
 
 from admin_cli_auth import require_admin
 from admin_management_repository import AdminManagementRepository
-from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from runtime_backend import backend_from_environment
 
 
@@ -32,6 +31,11 @@ def build_parser():
 
 
 def _delete(args, backend, repository):
+    # Deletion needs the Agent runtime queue, which imports Controller-root
+    # modules. Keep that dependency out of the create path so `cap contract
+    # create` only loads the persistence code it actually needs.
+    from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
+
     if not args.yes:
         raise ValueError("contract deletion requires --yes")
     actor = require_admin(backend, args.admin)

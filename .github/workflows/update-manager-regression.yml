@@ -6,7 +6,12 @@ on:
       - 'update-manager/**'
       - 'update.sh'
       - 'bin/dsm'
+      - 'bin/cap'
+      - 'database/manager.py'
+      - 'database/customer_cli.py'
+      - 'database/contract_cli.py'
       - 'tests/update*_test.sh'
+      - 'tests/v208_admin_cli_and_database_guard_test.py'
       - 'tests/release_build_test.sh'
       - 'release/**'
       - 'version'
@@ -45,6 +50,9 @@ jobs:
         run: |
           version_value="$(tr -d '\r\n' <version)"
           [[ "${version_value}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]
+
+      - name: Test v2.0.8 database and admin CLI guards
+        run: python3 -m unittest tests/v208_admin_cli_and_database_guard_test.py -v
 
       - name: Test download stdout stderr contract
         run: bash tests/update_download_output_test.sh
