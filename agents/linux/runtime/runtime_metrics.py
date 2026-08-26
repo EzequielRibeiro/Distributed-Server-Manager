@@ -11,6 +11,7 @@ from typing import Any
 import instance_runtime
 from host_telemetry import collect_host_telemetry
 from observability_client import collect_observability
+from queue_observability import collect_queue_observability
 from storage_pools import pool_inventory
 
 
@@ -114,11 +115,19 @@ def snapshot(*, queue_depth: dict[str, int] | None = None) -> dict[str, Any]:
     payload = _read()
     if queue_depth is not None:
         payload["queue_depth"] = {str(key): max(0, int(value)) for key, value in queue_depth.items()}
+
+    config = _agent_config()
+    stale_after = max(30, int(config.get("queue_stale_after_seconds", 300) or 300))
+    payload["queue_health"] = collect_queue_observability(
+        Path(instance_runtime.STATE_DIR),
+        stale_after_seconds=stale_after,
+    )
+    payload["queue_stale_count"] = sum(1 for item in payload["queue_health"].values() if item.get("stale"))
+
     samples = collect_observability({"agent_id": "local"})
     for sample in samples:
         sample.pop("agent_id", None)
 
-    config = _agent_config()
     pools: list[dict[str, Any]] = []
     if config:
         try:
