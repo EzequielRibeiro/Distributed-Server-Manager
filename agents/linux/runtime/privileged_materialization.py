@@ -35,7 +35,7 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temp, path)
 
 
-def _invoke(action: str, spec: dict[str, Any]) -> dict[str, Any]:
+def _invoke(action: str, spec: dict[str, Any], **extra: Any) -> dict[str, Any]:
     instance_id = _token(spec["instance_id"])
     root = _request_root()
     request_path = root / f"{instance_id}.request.json"
@@ -53,6 +53,7 @@ def _invoke(action: str, spec: dict[str, Any]) -> dict[str, Any]:
             "instance_id": instance_id,
             "agent_id": spec["agent_id"],
             "spec": spec,
+            **extra,
         },
     )
     completed = subprocess.run(
@@ -60,7 +61,7 @@ def _invoke(action: str, spec: dict[str, Any]) -> dict[str, Any]:
         capture_output=True,
         text=True,
         check=False,
-        timeout=60,
+        timeout=3600 if action == "migrate-storage-copy" else 60,
     )
     if completed.returncode != 0:
         raise RuntimeError((completed.stderr or completed.stdout or "privileged materializer helper failed")[:2000])
@@ -74,6 +75,12 @@ def _invoke(action: str, spec: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(operation, dict):
         raise RuntimeError("privileged materializer returned invalid operation")
     return operation
+
+
+def migrate_storage_copy(config: dict[str, Any], spec: dict[str, Any], *, target_root: str) -> dict[str, Any]:
+    agent_id = str(config.get("agent_id") or "").strip()
+    normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
+    return _invoke("migrate-storage-copy", normalized, target_root=str(target_root))
 
 
 def materialize(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
@@ -120,4 +127,4 @@ def remove(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     return {"instance_id": normalized["instance_id"], "stop": stopped, "operation": operation, "event": event}
 
 
-__all__ = ["materialize", "remove"]
+__all__ = ["materialize", "migrate_storage_copy", "remove"]
