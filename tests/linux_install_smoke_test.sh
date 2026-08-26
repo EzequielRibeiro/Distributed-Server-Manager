@@ -114,7 +114,10 @@ then
 fi
 
 # Start the installed dashboard through the same entrypoint used by systemd
-# and exercise its unauthenticated health probe.
+# and exercise its unauthenticated health probe. The installation smoke starts
+# only the dashboard process, not the operational workers, so the probe must be
+# structurally valid and reachable without requiring an overall "healthy"
+# worker score.
 export DASHBOARD_HOST="127.0.0.1"
 export DASHBOARD_PORT="18080"
 systemctl show-environment >/dev/null 2>&1 \
@@ -138,7 +141,7 @@ systemd-run \
 for _ in {1..30}
 do
     if curl --fail --silent "http://127.0.0.1:18080/health" \
-        | python3 -c 'import json,sys; assert json.load(sys.stdin)["status"] == "healthy"'
+        | python3 -c 'import json,sys; payload=json.load(sys.stdin); assert payload["status"] in {"healthy","warning","critical"}; assert isinstance(payload.get("score"),int)'
     then
         break
     fi
@@ -146,7 +149,7 @@ do
 done
 systemctl is-active --quiet "${SYSTEMD_SMOKE_UNIT}"
 curl --fail --silent "http://127.0.0.1:18080/health" \
-    | python3 -c 'import json,sys; assert json.load(sys.stdin)["status"] == "healthy"'
+    | python3 -c 'import json,sys; payload=json.load(sys.stdin); assert payload["status"] in {"healthy","warning","critical"}; assert isinstance(payload.get("score"),int)'
 systemctl stop "${SYSTEMD_SMOKE_UNIT}"
 systemctl reset-failed "${SYSTEMD_SMOKE_UNIT}" 2>/dev/null || true
 SYSTEMD_SMOKE_UNIT=""
