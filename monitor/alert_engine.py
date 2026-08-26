@@ -169,14 +169,27 @@ class DatabaseAlertEngine:
         digest = hashlib.sha256(f"{rule_id}|{identity}".encode("utf-8")).hexdigest()[:32]
         return f"evt-{digest}"
 
+    def _resolve_rule(self, rule_id: str, topology: dict[str, Any]) -> dict[str, Any] | None:
+        return self.alerts.resolve_alert(self._alert_id(rule_id, topology))
+
     def evaluate(self, event: dict[str, Any]) -> dict[str, Any] | None:
+        event_type = str(event.get("event_type") or "UNKNOWN_EVENT").strip().upper()
+        topology = self._topology(event)
+
+        if event_type == "INSTANCE_PROVISION_COMPLETED" and topology is not None:
+            resolved = None
+            for rule_id in ("INSTANCE_PROVISION_FAILED", "STEAM_AUTH_REQUIRED"):
+                result = self._resolve_rule(rule_id, topology)
+                if result is not None:
+                    resolved = result
+            return resolved
+
         severity = str(event.get("severity") or "info").strip().lower()
         if severity not in {"warning", "critical"}:
             return None
-        topology = self._topology(event)
         if topology is None:
             return None
-        event_type = str(event.get("event_type") or "UNKNOWN_EVENT").strip().upper()
+
         data = self._data(event)
         message = str(
             data.get("message")
