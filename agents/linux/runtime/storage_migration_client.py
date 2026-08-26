@@ -40,10 +40,17 @@ def _root(value: Any) -> Path:
 def _replace_prefix(value: Any, source: Path, target: Path) -> Any:
     if isinstance(value, str):
         old = str(source)
+        new = str(target)
         if value == old:
-            return str(target)
+            return new
         if value.startswith(old + os.sep):
-            return str(target) + value[len(old):]
+            return new + value[len(old):]
+        marker = "=" + old
+        position = value.find(marker)
+        if position >= 0:
+            suffix_index = position + len(marker)
+            if suffix_index == len(value) or value[suffix_index:suffix_index + 1] == os.sep:
+                return value[:position] + "=" + new + value[suffix_index:]
         return value
     if isinstance(value, list):
         return [_replace_prefix(item, source, target) for item in value]
