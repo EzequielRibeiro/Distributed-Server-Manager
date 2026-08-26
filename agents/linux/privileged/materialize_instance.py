@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import grp
+import hashlib
 import json
 import os
 import pwd
@@ -36,15 +37,19 @@ def _token(value: Any) -> str:
     return text
 
 
-def _instance_storage_root(config: dict[str, Any]) -> Path:
-    raw = str(config.get("instance_storage_root") or _DEFAULT_INSTANCE_STORAGE_ROOT).strip()
+def _storage_root(value: Any, label: str) -> Path:
+    raw = str(value or "").strip()
     path = Path(raw)
     if not raw or not path.is_absolute():
-        raise RuntimeError("Agent instance_storage_root must be an absolute path")
-    resolved = path.resolve()
+        raise RuntimeError(f"{label} must be an absolute path")
+    resolved = path.resolve(strict=False)
     if resolved == Path("/"):
-        raise RuntimeError("Agent instance_storage_root cannot be filesystem root")
+        raise RuntimeError(f"{label} cannot be filesystem root")
     return resolved
+
+
+def _instance_storage_root(config: dict[str, Any]) -> Path:
+    return _storage_root(config.get("instance_storage_root") or _DEFAULT_INSTANCE_STORAGE_ROOT, "Agent instance_storage_root")
 
 
 def _write_result(path: Path, payload: dict[str, Any]) -> None:
@@ -156,6 +161,54 @@ def _ensure_runtime_identity(spec: dict[str, Any], config: dict[str, Any]) -> No
     _prepare_private_state(spec, account, _instance_storage_root(config))
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _verify_tree(source: Path, target: Path) -> tuple[int, int]:
+    source_files = {p.relative_to(source): p for p in source.rglob("*") if p.is_file()}
+    target_files = {p.relative_to(target): p for p in target.rglob("*") if p.is_file()}
+    if source_files.keys() != target_files.keys():
+        raise RuntimeError("storage migration verification failed: file set differs")
+    total = 0
+    for relative, src in source_files.items():
+        dst = target_files[relative]
+        if src.stat().st_size != dst.stat().st_size or _sha256(src) != _sha256(dst):
+            raise RuntimeError(f"storage migration verification failed: {relative}")
+        total += src.stat().st_size
+    return len(source_files), total
+
+
+def _migrate_storage_copy(config: dict[str, Any], spec: dict[str, Any], target_value: Any) -> dict[str, Any]:
+    source_root = _instance_storage_root(config)
+    target_root = _storage_root(target_value, "target storage root")
+    instance_id = spec["instance_id"]
+    source = (source_root / instance_id).resolve(strict=False)
+    expected = Path(str(spec.get("instance_state_root") or source)).resolve(strict=False)
+    if source != expected:
+        raise RuntimeError("instance source state root does not match current Agent storage root")
+    target = (target_root / instance_id).resolve(strict=False)
+    target.relative_to(target_root)
+    if target.exists():
+        shutil.rmtree(target)
+    target_root.mkdir(parents=True, exist_ok=True)
+    os.chmod(target_root, 0o711)
+    if source.exists():
+        shutil.copytree(source, target, copy_function=shutil.copy2, symlinks=True)
+        count, total = _verify_tree(source, target)
+    else:
+        target.mkdir(parents=True, exist_ok=True)
+        count, total = 0, 0
+    account = _validate_runtime_user(str(spec.get("user") or _DEFAULT_RUNTIME_USER))
+    os.chown(target, account.pw_uid, account.pw_gid)
+    os.chmod(target, 0o700)
+    return {"changed": True, "source": str(source), "target": str(target), "verified_files": count, "verified_bytes": total, "source_preserved": True}
+
+
 def run(instance_id: str) -> dict[str, Any]:
     if os.geteuid() != 0:
         raise RuntimeError("privileged materializer helper must run as root")
@@ -186,6 +239,8 @@ def run(instance_id: str) -> dict[str, Any]:
         operation = materializer.apply(spec)
     elif action == "remove":
         operation = materializer.remove(spec)
+    elif action == "migrate-storage-copy":
+        operation = _migrate_storage_copy(config, spec, request.get("target_root"))
     else:
         raise RuntimeError("unsupported privileged materialization action")
     result = {
