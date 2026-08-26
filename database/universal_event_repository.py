@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import sys
-import uuid
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -16,8 +15,6 @@ if str(CORE) not in sys.path:
 
 from event_platform import EventValidationError, normalize_event, runtime_event_to_universal, utc_now
 from alert_repository import AlertSession
-
-LEGACY_DATABASE_EVENT_NAMESPACE = uuid.UUID("ab455e7e-6abc-477a-91cf-56658dba62d5")
 
 
 class UniversalEventRepository:
@@ -84,8 +81,6 @@ class UniversalEventRepository:
                 finally:
                     session.close()
         except Exception:
-            # At-least-once producers may race on the same event_id. A unique-key
-            # collision is a successful idempotent delivery when the row exists.
             existing = self.get(event["event_id"])
             if existing is not None:
                 return {"event": existing, "created": False}
@@ -141,56 +136,6 @@ class UniversalEventRepository:
             "created": created,
             "rejected": rejected,
         }
-
-    def import_legacy_events(self, *, limit: int = 10000) -> dict[str, int]:
-        """Idempotently copy the foundation-era `events` table into C1."""
-        ph = self._ph
-        bounded = max(1, min(int(limit), 100000))
-        with self.backend.connect() as connection:
-            session = AlertSession(self.backend, connection)
-            try:
-                rows = session.execute(
-                    f"SELECT id,event_id,event_type,severity,source,node_id,instance_id,operation_id,payload_json,created_at "
-                    f"FROM events ORDER BY id LIMIT {ph}",
-                    (bounded,),
-                ).fetchall()
-            finally:
-                session.close()
-
-        created = 0
-        existing = 0
-        rejected = 0
-        for raw_row in rows:
-            row = dict(raw_row)
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except json.JSONDecodeError:
-                payload = {"legacy_payload": str(row.get("payload_json") or "")}
-            event_id = str(row.get("event_id") or "").strip()
-            if not event_id:
-                event_id = str(uuid.uuid5(
-                    LEGACY_DATABASE_EVENT_NAMESPACE,
-                    f"{self.backend.name}:{row.get('id')}:{row.get('created_at')}:{row.get('event_type')}",
-                ))
-            try:
-                result = self.publish({
-                    "event_id": event_id,
-                    "event_type": row.get("event_type"),
-                    "occurred_at": str(row.get("created_at")),
-                    "source": row.get("source") or "legacy.events",
-                    "source_id": row.get("node_id"),
-                    "severity": row.get("severity") or "info",
-                    "instance_id": row.get("instance_id"),
-                    "correlation_id": row.get("operation_id"),
-                    "data": payload if isinstance(payload, dict) else {"legacy_payload": payload},
-                })
-                if result["created"]:
-                    created += 1
-                else:
-                    existing += 1
-            except (EventValidationError, TypeError, ValueError):
-                rejected += 1
-        return {"scanned": len(rows), "created": created, "existing": existing, "rejected": rejected}
 
     def list_events(
         self,
