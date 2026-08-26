@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Admin-only semantic activity-log surface and explicit logout audit."""
+"""Admin-only semantic activity-log surface and explicit auth audit."""
 from __future__ import annotations
 
 from urllib.parse import parse_qs, urlparse
@@ -11,11 +11,12 @@ from controller_session import expired_cookie_header, revoke_session, session_to
 ACTIVITY_PAGE = "/activity-log.html"
 ACTIVITY_API = "/api/admin/activity-log"
 ACTIVITY_OPTIONS_API = "/api/admin/activity-log/options"
+LOGIN_API = "/api/auth/login"
 LOGOUT_API = "/api/auth/logout"
 
 
 def install_dashboard_activity_audit(legacy, authenticate) -> None:
-    """Install the semantic audit query surface without generic HTTP logging."""
+    """Install semantic activity audit without generic HTTP request logging."""
     previous_get = legacy.DashboardHandler.do_GET
     previous_post = legacy.DashboardHandler.do_POST
 
@@ -32,6 +33,22 @@ def install_dashboard_activity_audit(legacy, authenticate) -> None:
 
     def identity(headers):
         return session_user_from_headers(headers) or authenticate(headers)
+
+    def record_auth(user, action, self):
+        if user is None:
+            return
+        who = str(user.get("username") or user.get("id") or "").strip() or None
+        repository().record_action(
+            actor_id=who,
+            actor_name=str(user.get("display_name") or user.get("name") or who or "Operador"),
+            actor_role=str(user.get("role") or "") or None,
+            action=action,
+            category="authentication",
+            result="success",
+            summary=humanize(action, user=user),
+            remote_address=(self.client_address[0] if getattr(self, "client_address", None) else None),
+            user_agent=str(self.headers.get("User-Agent") or "")[:1024] or None,
+        )
 
     def admin(self):
         user = identity(self.headers)
@@ -80,25 +97,30 @@ def install_dashboard_activity_audit(legacy, authenticate) -> None:
 
     def do_post(self):
         path = urlparse(self.path).path
+        if path == LOGIN_API:
+            captured = {"status": None}
+            original_send_response = self.send_response
+
+            def capture_status(code, *args, **kwargs):
+                captured["status"] = int(code)
+                return original_send_response(code, *args, **kwargs)
+
+            self.send_response = capture_status
+            try:
+                previous_post(self)
+            finally:
+                self.send_response = original_send_response
+            if captured["status"] == 200:
+                record_auth(authenticate(self.headers), "auth.login", self)
+            return
+
         if path != LOGOUT_API:
             return previous_post(self)
         user = identity(self.headers)
         if user is None:
             self.send_json(401, {"error": "unauthorized"})
             return
-        repo = repository()
-        who = str(user.get("username") or user.get("id") or "").strip() or None
-        repo.record_action(
-            actor_id=who,
-            actor_name=str(user.get("display_name") or user.get("name") or who or "Operador"),
-            actor_role=str(user.get("role") or "") or None,
-            action="auth.logout",
-            category="authentication",
-            result="success",
-            summary=humanize("auth.logout", user=user),
-            remote_address=(self.client_address[0] if getattr(self, "client_address", None) else None),
-            user_agent=str(self.headers.get("User-Agent") or "")[:1024] or None,
-        )
+        record_auth(user, "auth.logout", self)
         revoke_session(session_token_from_headers(self.headers))
         body = b'{"logged_out":true}'
         self.send_response(200)
@@ -117,6 +139,7 @@ __all__ = [
     "ACTIVITY_PAGE",
     "ACTIVITY_API",
     "ACTIVITY_OPTIONS_API",
+    "LOGIN_API",
     "LOGOUT_API",
     "install_dashboard_activity_audit",
 ]
