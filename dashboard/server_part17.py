@@ -16,6 +16,7 @@ from customer_instance_creation import install_customer_instance_creation
 from customer_instance_team_http import install_customer_instance_team
 from customer_instance_workspace_http import install_customer_instance_workspace
 from customer_management_http import install_customer_management_dashboard
+from customer_placement_locations_http import install_customer_placement_locations
 from customer_profile_admin_http import install_customer_profile_administration
 from dashboard_activity_http import install_dashboard_activity_audit
 from deleted_backup_vault_http import install_deleted_backup_vault_http
@@ -24,7 +25,7 @@ from system_user_admin_http import install_system_user_administration
 legacy=integration.legacy
 install_customer_instance_creation(legacy);install_customer_management_dashboard(legacy)
 _previous_get=legacy.DashboardHandler.do_GET;_previous_put=getattr(legacy.DashboardHandler,"do_PUT",None);_previous_send_json=legacy.DashboardHandler.send_json;_authenticate=integration._authenticate;_ROOT=Path(__file__).resolve().parents[1];_CONTROLLER_TELEMETRY_PATH="/api/controller/telemetry"
-legacy.STATIC_FILES.update({"/telemetry-widgets.css":legacy.WEB_DIR/"telemetry-widgets.css","/telemetry-widgets.js":legacy.WEB_DIR/"telemetry-widgets.js"})
+legacy.STATIC_FILES.update({"/telemetry-widgets.css":legacy.WEB_DIR/"telemetry-widgets.css","/telemetry-widgets.js":legacy.WEB_DIR/"telemetry-widgets.js","/customer-placement-selector.js":legacy.WEB_DIR/"customer-placement-selector.js"})
 def json_safe_send_json(self,code,payload):return _previous_send_json(self,code,normalize_json_value(payload))
 def _controller_telemetry_get(self,parsed):
  user=_authenticate(self.headers)
@@ -64,5 +65,6 @@ install_dashboard_activity_audit(legacy,_authenticate)
 install_alert_management(legacy,_authenticate)
 install_agent_administration(legacy,_authenticate)
 install_customer_profile_administration(legacy,_authenticate)
+install_customer_placement_locations(legacy,_authenticate)
 def run():legacy.run()
 if __name__=="__main__":run()
