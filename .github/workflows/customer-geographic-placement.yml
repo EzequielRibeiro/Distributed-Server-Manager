@@ -1,0 +1,48 @@
+name: Customer Geographic Placement
+
+on:
+  pull_request:
+    paths:
+      - 'dashboard/customer_placement_locations.py'
+      - 'dashboard/customer_placement_locations_http.py'
+      - 'dashboard/customer_instance_creation.py'
+      - 'dashboard/instance_placement.py'
+      - 'dashboard/server_part17.py'
+      - 'dashboard/web/customer.html'
+      - 'dashboard/web/customer-placement-selector.js'
+      - 'core/placement_requirements.py'
+      - 'database/location_repository.py'
+      - 'dashboard/placement_service.py'
+      - 'tests/customer_geographic_placement_test.py'
+      - '.github/workflows/customer-geographic-placement.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/customer_placement_locations.py'
+      - 'dashboard/customer_placement_locations_http.py'
+      - 'dashboard/customer_instance_creation.py'
+      - 'dashboard/instance_placement.py'
+      - 'dashboard/server_part17.py'
+      - 'dashboard/web/customer.html'
+      - 'dashboard/web/customer-placement-selector.js'
+      - 'core/placement_requirements.py'
+      - 'database/location_repository.py'
+      - 'dashboard/placement_service.py'
+      - 'tests/customer_geographic_placement_test.py'
+      - '.github/workflows/customer-geographic-placement.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  customer-geographic-placement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python syntax
+        run: python3 -m py_compile dashboard/customer_placement_locations.py dashboard/customer_placement_locations_http.py dashboard/customer_instance_creation.py tests/customer_geographic_placement_test.py
+      - name: Validate JavaScript syntax
+        run: node --check dashboard/web/customer-placement-selector.js
+      - name: Run geographic placement regressions
+        run: python3 -m unittest tests/customer_geographic_placement_test.py

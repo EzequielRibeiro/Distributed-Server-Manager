@@ -26,9 +26,6 @@ class _Repository:
         self.backend = object()
 
     def create_customer_instance(self, **kwargs):
-        # Agent and node assignment are internal Controller data. Deliberately
-        # include both here so this test fails if the public response starts
-        # projecting either identifier.
         return {
             "instance_id": "cli000001-dayz-001",
             "name": "Servidor DayZ",
@@ -42,7 +39,7 @@ class _Repository:
 
 
 class CustomerAgentPrivacyContractTest(unittest.TestCase):
-    def test_customer_creation_response_never_exposes_selected_agent_or_node(self):
+    def test_customer_creation_response_exposes_only_logical_region(self):
         repository = _Repository()
         legacy = SimpleNamespace(
             DashboardHandler=_Handler,
@@ -99,7 +96,7 @@ class CustomerAgentPrivacyContractTest(unittest.TestCase):
 
         self.assertTrue(result["created"])
         self.assertEqual(result["placement"]["region_id"], "br-sudeste")
-        self.assertEqual(result["placement"]["datacenter_id"], "dc-limeira")
+        self.assertNotIn("datacenter_id", result["placement"])
         self.assertNotIn("agent_id", result)
         self.assertNotIn("node_id", result)
         self.assertNotIn("agent_id", result["placement"])
@@ -108,6 +105,7 @@ class CustomerAgentPrivacyContractTest(unittest.TestCase):
         serialized = json.dumps(result, ensure_ascii=False, sort_keys=True)
         self.assertNotIn("agent-private-123", serialized)
         self.assertNotIn("node-private-456", serialized)
+        self.assertNotIn("dc-limeira", serialized)
 
 
 if __name__ == "__main__":
