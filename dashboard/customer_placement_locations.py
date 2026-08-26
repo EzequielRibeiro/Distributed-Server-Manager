@@ -7,6 +7,7 @@ import math
 from typing import Any
 
 from core.placement_requirements import requirements_for_instance
+from customer_reference import resolve_customer_reference
 from location_repository import LocationRepository
 from placement_errors import PlacementUnavailable
 from placement_service import choose_agent_for_instance
@@ -44,11 +45,13 @@ def _decode_object(value: Any) -> dict[str, Any]:
 def _customer_context(user: dict[str, Any] | None, repository: LocationRepository) -> tuple[int, str]:
     if not user or str(user.get("role") or "").strip().lower() != "customer" or not user.get("scope_id"):
         raise PermissionError("customer authentication required")
+    reference = user["scope_id"]
+    customer_id = resolve_customer_reference(reference, public_only=isinstance(reference, str))
     ph = repository.dialect.placeholder
     with repository.session() as session:
         row = session.execute(
             "SELECT id,controller_id,status FROM customers WHERE id=" + ph,
-            (str(user["scope_id"]),),
+            (customer_id,),
         ).fetchone()
     if row is None or str(row["status"] or "").strip().lower() != "active":
         raise PermissionError("customer is not active")
