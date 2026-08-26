@@ -11,7 +11,8 @@ from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
 from notification_outbox_repository import NotificationOutboxRepository
 
-_SEVERITY_RANK = {"info": 10, "warning": 20, "critical": 30}
+_SEVERITY_RANK = {"debug": 0, "info": 10, "warning": 20, "error": 30, "critical": 40}
+_SEVERITY_NAMES = ", ".join(_SEVERITY_RANK)
 
 
 class NotificationRoutingRepository:
@@ -108,7 +109,7 @@ class NotificationRoutingRepository:
         event_type = str(event_type or "").strip().upper() or None
         minimum_severity = str(minimum_severity or "").strip().lower()
         if minimum_severity not in _SEVERITY_RANK:
-            raise ValueError("minimum_severity must be info, warning or critical")
+            raise ValueError(f"minimum_severity must be one of: {_SEVERITY_NAMES}")
         route_id = str(uuid.uuid4())
         with self.session(transaction=True) as session:
             session.execute(
@@ -134,7 +135,7 @@ class NotificationRoutingRepository:
         event_type = str(event_type or "").strip().upper()
         severity = str(severity or "").strip().lower()
         if severity not in _SEVERITY_RANK:
-            raise ValueError("severity must be info, warning or critical")
+            raise ValueError(f"severity must be one of: {_SEVERITY_NAMES}")
         ph = self.dialect.placeholder
         with self.session() as session:
             rows = session.execute(
