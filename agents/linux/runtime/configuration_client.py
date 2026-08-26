@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from storage_pools import default_storage_pool_id, storage_pools
+
 _AGENT_STORAGE_NAMESPACE = "capivara.agent.storage"
 _DEFAULT_INSTANCE_STORAGE_ROOT = "/var/lib/capivara-instances"
 
@@ -101,9 +103,31 @@ def _load_local_config(target_id: str) -> dict[str, Any]:
     return config
 
 
+def _apply_pool_configuration(config: dict[str, Any], value: dict[str, Any]) -> dict[str, Any]:
+    raw_pools = value.get("storage_pools")
+    if not isinstance(raw_pools, list) or not raw_pools:
+        return config
+    candidate = dict(config)
+    candidate["storage_pools"] = [dict(item) for item in raw_pools if isinstance(item, dict)]
+    candidate["default_storage_pool_id"] = str(value.get("default_storage_pool_id") or "").strip()
+    normalized = storage_pools(candidate)
+    default_id = default_storage_pool_id(candidate)
+    for pool in normalized:
+        root = Path(pool["root_path"])
+        root.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(root, 0o711)
+        except OSError:
+            pass
+    config["storage_pools"] = [{k: pool[k] for k in ("id", "name", "root_path", "storage_class", "enabled", "priority", "reserve_bytes")} for pool in normalized]
+    config["default_storage_pool_id"] = default_id
+    return config
+
+
 def _apply_agent_storage(value: dict[str, Any], target_id: str, revision: str) -> dict[str, Any]:
     desired_root = _instance_storage_root(value.get("instance_storage_root"))
     config = _load_local_config(target_id)
+    config = _apply_pool_configuration(config, value)
     migrate_existing = bool(value.get("migrate_existing"))
     if migrate_existing:
         from storage_migration_client import handle_command
@@ -117,17 +141,21 @@ def _apply_agent_storage(value: dict[str, Any], target_id: str, revision: str) -
         )
         if str(migration.get("status") or "") != "completed":
             raise RuntimeError(str(migration.get("error") or "instance storage migration failed"))
+        _atomic_json(_config_path(), config)
         return {
             "instance_storage_root": str(desired_root),
+            "storage_pools": config.get("storage_pools"),
+            "default_storage_pool_id": config.get("default_storage_pool_id"),
             "migrate_existing": False,
             "migration": migration,
         }
 
     blockers = []
-    for instance_id, state_root in _existing_instance_roots():
-        expected = (desired_root / instance_id).resolve(strict=False)
-        if state_root != expected:
-            blockers.append(instance_id)
+    if not value.get("storage_pools"):
+        for instance_id, state_root in _existing_instance_roots():
+            expected = (desired_root / instance_id).resolve(strict=False)
+            if state_root != expected:
+                blockers.append(instance_id)
     if blockers:
         preview = ", ".join(blockers[:5])
         suffix = "" if len(blockers) <= 5 else f" (+{len(blockers) - 5})"
@@ -140,7 +168,8 @@ def _apply_agent_storage(value: dict[str, Any], target_id: str, revision: str) -
         pass
     config["instance_storage_root"] = str(desired_root)
     _atomic_json(_config_path(), config)
-    return {"instance_storage_root": str(desired_root), "migrate_existing": False}
+    return {"instance_storage_root": str(desired_root), "storage_pools": config.get("storage_pools"),
+            "default_storage_pool_id": config.get("default_storage_pool_id"), "migrate_existing": False}
 
 
 def configuration_state() -> list[dict[str, Any]]:
