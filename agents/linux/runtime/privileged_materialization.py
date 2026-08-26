@@ -77,10 +77,21 @@ def _invoke(action: str, spec: dict[str, Any], **extra: Any) -> dict[str, Any]:
     return operation
 
 
-def migrate_storage_copy(config: dict[str, Any], spec: dict[str, Any], *, target_root: str) -> dict[str, Any]:
+def migrate_storage_copy(
+    config: dict[str, Any],
+    spec: dict[str, Any],
+    *,
+    target_storage_pool_id: str,
+    migration_id: str,
+) -> dict[str, Any]:
     agent_id = str(config.get("agent_id") or "").strip()
     normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
-    return _invoke("migrate-storage-copy", normalized, target_root=str(target_root))
+    return _invoke(
+        "migrate-storage-copy",
+        normalized,
+        target_storage_pool_id=_token(target_storage_pool_id),
+        migration_id=_token(migration_id),
+    )
 
 
 def materialize(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
