@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Create or validate the initial Region/Datacenter topology."""
+"""Create or validate the initial Region/Datacenter topology.
+
+Existing topology identity is authoritative during reinstall: if the requested
+Region and Datacenter IDs already exist and the Datacenter is still attached to
+the requested Region, descriptive metadata differences do not make bootstrap
+fail. This keeps reinstall idempotent while still rejecting identity conflicts.
+"""
 
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
@@ -66,12 +71,6 @@ def bootstrap(backend, args: argparse.Namespace) -> None:
                         "active",
                     ),
                 )
-            else:
-                existing_name = str(_row_value(region, "name") or "")
-                if existing_name and existing_name != args.region_name:
-                    raise RuntimeError(
-                        f"Region {args.region_id} already exists with name {existing_name!r}"
-                    )
 
             datacenter = session.execute(
                 f"SELECT id,region_id,name FROM datacenters WHERE id={ph}",
@@ -95,14 +94,9 @@ def bootstrap(backend, args: argparse.Namespace) -> None:
                 )
             else:
                 existing_region = str(_row_value(datacenter, "region_id") or "")
-                existing_name = str(_row_value(datacenter, "name") or "")
                 if existing_region != args.region_id:
                     raise RuntimeError(
                         f"Datacenter {args.datacenter_id} already belongs to Region {existing_region}"
-                    )
-                if existing_name and existing_name != args.datacenter_name:
-                    raise RuntimeError(
-                        f"Datacenter {args.datacenter_id} already exists with name {existing_name!r}"
                     )
         finally:
             session.close()
