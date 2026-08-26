@@ -1,7 +1,7 @@
 [Unit]
-Description=Capivara DSM Alert Engine
-After=network.target dsm-monitor.service
-Wants=dsm-monitor.service
+Description=Capivara DSM Database Alert Engine
+After=network.target dsm-dashboard-worker.service
+Wants=dsm-dashboard-worker.service
 RequiresMountsFor=/opt/dsm
 
 [Service]
@@ -10,7 +10,7 @@ User={{DSM_USER}}
 Group={{DSM_GROUP}}
 Environment=DSM_ROOT=/opt/dsm
 WorkingDirectory=/opt/dsm
-ExecStart=/opt/dsm/monitor/alert_engine.sh daemon
+ExecStart=/usr/bin/python3 /opt/dsm/monitor/alert_engine.py
 Restart=always
 RestartSec=10
 TimeoutStartSec=30
