@@ -102,6 +102,16 @@ class NotificationOutboxRepository:
                 (str(error or "")[:4000], next_attempt_at, notification_id),
             )
 
+    def mark_terminal_failed(self, notification_id: str, error: str) -> None:
+        self.initialize()
+        ph = self.dialect.placeholder
+        with self.session(transaction=True) as session:
+            session.execute(
+                "UPDATE notification_outbox SET status='failed',last_error=" + ph +
+                ",next_attempt_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE notification_id=" + ph,
+                (str(error or "")[:4000], notification_id),
+            )
+
     def cancel(self, notification_id: str) -> None:
         self._set_status(notification_id, "cancelled")
 
