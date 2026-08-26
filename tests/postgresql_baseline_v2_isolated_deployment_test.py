@@ -130,7 +130,7 @@ def main() -> int:
             ("isolated-admin",),
         ).fetchone()
         stored_contract = session.execute(
-            "SELECT id,customer_id,game_id,resource_profile_id FROM service_contracts WHERE id=%s",
+            "SELECT id,customer_id,game_id FROM service_contracts WHERE id=%s",
             ("isolated-minecraft-contract",),
         ).fetchone()
 
@@ -142,7 +142,7 @@ def main() -> int:
         raise AssertionError("Customer billing identity was not stored")
     if stored_user["role"] != "admin" or stored_user["full_name"] != "Isolated Test Administrator":
         raise AssertionError("system administrator bootstrap failed")
-    if int(stored_contract["customer_id"]) != 1 or stored_contract["resource_profile_id"] != "standard":
+    if int(stored_contract["customer_id"]) != 1 or stored_contract["game_id"] != "minecraft":
         raise AssertionError("stored service contract is invalid")
 
     print("PostgreSQL Baseline v2 isolated deployment: OK")
