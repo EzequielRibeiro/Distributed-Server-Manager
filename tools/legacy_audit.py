@@ -30,6 +30,7 @@ RETIRED_PATHS = {
     "monitor/alert_engine.sh",
     "core/alert_db.sh",
     "core/alert_history.sh",
+    "core/notification_center.sh",
     "database/alert_store.sh",
     "database/dashboard_activity_repository.py",
     "database/dashboard_activity_schema.py",
