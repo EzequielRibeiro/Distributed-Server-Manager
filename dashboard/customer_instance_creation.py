@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Canonical Catalog v2 customer instance creation integration."""
 from __future__ import annotations
-import json,re,shutil
+import json,re,shutil,uuid
 from pathlib import Path
 from typing import Any
 from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
@@ -36,6 +36,7 @@ def install_customer_instance_creation(legacy)->None:
  def create_customer_instance(user,payload,root=None,database_path=None):
   root=Path(root or legacy.DSM_ROOT);database_path=database_path or legacy.DATABASE_FILE
   if not user or user.get("role")!="customer" or not user.get("scope_id"):raise PermissionError("only a scoped customer can create an instance")
+  correlation_id=str(payload.get("correlation_id") or "").strip() or str(uuid.uuid4())
   game=str(payload.get("game","")).strip().lower()
   if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{1,63}",game):raise ValueError("invalid game")
   runtime_id=str(payload.get("runtime_id","")).strip();edition=str(payload.get("edition","")).strip();version=str(payload.get("version","")).strip();build=str(payload.get("build","")).strip()
@@ -59,7 +60,10 @@ def install_customer_instance_creation(legacy)->None:
    if instance_path.exists():shutil.rmtree(instance_path)
    if resource.exists():shutil.rmtree(resource)
    raise
-  result={"created":True,"instance_id":plan["instance_id"],"name":plan["name"],"instance":str(instance_path),"agent_id":plan["agent_id"],"node_id":plan["node_id"],"game":game,"contract_id":plan["contract_id"],"placement":{"region_id":placement.get("region_id"),"datacenter_id":placement.get("datacenter_id"),"score":placement.get("score"),"reason":placement.get("reason")},"provision":provision}
+  try:
+   legacy.audit(user,"customer.instance.create","started",plan["instance_id"],f"customer={customer_id};contract={plan['contract_id']};region={placement.get('region_id') or ''};correlation_id={correlation_id}",database_path=database_path)
+  except Exception:pass
+  result={"created":True,"instance_id":plan["instance_id"],"name":plan["name"],"game":game,"contract_id":plan["contract_id"],"correlation_id":correlation_id,"placement":{"region_id":placement.get("region_id"),"score":placement.get("score"),"reason":placement.get("reason")},"provision":provision}
   if source_vault_id:result["backup_clone"]={"clone_id":clone["clone_id"],"source_vault_id":source_vault_id,"status":clone["status"]}
   return result
  def retry_instance_provisioning(user,instance_path,database_path=None):
