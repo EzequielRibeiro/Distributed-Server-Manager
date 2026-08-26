@@ -33,6 +33,7 @@ jobs:
             dashboard/activity_humanizer.py \
             dashboard/dashboard_activity_http.py \
             dashboard/alert_management_http.py \
+            dashboard/workers/notification_dispatcher.py \
             monitor/alert_engine.py \
             tests/database_audit_alerts_test.py \
             tests/notification_routing_test.py
@@ -40,5 +41,5 @@ jobs:
       - name: Validate JavaScript
         run: node --check dashboard/web/activity-log.js
 
-      - name: Test semantic database audit and alerts
+      - name: Test semantic database audit, alerts and notification delivery
         run: python3 -m unittest -v tests.database_audit_alerts_test tests.notification_routing_test
