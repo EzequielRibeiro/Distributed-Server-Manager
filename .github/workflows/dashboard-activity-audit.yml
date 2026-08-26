@@ -33,6 +33,7 @@ jobs:
             dashboard/activity_humanizer.py \
             dashboard/dashboard_activity_http.py \
             dashboard/alert_management_http.py \
+            dashboard/notification_management_http.py \
             dashboard/workers/notification_dispatcher.py \
             monitor/alert_engine.py \
             tests/database_audit_alerts_test.py \
