@@ -63,13 +63,16 @@ def select_storage_pool(
     requested_pool_id: str | None = None,
     preferred_storage_class: str | None = None,
     required_bytes: int | None = None,
+    reserved_bytes_by_pool: dict[str, int] | None = None,
 ) -> dict[str, Any] | None:
     """Return a deterministic pool decision, or None for legacy single-root Agents.
 
-    Explicit pool requests are strict: a missing, disabled, unhealthy or undersized
-    pool is rejected rather than silently replaced. Automatic selection filters
-    unavailable pools, applies class/capacity requirements, then ranks by priority,
-    usable capacity, default-pool preference and stable ID.
+    Controller-side logical reservations are deducted from the Agent-reported
+    usable capacity before eligibility/ranking. Explicit pool requests remain
+    strict: a missing, disabled, unhealthy or undersized pool is rejected rather
+    than silently replaced. Automatic selection filters unavailable pools,
+    applies class/capacity requirements, then ranks by priority, remaining
+    capacity, default-pool preference and stable ID.
     """
     raw_pools = storage_pools_from_metadata(metadata_json)
     if not raw_pools:
@@ -81,11 +84,21 @@ def select_storage_pool(
     requested = str(requested_pool_id or "").strip() or None
     preferred_class = str(preferred_storage_class or "").strip().lower() or None
     minimum = max(0, _number(required_bytes, 0)) if required_bytes is not None else 0
+    reserved = {
+        str(pool_id): max(0, _number(value, 0))
+        for pool_id, value in dict(reserved_bytes_by_pool or {}).items()
+        if str(pool_id).strip()
+    }
+    for pool in pools:
+        active_reserved = reserved.get(pool["storage_pool_id"], 0)
+        pool["reported_usable_bytes"] = pool["usable_bytes"]
+        pool["reserved_bytes"] = active_reserved
+        pool["available_bytes"] = max(0, pool["usable_bytes"] - active_reserved)
 
     def eligible(pool: dict[str, Any]) -> bool:
         if not pool["enabled"] or pool["health"] != "online":
             return False
-        if minimum and pool["usable_bytes"] < minimum:
+        if minimum and pool["available_bytes"] < minimum:
             return False
         return True
 
@@ -109,7 +122,7 @@ def select_storage_pool(
     candidates.sort(
         key=lambda pool: (
             -pool["priority"],
-            -pool["usable_bytes"],
+            -pool["available_bytes"],
             -int(pool["default"]),
             pool["storage_pool_id"],
         )
