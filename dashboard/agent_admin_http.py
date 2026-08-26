@@ -16,12 +16,14 @@ from agent_pairing_repository import (
 )
 from agent_relink_repository import AgentRelinkRepository
 from configuration_repository import ConfigurationRepository
+from instance_storage_pool_migration_repository import InstanceStoragePoolMigrationRepository
 from universal_event_repository import UniversalEventRepository
 
 DETAIL_PATH = "/api/admin/agent"
 RENAME_PATH = "/api/admin/agent/rename"
 STORAGE_PATH = "/api/admin/agent/storage"
 STORAGE_MIGRATE_PATH = "/api/admin/agent/storage/migrate"
+INSTANCE_STORAGE_POOL_MIGRATION_PATH = "/api/admin/instance/storage-pool-migrate"
 DOCTOR_PATH = "/api/admin/agent/doctor"
 RELINK_PREPARE_PATH = "/api/admin/agent/relink/prepare"
 CREDENTIAL_ROTATE_PATH = "/api/admin/agent/credential-rotate"
@@ -119,15 +121,29 @@ def install_agent_administration(legacy, authenticate) -> None:
 
     def do_get(self):
         parsed = urlparse(self.path)
-        if parsed.path not in {DETAIL_PATH, DOCTOR_PATH}:
+        if parsed.path not in {DETAIL_PATH, DOCTOR_PATH, INSTANCE_STORAGE_POOL_MIGRATION_PATH}:
             return previous_get(self)
         user = authenticated(self)
         if user is None:
             return
         values = parse_qs(parsed.query or "")
-        agent_id = str((values.get("agent_id") or [""])[0]).strip()
         try:
             backend = _backend(legacy)
+            if parsed.path == INSTANCE_STORAGE_POOL_MIGRATION_PATH:
+                migration_id = str((values.get("migration_id") or [""])[0]).strip()
+                if not migration_id:
+                    raise ValueError("migration_id is required")
+                migrations = InstanceStoragePoolMigrationRepository(backend)
+                migrations.initialize()
+                state = migrations.snapshot(migration_id)
+                request = state.get("request") if isinstance(state.get("request"), dict) else {}
+                agent_id = str(request.get("agent_id") or "").strip()
+                detail = AgentAdminRepository(backend).detail(agent_id)
+                _authorize(user, detail)
+                self.send_json(200, {"migration": state})
+                return
+
+            agent_id = str((values.get("agent_id") or [""])[0]).strip()
             repo = AgentAdminRepository(backend)
             detail = repo.detail(agent_id)
             _authorize(user, detail, doctor=parsed.path == DOCTOR_PATH)
@@ -138,8 +154,8 @@ def install_agent_administration(legacy, authenticate) -> None:
                 self.send_json(200, {"agent": detail})
         except PermissionError as exc:
             self.send_json(403, {"error": "forbidden", "message": str(exc)})
-        except (ValueError, LookupError) as exc:
-            self.send_json(404 if isinstance(exc, LookupError) else 400, {"error": "invalid_request", "message": str(exc)})
+        except (ValueError, LookupError, KeyError) as exc:
+            self.send_json(404 if isinstance(exc, (LookupError, KeyError)) else 400, {"error": "invalid_request", "message": str(exc)})
         except Exception:
             self.send_json(500, {"error": "agent_admin_failed", "message": "Falha ao consultar o Agent."})
 
@@ -166,7 +182,7 @@ def install_agent_administration(legacy, authenticate) -> None:
                 self.send_json(500, {"error": "relink_failed", "message": "Não foi possível revincular o Agent."})
             return
 
-        if path not in {RENAME_PATH, STORAGE_PATH, STORAGE_MIGRATE_PATH, DOCTOR_PATH, RELINK_PREPARE_PATH, CREDENTIAL_ROTATE_PATH}:
+        if path not in {RENAME_PATH, STORAGE_PATH, STORAGE_MIGRATE_PATH, INSTANCE_STORAGE_POOL_MIGRATION_PATH, DOCTOR_PATH, RELINK_PREPARE_PATH, CREDENTIAL_ROTATE_PATH}:
             return previous_post(self)
         user = authenticated(self)
         if user is None:
@@ -176,13 +192,32 @@ def install_agent_administration(legacy, authenticate) -> None:
         except ValueError:
             self.send_json(400, {"error": "invalid_request", "message": "Requisição inválida."})
             return
-        agent_id = str((payload or {}).get("agent_id") or "").strip()
         try:
             backend = _backend(legacy)
+            actor = str(user.get("username") or "system")
+
+            if path == INSTANCE_STORAGE_POOL_MIGRATION_PATH:
+                if _role(user) == "operator":
+                    raise PermissionError("operator is read-only")
+                instance_id = str((payload or {}).get("instance_id") or "").strip()
+                target_pool_id = str((payload or {}).get("target_storage_pool_id") or "").strip()
+                migrations = InstanceStoragePoolMigrationRepository(backend)
+                migrations.initialize()
+                owner_agent_id = migrations.agent_for_instance(instance_id)
+                detail = AgentAdminRepository(backend).detail(owner_agent_id)
+                _authorize(user, detail)
+                state = migrations.enqueue(
+                    instance_id=instance_id,
+                    target_storage_pool_id=target_pool_id,
+                    requested_by=actor,
+                )
+                self.send_json(202, {"migration": state})
+                return
+
+            agent_id = str((payload or {}).get("agent_id") or "").strip()
             repo = AgentAdminRepository(backend)
             detail = repo.detail(agent_id)
             _authorize(user, detail, doctor=path == DOCTOR_PATH)
-            actor = str(user.get("username") or "system")
 
             if path == RENAME_PATH:
                 if _role(user) == "operator": raise PermissionError("operator is read-only")
@@ -219,8 +254,8 @@ def install_agent_administration(legacy, authenticate) -> None:
             self.send_json(201, {"agent_id": agent_id, "controller_id": detail["controller_id"], "node_id": detail["node_id"], "fingerprint": detail.get("fingerprint"), "pairing_token": issued.token, "token_id": issued.token_id, "expires_at": issued.expires_at, "state": state, "command": "sudo -u capivara-agent python3 /opt/capivara-agent/runtime/relink_cli.py --token '<TOKEN>' && sudo systemctl restart capivara-agent.service", "warning": "O token é exibido uma única vez. Não registre o token nem o novo secret em logs."})
         except PermissionError as exc:
             self.send_json(403, {"error": "forbidden", "message": str(exc)})
-        except LookupError as exc:
-            self.send_json(404, {"error": "agent_not_found", "message": str(exc)})
+        except (LookupError, KeyError) as exc:
+            self.send_json(404, {"error": "not_found", "message": str(exc)})
         except (ValueError, TypeError) as exc:
             self.send_json(400, {"error": "invalid_request", "message": str(exc)})
         except Exception:
@@ -230,4 +265,4 @@ def install_agent_administration(legacy, authenticate) -> None:
     legacy.DashboardHandler.do_POST = do_post
 
 
-__all__ = ["install_agent_administration"]
+__all__ = ["INSTANCE_STORAGE_POOL_MIGRATION_PATH", "install_agent_administration"]
