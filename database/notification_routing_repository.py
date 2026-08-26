@@ -171,20 +171,38 @@ class NotificationRoutingRepository:
         subject: str | None = None,
         alert_id: str | None = None,
     ) -> list[str]:
+        event_id = str(event_id or "").strip()
         message = str(message or "").strip()
-        if not message:
-            raise ValueError("message is required")
+        if not event_id or not message:
+            raise ValueError("event_id and message are required")
         notification_ids = []
         for destination in self.matching_destinations(event_type=event_type, severity=severity):
+            channel = str(destination["channel"])
+            recipient = str(destination["recipient"])
+            existing = self._notification_for_event(event_id=event_id, channel=channel, recipient=recipient)
+            if existing:
+                notification_ids.append(existing)
+                continue
             notification_ids.append(self.outbox.enqueue(
-                channel=str(destination["channel"]),
-                recipient=str(destination["recipient"]),
+                channel=channel,
+                recipient=recipient,
                 message=message,
                 subject=subject,
                 event_id=event_id,
                 alert_id=alert_id,
             ))
         return notification_ids
+
+    def _notification_for_event(self, *, event_id: str, channel: str, recipient: str) -> str | None:
+        ph = self.dialect.placeholder
+        with self.session() as session:
+            row = session.execute(
+                "SELECT notification_id FROM notification_outbox "
+                f"WHERE event_id={ph} AND channel={ph} AND recipient={ph} "
+                "ORDER BY created_at,notification_id LIMIT 1",
+                (event_id, channel, recipient),
+            ).fetchone()
+        return None if row is None else str(row["notification_id"])
 
     @staticmethod
     def _destination_row(row: Any) -> dict[str, Any]:
