@@ -31,13 +31,8 @@ main(){
     start_worker scheduler_worker.sh
     start_worker monitor_worker.sh
     start_worker mods_worker.sh
-    start_worker alerts_worker.sh
     start_worker backup_worker.sh
-    # D1 automation/event/metric/schedule consumer. dsm-dashboard-worker.service
-    # is already part of the enabled Controller/Hybrid service set.
     start_python_worker automation_worker.py
-    # Mantém inventory/heartbeat do Agent local em Nodes hybrid.
-    # Em Nodes controller o processo permanece inerte até a promoção.
     start_python_worker hybrid_agent_worker.py
     while true; do sleep 60; done
 }
