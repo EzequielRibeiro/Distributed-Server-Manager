@@ -141,7 +141,8 @@ jobs:
           grep -F 'storage_pool_id' agents/linux/runtime/game_runtime.py agents/linux/runtime/runtime_spec.py
           grep -F 'resolve_storage_pool' agents/linux/privileged/materialize_instance.py
           grep -F 'storage_pools.py' agents/linux/installer/install-agent.sh release/build_agent_package.sh
-          grep -F 'capivara.storage.pool.usable_bytes' agents/linux/runtime/runtime_metrics.py
+          grep -F '_storage_pool_samples' agents/linux/runtime/runtime_metrics.py
+          grep -F 'usable_bytes' agents/linux/runtime/runtime_metrics.py
           grep -F 'telemetry["storage_pools"]' agents/linux/runtime/runtime_metrics.py
       - name: Check consolidated schema parity
         run: |
