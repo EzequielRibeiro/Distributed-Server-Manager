@@ -7,6 +7,7 @@ on:
       - 'bin/cap'
       - 'release/build_agent_package.sh'
       - 'tests/agent_local_cli_test.py'
+      - 'tests/agent_controller_cli_test.py'
       - 'tests/agent_local_game_data_state_test.py'
       - 'tests/agent_local_game_data_cli_test.py'
       - 'tests/agent_update_lifecycle_test.py'
@@ -19,6 +20,7 @@ on:
       - 'bin/cap'
       - 'release/build_agent_package.sh'
       - 'tests/agent_local_cli_test.py'
+      - 'tests/agent_controller_cli_test.py'
       - 'tests/agent_local_game_data_state_test.py'
       - 'tests/agent_local_game_data_cli_test.py'
       - 'tests/agent_update_lifecycle_test.py'
@@ -43,6 +45,7 @@ jobs:
           bash -n release/build_agent_package.sh
           python3 -m py_compile \
             agents/linux/runtime/local_cli.py \
+            agents/linux/runtime/controller_cli.py \
             agents/linux/runtime/capabilities.py \
             agents/linux/runtime/network_inventory.py \
             agents/linux/runtime/update_client.py \
@@ -52,6 +55,7 @@ jobs:
             agents/linux/runtime/game_data_state.py \
             agents/linux/updater/updater.py \
             tests/agent_local_cli_test.py \
+            tests/agent_controller_cli_test.py \
             tests/agent_local_game_data_state_test.py \
             tests/agent_local_game_data_cli_test.py \
             tests/agent_update_lifecycle_test.py
@@ -59,6 +63,7 @@ jobs:
         run: |
           python3 -m unittest \
             tests/agent_local_cli_test.py \
+            tests/agent_controller_cli_test.py \
             tests/agent_local_game_data_state_test.py \
             tests/agent_local_game_data_cli_test.py \
             tests/agent_update_lifecycle_test.py
