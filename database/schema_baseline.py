@@ -4,10 +4,10 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
+from activity_audit_schema import ensure_activity_audit_schema
 from artifact_transfer_schema import ensure_artifact_transfer_schema
 from baseline_backend_compat import finalize_baseline_sql
 from baseline_v2_compiler import compile_baseline_v2
-from dashboard_activity_schema import ensure_dashboard_activity_schema
 from instance_workspace_schema import ensure_instance_workspace_schema
 from instance_workspace_extended_schema import ensure_instance_workspace_extended_schema
 DATABASE_DIR=Path(__file__).resolve().parent;SCHEMA_DIR=DATABASE_DIR/"schemas";BASELINE_NAME="capivara-baseline-v2"
@@ -26,7 +26,7 @@ def load_schema_baseline(backend):
  if not path.is_file():raise FileNotFoundError(f"database schema baseline not found: {path}")
  source_sql=path.read_text(encoding="utf-8")
  if not source_sql.strip():raise ValueError(f"database schema baseline is empty: {path}")
- sql=compile_baseline_v2(source_sql,normalized);sql=finalize_baseline_sql(sql,normalized);sql=ensure_dashboard_activity_schema(sql,normalized);sql=ensure_instance_workspace_schema(sql,normalized);sql=ensure_instance_workspace_extended_schema(sql,normalized);sql=ensure_artifact_transfer_schema(sql,normalized)
+ sql=compile_baseline_v2(source_sql,normalized);sql=finalize_baseline_sql(sql,normalized);sql=ensure_activity_audit_schema(sql,normalized);sql=ensure_instance_workspace_schema(sql,normalized);sql=ensure_instance_workspace_extended_schema(sql,normalized);sql=ensure_artifact_transfer_schema(sql,normalized)
  return SchemaBaseline(normalized,BASELINE_NAME,path,sql,hashlib.sha256(sql.encode()).hexdigest())
 def baseline_marker_sql(backend):
  normalized=normalize_backend_name(backend)
