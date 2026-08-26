@@ -34,6 +34,7 @@ main(){
     start_worker backup_worker.sh
     start_python_worker automation_worker.py
     start_python_worker hybrid_agent_worker.py
+    start_python_worker notification_dispatcher.py
     while true; do sleep 60; done
 }
 main
