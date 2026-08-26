@@ -26,6 +26,7 @@ on:
       - 'tests/agent_instance_storage_root_test.py'
       - 'tests/agent_storage_pools_test.py'
       - 'tests/agent_storage_pool_telemetry_test.py'
+      - 'tests/agent_storage_pool_migration_test.py'
       - 'tests/storage_pool_placement_test.py'
       - '.github/workflows/agent-instance-runtime.yml'
   push:
@@ -45,6 +46,7 @@ on:
       - 'tests/agent_instance_storage_root_test.py'
       - 'tests/agent_storage_pools_test.py'
       - 'tests/agent_storage_pool_telemetry_test.py'
+      - 'tests/agent_storage_pool_migration_test.py'
       - 'tests/storage_pool_placement_test.py'
       - '.github/workflows/agent-instance-runtime.yml'
 
@@ -92,6 +94,7 @@ jobs:
             tests/agent_instance_storage_root_test.py \
             tests/agent_storage_pools_test.py \
             tests/agent_storage_pool_telemetry_test.py \
+            tests/agent_storage_pool_migration_test.py \
             tests/storage_pool_placement_test.py
       - name: Run instance runtime tests
         run: |
@@ -104,6 +107,7 @@ jobs:
           python3 -m unittest tests/agent_instance_storage_root_test.py
           python3 -m unittest tests/agent_storage_pools_test.py
           python3 -m unittest tests/agent_storage_pool_telemetry_test.py
+          python3 -m unittest tests/agent_storage_pool_migration_test.py
           python3 -m unittest tests/storage_pool_placement_test.py
       - name: Check lifecycle policy boundary
         run: |
@@ -158,6 +162,11 @@ jobs:
           grep -F 'storage_reserved_bytes' agents/linux/runtime/provisioning_contract.py database/agent_instance_provisioning_repository.py
           grep -F 'INSTANCE_STORAGE_POOL_CAPACITY_RESERVED' database/agent_instance_provisioning_repository.py
           grep -F 'INSTANCE_STORAGE_POOL_CAPACITY_RELEASED' database/agent_instance_provisioning_repository.py
+          grep -F 'target_storage_pool_id' agents/linux/runtime/storage_pool_migration_executor.py agents/linux/privileged/materialize_instance.py
+          grep -F '.capivara-migrate-' agents/linux/privileged/materialize_instance.py
+          grep -F 'atomic_commit' agents/linux/privileged/materialize_instance.py agents/linux/runtime/storage_pool_migration_executor.py
+          grep -F 'INSTANCE_STORAGE_POOL_MIGRATION_COMPLETED' agents/linux/runtime/storage_pool_migration_executor.py
+          grep -F 'storage_pool_migration_executor.py' agents/linux/installer/install-agent.sh release/build_agent_package.sh
       - name: Check consolidated schema parity
         run: |
           set -euo pipefail
