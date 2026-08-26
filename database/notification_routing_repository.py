@@ -13,6 +13,8 @@ from notification_outbox_repository import NotificationOutboxRepository
 
 _SEVERITY_RANK = {"debug": 0, "info": 10, "warning": 20, "error": 30, "critical": 40}
 _SEVERITY_NAMES = ", ".join(_SEVERITY_RANK)
+_SUPPORTED_CHANNELS = frozenset({"email", "discord"})
+_SECRET_CONFIG_TOKENS = ("password", "passwd", "secret", "token", "webhook", "api_key", "apikey", "authorization", "credential", "private_key")
 
 
 class NotificationRoutingRepository:
@@ -34,6 +36,15 @@ class NotificationRoutingRepository:
             finally:
                 session.close()
 
+    @staticmethod
+    def _validate_config(config: dict[str, Any] | None) -> dict[str, Any]:
+        value = dict(config or {})
+        for key in value:
+            normalized = str(key).strip().lower().replace("-", "_")
+            if any(token in normalized for token in _SECRET_CONFIG_TOKENS):
+                raise ValueError(f"secret notification config must use secret_file, not config.{key}")
+        return value
+
     def create_destination(
         self,
         *,
@@ -51,8 +62,10 @@ class NotificationRoutingRepository:
         secret_file = str(secret_file or "").strip() or None
         if not name or not channel or not recipient:
             raise ValueError("name, channel and recipient are required")
+        if channel not in _SUPPORTED_CHANNELS:
+            raise ValueError("channel must be email or discord")
+        config_json = json.dumps(self._validate_config(config), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         destination_id = str(uuid.uuid4())
-        config_json = json.dumps(config or {}, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         with self.session(transaction=True) as session:
             session.execute(
                 "INSERT INTO notification_destinations("
@@ -61,6 +74,43 @@ class NotificationRoutingRepository:
                 (destination_id, name, channel, recipient, secret_file, config_json, 1 if enabled else 0),
             )
         return destination_id
+
+    def update_destination(
+        self,
+        destination_id: str,
+        *,
+        name: str,
+        recipient: str,
+        secret_file: str | None = None,
+        config: dict[str, Any] | None = None,
+        enabled: bool = True,
+    ) -> dict[str, Any] | None:
+        self.initialize()
+        destination_id = str(destination_id or "").strip()
+        name = str(name or "").strip()
+        recipient = str(recipient or "").strip()
+        secret_file = str(secret_file or "").strip() or None
+        if not destination_id or not name or not recipient:
+            raise ValueError("destination_id, name and recipient are required")
+        config_json = json.dumps(self._validate_config(config), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        ph = self.dialect.placeholder
+        with self.session(transaction=True) as session:
+            session.execute(
+                f"UPDATE notification_destinations SET name={ph},recipient={ph},secret_file={ph},"
+                f"config_json={ph},enabled={ph},updated_at=CURRENT_TIMESTAMP WHERE destination_id={ph}",
+                (name, recipient, secret_file, config_json, 1 if enabled else 0, destination_id),
+            )
+        return self.get_destination(destination_id)
+
+    def get_destination(self, destination_id: str) -> dict[str, Any] | None:
+        self.initialize()
+        ph = self.dialect.placeholder
+        with self.session() as session:
+            row = session.execute(
+                f"SELECT * FROM notification_destinations WHERE destination_id={ph}",
+                (str(destination_id or "").strip(),),
+            ).fetchone()
+        return self._destination_row(row) if row is not None else None
 
     def set_destination_enabled(self, destination_id: str, enabled: bool) -> None:
         self.initialize()
@@ -106,8 +156,11 @@ class NotificationRoutingRepository:
         enabled: bool = True,
     ) -> str:
         self.initialize()
+        destination_id = str(destination_id or "").strip()
         event_type = str(event_type or "").strip().upper() or None
         minimum_severity = str(minimum_severity or "").strip().lower()
+        if not destination_id or self.get_destination(destination_id) is None:
+            raise ValueError("notification destination does not exist")
         if minimum_severity not in _SEVERITY_RANK:
             raise ValueError(f"minimum_severity must be one of: {_SEVERITY_NAMES}")
         route_id = str(uuid.uuid4())
@@ -129,6 +182,23 @@ class NotificationRoutingRepository:
                 f"WHERE route_id={ph}",
                 (1 if enabled else 0, route_id),
             )
+
+    def list_routes(self, *, destination_id: str | None = None) -> list[dict[str, Any]]:
+        self.initialize()
+        sql = "SELECT * FROM notification_routes"
+        params: tuple[Any, ...] = ()
+        if destination_id:
+            sql += f" WHERE destination_id={self.dialect.placeholder}"
+            params = (str(destination_id),)
+        sql += " ORDER BY created_at,route_id"
+        with self.session() as session:
+            rows = session.execute(sql, params).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["enabled"] = bool(item.get("enabled"))
+            result.append(item)
+        return result
 
     def matching_destinations(self, *, event_type: str, severity: str) -> list[dict[str, Any]]:
         self.initialize()
