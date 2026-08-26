@@ -37,9 +37,19 @@ def _limit(handler,bucket,key,*,limit,window):
     handler.send_response(429);handler.send_header("Content-Type","application/json; charset=utf-8");handler.send_header("Retry-After",str(decision.retry_after));body=b'{"error":"too many requests"}';handler.send_header("Content-Length",str(len(body)));handler.end_headers();handler.wfile.write(body);return False
 def integrated_authenticate(headers):
     user=_original_authenticate(headers)
-    if user is not None:return user
-    try:return authenticate_customer(headers,_backend())
-    except Exception:return None
+
+    # The legacy authenticator still recognizes Customer accounts, but its
+    # identity payload only carries the compatibility scope_id field.
+    # Baseline v2 Customer requests must always use the canonical Customer
+    # authenticator so customer_id/customer_code are preserved.
+    if user is not None and user.get("role") != "customer":
+        return user
+
+    try:
+        return authenticate_customer(headers,_backend())
+    except Exception:
+        return None
+
 def credential_authenticate(headers):
     return authenticate_login_credentials(
         headers,
