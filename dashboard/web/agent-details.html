@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Capivara DSM - Detalhes do Agent</title>
     <link rel="stylesheet" href="dashboard-home-v3.css">
-    <link rel="stylesheet" href="agent-details.css?v=3">
+    <link rel="stylesheet" href="agent-details.css?v=4">
     <link rel="stylesheet" href="telemetry-widgets.css?v=1">
 </head>
 <body class="cap-home cap-agent-detail-shell">
@@ -61,6 +61,12 @@
         </section>
 
         <section id="agent-telemetry" class="cap-telemetry-section" aria-label="Telemetria do Agent"><div class="cap-telemetry-empty">Carregando telemetria...</div></section>
+
+        <section class="cap-detail-panel" id="agent-storage-pools-panel">
+            <div class="cap-detail-heading"><div><h2>Storage Pools</h2><p id="agent-storage-pools-summary">Carregando inventário de armazenamento…</p></div></div>
+            <div id="agent-storage-pools" class="cap-range-grid"><div class="cap-detail-note">Carregando Storage Pools…</div></div>
+        </section>
+
         <section class="cap-detail-grid">
             <article class="cap-detail-panel"><div class="cap-detail-heading"><div><h2>Portas administradas</h2><p>Faixas publicadas pelo Agent e conflitos persistentes.</p></div></div><div id="detail-ranges" class="cap-range-grid"></div><div id="detail-conflicts" class="cap-detail-note"></div></article>
             <article class="cap-detail-panel"><div class="cap-detail-heading"><div><h2>Localização e Placement</h2><p>Identidade geográfica usada pelo Controller.</p></div></div><dl class="cap-detail-list"><div><dt>Datacenter</dt><dd id="detail-datacenter">—</dd></div><div><dt>Region</dt><dd id="detail-region">—</dd></div><div><dt>Public host</dt><dd id="detail-public-host">—</dd></div><div><dt>Node</dt><dd id="detail-node">—</dd></div></dl></article>
@@ -71,5 +77,6 @@
 </main>
 <script src="telemetry-widgets.js?v=1"></script>
 <script src="agent-details.js?v=5"></script>
+<script src="agent-storage-pools.js?v=1"></script>
 </body>
 </html>
