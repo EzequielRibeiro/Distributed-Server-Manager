@@ -21,6 +21,29 @@
       <div id="detail-data" class="customer-data-grid"></div>
     </section>
     <section class="card catalog-v2-card customer-management-card">
+      <div class="card-title"><div><h2>Editar perfil administrativo</h2><p>Atualize dados cadastrais sem alterar a identidade pública ou o e-mail de login.</p></div></div>
+      <form id="customer-profile-form" class="customer-form">
+        <label>Nome<input id="edit-name" maxlength="255" required></label>
+        <label>Razão social / nome legal<input id="edit-legal-name" maxlength="255"></label>
+        <label>Telefone<input id="edit-phone" maxlength="64"></label>
+        <label>Tipo de documento<select id="edit-document-type"><option value="cpf">CPF</option><option value="cnpj">CNPJ</option><option value="other">Outro</option></select></label>
+        <label>Número do documento<input id="edit-document-number" maxlength="64" required></label>
+        <label>Status da conta<select id="edit-status"><option value="active">Ativo</option><option value="inactive">Inativo</option><option value="suspended">Suspenso</option><option value="disabled">Desabilitado</option></select></label>
+        <label>Status do cadastro<select id="edit-registration-status"><option value="pending">Pendente</option><option value="active">Ativo</option><option value="suspended">Suspenso</option><option value="cancelled">Cancelado</option></select></label>
+        <label>Controller ID<input id="edit-controller-id" required></label>
+        <div class="customer-section-title">Billing</div>
+        <label>Provider<input id="edit-billing-provider" maxlength="128"></label>
+        <label>Customer ID externo<input id="edit-billing-customer-id" maxlength="255"></label>
+        <label>Status financeiro<select id="edit-billing-status"><option value="unlinked">Não vinculado</option><option value="pending">Pendente</option><option value="active">Ativo</option><option value="past_due">Em atraso</option><option value="suspended">Suspenso</option><option value="cancelled">Cancelado</option></select></label>
+        <div class="customer-section-title">Identidade protegida</div>
+        <label>Código do cliente<input id="edit-customer-code" readonly></label>
+        <label>E-mail de login<input id="edit-account-email" readonly></label>
+        <div class="wide customer-profile-summary">Código, chave primária e e-mail de login não podem ser alterados por esta tela. A troca de e-mail terá um fluxo seguro separado, com verificação de identidade.</div>
+        <div class="wide customer-actions"><button id="save-customer-profile" class="customer-primary" type="submit">Salvar alterações</button></div>
+      </form>
+      <div id="profile-edit-notice" class="customer-notice"></div>
+    </section>
+    <section class="card catalog-v2-card customer-management-card">
       <div class="card-title"><div><h2>Acesso do cliente</h2><p>Identidades de login e situação da senha.</p></div></div>
       <div id="detail-users" class="customer-list"></div>
     </section>
@@ -41,6 +64,6 @@
   <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
 <script src="/customer-management-shell.js?v=1"></script>
-<script src="/customer-admin.js?v=5"></script>
+<script src="/customer-admin.js?v=6"></script>
 </body>
 </html>
