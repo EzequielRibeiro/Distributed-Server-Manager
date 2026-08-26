@@ -23,8 +23,20 @@ grep -Fq 'bootstrap-profile' "${CORE_INSTALLER}" || fail "installer does not use
 grep -Fq 'initialize_runtime_state' "${CORE_INSTALLER}" || fail "installer does not initialize dashboard runtime state"
 grep -Fq 'mkdir -p "${SYSTEMD_DIR}"' "${CORE_INSTALLER}" || fail "installer does not create a custom systemd unit directory"
 grep -Fq -- '--reinstall' "${CORE_INSTALLER}" || fail "explicit reinstall option is unavailable"
-grep -Fq 'legacy_worker_units=' "${CORE_INSTALLER}" || fail "installer does not disable duplicate legacy workers"
-grep -Fq 'disable \' "${CORE_INSTALLER}" && grep -Fq -- '--now \' "${CORE_INSTALLER}" || fail "installer leaves legacy workers running"
+grep -Fq 'retire_obsolete_systemd_units' "${INSTALLER}" || fail "installer does not reconcile retired systemd units"
+for retired in dsm-notification-engine.timer dsm-notification-center.timer dsm-backup-worker.service dsm-events-worker.service dsm-metrics-worker.service dsm-mods-worker.service dsm-server-worker.service; do
+    grep -Fq "${retired}" "${INSTALLER}" || fail "retired unit is not reconciled: ${retired}"
+    [[ ! -e "${ROOT}/systemd/${retired}" ]] || fail "retired unit is still distributed: ${retired}"
+done
+python3 - "${INSTALLER}" <<'PY' || fail "retired systemd units are not reconciled around the core installer"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+pre = text.index('retire_obsolete_systemd_units "$@"')
+core = text.index('"${CORE_INSTALLER}" "$@"', pre)
+post = text.index('retire_obsolete_systemd_units "$@"', core)
+assert pre < core < post
+PY
 python3 - "${CORE_INSTALLER}" <<'PY' || fail "profile bootstrap is not ordered after database initialization"
 from pathlib import Path
 import sys
