@@ -27,6 +27,7 @@ REQUEST_ROOT = STATE_DIR / "privileged-materialization"
 _DEFAULT_INSTANCE_STORAGE_ROOT = Path("/var/lib/capivara-instances")
 _DEFAULT_RUNTIME_USER = "capivara-instance"
 _AGENT_GROUP = "capivara-agent"
+_FORBIDDEN_STORAGE_ROOTS = tuple(Path(value) for value in ("/boot", "/dev", "/etc", "/proc", "/root", "/run", "/sys", "/usr"))
 
 
 def _token(value: Any) -> str:
@@ -45,6 +46,12 @@ def _storage_root(value: Any, label: str) -> Path:
     resolved = path.resolve(strict=False)
     if resolved == Path("/"):
         raise RuntimeError(f"{label} cannot be filesystem root")
+    for forbidden in _FORBIDDEN_STORAGE_ROOTS:
+        try:
+            resolved.relative_to(forbidden)
+        except ValueError:
+            continue
+        raise RuntimeError(f"{label} is inside a protected system path")
     return resolved
 
 
@@ -161,6 +168,14 @@ def _ensure_runtime_identity(spec: dict[str, Any], config: dict[str, Any]) -> No
     _prepare_private_state(spec, account, _instance_storage_root(config))
 
 
+def _reject_symlinks(root: Path) -> None:
+    if root.is_symlink():
+        raise RuntimeError("storage migration source root cannot be a symlink")
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise RuntimeError(f"storage migration refuses symlink: {path.relative_to(root)}")
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -170,6 +185,8 @@ def _sha256(path: Path) -> str:
 
 
 def _verify_tree(source: Path, target: Path) -> tuple[int, int]:
+    _reject_symlinks(source)
+    _reject_symlinks(target)
     source_files = {p.relative_to(source): p for p in source.rglob("*") if p.is_file()}
     target_files = {p.relative_to(target): p for p in target.rglob("*") if p.is_file()}
     if source_files.keys() != target_files.keys():
@@ -186,6 +203,8 @@ def _verify_tree(source: Path, target: Path) -> tuple[int, int]:
 def _migrate_storage_copy(config: dict[str, Any], spec: dict[str, Any], target_value: Any) -> dict[str, Any]:
     source_root = _instance_storage_root(config)
     target_root = _storage_root(target_value, "target storage root")
+    if source_root == target_root:
+        return {"changed": False, "source": str(source_root), "target": str(target_root), "verified_files": 0, "verified_bytes": 0, "source_preserved": True}
     instance_id = spec["instance_id"]
     source = (source_root / instance_id).resolve(strict=False)
     expected = Path(str(spec.get("instance_state_root") or source)).resolve(strict=False)
@@ -193,12 +212,14 @@ def _migrate_storage_copy(config: dict[str, Any], spec: dict[str, Any], target_v
         raise RuntimeError("instance source state root does not match current Agent storage root")
     target = (target_root / instance_id).resolve(strict=False)
     target.relative_to(target_root)
+    if source.exists():
+        _reject_symlinks(source)
     if target.exists():
         shutil.rmtree(target)
     target_root.mkdir(parents=True, exist_ok=True)
     os.chmod(target_root, 0o711)
     if source.exists():
-        shutil.copytree(source, target, copy_function=shutil.copy2, symlinks=True)
+        shutil.copytree(source, target, copy_function=shutil.copy2, symlinks=False)
         count, total = _verify_tree(source, target)
     else:
         target.mkdir(parents=True, exist_ok=True)
@@ -243,14 +264,7 @@ def run(instance_id: str) -> dict[str, Any]:
         operation = _migrate_storage_copy(config, spec, request.get("target_root"))
     else:
         raise RuntimeError("unsupported privileged materialization action")
-    result = {
-        "status": "completed",
-        "action": action,
-        "instance_id": instance_id,
-        "agent_id": local_agent_id,
-        "operation": operation,
-        "templates": templates,
-    }
+    result = {"status": "completed", "action": action, "instance_id": instance_id, "agent_id": local_agent_id, "operation": operation, "templates": templates}
     _write_result(result_path, result)
     return result
 
