@@ -58,6 +58,9 @@ JUNK_PATTERNS = (
     re.compile(r"~$"),
 )
 
+DSM_PATH_PATTERN = re.compile(r"/opt/dsm/([A-Za-z0-9_./-]+)")
+TIMER_UNIT_PATTERN = re.compile(r"^Unit=([^\s]+)$", re.M)
+
 
 def tracked_files() -> list[str]:
     proc = subprocess.run(
@@ -67,6 +70,43 @@ def tracked_files() -> list[str]:
         stdout=subprocess.PIPE,
     )
     return [line for line in proc.stdout.splitlines() if line]
+
+
+def audit_systemd(systemd_dir: Path, failures: list[str]) -> None:
+    if not systemd_dir.is_dir():
+        return
+
+    units = sorted(
+        path
+        for path in systemd_dir.iterdir()
+        if path.is_file() and path.suffix in {".service", ".timer"}
+    )
+    unit_names = {path.name for path in units}
+
+    for unit in units:
+        text = unit.read_text(encoding="utf-8", errors="replace")
+        relative_unit = unit.relative_to(ROOT)
+
+        if unit.suffix == ".service" and re.search(
+            r"^Description=.*\bLegacy\b", text, re.M | re.I
+        ):
+            failures.append(f"service still identifies itself as legacy: {relative_unit}")
+
+        for match in DSM_PATH_PATTERN.finditer(text):
+            relative = match.group(1).rstrip("/.,;:")
+            if relative and not (ROOT / relative).exists():
+                failures.append(
+                    f"systemd unit references missing project path: {relative_unit} -> {relative}"
+                )
+
+        if unit.suffix == ".timer":
+            target_match = TIMER_UNIT_PATTERN.search(text)
+            if target_match:
+                target = target_match.group(1).strip()
+                if target not in unit_names:
+                    failures.append(
+                        f"timer references missing unit: {relative_unit} -> {target}"
+                    )
 
 
 def main() -> int:
@@ -81,12 +121,7 @@ def main() -> int:
         if any(pattern.search(path) for pattern in JUNK_PATTERNS):
             failures.append(f"backup/copy artifact is tracked: {path}")
 
-    systemd_dir = ROOT / "systemd"
-    if systemd_dir.is_dir():
-        for unit in sorted(systemd_dir.glob("*.service")):
-            text = unit.read_text(encoding="utf-8", errors="replace")
-            if re.search(r"^Description=.*\bLegacy\b", text, re.M | re.I):
-                failures.append(f"service still identifies itself as legacy: {unit.relative_to(ROOT)}")
+    audit_systemd(ROOT / "systemd", failures)
 
     aggregate = ROOT / "dashboard" / "workers" / "worker.sh"
     if aggregate.is_file():
