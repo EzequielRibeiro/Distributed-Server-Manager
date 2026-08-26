@@ -8,7 +8,7 @@ BOOTSTRAP="${DSM_ROOT}/core/bootstrap.sh"
 # shellcheck source=/dev/null
 source "${BOOTSTRAP}"
 export DSM_DATABASE_DRIVER DSM_DATABASE DSM_DATABASE_HOST DSM_DATABASE_PORT DSM_DATABASE_NAME DSM_DATABASE_USER DSM_DATABASE_PASSWORD_FILE DSM_DATABASE_TLS
-LEGACY_DSM="${DSM_ROOT}/bin/dsm-compat"; AGENT_LOCAL_CLI="${DSM_ROOT}/agents/linux/runtime/cap_dispatch.py"; ROLE_RESOLVER="${DSM_ROOT}/core/role_context.py"; CAP_ROLE_CACHE=""
+LEGACY_DSM="${DSM_ROOT}/bin/dsm-compat"; AGENT_LOCAL_CLI="${DSM_ROOT}/agents/linux/runtime/cap_dispatch.py"; AGENT_CONTROLLER_CLI="${DSM_ROOT}/agents/linux/runtime/controller_cli.py"; ROLE_RESOLVER="${DSM_ROOT}/core/role_context.py"; CAP_ROLE_CACHE=""
 local_role(){ [[ -z "${CAP_ROLE_CACHE}" ]] || { printf '%s\n' "${CAP_ROLE_CACHE}"; return 0; }; if [[ ! -f "${ROLE_RESOLVER}" ]]; then CAP_ROLE_CACHE="unknown"; else CAP_ROLE_CACHE="$(python3 "${ROLE_RESOLVER}" --root "${DSM_ROOT}" 2>/dev/null || true)"; CAP_ROLE_CACHE="${CAP_ROLE_CACHE:-unknown}"; fi; printf '%s\n' "${CAP_ROLE_CACHE}"; }
 require_role(){ local command_label="$1" role allowed allowed_text=""; shift; role="$(local_role)"; for allowed in "$@"; do [[ "${role}" != "${allowed}" ]] || return 0; [[ -z "${allowed_text}" ]] && allowed_text="${allowed}" || allowed_text+=" ou ${allowed}"; done; printf "Erro: '%s' requer role %s.\nRole local detectada: %s.\n" "${command_label}" "${allowed_text}" "${role}" >&2; exit 2; }
 usage(){ local role="${1:-unknown}" show_all="${2:-0}"; printf 'Capivara Distributed Server Manager\n\nUso:\n  cap <comando> [opções]\n\nRole local: %s\n' "${role}" >&2
@@ -58,6 +58,9 @@ Agent local / Hybrid:
   cap agent heartbeat [--json]
   cap agent capabilities [--json]
   cap agent network [--json]
+  cap agent controller show [--json]
+  cap agent controller set <http[s]://host:porta> [--no-restart] [--json]
+  cap agent controller test [URL] [--timeout SEGUNDOS] [--json]
   cap agent ports show [--json]
   cap agent ports check [--json]
   cap agent game-data list [--json]
@@ -99,10 +102,11 @@ EOF
 }
 legacy_exec(){ [[ -x "${LEGACY_DSM}" ]] || { echo "Camada interna de compatibilidade não encontrada: ${LEGACY_DSM}" >&2; exit 1; }; exec "${LEGACY_DSM}" "$@"; }
 agent_local_exec(){ [[ -f "${AGENT_LOCAL_CLI}" ]] || { echo "CLI local do Agent Linux não encontrada: ${AGENT_LOCAL_CLI}" >&2; exit 1; }; exec python3 "${AGENT_LOCAL_CLI}" "$@"; }
+agent_controller_exec(){ [[ -f "${AGENT_CONTROLLER_CLI}" ]] || { echo "CLI de Controller do Agent Linux não encontrada: ${AGENT_CONTROLLER_CLI}" >&2; exit 1; }; exec python3 "${AGENT_CONTROLLER_CLI}" "$@"; }
 case "${1:-}" in
 help|--help|-h|"") role="$(local_role)"; [[ "${2:-}" == "--all" ]] && usage "${role}" 1 || usage "${role}" 0 ;;
 infrastructure) require_role "cap infrastructure" controller hybrid; shift; case "${1:-}" in doctor) shift; exec python3 "${DSM_ROOT}/database/infrastructure_doctor_contract.py" doctor "$@" ;; role) shift; exec python3 "${DSM_ROOT}/database/infrastructure_role_cli.py" "$@" ;; *) usage "$(local_role)" 0; exit 2 ;; esac ;;
-agent) shift; case "${1:-}" in ssh-prepare) require_role "cap agent ssh-prepare" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_ssh_prepare_cli.py" "$@" ;; winrm-prepare) require_role "cap agent winrm-prepare" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_winrm_prepare_cli.py" "$@" ;; deploy) require_role "cap agent deploy" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_deploy_cli.py" "$@" ;; ports) case "${2:-}" in show|check) if [[ $# -eq 2 || "${3:-}" == --* ]]; then require_role "cap agent ports ${2}" agent hybrid; agent_local_exec "$@"; else require_role "cap agent ports ${2} <agent-id>" controller hybrid; legacy_exec agent "$@"; fi ;; set) require_role "cap agent ports set" controller hybrid; legacy_exec agent "$@" ;; *) usage "$(local_role)" 0; exit 2 ;; esac ;; status|info|health|heartbeat|capabilities|network|game-data|jobs|update|logs|doctor) require_role "cap agent ${1}" agent hybrid; agent_local_exec "$@" ;; *) usage "$(local_role)" 0; exit 2 ;; esac ;;
+agent) shift; case "${1:-}" in ssh-prepare) require_role "cap agent ssh-prepare" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_ssh_prepare_cli.py" "$@" ;; winrm-prepare) require_role "cap agent winrm-prepare" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_winrm_prepare_cli.py" "$@" ;; deploy) require_role "cap agent deploy" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_deploy_cli.py" "$@" ;; controller) require_role "cap agent controller" agent hybrid; shift; agent_controller_exec "$@" ;; ports) case "${2:-}" in show|check) if [[ $# -eq 2 || "${3:-}" == --* ]]; then require_role "cap agent ports ${2}" agent hybrid; agent_local_exec "$@"; else require_role "cap agent ports ${2} <agent-id>" controller hybrid; legacy_exec agent "$@"; fi ;; set) require_role "cap agent ports set" controller hybrid; legacy_exec agent "$@" ;; *) usage "$(local_role)" 0; exit 2 ;; esac ;; status|info|health|heartbeat|capabilities|network|game-data|jobs|update|logs|doctor) require_role "cap agent ${1}" agent hybrid; agent_local_exec "$@" ;; *) usage "$(local_role)" 0; exit 2 ;; esac ;;
 customer) require_role "cap customer" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/customer_cli.py" "$@" ;;
 contract) require_role "cap contract" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/contract_cli.py" "$@" ;;
 instance) case "${2:-}" in list|status|doctor|start|stop|restart) require_role "cap instance ${2}" agent hybrid; agent_local_exec "$@" ;; create|delete) require_role "cap instance ${2}" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/instance_admin_cli.py" "$@" ;; *) require_role "cap instance" controller hybrid; legacy_exec "$@" ;; esac ;;

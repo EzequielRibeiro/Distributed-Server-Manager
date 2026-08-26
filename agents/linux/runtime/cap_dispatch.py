@@ -13,6 +13,7 @@ RUNTIME_DIR = Path(__file__).resolve().parent
 if str(RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_DIR))
 
+import controller_cli
 import local_cli
 from instance_runtime import lifecycle
 
@@ -47,6 +48,8 @@ def _emit(payload: dict[str, Any], as_json: bool) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if len(args) >= 2 and args[0] == "agent" and args[1] == "controller":
+        return controller_cli.main(args[2:])
     if args and args[0] == "agent":
         return local_cli.main(args)
     if len(args) >= 3 and args[0] == "instance" and args[1] in LIFECYCLE_ACTIONS:
