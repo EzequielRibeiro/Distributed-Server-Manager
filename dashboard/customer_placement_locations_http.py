@@ -33,6 +33,7 @@ def dispatch_customer_placement_locations_get(path: str, *, user, backend, query
             backend,
             game_id=str((query.get("game") or [""])[0]).strip() or None,
             runtime_id=str((query.get("runtime") or [""])[0]).strip() or None,
+            contract_id=str((query.get("contract") or [""])[0]).strip() or None,
             client_latitude=_float_arg(query, "latitude"),
             client_longitude=_float_arg(query, "longitude"),
         )
