@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 import unittest
@@ -41,22 +40,29 @@ class UniversalEventContractTest(unittest.TestCase):
         with self.assertRaises(EventValidationError):
             normalize_event({"event_type": "VALID_TYPE", "source": "test", "severity": "fatal"})
 
-    def test_translates_legacy_runtime_event_deterministically(self):
-        legacy = {
+    def test_binds_canonical_runtime_event_to_authenticated_agent(self):
+        raw = {
             "schema_version": 1,
-            "kind": "CapivaraEvent",
-            "type": "INSTANCE_DRIFT_DETECTED",
-            "producer": "instance-runtime",
+            "kind": "CapivaraRuntimeEvent",
+            "event_id": "runtime-event-1",
+            "event_type": "INSTANCE_DRIFT_DETECTED",
+            "occurred_at": "2026-08-21T12:00:00Z",
             "agent_id": "agent-c1",
             "instance_id": "instance-c1",
-            "occurred_at": "2026-08-21T12:00:00Z",
             "data": {"reason": "stopped"},
         }
-        one = runtime_event_to_universal(legacy, authenticated_agent_id="agent-c1")
-        two = runtime_event_to_universal(legacy, authenticated_agent_id="agent-c1")
-        self.assertEqual(one["event_id"], two["event_id"])
-        self.assertEqual(one["source"], "agent.runtime")
-        self.assertEqual(one["event_type"], "INSTANCE_DRIFT_DETECTED")
+        event = runtime_event_to_universal(raw, authenticated_agent_id="agent-c1")
+        self.assertEqual(event["event_id"], "runtime-event-1")
+        self.assertEqual(event["source"], "agent.runtime")
+        self.assertEqual(event["event_type"], "INSTANCE_DRIFT_DETECTED")
+
+    def test_runtime_event_rejects_noncanonical_record(self):
+        with self.assertRaises(EventValidationError):
+            runtime_event_to_universal({
+                "kind": "CapivaraEvent",
+                "type": "INSTANCE_DRIFT_DETECTED",
+                "agent_id": "agent-c1",
+            }, authenticated_agent_id="agent-c1")
 
 
 class UniversalEventRepositoryTest(unittest.TestCase):
@@ -168,21 +174,6 @@ class UniversalEventRepositoryTest(unittest.TestCase):
         stored = self.repo.get("heartbeat-event")
         self.assertEqual(stored["source"], "agent.runtime")
 
-    def test_legacy_database_events_are_imported_idempotently(self):
-        with self.backend.transaction() as connection:
-            connection.execute(
-                "INSERT INTO events(event_id,event_type,severity,source,node_id,instance_id,payload_json) "
-                "VALUES (?,?,?,?,?,?,?)",
-                ("legacy-event", "SERVER_STARTED", "info", "legacy.runtime", "agent-node-c1", "instance-c1", '{"port":2302}'),
-            )
-        first = self.repo.import_legacy_events()
-        second = self.repo.import_legacy_events()
-        self.assertEqual(first["created"], 1)
-        self.assertEqual(second["existing"], 1)
-        stored = self.repo.get("legacy-event")
-        self.assertEqual(stored["event_type"], "SERVER_STARTED")
-        self.assertEqual(stored["data"], {"port": 2302})
-
     def test_event_subject_survives_instance_deletion(self):
         self.repo.publish({
             "event_id": "deleted-subject-event",
@@ -205,7 +196,7 @@ class AgentRuntimeEventQueueTest(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_emit_read_and_ack_is_durable_queue_contract(self):
+    def test_emit_read_and_ack_is_delivery_buffer_contract(self):
         one = emit_runtime_event(
             self.state,
             "INSTANCE_DRIFT_DETECTED",
@@ -226,25 +217,6 @@ class AgentRuntimeEventQueueTest(unittest.TestCase):
         self.assertEqual(removed, 1)
         remaining = read_runtime_events(self.state)
         self.assertEqual([item["event_id"] for item in remaining], [two["event_id"]])
-
-    def test_legacy_queue_record_receives_stable_id_and_can_be_acked(self):
-        path = self.state / "events" / "instance-runtime.jsonl"
-        path.parent.mkdir(parents=True)
-        path.write_text(json.dumps({
-            "schema_version": 1,
-            "kind": "CapivaraEvent",
-            "type": "INSTANCE_DRIFT_DETECTED",
-            "producer": "instance-runtime",
-            "agent_id": "agent-one",
-            "instance_id": "instance-one",
-            "occurred_at": "2026-08-21T12:00:00Z",
-            "data": {"state": "stopped"},
-        }) + "\n", encoding="utf-8")
-        first = read_runtime_events(self.state)
-        second = read_runtime_events(self.state)
-        self.assertEqual(first[0]["event_id"], second[0]["event_id"])
-        self.assertEqual(acknowledge_runtime_events(self.state, [first[0]["event_id"]]), 1)
-        self.assertEqual(read_runtime_events(self.state), [])
 
 
 if __name__ == "__main__":
