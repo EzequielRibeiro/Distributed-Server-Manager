@@ -23,7 +23,7 @@ from runtime_spec import validate_runtime_spec
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
 REQUEST_ROOT = STATE_DIR / "privileged-materialization"
-INSTANCE_STATE_BASE = Path("/var/lib/capivara-instances")
+_DEFAULT_INSTANCE_STORAGE_ROOT = Path("/var/lib/capivara-instances")
 _DEFAULT_RUNTIME_USER = "capivara-instance"
 _AGENT_GROUP = "capivara-agent"
 
@@ -34,6 +34,17 @@ def _token(value: Any) -> str:
     if not text or len(text) > 191 or any(ch not in allowed for ch in text):
         raise ValueError("invalid instance_id")
     return text
+
+
+def _instance_storage_root(config: dict[str, Any]) -> Path:
+    raw = str(config.get("instance_storage_root") or _DEFAULT_INSTANCE_STORAGE_ROOT).strip()
+    path = Path(raw)
+    if not raw or not path.is_absolute():
+        raise RuntimeError("Agent instance_storage_root must be an absolute path")
+    resolved = path.resolve()
+    if resolved == Path("/"):
+        raise RuntimeError("Agent instance_storage_root cannot be filesystem root")
+    return resolved
 
 
 def _write_result(path: Path, payload: dict[str, Any]) -> None:
@@ -95,16 +106,16 @@ def _within(root: Path, value: str, label: str) -> Path:
     return path
 
 
-def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd) -> None:
+def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, storage_root: Path) -> None:
     raw_root = spec.get("instance_state_root")
     if not raw_root:
         return
-    expected = (INSTANCE_STATE_BASE / spec["instance_id"]).resolve()
+    expected = (storage_root / spec["instance_id"]).resolve()
     state_root = Path(str(raw_root)).resolve()
     if state_root != expected:
-        raise RuntimeError("instance state root does not match instance identity")
-    INSTANCE_STATE_BASE.mkdir(parents=True, exist_ok=True)
-    os.chmod(INSTANCE_STATE_BASE, 0o711)
+        raise RuntimeError("instance state root does not match Agent instance_storage_root policy")
+    storage_root.mkdir(parents=True, exist_ok=True)
+    os.chmod(storage_root, 0o711)
     state_root.mkdir(parents=True, exist_ok=True)
     os.chown(state_root, account.pw_uid, account.pw_gid)
     os.chmod(state_root, 0o700)
@@ -138,11 +149,11 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd) -> 
         target.mkdir(parents=True, exist_ok=True)
 
 
-def _ensure_runtime_identity(spec: dict[str, Any]) -> None:
+def _ensure_runtime_identity(spec: dict[str, Any], config: dict[str, Any]) -> None:
     user = str(spec.get("user") or _DEFAULT_RUNTIME_USER)
     account = _validate_runtime_user(user)
     _validate_runtime_access(str(spec["working_directory"]), user)
-    _prepare_private_state(spec, account)
+    _prepare_private_state(spec, account, _instance_storage_root(config))
 
 
 def run(instance_id: str) -> dict[str, Any]:
@@ -169,7 +180,7 @@ def run(instance_id: str) -> dict[str, Any]:
     materializer = resolve_materializer(spec)
     templates: list[Any] = []
     if action == "apply":
-        _ensure_runtime_identity(spec)
+        _ensure_runtime_identity(spec, config)
         templates = materialize_templates(spec)
         templates.extend(materialize_network_properties(spec))
         operation = materializer.apply(spec)
