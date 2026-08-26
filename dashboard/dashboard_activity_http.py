@@ -234,11 +234,19 @@ def install_dashboard_activity_audit(legacy, authenticate) -> None:
         path, user, requested = _prepare(self)
         if path == LOGOUT_API:
             if user is None:
+                # Security events are persisted before the HTTP outcome is
+                # exposed to the caller, avoiding loss during immediate stop.
+                self._activity_status_code = 401
+                _record(self, "POST", path, user, requested)
                 self.send_json(401, {"error": "unauthorized"})
             else:
                 token = session_token_from_headers(self.headers)
                 revoke_session(token)
                 body = b'{"logged_out":true}'
+                # Capture the successful logout while the request identity is
+                # still available through user_before. Only then acknowledge it.
+                self._activity_status_code = 200
+                _record(self, "POST", path, user, requested)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Set-Cookie", expired_cookie_header())
@@ -246,7 +254,6 @@ def install_dashboard_activity_audit(legacy, authenticate) -> None:
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
-            _record(self, "POST", path, user, requested)
             return
         try:
             previous_post(self)

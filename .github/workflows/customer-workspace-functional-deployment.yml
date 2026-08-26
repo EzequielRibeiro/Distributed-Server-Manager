@@ -1,0 +1,66 @@
+name: Customer Workspace Functional Deployment
+
+on:
+  pull_request:
+    paths:
+      - 'database/**'
+      - 'dashboard/**'
+      - 'catalog/**'
+      - 'tests/customer_workspace_functional_deployment_test.py'
+      - 'tests/customer_workspace_functional_probe.py'
+      - '.github/workflows/customer-workspace-functional-deployment.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  functional-deployment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: capivara_functional_test
+          POSTGRES_PASSWORD: capivara_functional_test_password
+          POSTGRES_DB: capivara_workspace_functional_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U capivara_functional_test -d capivara_workspace_functional_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      CAPIVARA_ALLOW_ISOLATED_DB_TEST: '1'
+      DSM_DATABASE_DRIVER: postgresql
+      DSM_DATABASE_HOST: 127.0.0.1
+      DSM_DATABASE_PORT: '5432'
+      DSM_DATABASE_NAME: capivara_workspace_functional_test
+      DSM_DATABASE_USER: capivara_functional_test
+      DSM_DATABASE_PASSWORD_FILE: /tmp/capivara-workspace-functional-password
+      DSM_DATABASE_TLS: disable
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL Python driver
+        run: python3 -m pip install 'psycopg[binary]>=3.1,<4'
+      - name: Create protected PostgreSQL password file
+        run: |
+          printf '%s\n' 'capivara_functional_test_password' > /tmp/capivara-workspace-functional-password
+          chmod 600 /tmp/capivara-workspace-functional-password
+      - name: Materialize isolated DSM_ROOT under /tmp
+        run: |
+          rm -rf /tmp/capivara-functional-deployment
+          mkdir -p /tmp/capivara-functional-deployment
+          cp -a . /tmp/capivara-functional-deployment/
+          test -f /tmp/capivara-functional-deployment/dashboard/server_part17.py
+      - name: Boot Dashboard and exercise Admin/Customer Workspace over HTTP
+        working-directory: /tmp/capivara-functional-deployment
+        run: python3 tests/customer_workspace_functional_probe.py
+      - name: Show isolated Dashboard log on failure
+        if: failure()
+        run: |
+          if [ -f /tmp/capivara-functional-dashboard.log ]; then
+            tail -n 300 /tmp/capivara-functional-dashboard.log
+          fi
