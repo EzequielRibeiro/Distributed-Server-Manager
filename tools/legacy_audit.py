@@ -18,6 +18,10 @@ RETIRED_PATHS = {
     "systemd/dsm-event-queue-worker.service",
     "systemd/dsm-notification-center.service",
     "systemd/dsm-notification-engine.service",
+    "systemd/dsm-notification-center.timer",
+    "systemd/dsm-notification-engine.timer",
+    "systemd/dsm-discord-worker.service",
+    "systemd/dsm-discord.service",
     "dashboard/workers/events_worker.sh",
     "dashboard/workers/event_queue_worker.sh",
     "dashboard/workers/alerts_worker.sh",
@@ -31,6 +35,8 @@ RETIRED_PATHS = {
     "core/alert_db.sh",
     "core/alert_history.sh",
     "core/notification_center.sh",
+    "core/discord_sender.sh",
+    "core/discord_queue.sh",
     "database/alert_store.sh",
     "database/dashboard_activity_repository.py",
     "database/dashboard_activity_schema.py",
@@ -88,6 +94,15 @@ def main() -> int:
         for retired_worker in ("events_worker.sh", "event_queue_worker.sh", "alerts_worker.sh"):
             if retired_worker in aggregate_text:
                 failures.append(f"aggregate dashboard worker still launches retired {retired_worker}")
+
+    state_initializer = ROOT / "dashboard" / "state" / "init_state.sh"
+    if state_initializer.is_file():
+        state_text = state_initializer.read_text(encoding="utf-8")
+        for durable_projection in ("alerts_state.json", "events_state.json"):
+            if re.search(rf"FILES=.*{re.escape(durable_projection.removesuffix('_state.json'))}", state_text, re.S):
+                failures.append(
+                    f"dashboard state initializer recreates durable projection: {durable_projection}"
+                )
 
     if failures:
         print("Legacy audit: FAILED", file=sys.stderr)
