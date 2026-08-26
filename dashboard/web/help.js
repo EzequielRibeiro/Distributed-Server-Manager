@@ -5,6 +5,35 @@ const HELP_REPOSITORY = "https://github.com/EzequielRibeiro/Distributed-Server-M
 const materials = [
     {
         category: "agents",
+        tag: "Runbook",
+        title: "Recuperar vínculo de um Agent perdido",
+        description: "Reenrole um Agent que continua instalado, mas perdeu a credencial/vínculo com o Controller, preservando agent_id, node_id e fingerprint.",
+        keywords: "agent perdido desvinculado revincular reenrollment reenrolar pairing token credencial 401 agent_authentication_failed pairing_rejected recovery",
+        content: `
+            <h3>Quando usar</h3>
+            <p>Use este procedimento quando o Agent continua instalado e o serviço existe, mas o Controller rejeita heartbeat com <code>agent_authentication_failed</code> ou o registro desapareceu após perda/recriação do banco.</p>
+            <h3>Resumo seguro</h3>
+            <ol><li>Confirme a instalação e leia <code>agent_id</code>, <code>node_id</code> e fingerprint sem exibir segredos.</li><li>Confirme que os IDs antigos não colidem no Controller.</li><li>Emita um pairing token novo de curta duração.</li><li>Pare o Agent e faça backup de <code>/etc/capivara-agent/agent.json</code>.</li><li>Substitua apenas a credencial órfã, preservando identidade e configuração local.</li><li>Garanta owner <code>capivara-agent</code> e modo <code>0600</code>.</li><li>Inicie o serviço, aguarde enrollment e valide <code>heartbeat ok</code>.</li><li>Confirme nova credencial no Controller e rode <code>cap agent doctor</code>.</li></ol>
+            <p><strong>Nunca</strong> publique pairing token ou <code>credential_secret</code>.</p>
+            <p><a href="${HELP_REPOSITORY}docs/runbooks/agent-relink-recovery.md" target="_blank" rel="noopener">Abrir runbook completo no GitHub</a></p>`
+    },
+    {
+        category: "agents",
+        tag: "Referência",
+        title: "Administração e diagnóstico de Agents",
+        description: "Especificação da console administrativa para renomear Agent, executar Doctor, validar parâmetros, rotacionar credenciais e iniciar revinculação segura.",
+        keywords: "agent admin manutenção doctor diagnóstico health rename nome credential rotate relink heartbeat capabilities ports storage steamcmd auditoria",
+        content: `
+            <h3>Ferramenta administrativa planejada</h3>
+            <p>A console de Agent deve permitir a Admin/Controller editar propriedades administrativas seguras, executar diagnóstico completo e tratar credenciais sem expor shell remoto arbitrário.</p>
+            <h3>Diagnóstico mínimo</h3>
+            <p>Identidade, credencial, serviço, Controller, heartbeat, runtime inventory, endereço anunciado, capabilities, CPU/RAM/storage, faixas e conflitos de portas, game-data, SteamCMD quando aplicável, versão e atualização.</p>
+            <h3>Identidade protegida</h3>
+            <p><code>agent_id</code>, <code>node_id</code>, fingerprint e secrets não são campos de edição normal. Revinculação e rotação devem possuir fluxos próprios, RBAC e auditoria.</p>
+            <p><a href="${HELP_REPOSITORY}docs/architecture/agent-admin-maintenance.md" target="_blank" rel="noopener">Abrir especificação completa no GitHub</a></p>`
+    },
+    {
+        category: "agents",
         tag: "Tutorial",
         title: "Instalar um Agent Windows remotamente via WinRM",
         description: "Prepare autenticação por certificado uma vez e instale o Agent Windows pela Dashboard sem armazenar senha.",
@@ -28,19 +57,13 @@ const materials = [
             <pre>sudo cap agent ssh-prepare mine@192.168.15.55</pre>
             <p>Informe a senha SSH e a senha de sudo do Agent quando solicitadas. O acesso estará pronto quando aparecer <code>SSH_READY mine@192.168.15.55</code>.</p>
             <h3>Alternativa manual: 1. Descubra a conta da Dashboard</h3>
-            <pre>systemctl show dsm-dashboard.service -p User --value
-getent passwd capivara</pre>
+            <pre>systemctl show dsm-dashboard.service -p User --value\ngetent passwd capivara</pre>
             <h3>2. Crie a chave da conta de serviço</h3>
-            <pre>DSM_SERVICE_ACCOUNT="capivara"
-DSM_SERVICE_HOME="$(getent passwd "$DSM_SERVICE_ACCOUNT" | cut -d: -f6)"
-sudo install -d -m 700 -o "$DSM_SERVICE_ACCOUNT" -g "$DSM_SERVICE_ACCOUNT" "$DSM_SERVICE_HOME/.ssh"
-sudo -u "$DSM_SERVICE_ACCOUNT" ssh-keygen -t ed25519 -f "$DSM_SERVICE_HOME/.ssh/id_ed25519" -N ""</pre>
+            <pre>DSM_SERVICE_ACCOUNT="capivara"\nDSM_SERVICE_HOME="$(getent passwd "$DSM_SERVICE_ACCOUNT" | cut -d: -f6)"\nsudo install -d -m 700 -o "$DSM_SERVICE_ACCOUNT" -g "$DSM_SERVICE_ACCOUNT" "$DSM_SERVICE_HOME/.ssh"\nsudo -u "$DSM_SERVICE_ACCOUNT" ssh-keygen -t ed25519 -f "$DSM_SERVICE_HOME/.ssh/id_ed25519" -N ""</pre>
             <h3>3. Autorize o acesso ao Agent</h3>
             <pre>sudo -u capivara ssh-copy-id -i "$DSM_SERVICE_HOME/.ssh/id_ed25519.pub" mine@192.168.15.55</pre>
             <h3>4. No Agent, autorize o preflight e bootstrap</h3>
-            <pre>printf '%s\\n' 'mine ALL=(root) NOPASSWD: /usr/bin/true, /usr/bin/python3 -' | sudo tee /etc/sudoers.d/capivara-agent >/dev/null
-sudo chmod 440 /etc/sudoers.d/capivara-agent
-sudo visudo -cf /etc/sudoers.d/capivara-agent</pre>
+            <pre>printf '%s\\n' 'mine ALL=(root) NOPASSWD: /usr/bin/true, /usr/bin/python3 -' | sudo tee /etc/sudoers.d/capivara-agent >/dev/null\nsudo chmod 440 /etc/sudoers.d/capivara-agent\nsudo visudo -cf /etc/sudoers.d/capivara-agent</pre>
             <h3>5. Valide a partir do Controller</h3>
             <pre>sudo -u capivara ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new mine@192.168.15.55 'sudo -n true &amp;&amp; echo SSH_OK'</pre>
             <p>Somente prossiga quando o resultado for <code>SSH_OK</code>. Depois, use <strong>Infraestrutura → Adicionar Agent → Instalar remotamente via SSH</strong>.</p>
@@ -55,9 +78,7 @@ sudo visudo -cf /etc/sudoers.d/capivara-agent</pre>
         content: `
             <h3>Fluxo administrativo</h3>
             <ol><li>Confirme que o Agent está ativo e possui localização/faixa de portas.</li><li>Crie o Customer e o login.</li><li>Crie o contrato DayZ.</li><li>Crie a instância selecionando explicitamente o Agent.</li></ol>
-            <pre>cap customer create --id CLIENTE-001 --name "João" --username joao
-cap contract create --customer CLIENTE-001 --game dayz --instances 1 --id CONTRACT-DAYZ-001
-cap instance create --customer CLIENTE-001 --contract CONTRACT-DAYZ-001 --game dayz --agent AGENT-ID --name dayz-joao-01</pre>
+            <pre>cap customer create --id CLIENTE-001 --name "João" --username joao\ncap contract create --customer CLIENTE-001 --game dayz --instances 1 --id CONTRACT-DAYZ-001\ncap instance create --customer CLIENTE-001 --contract CONTRACT-DAYZ-001 --game dayz --agent AGENT-ID --name dayz-joao-01</pre>
             <p><a href="${HELP_REPOSITORY}docs/tutorial-instalacao-dayz-agent-remoto.md" target="_blank" rel="noopener">Abrir tutorial completo no GitHub</a></p>`
     },
     {
