@@ -89,17 +89,39 @@ def _existing_instance_roots() -> list[tuple[str, Path]]:
     return result
 
 
-def _apply_agent_storage(value: dict[str, Any], target_id: str) -> dict[str, Any]:
-    desired_root = _instance_storage_root(value.get("instance_storage_root"))
-    config_path = _config_path()
+def _load_local_config(target_id: str) -> dict[str, Any]:
     try:
-        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config = json.loads(_config_path().read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError("Agent configuration is unavailable") from exc
     if not isinstance(config, dict):
         raise RuntimeError("Agent configuration is invalid")
     if str(config.get("agent_id") or "").strip() != target_id:
         raise PermissionError("configuration target does not match local Agent")
+    return config
+
+
+def _apply_agent_storage(value: dict[str, Any], target_id: str, revision: str) -> dict[str, Any]:
+    desired_root = _instance_storage_root(value.get("instance_storage_root"))
+    config = _load_local_config(target_id)
+    migrate_existing = bool(value.get("migrate_existing"))
+    if migrate_existing:
+        from storage_migration_client import handle_command
+        migration = handle_command(
+            config,
+            {
+                "migration_id": f"configuration-{revision}",
+                "action": "migrate-instance-storage",
+                "target_root": str(desired_root),
+            },
+        )
+        if str(migration.get("status") or "") != "completed":
+            raise RuntimeError(str(migration.get("error") or "instance storage migration failed"))
+        return {
+            "instance_storage_root": str(desired_root),
+            "migrate_existing": False,
+            "migration": migration,
+        }
 
     blockers = []
     for instance_id, state_root in _existing_instance_roots():
@@ -117,8 +139,8 @@ def _apply_agent_storage(value: dict[str, Any], target_id: str) -> dict[str, Any
     except OSError:
         pass
     config["instance_storage_root"] = str(desired_root)
-    _atomic_json(config_path, config)
-    return {"instance_storage_root": str(desired_root)}
+    _atomic_json(_config_path(), config)
+    return {"instance_storage_root": str(desired_root), "migrate_existing": False}
 
 
 def configuration_state() -> list[dict[str, Any]]:
@@ -149,7 +171,7 @@ def apply_configuration(command: dict[str, Any]) -> dict[str, Any]:
     if namespace == _AGENT_STORAGE_NAMESPACE:
         if target_type != "agent":
             raise ValueError("Agent storage configuration requires agent target")
-        applied_value = _apply_agent_storage(value, target_id)
+        applied_value = _apply_agent_storage(value, target_id, revision)
     else:
         applied_value = value
     document = {
