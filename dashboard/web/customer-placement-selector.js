@@ -3,6 +3,7 @@
 
   const nativeFetch = window.fetch.bind(window);
   let coordinatesPromise = null;
+  let placementContext = {};
 
   function coordinatesIfAlreadyAllowed() {
     if (coordinatesPromise) return coordinatesPromise;
@@ -48,6 +49,8 @@
   async function placementRegions(options) {
     const coords = await coordinatesIfAlreadyAllowed();
     const params = new URLSearchParams();
+    if (placementContext.game) params.set("game", placementContext.game);
+    if (placementContext.contract) params.set("contract", placementContext.contract);
     if (coords) {
       params.set("latitude", String(coords.latitude));
       params.set("longitude", String(coords.longitude));
@@ -73,4 +76,17 @@
     }
     return nativeFetch(input, options);
   };
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const selector = window.CapivaraRuntimeSelector;
+    if (!selector || typeof selector.open !== "function") return;
+    const originalOpen = selector.open.bind(selector);
+    selector.open = function (contract) {
+      placementContext = {
+        contract: String(contract?.id || contract?.contract_id || "").trim(),
+        game: String(contract?.game_id || contract?.game || "").trim().toLowerCase(),
+      };
+      return originalOpen(contract);
+    };
+  });
 })();
