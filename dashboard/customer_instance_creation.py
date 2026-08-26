@@ -33,6 +33,7 @@ def _queue_agent_provisioning(*,root,repository,runtime_def,instance_id,agent_id
  return state,provision
 
 def install_customer_instance_creation(legacy)->None:
+ previous_post=legacy.DashboardHandler.do_POST
  def create_customer_instance(user,payload,root=None,database_path=None):
   root=Path(root or legacy.DSM_ROOT);database_path=database_path or legacy.DATABASE_FILE
   if not user or user.get("role")!="customer" or not user.get("scope_id"):raise PermissionError("only a scoped customer can create an instance")
@@ -61,15 +62,39 @@ def install_customer_instance_creation(legacy)->None:
   result={"created":True,"instance_id":plan["instance_id"],"name":plan["name"],"game":game,"contract_id":plan["contract_id"],"placement":{"region_id":placement.get("region_id"),"datacenter_id":placement.get("datacenter_id"),"score":placement.get("score"),"reason":placement.get("reason")},"provision":provision}
   if source_vault_id:result["backup_clone"]={"clone_id":clone["clone_id"],"source_vault_id":source_vault_id,"status":clone["status"]}
   return result
- def retry_instance_provisioning(user,instance_path,database_path=None):
-  database_path=database_path or legacy.DATABASE_FILE;instance=Path(legacy.catalog_instance_path(str(instance_path)));relative=instance.relative_to(legacy.INSTANCE_ROOT)
-  if len(relative.parts)!=3:raise ValueError("instance path must identify server, game and instance")
-  node_id,game,instance_id=relative.parts;repository=legacy.dashboard_repository(database_path);row=repository.reserve_retry(instance_id,node_id,game);runtime_id=str(row["runtime_id"] or "").strip();edition=str(row["edition"] or "").strip();version=str(row["game_version"] or "").strip();build=str(row["build_id"] or "").strip();agent_id=str(row["agent_id"] or "").strip()
+ def _retry_permission(user,repository,instance_id):
+  if not user:return False
+  role=str(user.get("role") or "").strip().lower()
+  if role=="admin":profile="manager"
+  else:
+   context=repository.instance_context(instance_id)
+   if context is None:return False
+   if role=="controller" and str(user.get("scope_id") or "")==str(context.get("controller_id") or ""):profile="operator"
+   else:profile=repository.permission_profile(str(user.get("username") or ""),instance_id)
+  return bool(profile and "instance.provision.retry" in legacy.INSTANCE_PERMISSIONS.get(profile,set()))
+ def retry_instance_provisioning(user,instance_id,database_path=None):
+  database_path=database_path or legacy.DATABASE_FILE;instance_id=str(instance_id or "").strip()
+  if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,127}",instance_id):raise ValueError("invalid instance_id")
+  repository=legacy.dashboard_repository(database_path);current=repository.retry_instance(instance_id)
+  if current is None:raise ValueError("instance is not registered")
+  node_id=str(current["node_id"] or "").strip();game=str(current["game_id"] or "").strip();row=repository.reserve_retry(instance_id,node_id,game);runtime_id=str(row["runtime_id"] or "").strip();edition=str(row["edition"] or "").strip();version=str(row["game_version"] or "").strip();build=str(row["build_id"] or "").strip();agent_id=str(row["agent_id"] or "").strip()
   if not all((runtime_id,edition,version,build,agent_id)):repository.update_instance_status(instance_id,row["status"]);raise ValueError("instance runtime selection is incomplete")
   runtime_def=runtime_definition(Path(legacy.DSM_ROOT),game,runtime_id)
   try:_,provision=_queue_agent_provisioning(root=Path(legacy.DSM_ROOT),repository=repository,runtime_def=runtime_def,instance_id=instance_id,agent_id=agent_id,runtime_id=runtime_id,version=version,build=build,requested_by=str((user or {}).get("username") or "customer"))
   except Exception:repository.update_instance_status(instance_id,row["status"]);raise
   legacy.audit(user,"instance.provision.retry","started",instance_id,f"runtime={runtime_id};version={version};build={build};transport=agent-b10",database_path=database_path)
   return {"retried":True,"instance_id":instance_id,"runtime_id":runtime_id,"edition":edition,"version":version,"build":build,"provision":provision}
- legacy._runtime_definition=runtime_definition;legacy.create_customer_instance=create_customer_instance;legacy.retry_instance_provisioning=retry_instance_provisioning
+ def instance_creation_post(self):
+  if self.path.split("?",1)[0]!="/api/instance/provision/retry":return previous_post(self)
+  user=legacy.authenticate(self.headers)
+  if user is None:self.unauthorized();return
+  if not legacy.can_write(user):self.forbidden();return
+  try:
+   body=self.read_json_body();instance_id=str(body.get("instance_id") or "").strip();repository=legacy.dashboard_repository(legacy.DATABASE_FILE)
+   if not _retry_permission(user,repository,instance_id):self.forbidden();return
+   result=retry_instance_provisioning(user,instance_id)
+  except PermissionError:self.forbidden();return
+  except (ValueError,OSError) as exc:self.send_json(400,{"error":str(exc)});return
+  self.send_json(200,result)
+ legacy._runtime_definition=runtime_definition;legacy.create_customer_instance=create_customer_instance;legacy.retry_instance_provisioning=retry_instance_provisioning;legacy.DashboardHandler.do_POST=instance_creation_post
 __all__=["install_customer_instance_creation","runtime_definition","runtime_directory"]
