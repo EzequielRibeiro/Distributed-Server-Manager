@@ -32,6 +32,13 @@
                     <p>O hostname físico do sistema operacional não é alterado.</p>
                 </div>
                 <div class="cap-admin-card">
+                    <h3>Armazenamento das instâncias</h3>
+                    <label for="agent-instance-storage-root">Diretório base para novas instâncias</label>
+                    <div class="cap-admin-row"><input id="agent-instance-storage-root" autocomplete="off" placeholder="/var/lib/capivara-instances"><button id="agent-admin-save-storage" class="cap-detail-button" type="button">Salvar diretório</button></div>
+                    <div id="agent-storage-state" class="cap-detail-note">Carregando configuração de armazenamento…</div>
+                    <p>A alteração é enviada pelo heartbeat. Instâncias existentes não são movidas automaticamente; se houver conflito com o root atual, o Agent recusará a mudança até uma migração explícita.</p>
+                </div>
+                <div class="cap-admin-card">
                     <h3>Doctor do Agent</h3>
                     <p>Valida identidade, enrollment, serviço, Controller, heartbeat, recursos, portas, game-data, SteamCMD e atualização.</p>
                     <button id="agent-run-doctor" class="cap-detail-button" type="button">Executar diagnóstico completo</button>
@@ -62,6 +69,6 @@
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
 <script src="telemetry-widgets.js?v=1"></script>
-<script src="agent-details.js?v=3"></script>
+<script src="agent-details.js?v=4"></script>
 </body>
 </html>
