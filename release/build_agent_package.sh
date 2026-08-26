@@ -18,6 +18,7 @@ mkdir -p "${PACKAGE_ROOT}/agent/common" "${PACKAGE_ROOT}/agent/runtime/adapters"
 copy(){ git -C "${ROOT}" show "${REF}:$1" >"${PACKAGE_ROOT}/$2"; }
 # Stable package-path contracts used by CI and external validation:
 # agent/runtime/local_cli.py
+# agent/runtime/controller_cli.py
 # agent/runtime/doctor_client.py
 # agent/runtime/relink_cli.py
 # agent/runtime/game_data_client.py
@@ -40,7 +41,7 @@ copy(){ git -C "${ROOT}" show "${REF}:$1" >"${PACKAGE_ROOT}/$2"; }
 # agent/runtime/storage_pools.py
 copy agents/linux/installer/install-agent.sh install-agent.sh
 copy agents/common/identity.py agent/common/identity.py
-for file in agent.py capabilities.py network_inventory.py host_telemetry.py update_client.py update_state.py local_cli.py doctor_client.py relink_cli.py cap_dispatch.py game_data_client.py game_data_executor.py game_data_files.py game_data_integrity.py game_data_reconcile.py game_data_state.py catalog_runtime_policy.py instance_runtime.py runtime_spec.py runtime_events.py runtime_materialization.py runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py observability_client.py configuration_client.py content_client.py backup_client.py broadcast_client.py console_client.py instance_files_client.py instance_telemetry.py resource_profile_client.py artifact_transfer_client.py game_runtime.py provisioning_contract.py provisioning_state.py provisioning_client.py provisioning_executor.py privileged_materialization.py storage_migration_client.py storage_pools.py; do copy "agents/linux/runtime/${file}" "agent/runtime/${file}"; done
+for file in agent.py capabilities.py network_inventory.py host_telemetry.py update_client.py update_state.py local_cli.py controller_cli.py doctor_client.py relink_cli.py cap_dispatch.py game_data_client.py game_data_executor.py game_data_files.py game_data_integrity.py game_data_reconcile.py game_data_state.py catalog_runtime_policy.py instance_runtime.py runtime_spec.py runtime_events.py runtime_materialization.py runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py observability_client.py configuration_client.py content_client.py backup_client.py broadcast_client.py console_client.py instance_files_client.py instance_telemetry.py resource_profile_client.py artifact_transfer_client.py game_runtime.py provisioning_contract.py provisioning_state.py provisioning_client.py provisioning_executor.py privileged_materialization.py storage_migration_client.py storage_pools.py; do copy "agents/linux/runtime/${file}" "agent/runtime/${file}"; done
 copy agents/linux/privileged/materialize_instance.py agent/privileged/materialize_instance.py
 copy agents/linux/privileged/reconcile_runtime_identity.py agent/privileged/reconcile_runtime_identity.py
 for file in __init__.py base.py registry.py systemd.py; do copy "agents/linux/runtime/adapters/${file}" "agent/runtime/adapters/${file}"; copy "agents/linux/runtime/materializers/${file}" "agent/runtime/materializers/${file}"; done
@@ -50,7 +51,7 @@ copy agents/linux/updater/updater.py agent/updater/updater.py
 for file in capivara-agent.service capivara-agent-update.service capivara-agent-update.path capivara-agent-materialize@.service capivara-agent-runtime-identity.service; do copy "agents/linux/services/${file}" "services/${file}"; done
 printf '%s\n' "${VERSION}" >"${PACKAGE_ROOT}/VERSION"
 printf '%s\n' 'Runtime configuration is created during installation. Pairing secrets are never packaged.' >"${PACKAGE_ROOT}/config/README.md"
-chmod 0755 "${PACKAGE_ROOT}/install-agent.sh" "${PACKAGE_ROOT}/agent/runtime/agent.py" "${PACKAGE_ROOT}/agent/runtime/local_cli.py" "${PACKAGE_ROOT}/agent/runtime/relink_cli.py" "${PACKAGE_ROOT}/agent/runtime/cap_dispatch.py" "${PACKAGE_ROOT}/agent/runtime/game_data_executor.py" "${PACKAGE_ROOT}/agent/runtime/provisioning_executor.py" "${PACKAGE_ROOT}/agent/privileged/materialize_instance.py" "${PACKAGE_ROOT}/agent/privileged/reconcile_runtime_identity.py" "${PACKAGE_ROOT}/agent/updater/updater.py"
+chmod 0755 "${PACKAGE_ROOT}/install-agent.sh" "${PACKAGE_ROOT}/agent/runtime/agent.py" "${PACKAGE_ROOT}/agent/runtime/local_cli.py" "${PACKAGE_ROOT}/agent/runtime/controller_cli.py" "${PACKAGE_ROOT}/agent/runtime/relink_cli.py" "${PACKAGE_ROOT}/agent/runtime/cap_dispatch.py" "${PACKAGE_ROOT}/agent/runtime/game_data_executor.py" "${PACKAGE_ROOT}/agent/runtime/provisioning_executor.py" "${PACKAGE_ROOT}/agent/privileged/materialize_instance.py" "${PACKAGE_ROOT}/agent/privileged/reconcile_runtime_identity.py" "${PACKAGE_ROOT}/agent/updater/updater.py"
 find "${PACKAGE_ROOT}/agent" -type f ! -perm -0100 -exec chmod 0644 {} +
 chmod 0644 "${PACKAGE_ROOT}/services/"* "${PACKAGE_ROOT}/VERSION" "${PACKAGE_ROOT}/config/README.md"
 python3 - "${PACKAGE_ROOT}" "${VERSION}" "${COMMIT}" "${CHANNEL}" <<'PY'
