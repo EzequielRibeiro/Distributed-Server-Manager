@@ -4,13 +4,14 @@
 # Capivara DSM - Update Process Guard
 #
 # Responsabilidades:
+# - validar a compatibilidade do banco com o pacote alvo;
 # - detectar instâncias de jogos ainda em execução;
 # - impedir atualização da árvore /opt/dsm enquanto houver
 #   runtime de jogo ativo;
 # - detectar workers legados do Dashboard executados fora
 #   do controle atual do systemd.
 #
-# Este módulo NÃO encerra servidores de jogos.
+# Este módulo NÃO encerra servidores de jogos nem altera o banco.
 # =============================================================
 
 set -Eeuo pipefail
@@ -91,6 +92,56 @@ process_guard_instance_from_pidfile()
     esac
 
     printf '%s\n' "${instance_path}"
+}
+
+# =============================================================
+# Target database compatibility
+# =============================================================
+
+process_guard_assert_target_database_compatible()
+{
+    local target_root="${NEW_SRC:-}"
+    local install_root="${INSTALL_DIR:-${DSM_ROOT}}"
+    local manager
+
+    if [[ -z "${target_root}" ]]
+    then
+        echo "ERRO: pacote alvo não definido para o preflight do banco." >&2
+        echo "ERROR: target package is not defined for database preflight." >&2
+        return 1
+    fi
+
+    manager="${target_root}/database/manager.py"
+
+    if [[ ! -f "${manager}" ]]
+    then
+        echo "ERRO: gerenciador de banco do pacote alvo ausente: ${manager}" >&2
+        echo "ERROR: target package database manager is missing: ${manager}" >&2
+        return 1
+    fi
+
+    echo
+    echo "Validando compatibilidade do banco com o pacote alvo..."
+    echo "Validating database compatibility with target package..."
+
+    if ! python3 "${manager}" --root "${install_root}" check
+    then
+        echo
+        echo "============================================================="
+        echo " Atualização bloqueada: banco incompatível com a versão alvo"
+        echo " Update blocked: database is incompatible with target version"
+        echo "============================================================="
+        echo
+        echo "Nenhum serviço foi parado e nenhum arquivo da instalação foi aplicado."
+        echo "No service was stopped and no installation file was applied."
+        echo
+        echo "O Capivara não executa migração histórica entre baselines incompatíveis."
+        echo "Capivara does not perform historical migration between incompatible baselines."
+        echo
+        return 1
+    fi
+
+    echo "[OK] Banco compatível com o pacote alvo | Database compatible with target package."
 }
 
 # =============================================================
@@ -432,6 +483,8 @@ process_guard_report_legacy_workers()
 
 process_guard_pre_update()
 {
+    process_guard_assert_target_database_compatible
+
     process_guard_report_legacy_workers
 
     process_guard_assert_no_active_instances
@@ -443,6 +496,7 @@ export -f process_guard_instance_pidfiles
 export -f process_guard_pid_is_running
 export -f process_guard_pid_command
 export -f process_guard_instance_from_pidfile
+export -f process_guard_assert_target_database_compatible
 export -f process_guard_active_instances
 export -f process_guard_has_active_instances
 export -f process_guard_assert_no_active_instances
