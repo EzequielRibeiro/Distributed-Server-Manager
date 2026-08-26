@@ -104,7 +104,7 @@ class CustomerAdminRepository:
                     raise ValueError("customer not found")
                 users = session.execute(
                     "SELECT u.username,u.active,m.account_role,ui.email,ui.email_verified_at,"
-                    "COALESCE(ps.must_change_password,0) AS must_change_password "
+                    "ps.must_change_password AS must_change_password "
                     "FROM dashboard_users u "
                     "LEFT JOIN customer_account_members m ON m.customer_id=u.customer_id AND m.username=u.username "
                     "LEFT JOIN customer_user_identities ui ON ui.username=u.username "
@@ -376,7 +376,7 @@ class CustomerAdminRepository:
             f"SELECT 1 FROM customer_password_state WHERE username={ph}",
             (username,),
         ).fetchone()
-        value = 1 if required else 0
+        value = required if self.backend.name == "postgresql" else (1 if required else 0)
         if exists:
             session.execute(
                 f"UPDATE customer_password_state SET must_change_password={ph},updated_at=CURRENT_TIMESTAMP WHERE username={ph}",
