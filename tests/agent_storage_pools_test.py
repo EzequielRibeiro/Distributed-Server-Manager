@@ -14,6 +14,7 @@ for path in (ROOT, RUNTIME):
         sys.path.insert(0, str(path))
 
 import game_runtime
+import instance_runtime
 import storage_pools
 
 
@@ -21,8 +22,12 @@ class AgentStoragePoolsTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
+        self.old_state = instance_runtime.STATE_DIR
+        instance_runtime.STATE_DIR = self.root / "agent-state"
+        instance_runtime.STATE_DIR.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
+        instance_runtime.STATE_DIR = self.old_state
         self.temp.cleanup()
 
     def config(self):
