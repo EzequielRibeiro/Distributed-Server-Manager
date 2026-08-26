@@ -83,7 +83,8 @@ windows_service._run=fake_run;status=windows_service.WindowsServiceAdapter().sta
 ''');self.assertEqual(r.returncode,0,r.stderr)
  def test_windows_agent_heartbeat_exposes_linux_runtime_contract(self):
   source=(WINDOWS_RUNTIME/"agent.py").read_text(encoding="utf-8")
+  compact="".join(source.split())
   for token in ('"instances":instance_inventory(config)','"instance_reconciliation":reconciliation_inventory(config)','"instance_runtime_health":health_inventory(config)','"instance_runtime_metrics":runtime_metrics_snapshot','"runtime_events":read_runtime_events','"configuration_state":configuration_state()','"content_state":content_state()','"backup_state":backup_state()','"broadcast_state":broadcast_state()','result.get("provisioning_command")','result.get("game_data_command")','result.get("instance_command")'):
-   self.assertIn(token,source)
+   self.assertIn(token,compact)
   self.assertNotIn("runtime_parity",source)
 if __name__=="__main__":unittest.main()
