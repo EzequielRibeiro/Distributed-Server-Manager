@@ -38,7 +38,6 @@ def main() -> int:
     if backend.name != "postgresql":
         raise AssertionError(f"unexpected backend: {backend.name}")
 
-    # A fresh database must initialize directly at Baseline v2.
     backend.initialize()
     admin = AdminManagementRepository(backend)
     customers = CustomerManagementRepository(backend)
@@ -62,13 +61,13 @@ def main() -> int:
         "instance_permission_grants", "instance_file_commands",
         "instance_console_commands", "instance_resource_commands",
         "artifact_transfers", "deleted_instance_backups", "instance_backup_clones",
-        "dashboard_activity_log",
+        "activity_audit", "universal_events", "alerts", "alert_events",
+        "event_consumer_cursors", "notification_outbox",
     }
     missing = sorted(required - tables)
     if missing:
         raise AssertionError("Baseline v2 missing tables: " + ", ".join(missing))
 
-    # Canonical topology bootstrap required by Customer creation.
     with admin.session(transaction=True) as session:
         session.execute(
             "INSERT INTO nodes(id,name,role,status) VALUES (%s,%s,%s,%s)",
@@ -79,7 +78,6 @@ def main() -> int:
             ("isolated-controller", "isolated-controller-node", "Isolated Controller", "active"),
         )
 
-    # First privileged user through the canonical repository.
     system_users.save(
         username="isolated-admin",
         password_hash=hash_password("Temporary-Test-Password-Only"),
@@ -93,7 +91,6 @@ def main() -> int:
         require_functional_identity=True,
     )
 
-    # Customer creation must allocate numeric PK + public CLI code automatically.
     customer = customers.create_account(
         name="Customer Isolated Test",
         legal_name="Customer Isolated Test Ltda",
@@ -129,25 +126,26 @@ def main() -> int:
             (customer["id"],),
         ).fetchone()
         stored_user = session.execute(
-            "SELECT role,customer_id,active FROM dashboard_users WHERE username=%s",
-            ("isolated-customer",),
+            "SELECT username,role,full_name,corporate_email FROM dashboard_users WHERE username=%s",
+            ("isolated-admin",),
         ).fetchone()
         stored_contract = session.execute(
-            "SELECT customer_id,game_id,status,instance_limit FROM service_contracts WHERE id=%s",
-            (contract["id"],),
+            "SELECT id,customer_id,game_id,resource_profile_id FROM service_contracts WHERE id=%s",
+            ("isolated-minecraft-contract",),
         ).fetchone()
-    assert stored_customer is not None
-    assert int(stored_customer["id"]) == 1
-    assert stored_customer["customer_code"] == "CLI-000001"
-    assert stored_customer["account_email"] == "customer.isolated@example.invalid"
-    assert stored_customer["billing_provider"] == "isolated-ci"
-    assert stored_customer["billing_customer_id"] == "billing-customer-1"
-    assert stored_user is not None and stored_user["role"] == "customer"
-    assert int(stored_user["customer_id"]) == 1 and bool(stored_user["active"])
-    assert stored_contract is not None and int(stored_contract["customer_id"]) == 1
-    assert stored_contract["game_id"] == "minecraft" and stored_contract["status"] == "active"
 
-    print("postgresql_baseline_v2_isolated_deployment_test: ok")
+    if int(stored_customer["id"]) != 1 or stored_customer["customer_code"] != "CLI-000001":
+        raise AssertionError("stored Customer identity is not canonical")
+    if stored_customer["account_email"] != "customer.isolated@example.invalid":
+        raise AssertionError("Customer account email was not stored")
+    if stored_customer["billing_provider"] != "isolated-ci" or stored_customer["billing_customer_id"] != "billing-customer-1":
+        raise AssertionError("Customer billing identity was not stored")
+    if stored_user["role"] != "admin" or stored_user["full_name"] != "Isolated Test Administrator":
+        raise AssertionError("system administrator bootstrap failed")
+    if int(stored_contract["customer_id"]) != 1 or stored_contract["resource_profile_id"] != "standard":
+        raise AssertionError("stored service contract is invalid")
+
+    print("PostgreSQL Baseline v2 isolated deployment: OK")
     return 0
 
 
