@@ -98,10 +98,12 @@ def main() -> int:
     state_initializer = ROOT / "dashboard" / "state" / "init_state.sh"
     if state_initializer.is_file():
         state_text = state_initializer.read_text(encoding="utf-8")
-        for durable_projection in ("alerts_state.json", "events_state.json"):
-            if re.search(rf"FILES=.*{re.escape(durable_projection.removesuffix('_state.json'))}", state_text, re.S):
+        match = re.search(r"FILES=\((.*?)\)", state_text, re.S)
+        initializer_entries = set(match.group(1).split()) if match else set()
+        for durable_projection in ("alerts", "events"):
+            if durable_projection in initializer_entries:
                 failures.append(
-                    f"dashboard state initializer recreates durable projection: {durable_projection}"
+                    f"dashboard state initializer recreates durable projection: {durable_projection}_state.json"
                 )
 
     if failures:
