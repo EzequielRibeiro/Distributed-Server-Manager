@@ -23,7 +23,11 @@ def authenticate_login_credentials(
     """
 
     user = controller_authenticator(headers)
-    if user is not None:
+
+    # Legacy dashboard authentication can still recognize Customer users.
+    # Never accept that reduced legacy identity here: Customer credentials
+    # must be resolved by the canonical Customer authenticator.
+    if user is not None and user.get("role") != "customer":
         return user
 
     try:
