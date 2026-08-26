@@ -66,20 +66,28 @@ function renderTimeline(result) {
   if (eventsTarget) {
     eventsTarget.innerHTML = events.slice(0, 30).map(event => `
       <article class="cap-event-item">
-        <time>${escapeHtml(formatTime(event.timestamp || event.time || event.created_at))}</time>
+        <time>${escapeHtml(formatTime(event.occurred_at || event.timestamp || event.time || event.created_at || event.received_at))}</time>
         <div><p>${escapeHtml(eventLabel(event))}</p><small>${escapeHtml(event.category || event.source || event.producer || "Sistema")}</small></div>
       </article>`).join("") || '<div class="cap-empty-state">Nenhum evento recente.</div>';
   }
+}
 
-  const important = events.filter(event => ["warning","warn","error","critical","fatal"].includes(String(event.level || event.severity || "").toLowerCase()));
-  text("observability-alert-total", important.length);
-  const alertsTarget = byId("observability-alerts");
-  if (alertsTarget) {
-    alertsTarget.innerHTML = important.slice(0, 20).map(event => {
-      const level = String(event.level || event.severity || "warning").toLowerCase();
-      return `<article class="cap-alert-item" data-level="${escapeHtml(level)}"><strong>${escapeHtml(level)}</strong><p>${escapeHtml(eventLabel(event))}</p><time>${escapeHtml(formatTime(event.timestamp || event.time || event.created_at))}</time></article>`;
-    }).join("") || '<div class="cap-empty-state">Nenhum alerta importante na janela atual.</div>';
-  }
+function renderAlerts(result) {
+  const alerts = Array.isArray(result) ? result : (result?.alerts || []);
+  text("observability-alert-total", alerts.length);
+  const target = byId("observability-alerts");
+  if (!target) return;
+  target.innerHTML = alerts.slice(0, 30).map(alert => {
+    const level = String(alert.level || "warning").toLowerCase();
+    const state = String(alert.state || "OPEN").toUpperCase();
+    const scope = [alert.agent_id, alert.instance_id].filter(Boolean).join(" · ") || alert.scope || "Controller";
+    return `<article class="cap-alert-item" data-level="${escapeHtml(level)}">
+      <strong>${escapeHtml(level)} · ${escapeHtml(state)}</strong>
+      <p>${escapeHtml(alert.message || alert.rule_id || alert.id || "Alerta")}</p>
+      <small>${escapeHtml(scope)}</small>
+      <time>${escapeHtml(formatTime(alert.updated_at || alert.opened_at))}</time>
+    </article>`;
+  }).join("") || '<div class="cap-empty-state">Nenhum alerta ativo.</div>';
 }
 
 function metricTitle(metric) {
@@ -187,15 +195,17 @@ async function loadLogs() {
 }
 
 async function refresh() {
-  const [user, timeline, metrics, doctor, health] = await Promise.all([
+  const [user, timeline, alerts, metrics, doctor, health] = await Promise.all([
     get("/whoami"),
-    get("/timeline?limit=100"),
+    get("/events?limit=100"),
+    get("/admin/alerts?active=true&limit=100"),
     get("/observability?mode=latest&limit=100"),
     get("/infrastructure/doctor"),
     get("/health")
   ]);
   if (user) renderUser(user);
   renderTimeline(timeline);
+  renderAlerts(alerts);
   renderMetrics(metrics || {});
   if (doctor) renderDoctor(doctor);
   else {
