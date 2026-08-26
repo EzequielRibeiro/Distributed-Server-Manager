@@ -84,7 +84,7 @@ class CustomerGeographicPlacementTest(unittest.TestCase):
              patch("customer_placement_locations.requirements_for_instance", return_value=PlacementRequirements()) as requirements, \
              patch("customer_placement_locations.choose_agent_for_instance", side_effect=_decision):
             payload = customer_placement_locations(
-                {"role": "customer", "scope_id": "42"},
+                {"role": "customer", "scope_id": "CLI-000042"},
                 object(),
                 game_id="dayz",
                 runtime_id="dayz.stable",
@@ -118,7 +118,7 @@ class CustomerGeographicPlacementTest(unittest.TestCase):
         with patch("customer_placement_locations.LocationRepository", _Repository), \
              patch("customer_placement_locations.requirements_for_instance", return_value=PlacementRequirements()), \
              patch("customer_placement_locations.choose_agent_for_instance", side_effect=choose):
-            payload = customer_placement_locations({"role": "customer", "scope_id": "42"}, object())
+            payload = customer_placement_locations({"role": "customer", "scope_id": "CLI-000042"}, object())
 
         by_region = {item["region_id"]: item for item in payload["locations"]}
         self.assertEqual(by_region["us-east"]["availability"], "unavailable")
@@ -128,12 +128,12 @@ class CustomerGeographicPlacementTest(unittest.TestCase):
     def test_non_customer_is_denied(self):
         with patch("customer_placement_locations.LocationRepository", _Repository):
             with self.assertRaises(PermissionError):
-                customer_placement_locations({"role": "admin", "scope_id": "42"}, object())
+                customer_placement_locations({"role": "admin", "scope_id": "CLI-000042"}, object())
 
     def test_http_rejects_invalid_coordinates_without_exposing_details(self):
         status, payload = dispatch_customer_placement_locations_get(
             "/api/customer/placement/locations",
-            user={"role": "customer", "scope_id": "42"},
+            user={"role": "customer", "scope_id": "CLI-000042"},
             backend=object(),
             query={"latitude": ["not-a-number"]},
         )
