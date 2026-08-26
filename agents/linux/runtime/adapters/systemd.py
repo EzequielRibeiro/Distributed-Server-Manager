@@ -77,6 +77,23 @@ class SystemdAdapter(InstanceRuntimeAdapter):
     def status(self, instance: dict[str, Any]) -> dict[str, Any]:
         return self._show(instance)
 
+    def _clear_failed_after_stop(self, unit: str, instance: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+        """Clear a residual failed state only after an explicit successful stop.
+
+        Some game servers exit non-zero after SIGTERM even though systemd completed
+        the requested stop and no process remains.  Keeping that residual failed
+        state makes desired=stopped impossible to reconcile.  This normalization is
+        intentionally scoped to the explicit stop path so crashes while a runtime is
+        expected to be running remain visible as failures.
+        """
+        if state.get("active_state") != "failed":
+            return state
+        code, stdout, stderr = self.runner(["systemctl", "reset-failed", unit, "--no-pager"], 10)
+        if code != 0:
+            detail = (stderr or stdout or "systemctl reset-failed failed")[:2000]
+            raise AdapterError(detail)
+        return self._show(instance)
+
     def _lifecycle(self, action: str, instance: dict[str, Any]) -> dict[str, Any]:
         if action not in {"start", "stop", "restart"}:
             raise AdapterError("unsupported systemd lifecycle action")
@@ -86,6 +103,9 @@ class SystemdAdapter(InstanceRuntimeAdapter):
         if action == "start" and before["running"]:
             return {"action": action, "changed": False, "idempotent": True, "state": before}
         if action == "stop" and not before["running"]:
+            if before.get("active_state") == "failed":
+                normalized = self._clear_failed_after_stop(str(before["unit"]), instance, before)
+                return {"action": action, "changed": True, "idempotent": True, "state": normalized}
             return {"action": action, "changed": False, "idempotent": True, "state": before}
         unit = str(before["unit"])
         code, stdout, stderr = self.runner(["systemctl", action, unit, "--no-pager"], self.timeout)
@@ -93,11 +113,15 @@ class SystemdAdapter(InstanceRuntimeAdapter):
             detail = (stderr or stdout or f"systemctl {action} failed")[:2000]
             raise AdapterError(detail)
         after = self._show(instance)
+        if action == "stop":
+            after = self._clear_failed_after_stop(unit, instance, after)
         expected_running = action != "stop"
         if not after["available"]:
             raise AdapterError("instance systemd unit became unavailable after lifecycle action")
         if bool(after["running"]) != expected_running:
             raise AdapterError(f"instance did not reach expected state after {action}")
+        if action == "stop" and after.get("active_state") == "failed":
+            raise AdapterError("instance remained failed after stop normalization")
         return {"action": action, "changed": True, "idempotent": False, "state": after}
 
     def start(self, instance: dict[str, Any]) -> dict[str, Any]:
