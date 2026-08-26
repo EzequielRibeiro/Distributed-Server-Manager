@@ -5,9 +5,8 @@ on:
       - 'core/api_platform.py'
       - 'database/api_*'
       - 'database/realtime_repository.py'
-      - 'database/migrations/038_realtime_api_platform.sql'
-      - 'database/migrations_mysql/038_realtime_api_platform.sql'
-      - 'database/migrations_postgresql/038_realtime_api_platform.sql'
+      - 'database/schema_baseline.py'
+      - 'database/schemas/**'
       - 'dashboard/api_access_http.py'
       - 'dashboard/realtime_*'
       - 'dashboard/server_part13.py'
@@ -32,7 +31,7 @@ jobs:
           grep -Fq 'cap api' bin/cap
           grep -Fq 'SSE_EVENTS_PATH' dashboard/server_part13.py
           grep -Fq 'PUBLIC_GET_PATHS' dashboard/server_part13.py
-          grep -Fq 'api_request_log' database/migrations/038_realtime_api_platform.sql
-          grep -Fq 'api_request_log' database/migrations_mysql/038_realtime_api_platform.sql
-          grep -Fq 'api_request_log' database/migrations_postgresql/038_realtime_api_platform.sql
+          grep -Fq 'api_request_log' database/schemas/sqlite.sql
+          grep -Fq 'api_request_log' database/schemas/mysql.sql
+          grep -Fq 'api_request_log' database/schemas/postgresql.sql
           test ! -e dashboard/server_part14.py
