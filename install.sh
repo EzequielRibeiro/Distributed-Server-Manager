@@ -180,9 +180,36 @@ bootstrap_initial_topology(){
         --datacenter-country-code "${DSM_DATACENTER_COUNTRY_CODE:-${DSM_REGION_COUNTRY_CODE:-}}"
 }
 
+retire_obsolete_systemd_units(){
+    [[ " ${*} " != *" --dry-run "* ]] || return 0
+    [[ "${EUID}" -eq 0 ]] || return 0
+    command -v systemctl >/dev/null 2>&1 || return 0
+
+    local systemd_dir="${SYSTEMD_DIR:-/etc/systemd/system}"
+    local unit
+    local -a retired_units=(
+        dsm-notification-engine.timer
+        dsm-notification-center.timer
+        dsm-backup-worker.service
+        dsm-events-worker.service
+        dsm-metrics-worker.service
+        dsm-mods-worker.service
+        dsm-server-worker.service
+    )
+
+    for unit in "${retired_units[@]}"; do
+        systemctl disable --now "${unit}" >/dev/null 2>&1 || true
+        rm -f -- "${systemd_dir}/${unit}"
+    done
+
+    systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
 select_role_and_database
 select_initial_topology
+retire_obsolete_systemd_units "$@"
 "${CORE_INSTALLER}" "$@"
+retire_obsolete_systemd_units "$@"
 
 if [[ " ${*} " != *" --dry-run "* ]]; then
     bootstrap_initial_topology
