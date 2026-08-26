@@ -350,9 +350,10 @@ class CustomerManagementRepository:
                 ).fetchone()
                 if customer is None:
                     raise ValueError("customer not found")
+                password_default = "FALSE" if self.backend.name == "postgresql" else "0"
                 users = session.execute(
                     "SELECT u.username,u.active,m.account_role,i.email,i.email_verified_at,"
-                    "COALESCE(ps.must_change_password,0) AS must_change_password "
+                    f"COALESCE(ps.must_change_password,{password_default}) AS must_change_password "
                     "FROM dashboard_users u "
                     "LEFT JOIN customer_account_members m "
                     "ON m.customer_id=u.customer_id AND m.username=u.username "
