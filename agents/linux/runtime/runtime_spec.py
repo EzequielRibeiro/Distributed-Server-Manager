@@ -48,6 +48,8 @@ def validate_runtime_spec(spec: dict[str, Any], *, expected_agent_id: str | None
     result["agent_id"] = _token(result.get("agent_id"), "agent_id")
     if expected_agent_id is not None and result["agent_id"] != _token(expected_agent_id, "expected_agent_id"):
         raise RuntimeSpecError("runtime spec belongs to another Agent")
+    if result.get("storage_pool_id") is not None:
+        result["storage_pool_id"] = _token(result.get("storage_pool_id"), "storage_pool_id")
     result["runtime_id"] = _token(result.get("runtime_id") or result["instance_id"], "runtime_id")
     result["adapter"] = _token(result.get("adapter") or "systemd", "adapter").lower()
     if result["adapter"] != "systemd":
