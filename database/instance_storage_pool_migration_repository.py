@@ -73,6 +73,18 @@ class InstanceStoragePoolMigrationRepository:
             finally:
                 session.close()
 
+    def agent_for_instance(self, instance_id: str) -> str:
+        instance_id = _token(instance_id, "instance_id")
+        ph = self.dialect.placeholder
+        with self.session() as session:
+            row = session.execute(f"SELECT agent_id FROM instances WHERE id={ph}", (instance_id,)).fetchone()
+        if row is None:
+            raise LookupError(instance_id)
+        agent_id = str(row["agent_id"] or "").strip()
+        if not agent_id:
+            raise ValueError("Instance has no Agent")
+        return agent_id
+
     def _publish(self, *, migration: dict[str, Any], event_type: str, severity: str = "info",
                  data: dict[str, Any] | None = None) -> None:
         request = migration.get("request") if isinstance(migration.get("request"), dict) else {}
