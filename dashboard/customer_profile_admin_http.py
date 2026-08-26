@@ -35,6 +35,16 @@ def _authorize(user, customer: dict) -> None:
     raise PermissionError("Customer administration access denied")
 
 
+def _authorize_changes(user, customer: dict, changes: dict[str, Any]) -> None:
+    """Prevent a scoped Controller from moving a Customer to another Controller."""
+    if _role(user) != "controller" or "controller_id" not in changes:
+        return
+    current_controller = str(customer.get("controller_id") or "")
+    requested_controller = str(changes.get("controller_id") or "")
+    if requested_controller != current_controller:
+        raise PermissionError("Only admin can reassign a Customer to another Controller")
+
+
 def _publish(backend, *, customer: dict, actor: str, role: str, correlation_id: str, before: dict, after: dict) -> None:
     try:
         UniversalEventRepository(backend).publish({
@@ -75,6 +85,7 @@ def update_customer_profile_for_user(payload: dict[str, Any] | None, *, user: di
     try:
         current = CustomerManagementRepository(backend).detail(customer_code)["customer"]
         _authorize(user, current)
+        _authorize_changes(user, current, changes)
         result = CustomerProfileAdminRepository(backend).update(customer_code, changes)
         audit_customer_event(
             backend,
