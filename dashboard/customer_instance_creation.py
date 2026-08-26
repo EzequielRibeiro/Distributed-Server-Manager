@@ -48,16 +48,15 @@ def install_customer_instance_creation(legacy)->None:
   if source_vault_id:clones.validate_source(source_vault_id,customer_id,game,runtime_id)
   placement=legacy.resolve_instance_placement(user,payload,repository);contract_id=str(payload.get("contract_id","")).strip() or None;occupied_ports_provider=occupied_ports_provider_for_backend(repository.backend);resource_profile_id=str(payload.get("resource_profile_id") or "").strip() or None
   plan=repository.create_customer_instance(customer_id=user["scope_id"],username=user["username"],game=game,runtime_id=runtime_id,edition=edition,variant=variant,version=version,build=build,instances_root=root/"instances",contract_id=contract_id,selected_agent_id=placement["agent_id"],network_profile=runtime_def.get("network"),occupied_ports_provider=occupied_ports_provider,resource_profile_id=resource_profile_id)
-  instance_path=plan["instance_path"];metadata_path=plan["metadata_path"];metadata=plan["metadata"];resource=root/"runtime"/"resources"/plan["node_id"]/game/plan["instance_id"]
+  instance_path=plan["instance_path"];metadata_path=plan["metadata_path"];metadata=plan["metadata"]
   try:
-   metadata_path.parent.mkdir(parents=True,exist_ok=False);(instance_path/"config").mkdir();(instance_path/"config"/"server.conf").write_text(f'# Configuração da instância {plan["name"]}\nINSTANCE_ID="{plan["instance_id"]}"\nGAME_ID="{game}"\n',encoding="utf-8");metadata_path.write_text(json.dumps(metadata,indent=2,ensure_ascii=False)+"\n",encoding="utf-8");resource.mkdir(parents=True,exist_ok=False);(resource/"instance.json").write_text(json.dumps(metadata,indent=2,ensure_ascii=False)+"\n",encoding="utf-8");(resource/"server.json").write_text(json.dumps({"status":{"state":"queued","health":"pending"}},indent=2)+"\n",encoding="utf-8")
+   metadata_path.parent.mkdir(parents=True,exist_ok=False);(instance_path/"config").mkdir();(instance_path/"config"/"server.conf").write_text(f'# Configuração da instância {plan["name"]}\nINSTANCE_ID="{plan["instance_id"]}"\nGAME_ID="{game}"\n',encoding="utf-8");metadata_path.write_text(json.dumps(metadata,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
    state,provision=_queue_agent_provisioning(root=root,repository=repository,runtime_def=runtime_def,instance_id=plan["instance_id"],agent_id=plan["agent_id"],runtime_id=runtime_id,version=version,build=build,requested_by=str(user.get("username") or "customer"),resource_profile_id=resource_profile_id)
    clone=None
    if source_vault_id:clone,_=clones.start(customer_id=customer_id,source_vault_id=source_vault_id,target_instance_id=plan["instance_id"],target_agent_id=plan["agent_id"],provisioning_id=str(state["provisioning_id"]),requested_by=str(user.get("username") or "customer"))
   except Exception:
    repository.delete_instance(plan["instance_id"])
    if instance_path.exists():shutil.rmtree(instance_path)
-   if resource.exists():shutil.rmtree(resource)
    raise
   # The Controller owns physical placement and filesystem layout. Customer
   # responses expose only the public instance identity and requested geography;
