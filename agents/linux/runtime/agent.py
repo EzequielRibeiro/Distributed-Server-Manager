@@ -43,6 +43,7 @@ from runtime_health import health_inventory
 from runtime_metrics import increment, snapshot as runtime_metrics_snapshot
 from runtime_operations import recover_interrupted_operations
 from runtime_reconciler import reconcile_all, reconciliation_inventory
+from storage_pool_migration_client import clear_storage_pool_migration_result, read_storage_pool_migration_result, stage_storage_pool_migration
 from update_client import clear_update_result, read_update_result, stage_update_request
 
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
@@ -124,6 +125,7 @@ def _queue_depth():
         "resource_results": count(state / "resource-results" / "*.json"),
         "artifact_results": count(state / "artifact-results" / "*.json"),
         "provisioning": count(state / "instance-provisioning" / "*.request.json"),
+        "storage_pool_migrations": count(state / "storage-pool-migrations" / "*.request.json"),
         "game_data": count(state / "game-data-jobs" / "*.json"),
         "backup_results": count(state / "backup-results" / "*.json"),
         "broadcast_state": count(state / "broadcast-state" / "*.json"),
@@ -170,6 +172,7 @@ def _inventory(config):
     result_readers = (
         ("update_result", read_update_result),
         ("provisioning_result", read_provisioning_result),
+        ("storage_pool_migration_result", read_storage_pool_migration_result),
         ("game_data_result", read_game_data_result),
         ("instance_result", read_instance_result),
         ("console_result", read_console_result),
@@ -271,6 +274,16 @@ def heartbeat(config):
     provisioning_state = result.get("provisioning_state") if isinstance(result.get("provisioning_state"), dict) else {}
     if str(provisioning_state.get("status") or "").lower() in {"completed", "failed"} and provisioning_state.get("provisioning_id"):
         clear_provisioning_result(str(provisioning_state["provisioning_id"]))
+
+    migration_command = result.get("storage_pool_migration_command")
+    if isinstance(migration_command, dict) and stage_storage_pool_migration(migration_command, config_path=CONFIG_PATH):
+        print(
+            f"storage-pool migration staged id={migration_command.get('migration_id')} instance={migration_command.get('instance_id')} target={migration_command.get('target_storage_pool_id')}",
+            flush=True,
+        )
+    migration_state = result.get("storage_pool_migration_state") if isinstance(result.get("storage_pool_migration_state"), dict) else {}
+    if str(migration_state.get("status") or "").lower() in {"completed", "failed"} and migration_state.get("migration_id"):
+        clear_storage_pool_migration_result(str(migration_state["migration_id"]))
 
     game_command = result.get("game_data_command")
     if isinstance(game_command, dict) and stage_game_data_command(game_command):

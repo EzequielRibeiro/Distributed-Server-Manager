@@ -144,11 +144,13 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
             health = "healthy" if state == "running" else ("degraded" if state in {"starting", "failed", "unavailable"} else "unknown")
         except Exception:
             health = "unknown"
+        private_state_root = record.get("instance_state_root") or record.get("path")
         results.append({
             "instance_id": instance_id,
+            "storage_pool_id": str(record.get("storage_pool_id") or "") or None,
             "cpu_percent": cpu,
             "memory_bytes": memory,
-            "storage_used_bytes": _storage_used(record.get("path")),
+            "storage_used_bytes": _storage_used(private_state_root),
             "network_rx_bytes": rx,
             "network_tx_bytes": tx,
             "players_online": game.get("players_online"),

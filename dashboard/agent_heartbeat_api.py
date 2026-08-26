@@ -14,6 +14,7 @@ from configuration_repository import ConfigurationRepository
 from content_repository import ContentRepository
 from instance_file_repository import InstanceFileRepository
 from instance_resource_repository import InstanceResourceRepository
+from instance_storage_pool_migration_repository import InstanceStoragePoolMigrationRepository
 from instance_workspace_repository import InstanceWorkspaceRepository
 from observability_repository import ObservabilityRepository
 from universal_event_repository import UniversalEventRepository
@@ -114,6 +115,12 @@ def _artifact_exchange(agent_id,body,*,backend,root=None):
  repo=ArtifactTransferRepository(backend,Path(root or "."));repo.initialize();state=None;reported=body.get("artifact_result")
  if isinstance(reported,dict):state=repo.apply_agent_result(agent_id,reported)
  return repo.command_for_agent(agent_id),state
+def _storage_pool_migration_exchange(agent_id,body,*,backend):
+ repo=InstanceStoragePoolMigrationRepository(backend);repo.initialize();state=None;reported=body.get("storage_pool_migration_result")
+ if isinstance(reported,dict):state=repo.apply_result(agent_id,reported)
+ cmd=repo.command_for_agent(agent_id)
+ if cmd is not None:repo.mark_delivered(str(cmd["migration_id"]))
+ return cmd,state
 def record_agent_heartbeat(authenticated_agent_id,payload,*,backend,root=None):
  agent_id=str(authenticated_agent_id or "").strip()
  if not agent_id:raise PermissionError("authenticated Agent identity required")
@@ -137,5 +144,5 @@ def record_agent_heartbeat(authenticated_agent_id,payload,*,backend,root=None):
  if isinstance(reported_broadcasts,list):automations.record_broadcast_state(agent_id,reported_broadcasts)
  broadcast_commands=automations.desired_for_agent(agent_id)
  for command in broadcast_commands:command["agent_id"]=agent_id
- console_command,console_state=_console_exchange(agent_id,body,backend=backend);file_command,file_state=_file_exchange(agent_id,body,backend=backend);resource_command,resource_state=_resource_exchange(agent_id,body,backend=backend);artifact_command,artifact_state=_artifact_exchange(agent_id,body,backend=backend,root=root);last_seen=repository.heartbeat(agent_id)
- return {"agent_id":agent_id,"health_status":"online","last_seen":last_seen,"accepted_event_ids":event_result["accepted_event_ids"],"events_accepted":event_result["accepted"],"events_created":event_result["created"],"events_rejected":event_result["rejected"],"metrics_accepted":metric_result["accepted"],"metrics_created":metric_result["created"],"metrics_rejected":metric_result["rejected"],"instance_telemetry_accepted":telemetry_count,"configuration_commands":desired_configuration,"configuration_count":len(desired_configuration),"content_commands":desired_content,"content_count":len(desired_content),"backup_commands":backup_commands,"backup_count":len(backup_commands),"broadcast_commands":broadcast_commands,"broadcast_count":len(broadcast_commands),"console_command":console_command,"console_state":console_state,"file_command":file_command,"file_state":file_state,"resource_command":resource_command,"resource_state":resource_state,"artifact_command":artifact_command,"artifact_state":artifact_state}
+ console_command,console_state=_console_exchange(agent_id,body,backend=backend);file_command,file_state=_file_exchange(agent_id,body,backend=backend);resource_command,resource_state=_resource_exchange(agent_id,body,backend=backend);artifact_command,artifact_state=_artifact_exchange(agent_id,body,backend=backend,root=root);storage_pool_migration_command,storage_pool_migration_state=_storage_pool_migration_exchange(agent_id,body,backend=backend);last_seen=repository.heartbeat(agent_id)
+ return {"agent_id":agent_id,"health_status":"online","last_seen":last_seen,"accepted_event_ids":event_result["accepted_event_ids"],"events_accepted":event_result["accepted"],"events_created":event_result["created"],"events_rejected":event_result["rejected"],"metrics_accepted":metric_result["accepted"],"metrics_created":metric_result["created"],"metrics_rejected":metric_result["rejected"],"instance_telemetry_accepted":telemetry_count,"configuration_commands":desired_configuration,"configuration_count":len(desired_configuration),"content_commands":desired_content,"content_count":len(desired_content),"backup_commands":backup_commands,"backup_count":len(backup_commands),"broadcast_commands":broadcast_commands,"broadcast_count":len(broadcast_commands),"console_command":console_command,"console_state":console_state,"file_command":file_command,"file_state":file_state,"resource_command":resource_command,"resource_state":resource_state,"artifact_command":artifact_command,"artifact_state":artifact_state,"storage_pool_migration_command":storage_pool_migration_command,"storage_pool_migration_state":storage_pool_migration_state}

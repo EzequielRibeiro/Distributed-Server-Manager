@@ -8,8 +8,10 @@ on:
       - 'database/agent_instance_provisioning_repository.py'
       - 'database/agent_instance_reconciliation_repository.py'
       - 'database/agent_instance_runtime_health_repository.py'
+      - 'database/instance_storage_pool_migration_repository.py'
       - 'database/storage_pool_placement.py'
       - 'database/schemas/**'
+      - 'dashboard/agent_admin_http.py'
       - 'dashboard/agent_instance_runtime_*.py'
       - 'dashboard/agent_instance_provisioning_*.py'
       - 'dashboard/agent_heartbeat_api.py'
@@ -26,7 +28,9 @@ on:
       - 'tests/agent_instance_storage_root_test.py'
       - 'tests/agent_storage_pools_test.py'
       - 'tests/agent_storage_pool_telemetry_test.py'
+      - 'tests/agent_storage_pool_migration_test.py'
       - 'tests/storage_pool_placement_test.py'
+      - 'tests/storage_pool_migration_controller_test.py'
       - '.github/workflows/agent-instance-runtime.yml'
   push:
     branches: [main]
@@ -36,8 +40,10 @@ on:
       - 'database/agent_instance_provisioning_repository.py'
       - 'database/agent_instance_reconciliation_repository.py'
       - 'database/agent_instance_runtime_health_repository.py'
+      - 'database/instance_storage_pool_migration_repository.py'
       - 'database/storage_pool_placement.py'
       - 'database/schemas/**'
+      - 'dashboard/agent_admin_http.py'
       - 'dashboard/agent_heartbeat_api.py'
       - 'dashboard/agent_instance_provisioning_*.py'
       - 'release/build_agent_package.sh'
@@ -45,7 +51,9 @@ on:
       - 'tests/agent_instance_storage_root_test.py'
       - 'tests/agent_storage_pools_test.py'
       - 'tests/agent_storage_pool_telemetry_test.py'
+      - 'tests/agent_storage_pool_migration_test.py'
       - 'tests/storage_pool_placement_test.py'
+      - 'tests/storage_pool_migration_controller_test.py'
       - '.github/workflows/agent-instance-runtime.yml'
 
 permissions:
@@ -75,7 +83,9 @@ jobs:
             database/agent_instance_provisioning_repository.py \
             database/agent_instance_reconciliation_repository.py \
             database/agent_instance_runtime_health_repository.py \
+            database/instance_storage_pool_migration_repository.py \
             database/storage_pool_placement.py \
+            dashboard/agent_admin_http.py \
             dashboard/agent_instance_runtime_api.py \
             dashboard/agent_instance_runtime_http.py \
             dashboard/agent_instance_provisioning_api.py \
@@ -92,7 +102,9 @@ jobs:
             tests/agent_instance_storage_root_test.py \
             tests/agent_storage_pools_test.py \
             tests/agent_storage_pool_telemetry_test.py \
-            tests/storage_pool_placement_test.py
+            tests/agent_storage_pool_migration_test.py \
+            tests/storage_pool_placement_test.py \
+            tests/storage_pool_migration_controller_test.py
       - name: Run instance runtime tests
         run: |
           python3 -m unittest tests/agent_instance_runtime_test.py
@@ -104,7 +116,9 @@ jobs:
           python3 -m unittest tests/agent_instance_storage_root_test.py
           python3 -m unittest tests/agent_storage_pools_test.py
           python3 -m unittest tests/agent_storage_pool_telemetry_test.py
+          python3 -m unittest tests/agent_storage_pool_migration_test.py
           python3 -m unittest tests/storage_pool_placement_test.py
+          python3 -m unittest tests/storage_pool_migration_controller_test.py
       - name: Check lifecycle policy boundary
         run: |
           grep -F 'capivara-instance-' agents/linux/policy/49-capivara-agent-instance-units.rules
@@ -158,6 +172,16 @@ jobs:
           grep -F 'storage_reserved_bytes' agents/linux/runtime/provisioning_contract.py database/agent_instance_provisioning_repository.py
           grep -F 'INSTANCE_STORAGE_POOL_CAPACITY_RESERVED' database/agent_instance_provisioning_repository.py
           grep -F 'INSTANCE_STORAGE_POOL_CAPACITY_RELEASED' database/agent_instance_provisioning_repository.py
+          grep -F 'target_storage_pool_id' agents/linux/runtime/storage_pool_migration_executor.py agents/linux/privileged/materialize_instance.py
+          grep -F '.capivara-migrate-' agents/linux/privileged/materialize_instance.py
+          grep -F 'atomic_commit' agents/linux/privileged/materialize_instance.py agents/linux/runtime/storage_pool_migration_executor.py
+          grep -F 'INSTANCE_STORAGE_POOL_MIGRATION_COMPLETED' agents/linux/runtime/storage_pool_migration_executor.py database/instance_storage_pool_migration_repository.py
+          grep -F 'INSTANCE_STORAGE_POOL_MIGRATION_REQUESTED' database/instance_storage_pool_migration_repository.py
+          grep -F 'INSTANCE_STORAGE_POOL_MIGRATION_CAPACITY_RELEASED' database/instance_storage_pool_migration_repository.py
+          grep -F 'storage_pool_migration_command' agents/linux/runtime/agent.py dashboard/agent_heartbeat_api.py
+          grep -F 'storage_pool_migration_result' agents/linux/runtime/agent.py dashboard/agent_heartbeat_api.py
+          grep -F '/api/admin/instance/storage-pool-migrate' dashboard/agent_admin_http.py
+          grep -F 'storage_pool_migration_executor.py' agents/linux/installer/install-agent.sh release/build_agent_package.sh
       - name: Check consolidated schema parity
         run: |
           set -euo pipefail

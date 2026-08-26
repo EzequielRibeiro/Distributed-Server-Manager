@@ -25,17 +25,16 @@ from storage_pools import resolve_storage_pool
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
 REQUEST_ROOT = STATE_DIR / "privileged-materialization"
-_DEFAULT_INSTANCE_STORAGE_ROOT = Path("/var/lib/capivara-instances")
 _DEFAULT_RUNTIME_USER = "capivara-instance"
 _AGENT_GROUP = "capivara-agent"
 _FORBIDDEN_STORAGE_ROOTS = tuple(Path(value) for value in ("/boot", "/dev", "/etc", "/proc", "/root", "/run", "/sys", "/usr"))
 
 
-def _token(value: Any) -> str:
+def _token(value: Any, label: str = "instance_id", max_length: int = 191) -> str:
     text = str(value or "").strip()
     allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
-    if not text or len(text) > 191 or any(ch not in allowed for ch in text):
-        raise ValueError("invalid instance_id")
+    if not text or len(text) > max_length or any(ch not in allowed for ch in text):
+        raise ValueError(f"invalid {label}")
     return text
 
 
@@ -105,11 +104,9 @@ def _validate_runtime_access(working_directory: str, user: str) -> None:
         return
     if not state.is_dir() or not game_data.is_dir() or not working.is_dir():
         raise RuntimeError("runtime working directory is unavailable")
-    state_mode = state.stat().st_mode
-    game_data_mode = game_data.stat().st_mode
-    if not (state_mode & 0o010):
+    if not (state.stat().st_mode & 0o010):
         raise RuntimeError("Agent state root is not traversable by runtime group")
-    if (game_data_mode & 0o050) != 0o050:
+    if (game_data.stat().st_mode & 0o050) != 0o050:
         raise RuntimeError("game-data is not readable/traversable by runtime group")
 
 
@@ -143,7 +140,6 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
         path.mkdir(parents=True, exist_ok=True)
         os.chown(path, account.pw_uid, account.pw_gid)
         os.chmod(path, 0o700)
-
     for item in spec.get("seed_files", []):
         source = _within(working_root, str(item["source"]), "seed source")
         target = _within(state_root, str(item["target"]), "seed target")
@@ -156,7 +152,6 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
             shutil.copy2(source, target)
         os.chown(target, account.pw_uid, account.pw_gid)
         os.chmod(target, 0o600)
-
     for item in spec.get("bind_paths", []):
         source = _within(state_root, str(item["source"]), "bind source")
         target = _within(working_root, str(item["target"]), "bind target")
@@ -205,34 +200,81 @@ def _verify_tree(source: Path, target: Path) -> tuple[int, int]:
     return len(source_files), total
 
 
-def _migrate_storage_copy(config: dict[str, Any], spec: dict[str, Any], target_value: Any) -> dict[str, Any]:
-    source_root = _instance_storage_root(config, spec.get("storage_pool_id"))
-    target_root = _storage_root(target_value, "target storage root")
+def _migrate_storage_copy(
+    config: dict[str, Any],
+    spec: dict[str, Any],
+    *,
+    target_storage_pool_id: Any = None,
+    migration_id: Any = None,
+    target_root_value: Any = None,
+) -> dict[str, Any]:
+    source_pool_id = str(spec.get("storage_pool_id") or "").strip() or None
+    source_root = _instance_storage_root(config, source_pool_id)
+    if target_storage_pool_id is not None:
+        target_pool_id = _token(target_storage_pool_id, "target_storage_pool_id", 64)
+        target_root = _instance_storage_root(config, target_pool_id)
+        migration_token = _token(migration_id, "migration_id")
+    else:
+        target_pool_id = None
+        target_root = _storage_root(target_root_value, "target storage root")
+        migration_token = "root-migration"
+
     if source_root == target_root:
-        return {"changed": False, "source": str(source_root), "target": str(target_root), "verified_files": 0, "verified_bytes": 0, "source_preserved": True}
+        return {
+            "changed": False,
+            "source_storage_pool_id": source_pool_id,
+            "target_storage_pool_id": target_pool_id,
+            "source": str(source_root),
+            "target": str(target_root),
+            "verified_files": 0,
+            "verified_bytes": 0,
+            "source_preserved": True,
+        }
+
     instance_id = spec["instance_id"]
     source = (source_root / instance_id).resolve(strict=False)
     expected = Path(str(spec.get("instance_state_root") or source)).resolve(strict=False)
     if source != expected:
         raise RuntimeError("instance source state root does not match current Agent storage pool")
-    target = (target_root / instance_id).resolve(strict=False)
-    target.relative_to(target_root)
-    if source.exists():
-        _reject_symlinks(source)
-    if target.exists():
-        shutil.rmtree(target)
+    final = (target_root / instance_id).resolve(strict=False)
+    final.relative_to(target_root)
+    staging = (target_root / f".capivara-migrate-{instance_id}-{migration_token}").resolve(strict=False)
+    staging.relative_to(target_root)
+    if final.exists():
+        raise RuntimeError("target instance state already exists")
+    if staging.exists():
+        shutil.rmtree(staging)
     target_root.mkdir(parents=True, exist_ok=True)
     os.chmod(target_root, 0o711)
-    if source.exists():
-        shutil.copytree(source, target, copy_function=shutil.copy2, symlinks=False)
-        count, total = _verify_tree(source, target)
-    else:
-        target.mkdir(parents=True, exist_ok=True)
-        count, total = 0, 0
-    account = _validate_runtime_user(str(spec.get("user") or _DEFAULT_RUNTIME_USER))
-    os.chown(target, account.pw_uid, account.pw_gid)
-    os.chmod(target, 0o700)
-    return {"changed": True, "source": str(source), "target": str(target), "verified_files": count, "verified_bytes": total, "source_preserved": True}
+
+    try:
+        if source.exists():
+            _reject_symlinks(source)
+            shutil.copytree(source, staging, copy_function=shutil.copy2, symlinks=False)
+            count, total = _verify_tree(source, staging)
+        else:
+            staging.mkdir(parents=True, exist_ok=False)
+            count, total = 0, 0
+        account = _validate_runtime_user(str(spec.get("user") or _DEFAULT_RUNTIME_USER))
+        os.chown(staging, account.pw_uid, account.pw_gid)
+        os.chmod(staging, 0o700)
+        os.replace(staging, final)
+    except Exception:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+    return {
+        "changed": True,
+        "source_storage_pool_id": source_pool_id,
+        "target_storage_pool_id": target_pool_id,
+        "source": str(source),
+        "target": str(final),
+        "verified_files": count,
+        "verified_bytes": total,
+        "source_preserved": True,
+        "atomic_commit": True,
+    }
 
 
 def run(instance_id: str) -> dict[str, Any]:
@@ -266,10 +308,17 @@ def run(instance_id: str) -> dict[str, Any]:
     elif action == "remove":
         operation = materializer.remove(spec)
     elif action == "migrate-storage-copy":
-        operation = _migrate_storage_copy(config, spec, request.get("target_root"))
+        operation = _migrate_storage_copy(
+            config,
+            spec,
+            target_storage_pool_id=request.get("target_storage_pool_id"),
+            migration_id=request.get("migration_id"),
+            target_root_value=request.get("target_root"),
+        )
     else:
         raise RuntimeError("unsupported privileged materialization action")
-    result = {"status": "completed", "action": action, "instance_id": instance_id, "agent_id": local_agent_id, "operation": operation, "templates": templates}
+    result = {"status": "completed", "action": action, "instance_id": instance_id,
+              "agent_id": local_agent_id, "operation": operation, "templates": templates}
     _write_result(result_path, result)
     return result
 

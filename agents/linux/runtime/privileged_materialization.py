@@ -19,11 +19,11 @@ def _request_root() -> Path:
     return Path(instance_runtime.STATE_DIR) / "privileged-materialization"
 
 
-def _token(value: Any) -> str:
+def _token(value: Any, label: str = "instance_id", max_length: int = 191) -> str:
     text = str(value or "").strip()
     allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
-    if not text or len(text) > 191 or any(ch not in allowed for ch in text):
-        raise ValueError("invalid instance_id")
+    if not text or len(text) > max_length or any(ch not in allowed for ch in text):
+        raise ValueError(f"invalid {label}")
     return text
 
 
@@ -78,9 +78,28 @@ def _invoke(action: str, spec: dict[str, Any], **extra: Any) -> dict[str, Any]:
 
 
 def migrate_storage_copy(config: dict[str, Any], spec: dict[str, Any], *, target_root: str) -> dict[str, Any]:
+    """Legacy Agent-wide root migration copy; target root is validated by the root helper."""
     agent_id = str(config.get("agent_id") or "").strip()
     normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
     return _invoke("migrate-storage-copy", normalized, target_root=str(target_root))
+
+
+def migrate_storage_pool_copy(
+    config: dict[str, Any],
+    spec: dict[str, Any],
+    *,
+    target_storage_pool_id: str,
+    migration_id: str,
+) -> dict[str, Any]:
+    """Per-instance pool migration; root helper resolves the target pool from local policy."""
+    agent_id = str(config.get("agent_id") or "").strip()
+    normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
+    return _invoke(
+        "migrate-storage-copy",
+        normalized,
+        target_storage_pool_id=_token(target_storage_pool_id, "target_storage_pool_id", 64),
+        migration_id=_token(migration_id, "migration_id"),
+    )
 
 
 def materialize(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
@@ -127,4 +146,4 @@ def remove(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     return {"instance_id": normalized["instance_id"], "stop": stopped, "operation": operation, "event": event}
 
 
-__all__ = ["materialize", "migrate_storage_copy", "remove"]
+__all__ = ["materialize", "migrate_storage_copy", "migrate_storage_pool_copy", "remove"]
