@@ -152,6 +152,27 @@ class CustomerManagementRepositoryTest(unittest.TestCase):
         self.assertEqual(detail["contracts"][0]["resource_profile_id"], "medium")
 
 
+class CustomerManagementPostgreSQLContractTest(unittest.TestCase):
+    def test_detail_uses_boolean_default_for_postgresql_password_state(self):
+        source = (
+            ROOT / "database" / "customer_management_repository.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            'password_default = "FALSE" if self.backend.name == "postgresql" else "0"',
+            source,
+        )
+        self.assertIn(
+            'f"COALESCE(ps.must_change_password,{password_default}) AS must_change_password "',
+            source,
+        )
+        self.assertNotIn(
+            "COALESCE(ps.must_change_password,0) AS must_change_password",
+            source,
+        )
+
+
+
 class CustomerManagementAssetContractTest(unittest.TestCase):
     def test_pages_keep_creation_lookup_detail_and_contract_separate(self):
         web = ROOT / "dashboard" / "web"
