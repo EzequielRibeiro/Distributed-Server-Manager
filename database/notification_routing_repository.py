@@ -83,6 +83,19 @@ class NotificationRoutingRepository:
             rows = session.execute(sql, params).fetchall()
         return [self._destination_row(row) for row in rows]
 
+    def delivery_destination(self, *, channel: str, recipient: str) -> dict[str, Any] | None:
+        self.initialize()
+        channel = str(channel or "").strip().lower()
+        recipient = str(recipient or "").strip()
+        ph = self.dialect.placeholder
+        with self.session() as session:
+            row = session.execute(
+                "SELECT * FROM notification_destinations "
+                f"WHERE channel={ph} AND recipient={ph} AND enabled={ph} LIMIT 1",
+                (channel, recipient, 1),
+            ).fetchone()
+        return self._destination_row(row) if row is not None else None
+
     def create_route(
         self,
         *,
