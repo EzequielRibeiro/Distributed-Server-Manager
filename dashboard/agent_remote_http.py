@@ -13,6 +13,7 @@ from agent_installation_api import bind_installation_after_enrollment
 from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from agent_lifecycle_repository import AgentLifecycleRepository
+from agent_link_incident_repository import AgentLinkIncidentRepository
 from agent_pairing_api import enroll_remote_agent
 from agent_pairing_repository import (
     AgentCredentialInvalid,
@@ -31,6 +32,14 @@ ENROLL_PATH = "/api/agent/enroll"
 HEARTBEAT_PATH = "/api/agent/heartbeat"
 ROOT = Path(__file__).resolve().parents[1]
 _LAST_VAULT_CLEANUP = 0.0
+_LINK_CRITICAL_CODES = {
+    "identity_incomplete",
+    "not_enrolled",
+    "credential_invalid",
+    "credential_revoked",
+    "fingerprint_mismatch",
+    "controller_mismatch",
+}
 
 
 def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, dict[str, Any]]:
@@ -165,6 +174,56 @@ def _attach_doctor_state(result, body, *, agent_id, backend):
         result["doctor_state"] = {"status": "unavailable"}
 
 
+def _doctor_link_recovery_ready(state: dict[str, Any] | None) -> bool:
+    if not isinstance(state, dict) or str(state.get("status") or "").lower() != "completed":
+        return False
+    report = state.get("result") if isinstance(state.get("result"), dict) else None
+    if report is None:
+        return False
+    findings = report.get("findings") if isinstance(report.get("findings"), list) else []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        severity = str(finding.get("severity") or "").lower()
+        code = str(finding.get("code") or "").lower()
+        if severity == "critical" and code in _LINK_CRITICAL_CODES:
+            return False
+    return True
+
+
+def _reconcile_link_incident(result, *, agent_id, backend):
+    """Require a valid heartbeat plus Doctor confirmation before auto-resolve."""
+    try:
+        incidents = AgentLinkIncidentRepository(backend)
+        active = incidents.active(agent_id)
+        if active is None:
+            return
+        admin = AgentAdminRepository(backend)
+        doctor = admin.latest_doctor(agent_id)
+        if _doctor_link_recovery_ready(doctor):
+            report = doctor.get("result") if isinstance(doctor, dict) else {}
+            incidents.resolve(
+                agent_id,
+                recovery="authenticated_heartbeat_and_doctor",
+                doctor_status=str((report or {}).get("status") or "healthy"),
+            )
+            result["link_incident"] = {"status": "resolved", "incident_id": active["id"]}
+            return
+
+        queued = admin.request_doctor(agent_id, requested_by="system:link-recovery")
+        command = admin.doctor_command_for_agent(agent_id)
+        if command:
+            result["doctor_command"] = command
+        result["doctor_state"] = admin.latest_doctor(agent_id) or queued
+        result["link_incident"] = {
+            "status": "recovering",
+            "incident_id": active["id"],
+            "action": "Executar Doctor",
+        }
+    except Exception:
+        result["link_incident"] = {"status": "unavailable"}
+
+
 def _attach_backup_clone_state(result, *, agent_id, backend):
     global _LAST_VAULT_CLEANUP
     try:
@@ -205,8 +264,24 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
             _attach_game_data_state(result, body, agent_id=agent_id, backend=backend)
         _attach_instance_state(result, body, agent_id=agent_id, backend=backend)
         _attach_doctor_state(result, body, agent_id=agent_id, backend=backend)
+        _reconcile_link_incident(result, agent_id=agent_id, backend=backend)
         _attach_backup_clone_state(result, agent_id=agent_id, backend=backend)
     except AgentCredentialInvalid:
+        try:
+            incidents = AgentLinkIncidentRepository(backend)
+            failed_agent_id = incidents.identify_agent_from_credential_reference(
+                credential_id,
+                fingerprint=fingerprint,
+            )
+            if failed_agent_id:
+                incidents.open(
+                    failed_agent_id,
+                    cause="credential_invalid",
+                    recommended_action="Revincular Agent",
+                    message="A credencial apresentada pelo Agent foi rejeitada. Revincule o Agent para restaurar a confiança.",
+                )
+        except Exception:
+            pass
         return 401, {"error": "agent_authentication_failed", "message": "Identidade do Agent inválida."}
     except Exception:
         return 500, {"error": "heartbeat_failed", "message": "Não foi possível registrar o heartbeat."}
