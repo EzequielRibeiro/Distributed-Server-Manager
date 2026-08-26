@@ -21,7 +21,7 @@ Controller / Hybrid:
   cap agent winrm-prepare USER@HOST [--port 5986]
   cap agent ssh-prepare USER@HOST [--ssh-port PORT]
   cap agent ports show|set|check ...
-  cap customer create --id ID --name NOME --username LOGIN [--controller ID]
+  cap customer create --name NOME --username LOGIN [--controller ID] [--email EMAIL] [--phone TELEFONE]
   cap contract create --customer ID --game GAME [--instances N] [--id ID]
   cap contract delete --contract ID --admin USER --yes
   cap instance create --customer ID --contract ID --game GAME --agent AGENT [options]
