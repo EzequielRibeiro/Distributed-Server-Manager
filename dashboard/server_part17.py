@@ -50,6 +50,14 @@ def catalog_architecture_put(self):
  try:payload=self.read_json_body()
  except ValueError:self.send_json(400,{"error":"invalid_request","message":"Requisição inválida."});return
  status,body=dispatch_catalog_runtime_policy_put(parsed.path,payload,user=user,root=_ROOT);self.send_json(status,body)
+def database_controller_alert(root,node_id,game,instance_id,agent_id,message):
+ result=legacy._open_provision_alert(legacy.DATABASE_FILE,instance_id=instance_id,rule_id="provision.steam-auth-required",level="CRITICAL",message=message)
+ return result is not None
+def resolve_database_controller_alert(root,instance_id):
+ result=legacy._resolve_provision_alert(legacy.DATABASE_FILE,instance_id=instance_id,rule_id="provision.steam-auth-required")
+ return result is not None
+legacy._controller_alert=database_controller_alert
+legacy._resolve_controller_alert=resolve_database_controller_alert
 legacy.DashboardHandler.send_json=json_safe_send_json;legacy.DashboardHandler.do_GET=catalog_architecture_get;legacy.DashboardHandler.do_PUT=catalog_architecture_put
 install_system_user_administration(legacy,_authenticate)
 install_customer_instance_workspace(legacy,_authenticate)
