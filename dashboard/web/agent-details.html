@@ -5,22 +5,53 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Capivara DSM - Detalhes do Agent</title>
     <link rel="stylesheet" href="dashboard-home-v3.css">
-    <link rel="stylesheet" href="agent-details.css?v=2">
+    <link rel="stylesheet" href="agent-details.css?v=3">
     <link rel="stylesheet" href="telemetry-widgets.css?v=1">
 </head>
 <body class="cap-home cap-agent-detail-shell">
 <div id="sidebar-component"></div>
 <main class="cap-home-main cap-agent-detail-page">
     <header class="cap-home-topbar">
-        <div class="cap-home-title"><button id="agent-detail-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1 id="agent-detail-title">Detalhes do Agent</h1><p>Saúde, identidade, telemetria, portas e operação do node selecionado.</p></div></div>
+        <div class="cap-home-title"><button id="agent-detail-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1 id="agent-detail-title">Detalhes do Agent</h1><p>Saúde, identidade, telemetria, portas, diagnóstico e manutenção do node selecionado.</p></div></div>
         <div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="agent-detail-user">—</strong><span id="agent-detail-role">—</span></div></div>
     </header>
     <div class="cap-home-content cap-agent-detail-content">
         <div class="cap-agent-detail-actions"><a class="cap-detail-button" href="agents.html">← Voltar para Agents</a><button id="refresh-agent-detail" class="cap-detail-button" type="button">Atualizar</button></div>
         <div id="agent-detail-error" class="cap-detail-error" hidden></div>
         <section class="cap-detail-summary">
-            <article><span>Hostname</span><strong id="detail-hostname">—</strong></article><article><span>Endereço</span><strong id="detail-address">—</strong></article><article><span>Sistema</span><strong id="detail-system">—</strong></article><article><span>Versão</span><strong id="detail-version">—</strong></article><article><span>Saúde</span><strong id="detail-health">—</strong></article><article><span>Último heartbeat</span><strong id="detail-heartbeat">—</strong></article>
+            <article><span>Nome administrativo</span><strong id="detail-name">—</strong></article><article><span>Hostname</span><strong id="detail-hostname">—</strong></article><article><span>Endereço</span><strong id="detail-address">—</strong></article><article><span>Sistema</span><strong id="detail-system">—</strong></article><article><span>Versão</span><strong id="detail-version">—</strong></article><article><span>Saúde</span><strong id="detail-health">—</strong></article><article><span>Último heartbeat</span><strong id="detail-heartbeat">—</strong></article><article><span>Agent ID</span><strong id="detail-agent-id">—</strong></article><article><span>Fingerprint</span><strong id="detail-fingerprint">—</strong></article>
         </section>
+
+        <section class="cap-detail-panel agent-manager-only" id="agent-admin-panel">
+            <div class="cap-detail-heading"><div><h2>Administração e manutenção</h2><p>Altere somente propriedades administrativas e execute verificações seguras. Nenhuma ação fornece shell remoto arbitrário.</p></div></div>
+            <div class="cap-admin-grid">
+                <div class="cap-admin-card">
+                    <h3>Nome administrativo</h3>
+                    <label for="agent-admin-name">Nome exibido no Controller</label>
+                    <div class="cap-admin-row"><input id="agent-admin-name" maxlength="160" autocomplete="off"><button id="agent-admin-save-name" class="cap-detail-button" type="button">Salvar nome</button></div>
+                    <p>O hostname físico do sistema operacional não é alterado.</p>
+                </div>
+                <div class="cap-admin-card">
+                    <h3>Doctor do Agent</h3>
+                    <p>Valida identidade, enrollment, serviço, Controller, heartbeat, recursos, portas, game-data, SteamCMD e atualização.</p>
+                    <button id="agent-run-doctor" class="cap-detail-button" type="button">Executar diagnóstico completo</button>
+                    <div id="agent-doctor-state" class="cap-detail-note">Nenhum diagnóstico solicitado.</div>
+                </div>
+                <div class="cap-admin-card">
+                    <h3>Credencial e revinculação</h3>
+                    <p>Gera um token de uso único para recuperar uma credencial perdida mantendo Agent ID, Node ID e fingerprint.</p>
+                    <button id="agent-prepare-relink" class="cap-detail-button" type="button">Preparar revinculação</button>
+                    <div id="agent-relink-result" class="cap-relink-result" hidden></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="agent-doctor-report" class="cap-detail-panel" hidden>
+            <div class="cap-detail-heading"><div><h2>Resultado do Doctor</h2><p id="agent-doctor-summary">—</p></div></div>
+            <div id="agent-doctor-findings" class="cap-doctor-findings"></div>
+            <dl id="agent-doctor-facts" class="cap-detail-list"></dl>
+        </section>
+
         <section id="agent-telemetry" class="cap-telemetry-section" aria-label="Telemetria do Agent"><div class="cap-telemetry-empty">Carregando telemetria...</div></section>
         <section class="cap-detail-grid">
             <article class="cap-detail-panel"><div class="cap-detail-heading"><div><h2>Portas administradas</h2><p>Faixas publicadas pelo Agent e conflitos persistentes.</p></div></div><div id="detail-ranges" class="cap-range-grid"></div><div id="detail-conflicts" class="cap-detail-note"></div></article>
@@ -31,6 +62,6 @@
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
 <script src="telemetry-widgets.js?v=1"></script>
-<script src="agent-details.js?v=2"></script>
+<script src="agent-details.js?v=3"></script>
 </body>
 </html>

@@ -1,18 +1,116 @@
-(function(){"use strict";
-const el=id=>document.getElementById(id);const auth=()=>sessionStorage.getItem("dsm_auth")||"";let collapsed=false;const params=new URLSearchParams(location.search);const agentId=params.get("agent_id")||params.get("id")||"";
-async function request(path){const r=await fetch(path,{headers:{Authorization:"Basic "+auth(),Accept:"application/json"},cache:"no-store"});if(r.status===401){sessionStorage.clear();location.replace("login.html");throw new Error("Sessão expirada");}const p=await r.json().catch(()=>({}));if(!r.ok)throw new Error(p.error||`HTTP ${r.status}`);return p}
-function text(id,v){const n=el(id);if(n)n.textContent=v??"—"}function value(v,f="—"){return v===null||v===undefined||v===""?f:String(v)}function heartbeat(v){if(!v)return"—";const d=new Date(v);return Number.isNaN(d.getTime())?String(v):d.toLocaleString("pt-BR")}
-function applySidebar(c){collapsed=c;document.body.classList.toggle("cap-sidebar-collapsed",c);localStorage.setItem("cap_sidebar_collapsed",c?"1":"0")}
-function bindMenu(){el("agent-detail-menu-toggle")?.addEventListener("click",()=>{if(innerWidth<=760){document.body.classList.toggle("sidebar-open");return}applySidebar(!collapsed)})}
-async function sidebar(){const host=el("sidebar-component");const r=await fetch("components/sidebar-v3.html");if(!r.ok)throw new Error(`sidebar HTTP ${r.status}`);host.innerHTML=await r.text();host.querySelectorAll("nav a").forEach(a=>a.classList.toggle("active",a.getAttribute("href")==="agents.html"));host.querySelectorAll("a").forEach(a=>a.addEventListener("click",()=>document.body.classList.remove("sidebar-open")));el("btn-logout")?.addEventListener("click",()=>{sessionStorage.clear();location.replace("login.html")});const who=await request("/api/whoami");text("current-user",`${who.username} (${who.role})`);text("agent-detail-user",who.username);text("agent-detail-role",who.role);document.querySelectorAll(".admin-only").forEach(x=>x.style.display=who.role==="admin"?"":"none");document.querySelectorAll(".agent-manager-only").forEach(x=>x.style.display=["admin","controller"].includes(who.role)?"":"none");if(!["admin","controller"].includes(who.role))throw new Error("Você não possui permissão para administrar Agents.");applySidebar(localStorage.getItem("cap_sidebar_collapsed")==="1")}
-function rangeCard(r){const n=document.createElement("div");n.className="cap-range-card";const protocol=value(r.protocol,"").toUpperCase();n.innerHTML=`<strong>${protocol} ${value(r.start_port,"?")}-${value(r.end_port,"?")}</strong><span>${value(r.available,0)} disponíveis · ${value(r.reserved,0)} reservadas · ${value(r.usage_pct,0)}% de uso</span>`;return n}
-const metricPaths={
-"capivara.host.cpu.usage_pct":"host.cpu_usage_pct","capivara.host.memory.usage_pct":"host.memory.usage_pct","capivara.host.memory.used_bytes":"host.memory.used_bytes","capivara.host.memory.total_bytes":"host.memory.total_bytes","capivara.host.disk.usage_pct":"host.disk.usage_pct","capivara.host.disk.used_bytes":"host.disk.used_bytes","capivara.host.disk.total_bytes":"host.disk.total_bytes","capivara.host.load.1m":"host.load_average.1m","capivara.host.load.5m":"host.load_average.5m","capivara.host.load.15m":"host.load_average.15m","capivara.host.uptime_seconds":"host.uptime_seconds","capivara.host.network.rx_bytes":"host.network.rx_bytes","capivara.host.network.tx_bytes":"host.network.tx_bytes","capivara.host.network.rx_bytes_per_second":"host.network.rx_bytes_per_second","capivara.host.network.tx_bytes_per_second":"host.network.tx_bytes_per_second","capivara.host.temperature_c":"host.temperature_c","capivara.agent.cpu.usage_pct":"agent.cpu_usage_pct","capivara.agent.memory.rss_bytes":"agent.memory_rss_bytes","capivara.agent.threads":"agent.threads","capivara.agent.pid":"agent.pid"};
-function assign(root,path,value){const keys=path.split(".");let obj=root;keys.forEach((key,i)=>{if(i===keys.length-1)obj[key]=value;else obj=obj[key]||(obj[key]={})})}
-function telemetryHistory(rows){const buckets=new Map();(rows||[]).forEach(row=>{const path=metricPaths[row.metric_name];if(!path)return;const stamp=String(row.collected_at||row.ingested_at||"");if(!buckets.has(stamp))buckets.set(stamp,{collected_at_unix:new Date(stamp).getTime()/1000,host:{},agent:{}});assign(buckets.get(stamp),path,Number(row.value))});return[...buckets.values()].sort((a,b)=>a.collected_at_unix-b.collected_at_unix)}
-async function loadTelemetry(current){const since=new Date(Date.now()-3600*1000).toISOString();const result=await request(`/api/observability?mode=history&agent_id=${encodeURIComponent(agentId)}&since=${encodeURIComponent(since)}&limit=5000`);const history=telemetryHistory(result.metrics||[]);window.CapivaraTelemetry?.render(el("agent-telemetry"),current||{},history,{label:"Agent",processKey:"agent",description:"Consumo total do host e consumo exclusivo do processo Capivara Agent."})}
-async function load(){if(!agentId)throw new Error("Agent não informado na URL.");const result=await request(`/api/agent/ports?agent_id=${encodeURIComponent(agentId)}`);const a=result.agent||{};text("agent-detail-title",`${value(a.name||a.hostname||a.node_id||a.id,"Agent")} · ${value(a.id,agentId)}`);text("detail-hostname",a.hostname||a.name||a.node_id||a.id);text("detail-address",a.address||a.ip||a.public_host);text("detail-system",a.system||a.os||a.os_name||a.platform);text("detail-version",a.version||a.capivara_version||a.agent_version||a.installed_version);text("detail-health",a.health||a.health_status||a.status);text("detail-heartbeat",heartbeat(a.last_heartbeat||a.heartbeat_at||a.last_seen||a.updated_at));text("detail-datacenter",a.datacenter_name||a.datacenter||a.location_name||a.location);text("detail-region",a.region_name||a.region||a.region_id);text("detail-public-host",a.public_host||a.address||a.ip);text("detail-node",a.node_id||a.hostname||a.id);const ranges=el("detail-ranges");ranges.replaceChildren(...(Array.isArray(result.ranges)?result.ranges:[]).map(rangeCard));if(!ranges.children.length){const empty=document.createElement("div");empty.className="cap-detail-note";empty.textContent="Nenhuma faixa de portas configurada.";ranges.appendChild(empty)}text("detail-conflicts",result.conflict_count?`${result.conflict_count} conflito(s) persistente(s) detectado(s).`:"Nenhum conflito persistente detectado.");await loadTelemetry(result.telemetry||a.telemetry||{})}
-function bindAgentViews(){document.querySelectorAll("[data-agent-view]").forEach(link=>{const view=link.dataset.agentView;link.href=`agent-observability.html?agent_id=${encodeURIComponent(agentId)}&view=${encodeURIComponent(view)}`})}
-async function refresh(){const b=el("refresh-agent-detail");if(b)b.disabled=true;const box=el("agent-detail-error");try{await load();box.hidden=true}catch(e){box.hidden=false;box.textContent=e.message}finally{if(b)b.disabled=false}}
-async function init(){if(!auth()){location.replace("login.html");return}bindMenu();bindAgentViews();el("refresh-agent-detail")?.addEventListener("click",refresh);try{await sidebar();await refresh();setInterval(refresh,30000)}catch(e){const box=el("agent-detail-error");box.hidden=false;box.textContent=e.message}}
-document.addEventListener("DOMContentLoaded",init)})();
+(function(){
+"use strict";
+const el=id=>document.getElementById(id);
+const auth=()=>sessionStorage.getItem("dsm_auth")||"";
+let collapsed=false;
+let currentRole="";
+let currentAdmin=null;
+const params=new URLSearchParams(location.search);
+const agentId=params.get("agent_id")||params.get("id")||"";
+
+async function request(path,options={}){
+  const headers={Authorization:"Basic "+auth(),Accept:"application/json",...(options.headers||{})};
+  if(options.body&&!headers["Content-Type"])headers["Content-Type"]="application/json";
+  const r=await fetch(path,{...options,headers,cache:"no-store"});
+  if(r.status===401){sessionStorage.clear();location.replace("login.html");throw new Error("Sessão expirada");}
+  const p=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(p.message||p.error||`HTTP ${r.status}`);
+  return p;
+}
+function post(path,payload){return request(path,{method:"POST",body:JSON.stringify(payload)});}
+function text(id,v){const n=el(id);if(n)n.textContent=v??"—";}
+function value(v,f="—"){return v===null||v===undefined||v===""?f:String(v);}
+function heartbeat(v){if(!v)return"—";const d=new Date(v);return Number.isNaN(d.getTime())?String(v):d.toLocaleString("pt-BR");}
+function applySidebar(c){collapsed=c;document.body.classList.toggle("cap-sidebar-collapsed",c);localStorage.setItem("cap_sidebar_collapsed",c?"1":"0");}
+function bindMenu(){el("agent-detail-menu-toggle")?.addEventListener("click",()=>{if(innerWidth<=760){document.body.classList.toggle("sidebar-open");return;}applySidebar(!collapsed);});}
+async function sidebar(){
+  const host=el("sidebar-component"),r=await fetch("components/sidebar-v3.html");
+  if(!r.ok)throw new Error(`sidebar HTTP ${r.status}`);
+  host.innerHTML=await r.text();
+  host.querySelectorAll("nav a").forEach(a=>a.classList.toggle("active",a.getAttribute("href")==="agents.html"));
+  host.querySelectorAll("a").forEach(a=>a.addEventListener("click",()=>document.body.classList.remove("sidebar-open")));
+  el("btn-logout")?.addEventListener("click",()=>{sessionStorage.clear();location.replace("login.html");});
+  const who=await request("/api/whoami");
+  currentRole=String(who.role||"").toLowerCase();
+  text("current-user",`${who.username} (${who.role})`);text("agent-detail-user",who.username);text("agent-detail-role",who.role);
+  document.querySelectorAll(".admin-only").forEach(x=>x.style.display=currentRole==="admin"?"":"none");
+  document.querySelectorAll(".agent-manager-only").forEach(x=>x.style.display=["admin","controller"].includes(currentRole)?"":"none");
+  if(!["admin","controller"].includes(currentRole))throw new Error("Você não possui permissão para administrar Agents.");
+  applySidebar(localStorage.getItem("cap_sidebar_collapsed")==="1");
+}
+function rangeCard(r){const n=document.createElement("div");n.className="cap-range-card";const protocol=value(r.protocol,"").toUpperCase();n.innerHTML=`<strong>${protocol} ${value(r.start_port,"?")}-${value(r.end_port,"?")}</strong><span>${value(r.available,0)} disponíveis · ${value(r.reserved,0)} reservadas · ${value(r.usage_pct,0)}% de uso</span>`;return n;}
+const metricPaths={"capivara.host.cpu.usage_pct":"host.cpu_usage_pct","capivara.host.memory.usage_pct":"host.memory.usage_pct","capivara.host.memory.used_bytes":"host.memory.used_bytes","capivara.host.memory.total_bytes":"host.memory.total_bytes","capivara.host.disk.usage_pct":"host.disk.usage_pct","capivara.host.disk.used_bytes":"host.disk.used_bytes","capivara.host.disk.total_bytes":"host.disk.total_bytes","capivara.host.load.1m":"host.load_average.1m","capivara.host.load.5m":"host.load_average.5m","capivara.host.load.15m":"host.load_average.15m","capivara.host.uptime_seconds":"host.uptime_seconds","capivara.host.network.rx_bytes":"host.network.rx_bytes","capivara.host.network.tx_bytes":"host.network.tx_bytes","capivara.host.network.rx_bytes_per_second":"host.network.rx_bytes_per_second","capivara.host.network.tx_bytes_per_second":"host.network.tx_bytes_per_second","capivara.host.temperature_c":"host.temperature_c","capivara.agent.cpu.usage_pct":"agent.cpu_usage_pct","capivara.agent.memory.rss_bytes":"agent.memory_rss_bytes","capivara.agent.threads":"agent.threads","capivara.agent.pid":"agent.pid"};
+function assign(root,path,v){const keys=path.split(".");let obj=root;keys.forEach((key,i)=>{if(i===keys.length-1)obj[key]=v;else obj=obj[key]||(obj[key]={});});}
+function telemetryHistory(rows){const buckets=new Map();(rows||[]).forEach(row=>{const path=metricPaths[row.metric_name];if(!path)return;const stamp=String(row.collected_at||row.ingested_at||"");if(!buckets.has(stamp))buckets.set(stamp,{collected_at_unix:new Date(stamp).getTime()/1000,host:{},agent:{}});assign(buckets.get(stamp),path,Number(row.value));});return[...buckets.values()].sort((a,b)=>a.collected_at_unix-b.collected_at_unix);}
+async function loadTelemetry(current){const since=new Date(Date.now()-3600*1000).toISOString();const result=await request(`/api/observability?mode=history&agent_id=${encodeURIComponent(agentId)}&since=${encodeURIComponent(since)}&limit=5000`);const history=telemetryHistory(result.metrics||[]);window.CapivaraTelemetry?.render(el("agent-telemetry"),current||{},history,{label:"Agent",processKey:"agent",description:"Consumo total do host e consumo exclusivo do processo Capivara Agent."});}
+
+function doctorFact(term,description){const box=document.createElement("div"),dt=document.createElement("dt"),dd=document.createElement("dd");dt.textContent=term;dd.textContent=description;box.append(dt,dd);return box;}
+function renderDoctor(state){
+  const stateBox=el("agent-doctor-state"),reportBox=el("agent-doctor-report"),findingsBox=el("agent-doctor-findings"),facts=el("agent-doctor-facts");
+  if(!state){stateBox.textContent="Nenhum diagnóstico solicitado.";reportBox.hidden=true;return;}
+  const status=String(state.status||"unknown");
+  stateBox.textContent=`Estado: ${status}${state.requested_at?` · solicitado em ${heartbeat(state.requested_at)}`:""}${state.completed_at?` · concluído em ${heartbeat(state.completed_at)}`:""}`;
+  const report=state.result;
+  if(!report||typeof report!=="object"){reportBox.hidden=true;return;}
+  reportBox.hidden=false;
+  text("agent-doctor-summary",`Status ${value(report.status)} · ${report.ready?"Agent apto":"Agent requer atenção"}`);
+  findingsBox.replaceChildren();
+  const findings=Array.isArray(report.findings)?report.findings:[];
+  if(!findings.length){const ok=document.createElement("div");ok.className="cap-doctor-finding healthy";ok.textContent="Nenhuma falha encontrada pelo Doctor.";findingsBox.append(ok);}
+  findings.forEach(item=>{const n=document.createElement("div");n.className=`cap-doctor-finding ${String(item.severity||"info").toLowerCase()}`;const strong=document.createElement("strong");strong.textContent=value(item.code,"finding");const span=document.createElement("span");span.textContent=value(item.message);n.append(strong,span);findingsBox.append(n);});
+  facts.replaceChildren(
+    doctorFact("Serviço",value(report.service?.active_state)),
+    doctorFact("Controller",report.heartbeat?.controller?.reachable?"alcançável":"não alcançável"),
+    doctorFact("Enrollment",report.identity?.enrolled?"credencial permanente presente":"credencial ausente"),
+    doctorFact("Portas",report.ports?.configured?`${value(report.ports?.conflict_count,0)} conflito(s)`:"faixas não configuradas"),
+    doctorFact("Armazenamento livre",report.host?.storage_root_free_bytes?`${(Number(report.host.storage_root_free_bytes)/1024/1024/1024).toFixed(1)} GiB`:"—")
+  );
+}
+function renderAdmin(a){
+  currentAdmin=a;
+  text("detail-name",a.name);text("detail-agent-id",a.agent_id);text("detail-fingerprint",a.fingerprint);
+  const input=el("agent-admin-name");if(input&&document.activeElement!==input)input.value=value(a.name,"");
+  renderDoctor(a.doctor);
+}
+async function loadAdmin(){const result=await request(`/api/admin/agent?agent_id=${encodeURIComponent(agentId)}`);renderAdmin(result.agent||{});}
+async function load(){
+  if(!agentId)throw new Error("Agent não informado na URL.");
+  const [result]=await Promise.all([request(`/api/agent/ports?agent_id=${encodeURIComponent(agentId)}`),loadAdmin()]);
+  const a=result.agent||{};
+  text("agent-detail-title",`${value(currentAdmin?.name||a.name||a.hostname||a.node_id||a.id,"Agent")} · ${value(a.id||currentAdmin?.agent_id,agentId)}`);
+  text("detail-hostname",a.hostname||currentAdmin?.hostname||a.name||a.node_id||a.id);text("detail-address",a.address||currentAdmin?.address||a.ip||a.public_host);text("detail-system",a.system||a.os||a.os_name||currentAdmin?.os_name||a.platform);text("detail-version",a.version||a.capivara_version||currentAdmin?.capivara_version||a.agent_version||a.installed_version);text("detail-health",a.health||a.health_status||currentAdmin?.health_status||a.status);text("detail-heartbeat",heartbeat(a.last_heartbeat||a.heartbeat_at||a.last_seen||currentAdmin?.last_seen||a.updated_at));text("detail-datacenter",a.datacenter_name||a.datacenter||a.location_name||a.location);text("detail-region",a.region_name||a.region||a.region_id);text("detail-public-host",a.public_host||a.address||currentAdmin?.address||a.ip);text("detail-node",a.node_id||currentAdmin?.node_id||a.hostname||a.id);
+  const ranges=el("detail-ranges");ranges.replaceChildren(...(Array.isArray(result.ranges)?result.ranges:[]).map(rangeCard));if(!ranges.children.length){const empty=document.createElement("div");empty.className="cap-detail-note";empty.textContent="Nenhuma faixa de portas configurada.";ranges.appendChild(empty);}
+  text("detail-conflicts",result.conflict_count?`${result.conflict_count} conflito(s) persistente(s) detectado(s).`:"Nenhum conflito persistente detectado.");
+  await loadTelemetry(result.telemetry||a.telemetry||{});
+}
+function bindAgentViews(){document.querySelectorAll("[data-agent-view]").forEach(link=>{const view=link.dataset.agentView;link.href=`agent-observability.html?agent_id=${encodeURIComponent(agentId)}&view=${encodeURIComponent(view)}`;});}
+function setBusy(button,busy,label){if(!button)return;button.disabled=busy;if(label)button.textContent=label;}
+async function saveName(){const button=el("agent-admin-save-name"),name=el("agent-admin-name").value.trim();setBusy(button,true,"Salvando…");try{await post("/api/admin/agent/rename",{agent_id:agentId,name});await loadAdmin();}catch(e){showError(e);}finally{setBusy(button,false,"Salvar nome");}}
+async function runDoctor(){const button=el("agent-run-doctor");setBusy(button,true,"Solicitando…");try{const result=await post("/api/admin/agent/doctor",{agent_id:agentId});renderDoctor(result.doctor);setTimeout(()=>refreshAdminOnly(),3500);}catch(e){showError(e);}finally{setBusy(button,false,"Executar diagnóstico completo");}}
+async function refreshAdminOnly(){try{await loadAdmin();hideError();}catch(e){showError(e);}}
+async function prepareRelink(){
+  const button=el("agent-prepare-relink"),box=el("agent-relink-result");setBusy(button,true,"Preparando…");
+  try{
+    const result=await post("/api/admin/agent/relink/prepare",{agent_id:agentId,ttl_seconds:900});
+    box.hidden=false;box.replaceChildren();
+    const warning=document.createElement("strong");warning.textContent="Token de uso único — expira em "+heartbeat(result.expires_at);
+    const token=document.createElement("code");token.textContent=result.pairing_token;
+    const help=document.createElement("p");help.textContent="No Agent, execute o comando abaixo substituindo <TOKEN> pelo token exibido. O token e a nova credencial não devem ser registrados em logs.";
+    const command=document.createElement("pre");command.textContent=result.command;
+    box.append(warning,token,help,command);
+  }catch(e){showError(e);}finally{setBusy(button,false,"Preparar revinculação");}
+}
+function showError(e){const box=el("agent-detail-error");box.hidden=false;box.textContent=e.message||String(e);}
+function hideError(){el("agent-detail-error").hidden=true;}
+async function refresh(){const b=el("refresh-agent-detail");if(b)b.disabled=true;try{await load();hideError();}catch(e){showError(e);}finally{if(b)b.disabled=false;}}
+async function init(){
+  if(!auth()){location.replace("login.html");return;}
+  bindMenu();bindAgentViews();
+  el("refresh-agent-detail")?.addEventListener("click",refresh);
+  el("agent-admin-save-name")?.addEventListener("click",saveName);
+  el("agent-run-doctor")?.addEventListener("click",runDoctor);
+  el("agent-prepare-relink")?.addEventListener("click",prepareRelink);
+  try{await sidebar();await refresh();setInterval(refresh,30000);}catch(e){showError(e);}
+}
+document.addEventListener("DOMContentLoaded",init);
+})();
