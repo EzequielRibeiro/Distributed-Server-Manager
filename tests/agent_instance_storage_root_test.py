@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "agents" / "linux" / "runtime"
@@ -20,6 +21,7 @@ import configuration_client
 import game_runtime
 import instance_runtime
 import provisioning_state
+import storage_migration_client
 
 
 class AgentInstanceStorageRootTest(unittest.TestCase):
@@ -70,34 +72,25 @@ class AgentInstanceStorageRootTest(unittest.TestCase):
         }
 
     @staticmethod
-    def storage_command(root: Path) -> dict:
+    def storage_command(root: Path, *, migrate: bool = False) -> dict:
         return {
             "target_type": "agent",
             "target_id": "agent-one",
             "namespace": "capivara.agent.storage",
-            "revision": "1",
-            "checksum": "storage-checksum",
-            "value": {"instance_storage_root": str(root)},
+            "revision": "2" if migrate else "1",
+            "checksum": "storage-migrate-checksum" if migrate else "storage-checksum",
+            "value": {"instance_storage_root": str(root), "migrate_existing": migrate},
             "configuration_refs": [],
         }
 
     def test_default_storage_root_preserves_legacy_layout(self):
-        spec = game_runtime.build_runtime_spec(
-            {"agent_id": "agent-one"},
-            self.instance,
-            {"install_path": str(self.install), "ports": self.ports()},
-        )
+        spec = game_runtime.build_runtime_spec({"agent_id": "agent-one"}, self.instance, {"install_path": str(self.install), "ports": self.ports()})
         self.assertEqual(spec["instance_state_root"], "/var/lib/capivara-instances/dayz-one")
         self.assertEqual(spec["profile_context"]["instance_state_root"], "/var/lib/capivara-instances/dayz-one")
 
     def test_custom_storage_root_is_applied_per_instance(self):
         storage = self.root / "games"
-        config = {"agent_id": "agent-one", "instance_storage_root": str(storage)}
-        spec = game_runtime.build_runtime_spec(
-            config,
-            self.instance,
-            {"install_path": str(self.install), "ports": self.ports()},
-        )
+        spec = game_runtime.build_runtime_spec({"agent_id": "agent-one", "instance_storage_root": str(storage)}, self.instance, {"install_path": str(self.install), "ports": self.ports()})
         expected = storage / "dayz-one"
         self.assertEqual(Path(spec["instance_state_root"]), expected)
         self.assertEqual(Path(spec["config_path"]), expected / "config" / "serverDZ.cfg")
@@ -117,9 +110,8 @@ class AgentInstanceStorageRootTest(unittest.TestCase):
             module._instance_storage_root({"instance_storage_root": "/"})
 
     def test_invalid_instance_id_cannot_escape_storage_root(self):
-        config = {"agent_id": "agent-one", "instance_storage_root": str(self.root / "games")}
         with self.assertRaisesRegex(ValueError, "invalid instance_id"):
-            game_runtime.instance_state_root(config, "../escape")
+            game_runtime.instance_state_root({"agent_id": "agent-one", "instance_storage_root": str(self.root / "games")}, "../escape")
 
     def test_managed_configuration_updates_agent_json_when_no_migration_is_needed(self):
         storage = self.root / "games"
@@ -132,19 +124,44 @@ class AgentInstanceStorageRootTest(unittest.TestCase):
     def test_managed_configuration_refuses_root_change_when_existing_instance_uses_old_root(self):
         inventory = Path(os.environ["CAPIVARA_AGENT_STATE_DIR"]) / "instances"
         inventory.mkdir(parents=True, exist_ok=True)
-        (inventory / "dayz-one.json").write_text(
-            json.dumps({
-                "instance_id": "dayz-one",
-                "instance_state_root": "/var/lib/capivara-instances/dayz-one",
-            }),
-            encoding="utf-8",
-        )
+        (inventory / "dayz-one.json").write_text(json.dumps({"instance_id": "dayz-one", "instance_state_root": "/var/lib/capivara-instances/dayz-one"}), encoding="utf-8")
         storage = self.root / "games"
         reports = configuration_client.apply_configuration_commands([self.storage_command(storage)])
         self.assertEqual(reports[0]["status"], "failed")
         self.assertIn("migration required", reports[0]["last_error"])
         config = json.loads(Path(os.environ["CAPIVARA_AGENT_CONFIG"]).read_text(encoding="utf-8"))
         self.assertEqual(config["instance_storage_root"], "/var/lib/capivara-instances")
+
+    def test_explicit_migration_routes_through_storage_migration_client(self):
+        storage = self.root / "nvme"
+        completed = {
+            "migration_id": "configuration-2",
+            "status": "completed",
+            "source_root": "/var/lib/capivara-instances",
+            "target_root": str(storage.resolve()),
+            "instances": ["dayz-one"],
+            "source_preserved": True,
+        }
+        with patch("storage_migration_client.handle_command", return_value=completed) as migrate:
+            reports = configuration_client.apply_configuration_commands([self.storage_command(storage, migrate=True)])
+        self.assertEqual(reports[0]["status"], "applied")
+        migrate.assert_called_once()
+        applied = json.loads((Path(os.environ["CAPIVARA_AGENT_STATE_DIR"]) / "managed-configuration" / "agent" / "agent-one" / "capivara.agent.storage.json").read_text(encoding="utf-8"))
+        self.assertTrue(applied["value"]["migration"]["source_preserved"])
+        self.assertFalse(applied["value"]["migrate_existing"])
+
+    def test_storage_path_rewrite_only_changes_old_instance_prefix(self):
+        source = Path("/old/dayz-one")
+        target = Path("/new/dayz-one")
+        value = {
+            "config_path": "/old/dayz-one/config/serverDZ.cfg",
+            "working_directory": "/srv/dayz",
+            "arguments": ["-profiles=/old/dayz-one/profiles"],
+        }
+        rewritten = storage_migration_client._replace_prefix(value, source, target)
+        self.assertEqual(rewritten["config_path"], "/new/dayz-one/config/serverDZ.cfg")
+        self.assertEqual(rewritten["working_directory"], "/srv/dayz")
+        self.assertEqual(rewritten["arguments"][0], "-profiles=/new/dayz-one/profiles")
 
 
 if __name__ == "__main__":
