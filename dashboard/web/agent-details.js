@@ -66,10 +66,18 @@ function renderDoctor(state){
     doctorFact("Armazenamento livre",report.host?.storage_root_free_bytes?`${(Number(report.host.storage_root_free_bytes)/1024/1024/1024).toFixed(1)} GiB`:"—")
   );
 }
+function renderStorage(storage){
+  const root=value(storage?.instance_storage_root,"/var/lib/capivara-instances");
+  const input=el("agent-instance-storage-root");if(input&&document.activeElement!==input)input.value=root;
+  const source=storage?.source==="managed"?"configuração gerenciada":"padrão do Agent";
+  const revision=storage?.revision?` · revisão ${storage.revision}`:"";
+  text("agent-storage-state",`Atual: ${root} · ${source}${revision}`);
+}
 function renderAdmin(a){
   currentAdmin=a;
   text("detail-name",a.name);text("detail-agent-id",a.agent_id);text("detail-fingerprint",a.fingerprint);
   const input=el("agent-admin-name");if(input&&document.activeElement!==input)input.value=value(a.name,"");
+  renderStorage(a.storage||{});
   renderDoctor(a.doctor);
 }
 async function loadAdmin(){const result=await request(`/api/admin/agent?agent_id=${encodeURIComponent(agentId)}`);renderAdmin(result.agent||{});}
@@ -86,6 +94,15 @@ async function load(){
 function bindAgentViews(){document.querySelectorAll("[data-agent-view]").forEach(link=>{const view=link.dataset.agentView;link.href=`agent-observability.html?agent_id=${encodeURIComponent(agentId)}&view=${encodeURIComponent(view)}`;});}
 function setBusy(button,busy,label){if(!button)return;button.disabled=busy;if(label)button.textContent=label;}
 async function saveName(){const button=el("agent-admin-save-name"),name=el("agent-admin-name").value.trim();setBusy(button,true,"Salvando…");try{await post("/api/admin/agent/rename",{agent_id:agentId,name});await loadAdmin();}catch(e){showError(e);}finally{setBusy(button,false,"Salvar nome");}}
+async function saveStorage(){
+  const button=el("agent-admin-save-storage"),root=el("agent-instance-storage-root").value.trim();setBusy(button,true,"Salvando…");
+  try{
+    const result=await post("/api/admin/agent/storage",{agent_id:agentId,instance_storage_root:root});
+    renderStorage(result.storage||{});hideError();
+    text("agent-storage-state",`Solicitado: ${value(result.storage?.instance_storage_root,root)} · aguardando aplicação pelo heartbeat do Agent.`);
+    setTimeout(()=>refreshAdminOnly(),3500);
+  }catch(e){showError(e);}finally{setBusy(button,false,"Salvar diretório");}
+}
 async function runDoctor(){const button=el("agent-run-doctor");setBusy(button,true,"Solicitando…");try{const result=await post("/api/admin/agent/doctor",{agent_id:agentId});renderDoctor(result.doctor);setTimeout(()=>refreshAdminOnly(),3500);}catch(e){showError(e);}finally{setBusy(button,false,"Executar diagnóstico completo");}}
 async function refreshAdminOnly(){try{await loadAdmin();hideError();}catch(e){showError(e);}}
 async function prepareRelink(){
@@ -108,6 +125,7 @@ async function init(){
   bindMenu();bindAgentViews();
   el("refresh-agent-detail")?.addEventListener("click",refresh);
   el("agent-admin-save-name")?.addEventListener("click",saveName);
+  el("agent-admin-save-storage")?.addEventListener("click",saveStorage);
   el("agent-run-doctor")?.addEventListener("click",runDoctor);
   el("agent-prepare-relink")?.addEventListener("click",prepareRelink);
   try{await sidebar();await refresh();setInterval(refresh,30000);}catch(e){showError(e);}
