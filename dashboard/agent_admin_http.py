@@ -15,12 +15,14 @@ from agent_pairing_repository import (
     PairingTokenInvalid,
 )
 from agent_relink_repository import AgentRelinkRepository
+from agent_storage_migration_repository import AgentStorageMigrationRepository
 from configuration_repository import ConfigurationRepository
 from universal_event_repository import UniversalEventRepository
 
 DETAIL_PATH = "/api/admin/agent"
 RENAME_PATH = "/api/admin/agent/rename"
 STORAGE_PATH = "/api/admin/agent/storage"
+STORAGE_MIGRATE_PATH = "/api/admin/agent/storage/migrate"
 DOCTOR_PATH = "/api/admin/agent/doctor"
 RELINK_PREPARE_PATH = "/api/admin/agent/relink/prepare"
 CREDENTIAL_ROTATE_PATH = "/api/admin/agent/credential-rotate"
@@ -73,12 +75,14 @@ def _storage_detail(backend, agent_id: str) -> dict:
         root = str(value.get("instance_storage_root") or _DEFAULT_STORAGE_ROOT)
         revision = configured.get("revision")
         checksum = configured.get("checksum")
+    migration = AgentStorageMigrationRepository(backend).latest(agent_id)
     return {
         "instance_storage_root": root,
         "source": "managed" if configured else "default",
         "revision": revision,
         "checksum": checksum,
-        "note": "A mudança é aplicada pelo próximo heartbeat e não move instâncias existentes automaticamente.",
+        "migration": migration,
+        "note": "Mudanças com instâncias existentes exigem migração explícita; o diretório antigo é preservado para rollback.",
     }
 
 
@@ -175,7 +179,7 @@ def install_agent_administration(legacy, authenticate) -> None:
                 self.send_json(500, {"error": "relink_failed", "message": "Não foi possível revincular o Agent."})
             return
 
-        if path not in {RENAME_PATH, STORAGE_PATH, DOCTOR_PATH, RELINK_PREPARE_PATH, CREDENTIAL_ROTATE_PATH}:
+        if path not in {RENAME_PATH, STORAGE_PATH, STORAGE_MIGRATE_PATH, DOCTOR_PATH, RELINK_PREPARE_PATH, CREDENTIAL_ROTATE_PATH}:
             return previous_post(self)
         user = authenticated(self)
         if user is None:
@@ -226,6 +230,21 @@ def install_agent_administration(legacy, authenticate) -> None:
                 self.send_json(202, {"agent_id": agent_id, "storage": _storage_detail(backend, agent_id), "changed": bool(stored.get("changed"))})
                 return
 
+            if path == STORAGE_MIGRATE_PATH:
+                if _role(user) == "operator":
+                    raise PermissionError("operator is read-only")
+                root = _storage_root((payload or {}).get("instance_storage_root"))
+                state = AgentStorageMigrationRepository(backend).request(agent_id, target_root=root, actor=actor)
+                _publish(
+                    backend,
+                    event_type="AGENT_INSTANCE_STORAGE_MIGRATION_REQUESTED",
+                    agent_id=agent_id,
+                    actor=actor,
+                    data={"migration_id": state["migration_id"], "target_root": root},
+                )
+                self.send_json(202, {"agent_id": agent_id, "migration": state})
+                return
+
             if path == DOCTOR_PATH:
                 result = repo.request_doctor(agent_id, requested_by=actor)
                 _publish(backend, event_type="AGENT_DOCTOR_REQUESTED", agent_id=agent_id, actor=actor, data={"request_id": result["request_id"]})
@@ -269,6 +288,8 @@ def install_agent_administration(legacy, authenticate) -> None:
             self.send_json(404, {"error": "agent_not_found", "message": str(exc)})
         except (ValueError, TypeError) as exc:
             self.send_json(400, {"error": "invalid_request", "message": str(exc)})
+        except RuntimeError as exc:
+            self.send_json(409, {"error": "conflict", "message": str(exc)})
         except Exception:
             self.send_json(500, {"error": "agent_admin_failed", "message": "Falha na operação administrativa do Agent."})
 
