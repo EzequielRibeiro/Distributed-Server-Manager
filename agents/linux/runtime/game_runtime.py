@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,11 +15,39 @@ from runtime_events import emit_runtime_event
 from runtime_materialization import materialize
 from runtime_spec import validate_runtime_spec
 
+_DEFAULT_INSTANCE_STORAGE_ROOT = Path("/var/lib/capivara-instances")
+_INSTANCE_ID = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 _PROFILE_CONTEXT_KEYS = (
     "install_path", "content_root", "working_directory", "executable", "ports", "environment", "arguments", "user",
     "desired_state", "instance_state_root", "config_path", "mission", "dayz_mission", "catalog_runtime_policy",
     "variables", "runtime_variables", "resource_profile",
 )
+
+
+def instance_storage_root(config: dict[str, Any]) -> Path:
+    """Return the administrator-controlled root used for mutable per-instance state."""
+    raw = str(config.get("instance_storage_root") or _DEFAULT_INSTANCE_STORAGE_ROOT).strip()
+    path = Path(raw)
+    if not raw or not path.is_absolute():
+        raise ValueError("Agent instance_storage_root must be an absolute path")
+    resolved = path.resolve(strict=False)
+    if resolved == Path("/"):
+        raise ValueError("Agent instance_storage_root cannot be filesystem root")
+    return resolved
+
+
+def instance_state_root(config: dict[str, Any], instance_id: str) -> Path:
+    """Derive a safe instance directory from Agent policy; clients cannot choose it."""
+    token = str(instance_id or "").strip()
+    if not _INSTANCE_ID.fullmatch(token):
+        raise ValueError("invalid instance_id")
+    root = instance_storage_root(config)
+    path = (root / token).resolve(strict=False)
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("instance path escapes Agent instance_storage_root") from exc
+    return path
 
 
 def _profile_context(context: dict[str, Any]) -> dict[str, Any]:
@@ -103,15 +132,21 @@ def build_runtime_spec(config: dict[str, Any], instance: dict[str, Any], context
         raise ValueError("Agent identity is required")
     if str(instance.get("agent_id") or "").strip() != agent_id:
         raise PermissionError("instance belongs to another Agent")
+
+    instance_id = str(instance.get("instance_id") or instance.get("id") or "").strip()
+    effective_context = dict(context)
+    if not effective_context.get("instance_state_root"):
+        effective_context["instance_state_root"] = str(instance_state_root(config, instance_id))
+
     profile = resolve_profile(instance)
-    raw = profile.build_runtime_spec(dict(instance), dict(context))
-    raw = apply_policy(raw, instance, context)
+    raw = profile.build_runtime_spec(dict(instance), effective_context)
+    raw = apply_policy(raw, instance, effective_context)
     normalized = validate_runtime_spec(raw, expected_agent_id=agent_id)
     normalized["game_id"] = str(raw.get("game_id") or instance.get("game_id") or "").strip().lower()
     normalized["environment_id"] = str(raw.get("environment_id") or instance.get("environment_id") or "").strip()
     normalized["profile"] = str(raw.get("profile") or normalized["game_id"])
     normalized["profile_version"] = int(raw.get("profile_version") or getattr(profile, "profile_version", 1))
-    normalized["profile_context"] = _profile_context(context)
+    normalized["profile_context"] = _profile_context(effective_context)
     for key in ("ports", "catalog_runtime_policy", "catalog_templates", "catalog_network_properties", "catalog_variables"):
         if key in raw:
             normalized[key] = raw[key]
@@ -125,7 +160,8 @@ def build_runtime_spec(config: dict[str, Any], instance: dict[str, Any], context
             "environment_id": normalized["environment_id"],
             "profile": normalized["profile"],
             "profile_version": normalized["profile_version"],
-            "catalog_policy": bool(context.get("catalog_runtime_policy")),
+            "catalog_policy": bool(effective_context.get("catalog_runtime_policy")),
+            "instance_storage_root": str(instance_storage_root(config)),
         },
     )
     return normalized
@@ -192,4 +228,4 @@ def materialize_profile(config: dict[str, Any], instance: dict[str, Any], contex
     return result
 
 
-__all__ = ["build_runtime_spec", "materialize_profile", "migrate_runtime_spec"]
+__all__ = ["build_runtime_spec", "instance_state_root", "instance_storage_root", "materialize_profile", "migrate_runtime_spec"]
