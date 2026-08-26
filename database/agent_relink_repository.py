@@ -2,6 +2,7 @@
 """Secure credential recovery for an already registered Agent identity."""
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -29,8 +30,20 @@ def _parse(value: Any) -> datetime:
     return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
+def _metadata(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8", errors="replace")
+    try:
+        value = json.loads(str(raw or "{}"))
+    except (TypeError, ValueError):
+        value = {}
+    return value if isinstance(value, dict) else {}
+
+
 class AgentRelinkRepository:
-    """Rotate an Agent credential after proving a one-time pairing token and identity."""
+    """Rotate an Agent credential after proving a one-time, Agent-bound token."""
 
     def __init__(self, backend: DatabaseBackend):
         self.backend = backend
@@ -73,7 +86,7 @@ class AgentRelinkRepository:
                     raise PairingTokenExpired("pairing token has expired")
 
                 agent = session.execute(
-                    "SELECT a.controller_id,a.node_id,a.status,ari.fingerprint "
+                    "SELECT a.controller_id,a.node_id,a.status,a.metadata_json,ari.fingerprint "
                     "FROM agents a LEFT JOIN agent_runtime_inventory ari ON ari.agent_id=a.id "
                     f"WHERE a.id={ph}",
                     (agent_id,),
@@ -82,6 +95,9 @@ class AgentRelinkRepository:
                     raise LookupError("Agent not found")
                 if str(agent["controller_id"]) != str(token_row["controller_id"]):
                     raise PairingTokenInvalid("pairing token belongs to another Controller")
+                prepared = _metadata(agent["metadata_json"]).get("admin_relink")
+                if not isinstance(prepared, dict) or str(prepared.get("token_id") or "") != str(token_row["id"]):
+                    raise PairingTokenInvalid("pairing token was not prepared for this Agent")
                 if str(agent["node_id"]) != node_id:
                     raise AgentCredentialInvalid("Agent node identity mismatch")
                 stored_fingerprint = str(agent["fingerprint"] or "").strip()
