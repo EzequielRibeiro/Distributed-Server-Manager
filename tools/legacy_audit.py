@@ -136,7 +136,7 @@ def main() -> int:
     state_initializer = ROOT / "dashboard" / "state" / "init_state.sh"
     if state_initializer.is_file():
         state_text = state_initializer.read_text(encoding="utf-8")
-        match = re.search(r"FILES=\((.*?)\)\", state_text, re.S)
+        match = re.search(r"FILES=\((.*?)\)", state_text, re.S)
         initializer_entries = set(match.group(1).split()) if match else set()
         for durable_projection in ("alerts", "events"):
             if durable_projection in initializer_entries:
