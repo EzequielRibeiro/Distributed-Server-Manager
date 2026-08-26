@@ -4,9 +4,8 @@ on:
     paths:
       - 'core/federation.py'
       - 'database/federation_*'
-      - 'database/migrations/039_multi_datacenter_federation.sql'
-      - 'database/migrations_mysql/039_multi_datacenter_federation.sql'
-      - 'database/migrations_postgresql/039_multi_datacenter_federation.sql'
+      - 'database/schema_baseline.py'
+      - 'database/schemas/**'
       - 'bin/cap'
       - 'tests/multi_datacenter_federation_test.py'
       - 'docs/architecture/multi-datacenter-federation.md'
@@ -26,7 +25,7 @@ jobs:
       - name: Verify integration contracts
         run: |
           grep -Fq 'cap federation' bin/cap
-          grep -Fq 'federation_members' database/migrations/039_multi_datacenter_federation.sql
-          grep -Fq 'federation_members' database/migrations_mysql/039_multi_datacenter_federation.sql
-          grep -Fq 'federation_members' database/migrations_postgresql/039_multi_datacenter_federation.sql
+          grep -Fq 'federation_members' database/schemas/sqlite.sql
+          grep -Fq 'federation_members' database/schemas/mysql.sql
+          grep -Fq 'federation_members' database/schemas/postgresql.sql
           test ! -e dashboard/server_part14.py
