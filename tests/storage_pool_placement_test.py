@@ -87,9 +87,10 @@ class StoragePoolProvisioningIntegrationTest(unittest.TestCase):
         self.backend = create_backend(DatabaseConfig(driver="sqlite", database=str(Path(self.temp.name) / "capivara.db")))
         self.backend.initialize()
         identity = installation_profile_identity(RegistryRepository(self.backend), profile="controller", hostname="storage-controller")
-        issued = AgentPairingRepository(self.backend).issue_token(controller_id=str(identity["controller_id"]), ttl_seconds=300)
-        enrolled = AgentPairingRepository(self.backend).enroll(
-            issued.token,
+        pairing = AgentPairingRepository(self.backend)
+        issued = pairing.issue_token(controller_id=str(identity["controller_id"]), ttl_seconds=300)
+        pairing.enroll(
+            pairing_token=issued.token,
             agent_id="agent-storage", node_id="node-storage", name="Storage Agent",
             fingerprint="sha256:storage-agent", hostname="storage-agent", os_name="linux", architecture="x86_64",
         )
