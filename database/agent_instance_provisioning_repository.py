@@ -19,6 +19,33 @@ VALID_STATES = {*ACTIVE_STATES, *FINAL_STATES}
 VALID_DESIRED_STATES = {"running", "stopped"}
 
 
+def _request_storage_reservation(request: Any) -> tuple[str | None, int]:
+    if not isinstance(request, dict):
+        return None, 0
+    instance = request.get("instance") if isinstance(request.get("instance"), dict) else {}
+    pool_id = str(instance.get("storage_pool_id") or "").strip() or None
+    try:
+        reserved_bytes = int(instance.get("storage_reserved_bytes") or 0)
+    except (TypeError, ValueError):
+        reserved_bytes = 0
+    return pool_id, max(0, reserved_bytes)
+
+
+def _decode_request(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            raw = raw.decode("utf-8")
+        except Exception:
+            return {}
+    try:
+        parsed = json.loads(str(raw)) if raw else {}
+    except (TypeError, ValueError):
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
+
+
 class AgentInstanceProvisioningRepository:
     def __init__(self, backend: DatabaseBackend):
         self.backend = backend
@@ -66,6 +93,21 @@ class AgentInstanceProvisioningRepository:
         text = str(error or "").lower()
         return any(token in text for token in ("steam guard", "steam auth", "steam login", "steam authentication"))
 
+    def _active_storage_reservations(self, session: AlertSession, agent_id: str) -> dict[str, int]:
+        ph = self.dialect.placeholder
+        rows = session.execute(
+            "SELECT request_json FROM agent_instance_provisioning "
+            f"WHERE agent_id={ph} AND status IN ('queued','delivered','running')",
+            (agent_id,),
+        ).fetchall()
+        totals: dict[str, int] = {}
+        for row in rows:
+            request = _decode_request(row["request_json"])
+            pool_id, reserved_bytes = _request_storage_reservation(request)
+            if pool_id and reserved_bytes:
+                totals[pool_id] = totals.get(pool_id, 0) + reserved_bytes
+        return totals
+
     def enqueue(self, *, agent_id: str, instance_id: str, environment_id: str, selector: str,
                 selection: dict[str, Any], configuration: dict[str, Any] | None = None,
                 desired_state: str = "stopped", requested_by: str | None = None,
@@ -91,19 +133,17 @@ class AgentInstanceProvisioningRepository:
                 raise ValueError("required_storage_bytes must be an integer") from exc
             if required_storage_bytes < 0:
                 raise ValueError("required_storage_bytes cannot be negative")
+        requested_capacity = int(required_storage_bytes or 0)
 
         ph = self.dialect.placeholder
         storage_decision: dict[str, Any] | None = None
         with self.session(transaction=True) as session:
+            lock_suffix = " FOR UPDATE" if self.dialect.name in {"postgresql", "mysql"} else ""
             agent = session.execute(
-                f"SELECT status,metadata_json FROM agents WHERE id={ph}", (agent_id,)
+                f"SELECT status,metadata_json FROM agents WHERE id={ph}{lock_suffix}", (agent_id,)
             ).fetchone()
             if agent is None or str(agent["status"] or "").strip().lower() != "active":
                 raise ValueError("Agent must be active")
-            storage_decision = select_storage_pool(
-                agent["metadata_json"], requested_pool_id=storage_pool_id,
-                preferred_storage_class=storage_class, required_bytes=required_storage_bytes,
-            )
             instance = session.execute(
                 f"SELECT id,agent_id,node_id,game_id,runtime_id FROM instances WHERE id={ph}", (instance_id,)
             ).fetchone()
@@ -118,6 +158,13 @@ class AgentInstanceProvisioningRepository:
             ).fetchone()
             if existing is not None:
                 return self.snapshot(str(existing["provisioning_id"]))
+
+            active_reservations = self._active_storage_reservations(session, agent_id)
+            storage_decision = select_storage_pool(
+                agent["metadata_json"], requested_pool_id=storage_pool_id,
+                preferred_storage_class=storage_class, required_bytes=requested_capacity,
+                reserved_bytes_by_pool=active_reservations,
+            )
             rows = session.execute(
                 "SELECT name,protocol,port,bind_address FROM instance_ports "
                 f"WHERE instance_id={ph} ORDER BY name,protocol,port", (instance_id,),
@@ -134,6 +181,8 @@ class AgentInstanceProvisioningRepository:
             }
             if storage_decision is not None:
                 instance_request["storage_pool_id"] = storage_decision["storage_pool_id"]
+                if requested_capacity:
+                    instance_request["storage_reserved_bytes"] = requested_capacity
             request = {
                 "schema_version": 1, "kind": "CapivaraInstanceProvisioningRequest",
                 "provisioning_id": provisioning_id, "agent_id": agent_id, "instance_id": instance_id,
@@ -154,19 +203,35 @@ class AgentInstanceProvisioningRepository:
 
         state = self.snapshot(provisioning_id)
         if storage_decision is not None:
+            available_before = int(storage_decision.get("available_bytes") or 0)
             self._publish_event(
                 event_id=f"{provisioning_id}:storage-pool-selected",
                 event_type="INSTANCE_STORAGE_POOL_SELECTED", severity="info", provisioning=state,
                 data={
                     "storage_pool_id": storage_decision["storage_pool_id"],
                     "storage_class": storage_decision["storage_class"],
-                    "usable_bytes": storage_decision["usable_bytes"],
+                    "reported_usable_bytes": storage_decision.get("reported_usable_bytes", storage_decision["usable_bytes"]),
+                    "active_reserved_bytes": storage_decision.get("reserved_bytes", 0),
+                    "available_bytes": available_before,
                     "priority": storage_decision["priority"],
                     "selection_source": storage_decision["source"],
                     "selection_reason": storage_decision["reason"],
                     "message": "Storage Pool selecionado para a instância antes do provisionamento.",
                 },
             )
+            if requested_capacity:
+                self._publish_event(
+                    event_id=f"{provisioning_id}:storage-capacity-reserved",
+                    event_type="INSTANCE_STORAGE_POOL_CAPACITY_RESERVED", severity="info", provisioning=state,
+                    data={
+                        "storage_pool_id": storage_decision["storage_pool_id"],
+                        "reserved_bytes": requested_capacity,
+                        "active_reserved_bytes_before": storage_decision.get("reserved_bytes", 0),
+                        "available_bytes_before": available_before,
+                        "available_bytes_after": max(0, available_before - requested_capacity),
+                        "message": "Capacidade lógica reservada no Storage Pool enquanto o provisionamento estiver ativo.",
+                    },
+                )
         self._publish_event(
             event_id=f"{provisioning_id}:queued", event_type="INSTANCE_PROVISION_QUEUED", severity="info",
             provisioning=state, data={"message": "Provisionamento da instância foi enfileirado para o Agent."},
@@ -259,6 +324,7 @@ class AgentInstanceProvisioningRepository:
                 )
 
         state = self.snapshot(provisioning_id)
+        pool_id, reserved_bytes = _request_storage_reservation(current.get("request"))
         if status == "running":
             self._publish_event(event_id=f"{provisioning_id}:running:{current_step}:{progress}",
                 event_type="INSTANCE_PROVISION_STARTED", severity="info", provisioning=state,
@@ -276,7 +342,21 @@ class AgentInstanceProvisioningRepository:
                     event_type="STEAM_AUTH_REQUIRED", severity="critical", provisioning=state,
                     data={"message": "Autenticação Steam necessária no Agent para continuar o provisionamento.",
                           "error": error})
+        if status in FINAL_STATES and pool_id and reserved_bytes:
+            self._publish_event(
+                event_id=f"{provisioning_id}:storage-capacity-released",
+                event_type="INSTANCE_STORAGE_POOL_CAPACITY_RELEASED", severity="info", provisioning=state,
+                data={
+                    "storage_pool_id": pool_id,
+                    "released_bytes": reserved_bytes,
+                    "final_status": status,
+                    "message": "Reserva lógica de capacidade do Storage Pool foi liberada ao finalizar o provisionamento.",
+                },
+            )
         return state
 
 
-__all__ = ["ACTIVE_STATES", "FINAL_STATES", "VALID_STATES", "AgentInstanceProvisioningRepository"]
+__all__ = [
+    "ACTIVE_STATES", "FINAL_STATES", "VALID_STATES", "AgentInstanceProvisioningRepository",
+    "_request_storage_reservation",
+]

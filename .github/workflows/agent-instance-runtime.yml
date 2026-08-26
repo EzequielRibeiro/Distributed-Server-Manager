@@ -154,6 +154,10 @@ jobs:
           grep -F 'telemetry["storage_pools"]' agents/linux/runtime/runtime_metrics.py
           grep -F 'select_storage_pool' database/storage_pool_placement.py database/agent_instance_provisioning_repository.py
           grep -F 'INSTANCE_STORAGE_POOL_SELECTED' database/agent_instance_provisioning_repository.py
+          grep -F 'reserved_bytes_by_pool' database/storage_pool_placement.py database/agent_instance_provisioning_repository.py
+          grep -F 'storage_reserved_bytes' agents/linux/runtime/provisioning_contract.py database/agent_instance_provisioning_repository.py
+          grep -F 'INSTANCE_STORAGE_POOL_CAPACITY_RESERVED' database/agent_instance_provisioning_repository.py
+          grep -F 'INSTANCE_STORAGE_POOL_CAPACITY_RELEASED' database/agent_instance_provisioning_repository.py
       - name: Check consolidated schema parity
         run: |
           set -euo pipefail

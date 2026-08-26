@@ -8,7 +8,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-for path in (ROOT, ROOT / "database", ROOT / "dashboard"):
+RUNTIME = ROOT / "agents" / "linux" / "runtime"
+for path in (ROOT, ROOT / "database", ROOT / "dashboard", RUNTIME):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
@@ -16,6 +17,7 @@ from agent_instance_provisioning_repository import AgentInstanceProvisioningRepo
 from agent_pairing_repository import AgentPairingRepository
 from backend import DatabaseConfig
 from backend_factory import create_backend
+from provisioning_contract import ProvisioningContractError, validate_provisioning_request
 from registry import installation_profile_identity
 from registry_repository import RegistryRepository
 from storage_pool_placement import select_storage_pool
@@ -80,6 +82,24 @@ class StoragePoolSelectorTest(unittest.TestCase):
         result = select_storage_pool(metadata(pool("zeta", priority=10), pool("alpha", priority=10)))
         self.assertEqual(result["storage_pool_id"], "alpha")
 
+    def test_active_reservations_reduce_effective_capacity(self):
+        result = select_storage_pool(
+            metadata(
+                pool("nvme", priority=100, usable_bytes=5000),
+                pool("hdd", priority=10, usable_bytes=10000),
+            ),
+            required_bytes=2000,
+            reserved_bytes_by_pool={"nvme": 4000},
+        )
+        self.assertEqual(result["storage_pool_id"], "hdd")
+        self.assertEqual(result["available_bytes"], 10000)
+        with self.assertRaises(ValueError):
+            select_storage_pool(
+                metadata(pool("nvme", priority=100, usable_bytes=5000)),
+                requested_pool_id="nvme", required_bytes=2000,
+                reserved_bytes_by_pool={"nvme": 4000},
+            )
+
 
 class StoragePoolProvisioningIntegrationTest(unittest.TestCase):
     def setUp(self):
@@ -106,13 +126,14 @@ class StoragePoolProvisioningIntegrationTest(unittest.TestCase):
             ))
             conn.execute("INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)",
                          (1, self.controller_id, "Customer", "active"))
-            conn.execute(
-                "INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,controller_id,agent_id,customer_id) VALUES (?,?,?,?,?,?,?,?,?)",
-                ("instance-storage", "node-storage", "dayz", "dayz.stable", "Storage Instance", "offline",
-                 self.controller_id, "agent-storage", 1),
-            )
-            conn.execute("INSERT INTO instance_ports(instance_id,node_id,name,protocol,port) VALUES (?,?,?,?,?)",
-                         ("instance-storage", "node-storage", "game", "udp", 24000))
+            for instance_id, port_number in (("instance-storage", 24000), ("instance-storage-2", 24001)):
+                conn.execute(
+                    "INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,controller_id,agent_id,customer_id) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (instance_id, "node-storage", "dayz", "dayz.stable", instance_id, "offline",
+                     self.controller_id, "agent-storage", 1),
+                )
+                conn.execute("INSERT INTO instance_ports(instance_id,node_id,name,protocol,port) VALUES (?,?,?,?,?)",
+                             (instance_id, "node-storage", "game", "udp", port_number))
         self.jobs = AgentInstanceProvisioningRepository(self.backend)
         self.jobs.initialize()
 
@@ -120,9 +141,9 @@ class StoragePoolProvisioningIntegrationTest(unittest.TestCase):
         self.backend.close()
         self.temp.cleanup()
 
-    def _enqueue(self, **extra):
+    def _enqueue(self, instance_id="instance-storage", **extra):
         return self.jobs.enqueue(
-            agent_id="agent-storage", instance_id="instance-storage", environment_id="dayz.stable",
+            agent_id="agent-storage", instance_id=instance_id, environment_id="dayz.stable",
             selector="stable", selection={"game": "dayz", "provider": "steam"}, desired_state="running", **extra,
         )
 
@@ -139,6 +160,39 @@ class StoragePoolProvisioningIntegrationTest(unittest.TestCase):
             conn.execute("UPDATE agents SET metadata_json=? WHERE id=?", (json.dumps({}), "agent-storage"))
         legacy = self._enqueue()
         self.assertNotIn("storage_pool_id", legacy["request"]["instance"])
+
+    def test_active_job_reservation_prevents_pool_oversubscription(self):
+        first = self._enqueue(required_storage_bytes=4000)
+        self.assertEqual(first["request"]["instance"]["storage_pool_id"], "nvme")
+        self.assertEqual(first["request"]["instance"]["storage_reserved_bytes"], 4000)
+
+        second = self._enqueue(instance_id="instance-storage-2", required_storage_bytes=2000)
+        self.assertEqual(second["request"]["instance"]["storage_pool_id"], "hdd")
+        self.assertEqual(second["request"]["instance"]["storage_reserved_bytes"], 2000)
+
+    def test_explicit_pool_rejects_capacity_already_reserved_by_active_job(self):
+        self._enqueue(required_storage_bytes=4000)
+        with self.assertRaises(ValueError):
+            self._enqueue(instance_id="instance-storage-2", storage_pool_id="nvme", required_storage_bytes=2000)
+
+    def test_final_result_releases_reservation_for_next_job(self):
+        first = self._enqueue(required_storage_bytes=4000)
+        self.jobs.apply_result("agent-storage", {
+            "provisioning_id": first["provisioning_id"], "instance_id": "instance-storage",
+            "status": "completed", "current_step": "completed", "progress": 100,
+        })
+        second = self._enqueue(instance_id="instance-storage-2", required_storage_bytes=2000)
+        self.assertEqual(second["request"]["instance"]["storage_pool_id"], "nvme")
+
+    def test_agent_contract_validates_capacity_reservation(self):
+        state = self._enqueue(required_storage_bytes=1234)
+        validated = validate_provisioning_request(state["request"], expected_agent_id="agent-storage")
+        self.assertEqual(validated["instance"]["storage_reserved_bytes"], 1234)
+        broken = dict(state["request"])
+        broken["instance"] = dict(broken["instance"])
+        broken["instance"].pop("storage_pool_id", None)
+        with self.assertRaises(ProvisioningContractError):
+            validate_provisioning_request(broken, expected_agent_id="agent-storage")
 
 
 if __name__ == "__main__":

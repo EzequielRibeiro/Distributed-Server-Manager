@@ -22,7 +22,15 @@ def validate_provisioning_request(request:dict[str,Any],*,expected_agent_id:str)
  instance=dict(instance)
  if _token(instance.get("instance_id"),"instance.instance_id")!=result["instance_id"]:raise ProvisioningContractError("instance_id mismatch")
  if _token(instance.get("agent_id"),"instance.agent_id")!=expected:raise ProvisioningContractError("instance belongs to another Agent")
- instance["game_id"]=_token(instance.get("game_id"),"instance.game_id").lower();instance["environment_id"]=_token(instance.get("environment_id") or result["environment_id"],"instance.environment_id");instance["runtime_id"]=_token(instance.get("runtime_id") or result["instance_id"],"instance.runtime_id");instance["desired_state"]=desired;result["instance"]=instance
+ instance["game_id"]=_token(instance.get("game_id"),"instance.game_id").lower();instance["environment_id"]=_token(instance.get("environment_id") or result["environment_id"],"instance.environment_id");instance["runtime_id"]=_token(instance.get("runtime_id") or result["instance_id"],"instance.runtime_id");instance["desired_state"]=desired
+ if instance.get("storage_pool_id") is not None:instance["storage_pool_id"]=_token(instance.get("storage_pool_id"),"instance.storage_pool_id")
+ if instance.get("storage_reserved_bytes") is not None:
+  try:reserved=int(instance.get("storage_reserved_bytes"))
+  except (TypeError,ValueError) as exc:raise ProvisioningContractError("invalid instance.storage_reserved_bytes") from exc
+  if reserved<0:raise ProvisioningContractError("invalid instance.storage_reserved_bytes")
+  if reserved and not instance.get("storage_pool_id"):raise ProvisioningContractError("storage reservation requires storage_pool_id")
+  instance["storage_reserved_bytes"]=reserved
+ result["instance"]=instance
  content=result.get("content")
  if not isinstance(content,dict) or not isinstance(content.get("selection"),dict) or not content.get("selection"):raise ProvisioningContractError("content selection is required")
  content=dict(content);action=str(content.get("action") or "ensure").strip().lower()
