@@ -18,7 +18,6 @@ def build_parser():
     parser.add_argument("--json", action="store_true", dest="as_json")
     subparsers = parser.add_subparsers(dest="action", required=True)
     create = subparsers.add_parser("create")
-    create.add_argument("--id", required=True, dest="customer_id")
     create.add_argument("--name", required=True)
     create.add_argument("--username", required=True)
     create.add_argument("--controller")
@@ -41,7 +40,6 @@ def main() -> int:
 
     try:
         result = repository.create_customer(
-            customer_id=args.customer_id,
             name=args.name,
             username=args.username,
             password_hash=hash_password(password),
@@ -56,6 +54,7 @@ def main() -> int:
         print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
     else:
         print(f"Customer created: {result['id']}")
+        print(f"Customer code: {result['customer_code']}")
         print(f"Login: {result['username']}")
         print(f"Controller: {result['controller_id']}")
     return 0
