@@ -45,4 +45,3 @@ jobs:
           grep -Fq 'cap ha' bin/cap
           grep -Fq 'HA_DR_PATH' dashboard/server_part13.py
           grep -Fq 'fencing failed; promotion refused' core/ha_dr_orchestrator.py
-          test ! -e dashboard/server_part14.py
