@@ -6,6 +6,8 @@ from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any
 
+from activity_audit_repository import ActivityAuditRepository
+from activity_humanizer import actor_name, humanize
 from catalog_resource_profiles_http import catalog_resource_profiles
 from customer_admin_repository import CustomerAdminRepository
 from customer_mailer import send_temporary_password
@@ -49,7 +51,6 @@ def _admin_write(user: dict[str, Any] | None) -> bool:
 
 
 def _json_safe(value: Any) -> Any:
-    """Normalize database-native temporal values before HTTP JSON encoding."""
     if isinstance(value, (datetime, date, time)):
         return value.isoformat()
     if isinstance(value, dict):
@@ -59,13 +60,7 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _deliver_temporary_password(
-    email: str | None,
-    username: str,
-    password: str,
-    *,
-    reset: bool,
-) -> bool:
+def _deliver_temporary_password(email: str | None, username: str, password: str, *, reset: bool) -> bool:
     if not email:
         return False
     try:
@@ -83,13 +78,49 @@ def _customer_code(payload: dict[str, Any], *, required: bool = True) -> str | N
     return value
 
 
-def dispatch_customer_admin_get(
-    path: str,
-    query: dict[str, list[str]],
-    *,
-    user,
+def _audit(
     backend,
-):
+    user,
+    *,
+    action: str,
+    category: str,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    target_name: str | None = None,
+    changes: dict[str, Any] | None = None,
+    context: dict[str, Any] | None = None,
+) -> None:
+    actor_id = str((user or {}).get("username") or (user or {}).get("id") or "").strip() or None
+    ActivityAuditRepository(backend).record_action(
+        actor_id=actor_id,
+        actor_name=actor_name(user),
+        actor_role=str((user or {}).get("role") or "").strip() or None,
+        action=action,
+        category=category,
+        target_type=target_type,
+        target_id=target_id,
+        target_name=target_name,
+        result="success",
+        summary=humanize(action, user=user, target_name=target_name, changes=changes, context=context),
+        changes=changes,
+    )
+
+
+def _member_role(detail: dict[str, Any], username: str) -> str | None:
+    for member in detail.get("users", []):
+        if str(member.get("username") or "") == username:
+            return str(member.get("account_role") or "") or None
+    return None
+
+
+def _instance_access(detail: dict[str, Any], username: str, instance_id: str) -> str | None:
+    for member in detail.get("users", []):
+        if str(member.get("username") or "") == username:
+            return (member.get("instance_access") or {}).get(instance_id)
+    return None
+
+
+def dispatch_customer_admin_get(path: str, query: dict[str, list[str]], *, user, backend):
     if path not in CUSTOMER_ADMIN_GET_PATHS:
         return None
     if not _admin_read(user):
@@ -113,13 +144,7 @@ def dispatch_customer_admin_get(
         return 500, {"error": "customer administration query failed"}
 
 
-def dispatch_customer_admin_post(
-    path: str,
-    payload: dict[str, Any],
-    *,
-    user,
-    backend,
-):
+def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, backend):
     if path not in CUSTOMER_ADMIN_POST_PATHS:
         return None
 
@@ -133,9 +158,17 @@ def dispatch_customer_admin_post(
             confirmation = str(payload.get("password_confirmation") or "")
             if password != confirmation:
                 return 400, {"error": "password confirmation does not match"}
-            password_repository.change_temporary_password(
-                str(user.get("username") or ""),
-                password,
+            username = str(user.get("username") or "")
+            password_repository.change_temporary_password(username, password)
+            _audit(
+                backend,
+                user,
+                action="customer.password_changed",
+                category="authentication",
+                target_type="customer_user",
+                target_id=username,
+                target_name=username,
+                changes={"password": {"changed": True}},
             )
             return 200, {"changed": True, "must_change_password": False}
 
@@ -145,9 +178,7 @@ def dispatch_customer_admin_post(
 
         if path == CUSTOMER_ADMIN_COLLECTION:
             if str(payload.get("id") or payload.get("customer_id") or "").strip():
-                raise ValueError(
-                    "customer id is generated automatically; do not supply id/customer_id"
-                )
+                raise ValueError("customer id is generated automatically; do not supply id/customer_id")
             email = str(payload.get("email") or "").strip()
             result = management.create_account(
                 name=str(payload.get("name") or ""),
@@ -162,11 +193,16 @@ def dispatch_customer_admin_post(
                 billing_customer_id=(str(payload.get("billing_customer_id") or "").strip() or None),
                 billing_status=(str(payload.get("billing_status") or "").strip() or None),
             )
-            result["delivered"] = _deliver_temporary_password(
-                email,
-                str(result["username"]),
-                str(result["temporary_password"]),
-                reset=False,
+            result["delivered"] = _deliver_temporary_password(email, str(result["username"]), str(result["temporary_password"]), reset=False)
+            customer_name = str(result.get("name") or payload.get("name") or result.get("customer_code") or "cliente")
+            _audit(
+                backend,
+                user,
+                action="customer.created",
+                category="customers",
+                target_type="customer",
+                target_id=str(result.get("customer_code") or result.get("id") or "") or None,
+                target_name=customer_name,
             )
             return 201, _json_safe(result)
 
@@ -174,73 +210,103 @@ def dispatch_customer_admin_post(
             username = str(payload.get("username") or "").strip().lower()
             matches = management.search(username, "username")
             email = None
+            customer_name = username
             for customer in matches:
-                if any(
-                    str(member.get("username")) == username
-                    for member in customer.get("users", [])
-                ):
+                if any(str(member.get("username")) == username for member in customer.get("users", [])):
                     email = customer.get("email")
+                    customer_name = str(customer.get("name") or username)
                     break
             result = password_repository.reset_password(username)
-            result["delivered"] = _deliver_temporary_password(
-                email,
-                str(result["username"]),
-                str(result["temporary_password"]),
-                reset=True,
+            result["delivered"] = _deliver_temporary_password(email, str(result["username"]), str(result["temporary_password"]), reset=True)
+            _audit(
+                backend,
+                user,
+                action="customer.password_reset",
+                category="customers",
+                target_type="customer_user",
+                target_id=username,
+                target_name=customer_name,
+                changes={"password": {"changed": True}},
             )
             return 200, _json_safe(result)
 
         if path == CUSTOMER_ADMIN_CONTRACT:
+            customer_code = _customer_code(payload)
+            detail = management.detail(customer_code)
+            customer_name = str((detail.get("customer") or {}).get("name") or customer_code)
             limit = int(payload.get("instance_limit") or 1)
             game_id = str(payload.get("game_id") or "").strip().lower()
             profile_catalog = catalog_resource_profiles(ROOT, game_id)
-            requested_profile_id = str(
-                payload.get("resource_profile_id") or ""
-            ).strip().lower()
-            resource_profile_id = requested_profile_id or str(
-                profile_catalog.get("default_profile_id") or ""
-            ).strip().lower()
+            requested_profile_id = str(payload.get("resource_profile_id") or "").strip().lower()
+            resource_profile_id = requested_profile_id or str(profile_catalog.get("default_profile_id") or "").strip().lower()
             profiles = profile_catalog.get("profiles", [])
-            profile = next(
-                (
-                    item
-                    for item in profiles
-                    if str(item.get("id") or "").strip().lower() == resource_profile_id
-                ),
-                None,
-            )
+            profile = next((item for item in profiles if str(item.get("id") or "").strip().lower() == resource_profile_id), None)
             if profile is None:
-                raise ValueError(
-                    "select a valid resource profile or configure the game default"
-                )
-            resource_profile_source = (
-                "selected" if requested_profile_id else "game_default"
-            )
+                raise ValueError("select a valid resource profile or configure the game default")
+            resource_profile_source = "selected" if requested_profile_id else "game_default"
             result = management.create_contract(
-                customer_code=_customer_code(payload),
+                customer_code=customer_code,
                 game_id=game_id,
                 instance_limit=limit,
                 ends_at=(str(payload.get("ends_at") or "").strip() or None),
                 resource_profile_id=resource_profile_id,
                 resource_profile_source=resource_profile_source,
             )
+            _audit(
+                backend,
+                user,
+                action="customer.contract.created",
+                category="contracts",
+                target_type="customer",
+                target_id=customer_code,
+                target_name=customer_name,
+                context={"game_id": game_id},
+            )
             return 201, _json_safe(result)
 
         if path == CUSTOMER_ADMIN_MEMBER_ROLE:
-            password_repository.set_member_role(
-                _customer_code(payload),
-                str(payload.get("username") or ""),
-                str(payload.get("account_role") or ""),
+            customer_code = _customer_code(payload)
+            username = str(payload.get("username") or "").strip().lower()
+            new_role = str(payload.get("account_role") or "").strip().lower()
+            before = management.detail(customer_code)
+            old_role = _member_role(before, username)
+            password_repository.set_member_role(customer_code, username, new_role)
+            _audit(
+                backend,
+                user,
+                action="customer.member_role.updated",
+                category="customers",
+                target_type="customer_user",
+                target_id=username,
+                target_name=username,
+                changes={"account_role": {"before": old_role, "after": new_role}},
+                context={"customer_code": customer_code},
             )
             return 200, {"updated": True}
 
         if path == CUSTOMER_ADMIN_ACCESS:
+            customer_code = _customer_code(payload)
+            username = str(payload.get("username") or "").strip().lower()
+            instance_id = str(payload.get("instance_id") or "").strip()
             profile = str(payload.get("permission_profile") or "").strip() or None
-            password_repository.set_instance_access(
-                _customer_code(payload),
-                str(payload.get("username") or ""),
-                str(payload.get("instance_id") or ""),
-                profile,
+            before = management.detail(customer_code)
+            old_profile = _instance_access(before, username, instance_id)
+            password_repository.set_instance_access(customer_code, username, instance_id, profile)
+            instance_name = instance_id
+            for instance in before.get("instances", []):
+                if str(instance.get("id") or "") == instance_id:
+                    instance_name = str(instance.get("name") or instance_id)
+                    break
+            _audit(
+                backend,
+                user,
+                action="customer.instance_access.updated",
+                category="customers",
+                target_type="customer_user",
+                target_id=username,
+                target_name=username,
+                changes={"permission_profile": {"before": old_profile, "after": profile}},
+                context={"instance_id": instance_id, "instance_name": instance_name},
             )
             return 200, {"updated": True}
     except (ValueError, TypeError) as exc:
