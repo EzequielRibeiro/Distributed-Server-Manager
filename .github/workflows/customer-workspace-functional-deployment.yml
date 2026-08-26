@@ -6,6 +6,7 @@ on:
       - 'database/**'
       - 'dashboard/**'
       - 'catalog/**'
+      - 'tests/customer_agent_privacy_contract_test.py'
       - 'tests/customer_workspace_functional_deployment_test.py'
       - 'tests/customer_workspace_functional_probe.py'
       - '.github/workflows/customer-workspace-functional-deployment.yml'
@@ -45,6 +46,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install PostgreSQL Python driver
         run: python3 -m pip install 'psycopg[binary]>=3.1,<4'
+      - name: Validate customer placement privacy contract
+        run: python3 -m unittest -v tests.customer_agent_privacy_contract_test
       - name: Create protected PostgreSQL password file
         run: |
           printf '%s\n' 'capivara_functional_test_password' > /tmp/capivara-workspace-functional-password
