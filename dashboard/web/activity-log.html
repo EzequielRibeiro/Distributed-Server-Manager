@@ -12,16 +12,16 @@
 <div id="sidebar-component"></div>
 <main class="cap-home-main customer-admin-page">
   <header class="cap-home-topbar cap-admin-topbar">
-    <div class="cap-home-title"><button id="admin-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1>Registro de atividades</h1><p>Auditoria administrativa da Dashboard. Acesso exclusivo de administradores.</p></div></div>
+    <div class="cap-home-title"><button id="admin-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1>Registro de atividades</h1><p>Auditoria administrativa em linguagem clara. Acesso exclusivo de administradores.</p></div></div>
     <div class="cap-top-status"><div class="cap-user"><strong id="admin-user-name">—</strong><span id="admin-user-role">—</span></div></div>
   </header>
   <div class="cap-home-content cap-admin-content">
     <section class="card catalog-v2-card cap-admin-card">
-      <div class="card-title"><div><h2>Consulta</h2><p>Filtre logins e atividades por período, usuário, categoria, atividade ou resultado.</p></div></div>
+      <div class="card-title"><div><h2>Consulta</h2><p>Filtre as ações dos operadores por período, operador, categoria, atividade ou resultado.</p></div></div>
       <div class="catalog-v2-form">
         <label>Data inicial<input id="activity-start" type="datetime-local"></label>
         <label>Data final<input id="activity-end" type="datetime-local"></label>
-        <label>Usuário<select id="activity-user"><option value="">Todos</option></select></label>
+        <label>Operador<select id="activity-user"><option value="">Todos</option></select></label>
         <label>Categoria<select id="activity-category"><option value="">Todas</option></select></label>
         <label>Atividade<select id="activity-name"><option value="">Todas</option></select></label>
         <label>Resultado<select id="activity-result"><option value="">Todos</option><option value="success">Sucesso</option><option value="denied">Negado</option><option value="error">Erro</option></select></label>
@@ -31,12 +31,12 @@
       <div id="activity-message" class="catalog-v2-summary"></div>
     </section>
     <section class="card catalog-v2-card cap-admin-card">
-      <div class="card-title"><div><h2>Atividades registradas</h2><p>Senhas, hashes, tokens, cookies e corpos de requisição não são armazenados neste registro.</p></div></div>
-      <div class="users-table-wrap"><table class="users-table"><thead><tr><th>Data</th><th>Usuário</th><th>Atividade</th><th>Categoria</th><th>Resultado</th><th>Rota</th><th>IP</th><th>Sessão</th></tr></thead><tbody id="activity-table"></tbody></table></div>
+      <div class="card-title"><div><h2>Atividades registradas</h2><p>O registro descreve o que foi feito e sobre qual recurso. Senhas, tokens, cookies, chaves e credenciais nunca são armazenados.</p></div></div>
+      <div class="users-table-wrap"><table class="users-table"><thead><tr><th>Data</th><th>Operador</th><th>Atividade</th><th>Categoria</th><th>Resultado</th><th>Recurso</th></tr></thead><tbody id="activity-table"></tbody></table></div>
     </section>
   </div>
   <footer class="cap-home-footer">Capivara Distributed Server Manager · Audit Trail</footer>
 </main>
-<script src="/activity-log.js?v=1"></script>
+<script src="/activity-log.js?v=2"></script>
 </body>
 </html>
