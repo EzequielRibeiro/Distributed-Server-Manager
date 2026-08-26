@@ -4,6 +4,7 @@
   const auth=()=>sessionStorage.getItem("dsm_auth")||"";
   const $=id=>document.getElementById(id);
   const identity=Object.fromEntries(new URLSearchParams(location.search));
+  const blockedViews=new Set(["logs","events","config","files","content","backups","danger"]);
   let timer=null;
 
   function query(){return new URLSearchParams(identity).toString()}
@@ -58,6 +59,39 @@
     render([...events].sort((a,b)=>String(b.timestamp??b.time??b.created_at??"").localeCompare(String(a.timestamp??a.time??a.created_at??""))).slice(0,200));
   }
 
+  function showOverview(){
+    const overview=document.querySelector('[data-view="overview"]');
+    if(!overview)return;
+    document.querySelectorAll("[data-view]").forEach(button=>button.classList.toggle("active",button===overview));
+    document.querySelectorAll(".view").forEach(view=>view.classList.toggle("active",view.id==="view-overview"));
+  }
+
+  function syncProvisionFailureTabs(){
+    const provision=$("provision-progress");
+    const blocked=Boolean(provision&&provision.classList.contains("provision-failed"));
+    let blockedViewWasActive=false;
+
+    document.querySelectorAll("[data-view]").forEach(button=>{
+      const view=String(button.dataset.view||"");
+      if(!blockedViews.has(view))return;
+      if(blocked&&button.classList.contains("active"))blockedViewWasActive=true;
+      button.disabled=blocked;
+      button.setAttribute("aria-disabled",blocked?"true":"false");
+      button.title=blocked?"Indisponível enquanto houver erro na instalação da instância.":"";
+      button.style.cursor=blocked?"not-allowed":"";
+      button.style.opacity=blocked?"0.45":"";
+    });
+
+    if(blocked&&blockedViewWasActive)showOverview();
+  }
+
+  function installProvisionFailureGuard(){
+    const provision=$("provision-progress");
+    if(!provision)return;
+    new MutationObserver(syncProvisionFailureTabs).observe(provision,{attributes:true,attributeFilter:["class","hidden"],childList:true,subtree:true});
+    syncProvisionFailureTabs();
+  }
+
   function active(){return document.querySelector('[data-view="events"]')?.classList.contains("active")}
   function schedule(){
     if(timer)clearInterval(timer);
@@ -67,6 +101,7 @@
   document.addEventListener("DOMContentLoaded",()=>{
     document.querySelector('[data-view="events"]')?.addEventListener("click",()=>load().catch(()=>{}));
     $("instance-events-refresh")?.addEventListener("click",()=>load().catch(()=>{}));
+    installProvisionFailureGuard();
     schedule();
   });
 })();
