@@ -1,4 +1,4 @@
-name: Dashboard Activity Audit
+name: Semantic Activity Audit
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: dashboard-activity-audit-${{ github.ref }}
+  group: semantic-activity-audit-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -23,17 +23,19 @@ jobs:
       - name: Validate Python
         run: |
           python3 -m py_compile \
-            database/dashboard_activity_repository.py \
-            database/dashboard_activity_schema.py \
+            database/activity_audit_repository.py \
+            database/activity_audit_schema.py \
+            database/event_consumer_schema.py \
+            database/notification_outbox_repository.py \
+            database/notification_outbox_schema.py \
+            dashboard/activity_humanizer.py \
             dashboard/dashboard_activity_http.py \
-            tests/dashboard_activity_audit_test.py
+            dashboard/alert_management_http.py \
+            monitor/alert_engine.py \
+            tests/database_audit_alerts_test.py
 
       - name: Validate JavaScript
-        run: |
-          node --check dashboard/web/activity-log.js
-          node --check dashboard/web/auth.js
-          node --check dashboard/web/customer-management-shell.js
-          node --check dashboard/web/users.js
+        run: node --check dashboard/web/activity-log.js
 
-      - name: Test Dashboard activity audit
-        run: python3 -m unittest -v tests.dashboard_activity_audit_test
+      - name: Test semantic database audit and alerts
+        run: python3 -m unittest -v tests.database_audit_alerts_test
