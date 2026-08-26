@@ -17,6 +17,7 @@ for path in (str(DATABASE), str(ROOT / "core")):
         sys.path.insert(0, path)
 
 from alert_repository import AlertRepository, AlertSession, dialect_for_backend
+from notification_routing_repository import NotificationRoutingRepository
 from runtime_backend import backend_from_environment
 
 CONSUMER_ID = "alert-engine-v2"
@@ -29,6 +30,7 @@ class DatabaseAlertEngine:
         self.backend = backend
         self.dialect = dialect_for_backend(backend)
         self.alerts = AlertRepository(backend)
+        self.notifications = NotificationRoutingRepository(backend)
 
     def initialize(self) -> None:
         self.backend.initialize()
@@ -209,12 +211,33 @@ class DatabaseAlertEngine:
             instance_id=topology.get("instance_id"),
         )
 
+    def route_notification(self, event: dict[str, Any], alert: dict[str, Any] | None) -> list[str]:
+        event_type = str(event.get("event_type") or "UNKNOWN_EVENT").strip().upper()
+        severity = str(event.get("severity") or "info").strip().lower()
+        data = self._data(event)
+        message = str(
+            data.get("message")
+            or data.get("error")
+            or data.get("title")
+            or event_type.replace("_", " ").title()
+        )
+        alert_id = None if alert is None else str(alert.get("id") or "").strip() or None
+        return self.notifications.enqueue_event(
+            event_id=str(event["event_id"]),
+            event_type=event_type,
+            severity=severity,
+            message=message,
+            subject=str(data.get("title") or event_type.replace("_", " ").title()),
+            alert_id=alert_id,
+        )
+
     def cycle(self, *, limit: int = DEFAULT_BATCH) -> int:
         self.initialize()
         self._initialize_cursor()
         processed = 0
         for event in self._events(max(1, min(int(limit), 1000))):
-            self.evaluate(event)
+            alert = self.evaluate(event)
+            self.route_notification(event, alert)
             self._advance(event)
             processed += 1
         return processed
