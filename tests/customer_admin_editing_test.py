@@ -181,6 +181,21 @@ class CustomerAdminEditingTest(unittest.TestCase):
             UniversalEventRepository(self.backend).list_events(event_type="CUSTOMER_PROFILE_UPDATED", limit=10), []
         )
 
+    def test_admin_can_reassign_customer_controller(self):
+        other = installation_profile_identity(
+            RegistryRepository(self.backend), profile="controller", hostname="customer-edit-controller-other"
+        )
+        other_controller_id = str(other["controller_id"])
+        self.assertNotEqual(other_controller_id, self.controller_id)
+        status, response = update_customer_profile_for_user(
+            {"customer_code": self.code, "changes": {"controller_id": other_controller_id}},
+            user={"username": "admin", "role": "admin"},
+            backend=self.backend,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(response["updated"])
+        self.assertEqual(response["customer"]["controller_id"], other_controller_id)
+
 
 if __name__ == "__main__":
     unittest.main()
