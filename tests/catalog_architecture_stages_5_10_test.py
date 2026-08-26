@@ -58,7 +58,8 @@ class CatalogArchitectureStages5To10Test(unittest.TestCase):
    result=module.inspect_game_data(path,{"executable":"server.bin"});self.assertEqual(result["health"],"ok");self.assertEqual(result["files"],1);self.assertTrue(result["tree_digest"])
  def test_stage8_provisioning_uses_ensure_and_catalog_resolver(self):
   repository=(ROOT/"database/agent_instance_provisioning_repository.py").read_text();contract=(ROOT/"agents/linux/runtime/provisioning_contract.py").read_text();resolver=(ROOT/"dashboard/catalog_provisioning_resolver.py").read_text()
-  self.assertIn('"content":{"action":"ensure"',repository);self.assertIn('"ensure"',contract);self.assertIn('catalog_runtime_policy',resolver);self.assertIn('resource_profile',resolver);self.assertIn('allowed_resource_profiles',resolver)
+  compact="".join(repository.split())
+  self.assertIn('"content":{"action":"ensure"',compact);self.assertIn('"ensure"',contract);self.assertIn('catalog_runtime_policy',resolver);self.assertIn('resource_profile',resolver);self.assertIn('allowed_resource_profiles',resolver)
  def test_stage10_windows_file_manager_is_confined_and_integrity_exists(self):
   module=load("windows_files",ROOT/"agents/windows/runtime/game_data_files.py")
   with tempfile.TemporaryDirectory() as td:

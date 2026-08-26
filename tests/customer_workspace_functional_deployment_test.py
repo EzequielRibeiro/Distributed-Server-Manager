@@ -292,8 +292,8 @@ def main() -> int:
 
     with backend.connect() as connection:
         rows = connection.execute(
-            "SELECT activity,username,result FROM dashboard_activity_log "
-            "WHERE username IN (%s,%s) ORDER BY created_at,event_id",
+            "SELECT action,actor_id,result FROM activity_audit "
+            "WHERE actor_id IN (%s,%s) ORDER BY occurred_at,activity_id",
             (ADMIN_USER, CUSTOMER_USER),
         ).fetchall()
         file_commands = connection.execute(
@@ -302,9 +302,9 @@ def main() -> int:
         backup_jobs = connection.execute(
             "SELECT COUNT(*) AS total FROM backup_jobs WHERE instance_id=%s", (plan["instance_id"],)
         ).fetchone()
-    activities = {(str(row["username"]), str(row["activity"])) for row in rows}
+    activities = {(str(row["actor_id"]), str(row["action"])) for row in rows}
     for username in (ADMIN_USER, CUSTOMER_USER):
-        if (username, "LOGIN") not in activities or (username, "LOGOUT") not in activities:
+        if (username, "auth.login") not in activities or (username, "auth.logout") not in activities:
             raise AssertionError(f"login/logout audit missing for {username}: {activities}")
     if int(file_commands["total"] or 0) < 1:
         raise AssertionError("file command was not persisted")

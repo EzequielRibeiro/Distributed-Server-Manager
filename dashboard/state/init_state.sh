@@ -2,7 +2,8 @@
 # =============================================================
 # DSM Dashboard
 # init_state.sh
-# Inicializa os arquivos de estado do Dashboard
+# Inicializa somente estado operacional transitório do Dashboard.
+# Eventos, alertas e auditoria duráveis pertencem exclusivamente ao database.
 # =============================================================
 
 set -euo pipefail
@@ -16,10 +17,8 @@ FILES=(
     server
     metrics
     monitor
-    alerts
     doctor
     scheduler
-    events
 )
 
 for file in "${FILES[@]}"; do
@@ -31,5 +30,10 @@ for file in "${FILES[@]}"; do
     fi
 done
 
+# Não preserve projeções duráveis antigas em JSON durante reinstalação.
+rm -f \
+    "$STATE_DIR/alerts_state.json" \
+    "$STATE_DIR/events_state.json"
+
 echo
-echo "Dashboard State inicializado com sucesso."
+echo "Dashboard State transitório inicializado com sucesso."

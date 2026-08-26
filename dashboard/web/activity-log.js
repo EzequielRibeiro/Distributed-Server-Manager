@@ -44,9 +44,9 @@
 
   async function loadOptions() {
     const data = await request("/api/admin/activity-log/options");
-    fillSelect("activity-user", data.users || []);
+    fillSelect("activity-user", data.actors || []);
     fillSelect("activity-category", data.categories || []);
-    fillSelect("activity-name", data.activities || []);
+    fillSelect("activity-name", data.actions || []);
   }
 
   function isoLocal(value) {
@@ -58,9 +58,9 @@
   function params() {
     const query = new URLSearchParams();
     const pairs = [
-      ["username", byId("activity-user").value],
+      ["actor_id", byId("activity-user").value],
       ["category", byId("activity-category").value],
-      ["activity", byId("activity-name").value],
+      ["action", byId("activity-name").value],
       ["result", byId("activity-result").value],
       ["start_at", isoLocal(byId("activity-start").value)],
       ["end_at", isoLocal(byId("activity-end").value)],
@@ -70,21 +70,30 @@
     return query.toString();
   }
 
+  function formatDate(value) {
+    if (!value) return "—";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("pt-BR");
+  }
+
   function render(rows) {
-    const body = byId("activity-table"); body.replaceChildren();
+    const body = byId("activity-table");
+    body.replaceChildren();
     rows.forEach(item => {
       const row = document.createElement("tr");
       const values = [
-        item.created_at || "—",
-        item.username || "—",
-        item.activity || "—",
+        formatDate(item.occurred_at),
+        item.actor_name || item.actor_id || "—",
+        item.summary || "—",
         item.category || "—",
-        `${item.result || "—"}${item.status_code ? ` · ${item.status_code}` : ""}`,
-        item.path || "—",
-        item.remote_address || "—",
-        item.session_id ? item.session_id.slice(0, 12) : "—",
+        item.result || "—",
+        item.target_name || item.target_id || "—",
       ];
-      values.forEach(value => { const td = document.createElement("td"); td.textContent = value; row.appendChild(td); });
+      values.forEach(value => {
+        const td = document.createElement("td");
+        td.textContent = value;
+        row.appendChild(td);
+      });
       body.appendChild(row);
     });
     byId("activity-message").textContent = `${rows.length} registro(s) exibido(s).`;

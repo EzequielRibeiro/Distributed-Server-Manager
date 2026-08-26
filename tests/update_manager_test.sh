@@ -112,9 +112,13 @@ trap 'rm -rf -- "${TMP_DIR}"' EXIT
 
 STATE_ROOT="${TMP_DIR}/dashboard-state-root"
 DSM_ROOT="${STATE_ROOT}" bash "${ROOT}/dashboard/state/init_state.sh" >/dev/null
-for state_name in dashboard server metrics monitor alerts doctor scheduler events; do
+for state_name in dashboard server metrics monitor doctor scheduler; do
     [[ -f "${STATE_ROOT}/dashboard/state/${state_name}_state.json" ]] \
         || fail "missing initialized dashboard state: ${state_name}"
+done
+for retired_state in alerts events; do
+    [[ ! -e "${STATE_ROOT}/dashboard/state/${retired_state}_state.json" ]] \
+        || fail "database-backed ${retired_state} state was recreated as JSON"
 done
 if find "${STATE_ROOT}/dashboard/state" -maxdepth 1 -name '*.state.json' | grep -q .; then
     fail "dashboard states use the obsolete .state.json naming"

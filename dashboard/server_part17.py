@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import parse_qs,urlparse
 import server_part16 as integration
 from agent_admin_http import install_agent_administration
+from alert_management_http import install_alert_management
 from artifact_transfer_http import install_artifact_transfer_http
 from backup_clone_http import install_backup_clone_http
 from catalog_runtime_policy_http import RUNTIME_POLICY_PATH,dispatch_catalog_runtime_policy_get,dispatch_catalog_runtime_policy_put
@@ -60,6 +61,7 @@ install_artifact_transfer_http(legacy,_authenticate)
 install_deleted_backup_vault_http(legacy,_authenticate)
 install_backup_clone_http(legacy,_authenticate)
 install_dashboard_activity_audit(legacy,_authenticate)
+install_alert_management(legacy,_authenticate)
 install_agent_administration(legacy,_authenticate)
 install_customer_profile_administration(legacy,_authenticate)
 def run():legacy.run()
