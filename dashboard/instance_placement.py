@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from core.placement_requirements import requirements_for_instance
@@ -21,6 +22,19 @@ def _customer_id(user: dict[str, Any]) -> int:
     return resolve_customer_reference(public, public_only=True)
 
 
+def _event_value(value: Any) -> Any:
+    """Convert placement domain values into database-event-safe primitives."""
+    if is_dataclass(value):
+        return _event_value(asdict(value))
+    if isinstance(value, dict):
+        return {str(key): _event_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_event_value(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
 def _publish_placement_event(
     repository,
     *,
@@ -33,7 +47,7 @@ def _publish_placement_event(
     allow_cross_region: bool,
     game_id: Any,
     runtime_id: Any,
-    requirements: dict[str, Any],
+    requirements: Any,
     decision: dict[str, Any] | None = None,
     message: str | None = None,
 ) -> None:
@@ -53,14 +67,14 @@ def _publish_placement_event(
                 "customer_code": customer_code,
                 "requested_region_id": requested_region_id,
                 "allow_cross_region": allow_cross_region,
-                "game_id": game_id,
-                "runtime_id": runtime_id,
-                "requirements": requirements,
+                "game_id": _event_value(game_id),
+                "runtime_id": _event_value(runtime_id),
+                "requirements": _event_value(requirements),
                 "selected_region_id": decision.get("region_id"),
                 "selected_datacenter_id": decision.get("datacenter_id"),
                 "selected_node_id": decision.get("node_id"),
                 "score": decision.get("score"),
-                "reason": decision.get("reason"),
+                "reason": _event_value(decision.get("reason")),
                 "eligible_agents": 1 if decision.get("agent_id") else 0,
                 "message": message,
             },
