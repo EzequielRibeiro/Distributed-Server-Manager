@@ -22,6 +22,7 @@ on:
       - 'tests/agent_instance_provisioning_test.py'
       - 'tests/agent_runtime_reconciliation_test.py'
       - 'tests/agent_runtime_completion_test.py'
+      - 'tests/agent_instance_storage_root_test.py'
       - '.github/workflows/agent-instance-runtime.yml'
   push:
     branches: [main]
@@ -35,6 +36,7 @@ on:
       - 'dashboard/agent_heartbeat_api.py'
       - 'release/build_agent_package.sh'
       - 'tests/agent_runtime_completion_test.py'
+      - 'tests/agent_instance_storage_root_test.py'
       - '.github/workflows/agent-instance-runtime.yml'
 
 permissions:
@@ -76,7 +78,8 @@ jobs:
             tests/agent_game_runtime_profiles_test.py \
             tests/agent_instance_provisioning_test.py \
             tests/agent_runtime_reconciliation_test.py \
-            tests/agent_runtime_completion_test.py
+            tests/agent_runtime_completion_test.py \
+            tests/agent_instance_storage_root_test.py
       - name: Run instance runtime tests
         run: |
           python3 -m unittest tests/agent_instance_runtime_test.py
@@ -85,6 +88,7 @@ jobs:
           python3 -m unittest tests/agent_instance_provisioning_test.py
           python3 -m unittest tests/agent_runtime_reconciliation_test.py
           python3 -m unittest tests/agent_runtime_completion_test.py
+          python3 -m unittest tests/agent_instance_storage_root_test.py
       - name: Check lifecycle policy boundary
         run: |
           grep -F 'capivara-instance-' agents/linux/policy/49-capivara-agent-instance-units.rules

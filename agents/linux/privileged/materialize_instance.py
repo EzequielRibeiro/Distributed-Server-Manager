@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import grp
+import hashlib
 import json
 import os
 import pwd
@@ -23,9 +24,10 @@ from runtime_spec import validate_runtime_spec
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
 REQUEST_ROOT = STATE_DIR / "privileged-materialization"
-INSTANCE_STATE_BASE = Path("/var/lib/capivara-instances")
+_DEFAULT_INSTANCE_STORAGE_ROOT = Path("/var/lib/capivara-instances")
 _DEFAULT_RUNTIME_USER = "capivara-instance"
 _AGENT_GROUP = "capivara-agent"
+_FORBIDDEN_STORAGE_ROOTS = tuple(Path(value) for value in ("/boot", "/dev", "/etc", "/proc", "/root", "/run", "/sys", "/usr"))
 
 
 def _token(value: Any) -> str:
@@ -34,6 +36,27 @@ def _token(value: Any) -> str:
     if not text or len(text) > 191 or any(ch not in allowed for ch in text):
         raise ValueError("invalid instance_id")
     return text
+
+
+def _storage_root(value: Any, label: str) -> Path:
+    raw = str(value or "").strip()
+    path = Path(raw)
+    if not raw or not path.is_absolute():
+        raise RuntimeError(f"{label} must be an absolute path")
+    resolved = path.resolve(strict=False)
+    if resolved == Path("/"):
+        raise RuntimeError(f"{label} cannot be filesystem root")
+    for forbidden in _FORBIDDEN_STORAGE_ROOTS:
+        try:
+            resolved.relative_to(forbidden)
+        except ValueError:
+            continue
+        raise RuntimeError(f"{label} is inside a protected system path")
+    return resolved
+
+
+def _instance_storage_root(config: dict[str, Any]) -> Path:
+    return _storage_root(config.get("instance_storage_root") or _DEFAULT_INSTANCE_STORAGE_ROOT, "Agent instance_storage_root")
 
 
 def _write_result(path: Path, payload: dict[str, Any]) -> None:
@@ -95,16 +118,16 @@ def _within(root: Path, value: str, label: str) -> Path:
     return path
 
 
-def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd) -> None:
+def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, storage_root: Path) -> None:
     raw_root = spec.get("instance_state_root")
     if not raw_root:
         return
-    expected = (INSTANCE_STATE_BASE / spec["instance_id"]).resolve()
+    expected = (storage_root / spec["instance_id"]).resolve()
     state_root = Path(str(raw_root)).resolve()
     if state_root != expected:
-        raise RuntimeError("instance state root does not match instance identity")
-    INSTANCE_STATE_BASE.mkdir(parents=True, exist_ok=True)
-    os.chmod(INSTANCE_STATE_BASE, 0o711)
+        raise RuntimeError("instance state root does not match Agent instance_storage_root policy")
+    storage_root.mkdir(parents=True, exist_ok=True)
+    os.chmod(storage_root, 0o711)
     state_root.mkdir(parents=True, exist_ok=True)
     os.chown(state_root, account.pw_uid, account.pw_gid)
     os.chmod(state_root, 0o700)
@@ -138,11 +161,73 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd) -> 
         target.mkdir(parents=True, exist_ok=True)
 
 
-def _ensure_runtime_identity(spec: dict[str, Any]) -> None:
+def _ensure_runtime_identity(spec: dict[str, Any], config: dict[str, Any]) -> None:
     user = str(spec.get("user") or _DEFAULT_RUNTIME_USER)
     account = _validate_runtime_user(user)
     _validate_runtime_access(str(spec["working_directory"]), user)
-    _prepare_private_state(spec, account)
+    _prepare_private_state(spec, account, _instance_storage_root(config))
+
+
+def _reject_symlinks(root: Path) -> None:
+    if root.is_symlink():
+        raise RuntimeError("storage migration source root cannot be a symlink")
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise RuntimeError(f"storage migration refuses symlink: {path.relative_to(root)}")
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _verify_tree(source: Path, target: Path) -> tuple[int, int]:
+    _reject_symlinks(source)
+    _reject_symlinks(target)
+    source_files = {p.relative_to(source): p for p in source.rglob("*") if p.is_file()}
+    target_files = {p.relative_to(target): p for p in target.rglob("*") if p.is_file()}
+    if source_files.keys() != target_files.keys():
+        raise RuntimeError("storage migration verification failed: file set differs")
+    total = 0
+    for relative, src in source_files.items():
+        dst = target_files[relative]
+        if src.stat().st_size != dst.stat().st_size or _sha256(src) != _sha256(dst):
+            raise RuntimeError(f"storage migration verification failed: {relative}")
+        total += src.stat().st_size
+    return len(source_files), total
+
+
+def _migrate_storage_copy(config: dict[str, Any], spec: dict[str, Any], target_value: Any) -> dict[str, Any]:
+    source_root = _instance_storage_root(config)
+    target_root = _storage_root(target_value, "target storage root")
+    if source_root == target_root:
+        return {"changed": False, "source": str(source_root), "target": str(target_root), "verified_files": 0, "verified_bytes": 0, "source_preserved": True}
+    instance_id = spec["instance_id"]
+    source = (source_root / instance_id).resolve(strict=False)
+    expected = Path(str(spec.get("instance_state_root") or source)).resolve(strict=False)
+    if source != expected:
+        raise RuntimeError("instance source state root does not match current Agent storage root")
+    target = (target_root / instance_id).resolve(strict=False)
+    target.relative_to(target_root)
+    if source.exists():
+        _reject_symlinks(source)
+    if target.exists():
+        shutil.rmtree(target)
+    target_root.mkdir(parents=True, exist_ok=True)
+    os.chmod(target_root, 0o711)
+    if source.exists():
+        shutil.copytree(source, target, copy_function=shutil.copy2, symlinks=False)
+        count, total = _verify_tree(source, target)
+    else:
+        target.mkdir(parents=True, exist_ok=True)
+        count, total = 0, 0
+    account = _validate_runtime_user(str(spec.get("user") or _DEFAULT_RUNTIME_USER))
+    os.chown(target, account.pw_uid, account.pw_gid)
+    os.chmod(target, 0o700)
+    return {"changed": True, "source": str(source), "target": str(target), "verified_files": count, "verified_bytes": total, "source_preserved": True}
 
 
 def run(instance_id: str) -> dict[str, Any]:
@@ -169,22 +254,17 @@ def run(instance_id: str) -> dict[str, Any]:
     materializer = resolve_materializer(spec)
     templates: list[Any] = []
     if action == "apply":
-        _ensure_runtime_identity(spec)
+        _ensure_runtime_identity(spec, config)
         templates = materialize_templates(spec)
         templates.extend(materialize_network_properties(spec))
         operation = materializer.apply(spec)
     elif action == "remove":
         operation = materializer.remove(spec)
+    elif action == "migrate-storage-copy":
+        operation = _migrate_storage_copy(config, spec, request.get("target_root"))
     else:
         raise RuntimeError("unsupported privileged materialization action")
-    result = {
-        "status": "completed",
-        "action": action,
-        "instance_id": instance_id,
-        "agent_id": local_agent_id,
-        "operation": operation,
-        "templates": templates,
-    }
+    result = {"status": "completed", "action": action, "instance_id": instance_id, "agent_id": local_agent_id, "operation": operation, "templates": templates}
     _write_result(result_path, result)
     return result
 
