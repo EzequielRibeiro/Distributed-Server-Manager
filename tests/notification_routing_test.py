@@ -8,15 +8,17 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
-for path in (ROOT / "database", ROOT / "dashboard" / "workers"):
+for path in (ROOT / "database", ROOT / "dashboard" / "workers", ROOT / "monitor"):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+from alert_engine import DatabaseAlertEngine
 from backend import DatabaseConfig
 from backend_factory import create_backend
 from notification_dispatcher import NotificationDispatcher
 from notification_outbox_repository import NotificationOutboxRepository
 from notification_routing_repository import NotificationRoutingRepository
+from universal_event_repository import UniversalEventRepository
 
 
 class NotificationRoutingTest(unittest.TestCase):
@@ -70,11 +72,49 @@ class NotificationRoutingTest(unittest.TestCase):
             alert_id="alert-1",
         )
         self.assertEqual(len(ids), 2)
+        repeated = self.routing.enqueue_event(
+            event_id="event-1",
+            event_type="INSTANCE_PROVISION_FAILED",
+            severity="critical",
+            message="Falha ao provisionar a instância",
+            subject="Falha de provisionamento",
+            alert_id="alert-1",
+        )
+        self.assertEqual(set(repeated), set(ids))
         rows = NotificationOutboxRepository(self.backend).pending()
+        self.assertEqual(len(rows), 2)
         self.assertEqual({row["channel"] for row in rows}, {"email", "discord"})
         self.assertEqual({row["recipient"] for row in rows}, {"ops@example.invalid", "noc"})
         self.assertTrue(all(row["event_id"] == "event-1" for row in rows))
         self.assertTrue(all(row["alert_id"] == "alert-1" for row in rows))
+
+    def test_universal_event_engine_routes_matching_event_to_outbox(self):
+        destination_id = self.routing.create_destination(
+            name="Eventos informativos",
+            channel="email",
+            recipient="events@example.invalid",
+            config={"sender": "capivara@example.invalid"},
+        )
+        self.routing.create_route(
+            destination_id=destination_id,
+            event_type="INSTANCE_STARTED",
+            minimum_severity="info",
+        )
+        engine = DatabaseAlertEngine(self.backend)
+        engine.cycle()
+        UniversalEventRepository(self.backend).publish({
+            "event_id": "event-engine-route",
+            "event_type": "INSTANCE_STARTED",
+            "source": "controller.runtime",
+            "severity": "info",
+            "data": {"message": "Instância iniciada"},
+        })
+        self.assertEqual(engine.cycle(), 1)
+        rows = NotificationOutboxRepository(self.backend).pending()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["event_id"], "event-engine-route")
+        self.assertEqual(rows[0]["recipient"], "events@example.invalid")
+        self.assertEqual(rows[0]["message"], "Instância iniciada")
 
     def test_disabled_destination_is_not_routed(self):
         destination_id = self.routing.create_destination(
