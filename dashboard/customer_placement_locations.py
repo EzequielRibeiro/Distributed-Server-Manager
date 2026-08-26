@@ -2,6 +2,7 @@
 """Customer-safe geographic placement discovery and recommendation."""
 from __future__ import annotations
 
+import json
 import math
 from typing import Any
 
@@ -27,23 +28,50 @@ def _distance_latency_ms(lat1: float | None, lon1: float | None, lat2: float | N
     dlambda = math.radians(lon2 - lon1)
     a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
     km = 6371.0 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    # Fiber paths are longer than great-circle distance.  A 10 ms floor keeps
-    # the value clearly in the realm of an estimate rather than a fake probe.
     return max(10, int(round((km * 1.35) / 100.0)))
 
 
-def _customer_controller(user: dict[str, Any] | None, repository: LocationRepository) -> str:
+def _decode_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    try:
+        decoded = json.loads(str(value or "{}"))
+    except (TypeError, ValueError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _customer_context(user: dict[str, Any] | None, repository: LocationRepository) -> tuple[int, str]:
     if not user or str(user.get("role") or "").strip().lower() != "customer" or not user.get("scope_id"):
         raise PermissionError("customer authentication required")
     ph = repository.dialect.placeholder
     with repository.session() as session:
         row = session.execute(
-            "SELECT controller_id,status FROM customers WHERE id=" + ph,
+            "SELECT id,controller_id,status FROM customers WHERE id=" + ph,
             (str(user["scope_id"]),),
         ).fetchone()
     if row is None or str(row["status"] or "").strip().lower() != "active":
         raise PermissionError("customer is not active")
-    return str(row["controller_id"] or "").strip()
+    return int(row["id"]), str(row["controller_id"] or "").strip()
+
+
+def _contract_resources(repository: LocationRepository, customer_id: int, contract_id: str | None) -> dict[str, Any] | None:
+    contract_id = str(contract_id or "").strip()
+    if not contract_id:
+        return None
+    ph = repository.dialect.placeholder
+    with repository.session() as session:
+        row = session.execute(
+            "SELECT id,customer_id,status,metadata_json FROM service_contracts WHERE id=" + ph + " AND customer_id=" + ph,
+            (contract_id, customer_id),
+        ).fetchone()
+    if row is None:
+        raise PermissionError("contract does not belong to customer")
+    if str(row["status"] or "").strip().lower() != "active":
+        raise ValueError("contract is not active")
+    metadata = _decode_object(row["metadata_json"])
+    resources = metadata.get("resources")
+    return dict(resources) if isinstance(resources, dict) else None
 
 
 def customer_placement_locations(
@@ -52,16 +80,19 @@ def customer_placement_locations(
     *,
     game_id: str | None = None,
     runtime_id: str | None = None,
+    contract_id: str | None = None,
     client_latitude: float | None = None,
     client_longitude: float | None = None,
     catalog_root=None,
 ) -> dict[str, Any]:
     repository = LocationRepository(backend)
     repository.initialize()
-    controller_id = _customer_controller(user, repository)
+    customer_id, controller_id = _customer_context(user, repository)
+    resources = _contract_resources(repository, customer_id, contract_id)
     requirements = requirements_for_instance(
         game_id=game_id,
         runtime_id=runtime_id,
+        resources=resources,
         catalog_root=catalog_root,
     )
 
