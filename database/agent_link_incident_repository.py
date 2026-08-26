@@ -47,6 +47,42 @@ class AgentLinkIncidentRepository:
             raise LookupError("Agent not found")
         return dict(row)
 
+    def identify_agent_from_credential_reference(
+        self,
+        credential_id: str,
+        *,
+        fingerprint: str | None = None,
+    ) -> str | None:
+        """Resolve a failed authentication to an Agent without using a secret.
+
+        A known credential id is sufficient when no fingerprint was supplied.
+        When the caller supplied a fingerprint it must match the registered
+        credential fingerprint, preventing a forged credential reference from
+        attributing a failure to another Agent.
+        """
+        self.initialize()
+        identifier = str(credential_id or "").strip()
+        if not identifier:
+            return None
+        ph = self.dialect.placeholder
+        with self.backend.connect() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                row = session.execute(
+                    "SELECT agent_id,fingerprint FROM agent_credentials "
+                    f"WHERE id={ph}",
+                    (identifier,),
+                ).fetchone()
+            finally:
+                session.close()
+        if row is None:
+            return None
+        supplied = str(fingerprint or "").strip()
+        registered = str(row["fingerprint"] or "").strip()
+        if supplied and supplied != registered:
+            return None
+        return str(row["agent_id"])
+
     def active(self, agent_id: str) -> dict[str, Any] | None:
         self.initialize()
         rows = self.alerts.list_alerts(
