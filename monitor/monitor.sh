@@ -49,6 +49,19 @@ monitor_init()
 }
 
 # =============================================================
+# Vínculo dos Agents
+# O sweep é best-effort: indisponibilidade temporária do backend não pode
+# interromper o monitor principal.
+# =============================================================
+agent_link_sweep()
+{
+    local sweep="$DSM_MONITOR_DIR/agent_link_sweep.py"
+    if [ -f "$sweep" ]; then
+        DSM_ROOT="$DSM_ROOT" python3 "$sweep" >/dev/null 2>&1 || true
+    fi
+}
+
+# =============================================================
 # Ciclo único
 # Usado pelo daemon e testes
 # =============================================================
@@ -68,6 +81,7 @@ monitor_cycle()
             ;;
     esac
     recovery_run
+    agent_link_sweep
     notify_flush 2>/dev/null || true
 }
 
