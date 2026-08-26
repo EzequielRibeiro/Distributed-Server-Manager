@@ -2,6 +2,7 @@
 """Administrative Agent maintenance and secure credential relink HTTP composition."""
 from __future__ import annotations
 
+from pathlib import Path
 import uuid
 from urllib.parse import parse_qs, urlparse
 
@@ -14,14 +15,18 @@ from agent_pairing_repository import (
     PairingTokenInvalid,
 )
 from agent_relink_repository import AgentRelinkRepository
+from configuration_repository import ConfigurationRepository
 from universal_event_repository import UniversalEventRepository
 
 DETAIL_PATH = "/api/admin/agent"
 RENAME_PATH = "/api/admin/agent/rename"
+STORAGE_PATH = "/api/admin/agent/storage"
 DOCTOR_PATH = "/api/admin/agent/doctor"
 RELINK_PREPARE_PATH = "/api/admin/agent/relink/prepare"
 CREDENTIAL_ROTATE_PATH = "/api/admin/agent/credential-rotate"
 REMOTE_RELINK_PATH = "/api/agent/relink"
+_STORAGE_NAMESPACE = "capivara.agent.storage"
+_DEFAULT_STORAGE_ROOT = "/var/lib/capivara-instances"
 
 
 def _backend(legacy):
@@ -41,6 +46,40 @@ def _authorize(user, detail: dict, *, doctor: bool = False) -> None:
     if doctor and role == "operator":
         return
     raise PermissionError("Agent administration access denied")
+
+
+def _storage_root(value) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("instance_storage_root is required")
+    path = Path(text)
+    if not path.is_absolute():
+        raise ValueError("instance_storage_root must be an absolute path")
+    resolved = path.resolve(strict=False)
+    if resolved == Path("/"):
+        raise ValueError("instance_storage_root cannot be filesystem root")
+    return str(resolved)
+
+
+def _storage_detail(backend, agent_id: str) -> dict:
+    repo = ConfigurationRepository(backend)
+    repo.initialize()
+    configured = repo.get(scope_type="agent", scope_id=agent_id, namespace=_STORAGE_NAMESPACE)
+    root = _DEFAULT_STORAGE_ROOT
+    revision = None
+    checksum = None
+    if configured:
+        value = configured.get("value") if isinstance(configured.get("value"), dict) else {}
+        root = str(value.get("instance_storage_root") or _DEFAULT_STORAGE_ROOT)
+        revision = configured.get("revision")
+        checksum = configured.get("checksum")
+    return {
+        "instance_storage_root": root,
+        "source": "managed" if configured else "default",
+        "revision": revision,
+        "checksum": checksum,
+        "note": "A mudança é aplicada pelo próximo heartbeat e não move instâncias existentes automaticamente.",
+    }
 
 
 def _publish(backend, *, event_type: str, agent_id: str, actor: str, data: dict) -> None:
@@ -92,6 +131,7 @@ def install_agent_administration(legacy, authenticate) -> None:
             if parsed.path == DOCTOR_PATH:
                 self.send_json(200, {"agent_id": agent_id, "doctor": repo.latest_doctor(agent_id)})
             else:
+                detail["storage"] = _storage_detail(backend, agent_id)
                 self.send_json(200, {"agent": detail})
         except PermissionError as exc:
             self.send_json(403, {"error": "forbidden", "message": str(exc)})
@@ -135,7 +175,7 @@ def install_agent_administration(legacy, authenticate) -> None:
                 self.send_json(500, {"error": "relink_failed", "message": "Não foi possível revincular o Agent."})
             return
 
-        if path not in {RENAME_PATH, DOCTOR_PATH, RELINK_PREPARE_PATH, CREDENTIAL_ROTATE_PATH}:
+        if path not in {RENAME_PATH, STORAGE_PATH, DOCTOR_PATH, RELINK_PREPARE_PATH, CREDENTIAL_ROTATE_PATH}:
             return previous_post(self)
         user = authenticated(self)
         if user is None:
@@ -159,6 +199,31 @@ def install_agent_administration(legacy, authenticate) -> None:
                 result = repo.rename(agent_id, str((payload or {}).get("name") or ""), actor=actor)
                 _publish(backend, event_type="AGENT_ADMIN_UPDATED", agent_id=agent_id, actor=actor, data={"field": "name", "name": result["name"]})
                 self.send_json(200, result)
+                return
+
+            if path == STORAGE_PATH:
+                if _role(user) == "operator":
+                    raise PermissionError("operator is read-only")
+                root = _storage_root((payload or {}).get("instance_storage_root"))
+                configurations = ConfigurationRepository(backend)
+                configurations.initialize()
+                stored = configurations.put(
+                    {
+                        "scope_type": "agent",
+                        "scope_id": agent_id,
+                        "namespace": _STORAGE_NAMESPACE,
+                        "value": {"instance_storage_root": root},
+                    },
+                    updated_by=actor,
+                )
+                _publish(
+                    backend,
+                    event_type="AGENT_INSTANCE_STORAGE_ROOT_REQUESTED",
+                    agent_id=agent_id,
+                    actor=actor,
+                    data={"instance_storage_root": root, "changed": bool(stored.get("changed"))},
+                )
+                self.send_json(202, {"agent_id": agent_id, "storage": _storage_detail(backend, agent_id), "changed": bool(stored.get("changed"))})
                 return
 
             if path == DOCTOR_PATH:
