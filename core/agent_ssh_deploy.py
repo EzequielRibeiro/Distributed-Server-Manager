@@ -18,8 +18,8 @@ class SSHDeployOptions:
     ssh_user: str
     ssh_port: int = 22
     identity_file: str | None = None
-    password_file: str | None = None
     connect_timeout: int = 10
+    password_file: str | None = None
 
 @dataclass(frozen=True)
 class SSHResult:
@@ -38,8 +38,7 @@ def validate_host(value: str) -> str:
     try: ipaddress.ip_address(candidate)
     except ValueError:
         labels = candidate.rstrip(".").split(".")
-        if any(not x or len(x)>63 or x.startswith("-") or x.endswith("-") for x in labels):
-            raise AgentDeployError("invalid SSH host")
+        if any(not x or len(x)>63 or x.startswith("-") or x.endswith("-") for x in labels): raise AgentDeployError("invalid SSH host")
     return candidate
 
 def validate_ssh_user(value: str) -> str:
@@ -51,12 +50,15 @@ def validate_password_file(value: str) -> Path:
     path = Path(os.path.expanduser(str(value or ""))).resolve()
     if not path.is_file(): raise AgentDeployError(f"SSH password file not found: {path}")
     mode = stat.S_IMODE(path.stat().st_mode)
-    if mode & 0o077:
-        raise AgentDeployError(f"SSH password file has unsafe permissions {mode:04o}; use 0600 or more restrictive")
+    if mode & 0o077: raise AgentDeployError(f"SSH password file has unsafe permissions {mode:04o}; use 0600 or more restrictive")
     try: secret = path.read_text(encoding="utf-8").rstrip("\r\n")
     except UnicodeDecodeError as exc: raise AgentDeployError("SSH password file must be UTF-8 text") from exc
     if not secret: raise AgentDeployError("SSH password file is empty")
     return path
+
+def _password_text(options: SSHDeployOptions) -> str | None:
+    if not options.password_file: return None
+    return validate_password_file(options.password_file).read_text(encoding="utf-8").rstrip("\r\n")
 
 def _default_runner(argv: Sequence[str], stdin_text: str | None, timeout: int | None) -> SSHResult:
     p=subprocess.run(list(argv),input=stdin_text,text=True,capture_output=True,timeout=timeout,check=False)
@@ -82,8 +84,7 @@ def build_ssh_argv(options: SSHDeployOptions, remote_command: str) -> list[str]:
 def _run_ssh(options: SSHDeployOptions, remote_command: str, *, runner: SSHRunner, stdin_text: str|None=None, timeout: int|None=None) -> SSHResult:
     if runner is _default_runner:
         if shutil.which("ssh") is None: raise AgentDeployError("OpenSSH client not found")
-        if options.password_file and shutil.which("sshpass") is None:
-            raise AgentDeployError("password-file authentication requires sshpass on the Controller; SSH keys remain preferred")
+        if options.password_file and shutil.which("sshpass") is None: raise AgentDeployError("password-file authentication requires sshpass on the Controller; SSH keys remain preferred")
     try: return runner(build_ssh_argv(options,remote_command),stdin_text,timeout)
     except subprocess.TimeoutExpired as exc: raise AgentDeployError("SSH operation timed out") from exc
     except OSError as exc: raise AgentDeployError(f"unable to execute SSH client: {exc}") from exc
@@ -92,18 +93,26 @@ def _reason(result: SSHResult, fallback: str) -> str:
     lines=(result.stderr or result.stdout).strip().splitlines(); return lines[-1] if lines else fallback
 
 def preflight_ssh(options: SSHDeployOptions, *, runner: SSHRunner=_default_runner) -> dict[str,Any]:
-    cmd='set -eu; test "$(uname -s)" = Linux; command -v bash >/dev/null; command -v curl >/dev/null; command -v python3 >/dev/null; if [ "$(id -u)" -ne 0 ]; then command -v sudo >/dev/null; sudo -n true; fi; printf "CAPIVARA_PREFLIGHT_OK\\n"; uname -m'
-    r=_run_ssh(options,cmd,runner=runner,timeout=options.connect_timeout+10)
+    user=validate_ssh_user(options.ssh_user); password=_password_text(options)
+    base='set -eu; test "$(uname -s)" = Linux; command -v bash >/dev/null; command -v curl >/dev/null; command -v python3 >/dev/null; '
+    stdin_text=None
+    if user!="root":
+        base+='command -v sudo >/dev/null; '
+        if password is not None:
+            base+="sudo -S -p '' true; "; stdin_text=password+"\n"
+        else: base+='sudo -n true; '
+    cmd=base+'printf "CAPIVARA_PREFLIGHT_OK\\n"; uname -m'
+    r=_run_ssh(options,cmd,runner=runner,stdin_text=stdin_text,timeout=options.connect_timeout+10)
     if r.returncode!=0 or "CAPIVARA_PREFLIGHT_OK" not in r.stdout:
-        raise AgentDeployError("SSH preflight failed (Linux, curl, bash, python3 and root/passwordless sudo are required): "+_reason(r,"remote preflight failed"))
+        requirement="root or sudo access" if password is not None else "root/passwordless sudo"
+        raise AgentDeployError(f"SSH preflight failed (Linux, curl, bash, python3 and {requirement} are required): "+_reason(r,"remote preflight failed"))
     lines=[x.strip() for x in r.stdout.splitlines() if x.strip()]
-    return {"platform":"linux","architecture":lines[-1] if lines else "unknown","transport":"openssh"}
+    return {"platform":"linux","architecture":lines[-1] if lines else "unknown","transport":"openssh","privilege":"root" if user=="root" else "sudo-password" if password is not None else "sudo-noninteractive"}
 
 def preflight_windows_ssh(options: SSHDeployOptions, *, runner: SSHRunner=_default_runner) -> dict[str,Any]:
     ps="$ErrorActionPreference='Stop';$id=[Security.Principal.WindowsIdentity]::GetCurrent();$p=New-Object Security.Principal.WindowsPrincipal($id);if(-not $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){exit 41};Write-Output 'CAPIVARA_WINDOWS_PREFLIGHT_OK';Write-Output $env:PROCESSOR_ARCHITECTURE"
     r=_run_ssh(options,'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "'+ps+'"',runner=runner,timeout=options.connect_timeout+15)
-    if r.returncode!=0 or "CAPIVARA_WINDOWS_PREFLIGHT_OK" not in r.stdout:
-        raise AgentDeployError("SSH preflight failed (Windows OpenSSH, PowerShell and an Administrator account are required): "+_reason(r,"remote Windows preflight failed"))
+    if r.returncode!=0 or "CAPIVARA_WINDOWS_PREFLIGHT_OK" not in r.stdout: raise AgentDeployError("SSH preflight failed (Windows OpenSSH, PowerShell and an Administrator account are required): "+_reason(r,"remote Windows preflight failed"))
     lines=[x.strip() for x in r.stdout.splitlines() if x.strip()]
     return {"platform":"windows","architecture":lines[-1] if lines else "unknown","transport":"openssh"}
 
@@ -122,8 +131,11 @@ def bootstrap_agent(options: SSHDeployOptions, *, controller_url: str,pairing_to
     controller_url=str(controller_url or "").strip().rstrip("/"); pairing_token=str(pairing_token or "").strip(); release_tag=str(release_tag or "latest").strip()
     if not controller_url.startswith(("http://","https://")): raise AgentDeployError("controller_url must use http:// or https://")
     if not pairing_token: raise AgentDeployError("pairing token is required")
-    cmd="python3 -" if validate_ssh_user(options.ssh_user)=="root" else "sudo -n python3 -"
-    r=_run_ssh(options,cmd,runner=runner,stdin_text=_bootstrap_stdin(controller_url,pairing_token,release_tag),timeout=timeout)
+    user=validate_ssh_user(options.ssh_user); password=_password_text(options); script=_bootstrap_stdin(controller_url,pairing_token,release_tag)
+    if user=="root": cmd="python3 -"; stdin_text=script
+    elif password is not None: cmd="sudo -S -p '' python3 -"; stdin_text=password+"\n"+script
+    else: cmd="sudo -n python3 -"; stdin_text=script
+    r=_run_ssh(options,cmd,runner=runner,stdin_text=stdin_text,timeout=timeout)
     if r.returncode!=0: raise AgentDeployError("Agent bootstrap failed: "+_reason(r,"remote Agent bootstrap failed"))
 
 def _windows_bootstrap_stdin(controller_url: str,pairing_token: str,release_tag: str) -> str:
