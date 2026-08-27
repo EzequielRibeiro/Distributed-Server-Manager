@@ -13,6 +13,8 @@ _PRIMARY_NAMES = ("game", "server", "primary", "game_port", "port")
 
 def install_customer_instance_connection(legacy, authenticate):
     previous_get = legacy.DashboardHandler.do_GET
+    legacy.STATIC_FILES["/customer-instance-core.js"] = legacy.WEB_DIR / "customer-instance-v2.js"
+    legacy.STATIC_FILES["/customer-instance-v2.js"] = legacy.WEB_DIR / "customer-instance-v2-wrapper.js"
     legacy.STATIC_FILES["/customer-instance-connection.js"] = legacy.WEB_DIR / "customer-instance-connection.js"
 
     def backend():
