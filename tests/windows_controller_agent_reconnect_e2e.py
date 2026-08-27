@@ -53,7 +53,7 @@ def parse_time(value): return datetime.fromisoformat(str(value).replace("Z","+00
 
 def main()->int:
     if os.name!="nt": raise SystemExit("Windows P4 E2E must run on Windows")
-    with tempfile.TemporaryDirectory(prefix="capivara-p4-win-") as temp:
+    with tempfile.TemporaryDirectory(prefix="capivara-p4-win-",ignore_cleanup_errors=True) as temp:
         root=Path(temp);state=root/"state";config_path=root/"agent.json";os.environ["CAPIVARA_AGENT_STATE_DIR"]=str(state);os.environ["CAPIVARA_AGENT_CONFIG"]=str(config_path);cert,key=cert_pair(root);os.environ["SSL_CERT_FILE"]=str(cert)
         db=root/"capivara.db";backend=create_backend(DatabaseConfig(driver="sqlite",database=str(db)));backend.initialize()
         with sqlite3.connect(db) as c:
