@@ -1,0 +1,36 @@
+name: Customer Health Alerting
+
+on:
+  pull_request:
+    paths:
+      - 'dashboard/customer_health_http.py'
+      - 'dashboard/customer_health_service.py'
+      - 'dashboard/customer_placement_locations_http.py'
+      - 'dashboard/server_part17.py'
+      - 'database/customer_health_repository.py'
+      - 'tests/customer_health_alerting_test.py'
+      - '.github/workflows/customer-health-alerting.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/customer_health_http.py'
+      - 'dashboard/customer_health_service.py'
+      - 'dashboard/customer_placement_locations_http.py'
+      - 'dashboard/server_part17.py'
+      - 'database/customer_health_repository.py'
+      - 'tests/customer_health_alerting_test.py'
+      - '.github/workflows/customer-health-alerting.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  customer-health-alerting:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python syntax
+        run: python3 -m py_compile dashboard/customer_health_http.py dashboard/customer_health_service.py dashboard/customer_placement_locations_http.py database/customer_health_repository.py tests/customer_health_alerting_test.py
+      - name: Run Customer health regressions
+        run: python3 -m unittest tests/customer_health_alerting_test.py
