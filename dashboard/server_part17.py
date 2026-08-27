@@ -6,6 +6,7 @@ from urllib.parse import parse_qs,urlparse
 import server_part16 as integration
 from admin_observability_http import install_admin_observability
 from agent_admin_http import install_agent_administration
+from agent_public_network_http import install_agent_public_network
 from agent_storage_pool_admin_http import install_agent_storage_pool_administration
 from alert_management_http import install_alert_management
 from artifact_transfer_http import install_artifact_transfer_http
@@ -75,6 +76,7 @@ install_dashboard_activity_audit(legacy,_authenticate)
 install_alert_management(legacy,_authenticate)
 install_customer_health_http(legacy,_authenticate)
 install_agent_administration(legacy,_authenticate)
+install_agent_public_network(legacy,_authenticate)
 install_agent_storage_pool_administration(legacy,_authenticate)
 install_storage_pool_source_cleanup(legacy,_authenticate)
 install_customer_profile_administration(legacy,_authenticate)
