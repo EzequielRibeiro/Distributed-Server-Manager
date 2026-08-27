@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import parse_qs,urlparse
 import server_part16 as integration
+from admin_observability_http import install_admin_observability
 from agent_admin_http import install_agent_administration
 from agent_storage_pool_admin_http import install_agent_storage_pool_administration
 from alert_management_http import install_alert_management
@@ -77,5 +78,6 @@ install_customer_profile_administration(legacy,_authenticate)
 install_customer_profile_self_service(legacy,_authenticate)
 install_customer_email_change(legacy,_authenticate)
 install_customer_placement_locations(legacy,_authenticate)
+install_admin_observability(legacy,_authenticate)
 def run():run_dashboard(legacy)
 if __name__=="__main__":run()

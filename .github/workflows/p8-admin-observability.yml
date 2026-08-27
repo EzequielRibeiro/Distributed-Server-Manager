@@ -1,0 +1,30 @@
+name: P8 Administrative Observability
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python and JavaScript syntax
+        run: |
+          python3 -m py_compile \
+            dashboard/admin_observability_api.py \
+            dashboard/admin_observability_http.py \
+            dashboard/server_part17.py \
+            tests/p8_admin_observability_test.py
+          node --check dashboard/web/admin-observability.js
+      - name: Run P8 contract tests
+        env:
+          PYTHONPATH: dashboard:database:core:.
+        run: python3 -m unittest tests/p8_admin_observability_test.py
+      - name: Validate P8 composition contract
+        run: |
+          grep -F 'install_admin_observability' dashboard/server_part17.py
+          grep -F '/api/admin/observability' dashboard/admin_observability_http.py
+          grep -F 'CapivaraAdministrativeObservability' dashboard/admin_observability_api.py
+          grep -F 'correlation_id' dashboard/web/admin-observability.js
