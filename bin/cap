@@ -17,7 +17,9 @@ if [[ "${show_all}" == "1" || "${role}" == "controller" || "${role}" == "hybrid"
 Controller / Hybrid:
   cap infrastructure doctor [--reconcile] [--json]
   cap infrastructure role show|set ...
-  cap agent deploy HOST --ssh-user USER [options]
+  cap agent deploy HOST --ssh-user USER [--platform linux|windows] [--identity-file PATH|--password-file PATH] [options]
+  cap agent test-connection HOST --ssh-user USER [--platform linux|windows] [--identity-file PATH|--password-file PATH]
+  cap agent secret create|delete NAME
   cap agent winrm-prepare USER@HOST [--port 5986]
   cap agent ssh-prepare USER@HOST [--ssh-port PORT]
   cap agent ports show|set|check ...
@@ -96,6 +98,11 @@ Todas as roles conhecidas:
   cap update check|run|history
   cap help --all
 
+Ajuda detalhada:
+  cap agent deploy --help
+  cap agent test-connection --help
+  cap agent secret --help
+
 Nota:
   `cap` é a única CLI pública. `dsm` existe apenas como compatibilidade temporária.
 EOF
@@ -106,7 +113,7 @@ agent_controller_exec(){ [[ -f "${AGENT_CONTROLLER_CLI}" ]] || { echo "CLI de Co
 case "${1:-}" in
 help|--help|-h|"") role="$(local_role)"; [[ "${2:-}" == "--all" ]] && usage "${role}" 1 || usage "${role}" 0 ;;
 infrastructure) require_role "cap infrastructure" controller hybrid; shift; case "${1:-}" in doctor) shift; exec python3 "${DSM_ROOT}/database/infrastructure_doctor_contract.py" doctor "$@" ;; role) shift; exec python3 "${DSM_ROOT}/database/infrastructure_role_cli.py" "$@" ;; *) usage "$(local_role)" 0; exit 2 ;; esac ;;
-agent) shift; case "${1:-}" in ssh-prepare) require_role "cap agent ssh-prepare" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_ssh_prepare_cli.py" "$@" ;; winrm-prepare) require_role "cap agent winrm-prepare" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_winrm_prepare_cli.py" "$@" ;; deploy) require_role "cap agent deploy" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_deploy_cli.py" "$@" ;; controller) require_role "cap agent controller" agent hybrid; shift; agent_controller_exec "$@" ;; ports) case "${2:-}" in show|check) if [[ $# -eq 2 || "${3:-}" == --* ]]; then require_role "cap agent ports ${2}" agent hybrid; agent_local_exec "$@"; else require_role "cap agent ports ${2} <agent-id>" controller hybrid; legacy_exec agent "$@"; fi ;; set) require_role "cap agent ports set" controller hybrid; legacy_exec agent "$@" ;; *) usage "$(local_role)" 0; exit 2 ;; esac ;; status|info|health|heartbeat|capabilities|network|game-data|jobs|update|logs|doctor) require_role "cap agent ${1}" agent hybrid; agent_local_exec "$@" ;; *) usage "$(local_role)" 0; exit 2 ;; esac ;;
+agent) shift; case "${1:-}" in ssh-prepare) require_role "cap agent ssh-prepare" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_ssh_prepare_cli.py" "$@" ;; winrm-prepare) require_role "cap agent winrm-prepare" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_winrm_prepare_cli.py" "$@" ;; deploy) require_role "cap agent deploy" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_deploy_cli.py" "$@" ;; test-connection) require_role "cap agent test-connection" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_connection_test_cli.py" "$@" ;; secret) require_role "cap agent secret" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/agent_remote_secret_cli.py" "$@" ;; controller) require_role "cap agent controller" agent hybrid; shift; agent_controller_exec "$@" ;; ports) case "${2:-}" in show|check) if [[ $# -eq 2 || "${3:-}" == --* ]]; then require_role "cap agent ports ${2}" agent hybrid; agent_local_exec "$@"; else require_role "cap agent ports ${2} <agent-id>" controller hybrid; legacy_exec agent "$@"; fi ;; set) require_role "cap agent ports set" controller hybrid; legacy_exec agent "$@" ;; *) usage "$(local_role)" 0; exit 2 ;; esac ;; status|info|health|heartbeat|capabilities|network|game-data|jobs|update|logs|doctor) require_role "cap agent ${1}" agent hybrid; agent_local_exec "$@" ;; *) usage "$(local_role)" 0; exit 2 ;; esac ;;
 customer) require_role "cap customer" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/customer_cli.py" "$@" ;;
 contract) require_role "cap contract" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/contract_cli.py" "$@" ;;
 instance) case "${2:-}" in list|status|doctor|start|stop|restart) require_role "cap instance ${2}" agent hybrid; agent_local_exec "$@" ;; create|delete) require_role "cap instance ${2}" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/instance_admin_cli.py" "$@" ;; *) require_role "cap instance" controller hybrid; legacy_exec "$@" ;; esac ;;
