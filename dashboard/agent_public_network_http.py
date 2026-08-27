@@ -11,6 +11,8 @@ PATH = "/api/admin/agent/public-network"
 def install_agent_public_network(legacy, authenticate):
     previous_get = legacy.DashboardHandler.do_GET
     previous_post = legacy.DashboardHandler.do_POST
+    legacy.STATIC_FILES["/agent-details-core.js"] = legacy.WEB_DIR / "agent-details.js"
+    legacy.STATIC_FILES["/agent-details.js"] = legacy.WEB_DIR / "agent-details-wrapper.js"
     legacy.STATIC_FILES["/agent-public-network.js"] = legacy.WEB_DIR / "agent-public-network.js"
 
     def backend():
