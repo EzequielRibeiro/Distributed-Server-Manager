@@ -30,7 +30,6 @@ main(){
     start_worker metrics_worker.sh
     start_worker scheduler_worker.sh
     start_worker monitor_worker.sh
-    start_worker mods_worker.sh
     start_worker backup_worker.sh
     start_python_worker automation_worker.py
     start_python_worker hybrid_agent_worker.py
