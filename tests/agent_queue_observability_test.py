@@ -6,7 +6,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "agents" / "linux" / "runtime"
@@ -31,11 +30,16 @@ class AgentQueueObservabilityTest(unittest.TestCase):
                 }),
                 encoding="utf-8",
             )
-            with patch("queue_observability.time.time", return_value=1000.0), patch.object(
-                Path, "stat", autospec=True
-            ) as stat:
-                stat.return_value.st_mtime = 600.0
-                report = collect_queue_observability(root, stale_after_seconds=300)
+            # Use the real file mtime as the deterministic reference instead of
+            # monkey-patching pathlib.Path.stat. Patching Path.stat globally also
+            # affects pathlib's directory traversal internals on Python 3.12 and
+            # can make glob() receive a non-integer st_mode.
+            mtime = target.stat().st_mtime
+            report = collect_queue_observability(
+                root,
+                now=mtime + 400,
+                stale_after_seconds=300,
+            )
 
             queue = report["instance_results"]
             self.assertEqual(queue["depth"], 1)
