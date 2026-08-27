@@ -34,7 +34,7 @@
             <label>Telefone<input id="customer-profile-phone" autocomplete="tel"></label>
             <label>Tipo de documento<select id="customer-profile-document-type"><option value="">Não informado</option><option value="cpf">CPF</option><option value="cnpj">CNPJ</option><option value="other">Outro</option></select></label>
             <label>Documento<input id="customer-profile-document-number"></label>
-            <div><span>E-mail da conta</span><strong id="customer-profile-email">—</strong><small>Somente leitura. Use o fluxo seguro de alteração de e-mail.</small></div>
+            <div><span>E-mail da conta</span><strong id="customer-profile-email">—</strong><small>Somente leitura. A troca exige confirmação no novo endereço.</small><button class="button" type="button" data-customer-email-change>Alterar e-mail</button></div>
             <div><span>Código do cliente</span><strong id="customer-profile-code">—</strong></div>
           </div>
           <div class="runtime-create-actions"><button id="customer-profile-save" class="button" type="submit">Salvar alterações</button></div>
@@ -97,4 +97,5 @@
     event.preventDefault();
     open();
   });
+  document.addEventListener("customer-email-changed", () => { if (!ensurePanel().hidden) load().catch(() => {}); });
 })();
