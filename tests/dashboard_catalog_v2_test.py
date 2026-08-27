@@ -103,9 +103,22 @@ class CatalogV2DashboardTest(unittest.TestCase):
         self.assertEqual({p["id"] for p in profiles["profiles"]}, {"standard", "large"})
 
     def test_controller_and_customer_instance_scope_is_preserved(self):
-        instance = ROOT / "instances/DemoNode/minecraft/cliente-demo"
-        controller = {"username":"controller","role":"controller","scope_id":"controller-demo"}
-        customer = {"username":"customer","role":"customer","scope_id":"CLI-DEMO-001"}
+        instances_root = ROOT / "instances"
+        instances_root.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=instances_root)
+        self.addCleanup(temporary.cleanup)
+        instance = Path(temporary.name) / "minecraft" / "instance-scope-test"
+        metadata_dir = instance / ".dsm"
+        metadata_dir.mkdir(parents=True)
+        (metadata_dir / "instance-metadata.json").write_text(
+            json.dumps({
+                "controller_id": "controller-test",
+                "customer": {"id": "CLI-TEST-001"},
+            }),
+            encoding="utf-8",
+        )
+        controller = {"username":"controller","role":"controller","scope_id":"controller-test"}
+        customer = {"username":"customer","role":"customer","scope_id":"CLI-TEST-001"}
         outsider = {"username":"outsider","role":"controller","scope_id":"controller-other"}
         admin = {"username":"admin","role":"admin","scope_id":""}
         self.assertTrue(SERVER.can_access_instance(admin, instance, write=True))
@@ -114,7 +127,7 @@ class CatalogV2DashboardTest(unittest.TestCase):
         self.assertFalse(SERVER.can_access_instance(outsider, instance, write=True))
 
     def test_instance_config_path_cannot_escape_instance(self):
-        instance = ROOT / "instances/DemoNode/minecraft/cliente-demo"
+        instance = ROOT / "instances/node01/minecraft/instance01"
         with self.assertRaisesRegex(ValueError, "invalid instance config file"):
             SERVER.instance_config_path(instance, "../../config/dsm.conf")
 
