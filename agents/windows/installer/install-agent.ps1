@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$ControllerUrl,
     [Parameter(Mandatory=$true)][string]$PairingToken,
+    [string]$ControllerCaFile = "",
     [string]$PackageDir = $PSScriptRoot,
     [string]$InstallRoot = "$env:ProgramFiles\CapivaraAgent",
     [string]$DataRoot = "$env:ProgramData\CapivaraAgent",
@@ -24,6 +25,20 @@ function New-CapivaraShortcut([string]$Path,[string]$Arguments) {
     $shortcut.IconLocation = "$env:WINDIR\System32\shell32.dll,13"
     $shortcut.Save()
 }
+function Install-ControllerCa([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return }
+    if ($ControllerUrl -notmatch '^https://') { Fail 'ControllerCaFile só pode ser usado com Controller HTTPS' }
+    if (-not (Test-Path $Path -PathType Leaf)) { Fail "CA do Controller não encontrada: $Path" }
+    try {
+        $resolved = (Resolve-Path $Path).Path
+        $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($resolved)
+        if (-not $cert.Subject) { Fail 'certificado da CA do Controller inválido' }
+        Import-Certificate -FilePath $resolved -CertStoreLocation 'Cert:\LocalMachine\Root' | Out-Null
+        Write-Host "CA privada do Controller adicionada à trust store do Windows: $($cert.Thumbprint)"
+    } catch {
+        Fail "falha ao instalar CA do Controller: $($_.Exception.Message)"
+    }
+}
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($identity)
@@ -32,6 +47,7 @@ if ($ControllerUrl -notmatch '^https?://') { Fail "ControllerUrl inválida" }
 if ([string]::IsNullOrWhiteSpace($PairingToken)) { Fail "PairingToken é obrigatório" }
 $python = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
 if (-not $python) { Fail "Python 3 não encontrado no PATH" }
+Install-ControllerCa $ControllerCaFile
 
 $PackageDir = (Resolve-Path $PackageDir).Path
 $required = @(
