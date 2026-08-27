@@ -5,9 +5,12 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from agent_public_network_schema import ensure_agent_public_network_schema
 from backend import DatabaseError, DatabaseMigrationError
-from discord_integration_schema import discord_integration_ddl
+from baseline_upgrade_engine import (
+    apply_pending_upgrades,
+    seed_current_upgrades,
+    upgrade_status,
+)
 from schema_baseline import BASELINE_NAME, baseline_marker_sql, load_schema_baseline
 
 REQUIRED_TABLES = {
@@ -20,20 +23,6 @@ REQUIRED_TABLES = {
     "instances",
     "service_contracts",
     "schema_baseline",
-}
-
-# Database Baseline v2 was intentionally frozen, but two additive schema
-# extensions were later compiled into the baseline. Older installations using
-# this checksum are safe to reconcile because both changes only add new tables.
-KNOWN_UPGRADABLE_BASELINE_CHECKSUMS = {
-    "1c5fbc4a59b4b42326ccbeaa6701aaa269f4b3841e654f5b94f2c7a9b8eb3fab",
-}
-
-DISCORD_EXTENSION_TABLES = {
-    "customer_discord_connections",
-    "customer_discord_instance_bindings",
-    "customer_discord_preferences",
-    "customer_discord_oauth_states",
 }
 
 
@@ -155,55 +144,15 @@ def _validate_structure(backend: Any, connection: Any) -> list[str]:
     return sorted(tables)
 
 
-def _upgrade_known_baseline(
-    backend: Any,
-    connection: Any,
-    *,
-    installed_checksum: str,
-    target_name: str,
-    target_checksum: str,
-) -> bool:
-    """Apply additive extensions for explicitly known Baseline v2 checksums."""
-    if installed_checksum not in KNOWN_UPGRADABLE_BASELINE_CHECKSUMS:
-        return False
-
-    _validate_structure(backend, connection)
-    tables = _table_names(backend, connection)
-
-    present_discord = DISCORD_EXTENSION_TABLES & tables
-    if present_discord and present_discord != DISCORD_EXTENSION_TABLES:
-        missing = sorted(DISCORD_EXTENSION_TABLES - present_discord)
-        raise DatabaseMigrationError(
-            "partial Discord Baseline v2 extension; missing tables: "
-            + ", ".join(missing)
-        )
-    if not present_discord:
-        _execute_script(backend, connection, discord_integration_ddl(backend.name))
-
-    if "agent_public_network_preconfiguration" not in _table_names(backend, connection):
-        _execute_script(
-            backend,
-            connection,
-            ensure_agent_public_network_schema("", backend.name),
-        )
-
-    _write_marker(
-        backend,
-        connection,
-        name=target_name,
-        checksum=target_checksum,
-    )
-    _commit(connection)
-    return True
-
-
 def initialize_baseline(backend: Any) -> dict[str, Any]:
-    """Install the baseline once or reconcile explicitly supported upgrades."""
+    """Install Baseline v2 or advance an existing database through upgrades."""
     baseline = load_schema_baseline(backend.name)
     with backend.connect() as connection:
         try:
             marker = _marker(backend, connection)
-            upgraded_now = False
+            installed_now = False
+            upgraded_now: list[int] = []
+
             if marker is None:
                 _execute_script(backend, connection, baseline.sql)
                 _write_marker(
@@ -212,28 +161,54 @@ def initialize_baseline(backend: Any) -> dict[str, Any]:
                     name=baseline.name,
                     checksum=baseline.checksum,
                 )
-                _commit(connection)
+                # The consolidated current baseline already contains every
+                # registered extension. Seed the ledger without replaying DDL.
+                seed_current_upgrades(backend, connection)
                 installed_now = True
+                _commit(connection)
             else:
-                installed_now = False
                 if str(marker["name"]) != baseline.name:
                     raise DatabaseMigrationError(
                         f"unsupported database baseline: {marker['name']}"
                     )
+
                 installed_checksum = str(marker["checksum"])
-                if installed_checksum != baseline.checksum:
-                    upgraded_now = _upgrade_known_baseline(
+                if installed_checksum == baseline.checksum:
+                    # Databases first installed before the ledger was
+                    # introduced but already on this exact consolidated schema
+                    # can safely adopt the current ledger state.
+                    seed_current_upgrades(backend, connection)
+                    _commit(connection)
+                else:
+                    # Once the ledger exists, this path is generic: future
+                    # releases only append a BaselineUpgrade. Historical
+                    # checksums are needed solely for the one-time pre-ledger
+                    # compatibility bridge.
+                    upgraded_now = apply_pending_upgrades(
                         backend,
                         connection,
                         installed_checksum=installed_checksum,
-                        target_name=baseline.name,
-                        target_checksum=baseline.checksum,
                     )
                     if not upgraded_now:
                         raise DatabaseMigrationError(
-                            "installed Database Baseline v2 checksum does not match the current release"
+                            "Database Baseline v2 checksum differs but no registered upgrade is pending"
                         )
+                    _validate_structure(backend, connection)
+                    _write_marker(
+                        backend,
+                        connection,
+                        name=baseline.name,
+                        checksum=baseline.checksum,
+                    )
+                    _commit(connection)
+
             tables = _validate_structure(backend, connection)
+            upgrades = upgrade_status(backend, connection)
+            if upgrades["pending"]:
+                raise DatabaseMigrationError(
+                    "Database Baseline v2 has unapplied registered upgrades"
+                )
+
             return {
                 "schema_version": 2,
                 "kind": "DatabaseStatus",
@@ -245,6 +220,8 @@ def initialize_baseline(backend: Any) -> dict[str, Any]:
                 "baseline_checksum": baseline.checksum,
                 "installed_now": installed_now,
                 "upgraded_now": upgraded_now,
+                "upgrade_version": upgrades["current_version"],
+                "upgrade_latest": upgrades["latest_version"],
                 "tables": tables,
             }
         except Exception:
@@ -264,19 +241,52 @@ def baseline_status(backend: Any) -> dict[str, Any]:
         )
         tables = _table_names(backend, connection)
         missing = sorted(REQUIRED_TABLES - tables) if initialized else sorted(REQUIRED_TABLES)
+
+        try:
+            upgrades = upgrade_status(backend, connection) if initialized else {
+                "ledger_present": False,
+                "current_version": 0,
+                "latest_version": 0,
+                "pending": [],
+            }
+            upgrade_error = None
+        except DatabaseMigrationError as exc:
+            upgrades = {
+                "ledger_present": "baseline_upgrades" in tables,
+                "current_version": 0,
+                "latest_version": 0,
+                "pending": [],
+            }
+            upgrade_error = str(exc)
+
+        valid_upgrades = bool(
+            upgrades["ledger_present"]
+            and not upgrades["pending"]
+            and upgrade_error is None
+        )
+
         return {
             "schema_version": 2,
             "kind": "DatabaseStatus",
             "driver": backend.name,
             "connected": True,
             "initialized": initialized,
-            "health": "ok" if initialized and checksum_matches and not missing else "error",
+            "health": (
+                "ok"
+                if initialized and checksum_matches and not missing and valid_upgrades
+                else "error"
+            ),
             "baseline": None if marker is None else str(marker["name"]),
             "baseline_checksum": None if marker is None else str(marker["checksum"]),
             "expected_baseline": BASELINE_NAME,
             "expected_checksum": baseline.checksum,
             "checksum_matches": checksum_matches,
             "missing_tables": missing,
+            "upgrade_ledger": upgrades["ledger_present"],
+            "upgrade_version": upgrades["current_version"],
+            "upgrade_latest": upgrades["latest_version"],
+            "pending_upgrades": upgrades["pending"],
+            "upgrade_error": upgrade_error,
         }
 
 
@@ -287,6 +297,9 @@ def validate_baseline(backend: Any) -> dict[str, Any]:
         status["initialized"]
         and status["checksum_matches"]
         and not status["missing_tables"]
+        and status["upgrade_ledger"]
+        and not status["pending_upgrades"]
+        and status["upgrade_error"] is None
     )
     return {
         **status,
