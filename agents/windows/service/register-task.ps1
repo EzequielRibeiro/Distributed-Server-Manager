@@ -1,11 +1,15 @@
 param(
     [Parameter(Mandatory=$true)][string]$PythonExe,
     [Parameter(Mandatory=$true)][string]$AgentScript,
-    [string]$TaskName = "CapivaraAgent"
+    [string]$TaskName = "CapivaraAgent",
+    [string]$DataRoot = "$env:ProgramData\CapivaraAgent",
+    [string]$LauncherScript = "$PSScriptRoot\run-agent.ps1"
 )
 
 $ErrorActionPreference = "Stop"
-$action = New-ScheduledTaskAction -Execute $PythonExe -Argument ('"{0}"' -f $AgentScript)
+if (-not (Test-Path $LauncherScript -PathType Leaf)) { throw "launcher do Agent não encontrado: $LauncherScript" }
+$arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -PythonExe "{1}" -AgentScript "{2}" -DataRoot "{3}"' -f $LauncherScript,$PythonExe,$AgentScript,$DataRoot
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arguments
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `

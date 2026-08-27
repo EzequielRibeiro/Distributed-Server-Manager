@@ -8,6 +8,7 @@ Estrutura:
 agents/windows/
 ├── installer/
 ├── service/
+├── gui/
 ├── runtime/
 │   ├── adapters/
 │   └── profiles/
@@ -48,8 +49,32 @@ O `windows-process` é a opção padrão para runtimes de jogos materializados p
 
 A plataforma não envia comandos de shell arbitrários pelo Controller. Runtime specs, argumentos, paths, providers e operações são allowlisted/validados localmente, mantendo o mesmo princípio de segurança usado pelo Agent Linux.
 
+## Interface administrativa opcional
+
+Quando o Windows oferece Desktop Experience/Explorer e WPF, o instalador habilita automaticamente a interface administrativa local. Em Windows Server Core ou qualquer ambiente sem shell gráfico, o Agent permanece 100% headless e nenhuma dependência gráfica é necessária.
+
+A GUI possui:
+
+- visão geral com identidade, versão, Controller, saúde e Storage Pools;
+- painel de atividades com métricas, reconciliação, configuração, conteúdo, backup, broadcast e game-data;
+- inventário de instâncias com ações `status`, `doctor`, `start`, `stop` e `restart`;
+- área de comandos que representa graficamente as operações administrativas locais suportadas;
+- console administrativo restrito ao command catalog do Agent, sem shell arbitrária;
+- visualizador de log persistente com acesso à pasta de logs;
+- ícone na bandeja do Windows, com abertura rápida, atualização de saúde e acesso aos logs;
+- atalho `Capivara Agent` na Área de Trabalho comum;
+- inicialização do tray pelo Startup comum do Windows.
+
+A instalação aceita `-GuiMode auto|on|off`. `auto` é o padrão. `on` exige que a máquina suporte GUI; `off` força operação headless mesmo em Windows com Desktop Experience.
+
+O serviço não expõe `agent.json` para a sessão gráfica. O processo SYSTEM publica apenas `state/gui/snapshot.json`, sem `pairing_token`, `credential_id`, `credential_secret` ou `identity_nonce`. A sessão gráfica lê esse snapshot e o log. Quando uma ação administrativa precisa acessar estado protegido, ela usa um bridge local com UAC e executa somente comandos allowlisted em `admin_gui_backend.py`.
+
+O log do Agent fica em `%ProgramData%\CapivaraAgent\logs\agent.log`, com rotação local quando ultrapassa 10 MiB. O supervisor continua sendo uma Scheduled Task SYSTEM; a GUI nunca substitui nem hospeda o runtime do Agent.
+
+Instalações existentes recebem os componentes gráficos via self-update. Após atualizar, o updater reconcilia o launcher do serviço e executa a integração gráfica de forma idempotente.
+
 ## Gate de paridade
 
-O workflow `Windows Agent Parity` executa os contratos em Linux e também nativamente em `windows-latest`. Ele valida lifecycle/provisioning já existentes, Storage Pools, configuração gerenciada, queue health, migração/cleanup e o pacote reproduzível. Os módulos do runtime são descobertos automaticamente por `release/build_windows_agent_package.py`, evitando que uma capability nova fique fora do ZIP de produção.
+O workflow `Windows Agent Parity` executa os contratos em Linux e também nativamente em `windows-latest`. Ele valida lifecycle/provisioning, Storage Pools, configuração gerenciada, queue health, migração/cleanup, GUI/tray, parsing PowerShell e o pacote reproduzível. Os módulos do runtime e scripts de GUI/serviço são descobertos automaticamente por `release/build_windows_agent_package.py`, evitando que uma capability nova fique fora do ZIP de produção.
 
 Produção usa o pacote imutável `capivara-agent-windows-X.Y.Z.zip` publicado na mesma GitHub Release do Controller. Ambientes offline podem usar o mesmo pacote extraído com `install-agent.ps1`.

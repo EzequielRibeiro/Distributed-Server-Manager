@@ -36,10 +36,18 @@ from runtime_operations import recover_interrupted_operations
 from runtime_reconciler import reconcile_all,reconciliation_inventory
 from storage_pool_migration_client import clear_storage_pool_migration_result,read_storage_pool_migration_result,stage_storage_pool_migration
 from update_client import clear_update_result,read_update_result,stage_update_request
-PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));CONFIG_PATH=Path(os.environ.get("CAPIVARA_AGENT_CONFIG",PROGRAM_DATA/"CapivaraAgent"/"agent.json"));DEFAULT_HEARTBEAT_SECONDS=30;DEFAULT_RECONCILE_SECONDS=15
+PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));CONFIG_PATH=Path(os.environ.get("CAPIVARA_AGENT_CONFIG",PROGRAM_DATA/"CapivaraAgent"/"agent.json"));GUI_SNAPSHOT_PATH=STATE_DIR/"gui"/"snapshot.json";DEFAULT_HEARTBEAT_SECONDS=30;DEFAULT_RECONCILE_SECONDS=15
 def _load_config()->dict[str,Any]:return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 def _write_config(config):
  CONFIG_PATH.parent.mkdir(parents=True,exist_ok=True);temp=CONFIG_PATH.with_suffix(".tmp");temp.write_text(json.dumps(config,indent=2,sort_keys=True)+"\n",encoding="utf-8");temp.replace(CONFIG_PATH)
+def _atomic_json(path:Path,payload:dict[str,Any]):
+ path.parent.mkdir(parents=True,exist_ok=True);temp=path.with_name(f".{path.name}.{os.getpid()}.tmp");temp.write_text(json.dumps(payload,indent=2,sort_keys=True,default=str)+"\n",encoding="utf-8");os.replace(temp,path)
+def _publish_gui_snapshot(config:dict[str,Any],inventory:dict[str,Any],controller_result:dict[str,Any]|None=None):
+ health=inventory.get("instance_runtime_health") if isinstance(inventory.get("instance_runtime_health"),list) else [];task_health=str((controller_result or {}).get("health_status") or "unknown").lower();bad=any(str(item.get("status") or item.get("health") or "").lower() in {"critical","failed","unhealthy"} for item in health if isinstance(item,dict));overall="healthy" if task_health not in {"critical","failed","offline"} and not bad else "degraded"
+ metrics=inventory.get("instance_runtime_metrics") if isinstance(inventory.get("instance_runtime_metrics"),dict) else {}
+ payload={"schema_version":1,"kind":"CapivaraWindowsAgentGuiSnapshot","generated_at":time.time(),"overall_health":overall,"agent":{"agent_id":config.get("agent_id"),"node_id":config.get("node_id"),"hostname":inventory.get("hostname"),"controller_url":config.get("controller_url"),"version":inventory.get("capivara_version"),"controller_health":task_health},"task":{"state":"running","task_name":os.environ.get("CAPIVARA_AGENT_TASK_NAME","CapivaraAgent")},"capabilities":inventory.get("capabilities"),"network":inventory.get("network"),"instances":inventory.get("instances",[]),"instance_health":health,"reconciliation":inventory.get("instance_reconciliation",[]),"metrics":metrics,"storage_pools":metrics.get("storage_pools",[]),"configuration_state":inventory.get("configuration_state",[]),"content_state":inventory.get("content_state",[]),"backup_state":inventory.get("backup_state",[]),"broadcast_state":inventory.get("broadcast_state",[]),"game_data":inventory.get("game_data",{})}
+ try:_atomic_json(GUI_SNAPSHOT_PATH,payload)
+ except OSError:pass
 def _post(url,payload,headers=None):
  body=json.dumps(payload,separators=(",",":")).encode("utf-8");request_headers={"Content-Type":"application/json","Accept":"application/json"};request_headers.update(headers or {});request=urllib.request.Request(url,data=body,headers=request_headers,method="POST")
  try:
@@ -73,7 +81,7 @@ def enroll(config):
  if not token:raise RuntimeError("Agent has no permanent credential and no pairing token")
  base=str(config["controller_url"]).rstrip("/");result=_post(base+"/api/agent/enroll",{"pairing_token":token,"agent_id":config["agent_id"],"node_id":config["node_id"],"name":config.get("name") or socket.gethostname(),"fingerprint":config["fingerprint"],"hostname":socket.gethostname(),"os":"windows","architecture":platform.machine(),"capivara_version":config.get("capivara_version"),"address":config.get("advertise_address")});config.update({"controller_id":result["controller_id"],"credential_id":result["credential_id"],"credential_secret":result["credential_secret"],"credential_type":result.get("credential_type","opaque-v1")});config.pop("pairing_token",None);_write_config(config);return config
 def heartbeat(config):
- base=str(config["controller_url"]).rstrip("/");result=_post(base+"/api/agent/heartbeat",_inventory(config),headers={"X-Capivara-Agent-Credential":str(config["credential_id"]),"X-Capivara-Agent-Secret":str(config["credential_secret"]),"X-Capivara-Agent-Fingerprint":str(config["fingerprint"])})
+ base=str(config["controller_url"]).rstrip("/");inventory=_inventory(config);result=_post(base+"/api/agent/heartbeat",inventory,headers={"X-Capivara-Agent-Credential":str(config["credential_id"]),"X-Capivara-Agent-Secret":str(config["credential_secret"]),"X-Capivara-Agent-Fingerprint":str(config["fingerprint"])});_publish_gui_snapshot(config,inventory,result)
  ids=result.get("accepted_event_ids")
  if isinstance(ids,list):acknowledge_runtime_events(STATE_DIR,ids)
  commands=result.get("configuration_commands")
@@ -124,7 +132,10 @@ def run_forever():
   if now>=next_hb:
    try:result=heartbeat(config);print(f"heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} status={result.get('status')}",flush=True)
    except SystemExit:raise
-   except Exception as exc:print(f"heartbeat failed: {exc}",file=sys.stderr,flush=True)
+   except Exception as exc:
+    try:_publish_gui_snapshot(config,_inventory(config),{"health_status":"offline"})
+    except Exception:pass
+    print(f"heartbeat failed: {exc}",file=sys.stderr,flush=True)
    next_hb=now+heartbeat_interval
   time.sleep(min(max(.25,min(next_rec,next_hb)-time.monotonic()),1.0))
 if __name__=="__main__":run_forever()
