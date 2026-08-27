@@ -18,7 +18,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -44,13 +43,7 @@ EXTERNAL_PORT = 18080
 
 
 def run(*args: str, check: bool = True, capture: bool = True, env=None) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        list(args),
-        check=check,
-        text=True,
-        capture_output=capture,
-        env=env,
-    )
+    return subprocess.run(list(args), check=check, text=True, capture_output=capture, env=env)
 
 
 class ControllerHandler(BaseHTTPRequestHandler):
@@ -227,7 +220,7 @@ def main() -> int:
                     "controller_url": f"http://{DNS_NAME}:{EXTERNAL_PORT}",
                     "pairing_token": pairing.token,
                     "capivara_version": "2.0.9-p4",
-                    "heartbeat_interval_seconds": 10,
+                    "heartbeat_interval_seconds": 1,
                     "degraded_after_seconds": 2,
                     "offline_after_seconds": 4,
                 },
@@ -256,7 +249,6 @@ def main() -> int:
         first_result = json.loads(first.stdout.strip().splitlines()[-1])
         assert first_result["health_status"] == "online", first_result
 
-        # Simulate loss of the public NAT forwarding while the internal Controller remains healthy.
         nat_rule(False)
         offline = agent_probe("heartbeat", config_path, state_dir, expect_success=False)
         offline_text = (offline.stderr or offline.stdout).lower()
@@ -273,8 +265,7 @@ def main() -> int:
         delivery_result = json.loads(delivery.stdout.strip().splitlines()[-1])
         assert delivery_result["doctor_command"] is True or str((delivery_result.get("doctor_state") or {}).get("status") or "").lower() in {"queued", "running"}
 
-        completion = agent_probe("heartbeat", config_path, state_dir)
-        completion_result = json.loads(completion.stdout.strip().splitlines()[-1])
+        agent_probe("heartbeat", config_path, state_dir)
         latest = admin.latest_doctor("agent-p4-external")
         assert str((latest or {}).get("status") or "").lower() == "completed", latest
 
