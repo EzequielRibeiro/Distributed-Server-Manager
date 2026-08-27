@@ -8,6 +8,8 @@ on:
       - 'config/dsm.conf'
       - 'dashboard/tls_runtime.py'
       - 'dashboard/server_part17.py'
+      - 'agents/linux/installer/install-agent.sh'
+      - 'agents/windows/installer/install-agent.ps1'
       - 'tests/controller_tls_transport_test.py'
       - '.github/workflows/controller-tls.yml'
   push:
@@ -18,6 +20,8 @@ on:
       - 'config/dsm.conf'
       - 'dashboard/tls_runtime.py'
       - 'dashboard/server_part17.py'
+      - 'agents/linux/installer/install-agent.sh'
+      - 'agents/windows/installer/install-agent.ps1'
       - 'tests/controller_tls_transport_test.py'
       - '.github/workflows/controller-tls.yml'
 
@@ -27,9 +31,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate shell and Python syntax
+        shell: pwsh
         run: |
           bash -n install.sh
           bash -n installer/web_transport.sh
+          bash -n agents/linux/installer/install-agent.sh
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile('agents/windows/installer/install-agent.ps1', [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
           python3 -m py_compile dashboard/tls_runtime.py dashboard/server_part17.py tests/controller_tls_transport_test.py
       - name: Run HTTP HTTPS transport tests
         run: python3 -m unittest tests/controller_tls_transport_test.py
@@ -39,5 +49,11 @@ jobs:
           grep -q 'persist_web_transport_config' install.sh
           grep -q 'letsencrypt' installer/web_transport.sh
           grep -q 'selfsigned' installer/web_transport.sh
+          grep -q 'renewal-hooks/deploy/capivara-dashboard' installer/web_transport.sh
+          grep -q -- '--controller-ca-file' agents/linux/installer/install-agent.sh
+          grep -q 'update-ca-certificates' agents/linux/installer/install-agent.sh
+          grep -q 'ControllerCaFile' agents/windows/installer/install-agent.ps1
+          grep -q 'Import-Certificate' agents/windows/installer/install-agent.ps1
           grep -q 'run_dashboard' dashboard/server_part17.py
           grep -q 'TLSv1_2' dashboard/tls_runtime.py
+          grep -q 'Strict-Transport-Security' dashboard/tls_runtime.py
