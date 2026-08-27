@@ -49,6 +49,13 @@ jobs:
           grep -q 'persist_web_transport_config' install.sh
           grep -q 'letsencrypt' installer/web_transport.sh
           grep -q 'selfsigned' installer/web_transport.sh
+          grep -q 'DSM_PUBLIC_PORT' installer/web_transport.sh
+          grep -q 'DSM_CONTROLLER_PUBLIC_URL' installer/web_transport.sh
+          grep -q 'http-01' installer/web_transport.sh
+          grep -q 'dns-01-manual' installer/web_transport.sh
+          grep -q 'dns-01-hook' installer/web_transport.sh
+          grep -q -- '--manual-auth-hook' installer/web_transport.sh
+          grep -q -- '--manual-cleanup-hook' installer/web_transport.sh
           grep -q 'renewal-hooks/deploy/capivara-dashboard' installer/web_transport.sh
           grep -q -- '--controller-ca-file' agents/linux/installer/install-agent.sh
           grep -q 'update-ca-certificates' agents/linux/installer/install-agent.sh
