@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "issue": 206,
+  "purpose": "Final integrated Customer and distributed operations regression traceability",
+  "scenarios": [
+    {
+      "id": "customer-profile-self-service",
+      "tests": ["tests/customer_self_service_profile_test.py"],
+      "covers": ["customer profile read/write", "customer RBAC", "tenant isolation", "protected identity fields"]
+    },
+    {
+      "id": "customer-email-verification",
+      "tests": ["tests/customer_email_change_test.py"],
+      "covers": ["one-time verification", "hashed token persistence", "expiry", "replay prevention", "fake/deterministic mail transport"]
+    },
+    {
+      "id": "customer-geographic-placement",
+      "tests": ["tests/customer_geographic_placement_test.py"],
+      "covers": ["logical location selection", "placement eligibility", "estimated latency", "no Agent/Node/fingerprint leakage", "correlation id"]
+    },
+    {
+      "id": "distributed-instance-lifecycle",
+      "tests": ["tests/phase22_customer_dayz_regression_test.py", "tests/customer_workspace_architecture_boundary_test.py"],
+      "covers": ["Customer contract", "placement", "port reservation", "provisioning handoff", "distributed architecture boundary", "safe HTTP failure boundary"]
+    },
+    {
+      "id": "agent-operational-queue",
+      "tests": ["tests/agent_queue_observability_test.py"],
+      "covers": ["queue depth", "oldest item age", "retry visibility", "stuck backlog classification", "secret-safe observability"]
+    },
+    {
+      "id": "storage-capacity",
+      "tests": ["tests/agent_storage_pool_admin_test.py"],
+      "covers": ["Storage Pool capacity", "Agent ownership", "administrative boundaries"]
+    },
+    {
+      "id": "customer-functional-health",
+      "tests": ["tests/customer_health_alerting_test.py"],
+      "covers": ["incident creation", "deduplication", "correlation", "acknowledge", "resolve", "recurrence", "tenant isolation"]
+    },
+    {
+      "id": "agent-controller-link-separation",
+      "tests": ["tests/agent_link_recovery_e2e_test.py"],
+      "covers": ["Agent-Controller link incident lifecycle", "recovery", "fingerprint identity", "domain separation from Customer incidents"]
+    }
+  ],
+  "database_gates": ["SQLite via canonical unit/E2E fixtures", "PostgreSQL Baseline v2 Isolated Deployment workflow"],
+  "platform_gates": ["CI Linux Agent package", "CI Windows Agent package"],
+  "external_services": "No live SMTP, Steam, or Internet dependency is required by this integrated gate."
+}
