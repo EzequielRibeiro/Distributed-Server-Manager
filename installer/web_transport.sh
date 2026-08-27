@@ -184,8 +184,6 @@ prepare_web_transport_certificate(){
         --email "${DSM_TLS_LE_EMAIL}" -d "${DSM_PUBLIC_HOST}"
     [[ -r "${DSM_TLS_CERT_FILE}" && -r "${DSM_TLS_KEY_FILE}" ]] || { web_transport_die "Let's Encrypt não produziu o certificado esperado" || return 1; }
 
-    # certbot renew is normally timer-driven. The deploy hook reloads the Python TLS listener
-    # only after a certificate has actually been renewed.
     install -d -m 755 /etc/letsencrypt/renewal-hooks/deploy
     cat >/etc/letsencrypt/renewal-hooks/deploy/capivara-dashboard <<'EOF_HOOK'
 #!/bin/sh
@@ -209,4 +207,11 @@ persist_web_transport_config(){
     web_transport_write_config_value "${config}" DSM_TLS_CERT_FILE "${DSM_TLS_CERT_FILE:-}"
     web_transport_write_config_value "${config}" DSM_TLS_KEY_FILE "${DSM_TLS_KEY_FILE:-}"
     web_transport_write_config_value "${config}" DSM_TLS_CA_FILE "${DSM_TLS_CA_FILE:-}"
+
+    # install-core may have already started the Dashboard using template defaults.
+    # Reconcile once after the final transport settings are persisted.
+    if command -v systemctl >/dev/null 2>&1 && systemctl cat dsm-dashboard.service >/dev/null 2>&1; then
+        systemctl restart dsm-dashboard.service
+        systemctl is-active --quiet dsm-dashboard.service || { web_transport_die "Dashboard não iniciou após aplicar ${DSM_WEB_SCHEME^^}" || return 1; }
+    fi
 }
