@@ -14,7 +14,12 @@ def _tree_sources(ref:str,source_root:str,package_root:str,suffixes:tuple[str,..
   if source.endswith(suffixes):
    relative=source.removeprefix(source_root.rstrip("/")+"/");out[f"{package_root.rstrip('/')}/{relative}"]=source
  return out
-def _runtime_sources(ref:str)->dict[str,str]:return _tree_sources(ref,"agents/windows/runtime","agent/runtime",(".py",))
+def _runtime_sources(ref:str)->dict[str,str]:
+ paths=git_text("ls-tree","-r","--name-only",ref,"agents/windows/runtime").splitlines();out={}
+ for source in paths:
+  if source.endswith(".py"):
+   relative=source.removeprefix("agents/windows/");out[f"agent/{relative}"]=source
+ return out
 def main()->int:
  ref=sys.argv[1] if len(sys.argv)>1 else "HEAD";output_dir=Path(sys.argv[2]) if len(sys.argv)>2 else ROOT/"dist";commit=git_text("rev-parse",f"{ref}^{{commit}}");version=git_text("show",f"{ref}:version");channel="beta" if "-" in version else "stable";package_name=f"capivara-agent-windows-{version}";output_dir.mkdir(parents=True,exist_ok=True);archive=output_dir/f"{package_name}.zip";checksum=output_dir/f"{package_name}.zip.sha256";external_manifest=output_dir/f"{package_name}.manifest.json"
  sources={"install-agent.ps1":"agents/windows/installer/install-agent.ps1","agent/common/identity.py":"agents/common/identity.py","agent/updater/updater.py":"agents/windows/updater/updater.py",**_runtime_sources(ref),**_tree_sources(ref,"agents/windows/service","service",(".ps1",)),**_tree_sources(ref,"agents/windows/gui","gui",(".ps1",))}
