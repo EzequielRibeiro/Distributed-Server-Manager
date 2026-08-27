@@ -2,8 +2,8 @@
 # =============================================================
 # DSM Update Manager
 #
-# Atualização segura do DayZ Server Manager
-# Safe update of DayZ Server Manager
+# Atualização segura do Capivara Distributed Server Manager
+# Safe update of Capivara Distributed Server Manager
 #
 # Recursos: | Features:
 # - valida pacote DSM | validates DSM package
@@ -754,46 +754,28 @@ create_staging() {
 }
 
 # =============================================================
-# Preservar dados existentes | Preserve existing data
+# Preservar somente dados duráveis | Preserve durable data only
 # =============================================================
 preserve_data() {
     echo
-    echo "Preservando dados existentes..."
-    echo "Preserving existing data..."
-    PRESERVE_ITEMS=(
+    echo "Preservando dados duráveis existentes..."
+    echo "Preserving existing durable data..."
+
+    # Explicit allowlist. Product code, caches, temporary workspaces and
+    # retired top-level directories must always come from the new package.
+    local -a PRESERVE_ITEMS=(
         "config"
         "data"
         "logs"
-        "backup"
         "backups"
-        "state"
-        "run"
-        "locks"
-        "cache"
-        "tmp"
-        "runtime"
         "instances"
-        "packages"
         "custom"
-        "mods"
-        "tools"
-        "import"
-        "export"
+        "game-data"
     )
-    while IFS= read -r -d '' ITEM_PATH
-    do
-        ITEM=$(basename "${ITEM_PATH}")
-        if [[ ! -e "${NEW_SRC}/${ITEM}" ]]
-        then
-            PRESERVE_ITEMS+=("${ITEM}")
-        fi
-    done < <(find "${INSTALL_DIR}" -mindepth 1 -maxdepth 1 -print0)
+    local ITEM
 
-    declare -A PRESERVED=()
     for ITEM in "${PRESERVE_ITEMS[@]}"
     do
-        [[ -z "${PRESERVED[${ITEM}]+x}" ]] || continue
-        PRESERVED["${ITEM}"]=1
         if [[ -d "${INSTALL_DIR}/${ITEM}" ]]
         then
             echo "Preservando | Preserving: ${ITEM}"
@@ -805,9 +787,19 @@ preserve_data() {
             cp -a "${INSTALL_DIR}/${ITEM}" "${STAGING_DIR}/${ITEM}"
         fi
     done
+
+    # Runtime source code is replaced by the release. Preserve only its
+    # explicitly scoped operational state while that state remains supported.
+    if [[ -d "${INSTALL_DIR}/runtime/state" ]]
+    then
+        echo "Preservando | Preserving: runtime/state"
+        mkdir -p "${STAGING_DIR}/runtime/state"
+        rsync -a "${INSTALL_DIR}/runtime/state/" "${STAGING_DIR}/runtime/state/"
+    fi
+
     echo
-    echo "Dados preservados."
-    echo "Data preserved."
+    echo "Dados duráveis preservados."
+    echo "Durable data preserved."
 }
 
 # =============================================================
@@ -936,7 +928,7 @@ install_command() {
 }
 
 # =============================================================
-# Atualizar serviços Systemd | Update Systemd services
+# Atualizar e reconciliar serviços Systemd | Update Systemd services
 # =============================================================
 update_systemd() {
     echo
@@ -947,23 +939,56 @@ update_systemd() {
         echo "Systemd desativado | disabled."
         return
     fi
+
+    local UNIT_TEMPLATE
+    local UNIT_NAME
+    local -a RETIRED_UNITS=(
+        dsm-notification-engine.timer
+        dsm-notification-center.timer
+        dsm-backup-worker.service
+        dsm-events-worker.service
+        dsm-metrics-worker.service
+        dsm-mods-worker.service
+        dsm-server-worker.service
+        dsm-event-queue-worker.service
+        dsm-notification-center.service
+        dsm-notification-engine.service
+        dsm-discord-worker.service
+        dsm-discord.service
+        dsm-runtime-sync.service
+    )
+
+    for UNIT_NAME in "${RETIRED_UNITS[@]}"
+    do
+        systemctl disable --now "${UNIT_NAME}" >/dev/null 2>&1 || true
+        rm -f -- "${SYSTEMD_DIR}/${UNIT_NAME}"
+    done
+
     if [[ -d "${INSTALL_DIR}/systemd" ]]
     then
-        cp "${INSTALL_DIR}/systemd/"*.service "${SYSTEMD_DIR}/" 2>/dev/null || true
-        local SERVICE_TEMPLATE
-        for SERVICE_TEMPLATE in "${SYSTEMD_DIR}"/dsm-*.service
+        for UNIT_TEMPLATE in \
+            "${INSTALL_DIR}/systemd/"*.service \
+            "${INSTALL_DIR}/systemd/"*.timer
         do
-            [[ -e "${SERVICE_TEMPLATE}" ]] || continue
+            [[ -e "${UNIT_TEMPLATE}" ]] || continue
+            cp -f "${UNIT_TEMPLATE}" "${SYSTEMD_DIR}/"
+        done
+
+        for UNIT_TEMPLATE in \
+            "${SYSTEMD_DIR}/"dsm-*.service \
+            "${SYSTEMD_DIR}/"dsm-*.timer
+        do
+            [[ -e "${UNIT_TEMPLATE}" ]] || continue
             sed -i \
                 -e "s|{{DSM_USER}}|${DSM_USER}|g" \
                 -e "s|{{DSM_GROUP}}|${DSM_GROUP}|g" \
-                "${SERVICE_TEMPLATE}"
+                "${UNIT_TEMPLATE}"
         done
     fi
     systemctl daemon-reload
     echo
-    echo "Systemd atualizado sem alterar habilitação dos serviços."
-    echo "Systemd updated without changing service enablement."
+    echo "Systemd reconciliado com a nova release."
+    echo "Systemd reconciled with the new release."
 }
 
 # =============================================================
@@ -1552,7 +1577,14 @@ rollback() {
     # reloading systemd; otherwise rollback can run old code with new units.
     if [[ -d "${INSTALL_DIR}/systemd" ]]
     then
-        cp "${INSTALL_DIR}/systemd/"*.service "${SYSTEMD_DIR}/" 2>/dev/null || true
+        local UNIT_TEMPLATE
+        for UNIT_TEMPLATE in \
+            "${INSTALL_DIR}/systemd/"*.service \
+            "${INSTALL_DIR}/systemd/"*.timer
+        do
+            [[ -e "${UNIT_TEMPLATE}" ]] || continue
+            cp -f "${UNIT_TEMPLATE}" "${SYSTEMD_DIR}/"
+        done
     fi
     # Atualizar Systemd | Update Systemd
     echo
