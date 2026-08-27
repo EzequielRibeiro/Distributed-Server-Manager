@@ -11,22 +11,32 @@ DEFAULT_STORAGE_POOL_ID="default"
 _POOL_ID=re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 _STORAGE_CLASS=re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
-def _absolute(raw:str)->bool:return Path(raw).is_absolute() or ntpath.isabs(raw)
+def _is_native_absolute(raw:str)->bool:return Path(raw).is_absolute()
+def _is_windows_absolute(raw:str)->bool:return ntpath.isabs(raw)
+def _absolute(raw:str)->bool:return _is_native_absolute(raw) or _is_windows_absolute(raw)
 def _norm(raw:str)->str:
- if ntpath.isabs(raw):return ntpath.normpath(raw)
- return str(Path(raw).resolve(strict=False))
-def _case(value:str)->str:return ntpath.normcase(ntpath.normpath(value)) if ntpath.isabs(value) else str(Path(value).resolve(strict=False))
+ if _is_native_absolute(raw):return str(Path(raw).resolve(strict=False))
+ if _is_windows_absolute(raw):return ntpath.normpath(raw)
+ raise ValueError("path must be absolute")
+def _case(value:str)->str:
+ if _is_native_absolute(value):return os.path.normcase(str(Path(value).resolve(strict=False)))
+ return ntpath.normcase(ntpath.normpath(value))
+def _child_of(target:str,base:str)->bool:
+ if _is_native_absolute(target) and _is_native_absolute(base):
+  try:Path(target).resolve(strict=False).relative_to(Path(base).resolve(strict=False));return True
+  except ValueError:return False
+ t=ntpath.normcase(ntpath.normpath(target));b=ntpath.normcase(ntpath.normpath(base));return t==b or t.startswith(b.rstrip("\\/")+"\\")
 def _root(value:Any,label:str="storage pool root")->str:
  raw=str(value or "").strip()
  if not raw or not _absolute(raw):raise ValueError(f"{label} must be an absolute path")
- normalized=_norm(raw);drive,tail=ntpath.splitdrive(normalized)
- if ntpath.isabs(normalized) and tail in {"\\","/"}:raise ValueError(f"{label} cannot be filesystem root")
+ normalized=_norm(raw)
+ if _is_native_absolute(normalized) and Path(normalized).parent==Path(normalized):raise ValueError(f"{label} cannot be filesystem root")
+ if _is_windows_absolute(normalized):
+  drive,tail=ntpath.splitdrive(normalized)
+  if drive and tail in {"\\","/"}:raise ValueError(f"{label} cannot be filesystem root")
  protected=[os.environ.get("WINDIR",r"C:\Windows"),os.environ.get("ProgramFiles",r"C:\Program Files"),os.environ.get("ProgramFiles(x86)",r"C:\Program Files (x86)")]
- target=_case(normalized)
  for item in protected:
-  if not item:continue
-  base=_case(item)
-  if target==base or target.startswith(base.rstrip("\\/")+ntpath.sep):raise ValueError(f"{label} is inside a protected system path")
+  if item and _child_of(normalized,str(item)):raise ValueError(f"{label} is inside a protected system path")
  return normalized
 def _pool_id(value:Any)->str:
  token=str(value or "").strip()
