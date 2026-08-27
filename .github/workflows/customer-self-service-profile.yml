@@ -1,0 +1,38 @@
+name: Customer Self-Service Profile
+
+on:
+  pull_request:
+    paths:
+      - 'dashboard/customer_profile_self_service_http.py'
+      - 'dashboard/server_part17.py'
+      - 'dashboard/web/customer-profile.js'
+      - 'dashboard/web/customer.html'
+      - 'database/customer_profile_admin_repository.py'
+      - 'tests/customer_self_service_profile_test.py'
+      - '.github/workflows/customer-self-service-profile.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/customer_profile_self_service_http.py'
+      - 'dashboard/server_part17.py'
+      - 'dashboard/web/customer-profile.js'
+      - 'dashboard/web/customer.html'
+      - 'database/customer_profile_admin_repository.py'
+      - 'tests/customer_self_service_profile_test.py'
+      - '.github/workflows/customer-self-service-profile.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  customer-self-service-profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python syntax
+        run: python3 -m py_compile dashboard/customer_profile_self_service_http.py tests/customer_self_service_profile_test.py
+      - name: Validate JavaScript syntax
+        run: node --check dashboard/web/customer-profile.js
+      - name: Run Customer self-service regressions
+        run: python3 -m unittest tests/customer_self_service_profile_test.py
