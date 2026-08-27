@@ -188,6 +188,10 @@ find_install_processes()
         pid="${proc##*/}"
         process_references_install "${pid}" && printf '%s\n' "${pid}"
     done
+    # Esta função produz uma lista; ausência de processos gerenciados não é erro.
+    # Sem retorno explícito, o status do último PID examinado vazava para o caller
+    # e podia abortar o desinstalador/testes sob set -e/pipefail.
+    return 0
 }
 
 stop_residual_processes()
