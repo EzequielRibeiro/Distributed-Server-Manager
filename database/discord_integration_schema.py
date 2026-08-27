@@ -7,7 +7,10 @@ def discord_integration_ddl(backend: str) -> str:
     backend = str(backend or "").strip().lower()
     timestamp = "TIMESTAMPTZ" if backend == "postgresql" else "TEXT" if backend == "sqlite" else "TIMESTAMP"
     id_type = "TEXT" if backend in {"postgresql", "sqlite"} else "VARCHAR(191)"
-    bool_type = "BOOLEAN" if backend == "postgresql" else "INTEGER" if backend == "sqlite" else "TINYINT(1)"
+    # Use numeric flags consistently. The dashboard repository layer already
+    # treats 0/1 as booleans and this avoids PostgreSQL rejecting integer
+    # parameters for BOOLEAN columns while keeping one portable API contract.
+    bool_type = "SMALLINT" if backend == "postgresql" else "INTEGER" if backend == "sqlite" else "TINYINT(1)"
     return f"""CREATE TABLE customer_discord_connections (
     id {id_type} PRIMARY KEY,
     customer_id INTEGER NOT NULL,
@@ -15,7 +18,7 @@ def discord_integration_ddl(backend: str) -> str:
     guild_name {id_type} NOT NULL,
     guild_icon TEXT,
     status VARCHAR(32) NOT NULL DEFAULT 'active',
-    is_default {bool_type} NOT NULL DEFAULT 0,
+    is_default {bool_type} NOT NULL DEFAULT 0 CHECK (is_default IN (0,1)),
     created_by {id_type},
     created_at {timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at {timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -31,7 +34,7 @@ CREATE TABLE customer_discord_instance_bindings (
     connection_id {id_type},
     channel_id {id_type},
     channel_name {id_type},
-    enabled {bool_type} NOT NULL DEFAULT 1,
+    enabled {bool_type} NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
     updated_at {timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY(customer_id,instance_id),
     FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE,
@@ -45,10 +48,10 @@ CREATE TABLE customer_discord_preferences (
     instance_id {id_type} NOT NULL DEFAULT '*',
     preference_type VARCHAR(16) NOT NULL,
     preference_key {id_type} NOT NULL,
-    enabled {bool_type} NOT NULL DEFAULT 1,
+    enabled {bool_type} NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
     channel_id {id_type},
     discord_role_id {id_type},
-    require_confirmation {bool_type} NOT NULL DEFAULT 0,
+    require_confirmation {bool_type} NOT NULL DEFAULT 0 CHECK (require_confirmation IN (0,1)),
     updated_at {timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY(customer_id,instance_id,preference_type,preference_key),
     FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE,
