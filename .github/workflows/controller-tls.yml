@@ -1,0 +1,43 @@
+name: Controller TLS Transport
+
+on:
+  pull_request:
+    paths:
+      - 'install.sh'
+      - 'installer/web_transport.sh'
+      - 'config/dsm.conf'
+      - 'dashboard/tls_runtime.py'
+      - 'dashboard/server_part17.py'
+      - 'tests/controller_tls_transport_test.py'
+      - '.github/workflows/controller-tls.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'install.sh'
+      - 'installer/web_transport.sh'
+      - 'config/dsm.conf'
+      - 'dashboard/tls_runtime.py'
+      - 'dashboard/server_part17.py'
+      - 'tests/controller_tls_transport_test.py'
+      - '.github/workflows/controller-tls.yml'
+
+jobs:
+  controller-tls:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell and Python syntax
+        run: |
+          bash -n install.sh
+          bash -n installer/web_transport.sh
+          python3 -m py_compile dashboard/tls_runtime.py dashboard/server_part17.py tests/controller_tls_transport_test.py
+      - name: Run HTTP HTTPS transport tests
+        run: python3 -m unittest tests/controller_tls_transport_test.py
+      - name: Enforce transport boundaries
+        run: |
+          grep -q 'select_web_transport' install.sh
+          grep -q 'persist_web_transport_config' install.sh
+          grep -q 'letsencrypt' installer/web_transport.sh
+          grep -q 'selfsigned' installer/web_transport.sh
+          grep -q 'run_dashboard' dashboard/server_part17.py
+          grep -q 'TLSv1_2' dashboard/tls_runtime.py
