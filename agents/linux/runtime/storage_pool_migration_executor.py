@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Execute one per-instance Storage Pool migration on the owning Linux Agent."""
+"""Execute per-instance Storage Pool migration and explicit source cleanup on the owning Linux Agent."""
 from __future__ import annotations
 
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import time
 from typing import Any
@@ -64,6 +65,7 @@ def _event(config: dict[str, Any], command: dict[str, Any], event_type: str, *, 
         agent_id=str(config.get("agent_id") or ""),
         data={
             "migration_id": command["migration_id"],
+            "source_migration_id": command.get("source_migration_id"),
             "source_storage_pool_id": command["source_storage_pool_id"],
             "target_storage_pool_id": command["target_storage_pool_id"],
             "step": step,
@@ -77,14 +79,20 @@ def validate_command(config: dict[str, Any], command: dict[str, Any]) -> dict[st
     if not isinstance(command, dict):
         raise ValueError("storage pool migration command must be an object")
     normalized = dict(command)
+    action = str(command.get("action") or "migrate").strip().lower()
+    if action not in {"migrate", "cleanup-source"}:
+        raise ValueError("invalid storage pool operation action")
+    normalized["action"] = action
     normalized["migration_id"] = safe_id(command.get("migration_id"), "migration_id")
     normalized["instance_id"] = safe_id(command.get("instance_id"), "instance_id")
     normalized["source_storage_pool_id"] = safe_id(command.get("source_storage_pool_id"), "source_storage_pool_id")
     normalized["target_storage_pool_id"] = safe_id(command.get("target_storage_pool_id"), "target_storage_pool_id")
+    if action == "cleanup-source":
+        normalized["source_migration_id"] = safe_id(command.get("source_migration_id"), "source_migration_id")
     expected_agent = str(config.get("agent_id") or "").strip()
     claimed_agent = str(command.get("agent_id") or expected_agent).strip()
     if not expected_agent or claimed_agent != expected_agent:
-        raise PermissionError("storage pool migration belongs to another Agent")
+        raise PermissionError("storage pool operation belongs to another Agent")
     normalized["agent_id"] = expected_agent
     if normalized["source_storage_pool_id"] == normalized["target_storage_pool_id"]:
         raise ValueError("source and target storage pools must differ")
@@ -93,8 +101,115 @@ def validate_command(config: dict[str, Any], command: dict[str, Any]) -> dict[st
     return normalized
 
 
+def _tree_stats_without_links(root: Path) -> tuple[int, int]:
+    files = 0
+    total = 0
+    if root.is_symlink():
+        raise RuntimeError("refusing cleanup of symlinked source root")
+    for current, dirs, names in os.walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        for name in list(dirs):
+            child = current_path / name
+            if child.is_symlink():
+                raise RuntimeError(f"refusing cleanup because source contains symlink: {child.relative_to(root)}")
+        for name in names:
+            child = current_path / name
+            if child.is_symlink():
+                raise RuntimeError(f"refusing cleanup because source contains symlink: {child.relative_to(root)}")
+            try:
+                stat = child.stat()
+            except OSError as exc:
+                raise RuntimeError(f"cannot inspect cleanup source: {child.relative_to(root)}") from exc
+            if child.is_file():
+                files += 1
+                total += int(stat.st_size)
+    return files, total
+
+
+def _execute_cleanup(config: dict[str, Any], command: dict[str, Any], result_path: Path) -> dict[str, Any]:
+    command = validate_command(config, command)
+    instance_id = command["instance_id"]
+    limits = runtime_limits(config)
+    started = time.monotonic()
+    _result(result_path, command, status="running", step="validate", progress=1)
+    _event(config, command, "INSTANCE_STORAGE_POOL_SOURCE_CLEANUP_STARTED", step="validate", progress=1)
+    try:
+        with runtime_operation(config, instance_id, "storage-pool-source-cleanup", lock_timeout_seconds=limits.lock_timeout_seconds):
+            current = dict(instance_runtime._owned(config, instance_id))
+            current_pool = str(current.get("storage_pool_id") or "").strip()
+            if current_pool != command["target_storage_pool_id"]:
+                raise RuntimeError(
+                    f"instance is not assigned to cleanup target Storage Pool: expected {command['target_storage_pool_id']}, found {current_pool or 'none'}"
+                )
+            source_pool = resolve_storage_pool(config, command["source_storage_pool_id"], require_enabled=False)
+            target_pool = resolve_storage_pool(config, command["target_storage_pool_id"], require_enabled=True)
+            source_parent = Path(source_pool["root_path"]).resolve(strict=False)
+            target_parent = Path(target_pool["root_path"]).resolve(strict=False)
+            source_root = (source_parent / instance_id).resolve(strict=False)
+            target_root = (target_parent / instance_id).resolve(strict=False)
+            actual_root = Path(str(current.get("instance_state_root") or target_root)).resolve(strict=False)
+            if actual_root != target_root:
+                raise RuntimeError("instance state root does not match cleanup target Storage Pool")
+            if source_root == target_root or source_root.parent != source_parent or target_root.parent != target_parent:
+                raise RuntimeError("unsafe Storage Pool cleanup path resolution")
+            if source_root == Path("/") or source_parent == Path("/"):
+                raise RuntimeError("refusing unsafe Storage Pool cleanup root")
+
+            _result(result_path, command, status="running", step="inspect-source", progress=30)
+            _event(config, command, "INSTANCE_STORAGE_POOL_SOURCE_CLEANUP_PROGRESS", step="inspect-source", progress=30)
+            if not source_root.exists():
+                final = _result(
+                    result_path, command, status="completed", step="completed", progress=100,
+                    already_absent=True, removed_files=0, removed_bytes=0,
+                    source_storage_pool_id=command["source_storage_pool_id"],
+                    target_storage_pool_id=command["target_storage_pool_id"],
+                    elapsed_ms=int((time.monotonic() - started) * 1000),
+                )
+                _event(config, command, "INSTANCE_STORAGE_POOL_SOURCE_CLEANUP_COMPLETED", step="completed", progress=100,
+                       data={"already_absent": True, "removed_files": 0, "removed_bytes": 0})
+                return final
+            if not source_root.is_dir():
+                raise RuntimeError("cleanup source is not a directory")
+            files, total = _tree_stats_without_links(source_root)
+            expected_files = command.get("expected_verified_files")
+            expected_bytes = command.get("expected_verified_bytes")
+            if expected_files is not None and int(expected_files) != files:
+                raise RuntimeError("cleanup source file count changed since migration verification")
+            if expected_bytes is not None and int(expected_bytes) != total:
+                raise RuntimeError("cleanup source byte count changed since migration verification")
+
+            _result(result_path, command, status="running", step="remove-source", progress=75,
+                    inspected_files=files, inspected_bytes=total)
+            _event(config, command, "INSTANCE_STORAGE_POOL_SOURCE_CLEANUP_PROGRESS", step="remove-source", progress=75,
+                   data={"inspected_files": files, "inspected_bytes": total})
+            shutil.rmtree(source_root)
+            if source_root.exists():
+                raise RuntimeError("cleanup source still exists after removal")
+            final = _result(
+                result_path, command, status="completed", step="completed", progress=100,
+                already_absent=False, removed_files=files, removed_bytes=total,
+                source_storage_pool_id=command["source_storage_pool_id"],
+                target_storage_pool_id=command["target_storage_pool_id"],
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+            )
+            _event(config, command, "INSTANCE_STORAGE_POOL_SOURCE_CLEANUP_COMPLETED", step="completed", progress=100,
+                   data={"removed_files": files, "removed_bytes": total})
+            return final
+    except Exception as exc:
+        failed = _result(
+            result_path, command, status="failed", step="failed", progress=100,
+            error=str(exc)[:2000], source_preserved=True,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+        )
+        _event(config, command, "INSTANCE_STORAGE_POOL_SOURCE_CLEANUP_FAILED", step="failed", progress=100,
+               data={"error": str(exc)[:2000], "source_preserved": True})
+        return failed
+
+
 def execute(config: dict[str, Any], command: dict[str, Any], result_path: Path) -> dict[str, Any]:
     command = validate_command(config, command)
+    if command["action"] == "cleanup-source":
+        return _execute_cleanup(config, command, result_path)
     migration_id = command["migration_id"]
     instance_id = command["instance_id"]
     limits = runtime_limits(config)
