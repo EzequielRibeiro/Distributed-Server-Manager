@@ -35,6 +35,26 @@ def _event_value(value: Any) -> Any:
     return str(value)
 
 
+def _region_latency(payload: dict[str, Any]) -> dict[str, float]:
+    """Accept customer-safe latency observations keyed only by public region id."""
+    placement = payload.get("placement") if isinstance(payload.get("placement"), dict) else payload
+    raw = placement.get("region_latency_ms")
+    if not isinstance(raw, dict):
+        return {}
+    values: dict[str, float] = {}
+    for key, value in raw.items():
+        region_id = str(key or "").strip()
+        if not region_id:
+            continue
+        try:
+            latency = float(value)
+        except (TypeError, ValueError):
+            continue
+        if 0.0 <= latency <= 5000.0:
+            values[region_id] = latency
+    return values
+
+
 def _publish_placement_event(
     repository,
     *,
@@ -75,6 +95,9 @@ def _publish_placement_event(
                 "selected_node_id": decision.get("node_id"),
                 "score": decision.get("score"),
                 "reason": _event_value(decision.get("reason")),
+                "latency_ms": decision.get("latency_ms"),
+                "latency_source": decision.get("latency_source"),
+                "distance_km": decision.get("distance_km"),
                 "eligible_agents": 1 if decision.get("agent_id") else 0,
                 "message": message,
             },
@@ -116,14 +139,11 @@ def resolve_instance_placement(
         else payload
     )
     preference = region_preference_for_creation(user, preference_payload)
+    region_latency_ms = _region_latency(payload)
 
     game_id = payload.get("game_id") or payload.get("game")
     runtime_id = payload.get("runtime_id") or payload.get("runtime")
-    resources = (
-        payload.get("resources")
-        if isinstance(payload.get("resources"), dict)
-        else None
-    )
+    resources = payload.get("resources") if isinstance(payload.get("resources"), dict) else None
     requirements = requirements_for_instance(
         game_id=game_id,
         runtime_id=runtime_id,
@@ -135,6 +155,7 @@ def resolve_instance_placement(
         controller_id=controller_id,
         preferred_region_id=preference["region_id"],
         allow_cross_region=bool(preference["allow_cross_region"]),
+        region_latency_ms=region_latency_ms,
         requirements=requirements,
     )
 
@@ -185,6 +206,9 @@ def resolve_instance_placement(
         "datacenter_id": decision.get("datacenter_id"),
         "score": decision.get("score"),
         "reason": decision.get("reason"),
+        "latency_ms": decision.get("latency_ms"),
+        "latency_source": decision.get("latency_source"),
+        "distance_km": decision.get("distance_km"),
         "requirements": decision.get("requirements"),
         "allow_cross_region": bool(preference["allow_cross_region"]),
     }
