@@ -67,9 +67,9 @@ class AgentAdminRepository:
             try:
                 row = self._row(session, agent_id)
                 credentials = session.execute(
-                    "SELECT id,credential_type,status,fingerprint,created_at,last_used_at,revoked_at "
+                    "SELECT id,credential_type,status,fingerprint,issued_at,last_used_at,revoked_at "
                     "FROM agent_credentials "
-                    f"WHERE agent_id={ph} ORDER BY created_at DESC,id DESC",
+                    f"WHERE agent_id={ph} ORDER BY issued_at DESC,id DESC",
                     (agent_id,),
                 ).fetchall()
             finally:
