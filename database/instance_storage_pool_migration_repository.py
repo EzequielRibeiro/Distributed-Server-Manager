@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Controller-side persistent queue for per-instance Storage Pool migrations."""
+"""Controller-side persistent queue for per-instance Storage Pool migrations and source cleanup."""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -16,6 +16,7 @@ from storage_pool_placement import select_storage_pool
 from universal_event_repository import UniversalEventRepository
 
 OPERATION_TYPE = "storage_pool_migration"
+CLEANUP_OPERATION_TYPE = "storage_pool_source_cleanup"
 ACTIVE_STATES = {"queued", "delivered", "running"}
 FINAL_STATES = {"completed", "failed"}
 _TOKEN = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
@@ -89,12 +90,13 @@ class InstanceStoragePoolMigrationRepository:
                  data: dict[str, Any] | None = None) -> None:
         request = migration.get("request") if isinstance(migration.get("request"), dict) else {}
         actor = str(request.get("requested_by") or "").strip() or None
+        action = str(request.get("action") or "migrate").strip().lower()
         self.events.publish({
             "event_id": f"{migration['migration_id']}:{event_type.lower()}",
             "event_type": event_type,
             "occurred_at": utc_timestamp(),
-            "source": "controller.storage-pool-migration",
-            "source_id": "controller.storage-pool-migration",
+            "source": "controller.storage-pool-cleanup" if action == "cleanup-source" else "controller.storage-pool-migration",
+            "source_id": "controller.storage-pool-cleanup" if action == "cleanup-source" else "controller.storage-pool-migration",
             "severity": severity,
             "agent_id": str(request.get("agent_id") or "") or None,
             "instance_id": str(migration.get("instance_id") or request.get("instance_id") or "") or None,
@@ -103,6 +105,7 @@ class InstanceStoragePoolMigrationRepository:
             "actor_id": actor,
             "data": {
                 "migration_id": migration["migration_id"],
+                "source_migration_id": request.get("source_migration_id"),
                 "source_storage_pool_id": request.get("source_storage_pool_id"),
                 "target_storage_pool_id": request.get("target_storage_pool_id"),
                 "required_storage_bytes": int(request.get("required_storage_bytes") or 0),
@@ -199,6 +202,7 @@ class InstanceStoragePoolMigrationRepository:
             request = {
                 "schema_version": 1,
                 "kind": "CapivaraInstanceStoragePoolMigration",
+                "action": "migrate",
                 "migration_id": migration_id,
                 "agent_id": agent_id,
                 "instance_id": instance_id,
@@ -228,13 +232,118 @@ class InstanceStoragePoolMigrationRepository:
         )
         return state
 
+    def cleanup_preview(self, source_migration_id: str) -> dict[str, Any]:
+        source_migration_id = _token(source_migration_id, "source_migration_id")
+        source = self.snapshot(source_migration_id)
+        if source.get("operation_type") != OPERATION_TYPE:
+            raise ValueError("cleanup source must be a Storage Pool migration")
+        if str(source.get("status") or "").lower() != "completed":
+            raise ValueError("Storage Pool migration must be completed before cleanup")
+        request = source.get("request") if isinstance(source.get("request"), dict) else {}
+        result = source.get("result") if isinstance(source.get("result"), dict) else {}
+        if result.get("source_preserved") is False:
+            raise ValueError("migration source is not preserved")
+        instance_id = _token(source.get("instance_id") or request.get("instance_id"), "instance_id")
+        agent_id = _token(request.get("agent_id"), "agent_id")
+        source_pool = _token(request.get("source_storage_pool_id"), "source_storage_pool_id")
+        target_pool = _token(request.get("target_storage_pool_id"), "target_storage_pool_id")
+        ph = self.dialect.placeholder
+        with self.session() as session:
+            agent = session.execute(f"SELECT status,metadata_json FROM agents WHERE id={ph}", (agent_id,)).fetchone()
+            if agent is None or str(agent["status"] or "").lower() != "active":
+                raise ValueError("Agent must be active")
+            telemetry = _instance_storage_telemetry(agent["metadata_json"], instance_id)
+            if telemetry is None:
+                raise ValueError("Agent has not reported current instance storage telemetry")
+            current_pool = str(telemetry.get("storage_pool_id") or "").strip()
+            if current_pool != target_pool:
+                raise ValueError("Instance is not currently reported on the migration target Storage Pool")
+            rows = session.execute(
+                f"SELECT id,status,request_json FROM operations WHERE instance_id={ph} AND operation_type={ph} ORDER BY created_at DESC",
+                (instance_id, CLEANUP_OPERATION_TYPE),
+            ).fetchall()
+        existing = None
+        for row in rows:
+            cleanup_request = _json_object(row["request_json"])
+            if str(cleanup_request.get("source_migration_id") or "") == source_migration_id:
+                existing = {"cleanup_id": str(row["id"]), "status": str(row["status"])}
+                break
+        return {
+            "eligible": existing is None or existing["status"] == "failed",
+            "source_migration_id": source_migration_id,
+            "instance_id": instance_id,
+            "agent_id": agent_id,
+            "source_storage_pool_id": source_pool,
+            "target_storage_pool_id": target_pool,
+            "verified_files": result.get("verified_files"),
+            "verified_bytes": result.get("verified_bytes"),
+            "current_storage_pool_id": current_pool,
+            "existing_cleanup": existing,
+            "confirmation_required": source_migration_id,
+            "warning": "A limpeza remove definitivamente a cópia preservada no Storage Pool de origem. Rollback para essa cópia deixa de ser possível.",
+        }
+
+    def enqueue_cleanup(self, *, source_migration_id: str, confirmation: str,
+                        requested_by: str | None = None) -> dict[str, Any]:
+        preview = self.cleanup_preview(source_migration_id)
+        if str(confirmation or "").strip() != preview["confirmation_required"]:
+            raise ValueError("cleanup confirmation must exactly match source_migration_id")
+        existing = preview.get("existing_cleanup")
+        if isinstance(existing, dict) and existing.get("status") in ACTIVE_STATES | {"completed"}:
+            return self.snapshot(str(existing["cleanup_id"]))
+        cleanup_id = "storage-cleanup-" + uuid.uuid4().hex
+        source = self.snapshot(preview["source_migration_id"])
+        source_request = source.get("request") if isinstance(source.get("request"), dict) else {}
+        source_result = source.get("result") if isinstance(source.get("result"), dict) else {}
+        request = {
+            "schema_version": 1,
+            "kind": "CapivaraInstanceStoragePoolSourceCleanup",
+            "action": "cleanup-source",
+            "migration_id": cleanup_id,
+            "source_migration_id": preview["source_migration_id"],
+            "agent_id": preview["agent_id"],
+            "instance_id": preview["instance_id"],
+            "source_storage_pool_id": preview["source_storage_pool_id"],
+            "target_storage_pool_id": preview["target_storage_pool_id"],
+            "required_storage_bytes": int(source_request.get("required_storage_bytes") or 0),
+            "expected_verified_files": source_result.get("verified_files"),
+            "expected_verified_bytes": source_result.get("verified_bytes"),
+            "requested_by": str(requested_by or "").strip() or None,
+        }
+        ph = self.dialect.placeholder
+        with self.session(transaction=True) as session:
+            instance = session.execute(
+                f"SELECT node_id FROM instances WHERE id={ph}", (preview["instance_id"],)
+            ).fetchone()
+            if instance is None:
+                raise ValueError("Instance not found")
+            active = session.execute(
+                f"SELECT id FROM operations WHERE instance_id={ph} AND operation_type={ph} AND status IN ('queued','delivered','running') ORDER BY created_at LIMIT 1",
+                (preview["instance_id"], CLEANUP_OPERATION_TYPE),
+            ).fetchone()
+            if active is not None:
+                return self.snapshot(str(active["id"]))
+            session.execute(
+                "INSERT INTO operations(id,operation_type,status,node_id,instance_id,request_json,created_at) "
+                f"VALUES ({self.dialect.parameters(7)})",
+                (cleanup_id, CLEANUP_OPERATION_TYPE, "queued", str(instance["node_id"] or "") or None,
+                 preview["instance_id"], json.dumps(request, separators=(",", ":"), sort_keys=True), utc_timestamp()),
+            )
+        state = self.snapshot(cleanup_id)
+        self._publish(
+            migration=state,
+            event_type="INSTANCE_STORAGE_POOL_SOURCE_CLEANUP_REQUESTED",
+            data={"message": "Limpeza explícita da cópia preservada no Storage Pool de origem solicitada pelo administrador."},
+        )
+        return state
+
     def snapshot(self, migration_id: str) -> dict[str, Any]:
         migration_id = _token(migration_id, "migration_id")
         ph = self.dialect.placeholder
         with self.session() as session:
             row = session.execute(
-                f"SELECT * FROM operations WHERE id={ph} AND operation_type={ph}",
-                (migration_id, OPERATION_TYPE),
+                f"SELECT * FROM operations WHERE id={ph} AND operation_type IN ({ph},{ph})",
+                (migration_id, OPERATION_TYPE, CLEANUP_OPERATION_TYPE),
             ).fetchone()
         if row is None:
             raise KeyError(migration_id)
@@ -250,9 +359,9 @@ class InstanceStoragePoolMigrationRepository:
         with self.session() as session:
             row = session.execute(
                 "SELECT o.id FROM operations o JOIN instances i ON i.id=o.instance_id "
-                f"WHERE i.agent_id={ph} AND o.operation_type={ph} "
+                f"WHERE i.agent_id={ph} AND o.operation_type IN ({ph},{ph}) "
                 "AND o.status IN ('queued','delivered','running') ORDER BY o.created_at LIMIT 1",
-                (agent_id, OPERATION_TYPE),
+                (agent_id, OPERATION_TYPE, CLEANUP_OPERATION_TYPE),
             ).fetchone()
         if row is None:
             return None
@@ -264,8 +373,8 @@ class InstanceStoragePoolMigrationRepository:
         with self.session(transaction=True) as session:
             session.execute(
                 "UPDATE operations SET status=CASE WHEN status='queued' THEN 'delivered' ELSE status END "
-                f"WHERE id={ph} AND operation_type={ph} AND status IN ('queued','delivered','running')",
-                (migration_id, OPERATION_TYPE),
+                f"WHERE id={ph} AND operation_type IN ({ph},{ph}) AND status IN ('queued','delivered','running')",
+                (migration_id, OPERATION_TYPE, CLEANUP_OPERATION_TYPE),
             )
         return self.snapshot(migration_id)
 
@@ -277,13 +386,14 @@ class InstanceStoragePoolMigrationRepository:
             return None
         current = self.snapshot(migration_id)
         request = current.get("request") or {}
+        cleanup = str(request.get("action") or "").lower() == "cleanup-source"
         if str(request.get("agent_id") or "") != str(agent_id):
-            raise PermissionError("storage pool migration belongs to another Agent")
+            raise PermissionError("storage pool operation belongs to another Agent")
         if str(result.get("instance_id") or "") != str(current.get("instance_id") or ""):
-            raise ValueError("storage pool migration result instance_id mismatch")
+            raise ValueError("storage pool operation result instance_id mismatch")
         status = str(result.get("status") or "").strip().lower()
         if status not in {"running", "completed", "failed"}:
-            raise ValueError("invalid storage pool migration result status")
+            raise ValueError("invalid storage pool operation result status")
         try:
             progress = max(0, min(100, int(result.get("progress") or 0)))
         except (TypeError, ValueError):
@@ -293,21 +403,46 @@ class InstanceStoragePoolMigrationRepository:
         payload = json.dumps(result, separators=(",", ":"), sort_keys=True)
         now = utc_timestamp()
         ph = self.dialect.placeholder
+        op_type = CLEANUP_OPERATION_TYPE if cleanup else OPERATION_TYPE
         with self.session(transaction=True) as session:
             if status == "running":
                 session.execute(
                     "UPDATE operations SET status='running',result_json=" + ph + ","
                     "started_at=CASE WHEN started_at IS NULL THEN " + ph + " ELSE started_at END "
                     f"WHERE id={ph} AND operation_type={ph} AND status NOT IN ('completed','failed')",
-                    (payload, now, migration_id, OPERATION_TYPE),
+                    (payload, now, migration_id, op_type),
                 )
             else:
                 session.execute(
                     "UPDATE operations SET status=" + ph + ",result_json=" + ph + ",error_code=" + ph + ",completed_at=" + ph + " "
                     f"WHERE id={ph} AND operation_type={ph} AND status NOT IN ('completed','failed')",
-                    (status, payload, error, now, migration_id, OPERATION_TYPE),
+                    (status, payload, error, now, migration_id, op_type),
                 )
         state = self.snapshot(migration_id)
+        if cleanup:
+            if status == "running":
+                event_type = "INSTANCE_STORAGE_POOL_SOURCE_CLEANUP_STARTED" if progress <= 1 else "INSTANCE_STORAGE_POOL_SOURCE_CLEANUP_PROGRESS"
+                self._publish(migration=state, event_type=event_type, data={"progress": progress, "current_step": step})
+            elif status == "completed":
+                self._publish(
+                    migration=state,
+                    event_type="INSTANCE_STORAGE_POOL_SOURCE_CLEANUP_COMPLETED",
+                    data={
+                        "progress": 100,
+                        "removed_files": result.get("removed_files"),
+                        "removed_bytes": result.get("removed_bytes"),
+                        "message": "Cópia preservada no Storage Pool de origem removida após validação do destino.",
+                    },
+                )
+            else:
+                self._publish(
+                    migration=state,
+                    event_type="INSTANCE_STORAGE_POOL_SOURCE_CLEANUP_FAILED",
+                    severity="critical",
+                    data={"progress": 100, "error": error},
+                )
+            return state
+
         if status == "running":
             event_type = "INSTANCE_STORAGE_POOL_MIGRATION_STARTED" if progress <= 1 else "INSTANCE_STORAGE_POOL_MIGRATION_PROGRESS"
             self._publish(migration=state, event_type=event_type, data={"progress": progress, "current_step": step})
@@ -345,6 +480,7 @@ class InstanceStoragePoolMigrationRepository:
 
 __all__ = [
     "ACTIVE_STATES",
+    "CLEANUP_OPERATION_TYPE",
     "FINAL_STATES",
     "OPERATION_TYPE",
     "InstanceStoragePoolMigrationRepository",
