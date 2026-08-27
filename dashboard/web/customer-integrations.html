@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Integrações | Capivara DSM</title>
+  <link rel="stylesheet" href="/customer.css?v=2">
+  <link rel="stylesheet" href="/customer-integrations.css?v=1">
+</head>
+<body>
+<div class="customer-shell">
+  <aside class="customer-sidebar">
+    <a class="customer-brand" href="/customer.html"><span>C</span><strong>capivara <small>DSM</small></strong></a>
+    <p class="customer-label">Cliente</p>
+    <nav class="customer-catalog" aria-label="Área do cliente"></nav>
+    <button id="customer-logout" class="customer-logout" type="button">Sair</button>
+  </aside>
+  <main class="customer-main">
+    <header class="customer-top">
+      <div><p class="customer-label">CAPIVARA DSM</p><h1>Integrações</h1><p>Conecte seus servidores a serviços externos sem depender de um jogo específico.</p></div>
+    </header>
+
+    <section class="customer-section">
+      <div class="section-heading"><div><p class="customer-label">SERVIÇOS</p><h2>Integrações disponíveis</h2></div></div>
+      <div class="integration-grid">
+        <article class="integration-card">
+          <div class="integration-card-head">
+            <div class="integration-row"><div class="integration-icon">D</div><div><h3>Discord</h3><p class="integration-muted">Eventos, comandos e notificações multi-game.</p></div></div>
+            <span id="discord-status" class="integration-status">Carregando</span>
+          </div>
+          <div id="discord-summary" class="integration-list"></div>
+          <div class="integration-actions" style="margin-top:16px">
+            <a id="discord-connect" class="button" href="#" hidden>Conectar Discord</a>
+            <button id="discord-refresh" class="button" type="button">Atualizar</button>
+          </div>
+        </article>
+        <article class="integration-card">
+          <div class="integration-card-head"><div><h3>Webhooks</h3><p class="integration-muted">Próximo conector da plataforma de integrações.</p></div><span class="integration-status">Planejado</span></div>
+        </article>
+      </div>
+    </section>
+
+    <section id="discord-config" class="customer-section">
+      <div class="section-heading"><div><p class="customer-label">DISCORD</p><h2>Configuração</h2><p>Defina um Discord padrão para a conta ou um Discord diferente para cada servidor.</p></div></div>
+      <div id="discord-message" role="status" aria-live="polite"></div>
+      <div class="integration-tabs" role="tablist">
+        <button class="active" type="button" data-tab="connections">Conexões</button>
+        <button type="button" data-tab="servers">Servidores</button>
+        <button type="button" data-tab="events">Eventos</button>
+        <button type="button" data-tab="commands">Comandos</button>
+      </div>
+
+      <div class="integration-panel" data-panel="connections">
+        <div class="section-heading"><div><h3>Discords conectados</h3><p class="integration-muted">A conexão marcada como padrão será herdada pelos servidores sem configuração própria.</p></div></div>
+        <div id="discord-connections" class="integration-list"></div>
+      </div>
+
+      <div class="integration-panel" data-panel="servers" hidden>
+        <div class="section-heading"><div><h3>Discord por servidor</h3><p class="integration-muted">Cada instância pode herdar o padrão, usar outra conexão ou ficar sem Discord.</p></div></div>
+        <div id="discord-bindings" class="integration-list"></div>
+      </div>
+
+      <div class="integration-panel" data-panel="events" hidden>
+        <div class="section-heading"><div><h3>Eventos</h3><p class="integration-muted">Eventos universais. O Capivara disponibiliza apenas o que o runtime do jogo suportar.</p></div></div>
+        <label class="integration-form" style="margin-bottom:14px">Aplicar a
+          <select id="discord-events-instance"><option value="*">Todos os servidores (padrão)</option></select>
+        </label>
+        <div id="discord-events" class="integration-options"></div>
+      </div>
+
+      <div class="integration-panel" data-panel="commands" hidden>
+        <div class="section-heading"><div><h3>Comandos</h3><p class="integration-muted">Controle quais ações poderão ser expostas pelo bot. Operações críticas podem exigir confirmação.</p></div></div>
+        <label class="integration-form" style="margin-bottom:14px">Aplicar a
+          <select id="discord-commands-instance"><option value="*">Todos os servidores (padrão)</option></select>
+        </label>
+        <div id="discord-commands" class="integration-options"></div>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="/customer-navigation.js?v=1"></script>
+<script src="/customer-integrations.js?v=1"></script>
+</body>
+</html>
