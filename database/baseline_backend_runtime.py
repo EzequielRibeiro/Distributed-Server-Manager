@@ -5,7 +5,9 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from agent_public_network_schema import ensure_agent_public_network_schema
 from backend import DatabaseError, DatabaseMigrationError
+from discord_integration_schema import discord_integration_ddl
 from schema_baseline import BASELINE_NAME, baseline_marker_sql, load_schema_baseline
 
 REQUIRED_TABLES = {
@@ -18,6 +20,20 @@ REQUIRED_TABLES = {
     "instances",
     "service_contracts",
     "schema_baseline",
+}
+
+# Database Baseline v2 was intentionally frozen, but two additive schema
+# extensions were later compiled into the baseline. Older installations using
+# this checksum are safe to reconcile because both changes only add new tables.
+KNOWN_UPGRADABLE_BASELINE_CHECKSUMS = {
+    "1c5fbc4a59b4b42326ccbeaa6701aaa269f4b3841e654f5b94f2c7a9b8eb3fab",
+}
+
+DISCORD_EXTENSION_TABLES = {
+    "customer_discord_connections",
+    "customer_discord_instance_bindings",
+    "customer_discord_preferences",
+    "customer_discord_oauth_states",
 }
 
 
@@ -139,12 +155,55 @@ def _validate_structure(backend: Any, connection: Any) -> list[str]:
     return sorted(tables)
 
 
+def _upgrade_known_baseline(
+    backend: Any,
+    connection: Any,
+    *,
+    installed_checksum: str,
+    target_name: str,
+    target_checksum: str,
+) -> bool:
+    """Apply additive extensions for explicitly known Baseline v2 checksums."""
+    if installed_checksum not in KNOWN_UPGRADABLE_BASELINE_CHECKSUMS:
+        return False
+
+    _validate_structure(backend, connection)
+    tables = _table_names(backend, connection)
+
+    present_discord = DISCORD_EXTENSION_TABLES & tables
+    if present_discord and present_discord != DISCORD_EXTENSION_TABLES:
+        missing = sorted(DISCORD_EXTENSION_TABLES - present_discord)
+        raise DatabaseMigrationError(
+            "partial Discord Baseline v2 extension; missing tables: "
+            + ", ".join(missing)
+        )
+    if not present_discord:
+        _execute_script(backend, connection, discord_integration_ddl(backend.name))
+
+    if "agent_public_network_preconfiguration" not in _table_names(backend, connection):
+        _execute_script(
+            backend,
+            connection,
+            ensure_agent_public_network_schema("", backend.name),
+        )
+
+    _write_marker(
+        backend,
+        connection,
+        name=target_name,
+        checksum=target_checksum,
+    )
+    _commit(connection)
+    return True
+
+
 def initialize_baseline(backend: Any) -> dict[str, Any]:
-    """Install the complete baseline once, or validate the installed checksum."""
+    """Install the baseline once or reconcile explicitly supported upgrades."""
     baseline = load_schema_baseline(backend.name)
     with backend.connect() as connection:
         try:
             marker = _marker(backend, connection)
+            upgraded_now = False
             if marker is None:
                 _execute_script(backend, connection, baseline.sql)
                 _write_marker(
@@ -161,10 +220,19 @@ def initialize_baseline(backend: Any) -> dict[str, Any]:
                     raise DatabaseMigrationError(
                         f"unsupported database baseline: {marker['name']}"
                     )
-                if str(marker["checksum"]) != baseline.checksum:
-                    raise DatabaseMigrationError(
-                        "installed Database Baseline v2 checksum does not match the current release"
+                installed_checksum = str(marker["checksum"])
+                if installed_checksum != baseline.checksum:
+                    upgraded_now = _upgrade_known_baseline(
+                        backend,
+                        connection,
+                        installed_checksum=installed_checksum,
+                        target_name=baseline.name,
+                        target_checksum=baseline.checksum,
                     )
+                    if not upgraded_now:
+                        raise DatabaseMigrationError(
+                            "installed Database Baseline v2 checksum does not match the current release"
+                        )
             tables = _validate_structure(backend, connection)
             return {
                 "schema_version": 2,
@@ -176,6 +244,7 @@ def initialize_baseline(backend: Any) -> dict[str, Any]:
                 "baseline": baseline.name,
                 "baseline_checksum": baseline.checksum,
                 "installed_now": installed_now,
+                "upgraded_now": upgraded_now,
                 "tables": tables,
             }
         except Exception:
