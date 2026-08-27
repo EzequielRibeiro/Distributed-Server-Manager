@@ -1,0 +1,60 @@
+name: External Controller Agent E2E
+
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/**'
+      - 'agents/windows/**'
+      - 'dashboard/agent_remote_http.py'
+      - 'dashboard/agent_heartbeat_api.py'
+      - 'database/agent_admin_repository.py'
+      - 'database/agent_pairing_repository.py'
+      - 'tests/external_agent_network_probe.py'
+      - 'tests/external_controller_agent_network_e2e.py'
+      - '.github/workflows/external-controller-agent-e2e.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/linux/**'
+      - 'agents/windows/**'
+      - 'dashboard/agent_remote_http.py'
+      - 'dashboard/agent_heartbeat_api.py'
+      - 'database/agent_admin_repository.py'
+      - 'database/agent_pairing_repository.py'
+      - 'tests/external_agent_network_probe.py'
+      - 'tests/external_controller_agent_network_e2e.py'
+      - '.github/workflows/external-controller-agent-e2e.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: external-controller-agent-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-external-network:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install network namespace tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes iproute2 iptables
+      - name: Compile P4 network harness
+        run: python3 -m py_compile tests/external_agent_network_probe.py tests/external_controller_agent_network_e2e.py
+      - name: Run isolated DNS NAT offline reconnect E2E
+        run: sudo --preserve-env=PATH python3 tests/external_controller_agent_network_e2e.py
+      - name: Enforce external topology contract
+        run: |
+          set -euo pipefail
+          grep -F 'controller.p4.test' tests/external_controller_agent_network_e2e.py
+          grep -F 'EXTERNAL_PORT = 18080' tests/external_controller_agent_network_e2e.py
+          grep -F 'INTERNAL_PORT = 8080' tests/external_controller_agent_network_e2e.py
+          grep -F 'PREROUTING' tests/external_controller_agent_network_e2e.py
+          grep -F 'request_doctor' tests/external_controller_agent_network_e2e.py
+          grep -F 'expect_success=False' tests/external_controller_agent_network_e2e.py
+          grep -F 'doctor_completed_after_reconnect' tests/external_controller_agent_network_e2e.py
