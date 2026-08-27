@@ -128,16 +128,49 @@ remove_systemd_units()
     log_success "Units systemd removidas."
 }
 
+process_parent_pid()
+{
+    local pid="$1" stat rest
+    [[ -r "/proc/${pid}/stat" ]] || return 1
+    stat="$(cat "/proc/${pid}/stat" 2>/dev/null)" || return 1
+    # comm may contain spaces and parentheses. Strip through the final ') '.
+    rest="${stat##*) }"
+    set -- ${rest}
+    [[ $# -ge 2 ]] || return 1
+    printf '%s\n' "$2"
+}
+
+process_is_uninstall_ancestor()
+{
+    local target="$1" pid="$$" parent=""
+    while [[ "${pid}" =~ ^[0-9]+$ && "${pid}" -gt 0 ]]
+    do
+        [[ "${target}" == "${pid}" ]] && return 0
+        parent="$(process_parent_pid "${pid}" 2>/dev/null || true)"
+        [[ "${parent}" =~ ^[0-9]+$ && "${parent}" -gt 0 && "${parent}" != "${pid}" ]] || break
+        pid="${parent}"
+    done
+    return 1
+}
+
 process_references_install()
 {
     local pid="$1" kind value arg
-    [[ "${pid}" != "$$" && "${pid}" != "${PPID}" ]] || return 1
-    for kind in cwd root exe
+
+    # Nunca encerre o desinstalador, sudo, a shell chamadora, sshd ou qualquer
+    # outro ancestral da sessão que iniciou a remoção.
+    process_is_uninstall_ancestor "${pid}" && return 1
+
+    # cwd dentro de /opt/dsm NÃO torna um processo gerenciado pelo Capivara.
+    # Uma shell SSH pode legitimamente executar `cd /opt/dsm` antes de chamar
+    # uninstall.sh. Matar por cwd derruba a sessão e interrompe a remoção.
+    for kind in exe
     do
         value="$(readlink "/proc/${pid}/${kind}" 2>/dev/null || true)"
         value="${value% (deleted)}"
         [[ "${value}" == "${INSTALL_DIR}" || "${value}" == "${INSTALL_DIR}/"* ]] && return 0
     done
+
     [[ -r "/proc/${pid}/cmdline" ]] || return 1
     while IFS= read -r -d '' arg
     do
@@ -155,6 +188,10 @@ find_install_processes()
         pid="${proc##*/}"
         process_references_install "${pid}" && printf '%s\n' "${pid}"
     done
+    # Esta função produz uma lista; ausência de processos gerenciados não é erro.
+    # Sem retorno explícito, o status do último PID examinado vazava para o caller
+    # e podia abortar o desinstalador/testes sob set -e/pipefail.
+    return 0
 }
 
 stop_residual_processes()
@@ -163,7 +200,7 @@ stop_residual_processes()
     local -a pids=()
     mapfile -t pids < <(find_install_processes)
     ((${#pids[@]})) || return 0
-    log_warning "Encerrando processos vinculados a ${INSTALL_DIR}: ${pids[*]}"
+    log_warning "Encerrando processos gerenciados vinculados a ${INSTALL_DIR}: ${pids[*]}"
     kill -TERM "${pids[@]}" 2>/dev/null || true
     for attempt in 1 2 3 4 5
     do
