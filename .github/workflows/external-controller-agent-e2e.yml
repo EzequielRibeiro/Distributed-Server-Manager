@@ -1,0 +1,88 @@
+name: External Controller Agent E2E
+
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/**'
+      - 'agents/windows/**'
+      - 'dashboard/agent_remote_http.py'
+      - 'dashboard/agent_heartbeat_api.py'
+      - 'database/agent_admin_repository.py'
+      - 'database/agent_pairing_repository.py'
+      - 'database/agent_runtime_repository.py'
+      - 'tests/external_agent_network_probe.py'
+      - 'tests/external_controller_agent_network_e2e.py'
+      - 'tests/windows_controller_agent_reconnect_e2e.py'
+      - '.github/workflows/external-controller-agent-e2e.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/linux/**'
+      - 'agents/windows/**'
+      - 'dashboard/agent_remote_http.py'
+      - 'dashboard/agent_heartbeat_api.py'
+      - 'database/agent_admin_repository.py'
+      - 'database/agent_pairing_repository.py'
+      - 'database/agent_runtime_repository.py'
+      - 'tests/external_agent_network_probe.py'
+      - 'tests/external_controller_agent_network_e2e.py'
+      - 'tests/windows_controller_agent_reconnect_e2e.py'
+      - '.github/workflows/external-controller-agent-e2e.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: external-controller-agent-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-external-network:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install network namespace tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes iproute2 iptables openssl
+      - name: Compile P4 Linux harness
+        run: python3 -m py_compile tests/external_agent_network_probe.py tests/external_controller_agent_network_e2e.py
+      - name: Run HTTPS DNS NAT outage reconnect E2E
+        run: sudo --preserve-env=PATH python3 tests/external_controller_agent_network_e2e.py
+      - name: Enforce Linux P4 contract
+        run: |
+          set -euo pipefail
+          grep -F 'https://' tests/external_controller_agent_network_e2e.py
+          grep -F 'controller.p4.test' tests/external_controller_agent_network_e2e.py
+          grep -F 'EXTERNAL_PORT = 18080' tests/external_controller_agent_network_e2e.py
+          grep -F 'PREROUTING' tests/external_controller_agent_network_e2e.py
+          grep -F '"degraded"' tests/external_controller_agent_network_e2e.py
+          grep -F '"offline"' tests/external_controller_agent_network_e2e.py
+          grep -F 'rtt_ms' tests/external_agent_network_probe.py
+          grep -F 'request_doctor' tests/external_controller_agent_network_e2e.py
+          grep -F 'doctor_completed_after_reconnect' tests/external_controller_agent_network_e2e.py
+
+  windows-native-reconnect:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Require OpenSSL
+        shell: pwsh
+        run: |
+          if (-not (Get-Command openssl.exe -ErrorAction SilentlyContinue)) { throw 'OpenSSL is required for native Windows P4 TLS gate' }
+      - name: Compile P4 Windows harness and runtime
+        run: python -m py_compile tests/windows_controller_agent_reconnect_e2e.py agents/windows/runtime/agent.py agents/windows/runtime/doctor_client.py
+      - name: Run native Windows HTTPS outage reconnect E2E
+        run: python tests/windows_controller_agent_reconnect_e2e.py
+      - name: Enforce Windows P4 contract
+        shell: pwsh
+        run: |
+          $text = Get-Content tests/windows_controller_agent_reconnect_e2e.py -Raw
+          foreach ($token in @('https://localhost','degraded','offline','rtt_ms','request_doctor','doctor_completed_after_reconnect')) {
+            if (-not $text.Contains($token)) { throw "missing P4 token: $token" }
+          }
