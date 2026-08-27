@@ -9,7 +9,7 @@ from typing import Any
 
 from customer_audit import audit_customer_event
 from customer_email_change_repository import CustomerEmailChangeRepository
-from customer_profile_self_service_http import _membership
+from customer_profile_self_service_http import _identity
 from universal_event_repository import UniversalEventRepository
 
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -31,10 +31,7 @@ def _publish(backend, *, event_type: str, membership: dict[str, Any], correlatio
             "correlation_id": correlation_id,
             "actor_type": "user",
             "actor_id": actor,
-            "data": {
-                "customer_id": str(membership.get("customer_id")),
-                "challenge_id": challenge_id,
-            },
+            "data": {"customer_id": str(membership.get("customer_id")), "challenge_id": challenge_id},
         })
     except Exception:
         pass
@@ -71,10 +68,16 @@ class CustomerEmailChangeService:
         self.ttl_seconds = max(300, min(int(ttl_seconds), 86400))
 
     def _owner(self, user: dict[str, Any]) -> dict[str, Any]:
-        membership = _membership(user, self.backend)
-        if str(membership.get("account_role") or "").lower() != "owner":
+        customer_id, customer, username, account_role = _identity(user, self.backend)
+        if account_role != "owner":
             raise PermissionError("only Customer account owner can change e-mail")
-        return membership
+        return {
+            "customer_id": customer_id,
+            "customer_code": customer.get("customer_code"),
+            "account_email": customer.get("account_email"),
+            "username": username,
+            "account_role": account_role,
+        }
 
     def initiate(self, *, user: dict[str, Any], target_email: str, confirmed: bool,
                  correlation_id: str | None = None) -> dict[str, Any]:
@@ -86,7 +89,7 @@ class CustomerEmailChangeService:
         email = str(target_email or "").strip().lower()
         if len(email) > 320 or not _EMAIL_RE.fullmatch(email):
             raise ValueError("invalid_email")
-        current = str(membership.get("login_email") or membership.get("account_email") or "").strip().lower()
+        current = str(membership.get("account_email") or "").strip().lower()
         if email == current:
             raise ValueError("email_unavailable")
         if self.repository.recent_count(
@@ -96,14 +99,13 @@ class CustomerEmailChangeService:
                    result="rate_limited", correlation_id=correlation_id)
             raise RuntimeError("rate_limited")
         if self.repository.email_in_use(email, except_username=actor):
-            # Authenticated response deliberately does not disclose which account owns the e-mail.
             raise ValueError("email_unavailable")
         if self.transport is None:
             raise RuntimeError("email_delivery_unavailable")
 
         raw_token = secrets.token_urlsafe(32)
         challenge = self.repository.create(
-            customer_id=str(membership["customer_id"]),
+            customer_id=membership["customer_id"],
             customer_code=str(membership.get("customer_code") or ""),
             username=actor,
             target_email=email,
@@ -113,9 +115,7 @@ class CustomerEmailChangeService:
         )
         try:
             self.transport.send_verification(
-                destination=email,
-                token=raw_token,
-                expires_minutes=max(1, self.ttl_seconds // 60),
+                destination=email, token=raw_token, expires_minutes=max(1, self.ttl_seconds // 60)
             )
         except Exception:
             self.repository.mark_delivery_failed(challenge["challenge_id"])
@@ -124,19 +124,14 @@ class CustomerEmailChangeService:
                    target_domain=_domain(email))
             raise RuntimeError("email_delivery_failed")
         finally:
-            raw_token = ""  # keep the clear token process-local only for the SMTP call above.
+            raw_token = ""
 
         _audit(self.backend, membership=membership, actor=actor, action="CUSTOMER_EMAIL_CHANGE_REQUESTED",
                result="success", correlation_id=correlation_id, challenge_id=challenge["challenge_id"],
                target_domain=_domain(email))
         _publish(self.backend, event_type="CUSTOMER_EMAIL_CHANGE_REQUESTED", membership=membership,
                  correlation_id=correlation_id, challenge_id=challenge["challenge_id"], actor=actor)
-        return {
-            "accepted": True,
-            "challenge_id": challenge["challenge_id"],
-            "expires_at": challenge["expires_at"],
-            "correlation_id": correlation_id,
-        }
+        return {"accepted": True, "challenge_id": challenge["challenge_id"], "expires_at": challenge["expires_at"], "correlation_id": correlation_id}
 
     def verify(self, *, user: dict[str, Any], challenge_id: str, token: str,
                confirmed: bool, correlation_id: str | None = None) -> dict[str, Any]:
@@ -147,15 +142,12 @@ class CustomerEmailChangeService:
         if not str(challenge_id or "").strip() or not str(token or "").strip():
             raise ValueError("invalid_or_expired_challenge")
         result = self.repository.verify_and_commit(
-            challenge_id=str(challenge_id).strip(),
-            customer_id=str(membership["customer_id"]),
-            username=actor,
-            raw_token=str(token).strip(),
+            challenge_id=str(challenge_id).strip(), customer_id=membership["customer_id"],
+            username=actor, raw_token=str(token).strip()
         )
         corr = str(correlation_id or result.get("correlation_id") or "").strip() or str(uuid.uuid4())
         _audit(self.backend, membership=membership, actor=actor, action="CUSTOMER_EMAIL_CHANGED",
-               result="success", correlation_id=corr, challenge_id=str(challenge_id),
-               target_domain=_domain(result["email"]))
+               result="success", correlation_id=corr, challenge_id=str(challenge_id), target_domain=_domain(result["email"]))
         _publish(self.backend, event_type="CUSTOMER_EMAIL_CHANGED", membership=membership,
                  correlation_id=corr, challenge_id=str(challenge_id), actor=actor)
         return {"changed": True, "correlation_id": corr}
@@ -165,8 +157,7 @@ class CustomerEmailChangeService:
         actor = str(membership.get("username") or user.get("username") or "customer")
         corr = str(correlation_id or "").strip() or str(uuid.uuid4())
         cancelled = self.repository.cancel(
-            challenge_id=str(challenge_id or "").strip(),
-            customer_id=str(membership["customer_id"]), username=actor,
+            challenge_id=str(challenge_id or "").strip(), customer_id=membership["customer_id"], username=actor
         )
         _audit(self.backend, membership=membership, actor=actor, action="CUSTOMER_EMAIL_CHANGE_CANCELLED",
                result="success" if cancelled else "rejected", correlation_id=corr,
