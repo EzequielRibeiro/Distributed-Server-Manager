@@ -11,6 +11,15 @@ from alert_repository import AlertSession, dialect_for_backend
 
 
 _ALLOWED_PROTOCOLS = {"tcp", "udp", "both"}
+_PUBLIC_TABLE_SQL = (
+    "CREATE TABLE IF NOT EXISTS agent_public_network_preconfiguration ("
+    "installation_id VARCHAR(255) PRIMARY KEY,"
+    "public_hostname VARCHAR(253) NULL,"
+    "public_ipv4 VARCHAR(45) NULL,"
+    "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+    "updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"
+    ")"
+)
 
 
 def normalize_preconfiguration(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -62,11 +71,20 @@ class AgentInstallationPreconfigurationRepository:
         self.backend = backend
         self.dialect = dialect_for_backend(backend)
 
+    def _ensure_public_table(self) -> None:
+        with self.backend.transaction() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                session.execute(_PUBLIC_TABLE_SQL)
+            finally:
+                session.close()
+
     def save(self, installation_id: str, settings: dict[str, Any]) -> dict[str, Any]:
         normalized = normalize_preconfiguration(settings)
         installation_id = str(installation_id or "").strip()
         if not installation_id:
             raise ValueError("installation_id is required")
+        self._ensure_public_table()
 
         ph = self.dialect.placeholder
         with self.backend.transaction() as connection:
@@ -107,6 +125,7 @@ class AgentInstallationPreconfigurationRepository:
         return normalized
 
     def get(self, installation_id: str) -> dict[str, Any] | None:
+        self._ensure_public_table()
         ph = self.dialect.placeholder
         with self.backend.connect() as connection:
             session = AlertSession(self.backend, connection)
