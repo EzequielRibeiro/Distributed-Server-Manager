@@ -88,6 +88,14 @@ def installation_profile_identity(
     raise ValueError(f"invalid installation profile: {profile}")
 
 
+def create_aurora(root: Path, database_path: Path | DatabaseBackend) -> dict[str, object]:
+    """Compatibility hook used only by the isolated registry test suite."""
+    from tests.fixtures.registry_demo import create_registry_fixture
+
+    adapter = type("RegistryFixtureAdapter", (), {"_repository": staticmethod(_repository)})
+    return create_registry_fixture(root, adapter, database_path)
+
+
 def purge_orphan_instance(
     root: Path,
     database_path: Path | DatabaseBackend,
