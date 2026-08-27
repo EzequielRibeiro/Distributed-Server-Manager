@@ -29,19 +29,25 @@ def normalize_preconfiguration(payload: dict[str, Any] | None) -> dict[str, Any]
         raise ValueError("agent_name must be at most 128 characters")
 
     public_network = normalize_public_network(payload)
+    include_public_network = any(
+        key in payload and payload.get(key) not in (None, "")
+        for key in ("public_hostname", "public_ipv4")
+    )
     start_raw = payload.get("port_start")
     end_raw = payload.get("port_end")
     protocol_raw = payload.get("port_protocol")
     has_port_value = any(value not in (None, "") for value in (start_raw, end_raw, protocol_raw))
 
     if not has_port_value:
-        return {
+        result = {
             "agent_name": name or None,
             "port_protocol": None,
             "port_start": None,
             "port_end": None,
-            **public_network,
         }
+        if include_public_network:
+            result.update(public_network)
+        return result
 
     if start_raw in (None, "") or end_raw in (None, ""):
         raise ValueError("port_start and port_end must be provided together")
@@ -57,13 +63,15 @@ def normalize_preconfiguration(payload: dict[str, Any] | None) -> dict[str, Any]
     if protocol not in _ALLOWED_PROTOCOLS:
         raise ValueError("port_protocol must be tcp, udp or both")
 
-    return {
+    result = {
         "agent_name": name or None,
         "port_protocol": protocol,
         "port_start": start,
         "port_end": end,
-        **public_network,
     }
+    if include_public_network:
+        result.update(public_network)
+    return result
 
 
 class AgentInstallationPreconfigurationRepository:
@@ -116,8 +124,8 @@ class AgentInstallationPreconfigurationRepository:
                     ") VALUES (" + self.dialect.parameters(3) + ")",
                     (
                         installation_id,
-                        normalized["public_hostname"],
-                        normalized["public_ipv4"],
+                        normalized.get("public_hostname"),
+                        normalized.get("public_ipv4"),
                     ),
                 )
             finally:
