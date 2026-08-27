@@ -3,11 +3,18 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CORE_INSTALLER="${ROOT}/install-core.sh"
+WEB_TRANSPORT_HELPER="${ROOT}/installer/web_transport.sh"
 
 [[ -x "${CORE_INSTALLER}" ]] || {
     printf '[Capivara][ERRO] Instalador principal ausente: %s\n' "${CORE_INSTALLER}" >&2
     exit 1
 }
+[[ -f "${WEB_TRANSPORT_HELPER}" ]] || {
+    printf '[Capivara][ERRO] Helper de transporte ausente: %s\n' "${WEB_TRANSPORT_HELPER}" >&2
+    exit 1
+}
+# shellcheck source=installer/web_transport.sh
+source "${WEB_TRANSPORT_HELPER}"
 
 is_interactive(){ [[ "${DSM_NON_INTERACTIVE:-0}" != "1" && -t 0 && -t 1 ]]; }
 
@@ -206,9 +213,12 @@ retire_obsolete_systemd_units(){
 }
 
 select_role_and_database
+select_web_transport
 select_initial_topology
+prepare_web_transport_certificate "$@"
 retire_obsolete_systemd_units "$@"
 "${CORE_INSTALLER}" "$@"
+persist_web_transport_config "$@"
 retire_obsolete_systemd_units "$@"
 
 if [[ " ${*} " != *" --dry-run "* ]]; then
