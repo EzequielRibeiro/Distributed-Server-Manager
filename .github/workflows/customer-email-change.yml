@@ -1,0 +1,48 @@
+name: Customer Secure Email Change
+
+on:
+  pull_request:
+    paths:
+      - 'dashboard/customer_email_change_http.py'
+      - 'dashboard/customer_email_change_service.py'
+      - 'dashboard/customer_email_transport.py'
+      - 'dashboard/server_part17.py'
+      - 'dashboard/web/customer-email-change.js'
+      - 'dashboard/web/customer-profile.js'
+      - 'dashboard/web/customer.html'
+      - 'database/customer_email_change_repository.py'
+      - 'tests/customer_email_change_test.py'
+      - '.github/workflows/customer-email-change.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/customer_email_change_http.py'
+      - 'dashboard/customer_email_change_service.py'
+      - 'dashboard/customer_email_transport.py'
+      - 'dashboard/server_part17.py'
+      - 'dashboard/web/customer-email-change.js'
+      - 'dashboard/web/customer-profile.js'
+      - 'dashboard/web/customer.html'
+      - 'database/customer_email_change_repository.py'
+      - 'tests/customer_email_change_test.py'
+      - '.github/workflows/customer-email-change.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  customer-secure-email-change:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python syntax
+        run: python3 -m py_compile database/customer_email_change_repository.py dashboard/customer_email_transport.py dashboard/customer_email_change_service.py dashboard/customer_email_change_http.py tests/customer_email_change_test.py
+      - name: Validate JavaScript syntax
+        run: node --check dashboard/web/customer-email-change.js && node --check dashboard/web/customer-profile.js
+      - name: Run secure e-mail change regressions
+        run: python3 -m unittest tests/customer_email_change_test.py
+      - name: Verify no raw-token persistence contract
+        run: |
+          ! grep -R "notification_outbox" dashboard/customer_email_change_* database/customer_email_change_repository.py
+          ! grep -R "raw_token.*json\|token.*result_json" database/customer_email_change_repository.py
