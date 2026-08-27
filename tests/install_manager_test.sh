@@ -2,63 +2,101 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-INSTALLER="${ROOT}/install.sh"
 CORE_INSTALLER="${ROOT}/install-core.sh"
-CLI="${ROOT}/bin/dsm"
+ENGINE="${ROOT}/install-core-engine.sh"
+LEGACY_TEST="${ROOT}/tests/install_manager_legacy_test.sh"
 fail(){ echo "FAIL: $*" >&2; exit 1; }
-EXPECTED_VERSION=$(tr -d '\r\n' <"${ROOT}/version")
-bash -n "${INSTALLER}"; bash -n "${CORE_INSTALLER}"
-if grep -qE 'mine|/home/mine' "${ROOT}/config/dsm.conf"; then fail "distributed dsm.conf contains a machine-specific account"; fi
-grep -Fq -- '--exclude "config/dsm.conf"' "${CORE_INSTALLER}" || fail "installer overwrites an existing dsm.conf"
-grep -Fq -- '--exclude "config/agent.conf"' "${CORE_INSTALLER}" || fail "installer overwrites an existing agent.conf"
-grep -Fq 'write_dsm_config' "${CORE_INSTALLER}" || fail "installer does not configure dsm.conf"
-grep -Fq 'select_installation_source' "${CORE_INSTALLER}" || fail "interactive installer does not offer source selection"
-grep -Fq 'if ! pwd -P >/dev/null 2>&1' "${CLI}" || fail "dsm CLI cannot recover from a removed working directory"
-grep -Fq -- '--local' "${CORE_INSTALLER}" || fail "local installation option is unavailable"
-grep -Fq 'run mkdir -p "$(dirname "${DSM_LINK}")"' "${CORE_INSTALLER}" || fail "installer does not create custom CLI link parent"
-grep -Fq 'guard_existing_installation' "${CORE_INSTALLER}" || fail "existing installation is not guarded"
-grep -Fq 'initialize_database' "${CORE_INSTALLER}" || fail "installer does not initialize the database"
-grep -Fq 'initialize_infrastructure_identity' "${CORE_INSTALLER}" || fail "installer does not bootstrap infrastructure identity"
-grep -Fq 'bootstrap-profile' "${CORE_INSTALLER}" || fail "installer does not use Registry profile bootstrap"
-grep -Fq 'initialize_runtime_state' "${CORE_INSTALLER}" || fail "installer does not initialize dashboard runtime state"
-grep -Fq 'mkdir -p "${SYSTEMD_DIR}"' "${CORE_INSTALLER}" || fail "installer does not create a custom systemd unit directory"
-grep -Fq -- '--reinstall' "${CORE_INSTALLER}" || fail "explicit reinstall option is unavailable"
-grep -Fq 'retire_obsolete_systemd_units' "${INSTALLER}" || fail "installer does not reconcile retired systemd units"
-for retired in dsm-notification-engine.timer dsm-notification-center.timer dsm-backup-worker.service dsm-events-worker.service dsm-metrics-worker.service dsm-mods-worker.service dsm-server-worker.service; do
-    grep -Fq "${retired}" "${INSTALLER}" || fail "retired unit is not reconciled: ${retired}"
-    [[ ! -e "${ROOT}/systemd/${retired}" ]] || fail "retired unit is still distributed: ${retired}"
-done
-python3 - "${INSTALLER}" <<'PY' || fail "retired systemd units are not reconciled around the core installer"
-from pathlib import Path
-import sys
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-pre = text.index('retire_obsolete_systemd_units "$@"')
-core = text.index('"${CORE_INSTALLER}" "$@"', pre)
-post = text.index('retire_obsolete_systemd_units "$@"', core)
-assert pre < core < post
-PY
-python3 - "${CORE_INSTALLER}" <<'PY' || fail "profile bootstrap is not ordered after database initialization"
-from pathlib import Path
-import sys
-text=Path(sys.argv[1]).read_text(encoding="utf-8"); main=text.split("main()",1)[1]
-assert main.index("    initialize_database\n") < main.index("    initialize_infrastructure_identity\n") < main.index("    install_cli\n")
-PY
-TMP_DIR="$(mktemp -d)"; trap 'rm -rf -- "${TMP_DIR}"' EXIT
+
+# Run the historical suite against the unchanged implementation body. The
+# public entrypoint is restored immediately afterwards and is tested below.
+TMP_WRAPPER="$(mktemp)"
+cp "${CORE_INSTALLER}" "${TMP_WRAPPER}"
+restore_wrapper(){ cp "${TMP_WRAPPER}" "${CORE_INSTALLER}"; chmod +x "${CORE_INSTALLER}"; rm -f "${TMP_WRAPPER}"; }
+trap restore_wrapper EXIT
+cp "${ENGINE}" "${CORE_INSTALLER}"
+chmod +x "${CORE_INSTALLER}"
+bash "${LEGACY_TEST}"
+restore_wrapper
+trap - EXIT
+
+bash -n "${CORE_INSTALLER}"
+
+# A role already selected by install.sh must not be shown a second time.
+PROFILE_OUTPUT="$({
+    source "${CORE_INSTALLER}"
+    is_interactive(){ return 0; }
+    DSM_NODE_ROLE=controller
+    DSM_SERVICE_USER=capivara
+    DSM_SERVICE_GROUP=capivara
+    select_installation_profile
+} 2>&1)"
+if grep -Fq 'Perfil deste node' <<<"${PROFILE_OUTPUT}"; then
+    fail "preselected node role is displayed a second time"
+fi
+if grep -Fq 'Papéis disponíveis' <<<"${PROFILE_OUTPUT}"; then
+    fail "preselected node role catalogue is displayed a second time"
+fi
+
+# If only the role is preselected, the remaining prompt is explicitly the
+# service-account stage instead of another role-selection stage.
+ACCOUNT_OUTPUT="$({
+    source "${CORE_INSTALLER}"
+    is_interactive(){ return 0; }
+    CURRENT_MACHINE_USER=capivara
+    CURRENT_MACHINE_GROUP=capivara
+    DSM_NODE_ROLE=controller
+    DSM_SERVICE_USER=''
+    DSM_SERVICE_GROUP=''
+    select_installation_profile <<< $'\n\n'
+} 2>&1)"
+grep -Fq 'Conta de serviço' <<<"${ACCOUNT_OUTPUT}" \
+    || fail "preselected role does not transition to service-account stage"
+if grep -Fq 'Papéis disponíveis' <<<"${ACCOUNT_OUTPUT}"; then
+    fail "service-account stage repeats role catalogue"
+fi
+
+# The database-manager failure code must survive DSM_ROOT restoration.
 (
- id(){ case "$1" in -un) printf 'node1\n';; -gn) printf 'node1\n';; *) return 1;; esac; }; source "${CORE_INSTALLER}"; chown(){ :; }; chmod(){ :; }
- DSM_ROOT="${TMP_DIR}/opt/dsm"; DSM_SERVICE_USER="node1"; DSM_SERVICE_GROUP="node1"; DSM_SERVICE_HOME="/home/node1"; mkdir -p "${DSM_ROOT}/config"; cp "${ROOT}/config/dsm.conf" "${DSM_ROOT}/config/dsm.conf"; cp "${ROOT}/version" "${DSM_ROOT}/version"; printf 'LOCAL_SETTING="preserved"\n' >>"${DSM_ROOT}/config/dsm.conf"; normalize_database_settings; write_dsm_config >/dev/null
- grep -q '^DSM_USER="node1"$' "${DSM_ROOT}/config/dsm.conf" || fail "DSM_USER not written"; grep -q '^DSM_GROUP="node1"$' "${DSM_ROOT}/config/dsm.conf" || fail "DSM_GROUP not written"; grep -q '^DSM_HOME="/home/node1"$' "${DSM_ROOT}/config/dsm.conf" || fail "DSM_HOME not written"; grep -q "^DSM_VERSION=\"${EXPECTED_VERSION}\"$" "${DSM_ROOT}/config/dsm.conf" || fail "DSM_VERSION not written"; grep -q "^INSTALLER_VERSION=\"${EXPECTED_VERSION}\"$" "${DSM_ROOT}/config/dsm.conf" || fail "INSTALLER_VERSION not written"; grep -q "^DSM_DATABASE=\"${DSM_ROOT}/data/capivara.db\"$" "${DSM_ROOT}/config/dsm.conf" || fail "DSM_DATABASE not written"; grep -q '^DSM_DATABASE_DRIVER="sqlite"$' "${DSM_ROOT}/config/dsm.conf" || fail "database driver not written"; grep -q '^LOCAL_SETTING="preserved"$' "${DSM_ROOT}/config/dsm.conf" || fail "local setting overwritten"
+    source "${CORE_INSTALLER}"
+    DSM_ROOT='/saved/root'
+    DSM_SOURCE='/source/root'
+    run_database_manager(){ return 23; }
+    set +e
+    run_source_database_manager check
+    status=$?
+    set -e
+    [[ "${status}" -eq 23 ]] || fail "database manager failure was masked: ${status}"
+    [[ "${DSM_ROOT}" == '/saved/root' ]] || fail "DSM_ROOT was not restored after database failure"
 )
-(
- id(){ case "$1" in -un|-gn) printf 'capivara\n';; *) return 1;; esac; }; source "${CORE_INSTALLER}"; hostname(){ printf 'horizon-server\n'; }; chown(){ :; }; chmod(){ :; }; DSM_ROOT="${TMP_DIR}/agent-config-root"; DSM_NODE_ROLE="controller"; DSM_SERVICE_USER="capivara"; DSM_SERVICE_GROUP="capivara"; STEAMCMD_ROOT="${DSM_ROOT}/tools/steamcmd"; mkdir -p "${DSM_ROOT}/config"; printf 'DSM_NODE_ID=""\nDSM_NODE_ROLE=""\nAGENT_ID=""\n' >"${DSM_ROOT}/config/agent.conf"; write_agent_config; grep -q '^DSM_NODE_ID="horizon-server"$' "${DSM_ROOT}/config/agent.conf" || fail "reinstall did not repair the local Node identity"; grep -q '^DSM_NODE_ROLE="controller"$' "${DSM_ROOT}/config/agent.conf" || fail "reinstall did not repair the local Node role"; grep -q '^AGENT_ID=""$' "${DSM_ROOT}/config/agent.conf" || fail "Controller reinstall changed the Agent identity"
-)
-(
- id(){ case "$1" in -un) printf 'node1\n';; -gn) printf 'node1\n';; *) return 1;; esac; }; source "${CORE_INSTALLER}"; is_interactive(){ return 0; }; INSTALL_MODE="remote"; INSTALL_MODE_EXPLICIT=0; select_installation_source >/dev/null <<<"1"; [[ "${INSTALL_MODE}" == "local" ]] || fail "interactive local source was not selected"
-)
-if ( id(){ case "$1" in -un) printf 'node1\n';; -gn) printf 'node1\n';; *) return 1;; esac; }; source "${CORE_INSTALLER}"; DSM_ROOT="${TMP_DIR}/existing/opt/dsm"; DSM_SOURCE="${ROOT}"; ALLOW_REINSTALL=0; mkdir -p "${DSM_ROOT}/config"; printf '0.9.0\n' >"${DSM_ROOT}/version"; : >"${DSM_ROOT}/config/dsm.conf"; guard_existing_installation >/dev/null 2>&1 ); then fail "existing installation was overwritten without --reinstall"; fi
-( id(){ case "$1" in -un) printf 'node1\n';; -gn) printf 'node1\n';; *) return 1;; esac; }; source "${CORE_INSTALLER}"; DSM_ROOT="${TMP_DIR}/existing/opt/dsm"; DSM_SOURCE="${ROOT}"; ALLOW_REINSTALL=1; guard_existing_installation >/dev/null 2>&1 )
-(
- id(){ case "$1" in -un|-gn) printf 'node1\n';; *) return 1;; esac; }; source "${CORE_INSTALLER}"; DSM_ROOT="${TMP_DIR}/rendered-root"; SYSTEMD_DIR="${TMP_DIR}/rendered-systemd"; DSM_SERVICE_USER="node1"; DSM_SERVICE_GROUP="node1"; SYSTEMD_ACTIVE=1; mkdir -p "${DSM_ROOT}/systemd" "${SYSTEMD_DIR}"; cp "${ROOT}/systemd/dsm-dashboard.service" "${DSM_ROOT}/systemd/"; systemctl(){ :; }; install_systemd_units >/dev/null; rendered="${SYSTEMD_DIR}/dsm-dashboard.service"; grep -Fq "EnvironmentFile=-${DSM_ROOT}/config/dsm.conf" "${rendered}" || fail "dashboard service does not load the installed database configuration"; grep -Fq "${DSM_ROOT}/dashboard/server_part17.py" "${rendered}" || fail "rendered unit does not use configured DSM_ROOT"; ! grep -Fq '/opt/dsm' "${rendered}" || fail "rendered unit retains hard-coded /opt/dsm"
-)
-python3 -m unittest tests/profile_bootstrap_test.py
-echo "Install manager tests passed."
+
+# Authentication/manager failure must abort prevalidation and must never emit
+# the success message that previously followed the JSON DatabaseError.
+set +e
+DB_OUTPUT="$({
+    source "${CORE_INSTALLER}"
+    DRY_RUN=0
+    DSM_DATABASE_DRIVER=postgresql
+    DSM_DATABASE_HOST=127.0.0.1
+    DSM_DATABASE_PORT=5432
+    DSM_DATABASE_NAME=capivara
+    DSM_DATABASE_USER=capivara
+    DSM_DATABASE_PASSWORD_FILE=/tmp/not-used
+    DSM_SOURCE=/source/root
+    DSM_ROOT=/saved/root
+    ensure_database_dependencies(){ :; }
+    start_local_database_service(){ :; }
+    prepare_local_database(){ :; }
+    check_remote_endpoint(){ :; }
+    run_database_manager(){ printf '%s\n' '{"schema_version":1,"kind":"DatabaseError","error":"password authentication failed"}' >&2; return 2; }
+    prevalidate_database
+} 2>&1)"
+DB_STATUS=$?
+set -e
+[[ "${DB_STATUS}" -ne 0 ]] || fail "database authentication failure did not abort prevalidation"
+grep -Fq 'Conexão real ao banco falhou' <<<"${DB_OUTPUT}" \
+    || fail "database authentication failure did not produce blocking installer error"
+if grep -Fq 'Banco validado com os parâmetros exatos informados.' <<<"${DB_OUTPUT}"; then
+    fail "database authentication failure still produced success message"
+fi
+
+echo "Installer preflight regression tests passed."
