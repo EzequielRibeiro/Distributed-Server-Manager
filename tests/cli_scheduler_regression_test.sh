@@ -4,6 +4,7 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALLER="${ROOT}/install.sh"
 CORE_INSTALLER="${ROOT}/install-core.sh"
+CORE_ENGINE="${ROOT}/install-core-engine.sh"
 UPDATER="${ROOT}/update.sh"
 SCHEDULER_UNIT="${ROOT}/systemd/dsm-scheduler.service"
 
@@ -21,9 +22,13 @@ fi
 grep -Fq 'install-core.sh' "${INSTALLER}" \
     || fail "installer wrapper does not delegate to install-core.sh"
 
-grep -Fq 'bin/cap' "${CORE_INSTALLER}" \
+# install-core.sh is now a compatibility entrypoint; the historical installer
+# implementation lives in install-core-engine.sh and is sourced by it.
+grep -Fq 'install-core-engine.sh' "${CORE_INSTALLER}" \
+    || fail "installer compatibility entrypoint does not load its engine"
+grep -Fq 'bin/cap' "${CORE_ENGINE}" \
     || fail "installer does not validate/install bin/cap"
-grep -Fq '/usr/local/bin/cap' "${CORE_INSTALLER}" \
+grep -Fq '/usr/local/bin/cap' "${CORE_ENGINE}" \
     || fail "installer does not publish the global cap command"
 grep -Fq 'bin/cap' "${UPDATER}" \
     || fail "updater does not validate/install bin/cap"
