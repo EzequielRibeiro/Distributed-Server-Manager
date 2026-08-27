@@ -17,6 +17,9 @@ def read_storage_pool_migration_result()->dict[str,Any]|None:
  return sorted(values,key=lambda item:item[0],reverse=True)[0][1] if values else None
 def stage_storage_pool_migration(command:dict[str,Any]|None,*,config_path:Path)->bool:
  if not isinstance(command,dict):return False
+ command=dict(command)
+ if str(command.get("action") or "").strip().lower()=="cleanup-source":
+  command.setdefault("verified_files",command.get("expected_verified_files"));command.setdefault("verified_bytes",command.get("expected_verified_bytes"))
  migration_id=str(command.get("migration_id") or command.get("cleanup_id") or "").strip();instance_id=str(command.get("instance_id") or "").strip()
  if not migration_id or not instance_id:return False
  request_path,result_path,log_path=paths(migration_id);existing=read_json(result_path)
