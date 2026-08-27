@@ -113,16 +113,27 @@ class ControllerTlsTransportTest(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
-    def test_installer_supports_http_and_three_https_certificate_modes(self):
+    def test_installer_supports_generic_acme_and_public_endpoint(self):
         helper = (ROOT / "installer" / "web_transport.sh").read_text(encoding="utf-8")
         installer = (ROOT / "install.sh").read_text(encoding="utf-8")
         config = (ROOT / "config" / "dsm.conf").read_text(encoding="utf-8")
         runtime = (ROOT / "dashboard" / "tls_runtime.py").read_text(encoding="utf-8")
-        for token in ("DSM_WEB_SCHEME", "letsencrypt", "existing", "selfsigned", "DSM_TLS_CERT_FILE", "DSM_TLS_KEY_FILE", "DSM_TLS_CA_FILE"):
+        for token in (
+            "DSM_WEB_SCHEME", "letsencrypt", "existing", "selfsigned",
+            "DSM_PUBLIC_PORT", "DSM_CONTROLLER_PUBLIC_URL",
+            "DSM_TLS_ACME_CHALLENGE", "http-01", "dns-01-manual", "dns-01-hook",
+            "DSM_TLS_DNS_AUTH_HOOK", "DSM_TLS_DNS_CLEANUP_HOOK",
+            "DSM_TLS_CERT_FILE", "DSM_TLS_KEY_FILE", "DSM_TLS_CA_FILE",
+        ):
             self.assertIn(token, helper)
         self.assertIn("select_web_transport", installer)
         self.assertIn("persist_web_transport_config", installer)
         self.assertIn('DSM_WEB_SCHEME="http"', config)
+        self.assertIn('DSM_PUBLIC_PORT="8080"', config)
+        self.assertIn('DSM_CONTROLLER_PUBLIC_URL=""', config)
+        self.assertIn('DSM_TLS_ACME_CHALLENGE="disabled"', config)
+        self.assertIn("CERTBOT_DOMAIN", config)
+        self.assertIn("CERTBOT_VALIDATION", config)
         self.assertIn("Strict-Transport-Security", runtime)
         self.assertIn("; Secure", runtime)
         self.assertIn("SameSite=Lax", runtime)
@@ -132,14 +143,45 @@ class ControllerTlsTransportTest(unittest.TestCase):
         helper = ROOT / "installer" / "web_transport.sh"
         http = subprocess.run([
             "bash", "-c",
-            f'source "{helper}"; DSM_NODE_ROLE=controller DSM_NON_INTERACTIVE=1 DSM_WEB_SCHEME=http select_web_transport; printf "%s|%s" "$DSM_WEB_SCHEME" "$DSM_WEB_PORT"',
+            f'source "{helper}"; DSM_NODE_ROLE=controller DSM_NON_INTERACTIVE=1 DSM_WEB_SCHEME=http select_web_transport; printf "%s|%s|%s" "$DSM_WEB_SCHEME" "$DSM_WEB_PORT" "$DSM_PUBLIC_PORT"',
         ], check=True, text=True, capture_output=True)
-        self.assertEqual(http.stdout, "http|8080")
+        self.assertEqual(http.stdout, "http|8080|8080")
         https = subprocess.run([
             "bash", "-c",
-            f'source "{helper}"; DSM_NODE_ROLE=controller DSM_NON_INTERACTIVE=1 DSM_WEB_SCHEME=https DSM_TLS_CERT_MODE=existing DSM_TLS_CERT_FILE=/tmp/a.crt DSM_TLS_KEY_FILE=/tmp/a.key select_web_transport; printf "%s|%s|%s" "$DSM_WEB_SCHEME" "$DSM_WEB_PORT" "$DSM_TLS_CERT_MODE"',
+            f'source "{helper}"; DSM_NODE_ROLE=controller DSM_NON_INTERACTIVE=1 DSM_WEB_SCHEME=https DSM_PUBLIC_HOST=controller.example.com DSM_PUBLIC_PORT=9443 DSM_TLS_CERT_MODE=existing DSM_TLS_CERT_FILE=/tmp/a.crt DSM_TLS_KEY_FILE=/tmp/a.key select_web_transport; printf "%s|%s|%s|%s" "$DSM_WEB_SCHEME" "$DSM_WEB_PORT" "$DSM_PUBLIC_PORT" "$DSM_CONTROLLER_PUBLIC_URL"',
         ], check=True, text=True, capture_output=True)
-        self.assertEqual(https.stdout, "https|8443|existing")
+        self.assertEqual(https.stdout, "https|8443|9443|https://controller.example.com:9443")
+
+    def test_noninteractive_generic_acme_modes(self):
+        helper = ROOT / "installer" / "web_transport.sh"
+        http01 = subprocess.run([
+            "bash", "-c",
+            f'source "{helper}"; DSM_NODE_ROLE=controller DSM_NON_INTERACTIVE=1 DSM_WEB_SCHEME=https DSM_PUBLIC_HOST=controller.example.com DSM_TLS_CERT_MODE=letsencrypt DSM_TLS_LE_EMAIL=admin@example.com DSM_TLS_ACME_CHALLENGE=http-01 select_web_transport; printf "%s" "$DSM_TLS_ACME_CHALLENGE"',
+        ], check=True, text=True, capture_output=True)
+        self.assertEqual(http01.stdout, "http-01")
+
+        with tempfile.TemporaryDirectory() as temp:
+            auth = Path(temp) / "auth.sh"
+            cleanup = Path(temp) / "cleanup.sh"
+            auth.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            cleanup.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            auth.chmod(0o755)
+            cleanup.chmod(0o755)
+            hook = subprocess.run([
+                "bash", "-c",
+                f'source "{helper}"; DSM_NODE_ROLE=controller DSM_NON_INTERACTIVE=1 DSM_WEB_SCHEME=https DSM_PUBLIC_HOST=controller.example.com DSM_TLS_CERT_MODE=letsencrypt DSM_TLS_LE_EMAIL=admin@example.com DSM_TLS_ACME_CHALLENGE=dns-01-hook DSM_TLS_DNS_AUTH_HOOK="{auth}" DSM_TLS_DNS_CLEANUP_HOOK="{cleanup}" select_web_transport; printf "%s|%s|%s" "$DSM_TLS_ACME_CHALLENGE" "$DSM_TLS_DNS_AUTH_HOOK" "$DSM_TLS_DNS_CLEANUP_HOOK"',
+            ], check=True, text=True, capture_output=True)
+            self.assertEqual(hook.stdout, f"dns-01-hook|{auth}|{cleanup}")
+
+    def test_dns_manual_is_provider_neutral_and_not_noninteractive(self):
+        helper = (ROOT / "installer" / "web_transport.sh").read_text(encoding="utf-8")
+        self.assertIn("--preferred-challenges dns", helper)
+        self.assertIn("--manual-auth-hook", helper)
+        self.assertIn("--manual-cleanup-hook", helper)
+        self.assertNotIn("cloudflare", helper.lower())
+        self.assertNotIn("route53", helper.lower())
+        self.assertNotIn("ydns", helper.lower())
+        self.assertIn("DNS-01 manual requer instalação interativa", helper)
 
 
 if __name__ == "__main__":

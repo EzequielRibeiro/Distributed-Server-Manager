@@ -22,10 +22,66 @@ path.write_text(text,encoding='utf-8')
 PY
 }
 
+web_transport_public_url(){
+    local scheme="${DSM_WEB_SCHEME:-http}" host="${DSM_PUBLIC_HOST:-}" port="${DSM_PUBLIC_PORT:-${DSM_WEB_PORT:-}}"
+    [[ -n "${host}" ]] || { printf ''; return 0; }
+    printf '%s://%s:%s' "${scheme}" "${host}" "${port}"
+}
+
+web_transport_select_acme_challenge(){
+    DSM_TLS_ACME_CHALLENGE="${DSM_TLS_ACME_CHALLENGE:-}"
+    DSM_TLS_DNS_AUTH_HOOK="${DSM_TLS_DNS_AUTH_HOOK:-}"
+    DSM_TLS_DNS_CLEANUP_HOOK="${DSM_TLS_DNS_CLEANUP_HOOK:-}"
+
+    if [[ -z "${DSM_TLS_ACME_CHALLENGE}" ]]; then
+        if web_transport_is_interactive; then
+            printf '\nValidação ACME / Let\x27s Encrypt:\n'
+            printf '  1) HTTP-01       - exige porta pública TCP/80 acessível\n'
+            printf '  2) DNS-01 manual - funciona com qualquer DNS que permita registro TXT\n'
+            printf '  3) DNS-01 hook   - automatizado por scripts externos, sem dependência de provedor\n\n'
+            local challenge_answer
+            read -r -p 'Validação [1]: ' challenge_answer
+            case "${challenge_answer:-1}" in
+                1|http|http-01) DSM_TLS_ACME_CHALLENGE=http-01 ;;
+                2|dns|dns-manual|dns-01-manual) DSM_TLS_ACME_CHALLENGE=dns-01-manual ;;
+                3|dns-hook|dns-01-hook) DSM_TLS_ACME_CHALLENGE=dns-01-hook ;;
+                *) web_transport_die "Método ACME inválido: ${challenge_answer}" || return 1 ;;
+            esac
+        else
+            DSM_TLS_ACME_CHALLENGE=http-01
+        fi
+    fi
+
+    DSM_TLS_ACME_CHALLENGE="${DSM_TLS_ACME_CHALLENGE,,}"
+    case "${DSM_TLS_ACME_CHALLENGE}" in
+        http|http-01) DSM_TLS_ACME_CHALLENGE=http-01 ;;
+        dns|dns-manual|dns-01-manual) DSM_TLS_ACME_CHALLENGE=dns-01-manual ;;
+        dns-hook|dns-01-hook) DSM_TLS_ACME_CHALLENGE=dns-01-hook ;;
+        *) web_transport_die "DSM_TLS_ACME_CHALLENGE inválido: ${DSM_TLS_ACME_CHALLENGE}" || return 1 ;;
+    esac
+
+    if [[ "${DSM_TLS_ACME_CHALLENGE}" == dns-01-hook ]]; then
+        if web_transport_is_interactive; then
+            local value
+            read -r -p "Hook de autenticação DNS [${DSM_TLS_DNS_AUTH_HOOK:-}]: " value
+            DSM_TLS_DNS_AUTH_HOOK="${value:-${DSM_TLS_DNS_AUTH_HOOK}}"
+            read -r -p "Hook de limpeza DNS [${DSM_TLS_DNS_CLEANUP_HOOK:-}]: " value
+            DSM_TLS_DNS_CLEANUP_HOOK="${value:-${DSM_TLS_DNS_CLEANUP_HOOK}}"
+        fi
+        [[ -n "${DSM_TLS_DNS_AUTH_HOOK}" && -n "${DSM_TLS_DNS_CLEANUP_HOOK}" ]] || {
+            web_transport_die "DNS-01 hook exige DSM_TLS_DNS_AUTH_HOOK e DSM_TLS_DNS_CLEANUP_HOOK" || return 1
+        }
+        [[ -x "${DSM_TLS_DNS_AUTH_HOOK}" ]] || { web_transport_die "Hook de autenticação DNS não é executável: ${DSM_TLS_DNS_AUTH_HOOK}" || return 1; }
+        [[ -x "${DSM_TLS_DNS_CLEANUP_HOOK}" ]] || { web_transport_die "Hook de limpeza DNS não é executável: ${DSM_TLS_DNS_CLEANUP_HOOK}" || return 1; }
+    fi
+}
+
 select_web_transport(){
     case "${DSM_NODE_ROLE:-}" in controller|hybrid) ;; *) return 0 ;; esac
     DSM_WEB_SCHEME="${DSM_WEB_SCHEME:-}"; DSM_WEB_HOST="${DSM_WEB_HOST:-0.0.0.0}"; DSM_WEB_PORT="${DSM_WEB_PORT:-}"
-    DSM_PUBLIC_HOST="${DSM_PUBLIC_HOST:-}"; DSM_TLS_CERT_MODE="${DSM_TLS_CERT_MODE:-}"
+    DSM_PUBLIC_HOST="${DSM_PUBLIC_HOST:-}"; DSM_PUBLIC_PORT="${DSM_PUBLIC_PORT:-}"; DSM_CONTROLLER_PUBLIC_URL="${DSM_CONTROLLER_PUBLIC_URL:-}"
+    DSM_TLS_CERT_MODE="${DSM_TLS_CERT_MODE:-}"; DSM_TLS_ACME_CHALLENGE="${DSM_TLS_ACME_CHALLENGE:-}"
+    DSM_TLS_DNS_AUTH_HOOK="${DSM_TLS_DNS_AUTH_HOOK:-}"; DSM_TLS_DNS_CLEANUP_HOOK="${DSM_TLS_DNS_CLEANUP_HOOK:-}"
     DSM_TLS_CERT_FILE="${DSM_TLS_CERT_FILE:-}"; DSM_TLS_KEY_FILE="${DSM_TLS_KEY_FILE:-}"; DSM_TLS_CA_FILE="${DSM_TLS_CA_FILE:-}"
     DSM_TLS_LE_EMAIL="${DSM_TLS_LE_EMAIL:-}"; DSM_TLS_SOURCE_CERT_FILE=""; DSM_TLS_SOURCE_KEY_FILE=""
 
@@ -42,15 +98,31 @@ select_web_transport(){
 
     if [[ "${DSM_WEB_SCHEME}" == http ]]; then
         DSM_WEB_PORT="${DSM_WEB_PORT:-8080}"; web_transport_validate_port "${DSM_WEB_PORT}" || { web_transport_die "DSM_WEB_PORT inválida: ${DSM_WEB_PORT}" || return 1; }
+        DSM_PUBLIC_PORT="${DSM_PUBLIC_PORT:-${DSM_WEB_PORT}}"; web_transport_validate_port "${DSM_PUBLIC_PORT}" || { web_transport_die "DSM_PUBLIC_PORT inválida: ${DSM_PUBLIC_PORT}" || return 1; }
         if web_transport_is_interactive; then printf '\n[AVISO] HTTP não cifra login, cookies ou tráfego do Agent.\nUse esta opção somente em rede local/confiável. Para Internet, escolha HTTPS.\n'; fi
-        DSM_TLS_CERT_MODE=disabled; DSM_TLS_CERT_FILE=""; DSM_TLS_KEY_FILE=""; DSM_TLS_CA_FILE=""
+        DSM_TLS_CERT_MODE=disabled; DSM_TLS_ACME_CHALLENGE=disabled; DSM_TLS_CERT_FILE=""; DSM_TLS_KEY_FILE=""; DSM_TLS_CA_FILE=""
     else
-        DSM_WEB_PORT="${DSM_WEB_PORT:-8443}"; web_transport_validate_port "${DSM_WEB_PORT}" || { web_transport_die "DSM_WEB_PORT inválida: ${DSM_WEB_PORT}" || return 1; }
+        DSM_WEB_PORT="${DSM_WEB_PORT:-8443}"
+        if web_transport_is_interactive && [[ -z "${DSM_WEB_PORT_EXPLICIT:-}" ]]; then
+            local value
+            read -r -p "Porta HTTPS interna [${DSM_WEB_PORT}]: " value
+            DSM_WEB_PORT="${value:-${DSM_WEB_PORT}}"
+        fi
+        web_transport_validate_port "${DSM_WEB_PORT}" || { web_transport_die "DSM_WEB_PORT inválida: ${DSM_WEB_PORT}" || return 1; }
+
+        DSM_PUBLIC_PORT="${DSM_PUBLIC_PORT:-${DSM_WEB_PORT}}"
+        if web_transport_is_interactive; then
+            local public_port_value
+            read -r -p "Porta HTTPS pública [${DSM_PUBLIC_PORT}]: " public_port_value
+            DSM_PUBLIC_PORT="${public_port_value:-${DSM_PUBLIC_PORT}}"
+        fi
+        web_transport_validate_port "${DSM_PUBLIC_PORT}" || { web_transport_die "DSM_PUBLIC_PORT inválida: ${DSM_PUBLIC_PORT}" || return 1; }
+
         if [[ -z "${DSM_TLS_CERT_MODE}" ]]; then
             if web_transport_is_interactive; then
-                printf '\nCertificado HTTPS:\n  1) Let\x27s Encrypt (domínio público; recomendado para Internet)\n  2) Certificado existente (PEM)\n  3) Certificado local autogerado (LAN/teste; CA privada)\n\n'
+                printf '\nCertificado HTTPS:\n  1) Let\x27s Encrypt / ACME\n  2) Certificado existente (PEM)\n  3) Certificado local autogerado (LAN/teste; CA privada)\n\n'
                 local cert_answer; read -r -p 'Certificado [1]: ' cert_answer
-                case "${cert_answer:-1}" in 1|letsencrypt|le) DSM_TLS_CERT_MODE=letsencrypt ;; 2|existing|pem) DSM_TLS_CERT_MODE=existing ;; 3|selfsigned|local) DSM_TLS_CERT_MODE=selfsigned ;; *) web_transport_die "Modo de certificado inválido: ${cert_answer}" || return 1 ;; esac
+                case "${cert_answer:-1}" in 1|letsencrypt|le|acme) DSM_TLS_CERT_MODE=letsencrypt ;; 2|existing|pem) DSM_TLS_CERT_MODE=existing ;; 3|selfsigned|local) DSM_TLS_CERT_MODE=selfsigned ;; *) web_transport_die "Modo de certificado inválido: ${cert_answer}" || return 1 ;; esac
             else DSM_TLS_CERT_MODE=existing; fi
         fi
         DSM_TLS_CERT_MODE="${DSM_TLS_CERT_MODE,,}"; case "${DSM_TLS_CERT_MODE}" in letsencrypt|existing|selfsigned) ;; *) web_transport_die "DSM_TLS_CERT_MODE inválido" || return 1;; esac
@@ -63,21 +135,29 @@ select_web_transport(){
             [[ -n "${DSM_PUBLIC_HOST}" ]] || { web_transport_die "DSM_PUBLIC_HOST é obrigatório para Let's Encrypt" || return 1; }
             [[ "${DSM_PUBLIC_HOST}" != *' '* && "${DSM_PUBLIC_HOST}" == *.* ]] || { web_transport_die "Hostname público inválido: ${DSM_PUBLIC_HOST}" || return 1; }
             [[ -n "${DSM_TLS_LE_EMAIL}" ]] || { web_transport_die "DSM_TLS_LE_EMAIL é obrigatório para Let's Encrypt" || return 1; }
+            web_transport_select_acme_challenge || return 1
             DSM_TLS_SOURCE_CERT_FILE="/etc/letsencrypt/live/${DSM_PUBLIC_HOST}/fullchain.pem"; DSM_TLS_SOURCE_KEY_FILE="/etc/letsencrypt/live/${DSM_PUBLIC_HOST}/privkey.pem"
             DSM_TLS_CERT_FILE="/etc/capivara/tls/server.crt"; DSM_TLS_KEY_FILE="/etc/capivara/tls/server.key"; DSM_TLS_CA_FILE=""
         elif [[ "${DSM_TLS_CERT_MODE}" == existing ]]; then
+            DSM_TLS_ACME_CHALLENGE=disabled
             if web_transport_is_interactive; then
-                local value; read -r -p "Certificado PEM [${DSM_TLS_CERT_FILE:-/etc/capivara/tls/server.crt}]: " value; DSM_TLS_CERT_FILE="${value:-${DSM_TLS_CERT_FILE:-/etc/capivara/tls/server.crt}}"
+                local value; read -r -p "Hostname público [${DSM_PUBLIC_HOST:-}]: " value; DSM_PUBLIC_HOST="${value:-${DSM_PUBLIC_HOST}}"
+                read -r -p "Certificado PEM [${DSM_TLS_CERT_FILE:-/etc/capivara/tls/server.crt}]: " value; DSM_TLS_CERT_FILE="${value:-${DSM_TLS_CERT_FILE:-/etc/capivara/tls/server.crt}}"
                 read -r -p "Chave privada PEM [${DSM_TLS_KEY_FILE:-/etc/capivara/tls/server.key}]: " value; DSM_TLS_KEY_FILE="${value:-${DSM_TLS_KEY_FILE:-/etc/capivara/tls/server.key}}"
                 read -r -p "CA privada para Agents (opcional) [${DSM_TLS_CA_FILE:-}]: " value; DSM_TLS_CA_FILE="${value:-${DSM_TLS_CA_FILE}}"
             fi
             [[ -n "${DSM_TLS_CERT_FILE}" && -n "${DSM_TLS_KEY_FILE}" ]] || { web_transport_die "Certificado e chave são obrigatórios em HTTPS existing" || return 1; }
         else
+            DSM_TLS_ACME_CHALLENGE=disabled
             if web_transport_is_interactive; then local value; read -r -p "Nome DNS/IP do Controller [${DSM_PUBLIC_HOST:-$(hostname -f 2>/dev/null || hostname)}]: " value; DSM_PUBLIC_HOST="${value:-${DSM_PUBLIC_HOST:-$(hostname -f 2>/dev/null || hostname)}}"; fi
             DSM_PUBLIC_HOST="${DSM_PUBLIC_HOST:-localhost}"; DSM_TLS_CERT_FILE="${DSM_TLS_CERT_FILE:-/etc/capivara/tls/server.crt}"; DSM_TLS_KEY_FILE="${DSM_TLS_KEY_FILE:-/etc/capivara/tls/server.key}"; DSM_TLS_CA_FILE="${DSM_TLS_CA_FILE:-/etc/capivara/tls/server.crt}"
         fi
     fi
-    export DSM_WEB_SCHEME DSM_WEB_HOST DSM_WEB_PORT DSM_PUBLIC_HOST DSM_TLS_CERT_MODE DSM_TLS_CERT_FILE DSM_TLS_KEY_FILE DSM_TLS_CA_FILE DSM_TLS_LE_EMAIL DSM_TLS_SOURCE_CERT_FILE DSM_TLS_SOURCE_KEY_FILE
+
+    if [[ -n "${DSM_PUBLIC_HOST}" ]]; then DSM_CONTROLLER_PUBLIC_URL="$(web_transport_public_url)"; else DSM_CONTROLLER_PUBLIC_URL=""; fi
+    export DSM_WEB_SCHEME DSM_WEB_HOST DSM_WEB_PORT DSM_PUBLIC_HOST DSM_PUBLIC_PORT DSM_CONTROLLER_PUBLIC_URL
+    export DSM_TLS_CERT_MODE DSM_TLS_ACME_CHALLENGE DSM_TLS_DNS_AUTH_HOOK DSM_TLS_DNS_CLEANUP_HOOK
+    export DSM_TLS_CERT_FILE DSM_TLS_KEY_FILE DSM_TLS_CA_FILE DSM_TLS_LE_EMAIL DSM_TLS_SOURCE_CERT_FILE DSM_TLS_SOURCE_KEY_FILE
 }
 
 prepare_web_transport_certificate(){
@@ -94,7 +174,23 @@ prepare_web_transport_certificate(){
     fi
     command -v certbot >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null; DEBIAN_FRONTEND=noninteractive apt-get install -y certbot >/dev/null; fi; }
     command -v certbot >/dev/null 2>&1 || { web_transport_die "certbot não está disponível" || return 1; }
-    certbot certonly --standalone --non-interactive --agree-tos --email "${DSM_TLS_LE_EMAIL}" -d "${DSM_PUBLIC_HOST}"
+
+    case "${DSM_TLS_ACME_CHALLENGE:-http-01}" in
+        http-01)
+            printf '[Capivara] ACME HTTP-01 requer a porta pública TCP/80 acessível durante emissão e renovação.\n'
+            certbot certonly --standalone --non-interactive --agree-tos --email "${DSM_TLS_LE_EMAIL}" -d "${DSM_PUBLIC_HOST}"
+            ;;
+        dns-01-manual)
+            web_transport_is_interactive || { web_transport_die "DNS-01 manual requer instalação interativa; use dns-01-hook em automação" || return 1; }
+            printf '[Capivara] O Certbot solicitará um registro TXT em _acme-challenge.%s.\n' "${DSM_PUBLIC_HOST}"
+            certbot certonly --manual --preferred-challenges dns --agree-tos --email "${DSM_TLS_LE_EMAIL}" -d "${DSM_PUBLIC_HOST}"
+            ;;
+        dns-01-hook)
+            certbot certonly --manual --preferred-challenges dns --non-interactive --agree-tos --email "${DSM_TLS_LE_EMAIL}" \
+                --manual-auth-hook "${DSM_TLS_DNS_AUTH_HOOK}" --manual-cleanup-hook "${DSM_TLS_DNS_CLEANUP_HOOK}" -d "${DSM_PUBLIC_HOST}"
+            ;;
+        *) web_transport_die "Desafio ACME não suportado: ${DSM_TLS_ACME_CHALLENGE}" || return 1 ;;
+    esac
     [[ -r "${DSM_TLS_SOURCE_CERT_FILE}" && -r "${DSM_TLS_SOURCE_KEY_FILE}" ]] || { web_transport_die "Let's Encrypt não produziu o certificado esperado" || return 1; }
 }
 
@@ -126,7 +222,9 @@ EOF_HOOK
     fi
 
     web_transport_write_config_value "${config}" DSM_WEB_SCHEME "${DSM_WEB_SCHEME}"; web_transport_write_config_value "${config}" DSM_WEB_HOST "${DSM_WEB_HOST}"; web_transport_write_config_value "${config}" DSM_WEB_PORT "${DSM_WEB_PORT}"
-    web_transport_write_config_value "${config}" DSM_PUBLIC_HOST "${DSM_PUBLIC_HOST:-}"; web_transport_write_config_value "${config}" DSM_TLS_CERT_MODE "${DSM_TLS_CERT_MODE:-disabled}"; web_transport_write_config_value "${config}" DSM_TLS_CERT_FILE "${DSM_TLS_CERT_FILE:-}"
-    web_transport_write_config_value "${config}" DSM_TLS_KEY_FILE "${DSM_TLS_KEY_FILE:-}"; web_transport_write_config_value "${config}" DSM_TLS_CA_FILE "${DSM_TLS_CA_FILE:-}"
+    web_transport_write_config_value "${config}" DSM_PUBLIC_HOST "${DSM_PUBLIC_HOST:-}"; web_transport_write_config_value "${config}" DSM_PUBLIC_PORT "${DSM_PUBLIC_PORT:-${DSM_WEB_PORT}}"; web_transport_write_config_value "${config}" DSM_CONTROLLER_PUBLIC_URL "${DSM_CONTROLLER_PUBLIC_URL:-}"
+    web_transport_write_config_value "${config}" DSM_TLS_CERT_MODE "${DSM_TLS_CERT_MODE:-disabled}"; web_transport_write_config_value "${config}" DSM_TLS_ACME_CHALLENGE "${DSM_TLS_ACME_CHALLENGE:-disabled}"
+    web_transport_write_config_value "${config}" DSM_TLS_DNS_AUTH_HOOK "${DSM_TLS_DNS_AUTH_HOOK:-}"; web_transport_write_config_value "${config}" DSM_TLS_DNS_CLEANUP_HOOK "${DSM_TLS_DNS_CLEANUP_HOOK:-}"
+    web_transport_write_config_value "${config}" DSM_TLS_CERT_FILE "${DSM_TLS_CERT_FILE:-}"; web_transport_write_config_value "${config}" DSM_TLS_KEY_FILE "${DSM_TLS_KEY_FILE:-}"; web_transport_write_config_value "${config}" DSM_TLS_CA_FILE "${DSM_TLS_CA_FILE:-}"
     if command -v systemctl >/dev/null 2>&1 && systemctl cat dsm-dashboard.service >/dev/null 2>&1; then systemctl restart dsm-dashboard.service; systemctl is-active --quiet dsm-dashboard.service || { web_transport_die "Dashboard não iniciou após aplicar ${DSM_WEB_SCHEME^^}" || return 1; }; fi
 }
