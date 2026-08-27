@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_port_repository import AgentPortRepository
+from agent_public_network import AgentPublicNetworkRepository, normalize_public_network
 from alert_repository import AlertSession, dialect_for_backend
 
 
@@ -18,6 +19,7 @@ def normalize_preconfiguration(payload: dict[str, Any] | None) -> dict[str, Any]
     if len(name) > 128:
         raise ValueError("agent_name must be at most 128 characters")
 
+    public_network = normalize_public_network(payload)
     start_raw = payload.get("port_start")
     end_raw = payload.get("port_end")
     protocol_raw = payload.get("port_protocol")
@@ -29,6 +31,7 @@ def normalize_preconfiguration(payload: dict[str, Any] | None) -> dict[str, Any]
             "port_protocol": None,
             "port_start": None,
             "port_end": None,
+            **public_network,
         }
 
     if start_raw in (None, "") or end_raw in (None, ""):
@@ -50,6 +53,7 @@ def normalize_preconfiguration(payload: dict[str, Any] | None) -> dict[str, Any]
         "port_protocol": protocol,
         "port_start": start,
         "port_end": end,
+        **public_network,
     }
 
 
@@ -86,6 +90,8 @@ class AgentInstallationPreconfigurationRepository:
                 )
             finally:
                 session.close()
+        # Public network values intentionally stay in the installation token metadata path
+        # until enrollment and are returned to callers from the normalized payload.
         return normalized
 
     def get(self, installation_id: str) -> dict[str, Any] | None:
@@ -124,7 +130,14 @@ class AgentInstallationPreconfigurationRepository:
             finally:
                 session.close()
 
-    def apply(self, installation_id: str, agent_id: str) -> dict[str, Any] | None:
+    def apply(
+        self,
+        installation_id: str,
+        agent_id: str,
+        *,
+        public_hostname: str | None = None,
+        public_ipv4: str | None = None,
+    ) -> dict[str, Any] | None:
         settings = self.get(installation_id)
         if settings is None:
             return None
@@ -153,9 +166,19 @@ class AgentInstallationPreconfigurationRepository:
                     end_port=int(settings["port_end"]),
                     force=False,
                 )
+
+            if public_hostname or public_ipv4:
+                AgentPublicNetworkRepository(self.backend).set(
+                    str(agent_id),
+                    {"public_hostname": public_hostname, "public_ipv4": public_ipv4},
+                    actor="agent-installation",
+                )
         except Exception as exc:
             self._mark_result(installation_id, error=str(exc))
             raise
 
         self._mark_result(installation_id, error=None)
-        return self.get(installation_id)
+        result = self.get(installation_id) or {}
+        result["public_hostname"] = public_hostname
+        result["public_ipv4"] = public_ipv4
+        return result
