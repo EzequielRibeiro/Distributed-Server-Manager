@@ -1,374 +1,136 @@
 #!/usr/bin/env python3
-"""Administrative CLI for bootstrapping a Linux Agent over SSH."""
-
+"""Administrative CLI for bootstrapping Linux or Windows Agents over OpenSSH."""
 from __future__ import annotations
-
-import argparse
-import json
-import os
-import socket
-import sys
+import argparse,json,os,socket,sys
 from pathlib import Path
 from typing import Any
-
-ROOT_DIR = Path(__file__).resolve().parents[1]
-for candidate in (ROOT_DIR, ROOT_DIR / "core", ROOT_DIR / "database"):
-    if str(candidate) not in sys.path:
-        sys.path.insert(0, str(candidate))
-
+ROOT_DIR=Path(__file__).resolve().parents[1]
+for candidate in (ROOT_DIR,ROOT_DIR/"core",ROOT_DIR/"database"):
+    if str(candidate) not in sys.path: sys.path.insert(0,str(candidate))
 from agent_deploy_topology import validate_deploy_location
-from agent_installation_preconfiguration import (
-    AgentInstallationPreconfigurationRepository,
-    normalize_preconfiguration,
-)
+from agent_installation_preconfiguration import AgentInstallationPreconfigurationRepository,normalize_preconfiguration
 from agent_pairing_repository import AgentPairingRepository
-from agent_ssh_deploy import (
-    AgentDeployError,
-    SSHDeployOptions,
-    bootstrap_agent,
-    preflight_ssh,
-    remote_agent_present,
-    wait_for_agent_online,
-)
-from alert_repository import AlertSession, dialect_for_backend
+from agent_ssh_deploy import AgentDeployError,SSHDeployOptions,bootstrap_agent,bootstrap_windows_agent_ssh,preflight_ssh,preflight_windows_ssh,remote_agent_present,remote_windows_agent_present_ssh,wait_for_agent_online
+from alert_repository import AlertSession,dialect_for_backend
 from runtime_backend import backend_from_environment
 
-
-def _active_controller_id(backend, requested: str | None) -> str:
-    dialect = dialect_for_backend(backend)
-    ph = dialect.placeholder
-    with backend.connect() as connection:
-        session = AlertSession(backend, connection)
+def _active_controller_id(backend,requested):
+    d=dialect_for_backend(backend); ph=d.placeholder
+    with backend.connect() as c:
+        s=AlertSession(backend,c)
         try:
             if requested:
-                row = session.execute(
-                    f"SELECT id,status FROM controllers WHERE id={ph}",
-                    (str(requested).strip(),),
-                ).fetchone()
-                if row is None:
-                    raise AgentDeployError(f"Controller not found: {requested}")
-                if str(row["status"]).lower() != "active":
-                    raise AgentDeployError("Controller must be active")
+                row=s.execute(f"SELECT id,status FROM controllers WHERE id={ph}",(str(requested).strip(),)).fetchone()
+                if row is None: raise AgentDeployError(f"Controller not found: {requested}")
+                if str(row["status"]).lower()!="active": raise AgentDeployError("Controller must be active")
                 return str(row["id"])
-
-            rows = session.execute(
-                "SELECT id FROM controllers WHERE status='active' ORDER BY id"
-            ).fetchall()
-        finally:
-            session.close()
-    if not rows:
-        raise AgentDeployError("no active Controller identity found")
-    if len(rows) > 1:
-        raise AgentDeployError("multiple active Controllers found; use --controller-id")
+            rows=s.execute("SELECT id FROM controllers WHERE status='active' ORDER BY id").fetchall()
+        finally:s.close()
+    if not rows: raise AgentDeployError("no active Controller identity found")
+    if len(rows)>1: raise AgentDeployError("multiple active Controllers found; use --controller-id")
     return str(rows[0]["id"])
 
-
-def _source_address_for_host(host: str) -> str:
-    """Resolve the local address the kernel would use to reach HOST."""
-    try:
-        infos = socket.getaddrinfo(host, 9, type=socket.SOCK_DGRAM)
-    except socket.gaierror as exc:
-        raise AgentDeployError(f"unable to resolve Agent host: {host}") from exc
-    for family, socktype, proto, _, sockaddr in infos:
-        sock = socket.socket(family, socktype, proto)
+def _source_address_for_host(host):
+    try: infos=socket.getaddrinfo(host,9,type=socket.SOCK_DGRAM)
+    except socket.gaierror as exc: raise AgentDeployError(f"unable to resolve Agent host: {host}") from exc
+    for family,socktype,proto,_,sockaddr in infos:
+        sock=socket.socket(family,socktype,proto)
         try:
-            sock.connect(sockaddr)
-            address = str(sock.getsockname()[0])
-            if address and address not in {"0.0.0.0", "::"}:
-                return address
-        except OSError:
-            continue
-        finally:
-            sock.close()
+            sock.connect(sockaddr); address=str(sock.getsockname()[0])
+            if address and address not in {"0.0.0.0","::"}: return address
+        except OSError: pass
+        finally:sock.close()
     raise AgentDeployError("unable to determine Controller address reachable by Agent")
 
-
-def _controller_url(host: str, requested: str | None) -> str:
-    explicit = str(requested or "").strip() or str(os.environ.get("DSM_CONTROLLER_URL", "")).strip()
+def _controller_url(host,requested):
+    explicit=str(requested or "").strip() or str(os.environ.get("DSM_CONTROLLER_URL","")).strip()
     if explicit:
-        if not explicit.startswith(("http://", "https://")):
-            raise AgentDeployError("controller URL must use http:// or https://")
+        if not explicit.startswith(("http://","https://")): raise AgentDeployError("controller URL must use http:// or https://")
         return explicit.rstrip("/")
-    address = _source_address_for_host(host)
-    if ":" in address:
-        address = f"[{address}]"
-    port = int(os.environ.get("DSM_DASHBOARD_PORT", "8080") or "8080")
-    return f"http://{address}:{port}"
+    address=_source_address_for_host(host); address=f"[{address}]" if ":" in address else address
+    return f"http://{address}:{int(os.environ.get('DSM_DASHBOARD_PORT','8080') or '8080')}"
 
+def _parse_port_range(value):
+    raw=str(value or "").strip()
+    if not raw:return None,None
+    if raw.count("-")!=1: raise ValueError("--port-range must use START-END")
+    try:start,end=map(int,raw.split("-",1))
+    except ValueError as exc: raise ValueError("--port-range must contain integer ports") from exc
+    if not 1<=start<=end<=65535: raise ValueError("--port-range must satisfy 1 <= START <= END <= 65535")
+    return start,end
 
-def _parse_port_range(value: str | None) -> tuple[int | None, int | None]:
-    raw = str(value or "").strip()
-    if not raw:
-        return None, None
-    if raw.count("-") != 1:
-        raise ValueError("--port-range must use START-END, for example 24000-24999")
-    start_raw, end_raw = raw.split("-", 1)
-    try:
-        start = int(start_raw)
-        end = int(end_raw)
-    except ValueError as exc:
-        raise ValueError("--port-range must contain integer ports") from exc
-    if not 1 <= start <= end <= 65535:
-        raise ValueError("--port-range must satisfy 1 <= START <= END <= 65535")
-    return start, end
-
-
-def _preconfiguration_from_args(args: argparse.Namespace) -> dict[str, Any]:
-    start, end = _parse_port_range(args.port_range)
-    if start is None and args.port_protocol is not None:
-        raise ValueError("--port-protocol requires --port-range")
-    payload: dict[str, Any] = {"agent_name": args.name}
-    if start is not None:
-        payload.update(
-            port_start=start,
-            port_end=end,
-            port_protocol=args.port_protocol or "both",
-        )
+def _preconfiguration(args):
+    start,end=_parse_port_range(args.port_range)
+    if start is None and args.port_protocol is not None: raise ValueError("--port-protocol requires --port-range")
+    payload={"agent_name":args.name}
+    if start is not None: payload.update(port_start=start,port_end=end,port_protocol=args.port_protocol or "both")
     return normalize_preconfiguration(payload)
 
+# Public compatibility name used by the existing CLI/Dashboard parity tests.
+def _preconfiguration_from_args(args):
+    return _preconfiguration(args)
 
-def _annotate_pairing(
-    backend,
-    *,
-    token_id: str,
-    region_id: str | None,
-    datacenter_id: str | None,
-) -> None:
-    """Best-effort metadata compatible with the existing installation workflow."""
-    dialect = dialect_for_backend(backend)
-    ph = dialect.placeholder
-    with backend.transaction() as connection:
-        session = AlertSession(backend, connection)
+def _annotate_pairing(backend,*,token_id,platform,region_id,datacenter_id):
+    d=dialect_for_backend(backend); ph=d.placeholder
+    with backend.transaction() as c:
+        s=AlertSession(backend,c)
         try:
-            columns = {str(row["name"]) for row in session.execute("PRAGMA table_info(agent_pairing_tokens)").fetchall()} if dialect.name == "sqlite" else set()
-            assignments: list[str] = []
-            values: list[Any] = []
-            for column, value in (
-                ("platform", "linux"),
-                ("install_method", "ssh"),
-                ("region_id", region_id),
-                ("datacenter_id", datacenter_id),
-            ):
-                if columns and column not in columns:
-                    continue
-                if value is None and column in {"region_id", "datacenter_id"}:
-                    continue
-                assignments.append(f"{column}={ph}")
-                values.append(value)
-            if assignments:
-                values.append(token_id)
-                session.execute(
-                    "UPDATE agent_pairing_tokens SET " + ",".join(assignments) + f" WHERE id={ph}",
-                    tuple(values),
-                )
-        finally:
-            session.close()
+            columns={str(r["name"]) for r in s.execute("PRAGMA table_info(agent_pairing_tokens)").fetchall()} if d.name=="sqlite" else set(); assignments=[]; values=[]
+            for column,value in (("platform",platform),("install_method","ssh"),("region_id",region_id),("datacenter_id",datacenter_id)):
+                if columns and column not in columns:continue
+                if value is None and column in {"region_id","datacenter_id"}:continue
+                assignments.append(f"{column}={ph}");values.append(value)
+            if assignments: values.append(token_id);s.execute("UPDATE agent_pairing_tokens SET "+",".join(assignments)+f" WHERE id={ph}",tuple(values))
+        finally:s.close()
 
-
-def _status_reader(backend, token_id: str):
-    dialect = dialect_for_backend(backend)
-    ph = dialect.placeholder
-
-    def read() -> dict[str, Any]:
-        with backend.connect() as connection:
-            session = AlertSession(backend, connection)
+def _status_reader(backend,token_id):
+    d=dialect_for_backend(backend);ph=d.placeholder
+    def read():
+        with backend.connect() as c:
+            s=AlertSession(backend,c)
             try:
-                row = session.execute(
-                    "SELECT agent_id,consumed_at FROM agent_pairing_tokens " + f"WHERE id={ph}",
-                    (token_id,),
-                ).fetchone()
-                if row is None:
-                    raise AgentDeployError("pairing record disappeared during deployment")
-                agent_id = str(row["agent_id"]) if row["agent_id"] else None
-                payload: dict[str, Any] = {
-                    "agent_id": agent_id,
-                    "pairing_consumed": bool(row["consumed_at"]),
-                    "agent_status": None,
-                    "health_status": None,
-                }
-                if not agent_id:
-                    return payload
-                agent = session.execute(
-                    f"SELECT status,node_id,name FROM agents WHERE id={ph}",
-                    (agent_id,),
-                ).fetchone()
-                runtime = session.execute(
-                    f"SELECT health_status,last_seen,hostname,address FROM agent_runtime_inventory WHERE agent_id={ph}",
-                    (agent_id,),
-                ).fetchone()
-                if agent is not None:
-                    payload.update(
-                        agent_status=str(agent["status"]),
-                        node_id=str(agent["node_id"]),
-                        name=str(agent["name"]),
-                    )
-                if runtime is not None:
-                    payload.update(
-                        health_status=str(runtime["health_status"] or ""),
-                        last_seen=runtime["last_seen"],
-                        hostname=runtime["hostname"],
-                        address=runtime["address"],
-                    )
+                row=s.execute("SELECT agent_id,consumed_at FROM agent_pairing_tokens WHERE id="+ph,(token_id,)).fetchone()
+                if row is None:raise AgentDeployError("pairing record disappeared during deployment")
+                agent_id=str(row["agent_id"]) if row["agent_id"] else None; payload={"agent_id":agent_id,"pairing_consumed":bool(row["consumed_at"]),"agent_status":None,"health_status":None}
+                if not agent_id:return payload
+                agent=s.execute(f"SELECT status,node_id,name FROM agents WHERE id={ph}",(agent_id,)).fetchone();runtime=s.execute(f"SELECT health_status,last_seen,hostname,address FROM agent_runtime_inventory WHERE agent_id={ph}",(agent_id,)).fetchone()
+                if agent is not None:payload.update(agent_status=str(agent["status"]),node_id=str(agent["node_id"]),name=str(agent["name"]))
+                if runtime is not None:payload.update(health_status=str(runtime["health_status"] or ""),last_seen=runtime["last_seen"],hostname=runtime["hostname"],address=runtime["address"])
                 return payload
-            finally:
-                session.close()
-
+            finally:s.close()
     return read
 
-
-def deploy(args: argparse.Namespace) -> dict[str, Any]:
-    backend = backend_from_environment()
+def deploy(args):
+    backend=backend_from_environment()
     try:
-        backend.initialize()
-        options = SSHDeployOptions(
-            host=args.host,
-            ssh_user=args.ssh_user,
-            ssh_port=args.ssh_port,
-            identity_file=args.identity_file,
-            connect_timeout=args.connect_timeout,
-        )
-        controller_id = _active_controller_id(backend, args.controller_id)
-        controller_url = _controller_url(args.host, args.controller_url)
-        region_id, datacenter_id = validate_deploy_location(
-            backend,
-            region_id=args.region_id,
-            datacenter_id=args.datacenter_id,
-        )
-        preconfiguration = _preconfiguration_from_args(args)
+        backend.initialize();options=SSHDeployOptions(host=args.host,ssh_user=args.ssh_user,ssh_port=args.ssh_port,identity_file=args.identity_file,password_file=args.password_file,connect_timeout=args.connect_timeout)
+        controller_id=_active_controller_id(backend,args.controller_id);controller_url=_controller_url(args.host,args.controller_url);region_id,datacenter_id=validate_deploy_location(backend,region_id=args.region_id,datacenter_id=args.datacenter_id);preconfiguration=_preconfiguration(args)
+        if args.platform=="windows": preflight=preflight_windows_ssh(options);present=remote_windows_agent_present_ssh(options);bootstrap=bootstrap_windows_agent_ssh
+        else: preflight=preflight_ssh(options);present=remote_agent_present(options);bootstrap=bootstrap_agent
+        if present:raise AgentDeployError("Capivara Agent installation already detected on remote host; refusing automatic reinstall")
+        issued=AgentPairingRepository(backend).issue_token(controller_id=controller_id,created_by=os.environ.get("USER") or None,ttl_seconds=args.pairing_ttl)
+        _annotate_pairing(backend,token_id=issued.token_id,platform=args.platform,region_id=region_id,datacenter_id=datacenter_id);AgentInstallationPreconfigurationRepository(backend).save(issued.token_id,preconfiguration)
+        bootstrap(options,controller_url=controller_url,pairing_token=issued.token,release_tag=args.release_tag,timeout=args.bootstrap_timeout)
+        online=wait_for_agent_online(_status_reader(backend,issued.token_id),timeout=args.heartbeat_timeout);applied=AgentInstallationPreconfigurationRepository(backend).get(issued.token_id)
+        return {"deployment":"completed","host":args.host,"ssh_user":args.ssh_user,"ssh_port":args.ssh_port,"controller_id":controller_id,"controller_url":controller_url,"region_id":region_id,"datacenter_id":datacenter_id,"preconfiguration":applied,"remote_platform":preflight.get("platform"),"remote_architecture":preflight.get("architecture"),"authentication":"password-file" if args.password_file else "ssh-key-or-agent","agent_id":online.get("agent_id"),"node_id":online.get("node_id"),"agent_status":online.get("agent_status"),"health_status":online.get("health_status"),"last_seen":online.get("last_seen")}
+    finally:backend.close()
 
-        preflight = preflight_ssh(options)
-        if remote_agent_present(options):
-            raise AgentDeployError(
-                "Capivara Agent installation already detected on remote host; refusing automatic reinstall"
-            )
+def build_parser():
+    p=argparse.ArgumentParser(description="Deploy a Capivara Linux or Windows Agent over OpenSSH",epilog="Passwords are never accepted as CLI values. Use --password-file PATH for a protected 0600 file; SSH keys remain preferred.")
+    p.add_argument("host",help="remote Agent host (IPv4, IPv6 or hostname)");p.add_argument("--platform",choices=("linux","windows"),default="linux",help="target platform; default: linux");p.add_argument("--ssh-user",required=True,help="SSH bootstrap user");p.add_argument("--ssh-port",type=int,default=22);auth=p.add_mutually_exclusive_group();auth.add_argument("--identity-file");auth.add_argument("--password-file",help="protected file containing only the SSH password; mode 0600 or stricter");p.add_argument("--controller-id");p.add_argument("--controller-url");p.add_argument("--region-id");p.add_argument("--datacenter-id");p.add_argument("--name");p.add_argument("--port-range",metavar="START-END");p.add_argument("--port-protocol",choices=("tcp","udp","both"));p.add_argument("--release-tag",default="latest");p.add_argument("--pairing-ttl",type=int,default=900);p.add_argument("--connect-timeout",type=int,default=10);p.add_argument("--bootstrap-timeout",type=int,default=900);p.add_argument("--heartbeat-timeout",type=int,default=180);p.add_argument("--json",action="store_true");return p
 
-        issued = AgentPairingRepository(backend).issue_token(
-            controller_id=controller_id,
-            created_by=os.environ.get("USER") or None,
-            ttl_seconds=args.pairing_ttl,
-        )
-        _annotate_pairing(
-            backend,
-            token_id=issued.token_id,
-            region_id=region_id,
-            datacenter_id=datacenter_id,
-        )
-        AgentInstallationPreconfigurationRepository(backend).save(
-            issued.token_id,
-            preconfiguration,
-        )
-
-        bootstrap_agent(
-            options,
-            controller_url=controller_url,
-            pairing_token=issued.token,
-            timeout=args.bootstrap_timeout,
-        )
-        online = wait_for_agent_online(
-            _status_reader(backend, issued.token_id),
-            timeout=args.heartbeat_timeout,
-        )
-        applied_preconfiguration = AgentInstallationPreconfigurationRepository(backend).get(
-            issued.token_id
-        )
-        return {
-            "deployment": "completed",
-            "host": args.host,
-            "ssh_user": args.ssh_user,
-            "ssh_port": args.ssh_port,
-            "controller_id": controller_id,
-            "controller_url": controller_url,
-            "region_id": region_id,
-            "datacenter_id": datacenter_id,
-            "preconfiguration": applied_preconfiguration,
-            "remote_platform": preflight.get("platform"),
-            "remote_architecture": preflight.get("architecture"),
-            "agent_id": online.get("agent_id"),
-            "node_id": online.get("node_id"),
-            "agent_status": online.get("agent_status"),
-            "health_status": online.get("health_status"),
-            "last_seen": online.get("last_seen"),
-        }
-    finally:
-        backend.close()
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Deploy a Capivara Linux Agent over SSH")
-    parser.add_argument("host", help="remote Agent host (IPv4, IPv6 or hostname)")
-    parser.add_argument("--ssh-user", required=True, help="SSH bootstrap user")
-    parser.add_argument("--ssh-port", type=int, default=22)
-    parser.add_argument("--identity-file")
-    parser.add_argument("--controller-id")
-    parser.add_argument("--controller-url")
-    parser.add_argument("--region-id")
-    parser.add_argument("--datacenter-id")
-    parser.add_argument("--name", help="administrative Agent name applied after enrollment")
-    parser.add_argument(
-        "--port-range",
-        metavar="START-END",
-        help="managed Agent port range applied after enrollment, for example 24000-24999",
-    )
-    parser.add_argument(
-        "--port-protocol",
-        choices=("tcp", "udp", "both"),
-        help="protocol for --port-range; defaults to both",
-    )
-    parser.add_argument("--pairing-ttl", type=int, default=900)
-    parser.add_argument("--connect-timeout", type=int, default=10)
-    parser.add_argument("--bootstrap-timeout", type=int, default=900)
-    parser.add_argument("--heartbeat-timeout", type=int, default=180)
-    parser.add_argument("--json", action="store_true")
-    return parser
-
-
-def _print_human(payload: dict[str, Any]) -> None:
-    print("Capivara Agent Deployment")
-    print()
-    preconfiguration = payload.get("preconfiguration") or {}
-    port_range = "unconfigured"
-    if preconfiguration.get("port_start") is not None:
-        port_range = (
-            f"{preconfiguration.get('port_protocol')} "
-            f"{preconfiguration.get('port_start')}-{preconfiguration.get('port_end')}"
-        )
-    fields = (
-        ("Host", payload.get("host")),
-        ("SSH user", payload.get("ssh_user")),
-        ("Controller", payload.get("controller_id")),
-        ("Controller URL", payload.get("controller_url")),
-        ("Region", payload.get("region_id") or "unconfigured"),
-        ("Datacenter", payload.get("datacenter_id") or "unconfigured"),
-        ("Agent name", preconfiguration.get("requested_name") or "automatic"),
-        ("Port range", port_range),
-        ("Remote platform", payload.get("remote_platform")),
-        ("Architecture", payload.get("remote_architecture")),
-        ("Agent", payload.get("agent_id")),
-        ("Node", payload.get("node_id")),
-        ("Status", payload.get("agent_status")),
-        ("Health", payload.get("health_status")),
-    )
-    for label, value in fields:
-        print(f"{label:<18}: {value}")
+def _print_human(payload):
+    print("Capivara Agent Deployment\n")
+    for label,key in (("Host","host"),("SSH user","ssh_user"),("Authentication","authentication"),("Controller","controller_id"),("Controller URL","controller_url"),("Region","region_id"),("Datacenter","datacenter_id"),("Remote platform","remote_platform"),("Architecture","remote_architecture"),("Agent","agent_id"),("Node","node_id"),("Status","agent_status"),("Health","health_status")):print(f"{label:<18}: {payload.get(key)}")
     print("Deployment        : completed")
 
-
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    try:
-        payload = deploy(args)
-    except (AgentDeployError, ValueError, LookupError) as exc:
-        if getattr(args, "json", False):
-            print(json.dumps({"deployment": "failed", "error": str(exc)}, ensure_ascii=False))
-            return 2
-        parser.exit(2, f"Erro: {exc}\n")
-    if args.json:
-        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-    else:
-        _print_human(payload)
+def main(argv=None):
+    p=build_parser();args=p.parse_args(argv)
+    try:payload=deploy(args)
+    except (AgentDeployError,ValueError,LookupError) as exc:
+        if getattr(args,"json",False):print(json.dumps({"deployment":"failed","error":str(exc)},ensure_ascii=False));return 2
+        p.exit(2,f"Erro: {exc}\n")
+    if args.json:print(json.dumps(payload,ensure_ascii=False,sort_keys=True))
+    else:_print_human(payload)
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+if __name__=="__main__":raise SystemExit(main())

@@ -6,35 +6,45 @@
     <title>Capivara DSM - Adicionar Agent</title>
     <link rel="stylesheet" href="dashboard-home-v3.css">
     <link rel="stylesheet" href="agents.css">
-    <link rel="stylesheet" href="add-agent-v3.css?v=1">
+    <link rel="stylesheet" href="add-agent-v3.css?v=2">
 </head>
 <body class="cap-home cap-add-agent-shell">
 <div id="sidebar-component"></div>
 <main class="cap-home-main cap-add-agent-page">
     <header class="cap-home-topbar">
-        <div class="cap-home-title"><button id="add-agent-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1>Adicionar Agent</h1><p>Prepare, instale e acompanhe o enrollment de um novo Agent.</p></div></div>
+        <div class="cap-home-title"><button id="add-agent-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1>Adicionar Agent</h1><p>Escolha o sistema operacional do novo host.</p></div></div>
         <div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="add-agent-user">—</strong><span id="add-agent-role">—</span></div></div>
     </header>
     <div class="cap-home-content cap-add-agent-content">
         <div class="cap-add-agent-actions"><a class="cap-add-agent-link" href="agents.html">← Voltar para Agents</a></div>
         <div id="agents-error" class="agents-error" hidden></div>
-        <section id="add-agent" class="agent-detail add-agent-panel agent-manager-only">
-            <div class="cap-add-agent-heading"><h2>Instalação do Agent</h2><p>Instale manualmente por instrução ou permita que o Controller faça o bootstrap Linux via SSH e Windows via WinRM HTTPS.</p></div>
-            <form id="agent-install-form" class="range-form">
-                <fieldset><legend>Sistema</legend><label class="inline-option"><input type="radio" name="agent-platform" value="linux" checked> Linux</label><label class="inline-option"><input type="radio" name="agent-platform" value="windows"> Windows</label></fieldset>
-                <fieldset><legend>Método</legend><label class="inline-option"><input type="radio" name="agent-method" value="github" checked> Gerar instrução · GitHub Release</label><label class="inline-option"><input type="radio" name="agent-method" value="local"> Gerar instrução · Pacote local</label><label class="inline-option"><input type="radio" name="agent-method" value="ssh"> Instalar remotamente via SSH</label><label class="inline-option"><input type="radio" name="agent-method" value="winrm"> Instalar Windows via WinRM</label></fieldset>
-                <div id="agent-ssh-options" class="range-form" hidden><h3>Bootstrap SSH pelo Controller</h3><label>Host ou IP do Agent<input id="agent-ssh-host" type="text" placeholder="192.168.15.55" autocomplete="off"></label><label>Usuário SSH<input id="agent-ssh-user" type="text" placeholder="ezequiel" autocomplete="off"></label><label>Porta SSH<input id="agent-ssh-port" type="number" min="1" max="65535" value="22"></label><label>URL do Controller alcançável pelo Agent<input id="agent-controller-url" type="url" placeholder="https://controller.exemplo"></label><p class="location-safety-note">O Dashboard não aceita senha SSH. O Controller usa sua chave/ssh-agent já configurada, preserva a verificação de host key e exige sudo não interativo no host remoto.</p></div>
-                <div id="agent-winrm-options" class="range-form" hidden><h3>Bootstrap WinRM pelo Controller</h3><label>Host ou IP do Agent Windows<input id="agent-winrm-host" type="text" placeholder="node1.exemplo.local" autocomplete="off"></label><label>URL do Controller alcançável pelo Agent<input id="agent-winrm-controller-url" type="url" placeholder="https://controller.exemplo"></label><p class="location-safety-note">Prepare uma vez com <code>sudo cap agent winrm-prepare Administrator@HOST</code>. A Dashboard usa certificado e nunca recebe a senha.</p></div>
-                <label id="agent-controller-wrapper" hidden>Controller<select id="agent-install-controller"></select></label><label>Região<select id="agent-install-region" required><option value="">Selecione uma região</option></select></label><label>Datacenter<select id="agent-install-datacenter" required><option value="">Selecione um datacenter</option></select></label>
-                <fieldset><legend>Pré-configuração do Agent</legend><label>Nome administrativo<input id="agent-preconfig-name" type="text" maxlength="128" placeholder="Node Limeira 01"></label><label>Protocolo da faixa<select id="agent-preconfig-protocol"><option value="both">TCP + UDP</option><option value="udp">UDP</option><option value="tcp">TCP</option></select></label><label>Porta inicial<input id="agent-preconfig-port-start" type="number" min="1" max="65535" value="24000"></label><label>Porta final<input id="agent-preconfig-port-end" type="number" min="1" max="65535" value="24999"></label><p class="location-safety-note">A faixa só é criada depois do enrollment, quando o Agent já possui identidade.</p></fieldset>
-                <button id="generate-agent-install" type="submit">Gerar instalação</button><p id="agent-install-feedback" class="location-safety-note" role="status" aria-live="polite"></p>
-            </form>
-            <div id="agent-install-result" class="agent-install-result" hidden><h3 id="agent-install-result-title">Instruções de instalação</h3><p id="agent-install-expiry"></p><textarea id="agent-install-command" readonly rows="5"></textarea><button id="copy-agent-install" type="button">Copiar instrução</button><p id="agent-remote-bootstrap-status" class="location-safety-note" hidden></p><p id="agent-preconfiguration-status" class="location-safety-note"></p><div id="agent-install-progress" class="agent-install-progress" data-state="waiting" aria-live="polite"><span data-step="waiting">Aguardando Agent</span><span data-step="pairing">Pareando</span><span data-step="validating">Validando</span><span data-step="online">Online</span></div></div>
+        <section class="agent-detail add-agent-panel agent-manager-only">
+            <div class="cap-add-agent-heading">
+                <h2>Qual sistema receberá o Agent?</h2>
+                <p>Linux e Windows agora possuem assistentes independentes, com pré-requisitos, transporte remoto e ajuda próprios.</p>
+            </div>
+            <div class="cap-agent-platform-grid">
+                <a class="cap-agent-platform-card" href="add-agent-linux.html">
+                    <span class="cap-agent-platform-icon" aria-hidden="true">🐧</span>
+                    <strong>Agent Linux</strong>
+                    <span>Ubuntu, Debian e distribuições Linux compatíveis. Instalação local ou bootstrap remoto por OpenSSH.</span>
+                    <b>Instalar Agent Linux →</b>
+                </a>
+                <a class="cap-agent-platform-card" href="add-agent-windows.html">
+                    <span class="cap-agent-platform-icon" aria-hidden="true">▣</span>
+                    <strong>Agent Windows</strong>
+                    <span>Windows Server e Windows compatíveis. OpenSSH é o transporte preferencial; WinRM permanece disponível.</span>
+                    <b>Instalar Agent Windows →</b>
+                </a>
+            </div>
+            <div class="cap-agent-help-strip">
+                <div><strong>Primeira instalação?</strong><span>Veja os pré-requisitos, como preparar o acesso SSH e como usar credenciais temporárias com segurança.</span></div>
+                <a class="cap-add-agent-link" target="_blank" rel="noopener" href="https://github.com/EzequielRibeiro/Distributed-Server-Manager/tree/main/docs/agents">Ajuda de instalação ↗</a>
+            </div>
         </section>
     </div>
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
 <script src="add-agent-page.js?v=2"></script>
-<script src="agent-installation.js?v=2"></script>
 </body>
 </html>
