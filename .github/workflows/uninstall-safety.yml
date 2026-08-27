@@ -1,0 +1,28 @@
+name: Uninstall Safety
+
+on:
+  pull_request:
+    paths:
+      - 'uninstall.sh'
+      - 'tests/uninstall_session_guard_test.sh'
+      - '.github/workflows/uninstall-safety.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'uninstall.sh'
+      - 'tests/uninstall_session_guard_test.sh'
+      - '.github/workflows/uninstall-safety.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  session-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate uninstall syntax
+        run: bash -n uninstall.sh tests/uninstall_session_guard_test.sh
+      - name: Verify invoking session is preserved
+        run: bash tests/uninstall_session_guard_test.sh
