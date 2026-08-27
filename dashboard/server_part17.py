@@ -6,6 +6,7 @@ from urllib.parse import parse_qs,urlparse
 import server_part16 as integration
 from admin_observability_http import install_admin_observability
 from agent_admin_http import install_agent_administration
+from agent_public_network_http import install_agent_public_network
 from agent_storage_pool_admin_http import install_agent_storage_pool_administration
 from alert_management_http import install_alert_management
 from artifact_transfer_http import install_artifact_transfer_http
@@ -19,6 +20,7 @@ from customer_discord_schema_runtime import ensure_customer_discord_schema
 from customer_email_change_http import install_customer_email_change
 from customer_health_http import install_customer_health_http
 from customer_instance_activity_http import install_customer_instance_activity
+from customer_instance_connection_http import install_customer_instance_connection
 from customer_instance_creation import install_customer_instance_creation
 from customer_instance_team_http import install_customer_instance_team
 from customer_instance_workspace_http import install_customer_instance_workspace
@@ -65,6 +67,7 @@ def catalog_architecture_put(self):
 legacy.DashboardHandler.send_json=json_safe_send_json;legacy.DashboardHandler.do_GET=catalog_architecture_get;legacy.DashboardHandler.do_PUT=catalog_architecture_put
 install_system_user_administration(legacy,_authenticate)
 install_customer_instance_workspace(legacy,_authenticate)
+install_customer_instance_connection(legacy,_authenticate)
 install_customer_instance_team(legacy,_authenticate)
 install_customer_instance_activity(legacy,_authenticate)
 install_contract_upgrade_api(legacy,_authenticate,_ROOT)
@@ -75,6 +78,7 @@ install_dashboard_activity_audit(legacy,_authenticate)
 install_alert_management(legacy,_authenticate)
 install_customer_health_http(legacy,_authenticate)
 install_agent_administration(legacy,_authenticate)
+install_agent_public_network(legacy,_authenticate)
 install_agent_storage_pool_administration(legacy,_authenticate)
 install_storage_pool_source_cleanup(legacy,_authenticate)
 install_customer_profile_administration(legacy,_authenticate)

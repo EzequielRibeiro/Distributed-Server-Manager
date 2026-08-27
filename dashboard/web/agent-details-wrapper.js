@@ -1,0 +1,1 @@
+(()=>{"use strict";function load(src){return new Promise((resolve,reject)=>{const s=document.createElement("script");s.src=src;s.onload=resolve;s.onerror=reject;document.head.appendChild(s)})}load("/agent-details-core.js").then(()=>load("/agent-public-network.js"));})();

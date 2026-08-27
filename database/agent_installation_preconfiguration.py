@@ -6,10 +6,20 @@ from __future__ import annotations
 from typing import Any
 
 from agent_port_repository import AgentPortRepository
+from agent_public_network import AgentPublicNetworkRepository, normalize_public_network
 from alert_repository import AlertSession, dialect_for_backend
 
 
 _ALLOWED_PROTOCOLS = {"tcp", "udp", "both"}
+_PUBLIC_TABLE_SQL = (
+    "CREATE TABLE IF NOT EXISTS agent_public_network_preconfiguration ("
+    "installation_id VARCHAR(255) PRIMARY KEY,"
+    "public_hostname VARCHAR(253) NULL,"
+    "public_ipv4 VARCHAR(45) NULL,"
+    "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+    "updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"
+    ")"
+)
 
 
 def normalize_preconfiguration(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -18,18 +28,26 @@ def normalize_preconfiguration(payload: dict[str, Any] | None) -> dict[str, Any]
     if len(name) > 128:
         raise ValueError("agent_name must be at most 128 characters")
 
+    public_network = normalize_public_network(payload)
+    include_public_network = any(
+        key in payload and payload.get(key) not in (None, "")
+        for key in ("public_hostname", "public_ipv4")
+    )
     start_raw = payload.get("port_start")
     end_raw = payload.get("port_end")
     protocol_raw = payload.get("port_protocol")
     has_port_value = any(value not in (None, "") for value in (start_raw, end_raw, protocol_raw))
 
     if not has_port_value:
-        return {
+        result = {
             "agent_name": name or None,
             "port_protocol": None,
             "port_start": None,
             "port_end": None,
         }
+        if include_public_network:
+            result.update(public_network)
+        return result
 
     if start_raw in (None, "") or end_raw in (None, ""):
         raise ValueError("port_start and port_end must be provided together")
@@ -45,12 +63,15 @@ def normalize_preconfiguration(payload: dict[str, Any] | None) -> dict[str, Any]
     if protocol not in _ALLOWED_PROTOCOLS:
         raise ValueError("port_protocol must be tcp, udp or both")
 
-    return {
+    result = {
         "agent_name": name or None,
         "port_protocol": protocol,
         "port_start": start,
         "port_end": end,
     }
+    if include_public_network:
+        result.update(public_network)
+    return result
 
 
 class AgentInstallationPreconfigurationRepository:
@@ -58,11 +79,20 @@ class AgentInstallationPreconfigurationRepository:
         self.backend = backend
         self.dialect = dialect_for_backend(backend)
 
+    def _ensure_public_table(self) -> None:
+        with self.backend.transaction() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                session.execute(_PUBLIC_TABLE_SQL)
+            finally:
+                session.close()
+
     def save(self, installation_id: str, settings: dict[str, Any]) -> dict[str, Any]:
         normalized = normalize_preconfiguration(settings)
         installation_id = str(installation_id or "").strip()
         if not installation_id:
             raise ValueError("installation_id is required")
+        self._ensure_public_table()
 
         ph = self.dialect.placeholder
         with self.backend.transaction() as connection:
@@ -84,11 +114,26 @@ class AgentInstallationPreconfigurationRepository:
                         normalized["port_end"],
                     ),
                 )
+                session.execute(
+                    "DELETE FROM agent_public_network_preconfiguration WHERE installation_id=" + ph,
+                    (installation_id,),
+                )
+                session.execute(
+                    "INSERT INTO agent_public_network_preconfiguration("
+                    "installation_id,public_hostname,public_ipv4"
+                    ") VALUES (" + self.dialect.parameters(3) + ")",
+                    (
+                        installation_id,
+                        normalized.get("public_hostname"),
+                        normalized.get("public_ipv4"),
+                    ),
+                )
             finally:
                 session.close()
         return normalized
 
     def get(self, installation_id: str) -> dict[str, Any] | None:
+        self._ensure_public_table()
         ph = self.dialect.placeholder
         with self.backend.connect() as connection:
             session = AlertSession(self.backend, connection)
@@ -99,9 +144,19 @@ class AgentInstallationPreconfigurationRepository:
                     "WHERE installation_id=" + ph,
                     (str(installation_id),),
                 ).fetchone()
+                public_row = session.execute(
+                    "SELECT public_hostname,public_ipv4 FROM agent_public_network_preconfiguration "
+                    "WHERE installation_id=" + ph,
+                    (str(installation_id),),
+                ).fetchone()
             finally:
                 session.close()
-        return None if row is None else dict(row)
+        if row is None:
+            return None
+        result = dict(row)
+        result["public_hostname"] = public_row["public_hostname"] if public_row is not None else None
+        result["public_ipv4"] = public_row["public_ipv4"] if public_row is not None else None
+        return result
 
     def _mark_result(self, installation_id: str, *, error: str | None) -> None:
         ph = self.dialect.placeholder
@@ -152,6 +207,16 @@ class AgentInstallationPreconfigurationRepository:
                     start_port=int(settings["port_start"]),
                     end_port=int(settings["port_end"]),
                     force=False,
+                )
+
+            if settings.get("public_hostname") or settings.get("public_ipv4"):
+                AgentPublicNetworkRepository(self.backend).set(
+                    str(agent_id),
+                    {
+                        "public_hostname": settings.get("public_hostname"),
+                        "public_ipv4": settings.get("public_ipv4"),
+                    },
+                    actor="agent-installation",
                 )
         except Exception as exc:
             self._mark_result(installation_id, error=str(exc))
