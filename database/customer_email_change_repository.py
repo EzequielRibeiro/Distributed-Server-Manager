@@ -71,28 +71,19 @@ class CustomerEmailChangeRepository:
                 count += 1
         return count
 
-    def email_in_use(self, email: str, *, except_username: str | None = None, session=None) -> bool:
+    def email_in_use(self, email: str, *, except_username: str | None = None) -> bool:
         self.initialize()
-        own = session is None
-        connection = None
-        if own:
-            connection = self.backend.connect().__enter__()
+        sql = f"SELECT username FROM customer_user_identities WHERE LOWER(email)=LOWER({self.ph})"
+        params: tuple[Any, ...] = (str(email),)
+        if except_username:
+            sql += f" AND username<>{self.ph}"
+            params += (str(except_username),)
+        with self.backend.connect() as connection:
             session = AlertSession(self.backend, connection)
-        try:
-            sql = f"SELECT username FROM customer_user_identities WHERE LOWER(email)=LOWER({self.ph})"
-            params: tuple[Any, ...] = (str(email),)
-            if except_username:
-                sql += f" AND username<>{self.ph}"
-                params += (str(except_username),)
-            return session.execute(sql, params).fetchone() is not None
-        finally:
-            if own:
+            try:
+                return session.execute(sql, params).fetchone() is not None
+            finally:
                 session.close()
-                self.backend.connect().__exit__ if False else None
-                try:
-                    connection.close()
-                except Exception:
-                    pass
 
     def create(self, *, customer_id: str, customer_code: str, username: str, target_email: str, raw_token: str,
                correlation_id: str, ttl_seconds: int = 1800) -> dict[str, Any]:
