@@ -14,6 +14,7 @@ from contract_upgrade_http import install_contract_upgrade_api
 from controller_telemetry import controller_telemetry
 from customer_discord_http import install_customer_discord
 from customer_discord_oauth_http import install_customer_discord_oauth_callback
+from customer_discord_schema_runtime import ensure_customer_discord_schema
 from customer_email_change_http import install_customer_email_change
 from customer_health_http import install_customer_health_http
 from customer_instance_activity_http import install_customer_instance_activity
@@ -79,6 +80,7 @@ install_customer_profile_administration(legacy,_authenticate)
 install_customer_profile_self_service(legacy,_authenticate)
 install_customer_email_change(legacy,_authenticate)
 install_customer_placement_locations(legacy,_authenticate)
+ensure_customer_discord_schema(legacy)
 install_customer_discord(legacy,_authenticate)
 install_customer_discord_oauth_callback(legacy)
 def run():run_dashboard(legacy)
