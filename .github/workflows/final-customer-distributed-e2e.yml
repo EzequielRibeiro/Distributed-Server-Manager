@@ -1,0 +1,45 @@
+name: Final Customer Distributed E2E
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    paths:
+      - 'dashboard/**'
+      - 'database/**'
+      - 'agents/**'
+      - 'tests/final_customer_distributed_e2e.sh'
+      - 'tests/final_customer_distributed_e2e_manifest.json'
+      - 'tests/customer_self_service_profile_test.py'
+      - 'tests/customer_email_change_test.py'
+      - 'tests/customer_geographic_placement_test.py'
+      - 'tests/customer_health_alerting_test.py'
+      - 'tests/agent_queue_observability_test.py'
+      - 'tests/agent_storage_pool_admin_test.py'
+      - 'tests/agent_link_recovery_e2e_test.py'
+      - 'tests/customer_workspace_architecture_boundary_test.py'
+      - 'tests/phase22_customer_dayz_regression_test.py'
+      - '.github/workflows/final-customer-distributed-e2e.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  final-customer-distributed-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate traceability manifest
+        run: python3 -m json.tool tests/final_customer_distributed_e2e_manifest.json >/dev/null
+
+      - name: Run integrated Customer and distributed operations regression
+        run: bash tests/final_customer_distributed_e2e.sh
