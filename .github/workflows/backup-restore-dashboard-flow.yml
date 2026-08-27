@@ -1,0 +1,37 @@
+name: Backup Restore Dashboard Flow
+
+on:
+  pull_request:
+    paths:
+      - 'dashboard/customer_instance_workspace_http.py'
+      - 'dashboard/customer_instance_workspace_service.py'
+      - 'dashboard/web/customer-backup-transfer.js'
+      - 'database/backup_repository.py'
+      - 'agents/linux/runtime/backup_client.py'
+      - 'agents/windows/runtime/backup_client.py'
+      - 'tests/backup_restore_dashboard_flow_test.py'
+      - '.github/workflows/backup-restore-dashboard-flow.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/customer_instance_workspace_http.py'
+      - 'dashboard/customer_instance_workspace_service.py'
+      - 'dashboard/web/customer-backup-transfer.js'
+      - 'database/backup_repository.py'
+      - 'agents/linux/runtime/backup_client.py'
+      - 'agents/windows/runtime/backup_client.py'
+      - 'tests/backup_restore_dashboard_flow_test.py'
+      - '.github/workflows/backup-restore-dashboard-flow.yml'
+
+jobs:
+  backup-restore-flow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: JavaScript syntax
+        run: node --check dashboard/web/customer-backup-transfer.js
+      - name: Backup restore flow regression
+        run: python3 tests/backup_restore_dashboard_flow_test.py
