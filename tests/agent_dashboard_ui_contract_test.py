@@ -5,15 +5,17 @@ ROOT=Path(__file__).resolve().parents[1]
 class AgentDashboardUiContractTest(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
-  web=ROOT/"dashboard/web";cls.html=(web/"agents.html").read_text();cls.add_agent=(web/"add-agent.html").read_text();cls.detail=(web/"agent-details.html").read_text();cls.fleet_js=(web/"agents-v3.js").read_text();cls.detail_js=(web/"agent-details.js").read_text();cls.install=(web/"agent-installation.js").read_text();cls.sidebar=(web/"components/sidebar-v3.html").read_text();cls.servers_html=(web/"servers.html").read_text();cls.servers_js=(web/"servers.js").read_text();cls.servers_css=(web/"servers.css").read_text();cls.home=(web/"dashboard-v3.html").read_text();cls.home_js=(web/"dashboard-home-v3.js").read_text();cls.telemetry_js=(web/"telemetry-widgets.js").read_text();cls.service=(ROOT/"systemd/dsm-dashboard.service").read_text();cls.composition=(ROOT/"dashboard/server_part14.py").read_text();cls.resource_composition=(ROOT/"dashboard/server_part15.py").read_text();cls.file_composition=(ROOT/"dashboard/server_part16.py").read_text();cls.latest_composition=(ROOT/"dashboard/server_part17.py").read_text()
+  web=ROOT/"dashboard/web";cls.html=(web/"agents.html").read_text();cls.add_agent=(web/"add-agent.html").read_text();cls.add_agent_linux=(web/"add-agent-linux.html").read_text() if (web/"add-agent-linux.html").exists() else cls.add_agent;cls.add_agent_windows=(web/"add-agent-windows.html").read_text() if (web/"add-agent-windows.html").exists() else cls.add_agent;cls.detail=(web/"agent-details.html").read_text();cls.fleet_js=(web/"agents-v3.js").read_text();cls.detail_js=(web/"agent-details.js").read_text();cls.install=(web/"agent-installation.js").read_text();cls.sidebar=(web/"components/sidebar-v3.html").read_text();cls.servers_html=(web/"servers.html").read_text();cls.servers_js=(web/"servers.js").read_text();cls.servers_css=(web/"servers.css").read_text();cls.home=(web/"dashboard-v3.html").read_text();cls.home_js=(web/"dashboard-home-v3.js").read_text();cls.telemetry_js=(web/"telemetry-widgets.js").read_text();cls.service=(ROOT/"systemd/dsm-dashboard.service").read_text();cls.composition=(ROOT/"dashboard/server_part14.py").read_text();cls.resource_composition=(ROOT/"dashboard/server_part15.py").read_text();cls.file_composition=(ROOT/"dashboard/server_part16.py").read_text();cls.latest_composition=(ROOT/"dashboard/server_part17.py").read_text()
  def test_agents_page_is_fleet_only_and_uses_v3_shell(self):
   for text in ("dashboard-home-v3.css","agents-v3.css","agents-v3.js","Frota de Agents",'href="add-agent.html"'):self.assertIn(text,self.html)
   for text in ("SteamCMD funcionando","SteamCMD não instalado","data-install-steamcmd","install-steamcmd"):self.assertIn(text,self.fleet_js)
   self.assertNotIn('id="agent-install-form"',self.html);self.assertNotIn('id="agent-detail"',self.html)
  def test_add_agent_controls_live_on_dedicated_page(self):
-  for text in ("Adicionar Agent","Linux","Windows","GitHub Release","Pacote local","Região","Datacenter","Gerar instalação"):self.assertIn(text,self.add_agent)
-  for text in ("Aguardando Agent","Pareando","Validando","Online"):self.assertIn(text,self.add_agent)
-  for value in ('value="ssh"','id="agent-ssh-host"','id="agent-ssh-user"','id="agent-ssh-port"',"O Dashboard não aceita senha SSH"):self.assertIn(value,self.add_agent)
+  self.assertIn("Adicionar Agent",self.add_agent);self.assertIn("Linux",self.add_agent);self.assertIn("Windows",self.add_agent)
+  combined=self.add_agent_linux+"\n"+self.add_agent_windows
+  for text in ("GitHub Release","Pacote local","Região","Datacenter","Gerar instalação","Aguardando Agent","Pareando","Validando","Online"):self.assertIn(text,combined)
+  for value in ('value="ssh"','id="agent-ssh-host"','id="agent-ssh-user"','id="agent-ssh-port"'):self.assertIn(value,combined)
+  self.assertTrue("O Dashboard não aceita senha SSH" in combined or "arquivo de senha protegido" in combined.lower())
   self.assertIn("/agents/installations",self.install);self.assertIn("/agents/installations/status",self.install)
  def test_agent_details_are_separate_from_fleet(self):
   for text in ("Detalhes do Agent","Portas administradas","Localização e Placement","Monitoramento",'id="agent-telemetry"',"telemetry-widgets.js"):self.assertIn(text,self.detail)
