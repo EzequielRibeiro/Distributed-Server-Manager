@@ -176,14 +176,14 @@ prevalidate_database()
         start_local_database_service
         prepare_local_database
         check_remote_endpoint
-        run_source_database_manager check >/dev/null \
-            || die "Conexão real ao banco falhou; nenhuma instalação do Capivara foi iniciada."
-        # A conexão isolada não basta: um banco parcialmente inicializado
-        # precisa ser recusado antes de criar conta, /opt/dsm ou systemd.
-        # Em banco vazio, init aplica o baseline consolidado; em banco já
-        # inicializado, ele valida a presença das tabelas obrigatórias.
-        run_source_database_manager init >/dev/null \
+        # init is the authoritative reconciliation step: it installs an empty
+        # baseline or applies only explicitly supported additive Baseline v2
+        # upgrades. Running the strict health check first would reject a safe,
+        # known upgrade before it had a chance to reconcile the marker/schema.
+        run_source_database_manager init \
             || die "Schema do banco ausente, parcial ou incompatível; nenhuma instalação do Capivara foi iniciada."
+        run_source_database_manager check \
+            || die "Banco reconciliado, mas a validação final falhou; nenhuma instalação do Capivara foi iniciada."
     fi
     DATABASE_CONNECTION_STATUS=operacional
     log "Banco validado com os parâmetros exatos informados."
