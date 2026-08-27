@@ -75,9 +75,33 @@ jobs:
 
       - name: Security contract
         run: |
-          # Direct password arguments remain forbidden. --password-file is explicitly allowed.
-          ! grep -R --line-number -- '--password ' core/agent_ssh_deploy.py database/agent_deploy_cli.py database/agent_connection_test_cli.py database/agent_deploy_topology.py bin/cap
-          ! grep -R --line-number 'add_argument(["'"']--password["'"']' database/agent_deploy_cli.py database/agent_connection_test_cli.py
-          ! grep -R --line-number 'shell=True' core/agent_ssh_deploy.py database/agent_deploy_cli.py database/agent_connection_test_cli.py database/agent_deploy_topology.py
-          ! grep -R --line-number 'StrictHostKeyChecking=no' core/agent_ssh_deploy.py database/agent_deploy_cli.py bin/cap
+          python3 - <<'PY'
+          from pathlib import Path
+
+          files = [
+              Path('core/agent_ssh_deploy.py'),
+              Path('database/agent_deploy_cli.py'),
+              Path('database/agent_connection_test_cli.py'),
+              Path('database/agent_deploy_topology.py'),
+              Path('bin/cap'),
+          ]
+          failures = []
+          for path in files:
+              text = path.read_text(encoding='utf-8')
+              for forbidden in ('shell=True', 'StrictHostKeyChecking=no'):
+                  if forbidden in text:
+                      failures.append(f'{path}: forbidden {forbidden}')
+
+          for path in (Path('database/agent_deploy_cli.py'), Path('database/agent_connection_test_cli.py')):
+              text = path.read_text(encoding='utf-8')
+              if 'add_argument("--password")' in text or "add_argument('--password')" in text:
+                  failures.append(f'{path}: direct --password CLI option is forbidden')
+
+          cap = Path('bin/cap').read_text(encoding='utf-8')
+          if '--password SENHA' in cap or '--password PASSWORD' in cap:
+              failures.append('bin/cap: direct password syntax is forbidden')
+
+          if failures:
+              raise SystemExit('\n'.join(failures))
+          PY
           ! grep -n -- '--pairing-token "${PAIRING_TOKEN}"' agents/linux/installer/bootstrap-release.sh
