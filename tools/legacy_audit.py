@@ -22,6 +22,7 @@ RETIRED_PATHS = {
     "systemd/dsm-notification-engine.timer",
     "systemd/dsm-discord-worker.service",
     "systemd/dsm-discord.service",
+    "systemd/dsm-runtime-sync.service",
     "dashboard/workers/events_worker.sh",
     "dashboard/workers/event_queue_worker.sh",
     "dashboard/workers/alerts_worker.sh",
@@ -40,10 +41,24 @@ RETIRED_PATHS = {
     "core/notification_center.sh",
     "core/discord_sender.sh",
     "core/discord_queue.sh",
+    "core/events.sh",
     "database/alert_store.sh",
     "database/dashboard_activity_repository.py",
     "database/dashboard_activity_schema.py",
+    "database/registry_demo_v2.py",
+    "runtime/runtime_manager.sh",
+    "runtime/workers/sync_worker.sh",
+    "tools/tools/install_steamcmd.sh",
+    ".github/workflows/publish-v2-release.yml",
 }
+
+RETIRED_PREFIXES = (
+    ".artifacts/",
+    "combat/",
+    "events/engine/",
+    "events/mods/",
+    "runtime/resources/DemoNode/",
+)
 
 DOCUMENTED_COMPATIBILITY = {
     "update.sh",
@@ -63,6 +78,16 @@ JUNK_PATTERNS = (
 
 DSM_PATH_PATTERN = re.compile(r"/opt/dsm/([A-Za-z0-9_./-]+)")
 TIMER_UNIT_PATTERN = re.compile(r"^Unit=([^\s]+)$", re.M)
+LINUXGSM_PATTERN = re.compile(
+    r"(?:LinuxGSM|linuxgsm|linux-gsm|config-lgsm|lgsm/functions|LGSM_ROOT|LGSM_CONFIG)",
+    re.I,
+)
+DEMO_PATTERN = re.compile(
+    r"(?:controller-demo|agent-demo|DemoNode|cliente-demo|marina\.demo|Aurora Games Ltda\.)"
+)
+TEXT_SUFFIXES = {
+    ".py", ".sh", ".json", ".conf", ".service", ".timer", ".yml", ".yaml"
+}
 
 
 def tracked_files() -> list[str]:
@@ -111,6 +136,30 @@ def audit_systemd(systemd_dir: Path, failures: list[str]) -> None:
                         f"timer references missing unit: {relative_unit} -> {target}"
                     )
 
+    dashboard_unit = systemd_dir / "dsm-dashboard.service"
+    if dashboard_unit.is_file():
+        text = dashboard_unit.read_text(encoding="utf-8", errors="replace")
+        if "/etc/default/dsm-dashboard" in text:
+            failures.append(
+                "dashboard service still loads the retired secondary EnvironmentFile"
+            )
+
+
+def audit_source_markers(files: list[str], failures: list[str]) -> None:
+    for relative in files:
+        path = ROOT / relative
+        if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
+            continue
+        if relative == "tools/legacy_audit.py":
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+
+        if not relative.startswith(("docs/", "tests/")) and LINUXGSM_PATTERN.search(text):
+            failures.append(f"LinuxGSM residue outside docs/tests: {relative}")
+
+        if not relative.startswith(("docs/", "tests/")) and DEMO_PATTERN.search(text):
+            failures.append(f"demo topology marker outside docs/tests: {relative}")
+
 
 def main() -> int:
     files = tracked_files()
@@ -121,10 +170,13 @@ def main() -> int:
         failures.append(f"retired artifact is still tracked: {path}")
 
     for path in files:
+        if path.startswith(RETIRED_PREFIXES):
+            failures.append(f"retired/generated tree is still tracked: {path}")
         if any(pattern.search(path) for pattern in JUNK_PATTERNS):
             failures.append(f"backup/copy artifact is tracked: {path}")
 
     audit_systemd(ROOT / "systemd", failures)
+    audit_source_markers(files, failures)
 
     aggregate = ROOT / "dashboard" / "workers" / "worker.sh"
     if aggregate.is_file():
@@ -153,6 +205,7 @@ def main() -> int:
     print("Legacy audit: OK")
     print(f"Tracked files inspected: {len(files)}")
     print(f"Retired paths enforced: {len(RETIRED_PATHS)}")
+    print(f"Retired prefixes enforced: {len(RETIRED_PREFIXES)}")
     print(f"Remaining separately-scoped compatibility surfaces: {len(DOCUMENTED_COMPATIBILITY)}")
     return 0
 
