@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small HTTPS wrapper for the Dashboard runtime.
+"""Small HTTP(S) wrapper for the Dashboard runtime.
 
 Kept outside server.py so transport concerns do not grow the legacy route module.
 """
@@ -9,10 +9,6 @@ import os
 import ssl
 import threading
 from pathlib import Path
-
-
-def _truthy(value: str | None) -> bool:
-    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _transport() -> tuple[str, str, int, str | None, str | None]:
@@ -45,19 +41,49 @@ def configure_tls(server, *, scheme: str, cert_file: str | None, key_file: str |
         raise RuntimeError(f"TLS private key not found: {key_path}")
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
-    if hasattr(ssl.TLSVersion, "TLSv1_3"):
-        context.maximum_version = ssl.TLSVersion.MAXIMUM_SUPPORTED
     context.options |= getattr(ssl, "OP_NO_COMPRESSION", 0)
     context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
     server.socket = context.wrap_socket(server.socket, server_side=True)
 
 
+def install_transport_security_headers(legacy, *, scheme: str) -> None:
+    """Apply transport-aware headers without modifying the legacy route module."""
+    handler = legacy.DashboardHandler
+    marker = "_capivara_transport_headers_installed"
+    if getattr(handler, marker, False):
+        return
+    previous_send_header = handler.send_header
+    previous_end_headers = handler.end_headers
+
+    def send_header(self, keyword, value):
+        if scheme == "https" and str(keyword).lower() == "set-cookie":
+            cookie = str(value)
+            lower = cookie.lower()
+            if "secure" not in lower:
+                cookie += "; Secure"
+            if "samesite=" not in lower:
+                cookie += "; SameSite=Lax"
+            value = cookie
+        return previous_send_header(self, keyword, value)
+
+    def end_headers(self):
+        previous_send_header(self, "Referrer-Policy", "no-referrer")
+        previous_send_header(self, "Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        if scheme == "https":
+            previous_send_header(self, "Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        return previous_end_headers(self)
+
+    handler.send_header = send_header
+    handler.end_headers = end_headers
+    setattr(handler, marker, True)
+
+
 def run_dashboard(legacy) -> None:
     scheme, host, port, cert, key = _transport()
     legacy.validate_environment()
-    # Preserve historical globals used by diagnostics/banner while allowing installer config.
     legacy.HOST = host
     legacy.PORT = port
+    install_transport_security_headers(legacy, scheme=scheme)
     legacy.print_banner()
     server = legacy.DashboardServer((host, port))
     configure_tls(server, scheme=scheme, cert_file=cert, key_file=key)
@@ -75,4 +101,4 @@ def run_dashboard(legacy) -> None:
         server.server_close()
 
 
-__all__ = ["configure_tls", "run_dashboard"]
+__all__ = ["configure_tls", "install_transport_security_headers", "run_dashboard"]
