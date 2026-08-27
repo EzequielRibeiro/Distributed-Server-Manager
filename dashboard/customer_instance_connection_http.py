@@ -56,11 +56,19 @@ def install_customer_instance_connection(legacy, authenticate):
             context = api.require(user, instance_id, "instance.view")
             ports = api._ports(instance_id)
             selected = primary_port(ports)
-            network = AgentPublicNetworkRepository(backend()).get(str(context.get("agent_id") or ""), resolve_dns=False)
-            endpoint = player_endpoint(network, selected.get("port") if selected else None)
+            network = AgentPublicNetworkRepository(backend()).get(str(context.get("agent_id") or ""), resolve_dns=True)
+            effective_network = dict(network)
+            dns = network.get("dns") if isinstance(network.get("dns"), dict) else {}
+            fallback = False
+            if network.get("public_hostname") and str(dns.get("status") or "") != "active" and network.get("public_ipv4"):
+                effective_network["public_hostname"] = None
+                fallback = True
+            endpoint = player_endpoint(effective_network, selected.get("port") if selected else None)
             if endpoint is not None:
                 endpoint["protocol"] = str(selected.get("protocol") or "udp")
                 endpoint["port_name"] = selected.get("name")
+                endpoint["dns_status"] = dns.get("status")
+                endpoint["fallback"] = fallback
             self.send_json(200, {
                 "instance_id": instance_id,
                 "status": context.get("status"),
