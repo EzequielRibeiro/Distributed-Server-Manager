@@ -6,15 +6,17 @@ on:
       - 'bin/cap'
       - 'core/agent_ssh_deploy.py'
       - 'database/agent_deploy_cli.py'
+      - 'database/agent_connection_test_cli.py'
+      - 'database/agent_remote_secret_cli.py'
       - 'database/agent_deploy_topology.py'
       - 'database/agent_installation_preconfiguration.py'
       - 'agents/linux/installer/bootstrap-release.sh'
       - 'agents/linux/installer/install-agent.sh'
       - 'tests/agent_ssh_deploy_test.py'
+      - 'tests/agent_ssh_cross_platform_test.py'
       - 'tests/agent_deploy_preconfiguration_test.py'
       - 'docs/architecture/agent-ssh-deploy.md'
-      - 'docs/architecture/agent-ssh-deploy-implementation.md'
-      - 'docs/architecture/agent-deploy-preconfiguration.md'
+      - 'docs/agents/**'
       - '.github/workflows/agent-ssh-deploy.yml'
   push:
     branches: [main]
@@ -22,13 +24,18 @@ on:
       - 'bin/cap'
       - 'core/agent_ssh_deploy.py'
       - 'database/agent_deploy_cli.py'
+      - 'database/agent_connection_test_cli.py'
+      - 'database/agent_remote_secret_cli.py'
       - 'database/agent_deploy_topology.py'
       - 'database/agent_installation_preconfiguration.py'
       - 'agents/linux/installer/bootstrap-release.sh'
       - 'agents/linux/installer/install-agent.sh'
       - 'tests/agent_ssh_deploy_test.py'
+      - 'tests/agent_ssh_cross_platform_test.py'
       - 'tests/agent_deploy_preconfiguration_test.py'
-      - 'docs/architecture/agent-deploy-preconfiguration.md'
+      - 'docs/architecture/agent-ssh-deploy.md'
+      - 'docs/agents/**'
+      - '.github/workflows/agent-ssh-deploy.yml'
 
 permissions:
   contents: read
@@ -49,20 +56,28 @@ jobs:
           python3 -m py_compile \
             core/agent_ssh_deploy.py \
             database/agent_deploy_cli.py \
+            database/agent_connection_test_cli.py \
+            database/agent_remote_secret_cli.py \
             database/agent_deploy_topology.py \
             database/agent_installation_preconfiguration.py \
             tests/agent_ssh_deploy_test.py \
+            tests/agent_ssh_cross_platform_test.py \
             tests/agent_deploy_preconfiguration_test.py
 
       - name: Test SSH deployment contracts
         run: python3 -m unittest tests/agent_ssh_deploy_test.py
+
+      - name: Test cross-platform SSH contracts
+        run: python3 -m unittest tests/agent_ssh_cross_platform_test.py
 
       - name: Test CLI and Dashboard preconfiguration parity
         run: python3 -m unittest tests/agent_deploy_preconfiguration_test.py
 
       - name: Security contract
         run: |
-          ! grep -R --line-number -- '--password' core/agent_ssh_deploy.py database/agent_deploy_cli.py database/agent_deploy_topology.py bin/cap
-          ! grep -R --line-number 'shell=True' core/agent_ssh_deploy.py database/agent_deploy_cli.py database/agent_deploy_topology.py
+          # Direct password arguments remain forbidden. --password-file is explicitly allowed.
+          ! grep -R --line-number -- '--password ' core/agent_ssh_deploy.py database/agent_deploy_cli.py database/agent_connection_test_cli.py database/agent_deploy_topology.py bin/cap
+          ! grep -R --line-number 'add_argument(["'"']--password["'"']' database/agent_deploy_cli.py database/agent_connection_test_cli.py
+          ! grep -R --line-number 'shell=True' core/agent_ssh_deploy.py database/agent_deploy_cli.py database/agent_connection_test_cli.py database/agent_deploy_topology.py
           ! grep -R --line-number 'StrictHostKeyChecking=no' core/agent_ssh_deploy.py database/agent_deploy_cli.py bin/cap
           ! grep -n -- '--pairing-token "${PAIRING_TOKEN}"' agents/linux/installer/bootstrap-release.sh
