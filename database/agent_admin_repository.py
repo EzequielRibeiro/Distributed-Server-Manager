@@ -238,3 +238,45 @@ class AgentAdminRepository:
             finally:
                 session.close()
         return state
+
+    def remove(self, agent_id: str, *, confirmation: str, actor: str | None = None) -> dict[str, Any]:
+        """Remove an Agent registration and its dedicated node after safety checks."""
+        self.initialize()
+        agent_id = str(agent_id or "").strip()
+        confirmation = str(confirmation or "").strip()
+        if not agent_id:
+            raise ValueError("agent_id is required")
+        if confirmation != agent_id:
+            raise ValueError("confirmation must exactly match agent_id")
+        ph = self.dialect.placeholder
+        with self.backend.transaction() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                row = self._row(session, agent_id)
+                node_id = str(row["node_id"])
+                instances = session.execute(
+                    "SELECT id,name,status FROM instances "
+                    f"WHERE node_id={ph} ORDER BY id",
+                    (node_id,),
+                ).fetchall()
+                if instances:
+                    ids = ", ".join(str(item["id"]) for item in instances[:5])
+                    suffix = "" if len(instances) <= 5 else f" (+{len(instances) - 5})"
+                    raise ValueError(
+                        f"Agent has {len(instances)} instance(s) and cannot be removed: {ids}{suffix}"
+                    )
+
+                session.execute(f"DELETE FROM agents WHERE id={ph}", (agent_id,))
+                session.execute(f"DELETE FROM nodes WHERE id={ph}", (node_id,))
+            finally:
+                session.close()
+
+        return {
+            "agent_id": agent_id,
+            "node_id": node_id,
+            "name": str(row["name"]),
+            "controller_id": str(row["controller_id"]),
+            "removed": True,
+            "removed_by": str(actor or "system"),
+            "removed_at": _now(),
+        }
