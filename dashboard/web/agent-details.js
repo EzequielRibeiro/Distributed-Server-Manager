@@ -89,8 +89,22 @@ async function storageAction(migrate){
 async function runDoctor(){const button=el("agent-run-doctor");setBusy(button,true,"Solicitando…");try{const result=await post("/api/admin/agent/doctor",{agent_id:agentId});renderDoctor(result.doctor);setTimeout(()=>refreshAdminOnly(),3500);}catch(e){showError(e);}finally{setBusy(button,false,"Executar diagnóstico completo");}}
 async function refreshAdminOnly(){try{await loadAdmin();hideError();}catch(e){showError(e);}}
 async function prepareRelink(){const button=el("agent-prepare-relink"),box=el("agent-relink-result");setBusy(button,true,"Preparando…");try{const result=await post("/api/admin/agent/relink/prepare",{agent_id:agentId,ttl_seconds:900});box.hidden=false;box.replaceChildren();const warning=document.createElement("strong");warning.textContent="Token de uso único — expira em "+heartbeat(result.expires_at);const token=document.createElement("code");token.textContent=result.pairing_token;const help=document.createElement("p");help.textContent="No Agent, execute o comando abaixo substituindo <TOKEN> pelo token exibido. O token e a nova credencial não devem ser registrados em logs.";const command=document.createElement("pre");command.textContent=result.command;box.append(warning,token,help,command);}catch(e){showError(e);}finally{setBusy(button,false,"Preparar revinculação");}}
+async function removeAgent(){
+  const button=el("agent-remove"),input=el("agent-remove-confirmation"),state=el("agent-remove-state");
+  if(currentRole!=="admin")return;
+  const confirmation=String(input?.value||"").trim();
+  if(confirmation!==agentId){showError(new Error("Digite o Agent ID completo para confirmar a remoção."));return;}
+  if(!window.confirm(`Remover definitivamente ${agentId} do Controller? Esta ação não desinstala a máquina remota.`))return;
+  setBusy(button,true,"Removendo…");
+  try{
+    const result=await post("/api/admin/agent/remove",{agent_id:agentId,confirmation});
+    hideError();
+    if(state)state.textContent=`Agent ${result.agent_id} e Node ${result.node_id} removidos do Controller.`;
+    window.setTimeout(()=>location.replace("agents.html?removed="+encodeURIComponent(result.agent_id)),700);
+  }catch(e){showError(e);setBusy(button,false,"Remover Agent");}
+}
 function showError(e){const box=el("agent-detail-error");box.hidden=false;box.textContent=e.message||String(e);}function hideError(){el("agent-detail-error").hidden=true;}
 async function refresh(){const b=el("refresh-agent-detail");if(b)b.disabled=true;try{await load();hideError();}catch(e){showError(e);}finally{if(b)b.disabled=false;}}
-async function init(){if(!auth()){location.replace("login.html");return;}bindMenu();bindAgentViews();el("refresh-agent-detail")?.addEventListener("click",refresh);el("agent-admin-save-name")?.addEventListener("click",saveName);el("agent-admin-save-storage")?.addEventListener("click",()=>storageAction(false));el("agent-admin-migrate-storage")?.addEventListener("click",()=>storageAction(true));el("agent-run-doctor")?.addEventListener("click",runDoctor);el("agent-prepare-relink")?.addEventListener("click",prepareRelink);try{await sidebar();await refresh();setInterval(refresh,30000);}catch(e){showError(e);}}
+async function init(){if(!auth()){location.replace("login.html");return;}bindMenu();bindAgentViews();el("refresh-agent-detail")?.addEventListener("click",refresh);el("agent-admin-save-name")?.addEventListener("click",saveName);el("agent-admin-save-storage")?.addEventListener("click",()=>storageAction(false));el("agent-admin-migrate-storage")?.addEventListener("click",()=>storageAction(true));el("agent-run-doctor")?.addEventListener("click",runDoctor);el("agent-prepare-relink")?.addEventListener("click",prepareRelink);el("agent-remove")?.addEventListener("click",removeAgent);try{await sidebar();await refresh();setInterval(refresh,30000);}catch(e){showError(e);}}
 document.addEventListener("DOMContentLoaded",init);
 })();
