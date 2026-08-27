@@ -150,11 +150,12 @@ select_web_transport(){
 
 prepare_web_transport_certificate(){
     [[ "${DSM_WEB_SCHEME:-http}" == https ]] || return 0
-    [[ "${1:-}" != --dry-run ]] || return 0
+    [[ " ${*} " != *" --dry-run "* ]] || return 0
 
     if [[ "${DSM_TLS_CERT_MODE}" == existing ]]; then
         [[ -r "${DSM_TLS_CERT_FILE}" ]] || { web_transport_die "Certificado não encontrado: ${DSM_TLS_CERT_FILE}" || return 1; }
         [[ -r "${DSM_TLS_KEY_FILE}" ]] || { web_transport_die "Chave privada não encontrada: ${DSM_TLS_KEY_FILE}" || return 1; }
+        [[ -z "${DSM_TLS_CA_FILE}" || -r "${DSM_TLS_CA_FILE}" ]] || { web_transport_die "CA privada não encontrada: ${DSM_TLS_CA_FILE}" || return 1; }
         return 0
     fi
 
@@ -168,6 +169,7 @@ prepare_web_transport_certificate(){
             -keyout "${DSM_TLS_KEY_FILE}" -out "${DSM_TLS_CERT_FILE}" >/dev/null 2>&1
         chmod 600 "${DSM_TLS_KEY_FILE}"
         chmod 644 "${DSM_TLS_CERT_FILE}"
+        printf '[Capivara] CA/certificado local para Agents: %s\n' "${DSM_TLS_CA_FILE}"
         return 0
     fi
 
@@ -181,11 +183,22 @@ prepare_web_transport_certificate(){
     certbot certonly --standalone --non-interactive --agree-tos \
         --email "${DSM_TLS_LE_EMAIL}" -d "${DSM_PUBLIC_HOST}"
     [[ -r "${DSM_TLS_CERT_FILE}" && -r "${DSM_TLS_KEY_FILE}" ]] || { web_transport_die "Let's Encrypt não produziu o certificado esperado" || return 1; }
+
+    # certbot renew is normally timer-driven. The deploy hook reloads the Python TLS listener
+    # only after a certificate has actually been renewed.
+    install -d -m 755 /etc/letsencrypt/renewal-hooks/deploy
+    cat >/etc/letsencrypt/renewal-hooks/deploy/capivara-dashboard <<'EOF_HOOK'
+#!/bin/sh
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl try-restart dsm-dashboard.service >/dev/null 2>&1 || true
+fi
+EOF_HOOK
+    chmod 755 /etc/letsencrypt/renewal-hooks/deploy/capivara-dashboard
 }
 
 persist_web_transport_config(){
     [[ "${DSM_NODE_ROLE:-}" == controller || "${DSM_NODE_ROLE:-}" == hybrid ]] || return 0
-    [[ "${1:-}" != --dry-run ]] || return 0
+    [[ " ${*} " != *" --dry-run "* ]] || return 0
     local config="${DSM_ROOT:-/opt/dsm}/config/dsm.conf"
     [[ -f "${config}" ]] || { web_transport_die "Configuração instalada não encontrada: ${config}" || return 1; }
     web_transport_write_config_value "${config}" DSM_WEB_SCHEME "${DSM_WEB_SCHEME}"
