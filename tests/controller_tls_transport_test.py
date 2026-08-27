@@ -106,11 +106,16 @@ class ControllerTlsTransportTest(unittest.TestCase):
         helper = (ROOT / "installer" / "web_transport.sh").read_text(encoding="utf-8")
         installer = (ROOT / "install.sh").read_text(encoding="utf-8")
         config = (ROOT / "config" / "dsm.conf").read_text(encoding="utf-8")
-        for token in ("DSM_WEB_SCHEME", "letsencrypt", "existing", "selfsigned", "DSM_TLS_CERT_FILE", "DSM_TLS_KEY_FILE"):
+        runtime = (ROOT / "dashboard" / "tls_runtime.py").read_text(encoding="utf-8")
+        for token in ("DSM_WEB_SCHEME", "letsencrypt", "existing", "selfsigned", "DSM_TLS_CERT_FILE", "DSM_TLS_KEY_FILE", "DSM_TLS_CA_FILE"):
             self.assertIn(token, helper)
         self.assertIn("select_web_transport", installer)
         self.assertIn("persist_web_transport_config", installer)
         self.assertIn('DSM_WEB_SCHEME="http"', config)
+        self.assertIn("Strict-Transport-Security", runtime)
+        self.assertIn("; Secure", runtime)
+        self.assertIn("SameSite=Lax", runtime)
+        self.assertIn("renewal-hooks/deploy/capivara-dashboard", helper)
 
     def test_noninteractive_http_and_https_selection_contract(self):
         helper = ROOT / "installer" / "web_transport.sh"
