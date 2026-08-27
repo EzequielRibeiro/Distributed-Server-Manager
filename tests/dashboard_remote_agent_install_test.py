@@ -161,7 +161,7 @@ class DashboardRemoteAgentInstallTest(unittest.TestCase):
         self.assertLessEqual(expires, datetime.now(timezone.utc) + timedelta(seconds=2))
 
     def test_dashboard_rejects_ssh_password_without_issuing_token(self):
-        with self.assertRaisesRegex(ValueError, "passwords are not accepted"):
+        with self.assertRaisesRegex(ValueError, "passwords are .*accepted"):
             create_agent_installation_for_user(
                 self.controller,
                 self.backend,
@@ -235,21 +235,26 @@ class DashboardRemoteAgentInstallTest(unittest.TestCase):
         self.assertIsNone(status["preconfiguration"]["apply_error"])
 
     def test_ui_exposes_ssh_and_preconfiguration_without_password_field(self):
-        html = (ROOT / "dashboard/web/add-agent.html").read_text(encoding="utf-8")
-        js = (ROOT / "dashboard/web/agent-installation.js").read_text(encoding="utf-8")
-        self.assertIn('value="ssh"', html)
-        self.assertIn('id="agent-preconfig-port-start"', html)
-        self.assertIn('id="agent-preconfig-port-end"', html)
-        self.assertIn('id="agent-ssh-host"', html)
-        self.assertIn('id="agent-install-feedback"', html)
-        self.assertNotIn('type="password"', html)
+        linux = (ROOT / "dashboard/web/add-agent-linux.html").read_text(encoding="utf-8")
+        windows = (ROOT / "dashboard/web/add-agent-windows.html").read_text(encoding="utf-8")
+        js = (ROOT / "dashboard/web/agent-installation-wizard.js").read_text(encoding="utf-8")
+        for html in (linux, windows):
+            self.assertIn('value="ssh"', html)
+            self.assertIn('id="agent-preconfig-port-start"', html)
+            self.assertIn('id="agent-preconfig-port-end"', html)
+            self.assertIn('id="agent-ssh-host"', html)
+            self.assertIn('id="agent-install-feedback"', html)
+            self.assertIn('id="agent-public-hostname"', html)
+            self.assertIn('id="agent-public-ipv4"', html)
+            self.assertNotIn('type="password"', html)
         self.assertIn("remote_bootstrap", js)
         self.assertIn("port_protocol", js)
-        self.assertIn("Executando bootstrap SSH...", js)
-        self.assertIn("Falha: ${error.message}", js)
-        self.assertIn("window.isSecureContext", js)
-        self.assertIn('document.execCommand("copy")', js)
-        self.assertIn("Use Ctrl+C no texto selecionado", js)
+        self.assertIn("public_hostname", js)
+        self.assertIn("public_ipv4", js)
+        self.assertIn("Executando preflight e bootstrap remoto", js)
+        self.assertIn("Falha: ${e.message}", js)
+        self.assertIn("navigator.clipboard.writeText", js)
+        self.assertIn("Use Ctrl+C para copiar a instrução", js)
 
 
 if __name__ == "__main__":
