@@ -9,14 +9,13 @@ Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System
 $SnapshotPath = Join-Path $DataRoot 'state\gui\snapshot.json'
 $LogPath = Join-Path $DataRoot 'logs\agent.log'
 $Backend = Join-Path $InstallRoot 'runtime\admin_gui_backend.py'
+$CommandBridge = Join-Path $InstallRoot 'gui\Invoke-CapivaraAdminCommand.ps1'
 $Python = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
 $script:LastSnapshot = $null
 
 function Read-AgentSnapshot {
     try {
-        if (Test-Path $SnapshotPath) {
-            return (Get-Content $SnapshotPath -Raw -Encoding UTF8 | ConvertFrom-Json)
-        }
+        if (Test-Path $SnapshotPath) { return (Get-Content $SnapshotPath -Raw -Encoding UTF8 | ConvertFrom-Json) }
     } catch {}
     return $null
 }
@@ -28,22 +27,28 @@ function Get-AgentLog([int]$Lines = 250) {
     if (-not (Test-Path $LogPath)) { return "Log ainda não disponível: $LogPath" }
     return ((Get-Content $LogPath -Tail $Lines -ErrorAction SilentlyContinue) -join [Environment]::NewLine)
 }
+function Test-IsAdministrator {
+    try {
+        $identity=[Security.Principal.WindowsIdentity]::GetCurrent();$principal=New-Object Security.Principal.WindowsPrincipal($identity)
+        return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch { return $false }
+}
 function Invoke-AgentAdminCommand([string]$CommandLine) {
     if ([string]::IsNullOrWhiteSpace($CommandLine)) { return '' }
     if (-not $Python -or -not (Test-Path $Backend)) { return 'Backend administrativo não encontrado.' }
     $tokens = @($CommandLine.Trim() -split '\s+')
-    $mutating = $tokens.Count -ge 2 -and $tokens[0] -eq 'instance' -and $tokens[1] -in @('start','stop','restart')
-    $args = @($Backend, 'command') + $tokens
-    if ($mutating) {
-        $temp = Join-Path $env:TEMP ("capivara-gui-{0}.txt" -f [guid]::NewGuid().ToString('N'))
-        $quoted = ($args | ForEach-Object { '"' + ($_ -replace '"','\"') + '"' }) -join ' '
-        $process = Start-Process -FilePath $Python -ArgumentList $quoted -Verb RunAs -Wait -PassThru -RedirectStandardOutput $temp -RedirectStandardError ($temp + '.err')
-        $text = if (Test-Path $temp) { Get-Content $temp -Raw -Encoding UTF8 } else { '' }
-        if (Test-Path ($temp + '.err')) { $text += (Get-Content ($temp + '.err') -Raw -Encoding UTF8) }
-        Remove-Item $temp,($temp + '.err') -Force -ErrorAction SilentlyContinue
-        return $text
+    if (Test-IsAdministrator) {
+        try { return (& $Python $Backend command @tokens 2>&1 | Out-String) } catch { return $_.Exception.Message }
     }
-    try { return (& $Python @args 2>&1 | Out-String) } catch { return $_.Exception.Message }
+    if (-not (Test-Path $CommandBridge)) { return 'Bridge administrativo não encontrado.' }
+    $temp = Join-Path $env:TEMP ("capivara-gui-{0}.txt" -f [guid]::NewGuid().ToString('N'))
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($CommandLine))
+    $arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -PythonExe "{1}" -Backend "{2}" -OutputPath "{3}" -EncodedCommand "{4}"' -f $CommandBridge,$Python,$Backend,$temp,$encoded
+    try {
+        Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList $arguments -Verb RunAs -Wait | Out-Null
+        return (Get-Content $temp -Raw -Encoding UTF8 -ErrorAction SilentlyContinue)
+    } catch { return $_.Exception.Message }
+    finally { Remove-Item $temp -Force -ErrorAction SilentlyContinue }
 }
 
 [xml]$xaml = @'
