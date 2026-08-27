@@ -33,7 +33,7 @@ from tls_runtime import run_dashboard
 legacy=integration.legacy
 install_customer_instance_creation(legacy);install_customer_management_dashboard(legacy)
 _previous_get=legacy.DashboardHandler.do_GET;_previous_put=getattr(legacy.DashboardHandler,"do_PUT",None);_previous_send_json=legacy.DashboardHandler.send_json;_authenticate=integration._authenticate;_ROOT=Path(__file__).resolve().parents[1];_CONTROLLER_TELEMETRY_PATH="/api/controller/telemetry"
-legacy.STATIC_FILES.update({"/telemetry-widgets.css":legacy.WEB_DIR/"telemetry-widgets.css","/telemetry-widgets.js":legacy.WEB_DIR/"telemetry-widgets.js","/customer-placement-selector.js":legacy.WEB_DIR/"customer-placement-selector.js","/customer-profile.js":legacy.WEB_DIR/"customer-profile.js","/customer-email-change.js":legacy.WEB_DIR/"customer-email-change.js","/customer-navigation.js":legacy.WEB_DIR/"customer-navigation.js","/customer-integrations.html":legacy.WEB_DIR/"customer-integrations.html","/customer-integrations.js":legacy.WEB_DIR/"customer-integrations.js","/customer-integrations.css":legacy.WEB_DIR/"customer-integrations.css","/customer-backups.html":legacy.WEB_DIR/"customer-backups.html","/customer-backups.js":legacy.WEB_DIR/"customer-backups.js"})
+legacy.STATIC_FILES.update({"/telemetry-widgets.css":legacy.WEB_DIR/"telemetry-widgets.css","/telemetry-widgets.js":legacy.WEB_DIR/"telemetry-widgets.js","/customer-placement-selector.js":legacy.WEB_DIR/"customer-placement-selector.js","/customer-profile.js":legacy.WEB_DIR/"customer-profile.js","/customer-email-change.js":legacy.WEB_DIR/"customer-email-change.js","/customer-navigation.js":legacy.WEB_DIR/"customer-navigation.js","/customer.js":legacy.WEB_DIR/"customer-shell.js","/customer-core.js":legacy.WEB_DIR/"customer.js","/customer-integrations.html":legacy.WEB_DIR/"customer-integrations.html","/customer-integrations.js":legacy.WEB_DIR/"customer-integrations.js","/customer-integrations.css":legacy.WEB_DIR/"customer-integrations.css","/customer-backups.html":legacy.WEB_DIR/"customer-backups.html","/customer-backups.js":legacy.WEB_DIR/"customer-backups.js","/customer-account.html":legacy.WEB_DIR/"customer-account.html","/customer-account.js":legacy.WEB_DIR/"customer-account.js"})
 def json_safe_send_json(self,code,payload):return _previous_send_json(self,code,normalize_json_value(payload))
 def _controller_telemetry_get(self,parsed):
  user=_authenticate(self.headers)
@@ -74,7 +74,7 @@ install_alert_management(legacy,_authenticate)
 install_customer_health_http(legacy,_authenticate)
 install_agent_administration(legacy,_authenticate)
 install_agent_storage_pool_administration(legacy,_authenticate)
-install_storage_pool_source_cleanup(legacy,_authenticate)
+install_storage_pool_source_cleanup_http(legacy,_authenticate)
 install_customer_profile_administration(legacy,_authenticate)
 install_customer_profile_self_service(legacy,_authenticate)
 install_customer_email_change(legacy,_authenticate)
