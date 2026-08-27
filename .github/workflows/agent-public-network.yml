@@ -1,0 +1,51 @@
+name: Agent public network
+
+on:
+  pull_request:
+    paths:
+      - 'database/agent_public_network.py'
+      - 'database/agent_public_network_schema.py'
+      - 'database/agent_installation_preconfiguration.py'
+      - 'database/schema_baseline.py'
+      - 'dashboard/agent_public_network_http.py'
+      - 'dashboard/customer_instance_connection_http.py'
+      - 'dashboard/server_part17.py'
+      - 'dashboard/web/add-agent-linux.html'
+      - 'dashboard/web/add-agent-windows.html'
+      - 'dashboard/web/agent-installation-wizard.js'
+      - 'dashboard/web/agent-public-network.js'
+      - 'dashboard/web/agent-details-wrapper.js'
+      - 'dashboard/web/customer-instance-connection.js'
+      - 'dashboard/web/customer-instance-v2-wrapper.js'
+      - 'agents/linux/runtime/cap_dispatch.py'
+      - 'agents/windows/runtime/admin_gui_backend.py'
+      - 'tests/agent_public_network_test.py'
+      - '.github/workflows/agent-public-network.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'database/agent_public_network.py'
+      - 'dashboard/agent_public_network_http.py'
+      - 'dashboard/customer_instance_connection_http.py'
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile changed Python contracts
+        run: |
+          python -m py_compile \
+            database/agent_public_network.py \
+            database/agent_public_network_schema.py \
+            database/agent_installation_preconfiguration.py \
+            dashboard/agent_public_network_http.py \
+            dashboard/customer_instance_connection_http.py \
+            dashboard/server_part17.py \
+            agents/linux/runtime/cap_dispatch.py \
+            agents/windows/runtime/admin_gui_backend.py
+      - name: Run public network contract tests
+        run: python -m unittest tests.agent_public_network_test -v
