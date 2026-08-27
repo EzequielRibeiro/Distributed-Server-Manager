@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-CONTROLLER_URL=""; PAIRING_TOKEN="${CAPIVARA_PAIRING_TOKEN:-}"; PACKAGE_DIR=""
+CONTROLLER_URL=""; CONTROLLER_CA_FILE=""; PAIRING_TOKEN="${CAPIVARA_PAIRING_TOKEN:-}"; PACKAGE_DIR=""
 INSTALL_ROOT="${CAPIVARA_AGENT_ROOT:-/opt/capivara-agent}"; CONFIG_DIR="${CAPIVARA_AGENT_CONFIG_DIR:-/etc/capivara-agent}"
 STATE_DIR="${CAPIVARA_AGENT_STATE_DIR:-/var/lib/capivara-agent}"; INSTANCE_STORAGE_ROOT="${CAPIVARA_INSTANCE_STORAGE_ROOT:-/var/lib/capivara-instances}"; SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 POLKIT_RULES_DIR="${CAPIVARA_POLKIT_RULES_DIR:-/etc/polkit-1/rules.d}"; CLI_PATH="${CAPIVARA_AGENT_CLI_PATH:-/usr/local/bin/cap}"
@@ -14,6 +14,8 @@ Uso:
 Opções:
   --controller-url URL       Endpoint do Controller alcançável por este Agent.
                              Ex.: http://192.168.15.35:8080 ou https://controller.exemplo:18080
+  --controller-ca-file FILE  CA/certificado PEM privado do Controller para HTTPS local.
+                             Não é necessário para Let's Encrypt/CA pública.
   --pairing-token TOKEN      Token de pareamento do Agent.
   --instance-storage-root P  Diretório raiz das instâncias.
   --package-dir DIR          Pacote do Agent a instalar.
@@ -25,6 +27,7 @@ EOF
 }
 while (( $# )); do case "$1" in
   --controller-url) [[ $# -ge 2 ]] || fail "--controller-url requer valor"; CONTROLLER_URL="$2"; shift 2;;
+  --controller-ca-file) [[ $# -ge 2 ]] || fail "--controller-ca-file requer valor"; CONTROLLER_CA_FILE="$2"; shift 2;;
   --pairing-token) [[ $# -ge 2 ]] || fail "--pairing-token requer valor"; PAIRING_TOKEN="$2"; shift 2;;
   --instance-storage-root) [[ $# -ge 2 ]] || fail "--instance-storage-root requer valor"; INSTANCE_STORAGE_ROOT="$2"; shift 2;;
   --package-dir) [[ $# -ge 2 ]] || fail "--package-dir requer valor"; PACKAGE_DIR="$2"; shift 2;;
@@ -81,7 +84,7 @@ EOF
     port="${port:-18080}"
     cat <<'EOF'
 Protocolo:
-  1) HTTPS (recomendado para Internet, quando TLS estiver configurado)
+  1) HTTPS (recomendado para Internet)
   2) HTTP
 EOF
     read -r -p 'Seleção [1]: ' choice
@@ -124,7 +127,25 @@ install_runtime_dependencies(){
   elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install ca-certificates glibc-32bit libgcc_s1-32bit libstdc++6-32bit
   else log "Gerenciador de pacotes não reconhecido; dependências opcionais serão reportadas pelo diagnóstico do Agent."; fi
 }
+install_controller_ca(){
+  [[ -n "${CONTROLLER_CA_FILE}" ]] || return 0
+  [[ "${CONTROLLER_URL}" == https://* ]] || fail "--controller-ca-file só pode ser usado com Controller HTTPS"
+  [[ -f "${CONTROLLER_CA_FILE}" ]] || fail "CA do Controller não encontrada: ${CONTROLLER_CA_FILE}"
+  grep -q 'BEGIN CERTIFICATE' "${CONTROLLER_CA_FILE}" || fail "CA do Controller deve ser um certificado PEM"
+  if command -v update-ca-certificates >/dev/null 2>&1; then
+    install -m 0644 "${CONTROLLER_CA_FILE}" /usr/local/share/ca-certificates/capivara-controller.crt
+    update-ca-certificates >/dev/null
+  elif command -v update-ca-trust >/dev/null 2>&1; then
+    install -d -m 0755 /etc/pki/ca-trust/source/anchors
+    install -m 0644 "${CONTROLLER_CA_FILE}" /etc/pki/ca-trust/source/anchors/capivara-controller.crt
+    update-ca-trust extract >/dev/null
+  else
+    fail "não foi possível atualizar a trust store do sistema"
+  fi
+  log "CA privada do Controller adicionada à trust store do Linux."
+}
 install_runtime_dependencies
+install_controller_ca
 for cmd in python3 install systemctl; do command -v "$cmd" >/dev/null || fail "comando necessário ausente: $cmd"; done
 [[ -n "${PACKAGE_DIR}" ]] || PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; PACKAGE_DIR="$(cd "${PACKAGE_DIR}" && pwd)"
 
