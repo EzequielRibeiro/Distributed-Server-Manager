@@ -39,6 +39,7 @@ def choose_agent_for_instance(
     preferred_region_id: str | None = None,
     allow_cross_region: bool = False,
     latency_ms: dict[str, float] | None = None,
+    region_latency_ms: dict[str, float] | None = None,
     client_latitude: float | None = None,
     client_longitude: float | None = None,
     requirements: PlacementRequirements | None = None,
@@ -48,7 +49,8 @@ def choose_agent_for_instance(
 
     ``required_agent_id`` does not bypass placement. The requested Agent still
     has to pass lifecycle, topology, heartbeat, capabilities, resources and port
-    eligibility checks before it can be selected.
+    eligibility checks before it can be selected. ``region_latency_ms`` is keyed
+    by public logical region and therefore does not require exposing Agent IDs.
     """
     repository = LocationRepository(backend)
     repository.initialize()
@@ -63,9 +65,6 @@ def choose_agent_for_instance(
         required_agent_id = str(required_agent_id).strip()
         rows = [row for row in rows if str(row["agent_id"]) == required_agent_id]
 
-    # Lifecycle/topology are already enforced by LocationRepository.candidates.
-    # Telemetry-aware Agents must be online; legacy Agents remain compatible
-    # only when no explicit technical evidence is required.
     health = AgentRuntimeRepository(backend).refresh_health(controller_id=controller_id)
     rows = [row for row in rows if health.get(str(row["agent_id"]), "online") == "online"]
 
@@ -115,6 +114,7 @@ def choose_agent_for_instance(
             client_latitude=client_latitude,
             client_longitude=client_longitude,
             latency_ms=latency_ms,
+            region_latency_ms=region_latency_ms,
             allow_cross_region=allow_cross_region,
         ),
         candidates,
@@ -126,6 +126,9 @@ def choose_agent_for_instance(
         "datacenter_id": decision.candidate.datacenter_id,
         "score": decision.score,
         "reason": decision.reason,
+        "latency_ms": decision.latency_ms,
+        "latency_source": decision.latency_source,
+        "distance_km": decision.distance_km,
         "requirements": {
             "game_id": requirements.game_id,
             "runtime_id": requirements.runtime_id,
