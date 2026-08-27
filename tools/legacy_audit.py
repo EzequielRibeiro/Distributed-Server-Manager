@@ -27,6 +27,7 @@ RETIRED_PATHS = {
     "dashboard/workers/event_queue_worker.sh",
     "dashboard/workers/alerts_worker.sh",
     "dashboard/workers/collect_alerts.sh",
+    "dashboard/workers/mods_worker.sh",
     "dashboard/alerts/alert_engine.sh",
     "dashboard/api/alerts.sh",
     "dashboard/notifications/notification_engine.sh",
@@ -42,6 +43,8 @@ RETIRED_PATHS = {
     "core/discord_sender.sh",
     "core/discord_queue.sh",
     "core/events.sh",
+    "core/lgsm.sh",
+    "core/providers/linuxgsm.sh",
     "database/alert_store.sh",
     "database/dashboard_activity_repository.py",
     "database/dashboard_activity_schema.py",
@@ -55,8 +58,8 @@ RETIRED_PATHS = {
 RETIRED_PREFIXES = (
     ".artifacts/",
     "combat/",
-    "events/engine/",
-    "events/mods/",
+    "events/",
+    "core/events/",
     "runtime/resources/DemoNode/",
 )
 
@@ -66,7 +69,6 @@ DOCUMENTED_COMPATIBILITY = {
     "dashboard/workers/server_worker.sh",
     "dashboard/workers/metrics_worker.sh",
     "dashboard/workers/monitor_worker.sh",
-    "dashboard/workers/mods_worker.sh",
     "dashboard/workers/backup_worker.sh",
 }
 
@@ -78,8 +80,10 @@ JUNK_PATTERNS = (
 
 DSM_PATH_PATTERN = re.compile(r"/opt/dsm/([A-Za-z0-9_./-]+)")
 TIMER_UNIT_PATTERN = re.compile(r"^Unit=([^\s]+)$", re.M)
+# Functional/provider markers. Plain historical prose such as "no dependency on
+# LinuxGSM" is not a runtime integration and therefore is not treated as one.
 LINUXGSM_PATTERN = re.compile(
-    r"(?:LinuxGSM|linuxgsm|linux-gsm|config-lgsm|lgsm/functions|LGSM_ROOT|LGSM_CONFIG)",
+    r"(?:linuxgsm\.sh|LINUXGSM_PATH|LGSM_[A-Z0-9_]+|config-lgsm|lgsm/functions|LGSM_ROOT|LGSM_CONFIG)",
     re.I,
 )
 DEMO_PATTERN = re.compile(
@@ -155,7 +159,7 @@ def audit_source_markers(files: list[str], failures: list[str]) -> None:
         text = path.read_text(encoding="utf-8", errors="replace")
 
         if not relative.startswith(("docs/", "tests/")) and LINUXGSM_PATTERN.search(text):
-            failures.append(f"LinuxGSM residue outside docs/tests: {relative}")
+            failures.append(f"LinuxGSM runtime residue outside docs/tests: {relative}")
 
         if not relative.startswith(("docs/", "tests/")) and DEMO_PATTERN.search(text):
             failures.append(f"demo topology marker outside docs/tests: {relative}")
@@ -181,7 +185,12 @@ def main() -> int:
     aggregate = ROOT / "dashboard" / "workers" / "worker.sh"
     if aggregate.is_file():
         aggregate_text = aggregate.read_text(encoding="utf-8")
-        for retired_worker in ("events_worker.sh", "event_queue_worker.sh", "alerts_worker.sh"):
+        for retired_worker in (
+            "events_worker.sh",
+            "event_queue_worker.sh",
+            "alerts_worker.sh",
+            "mods_worker.sh",
+        ):
             if retired_worker in aggregate_text:
                 failures.append(f"aggregate dashboard worker still launches retired {retired_worker}")
 
