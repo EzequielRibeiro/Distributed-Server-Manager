@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Backups | Capivara DSM</title>
+  <link rel="stylesheet" href="/customer.css?v=2">
+  <link rel="stylesheet" href="/customer-integrations.css?v=1">
+</head>
+<body>
+<div class="customer-shell">
+  <aside class="customer-sidebar">
+    <a class="customer-brand" href="/customer.html"><span>C</span><strong>capivara <small>DSM</small></strong></a>
+    <p class="customer-label">Cliente</p><nav class="customer-catalog" aria-label="Área do cliente"></nav>
+    <button id="customer-logout" class="customer-logout" type="button">Sair</button>
+  </aside>
+  <main class="customer-main">
+    <header class="customer-top"><div><p class="customer-label">CAPIVARA DSM</p><h1>Backups</h1><p>Visão consolidada dos backups dos seus servidores.</p></div></header>
+    <section class="customer-section">
+      <div class="section-heading"><div><p class="customer-label">SERVIDORES</p><h2>Backups por instância</h2><p>O backup continua pertencendo à instância; esta página reúne o estado de todos os seus servidores.</p></div></div>
+      <div id="customer-backup-grid" class="integration-grid"><p>Carregando backups…</p></div>
+    </section>
+    <div id="customer-message" class="customer-message" role="status" aria-live="polite"></div>
+  </main>
+</div>
+<script src="/customer-navigation.js?v=1"></script>
+<script src="/customer-backups.js?v=1"></script>
+</body>
+</html>
