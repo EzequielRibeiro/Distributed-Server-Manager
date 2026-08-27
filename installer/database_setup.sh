@@ -101,6 +101,9 @@ DO \$body\$ BEGIN
   CREATE ROLE ${DSM_DATABASE_USER} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '${escaped}';
  END IF;
 END \$body\$;
+-- Reconcile the existing local role with the configured secret as well.
+-- This keeps reinstalls/idempotent runs from retaining a stale PostgreSQL password.
+ALTER ROLE ${DSM_DATABASE_USER} WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '${escaped}';
 SELECT 'CREATE DATABASE ${DSM_DATABASE_NAME} OWNER ${DSM_DATABASE_USER}'
  WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname='${DSM_DATABASE_NAME}')\gexec
 GRANT ALL PRIVILEGES ON DATABASE ${DSM_DATABASE_NAME} TO ${DSM_DATABASE_USER};
