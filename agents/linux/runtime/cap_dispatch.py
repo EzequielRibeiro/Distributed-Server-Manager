@@ -15,6 +15,7 @@ if str(RUNTIME_DIR) not in sys.path:
 
 import controller_cli
 import local_cli
+import public_network_cli
 from instance_runtime import lifecycle
 
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
@@ -48,6 +49,8 @@ def _emit(payload: dict[str, Any], as_json: bool) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if len(args) >= 3 and args[:3] == ["agent", "network", "public"]:
+        return public_network_cli.main(args[3:])
     if len(args) >= 2 and args[0] == "agent" and args[1] == "controller":
         return controller_cli.main(args[2:])
     if args and args[0] == "agent":
