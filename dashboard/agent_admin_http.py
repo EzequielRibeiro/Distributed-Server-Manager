@@ -21,6 +21,7 @@ from universal_event_repository import UniversalEventRepository
 
 DETAIL_PATH = "/api/admin/agent"
 RENAME_PATH = "/api/admin/agent/rename"
+REMOVE_PATH = "/api/admin/agent/remove"
 STORAGE_PATH = "/api/admin/agent/storage"
 STORAGE_MIGRATE_PATH = "/api/admin/agent/storage/migrate"
 INSTANCE_STORAGE_POOL_MIGRATION_PATH = "/api/admin/instance/storage-pool-migrate"
@@ -182,7 +183,7 @@ def install_agent_administration(legacy, authenticate) -> None:
                 self.send_json(500, {"error": "relink_failed", "message": "Não foi possível revincular o Agent."})
             return
 
-        if path not in {RENAME_PATH, STORAGE_PATH, STORAGE_MIGRATE_PATH, INSTANCE_STORAGE_POOL_MIGRATION_PATH, DOCTOR_PATH, RELINK_PREPARE_PATH, CREDENTIAL_ROTATE_PATH}:
+        if path not in {RENAME_PATH, REMOVE_PATH, STORAGE_PATH, STORAGE_MIGRATE_PATH, INSTANCE_STORAGE_POOL_MIGRATION_PATH, DOCTOR_PATH, RELINK_PREPARE_PATH, CREDENTIAL_ROTATE_PATH}:
             return previous_post(self)
         user = authenticated(self)
         if user is None:
@@ -218,6 +219,24 @@ def install_agent_administration(legacy, authenticate) -> None:
             repo = AgentAdminRepository(backend)
             detail = repo.detail(agent_id)
             _authorize(user, detail, doctor=path == DOCTOR_PATH)
+
+            if path == REMOVE_PATH:
+                if _role(user) != "admin":
+                    raise PermissionError("Somente administradores podem remover Agents")
+                result = repo.remove(
+                    agent_id,
+                    confirmation=str((payload or {}).get("confirmation") or ""),
+                    actor=actor,
+                )
+                _publish(
+                    backend,
+                    event_type="AGENT_REMOVED",
+                    agent_id=agent_id,
+                    actor=actor,
+                    data={"node_id": result["node_id"], "name": result["name"], "controller_id": result["controller_id"]},
+                )
+                self.send_json(200, result)
+                return
 
             if path == RENAME_PATH:
                 if _role(user) == "operator": raise PermissionError("operator is read-only")
