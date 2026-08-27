@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Capivara — Observabilidade administrativa</title>
+  <link rel="stylesheet" href="/admin-observability.css">
+</head>
+<body>
+  <main class="p8-shell">
+    <header class="p8-header">
+      <div>
+        <p class="eyebrow">P8 · Operações</p>
+        <h1>Observabilidade administrativa</h1>
+        <p id="health-text">Carregando saúde consolidada…</p>
+      </div>
+      <button id="refresh" type="button">Atualizar</button>
+    </header>
+
+    <section class="filters" aria-label="Filtros">
+      <input id="agent-filter" placeholder="Agent ID">
+      <input id="customer-filter" placeholder="Customer ID">
+      <input id="instance-filter" placeholder="Instance ID">
+      <input id="region-filter" placeholder="Region ID">
+      <button id="apply" type="button">Aplicar filtros</button>
+    </section>
+
+    <section id="summary" class="summary-grid" aria-live="polite"></section>
+
+    <section class="panel">
+      <div class="panel-title"><h2>Operações recentes</h2><span>correlation_id para rastreio ponta a ponta</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Status</th><th>Agent</th><th>Instância</th><th>Correlação</th></tr></thead><tbody id="operations"></tbody></table></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title"><h2>Alertas ativos</h2><span>warning / critical / impacto Customer</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Severidade</th><th>Código</th><th>Escopo</th><th>Status</th><th>Correlação</th></tr></thead><tbody id="alerts"></tbody></table></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title"><h2>Atividade administrativa</h2><span>ações recentes no Controller</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Ator</th><th>Papel</th><th>Ação</th><th>Alvo</th><th>Correlação</th></tr></thead><tbody id="activity"></tbody></table></div>
+    </section>
+  </main>
+  <script src="/admin-observability.js"></script>
+</body>
+</html>
