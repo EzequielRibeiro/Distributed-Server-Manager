@@ -66,6 +66,10 @@ def _preconfiguration(args):
     if start is not None: payload.update(port_start=start,port_end=end,port_protocol=args.port_protocol or "both")
     return normalize_preconfiguration(payload)
 
+# Public compatibility name used by the existing CLI/Dashboard parity tests.
+def _preconfiguration_from_args(args):
+    return _preconfiguration(args)
+
 def _annotate_pairing(backend,*,token_id,platform,region_id,datacenter_id):
     d=dialect_for_backend(backend); ph=d.placeholder
     with backend.transaction() as c:
