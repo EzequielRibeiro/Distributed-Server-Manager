@@ -1,126 +1,28 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # =============================================================
 # MÓDULO 02 (SERVER)
-#
-# Agregador do módulo Server.
+# Agregador do módulo Server nativo do Capivara.
 #
 # Ordem:
-#
-# pid
-# process
-# validate
-# status
-# start
-# stop
-# restart
-#
-# Responsável por:
-#
-# - integração LinuxGSM
-# - identificação PID
-# - validação processo DayZ
-# - controle start/stop/restart/status
-#
+# pid -> process -> validate -> status -> start -> stop -> restart
 # =============================================================
-
-
-
-# Evita carregamento duplicado
 
 if [ "${DSM_SERVER_LOADED:-0}" = "1" ]; then
     return 0
 fi
 
-
 DSM_SERVER_LOADED=1
 
-
-
-# =============================================================
-# Diretório Server
-# =============================================================
-
-
-if [ -z "$DSM_ROOT" ]; then
+if [ -z "${DSM_ROOT:-}" ]; then
     DSM_ROOT="/opt/dsm"
 fi
 
-
 DSM_SERVER_DIR="${DSM_ROOT}/server"
 
-
-
-
-
-# =============================================================
-# PID
-# =============================================================
-
-
 source "$DSM_SERVER_DIR/pid.sh"
-
-
-
-
-
-# =============================================================
-# PROCESSO DAYZ
-# =============================================================
-
-
 source "$DSM_SERVER_DIR/process.sh"
-
-
-
-
-
-# =============================================================
-# VALIDAÇÃO
-# =============================================================
-
-
 source "$DSM_SERVER_DIR/validate.sh"
-
-
-
-
-
-# =============================================================
-# STATUS
-# =============================================================
-
-
 source "$DSM_SERVER_DIR/status.sh"
-
-
-
-
-
-# =============================================================
-# START
-# =============================================================
-
-
 source "$DSM_SERVER_DIR/start.sh"
-
-
-
-
-
-# =============================================================
-# STOP
-# =============================================================
-
-
 source "$DSM_SERVER_DIR/stop.sh"
-
-
-
-
-
-# =============================================================
-# RESTART
-# =============================================================
-
-
 source "$DSM_SERVER_DIR/restart.sh"

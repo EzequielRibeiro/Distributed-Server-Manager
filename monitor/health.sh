@@ -1,9 +1,8 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # =============================================================
 # monitor/health.sh - MÓDULO 04 (MONITOR)
 # DSM Monitor Health Check
 # Fonte única: server_status()
-# Integra: LinuxGSM PID + Processo DayZ
 # Retornos:
 # 0 - HEALTHY
 # 1 - CRITICAL
@@ -14,9 +13,6 @@
 LOG_MODULE="monitor"
 HEALTH_STATE_FILE="${DSM_ROOT}/cache/health.state"
 
-# =============================================================
-# Health Check
-# =============================================================
 health_check()
 {
     log_info "Executando health check"
@@ -26,42 +22,30 @@ health_check()
     case "$STATUS" in
         ONLINE)
             echo "HEALTHY"
-            events_emit \
-            "SERVER_HEALTHY" \
-            "Servidor online" \
-            2>/dev/null || true
+            events_emit "SERVER_HEALTHY" "Servidor online" 2>/dev/null || true
             echo "ONLINE" > "$HEALTH_STATE_FILE"
             return 0
-        ;;
+            ;;
         OFFLINE)
             echo "CRITICAL"
-            events_emit \
-            "SERVER_OFFLINE" \
-            "Servidor parado" \
-            2>/dev/null || true
+            events_emit "SERVER_OFFLINE" "Servidor parado" 2>/dev/null || true
             echo "OFFLINE" > "$HEALTH_STATE_FILE"
             return 1
-        ;;
+            ;;
         "PROCESSO INVÁLIDO")
             echo "WARNING"
-            events_emit \
-            "SERVER_INVALID_PROCESS" \
-            "PID inválido ou processo não é DayZ" \
-            2>/dev/null || true
+            events_emit "SERVER_INVALID_PROCESS" "PID inválido ou processo inesperado" 2>/dev/null || true
             echo "INVALID" > "$HEALTH_STATE_FILE"
             return 2
-        ;;
+            ;;
         *)
             echo "UNKNOWN"
             echo "UNKNOWN" > "$HEALTH_STATE_FILE"
             return 3
-        ;;
+            ;;
     esac
 }
 
-# =============================================================
-# JSON para Dashboard/API
-# =============================================================
 health_status_json()
 {
     local STATUS
@@ -76,7 +60,7 @@ health_status_json()
     "pid":"$(server_pid)"
 }
 EOF
-        ;;
+            ;;
         OFFLINE)
             cat <<EOF
 {
@@ -85,7 +69,7 @@ EOF
     "pid":null
 }
 EOF
-        ;;
+            ;;
         "PROCESSO INVÁLIDO")
             cat <<EOF
 {
@@ -94,7 +78,7 @@ EOF
     "pid":"$(server_pid)"
 }
 EOF
-        ;;
+            ;;
         *)
             cat <<EOF
 {
@@ -103,6 +87,6 @@ EOF
     "pid":null
 }
 EOF
-        ;;
+            ;;
     esac
 }

@@ -1,104 +1,56 @@
 #!/bin/bash
 # =============================================================
-# monitor/metrics/disk.sh - DSM Metrics Engine v1.1.0
-# Coleta:
-#   - Espaço total do disco
-#   - Espaço usado
-#   - Espaço livre
-#   - Percentual livre
-#   - Percentual usado
-#   - Diretório do servidor DayZ
+# monitor/metrics/disk.sh - DSM Metrics Engine
+# Coleta métricas do filesystem usado pelo Capivara.
 # =============================================================
 
 LOG_MODULE="metrics-disk"
 
-# =============================================================
-# Diretório monitorado
-# Normalmente: /home/dayzserver/serverfiles
-# Obtido pela configuração DSM/LGSM
-# =============================================================
 metrics_disk_path()
 {
-    if [ -n "$LGSM_HOME" ]; then
-        echo "$LGSM_HOME"
+    if [ -n "${INSTANCE_DIR:-}" ] && [ -e "${INSTANCE_DIR}" ]; then
+        echo "${INSTANCE_DIR}"
         return
     fi
-
-    if [ -n "$INSTANCE_DIR" ]; then
-        echo "$INSTANCE_DIR"
+    if [ -n "${DSM_DATA_DIR:-}" ] && [ -e "${DSM_DATA_DIR}" ]; then
+        echo "${DSM_DATA_DIR}"
+        return
+    fi
+    if [ -n "${DSM_ROOT:-}" ] && [ -e "${DSM_ROOT}" ]; then
+        echo "${DSM_ROOT}"
         return
     fi
     echo "/"
 }
 
-# =============================================================
-# Espaço total em GB
-# =============================================================
 metrics_disk_total_gb()
 {
-    local path
-    path="$(metrics_disk_path)"
-
-    df -BG "$path" 2>/dev/null |
-    awk 'NR==2 {
-        gsub("G","",$2);
-        print $2
-    }'
+    df -BG "$(metrics_disk_path)" 2>/dev/null |
+        awk 'NR==2 {gsub("G","",$2); print $2}'
 }
 
-# =============================================================
-# Espaço usado em GB
-# =============================================================
 metrics_disk_used_gb()
 {
-    local path
-    path="$(metrics_disk_path)"
-
-    df -BG "$path" 2>/dev/null |
-    awk 'NR==2 {
-        gsub("G","",$3);
-        print $3
-    }'
+    df -BG "$(metrics_disk_path)" 2>/dev/null |
+        awk 'NR==2 {gsub("G","",$3); print $3}'
 }
 
-# =============================================================
-# Espaço livre em GB
-# =============================================================
 metrics_disk_free_gb()
 {
-    local path
-    path="$(metrics_disk_path)"
-
-    df -BG "$path" 2>/dev/null |
-    awk 'NR==2 {
-        gsub("G","",$4);
-        print $4
-    }'
+    df -BG "$(metrics_disk_path)" 2>/dev/null |
+        awk 'NR==2 {gsub("G","",$4); print $4}'
 }
 
-# =============================================================
-# Percentual utilizado
-# =============================================================
 metrics_disk_used_pct()
 {
-    local path
-    path="$(metrics_disk_path)"
-
-    df "$path" 2>/dev/null |
-    awk 'NR==2 {
-        gsub("%","");
-        print $5
-    }'
+    df "$(metrics_disk_path)" 2>/dev/null |
+        awk 'NR==2 {gsub("%",""); print $5}'
 }
 
-# =============================================================
-# Percentual livre
-# =============================================================
 metrics_disk_free_pct()
 {
     local used
     used="$(metrics_disk_used_pct)"
-
     if [ -z "$used" ]; then
         echo "0"
         return
@@ -106,21 +58,12 @@ metrics_disk_free_pct()
     echo $((100-used))
 }
 
-# =============================================================
-# Espaço livre formatado
-# =============================================================
 metrics_disk_free_human()
 {
-    local path
-    path="$(metrics_disk_path)"
-
-    df -h "$path" 2>/dev/null |
-    awk 'NR==2 {print $4}'
+    df -h "$(metrics_disk_path)" 2>/dev/null |
+        awk 'NR==2 {print $4}'
 }
 
-# =============================================================
-# JSON do módulo Disk
-# =============================================================
 metrics_disk_json()
 {
 cat <<EOF

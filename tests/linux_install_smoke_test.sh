@@ -71,9 +71,6 @@ then
         | python3 -c 'import json,sys; assert json.load(sys.stdin)["valid"]'
 fi
 
-# A fresh Controller profile must already own its Controller identity but must
-# not fabricate an Agent. Placement therefore remains unavailable until an
-# Agent is enrolled.
 python3 "${DSM_ROOT}/database/registry.py" \
     --root "${DSM_ROOT}" bootstrap-status \
     | python3 -c '
@@ -98,9 +95,7 @@ python3 "${DSM_ROOT}/database/operations.py" \
     --root "${DSM_ROOT}" readiness \
     | python3 -c 'import json,sys; assert json.load(sys.stdin)["ready"]'
 
-# Render every unit against the temporary root and validate it with systemd.
 (
-    # shellcheck source=../install-core.sh
     source "${DSM_ROOT}/install-core.sh"
     SYSTEMD_ACTIVE=1
     systemctl(){ :; }
@@ -108,16 +103,17 @@ python3 "${DSM_ROOT}/database/operations.py" \
 )
 if command -v systemd-analyze >/dev/null 2>&1
 then
-    SYSTEMD_UNIT_PATH="${SYSTEMD_DIR}:/usr/lib/systemd/system:/lib/systemd/system" \
-        systemd-analyze verify \
-        "${SYSTEMD_DIR}"/*.service "${SYSTEMD_DIR}"/*.timer
+    mapfile -d '' systemd_units < <(
+        find "${SYSTEMD_DIR}" -maxdepth 1 -type f \
+            \( -name '*.service' -o -name '*.timer' \) -print0
+    )
+    if (( ${#systemd_units[@]} > 0 ))
+    then
+        SYSTEMD_UNIT_PATH="${SYSTEMD_DIR}:/usr/lib/systemd/system:/lib/systemd/system" \
+            systemd-analyze verify "${systemd_units[@]}"
+    fi
 fi
 
-# Start the installed dashboard through the same entrypoint used by systemd
-# and exercise its unauthenticated health probe. The installation smoke starts
-# only the dashboard process, not the operational workers, so the probe must be
-# structurally valid and reachable without requiring an overall "healthy"
-# worker score.
 export DASHBOARD_HOST="127.0.0.1"
 export DASHBOARD_PORT="18080"
 systemctl show-environment >/dev/null 2>&1 \
@@ -154,14 +150,11 @@ systemctl stop "${SYSTEMD_SMOKE_UNIT}"
 systemctl reset-failed "${SYSTEMD_SMOKE_UNIT}" 2>/dev/null || true
 SYSTEMD_SMOKE_UNIT=""
 
-# Reinstallation must preserve the initialized database and administrator.
 bash "${DSM_ROOT}/install.sh" "${INSTALL_ARGS[@]}" --reinstall
 python3 "${DSM_ROOT}/database/operations.py" \
     --root "${DSM_ROOT}" readiness \
     | python3 -c 'import json,sys; assert json.load(sys.stdin)["ready"]'
 
-# Profile bootstrap is idempotent: reinstall must not add another automatic
-# Controller identity.
 python3 "${DSM_ROOT}/database/registry.py" \
     --root "${DSM_ROOT}" bootstrap-status \
     | python3 -c '

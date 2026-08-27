@@ -5,35 +5,17 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import hashlib
 import json
 import os
 import re
-import secrets
 from pathlib import Path
 
 from backend import DatabaseBackend, DatabaseConfig
 from backend_factory import create_backend
-from registry_demo_v2 import create_aurora_demo
 from registry_repository import RegistryRepository
 from runtime_backend import backend_from_environment
 from user_repository import UserRepository
 from users import hash_password
-
-AURORA_LOGO = (
-    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E"
-    "%3Crect width='128' height='128' rx='24' fill='%230f172a'/%3E"
-    "%3Cpath d='M64 18 103 93H25Z' fill='%2338bdf8'/%3E"
-    "%3Ccircle cx='64' cy='72' r='17' fill='%23020617'/%3E%3C/svg%3E"
-)
-
-
-def password_hash(password: str) -> str:
-    salt = secrets.token_bytes(16)
-    digest = hashlib.scrypt(
-        password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1, dklen=32
-    )
-    return f"scrypt${2**14}$8$1${salt.hex()}${digest.hex()}"
 
 
 def _repository(target: Path | DatabaseBackend) -> RegistryRepository:
@@ -106,41 +88,6 @@ def installation_profile_identity(
     raise ValueError(f"invalid installation profile: {profile}")
 
 
-def create_aurora(
-    root: Path,
-    database_path: Path | DatabaseBackend,
-) -> dict[str, object]:
-    """Create the fictitious Aurora hierarchy using Baseline v2 identity."""
-    instance_path = root / "instances" / "DemoNode" / "minecraft" / "cliente-demo"
-    metadata_dir = instance_path / ".dsm"
-    metadata_path = metadata_dir / "instance-metadata.json"
-    repository = _repository(database_path)
-    created = create_aurora_demo(
-        repository,
-        password_hash=password_hash("Aurora@2026!"),
-        manifest_path=str(metadata_path),
-        logo_url=AURORA_LOGO,
-    )
-    metadata = created["metadata"]
-    metadata_dir.mkdir(parents=True, exist_ok=True)
-    temporary = metadata_path.with_suffix(".json.tmp")
-    temporary.write_text(
-        json.dumps(metadata, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(temporary, metadata_path)
-    return {
-        "created": True,
-        "controller_id": "controller-demo",
-        "agent_id": "agent-demo",
-        "customer_id": int(created["customer_id"]),
-        "customer_code": str(created["customer_code"]),
-        "instance_id": "cliente-demo",
-        "instance": str(instance_path),
-        "metadata": str(metadata_path),
-    }
-
-
 def purge_orphan_instance(
     root: Path,
     database_path: Path | DatabaseBackend,
@@ -162,19 +109,11 @@ def purge_orphan_instance(
         raise ValueError(
             "instance has a local directory; use the instance administration danger zone instead"
         )
-    runtime_path = (
-        root / "runtime" / "resources" / row["node_id"] / row["game_id"] / row["id"]
-    )
     repository.delete_instance(instance_id)
-    if runtime_path.is_dir():
-        import shutil
-
-        shutil.rmtree(runtime_path)
     return {
         "purged": True,
         "instance_id": instance_id,
         "name": row["name"],
-        "runtime_removed": not runtime_path.exists(),
     }
 
 
@@ -187,7 +126,6 @@ def main() -> int:
     )
     parser.add_argument("--database", type=Path)
     subcommands = parser.add_subparsers(dest="command", required=True)
-    subcommands.add_parser("create-aurora", help="create the fictitious Aurora hierarchy")
     purge = subcommands.add_parser(
         "purge-orphan", help="remove an orphan instance record without a local directory"
     )
@@ -223,9 +161,7 @@ def main() -> int:
     else:
         target = backend_from_environment()
 
-    if args.command == "create-aurora":
-        payload = create_aurora(root, target)
-    elif args.command == "purge-orphan":
+    if args.command == "purge-orphan":
         payload = purge_orphan_instance(root, target, args.instance_id)
     else:
         repository = _repository(target)

@@ -62,11 +62,19 @@ fi
     enforce_version_policy
 ) >/dev/null || fail "downgrade override was ignored"
 
-for item in config data runtime instances packages custom mods tools import export; do
-    grep -q "^[[:space:]]*\"${item}\"" "${UPDATE}" || fail "mutable directory not preserved: ${item}"
+for item in config data logs backups instances custom game-data; do
+    grep -q "^[[:space:]]*\"${item}\"" "${UPDATE}" || fail "durable directory not preserved: ${item}"
+done
+for retired in backup mods tools packages import export; do
+    if grep -q "^[[:space:]]*\"${retired}\"" "${UPDATE}"; then
+        fail "product/transient directory is preserved as durable data: ${retired}"
+    fi
 done
 grep -Fq 'rsync -a "${INSTALL_DIR}/${ITEM}/" "${STAGING_DIR}/${ITEM}/"' "${UPDATE}" || fail "preservation can nest directories"
-grep -Fq 'find "${INSTALL_DIR}" -mindepth 1 -maxdepth 1 -print0' "${UPDATE}" || fail "unmanaged local data is not discovered"
+grep -Fq 'if [[ -d "${INSTALL_DIR}/runtime/state" ]]' "${UPDATE}" || fail "runtime/state preservation contract is missing"
+if grep -Fq 'find "${INSTALL_DIR}" -mindepth 1 -maxdepth 1 -print0' "${UPDATE}"; then
+    fail "unmanaged top-level directories are still auto-preserved"
+fi
 grep -Fq 'tar -xzf "${BACKUP_FILE}" -C /opt' "${UPDATE}" || fail "rollback restores outside /opt"
 grep -Fq 'REQUIRED_BYTES=$((INSTALL_BYTES * 2))' "${UPDATE}" || fail "disk check ignores installation size"
 grep -Fq 'gzip -t "${BACKUP_PART}"' "${UPDATE}" || fail "backup integrity is not validated"
@@ -95,10 +103,8 @@ grep -Fq 'DIAGNOSTIC_DIR="${BACKUP_DIR}/update-diagnostics-' "${UPDATE}" \
 if grep -Fq 'systemctl enable "${SERVICE_NAME}"' "${UPDATE}"; then
     fail "update manager enables every discovered service"
 fi
-grep -Fq 'ExecStart=/opt/dsm/runtime/workers/sync_worker.sh' "${ROOT}/systemd/dsm-runtime-sync.service" \
-    || fail "runtime sync service points to a missing worker"
-grep -Fq 'Type=oneshot' "${ROOT}/systemd/dsm-runtime-sync.service" \
-    || fail "runtime sync worker is configured as a long-running service"
+[[ ! -e "${ROOT}/systemd/dsm-runtime-sync.service" ]] \
+    || fail "retired runtime sync service is still tracked"
 grep -Fq 'ExecStart=/bin/bash /opt/dsm/dashboard/workers/worker.sh' \
     "${ROOT}/systemd/dsm-dashboard-worker.service" \
     || fail "dashboard worker service points to a missing launcher"
@@ -132,7 +138,6 @@ tar -xzf "${TMP_DIR}/backup.tar.gz" -C "${TMP_DIR}/opt"
 [[ -f "${TMP_DIR}/opt/dsm/instances/server01/world.dat" ]] || fail "rollback archive layout invalid"
 
 (
-    # shellcheck source=../update.sh
     source "${UPDATE}"
     INSTALL_DIR="${TMP_DIR}/source/opt/dsm"
     BACKUP_DIR="${TMP_DIR}/generated-backups"
@@ -157,7 +162,6 @@ tar -xzf "${TMP_DIR}/backup.tar.gz" -C "${TMP_DIR}/opt"
 )
 
 (
-    # Validate the account checks without depending on host account names.
     source "${UPDATE}"
     CONFIG_FILE="${TMP_DIR}/dsm.conf"
     DSM_USER="node1"
@@ -337,21 +341,13 @@ fi
     grep -q '^LOCAL_SETTING="preserved"$' "${CONFIG_FILE}" || fail "local configuration was overwritten"
 )
 
-# =============================================================
-# Update Manager semantic version contract
-# =============================================================
-
 UPDATE_MANAGER="${ROOT}/update-manager/update-manager.sh"
 
-# An inherited bootstrap marker must not leave update logging unavailable.
 (
     DSM_ROOT="${ROOT}"
     DSM_BOOTSTRAP_LOADED=1
     unset -f log_info log_error is_semver semver_compare 2>/dev/null || true
-
-    # shellcheck source=../update-manager/update-manager.sh
     source "${UPDATE_MANAGER}"
-
     declare -F log_info >/dev/null || fail "update manager did not recover log_info"
     declare -F log_error >/dev/null || fail "update manager did not recover log_error"
     declare -F is_semver >/dev/null || fail "update manager did not recover is_semver"
@@ -360,902 +356,221 @@ UPDATE_MANAGER="${ROOT}/update-manager/update-manager.sh"
 
 (
     DSM_ROOT="${ROOT}"
-
-    # shellcheck source=../update-manager/update-manager.sh
     source "${UPDATE_MANAGER}"
-
-    [[ "$(semver_compare 1.1.0 1.0.0)" == "1" ]] \
-        || fail "update manager upgrade comparison failed"
-
-    [[ "$(semver_compare 1.0.0 1.0.0)" == "0" ]] \
-        || fail "update manager equal-version comparison failed"
-
-    [[ "$(semver_compare 1.0.0 1.1.0)" == "-1" ]] \
-        || fail "update manager downgrade comparison failed"
-
-    [[ "$(semver_compare 1.0.0-rc.1 1.0.0)" == "-1" ]] \
-        || fail "update manager prerelease comparison failed"
-
-    [[ "$(semver_compare 1.0.0-rc.2 1.0.0-rc.10)" == "-1" ]] \
-        || fail "update manager numeric prerelease comparison failed"
+    [[ "$(semver_compare 1.1.0 1.0.0)" == "1" ]] || fail "update manager upgrade comparison failed"
+    [[ "$(semver_compare 1.0.0 1.0.0)" == "0" ]] || fail "update manager equal-version comparison failed"
+    [[ "$(semver_compare 1.0.0 1.1.0)" == "-1" ]] || fail "update manager downgrade comparison failed"
+    [[ "$(semver_compare 1.0.0-rc.1 1.0.0)" == "-1" ]] || fail "update manager prerelease comparison failed"
+    [[ "$(semver_compare 1.0.0-rc.2 1.0.0-rc.10)" == "-1" ]] || fail "update manager numeric prerelease comparison failed"
 )
-
-# =============================================================
-# Update Manager update-check contract
-# =============================================================
 
 (
     DSM_ROOT="${ROOT}"
-
-    # shellcheck source=../update-manager/update-manager.sh
     source "${UPDATE_MANAGER}"
-
-    TEST_INSTALL_DIR="$(mktemp -d)"
-    INSTALL_DIR="${TEST_INSTALL_DIR}"
-
+    TEST_INSTALL_DIR="$(mktemp -d)"; INSTALL_DIR="${TEST_INSTALL_DIR}"
     trap 'rm -rf -- "${TEST_INSTALL_DIR}"' EXIT
-
-    log_info()
-    {
-        :
-    }
-
-    log_error()
-    {
-        :
-    }
-
-    notify_dispatch()
-    {
-        :
-    }
-
-    github_latest_release()
-    {
-        printf '%s\n' '{"tag_name":"v1.0.0"}'
-    }
-
+    log_info(){ :; }; log_error(){ :; }; notify_dispatch(){ :; }
+    github_latest_release(){ printf '%s\n' '{"tag_name":"v1.0.0"}'; }
     printf '%s\n' '1.0.0' >"${INSTALL_DIR}/version"
-
-    dsm_update_check >/dev/null \
-        || fail "equal release should report DSM as up to date"
+    dsm_update_check >/dev/null || fail "equal release should report DSM as up to date"
 )
 
 (
     DSM_ROOT="${ROOT}"
-
-    # shellcheck source=../update-manager/update-manager.sh
     source "${UPDATE_MANAGER}"
-
-    TEST_INSTALL_DIR="$(mktemp -d)"
-    INSTALL_DIR="${TEST_INSTALL_DIR}"
-
+    TEST_INSTALL_DIR="$(mktemp -d)"; INSTALL_DIR="${TEST_INSTALL_DIR}"
     trap 'rm -rf -- "${TEST_INSTALL_DIR}"' EXIT
-
-    log_info()
-    {
-        :
-    }
-
-    log_error()
-    {
-        :
-    }
-
-    notify_dispatch()
-    {
-        :
-    }
-
-    github_latest_release()
-    {
-        printf '%s\n' '{"tag_name":"v1.1.0"}'
-    }
-
+    log_info(){ :; }; log_error(){ :; }; notify_dispatch(){ :; }
+    github_latest_release(){ printf '%s\n' '{"tag_name":"v1.1.0"}'; }
     printf '%s\n' '1.0.0' >"${INSTALL_DIR}/version"
-
-    set +e
-    dsm_update_check >/dev/null
-    STATUS=$?
-    set -e
-
-    [[ "${STATUS}" -eq 10 ]] \
-        || fail "newer release should return 10; returned ${STATUS}"
+    set +e; dsm_update_check >/dev/null; STATUS=$?; set -e
+    [[ "${STATUS}" -eq 10 ]] || fail "newer release should return 10; returned ${STATUS}"
 )
 
 (
     DSM_ROOT="${ROOT}"
-
-    # shellcheck source=../update-manager/update-manager.sh
     source "${UPDATE_MANAGER}"
-
-    TEST_INSTALL_DIR="$(mktemp -d)"
-    INSTALL_DIR="${TEST_INSTALL_DIR}"
-
+    TEST_INSTALL_DIR="$(mktemp -d)"; INSTALL_DIR="${TEST_INSTALL_DIR}"
     trap 'rm -rf -- "${TEST_INSTALL_DIR}"' EXIT
-
-    log_info()
-    {
-        :
-    }
-
-    log_error()
-    {
-        :
-    }
-
-    notify_dispatch()
-    {
-        :
-    }
-
-    github_latest_release()
-    {
-        printf '%s\n' '{"tag_name":"v1.0.0"}'
-    }
-
+    log_info(){ :; }; log_error(){ :; }; notify_dispatch(){ :; }
+    github_latest_release(){ printf '%s\n' '{"tag_name":"v1.0.0"}'; }
     printf '%s\n' '1.1.0' >"${INSTALL_DIR}/version"
-
-    dsm_update_check >/dev/null \
-        || fail "installed version ahead of release should not be treated as an update"
+    dsm_update_check >/dev/null || fail "installed version ahead of release should not be treated as an update"
 )
 
 (
     DSM_ROOT="${ROOT}"
-
-    # shellcheck source=../update-manager/update-manager.sh
     source "${UPDATE_MANAGER}"
-
-    TEST_INSTALL_DIR="$(mktemp -d)"
-    INSTALL_DIR="${TEST_INSTALL_DIR}"
-
+    TEST_INSTALL_DIR="$(mktemp -d)"; INSTALL_DIR="${TEST_INSTALL_DIR}"
     trap 'rm -rf -- "${TEST_INSTALL_DIR}"' EXIT
-
-    log_info()
-    {
-        :
-    }
-
-    log_error()
-    {
-        :
-    }
-
-    notify_dispatch()
-    {
-        :
-    }
-
-    github_latest_release()
-    {
-        printf '%s\n' '{"tag_name":"v1.1.0"}'
-    }
-
+    log_info(){ :; }; log_error(){ :; }; notify_dispatch(){ :; }
+    github_latest_release(){ printf '%s\n' '{"tag_name":"v1.1.0"}'; }
     printf '%s\n' 'invalid-version' >"${INSTALL_DIR}/version"
-
-    if dsm_update_check >/dev/null 2>&1
-    then
-        fail "invalid installed version was accepted"
-    fi
+    if dsm_update_check >/dev/null 2>&1; then fail "invalid installed version was accepted"; fi
 )
 
 (
     DSM_ROOT="${ROOT}"
-
-    # shellcheck source=../update-manager/update-manager.sh
     source "${UPDATE_MANAGER}"
-
-    TEST_INSTALL_DIR="$(mktemp -d)"
-    INSTALL_DIR="${TEST_INSTALL_DIR}"
-
+    TEST_INSTALL_DIR="$(mktemp -d)"; INSTALL_DIR="${TEST_INSTALL_DIR}"
     trap 'rm -rf -- "${TEST_INSTALL_DIR}"' EXIT
-
-    log_info()
-    {
-        :
-    }
-
-    log_error()
-    {
-        :
-    }
-
-    notify_dispatch()
-    {
-        :
-    }
-
-    github_latest_release()
-    {
-        printf '%s\n' '{"tag_name":"not-semver"}'
-    }
-
+    log_info(){ :; }; log_error(){ :; }; notify_dispatch(){ :; }
+    github_latest_release(){ printf '%s\n' '{"tag_name":"not-semver"}'; }
     printf '%s\n' '1.0.0' >"${INSTALL_DIR}/version"
-
-    if dsm_update_check >/dev/null 2>&1
-    then
-        fail "invalid remote version was accepted"
-    fi
+    if dsm_update_check >/dev/null 2>&1; then fail "invalid remote version was accepted"; fi
 )
 
 (
     DSM_ROOT="${ROOT}"
-
-    # shellcheck source=../update-manager/update-manager.sh
     source "${UPDATE_MANAGER}"
-
-    TEST_INSTALL_DIR="$(mktemp -d)"
-    INSTALL_DIR="${TEST_INSTALL_DIR}"
-
+    TEST_INSTALL_DIR="$(mktemp -d)"; INSTALL_DIR="${TEST_INSTALL_DIR}"
     trap 'rm -rf -- "${TEST_INSTALL_DIR}"' EXIT
-
-    log_info()
-    {
-        :
-    }
-
-    log_error()
-    {
-        :
-    }
-
-    notify_dispatch()
-    {
-        :
-    }
-
-    github_latest_release()
-    {
-        printf '%s\n' '{"tag_name":null}'
-    }
-
+    log_info(){ :; }; log_error(){ :; }; notify_dispatch(){ :; }
+    github_latest_release(){ printf '%s\n' '{"tag_name":null}'; }
     printf '%s\n' '1.0.0' >"${INSTALL_DIR}/version"
-
-    if dsm_update_check >/dev/null 2>&1
-    then
-        fail "release without tag_name was accepted"
-    fi
+    if dsm_update_check >/dev/null 2>&1; then fail "release without tag_name was accepted"; fi
 )
 
-# =============================================================
-# Update Manager update-run gate contract
-# =============================================================
-
-# Up to date:
-# dsm_update_run must stop successfully without entering
-# the download/install pipeline.
 (
     DSM_ROOT="${ROOT}"
-
-    # shellcheck source=../update-manager/update-manager.sh
     source "${UPDATE_MANAGER}"
-
     PIPELINE_CALLED=0
-
-    log_info()
-    {
-        :
-    }
-
-    log_error()
-    {
-        :
-    }
-
-    dsm_update_check()
-    {
-        return 0
-    }
-
-    github_latest_release()
-    {
-        PIPELINE_CALLED=1
-        return 1
-    }
-
-    dsm_update_run >/dev/null \
-        || fail "update run should succeed when DSM is already up to date"
-
-    [[ "${PIPELINE_CALLED}" -eq 0 ]] \
-        || fail "update run entered pipeline for an up-to-date installation"
+    log_info(){ :; }; log_error(){ :; }
+    dsm_update_check(){ return 0; }
+    github_latest_release(){ PIPELINE_CALLED=1; return 1; }
+    dsm_update_run >/dev/null || fail "update run should succeed when DSM is already up to date"
+    [[ "${PIPELINE_CALLED}" -eq 0 ]] || fail "update run entered pipeline for an up-to-date installation"
 )
 
-# Check failure:
-# dsm_update_run must convert a check failure into a normal
-# update-run failure and must not enter the pipeline.
 (
     DSM_ROOT="${ROOT}"
-
-    # shellcheck source=../update-manager/update-manager.sh
     source "${UPDATE_MANAGER}"
-
     PIPELINE_CALLED=0
-
-    log_info()
-    {
-        :
-    }
-
-    log_error()
-    {
-        :
-    }
-
-    dsm_update_check()
-    {
-        return 1
-    }
-
-    github_latest_release()
-    {
-        PIPELINE_CALLED=1
-        return 1
-    }
-
-    if dsm_update_run >/dev/null 2>&1
-    then
-        fail "update run accepted an update-check failure"
-    fi
-
-    [[ "${PIPELINE_CALLED}" -eq 0 ]] \
-        || fail "update run entered pipeline after update-check failure"
+    log_info(){ :; }; log_error(){ :; }
+    dsm_update_check(){ return 1; }
+    github_latest_release(){ PIPELINE_CALLED=1; return 1; }
+    if dsm_update_run >/dev/null 2>&1; then fail "update run accepted an update-check failure"; fi
+    [[ "${PIPELINE_CALLED}" -eq 0 ]] || fail "update run entered pipeline after update-check failure"
 )
 
-# Update available:
-# return 10 from dsm_update_check is the only status that
-# authorizes dsm_update_run to enter the update pipeline.
-# Update available:
-# return 10 from dsm_update_check is the only status that
-# authorizes dsm_update_run to enter the update pipeline.
 (
     DSM_ROOT="${ROOT}"
-
-    # shellcheck source=../update-manager/update-manager.sh
     source "${UPDATE_MANAGER}"
-
-    TEST_INSTALL_DIR="$(mktemp -d)"
-    PIPELINE_MARKER="${TEST_INSTALL_DIR}/pipeline-called"
-    INSTALL_DIR="${TEST_INSTALL_DIR}"
-
+    TEST_INSTALL_DIR="$(mktemp -d)"; PIPELINE_MARKER="${TEST_INSTALL_DIR}/pipeline-called"; INSTALL_DIR="${TEST_INSTALL_DIR}"
     trap 'rm -rf -- "${TEST_INSTALL_DIR}"' EXIT
-
     printf '%s\n' '1.0.0' >"${INSTALL_DIR}/version"
-
-    log_info()
-    {
-        :
-    }
-
-    log_error()
-    {
-        :
-    }
-
-    notify_dispatch()
-    {
-        :
-    }
-
-    dsm_update_check()
-    {
-        return 10
-    }
-
-    github_latest_release()
-    {
-        touch "${PIPELINE_MARKER}"
-        printf '%s\n' '{"tag_name":"v1.1.0"}'
-    }
-
-    github_release_download()
-    {
-        # Deliberately stop the pipeline immediately after
-        # proving that status 10 allowed it to advance.
-        printf '%s\n' ''
-    }
-
-    if dsm_update_run >/dev/null 2>&1
-    then
-        fail "update run unexpectedly completed without a release package"
-    fi
-
-    [[ -f "${PIPELINE_MARKER}" ]] \
-        || fail "update run did not enter pipeline when update-check returned 10"
+    log_info(){ :; }; log_error(){ :; }; notify_dispatch(){ :; }
+    dsm_update_check(){ return 10; }
+    github_latest_release(){ touch "${PIPELINE_MARKER}"; printf '%s\n' '{"tag_name":"v1.1.0"}'; }
+    github_release_download(){ printf '%s\n' ''; }
+    if dsm_update_run >/dev/null 2>&1; then fail "update run unexpectedly completed without a release package"; fi
+    [[ -f "${PIPELINE_MARKER}" ]] || fail "update run did not enter pipeline when update-check returned 10"
 )
-
-# =============================================================
-# Update Manager checksum fail-closed contract
-# =============================================================
 
 (
     DSM_ROOT="${ROOT}"
-
-    # shellcheck source=../update-manager/verify-release.sh
     source "${ROOT}/update-manager/verify-release.sh"
-
-    TEST_ROOT="$(mktemp -d)"
-    PACKAGE_VERSION="1.0.0"
-    PACKAGE_NAME="capivara-dsm-${PACKAGE_VERSION}"
-    PACKAGE_ROOT="${TEST_ROOT}/${PACKAGE_NAME}"
-    PACKAGE="${TEST_ROOT}/${PACKAGE_NAME}.tar.gz"
-
+    TEST_ROOT="$(mktemp -d)"; PACKAGE_VERSION="1.0.0"; PACKAGE_NAME="capivara-dsm-${PACKAGE_VERSION}"; PACKAGE_ROOT="${TEST_ROOT}/${PACKAGE_NAME}"; PACKAGE="${TEST_ROOT}/${PACKAGE_NAME}.tar.gz"
     trap 'rm -rf -- "${TEST_ROOT}"' EXIT
-
-    mkdir -p \
-        "${PACKAGE_ROOT}/bin" \
-        "${PACKAGE_ROOT}/core"
-
+    mkdir -p "${PACKAGE_ROOT}/bin" "${PACKAGE_ROOT}/core"
     printf '%s\n' "${PACKAGE_VERSION}" >"${PACKAGE_ROOT}/version"
     printf '%s\n' '#!/usr/bin/env bash' >"${PACKAGE_ROOT}/bin/dsm"
     printf '%s\n' '#!/usr/bin/env bash' >"${PACKAGE_ROOT}/core/bootstrap.sh"
-
     tar -czf "${PACKAGE}" -C "${TEST_ROOT}" "${PACKAGE_NAME}"
-
-    VERIFY_CHECKSUM=1
-
-    log_error()
-    {
-        :
-    }
-
-    VALID_CHECKSUM="$(sha256sum "${PACKAGE}" | awk '{print $1}')"
-    INVALID_CHECKSUM="$(printf '0%.0s' {1..64})"
-
-    verify_release "${PACKAGE}" "${VALID_CHECKSUM}" >/dev/null \
-        || fail "valid release checksum was rejected"
-
-    if verify_release "${PACKAGE}" "${INVALID_CHECKSUM}" >/dev/null 2>&1
-    then
-        fail "invalid release checksum was accepted"
-    fi
-
-    if verify_release "${PACKAGE}" "" >/dev/null 2>&1
-    then
-        fail "missing release checksum was accepted"
-    fi
+    VERIFY_CHECKSUM=1; log_error(){ :; }
+    VALID_CHECKSUM="$(sha256sum "${PACKAGE}" | awk '{print $1}')"; INVALID_CHECKSUM="$(printf '0%.0s' {1..64})"
+    verify_release "${PACKAGE}" "${VALID_CHECKSUM}" >/dev/null || fail "valid release checksum was rejected"
+    if verify_release "${PACKAGE}" "${INVALID_CHECKSUM}" >/dev/null 2>&1; then fail "invalid release checksum was accepted"; fi
+    if verify_release "${PACKAGE}" "" >/dev/null 2>&1; then fail "missing release checksum was accepted"; fi
 )
-
-# =============================================================
-# Update Manager pipeline checksum fail-closed integration
-# =============================================================
-(
-    DSM_ROOT="${ROOT}"
-
-    # shellcheck source=../update-manager/update-manager.sh
-    source "${UPDATE_MANAGER}"
-
-    PIPELINE_ROOT="$(mktemp -d)"
-    trap 'rm -rf -- "${PIPELINE_ROOT}"' EXIT
-    PIPELINE_INSTALL="${PIPELINE_ROOT}/install"
-    PIPELINE_DOWNLOADS="${PIPELINE_ROOT}/downloads"
-    PIPELINE_TEMP="${PIPELINE_ROOT}/tmp"
-
-    mkdir -p \
-        "${PIPELINE_INSTALL}" \
-        "${PIPELINE_DOWNLOADS}" \
-        "${PIPELINE_TEMP}"
-
-    printf '%s\n' '1.0.0' >"${PIPELINE_INSTALL}/version"
-
-    PIPELINE_PACKAGE="${PIPELINE_DOWNLOADS}/dsm.tar.gz"
-    PIPELINE_CHECKSUM="${PIPELINE_DOWNLOADS}/dsm.tar.gz.sha256"
-    UPDATE_MARKER="${PIPELINE_ROOT}/update-called"
-    EVENT_LOG="${PIPELINE_ROOT}/events.log"
-
-    printf '%s\n' 'corrupted package' >"${PIPELINE_PACKAGE}"
-
-    VALID_FORMAT_INVALID_CHECKSUM="$(
-        printf '0%.0s' {1..64}
-    )"
-
-    printf '%s  %s\n' \
-        "${VALID_FORMAT_INVALID_CHECKSUM}" \
-        "dsm.tar.gz" \
-        >"${PIPELINE_CHECKSUM}"
-
-    INSTALL_DIR="${PIPELINE_INSTALL}"
-    TEMP_DIR="${PIPELINE_TEMP}"
-
-    dsm_update_check()
-    {
-        latest_version="2.0.0"
-        return 10
-    }
-
-    github_latest_release()
-    {
-        printf '%s\n' '{"tag_name":"v2.0.0"}'
-    }
-
-    github_release_download()
-    {
-        printf '%s\n' 'https://example.invalid/dsm.tar.gz'
-    }
-
-    download_release()
-    {
-        printf '%s\n' "${PIPELINE_PACKAGE}"
-    }
-
-    github_release_checksum_download()
-    {
-        printf '%s\n' 'https://example.invalid/dsm.tar.gz.sha256'
-    }
-
-    download_checksum()
-    {
-        printf '%s\n' "${PIPELINE_CHECKSUM}"
-    }
-
-    notify_dispatch()
-    {
-        :
-    }
-
-    events_emit()
-    {
-        printf '%s\n' "$*" >>"${EVENT_LOG}"
-    }
-
-    verify_release()
-    {
-        return 1
-    }
-
-    dsm_update_history_add()
-    {
-        fail "history was written after checksum validation failure"
-    }
-
-    update_guard()
-    {
-        touch "${UPDATE_MARKER}"
-        return 0
-    }
-
-    DSM_ROOT="${PIPELINE_ROOT}/dsm-root"
-
-    mkdir -p "${DSM_ROOT}"
-
-    cat >"${DSM_ROOT}/update.sh" <<EOF
-#!/usr/bin/env bash
-touch "${UPDATE_MARKER}"
-exit 0
-EOF
-
-    chmod +x "${DSM_ROOT}/update.sh"
-
-    if dsm_update_run >/dev/null 2>&1
-    then
-        fail "update pipeline accepted failed checksum validation"
-    fi
-
-    [ ! -e "${UPDATE_MARKER}" ] \
-        || fail "update.sh executed after checksum validation failure"
-
-    [ -f "${EVENT_LOG}" ] \
-        || fail "DSM_UPDATE_FAILED event was not emitted"
-
-    grep -q '^DSM_UPDATE_FAILED 2\.0\.0$' "${EVENT_LOG}" \
-        || fail "wrong event emitted after checksum validation failure"
-)
-
-# =============================================================
-# Update Process Guard permanent contract
-# =============================================================
 
 PROCESS_GUARD="${ROOT}/update-manager/process-guard.sh"
-
-[[ -f "${PROCESS_GUARD}" ]] \
-    || fail "update Process Guard module is missing"
-
-grep -Fq 'GUARD="${NEW_SRC}/update-manager/process-guard.sh"' "${UPDATE}" \
-    || fail "update.sh does not load the Process Guard from the release source"
-
-[[ "$(
-    grep -Ec '^run_process_guard\(\)$' "${UPDATE}"
-)" -eq 1 ]] \
-    || fail "run_process_guard function must exist exactly once"
-
-[[ "$(
-    grep -Ec '^[[:space:]]+run_process_guard[[:space:]]*$' "${UPDATE}"
-)" -eq 1 ]] \
-    || fail "run_process_guard must be called exactly once"
-
-grep -Fq 'process_guard_pre_update' "${UPDATE}" \
-    || fail "update.sh does not invoke the Process Guard pre-update gate"
+[[ -f "${PROCESS_GUARD}" ]] || fail "update Process Guard module is missing"
+grep -Fq 'GUARD="${NEW_SRC}/update-manager/process-guard.sh"' "${UPDATE}" || fail "update.sh does not load the Process Guard from the release source"
+[[ "$(grep -Ec '^run_process_guard\(\)$' "${UPDATE}")" -eq 1 ]] || fail "run_process_guard function must exist exactly once"
+[[ "$(grep -Ec '^[[:space:]]+run_process_guard[[:space:]]*$' "${UPDATE}")" -eq 1 ]] || fail "run_process_guard must be called exactly once"
+grep -Fq 'process_guard_pre_update' "${UPDATE}" || fail "update.sh does not invoke the Process Guard pre-update gate"
 
 (
-    guard_line="$(
-        grep -nE '^[[:space:]]+run_process_guard[[:space:]]*$' \
-            "${UPDATE}" |
-        cut -d: -f1
-    )"
-
-    capture_line="$(
-        grep -nE '^[[:space:]]+capture_service_state[[:space:]]*$' \
-            "${UPDATE}" |
-        cut -d: -f1
-    )"
-
-    transaction_line="$(
-        grep -nE '^[[:space:]]+UPDATE_TRANSACTION_STARTED=1[[:space:]]*$' \
-            "${UPDATE}" |
-        cut -d: -f1
-    )"
-
-    stop_line="$(
-        grep -nE '^[[:space:]]+stop_services[[:space:]]*$' \
-            "${UPDATE}" |
-        cut -d: -f1
-    )"
-
-    [[ "${guard_line}" =~ ^[0-9]+$ ]] \
-        || fail "Process Guard call line was not found"
-
-    [[ "${capture_line}" =~ ^[0-9]+$ ]] \
-        || fail "capture_service_state call line was not found"
-
-    [[ "${transaction_line}" =~ ^[0-9]+$ ]] \
-        || fail "update transaction marker line was not found"
-
-    [[ "${stop_line}" =~ ^[0-9]+$ ]] \
-        || fail "stop_services call line was not found"
-
-    (( guard_line < capture_line )) \
-        || fail "Process Guard runs after service state capture"
-
-    (( capture_line < transaction_line )) \
-        || fail "update transaction starts before service state capture"
-
-    (( transaction_line < stop_line )) \
-        || fail "DSM services stop before update transaction starts"
+    guard_line="$(grep -nE '^[[:space:]]+run_process_guard[[:space:]]*$' "${UPDATE}" | cut -d: -f1)"
+    capture_line="$(grep -nE '^[[:space:]]+capture_service_state[[:space:]]*$' "${UPDATE}" | cut -d: -f1)"
+    transaction_line="$(grep -nE '^[[:space:]]+UPDATE_TRANSACTION_STARTED=1[[:space:]]*$' "${UPDATE}" | cut -d: -f1)"
+    stop_line="$(grep -nE '^[[:space:]]+stop_services[[:space:]]*$' "${UPDATE}" | cut -d: -f1)"
+    [[ "${guard_line}" =~ ^[0-9]+$ ]] || fail "Process Guard call line was not found"
+    [[ "${capture_line}" =~ ^[0-9]+$ ]] || fail "capture_service_state call line was not found"
+    [[ "${transaction_line}" =~ ^[0-9]+$ ]] || fail "update transaction marker line was not found"
+    [[ "${stop_line}" =~ ^[0-9]+$ ]] || fail "stop_services call line was not found"
+    (( guard_line < capture_line )) || fail "Process Guard runs after service state capture"
+    (( capture_line < transaction_line )) || fail "update transaction starts before service state capture"
+    (( transaction_line < stop_line )) || fail "DSM services stop before update transaction starts"
 )
 
 (
-    while IFS= read -r line
-    do
-        trimmed="$(
-            printf '%s\n' "${line}" |
-                sed 's/^[[:space:]]*//'
-        )"
-
+    while IFS= read -r line; do
+        trimmed="$(printf '%s\n' "${line}" | sed 's/^[[:space:]]*//')"
         case "${trimmed}" in
-            pkill|pkill\ *|killall|killall\ *)
-                fail "Process Guard contains destructive process termination"
-                ;;
-            kill\ *)
-                if [[ ! "${trimmed}" =~ ^kill[[:space:]]+-0([[:space:]]|$) ]]
-                then
-                    fail "Process Guard contains destructive kill command"
-                fi
-                ;;
+            pkill|pkill\ *|killall|killall\ *) fail "Process Guard contains destructive process termination" ;;
+            kill\ *) [[ "${trimmed}" =~ ^kill[[:space:]]+-0([[:space:]]|$) ]] || fail "Process Guard contains destructive kill command" ;;
         esac
-
     done <"${PROCESS_GUARD}"
 )
 
 (
-    TEST_ROOT="$(mktemp -d)"
-    TEST_PID=""
-
-    cleanup_process_guard_test()
-    {
-        if [[ -n "${TEST_PID}" ]] &&
-           kill -0 "${TEST_PID}" 2>/dev/null
-        then
-            wait "${TEST_PID}" 2>/dev/null || true
-        fi
-
+    TEST_ROOT="$(mktemp -d)"; TEST_PID=""
+    cleanup_process_guard_test(){
+        if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then wait "${TEST_PID}" 2>/dev/null || true; fi
         rm -rf -- "${TEST_ROOT}"
     }
-
     trap cleanup_process_guard_test EXIT
-
-    export DSM_ROOT="${TEST_ROOT}"
-
-    TEST_CGROUP_ROOT="${TEST_ROOT}/cgroup"
-
-    export PROCESS_GUARD_CGROUP_ROOT="${TEST_CGROUP_ROOT}"
-
-    # shellcheck source=../update-manager/process-guard.sh
+    export DSM_ROOT="${TEST_ROOT}"; TEST_CGROUP_ROOT="${TEST_ROOT}/cgroup"; export PROCESS_GUARD_CGROUP_ROOT="${TEST_CGROUP_ROOT}"
     source "${PROCESS_GUARD}"
-
-    INSTANCE_PATH="${DSM_ROOT}/instances/TestNode/dayz/test-instance"
-    PIDFILE="${INSTANCE_PATH}/runtime/process.pid"
-
+    INSTANCE_PATH="${DSM_ROOT}/instances/TestNode/dayz/test-instance"; PIDFILE="${INSTANCE_PATH}/runtime/process.pid"
     mkdir -p "${INSTANCE_PATH}/runtime"
-
-    ACTIVE="$(process_guard_active_instances)"
-
-    [[ -z "${ACTIVE}" ]] \
-        || fail "Process Guard reports an active instance without a process"
-
-    sleep 2 &
-    TEST_PID=$!
-
-    printf '%s\n' "${TEST_PID}" >"${PIDFILE}"
-
-    ACTIVE="$(process_guard_active_instances)"
-
-    [[ -n "${ACTIVE}" ]] \
-        || fail "Process Guard did not detect an active instance"
-
-    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" \
-        || fail "Process Guard active instance output lacks the PID"
-
-    grep -Fq "test-instance" <<<"${ACTIVE}" \
-        || fail "Process Guard active instance output lacks the instance"
-
-    if process_guard_assert_no_active_instances >/dev/null 2>&1
-    then
-        fail "Process Guard allowed update with an active game instance"
-    fi
-
-    wait "${TEST_PID}"
-    TEST_PID=""
-
-    ACTIVE="$(process_guard_active_instances)"
-
-    [[ -z "${ACTIVE}" ]] \
-        || fail "Process Guard treats a stale PID as active"
-
-    process_guard_assert_no_active_instances >/dev/null \
-        || fail "Process Guard blocks update without active instances"
-
-    # ---------------------------------------------------------
-    # Active transient systemd unit without instance directory
-    #
-    # Reproduz o caso real observado no Linux:
-    #
-    #   capivara-instance-<id>.service
-    #
-    # permanece ativa mesmo depois que o diretório original
-    # da instância deixou de existir.
-    # ---------------------------------------------------------
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard reports an active instance without a process"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${PIDFILE}"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active instance"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the PID"
+    grep -Fq "test-instance" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the instance"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an active game instance"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats a stale PID as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update without active instances"
 
     ORPHAN_UNIT="capivara-instance-orphan-dayz.service"
-
     ORPHAN_CGROUP="${TEST_CGROUP_ROOT}/user.slice/user-test.slice/app.slice/${ORPHAN_UNIT}"
-
     mkdir -p "${ORPHAN_CGROUP}"
-
-    sleep 2 &
-    TEST_PID=$!
-
-    printf '%s\n' "${TEST_PID}" \
-        >"${ORPHAN_CGROUP}/cgroup.procs"
-
-    ACTIVE="$(process_guard_active_instances)"
-
-    [[ -n "${ACTIVE}" ]] \
-        || fail "Process Guard did not detect an active transient unit"
-
-    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" \
-        || fail "Process Guard transient unit output lacks the PID"
-
-    grep -Fq "${ORPHAN_UNIT}" <<<"${ACTIVE}" \
-        || fail "Process Guard transient unit output lacks the unit name"
-
-    if process_guard_assert_no_active_instances >/dev/null 2>&1
-    then
-        fail "Process Guard allowed update with an orphan active transient unit"
-    fi
-
-    wait "${TEST_PID}"
-    TEST_PID=""
-
-    ACTIVE="$(process_guard_active_instances)"
-
-    [[ -z "${ACTIVE}" ]] \
-        || fail "Process Guard treats an empty transient cgroup as active"
-
-    process_guard_assert_no_active_instances >/dev/null \
-        || fail "Process Guard blocks update after transient unit becomes empty"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${ORPHAN_CGROUP}/cgroup.procs"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active transient unit"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the PID"
+    grep -Fq "${ORPHAN_UNIT}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the unit name"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an orphan active transient unit"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats an empty transient cgroup as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update after transient unit becomes empty"
 )
-echo "Update manager tests passed."
-
-
-# =============================================================
-# Regression: legacy runtime account migration
-# =============================================================
 
 (
     source "${UPDATE}"
-
-    INSTALL_DIR="${TMP_DIR}/legacy-install"
-
-    DSM_USER=""
-    DSM_GROUP=""
-    DSM_HOME=""
-
-    mkdir -p "${INSTALL_DIR}"
-
-    stat()
-    {
-        if [[ "$1" == "-c" && "$2" == "%U" ]]
-        then
-            printf '%s\n' "legacy-user"
-            return 0
-        fi
-
-        return 1
-    }
-
-    id()
-    {
-        if [[ "$1" == "-gn" && "$2" == "legacy-user" ]]
-        then
-            printf '%s\n' "legacy-group"
-            return 0
-        fi
-
-        return 1
-    }
-
-    getent()
-    {
-        if [[ "$1" == "passwd" && "$2" == "legacy-user" ]]
-        then
-            printf '%s\n' \
-                "legacy-user:x:1000:1000::/home/legacy-user:/bin/bash"
-            return 0
-        fi
-
-        return 1
-    }
-
+    INSTALL_DIR="${TMP_DIR}/legacy-install"; DSM_USER=""; DSM_GROUP=""; DSM_HOME=""; mkdir -p "${INSTALL_DIR}"
+    stat(){ [[ "$1" == "-c" && "$2" == "%U" ]] && { printf '%s\n' "legacy-user"; return 0; }; return 1; }
+    id(){ [[ "$1" == "-gn" && "$2" == "legacy-user" ]] && { printf '%s\n' "legacy-group"; return 0; }; return 1; }
+    getent(){ [[ "$1" == "passwd" && "$2" == "legacy-user" ]] && { printf '%s\n' "legacy-user:x:1000:1000::/home/legacy-user:/bin/bash"; return 0; }; return 1; }
     resolve_legacy_runtime_account >/dev/null
-
-    [[ "${DSM_USER}" == "legacy-user" ]] \
-        || fail "legacy DSM user was not detected"
-
-    [[ "${DSM_GROUP}" == "legacy-group" ]] \
-        || fail "legacy DSM group was not detected"
-
-    [[ "${DSM_HOME}" == "/home/legacy-user" ]] \
-        || fail "legacy DSM home was not detected"
+    [[ "${DSM_USER}" == "legacy-user" ]] || fail "legacy DSM user was not detected"
+    [[ "${DSM_GROUP}" == "legacy-group" ]] || fail "legacy DSM group was not detected"
+    [[ "${DSM_HOME}" == "/home/legacy-user" ]] || fail "legacy DSM home was not detected"
 )
 
-
-# =============================================================
-# Regression: notification backend is optional
-# =============================================================
-
 (
-    DSM_ROOT="${ROOT}"
-
-    source "${UPDATE_MANAGER}"
-
-    unset -f notify_dispatch 2>/dev/null || true
-
-    log_info()
-    {
-        :
-    }
-
-    dsm_update_notify \
-        "DSM Update" \
-        "Falha simulada"
+    DSM_ROOT="${ROOT}"; source "${UPDATE_MANAGER}"; unset -f notify_dispatch 2>/dev/null || true; log_info(){ :; }
+    dsm_update_notify "DSM Update" "Falha simulada"
 ) || fail "missing notification backend broke update manager"
 
-# Regression: an update package must never replace the installed operational
-# database configuration. The installed config is authoritative.
 (
-    # shellcheck source=../update.sh
     source "${UPDATE}"
-
-    CASE_ROOT="$(mktemp -d)"
-    trap 'rm -rf -- "${CASE_ROOT}"' EXIT
-
-    INSTALL_DIR="${CASE_ROOT}/installed"
-    STAGING_DIR="${CASE_ROOT}/staging"
-    NEW_SRC="${CASE_ROOT}/release"
-
-    mkdir -p \
-        "${INSTALL_DIR}/config" \
-        "${NEW_SRC}/config"
-
+    CASE_ROOT="$(mktemp -d)"; trap 'rm -rf -- "${CASE_ROOT}"' EXIT
+    INSTALL_DIR="${CASE_ROOT}/installed"; STAGING_DIR="${CASE_ROOT}/staging"; NEW_SRC="${CASE_ROOT}/release"
+    mkdir -p "${INSTALL_DIR}/config" "${NEW_SRC}/config"
     cat >"${INSTALL_DIR}/config/dsm.conf" <<'EOF_INSTALLED'
 DSM_DATABASE_DRIVER="postgresql"
 DSM_DATABASE=""
@@ -1266,7 +581,6 @@ DSM_DATABASE_USER="capivara"
 DSM_DATABASE_PASSWORD_FILE="/etc/capivara/secrets/database-password"
 DSM_DATABASE_TLS="preferred"
 EOF_INSTALLED
-
     cat >"${NEW_SRC}/config/dsm.conf" <<'EOF_RELEASE'
 DSM_DATABASE_DRIVER="sqlite"
 DSM_DATABASE="/opt/dsm/data/capivara.db"
@@ -1277,26 +591,12 @@ DSM_DATABASE_USER=""
 DSM_DATABASE_PASSWORD_FILE=""
 DSM_DATABASE_TLS="preferred"
 EOF_RELEASE
-
-    create_staging >/dev/null
-    preserve_data >/dev/null
-
-    grep -q '^DSM_DATABASE_DRIVER="postgresql"$' \
-        "${STAGING_DIR}/config/dsm.conf" \
-        || fail "installed PostgreSQL configuration was replaced by release defaults"
-
-    grep -q '^DSM_DATABASE_HOST="localhost"$' \
-        "${STAGING_DIR}/config/dsm.conf" \
-        || fail "installed database host was not preserved"
-
-    if grep -q '^DSM_DATABASE_DRIVER="sqlite"$' \
-        "${STAGING_DIR}/config/dsm.conf"
-    then
-        fail "release SQLite configuration leaked into operational configuration"
-    fi
+    create_staging >/dev/null; preserve_data >/dev/null
+    grep -q '^DSM_DATABASE_DRIVER="postgresql"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed PostgreSQL configuration was replaced by release defaults"
+    grep -q '^DSM_DATABASE_HOST="localhost"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed database host was not preserved"
+    if grep -q '^DSM_DATABASE_DRIVER="sqlite"$' "${STAGING_DIR}/config/dsm.conf"; then fail "release SQLite configuration leaked into operational configuration"; fi
 )
 
-# bin/cap is a public CLI entrypoint and must remain executable directly
-# from a normal repository checkout/release.
-[[ -x "${ROOT}/bin/cap" ]] \
-    || fail "bin/cap is not executable"
+[[ -x "${ROOT}/bin/cap" ]] || fail "bin/cap is not executable"
+
+echo "Update manager tests passed."
