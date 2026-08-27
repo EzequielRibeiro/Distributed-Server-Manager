@@ -1,92 +1,14 @@
 (function(){
 "use strict";
-
-const auth=()=>sessionStorage.getItem("dsm_auth")||"";
-const params=new URLSearchParams(location.search);
-const agentId=params.get("agent_id")||params.get("id")||"";
-const el=id=>document.getElementById(id);
-
-function bytes(value){
-  const n=Number(value);
-  if(!Number.isFinite(n)||n<0)return "—";
-  const units=["B","KiB","MiB","GiB","TiB","PiB"];
-  let v=n,i=0;
-  while(v>=1024&&i<units.length-1){v/=1024;i+=1;}
-  return `${v>=100||i===0?v.toFixed(0):v.toFixed(1)} ${units[i]}`;
-}
-
-function pct(usable,total){
-  const u=Number(usable),t=Number(total);
-  if(!Number.isFinite(u)||!Number.isFinite(t)||t<=0)return null;
-  return Math.max(0,Math.min(100,(u/t)*100));
-}
-
-function value(v,f="—"){return v===null||v===undefined||v===""?f:String(v);}
-
-function poolCard(pool){
-  const card=document.createElement("div");
-  card.className="cap-range-card cap-storage-pool-card";
-  const health=String(pool.health||"unknown").toLowerCase();
-  card.dataset.health=health;
-
-  const title=document.createElement("strong");
-  title.textContent=`${value(pool.id,"pool")}${pool.default?" · padrão":""}`;
-
-  const meta=document.createElement("span");
-  meta.textContent=`${value(pool.storage_class,"standard")} · prioridade ${value(pool.priority,0)} · ${pool.enabled===false?"desabilitado":health}`;
-
-  const path=document.createElement("code");
-  path.textContent=value(pool.root_path);
-
-  const capacity=document.createElement("span");
-  capacity.textContent=`Utilizável ${bytes(pool.usable_bytes)} · Livre ${bytes(pool.free_bytes)} · Reserva ${bytes(pool.reserve_bytes)} · Total ${bytes(pool.total_bytes)}`;
-
-  const ratio=pct(pool.usable_bytes,pool.total_bytes);
-  const progress=document.createElement("div");
-  progress.className="cap-storage-pool-progress";
-  progress.setAttribute("role","progressbar");
-  progress.setAttribute("aria-label",`Capacidade utilizável do pool ${value(pool.id,"pool")}`);
-  progress.setAttribute("aria-valuemin","0");
-  progress.setAttribute("aria-valuemax","100");
-  progress.setAttribute("aria-valuenow",ratio===null?"0":ratio.toFixed(1));
-  const fill=document.createElement("i");
-  fill.style.width=`${ratio===null?0:ratio}%`;
-  progress.append(fill);
-
-  card.append(title,meta,path,capacity,progress);
-  return card;
-}
-
-function render(pools){
-  const box=el("agent-storage-pools");
-  const summary=el("agent-storage-pools-summary");
-  if(!box)return;
-  const list=Array.isArray(pools)?pools:[];
-  box.replaceChildren();
-  if(!list.length){
-    const empty=document.createElement("div");
-    empty.className="cap-detail-note";
-    empty.textContent="Este Agent ainda não publicou inventário de Storage Pools. Agents legados continuam usando o diretório de armazenamento único.";
-    box.append(empty);
-    if(summary)summary.textContent="Sem inventário de pools no último heartbeat.";
-    return;
-  }
-  list.forEach(pool=>box.append(poolCard(pool)));
-  const online=list.filter(p=>String(p.health||"").toLowerCase()==="online"&&p.enabled!==false).length;
-  const usable=list.reduce((sum,p)=>sum+(Number.isFinite(Number(p.usable_bytes))?Number(p.usable_bytes):0),0);
-  if(summary)summary.textContent=`${list.length} pool(s) publicado(s) · ${online} disponível(is) · ${bytes(usable)} utilizáveis no total.`;
-}
-
-async function refresh(){
-  if(!agentId||!auth())return;
-  try{
-    const r=await fetch(`/api/agent/ports?agent_id=${encodeURIComponent(agentId)}`,{headers:{Authorization:"Basic "+auth(),Accept:"application/json"},cache:"no-store"});
-    if(!r.ok)return;
-    const payload=await r.json();
-    const telemetry=payload.telemetry||payload.agent?.telemetry||{};
-    render(telemetry.storage_pools||payload.agent?.metadata?.telemetry?.storage_pools||[]);
-  }catch(_){/* main page owns global error reporting */}
-}
-
+const auth=()=>sessionStorage.getItem("dsm_auth")||"";const params=new URLSearchParams(location.search);const agentId=params.get("agent_id")||params.get("id")||"";const el=id=>document.getElementById(id);let desired=[];
+function bytes(value){const n=Number(value);if(!Number.isFinite(n)||n<0)return"—";const units=["B","KiB","MiB","GiB","TiB","PiB"];let v=n,i=0;while(v>=1024&&i<units.length-1){v/=1024;i+=1;}return`${v>=100||i===0?v.toFixed(0):v.toFixed(1)} ${units[i]}`;}
+function value(v,f="—"){return v===null||v===undefined||v===""?f:String(v);}function pct(usable,total){const u=Number(usable),t=Number(total);if(!Number.isFinite(u)||!Number.isFinite(t)||t<=0)return null;return Math.max(0,Math.min(100,(u/t)*100));}
+async function api(path,options={}){const headers={Authorization:"Basic "+auth(),Accept:"application/json",...(options.headers||{})};if(options.body)headers["Content-Type"]="application/json";const r=await fetch(path,{...options,headers,cache:"no-store"});const p=await r.json().catch(()=>({}));if(!r.ok)throw new Error(p.message||p.error||`HTTP ${r.status}`);return p;}
+async function mutate(payload){const r=await api("/api/admin/agent/storage-pools",{method:"POST",body:JSON.stringify({agent_id:agentId,...payload})});renderDesired(r.storage_pools);return r;}
+function promptPool(existing){const id=prompt("ID do Storage Pool",existing?.id||"");if(!id)return null;const name=prompt("Nome",existing?.name||id);if(name===null)return null;const root=prompt("Diretório absoluto",existing?.root_path||"");if(!root)return null;const cls=prompt("Classe (nvme, ssd, hdd, capacity, standard...)",existing?.storage_class||"standard");if(!cls)return null;const priority=Number(prompt("Prioridade",String(existing?.priority??0)));const reserveGiB=Number(prompt("Reserva mínima em GiB",String(Number(existing?.reserve_bytes||0)/1073741824)));if(!Number.isFinite(priority)||!Number.isFinite(reserveGiB)||reserveGiB<0)throw new Error("Prioridade/reserva inválidas.");return{id,name,root_path:root,storage_class:cls,priority,reserve_bytes:Math.round(reserveGiB*1073741824),enabled:existing?.enabled!==false};}
+function controls(pool){const box=document.createElement("div");box.className="cap-admin-row cap-storage-pool-actions";const edit=document.createElement("button");edit.className="cap-detail-button";edit.textContent="Editar";edit.onclick=async()=>{try{const p=promptPool(pool);if(p)await mutate({action:"upsert",pool:p});}catch(e){alert(e.message);}};const toggle=document.createElement("button");toggle.className="cap-detail-button";toggle.textContent=pool.enabled===false?"Habilitar":"Desabilitar";toggle.disabled=!!pool.default;toggle.onclick=()=>mutate({action:pool.enabled===false?"enable":"disable",storage_pool_id:pool.id}).catch(e=>alert(e.message));const def=document.createElement("button");def.className="cap-detail-button";def.textContent=pool.default?"Padrão":"Tornar padrão";def.disabled=!!pool.default||pool.enabled===false;def.onclick=()=>mutate({action:"set-default",storage_pool_id:pool.id}).catch(e=>alert(e.message));const remove=document.createElement("button");remove.className="cap-detail-button";remove.textContent="Remover";remove.disabled=!!pool.default;remove.onclick=async()=>{if(!confirm(`Remover o Storage Pool ${pool.id}?`))return;try{const r=await api(`/api/admin/agent/storage-pools?agent_id=${encodeURIComponent(agentId)}&storage_pool_id=${encodeURIComponent(pool.id)}`,{method:"DELETE"});renderDesired(r.storage_pools);}catch(e){alert(e.message);}};box.append(edit,toggle,def,remove);return box;}
+function poolCard(pool,managed){const observed=pool.observed||pool;const card=document.createElement("div");card.className="cap-range-card cap-storage-pool-card";const health=String(observed.health||"unknown").toLowerCase();card.dataset.health=health;const title=document.createElement("strong");title.textContent=`${value(pool.id,"pool")}${pool.default?" · padrão":""}`;const meta=document.createElement("span");meta.textContent=`${value(pool.storage_class,"standard")} · prioridade ${value(pool.priority,0)} · ${pool.enabled===false?"desabilitado":health}`;const path=document.createElement("code");path.textContent=value(pool.root_path);const capacity=document.createElement("span");capacity.textContent=`Utilizável ${bytes(observed.usable_bytes)} · Livre ${bytes(observed.free_bytes)} · Reserva ${bytes(pool.reserve_bytes)} · Total ${bytes(observed.total_bytes)}`;const ratio=pct(observed.usable_bytes,observed.total_bytes),progress=document.createElement("div");progress.className="cap-storage-pool-progress";const fill=document.createElement("i");fill.style.width=`${ratio===null?0:ratio}%`;progress.append(fill);card.append(title,meta,path,capacity,progress);if(managed)card.append(controls(pool));return card;}
+function renderDesired(model){desired=Array.isArray(model?.pools)?model.pools:[];const box=el("agent-storage-pools"),summary=el("agent-storage-pools-summary");if(!box)return;box.replaceChildren();const toolbar=document.createElement("div");toolbar.className="cap-admin-row";const add=document.createElement("button");add.className="cap-detail-button";add.textContent="Adicionar Storage Pool";add.onclick=async()=>{try{const p=promptPool(null);if(p)await mutate({action:"upsert",pool:p});}catch(e){alert(e.message);}};toolbar.append(add);box.append(toolbar);if(!desired.length){const empty=document.createElement("div");empty.className="cap-detail-note";empty.textContent="Nenhum Storage Pool gerenciado.";box.append(empty);if(summary)summary.textContent="Sem pools configurados.";return;}desired.forEach(pool=>box.append(poolCard(pool,true)));const online=desired.filter(p=>String(p.observed?.health||"").toLowerCase()==="online"&&p.enabled!==false).length;const usable=desired.reduce((s,p)=>s+(Number(p.observed?.usable_bytes)||0),0);if(summary)summary.textContent=`${desired.length} pool(s) configurado(s) · ${online} online · ${bytes(usable)} utilizáveis observados.`;}
+async function refresh(){if(!agentId||!auth())return;try{const p=await api(`/api/admin/agent/storage-pools?agent_id=${encodeURIComponent(agentId)}`);renderDesired(p.storage_pools);}catch(_){try{const p=await api(`/api/agent/ports?agent_id=${encodeURIComponent(agentId)}`);const telemetry=p.telemetry||p.agent?.telemetry||{};const box=el("agent-storage-pools");box?.replaceChildren(...(telemetry.storage_pools||[]).map(x=>poolCard(x,false)));}catch(__){}}}
 document.addEventListener("DOMContentLoaded",()=>{refresh();setInterval(refresh,30000);});
 })();
