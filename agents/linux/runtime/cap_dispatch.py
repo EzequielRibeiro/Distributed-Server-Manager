@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +18,6 @@ if str(RUNTIME_DIR) not in sys.path:
 
 import controller_cli
 import local_cli
-import public_network_cli
 from instance_runtime import lifecycle
 
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
@@ -27,7 +29,7 @@ def _config() -> dict[str, Any]:
         value = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     except PermissionError as exc:
         raise RuntimeError(
-            "Agent lifecycle requires access to the protected Agent identity; use sudo for local lifecycle operations."
+            "Agent operation requires access to the protected Agent identity; use sudo for administrative operations."
         ) from exc
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"Agent config is unavailable: {exc}") from exc
@@ -36,7 +38,7 @@ def _config() -> dict[str, Any]:
     return value
 
 
-def _emit(payload: dict[str, Any], as_json: bool) -> None:
+def _emit(payload: dict[str, Any], as_json: bool = True) -> None:
     if as_json:
         print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
         return
@@ -47,10 +49,56 @@ def _emit(payload: dict[str, Any], as_json: bool) -> None:
             print(f"{key}: {value}")
 
 
+def _public_network_request(method: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    config = _config()
+    base = str(config.get("controller_url") or "").rstrip("/")
+    if not base:
+        raise RuntimeError("controller_url is not configured")
+    headers = {
+        "Accept": "application/json",
+        "X-Capivara-Agent-Credential": str(config.get("credential_id") or ""),
+        "X-Capivara-Agent-Secret": str(config.get("credential_secret") or ""),
+        "X-Capivara-Agent-Fingerprint": str(config.get("fingerprint") or ""),
+    }
+    body = None
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+        body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(base + "/api/agent/public-network", data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(exc.read().decode("utf-8", errors="replace") or str(exc)) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Controller unavailable: {exc.reason}") from exc
+
+
+def _public_network_cli(args: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="cap agent network public")
+    commands = parser.add_subparsers(dest="action", required=True)
+    commands.add_parser("show")
+    commands.add_parser("test")
+    setter = commands.add_parser("set")
+    setter.add_argument("--hostname", default="")
+    setter.add_argument("--ipv4", default="")
+    parsed = parser.parse_args(args)
+    try:
+        if parsed.action == "set":
+            result = _public_network_request("POST", {"public_hostname": parsed.hostname, "public_ipv4": parsed.ipv4})
+        else:
+            result = _public_network_request("GET")
+        _emit(result)
+        return 0
+    except (RuntimeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) >= 3 and args[:3] == ["agent", "network", "public"]:
-        return public_network_cli.main(args[3:])
+        return _public_network_cli(args[3:])
     if len(args) >= 2 and args[0] == "agent" and args[1] == "controller":
         return controller_cli.main(args[2:])
     if args and args[0] == "agent":
