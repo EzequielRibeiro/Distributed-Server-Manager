@@ -15,14 +15,21 @@ def _transport() -> tuple[str, str, int, str | None, str | None]:
     scheme = str(os.environ.get("DSM_WEB_SCHEME", "http") or "http").strip().lower()
     if scheme not in {"http", "https"}:
         raise RuntimeError(f"invalid DSM_WEB_SCHEME: {scheme}")
-    host = str(os.environ.get("DSM_WEB_HOST", "0.0.0.0") or "0.0.0.0").strip()
+    # New installer variables are authoritative. Historical runtime overrides remain
+    # supported for isolated deployments/tests and existing service environments.
+    host = str(
+        os.environ.get("DSM_WEB_HOST")
+        or os.environ.get("DASHBOARD_HOST")
+        or "0.0.0.0"
+    ).strip()
     default_port = 8443 if scheme == "https" else 8080
+    raw_port = os.environ.get("DSM_WEB_PORT") or os.environ.get("DASHBOARD_PORT") or str(default_port)
     try:
-        port = int(os.environ.get("DSM_WEB_PORT", str(default_port)))
+        port = int(raw_port)
     except ValueError as exc:
-        raise RuntimeError("DSM_WEB_PORT must be an integer") from exc
+        raise RuntimeError("DSM_WEB_PORT/DASHBOARD_PORT must be an integer") from exc
     if not 1 <= port <= 65535:
-        raise RuntimeError("DSM_WEB_PORT must be between 1 and 65535")
+        raise RuntimeError("Dashboard port must be between 1 and 65535")
     cert = str(os.environ.get("DSM_TLS_CERT_FILE", "") or "").strip() or None
     key = str(os.environ.get("DSM_TLS_KEY_FILE", "") or "").strip() or None
     return scheme, host, port, cert, key
