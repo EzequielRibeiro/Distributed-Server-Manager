@@ -36,6 +36,7 @@ class ControllerTlsTransportTest(unittest.TestCase):
     def setUp(self):
         self.saved = {key: os.environ.get(key) for key in (
             "DSM_WEB_SCHEME", "DSM_WEB_HOST", "DSM_WEB_PORT",
+            "DASHBOARD_HOST", "DASHBOARD_PORT",
             "DSM_TLS_CERT_FILE", "DSM_TLS_KEY_FILE",
         )}
 
@@ -55,6 +56,16 @@ class ControllerTlsTransportTest(unittest.TestCase):
         self.assertEqual(port, 8080)
         self.assertIsNone(cert)
         self.assertIsNone(key)
+
+    def test_legacy_dashboard_host_port_remain_valid_fallbacks(self):
+        for key in self.saved:
+            os.environ.pop(key, None)
+        os.environ["DASHBOARD_HOST"] = "127.0.0.1"
+        os.environ["DASHBOARD_PORT"] = "19090"
+        scheme, host, port, _, _ = _transport()
+        self.assertEqual(scheme, "http")
+        self.assertEqual(host, "127.0.0.1")
+        self.assertEqual(port, 19090)
 
     def test_https_requires_certificate_and_key(self):
         os.environ["DSM_WEB_SCHEME"] = "https"
