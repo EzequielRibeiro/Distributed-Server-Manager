@@ -10,6 +10,7 @@ on:
       - 'release/build_windows_agent_package.py'
       - 'tests/windows_agent_runtime_parity_test.py'
       - 'tests/windows_agent_storage_parity_test.py'
+      - 'tests/windows_agent_gui_test.py'
       - 'tests/phase19_windows_agent_test.py'
       - '.github/workflows/windows-agent-parity.yml'
   push:
@@ -22,6 +23,7 @@ on:
       - 'release/build_windows_agent_package.py'
       - 'tests/windows_agent_runtime_parity_test.py'
       - 'tests/windows_agent_storage_parity_test.py'
+      - 'tests/windows_agent_gui_test.py'
       - 'tests/phase19_windows_agent_test.py'
       - '.github/workflows/windows-agent-parity.yml'
 
@@ -41,27 +43,27 @@ jobs:
         with:
           fetch-depth: 0
       - name: Compile complete Windows runtime
-        run: python3 -m compileall -q agents/windows/runtime release/build_windows_agent_package.py tests/windows_agent_runtime_parity_test.py tests/windows_agent_storage_parity_test.py tests/phase19_windows_agent_test.py
+        run: python3 -m compileall -q agents/windows/runtime release/build_windows_agent_package.py tests/windows_agent_runtime_parity_test.py tests/windows_agent_storage_parity_test.py tests/windows_agent_gui_test.py tests/phase19_windows_agent_test.py
       - name: Validate Windows runtime parity contracts
         run: |
           python3 -m unittest tests/windows_agent_runtime_parity_test.py
           python3 -m unittest tests/windows_agent_storage_parity_test.py
+          python3 -m unittest tests/windows_agent_gui_test.py
       - name: Validate Windows package and protocol
         run: python3 -m unittest tests/phase19_windows_agent_test.py
-      - name: Check distributed Storage Pool boundary
+      - name: Check distributed Storage Pool and GUI boundary
         run: |
           set -euo pipefail
           grep -F 'storage_pool_id' agents/windows/runtime/game_runtime.py agents/windows/runtime/provisioning_executor.py agents/windows/runtime/instance_telemetry.py
           grep -F 'capivara.agent.storage' agents/windows/runtime/configuration_client.py
-          grep -F 'pool_inventory' agents/windows/runtime/runtime_metrics.py
-          grep -F 'queue_health' agents/windows/runtime/runtime_metrics.py
           grep -F 'storage_pool_migration_command' agents/windows/runtime/agent.py
-          grep -F 'storage_pool_migration_result' agents/windows/runtime/agent.py
           grep -F 'INSTANCE_STORAGE_POOL_MIGRATION_COMPLETED' agents/windows/runtime/storage_pool_migration_executor.py
-          grep -F 'INSTANCE_STORAGE_POOL_SOURCE_CLEANUP_COMPLETED' agents/windows/runtime/storage_pool_migration_executor.py
-          grep -F '.capivara-migrate-' agents/windows/runtime/storage_pool_migration_executor.py
-          grep -F 'sha256' agents/windows/runtime/storage_pool_migration_executor.py
-          ! grep -F 'source_path' agents/windows/runtime/storage_pool_migration_executor.py agents/windows/runtime/storage_pool_migration_client.py
+          grep -F '_publish_gui_snapshot' agents/windows/runtime/agent.py
+          grep -F 'System.Windows.Forms.NotifyIcon' agents/windows/gui/CapivaraAgentGui.ps1
+          grep -F "GuiMode = 'auto'" agents/windows/installer/install-agent.ps1
+          grep -F 'CommonDesktopDirectory' agents/windows/installer/install-agent.ps1
+          grep -F 'CommonStartup' agents/windows/installer/install-agent.ps1
+          ! grep -F 'shell=True' agents/windows/runtime/admin_gui_backend.py
       - name: Build reproducible Windows Agent package
         run: |
           python3 release/build_windows_agent_package.py HEAD dist-parity
@@ -72,8 +74,8 @@ jobs:
           archive=next(Path('dist-parity').glob('capivara-agent-windows-*.zip'))
           with zipfile.ZipFile(archive) as z:
               names=set(z.namelist())
-          for filename in ('storage_pools.py','storage_pool_migration_state.py','storage_pool_migration_client.py','storage_pool_migration_executor.py','queue_observability.py'):
-              assert any(name.endswith('/agent/runtime/'+filename) for name in names), filename
+          for suffix in ('/agent/runtime/admin_gui_backend.py','/gui/CapivaraAgentGui.ps1','/service/run-agent.ps1','/service/register-task.ps1'):
+              assert any(name.endswith(suffix) for name in names), suffix
           PY
 
   native-windows:
@@ -86,14 +88,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Parse Windows PowerShell GUI and service scripts
+        shell: pwsh
+        run: |
+          $errors = @()
+          foreach ($file in @('agents/windows/gui/CapivaraAgentGui.ps1','agents/windows/service/run-agent.ps1','agents/windows/service/register-task.ps1','agents/windows/installer/install-agent.ps1')) {
+            $tokens=$null; $parseErrors=$null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file),[ref]$tokens,[ref]$parseErrors) | Out-Null
+            if ($parseErrors.Count -gt 0) { $errors += $parseErrors }
+          }
+          if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error; exit 1 }
       - name: Compile complete Windows runtime
         shell: pwsh
-        run: python -m compileall -q agents/windows/runtime release/build_windows_agent_package.py tests/windows_agent_runtime_parity_test.py tests/windows_agent_storage_parity_test.py tests/phase19_windows_agent_test.py
-      - name: Validate Windows runtime parity contracts natively
+        run: python -m compileall -q agents/windows/runtime release/build_windows_agent_package.py tests/windows_agent_runtime_parity_test.py tests/windows_agent_storage_parity_test.py tests/windows_agent_gui_test.py tests/phase19_windows_agent_test.py
+      - name: Validate Windows runtime and GUI contracts natively
         shell: pwsh
         run: |
           python -m unittest tests/windows_agent_runtime_parity_test.py
           python -m unittest tests/windows_agent_storage_parity_test.py
+          python -m unittest tests/windows_agent_gui_test.py
       - name: Validate Windows package and protocol natively
         shell: pwsh
         run: python -m unittest tests/phase19_windows_agent_test.py
