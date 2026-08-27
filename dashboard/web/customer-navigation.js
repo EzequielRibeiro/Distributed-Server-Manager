@@ -6,25 +6,21 @@
     ["/customer-backups.html", "↺", "Backups", "Backups de todos os servidores"],
     ["/customer-integrations.html", "◇", "Integrações", "Discord e serviços externos"],
     ["/customer-members.html", "◎", "Equipe e acessos", "Usuários, convites e permissões"],
-    ["/customer.html#profile", "◌", "Dados cadastrais", "Cadastro e informações da conta", "profile"],
-    ["/customer-change-password.html", "⌁", "Conta e segurança", "Senha e segurança de acesso"],
+    ["/customer-account.html", "◌", "Minha conta", "Cadastro e informações da conta"],
   ];
 
   function activePath() {
     return location.pathname || "/customer.html";
   }
 
-  function link([href, mark, title, subtitle, action]) {
+  function link([href, mark, title, subtitle]) {
     const anchor = document.createElement("a");
     anchor.className = "catalog-game customer-nav-link";
     anchor.href = href;
     anchor.dataset.customerNav = title;
-    if (activePath() === href.split("#")[0] && !href.includes("#")) {
+    if (activePath() === href) {
       anchor.classList.add("active");
       anchor.setAttribute("aria-current", "page");
-    }
-    if (action === "profile") {
-      anchor.setAttribute("data-customer-profile", "");
     }
     anchor.innerHTML = `<span class="game-mark">${mark}</span><span><strong>${title}</strong><small>${subtitle}</small></span>`;
     return anchor;
@@ -52,7 +48,8 @@
       logout.dataset.navigationBound = "1";
       logout.addEventListener("click", () => {
         sessionStorage.removeItem("dsm_auth");
-        location.href = "/login.html";
+        sessionStorage.removeItem("dsm_customer_auth");
+        location.href = "/customer-login.html";
       });
     }
   }
