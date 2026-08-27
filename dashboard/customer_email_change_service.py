@@ -68,7 +68,10 @@ class CustomerEmailChangeService:
         self.ttl_seconds = max(300, min(int(ttl_seconds), 86400))
 
     def _owner(self, user: dict[str, Any]) -> dict[str, Any]:
-        customer_id, customer, username, account_role = _identity(user, self.backend)
+        try:
+            customer_id, customer, username, account_role = _identity(user, self.backend)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise PermissionError("customer scope not authorized") from exc
         if account_role != "owner":
             raise PermissionError("only Customer account owner can change e-mail")
         return {
