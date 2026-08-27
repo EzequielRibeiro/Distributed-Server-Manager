@@ -12,11 +12,15 @@ on:
       - 'database/storage_pool_placement.py'
       - 'database/schemas/**'
       - 'dashboard/agent_admin_http.py'
+      - 'dashboard/storage_pool_source_cleanup_http.py'
+      - 'dashboard/web/agent-details.html'
+      - 'dashboard/web/storage-pool-source-cleanup.js'
       - 'dashboard/agent_instance_runtime_*.py'
       - 'dashboard/agent_instance_provisioning_*.py'
       - 'dashboard/agent_heartbeat_api.py'
       - 'dashboard/agent_remote_http.py'
       - 'dashboard/server_part13.py'
+      - 'dashboard/server_part17.py'
       - 'bin/cap'
       - 'release/build_agent_package.sh'
       - 'tests/agent_instance_runtime_test.py'
@@ -29,8 +33,10 @@ on:
       - 'tests/agent_storage_pools_test.py'
       - 'tests/agent_storage_pool_telemetry_test.py'
       - 'tests/agent_storage_pool_migration_test.py'
+      - 'tests/storage_pool_source_cleanup_test.py'
       - 'tests/storage_pool_placement_test.py'
       - 'tests/storage_pool_migration_controller_test.py'
+      - 'tests/storage_pool_source_cleanup_controller_test.py'
       - '.github/workflows/agent-instance-runtime.yml'
   push:
     branches: [main]
@@ -44,16 +50,22 @@ on:
       - 'database/storage_pool_placement.py'
       - 'database/schemas/**'
       - 'dashboard/agent_admin_http.py'
+      - 'dashboard/storage_pool_source_cleanup_http.py'
+      - 'dashboard/web/agent-details.html'
+      - 'dashboard/web/storage-pool-source-cleanup.js'
       - 'dashboard/agent_heartbeat_api.py'
       - 'dashboard/agent_instance_provisioning_*.py'
+      - 'dashboard/server_part17.py'
       - 'release/build_agent_package.sh'
       - 'tests/agent_runtime_completion_test.py'
       - 'tests/agent_instance_storage_root_test.py'
       - 'tests/agent_storage_pools_test.py'
       - 'tests/agent_storage_pool_telemetry_test.py'
       - 'tests/agent_storage_pool_migration_test.py'
+      - 'tests/storage_pool_source_cleanup_test.py'
       - 'tests/storage_pool_placement_test.py'
       - 'tests/storage_pool_migration_controller_test.py'
+      - 'tests/storage_pool_source_cleanup_controller_test.py'
       - '.github/workflows/agent-instance-runtime.yml'
 
 permissions:
@@ -72,6 +84,7 @@ jobs:
           bash -n bin/cap
           bash -n agents/linux/installer/install-agent.sh
           bash -n release/build_agent_package.sh
+          node --check dashboard/web/storage-pool-source-cleanup.js
           python3 -m py_compile \
             agents/linux/runtime/*.py \
             agents/linux/runtime/adapters/*.py \
@@ -86,6 +99,7 @@ jobs:
             database/instance_storage_pool_migration_repository.py \
             database/storage_pool_placement.py \
             dashboard/agent_admin_http.py \
+            dashboard/storage_pool_source_cleanup_http.py \
             dashboard/agent_instance_runtime_api.py \
             dashboard/agent_instance_runtime_http.py \
             dashboard/agent_instance_provisioning_api.py \
@@ -93,6 +107,7 @@ jobs:
             dashboard/agent_heartbeat_api.py \
             dashboard/agent_remote_http.py \
             dashboard/server_part13.py \
+            dashboard/server_part17.py \
             tests/agent_instance_runtime_test.py \
             tests/agent_instance_materialization_test.py \
             tests/agent_game_runtime_profiles_test.py \
@@ -103,8 +118,10 @@ jobs:
             tests/agent_storage_pools_test.py \
             tests/agent_storage_pool_telemetry_test.py \
             tests/agent_storage_pool_migration_test.py \
+            tests/storage_pool_source_cleanup_test.py \
             tests/storage_pool_placement_test.py \
-            tests/storage_pool_migration_controller_test.py
+            tests/storage_pool_migration_controller_test.py \
+            tests/storage_pool_source_cleanup_controller_test.py
       - name: Run instance runtime tests
         run: |
           python3 -m unittest tests/agent_instance_runtime_test.py
@@ -117,8 +134,10 @@ jobs:
           python3 -m unittest tests/agent_storage_pools_test.py
           python3 -m unittest tests/agent_storage_pool_telemetry_test.py
           python3 -m unittest tests/agent_storage_pool_migration_test.py
+          python3 -m unittest tests/storage_pool_source_cleanup_test.py
           python3 -m unittest tests/storage_pool_placement_test.py
           python3 -m unittest tests/storage_pool_migration_controller_test.py
+          python3 -m unittest tests/storage_pool_source_cleanup_controller_test.py
       - name: Check lifecycle policy boundary
         run: |
           grep -F 'capivara-instance-' agents/linux/policy/49-capivara-agent-instance-units.rules
@@ -182,6 +201,11 @@ jobs:
           grep -F 'storage_pool_migration_result' agents/linux/runtime/agent.py dashboard/agent_heartbeat_api.py
           grep -F '/api/admin/instance/storage-pool-migrate' dashboard/agent_admin_http.py
           grep -F 'storage_pool_migration_executor.py' agents/linux/installer/install-agent.sh release/build_agent_package.sh
+          grep -F 'cleanup-source' agents/linux/runtime/storage_pool_migration_executor.py database/instance_storage_pool_migration_repository.py
+          grep -F 'INSTANCE_STORAGE_POOL_SOURCE_CLEANUP_REQUESTED' database/instance_storage_pool_migration_repository.py
+          grep -F 'INSTANCE_STORAGE_POOL_SOURCE_CLEANUP_COMPLETED' agents/linux/runtime/storage_pool_migration_executor.py database/instance_storage_pool_migration_repository.py
+          grep -F '/api/admin/instance/storage-pool-cleanup' dashboard/storage_pool_source_cleanup_http.py dashboard/web/storage-pool-source-cleanup.js
+          ! grep -F 'source_path' dashboard/storage_pool_source_cleanup_http.py dashboard/web/storage-pool-source-cleanup.js
       - name: Check consolidated schema parity
         run: |
           set -euo pipefail
