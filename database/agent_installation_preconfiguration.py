@@ -88,10 +88,22 @@ class AgentInstallationPreconfigurationRepository:
                         normalized["port_end"],
                     ),
                 )
+                session.execute(
+                    "DELETE FROM agent_public_network_preconfiguration WHERE installation_id=" + ph,
+                    (installation_id,),
+                )
+                session.execute(
+                    "INSERT INTO agent_public_network_preconfiguration("
+                    "installation_id,public_hostname,public_ipv4"
+                    ") VALUES (" + self.dialect.parameters(3) + ")",
+                    (
+                        installation_id,
+                        normalized["public_hostname"],
+                        normalized["public_ipv4"],
+                    ),
+                )
             finally:
                 session.close()
-        # Public network values intentionally stay in the installation token metadata path
-        # until enrollment and are returned to callers from the normalized payload.
         return normalized
 
     def get(self, installation_id: str) -> dict[str, Any] | None:
@@ -105,9 +117,19 @@ class AgentInstallationPreconfigurationRepository:
                     "WHERE installation_id=" + ph,
                     (str(installation_id),),
                 ).fetchone()
+                public_row = session.execute(
+                    "SELECT public_hostname,public_ipv4 FROM agent_public_network_preconfiguration "
+                    "WHERE installation_id=" + ph,
+                    (str(installation_id),),
+                ).fetchone()
             finally:
                 session.close()
-        return None if row is None else dict(row)
+        if row is None:
+            return None
+        result = dict(row)
+        result["public_hostname"] = public_row["public_hostname"] if public_row is not None else None
+        result["public_ipv4"] = public_row["public_ipv4"] if public_row is not None else None
+        return result
 
     def _mark_result(self, installation_id: str, *, error: str | None) -> None:
         ph = self.dialect.placeholder
@@ -130,14 +152,7 @@ class AgentInstallationPreconfigurationRepository:
             finally:
                 session.close()
 
-    def apply(
-        self,
-        installation_id: str,
-        agent_id: str,
-        *,
-        public_hostname: str | None = None,
-        public_ipv4: str | None = None,
-    ) -> dict[str, Any] | None:
+    def apply(self, installation_id: str, agent_id: str) -> dict[str, Any] | None:
         settings = self.get(installation_id)
         if settings is None:
             return None
@@ -167,10 +182,13 @@ class AgentInstallationPreconfigurationRepository:
                     force=False,
                 )
 
-            if public_hostname or public_ipv4:
+            if settings.get("public_hostname") or settings.get("public_ipv4"):
                 AgentPublicNetworkRepository(self.backend).set(
                     str(agent_id),
-                    {"public_hostname": public_hostname, "public_ipv4": public_ipv4},
+                    {
+                        "public_hostname": settings.get("public_hostname"),
+                        "public_ipv4": settings.get("public_ipv4"),
+                    },
                     actor="agent-installation",
                 )
         except Exception as exc:
@@ -178,7 +196,4 @@ class AgentInstallationPreconfigurationRepository:
             raise
 
         self._mark_result(installation_id, error=None)
-        result = self.get(installation_id) or {}
-        result["public_hostname"] = public_hostname
-        result["public_ipv4"] = public_ipv4
-        return result
+        return self.get(installation_id)
