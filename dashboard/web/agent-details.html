@@ -51,6 +51,13 @@
                     <button id="agent-prepare-relink" class="cap-detail-button" type="button">Preparar revinculação</button>
                     <div id="agent-relink-result" class="cap-relink-result" hidden></div>
                 </div>
+                <div class="cap-admin-card admin-only" id="agent-danger-zone">
+                    <h3>Zona de perigo</h3>
+                    <p>Remove definitivamente o registro do Agent e o Node dedicado do Controller. A remoção é bloqueada enquanto houver qualquer instância associada ao Node. Esta ação não desinstala arquivos na máquina remota.</p>
+                    <label for="agent-remove-confirmation">Digite o Agent ID completo para confirmar</label>
+                    <div class="cap-admin-row"><input id="agent-remove-confirmation" autocomplete="off" spellcheck="false" placeholder="agent-..."><button id="agent-remove" class="cap-detail-button" type="button">Remover Agent</button></div>
+                    <div id="agent-remove-state" class="cap-detail-note">Disponível somente para administradores.</div>
+                </div>
             </div>
         </section>
 
@@ -76,7 +83,7 @@
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
 <script src="telemetry-widgets.js?v=1"></script>
-<script src="agent-details.js?v=5"></script>
+<script src="agent-details.js?v=6"></script>
 <script src="agent-storage-pools.js?v=1"></script>
 </body>
 </html>
