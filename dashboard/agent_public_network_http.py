@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Administrative HTTP API for Agent player-facing public network identity."""
+"""Administrative and Agent-authenticated API for player-facing public network identity."""
 from __future__ import annotations
 from urllib.parse import parse_qs, urlparse
 
+from agent_pairing_api import authenticate_agent_identity
 from agent_public_network import AgentPublicNetworkRepository
 
-PATH = "/api/admin/agent/public-network"
+ADMIN_PATH = "/api/admin/agent/public-network"
+AGENT_PATH = "/api/agent/public-network"
 
 
 def install_agent_public_network(legacy, authenticate):
@@ -28,14 +30,35 @@ def install_agent_public_network(legacy, authenticate):
             return None
         return user
 
+    def require_agent(self):
+        credential_id = str(self.headers.get("X-Capivara-Agent-Credential") or "").strip()
+        credential_secret = str(self.headers.get("X-Capivara-Agent-Secret") or "").strip()
+        fingerprint = str(self.headers.get("X-Capivara-Agent-Fingerprint") or "").strip() or None
+        try:
+            return authenticate_agent_identity(
+                backend(),
+                credential_id=credential_id,
+                credential_secret=credential_secret,
+                fingerprint=fingerprint,
+            )
+        except PermissionError:
+            self.send_json(401, {"error": "unauthorized_agent", "message": "Credencial do Agent inválida."})
+            return None
+
     def get(self):
         parsed = urlparse(self.path)
-        if parsed.path != PATH:
+        if parsed.path not in {ADMIN_PATH, AGENT_PATH}:
             return previous_get(self)
-        user = require_manager(self)
-        if user is None:
-            return
-        agent_id = str((parse_qs(parsed.query).get("agent_id") or [""])[0]).strip()
+        if parsed.path == AGENT_PATH:
+            identity = require_agent(self)
+            if identity is None:
+                return
+            agent_id = str(identity["agent_id"])
+        else:
+            user = require_manager(self)
+            if user is None:
+                return
+            agent_id = str((parse_qs(parsed.query).get("agent_id") or [""])[0]).strip()
         try:
             network = AgentPublicNetworkRepository(backend()).get(agent_id, resolve_dns=True)
             self.send_json(200, {"agent_id": agent_id, "public_network": network})
@@ -46,21 +69,31 @@ def install_agent_public_network(legacy, authenticate):
 
     def post(self):
         parsed = urlparse(self.path)
-        if parsed.path != PATH:
+        if parsed.path not in {ADMIN_PATH, AGENT_PATH}:
             return previous_post(self)
-        user = require_manager(self)
-        if user is None:
-            return
+        if parsed.path == AGENT_PATH:
+            identity = require_agent(self)
+            if identity is None:
+                return
+            agent_id = str(identity["agent_id"])
+            actor = "agent-local-cli"
+        else:
+            user = require_manager(self)
+            if user is None:
+                return
+            actor = str(user.get("username") or "dashboard")
+            agent_id = ""
         try:
             body = self.read_json_body()
-            agent_id = str(body.get("agent_id") or "").strip()
+            if parsed.path == ADMIN_PATH:
+                agent_id = str(body.get("agent_id") or "").strip()
             network = AgentPublicNetworkRepository(backend()).set(
                 agent_id,
                 {
                     "public_hostname": body.get("public_hostname"),
                     "public_ipv4": body.get("public_ipv4"),
                 },
-                actor=str(user.get("username") or "dashboard"),
+                actor=actor,
             )
             self.send_json(200, {"agent_id": agent_id, "public_network": network})
         except LookupError as exc:
@@ -74,4 +107,5 @@ def install_agent_public_network(legacy, authenticate):
     legacy.DashboardHandler.do_POST = post
 
 
-__all__ = ["PATH", "install_agent_public_network"]
+PATH = ADMIN_PATH
+__all__ = ["ADMIN_PATH", "AGENT_PATH", "PATH", "install_agent_public_network"]
