@@ -15,7 +15,7 @@ async function get(path) {
             window.location.replace("/login.html");
             return null;
         }
-        if (!response.ok) return null;
+        if (!response.ok) { console.warn("[Capivara Home]", path, `HTTP ${response.status}`); return null; }
         return await response.json();
     } catch (error) {
         console.warn("[Capivara Home]", path, error); return null;
@@ -38,11 +38,12 @@ function renderAgents(result) {
     const health=$("home-health-agents"); if(health){health.textContent=agents.length?`${online} / ${agents.length} online`:"Nenhum Agent";health.className=online===agents.length&&agents.length?"cap-good":"cap-warn"}
 }
 
-function renderInfrastructure(data) { let regions=0,datacenters=0; function walk(value){if(!value)return;if(Array.isArray(value)){value.forEach(walk);return}if(typeof value!=="object")return;if(value.type==="region")regions++;if(value.type==="datacenter")datacenters++;Object.values(value).forEach(walk)} walk(data); text("home-infra-regions",regions); text("home-infra-datacenters",datacenters); }
-function renderTimeline(result) { const events=Array.isArray(result)?result:(result?.events||[]); const list=$("home-events"); if(list){list.innerHTML=events.slice(0,5).map(event=>`<div class="cap-event"><time>${escapeHtml(formatTime(event.timestamp||event.time))}</time><i class="cap-event-dot"></i><div><p>${escapeHtml(eventText(event))}</p><small>${escapeHtml(event.category||event.source||"Sistema")}</small></div></div>`).join("")||'<div class="cap-empty">Nenhuma atividade recente.</div>'} const important=events.filter(event=>["warning","warn","error","critical","fatal"].includes(String(event.level||"").toLowerCase())); const alerts=$("home-alerts"); if(alerts){alerts.innerHTML=important.slice(0,3).map(event=>{const critical=["error","critical","fatal"].includes(String(event.level||"").toLowerCase());return `<article class="cap-alert ${critical?"":"warning"}"><strong class="${critical?"cap-bad":"cap-warn"}">${escapeHtml(String(event.level||"WARNING").toUpperCase())}</strong><p>${escapeHtml(eventText(event))}</p><time>${escapeHtml(formatTime(event.timestamp||event.time))}</time></article>`}).join("")||'<div class="cap-empty">Nenhum alerta importante no período.</div>'} text("home-alert-total",important.length); }
-function renderHealth(result) { const data=result?.data||result||{};const status=String(data.status||"").toLowerCase();const failed=["failed","critical","offline","error"].includes(status);text("home-controller-health",data.status||"Operacional");const dot=$("home-controller-dot");if(dot)dot.classList.toggle("off",failed);const top=document.querySelector(".cap-controller-state");if(top){top.classList.toggle("cap-controller-failed",failed);const label=top.querySelector("span");if(label)label.textContent=failed?"Controller com falha":"Controller Online"}}
-function renderUser(user) { const role=user?.role||"";text("home-user-name",user?.username||"Usuário");text("home-user-role",role);text("current-user",user?.username||"Sessão ativa");document.querySelectorAll(".admin-only").forEach(element=>element.style.display=role==="admin"?"":"none");document.querySelectorAll(".agent-manager-only").forEach(element=>element.style.display=["admin","controller"].includes(role)?"":"none");document.querySelectorAll(".instance-manager-only").forEach(element=>element.style.display=["admin","controller","client","customer"].includes(role)?"":"none"); }
-function renderControllerTelemetry(result){if(!result)return;window.CapivaraTelemetry?.render($("controller-telemetry"),result.current||{},result.history||[],{label:"Controller",processKey:"controller",description:"Telemetria do host do Control Plane e consumo exclusivo do processo da Dashboard/Controller."})}
+function uniqueEntityCount(data,key,type){const ids=new Set();const roots=[data,data?.data,data?.infrastructure,data?.topology].filter(Boolean);for(const root of roots){const rows=root?.[key];if(Array.isArray(rows))rows.forEach((item,index)=>ids.add(String(item?.id??item?.[`${type}_id`]??`${key}-${index}`)));}function walk(value){if(!value)return;if(Array.isArray(value)){value.forEach(walk);return}if(typeof value!=="object")return;if(String(value.type||"").toLowerCase()===type)ids.add(String(value.id??value[`${type}_id`]??JSON.stringify(value)));Object.values(value).forEach(walk)}walk(data);return ids.size;}
+function renderInfrastructure(data) { if(!data){text("home-infra-regions","—");text("home-infra-datacenters","—");return;} text("home-infra-regions",uniqueEntityCount(data,"regions","region")); text("home-infra-datacenters",uniqueEntityCount(data,"datacenters","datacenter")); }
+function renderTimeline(result) { if(!result){const list=$("home-events");if(list)list.innerHTML='<div class="cap-empty">Atividade recente indisponível.</div>';const alerts=$("home-alerts");if(alerts)alerts.innerHTML='<div class="cap-empty">Alertas indisponíveis.</div>';text("home-alert-total","—");return;} const events=Array.isArray(result)?result:(result?.events||[]); const list=$("home-events"); if(list){list.innerHTML=events.slice(0,5).map(event=>`<div class="cap-event"><time>${escapeHtml(formatTime(event.timestamp||event.time))}</time><i class="cap-event-dot"></i><div><p>${escapeHtml(eventText(event))}</p><small>${escapeHtml(event.category||event.source||"Sistema")}</small></div></div>`).join("")||'<div class="cap-empty">Nenhuma atividade recente.</div>'} const important=events.filter(event=>["warning","warn","error","critical","fatal"].includes(String(event.level||"").toLowerCase())); const alerts=$("home-alerts"); if(alerts){alerts.innerHTML=important.slice(0,3).map(event=>{const critical=["error","critical","fatal"].includes(String(event.level||"").toLowerCase());return `<article class="cap-alert ${critical?"":"warning"}"><strong class="${critical?"cap-bad":"cap-warn"}">${escapeHtml(String(event.level||"WARNING").toUpperCase())}</strong><p>${escapeHtml(eventText(event))}</p><time>${escapeHtml(formatTime(event.timestamp||event.time))}</time></article>`}).join("")||'<div class="cap-empty">Nenhum alerta importante no período.</div>'} text("home-alert-total",important.length); }
+function renderHealth(result) { const data=result?.data||result||{};const status=String(data.status||"").toLowerCase();const failed=["failed","critical","offline","error"].includes(status);text("home-controller-health",result?(data.status||"Operacional"):"Indisponível");const dot=$("home-controller-dot");if(dot)dot.classList.toggle("off",failed||!result);const top=document.querySelector(".cap-controller-state");if(top){top.classList.toggle("cap-controller-failed",failed||!result);const label=top.querySelector("span");if(label)label.textContent=!result?"Controller indisponível":failed?"Controller com falha":"Controller Online"}}
+function renderUser(user) { const role=String(user?.role||"").toLowerCase();text("home-user-name",user?.username||"Usuário");text("home-user-role",role);text("current-user",user?.username||"Sessão ativa");document.querySelectorAll(".admin-only").forEach(element=>element.style.display=role==="admin"?"":"none");document.querySelectorAll(".agent-manager-only").forEach(element=>element.style.display=["admin","controller"].includes(role)?"":"none");document.querySelectorAll(".instance-manager-only").forEach(element=>element.style.display=["admin","controller","client","customer"].includes(role)?"":"none"); }
+function renderControllerTelemetry(result){const target=$("controller-telemetry");if(!target)return;if(!result){target.innerHTML='<div class="cap-telemetry-empty">Telemetria do Controller indisponível no momento.</div>';return;}if(!window.CapivaraTelemetry?.render){target.innerHTML='<div class="cap-telemetry-empty">Componente de telemetria indisponível.</div>';return;}window.CapivaraTelemetry.render(target,result.current||{},result.history||[],{label:"Controller",processKey:"controller",description:"Telemetria do host do Control Plane e consumo exclusivo do processo da Dashboard/Controller."})}
 
 async function refresh() {
     const [user,agents,infrastructure,timeline,health,controllerTelemetry]=await Promise.all([get("/whoami"),get("/agents"),get("/infrastructure?active_only=true"),get("/timeline?limit=30"),get("/health"),get("/controller/telemetry?window_seconds=3600")]);
@@ -51,80 +52,15 @@ async function refresh() {
 
 function bindMobileSidebar(target,toggle){
     if(!target||!toggle)return;
-
     const isMobile=()=>window.innerWidth<=760;
-    const setOpen=open=>{
-        document.body.classList.toggle("sidebar-open",Boolean(open)&&isMobile());
-        toggle.setAttribute("aria-expanded",Boolean(open)&&isMobile()?"true":"false");
-        toggle.setAttribute("aria-label",Boolean(open)&&isMobile()?"Fechar menu":"Abrir menu");
-    };
-
-    toggle.addEventListener("click",event=>{
-        event.stopPropagation();
-        if(isMobile()){
-            setOpen(!document.body.classList.contains("sidebar-open"));
-            return;
-        }
-        document.body.classList.toggle("cap-sidebar-collapsed");
-    });
-
-    target.querySelector(".cap-sidebar-close")?.addEventListener("click",()=>setOpen(false));
-    target.querySelectorAll("a").forEach(link=>link.addEventListener("click",()=>setOpen(false)));
-
-    document.addEventListener("pointerdown",event=>{
-        if(!isMobile()||!document.body.classList.contains("sidebar-open"))return;
-        if(target.contains(event.target)||toggle.contains(event.target))return;
-        setOpen(false);
-    });
-
-    document.addEventListener("keydown",event=>{
-        if(event.key==="Escape")setOpen(false);
-    });
-
-    let startX=null;
-    let startY=null;
-
-    target.addEventListener("touchstart",event=>{
-        const touch=event.changedTouches?.[0];
-        if(!touch)return;
-        startX=touch.clientX;
-        startY=touch.clientY;
-    },{passive:true});
-
-    target.addEventListener("touchend",event=>{
-        if(startX===null||startY===null)return;
-        const touch=event.changedTouches?.[0];
-        if(!touch)return;
-
-        const dx=touch.clientX-startX;
-        const dy=touch.clientY-startY;
-
-        startX=null;
-        startY=null;
-
-        if(isMobile()&&dx<-60&&Math.abs(dx)>Math.abs(dy)*1.2){
-            setOpen(false);
-        }
-    },{passive:true});
-
-    window.addEventListener("resize",()=>{
-        if(!isMobile())setOpen(false);
-    });
+    const setOpen=open=>{document.body.classList.toggle("sidebar-open",Boolean(open)&&isMobile());toggle.setAttribute("aria-expanded",Boolean(open)&&isMobile()?"true":"false");toggle.setAttribute("aria-label",Boolean(open)&&isMobile()?"Fechar menu":"Abrir menu");};
+    toggle.addEventListener("click",event=>{event.stopPropagation();if(isMobile()){setOpen(!document.body.classList.contains("sidebar-open"));return;}document.body.classList.toggle("cap-sidebar-collapsed");});
+    target.querySelector(".cap-sidebar-close")?.addEventListener("click",()=>setOpen(false));target.querySelectorAll("a").forEach(link=>link.addEventListener("click",()=>setOpen(false)));
+    document.addEventListener("pointerdown",event=>{if(!isMobile()||!document.body.classList.contains("sidebar-open"))return;if(target.contains(event.target)||toggle.contains(event.target))return;setOpen(false);});
+    document.addEventListener("keydown",event=>{if(event.key==="Escape")setOpen(false);});
+    let startX=null,startY=null;target.addEventListener("touchstart",event=>{const touch=event.changedTouches?.[0];if(!touch)return;startX=touch.clientX;startY=touch.clientY;},{passive:true});target.addEventListener("touchend",event=>{if(startX===null||startY===null)return;const touch=event.changedTouches?.[0];if(!touch)return;const dx=touch.clientX-startX,dy=touch.clientY-startY;startX=null;startY=null;if(isMobile()&&dx<-60&&Math.abs(dx)>Math.abs(dy)*1.2)setOpen(false);},{passive:true});window.addEventListener("resize",()=>{if(!isMobile())setOpen(false);});
 }
 
-async function loadSidebar(){
-    const target=$("sidebar-component");
-    if(!target)return;
-    const response=await fetch("/components/sidebar-v3.html",{headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});
-    if(response.ok)target.innerHTML=await response.text();
-    const logout=$("btn-logout");
-    if(logout)logout.onclick=async()=>{try{await fetch("/api/auth/logout",{method:"POST",headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});}finally{window.location.replace("/login.html")}};
-    bindMobileSidebar(target,$("home-menu-toggle"));
-}
+async function loadSidebar(){const target=$("sidebar-component");if(!target)return;const response=await fetch("/components/sidebar-v3.html",{headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});if(response.ok)target.innerHTML=await response.text();const logout=$("btn-logout");if(logout)logout.onclick=async()=>{try{await fetch("/api/auth/logout",{method:"POST",headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});}finally{window.location.replace("/login.html")}};bindMobileSidebar(target,$("home-menu-toggle"));}
 
-document.addEventListener("DOMContentLoaded",async()=>{
-    await loadSidebar();
-    $("home-refresh")?.addEventListener("click",refresh);
-    await refresh();
-    window.setInterval(refresh,30000);
-});
+document.addEventListener("DOMContentLoaded",async()=>{await loadSidebar();$("home-refresh")?.addEventListener("click",refresh);await refresh();window.setInterval(refresh,30000);});
