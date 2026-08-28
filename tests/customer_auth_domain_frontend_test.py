@@ -42,8 +42,9 @@ class CustomerAuthDomainFrontendTest(unittest.TestCase):
                 )
                 self.assertIn("/customer-login.html", source)
 
-    def test_secondary_customer_pages_validate_dedicated_customer_session(self):
+    def test_customer_pages_validate_dedicated_customer_session(self):
         for name in (
+            "customer-account.js",
             "customer-backups.js",
             "customer-integrations.js",
             "customer-members.js",
@@ -57,6 +58,8 @@ class CustomerAuthDomainFrontendTest(unittest.TestCase):
     def test_customer_shell_never_loads_controller_bridge(self):
         source = self.read("customer-shell.js")
         self.assertNotIn("browser-session-bridge.js", source)
+        self.assertIn("/api/customer/auth/session", source)
+        self.assertIn('session.role !== "customer"', source)
         self.assertIn("/customer-navigation.js?v=2", source)
         self.assertIn("/customer-core.js?v=3", source)
 
