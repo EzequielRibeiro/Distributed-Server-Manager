@@ -10,8 +10,70 @@ const agentId=params.get("agent_id")||params.get("id")||"";
 async function request(path,options={}){const headers={Authorization:"Basic "+auth(),Accept:"application/json",...(options.headers||{})};if(options.body&&!headers["Content-Type"])headers["Content-Type"]="application/json";const r=await fetch(path,{...options,headers,cache:"no-store"});if(r.status===401){sessionStorage.clear();location.replace("login.html");throw new Error("Sessão expirada");}const p=await r.json().catch(()=>({}));if(!r.ok)throw new Error(p.message||p.error||`HTTP ${r.status}`);return p;}
 function post(path,payload){return request(path,{method:"POST",body:JSON.stringify(payload)});}
 function text(id,v){const n=el(id);if(n)n.textContent=v??"—";}function value(v,f="—"){return v===null||v===undefined||v===""?f:String(v);}function heartbeat(v){if(!v)return"—";const d=new Date(v);return Number.isNaN(d.getTime())?String(v):d.toLocaleString("pt-BR");}
-function applySidebar(c){collapsed=c;document.body.classList.toggle("cap-sidebar-collapsed",c);localStorage.setItem("cap_sidebar_collapsed",c?"1":"0");}function bindMenu(){el("agent-detail-menu-toggle")?.addEventListener("click",()=>{if(innerWidth<=760){document.body.classList.toggle("sidebar-open");return;}applySidebar(!collapsed);});}
-async function sidebar(){const host=el("sidebar-component"),r=await fetch("/components/sidebar-v3.html",{headers:{Authorization:"Basic "+auth()},cache:"no-store"});if(!r.ok)throw new Error(`sidebar HTTP ${r.status}`);host.innerHTML=await r.text();host.querySelectorAll("nav a").forEach(a=>a.classList.toggle("active",a.getAttribute("href")==="agents.html"));host.querySelectorAll("a").forEach(a=>a.addEventListener("click",()=>document.body.classList.remove("sidebar-open")));el("btn-logout")?.addEventListener("click",()=>{sessionStorage.clear();location.replace("login.html");});const who=await request("/api/whoami");currentRole=String(who.role||"").toLowerCase();text("current-user",`${who.username} (${who.role})`);text("agent-detail-user",who.username);text("agent-detail-role",who.role);document.querySelectorAll(".admin-only").forEach(x=>x.hidden=currentRole!=="admin");document.querySelectorAll(".agent-manager-only").forEach(x=>x.hidden=!["admin","controller"].includes(currentRole));if(!["admin","controller"].includes(currentRole))throw new Error("Você não possui permissão para administrar Agents.");applySidebar(localStorage.getItem("cap_sidebar_collapsed")==="1");}
+function applySidebar(c){collapsed=c;document.body.classList.toggle("cap-sidebar-collapsed",c);localStorage.setItem("cap_sidebar_collapsed",c?"1":"0");}
+function setMobileMenu(open){
+    const toggle=el("agent-detail-menu-toggle");
+    const active=Boolean(open)&&innerWidth<=760;
+    document.body.classList.toggle("sidebar-open",active);
+    toggle?.setAttribute("aria-expanded",active?"true":"false");
+    toggle?.setAttribute("aria-label",active?"Fechar menu":"Abrir menu");
+}
+function bindMenu(){
+    el("agent-detail-menu-toggle")?.addEventListener("click",event=>{
+        event.stopPropagation();
+        if(innerWidth<=760){
+            setMobileMenu(!document.body.classList.contains("sidebar-open"));
+            return;
+        }
+        applySidebar(!collapsed);
+    });
+}
+async function sidebar(){const host=el("sidebar-component"),r=await fetch("/components/sidebar-v3.html",{headers:{Authorization:"Basic "+auth()},cache:"no-store"});if(!r.ok)throw new Error(`sidebar HTTP ${r.status}`);host.innerHTML=await r.text();host.querySelectorAll("nav a").forEach(a=>a.classList.toggle("active",a.getAttribute("href")==="agents.html"));host.querySelectorAll("a").forEach(a=>a.addEventListener("click",()=>setMobileMenu(false)));
+host.querySelector(".cap-sidebar-close")?.addEventListener("click",()=>setMobileMenu(false));
+
+const toggle=el("agent-detail-menu-toggle");
+
+document.addEventListener("pointerdown",event=>{
+    if(innerWidth>760||!document.body.classList.contains("sidebar-open"))return;
+    if(host.contains(event.target)||toggle?.contains(event.target))return;
+    setMobileMenu(false);
+});
+
+document.addEventListener("keydown",event=>{
+    if(event.key==="Escape")setMobileMenu(false);
+});
+
+let touchStartX=null;
+let touchStartY=null;
+
+host.addEventListener("touchstart",event=>{
+    const touch=event.changedTouches?.[0];
+    if(!touch)return;
+    touchStartX=touch.clientX;
+    touchStartY=touch.clientY;
+},{passive:true});
+
+host.addEventListener("touchend",event=>{
+    if(touchStartX===null||touchStartY===null)return;
+    const touch=event.changedTouches?.[0];
+    if(!touch)return;
+
+    const dx=touch.clientX-touchStartX;
+    const dy=touch.clientY-touchStartY;
+
+    touchStartX=null;
+    touchStartY=null;
+
+    if(innerWidth<=760&&dx<-60&&Math.abs(dx)>Math.abs(dy)*1.2){
+        setMobileMenu(false);
+    }
+},{passive:true});
+
+window.addEventListener("resize",()=>{
+    if(innerWidth>760)setMobileMenu(false);
+});
+
+el("btn-logout")?.addEventListener("click",()=>{sessionStorage.clear();location.replace("login.html");});const who=await request("/api/whoami");currentRole=String(who.role||"").toLowerCase();text("current-user",`${who.username} (${who.role})`);text("agent-detail-user",who.username);text("agent-detail-role",who.role);document.querySelectorAll(".admin-only").forEach(x=>x.hidden=currentRole!=="admin");document.querySelectorAll(".agent-manager-only").forEach(x=>x.hidden=!["admin","controller"].includes(currentRole));if(!["admin","controller"].includes(currentRole))throw new Error("Você não possui permissão para administrar Agents.");applySidebar(localStorage.getItem("cap_sidebar_collapsed")==="1");}
 function rangeCard(r){const n=document.createElement("div");n.className="cap-range-card";const protocol=value(r.protocol,"").toUpperCase();n.innerHTML=`<strong>${protocol} ${value(r.start_port,"?")}-${value(r.end_port,"?")}</strong><span>${value(r.available,0)} disponíveis · ${value(r.reserved,0)} reservadas · ${value(r.usage_pct,0)}% de uso</span>`;return n;}
 const metricPaths={"capivara.host.cpu.usage_pct":"host.cpu_usage_pct","capivara.host.memory.usage_pct":"host.memory.usage_pct","capivara.host.memory.used_bytes":"host.memory.used_bytes","capivara.host.memory.total_bytes":"host.memory.total_bytes","capivara.host.disk.usage_pct":"host.disk.usage_pct","capivara.host.disk.used_bytes":"host.disk.used_bytes","capivara.host.disk.total_bytes":"host.disk.total_bytes","capivara.host.disk.read_bytes_per_second":"host.disk.read_bytes_per_second","capivara.host.disk.write_bytes_per_second":"host.disk.write_bytes_per_second","capivara.host.disk.read_iops":"host.disk.read_iops","capivara.host.disk.write_iops":"host.disk.write_iops","capivara.host.load.1m":"host.load_average.1m","capivara.host.load.5m":"host.load_average.5m","capivara.host.load.15m":"host.load_average.15m","capivara.host.uptime_seconds":"host.uptime_seconds","capivara.host.network.rx_bytes":"host.network.rx_bytes","capivara.host.network.tx_bytes":"host.network.tx_bytes","capivara.host.network.rx_bytes_per_second":"host.network.rx_bytes_per_second","capivara.host.network.tx_bytes_per_second":"host.network.tx_bytes_per_second","capivara.host.temperature_c":"host.temperature_c","capivara.agent.cpu.usage_pct":"agent.cpu_usage_pct","capivara.agent.memory.rss_bytes":"agent.memory_rss_bytes","capivara.agent.threads":"agent.threads","capivara.agent.pid":"agent.pid","capivara.agent.players.online":"node_activity.players_online","capivara.agent.players.capacity":"node_activity.players_capacity","capivara.agent.instances.running":"node_activity.instances_running","capivara.agent.instances.total":"node_activity.instances_total","capivara.agent.storage.free_bytes":"node_activity.storage_free_bytes","capivara.agent.instances.storage_used_bytes":"node_activity.storage_used_bytes"};
 function assign(root,path,v){const keys=path.split(".");let obj=root;keys.forEach((key,i)=>{if(i===keys.length-1)obj[key]=v;else obj=obj[key]||(obj[key]={});});}function telemetryHistory(rows){const buckets=new Map();(rows||[]).forEach(row=>{const path=metricPaths[row.metric_name];if(!path)return;const stamp=String(row.collected_at||row.ingested_at||"");if(!buckets.has(stamp))buckets.set(stamp,{collected_at_unix:new Date(stamp).getTime()/1000,host:{},agent:{},node_activity:{}});assign(buckets.get(stamp),path,Number(row.value));});return[...buckets.values()].sort((a,b)=>a.collected_at_unix-b.collected_at_unix);}async function loadTelemetry(current){const since=new Date(Date.now()-3600*1000).toISOString();const result=await request(`/api/observability?mode=history&agent_id=${encodeURIComponent(agentId)}&since=${encodeURIComponent(since)}&limit=5000`);const history=telemetryHistory(result.metrics||[]);if(!window.CapivaraTelemetry?.render)throw new Error("Widget de telemetria indisponível.");window.CapivaraTelemetry.render(el("agent-telemetry"),current||{},history,{label:"Agent",processKey:"agent",description:"Consumo total do host e consumo exclusivo do processo Capivara Agent."});}

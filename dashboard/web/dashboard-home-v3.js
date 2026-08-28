@@ -52,6 +52,82 @@ async function refresh() {
     if(user)renderUser(user);renderAgents(agents);renderInfrastructure(infrastructure);renderTimeline(timeline);renderHealth(health);renderControllerTelemetry(controllerTelemetry);text("home-last-refresh",new Date().toLocaleTimeString("pt-BR"));
 }
 
-async function loadSidebar(){const target=$("sidebar-component");if(!target)return;const response=await fetch("/components/sidebar-v3.html",{cache:"no-store"});if(response.ok)target.innerHTML=await response.text();const logout=$("btn-logout");if(logout)logout.onclick=()=>{sessionStorage.clear();window.location.replace("/login.html")}}
+function bindMobileSidebar(target,toggle){
+    if(!target||!toggle)return;
 
-document.addEventListener("DOMContentLoaded",async()=>{await loadSidebar();$("home-menu-toggle")?.addEventListener("click",()=>{if(window.innerWidth<=760)document.body.classList.toggle("sidebar-open");else document.body.classList.toggle("cap-sidebar-collapsed")});$("home-refresh")?.addEventListener("click",refresh);await refresh();window.setInterval(refresh,30000)});
+    const isMobile=()=>window.innerWidth<=760;
+    const setOpen=open=>{
+        document.body.classList.toggle("sidebar-open",Boolean(open)&&isMobile());
+        toggle.setAttribute("aria-expanded",Boolean(open)&&isMobile()?"true":"false");
+        toggle.setAttribute("aria-label",Boolean(open)&&isMobile()?"Fechar menu":"Abrir menu");
+    };
+
+    toggle.addEventListener("click",event=>{
+        event.stopPropagation();
+        if(isMobile()){
+            setOpen(!document.body.classList.contains("sidebar-open"));
+            return;
+        }
+        document.body.classList.toggle("cap-sidebar-collapsed");
+    });
+
+    target.querySelector(".cap-sidebar-close")?.addEventListener("click",()=>setOpen(false));
+    target.querySelectorAll("a").forEach(link=>link.addEventListener("click",()=>setOpen(false)));
+
+    document.addEventListener("pointerdown",event=>{
+        if(!isMobile()||!document.body.classList.contains("sidebar-open"))return;
+        if(target.contains(event.target)||toggle.contains(event.target))return;
+        setOpen(false);
+    });
+
+    document.addEventListener("keydown",event=>{
+        if(event.key==="Escape")setOpen(false);
+    });
+
+    let startX=null;
+    let startY=null;
+
+    target.addEventListener("touchstart",event=>{
+        const touch=event.changedTouches?.[0];
+        if(!touch)return;
+        startX=touch.clientX;
+        startY=touch.clientY;
+    },{passive:true});
+
+    target.addEventListener("touchend",event=>{
+        if(startX===null||startY===null)return;
+        const touch=event.changedTouches?.[0];
+        if(!touch)return;
+
+        const dx=touch.clientX-startX;
+        const dy=touch.clientY-startY;
+
+        startX=null;
+        startY=null;
+
+        if(isMobile()&&dx<-60&&Math.abs(dx)>Math.abs(dy)*1.2){
+            setOpen(false);
+        }
+    },{passive:true});
+
+    window.addEventListener("resize",()=>{
+        if(!isMobile())setOpen(false);
+    });
+}
+
+async function loadSidebar(){
+    const target=$("sidebar-component");
+    if(!target)return;
+    const response=await fetch("/components/sidebar-v3.html",{cache:"no-store"});
+    if(response.ok)target.innerHTML=await response.text();
+    const logout=$("btn-logout");
+    if(logout)logout.onclick=()=>{sessionStorage.clear();window.location.replace("/login.html")};
+    bindMobileSidebar(target,$("home-menu-toggle"));
+}
+
+document.addEventListener("DOMContentLoaded",async()=>{
+    await loadSidebar();
+    $("home-refresh")?.addEventListener("click",refresh);
+    await refresh();
+    window.setInterval(refresh,30000);
+});

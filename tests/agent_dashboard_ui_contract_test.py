@@ -29,7 +29,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
   for view in ("monitoring","events","diagnostics","updates","logs"):
    self.assertIn(f'href="agent-observability.html?view={view}"',self.detail)
   self.assertIn('telemetry-widgets.js?v=3',self.detail)
-  self.assertIn('agent-details.js?v=13',self.detail)
+  self.assertIn('agent-details.js?v=14',self.detail)
   self.assertIn('telemetry-widgets.css?v=2',self.detail)
   self.assertLess(self.detail.index('id="agent-telemetry"'),self.detail.index('id="agent-admin-panel"'))
  def test_agent_details_require_agent_context(self):
@@ -42,6 +42,17 @@ class AgentDashboardUiContractTest(unittest.TestCase):
    self.assertIn(route,self.composition)
  def test_controller_telemetry_is_on_dashboard_home(self):
   self.assertIn('id="controller-telemetry"',self.home);self.assertIn("telemetry-widgets.js",self.home);self.assertIn("/controller/telemetry?window_seconds=3600",self.home_js);self.assertIn("/api/controller/telemetry",self.latest_composition);self.assertIn("telemetry-widgets.css",self.latest_composition)
+ def test_mobile_sidebar_can_be_closed_without_browser_back(self):
+  for marker in ('class="cap-sidebar-close"','aria-label="Fechar menu"'):
+   self.assertIn(marker,self.sidebar)
+  for marker in ("pointerdown","touchstart","touchend","dx<-60","Escape","sidebar-open"):
+   self.assertIn(marker,self.detail_js)
+  for marker in ("bindMobileSidebar","pointerdown","touchstart","touchend","dx<-60","Escape"):
+   self.assertIn(marker,self.home_js)
+  self.assertIn("cap-sidebar-close", (ROOT/"dashboard/web/dashboard-home-v3.css").read_text())
+  self.assertIn("dashboard-home-v3.css?v=9",self.detail)
+  self.assertIn("agent-details.js?v=14",self.detail)
+
  def test_dashboard_v3_navigation_preserves_rbac_and_add_agent(self):
   for text in ('href="servers.html"','href="agents.html"','href="add-agent.html"','admin-only','agent-manager-only','href="catalog.html"','href="game-profiles.html"','href="observability.html#alerts"','href="operations.html#backups"'):self.assertIn(text,self.sidebar)
   self.assertNotIn("Criar instância",self.sidebar)
