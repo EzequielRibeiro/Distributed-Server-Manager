@@ -24,8 +24,8 @@ async function logout() {
     } catch (error) {
         console.warn("Logout request failed:", error);
     } finally {
-        sessionStorage.removeItem("dsm_auth");
-        sessionStorage.removeItem("dsm_customer_auth");
+        
+        
         window.location.replace("/login.html");
     }
 }
@@ -96,8 +96,8 @@ async function login() {
         // Remove every legacy credential copy. The Basic value existed only
         // during this request; normal navigation now relies on the HttpOnly
         // Controller session cookie.
-        sessionStorage.removeItem("dsm_auth");
-        sessionStorage.removeItem("dsm_customer_auth");
+        
+        
         window.location.replace(destination);
     } catch (error) {
         console.error("Login error:", error);

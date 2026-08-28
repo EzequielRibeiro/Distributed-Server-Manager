@@ -2,12 +2,12 @@
     "use strict";
 
     const API = "/api";
-    const auth = () => sessionStorage.getItem("dsm_auth") || "";
+    
     let activeView = "agents";
 
     async function request(path) {
         const response = await fetch(`${API}${path}`, {
-            headers: { Authorization: `Basic ${auth()}`, Accept: "application/json" },
+            headers: { "X-Capivara-Auth-Area":"controller", Accept: "application/json" },
             cache: "no-store"
         });
         if (response.status === 401) {
@@ -77,7 +77,7 @@
         const target = document.getElementById("sidebar-component");
         if (!target) return;
         const response = await fetch("/components/sidebar-v3.html", {
-            headers: auth() ? { Authorization: `Basic ${auth()}` } : {},
+            headers: auth() ? { "X-Capivara-Auth-Area":"controller" } : {},
             cache: "no-store"
         });
         if (!response.ok) throw new Error(`sidebar HTTP ${response.status}`);

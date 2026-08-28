@@ -1286,8 +1286,8 @@
             }
           );
         } finally {
-          sessionStorage.removeItem("dsm_auth");
-          sessionStorage.removeItem("dsm_customer_auth");
+          
+          
           location.replace("/customer-login.html");
         }
       }

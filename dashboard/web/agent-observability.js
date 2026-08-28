@@ -7,7 +7,7 @@
     const requestedView = params.get("view") || "monitoring";
     const views = new Set(["monitoring", "events", "diagnostics", "updates", "logs"]);
     const view = views.has(requestedView) ? requestedView : "monitoring";
-    const auth = () => sessionStorage.getItem("dsm_auth") || "";
+    
     let agent = {};
     let refreshTimer = null;
 
@@ -67,7 +67,7 @@
 
     async function request(path) {
         const response = await fetch(path, {
-            headers: {Authorization: `Basic ${auth()}`, Accept: "application/json"},
+            headers: {"X-Capivara-Auth-Area":"controller", Accept: "application/json"},
             cache: "no-store",
         });
         if (response.status === 401) {

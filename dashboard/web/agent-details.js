@@ -1,13 +1,13 @@
 (function(){
 "use strict";
 const el=id=>document.getElementById(id);
-const auth=()=>sessionStorage.getItem("dsm_auth")||"";
+
 let collapsed=false;
 let currentRole="";
 let currentAdmin=null;
 const params=new URLSearchParams(location.search);
 const agentId=params.get("agent_id")||params.get("id")||"";
-async function request(path,options={}){const headers={Authorization:"Basic "+auth(),Accept:"application/json",...(options.headers||{})};if(options.body&&!headers["Content-Type"])headers["Content-Type"]="application/json";const r=await fetch(path,{...options,headers,cache:"no-store"});if(r.status===401){sessionStorage.clear();location.replace("login.html");throw new Error("Sessão expirada");}const p=await r.json().catch(()=>({}));if(!r.ok)throw new Error(p.message||p.error||`HTTP ${r.status}`);return p;}
+async function request(path,options={}){const headers={"X-Capivara-Auth-Area":"controller",Accept:"application/json",...(options.headers||{})};if(options.body&&!headers["Content-Type"])headers["Content-Type"]="application/json";const r=await fetch(path,{...options,headers,cache:"no-store"});if(r.status===401){sessionStorage.clear();location.replace("login.html");throw new Error("Sessão expirada");}const p=await r.json().catch(()=>({}));if(!r.ok)throw new Error(p.message||p.error||`HTTP ${r.status}`);return p;}
 function post(path,payload){return request(path,{method:"POST",body:JSON.stringify(payload)});}
 function text(id,v){const n=el(id);if(n)n.textContent=v??"—";}function value(v,f="—"){return v===null||v===undefined||v===""?f:String(v);}function heartbeat(v){if(!v)return"—";const d=new Date(v);return Number.isNaN(d.getTime())?String(v):d.toLocaleString("pt-BR");}
 function applySidebar(c){collapsed=c;document.body.classList.toggle("cap-sidebar-collapsed",c);localStorage.setItem("cap_sidebar_collapsed",c?"1":"0");}
@@ -28,7 +28,7 @@ function bindMenu(){
         applySidebar(!collapsed);
     });
 }
-async function sidebar(){const host=el("sidebar-component"),r=await fetch("/components/sidebar-v3.html",{headers:{Authorization:"Basic "+auth()},cache:"no-store"});if(!r.ok)throw new Error(`sidebar HTTP ${r.status}`);host.innerHTML=await r.text();host.querySelectorAll("nav a").forEach(a=>a.classList.toggle("active",a.getAttribute("href")==="agents.html"));host.querySelectorAll("a").forEach(a=>a.addEventListener("click",()=>setMobileMenu(false)));
+async function sidebar(){const host=el("sidebar-component"),r=await fetch("/components/sidebar-v3.html",{headers:{"X-Capivara-Auth-Area":"controller"},cache:"no-store"});if(!r.ok)throw new Error(`sidebar HTTP ${r.status}`);host.innerHTML=await r.text();host.querySelectorAll("nav a").forEach(a=>a.classList.toggle("active",a.getAttribute("href")==="agents.html"));host.querySelectorAll("a").forEach(a=>a.addEventListener("click",()=>setMobileMenu(false)));
 host.querySelector(".cap-sidebar-close")?.addEventListener("click",()=>setMobileMenu(false));
 
 const toggle=el("agent-detail-menu-toggle");

@@ -7,7 +7,7 @@
 
     function authHeaders() {
         return {
-            Authorization: `Basic ${sessionStorage.getItem("dsm_auth") || ""}`,
+            "X-Capivara-Auth-Area":"controller",
             Accept: "application/json"
         };
     }

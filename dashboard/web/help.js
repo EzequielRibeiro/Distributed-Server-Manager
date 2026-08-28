@@ -144,7 +144,7 @@ async function initialize() {
     const logout = document.getElementById("btn-logout");
     if (logout) logout.onclick = () => { sessionStorage.clear(); location.replace("/login.html"); };
     try {
-        const response = await fetch("/api/whoami", {headers: {Authorization: `Basic ${sessionStorage.getItem("dsm_auth") || ""}`}});
+        const response = await fetch("/api/whoami", {headers: {"X-Capivara-Auth-Area":"controller"}});
         const user = await response.json();
         if (!response.ok) throw new Error(user.error || "authentication required");
         const current = document.getElementById("current-user");

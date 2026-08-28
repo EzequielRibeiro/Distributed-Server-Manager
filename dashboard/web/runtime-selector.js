@@ -144,7 +144,7 @@
 
     async function request(path, options = {}) {
         const headers = {
-            Authorization: `Basic ${auth()}`,
+            "X-Capivara-Auth-Area":"customer",
             Accept: "application/json",
         };
 
@@ -164,7 +164,7 @@
         );
 
         if (response.status === 401) {
-            sessionStorage.removeItem("dsm_auth");
+            
             window.location.href = "/login.html";
 
             throw new Error(
