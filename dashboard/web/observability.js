@@ -4,19 +4,13 @@ const OBS_API = "/api";
 const byId = id => document.getElementById(id);
 
 function authHeaders() {
-  const token = sessionStorage.getItem("dsm_auth");
-  if (!token) {
-    window.location.replace("/login.html");
-    throw new Error("auth required");
-  }
-  return {Authorization: `Basic ${token}`, Accept: "application/json"};
+  return {Accept: "application/json", "X-Capivara-Auth-Area": "controller"};
 }
 
 async function get(path) {
   try {
-    const response = await fetch(`${OBS_API}${path}`, {headers: authHeaders(), cache: "no-store"});
+    const response = await fetch(`${OBS_API}${path}`, {headers: authHeaders(), credentials: "same-origin", cache: "no-store"});
     if (response.status === 401) {
-      sessionStorage.clear();
       window.location.replace("/login.html");
       return null;
     }
@@ -216,13 +210,21 @@ async function refresh() {
   renderHealth(health);
 }
 
+async function logout() {
+  try {
+    await fetch("/api/auth/logout", {method:"POST", headers: authHeaders(), credentials:"same-origin", cache:"no-store"});
+  } finally {
+    window.location.replace("/login.html");
+  }
+}
+
 async function loadSidebar() {
   const target = byId("sidebar-component");
   if (!target) return;
-  const response = await fetch("/components/sidebar-v3.html", {cache:"no-store"});
+  const response = await fetch("/components/sidebar-v3.html", {credentials:"same-origin", cache:"no-store"});
   if (response.ok) target.innerHTML = await response.text();
-  const logout = byId("btn-logout");
-  if (logout) logout.onclick = () => { sessionStorage.clear(); window.location.replace("/login.html"); };
+  const logoutButton = byId("btn-logout");
+  if (logoutButton) logoutButton.onclick = logout;
   document.querySelectorAll(".cap-sidebar-v3 a").forEach(link => link.classList.remove("active"));
   document.querySelectorAll('.cap-sidebar-v3 a[href^="observability.html"]').forEach(link => link.classList.add("active"));
 }
