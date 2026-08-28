@@ -53,6 +53,7 @@ class CustomerSelfServiceProfileTest(unittest.TestCase):
             status, payload = profile_http.customer_profile_get(user=self.user, backend=self.backend)
             self.assertEqual(status, 200)
             self.assertFalse(payload["editable"])
+            self.assertEqual(payload["profile"]["account_role"], "member")
             status, payload = profile_http.customer_profile_update({"changes": {"phone": "1"}}, user=self.user, backend=self.backend)
         self.assertEqual(status, 403)
         self.assertEqual(payload["error"], "forbidden")
@@ -97,7 +98,7 @@ class CustomerSelfServiceProfileTest(unittest.TestCase):
         self.assertNotIn("before", event["data"])
         self.assertNotIn("after", event["data"])
 
-    def test_ui_keeps_email_read_only_and_uses_customer_endpoint(self):
+    def test_ui_keeps_email_read_only_and_uses_customer_cookie_session(self):
         script = (ROOT / "dashboard" / "web" / "customer-profile.js").read_text(encoding="utf-8")
         html = (ROOT / "dashboard" / "web" / "customer.html").read_text(encoding="utf-8")
         self.assertIn('/api/customer/profile', script)
@@ -106,6 +107,13 @@ class CustomerSelfServiceProfileTest(unittest.TestCase):
         self.assertNotIn('account_email:', script)
         self.assertIn("data-customer-profile", html)
         self.assertIn('/customer-profile.js', html)
+        self.assertIn('X-Capivara-Auth-Area', script)
+        self.assertIn('credentials:"same-origin"', script)
+        self.assertNotIn('sessionStorage', script)
+        self.assertNotIn('Authorization', script)
+        self.assertIn('/customer-login.html', script)
+        self.assertIn('customer-profile-role', script)
+        self.assertIn('emailChange.hidden=!editable', script)
 
 
 if __name__ == "__main__":
