@@ -52,10 +52,22 @@ class AgentDashboardUiContractTest(unittest.TestCase):
   self.assertIn("cap-sidebar-close", (ROOT/"dashboard/web/dashboard-home-v3.css").read_text())
   self.assertIn("dashboard-home-v3.css?v=9",self.detail)
   self.assertIn("agent-details.js?v=14",self.detail)
-
  def test_dashboard_v3_navigation_preserves_rbac_and_add_agent(self):
-  for text in ('href="servers.html"','href="agents.html"','href="add-agent.html"','admin-only','agent-manager-only','href="catalog.html"','href="game-profiles.html"','href="observability.html#alerts"','href="operations.html#backups"'):self.assertIn(text,self.sidebar)
+  for text in ('href="servers.html"','href="agents.html"','href="add-agent.html"','admin-only','agent-manager-only','href="catalog.html"','href="game-profiles.html"','href="regions.html"','href="datacenters.html"','href="placement.html"','href="observability.html"','href="alerts.html"','href="events.html"','href="monitoring.html"','href="controller-logs.html"','href="diagnostics.html"','href="operations.html#backups"'):self.assertIn(text,self.sidebar)
+  for legacy in ('infrastructure.html#regions','infrastructure.html#datacenters','infrastructure.html#placement','observability.html#alerts','observability.html#events','observability.html#monitoring','observability.html#diagnostics'):self.assertNotIn(legacy,self.sidebar)
   self.assertNotIn("Criar instância",self.sidebar)
+ def test_observability_pages_are_dedicated_and_registered(self):
+  web=ROOT/"dashboard/web"
+  pages={"alerts.html":"alerts","events.html":"events","monitoring.html":"monitoring","controller-logs.html":"logs","diagnostics.html":"diagnostics"}
+  for filename,view in pages.items():
+   content=(web/filename).read_text();self.assertIn(f'data-observability-view="{view}"',content);self.assertIn(f'/{filename}',self.composition)
+  overview=(web/"observability.html").read_text();self.assertIn('data-observability-view="overview"',overview);self.assertIn("Áreas de observabilidade",overview)
+ def test_infrastructure_pages_are_dedicated_and_registered(self):
+  web=ROOT/"dashboard/web"
+  pages={"regions.html":"infra-regions","datacenters.html":"infra-datacenters","placement.html":"infra-placement"}
+  for filename,target in pages.items():
+   content=(web/filename).read_text();self.assertIn(f'id="{target}"',content);self.assertIn('infrastructure-v3.js?v=3',content);self.assertIn(f'/{filename}',self.composition)
+  self.assertIn('const current=location.pathname.split("/").pop()',self.infrastructure_js)
  def test_agent_v3_routes_are_registered_in_composition_layer(self):
   for route in ("/agents.html","/agents-v3.js","/agents-v3.css","/agent-steam-status.css","/add-agent.html","/add-agent-v3.css","/agent-details.html","/agent-details.js","/agent-details.css","/agent-observability.html","/agent-observability.js","/agent-observability.css","/catalog-installation.css"):self.assertIn(route,self.composition)
   self.assertIn('dashboard/server_part17.py',self.service);self.assertIn('import server_part14 as integration',self.resource_composition);self.assertIn('import server_part15 as integration',self.file_composition);self.assertIn('import server_part16 as integration',self.latest_composition)
@@ -65,10 +77,10 @@ class AgentDashboardUiContractTest(unittest.TestCase):
   for text in ("--cap-bg:#0b111b","background:var(--cap-bg)!important","color-scheme:dark"):self.assertIn(text,self.servers_css)
   self.assertIn('window.innerWidth<=760',self.servers_js);self.assertIn('classList.toggle("sidebar-open")',self.servers_js);self.assertNotIn("cap-sidebar-open",self.servers_js)
   for route in ("/servers.html","/servers.js","/servers.css"):self.assertIn(route,self.composition)
-  observability=(ROOT/"dashboard/web/observability.html").read_text()
-  self.assertIn("servers.html",(ROOT/"dashboard/web/servers-v2.html").read_text());self.assertNotIn('id="log-agent"',observability);self.assertIn("Logs do Controller",observability);self.assertIn('metadata["recent_logs"]',(ROOT/"dashboard/agent_heartbeat_api.py").read_text())
+  controller_logs=(ROOT/"dashboard/web/controller-logs.html").read_text()
+  self.assertIn("servers.html",(ROOT/"dashboard/web/servers-v2.html").read_text());self.assertNotIn('id="log-agent"',controller_logs);self.assertIn("Logs do Controller",controller_logs);self.assertIn('metadata["recent_logs"]',(ROOT/"dashboard/agent_heartbeat_api.py").read_text())
  def test_infrastructure_can_assign_agent_datacenter(self):
   for text in ("Datacenter do Agent","Vincular datacenter","Alterar localização","Region derivada:",'/agent/location','datacenter_id:select.value','status:\"active\"'):self.assertIn(text,self.infrastructure_js)
-  self.assertIn('infrastructure-v3.js?v=2',self.infrastructure_html);self.assertIn('infrastructure-v3.css?v=2',self.infrastructure_html)
+  self.assertIn('infrastructure-v3.js?v=3',self.infrastructure_html);self.assertIn('infrastructure-v3.css?v=2',self.infrastructure_html)
   for text in ("cap-agent-location-form","cap-agent-location-region","cap-agent-location-feedback"):self.assertIn(text,self.infrastructure_css)
 if __name__=="__main__":unittest.main()
