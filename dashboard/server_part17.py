@@ -11,6 +11,7 @@ from agent_storage_pool_admin_http import install_agent_storage_pool_administrat
 from alert_management_http import install_alert_management
 from artifact_transfer_http import install_artifact_transfer_http
 from backup_clone_http import install_backup_clone_http
+from browser_session_http import install_browser_session_http
 from catalog_runtime_policy_http import RUNTIME_POLICY_PATH,dispatch_catalog_runtime_policy_get,dispatch_catalog_runtime_policy_put
 from contract_upgrade_http import install_contract_upgrade_api
 from controller_telemetry import controller_telemetry
@@ -80,7 +81,7 @@ install_customer_health_http(legacy,_authenticate)
 install_agent_administration(legacy,_authenticate)
 install_agent_public_network(legacy,_authenticate)
 install_agent_storage_pool_administration(legacy,_authenticate)
-install_storage_pool_source_cleanup(legacy,_authenticate)
+install_storage_pool_source_cleanup_http(legacy,_authenticate)
 install_customer_profile_administration(legacy,_authenticate)
 install_customer_profile_self_service(legacy,_authenticate)
 install_customer_email_change(legacy,_authenticate)
@@ -89,5 +90,6 @@ ensure_customer_discord_schema(legacy)
 install_customer_discord(legacy,_authenticate)
 install_customer_discord_oauth_callback(legacy)
 install_admin_observability(legacy,_authenticate)
+install_browser_session_http(legacy,integration.integration.integration.integration.integration.integration.part8.credential_authenticate)
 def run():run_dashboard(legacy)
 if __name__=="__main__":run()
