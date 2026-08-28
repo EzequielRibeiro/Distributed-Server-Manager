@@ -1118,9 +1118,19 @@ wait_for_service_readiness() {
 
 wait_for_dashboard_readiness() {
     local DASHBOARD_URL="$1"
+    local DASHBOARD_SCHEME="${2:-http}"
     local DEADLINE=$((SECONDS + READINESS_TIMEOUT))
+    local -a CURL_ARGS=(--fail --silent --show-error --max-time 5)
 
-    until curl --fail --silent --show-error --max-time 5 "${DASHBOARD_URL}" >/dev/null
+    # The loopback readiness probe verifies that the HTTPS listener is alive,
+    # not the public certificate identity. A public certificate normally does
+    # not contain 127.0.0.1, so only this local probe skips hostname validation.
+    if [[ "${DASHBOARD_SCHEME}" == "https" ]]
+    then
+        CURL_ARGS+=(--insecure)
+    fi
+
+    until curl "${CURL_ARGS[@]}" "${DASHBOARD_URL}" >/dev/null
     do
         if (( SECONDS >= DEADLINE ))
         then
@@ -1134,7 +1144,9 @@ wait_for_dashboard_readiness() {
 validate_runtime_readiness() {
     local SERVICE_NAME
     local DASHBOARD_RESTORED=0
-    local DASHBOARD_PORT_VALUE="8080"
+    local DASHBOARD_SCHEME_VALUE="${DSM_WEB_SCHEME:-http}"
+    local DASHBOARD_PORT_VALUE="${DSM_WEB_PORT:-}"
+    local DASHBOARD_URL
 
     echo
     echo "Validando readiness pós-atualização..."
@@ -1157,15 +1169,45 @@ validate_runtime_readiness() {
 
     if [[ "${DASHBOARD_RESTORED}" -eq 1 ]]
     then
-        if [[ -r "${INSTALL_DIR}/dashboard/config/dashboard.conf" ]]
+        DASHBOARD_SCHEME_VALUE="${DASHBOARD_SCHEME_VALUE,,}"
+        case "${DASHBOARD_SCHEME_VALUE}" in
+            http|https)
+                ;;
+            *)
+                echo "[ERROR] Transporte do Dashboard inválido | Invalid Dashboard transport: ${DASHBOARD_SCHEME_VALUE}" >&2
+                return 1
+                ;;
+        esac
+
+        # Compatibility fallback for installations created before DSM_WEB_PORT
+        # became authoritative in config/dsm.conf.
+        if [[ -z "${DASHBOARD_PORT_VALUE}" \
+            && -r "${INSTALL_DIR}/dashboard/config/dashboard.conf" ]]
         then
             DASHBOARD_PORT_VALUE=$(awk -F= '$1 == "PORT" {gsub(/[^0-9]/, "", $2); print $2; exit}' \
                 "${INSTALL_DIR}/dashboard/config/dashboard.conf")
-            DASHBOARD_PORT_VALUE="${DASHBOARD_PORT_VALUE:-8080}"
         fi
-        wait_for_dashboard_readiness \
-            "http://127.0.0.1:${DASHBOARD_PORT_VALUE}/health"
-        echo "[OK] Dashboard HTTP /health"
+
+        if [[ -z "${DASHBOARD_PORT_VALUE}" ]]
+        then
+            if [[ "${DASHBOARD_SCHEME_VALUE}" == "https" ]]
+            then
+                DASHBOARD_PORT_VALUE="8443"
+            else
+                DASHBOARD_PORT_VALUE="8080"
+            fi
+        fi
+
+        if [[ ! "${DASHBOARD_PORT_VALUE}" =~ ^[0-9]+$ ]] \
+            || (( DASHBOARD_PORT_VALUE < 1 || DASHBOARD_PORT_VALUE > 65535 ))
+        then
+            echo "[ERROR] Porta do Dashboard inválida | Invalid Dashboard port: ${DASHBOARD_PORT_VALUE}" >&2
+            return 1
+        fi
+
+        DASHBOARD_URL="${DASHBOARD_SCHEME_VALUE}://127.0.0.1:${DASHBOARD_PORT_VALUE}/health"
+        wait_for_dashboard_readiness "${DASHBOARD_URL}" "${DASHBOARD_SCHEME_VALUE}"
+        echo "[OK] Dashboard ${DASHBOARD_SCHEME_VALUE^^} /health"
     fi
 }
 
