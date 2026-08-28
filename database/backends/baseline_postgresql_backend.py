@@ -63,11 +63,10 @@ class BaselinePostgreSQLBackend(PostgreSQLBackend):
         return initialize_baseline(self)
 
     def migrate(self) -> Mapping[str, Any]:
-        # DatabaseBackend.migrate() is the mutating upgrade operation. Baseline
-        # v2 reconciliation is centralized in initialize_baseline(), which
-        # applies/records only registered additive upgrades and remains
-        # idempotent for an already-current database.
-        return initialize_baseline(self)
+        # Reconcile first, then return the strict health payload expected by the
+        # manager `migrate` command (including `valid`).
+        initialize_baseline(self)
+        return validate_baseline(self)
 
     def status(self) -> Mapping[str, Any]:
         return baseline_status(self)
