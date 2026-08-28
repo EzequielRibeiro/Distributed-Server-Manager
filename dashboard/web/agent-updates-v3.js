@@ -2,7 +2,7 @@
 
 (() => {
     const el = id => document.getElementById(id);
-    const auth = () => sessionStorage.getItem("dsm_auth") || "";
+    const controllerHeaders = () => ({Accept: "application/json", "X-Capivara-Auth-Area": "controller"});
     const ACTIVE_STATES = new Set(["planned", "updating", "verifying"]);
     const PROGRESS = {
         planned: [15, "Rollout planejado", "Aguardando o Agent receber a atualização."],
@@ -17,15 +17,15 @@
         const response = await fetch(`/api${path}`, {
             ...options,
             headers: {
-                Authorization: `Basic ${auth()}`,
-                Accept: "application/json",
+                ...controllerHeaders(),
                 ...(options.body ? {"Content-Type": "application/json"} : {}),
                 ...(options.headers || {})
-            }
+            },
+            credentials: "same-origin",
+            cache: options.cache || "no-store"
         });
         if (response.status === 401) {
-            sessionStorage.clear();
-            location.replace("login.html");
+            location.replace("/login.html");
             throw new Error("Sessão expirada");
         }
         const payload = await response.json().catch(() => ({}));
