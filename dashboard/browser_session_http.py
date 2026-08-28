@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import json
-import mimetypes
-from pathlib import Path
 from urllib.parse import urlparse
 
 from controller_session import (
@@ -21,6 +19,7 @@ from customer_security import customer_rate_limiter, remote_identity
 
 ADMIN_LOGIN_PATH = "/api/auth/login"
 CUSTOMER_LOGIN_PATH = "/api/customer/auth/session"
+CUSTOMER_LOGOUT_PATH = "/api/customer/auth/logout"
 LOGOUT_PATH = "/api/auth/logout"
 SESSION_PATH = "/api/auth/session"
 BRIDGE_PATH = "/browser-session-bridge.js"
@@ -43,9 +42,9 @@ def _send(handler, status: int, payload: dict, *, cookie: str | None = None) -> 
     handler.wfile.write(body)
 
 
-def _replace_session(handler, user: dict) -> str:
-    revoke_session(session_token_from_headers(handler.headers))
-    return create_session(user)
+def _replace_session(handler, user: dict, *, area: str) -> str:
+    revoke_session(session_token_from_headers(handler.headers, area=area))
+    return create_session(user, area=area)
 
 
 def _login_allowed(handler, bucket: str, *, limit: int = 10, window: int = 300) -> bool:
@@ -64,75 +63,41 @@ def _login_allowed(handler, bucket: str, *, limit: int = 10, window: int = 300) 
     return False
 
 
-def _serve_html_with_bridge(handler, path: Path) -> bool:
-    if path.suffix.lower() != ".html":
-        return False
-    if session_user_from_headers(handler.headers) is None:
-        return False
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        return False
-    if BRIDGE_TAG not in text:
-        if "</head>" in text:
-            text = text.replace("</head>", f"{BRIDGE_TAG}</head>", 1)
-        elif "</body>" in text:
-            text = text.replace("</body>", f"{BRIDGE_TAG}</body>", 1)
-        else:
-            text = BRIDGE_TAG + text
-    body = text.encode("utf-8")
-    handler.send_response(200)
-    handler.send_header("Content-Type", mimetypes.guess_type(str(path))[0] or "text/html; charset=utf-8")
-    # The existing Dashboard still uses inline *style attributes* for dynamic
-    # widths/visibility in several legacy widgets. Keep script execution locked
-    # to same-origin while allowing those styles until that frontend debt is
-    # removed. Do not enable unsafe-inline for scripts.
-    handler.send_header(
-        "Content-Security-Policy",
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-        "connect-src 'self'; img-src 'self' data:; font-src 'self'; "
-        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
-    )
-    handler.send_header("X-Content-Type-Options", "nosniff")
-    handler.send_header("X-Frame-Options", "DENY")
-    handler.send_header("Cache-Control", "no-store")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.end_headers()
-    handler.wfile.write(body)
-    return True
-
-
 def install_browser_session_http(legacy, controller_credential_authenticator) -> None:
     """Install the final web-session boundary after all legacy HTTP wrappers."""
     previous_get = legacy.DashboardHandler.do_GET
     previous_post = legacy.DashboardHandler.do_POST
-    previous_send_file = legacy.DashboardHandler.send_file
     legacy.STATIC_FILES[BRIDGE_PATH] = legacy.WEB_DIR / "browser-session-bridge.js"
-
-    def session_aware_send_file(self, path):
-        candidate = Path(path)
-        if _serve_html_with_bridge(self, candidate):
-            return
-        return previous_send_file(self, path)
 
     def browser_session_get(self):
         path = urlparse(self.path).path
-        if path != SESSION_PATH:
+
+        if path == SESSION_PATH:
+            area = "controller"
+        elif path == CUSTOMER_LOGIN_PATH:
+            area = "customer"
+        else:
             return previous_get(self)
-        user = session_user_from_headers(self.headers)
+
+        user = session_user_from_headers(self.headers, area=area)
         if user is None:
             _send(self, 401, {"authenticated": False})
             return
-        _send(
-            self,
-            200,
-            {
-                "authenticated": True,
-                "username": user.get("username", ""),
-                "role": user.get("role", ""),
-                "scope_id": user.get("scope_id", ""),
-            },
-        )
+
+        payload = {
+            "authenticated": True,
+            "username": user.get("username", ""),
+            "role": user.get("role", ""),
+            "scope_id": user.get("scope_id", ""),
+        }
+
+        if user.get("customer_id") is not None:
+            payload["customer_id"] = user["customer_id"]
+
+        if user.get("customer_code"):
+            payload["customer_code"] = user["customer_code"]
+
+        _send(self, 200, payload)
 
     def browser_session_post(self):
         path = urlparse(self.path).path
@@ -141,20 +106,22 @@ def install_browser_session_http(legacy, controller_credential_authenticator) ->
                 return
             user = controller_credential_authenticator(self.headers)
             if user is None or user.get("role") not in {"admin", "controller", "operator"}:
-                revoke_session(session_token_from_headers(self.headers))
+                revoke_session(
+                    session_token_from_headers(self.headers, area="controller")
+                )
                 _send(
                     self,
                     401,
                     {"error": "invalid_credentials", "message": "Usuário ou senha inválidos."},
-                    cookie=expired_cookie_header(),
+                    cookie=expired_cookie_header(area="controller"),
                 )
                 return
-            token = _replace_session(self, user)
+            token = _replace_session(self, user, area="controller")
             _send(
                 self,
                 200,
                 {"authenticated": True, "role": user.get("role"), "username": user.get("username")},
-                cookie=cookie_header(token),
+                cookie=cookie_header(token, area="controller"),
             )
             return
 
@@ -167,36 +134,51 @@ def install_browser_session_http(legacy, controller_credential_authenticator) ->
             except Exception:
                 user = None
             if user is None or user.get("role") != "customer":
-                revoke_session(session_token_from_headers(self.headers))
+                revoke_session(
+                    session_token_from_headers(self.headers, area="customer")
+                )
                 _send(
                     self,
                     401,
                     {"error": "invalid_credentials", "message": "Usuário ou senha inválidos."},
-                    cookie=expired_cookie_header(),
+                    cookie=expired_cookie_header(area="customer"),
                 )
                 return
-            token = _replace_session(self, user)
+            token = _replace_session(self, user, area="customer")
             _send(
                 self,
                 200,
                 {"authenticated": True, "role": "customer", "username": user.get("username")},
-                cookie=cookie_header(token),
+                cookie=cookie_header(token, area="customer"),
             )
             return
 
         if path == LOGOUT_PATH:
-            revoke_session(session_token_from_headers(self.headers))
+            revoke_session(
+                session_token_from_headers(self.headers, area="controller")
+            )
             _send(
                 self,
                 200,
                 {"authenticated": False},
-                cookie=expired_cookie_header(),
+                cookie=expired_cookie_header(area="controller"),
+            )
+            return
+
+        if path == CUSTOMER_LOGOUT_PATH:
+            revoke_session(
+                session_token_from_headers(self.headers, area="customer")
+            )
+            _send(
+                self,
+                200,
+                {"authenticated": False},
+                cookie=expired_cookie_header(area="customer"),
             )
             return
 
         return previous_post(self)
 
-    legacy.DashboardHandler.send_file = session_aware_send_file
     legacy.DashboardHandler.do_GET = browser_session_get
     legacy.DashboardHandler.do_POST = browser_session_post
 
@@ -205,6 +187,7 @@ __all__ = [
     "ADMIN_LOGIN_PATH",
     "BRIDGE_PATH",
     "CUSTOMER_LOGIN_PATH",
+    "CUSTOMER_LOGOUT_PATH",
     "LOGOUT_PATH",
     "SESSION_PATH",
     "install_browser_session_http",

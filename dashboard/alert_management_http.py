@@ -22,7 +22,7 @@ def install_alert_management(legacy, authenticate) -> None:
         return legacy.dashboard_repository(legacy.DATABASE_FILE).backend
 
     def identity(headers):
-        return session_user_from_headers(headers) or authenticate(headers)
+        return session_user_from_headers(headers, area="controller") or authenticate(headers)
 
     def authorized(self):
         user = identity(self.headers)

@@ -35,20 +35,55 @@ def _limit(handler,bucket,key,*,limit,window):
     decision=customer_rate_limiter.check(bucket,key,limit=limit,window_seconds=window)
     if decision.allowed:return True
     handler.send_response(429);handler.send_header("Content-Type","application/json; charset=utf-8");handler.send_header("Retry-After",str(decision.retry_after));body=b'{"error":"too many requests"}';handler.send_header("Content-Length",str(len(body)));handler.end_headers();handler.wfile.write(body);return False
-def integrated_authenticate(headers):
-    user=_original_authenticate(headers)
+def integrated_controller_authenticate(headers):
+    user = session_user_from_headers(headers, area="controller")
+    if user is not None:
+        return user if user.get("role") in {"admin", "controller", "operator"} else None
 
-    # The legacy authenticator still recognizes Customer accounts, but its
-    # identity payload only carries the compatibility scope_id field.
-    # Baseline v2 Customer requests must always use the canonical Customer
-    # authenticator so customer_id/customer_code are preserved.
-    if user is not None and user.get("role") != "customer":
+    user = _original_authenticate(headers)
+    if user is not None and user.get("role") in {"admin", "controller", "operator"}:
+        return user
+    return None
+
+
+def integrated_customer_authenticate(headers):
+    user = session_user_from_headers(headers, area="customer")
+    if user is not None:
+        return user if user.get("role") == "customer" else None
+
+    try:
+        user = authenticate_customer(headers, _backend())
+    except Exception:
+        return None
+
+    return user if user is not None and user.get("role") == "customer" else None
+
+
+def integrated_authenticate(headers):
+    """Compatibility only for legacy endpoints whose area is not explicit."""
+    controller = session_user_from_headers(headers, area="controller")
+    customer = session_user_from_headers(headers, area="customer")
+
+    # Never guess when both browser identities coexist.
+    if controller is not None and customer is not None:
+        return None
+
+    if controller is not None:
+        return controller
+
+    if customer is not None:
+        return customer
+
+    user = _original_authenticate(headers)
+    if user is not None and user.get("role") in {"admin", "controller", "operator"}:
         return user
 
     try:
-        return authenticate_customer(headers,_backend())
+        user = authenticate_customer(headers, _backend())
     except Exception:
         return None
+
+    return user if user is not None and user.get("role") == "customer" else None
 
 def credential_authenticate(headers):
     return authenticate_login_credentials(
@@ -57,10 +92,10 @@ def credential_authenticate(headers):
         customer_authenticator=lambda request_headers: authenticate_customer(request_headers,_backend()),
     )
 def reject_login(self):
-    token=session_token_from_headers(self.headers);revoke_session(token)
+    token=session_token_from_headers(self.headers,area="controller");revoke_session(token)
     body=b'{"error":"unauthorized"}'
     self.send_response(401);self.send_header("Content-Type","application/json; charset=utf-8")
-    self.send_header("Set-Cookie",expired_cookie_header());self.send_header("Cache-Control","no-store")
+    self.send_header("Set-Cookie",expired_cookie_header(area="controller"));self.send_header("Cache-Control","no-store")
     self.send_header("Content-Length",str(len(body)));self.end_headers();self.wfile.write(body)
 def _require_area_role(handler,user,allowed_roles):
     if user is None:handler.unauthorized();return False
@@ -89,7 +124,10 @@ legacy.authenticate=integrated_authenticate;legacy.instance_permission_profile=i
 
 def _instance_from_values(server,game,instance):return legacy.instance_identity_path(str(server or ""),str(game or ""),str(instance or ""))
 def _html_with_scripts(source:Path,scripts:list[str]):
-    text=source.read_text(encoding="utf-8");tags="".join(f'<script src="{item}"></script>' for item in scripts);return (text.replace("</body>",tags+"</body>") if "</body>" in text else text+tags).encode("utf-8")
+    text=source.read_text(encoding="utf-8")
+    all_scripts=["/browser-session-bridge.js?v=1",*scripts]
+    tags="".join(f'<script src="{item}"></script>' for item in all_scripts)
+    return (text.replace("</body>",tags+"</body>") if "</body>" in text else text+tags).encode("utf-8")
 def _send_html(self,body):self.send_response(200);self.send_header("Content-Type","text/html; charset=utf-8");self.send_header("Content-Length",str(len(body)));self.end_headers();self.wfile.write(body)
 def _serve_instance_page(self):_send_html(self,_html_with_scripts(legacy.WEB_DIR/"customer-instance.html",["/customer-deletion-v2.js","/customer-overview-v2.js"]))
 def _serve_customer_page(self):_send_html(self,_html_with_scripts(legacy.WEB_DIR/"customer.html",["/customer-deleted-backups.js"]))
@@ -107,7 +145,7 @@ def integrated_get(self):
         if not _require_area_role(self,user,{"customer"}):return
         self.send_file(CUSTOMER_AUTHENTICATED_FILES[path]);return
     if path in CUSTOMER_PROTECTED_PAGES:
-        user=session_user_from_headers(self.headers)
+        user=session_user_from_headers(self.headers,area="customer")
         if user is None:
             self.send_response(302)
             self.send_header("Location","/customer-login.html")
@@ -121,7 +159,7 @@ def integrated_get(self):
         else:self.send_file(legacy.STATIC_FILES[path])
         return
     if path in CONTROLLER_PROTECTED_PAGES:
-        user=session_user_from_headers(self.headers)
+        user=session_user_from_headers(self.headers,area="controller")
         if user is None:
             self.send_response(302)
             self.send_header("Location","/login.html")
@@ -205,14 +243,14 @@ def integrated_post(self):
         if user is None:
             reject_login(self)
             return
-        if user.get("role") not in {"admin","controller","operator","customer"}:
+        if user.get("role") not in {"admin","controller","operator"}:
             self.forbidden()
             return
-        token=create_session(user)
+        token=create_session(user,area="controller")
         body=b'{"authenticated":true}'
         self.send_response(200)
         self.send_header("Content-Type","application/json; charset=utf-8")
-        self.send_header("Set-Cookie",cookie_header(token))
+        self.send_header("Set-Cookie",cookie_header(token,area="controller"))
         self.send_header("Cache-Control","no-store")
         self.send_header("Content-Length",str(len(body)))
         self.end_headers()

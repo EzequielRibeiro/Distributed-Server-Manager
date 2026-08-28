@@ -56,10 +56,15 @@ def test_controller_shell_does_not_require_basic_auth_header():
     controller_block = SOURCE[start:end]
 
     assert "integrated_authenticate(self.headers)" not in controller_block
-    assert "session_user_from_headers(self.headers)" in controller_block
+    assert 'session_user_from_headers(self.headers,area="controller")' in controller_block
     assert '_require_area_role(' in controller_block
     assert '{"admin","controller","operator"}' in controller_block
     assert 'self.send_header("Location","/login.html")' in controller_block
+
+
+def test_protected_pages_use_area_specific_browser_sessions():
+    assert 'session_user_from_headers(self.headers,area="customer")' in SOURCE
+    assert 'session_user_from_headers(self.headers,area="controller")' in SOURCE
 
 
 def test_customer_apis_reject_admin_controller_sessions():

@@ -42,7 +42,7 @@ def install_customer_management_dashboard(legacy) -> None:
     def customer_management_get(self):
         path = urlparse(self.path).path
         if path in CUSTOMER_MANAGEMENT_PAGES:
-            user = session_user_from_headers(self.headers)
+            user = session_user_from_headers(self.headers, area="controller")
             if user is None:
                 self.send_response(302)
                 self.send_header("Location", "/login.html")

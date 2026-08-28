@@ -32,7 +32,7 @@ def install_dashboard_activity_audit(legacy, authenticate) -> None:
         return ActivityAuditRepository(backend())
 
     def identity(headers):
-        return session_user_from_headers(headers) or authenticate(headers)
+        return session_user_from_headers(headers, area="controller") or authenticate(headers)
 
     def record_auth(user, action, self):
         if user is None:
@@ -121,11 +121,11 @@ def install_dashboard_activity_audit(legacy, authenticate) -> None:
             self.send_json(401, {"error": "unauthorized"})
             return
         record_auth(user, "auth.logout", self)
-        revoke_session(session_token_from_headers(self.headers))
+        revoke_session(session_token_from_headers(self.headers, area="controller"))
         body = b'{"logged_out":true}'
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Set-Cookie", expired_cookie_header())
+        self.send_header("Set-Cookie", expired_cookie_header(area="controller"))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()

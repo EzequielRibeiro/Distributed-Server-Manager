@@ -28,7 +28,7 @@ class CustomerSessionAuthTest(unittest.TestCase):
             return None
 
         user = authenticate_browser_customer(
-            {"Cookie": "capivara_session=abc"},
+            {"Cookie": "capivara_customer_session=abc"},
             session_authenticator=session_auth,
             fallback_authenticator=fallback_auth,
         )

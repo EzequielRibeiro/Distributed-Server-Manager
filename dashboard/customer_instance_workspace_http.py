@@ -16,7 +16,7 @@ def install_customer_instance_workspace(legacy,authenticate):
  def service():return CustomerInstanceWorkspaceService(backend(),legacy.DSM_ROOT)
  def activity_repo():return InstanceActivityRepository(backend())
  def user_for(self):
-  value=session_user_from_headers(self.headers)
+  value=session_user_from_headers(self.headers, area="customer")
   if value is not None:return value
   try:return authenticate(self.headers)
   except Exception:return None

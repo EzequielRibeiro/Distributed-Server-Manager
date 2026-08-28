@@ -13,7 +13,7 @@ def install_customer_instance_team(legacy,authenticate):
  previous_get=legacy.DashboardHandler.do_GET;previous_post=legacy.DashboardHandler.do_POST;previous_patch=getattr(legacy.DashboardHandler,"do_PATCH",None)
  def backend():return legacy.dashboard_repository(legacy.DATABASE_FILE).backend
  def actor(self):
-  value=session_user_from_headers(self.headers)
+  value=session_user_from_headers(self.headers, area="customer")
   if value is not None:return value
   try:return authenticate(self.headers)
   except Exception:return None

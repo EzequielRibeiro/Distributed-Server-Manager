@@ -40,7 +40,7 @@ def integrated_post(self):
     if path != INSTANCE_CREATE_PATH:
         return _previous_post(self)
 
-    user = integration.integrated_authenticate(self.headers)
+    user = integration.integrated_customer_authenticate(self.headers)
     if user is None:
         self.unauthorized()
         return

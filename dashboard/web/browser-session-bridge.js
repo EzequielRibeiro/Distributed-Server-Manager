@@ -25,9 +25,14 @@
         return nativeFetch(input, options);
     };
 
-    async function logout(destination) {
+    async function logout(destination, area) {
+        const endpoint =
+            area === "customer"
+                ? "/api/customer/auth/logout"
+                : "/api/auth/logout";
+
         try {
-            await nativeFetch("/api/auth/logout", {
+            await nativeFetch(endpoint, {
                 method: "POST",
                 credentials: "same-origin",
                 headers: {Accept: "application/json"},
@@ -47,7 +52,11 @@
         if (!button) return;
         event.preventDefault();
         event.stopImmediatePropagation();
-        logout(button.id === "customer-logout" ? "/customer-login.html" : "/login.html");
+        const customer = button.id === "customer-logout";
+        logout(
+            customer ? "/customer-login.html" : "/login.html",
+            customer ? "customer" : "controller"
+        );
     }, true);
 
     window.CapivaraBrowserSession = Object.freeze({logout});

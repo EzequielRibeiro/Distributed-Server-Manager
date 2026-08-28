@@ -21,7 +21,7 @@ def install_customer_instance_connection(legacy, authenticate):
         return legacy.dashboard_repository(legacy.DATABASE_FILE).backend
 
     def user_for(self):
-        value = session_user_from_headers(self.headers)
+        value = session_user_from_headers(self.headers, area="customer")
         if value is not None:
             return value
         try:

@@ -21,7 +21,7 @@ def install_artifact_transfer_http(legacy,authenticate):
   try:return AgentPairingRepository(backend()).authenticate(credential_id=str(self.headers.get("X-Capivara-Agent-Credential") or ""),credential_secret=str(self.headers.get("X-Capivara-Agent-Secret") or ""),fingerprint=str(self.headers.get("X-Capivara-Agent-Fingerprint") or "") or None)
   except AgentCredentialInvalid:return None
  def actor(self):
-  value=session_user_from_headers(self.headers)
+  value=session_user_from_headers(self.headers,area="customer")
   if value is not None:return value
   try:return authenticate(self.headers)
   except Exception:return None

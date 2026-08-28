@@ -11,7 +11,7 @@ def install_backup_clone_http(legacy,authenticate):
  previous_get=legacy.DashboardHandler.do_GET;root=Path(legacy.DSM_ROOT)
  def backend():return legacy.dashboard_repository(legacy.DATABASE_FILE).backend
  def actor(self):
-  user=session_user_from_headers(self.headers)
+  user=session_user_from_headers(self.headers, area="customer")
   if user is not None:return user
   try:return authenticate(self.headers)
   except Exception:return None

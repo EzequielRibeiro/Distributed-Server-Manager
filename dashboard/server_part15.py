@@ -22,7 +22,9 @@ _previous_post = legacy.DashboardHandler.do_POST
 _previous_put = getattr(legacy.DashboardHandler, "do_PUT", None)
 _previous_patch = getattr(legacy.DashboardHandler, "do_PATCH", None)
 _previous_delete = getattr(legacy.DashboardHandler, "do_DELETE", None)
-_authenticate = integration.integration._authenticate
+_controller_authenticate = integration.integration._controller_authenticate
+_customer_authenticate = integration.integration._customer_authenticate
+_authenticate = _controller_authenticate
 _ROOT = Path(__file__).resolve().parents[1]
 
 

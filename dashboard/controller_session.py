@@ -13,7 +13,11 @@ import time
 from email.utils import formatdate
 
 
-SESSION_COOKIE = "capivara_session"
+CONTROLLER_SESSION_COOKIE = "capivara_controller_session"
+CUSTOMER_SESSION_COOKIE = "capivara_customer_session"
+
+# Compatibility name. New code must select an explicit area.
+SESSION_COOKIE = CONTROLLER_SESSION_COOKIE
 SESSION_TTL = int(os.environ.get("DSM_BROWSER_SESSION_TTL_SECONDS", str(8 * 60 * 60)))
 SESSION_FILE = Path(
     os.environ.get(
@@ -79,20 +83,50 @@ def _cookie_secure() -> bool:
     return os.environ.get("DSM_WEB_SCHEME", "http").strip().lower() == "https"
 
 
-def create_session(user: dict) -> str:
+def create_session(user: dict, *, area: str | None = None) -> str:
     _load_sessions()
     token = secrets.token_urlsafe(48)
     now = int(time.time())
+
+    role = str(user.get("role") or "").strip().lower()
+
+    # Preserve compatibility with existing internal callers while making every
+    # newly-created browser session carry an explicit authentication domain.
+    if area is None:
+        normalized_area = "customer" if role == "customer" else "controller"
+    else:
+        normalized_area = str(area or "").strip().lower()
+
+    if normalized_area not in {"controller", "customer"}:
+        raise ValueError(f"invalid session area: {area}")
+
+    if normalized_area == "controller":
+        if role not in {"admin", "controller", "operator"}:
+            raise ValueError("controller session requires a Controller role")
+    elif role != "customer":
+        raise ValueError("customer session requires the Customer role")
+
     session = {
         "username": user["username"],
         "role": user["role"],
         "scope_id": user.get("scope_id", ""),
+        "area": normalized_area,
         "created_at": now,
         "expires_at": now + SESSION_TTL,
     }
+
+    # Customer sessions must preserve the canonical Customer identity.
+    # Never persist password hashes, Basic credentials, or other secrets.
+    if user.get("customer_id") is not None:
+        session["customer_id"] = user["customer_id"]
+
+    if user.get("customer_code"):
+        session["customer_code"] = user["customer_code"]
+
     with _lock:
         _sessions[_token_key(token)] = session
         _persist_sessions()
+
     return token
 
 
@@ -139,31 +173,80 @@ def revoke_user_sessions(username: str, *, role: str | None = None) -> int:
     return removed
 
 
-def session_token_from_headers(headers) -> str | None:
+def _cookie_name(area: str = "controller") -> str:
+    normalized = str(area or "controller").strip().lower()
+    if normalized == "customer":
+        return CUSTOMER_SESSION_COOKIE
+    if normalized == "controller":
+        return CONTROLLER_SESSION_COOKIE
+    raise ValueError(f"invalid session area: {area}")
+
+
+def session_token_from_headers(headers, *, area: str = "controller") -> str | None:
+    cookie_name = _cookie_name(area)
     raw = headers.get("Cookie", "")
     for item in raw.split(";"):
         name, separator, value = item.strip().partition("=")
-        if separator and name == SESSION_COOKIE:
+        if separator and name == cookie_name:
             return value or None
     return None
 
 
-def session_user_from_headers(headers) -> dict | None:
-    token = session_token_from_headers(headers)
+def session_user_from_headers(headers, *, area: str = "controller") -> dict | None:
+    token = session_token_from_headers(headers, area=area)
     session = get_session(token)
+
     if session is None:
         return None
-    return {
+
+    normalized_area = str(area or "controller").strip().lower()
+    if normalized_area not in {"controller", "customer"}:
+        return None
+
+    role = str(session.get("role") or "").strip().lower()
+    session_area = str(session.get("area") or "").strip().lower()
+
+    # New sessions are bound cryptographically to a stored authentication
+    # domain. Older persisted sessions did not contain "area", so their role is
+    # used as a fail-closed compatibility boundary.
+    if session_area:
+        if session_area != normalized_area:
+            return None
+    elif normalized_area == "customer":
+        if role != "customer":
+            return None
+    elif role not in {"admin", "controller", "operator"}:
+        return None
+
+    if normalized_area == "customer" and role != "customer":
+        return None
+
+    if normalized_area == "controller" and role not in {
+        "admin",
+        "controller",
+        "operator",
+    }:
+        return None
+
+    user = {
         "username": session["username"],
         "role": session["role"],
         "scope_id": session.get("scope_id", ""),
     }
 
+    if session.get("customer_id") is not None:
+        user["customer_id"] = session["customer_id"]
 
-def cookie_header(token: str) -> str:
+    if session.get("customer_code"):
+        user["customer_code"] = session["customer_code"]
+
+    return user
+
+
+def cookie_header(token: str, *, area: str = "controller") -> str:
     expires = formatdate(time.time() + SESSION_TTL, usegmt=True)
     flags = [
-        f"{SESSION_COOKIE}={token}",
+        f"{_cookie_name(area)}={token}",
         "Path=/",
         "HttpOnly",
         "SameSite=Strict",
@@ -175,9 +258,9 @@ def cookie_header(token: str) -> str:
     return "; ".join(flags)
 
 
-def expired_cookie_header() -> str:
+def expired_cookie_header(*, area: str = "controller") -> str:
     flags = [
-        f"{SESSION_COOKIE}=",
+        f"{_cookie_name(area)}=",
         "Path=/",
         "HttpOnly",
         "SameSite=Strict",

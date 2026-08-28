@@ -62,6 +62,273 @@ class BrowserSessionSecurityTest(unittest.TestCase):
         self.assertEqual(restored["username"], "admin")
         self.assertEqual(restored["role"], "admin")
 
+    def test_customer_session_preserves_canonical_identity(self):
+        user = {
+            "username": "aurora",
+            "role": "customer",
+            "customer_id": 1,
+            "customer_code": "CLI-000001",
+            "scope_id": 1,
+        }
+
+        token = controller_session.create_session(user)
+        restored = controller_session.get_session(token)
+
+        self.assertIsNotNone(restored)
+        self.assertEqual(restored["username"], "aurora")
+        self.assertEqual(restored["role"], "customer")
+        self.assertEqual(restored["customer_id"], 1)
+        self.assertEqual(restored["customer_code"], "CLI-000001")
+        self.assertEqual(restored["scope_id"], 1)
+
+    def test_customer_identity_survives_cookie_header_reconstruction(self):
+        user = {
+            "username": "aurora",
+            "role": "customer",
+            "customer_id": 1,
+            "customer_code": "CLI-000001",
+            "scope_id": 1,
+        }
+
+        token = controller_session.create_session(user)
+
+        restored = controller_session.session_user_from_headers(
+            Headers({
+                "Cookie": (
+                    f"{controller_session.CUSTOMER_SESSION_COOKIE}={token}"
+                )
+            }),
+            area="customer",
+        )
+
+        self.assertIsNotNone(restored)
+        self.assertEqual(restored["username"], "aurora")
+        self.assertEqual(restored["role"], "customer")
+        self.assertEqual(restored["customer_id"], 1)
+        self.assertEqual(restored["customer_code"], "CLI-000001")
+        self.assertEqual(restored["scope_id"], 1)
+
+
+    def test_controller_and_customer_sessions_coexist_in_same_cookie_header(self):
+        controller_token = controller_session.create_session(
+            {
+                "username": "admin",
+                "role": "admin",
+                "scope_id": "controller",
+            }
+        )
+        customer_token = controller_session.create_session(
+            {
+                "username": "aurora",
+                "role": "customer",
+                "scope_id": 1,
+                "customer_id": 1,
+                "customer_code": "CLI-000001",
+            }
+        )
+
+        headers = Headers(
+            {
+                "Cookie": (
+                    f"{controller_session.CONTROLLER_SESSION_COOKIE}={controller_token}; "
+                    f"{controller_session.CUSTOMER_SESSION_COOKIE}={customer_token}"
+                )
+            }
+        )
+
+        controller = controller_session.session_user_from_headers(
+            headers,
+            area="controller",
+        )
+        customer = controller_session.session_user_from_headers(
+            headers,
+            area="customer",
+        )
+
+        self.assertEqual(controller["username"], "admin")
+        self.assertEqual(controller["role"], "admin")
+
+        self.assertEqual(customer["username"], "aurora")
+        self.assertEqual(customer["role"], "customer")
+        self.assertEqual(customer["customer_id"], 1)
+
+    def test_area_cookie_headers_have_distinct_names(self):
+        controller_token = controller_session.create_session(
+            {"username": "admin", "role": "admin"}
+        )
+        customer_token = controller_session.create_session(
+            {"username": "aurora", "role": "customer"}
+        )
+
+        controller_header = controller_session.cookie_header(
+            controller_token,
+            area="controller",
+        )
+        customer_header = controller_session.cookie_header(
+            customer_token,
+            area="customer",
+        )
+
+        self.assertIn(
+            f"{controller_session.CONTROLLER_SESSION_COOKIE}=",
+            controller_header,
+        )
+        self.assertNotIn(
+            f"{controller_session.CUSTOMER_SESSION_COOKIE}=",
+            controller_header,
+        )
+
+        self.assertIn(
+            f"{controller_session.CUSTOMER_SESSION_COOKIE}=",
+            customer_header,
+        )
+        self.assertNotIn(
+            f"{controller_session.CONTROLLER_SESSION_COOKIE}=",
+            customer_header,
+        )
+
+    def test_wrong_area_cookie_is_not_accepted(self):
+        customer_token = controller_session.create_session(
+            {
+                "username": "aurora",
+                "role": "customer",
+                "scope_id": 1,
+            }
+        )
+
+        headers = Headers(
+            {
+                "Cookie": (
+                    f"{controller_session.CUSTOMER_SESSION_COOKIE}="
+                    f"{customer_token}"
+                )
+            }
+        )
+
+        self.assertIsNone(
+            controller_session.session_user_from_headers(
+                headers,
+                area="controller",
+            )
+        )
+
+        customer = controller_session.session_user_from_headers(
+            headers,
+            area="customer",
+        )
+        self.assertEqual(customer["role"], "customer")
+
+
+    def test_controller_and_customer_sessions_coexist_in_same_cookie_header(self):
+        controller_token = controller_session.create_session(
+            {
+                "username": "admin",
+                "role": "admin",
+                "scope_id": "controller",
+            }
+        )
+        customer_token = controller_session.create_session(
+            {
+                "username": "aurora",
+                "role": "customer",
+                "scope_id": 1,
+                "customer_id": 1,
+                "customer_code": "CLI-000001",
+            }
+        )
+
+        headers = Headers(
+            {
+                "Cookie": (
+                    f"{controller_session.CONTROLLER_SESSION_COOKIE}={controller_token}; "
+                    f"{controller_session.CUSTOMER_SESSION_COOKIE}={customer_token}"
+                )
+            }
+        )
+
+        controller = controller_session.session_user_from_headers(
+            headers,
+            area="controller",
+        )
+        customer = controller_session.session_user_from_headers(
+            headers,
+            area="customer",
+        )
+
+        self.assertEqual(controller["username"], "admin")
+        self.assertEqual(controller["role"], "admin")
+
+        self.assertEqual(customer["username"], "aurora")
+        self.assertEqual(customer["role"], "customer")
+        self.assertEqual(customer["customer_id"], 1)
+
+    def test_area_cookie_headers_have_distinct_names(self):
+        controller_token = controller_session.create_session(
+            {"username": "admin", "role": "admin"}
+        )
+        customer_token = controller_session.create_session(
+            {"username": "aurora", "role": "customer"}
+        )
+
+        controller_header = controller_session.cookie_header(
+            controller_token,
+            area="controller",
+        )
+        customer_header = controller_session.cookie_header(
+            customer_token,
+            area="customer",
+        )
+
+        self.assertIn(
+            f"{controller_session.CONTROLLER_SESSION_COOKIE}=",
+            controller_header,
+        )
+        self.assertNotIn(
+            f"{controller_session.CUSTOMER_SESSION_COOKIE}=",
+            controller_header,
+        )
+
+        self.assertIn(
+            f"{controller_session.CUSTOMER_SESSION_COOKIE}=",
+            customer_header,
+        )
+        self.assertNotIn(
+            f"{controller_session.CONTROLLER_SESSION_COOKIE}=",
+            customer_header,
+        )
+
+    def test_wrong_area_cookie_is_not_accepted(self):
+        customer_token = controller_session.create_session(
+            {
+                "username": "aurora",
+                "role": "customer",
+                "scope_id": 1,
+            }
+        )
+
+        headers = Headers(
+            {
+                "Cookie": (
+                    f"{controller_session.CUSTOMER_SESSION_COOKIE}="
+                    f"{customer_token}"
+                )
+            }
+        )
+
+        self.assertIsNone(
+            controller_session.session_user_from_headers(
+                headers,
+                area="controller",
+            )
+        )
+
+        customer = controller_session.session_user_from_headers(
+            headers,
+            area="customer",
+        )
+        self.assertEqual(customer["role"], "customer")
+
+
     def test_cookie_is_persistent_httponly_strict_and_secure_under_https(self):
         token = controller_session.create_session({"username": "admin", "role": "admin"})
         with patch.dict(os.environ, {"DSM_WEB_SCHEME": "https"}, clear=False):
@@ -98,13 +365,25 @@ class BrowserSessionSecurityTest(unittest.TestCase):
         self.assertIn("install_browser_session_http", source)
         self.assertIn("browser_login_base.credential_authenticate", source)
 
-    def test_authenticated_html_csp_allows_legacy_inline_styles_not_inline_scripts(self):
-        source = (DASHBOARD / "browser_session_http.py").read_text(encoding="utf-8")
+    def test_transport_csp_allows_legacy_inline_styles_not_inline_scripts(self):
+        source = (DASHBOARD / "tls_runtime.py").read_text(encoding="utf-8")
+        self.assertIn("Content-Security-Policy", source)
         self.assertIn("style-src 'self' 'unsafe-inline'", source)
         self.assertIn("script-src 'self'", source)
         self.assertNotIn("script-src 'self' 'unsafe-inline'", source)
         self.assertIn("frame-ancestors 'none'", source)
+        self.assertIn("base-uri 'self'", source)
         self.assertIn("form-action 'self'", source)
+
+    def test_browser_session_boundary_does_not_intercept_static_file_delivery(self):
+        source = (DASHBOARD / "browser_session_http.py").read_text(encoding="utf-8")
+        self.assertNotIn("_serve_html_with_bridge", source)
+        self.assertNotIn("session_aware_send_file", source)
+        self.assertNotIn("previous_send_file", source)
+        self.assertNotIn(
+            "legacy.DashboardHandler.send_file =",
+            source,
+        )
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ def install_deleted_backup_vault_http(legacy,authenticate):
  def vault():return DeletedBackupVaultRepository(backend(),root)
  def workspace():return CustomerInstanceWorkspaceService(backend(),root)
  def actor(self):
-  value=session_user_from_headers(self.headers)
+  value=session_user_from_headers(self.headers, area="customer")
   if value is not None:return value
   try:return authenticate(self.headers)
   except Exception:return None
