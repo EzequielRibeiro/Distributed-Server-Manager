@@ -1,6 +1,21 @@
 (function () {
   "use strict";
 
+  const AREA_HEADER = "X-Capivara-Auth-Area";
+  const nativeFetch = window.fetch.bind(window);
+
+  if (!window.__capivaraCustomerFetchBoundary) {
+    window.__capivaraCustomerFetchBoundary = true;
+    window.fetch = function (input, init) {
+      const options = {...(init || {})};
+      const headers = new Headers(options.headers || {});
+      headers.set(AREA_HEADER, "customer");
+      options.headers = headers;
+      if (!options.credentials) options.credentials = "same-origin";
+      return nativeFetch(input, options);
+    };
+  }
+
   const ITEMS = [
     ["/customer.html", "▣", "Meus servidores", "Instâncias contratadas"],
     ["/customer-backups.html", "↺", "Backups", "Backups de todos os servidores"],
@@ -30,6 +45,8 @@
     const sidebar = document.querySelector(".customer-sidebar");
     if (!sidebar) return;
 
+    sidebar.style.overflowY = "auto";
+
     let area = sidebar.querySelector("nav[aria-label='Área do cliente']");
     if (!area) {
       const label = document.createElement("p");
@@ -43,8 +60,25 @@
     }
     area.replaceChildren(...ITEMS.map(link));
 
-    const logout = sidebar.querySelector("#customer-logout");
-    if (logout && !logout.dataset.navigationBound) {
+    let logout = sidebar.querySelector("#customer-logout");
+    if (!logout) {
+      logout = document.createElement("button");
+      logout.id = "customer-logout";
+      logout.className = "customer-logout";
+      logout.type = "button";
+      logout.textContent = "Sair";
+      sidebar.appendChild(logout);
+    }
+
+    logout.hidden = false;
+    logout.style.display = "block";
+    logout.style.position = "sticky";
+    logout.style.bottom = "0";
+    logout.style.zIndex = "5";
+    logout.style.marginTop = "20px";
+    logout.style.background = "#091b18";
+
+    if (!logout.dataset.navigationBound) {
       logout.dataset.navigationBound = "1";
       logout.addEventListener("click", async (event) => {
         event.preventDefault();
@@ -52,7 +86,7 @@
           await fetch("/api/customer/auth/logout", {
             method: "POST",
             credentials: "same-origin",
-            headers: {Accept: "application/json"},
+            headers: {Accept: "application/json", [AREA_HEADER]: "customer"},
             cache: "no-store",
           });
         } finally {
