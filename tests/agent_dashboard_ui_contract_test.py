@@ -65,7 +65,8 @@ class AgentDashboardUiContractTest(unittest.TestCase):
   for text in ("--cap-bg:#0b111b","background:var(--cap-bg)!important","color-scheme:dark"):self.assertIn(text,self.servers_css)
   self.assertIn('window.innerWidth<=760',self.servers_js);self.assertIn('classList.toggle("sidebar-open")',self.servers_js);self.assertNotIn("cap-sidebar-open",self.servers_js)
   for route in ("/servers.html","/servers.js","/servers.css"):self.assertIn(route,self.composition)
-  self.assertIn("servers.html",(ROOT/"dashboard/web/servers-v2.html").read_text());self.assertIn('id="log-agent"',(ROOT/"dashboard/web/observability.html").read_text());self.assertIn('metadata["recent_logs"]',(ROOT/"dashboard/agent_heartbeat_api.py").read_text())
+  observability=(ROOT/"dashboard/web/observability.html").read_text()
+  self.assertIn("servers.html",(ROOT/"dashboard/web/servers-v2.html").read_text());self.assertNotIn('id="log-agent"',observability);self.assertIn("Logs do Controller",observability);self.assertIn('metadata["recent_logs"]',(ROOT/"dashboard/agent_heartbeat_api.py").read_text())
  def test_infrastructure_can_assign_agent_datacenter(self):
   for text in ("Datacenter do Agent","Vincular datacenter","Alterar localização","Region derivada:",'/agent/location','datacenter_id:select.value','status:\"active\"'):self.assertIn(text,self.infrastructure_js)
   self.assertIn('infrastructure-v3.js?v=2',self.infrastructure_html);self.assertIn('infrastructure-v3.css?v=2',self.infrastructure_html)
