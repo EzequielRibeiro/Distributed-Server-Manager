@@ -1,26 +1,24 @@
 (function(){
 "use strict";
-const auth=()=>sessionStorage.getItem("dsm_auth")||"";
+const controllerHeaders=()=>({Accept:"application/json","X-Capivara-Auth-Area":"controller"});
 async function request(path,options={}){
-  const headers={Authorization:`Basic ${auth()}`,Accept:"application/json",...(options.headers||{})};
+  const headers={...controllerHeaders(),...(options.headers||{})};
   if(options.body)headers["Content-Type"]="application/json";
-  const response=await fetch(path,{...options,headers,cache:"no-store",credentials:"same-origin"});
-  if(response.status===401){sessionStorage.removeItem("dsm_auth");location.replace("/login.html");throw new Error("Sessão encerrada");}
+  const response=await fetch(path,{...options,headers,cache:options.cache||"no-store",credentials:"same-origin"});
+  if(response.status===401){location.replace("/login.html");throw new Error("Sessão encerrada");}
   const data=await response.json().catch(()=>({}));
   if(!response.ok)throw new Error(data.message||data.error||`HTTP ${response.status}`);
   return data;
 }
 async function logout(){
-  try{
-    if(auth())await fetch("/api/auth/logout",{method:"POST",headers:{Authorization:`Basic ${auth()}`,Accept:"application/json"},credentials:"same-origin",cache:"no-store"});
-  }catch(_error){}
-  finally{sessionStorage.clear();location.replace("/login.html");}
+  try{await fetch("/api/auth/logout",{method:"POST",headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});}
+  catch(_error){}
+  finally{location.replace("/login.html");}
 }
 async function loadShell(activeHref){
-  if(!auth()){location.replace("/login.html");throw new Error("Sessão não iniciada");}
   const host=document.getElementById("sidebar-component");
   if(host){
-    const response=await fetch("/components/sidebar-v3.html",{cache:"no-store"});
+    const response=await fetch("/components/sidebar-v3.html",{cache:"no-store",credentials:"same-origin"});
     host.innerHTML=await response.text();
     host.querySelectorAll("nav a").forEach(a=>a.classList.toggle("active",a.getAttribute("href")===activeHref));
     const logoutButton=document.getElementById("btn-logout");
@@ -62,5 +60,5 @@ function formatDocument(type,value){
   if(type==="cnpj"&&/^\d{14}$/.test(raw))return raw.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/,"$1.$2.$3/$4-$5");
   return raw||"—";
 }
-window.CapCustomerManagement={auth,request,loadShell,logout,setNotice,dataCell,formatDocument};
+window.CapCustomerManagement={request,loadShell,logout,setNotice,dataCell,formatDocument};
 })();
