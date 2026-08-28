@@ -2,7 +2,7 @@
 const $=id=>document.getElementById(id);
 function basic(user,password){const bytes=new TextEncoder().encode(`${user}:${password}`);let binary="";for(const byte of bytes)binary+=String.fromCharCode(byte);return btoa(binary)}
 async function json(path,body){const response=await fetch(path,{method:"POST",headers:{Accept:"application/json","Content-Type":"application/json"},body:JSON.stringify(body),credentials:"same-origin"});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||`HTTP ${response.status}`);return data}
-async function customerSession(){const response=await fetch("/api/auth/session",{headers:{Accept:"application/json"},credentials:"same-origin",cache:"no-store"});if(!response.ok)return null;const data=await response.json().catch(()=>({}));return data?.role==="customer"&&data?.authenticated?data:null}
+async function customerSession(){const response=await fetch("/api/customer/auth/session",{headers:{Accept:"application/json"},credentials:"same-origin",cache:"no-store"});if(!response.ok)return null;const data=await response.json().catch(()=>({}));return data?.role==="customer"&&data?.authenticated?data:null}
 const login=$("customer-login-form");
 if(login){
  customerSession().then(data=>{if(data)location.replace("/customer.html")}).catch(()=>{});
