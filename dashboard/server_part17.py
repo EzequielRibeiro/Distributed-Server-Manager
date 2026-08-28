@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import parse_qs,urlparse
 import server_part16 as integration
+import server_part8 as browser_login_base
 from admin_observability_http import install_admin_observability
 from agent_admin_http import install_agent_administration
 from agent_public_network_http import install_agent_public_network
@@ -81,7 +82,7 @@ install_customer_health_http(legacy,_authenticate)
 install_agent_administration(legacy,_authenticate)
 install_agent_public_network(legacy,_authenticate)
 install_agent_storage_pool_administration(legacy,_authenticate)
-install_storage_pool_source_cleanup_http(legacy,_authenticate)
+install_storage_pool_source_cleanup(legacy,_authenticate)
 install_customer_profile_administration(legacy,_authenticate)
 install_customer_profile_self_service(legacy,_authenticate)
 install_customer_email_change(legacy,_authenticate)
@@ -90,6 +91,6 @@ ensure_customer_discord_schema(legacy)
 install_customer_discord(legacy,_authenticate)
 install_customer_discord_oauth_callback(legacy)
 install_admin_observability(legacy,_authenticate)
-install_browser_session_http(legacy,integration.integration.integration.integration.integration.integration.part8.credential_authenticate)
+install_browser_session_http(legacy,browser_login_base.credential_authenticate)
 def run():run_dashboard(legacy)
 if __name__=="__main__":run()
