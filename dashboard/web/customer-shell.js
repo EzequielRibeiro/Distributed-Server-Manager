@@ -8,8 +8,30 @@
     document.head.appendChild(script);
   }
 
-  // Customer pages use the dedicated Customer cookie session directly.
-  // Do not inject the Controller compatibility bridge into this auth domain.
-  load("/customer-navigation.js?v=2");
-  load("/customer-core.js?v=3");
+  async function bootstrap() {
+    let response;
+    try {
+      response = await fetch("/api/customer/auth/session", {
+        headers: {Accept: "application/json"},
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+    } catch (error) {
+      location.replace("/customer-login.html");
+      return;
+    }
+
+    const session = await response.json().catch(() => ({}));
+    if (!response.ok || session.authenticated !== true || session.role !== "customer") {
+      location.replace("/customer-login.html");
+      return;
+    }
+
+    // Customer pages use only the dedicated Customer cookie session.
+    // The Controller compatibility bridge is intentionally not loaded here.
+    load("/customer-navigation.js?v=2");
+    load("/customer-core.js?v=3");
+  }
+
+  bootstrap();
 })();
