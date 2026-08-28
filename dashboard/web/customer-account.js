@@ -36,6 +36,12 @@
 
   async function load() {
     try {
+      const session = await request("/api/customer/auth/session");
+      if (session.authenticated !== true || session.role !== "customer") {
+        location.replace("/customer-login.html");
+        return;
+      }
+
       const data = await request("/api/customer/profile");
       const profile = data.profile || {};
       const details = $("customer-account-details");
