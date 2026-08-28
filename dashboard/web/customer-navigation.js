@@ -48,17 +48,14 @@
       logout.dataset.navigationBound = "1";
       logout.addEventListener("click", async (event) => {
         event.preventDefault();
-
         try {
           await fetch("/api/customer/auth/logout", {
             method: "POST",
             credentials: "same-origin",
-            headers: { Accept: "application/json" },
+            headers: {Accept: "application/json"},
             cache: "no-store",
           });
         } finally {
-          sessionStorage.removeItem("dsm_auth");
-          sessionStorage.removeItem("dsm_customer_auth");
           location.replace("/customer-login.html");
         }
       });
