@@ -187,7 +187,9 @@ def _run_ssh(
 
 
 def _reason(result: SSHResult, fallback: str) -> str:
-    combined = "\n".join(part for part in (result.stderr, result.stdout) if part).strip()
+    stderr = str(result.stderr or "").strip()
+    stdout = str(result.stdout or "").strip()
+    combined = "\n".join(part for part in (stderr, stdout) if part).strip()
     lowered = combined.lower()
 
     # sshpass uses 5 for an invalid/rejected password. This often arrives with
@@ -212,8 +214,26 @@ def _reason(result: SSHResult, fallback: str) -> str:
     if "connection timed out" in lowered or "operation timed out" in lowered:
         return "SSH connection timed out"
 
-    lines = combined.splitlines()
-    return lines[-1] if lines else fallback
+    # Remote bootstrap scripts emit explicit markers on stderr. Prefer those
+    # over stdout progress lines such as "Pacote validado por SHA-256" so a
+    # successful progress message can never mask the actual install failure.
+    stderr_lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    for marker in ("CAPIVARA_BOOTSTRAP_ERROR:", "[Capivara Agent][ERRO]"):
+        marked = [line for line in stderr_lines if marker in line]
+        if marked:
+            return marked[-1]
+    if stderr_lines:
+        return stderr_lines[-1]
+
+    stdout_lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    errorish = [
+        line
+        for line in stdout_lines
+        if any(token in line.lower() for token in ("error", "erro", "failed", "falhou", "traceback"))
+    ]
+    if errorish:
+        return errorish[-1]
+    return stdout_lines[-1] if stdout_lines else fallback
 
 
 def preflight_ssh(
