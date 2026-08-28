@@ -128,6 +128,7 @@ class ActivityAuditRepository:
         self,
         *,
         actor_id: str | None = None,
+        actor_role: str | None = None,
         category: str | None = None,
         action: str | None = None,
         result: str | None = None,
@@ -143,6 +144,7 @@ class ActivityAuditRepository:
         params: list[Any] = []
         for column, value in (
             ("actor_id", actor_id),
+            ("actor_role", actor_role),
             ("category", category),
             ("action", action),
             ("result", result),
@@ -177,6 +179,126 @@ class ActivityAuditRepository:
             result_rows.append(item)
         return result_rows
 
+    def actor_directory(
+        self,
+        *,
+        query: str = "",
+        role: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        include_all: bool = False,
+    ) -> dict[str, Any]:
+        """Return identities that can be selected as audit actors.
+
+        System users expose functional name/e-mail. Customer identities also expose
+        Customer name, e-mail, document and public code, allowing the audit page to
+        locate a person without conflating the access category with the identity.
+        Historical audit-only actors are retained as a fallback after account removal.
+        """
+        self.initialize()
+        term = str(query or "").strip().lower()
+        normalized_role = str(role or "").strip().lower()
+        if normalized_role and normalized_role not in {"admin", "controller", "operator", "customer"}:
+            raise ValueError("invalid actor role")
+        bounded = max(1, min(int(limit or 100), 200))
+        start = max(0, int(offset or 0))
+        if not term and not include_all:
+            return {"actors": [], "has_more": False, "next_offset": start, "total": 0}
+
+        ph = self.dialect.placeholder
+        clauses = ["u.role IN ('admin','controller','operator','customer')"]
+        params: list[Any] = []
+        if normalized_role:
+            clauses.append(f"LOWER(u.role)={ph}")
+            params.append(normalized_role)
+        if term:
+            like = f"%{term}%"
+            clauses.append(
+                "(LOWER(COALESCE(u.username,'')) LIKE " + ph +
+                " OR LOWER(COALESCE(u.full_name,'')) LIKE " + ph +
+                " OR LOWER(COALESCE(u.corporate_email,'')) LIKE " + ph +
+                " OR LOWER(COALESCE(i.email,'')) LIKE " + ph +
+                " OR LOWER(COALESCE(c.name,'')) LIKE " + ph +
+                " OR LOWER(COALESCE(c.legal_name,'')) LIKE " + ph +
+                " OR LOWER(COALESCE(c.document_number,'')) LIKE " + ph +
+                " OR LOWER(COALESCE(c.customer_code,'')) LIKE " + ph + ")"
+            )
+            params.extend([like] * 8)
+
+        with self.session() as session:
+            rows = session.execute(
+                "SELECT u.username AS actor_id,u.role AS actor_role,u.active,"
+                "COALESCE(u.full_name,c.name,u.username) AS actor_name,"
+                "COALESCE(u.corporate_email,i.email,c.account_email,c.email) AS email,"
+                "c.document_type,c.document_number,c.customer_code "
+                "FROM dashboard_users u "
+                "LEFT JOIN customers c ON c.id=u.customer_id "
+                "LEFT JOIN customer_user_identities i ON i.username=u.username "
+                "WHERE " + " AND ".join(clauses) +
+                " ORDER BY LOWER(u.role),LOWER(COALESCE(u.full_name,c.name,u.username)),LOWER(u.username)",
+                tuple(params),
+            ).fetchall()
+            audit_clauses = ["actor_id IS NOT NULL"]
+            audit_params: list[Any] = []
+            if normalized_role:
+                audit_clauses.append(f"LOWER(COALESCE(actor_role,''))={ph}")
+                audit_params.append(normalized_role)
+            if term:
+                like = f"%{term}%"
+                audit_clauses.append(
+                    "(LOWER(COALESCE(actor_id,'')) LIKE " + ph +
+                    " OR LOWER(COALESCE(actor_name,'')) LIKE " + ph + ")"
+                )
+                audit_params.extend([like, like])
+            historical = session.execute(
+                "SELECT actor_id,MAX(actor_name) AS actor_name,MAX(actor_role) AS actor_role "
+                "FROM activity_audit WHERE " + " AND ".join(audit_clauses) +
+                " GROUP BY actor_id ORDER BY actor_id",
+                tuple(audit_params),
+            ).fetchall()
+
+        merged: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            item = dict(row)
+            actor_id = str(item.get("actor_id") or "").strip()
+            if not actor_id:
+                continue
+            item["actor_role"] = str(item.get("actor_role") or "").lower()
+            item["active"] = bool(item.get("active", True))
+            merged[actor_id] = item
+        for row in historical:
+            actor_id = str(row["actor_id"] or "").strip()
+            if not actor_id or actor_id in merged:
+                continue
+            merged[actor_id] = {
+                "actor_id": actor_id,
+                "actor_name": row["actor_name"] or actor_id,
+                "actor_role": str(row["actor_role"] or "").lower(),
+                "active": False,
+                "email": None,
+                "document_type": None,
+                "document_number": None,
+                "customer_code": None,
+                "historical": True,
+            }
+
+        ordered = sorted(
+            merged.values(),
+            key=lambda item: (
+                str(item.get("actor_role") or ""),
+                str(item.get("actor_name") or item.get("actor_id") or "").lower(),
+                str(item.get("actor_id") or "").lower(),
+            ),
+        )
+        page = ordered[start:start + bounded]
+        next_offset = start + len(page)
+        return {
+            "actors": page,
+            "has_more": next_offset < len(ordered),
+            "next_offset": next_offset,
+            "total": len(ordered),
+        }
+
     def filter_options(self) -> dict[str, list[str]]:
         self.initialize()
         with self.session() as session:
@@ -189,8 +311,17 @@ class ActivityAuditRepository:
             categories = session.execute(
                 "SELECT DISTINCT category FROM activity_audit ORDER BY category"
             ).fetchall()
+            roles = session.execute(
+                "SELECT DISTINCT role FROM dashboard_users "
+                "WHERE role IN ('admin','controller','operator','customer') ORDER BY role"
+            ).fetchall()
+        actor_roles = [str(row["role"]) for row in roles]
+        for standard in ("admin", "controller", "operator", "customer"):
+            if standard not in actor_roles:
+                actor_roles.append(standard)
         return {
             "actors": [str(row["actor_id"]) for row in actors],
+            "actor_roles": actor_roles,
             "actions": [str(row["action"]) for row in actions],
             "categories": [str(row["category"]) for row in categories],
         }
