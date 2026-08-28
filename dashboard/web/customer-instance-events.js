@@ -1,7 +1,6 @@
 (function(){
   "use strict";
 
-  const auth=()=>sessionStorage.getItem("dsm_auth")||"";
   const $=id=>document.getElementById(id);
   const identity=Object.fromEntries(new URLSearchParams(location.search));
   const blockedViews=new Set(["logs","events","config","files","content","backups","danger"]);
@@ -10,8 +9,8 @@
   function query(){return new URLSearchParams(identity).toString()}
 
   async function request(path){
-    const response=await fetch(path,{headers:{Authorization:`Basic ${auth()}`,Accept:"application/json"}});
-    if(response.status===401){sessionStorage.removeItem("dsm_auth");location.href="/login.html";throw new Error("Sessão encerrada.")}
+    const response=await fetch(path,{headers:{Accept:"application/json","X-Capivara-Auth-Area":"customer"},credentials:"same-origin",cache:"no-store"});
+    if(response.status===401){location.href="/customer-login.html";throw new Error("Sessão encerrada.")}
     const data=await response.json().catch(()=>({}));
     if(!response.ok)throw new Error(data.error||data.message||`HTTP ${response.status}`);
     return data;
