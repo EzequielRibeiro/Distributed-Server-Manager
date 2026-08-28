@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from controller_session import session_user_from_headers
 
 CONTROLLER_PAGES = {
-    "/activity-log.html", "/customers.html", "/customer-create.html",
+    "/dashboard-v3.html", "/activity-log.html", "/customers.html", "/customer-create.html",
     "/customer-contract-create.html", "/users.html", "/system.html",
     "/infrastructure.html", "/regions.html", "/datacenters.html",
     "/placement.html", "/agents.html", "/add-agent.html",
