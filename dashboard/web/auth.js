@@ -18,14 +18,12 @@ async function logout() {
         await fetch("/api/auth/logout", {
             method: "POST",
             credentials: "same-origin",
-            headers: {Accept: "application/json"},
+            headers: {Accept: "application/json", "X-Capivara-Auth-Area": "controller"},
             cache: "no-store"
         });
     } catch (error) {
         console.warn("Logout request failed:", error);
     } finally {
-        
-        
         window.location.replace("/login.html");
     }
 }
@@ -41,7 +39,7 @@ async function loadBrowserSession() {
     const response = await fetch("/api/auth/session", {
         method: "GET",
         credentials: "same-origin",
-        headers: {Accept: "application/json"},
+        headers: {Accept: "application/json", "X-Capivara-Auth-Area": "controller"},
         cache: "no-store"
     });
     if (!response.ok) return null;
@@ -64,6 +62,9 @@ async function login() {
     showError("");
 
     try {
+        // Basic exists only in memory for this credential-exchange request.
+        // It is never persisted and is never used again after the HttpOnly
+        // Controller session cookie is issued.
         const token = encodeBasicAuth(user, password);
         const response = await fetch("/api/auth/login", {
             method: "POST",
@@ -93,11 +94,6 @@ async function login() {
             return;
         }
 
-        // Remove every legacy credential copy. The Basic value existed only
-        // during this request; normal navigation now relies on the HttpOnly
-        // Controller session cookie.
-        
-        
         window.location.replace(destination);
     } catch (error) {
         console.error("Login error:", error);
