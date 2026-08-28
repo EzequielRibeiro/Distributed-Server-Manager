@@ -20,6 +20,7 @@ _PAGE_SIZE = int(os.sysconf("SC_PAGE_SIZE")) if hasattr(os, "sysconf") else 4096
 
 _previous_cpu: tuple[int, int] | None = None
 _previous_network: tuple[float, int, int] | None = None
+_previous_disk_io: tuple[float, int, int, int, int] | None = None
 _previous_process: dict[int, tuple[float, int]] = {}
 
 
@@ -93,6 +94,88 @@ def _disk() -> dict[str, int | float | None]:
         "used_bytes": usage.used,
         "free_bytes": usage.free,
         "usage_pct": round(100.0 * usage.used / usage.total, 2) if usage.total else None,
+    }
+
+
+def _disk_io_totals() -> tuple[int, int, int, int]:
+    """Return cumulative read/write bytes and completed I/O operations.
+
+    Linux /proc/diskstats reports sectors; Linux sectors are defined as
+    512-byte units for this interface. Device-mapper, loop, ram and optical
+    pseudo-devices are ignored to avoid obvious double counting.
+    """
+    read_bytes = write_bytes = read_ops = write_ops = 0
+
+    for line in _read_text(_PROC / "diskstats").splitlines():
+        fields = line.split()
+        if len(fields) < 14:
+            continue
+
+        name = fields[2]
+
+        if (
+            name.startswith(("loop", "ram", "sr", "fd", "dm-"))
+            or name.startswith("md")
+        ):
+            continue
+
+        # Count whole physical/block devices, not their partitions.
+        if (name.startswith(("sd", "vd", "xvd")) and name[-1:].isdigit()):
+            continue
+        if name.startswith("nvme") and "p" in name:
+            continue
+        if name.startswith("mmcblk") and "p" in name:
+            continue
+
+        try:
+            reads_completed = int(fields[3])
+            sectors_read = int(fields[5])
+            writes_completed = int(fields[7])
+            sectors_written = int(fields[9])
+        except (ValueError, IndexError):
+            continue
+
+        read_ops += reads_completed
+        write_ops += writes_completed
+        read_bytes += sectors_read * 512
+        write_bytes += sectors_written * 512
+
+    return read_bytes, write_bytes, read_ops, write_ops
+
+
+def _disk_io() -> dict[str, int | float | None]:
+    global _previous_disk_io
+
+    now = time.monotonic()
+    read_bytes, write_bytes, read_ops, write_ops = _disk_io_totals()
+
+    previous = _previous_disk_io
+    _previous_disk_io = (
+        now,
+        read_bytes,
+        write_bytes,
+        read_ops,
+        write_ops,
+    )
+
+    read_rate = write_rate = read_iops = write_iops = None
+
+    if previous is not None:
+        elapsed = now - previous[0]
+
+        if elapsed > 0:
+            read_rate = max(0.0, (read_bytes - previous[1]) / elapsed)
+            write_rate = max(0.0, (write_bytes - previous[2]) / elapsed)
+            read_iops = max(0.0, (read_ops - previous[3]) / elapsed)
+            write_iops = max(0.0, (write_ops - previous[4]) / elapsed)
+
+    return {
+        "read_bytes": read_bytes,
+        "write_bytes": write_bytes,
+        "read_bytes_per_second": round(read_rate, 2) if read_rate is not None else None,
+        "write_bytes_per_second": round(write_rate, 2) if write_rate is not None else None,
+        "read_iops": round(read_iops, 2) if read_iops is not None else None,
+        "write_iops": round(write_iops, 2) if write_iops is not None else None,
     }
 
 
@@ -246,7 +329,7 @@ def collect_host_telemetry() -> dict[str, Any]:
         "host": {
             "cpu_usage_pct": _cpu_usage_pct(),
             "memory": _memory(),
-            "disk": _disk(),
+            "disk": {**_disk(), **_disk_io()},
             "load_average": _load_average(),
             "uptime_seconds": _uptime_seconds(),
             "network": _network(),

@@ -29,7 +29,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
   for view in ("monitoring","events","diagnostics","updates","logs"):
    self.assertIn(f'href="agent-observability.html?view={view}"',self.detail)
   self.assertIn('telemetry-widgets.js?v=3',self.detail)
-  self.assertIn('agent-details.js?v=12',self.detail)
+  self.assertIn('agent-details.js?v=13',self.detail)
   self.assertIn('telemetry-widgets.css?v=2',self.detail)
   self.assertLess(self.detail.index('id="agent-telemetry"'),self.detail.index('id="agent-admin-panel"'))
  def test_agent_details_require_agent_context(self):

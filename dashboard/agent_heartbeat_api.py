@@ -75,9 +75,36 @@ def _observability_from_heartbeat(agent_id,body):
  telemetry=_telemetry_from_heartbeat(body)
  if isinstance(telemetry,dict):
   host=telemetry.get("host") if isinstance(telemetry.get("host"),dict) else {};memory=host.get("memory") if isinstance(host.get("memory"),dict) else {};disk=host.get("disk") if isinstance(host.get("disk"),dict) else {};network=host.get("network") if isinstance(host.get("network"),dict) else {};load=host.get("load_average") if isinstance(host.get("load_average"),dict) else {};process=telemetry.get("agent") if isinstance(telemetry.get("agent"),dict) else {}
-  values={"capivara.host.cpu.usage_pct":(host.get("cpu_usage_pct"),"percent"),"capivara.host.memory.usage_pct":(memory.get("usage_pct"),"percent"),"capivara.host.memory.used_bytes":(memory.get("used_bytes"),"bytes"),"capivara.host.memory.total_bytes":(memory.get("total_bytes"),"bytes"),"capivara.host.disk.usage_pct":(disk.get("usage_pct"),"percent"),"capivara.host.disk.used_bytes":(disk.get("used_bytes"),"bytes"),"capivara.host.disk.total_bytes":(disk.get("total_bytes"),"bytes"),"capivara.host.load.1m":(load.get("1m"),"load"),"capivara.host.load.5m":(load.get("5m"),"load"),"capivara.host.load.15m":(load.get("15m"),"load"),"capivara.host.uptime_seconds":(host.get("uptime_seconds"),"seconds"),"capivara.host.network.rx_bytes":(network.get("rx_bytes"),"bytes"),"capivara.host.network.tx_bytes":(network.get("tx_bytes"),"bytes"),"capivara.host.network.rx_bytes_per_second":(network.get("rx_bytes_per_second"),"bytes_per_second"),"capivara.host.network.tx_bytes_per_second":(network.get("tx_bytes_per_second"),"bytes_per_second"),"capivara.host.temperature_c":(host.get("temperature_c"),"celsius"),"capivara.agent.cpu.usage_pct":(process.get("cpu_usage_pct"),"percent"),"capivara.agent.memory.rss_bytes":(process.get("memory_rss_bytes"),"bytes"),"capivara.agent.threads":(process.get("threads"),"threads"),"capivara.agent.pid":(process.get("pid"),"pid")}
+  values={"capivara.host.cpu.usage_pct":(host.get("cpu_usage_pct"),"percent"),"capivara.host.memory.usage_pct":(memory.get("usage_pct"),"percent"),"capivara.host.memory.used_bytes":(memory.get("used_bytes"),"bytes"),"capivara.host.memory.total_bytes":(memory.get("total_bytes"),"bytes"),"capivara.host.disk.usage_pct":(disk.get("usage_pct"),"percent"),"capivara.host.disk.used_bytes":(disk.get("used_bytes"),"bytes"),"capivara.host.disk.total_bytes":(disk.get("total_bytes"),"bytes"),"capivara.host.disk.read_bytes_per_second":(disk.get("read_bytes_per_second"),"bytes_per_second"),"capivara.host.disk.write_bytes_per_second":(disk.get("write_bytes_per_second"),"bytes_per_second"),"capivara.host.disk.read_iops":(disk.get("read_iops"),"operations_per_second"),"capivara.host.disk.write_iops":(disk.get("write_iops"),"operations_per_second"),"capivara.host.load.1m":(load.get("1m"),"load"),"capivara.host.load.5m":(load.get("5m"),"load"),"capivara.host.load.15m":(load.get("15m"),"load"),"capivara.host.uptime_seconds":(host.get("uptime_seconds"),"seconds"),"capivara.host.network.rx_bytes":(network.get("rx_bytes"),"bytes"),"capivara.host.network.tx_bytes":(network.get("tx_bytes"),"bytes"),"capivara.host.network.rx_bytes_per_second":(network.get("rx_bytes_per_second"),"bytes_per_second"),"capivara.host.network.tx_bytes_per_second":(network.get("tx_bytes_per_second"),"bytes_per_second"),"capivara.host.temperature_c":(host.get("temperature_c"),"celsius"),"capivara.agent.cpu.usage_pct":(process.get("cpu_usage_pct"),"percent"),"capivara.agent.memory.rss_bytes":(process.get("memory_rss_bytes"),"bytes"),"capivara.agent.threads":(process.get("threads"),"threads"),"capivara.agent.pid":(process.get("pid"),"pid")}
   for name,(value,unit) in values.items():
    if isinstance(value,(int,float)) and not isinstance(value,bool):result.append({"metric_name":name,"metric_type":"gauge","value":value,"unit":unit,"scope_type":"agent"})
+ samples=body.get("instance_telemetry")
+ if isinstance(samples,list):
+  players_online=0;players_capacity=0;instances_reporting=0;instances_running=0;storage_used=0
+  players_seen=False;capacity_seen=False;storage_seen=False
+  for item in samples[:500]:
+   if not isinstance(item,dict):continue
+   instances_reporting+=1
+   health=str(item.get("health") or "").lower()
+   if health=="healthy":instances_running+=1
+   value=item.get("players_online")
+   if isinstance(value,(int,float)) and not isinstance(value,bool):
+    players_online+=max(0,value);players_seen=True
+   value=item.get("players_max")
+   if isinstance(value,(int,float)) and not isinstance(value,bool):
+    players_capacity+=max(0,value);capacity_seen=True
+   value=item.get("storage_used_bytes")
+   if isinstance(value,(int,float)) and not isinstance(value,bool):
+    storage_used+=max(0,value);storage_seen=True
+  aggregates=[
+   ("capivara.agent.instances.total",instances_reporting,"instances"),
+   ("capivara.agent.instances.running",instances_running,"instances"),
+  ]
+  if players_seen:aggregates.append(("capivara.agent.players.online",players_online,"players"))
+  if capacity_seen:aggregates.append(("capivara.agent.players.capacity",players_capacity,"players"))
+  if storage_seen:aggregates.append(("capivara.agent.instances.storage_used_bytes",storage_used,"bytes"))
+  for name,value,unit in aggregates:
+   result.append({"metric_name":name,"metric_type":"gauge","value":value,"unit":unit,"scope_type":"agent"})
  health_map={"healthy":1.0,"transitioning":.5,"unknown":-1.0,"degraded":0.0}
  for item in body.get("instance_runtime_health") or []:
   if not isinstance(item,dict) or not item.get("instance_id"):continue
