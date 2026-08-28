@@ -17,17 +17,25 @@
   </header>
   <div class="cap-home-content cap-admin-content">
     <section class="card catalog-v2-card cap-admin-card">
-      <div class="card-title"><div><h2>Consulta</h2><p>Filtre as ações dos operadores por período, operador, categoria, atividade ou resultado.</p></div></div>
+      <div class="card-title"><div><h2>Consulta</h2><p>Filtre as ações por período, categoria de acesso, usuário, categoria, atividade ou resultado.</p></div></div>
       <div class="catalog-v2-form">
         <label>Data inicial<input id="activity-start" type="datetime-local"></label>
         <label>Data final<input id="activity-end" type="datetime-local"></label>
-        <label>Operador<select id="activity-user"><option value="">Todos</option></select></label>
+        <label>Categoria de acesso<select id="activity-role"><option value="">Todos os acessos</option></select></label>
+        <label>Localizar usuário<input id="activity-user-query" type="search" maxlength="320" autocomplete="off" placeholder="Nome, e-mail, documento, login ou ID"></label>
+        <label>Usuário encontrado<select id="activity-user"><option value="">Qualquer usuário da categoria</option></select></label>
         <label>Categoria<select id="activity-category"><option value="">Todas</option></select></label>
         <label>Atividade<select id="activity-name"><option value="">Todas</option></select></label>
         <label>Resultado<select id="activity-result"><option value="">Todos</option><option value="success">Sucesso</option><option value="denied">Negado</option><option value="error">Erro</option></select></label>
         <label>Limite<select id="activity-limit"><option>100</option><option selected>200</option><option>500</option><option>1000</option></select></label>
       </div>
-      <div class="catalog-v2-actions"><button id="activity-search" class="catalog-v2-primary">Consultar</button><button id="activity-clear">Limpar filtros</button></div>
+      <div class="catalog-v2-actions">
+        <button id="activity-find-user" type="button">Buscar usuários</button>
+        <button id="activity-show-users" type="button">Mostrar lista completa</button>
+        <button id="activity-more-users" type="button" hidden>Carregar mais</button>
+      </div>
+      <div id="activity-user-message" class="catalog-v2-summary">Selecione uma categoria de acesso e pesquise por nome, e-mail, documento, login ou ID. Também é possível mostrar a lista completa.</div>
+      <div class="catalog-v2-actions"><button id="activity-search" class="catalog-v2-primary">Consultar atividades</button><button id="activity-clear">Limpar filtros</button></div>
       <div id="activity-message" class="catalog-v2-summary"></div>
     </section>
     <section class="card catalog-v2-card cap-admin-card">
@@ -37,6 +45,6 @@
   </div>
   <footer class="cap-home-footer">Capivara Distributed Server Manager · Audit Trail</footer>
 </main>
-<script src="/activity-log.js?v=2"></script>
+<script src="/activity-log.js?v=3"></script>
 </body>
 </html>
