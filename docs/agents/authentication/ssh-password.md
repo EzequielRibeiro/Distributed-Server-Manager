@@ -18,15 +18,15 @@ Por padrão o arquivo é criado em:
 /etc/capivara/secrets/remote-deploy/node01.secret
 ```
 
-com diretório `0700` e arquivo `0600`.
+O diretório permanece `0700` e o arquivo `0600`. Quando o comando é executado como root em uma instalação normal, o Capivara também reconcilia o ownership para a conta de serviço (`capivara` por padrão), permitindo que o Dashboard use o mesmo secret sem relaxar as permissões.
+
+A criação do secret também prepara `~capivara/.ssh` com modo `0700` para persistir `known_hosts`. No primeiro contato SSH o Capivara usa `StrictHostKeyChecking=accept-new`: uma chave nova é aceita e persistida, mas uma chave já conhecida que mudar continua sendo rejeitada.
 
 O conteúdo do arquivo é somente a senha, seguida por quebra de linha. Não use JSON, `PASSWORD=`, aspas ou comentários.
 
 ## Testar a senha SSH diretamente
 
 Antes de usar o deploy do Capivara, é possível confirmar se a senha armazenada no arquivo realmente autentica no host remoto.
-
-Linux:
 
 ```bash
 sudo sshpass \
@@ -36,6 +36,7 @@ sudo sshpass \
   -o ConnectTimeout=10 \
   -o BatchMode=no \
   -o PreferredAuthentications=password \
+  -o StrictHostKeyChecking=accept-new \
   USER@HOST \
   'echo CAPIVARA_SSH_OK; id'
 ```
@@ -50,6 +51,7 @@ sudo sshpass \
   -o ConnectTimeout=10 \
   -o BatchMode=no \
   -o PreferredAuthentications=password \
+  -o StrictHostKeyChecking=accept-new \
   USER@192.168.15.59 \
   'echo CAPIVARA_SSH_OK; id'
 ```
@@ -112,6 +114,12 @@ Use `--platform windows` para um Agent Windows.
 
 A implementação usa `sshpass -f ARQUIVO` quando `--password-file` é escolhido. O caminho do arquivo pode aparecer no processo; a senha não. `sshpass` precisa estar instalado no Controller para esse modo. Sem `--password-file`, o OpenSSH usa chave/ssh-agent e `sshpass` não é necessário.
 
+## Diagnóstico de falhas
+
+O Capivara diferencia falhas comuns de SSH em vez de retornar apenas `remote preflight failed`. Entre as mensagens esperadas estão autenticação SSH rejeitada, verificação de host key, conexão recusada/timeout e falha de `sudo`.
+
+O bootstrap remoto também preserva a mensagem do instalador. Se `/agent/install.sh` ou `install-agent.sh` falhar, o Controller deve mostrar a causa/exit code sem imprimir o pairing token.
+
 ## Depois do bootstrap
 
 Assim que o Agent fizer enrollment e estiver online, remova o secret se ele não for mais necessário:
@@ -129,3 +137,4 @@ A credencial administrativa do host não é copiada para a configuração perman
 - Não use arquivo com permissões de grupo/outros; o Capivara rejeita permissões mais abertas que `0600`.
 - A Dashboard aceita somente caminhos dentro de `DSM_REMOTE_DEPLOY_SECRET_DIR`, que por padrão é `/etc/capivara/secrets/remote-deploy`.
 - Não registrar conteúdo do secret, pairing token ou credencial permanente em logs ou JSON de saída.
+- `StrictHostKeyChecking=no` não é usado. O primeiro contato usa `accept-new` e mudanças posteriores de fingerprint continuam sendo bloqueadas.
