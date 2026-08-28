@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,17 +33,13 @@ class CustomerAuthDomainFrontendTest(unittest.TestCase):
                 self.assertNotIn('location.replace("/login.html")', source)
 
     def test_customer_modules_use_cookie_session_transport(self):
-        for name in (
-            "customer.js",
-            "customer-account.js",
-            "customer-backups.js",
-            "customer-integrations.js",
-            "customer-members.js",
-            "customer-navigation.js",
-        ):
+        for name in self.CUSTOMER_MODULES:
             with self.subTest(name=name):
                 source = self.read(name)
-                self.assertIn('credentials: "same-origin"', source)
+                self.assertRegex(
+                    source,
+                    re.compile(r'credentials\s*:\s*"same-origin"'),
+                )
                 self.assertIn("/customer-login.html", source)
 
     def test_secondary_customer_pages_validate_dedicated_customer_session(self):
