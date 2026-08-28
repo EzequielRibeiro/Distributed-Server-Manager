@@ -51,6 +51,7 @@ DASHBOARD_V3_FILES = {
     "/agent-observability.html": legacy.WEB_DIR / "agent-observability.html",
     "/agent-observability.css": legacy.WEB_DIR / "agent-observability.css",
     "/agent-observability.js": legacy.WEB_DIR / "agent-observability.js",
+    "/agent-queue-details-state.js": legacy.WEB_DIR / "agent-queue-details-state.js",
 
     # Servers and catalog.
     "/servers.html": legacy.WEB_DIR / "servers.html",
