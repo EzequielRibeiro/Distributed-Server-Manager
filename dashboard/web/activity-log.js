@@ -1,32 +1,34 @@
 (function () {
   "use strict";
   const byId = id => document.getElementById(id);
-  const auth = sessionStorage.getItem("dsm_auth") || "";
+  const controllerHeaders = () => ({Accept: "application/json", "X-Capivara-Auth-Area": "controller"});
 
   async function request(path) {
     const response = await fetch(path, {
-      headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
+      headers: controllerHeaders(),
       credentials: "same-origin",
       cache: "no-store",
     });
-    if (response.status === 401) { sessionStorage.clear(); location.replace("/login.html"); throw new Error("Sessão encerrada"); }
+    if (response.status === 401) { location.replace("/login.html"); throw new Error("Sessão encerrada"); }
     if (response.status === 403) { location.replace("/dashboard-v3.html"); throw new Error("Acesso exclusivo de administradores"); }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
     return data;
   }
 
+  async function logout() {
+    try { await fetch("/api/auth/logout", { method: "POST", headers: controllerHeaders(), credentials: "same-origin", cache: "no-store" }); } catch (_) {}
+    location.replace("/login.html");
+  }
+
   async function loadShell() {
     const sidebar = byId("sidebar-component");
     if (sidebar) {
-      const response = await fetch("/components/sidebar-v3.html");
+      const response = await fetch("/components/sidebar-v3.html", {credentials: "same-origin", cache: "no-store"});
       sidebar.innerHTML = await response.text();
       sidebar.querySelectorAll("nav a").forEach(a => a.classList.toggle("active", a.getAttribute("href") === "activity-log.html"));
-      const logout = byId("btn-logout");
-      if (logout) logout.onclick = async () => {
-        try { await fetch("/api/auth/logout", { method: "POST", headers: { Authorization: `Basic ${auth}` }, credentials: "same-origin" }); } catch (_) {}
-        sessionStorage.clear(); location.replace("/login.html");
-      };
+      const logoutButton = byId("btn-logout");
+      if (logoutButton) logoutButton.onclick = logout;
     }
     const who = await request("/api/whoami");
     if (String(who.role || "").toLowerCase() !== "admin") throw new Error("Acesso exclusivo de administradores");
@@ -113,7 +115,6 @@
   function showError(error) { byId("activity-message").textContent = error.message || String(error); }
 
   document.addEventListener("DOMContentLoaded", async () => {
-    if (!auth) { location.replace("/login.html"); return; }
     try {
       await loadShell();
       await loadOptions();
