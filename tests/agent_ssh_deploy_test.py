@@ -72,7 +72,7 @@ class AgentSSHDeployTest(unittest.TestCase):
         with self.assertRaises(AgentDeployError):
             validate_ssh_user("user;id")
 
-    def test_ssh_argv_is_structured_and_has_no_password_flag(self):
+    def test_ssh_argv_is_structured_and_uses_safe_tofu(self):
         with tempfile.TemporaryDirectory() as temp:
             key = Path(temp) / "id_ed25519"
             key.write_text("fake", encoding="utf-8")
@@ -90,6 +90,7 @@ class AgentSSHDeployTest(unittest.TestCase):
         self.assertIn("ezequiel@192.168.15.55", argv)
         joined = " ".join(argv).lower()
         self.assertNotIn("password", joined)
+        self.assertIn("stricthostkeychecking=accept-new", joined)
         self.assertNotIn("stricthostkeychecking=no", joined)
 
     def test_preflight_is_read_only_and_requires_noninteractive_sudo(self):
@@ -109,6 +110,26 @@ class AgentSSHDeployTest(unittest.TestCase):
         self.assertIn("sudo -n true", remote)
         self.assertNotIn("apt ", remote)
         self.assertNotIn("mkdir", remote)
+
+    def test_password_rejection_has_actionable_diagnostic(self):
+        with tempfile.TemporaryDirectory() as temp:
+            password_file = Path(temp) / "node.secret"
+            password_file.write_text("wrong-password\n", encoding="utf-8")
+            password_file.chmod(0o600)
+
+            def runner(argv, stdin_text, timeout):
+                return SSHResult(5, "", "")
+
+            with self.assertRaises(AgentDeployError) as ctx:
+                preflight_ssh(
+                    SSHDeployOptions(
+                        host="192.168.15.55",
+                        ssh_user="mine",
+                        password_file=str(password_file),
+                    ),
+                    runner=runner,
+                )
+            self.assertIn("SSH authentication failed", str(ctx.exception))
 
     def test_existing_agent_detection(self):
         def present(argv, stdin_text, timeout):
@@ -141,12 +162,15 @@ class AgentSSHDeployTest(unittest.TestCase):
         self.assertEqual(observed["argv"][-1], "sudo -n python3 -")
         self.assertIn('env["CAPIVARA_PAIRING_TOKEN"]', observed["stdin"])
         self.assertNotIn('"--pairing-token", payload["pairing_token"]', observed["stdin"])
+        self.assertIn("CAPIVARA_BOOTSTRAP_ERROR", observed["stdin"])
+        self.assertIn("check=False", observed["stdin"])
+        self.assertNotIn("CalledProcessError", observed["stdin"])
 
     def test_bootstrap_failure_does_not_echo_token(self):
         secret = "pairing-DO-NOT-PRINT"
 
         def runner(argv, stdin_text, timeout):
-            return SSHResult(1, "", "curl: failed")
+            return SSHResult(1, "", "CAPIVARA_BOOTSTRAP_ERROR: Agent installer exited with status 1")
 
         with self.assertRaises(AgentDeployError) as ctx:
             bootstrap_agent(
@@ -156,6 +180,7 @@ class AgentSSHDeployTest(unittest.TestCase):
                 runner=runner,
             )
         self.assertNotIn(secret, str(ctx.exception))
+        self.assertIn("Agent installer exited with status 1", str(ctx.exception))
 
     def test_wait_for_online(self):
         states = iter([
