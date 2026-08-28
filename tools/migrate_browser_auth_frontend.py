@@ -16,30 +16,17 @@ ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "dashboard" / "web"
 
 CUSTOMER_FILES = {
-    "create-server-wizard.js",
-    "customer-backup-transfer.js",
-    "customer-change-password.js",
-    "customer-deleted-backups.js",
-    "customer-deletion-v2.js",
-    "customer-email-change.js",
-    "customer-instance-activity.js",
-    "customer-instance-connection.js",
-    "customer-instance-delete.js",
-    "customer-instance-events.js",
-    "customer-instance-v2.js",
-    "customer-instance.js",
-    "customer-members.js",
-    "customer-navigation.js",
-    "customer-placement-selector.js",
-    "customer-profile.js",
-    "customer-shell.js",
-    "customer.js",
-    "customer-backups.js",
-    "customer-integrations.js",
-    "customer-account.js",
+    "create-server-wizard.js", "customer-backup-transfer.js",
+    "customer-change-password.js", "customer-deleted-backups.js",
+    "customer-deletion-v2.js", "customer-email-change.js",
+    "customer-instance-activity.js", "customer-instance-connection.js",
+    "customer-instance-delete.js", "customer-instance-events.js",
+    "customer-instance-v2.js", "customer-instance.js", "customer-members.js",
+    "customer-navigation.js", "customer-placement-selector.js",
+    "customer-profile.js", "customer-shell.js", "customer.js",
+    "customer-backups.js", "customer-integrations.js", "customer-account.js",
     "runtime-selector.js",
 }
-
 LOGIN_EXEMPT = {"auth.js", "customer-auth.js"}
 
 
@@ -67,27 +54,18 @@ def replace_authorization(text: str, area: str) -> str:
 
 
 def remove_auth_state(text: str) -> str:
-    text = re.sub(
-        r'(?:const|let|var)\s+auth\s*=\s*\(\)\s*=>\s*sessionStorage\.getItem\(["\']dsm_auth["\']\)\s*\|\|\s*["\']["\']\s*;?',
-        '', text,
-    )
-    text = re.sub(
-        r'(?:const|let|var)\s+auth\s*=\s*sessionStorage\.getItem\(["\']dsm_auth["\']\)\s*\|\|\s*["\']["\']\s*;?',
-        '', text,
-    )
+    empty_auth = r'sessionStorage\.getItem\(["\']dsm_auth["\']\)\s*\|\|\s*["\']["\']'
+    text = re.sub(rf'(?:const|let|var)\s+auth\s*=\s*\(\)\s*=>\s*{empty_auth}\s*;?', '', text)
+    text = re.sub(rf'(?:const|let|var)\s+auth\s*=\s*{empty_auth}\s*;?', '', text)
+    # Compact declarations such as `const $=...,auth=()=>sessionStorage...`.
+    text = re.sub(rf',\s*auth\s*=\s*\(\)\s*=>\s*{empty_auth}', '', text)
+    # Multiline helper declaration used by runtime-selector.js.
+    text = re.sub(rf'\n?\s*const\s+auth\s*=\s*\(\)\s*=>\s*\{{\s*return\s+{empty_auth}\s*;?\s*\}}\s*;?', '', text)
     text = re.sub(
         r'function\s+getAuth\s*\(\s*\)\s*\{\s*return\s+sessionStorage\.getItem\(["\']dsm_auth["\']\)\s*;?\s*\}',
         '', text,
     )
-    # Token variables were only browser copies of the Basic credential. Remove
-    # them after their Authorization consumers have been migrated.
-    text = re.sub(
-        r'(?:const|let|var)\s+token\s*=\s*sessionStorage\.getItem\(["\']dsm_auth["\']\)\s*;?',
-        '', text,
-    )
-    # No authentication state may be cleared from Web Storage anymore. A broad
-    # clear() used on 401/logout is both unnecessary and destructive to
-    # non-auth UI state such as backup-clone selections.
+    text = re.sub(r'(?:const|let|var)\s+token\s*=\s*sessionStorage\.getItem\(["\']dsm_auth["\']\)\s*;?', '', text)
     text = re.sub(r'sessionStorage\.clear\(\)\s*;?', '', text)
     text = re.sub(r'sessionStorage\.removeItem\(["\']dsm_auth["\']\)\s*;?', '', text)
     text = re.sub(r'sessionStorage\.removeItem\(["\']dsm_customer_auth["\']\)\s*;?', '', text)
@@ -98,6 +76,8 @@ def remove_preflight_guards(text: str) -> str:
     guards = [
         r'if\s*\(\s*!auth\(\)\s*\)\s*\{\s*(?:window\.)?location\.(?:href|replace)\s*(?:=\s*["\']/login\.html["\']|\(["\']/login\.html["\']\))\s*;?\s*return\s*;?\s*\}',
         r'if\s*\(\s*!auth\s*\)\s*\{\s*(?:window\.)?location\.(?:href|replace)\s*(?:=\s*["\']/login\.html["\']|\(["\']/login\.html["\']\))\s*;?\s*return\s*;?\s*\}',
+        # A token declaration may have already been removed by this codemod.
+        r'if\s*\(\s*!token\s*\)\s*\{\s*(?:window\.)?location\.replace\(["\']/login\.html["\']\)\s*;?\s*throw\s+new\s+Error\([^)]*\)\s*;?\s*\}',
         r'if\s*\(\s*!token\s*\)\s*\{\s*return\s+null\s*;?\s*\}',
     ]
     for guard in guards:
@@ -109,22 +89,23 @@ def migrate(path: Path) -> bool:
     original = path.read_text(encoding="utf-8")
     text = original
     area = area_for(path)
-
     if path.name not in LOGIN_EXEMPT:
         text = replace_authorization(text, area)
         text = remove_auth_state(text)
         text = remove_preflight_guards(text)
 
-    # Even login pages have no reason to know historical Web Storage key names.
     text = re.sub(r'sessionStorage\.clear\(\)\s*;?', '', text)
     text = re.sub(r'sessionStorage\.removeItem\(["\']dsm_auth["\']\)\s*;?', '', text)
     text = re.sub(r'sessionStorage\.removeItem\(["\']dsm_customer_auth["\']\)\s*;?', '', text)
 
     if area == "customer":
-        text = text.replace('location.href="/login.html"', 'location.href="/customer-login.html"')
-        text = text.replace("location.href='/login.html'", "location.href='/customer-login.html'")
-        text = text.replace('location.replace("/login.html")', 'location.replace("/customer-login.html")')
-        text = text.replace("location.replace('/login.html')", "location.replace('/customer-login.html')")
+        # Preserve other Customer navigation but never route an expired Customer
+        # identity into the Controller login domain.
+        text = re.sub(
+            r'((?:window\.)?location\.(?:href|replace)\s*(?:=\s*|\(\s*)["\'])/login\.html(["\'])',
+            r'\1/customer-login.html\2',
+            text,
+        )
 
     if text != original:
         path.write_text(text, encoding="utf-8")
@@ -144,8 +125,10 @@ def audit() -> list[str]:
             findings.append(f"{rel}: broad sessionStorage.clear in auth-era frontend")
         if path.name not in LOGIN_EXEMPT and re.search(r'Authorization\s*:\s*(?:`|["\'])Basic', text):
             findings.append(f"{rel}: legacy Basic Authorization")
-        if area_for(path) == "customer" and re.search(r'location\.(?:href|replace).*?/login\.html', text):
+        if area_for(path) == "customer" and re.search(r'location\.(?:href|replace)[^\n;]*?/login\.html', text):
             findings.append(f"{rel}: Customer redirects to Controller login")
+        if "!token" in text and "X-Capivara-Auth-Area" in text and "sessionStorage.getItem" not in text:
+            findings.append(f"{rel}: orphan token guard after migration")
     return findings
 
 
