@@ -23,6 +23,7 @@ from agent_ssh_deploy import (
     SSHDeployOptions,
     SSHResult,
     bootstrap_agent,
+    build_scp_argv,
     build_ssh_argv,
     preflight_ssh,
     remote_agent_present,
@@ -247,6 +248,122 @@ class AgentSSHDeployTest(unittest.TestCase):
         self.assertIn('cap agent deploy HOST --ssh-user USER', cap)
         self.assertIn('cap agent ssh-prepare USER@HOST', cap)
         self.assertIn('database/agent_ssh_prepare_cli.py', cap)
+
+
+    def test_package_file_cli_contract(self):
+        args = build_parser().parse_args([
+            "192.168.15.59",
+            "--ssh-user",
+            "mine",
+            "--package-file",
+            "/tmp/capivara-agent-linux-2.0.14.tar.gz",
+        ])
+
+        self.assertEqual(
+            args.package_file,
+            "/tmp/capivara-agent-linux-2.0.14.tar.gz",
+        )
+        self.assertIsNone(args.release_tag)
+
+    def test_package_file_and_release_tag_are_mutually_exclusive(self):
+        parser = build_parser()
+
+        with self.assertRaises(SystemExit) as ctx:
+            parser.parse_args([
+                "192.168.15.59",
+                "--ssh-user",
+                "mine",
+                "--release-tag",
+                "v2.0.14",
+                "--package-file",
+                "/tmp/capivara-agent-linux-2.0.14.tar.gz",
+            ])
+
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_scp_argv_is_structured_and_uses_safe_tofu(self):
+        with tempfile.TemporaryDirectory() as temp:
+            package = Path(temp) / "agent.tar.gz"
+            package.write_bytes(b"fake-package")
+
+            remote = (
+                "/tmp/"
+                "capivara-agent-package-"
+                "0123456789abcdef0123456789abcdef"
+                ".tar.gz"
+            )
+
+            argv = build_scp_argv(
+                SSHDeployOptions(
+                    host="192.168.15.59",
+                    ssh_user="mine",
+                    ssh_port=2222,
+                ),
+                package,
+                remote,
+            )
+
+        self.assertEqual(argv[0], "scp")
+        self.assertIn("-P", argv)
+        self.assertIn("2222", argv)
+
+        joined = " ".join(argv)
+
+        self.assertIn(
+            "StrictHostKeyChecking=accept-new",
+            joined,
+        )
+        self.assertNotIn(
+            "StrictHostKeyChecking=no",
+            joined,
+        )
+        self.assertIn(
+            "mine@192.168.15.59:",
+            joined,
+        )
+        self.assertIn(remote, joined)
+
+    def test_scp_password_uses_password_file_not_secret_value(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+
+            package = root / "agent.tar.gz"
+            package.write_bytes(b"fake-package")
+
+            password = root / "node.secret"
+            password.write_text(
+                "SUPER-SECRET-PASSWORD\n",
+                encoding="utf-8",
+            )
+            password.chmod(0o600)
+
+            remote = (
+                "/tmp/"
+                "capivara-agent-package-"
+                "abcdefabcdefabcdefabcdefabcdefab"
+                ".tar.gz"
+            )
+
+            argv = build_scp_argv(
+                SSHDeployOptions(
+                    host="192.168.15.59",
+                    ssh_user="mine",
+                    password_file=str(password),
+                ),
+                package,
+                remote,
+            )
+
+            joined = " ".join(argv)
+
+            self.assertEqual(argv[0], "sshpass")
+            self.assertIn("-f", argv)
+            self.assertIn(str(password.resolve()), argv)
+            self.assertNotIn(
+                "SUPER-SECRET-PASSWORD",
+                joined,
+            )
+
 
 
 if __name__ == "__main__":

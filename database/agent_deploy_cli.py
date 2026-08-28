@@ -10,7 +10,7 @@ for candidate in (ROOT_DIR,ROOT_DIR/"core",ROOT_DIR/"database"):
 from agent_deploy_topology import validate_deploy_location
 from agent_installation_preconfiguration import AgentInstallationPreconfigurationRepository,normalize_preconfiguration
 from agent_pairing_repository import AgentPairingRepository
-from agent_ssh_deploy import AgentDeployError,SSHDeployOptions,bootstrap_agent,bootstrap_windows_agent_ssh,preflight_ssh,preflight_windows_ssh,remote_agent_present,remote_windows_agent_present_ssh,wait_for_agent_online
+from agent_ssh_deploy import AgentDeployError,SSHDeployOptions,bootstrap_agent,bootstrap_agent_package,bootstrap_windows_agent_ssh,preflight_ssh,preflight_windows_ssh,remote_agent_present,remote_windows_agent_present_ssh,wait_for_agent_online
 from alert_repository import AlertSession,dialect_for_backend
 from runtime_backend import backend_from_environment
 
@@ -101,23 +101,238 @@ def _status_reader(backend,token_id):
     return read
 
 def deploy(args):
-    backend=backend_from_environment()
+    backend = backend_from_environment()
+
     try:
-        backend.initialize();options=SSHDeployOptions(host=args.host,ssh_user=args.ssh_user,ssh_port=args.ssh_port,identity_file=args.identity_file,password_file=args.password_file,connect_timeout=args.connect_timeout)
-        controller_id=_active_controller_id(backend,args.controller_id);controller_url=_controller_url(args.host,args.controller_url);region_id,datacenter_id=validate_deploy_location(backend,region_id=args.region_id,datacenter_id=args.datacenter_id);preconfiguration=_preconfiguration(args)
-        if args.platform=="windows": preflight=preflight_windows_ssh(options);present=remote_windows_agent_present_ssh(options);bootstrap=bootstrap_windows_agent_ssh
-        else: preflight=preflight_ssh(options);present=remote_agent_present(options);bootstrap=bootstrap_agent
-        if present:raise AgentDeployError("Capivara Agent installation already detected on remote host; refusing automatic reinstall")
-        issued=AgentPairingRepository(backend).issue_token(controller_id=controller_id,created_by=os.environ.get("USER") or None,ttl_seconds=args.pairing_ttl)
-        _annotate_pairing(backend,token_id=issued.token_id,platform=args.platform,region_id=region_id,datacenter_id=datacenter_id);AgentInstallationPreconfigurationRepository(backend).save(issued.token_id,preconfiguration)
-        bootstrap(options,controller_url=controller_url,pairing_token=issued.token,release_tag=args.release_tag,timeout=args.bootstrap_timeout)
-        online=wait_for_agent_online(_status_reader(backend,issued.token_id),timeout=args.heartbeat_timeout);applied=AgentInstallationPreconfigurationRepository(backend).get(issued.token_id)
-        return {"deployment":"completed","host":args.host,"ssh_user":args.ssh_user,"ssh_port":args.ssh_port,"controller_id":controller_id,"controller_url":controller_url,"region_id":region_id,"datacenter_id":datacenter_id,"preconfiguration":applied,"remote_platform":preflight.get("platform"),"remote_architecture":preflight.get("architecture"),"authentication":"password-file" if args.password_file else "ssh-key-or-agent","agent_id":online.get("agent_id"),"node_id":online.get("node_id"),"agent_status":online.get("agent_status"),"health_status":online.get("health_status"),"last_seen":online.get("last_seen")}
-    finally:backend.close()
+        backend.initialize()
+
+        options = SSHDeployOptions(
+            host=args.host,
+            ssh_user=args.ssh_user,
+            ssh_port=args.ssh_port,
+            identity_file=args.identity_file,
+            password_file=args.password_file,
+            connect_timeout=args.connect_timeout,
+        )
+
+        package_file = getattr(args, "package_file", None)
+        release_tag = args.release_tag or "latest"
+
+        if package_file and args.platform != "linux":
+            raise AgentDeployError(
+                "--package-file is supported only for Linux Agents"
+            )
+
+        controller_id = _active_controller_id(
+            backend,
+            args.controller_id,
+        )
+
+        controller_url = _controller_url(
+            args.host,
+            args.controller_url,
+        )
+
+        region_id, datacenter_id = validate_deploy_location(
+            backend,
+            region_id=args.region_id,
+            datacenter_id=args.datacenter_id,
+        )
+
+        preconfiguration = _preconfiguration(args)
+
+        if args.platform == "windows":
+            preflight = preflight_windows_ssh(options)
+            present = remote_windows_agent_present_ssh(options)
+            bootstrap = bootstrap_windows_agent_ssh
+        else:
+            preflight = preflight_ssh(options)
+            present = remote_agent_present(options)
+            bootstrap = bootstrap_agent
+
+        if present:
+            raise AgentDeployError(
+                "Capivara Agent installation already detected on "
+                "remote host; refusing automatic reinstall"
+            )
+
+        issued = AgentPairingRepository(backend).issue_token(
+            controller_id=controller_id,
+            created_by=os.environ.get("USER") or None,
+            ttl_seconds=args.pairing_ttl,
+        )
+
+        _annotate_pairing(
+            backend,
+            token_id=issued.token_id,
+            platform=args.platform,
+            region_id=region_id,
+            datacenter_id=datacenter_id,
+        )
+
+        AgentInstallationPreconfigurationRepository(
+            backend
+        ).save(
+            issued.token_id,
+            preconfiguration,
+        )
+
+        if package_file:
+            bootstrap_agent_package(
+                options,
+                controller_url=controller_url,
+                pairing_token=issued.token,
+                package_file=package_file,
+                timeout=args.bootstrap_timeout,
+            )
+        else:
+            bootstrap(
+                options,
+                controller_url=controller_url,
+                pairing_token=issued.token,
+                release_tag=release_tag,
+                timeout=args.bootstrap_timeout,
+            )
+
+        online = wait_for_agent_online(
+            _status_reader(
+                backend,
+                issued.token_id,
+            ),
+            timeout=args.heartbeat_timeout,
+        )
+
+        applied = (
+            AgentInstallationPreconfigurationRepository(
+                backend
+            ).get(issued.token_id)
+        )
+
+        return {
+            "deployment": "completed",
+            "host": args.host,
+            "ssh_user": args.ssh_user,
+            "ssh_port": args.ssh_port,
+            "controller_id": controller_id,
+            "controller_url": controller_url,
+            "region_id": region_id,
+            "datacenter_id": datacenter_id,
+            "preconfiguration": applied,
+            "remote_platform": preflight.get("platform"),
+            "remote_architecture": preflight.get("architecture"),
+            "authentication": (
+                "password-file"
+                if args.password_file
+                else "ssh-key-or-agent"
+            ),
+            "agent_id": online.get("agent_id"),
+            "node_id": online.get("node_id"),
+            "agent_status": online.get("agent_status"),
+            "health_status": online.get("health_status"),
+            "last_seen": online.get("last_seen"),
+        }
+
+    finally:
+        backend.close()
 
 def build_parser():
-    p=argparse.ArgumentParser(description="Deploy a Capivara Linux or Windows Agent over OpenSSH",epilog="Passwords are never accepted as CLI values. Use --password-file PATH for a protected 0600 file; SSH keys remain preferred.")
-    p.add_argument("host",help="remote Agent host (IPv4, IPv6 or hostname)");p.add_argument("--platform",choices=("linux","windows"),default="linux",help="target platform; default: linux");p.add_argument("--ssh-user",required=True,help="SSH bootstrap user");p.add_argument("--ssh-port",type=int,default=22);auth=p.add_mutually_exclusive_group();auth.add_argument("--identity-file");auth.add_argument("--password-file",help="protected file containing only the SSH password; mode 0600 or stricter");p.add_argument("--controller-id");p.add_argument("--controller-url");p.add_argument("--region-id");p.add_argument("--datacenter-id");p.add_argument("--name");p.add_argument("--port-range",metavar="START-END");p.add_argument("--port-protocol",choices=("tcp","udp","both"));p.add_argument("--release-tag",default="latest");p.add_argument("--pairing-ttl",type=int,default=900);p.add_argument("--connect-timeout",type=int,default=10);p.add_argument("--bootstrap-timeout",type=int,default=900);p.add_argument("--heartbeat-timeout",type=int,default=180);p.add_argument("--json",action="store_true");return p
+    p = argparse.ArgumentParser(
+        description=(
+            "Deploy a Capivara Linux or Windows Agent over OpenSSH"
+        ),
+        epilog=(
+            "Passwords are never accepted as CLI values. "
+            "Use --password-file PATH for a protected 0600 file; "
+            "SSH keys remain preferred."
+        ),
+    )
+
+    p.add_argument(
+        "host",
+        help="remote Agent host (IPv4, IPv6 or hostname)",
+    )
+
+    p.add_argument(
+        "--platform",
+        choices=("linux", "windows"),
+        default="linux",
+        help="target platform; default: linux",
+    )
+
+    p.add_argument(
+        "--ssh-user",
+        required=True,
+        help="SSH bootstrap user",
+    )
+
+    p.add_argument("--ssh-port", type=int, default=22)
+
+    auth = p.add_mutually_exclusive_group()
+    auth.add_argument("--identity-file")
+    auth.add_argument(
+        "--password-file",
+        help=(
+            "protected file containing only the SSH password; "
+            "mode 0600 or stricter"
+        ),
+    )
+
+    p.add_argument("--controller-id")
+    p.add_argument("--controller-url")
+    p.add_argument("--region-id")
+    p.add_argument("--datacenter-id")
+    p.add_argument("--name")
+    p.add_argument(
+        "--port-range",
+        metavar="START-END",
+    )
+    p.add_argument(
+        "--port-protocol",
+        choices=("tcp", "udp", "both"),
+    )
+
+    source = p.add_mutually_exclusive_group()
+
+    source.add_argument(
+        "--release-tag",
+        help=(
+            "GitHub Agent release tag; default: latest"
+        ),
+    )
+
+    source.add_argument(
+        "--package-file",
+        help=(
+            "local Linux Agent .tar.gz package for homologation"
+        ),
+    )
+
+    p.add_argument(
+        "--pairing-ttl",
+        type=int,
+        default=900,
+    )
+    p.add_argument(
+        "--connect-timeout",
+        type=int,
+        default=10,
+    )
+    p.add_argument(
+        "--bootstrap-timeout",
+        type=int,
+        default=900,
+    )
+    p.add_argument(
+        "--heartbeat-timeout",
+        type=int,
+        default=180,
+    )
+    p.add_argument(
+        "--json",
+        action="store_true",
+    )
+
+    return p
 
 def _print_human(payload):
     print("Capivara Agent Deployment\n")

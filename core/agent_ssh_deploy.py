@@ -6,16 +6,19 @@ transport, while keeping platform-specific preflight and bootstrap commands.
 """
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import os
 import re
+import secrets
 import shutil
 import stat
 import subprocess
+import tarfile
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Sequence
 
 
@@ -160,6 +163,567 @@ def build_ssh_argv(options: SSHDeployOptions, remote_command: str) -> list[str]:
         argv.extend(["-i", str(identity)])
     argv.extend([f"{user}@{host}", remote_command])
     return argv
+
+
+
+def build_scp_argv(
+    options: SSHDeployOptions,
+    local_path: str | Path,
+    remote_path: str,
+) -> list[str]:
+    host = validate_host(options.host)
+    user = validate_ssh_user(options.ssh_user)
+
+    if not 1 <= int(options.ssh_port) <= 65535:
+        raise AgentDeployError("ssh_port must be between 1 and 65535")
+    if not 1 <= int(options.connect_timeout) <= 300:
+        raise AgentDeployError(
+            "connect_timeout must be between 1 and 300 seconds"
+        )
+    if options.identity_file and options.password_file:
+        raise AgentDeployError(
+            "use either identity_file or password_file, not both"
+        )
+
+    source = Path(local_path).expanduser().resolve()
+    if not source.is_file():
+        raise AgentDeployError(
+            f"local Agent package not found: {source}"
+        )
+
+    if not re.fullmatch(
+        r"/tmp/capivara-agent-package-[0-9a-f]{32}\.tar\.gz",
+        remote_path,
+    ):
+        raise AgentDeployError("unsafe remote Agent package path")
+
+    password_path = (
+        validate_password_file(options.password_file)
+        if options.password_file
+        else None
+    )
+
+    argv: list[str] = []
+
+    if password_path:
+        argv.extend(["sshpass", "-f", str(password_path)])
+
+    argv.extend([
+        "scp",
+        "-P",
+        str(int(options.ssh_port)),
+        "-o",
+        f"ConnectTimeout={int(options.connect_timeout)}",
+        "-o",
+        "BatchMode=no" if password_path else "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+    ])
+
+    if password_path:
+        argv.extend([
+            "-o",
+            "PreferredAuthentications=password,keyboard-interactive",
+        ])
+
+    if options.identity_file:
+        identity = Path(
+            os.path.expanduser(str(options.identity_file))
+        ).resolve()
+
+        if not identity.is_file():
+            raise AgentDeployError(
+                f"SSH identity file not found: {identity}"
+            )
+
+        argv.extend(["-i", str(identity)])
+
+    scp_host = f"[{host}]" if ":" in host else host
+
+    argv.extend([
+        str(source),
+        f"{user}@{scp_host}:{remote_path}",
+    ])
+
+    return argv
+
+
+def _run_scp(
+    options: SSHDeployOptions,
+    local_path: str | Path,
+    remote_path: str,
+    *,
+    runner: SSHRunner = _default_runner,
+    timeout: int | None = None,
+) -> SSHResult:
+    if runner is _default_runner:
+        if shutil.which("scp") is None:
+            raise AgentDeployError("OpenSSH scp client not found")
+
+        if options.password_file and shutil.which("sshpass") is None:
+            raise AgentDeployError(
+                "password-file authentication requires sshpass "
+                "on the Controller; SSH keys remain preferred"
+            )
+
+    try:
+        return runner(
+            build_scp_argv(options, local_path, remote_path),
+            None,
+            timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AgentDeployError(
+            "Agent package transfer timed out"
+        ) from exc
+    except OSError as exc:
+        raise AgentDeployError(
+            f"unable to execute scp client: {exc}"
+        ) from exc
+
+
+def validate_agent_package_file(value: str | Path) -> Path:
+    path = Path(value).expanduser().resolve()
+
+    if not path.is_file():
+        raise AgentDeployError(
+            f"local Agent package not found: {path}"
+        )
+
+    try:
+        archive = tarfile.open(path, "r:gz")
+    except (tarfile.TarError, OSError) as exc:
+        raise AgentDeployError(
+            f"invalid Linux Agent package: {path}"
+        ) from exc
+
+    try:
+        members: dict[str, tarfile.TarInfo] = {}
+        roots: set[str] = set()
+
+        for member in archive.getmembers():
+            raw = member.name
+
+            while raw.startswith("./"):
+                raw = raw[2:]
+
+            if not raw:
+                continue
+
+            parts = PurePosixPath(raw).parts
+
+            if (
+                raw.startswith("/")
+                or ".." in parts
+                or member.issym()
+                or member.islnk()
+            ):
+                raise AgentDeployError(
+                    f"unsafe path in Agent package: {member.name}"
+                )
+
+            if not parts:
+                continue
+
+            roots.add(parts[0])
+            members[raw.rstrip("/")] = member
+
+        if len(roots) != 1:
+            raise AgentDeployError(
+                "Agent package must contain exactly one top-level directory"
+            )
+
+        package_root = next(iter(roots))
+
+        def package_member(relative: str) -> tarfile.TarInfo | None:
+            return members.get(
+                f"{package_root}/{relative}"
+            )
+
+        for required in (
+            "install-agent.sh",
+            "manifest.json",
+            "VERSION",
+        ):
+            member = package_member(required)
+
+            if member is None or not member.isfile():
+                raise AgentDeployError(
+                    f"invalid Agent package: missing {required}"
+                )
+
+        manifest_member = package_member(
+            "manifest.json"
+        )
+        version_member = package_member(
+            "VERSION"
+        )
+
+        assert manifest_member is not None
+        assert version_member is not None
+
+        manifest_fp = archive.extractfile(
+            manifest_member
+        )
+        version_fp = archive.extractfile(
+            version_member
+        )
+
+        if manifest_fp is None or version_fp is None:
+            raise AgentDeployError(
+                "invalid Agent package metadata"
+            )
+
+        manifest = json.loads(
+            manifest_fp.read().decode("utf-8")
+        )
+
+        version = (
+            version_fp.read()
+            .decode("utf-8")
+            .strip()
+        )
+
+        if manifest.get("kind") != "CapivaraAgentPackage":
+            raise AgentDeployError(
+                "invalid Agent package kind"
+            )
+
+        if manifest.get("schema_version") != 1:
+            raise AgentDeployError(
+                "unsupported Agent package manifest schema"
+            )
+
+        if manifest.get("platform") != "linux":
+            raise AgentDeployError(
+                "local package is not a Linux Agent package"
+            )
+
+        if str(manifest.get("version") or "") != version:
+            raise AgentDeployError(
+                "Agent package version differs from manifest"
+            )
+
+        required_files = manifest.get(
+            "required_files"
+        )
+
+        files = manifest.get("files")
+
+        if (
+            not isinstance(required_files, list)
+            or not isinstance(files, dict)
+        ):
+            raise AgentDeployError(
+                "invalid Agent package manifest structure"
+            )
+
+        for rel_value in required_files:
+            rel = str(rel_value)
+
+            rel_parts = PurePosixPath(rel).parts
+
+            if (
+                not rel
+                or rel.startswith("/")
+                or ".." in rel_parts
+            ):
+                raise AgentDeployError(
+                    f"unsafe Agent manifest path: {rel}"
+                )
+
+            member = package_member(rel)
+
+            metadata = files.get(rel)
+
+            if (
+                member is None
+                or not member.isfile()
+                or not isinstance(metadata, dict)
+            ):
+                raise AgentDeployError(
+                    f"invalid Agent package manifest entry: {rel}"
+                )
+
+            expected = str(
+                metadata.get("sha256") or ""
+            )
+
+            if not re.fullmatch(
+                r"[0-9a-f]{64}",
+                expected,
+            ):
+                raise AgentDeployError(
+                    f"invalid Agent package SHA-256 entry: {rel}"
+                )
+
+            source = archive.extractfile(
+                member
+            )
+
+            if source is None:
+                raise AgentDeployError(
+                    f"unable to read Agent package file: {rel}"
+                )
+
+            data = source.read()
+
+            actual = hashlib.sha256(
+                data
+            ).hexdigest()
+
+            if actual != expected:
+                raise AgentDeployError(
+                    f"Agent package SHA-256 mismatch: {rel}"
+                )
+
+            expected_size = metadata.get("size")
+
+            if (
+                expected_size is not None
+                and int(expected_size) != len(data)
+            ):
+                raise AgentDeployError(
+                    f"Agent package size mismatch: {rel}"
+                )
+
+    except (
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise AgentDeployError(
+            "invalid Agent package metadata"
+        ) from exc
+    finally:
+        archive.close()
+
+    return path
+
+
+
+def _local_package_bootstrap_stdin(
+    controller_url: str,
+    pairing_token: str,
+    remote_package_path: str,
+) -> str:
+    payload = json.dumps(
+        {
+            "controller_url": controller_url,
+            "pairing_token": pairing_token,
+            "package_path": remote_package_path,
+        },
+        separators=(",", ":"),
+    )
+
+    return f'''import json, os, pathlib, shutil, subprocess, sys, tarfile, tempfile
+payload=json.loads({payload!r})
+archive_path=pathlib.Path(payload["package_path"])
+work=pathlib.Path(tempfile.mkdtemp(prefix="capivara-agent-local-"))
+try:
+    try:
+        with tarfile.open(archive_path, "r:gz") as archive:
+            root=work.resolve()
+            for member in archive.getmembers():
+                raw=member.name
+                while raw.startswith("./"):
+                    raw=raw[2:]
+                parts=pathlib.PurePosixPath(raw).parts
+                if (
+                    not raw
+                    or raw.startswith("/")
+                    or ".." in parts
+                    or member.issym()
+                    or member.islnk()
+                ):
+                    print(
+                        "CAPIVARA_BOOTSTRAP_ERROR: "
+                        "unsafe Agent package path: %s" % member.name,
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(1)
+
+                target=(work/pathlib.Path(*parts)).resolve()
+
+                if target != root and root not in target.parents:
+                    print(
+                        "CAPIVARA_BOOTSTRAP_ERROR: "
+                        "Agent package path escaped extraction root",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(1)
+
+            archive.extractall(work)
+
+    except (tarfile.TarError, OSError) as exc:
+        print(
+            "CAPIVARA_BOOTSTRAP_ERROR: "
+            "unable to extract local Agent package: %s" % exc,
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    roots=[
+        item
+        for item in work.iterdir()
+        if item.is_dir()
+    ]
+
+    if len(roots) != 1:
+        print(
+            "CAPIVARA_BOOTSTRAP_ERROR: "
+            "Agent package must contain exactly one top-level directory",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    package_root=roots[0]
+    installer=package_root/"install-agent.sh"
+
+    if not installer.is_file():
+        print(
+            "CAPIVARA_BOOTSTRAP_ERROR: "
+            "install-agent.sh missing from local Agent package",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    env=os.environ.copy()
+    env["CAPIVARA_PAIRING_TOKEN"]=payload["pairing_token"]
+
+    install=subprocess.run(
+        [
+            "bash",
+            str(installer),
+            "--controller-url",
+            payload["controller_url"],
+            "--package-dir",
+            str(package_root),
+        ],
+        check=False,
+        env=env,
+    )
+
+    if install.returncode:
+        print(
+            "CAPIVARA_BOOTSTRAP_ERROR: "
+            "Agent installer exited with status %d"
+            % install.returncode,
+            file=sys.stderr,
+        )
+        raise SystemExit(install.returncode)
+finally:
+    shutil.rmtree(work, ignore_errors=True)
+    try:
+        archive_path.unlink()
+    except FileNotFoundError:
+        pass
+'''
+
+
+def bootstrap_agent_package(
+    options: SSHDeployOptions,
+    *,
+    controller_url: str,
+    pairing_token: str,
+    package_file: str | Path,
+    runner: SSHRunner = _default_runner,
+    transfer_runner: SSHRunner = _default_runner,
+    timeout: int = 900,
+) -> None:
+    controller_url = str(
+        controller_url or ""
+    ).strip().rstrip("/")
+
+    pairing_token = str(
+        pairing_token or ""
+    ).strip()
+
+    if not controller_url.startswith(
+        ("http://", "https://")
+    ):
+        raise AgentDeployError(
+            "controller_url must use http:// or https://"
+        )
+
+    if not pairing_token:
+        raise AgentDeployError(
+            "pairing token is required"
+        )
+
+    package = validate_agent_package_file(
+        package_file
+    )
+
+    remote_path = (
+        "/tmp/capivara-agent-package-"
+        + secrets.token_hex(16)
+        + ".tar.gz"
+    )
+
+    transfer = _run_scp(
+        options,
+        package,
+        remote_path,
+        runner=transfer_runner,
+        timeout=timeout,
+    )
+
+    if transfer.returncode != 0:
+        raise AgentDeployError(
+            "Agent package transfer failed: "
+            + _reason(
+                transfer,
+                "remote Agent package transfer failed",
+            )
+        )
+
+    user = validate_ssh_user(options.ssh_user)
+    password = _password_text(options)
+
+    script = _local_package_bootstrap_stdin(
+        controller_url,
+        pairing_token,
+        remote_path,
+    )
+
+    if user == "root":
+        command = "python3 -"
+        stdin_text = script
+    elif password is not None:
+        command = "sudo -S -p '' python3 -"
+        stdin_text = password + "\n" + script
+    else:
+        command = "sudo -n python3 -"
+        stdin_text = script
+
+    result = _run_ssh(
+        options,
+        command,
+        runner=runner,
+        stdin_text=stdin_text,
+        timeout=timeout,
+    )
+
+    if result.returncode != 0:
+        try:
+            _run_ssh(
+                options,
+                f"rm -f -- {remote_path}",
+                runner=runner,
+                timeout=options.connect_timeout + 5,
+            )
+        except AgentDeployError:
+            pass
+
+        raise AgentDeployError(
+            "Agent local package bootstrap failed: "
+            + _reason(
+                result,
+                "remote Agent local package bootstrap failed",
+            )
+        )
 
 
 def _run_ssh(

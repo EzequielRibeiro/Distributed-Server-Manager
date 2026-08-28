@@ -33,7 +33,7 @@ class AgentSSHBootstrapDiagnosticTest(unittest.TestCase):
             )
 
         message = str(ctx.exception)
-        self.assertIn("CAPIVARA_BOOTSTRAP_ERROR: Agent installer exited with status 1", message)
+        self.assertIn("[Capivara Agent][ERRO] arquivo obrigatório ausente: agent/runtime/example.py", message)
         self.assertNotIn("Pacote validado por SHA-256", message)
         self.assertNotIn("secret-not-for-output", message)
 
