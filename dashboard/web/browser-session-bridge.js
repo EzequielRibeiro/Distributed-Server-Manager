@@ -21,13 +21,11 @@
         }
 
         options.headers = headers;
-        if (!options.credentials) {
-            options.credentials = "same-origin";
-        }
+        if (!options.credentials) options.credentials = "same-origin";
         return nativeFetch(input, options);
     };
 
-    async function logout() {
+    async function logout(destination) {
         try {
             await nativeFetch("/api/auth/logout", {
                 method: "POST",
@@ -40,16 +38,16 @@
         } finally {
             sessionStorage.removeItem(COMPAT_KEY);
             sessionStorage.removeItem("dsm_customer_auth");
-            window.location.replace("/login.html");
+            window.location.replace(destination || "/login.html");
         }
     }
 
     document.addEventListener("click", function (event) {
-        const button = event.target.closest("#btn-logout,[data-capivara-logout]");
+        const button = event.target.closest("#btn-logout,#customer-logout,[data-capivara-logout]");
         if (!button) return;
         event.preventDefault();
         event.stopImmediatePropagation();
-        logout();
+        logout(button.id === "customer-logout" ? "/customer-login.html" : "/login.html");
     }, true);
 
     window.CapivaraBrowserSession = Object.freeze({logout});
