@@ -98,11 +98,97 @@ process_guard_instance_from_pidfile()
 # Target database compatibility
 # =============================================================
 
+process_guard_database_check_is_upgradeable()
+{
+    local payload="${1:-}"
+    local target_root="${2:-}"
+
+    [[ -n "${payload}" && -n "${target_root}" ]] || return 1
+
+    CAPIVARA_DATABASE_CHECK_PAYLOAD="${payload}" \
+        python3 - "${target_root}" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(os.environ["CAPIVARA_DATABASE_CHECK_PAYLOAD"])
+except (KeyError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+if payload.get("kind") != "DatabaseCheck":
+    raise SystemExit(1)
+if payload.get("connected") is not True or payload.get("initialized") is not True:
+    raise SystemExit(1)
+if not payload.get("baseline") or payload.get("baseline") != payload.get("expected_baseline"):
+    raise SystemExit(1)
+if payload.get("missing_tables"):
+    raise SystemExit(1)
+if payload.get("upgrade_error") is not None:
+    raise SystemExit(1)
+
+database_dir = Path(sys.argv[1]) / "database"
+if not database_dir.is_dir():
+    raise SystemExit(1)
+sys.path.insert(0, str(database_dir))
+
+try:
+    from baseline_upgrade_engine import (
+        LEGACY_BASELINE_START_VERSION,
+        UPGRADES,
+        latest_upgrade_version,
+    )
+except Exception:
+    raise SystemExit(1)
+
+pending = payload.get("pending_upgrades")
+if not isinstance(pending, list):
+    raise SystemExit(1)
+
+registered = {(upgrade.version, upgrade.name) for upgrade in UPGRADES}
+for item in pending:
+    if not isinstance(item, dict):
+        raise SystemExit(1)
+    pair = (item.get("version"), item.get("name"))
+    if pair not in registered:
+        raise SystemExit(1)
+
+if payload.get("upgrade_latest") != latest_upgrade_version():
+    raise SystemExit(1)
+
+checksum_matches = payload.get("checksum_matches") is True
+ledger_present = payload.get("upgrade_ledger") is True
+installed_checksum = payload.get("baseline_checksum")
+
+# Exact current consolidated baseline without a ledger is safe: the target
+# reconciler only seeds the ledger because the schema already includes all
+# registered extensions.
+if checksum_matches:
+    raise SystemExit(0 if (not ledger_present or pending) else 1)
+
+# Once a valid ledger exists, a checksum change is advanced only through the
+# target release's registered additive upgrades.
+if ledger_present:
+    raise SystemExit(0 if pending else 1)
+
+# Pre-ledger checksum changes are accepted only through the finite compatibility
+# bridge declared by the target release itself.
+if installed_checksum in LEGACY_BASELINE_START_VERSION and pending:
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+
 process_guard_assert_target_database_compatible()
 {
     local target_root="${NEW_SRC:-}"
     local install_root="${INSTALL_DIR:-${DSM_ROOT}}"
     local manager
+    local check_output=""
+    local check_status=0
 
     if [[ -z "${target_root}" ]]
     then
@@ -124,24 +210,41 @@ process_guard_assert_target_database_compatible()
     echo "Validando compatibilidade do banco com o pacote alvo..."
     echo "Validating database compatibility with target package..."
 
-    if ! python3 "${manager}" --root "${install_root}" check
+    if check_output="$(python3 "${manager}" --root "${install_root}" check)"
     then
-        echo
-        echo "============================================================="
-        echo " Atualização bloqueada: banco incompatível com a versão alvo"
-        echo " Update blocked: database is incompatible with target version"
-        echo "============================================================="
-        echo
-        echo "Nenhum serviço foi parado e nenhum arquivo da instalação foi aplicado."
-        echo "No service was stopped and no installation file was applied."
-        echo
-        echo "O Capivara não executa migração histórica entre baselines incompatíveis."
-        echo "Capivara does not perform historical migration between incompatible baselines."
-        echo
-        return 1
+        [[ -n "${check_output}" ]] && printf '%s\n' "${check_output}"
+        echo "[OK] Banco compatível com o pacote alvo | Database compatible with target package."
+        return 0
+    else
+        check_status=$?
     fi
 
-    echo "[OK] Banco compatível com o pacote alvo | Database compatible with target package."
+    [[ -n "${check_output}" ]] && printf '%s\n' "${check_output}"
+
+    if (( check_status == 1 )) \
+        && process_guard_database_check_is_upgradeable "${check_output}" "${target_root}"
+    then
+        echo
+        echo "[OK] Banco compatível com reconciliação Baseline v2 pendente."
+        echo "[OK] Database compatible with pending Baseline v2 reconciliation."
+        echo "Os upgrades aditivos registrados serão aplicados após a parada controlada dos serviços."
+        echo "Registered additive upgrades will be applied after services are stopped safely."
+        return 0
+    fi
+
+    echo
+    echo "============================================================="
+    echo " Atualização bloqueada: banco incompatível com a versão alvo"
+    echo " Update blocked: database is incompatible with target version"
+    echo "============================================================="
+    echo
+    echo "Nenhum serviço foi parado e nenhum arquivo da instalação foi aplicado."
+    echo "No service was stopped and no installation file was applied."
+    echo
+    echo "O Capivara não executa migração histórica entre baselines incompatíveis."
+    echo "Capivara does not perform historical migration between incompatible baselines."
+    echo
+    return 1
 }
 
 # =============================================================
@@ -496,6 +599,7 @@ export -f process_guard_instance_pidfiles
 export -f process_guard_pid_is_running
 export -f process_guard_pid_command
 export -f process_guard_instance_from_pidfile
+export -f process_guard_database_check_is_upgradeable
 export -f process_guard_assert_target_database_compatible
 export -f process_guard_active_instances
 export -f process_guard_has_active_instances
