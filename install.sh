@@ -212,12 +212,59 @@ retire_obsolete_systemd_units(){
     systemctl daemon-reload >/dev/null 2>&1 || true
 }
 
+resolve_installed_service_account(){
+    [[ " ${*} " != *" --dry-run "* ]] || return 0
+
+    local config="${DSM_ROOT:-/opt/dsm}/config/dsm.conf"
+    local installed_user=""
+    local installed_group=""
+
+    if [[ -f "${config}" ]]; then
+        installed_user="$(sed -n 's/^DSM_USER="\([^"]*\)"$/\1/p' "${config}" | tail -n 1)"
+        installed_group="$(sed -n 's/^DSM_GROUP="\([^"]*\)"$/\1/p' "${config}" | tail -n 1)"
+    fi
+
+    DSM_SERVICE_USER="${installed_user:-${DSM_SERVICE_USER:-}}"
+    DSM_SERVICE_GROUP="${installed_group:-${DSM_SERVICE_GROUP:-}}"
+
+    [[ -n "${DSM_SERVICE_USER}" && -n "${DSM_SERVICE_GROUP}" ]] || {
+        printf '[Capivara][ERRO] Não foi possível resolver a conta de serviço instalada.\n' >&2
+        return 1
+    }
+
+    export DSM_SERVICE_USER DSM_SERVICE_GROUP
+}
+
+reconcile_managed_tls_permissions(){
+    [[ "${DSM_WEB_SCHEME:-http}" == https ]] || return 0
+    [[ " ${*} " != *" --dry-run "* ]] || return 0
+
+    case "${DSM_TLS_CERT_MODE:-}" in
+        letsencrypt|selfsigned)
+            local tls_dir="$(dirname "${DSM_TLS_KEY_FILE}")"
+            install -d -m 0750 -o root -g "${DSM_SERVICE_GROUP}" "${tls_dir}"
+
+            if [[ -f "${DSM_TLS_CERT_FILE}" ]]; then
+                chown root:"${DSM_SERVICE_GROUP}" "${DSM_TLS_CERT_FILE}"
+                chmod 0640 "${DSM_TLS_CERT_FILE}"
+            fi
+
+            if [[ -f "${DSM_TLS_KEY_FILE}" ]]; then
+                chown root:"${DSM_SERVICE_GROUP}" "${DSM_TLS_KEY_FILE}"
+                chmod 0640 "${DSM_TLS_KEY_FILE}"
+            fi
+            ;;
+    esac
+}
+
 select_role_and_database
 select_web_transport
 select_initial_topology
 prepare_web_transport_certificate "$@"
 retire_obsolete_systemd_units "$@"
 "${CORE_INSTALLER}" "$@"
+resolve_installed_service_account "$@"
+reconcile_managed_tls_permissions "$@"
 persist_web_transport_config "$@"
 retire_obsolete_systemd_units "$@"
 
