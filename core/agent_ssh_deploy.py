@@ -218,10 +218,32 @@ def _reason(result: SSHResult, fallback: str) -> str:
     # over stdout progress lines such as "Pacote validado por SHA-256" so a
     # successful progress message can never mask the actual install failure.
     stderr_lines = [line.strip() for line in stderr.splitlines() if line.strip()]
-    for marker in ("CAPIVARA_BOOTSTRAP_ERROR:", "[Capivara Agent][ERRO]"):
-        marked = [line for line in stderr_lines if marker in line]
-        if marked:
-            return marked[-1]
+
+    # A mensagem específica do instalador tem precedência sobre o marcador
+    # genérico produzido pelo bootstrap pai.
+    specific = [
+        line for line in stderr_lines
+        if "[Capivara Agent][ERRO]" in line
+    ]
+    if specific:
+        return specific[-1]
+
+    bootstrap_markers = [
+        line for line in stderr_lines
+        if "CAPIVARA_BOOTSTRAP_ERROR:" in line
+    ]
+    if bootstrap_markers:
+        # Com `set -e`, alguns comandos (apt, python, install, systemctl etc.)
+        # podem abortar sem passar por fail(). Nesse caso preserve a última
+        # linha real de stderr anterior ao marcador genérico.
+        non_markers = [
+            line for line in stderr_lines
+            if "CAPIVARA_BOOTSTRAP_ERROR:" not in line
+        ]
+        if non_markers:
+            return f"{non_markers[-1]} | {bootstrap_markers[-1]}"
+        return bootstrap_markers[-1]
+
     if stderr_lines:
         return stderr_lines[-1]
 

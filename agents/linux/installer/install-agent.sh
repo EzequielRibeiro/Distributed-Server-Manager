@@ -112,7 +112,7 @@ CONTROLLER_URL="$(normalize_controller_url "${CONTROLLER_URL}")" || fail "Contro
 [[ -n "${PAIRING_TOKEN}" ]] || fail "pairing token é obrigatório"
 [[ "${INSTANCE_STORAGE_ROOT}" == /* ]] || fail "instance storage root deve ser um caminho absoluto"
 [[ "${INSTANCE_STORAGE_ROOT}" != "/" ]] || fail "instance storage root não pode ser /"
-[[ "${INSTANCE_STORAGE_ROOT}" != *$'\n'* && "${INSTANCE_STORAGE_ROOT}" != *$'\r'* && "${INSTANCE_STORAGE_ROOT}" != *$'\0'* ]] || fail "instance storage root inválido"
+[[ "${INSTANCE_STORAGE_ROOT}" != *$'\n'* && "${INSTANCE_STORAGE_ROOT}" != *$'\r'* ]] || fail "instance storage root inválido"
 unset CAPIVARA_PAIRING_TOKEN
 install_runtime_dependencies(){
   local machine
