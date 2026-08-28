@@ -27,6 +27,9 @@ DASHBOARD_V3_FILES = {
 
     # Infrastructure.
     "/infrastructure.html": legacy.WEB_DIR / "infrastructure.html",
+    "/regions.html": legacy.WEB_DIR / "regions.html",
+    "/datacenters.html": legacy.WEB_DIR / "datacenters.html",
+    "/placement.html": legacy.WEB_DIR / "placement.html",
     "/infrastructure-v3.css": legacy.WEB_DIR / "infrastructure-v3.css",
     "/infrastructure-v3.js": legacy.WEB_DIR / "infrastructure-v3.js",
     "/agents.html": legacy.WEB_DIR / "agents.html",
