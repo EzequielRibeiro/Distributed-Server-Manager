@@ -15,7 +15,7 @@ A Customer is not a Controller system user. Customer credentials presented to th
 
 Username/password credentials are submitted only for the login request over HTTPS. The frontend may encode them as HTTP Basic for that single credential-verification request, but must not persist the resulting Basic value in `localStorage`, `sessionStorage`, URLs, HTML, or logs.
 
-Successful login creates a random server-side session and returns an HttpOnly cookie. Normal browser navigation and API requests authenticate with that cookie.
+Successful login creates a random server-side session and returns an HttpOnly cookie. Normal browser navigation and API requests authenticate with that cookie. No authenticated page stores an authentication credential, token, sentinel, or login-state surrogate in Web Storage.
 
 Controller login endpoint:
 
@@ -29,16 +29,23 @@ Customer login endpoint:
 
 Session introspection:
 
-- `GET /api/auth/session`
+- Controller: `GET /api/auth/session`
+- Customer: `GET /api/customer/auth/session`
 
 Logout:
 
-- `POST /api/auth/logout`
-- revokes the server-side session and expires the browser cookie
+- Controller: `POST /api/auth/logout`
+- Customer: `POST /api/customer/auth/logout`
+- each logout revokes only its own server-side session and expires only its own cookie
 
 ## Cookie policy
 
-The session cookie is `capivara_session` and uses:
+The two browser domains use distinct cookies so both identities can coexist in one browser:
+
+- Controller: `capivara_controller_session`
+- Customer: `capivara_customer_session`
+
+Both cookies use:
 
 - `HttpOnly`
 - `SameSite=Strict`
@@ -49,7 +56,20 @@ The session cookie is `capivara_session` and uses:
 
 The default TTL remains eight hours and can be configured with `DSM_BROWSER_SESSION_TTL_SECONDS`.
 
-`DSM_BROWSER_SESSION_FILE` controls the persistent Controller-local session registry. The default is `${DSM_ROOT:-/opt/dsm}/runtime/browser-sessions.json`. Only SHA-256 digests of browser session tokens are persisted; the raw cookie token is not written to disk. The file is written atomically and restricted to mode `0600` when the filesystem permits it.
+`DSM_BROWSER_SESSION_FILE` controls the persistent Controller-local session registry. The default is `${DSM_ROOT:-/opt/dsm}/runtime/browser-sessions.json`. Only SHA-256 digests of browser session tokens are persisted; raw cookie tokens are not written to disk. The file is written atomically and restricted to mode `0600` when the filesystem permits it.
+
+Every persisted browser session records its authentication area. A Controller cookie cannot be accepted as a Customer session and a Customer cookie cannot be accepted as a Controller session.
+
+## Shared API route disambiguation
+
+Some historical API routes, such as `/api/whoami` and runtime endpoints, are shared by both portals. Because a browser may legitimately hold both HttpOnly cookies at the same time, authenticated frontend requests identify the intended authentication domain with:
+
+- `X-Capivara-Auth-Area: controller`, or
+- `X-Capivara-Auth-Area: customer`.
+
+This header is **not a credential and never grants access**. It only selects which already-valid HttpOnly cookie the server is allowed to evaluate. The role and scope still come exclusively from the validated server-side session.
+
+If both browser sessions coexist and a shared route supplies no unambiguous area, compatibility authentication fails closed rather than guessing an identity.
 
 ## Persistence and revocation
 
@@ -59,17 +79,27 @@ The persistent registry allows a valid browser session to survive:
 - desktop tab/browser restart while the persistent cookie is still valid;
 - Dashboard/Controller process restart.
 
-A new login rotates the session token by revoking the current browser session before creating a replacement. Logout revokes it immediately. Expired sessions are removed when encountered.
+A new login rotates only the session for the same authentication area. Controller and Customer sessions therefore do not revoke one another. Logout revokes only the selected area. Expired sessions are removed when encountered.
 
-`revoke_user_sessions()` is available to security-sensitive account workflows that need to invalidate every browser session for one identity, for example after password or account-security changes.
+`revoke_user_sessions()` is available to security-sensitive account workflows that need to invalidate browser sessions for one identity, for example after password or account-security changes.
 
-## Legacy frontend compatibility
+## Frontend migration rule
 
-Some Dashboard modules still synchronously test for `sessionStorage.dsm_auth` before making a request. During migration, authenticated HTML pages load `browser-session-bridge.js` before legacy modules.
+The authenticated frontend is cookie-only. The former `sessionStorage.dsm_auth` / `sessionStorage.dsm_customer_auth` model is retired and must not be reintroduced.
 
-The bridge writes only the fixed, non-secret sentinel `cookie-session`; it never writes username/password-derived Basic credentials. It also strips the sentinel `Authorization` header before `fetch()` reaches the network, so actual browser authentication remains cookie-only.
+Authenticated modules must not:
 
-This bridge is transitional compatibility code. New frontend code must not depend on `dsm_auth` and should use ordinary same-origin `fetch()` calls.
+- read or write `dsm_auth` or `dsm_customer_auth`;
+- clear Web Storage as an authentication operation;
+- construct or send `Authorization: Basic ...` after login;
+- infer authentication from the presence of a JavaScript value;
+- route a Customer 401 response to `/login.html`.
+
+The only permitted browser `Authorization: Basic ...` construction is the initial credential exchange in `auth.js` and `customer-auth.js`. Those values exist only in memory for that request and are immediately discarded.
+
+`browser-session-bridge.js` no longer contains a credential sentinel or Web Storage compatibility state. Its remaining responsibility is request-area compatibility for pages that have not yet consolidated on the canonical browser helper. New or modified authenticated modules should use an explicit auth area and same-origin cookie requests directly.
+
+`tests/browser_auth_legacy_dependency_test.py` scans the browser frontend and fails CI if the retired model is reintroduced.
 
 ## Security boundaries
 
@@ -80,9 +110,10 @@ This bridge is transitional compatibility code. New frontend code must not depen
 - Browser session cookies are inaccessible to JavaScript because of `HttpOnly`.
 - `SameSite=Strict` is the primary CSRF boundary for browser-session requests; state-changing browser endpoints must remain same-site and must not weaken this cookie policy without adding an explicit CSRF token/origin policy.
 - Browser sessions never replace Bearer tokens for commercial/external APIs or Agent credentials.
+- Authentication-area selection is routing metadata, not authorization; RBAC and customer scoping remain server-side.
 
 ## Homologation requirements
 
-Before release, validate both Controller/Admin and Customer flows on desktop and mobile. A valid session must survive switching applications, closing/reopening a tab or browser, and restarting the Dashboard service while still inside TTL. Validate generic rejection of Customer credentials on `/login.html`, Customer login only through `/customer-login.html`, logout revocation, expiry, protected static assets, and normal API calls with no persisted Basic credential.
+Before release, validate both Controller/Admin and Customer flows on desktop and mobile. A valid session must survive switching applications, closing/reopening a tab or browser, and restarting the Dashboard service while still inside TTL. Validate simultaneous Controller + Customer sessions, independent logout, expiry, generic rejection of Customer credentials on `/login.html`, Customer login only through `/customer-login.html`, protected static assets, and normal API calls with no persisted Basic credential.
 
 Release/version changes are performed only after homologation passes.
