@@ -38,7 +38,22 @@ from system_user_admin_http import install_system_user_administration
 from tls_runtime import run_dashboard
 legacy=integration.legacy
 install_customer_instance_creation(legacy);install_customer_management_dashboard(legacy)
-_previous_get=legacy.DashboardHandler.do_GET;_previous_put=getattr(legacy.DashboardHandler,"do_PUT",None);_previous_send_json=legacy.DashboardHandler.send_json;_controller_authenticate=integration._controller_authenticate;_customer_authenticate=integration._customer_authenticate;_authenticate=_controller_authenticate;_ROOT=Path(__file__).resolve().parents[1];_CONTROLLER_TELEMETRY_PATH="/api/controller/telemetry"
+_previous_get=legacy.DashboardHandler.do_GET;_previous_put=getattr(legacy.DashboardHandler,"do_PUT",None);_previous_send_json=legacy.DashboardHandler.send_json;_controller_authenticate=integration._controller_authenticate;_customer_authenticate=integration._customer_authenticate;_legacy_ambiguous_authenticate=browser_login_base.integrated_authenticate;_ROOT=Path(__file__).resolve().parents[1];_CONTROLLER_TELEMETRY_PATH="/api/controller/telemetry"
+
+
+def _area_aware_authenticate(headers):
+    """Resolve legacy shared endpoints without guessing when both cookies coexist."""
+    area=str(headers.get("X-Capivara-Auth-Area") or "").strip().lower()
+    if area=="controller":return _controller_authenticate(headers)
+    if area=="customer":return _customer_authenticate(headers)
+    return _legacy_ambiguous_authenticate(headers)
+
+
+# Legacy shared routes still call server.authenticate()/server_part8.integrated_authenticate.
+# A browser may legitimately hold both cookies, so the portal explicitly selects which
+# existing cookie is evaluated. The hint never grants access by itself.
+browser_login_base.integrated_authenticate=_area_aware_authenticate
+legacy.authenticate=_area_aware_authenticate
 legacy.STATIC_FILES.update({"/telemetry-widgets.css":legacy.WEB_DIR/"telemetry-widgets.css","/telemetry-widgets.js":legacy.WEB_DIR/"telemetry-widgets.js","/customer-placement-selector.js":legacy.WEB_DIR/"customer-placement-selector.js","/customer-profile.js":legacy.WEB_DIR/"customer-profile.js","/customer-email-change.js":legacy.WEB_DIR/"customer-email-change.js","/customer-navigation.js":legacy.WEB_DIR/"customer-navigation.js","/customer.js":legacy.WEB_DIR/"customer-shell.js","/customer-core.js":legacy.WEB_DIR/"customer.js","/customer-integrations.html":legacy.WEB_DIR/"customer-integrations.html","/customer-integrations.js":legacy.WEB_DIR/"customer-integrations.js","/customer-integrations.css":legacy.WEB_DIR/"customer-integrations.css","/customer-backups.html":legacy.WEB_DIR/"customer-backups.html","/customer-backups.js":legacy.WEB_DIR/"customer-backups.js","/customer-account.html":legacy.WEB_DIR/"customer-account.html","/customer-account.js":legacy.WEB_DIR/"customer-account.js"})
 def json_safe_send_json(self,code,payload):return _previous_send_json(self,code,normalize_json_value(payload))
 def _controller_telemetry_get(self,parsed):
