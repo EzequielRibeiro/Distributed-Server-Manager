@@ -33,6 +33,7 @@ from customer_profile_self_service_http import install_customer_profile_self_ser
 from dashboard_activity_http import install_dashboard_activity_audit
 from deleted_backup_vault_http import install_deleted_backup_vault_http
 from json_serialization import normalize_json_value
+from portal_navigation_session_http import install_portal_navigation_session_guard
 from storage_pool_source_cleanup_http import install_storage_pool_source_cleanup
 from system_user_admin_http import install_system_user_administration
 from tls_runtime import run_dashboard
@@ -104,5 +105,6 @@ install_customer_discord(legacy,_customer_authenticate)
 install_customer_discord_oauth_callback(legacy)
 install_admin_observability(legacy,_controller_authenticate)
 install_browser_session_http(legacy,browser_login_base.credential_authenticate)
+install_portal_navigation_session_guard(legacy)
 def run():run_dashboard(legacy)
 if __name__=="__main__":run()
