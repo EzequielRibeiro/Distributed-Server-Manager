@@ -36,7 +36,7 @@ sudo sshpass \
   -o ConnectTimeout=10 \
   -o BatchMode=no \
   -o PreferredAuthentications=password \
-  USUARIO@HOST \
+  USER@HOST \
   'echo CAPIVARA_SSH_OK; id'
 ```
 
@@ -50,7 +50,7 @@ sudo sshpass \
   -o ConnectTimeout=10 \
   -o BatchMode=no \
   -o PreferredAuthentications=password \
-  mine@192.168.15.59 \
+  USER@192.168.15.59 \
   'echo CAPIVARA_SSH_OK; id'
 ```
 
@@ -70,7 +70,7 @@ Linux:
 ```bash
 sudo cap agent test-connection 192.168.15.59 \
   --platform linux \
-  --ssh-user mine \
+  --ssh-user USER \
   --password-file /etc/capivara/secrets/remote-deploy/node01.secret
 ```
 
@@ -104,7 +104,7 @@ O teste é não destrutivo: valida transporte, autenticação, plataforma e priv
 ```bash
 sudo cap agent deploy HOST \
   --platform linux \
-  --ssh-user USUARIO \
+  --ssh-user USER \
   --password-file /etc/capivara/secrets/remote-deploy/node01.secret
 ```
 
