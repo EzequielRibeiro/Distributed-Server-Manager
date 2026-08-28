@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
+from activity_audit_schema import activity_audit_ddl
 from agent_public_network_schema import ensure_agent_public_network_schema
 from backend import DatabaseMigrationError
 from discord_integration_schema import discord_integration_ddl
@@ -159,9 +160,16 @@ def _upgrade_agent_public_network(backend: Any, connection: Any) -> None:
     )
 
 
+def _upgrade_activity_audit(backend: Any, connection: Any) -> None:
+    if "activity_audit" in _table_names(backend, connection):
+        return
+    _execute_script(backend, connection, activity_audit_ddl(backend.name))
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
+    BaselineUpgrade(3, "activity_audit", _upgrade_activity_audit),
 )
 
 
@@ -210,12 +218,18 @@ def _validate_ledger(applied: Mapping[int, str]) -> None:
 
 
 def seed_current_upgrades(backend: Any, connection: Any) -> None:
-    """Record that a fresh/current consolidated baseline already includes all upgrades."""
+    """Reconcile and record extensions already represented by the current baseline.
+
+    Exact-checksum databases may predate the upgrade ledger or may have been
+    partially materialized by an older release. Every registered upgrade is
+    therefore idempotently reconciled before its ledger entry is recorded.
+    """
     _ensure_ledger(backend, connection)
     applied = _read_applied(backend, connection)
     _validate_ledger(applied)
     for upgrade in UPGRADES:
         if upgrade.version not in applied:
+            upgrade.apply(backend, connection)
             _insert_ledger(backend, connection, upgrade)
 
 
