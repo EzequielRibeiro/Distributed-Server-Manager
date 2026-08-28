@@ -1,0 +1,50 @@
+name: Browser Session Security
+
+on:
+  pull_request:
+    paths:
+      - "dashboard/controller_session.py"
+      - "dashboard/login_credentials.py"
+      - "dashboard/browser_session_http.py"
+      - "dashboard/server_part17.py"
+      - "dashboard/web/auth.js"
+      - "dashboard/web/customer-auth.js"
+      - "dashboard/web/customer-shell.js"
+      - "dashboard/web/browser-session-bridge.js"
+      - "tests/browser_session_security_test.py"
+      - ".github/workflows/browser-session.yml"
+  push:
+    branches: [main]
+    paths:
+      - "dashboard/controller_session.py"
+      - "dashboard/login_credentials.py"
+      - "dashboard/browser_session_http.py"
+      - "dashboard/server_part17.py"
+      - "dashboard/web/auth.js"
+      - "dashboard/web/customer-auth.js"
+      - "dashboard/web/customer-shell.js"
+      - "dashboard/web/browser-session-bridge.js"
+      - "tests/browser_session_security_test.py"
+      - ".github/workflows/browser-session.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python
+        run: |
+          python3 -m py_compile \
+            dashboard/controller_session.py \
+            dashboard/login_credentials.py \
+            dashboard/browser_session_http.py \
+            dashboard/server_part17.py \
+            tests/browser_session_security_test.py
+      - name: Validate JavaScript
+        run: |
+          node --check dashboard/web/auth.js
+          node --check dashboard/web/customer-auth.js
+          node --check dashboard/web/customer-shell.js
+          node --check dashboard/web/browser-session-bridge.js
+      - name: Test browser session security
+        run: python3 -m unittest tests/browser_session_security_test.py
