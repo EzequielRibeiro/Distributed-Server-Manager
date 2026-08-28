@@ -9,8 +9,24 @@ for candidate in (ROOT,ROOT/"core"):
 from agent_ssh_deploy import AgentDeployError,SSHDeployOptions,preflight_ssh,preflight_windows_ssh
 
 def build_parser():
-    p=argparse.ArgumentParser(description="Test SSH access to a Linux or Windows host without installing an Agent",epilog="Use --password-file for newly installed hosts. The password itself is never accepted on the command line.")
-    p.add_argument("host");p.add_argument("--platform",choices=("linux","windows"),default="linux");p.add_argument("--ssh-user",required=True);p.add_argument("--ssh-port",type=int,default=22);auth=p.add_mutually_exclusive_group();auth.add_argument("--identity-file");auth.add_argument("--password-file");p.add_argument("--connect-timeout",type=int,default=10);p.add_argument("--json",action="store_true");return p
+    p=argparse.ArgumentParser(
+        description="Test SSH access to a Linux or Windows host without installing an Agent",
+        epilog=(
+            "Passwords are never accepted directly on the command line. "
+            "--password-file requires sshpass on the Controller; on Debian/Ubuntu install it with "
+            "'sudo apt install sshpass'. SSH keys remain preferred."
+        ),
+    )
+    p.add_argument("host")
+    p.add_argument("--platform",choices=("linux","windows"),default="linux")
+    p.add_argument("--ssh-user",required=True)
+    p.add_argument("--ssh-port",type=int,default=22)
+    auth=p.add_mutually_exclusive_group()
+    auth.add_argument("--identity-file",help="SSH private key; preferred authentication method")
+    auth.add_argument("--password-file",help="protected 0600 password file; requires sshpass on the Controller")
+    p.add_argument("--connect-timeout",type=int,default=10)
+    p.add_argument("--json",action="store_true")
+    return p
 
 def main(argv=None):
     p=build_parser();a=p.parse_args(argv)
