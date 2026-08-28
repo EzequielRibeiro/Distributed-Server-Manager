@@ -22,11 +22,14 @@ class AgentDashboardUiContractTest(unittest.TestCase):
   for text in ("/api/agent/ports","/api/observability?mode=history","CapivaraTelemetry"):self.assertIn(text,self.detail_js)
   self.assertIn("agent-details.html?agent_id=",self.fleet_js)
  def test_agent_details_restore_telemetry_and_real_view_links(self):
-  for text in ("Telemetria do computador","Telemetria do Capivara","mergeSample","host.memory","${processKey}.pid","Processos do"):
+  for text in ("Telemetria do computador","Telemetria do Capivara","Capacidade e atividade do Node","Players online","Capacidade de players","Instâncias ativas","Armazenamento livre","Disco · leitura","Disco · escrita","mergeSample","host.memory","${processKey}.pid","Processos do"):
    self.assertIn(text,self.telemetry_js)
+  for text in ("capivara.agent.players.online","capivara.agent.players.capacity","capivara.host.disk.read_bytes_per_second","instance_telemetry"):
+   self.assertIn(text,self.detail_js)
   for view in ("monitoring","events","diagnostics","updates","logs"):
    self.assertIn(f'href="agent-observability.html?view={view}"',self.detail)
-  self.assertIn('telemetry-widgets.js?v=2',self.detail)
+  self.assertIn('telemetry-widgets.js?v=3',self.detail)
+  self.assertIn('agent-details.js?v=12',self.detail)
   self.assertIn('telemetry-widgets.css?v=2',self.detail)
   self.assertLess(self.detail.index('id="agent-telemetry"'),self.detail.index('id="agent-admin-panel"'))
  def test_agent_details_require_agent_context(self):
