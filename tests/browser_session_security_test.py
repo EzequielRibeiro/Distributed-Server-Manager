@@ -98,6 +98,14 @@ class BrowserSessionSecurityTest(unittest.TestCase):
         self.assertIn("install_browser_session_http", source)
         self.assertIn("browser_login_base.credential_authenticate", source)
 
+    def test_authenticated_html_csp_allows_legacy_inline_styles_not_inline_scripts(self):
+        source = (DASHBOARD / "browser_session_http.py").read_text(encoding="utf-8")
+        self.assertIn("style-src 'self' 'unsafe-inline'", source)
+        self.assertIn("script-src 'self'", source)
+        self.assertNotIn("script-src 'self' 'unsafe-inline'", source)
+        self.assertIn("frame-ancestors 'none'", source)
+        self.assertIn("form-action 'self'", source)
+
 
 if __name__ == "__main__":
     unittest.main()
