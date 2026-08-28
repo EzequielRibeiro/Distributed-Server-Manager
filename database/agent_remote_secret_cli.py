@@ -48,7 +48,6 @@ def _path(directory, name):
 
 
 def _service_identity():
-    """Return the installed service account when it can be resolved locally."""
     try:
         return pwd.getpwnam(DEFAULT_SERVICE_USER)
     except KeyError:
@@ -56,12 +55,6 @@ def _service_identity():
 
 
 def _prepare_service_ssh_home(identity) -> None:
-    """Prepare persistent known_hosts storage for Dashboard/CLI OpenSSH usage.
-
-    This is intentionally performed only by the privileged secret creation flow.
-    It avoids making the Dashboard service account responsible for creating a
-    directory below a root-owned installation root such as /opt/dsm.
-    """
     if identity is None or os.geteuid() != 0:
         return
     home = Path(identity.pw_dir).expanduser()
@@ -77,22 +70,21 @@ def _prepare_service_ssh_home(identity) -> None:
         os.chmod(known_hosts, 0o600)
 
 
-def _grant_service_access(root: Path, path: Path) -> str:
-    """Keep 0700/0600 while making the Dashboard service the owner.
+def _grant_service_access(root: Path, path: Path) -> None:
+    """Keep 0700/0600 and let the Dashboard service consume the secret.
 
-    When the command is executed without root privileges (for example in unit
-    tests or a custom unprivileged directory), ownership is left unchanged.
+    Root-created secrets used to remain owned by root, which made the Dashboard
+    fail with EACCES. When running privileged, reconcile ownership to the
+    installed Capivara service account and prepare its persistent ~/.ssh store.
     """
     identity = _service_identity()
     if identity is None or os.geteuid() != 0:
-        return str(path.owner()) if path.exists() else str(os.geteuid())
-
+        return
     os.chown(root, identity.pw_uid, identity.pw_gid)
     os.chmod(root, 0o700)
     os.chown(path, identity.pw_uid, identity.pw_gid)
     os.chmod(path, 0o600)
     _prepare_service_ssh_home(identity)
-    return identity.pw_name
 
 
 def create(directory, name):
@@ -113,13 +105,13 @@ def create(directory, name):
             handle.write(first + "\n")
         os.replace(tmp, path)
         os.chmod(path, 0o600)
-        owner = _grant_service_access(root, path)
+        _grant_service_access(root, path)
     finally:
         try:
             os.unlink(tmp)
         except FileNotFoundError:
             pass
-    return path, owner
+    return path
 
 
 def delete(directory, name):
@@ -136,7 +128,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "create":
-            path, owner = create(args.directory, args.name)
+            path = create(args.directory, args.name)
+            try:
+                owner = path.owner()
+            except (KeyError, OSError):
+                owner = "unknown"
             print("Remote deploy secret created")
             print(f"Path.............. {path}")
             print("Permissions....... 0600")
