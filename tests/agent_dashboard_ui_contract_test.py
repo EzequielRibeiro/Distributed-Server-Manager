@@ -22,7 +22,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
   for text in ("/api/agent/ports","/api/observability?mode=history","CapivaraTelemetry"):self.assertIn(text,self.detail_js)
   self.assertIn("agent-details.html?agent_id=",self.fleet_js)
  def test_agent_details_restore_telemetry_and_real_view_links(self):
-  for text in ("Telemetria do computador","Telemetria do Capivara","mergeSample","host.memory","agent.pid","Processos do"):
+  for text in ("Telemetria do computador","Telemetria do Capivara","mergeSample","host.memory","${processKey}.pid","Processos do"):
    self.assertIn(text,self.telemetry_js)
   for view in ("monitoring","events","diagnostics","updates","logs"):
    self.assertIn(f'href="agent-observability.html?view={view}"',self.detail)
