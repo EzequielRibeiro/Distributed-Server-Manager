@@ -55,7 +55,7 @@ legacy.authenticate=_area_aware_authenticate
 legacy.STATIC_FILES.update({"/browser-auth-client.js":legacy.WEB_DIR/"browser-auth-client.js","/telemetry-widgets.css":legacy.WEB_DIR/"telemetry-widgets.css","/telemetry-widgets.js":legacy.WEB_DIR/"telemetry-widgets.js","/customer-placement-selector.js":legacy.WEB_DIR/"customer-placement-selector.js","/customer-profile.js":legacy.WEB_DIR/"customer-profile.js","/customer-email-change.js":legacy.WEB_DIR/"customer-email-change.js","/customer-navigation.js":legacy.WEB_DIR/"customer-navigation.js","/customer.js":legacy.WEB_DIR/"customer-shell.js","/customer-core.js":legacy.WEB_DIR/"customer.js","/customer-integrations.html":legacy.WEB_DIR/"customer-integrations.html","/customer-integrations.js":legacy.WEB_DIR/"customer-integrations.js","/customer-integrations.css":legacy.WEB_DIR/"customer-integrations.css","/customer-backups.html":legacy.WEB_DIR/"customer-backups.html","/customer-backups.js":legacy.WEB_DIR/"customer-backups.js","/customer-account.html":legacy.WEB_DIR/"customer-account.html","/customer-account.js":legacy.WEB_DIR/"customer-account.js"})
 def json_safe_send_json(self,code,payload):return _previous_send_json(self,code,normalize_json_value(payload))
 def _controller_telemetry_get(self,parsed):
- user=_authenticate(self.headers)
+ user=_controller_authenticate(self.headers)
  if user is None:self.unauthorized();return
  if str(user.get("role") or "").lower() not in {"admin","controller"}:self.send_json(403,{"error":"forbidden"});return
  values=parse_qs(parsed.query or "")
@@ -66,7 +66,7 @@ def catalog_architecture_get(self):
  parsed=urlparse(self.path)
  if parsed.path==_CONTROLLER_TELEMETRY_PATH:return _controller_telemetry_get(self,parsed)
  if parsed.path!=RUNTIME_POLICY_PATH:return _previous_get(self)
- user=_authenticate(self.headers)
+ user=_controller_authenticate(self.headers)
  if user is None:self.unauthorized();return
  status,body=dispatch_catalog_runtime_policy_get(parsed.path,parsed.query,user=user,root=_ROOT);self.send_json(status,body)
 def catalog_architecture_put(self):
@@ -74,7 +74,7 @@ def catalog_architecture_put(self):
  if parsed.path!=RUNTIME_POLICY_PATH:
   if _previous_put is not None:return _previous_put(self)
   self.send_json(404,{"error":"not_found"});return
- user=_authenticate(self.headers)
+ user=_controller_authenticate(self.headers)
  if user is None:self.unauthorized();return
  try:payload=self.read_json_body()
  except ValueError:self.send_json(400,{"error":"invalid_request","message":"Requisição inválida."});return
