@@ -1,0 +1,27 @@
+name: Baseline Update Reconciliation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: baseline-update-reconciliation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate update reconciliation
+        run: |
+          bash -n update-manager/process-guard.sh
+          python3 -m py_compile tests/update_baseline_upgrade_path_test.py
+          python3 -m unittest tests/update_baseline_upgrade_path_test.py
