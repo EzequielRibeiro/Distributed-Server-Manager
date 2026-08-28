@@ -28,6 +28,9 @@ DASHBOARD_V3_FILES = {
 
     # Infrastructure.
     "/infrastructure.html": legacy.WEB_DIR / "infrastructure.html",
+    "/regions.html": legacy.WEB_DIR / "regions.html",
+    "/datacenters.html": legacy.WEB_DIR / "datacenters.html",
+    "/placement.html": legacy.WEB_DIR / "placement.html",
     "/infrastructure-v3.css": legacy.WEB_DIR / "infrastructure-v3.css",
     "/infrastructure-v3.js": legacy.WEB_DIR / "infrastructure-v3.js",
     "/agents.html": legacy.WEB_DIR / "agents.html",
@@ -71,6 +74,11 @@ DASHBOARD_V3_FILES = {
     "/operations.css": legacy.WEB_DIR / "operations.css",
     "/operations.js": legacy.WEB_DIR / "operations.js",
     "/observability.html": legacy.WEB_DIR / "observability.html",
+    "/alerts.html": legacy.WEB_DIR / "alerts.html",
+    "/events.html": legacy.WEB_DIR / "events.html",
+    "/monitoring.html": legacy.WEB_DIR / "monitoring.html",
+    "/controller-logs.html": legacy.WEB_DIR / "controller-logs.html",
+    "/diagnostics.html": legacy.WEB_DIR / "diagnostics.html",
     "/observability.css": legacy.WEB_DIR / "observability.css",
     "/observability.js": legacy.WEB_DIR / "observability.js",
 }

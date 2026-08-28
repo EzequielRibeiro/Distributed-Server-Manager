@@ -17,20 +17,13 @@
       <a class="catalog-game" href="/customer-members.html"><span class="game-mark">◎</span><span><strong>Equipe e acessos</strong><small>Usuários, convites e permissões</small></span></a>
       <a class="catalog-game" href="#profile" data-customer-profile><span class="game-mark">◌</span><span><strong>Meu perfil</strong><small>Dados cadastrais da conta</small></span></a>
     </nav>
-    <p class="customer-label">Jogos</p>
-    <nav id="customer-catalog" class="customer-catalog" aria-label="Catálogo de jogos"></nav>
+    <p class="customer-label">Jogos</p><nav id="customer-catalog" class="customer-catalog" aria-label="Catálogo de jogos"></nav>
     <button id="customer-logout" class="customer-logout" type="button">Sair</button>
   </aside>
   <main class="customer-main">
     <header class="customer-top"><div><p class="customer-label">CAPIVARA DSM</p><h1>Meus servidores</h1><p>Gerencie os servidores disponíveis em seus contratos.</p></div></header>
-    <section class="customer-section">
-      <div class="section-heading"><div><p class="customer-label">CONTRATOS</p><h2>Servidores disponíveis</h2></div></div>
-      <div id="customer-contracts" class="server-grid"><p>Carregando contratos…</p></div>
-    </section>
-    <section class="customer-section">
-      <div class="section-heading"><div><p class="customer-label">INSTÂNCIAS</p><h2>Instâncias existentes</h2></div></div>
-      <div id="customer-servers" class="server-grid"><p>Carregando servidores…</p></div>
-    </section>
+    <section class="customer-section"><div class="section-heading"><div><p class="customer-label">CONTRATOS</p><h2>Servidores disponíveis</h2></div></div><div id="customer-contracts" class="server-grid"><p>Carregando contratos…</p></div></section>
+    <section class="customer-section"><div class="section-heading"><div><p class="customer-label">INSTÂNCIAS</p><h2>Instâncias existentes</h2></div></div><div id="customer-servers" class="server-grid"><p>Carregando servidores…</p></div></section>
     <section id="create-instance-panel" class="customer-section runtime-create-panel" hidden>
       <article class="instance-panel">
         <div class="section-heading"><div><p class="customer-label">NOVA INSTÂNCIA</p><h2 id="create-instance-title">Criar servidor</h2><p id="create-instance-description">Selecione o ambiente do servidor.</p></div><button id="create-instance-close" class="button" type="button">Cancelar</button></div>
@@ -40,68 +33,18 @@
         <div id="runtime-type-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">3</span><div><strong>Tipo de servidor</strong><small>Escolha a implementação desejada.</small></div></div><div id="runtime-types" class="runtime-selector-grid"></div></div>
         <div id="runtime-version-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">4</span><div><strong>Versão</strong><small>Escolha a versão do jogo.</small></div></div><label class="runtime-field" for="runtime-version">Versão<select id="runtime-version"><option value="">Selecione…</option></select></label></div>
         <div id="runtime-build-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">5</span><div><strong>Build</strong><small>Escolha uma build específica ou utilize a recomendada.</small></div></div><label class="runtime-field" for="runtime-build">Build<select id="runtime-build"><option value="">Selecione…</option></select></label></div>
-        <div id="runtime-region-step" class="runtime-step" hidden>
-          <div class="runtime-step-header"><span class="runtime-step-number">6</span><div><strong>Localização do servidor</strong><small>Escolha a localização geográfica preferencial.</small></div></div>
-          <label class="runtime-field" for="runtime-region">Localização<select id="runtime-region"><option value="">Selecione…</option></select></label>
-          <small id="runtime-region-help">A recomendação considera disponibilidade e, quando permitido pelo navegador, latência geográfica estimada. O Controller escolhe o Agent internamente.</small>
-          <label class="runtime-region-fallback"><input id="runtime-region-fallback" type="checkbox"><span>Permitir outra região caso não exista capacidade disponível na localização escolhida.</span></label>
-        </div>
-        <div id="runtime-summary-step" class="runtime-step" hidden>
-          <div class="runtime-step-header"><span class="runtime-step-number">7</span><div><strong>Confirmar servidor</strong><small>Revise as escolhas antes da criação.</small></div></div>
-          <div id="runtime-selection-summary" class="runtime-selection-summary"><div><span>Jogo</span><strong id="runtime-summary-game">—</strong></div><div><span>Edição</span><strong id="runtime-summary-edition">—</strong></div><div><span>Servidor</span><strong id="runtime-summary-runtime">—</strong></div><div><span>Versão</span><strong id="runtime-summary-version">—</strong></div><div><span>Build</span><strong id="runtime-summary-build">—</strong></div><div><span>Localização</span><strong id="runtime-summary-region">—</strong></div><div><span>Fallback regional</span><strong id="runtime-summary-region-fallback">Não</strong></div></div>
-          <div id="minecraft-runtime-notice" class="runtime-notice" hidden><strong>Tipo de servidor Minecraft</strong><p>A escolha determina quais mods, plugins e recursos poderão ser utilizados posteriormente.</p></div>
-          <div class="runtime-create-actions"><button id="create-instance-submit" class="button" type="button" disabled>Criar servidor</button></div>
-        </div>
+        <div id="runtime-region-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">6</span><div><strong>Localização do servidor</strong><small>Escolha a localização geográfica preferencial.</small></div></div><label class="runtime-field" for="runtime-region">Localização<select id="runtime-region"><option value="">Selecione…</option></select></label><small id="runtime-region-help">A recomendação considera disponibilidade e, quando permitido pelo navegador, latência geográfica estimada. O Controller escolhe o Agent internamente.</small><label class="runtime-region-fallback"><input id="runtime-region-fallback" type="checkbox"><span>Permitir outra região caso não exista capacidade disponível na localização escolhida.</span></label></div>
+        <div id="runtime-summary-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">7</span><div><strong>Confirmar servidor</strong><small>Revise as escolhas antes da criação.</small></div></div><div id="runtime-selection-summary" class="runtime-selection-summary"><div><span>Jogo</span><strong id="runtime-summary-game">—</strong></div><div><span>Edição</span><strong id="runtime-summary-edition">—</strong></div><div><span>Servidor</span><strong id="runtime-summary-runtime">—</strong></div><div><span>Versão</span><strong id="runtime-summary-version">—</strong></div><div><span>Build</span><strong id="runtime-summary-build">—</strong></div><div><span>Localização</span><strong id="runtime-summary-region">—</strong></div><div><span>Fallback regional</span><strong id="runtime-summary-region-fallback">Não</strong></div></div><div id="minecraft-runtime-notice" class="runtime-notice" hidden><strong>Tipo de servidor Minecraft</strong><p>A escolha determina quais mods, plugins e recursos poderão ser utilizados posteriormente.</p></div><div class="runtime-create-actions"><button id="create-instance-submit" class="button" type="button" disabled>Criar servidor</button></div></div>
       </article>
     </section>
     <div id="customer-message" class="customer-message" role="status" aria-live="polite"></div>
   </main>
 </div>
 <script src="/customer.js?v=4"></script>
-<script>
-(function () {
-  "use strict";
-
-  function showCustomerMessage(text) {
-    const node = document.getElementById("customer-message");
-    if (!node) return;
-    node.textContent = text;
-    node.classList.add("show");
-    window.clearTimeout(showCustomerMessage.timer);
-    showCustomerMessage.timer = window.setTimeout(() => node.classList.remove("show"), 5000);
-  }
-
-  document.addEventListener("click", event => {
-    const button = event.target.closest("#customer-catalog .catalog-game.locked");
-    if (!button) return;
-
-    const game = button.querySelector("strong")?.textContent?.trim() || "este jogo";
-    const instanceGames = Array.from(
-      document.querySelectorAll("#customer-servers .server-card .game")
-    ).filter(node => node.textContent?.trim() === game);
-
-    if (instanceGames.length === 1) return;
-
-    event.preventDefault();
-    event.stopImmediatePropagation();
-
-    if (instanceGames.length > 1) {
-      showCustomerMessage(
-        `Você possui mais de uma instância de ${game}. Selecione a instância em “Instâncias existentes”.`
-      );
-      document.getElementById("customer-servers")?.scrollIntoView({behavior: "smooth"});
-      return;
-    }
-
-    showCustomerMessage(
-      `Você não possui um contrato ativo para ${game}. Entre em contato com o administrador para contratar este jogo.`
-    );
-  }, true);
-})();
-</script>
-<script src="/customer-profile.js?v=2"></script>
+<script>(function(){"use strict";document.addEventListener("click",event=>{const button=event.target.closest("#customer-catalog .catalog-game");if(!button)return;const game=button.querySelector("strong")?.textContent?.trim();if(!game)return;event.preventDefault();event.stopImmediatePropagation();location.href=`/contract-demo.html?game=${encodeURIComponent(game)}`;},true);})();</script>
+<script src="/customer-profile.js?v=3"></script>
 <script src="/customer-email-change.js?v=1"></script>
-<script src="/customer-placement-selector.js?v=1"></script>
+<script src="/customer-placement-selector.js?v=2"></script>
 <script src="/runtime-selector.js?v=2"></script>
 <script src="/create-server-wizard.js"></script>
 </body>

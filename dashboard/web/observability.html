@@ -1,69 +1,10 @@
 <!doctype html>
 <html lang="pt-BR">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Observabilidade | Capivara DSM</title>
-  <link rel="stylesheet" href="/dashboard-home-v3.css">
-  <link rel="stylesheet" href="/observability.css">
-</head>
-<body class="cap-home cap-observability-shell">
-<div id="sidebar-component"></div>
-<main class="cap-home-main cap-observability-page">
-  <header class="cap-home-topbar cap-observability-topbar">
-    <div class="cap-home-title">
-      <button id="observability-menu-toggle" type="button" aria-label="Recolher menu">☰</button>
-      <div><h1>Observabilidade</h1><p>Eventos, alertas, métricas, logs e diagnóstico da infraestrutura distribuída.</p></div>
-    </div>
-    <div class="cap-top-status">
-      <div class="cap-controller-state"><i></i><span id="observability-controller-status">Controller Online</span></div>
-      <div class="cap-user"><strong id="observability-user-name">—</strong><span id="observability-user-role">—</span></div>
-    </div>
-  </header>
-
-  <div class="cap-home-content cap-observability-content">
-    <section class="cap-observability-summary" aria-label="Resumo de observabilidade">
-      <article><span>Eventos recentes</span><strong id="observability-event-total">0</strong><small>última janela</small></article>
-      <article><span>Alertas</span><strong id="observability-alert-total">0</strong><small>warning ou superior</small></article>
-      <article><span>Métricas</span><strong id="observability-metric-total">0</strong><small>amostras atuais</small></article>
-      <article><span>Diagnóstico</span><strong id="observability-doctor-state">—</strong><small>Infrastructure Doctor</small></article>
-    </section>
-
-    <section id="alerts" class="cap-observability-card">
-      <div class="cap-section-heading"><div><h2>Alertas importantes</h2><p>Eventos de severidade warning, error, critical ou fatal.</p></div><button id="observability-refresh" type="button">Atualizar</button></div>
-      <div id="observability-alerts" class="cap-alert-list"><div class="cap-empty-state">Carregando alertas...</div></div>
-    </section>
-
-    <section id="events" class="cap-observability-card">
-      <div class="cap-section-heading"><div><h2>Eventos recentes</h2><p>Timeline consolidada da Universal Event Platform.</p></div></div>
-      <div id="observability-events" class="cap-event-list"><div class="cap-empty-state">Carregando eventos...</div></div>
-    </section>
-
-    <section id="monitoring" class="cap-observability-card">
-      <div class="cap-section-heading"><div><h2>Monitoramento</h2><p>Métricas mais recentes publicadas pela plataforma universal de observabilidade.</p></div></div>
-      <div id="observability-metrics" class="cap-metric-grid"><div class="cap-empty-state">Carregando métricas...</div></div>
-    </section>
-
-    <section id="logs-panel" class="cap-observability-card">
-      <div class="cap-section-heading"><div><h2>Logs</h2><p>Consulta centralizada de logs do Controller, Agents e instâncias.</p></div><button id="btn-refresh-logs" type="button">Atualizar logs</button></div>
-      <div class="cap-log-toolbar">
-        <label>Origem<select id="log-source"><option value="controller">Controller</option><option value="agent">Agent / Node</option><option value="instance">Instância</option></select></label>
-        <label id="log-agent-wrap" hidden>Agent<select id="log-agent" aria-label="Agent"></select></label>
-        <label id="log-server-wrap" hidden>Node / Agent<input id="log-server" type="text" placeholder="agent-id"></label>
-        <label id="log-game-wrap" hidden>Jogo<input id="log-game" type="text" placeholder="game-id"></label>
-        <label id="log-instance-wrap" hidden>Instância<input id="log-instance" type="text" placeholder="instance-id"></label>
-      </div>
-      <small id="logs-context">Controller</small>
-      <div id="logs" class="cap-log-box" aria-live="polite">Aguardando logs...</div>
-    </section>
-
-    <section id="diagnostics" class="cap-observability-card agent-manager-only">
-      <div class="cap-section-heading"><div><h2>Diagnóstico da infraestrutura</h2><p>Leitura segura e não destrutiva do Infrastructure Doctor.</p></div><a class="cap-observability-link" href="/agents.html">Abrir Infraestrutura</a></div>
-      <div id="observability-doctor" class="cap-doctor-grid"><div class="cap-empty-state">Executando diagnóstico...</div></div>
-    </section>
-  </div>
-  <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
-</main>
-<script src="/sidebar-v3.js?v=2"></script><script src="/observability.js"></script>
-</body>
-</html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Observabilidade | Capivara DSM</title><link rel="stylesheet" href="/dashboard-home-v3.css"><link rel="stylesheet" href="/observability.css"></head>
+<body class="cap-home cap-observability-shell" data-observability-view="overview"><div id="sidebar-component"></div><main class="cap-home-main cap-observability-page"><header class="cap-home-topbar cap-observability-topbar"><div class="cap-home-title"><button id="observability-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1>Observabilidade</h1><p>Visão geral da saúde operacional do Controller e da infraestrutura distribuída.</p></div></div><div class="cap-top-status"><div class="cap-controller-state"><i></i><span id="observability-controller-status">Controller Online</span></div><div class="cap-user"><strong id="observability-user-name">—</strong><span id="observability-user-role">—</span></div></div></header>
+<div class="cap-home-content cap-observability-content"><section class="cap-observability-summary" aria-label="Resumo de observabilidade"><article><span>Eventos recentes</span><strong id="observability-event-total">0</strong><small>última janela</small></article><article><span>Alertas</span><strong id="observability-alert-total">0</strong><small>ativos</small></article><article><span>Métricas</span><strong id="observability-metric-total">0</strong><small>amostras atuais</small></article><article><span>Diagnóstico</span><strong id="observability-doctor-state">—</strong><small>Infrastructure Doctor</small></article></section>
+<section class="cap-observability-card"><div class="cap-section-heading"><div><h2>Áreas de observabilidade</h2><p>Cada função possui agora uma página própria.</p></div><button id="observability-refresh" type="button">Atualizar resumo</button></div><div class="cap-observability-nav"><a href="alerts.html"><strong>Alertas</strong><span>Problemas ativos e severidade.</span></a><a href="events.html"><strong>Eventos</strong><span>Timeline operacional consolidada.</span></a><a href="monitoring.html"><strong>Monitoramento</strong><span>Métricas atuais da plataforma.</span></a><a href="controller-logs.html"><strong>Logs do Controller</strong><span>Saída dos serviços centrais.</span></a><a class="agent-manager-only" href="diagnostics.html"><strong>Diagnóstico</strong><span>Infrastructure Doctor.</span></a></div></section>
+<section class="cap-observability-card"><div class="cap-section-heading"><div><h2>Alertas recentes</h2><p>Prévia dos alertas ativos.</p></div><a class="cap-observability-link" href="alerts.html">Abrir Alertas</a></div><div id="observability-alerts" class="cap-alert-list"><div class="cap-empty-state">Carregando alertas...</div></div></section>
+<section class="cap-observability-card"><div class="cap-section-heading"><div><h2>Eventos recentes</h2><p>Prévia da timeline operacional.</p></div><a class="cap-observability-link" href="events.html">Abrir Eventos</a></div><div id="observability-events" class="cap-event-list"><div class="cap-empty-state">Carregando eventos...</div></div></section>
+<section class="cap-observability-card"><div class="cap-section-heading"><div><h2>Métricas atuais</h2><p>Prévia das métricas mais recentes.</p></div><a class="cap-observability-link" href="monitoring.html">Abrir Monitoramento</a></div><div id="observability-metrics" class="cap-metric-grid"><div class="cap-empty-state">Carregando métricas...</div></div></section>
+<div id="observability-doctor" hidden></div></div><footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer></main><script src="/observability.js?v=5"></script></body></html>
