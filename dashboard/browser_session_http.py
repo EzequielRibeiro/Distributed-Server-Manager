@@ -83,7 +83,16 @@ def _serve_html_with_bridge(handler, path: Path) -> bool:
     body = text.encode("utf-8")
     handler.send_response(200)
     handler.send_header("Content-Type", mimetypes.guess_type(str(path))[0] or "text/html; charset=utf-8")
-    handler.send_header("Content-Security-Policy", "default-src 'self'")
+    # The existing Dashboard still uses inline *style attributes* for dynamic
+    # widths/visibility in several legacy widgets. Keep script execution locked
+    # to same-origin while allowing those styles until that frontend debt is
+    # removed. Do not enable unsafe-inline for scripts.
+    handler.send_header(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "connect-src 'self'; img-src 'self' data:; font-src 'self'; "
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    )
     handler.send_header("X-Content-Type-Options", "nosniff")
     handler.send_header("X-Frame-Options", "DENY")
     handler.send_header("Cache-Control", "no-store")
