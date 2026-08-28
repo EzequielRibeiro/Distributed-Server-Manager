@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Final browser-navigation guard for simultaneous Controller and Customer sessions.
 
-Normal top-level browser navigation cannot attach X-Capivara-Auth-Area. This
-wrapper therefore resolves the authentication domain from the requested page
-path before legacy handlers can see both cookies and fail closed as ambiguous.
-API requests continue to use explicit area headers.
+Normal top-level browser navigation and passive subresource requests cannot
+attach X-Capivara-Auth-Area. This wrapper therefore resolves the authentication
+domain from known portal paths before legacy handlers can see both cookies and
+fail closed as ambiguous. API requests continue to use explicit area headers.
 """
 from __future__ import annotations
 
@@ -42,6 +42,51 @@ CONTROLLER_PAGES = {
     "/help.html",
 }
 
+# Browser subresources do not carry X-Capivara-Auth-Area either. Keep this
+# allow-list explicit so Customer assets can continue to use their own domain.
+CONTROLLER_ASSETS = {
+    "/components/sidebar-v3.html",
+    "/sidebar-v3.js",
+    "/dashboard-home-v3.css",
+    "/dashboard-home-v3.js",
+    "/telemetry-widgets.css",
+    "/telemetry-widgets.js",
+    "/activity-log.js",
+    "/customer-admin.css",
+    "/system.css",
+    "/system.js",
+    "/infrastructure-v3.css",
+    "/infrastructure-v3.js",
+    "/agents-v3.css",
+    "/agents-v3.js",
+    "/agent-steam-status.css",
+    "/agent-updates-v3.css",
+    "/agent-updates-v3.js",
+    "/add-agent-v3.css",
+    "/add-agent-page.js",
+    "/agent-installation.js",
+    "/agent-installation-wizard.js",
+    "/agent-details.css",
+    "/agent-details.js",
+    "/agent-storage-pools.css",
+    "/agent-storage-pools.js",
+    "/storage-pool-source-cleanup.js",
+    "/agent-observability.css",
+    "/agent-observability.js",
+    "/agent-queue-details-state.js",
+    "/servers.css",
+    "/servers.js",
+    "/catalog-page.css",
+    "/catalog-installation.css",
+    "/catalog-page.js",
+    "/game-profiles.css",
+    "/game-profiles.js",
+    "/operations.css",
+    "/operations.js",
+    "/observability.css",
+    "/observability.js",
+}
+
 CUSTOMER_PAGES = {
     "/contract-demo.html",
 }
@@ -55,18 +100,30 @@ def _redirect(handler, location: str) -> None:
     handler.end_headers()
 
 
+def _controller_user(handler):
+    user = session_user_from_headers(handler.headers, area="controller")
+    if user is None:
+        return None
+    if str(user.get("role") or "").lower() not in {"admin", "controller", "operator"}:
+        return False
+    return user
+
+
 def install_portal_navigation_session_guard(legacy) -> None:
     previous_get = legacy.DashboardHandler.do_GET
 
     def guarded_get(self):
         path = urlparse(self.path).path
 
-        if path in CONTROLLER_PAGES:
-            user = session_user_from_headers(self.headers, area="controller")
+        if path in CONTROLLER_PAGES or path in CONTROLLER_ASSETS:
+            user = _controller_user(self)
             if user is None:
-                _redirect(self, "/login.html")
+                if path in CONTROLLER_PAGES:
+                    _redirect(self, "/login.html")
+                else:
+                    self.send_json(401, {"error": "authentication_required"})
                 return
-            if str(user.get("role") or "").lower() not in {"admin", "controller", "operator"}:
+            if user is False:
                 self.send_json(403, {"error": "forbidden"})
                 return
             target = legacy.STATIC_FILES.get(path)
@@ -94,6 +151,7 @@ def install_portal_navigation_session_guard(legacy) -> None:
 
 __all__ = [
     "CONTROLLER_PAGES",
+    "CONTROLLER_ASSETS",
     "CUSTOMER_PAGES",
     "install_portal_navigation_session_guard",
 ]
