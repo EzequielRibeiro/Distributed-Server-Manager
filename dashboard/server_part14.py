@@ -14,6 +14,7 @@ DASHBOARD_V3_FILES = {
     "/dashboard-v3.html": legacy.WEB_DIR / "dashboard-v3.html",
     "/dashboard-home-v3.css": legacy.WEB_DIR / "dashboard-home-v3.css",
     "/dashboard-home-v3.js": legacy.WEB_DIR / "dashboard-home-v3.js",
+    "/sidebar-v3.js": legacy.WEB_DIR / "sidebar-v3.js",
     "/components/sidebar-v3.html": legacy.WEB_DIR / "components" / "sidebar-v3.html",
 
     # Administration.
