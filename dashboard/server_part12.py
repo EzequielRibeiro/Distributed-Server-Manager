@@ -9,6 +9,7 @@ import server_part11 as integration
 from agent_installation_http import (
     AGENT_INSTALLATIONS_PATH,
     AGENT_INSTALLATION_STATUS_PATH,
+    AGENT_INSTALLATION_TEST_PATH,
     AGENT_RELEASES_PATH,
     dispatch_agent_installation_get,
     dispatch_agent_installation_post,
@@ -54,7 +55,7 @@ def integrated_get(self):
 
 def integrated_post(self):
     parsed = urlparse(self.path)
-    if parsed.path != AGENT_INSTALLATIONS_PATH:
+    if parsed.path not in {AGENT_INSTALLATIONS_PATH, AGENT_INSTALLATION_TEST_PATH}:
         return _previous_post(self)
     user = _user(self)
     if user is None:
