@@ -153,12 +153,12 @@ function renderAgentLogs(agent, result = null) {
 }
 
 function authHeader() {
-    const token = sessionStorage.getItem("dsm_auth");
+    
     if (!token) {
         window.location.replace("/login.html");
         throw new Error("authentication required");
     }
-    return {Authorization: `Basic ${token}`, Accept: "application/json"};
+    return {"X-Capivara-Auth-Area":"controller", Accept: "application/json"};
 }
 
 async function request(endpoint, options = {}) {
@@ -167,7 +167,7 @@ async function request(endpoint, options = {}) {
 
     const response = await fetch(`${API}${endpoint}`, {...options, headers});
     if (response.status === 401) {
-        sessionStorage.clear();
+        
         window.location.replace("/login.html");
         return null;
     }
@@ -196,7 +196,7 @@ async function loadSidebar() {
     const logout = byId("btn-logout");
     if (logout) {
         logout.addEventListener("click", () => {
-            sessionStorage.clear();
+            
             window.location.replace("/login.html");
         });
     }

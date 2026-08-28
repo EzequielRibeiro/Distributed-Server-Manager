@@ -11,7 +11,7 @@
             cache: "no-store"
         });
         if (response.status === 401) {
-            sessionStorage.clear();
+            
             window.location.replace("/login.html");
             throw new Error("authentication required");
         }
@@ -85,7 +85,7 @@
         activateInfrastructureNav();
         const logout = document.getElementById("btn-logout");
         if (logout) logout.onclick = () => {
-            sessionStorage.clear();
+            
             window.location.replace("/login.html");
         };
     }

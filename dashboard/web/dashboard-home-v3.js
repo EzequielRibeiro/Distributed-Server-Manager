@@ -117,7 +117,7 @@ async function loadSidebar(){
     const response=await fetch("/components/sidebar-v3.html",{cache:"no-store"});
     if(response.ok)target.innerHTML=await response.text();
     const logout=$("btn-logout");
-    if(logout)logout.onclick=()=>{sessionStorage.clear();window.location.replace("/login.html")};
+    if(logout)logout.onclick=()=>{window.location.replace("/login.html")};
     bindMobileSidebar(target,$("home-menu-toggle"));
 }
 

@@ -71,7 +71,7 @@
             cache: "no-store",
         });
         if (response.status === 401) {
-            sessionStorage.clear();
+            
             location.replace("login.html");
             throw new Error("Sessão expirada.");
         }
@@ -404,7 +404,7 @@
     async function sidebar() {
         const response = await fetch("components/sidebar-v3.html", {cache: "no-store"});
         if (response.ok) $("sidebar-component").innerHTML = await response.text();
-        $("btn-logout")?.addEventListener("click", () => { sessionStorage.clear(); location.replace("login.html"); });
+        $("btn-logout")?.addEventListener("click", () => {  location.replace("login.html"); });
         document.querySelectorAll("nav a").forEach(link => link.classList.toggle("active", link.getAttribute("href") === "agents.html"));
         const who = await request("/api/whoami");
         $("agent-context-user").textContent = who.username || "Usuário";
