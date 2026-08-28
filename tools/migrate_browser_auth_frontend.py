@@ -54,6 +54,10 @@ def replace_authorization(text: str, area: str) -> str:
         r'Authorization\s*:\s*`Basic \$\{auth\}`',
         r'Authorization\s*:\s*["\']Basic ["\']\s*\+\s*auth\(\)',
         r'Authorization\s*:\s*["\']Basic ["\']\s*\+\s*auth\b',
+        r'Authorization\s*:\s*["\']Basic ["\']\s*\+\s*getAuth\(\)',
+        r'Authorization\s*:\s*`Basic \$\{getAuth\(\)\}`',
+        r'Authorization\s*:\s*["\']Basic ["\']\s*\+\s*token\b',
+        r'Authorization\s*:\s*`Basic \$\{token\}`',
         r'Authorization\s*:\s*["\']Basic ["\']\s*\+\s*\(sessionStorage\.getItem\(["\']dsm_auth["\']\)\s*\|\|\s*["\']["\']\)',
         r'Authorization\s*:\s*`Basic \$\{sessionStorage\.getItem\(["\']dsm_auth["\']\)\s*\|\|\s*["\']["\']\}`',
     ]
@@ -63,8 +67,6 @@ def replace_authorization(text: str, area: str) -> str:
 
 
 def remove_auth_state(text: str) -> str:
-    # Dedicated legacy auth declarations. Any remaining uses are detected by
-    # the audit at the end instead of being silently hidden.
     text = re.sub(
         r'(?:const|let|var)\s+auth\s*=\s*\(\)\s*=>\s*sessionStorage\.getItem\(["\']dsm_auth["\']\)\s*\|\|\s*["\']["\']\s*;?',
         '', text,
@@ -73,18 +75,30 @@ def remove_auth_state(text: str) -> str:
         r'(?:const|let|var)\s+auth\s*=\s*sessionStorage\.getItem\(["\']dsm_auth["\']\)\s*\|\|\s*["\']["\']\s*;?',
         '', text,
     )
-    # Authentication state cleanup is obsolete; there is no browser auth state
-    # outside HttpOnly cookies anymore.
+    text = re.sub(
+        r'function\s+getAuth\s*\(\s*\)\s*\{\s*return\s+sessionStorage\.getItem\(["\']dsm_auth["\']\)\s*;?\s*\}',
+        '', text,
+    )
+    # Token variables were only browser copies of the Basic credential. Remove
+    # them after their Authorization consumers have been migrated.
+    text = re.sub(
+        r'(?:const|let|var)\s+token\s*=\s*sessionStorage\.getItem\(["\']dsm_auth["\']\)\s*;?',
+        '', text,
+    )
+    # No authentication state may be cleared from Web Storage anymore. A broad
+    # clear() used on 401/logout is both unnecessary and destructive to
+    # non-auth UI state such as backup-clone selections.
+    text = re.sub(r'sessionStorage\.clear\(\)\s*;?', '', text)
     text = re.sub(r'sessionStorage\.removeItem\(["\']dsm_auth["\']\)\s*;?', '', text)
     text = re.sub(r'sessionStorage\.removeItem\(["\']dsm_customer_auth["\']\)\s*;?', '', text)
     return text
 
 
 def remove_preflight_guards(text: str) -> str:
-    # Compact guards used by old modules before they even made an API request.
     guards = [
         r'if\s*\(\s*!auth\(\)\s*\)\s*\{\s*(?:window\.)?location\.(?:href|replace)\s*(?:=\s*["\']/login\.html["\']|\(["\']/login\.html["\']\))\s*;?\s*return\s*;?\s*\}',
         r'if\s*\(\s*!auth\s*\)\s*\{\s*(?:window\.)?location\.(?:href|replace)\s*(?:=\s*["\']/login\.html["\']|\(["\']/login\.html["\']\))\s*;?\s*return\s*;?\s*\}',
+        r'if\s*\(\s*!token\s*\)\s*\{\s*return\s+null\s*;?\s*\}',
     ]
     for guard in guards:
         text = re.sub(guard, '', text)
@@ -101,8 +115,8 @@ def migrate(path: Path) -> bool:
         text = remove_auth_state(text)
         text = remove_preflight_guards(text)
 
-    # Login modules may clear historical browser state today, but those calls
-    # themselves become a dependency/documentation trap. Remove them too.
+    # Even login pages have no reason to know historical Web Storage key names.
+    text = re.sub(r'sessionStorage\.clear\(\)\s*;?', '', text)
     text = re.sub(r'sessionStorage\.removeItem\(["\']dsm_auth["\']\)\s*;?', '', text)
     text = re.sub(r'sessionStorage\.removeItem\(["\']dsm_customer_auth["\']\)\s*;?', '', text)
 
@@ -126,6 +140,8 @@ def audit() -> list[str]:
         for needle in ("dsm_auth", "dsm_customer_auth"):
             if needle in text:
                 findings.append(f"{rel}: legacy auth state {needle}")
+        if "sessionStorage.clear()" in text:
+            findings.append(f"{rel}: broad sessionStorage.clear in auth-era frontend")
         if path.name not in LOGIN_EXEMPT and re.search(r'Authorization\s*:\s*(?:`|["\'])Basic', text):
             findings.append(f"{rel}: legacy Basic Authorization")
         if area_for(path) == "customer" and re.search(r'location\.(?:href|replace).*?/login\.html', text):
