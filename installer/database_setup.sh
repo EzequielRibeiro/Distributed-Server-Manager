@@ -192,9 +192,13 @@ prevalidate_database()
 run_source_database_manager()
 {
     local saved_root="${DSM_ROOT}"
+    local status=0
+
     DSM_ROOT="${DSM_SOURCE}"
-    run_database_manager "$@"
+    run_database_manager "$@" || status=$?
     DSM_ROOT="${saved_root}"
+
+    return "${status}"
 }
 
 transfer_database_secret_ownership()
