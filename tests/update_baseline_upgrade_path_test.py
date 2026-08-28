@@ -71,6 +71,48 @@ class BaselineUpdatePathTest(unittest.TestCase):
             self.assertTrue(after_payload["upgrade_ledger"])
             self.assertFalse(after_payload["pending_upgrades"])
 
+    def test_migrate_repairs_missing_activity_audit_before_seeding_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "dsm"
+            database = root / "data" / "capivara.db"
+            database.parent.mkdir(parents=True)
+
+            initialized = self.manager(root, database, "init")
+            self.assertEqual(initialized.returncode, 0, initialized.stderr)
+
+            with sqlite3.connect(database) as connection:
+                connection.execute("DROP TABLE baseline_upgrades")
+                connection.execute("DROP TABLE activity_audit")
+                connection.commit()
+
+            migrated = self.manager(root, database, "migrate")
+            self.assertEqual(migrated.returncode, 0, migrated.stderr)
+            payload = json.loads(migrated.stdout)
+            self.assertTrue(payload["valid"])
+            self.assertEqual(payload["upgrade_version"], 3)
+            self.assertEqual(payload["upgrade_latest"], 3)
+
+            with sqlite3.connect(database) as connection:
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                ledger = connection.execute(
+                    "SELECT version,name FROM baseline_upgrades ORDER BY version"
+                ).fetchall()
+
+            self.assertIn("activity_audit", tables)
+            self.assertEqual(
+                ledger,
+                [
+                    (1, "discord_integration"),
+                    (2, "agent_public_network"),
+                    (3, "activity_audit"),
+                ],
+            )
+
     def guard_classifier(self, payload: dict[str, object]) -> subprocess.CompletedProcess[str]:
         script = f'''\
 source "{PROCESS_GUARD}"
@@ -101,10 +143,11 @@ process_guard_database_check_is_upgradeable "$PAYLOAD" "{ROOT}"
             "missing_tables": [],
             "upgrade_ledger": False,
             "upgrade_version": 0,
-            "upgrade_latest": 2,
+            "upgrade_latest": 3,
             "pending_upgrades": [
                 {"version": 1, "name": "discord_integration"},
                 {"version": 2, "name": "agent_public_network"},
+                {"version": 3, "name": "activity_audit"},
             ],
             "upgrade_error": None,
             "valid": False,
@@ -128,10 +171,11 @@ process_guard_database_check_is_upgradeable "$PAYLOAD" "{ROOT}"
             "missing_tables": [],
             "upgrade_ledger": False,
             "upgrade_version": 0,
-            "upgrade_latest": 2,
+            "upgrade_latest": 3,
             "pending_upgrades": [
                 {"version": 1, "name": "discord_integration"},
                 {"version": 2, "name": "agent_public_network"},
+                {"version": 3, "name": "activity_audit"},
             ],
             "upgrade_error": None,
             "valid": False,
