@@ -181,7 +181,7 @@ prevalidate_database()
         # upgrades. Running the strict health check first would reject a safe,
         # known upgrade before it had a chance to reconcile the marker/schema.
         run_source_database_manager init \
-            || die "Schema do banco ausente, parcial ou incompatível; nenhuma instalação do Capivara foi iniciada."
+            || die "Conexão real ao banco falhou ou o schema está ausente, parcial ou incompatível; nenhuma instalação do Capivara foi iniciada."
         run_source_database_manager check \
             || die "Banco reconciliado, mas a validação final falhou; nenhuma instalação do Capivara foi iniciada."
     fi
