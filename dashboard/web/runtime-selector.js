@@ -156,6 +156,8 @@
                     ...headers,
                     ...(options.headers || {}),
                 },
+                credentials: "same-origin",
+                cache: options.cache || "no-store",
             }
         );
 

@@ -2,11 +2,12 @@
 
 const HOME_API = "/api";
 const $ = id => document.getElementById(id);
+const controllerHeaders = () => ({Accept: "application/json", "X-Capivara-Auth-Area": "controller"});
 
 async function get(path) {
     try {
         const response = await fetch(`${HOME_API}${path}`, {
-            headers: {Accept: "application/json"},
+            headers: controllerHeaders(),
             credentials: "same-origin",
             cache: "no-store",
         });
@@ -114,10 +115,10 @@ function bindMobileSidebar(target,toggle){
 async function loadSidebar(){
     const target=$("sidebar-component");
     if(!target)return;
-    const response=await fetch("/components/sidebar-v3.html",{cache:"no-store"});
+    const response=await fetch("/components/sidebar-v3.html",{headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});
     if(response.ok)target.innerHTML=await response.text();
     const logout=$("btn-logout");
-    if(logout)logout.onclick=()=>{window.location.replace("/login.html")};
+    if(logout)logout.onclick=async()=>{try{await fetch("/api/auth/logout",{method:"POST",headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});}finally{window.location.replace("/login.html")}};
     bindMobileSidebar(target,$("home-menu-toggle"));
 }
 

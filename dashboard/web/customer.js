@@ -24,6 +24,7 @@
   async function request(path, options = {}) {
     const headers = {
       Accept: "application/json",
+      "X-Capivara-Auth-Area": "customer",
       ...(options.headers || {}),
     };
 
@@ -1102,18 +1103,8 @@
     );
 
 
-    if (
-      ![
-        "customer",
-        "admin",
-        "controller",
-      ].includes(
-        user.role
-      )
-    ) {
-      location.href =
-        "/index.html";
-
+    if (user.role !== "customer") {
+      location.replace("/customer-login.html");
       return;
     }
 
