@@ -13,6 +13,7 @@ def authenticate_login_credentials(
     headers: Any,
     *,
     controller_authenticator: Authenticator,
+    customer_authenticator: Authenticator | None = None,
 ) -> dict | None:
     """Authenticate only a Controller/system identity supplied to this login.
 
@@ -20,7 +21,12 @@ def authenticate_login_credentials(
     current request must prove fresh credentials. Customer identities are also
     excluded from the administrative login boundary; Customers authenticate
     through the dedicated Customer session endpoint instead.
+
+    ``customer_authenticator`` remains accepted temporarily so older composition
+    layers can call this boundary without a flag-day deployment. It is
+    deliberately ignored and can be removed after those callers are migrated.
     """
+    del customer_authenticator
     user = controller_authenticator(headers)
     if user is None:
         return None
