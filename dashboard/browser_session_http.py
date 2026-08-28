@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import mimetypes
+from pathlib import Path
 from urllib.parse import urlparse
 
 from controller_session import (
@@ -21,6 +23,8 @@ ADMIN_LOGIN_PATH = "/api/auth/login"
 CUSTOMER_LOGIN_PATH = "/api/customer/auth/session"
 LOGOUT_PATH = "/api/auth/logout"
 SESSION_PATH = "/api/auth/session"
+BRIDGE_PATH = "/browser-session-bridge.js"
+BRIDGE_TAG = '<script src="/browser-session-bridge.js?v=1"></script>'
 
 
 def _body(payload: dict) -> bytes:
@@ -60,10 +64,47 @@ def _login_allowed(handler, bucket: str, *, limit: int = 10, window: int = 300) 
     return False
 
 
+def _serve_html_with_bridge(handler, path: Path) -> bool:
+    if path.suffix.lower() != ".html":
+        return False
+    if session_user_from_headers(handler.headers) is None:
+        return False
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    if BRIDGE_TAG not in text:
+        if "</head>" in text:
+            text = text.replace("</head>", f"{BRIDGE_TAG}</head>", 1)
+        elif "</body>" in text:
+            text = text.replace("</body>", f"{BRIDGE_TAG}</body>", 1)
+        else:
+            text = BRIDGE_TAG + text
+    body = text.encode("utf-8")
+    handler.send_response(200)
+    handler.send_header("Content-Type", mimetypes.guess_type(str(path))[0] or "text/html; charset=utf-8")
+    handler.send_header("Content-Security-Policy", "default-src 'self'")
+    handler.send_header("X-Content-Type-Options", "nosniff")
+    handler.send_header("X-Frame-Options", "DENY")
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+    return True
+
+
 def install_browser_session_http(legacy, controller_credential_authenticator) -> None:
     """Install the final web-session boundary after all legacy HTTP wrappers."""
     previous_get = legacy.DashboardHandler.do_GET
     previous_post = legacy.DashboardHandler.do_POST
+    previous_send_file = legacy.DashboardHandler.send_file
+    legacy.STATIC_FILES[BRIDGE_PATH] = legacy.WEB_DIR / "browser-session-bridge.js"
+
+    def session_aware_send_file(self, path):
+        candidate = Path(path)
+        if _serve_html_with_bridge(self, candidate):
+            return
+        return previous_send_file(self, path)
 
     def browser_session_get(self):
         path = urlparse(self.path).path
@@ -146,12 +187,14 @@ def install_browser_session_http(legacy, controller_credential_authenticator) ->
 
         return previous_post(self)
 
+    legacy.DashboardHandler.send_file = session_aware_send_file
     legacy.DashboardHandler.do_GET = browser_session_get
     legacy.DashboardHandler.do_POST = browser_session_post
 
 
 __all__ = [
     "ADMIN_LOGIN_PATH",
+    "BRIDGE_PATH",
     "CUSTOMER_LOGIN_PATH",
     "LOGOUT_PATH",
     "SESSION_PATH",
