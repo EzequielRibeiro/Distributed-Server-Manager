@@ -7,11 +7,9 @@ on:
       - "dashboard/login_credentials.py"
       - "dashboard/browser_session_http.py"
       - "dashboard/server_part17.py"
-      - "dashboard/web/auth.js"
-      - "dashboard/web/customer-auth.js"
-      - "dashboard/web/customer-shell.js"
-      - "dashboard/web/browser-session-bridge.js"
+      - "dashboard/web/**"
       - "tests/browser_session_security_test.py"
+      - "tests/browser_auth_legacy_dependency_test.py"
       - ".github/workflows/browser-session.yml"
   push:
     branches: [main]
@@ -20,11 +18,9 @@ on:
       - "dashboard/login_credentials.py"
       - "dashboard/browser_session_http.py"
       - "dashboard/server_part17.py"
-      - "dashboard/web/auth.js"
-      - "dashboard/web/customer-auth.js"
-      - "dashboard/web/customer-shell.js"
-      - "dashboard/web/browser-session-bridge.js"
+      - "dashboard/web/**"
       - "tests/browser_session_security_test.py"
+      - "tests/browser_auth_legacy_dependency_test.py"
       - ".github/workflows/browser-session.yml"
 
 jobs:
@@ -39,12 +35,15 @@ jobs:
             dashboard/login_credentials.py \
             dashboard/browser_session_http.py \
             dashboard/server_part17.py \
-            tests/browser_session_security_test.py
-      - name: Validate JavaScript
+            tests/browser_session_security_test.py \
+            tests/browser_auth_legacy_dependency_test.py
+      - name: Validate authenticated JavaScript
         run: |
-          node --check dashboard/web/auth.js
-          node --check dashboard/web/customer-auth.js
-          node --check dashboard/web/customer-shell.js
-          node --check dashboard/web/browser-session-bridge.js
+          set -e
+          for file in dashboard/web/*.js; do
+            node --check "$file"
+          done
       - name: Test browser session security
-        run: python3 -m unittest tests/browser_session_security_test.py
+        run: |
+          python3 -m unittest tests/browser_session_security_test.py
+          python3 -m unittest tests/browser_auth_legacy_dependency_test.py
