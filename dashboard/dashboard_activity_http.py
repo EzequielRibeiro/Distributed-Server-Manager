@@ -11,6 +11,7 @@ from controller_session import expired_cookie_header, revoke_session, session_to
 ACTIVITY_PAGE = "/activity-log.html"
 ACTIVITY_API = "/api/admin/activity-log"
 ACTIVITY_OPTIONS_API = "/api/admin/activity-log/options"
+ACTIVITY_ACTORS_API = "/api/admin/activity-log/actors"
 LOGIN_API = "/api/auth/login"
 LOGOUT_API = "/api/auth/logout"
 
@@ -67,7 +68,7 @@ def install_dashboard_activity_audit(legacy, authenticate) -> None:
                 return
             self.send_file(legacy.WEB_DIR / "activity-log.html")
             return
-        if path in {ACTIVITY_API, ACTIVITY_OPTIONS_API}:
+        if path in {ACTIVITY_API, ACTIVITY_OPTIONS_API, ACTIVITY_ACTORS_API}:
             if admin(self) is None:
                 return
             repo = repository()
@@ -76,12 +77,30 @@ def install_dashboard_activity_audit(legacy, authenticate) -> None:
                 return
             query = parse_qs(urlparse(self.path).query)
             one = lambda name: (query.get(name) or [None])[0]
+            if path == ACTIVITY_ACTORS_API:
+                try:
+                    limit = int(one("limit") or 100)
+                    offset = int(one("offset") or 0)
+                    show_all = str(one("show_all") or "").strip().lower() in {"1", "true", "yes", "on"}
+                    result = repo.actor_directory(
+                        query=str(one("q") or ""),
+                        role=one("role"),
+                        limit=limit,
+                        offset=offset,
+                        include_all=show_all,
+                    )
+                except (TypeError, ValueError) as exc:
+                    self.send_json(400, {"error": "invalid_request", "message": str(exc)})
+                    return
+                self.send_json(200, result)
+                return
             try:
                 limit = int(one("limit") or 200)
             except ValueError:
                 limit = 200
             rows = repo.search(
                 actor_id=one("actor_id") or one("username"),
+                actor_role=one("actor_role") or one("role"),
                 category=one("category"),
                 action=one("action") or one("activity"),
                 result=one("result"),
@@ -139,6 +158,7 @@ __all__ = [
     "ACTIVITY_PAGE",
     "ACTIVITY_API",
     "ACTIVITY_OPTIONS_API",
+    "ACTIVITY_ACTORS_API",
     "LOGIN_API",
     "LOGOUT_API",
     "install_dashboard_activity_audit",
