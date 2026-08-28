@@ -97,6 +97,51 @@ run_source_database_manager()
     return "${status}"
 }
 
+# Keep the generic requirements report intact, then add a role-aware feature
+# report for Controller capabilities that rely on optional system packages.
+eval "$(declare -f system_requirements_preflight | sed '1s/system_requirements_preflight/system_requirements_preflight_base/')"
+
+controller_feature_requirements()
+{
+    case "${DSM_NODE_ROLE:-}" in
+        controller|hybrid)
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+
+    section "Dependências por recurso"
+    printf 'Recursos administrativos do Controller podem exigir pacotes adicionais.\n\n'
+
+    if command -v ssh >/dev/null 2>&1
+    then
+        printf '  %-30s OK\n' "OpenSSH Client"
+        printf '      Recurso: deploy/teste remoto de Agents por chave SSH.\n'
+    else
+        printf '  %-30s AVISO - comando ssh não encontrado\n' "OpenSSH Client"
+        printf '      Recurso afetado: cap agent deploy/test-connection.\n'
+        printf '      Debian/Ubuntu: sudo apt install openssh-client\n'
+    fi
+
+    if command -v sshpass >/dev/null 2>&1
+    then
+        printf '  %-30s OK\n' "sshpass"
+        printf '      Recurso: autenticação SSH por --password-file.\n'
+    else
+        printf '  %-30s AVISO - necessário para --password-file\n' "sshpass"
+        printf '      Recurso afetado: cap agent deploy/test-connection por senha.\n'
+        printf '      Debian/Ubuntu: sudo apt install sshpass\n'
+        printf '      Alternativa preferida: autenticação por chave SSH.\n'
+    fi
+}
+
+system_requirements_preflight()
+{
+    system_requirements_preflight_base "$@"
+    controller_feature_requirements
+}
+
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]
 then
     main "$@"
