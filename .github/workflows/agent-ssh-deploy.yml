@@ -13,6 +13,7 @@ on:
       - 'agents/linux/installer/bootstrap-release.sh'
       - 'agents/linux/installer/install-agent.sh'
       - 'tests/agent_ssh_deploy_test.py'
+      - 'tests/agent_ssh_bootstrap_diagnostic_test.py'
       - 'tests/agent_ssh_cross_platform_test.py'
       - 'tests/agent_deploy_preconfiguration_test.py'
       - 'docs/architecture/agent-ssh-deploy.md'
@@ -31,6 +32,7 @@ on:
       - 'agents/linux/installer/bootstrap-release.sh'
       - 'agents/linux/installer/install-agent.sh'
       - 'tests/agent_ssh_deploy_test.py'
+      - 'tests/agent_ssh_bootstrap_diagnostic_test.py'
       - 'tests/agent_ssh_cross_platform_test.py'
       - 'tests/agent_deploy_preconfiguration_test.py'
       - 'docs/architecture/agent-ssh-deploy.md'
@@ -61,11 +63,15 @@ jobs:
             database/agent_deploy_topology.py \
             database/agent_installation_preconfiguration.py \
             tests/agent_ssh_deploy_test.py \
+            tests/agent_ssh_bootstrap_diagnostic_test.py \
             tests/agent_ssh_cross_platform_test.py \
             tests/agent_deploy_preconfiguration_test.py
 
       - name: Test SSH deployment contracts
         run: python3 -m unittest tests/agent_ssh_deploy_test.py
+
+      - name: Test bootstrap diagnostic priority
+        run: python3 -m unittest tests/agent_ssh_bootstrap_diagnostic_test.py
 
       - name: Test cross-platform SSH contracts
         run: python3 -m unittest tests/agent_ssh_cross_platform_test.py
