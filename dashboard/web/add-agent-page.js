@@ -7,19 +7,13 @@ let sidebarCollapsed = false;
 
 function byId(id) { return document.getElementById(id); }
 function authHeader() {
-    const token = sessionStorage.getItem("dsm_auth");
-    if (!token) {
-        window.location.replace("/login.html");
-        throw new Error("authentication required");
-    }
-    return {Authorization: `Basic ${token}`, Accept: "application/json"};
+    return {Accept: "application/json", "X-Capivara-Auth-Area": "controller"};
 }
 async function request(endpoint, options = {}) {
     const headers = {...authHeader(), ...(options.headers || {})};
     if (options.body) headers["Content-Type"] = "application/json";
-    const response = await fetch(`${API}${endpoint}`, {...options, headers});
+    const response = await fetch(`${API}${endpoint}`, {...options, headers, credentials: "same-origin", cache: options.cache || "no-store"});
     if (response.status === 401) {
-        sessionStorage.clear();
         window.location.replace("/login.html");
         return null;
     }
@@ -62,10 +56,17 @@ function bindMenu() {
         applySidebarState(!sidebarCollapsed);
     });
 }
+async function logout() {
+    try {
+        await fetch("/api/auth/logout", {method: "POST", headers: authHeader(), credentials: "same-origin", cache: "no-store"});
+    } finally {
+        window.location.replace("/login.html");
+    }
+}
 async function loadSidebar() {
     const target = byId("sidebar-component");
     if (!target) return;
-    const response = await fetch("/components/sidebar-v3.html");
+    const response = await fetch("/components/sidebar-v3.html", {credentials: "same-origin", cache: "no-store"});
     if (!response.ok) throw new Error(`sidebar HTTP ${response.status}`);
     target.innerHTML = await response.text();
     target.querySelectorAll("nav a").forEach(a =>
@@ -74,10 +75,7 @@ async function loadSidebar() {
     target.querySelectorAll("a").forEach(a =>
         a.addEventListener("click", () => document.body.classList.remove("sidebar-open"))
     );
-    byId("btn-logout")?.addEventListener("click", () => {
-        sessionStorage.clear();
-        window.location.replace("/login.html");
-    });
+    byId("btn-logout")?.addEventListener("click", logout);
 }
 async function loadInfrastructure() {
     infrastructureTopology = await request("/infrastructure?active_only=true");
