@@ -37,10 +37,6 @@
 
     const $ = (id) => document.getElementById(id);
 
-    const auth = () => {
-        return sessionStorage.getItem("dsm_auth") || "";
-    };
-
 
     // =========================================================
     // Estado
@@ -165,7 +161,7 @@
 
         if (response.status === 401) {
             
-            window.location.href = "/login.html";
+            window.location.href = "/customer-login.html";
 
             throw new Error(
                 "Sessão encerrada."

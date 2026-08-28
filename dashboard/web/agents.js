@@ -154,10 +154,7 @@ function renderAgentLogs(agent, result = null) {
 
 function authHeader() {
     
-    if (!token) {
-        window.location.replace("/login.html");
-        throw new Error("authentication required");
-    }
+    
     return {"X-Capivara-Auth-Area":"controller", Accept: "application/json"};
 }
 

@@ -1,6 +1,6 @@
 (function(){
   "use strict";
-  const $=id=>document.getElementById(id),auth=()=>sessionStorage.getItem("dsm_auth")||"",identity=Object.fromEntries(new URLSearchParams(location.search));let summary={},filePath=".",availableContent=[],installedContent=[],selectedRuntime=null;
+  const $=id=>document.getElementById(id),identity=Object.fromEntries(new URLSearchParams(location.search));let summary={},filePath=".",availableContent=[],installedContent=[],selectedRuntime=null;
   const instancePath=()=>`/opt/dsm/instances/${identity.server}/${identity.game}/${identity.instance}`;
   async function request(path,options={}){const headers={"X-Capivara-Auth-Area":"customer",Accept:"application/json"};if(options.body)headers["Content-Type"]="application/json";const response=await fetch(path,{...options,headers});if(response.status===401){location.href="/customer-login.html";throw new Error("Sessão encerrada")}const contentType=response.headers.get("content-type")||"";const data=contentType.includes("application/json")?await response.json():await response.blob();if(!response.ok)throw new Error(data.error||`HTTP ${response.status}`);return data}
   function message(text){const node=$("customer-message");node.textContent=text;node.classList.add("show");clearTimeout(message.timer);message.timer=setTimeout(()=>node.classList.remove("show"),3500)}
