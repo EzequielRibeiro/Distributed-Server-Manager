@@ -3,8 +3,6 @@
 
   const $ = id => document.getElementById(id);
 
-  const auth = () =>
-    sessionStorage.getItem("dsm_auth") || "";
 
   const gameNames = {
     minecraft: "Minecraft",
@@ -25,8 +23,8 @@
 
   async function request(path, options = {}) {
     const headers = {
-      Authorization: `Basic ${auth()}`,
       Accept: "application/json",
+      ...(options.headers || {}),
     };
 
     if (options.body) {
@@ -37,12 +35,12 @@
       path, {
         ...options,
         headers,
+        credentials: "same-origin",
       }
     );
 
     if (response.status === 401) {
-      sessionStorage.removeItem("dsm_auth");
-      location.href = "/login.html";
+      location.replace("/customer-login.html");
 
       throw new Error(
         "Sessão encerrada."
@@ -1077,14 +1075,6 @@
   // =========================================================
 
   async function load() {
-    if (!auth()) {
-      location.href =
-        "/login.html";
-
-      return;
-    }
-
-
     const [
       user,
       runtimeData,
@@ -1282,13 +1272,24 @@
   if (logout) {
     logout.addEventListener(
       "click",
-      () => {
-        sessionStorage.removeItem(
-          "dsm_auth"
-        );
-
-        location.href =
-          "/login.html";
+      async () => {
+        try {
+          await fetch(
+            "/api/customer/auth/logout",
+            {
+              method: "POST",
+              headers: {
+                Accept: "application/json",
+              },
+              credentials: "same-origin",
+              cache: "no-store",
+            }
+          );
+        } finally {
+          sessionStorage.removeItem("dsm_auth");
+          sessionStorage.removeItem("dsm_customer_auth");
+          location.replace("/customer-login.html");
+        }
       }
     );
   }

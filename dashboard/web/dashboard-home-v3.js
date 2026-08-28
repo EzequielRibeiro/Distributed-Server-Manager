@@ -3,20 +3,16 @@
 const HOME_API = "/api";
 const $ = id => document.getElementById(id);
 
-function auth() {
-    const token = sessionStorage.getItem("dsm_auth");
-    if (!token) {
-        window.location.replace("/login.html");
-        throw new Error("auth required");
-    }
-    return {Authorization: `Basic ${token}`, Accept: "application/json"};
-}
-
 async function get(path) {
     try {
-        const response = await fetch(`${HOME_API}${path}`, {headers: auth(), cache: "no-store"});
+        const response = await fetch(`${HOME_API}${path}`, {
+            headers: {Accept: "application/json"},
+            credentials: "same-origin",
+            cache: "no-store",
+        });
         if (response.status === 401) {
-            sessionStorage.clear(); window.location.replace("/login.html"); return null;
+            window.location.replace("/login.html");
+            return null;
         }
         if (!response.ok) return null;
         return await response.json();

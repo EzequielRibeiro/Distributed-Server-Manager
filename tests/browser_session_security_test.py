@@ -360,6 +360,66 @@ class BrowserSessionSecurityTest(unittest.TestCase):
         self.assertIn('/api/customer/auth/session', customer)
         self.assertIn('/api/auth/login', admin)
 
+    def test_admin_dashboard_uses_controller_cookie_session_not_legacy_basic(self):
+        source = (WEB / "dashboard-home-v3.js").read_text(encoding="utf-8")
+
+        self.assertNotIn(
+            'sessionStorage.getItem("dsm_auth")',
+            source,
+        )
+        self.assertNotIn(
+            "Authorization: `Basic",
+            source,
+        )
+        self.assertIn(
+            'credentials: "same-origin"',
+            source,
+        )
+        self.assertIn(
+            'window.location.replace("/login.html")',
+            source,
+        )
+
+    def test_customer_dashboard_uses_customer_cookie_session_not_legacy_basic(self):
+        source = (WEB / "customer.js").read_text(encoding="utf-8")
+
+        self.assertNotIn(
+            'sessionStorage.getItem("dsm_auth")',
+            source,
+        )
+        self.assertNotIn(
+            "Authorization: `Basic",
+            source,
+        )
+        self.assertIn(
+            'credentials: "same-origin"',
+            source,
+        )
+        self.assertIn(
+            'location.replace("/customer-login.html")',
+            source,
+        )
+        self.assertIn(
+            '"/api/customer/auth/logout"',
+            source,
+        )
+
+    def test_customer_dashboard_never_redirects_auth_failure_to_controller_login(self):
+        source = (WEB / "customer.js").read_text(encoding="utf-8")
+
+        self.assertNotIn(
+            'location.href = "/login.html"',
+            source,
+        )
+        self.assertNotIn(
+            'location.replace("/login.html")',
+            source,
+        )
+        self.assertIn(
+            "/customer-login.html",
+            source,
+        )
+
     def test_final_composition_installs_browser_session_boundary(self):
         source = (DASHBOARD / "server_part17.py").read_text(encoding="utf-8")
         self.assertIn("install_browser_session_http", source)
