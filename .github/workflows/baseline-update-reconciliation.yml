@@ -22,6 +22,8 @@ jobs:
 
       - name: Validate update reconciliation
         run: |
+          bash -n update.sh
           bash -n update-manager/process-guard.sh
+          bash tests/update_dashboard_readiness_test.sh
           python3 -m py_compile tests/update_baseline_upgrade_path_test.py
           python3 -m unittest tests/update_baseline_upgrade_path_test.py
