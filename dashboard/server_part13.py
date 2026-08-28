@@ -152,7 +152,7 @@ def integrated_post(self):
   result=(dispatch_customer_team("POST",path,payload=payload,user=user,backend=_backend()) if path in CUSTOMER_TEAM_PATHS else dispatch_customer_invitations("POST",path,payload=payload,user=user,backend=_backend()))
   if result is not None:status,body=result;self.send_json(status,body);return
  if path in CUSTOMER_ADMIN_POST_PATHS:
-  user=_user(self)
+  user=_customer_api_user(self) if path==CUSTOMER_PASSWORD_CHANGE else _user(self)
   if user is None:return
   payload,error=_payload(self)
   if error:self.send_json(400,error);return

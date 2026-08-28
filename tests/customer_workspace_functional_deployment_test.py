@@ -89,6 +89,17 @@ class Browser:
             raise AssertionError(f"login for {username} did not issue a browser session cookie")
         return payload
 
+    def customer_login(self, username: str, password: str) -> dict:
+        with self._open(
+            "/api/customer/auth/session",
+            method="POST",
+            headers={"Authorization": auth_value(username, password), "Accept": "application/json"},
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8") or "{}")
+        if not list(self.cookies):
+            raise AssertionError(f"Customer login for {username} did not issue a browser session cookie")
+        return payload
+
     def json(self, path: str, *, method: str = "GET", body=None, expected=(200,)) -> dict:
         with self._open(path, method=method, body=body, headers={"Accept": "application/json"}) as response:
             status = int(response.status)
@@ -241,7 +252,7 @@ def main() -> int:
             if token not in admin_page:
                 raise AssertionError(f"Admin dashboard missing structural marker {token!r}")
 
-        customer_browser.login(CUSTOMER_USER, str(customer["temporary_password"]))
+        customer_browser.customer_login(CUSTOMER_USER, str(customer["temporary_password"]))
         who = customer_browser.json("/api/whoami")
         if who.get("role") != "customer" or who.get("username") != CUSTOMER_USER:
             raise AssertionError(f"unexpected Customer identity: {who}")
@@ -280,7 +291,7 @@ def main() -> int:
         if not isinstance(activity, dict):
             raise AssertionError("Admin activity API did not return an object")
 
-        customer_browser.json("/api/auth/logout", method="POST", expected=(200, 204))
+        customer_browser.json("/api/customer/auth/logout", method="POST", expected=(200, 204))
         admin.json("/api/auth/logout", method="POST", expected=(200, 204))
     finally:
         process.terminate()

@@ -14,6 +14,7 @@ from controller_session import (
     session_token_from_headers,
     session_user_from_headers,
 )
+from activity_audit_repository import ActivityAuditRepository
 from customer_http_auth import authenticate_customer
 from customer_security import customer_rate_limiter, remote_identity
 
@@ -69,6 +70,42 @@ def install_browser_session_http(legacy, controller_credential_authenticator) ->
     previous_post = legacy.DashboardHandler.do_POST
     legacy.STATIC_FILES[BRIDGE_PATH] = legacy.WEB_DIR / "browser-session-bridge.js"
 
+    def audit_auth(handler, user: dict | None, action: str, *, area: str) -> None:
+        if user is None:
+            return
+        try:
+            backend = legacy.dashboard_repository(legacy.DATABASE_FILE).backend
+            ActivityAuditRepository(backend).record_action(
+                actor_id=str(user.get("username") or user.get("id") or "").strip() or None,
+                actor_name=str(
+                    user.get("display_name")
+                    or user.get("name")
+                    or user.get("username")
+                    or ""
+                ).strip() or None,
+                actor_role=str(user.get("role") or "").strip() or None,
+                action=action,
+                category="authentication",
+                result="success",
+                summary=(
+                    "Login realizado com sucesso."
+                    if action == "auth.login"
+                    else "Logout realizado com sucesso."
+                ),
+                target_type="browser_session",
+                target_id=area,
+                remote_address=(
+                    handler.client_address[0]
+                    if getattr(handler, "client_address", None)
+                    else None
+                ),
+                user_agent=str(handler.headers.get("User-Agent") or "").strip() or None,
+            )
+        except Exception:
+            # Auditoria não deve derrubar uma autenticação válida,
+            # mas os testes funcionais verificam sua persistência.
+            pass
+
     def browser_session_get(self):
         path = urlparse(self.path).path
 
@@ -117,6 +154,7 @@ def install_browser_session_http(legacy, controller_credential_authenticator) ->
                 )
                 return
             token = _replace_session(self, user, area="controller")
+            audit_auth(self, user, "auth.login", area="controller")
             _send(
                 self,
                 200,
@@ -145,6 +183,7 @@ def install_browser_session_http(legacy, controller_credential_authenticator) ->
                 )
                 return
             token = _replace_session(self, user, area="customer")
+            audit_auth(self, user, "auth.login", area="customer")
             _send(
                 self,
                 200,
@@ -154,9 +193,11 @@ def install_browser_session_http(legacy, controller_credential_authenticator) ->
             return
 
         if path == LOGOUT_PATH:
+            user = session_user_from_headers(self.headers, area="controller")
             revoke_session(
                 session_token_from_headers(self.headers, area="controller")
             )
+            audit_auth(self, user, "auth.logout", area="controller")
             _send(
                 self,
                 200,
@@ -166,9 +207,11 @@ def install_browser_session_http(legacy, controller_credential_authenticator) ->
             return
 
         if path == CUSTOMER_LOGOUT_PATH:
+            user = session_user_from_headers(self.headers, area="customer")
             revoke_session(
                 session_token_from_headers(self.headers, area="customer")
             )
+            audit_auth(self, user, "auth.logout", area="customer")
             _send(
                 self,
                 200,

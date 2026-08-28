@@ -8,12 +8,17 @@ import customer_workspace_functional_deployment_test as functional
 
 FINAL_PASSWORD = "Functional-Customer-Final-2026"
 original_login = functional.Browser.login
+original_customer_login = functional.Browser.customer_login
 
 
 def tracked_login(self, username: str, password: str):
+    return original_login(self, username, password)
+
+
+def tracked_customer_login(self, username: str, password: str):
     self._functional_username = username
     self._functional_password = password
-    return original_login(self, username, password)
+    return original_customer_login(self, username, password)
 
 
 def traced_page(self, path: str, *, expected=(200,)) -> str:
@@ -42,7 +47,6 @@ def traced_page(self, path: str, *, expected=(200,)) -> str:
             method="POST",
             body={"password": FINAL_PASSWORD, "password_confirmation": FINAL_PASSWORD},
             headers={
-                "Authorization": functional.auth_value(username, temporary_password),
                 "Accept": "application/json",
             },
         ) as response:
@@ -50,7 +54,7 @@ def traced_page(self, path: str, *, expected=(200,)) -> str:
             if response.status != 200:
                 raise AssertionError(f"temporary password change failed: {response.status} {payload}")
         self.cookies.clear()
-        self.login(username, FINAL_PASSWORD)
+        self.customer_login(username, FINAL_PASSWORD)
         status, raw, final_url = fetch_page()
         final_path = urlsplit(final_url).path
         print(
@@ -67,5 +71,6 @@ def traced_page(self, path: str, *, expected=(200,)) -> str:
 
 
 functional.Browser.login = tracked_login
+functional.Browser.customer_login = tracked_customer_login
 functional.Browser.page = traced_page
 raise SystemExit(functional.main())
