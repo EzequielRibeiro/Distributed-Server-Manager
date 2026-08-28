@@ -45,16 +45,15 @@
     </section>
 
     <section id="logs-panel" class="cap-observability-card">
-      <div class="cap-section-heading"><div><h2>Logs</h2><p>Consulta centralizada de logs do Controller, Agents e instâncias.</p></div><button id="btn-refresh-logs" type="button">Atualizar logs</button></div>
-      <div class="cap-log-toolbar">
-        <label>Origem<select id="log-source"><option value="controller">Controller</option><option value="agent">Agent / Node</option><option value="instance">Instância</option></select></label>
-        <label id="log-agent-wrap" hidden>Agent<select id="log-agent" aria-label="Agent"></select></label>
-        <label id="log-server-wrap" hidden>Node / Agent<input id="log-server" type="text" placeholder="agent-id"></label>
-        <label id="log-game-wrap" hidden>Jogo<input id="log-game" type="text" placeholder="game-id"></label>
-        <label id="log-instance-wrap" hidden>Instância<input id="log-instance" type="text" placeholder="instance-id"></label>
+      <div class="cap-section-heading">
+        <div>
+          <h2>Logs do Controller</h2>
+          <p>Logs operacionais dos serviços centrais do Controller. Logs de Agents e consoles de jogos permanecem em suas respectivas áreas.</p>
+        </div>
+        <button id="btn-refresh-logs" type="button">Atualizar logs</button>
       </div>
       <small id="logs-context">Controller</small>
-      <div id="logs" class="cap-log-box" aria-live="polite">Aguardando logs...</div>
+      <div id="logs" class="cap-log-box" aria-live="polite">Aguardando logs do Controller...</div>
     </section>
 
     <section id="diagnostics" class="cap-observability-card agent-manager-only">
@@ -64,6 +63,6 @@
   </div>
   <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="/observability.js"></script>
+<script src="/observability.js?v=4"></script>
 </body>
 </html>
