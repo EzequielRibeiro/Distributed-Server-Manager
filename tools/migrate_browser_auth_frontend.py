@@ -82,10 +82,9 @@ def semantic_fixes(path: Path, text: str) -> str:
     area = area_for(path)
     area_header = f'"X-Capivara-Auth-Area": "{area}"'
 
-    # Customer core uses shared whoami/runtime routes, so its identity must be
-    # explicit when Controller and Customer cookies coexist.
     if path.name == "customer.js":
-        text = text.replace('Accept: "application/json",\n      ...(options.headers || {}),', f'Accept: "application/json",\n      {area_header},\n      ...(options.headers || {}),')
+        replacement = 'Accept: "application/json",\n      ' + area_header + ',\n      ...(options.headers || {}),'
+        text = text.replace('Accept: "application/json",\n      ...(options.headers || {}),', replacement)
         text = re.sub(
             r'if\s*\(\s*!\[\s*"customer",\s*"admin",\s*"controller",\s*\]\.includes\(\s*user\.role\s*\)\s*\)\s*\{\s*location\.href\s*=\s*"/index\.html";\s*return;\s*\}',
             'if (user.role !== "customer") {\n      location.replace("/customer-login.html");\n      return;\n    }',
@@ -93,7 +92,6 @@ def semantic_fixes(path: Path, text: str) -> str:
             flags=re.S,
         )
 
-    # Main Controller landing page also calls shared endpoints.
     if path.name == "dashboard-home-v3.js":
         if 'const controllerHeaders' not in text:
             text = text.replace('const $ = id => document.getElementById(id);', 'const $ = id => document.getElementById(id);\nconst controllerHeaders = () => ({Accept: "application/json", "X-Capivara-Auth-Area": "controller"});')
@@ -101,8 +99,6 @@ def semantic_fixes(path: Path, text: str) -> str:
         text = text.replace('const response=await fetch("/components/sidebar-v3.html",{cache:"no-store"});', 'const response=await fetch("/components/sidebar-v3.html",{headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});')
         text = text.replace('if(logout)logout.onclick=()=>{window.location.replace("/login.html")};', 'if(logout)logout.onclick=async()=>{try{await fetch("/api/auth/logout",{method:"POST",headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});}finally{window.location.replace("/login.html")}};')
 
-    # Older Agents page remains routable. Make its cookie use explicit and make
-    # logout revoke the Controller session instead of merely navigating away.
     if path.name == "agents.js":
         text = text.replace('fetch(`${API}${endpoint}`, {...options, headers})', 'fetch(`${API}${endpoint}`, {...options, headers, credentials:"same-origin", cache:options.cache||"no-store"})')
         text = text.replace('const response = await fetch("/components/sidebar.html");', 'const response = await fetch("/components/sidebar.html", {credentials:"same-origin", cache:"no-store"});')
@@ -170,7 +166,7 @@ def audit() -> list[str]:
     }
     for name, area in required_area.items():
         text = (WEB / name).read_text(encoding="utf-8")
-        if f'X-Capivara-Auth-Area' not in text or area not in text:
+        if "X-Capivara-Auth-Area" not in text or area not in text:
             findings.append(f"dashboard/web/{name}: missing explicit {area} auth area")
 
     customer_core = (WEB / "customer.js").read_text(encoding="utf-8")
