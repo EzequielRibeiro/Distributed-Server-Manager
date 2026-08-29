@@ -37,7 +37,7 @@ CONTROLLER_ASSETS = {
     "/agents-v3.css", "/agents-v3.js", "/agent-steam-status.css",
     "/agent-updates-v3.css", "/agent-updates-v3.js", "/add-agent-v3.css",
     "/add-agent-page.js", "/agent-installation.js", "/agent-installation-wizard.js",
-    "/agent-details.css", "/agent-details.js", "/agent-storage-pools.css",
+    "/agent-details.css", "/agent-details.js", "/agent-details-sidebar.js", "/agent-storage-pools.css",
     "/agent-storage-pools.js", "/storage-pool-source-cleanup.js",
     "/agent-observability.css", "/agent-observability.js",
     "/agent-queue-details-state.js", "/servers.css", "/servers.js",
