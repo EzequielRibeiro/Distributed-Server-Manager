@@ -855,21 +855,6 @@ def preflight_ssh(
         "fi; "
         "fi; "
     )
-    base += (
-        "if command -v dpkg >/dev/null 2>&1; then "
-        "audit=$(dpkg --audit 2>&1 || true); "
-        "if [ -n \"$audit\" ]; then "
-        "printf '%s\\n' \"$audit\" >&2; "
-        "printf 'CAPIVARA_PACKAGE_MANAGER_NOT_READY: dpkg audit reported incomplete package state\\n' >&2; "
-        "exit 42; "
-        "fi; "
-        "if [ -d /var/lib/dpkg/updates ] && "
-        "find /var/lib/dpkg/updates -mindepth 1 -maxdepth 1 -type f -print -quit 2>/dev/null | grep -q .; then "
-        "printf 'CAPIVARA_PACKAGE_MANAGER_NOT_READY: dpkg has pending update state; run dpkg --configure -a\\n' >&2; "
-        "exit 42; "
-        "fi; "
-        "fi; "
-    )
     command = base + 'printf "CAPIVARA_PREFLIGHT_OK\\n"; uname -m'
     result = _run_ssh(
         options,
