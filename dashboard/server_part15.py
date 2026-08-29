@@ -7,7 +7,14 @@ from urllib.parse import urlparse
 
 import server_part14 as integration
 import catalog_profile_presentation_assets
-from catalog_game_builder_http import GAME_BUILDER_VERIFY_PATH, dispatch_catalog_game_builder_verify
+from catalog_game_builder_http import (
+    GAME_BUILDER_PUBLISH_PATH,
+    GAME_BUILDER_ROLLBACK_PATH,
+    GAME_BUILDER_VERIFY_PATH,
+    dispatch_catalog_game_builder_publish,
+    dispatch_catalog_game_builder_rollback,
+    dispatch_catalog_game_builder_verify,
+)
 from catalog_game_data_inventory_http import GAME_DATA_INVENTORY_PATH, dispatch_catalog_game_data_inventory_get
 from catalog_resource_profiles_http import (
     RESOURCE_PROFILES_PATH,
@@ -89,7 +96,8 @@ def catalog_architecture_get(self):
 
 def catalog_architecture_post(self):
     parsed = urlparse(self.path)
-    if parsed.path not in {RESOURCE_PROFILES_PATH, GAME_BUILDER_VERIFY_PATH}:
+    builder_paths = {GAME_BUILDER_VERIFY_PATH, GAME_BUILDER_PUBLISH_PATH, GAME_BUILDER_ROLLBACK_PATH}
+    if parsed.path not in {RESOURCE_PROFILES_PATH, *builder_paths}:
         return _previous_post(self)
     user = _controller_user(self)
     if user is None:
@@ -99,6 +107,10 @@ def catalog_architecture_post(self):
         return
     if parsed.path == GAME_BUILDER_VERIFY_PATH:
         result = dispatch_catalog_game_builder_verify(parsed.path, payload, user=user, root=_ROOT)
+    elif parsed.path == GAME_BUILDER_PUBLISH_PATH:
+        result = dispatch_catalog_game_builder_publish(parsed.path, payload, user=user, root=_ROOT)
+    elif parsed.path == GAME_BUILDER_ROLLBACK_PATH:
+        result = dispatch_catalog_game_builder_rollback(parsed.path, payload, user=user, root=_ROOT)
     else:
         result = dispatch_catalog_resource_profiles_post(parsed.path, payload, user=user, root=_ROOT)
     status, body = result
