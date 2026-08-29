@@ -54,7 +54,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
   self.assertIn("dashboard-home-v3.css?v=9",self.detail)
   self.assertIn("agent-details.js?v=14",self.detail)
  def test_dashboard_v3_navigation_preserves_rbac_and_add_agent(self):
-  for text in ('href="servers.html"','href="agents.html"','href="add-agent.html"','admin-only','agent-manager-only','href="catalog.html"','href="game-profiles.html"','href="regions.html"','href="datacenters.html"','href="placement.html"','href="observability.html"','href="alerts.html"','href="events.html"','href="monitoring.html"','href="controller-logs.html"','href="diagnostics.html"','href="operations.html#backups"'):self.assertIn(text,self.sidebar)
+  for text in ('href="servers.html"','href="agents.html"','href="add-agent.html"','admin-only','agent-manager-only','href="catalog.html"','href="game-profiles.html"','href="regions.html"','href="datacenters.html"','href="placement.html"','href="observability.html"','href="alerts.html"','href="events.html"','href="monitoring.html"','href="controller-logs.html"','href="diagnostics.html"','href="operations.html"'):self.assertIn(text,self.sidebar)
   for legacy in ('infrastructure.html#regions','infrastructure.html#datacenters','infrastructure.html#placement','observability.html#alerts','observability.html#events','observability.html#monitoring','observability.html#diagnostics'):self.assertNotIn(legacy,self.sidebar)
   self.assertNotIn("Criar instância",self.sidebar)
  def test_observability_pages_are_dedicated_and_registered(self):
