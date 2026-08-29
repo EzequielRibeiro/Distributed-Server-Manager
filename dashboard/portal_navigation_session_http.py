@@ -40,7 +40,7 @@ CONTROLLER_ASSETS = {
     "/agent-observability.css", "/agent-observability.js",
     "/agent-queue-details-state.js", "/servers.css", "/servers.js",
     "/catalog-page.css", "/catalog-installation.css", "/catalog-page.js",
-    "/game-profiles.css", "/game-profiles.js", "/operations.css",
+    "/game-profiles.css", "/game-profiles.js", "/game-profile-presentation.js", "/operations.css",
     "/operations.js", "/observability.css", "/observability.js",
     "/help.css", "/help.js",
 }
