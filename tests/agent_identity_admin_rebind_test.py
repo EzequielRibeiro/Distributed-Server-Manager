@@ -91,12 +91,14 @@ class AgentIdentityAdminRebindTest(unittest.TestCase):
 
         self.assertEqual(result["old_identity"], OLD)
         self.assertEqual(result["new_identity"], NEW)
+        self.assertEqual(result["node_id"], self.node_id)
         self.assertTrue(result["incident_resolved"])
+        self.assertEqual(shown["agent_id"], self.agent_id)
+        self.assertEqual(shown["node_id"], self.node_id)
         self.assertEqual(shown["host_identity"], NEW)
         self.assertIsNone(shown["active_incident"])
         self.assertEqual(before["agent_id"], self.agent_id)
         self.assertEqual(after["agent_id"], self.agent_id)
-        self.assertEqual(after["node_id"], self.node_id)
         self.assertEqual(after["credential_id"], self.enrolled.credential_id)
 
     def test_rebind_rejects_stale_expected_identity(self):
