@@ -43,6 +43,7 @@ def _load_sessions() -> None:
         if _loaded:
             return
         now = int(time.time())
+        expired_found = False
         try:
             raw = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
         except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
@@ -54,10 +55,14 @@ def _load_sessions() -> None:
                 try:
                     expires_at = int(session.get("expires_at", 0))
                 except (TypeError, ValueError):
-                    continue
+                    expires_at = 0
                 if expires_at > now:
                     _sessions[key] = dict(session)
+                else:
+                    expired_found = True
         _loaded = True
+        if expired_found:
+            _persist_sessions()
 
 
 def _persist_sessions() -> None:
@@ -74,6 +79,23 @@ def _persist_sessions() -> None:
         os.chmod(SESSION_FILE, 0o600)
     except OSError:
         pass
+
+
+def _prune_expired_sessions_locked(now: int | None = None) -> int:
+    current = int(time.time()) if now is None else int(now)
+    removed = 0
+    for key, session in list(_sessions.items()):
+        try:
+            expires_at = int(session.get("expires_at", 0))
+        except (TypeError, ValueError):
+            expires_at = 0
+        if expires_at > current:
+            continue
+        _sessions.pop(key, None)
+        removed += 1
+    if removed:
+        _persist_sessions()
+    return removed
 
 
 def _cookie_secure() -> bool:
@@ -124,6 +146,7 @@ def create_session(user: dict, *, area: str | None = None) -> str:
         session["customer_code"] = user["customer_code"]
 
     with _lock:
+        _prune_expired_sessions_locked(now)
         _sessions[_token_key(token)] = session
         _persist_sessions()
 
@@ -131,27 +154,24 @@ def create_session(user: dict, *, area: str | None = None) -> str:
 
 
 def get_session(token: str | None) -> dict | None:
-    if not token:
-        return None
     _load_sessions()
     now = int(time.time())
-    key = _token_key(token)
     with _lock:
-        session = _sessions.get(key)
-        if session is None:
+        _prune_expired_sessions_locked(now)
+        if not token:
             return None
-        if int(session.get("expires_at", 0)) <= now:
-            _sessions.pop(key, None)
-            _persist_sessions()
+        session = _sessions.get(_token_key(token))
+        if session is None:
             return None
         return dict(session)
 
 
 def revoke_session(token: str | None) -> None:
-    if not token:
-        return
     _load_sessions()
     with _lock:
+        _prune_expired_sessions_locked()
+        if not token:
+            return
         if _sessions.pop(_token_key(token), None) is not None:
             _persist_sessions()
 
@@ -161,6 +181,7 @@ def revoke_user_sessions(username: str, *, role: str | None = None) -> int:
     _load_sessions()
     removed = 0
     with _lock:
+        _prune_expired_sessions_locked()
         for key, session in list(_sessions.items()):
             if session.get("username") != username:
                 continue
