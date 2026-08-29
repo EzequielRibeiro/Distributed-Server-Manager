@@ -1,8 +1,8 @@
 (function () {
   "use strict";
 
-  const auth = () => sessionStorage.getItem("dsm_auth") || "";
   const requestedGame = new URLSearchParams(location.search).get("game") || "";
+  const customerHeaders = () => ({Accept: "application/json", "X-Capivara-Auth-Area": "customer"});
 
   const gameNames = {
     minecraft: "Minecraft",
@@ -32,21 +32,14 @@
   }
 
   async function request(path) {
-    if (!auth()) {
-      location.href = "/login.html";
-      throw new Error("Sessão encerrada.");
-    }
-
     const response = await fetch(path, {
-      headers: {
-        Authorization: `Basic ${auth()}`,
-        Accept: "application/json",
-      },
+      headers: customerHeaders(),
+      credentials: "same-origin",
+      cache: "no-store",
     });
 
     if (response.status === 401) {
-      sessionStorage.removeItem("dsm_auth");
-      location.href = "/login.html";
+      location.replace("/customer-login.html");
       throw new Error("Sessão encerrada.");
     }
 
@@ -117,6 +110,7 @@
     const container = document.getElementById("demo-profiles");
 
     try {
+      await request("/api/customer/auth/session");
       const catalogData = await request("/api/catalog/runtimes");
       const game = resolveGame(catalogData);
       title.textContent = `Servidor ${gameLabel(game)}`;
