@@ -8,6 +8,7 @@ BOOTSTRAP="${DSM_ROOT}/core/bootstrap.sh"
 # shellcheck source=/dev/null
 source "${BOOTSTRAP}"
 export DSM_DATABASE_DRIVER DSM_DATABASE DSM_DATABASE_HOST DSM_DATABASE_PORT DSM_DATABASE_NAME DSM_DATABASE_USER DSM_DATABASE_PASSWORD_FILE DSM_DATABASE_TLS
+export DSM_CONTROLLER_PUBLIC_URL DSM_CONTROLLER_URL DSM_PUBLIC_HOST DSM_PUBLIC_PORT
 LEGACY_DSM="${DSM_ROOT}/bin/dsm-compat"; AGENT_LOCAL_CLI="${DSM_ROOT}/agents/linux/runtime/cap_dispatch.py"; AGENT_CONTROLLER_CLI="${DSM_ROOT}/agents/linux/runtime/controller_cli.py"; ROLE_RESOLVER="${DSM_ROOT}/core/role_context.py"; CAP_ROLE_CACHE=""
 local_role(){ [[ -z "${CAP_ROLE_CACHE}" ]] || { printf '%s\n' "${CAP_ROLE_CACHE}"; return 0; }; if [[ ! -f "${ROLE_RESOLVER}" ]]; then CAP_ROLE_CACHE="unknown"; else CAP_ROLE_CACHE="$(python3 "${ROLE_RESOLVER}" --root "${DSM_ROOT}" 2>/dev/null || true)"; CAP_ROLE_CACHE="${CAP_ROLE_CACHE:-unknown}"; fi; printf '%s\n' "${CAP_ROLE_CACHE}"; }
 require_role(){ local command_label="$1" role allowed allowed_text=""; shift; role="$(local_role)"; for allowed in "$@"; do [[ "${role}" != "${allowed}" ]] || return 0; [[ -z "${allowed_text}" ]] && allowed_text="${allowed}" || allowed_text+=" ou ${allowed}"; done; printf "Erro: '%s' requer role %s.\nRole local detectada: %s.\n" "${command_label}" "${allowed_text}" "${role}" >&2; exit 2; }

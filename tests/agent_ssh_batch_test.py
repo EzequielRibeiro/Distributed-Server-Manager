@@ -199,6 +199,16 @@ class ControllerReversePreflightBehaviorTest(unittest.TestCase):
             )
 
 
+class PublicCapEnvironmentContractTest(unittest.TestCase):
+    def test_cap_exports_controller_public_url(self):
+        text = (ROOT / "bin/cap").read_text(encoding="utf-8")
+        self.assertIn(
+            "export DSM_CONTROLLER_PUBLIC_URL DSM_CONTROLLER_URL "
+            "DSM_PUBLIC_HOST DSM_PUBLIC_PORT",
+            text,
+        )
+
+
 class CliContractTest(unittest.TestCase):
     def test_deploy_json_normalizes_database_timestamps(self):
         text = (ROOT / "database/agent_deploy_cli.py").read_text(encoding="utf-8")
