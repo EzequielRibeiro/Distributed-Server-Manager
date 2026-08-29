@@ -15,7 +15,7 @@ from automation_http import AUTOMATION_PATH,BROADCAST_PATH,dispatch_automation_g
 from backup_http import BACKUP_PATH,dispatch_backup_get,dispatch_backup_post
 from configuration_http import CONFIGURATIONS_PATH,dispatch_configuration_get,dispatch_configuration_post
 from content_http import CONTENT_PATH,dispatch_content_get,dispatch_content_post
-from customer_admin_api import CUSTOMER_ADMIN_GET_PATHS,CUSTOMER_ADMIN_POST_PATHS,dispatch_customer_admin_get,dispatch_customer_admin_post
+from customer_admin_api import CUSTOMER_ADMIN_GET_PATHS,CUSTOMER_ADMIN_POST_PATHS,CUSTOMER_PASSWORD_CHANGE,dispatch_customer_admin_get,dispatch_customer_admin_post
 from customer_admin_repository import CustomerAdminRepository
 from customer_invitation_api import PUBLIC_INVITATION_PATHS,TEAM_INVITATION_PATHS,dispatch_customer_invitations
 from customer_team_api import CUSTOMER_TEAM_PATHS,dispatch_customer_team
@@ -25,7 +25,7 @@ from infrastructure_role_http import INFRASTRUCTURE_ROLE_PATH,dispatch_infrastru
 from observability_http import OBSERVABILITY_PATH,dispatch_observability_get
 from realtime_http import PUBLIC_GET_PATHS,PUBLIC_POST_PATHS,SSE_EVENTS_PATH,dispatch_realtime_get,dispatch_realtime_post,serve_event_stream
 from universal_event_http import EVENTS_PATH,dispatch_universal_event_get,dispatch_universal_event_post
-legacy=integration.legacy;_previous_get=legacy.DashboardHandler.do_GET;_previous_post=legacy.DashboardHandler.do_POST;_authenticate=integration._authenticate
+legacy=integration.legacy;_previous_get=legacy.DashboardHandler.do_GET;_previous_post=legacy.DashboardHandler.do_POST;_controller_authenticate=integration._controller_authenticate;_customer_authenticate=integration._customer_authenticate;_authenticate=_controller_authenticate
 ROOT_DIR=Path(__file__).resolve().parents[1];WINDOWS_INSTALL_PATH="/agent/install.ps1";WINDOWS_INSTALL_FILE=ROOT_DIR/"agents"/"windows"/"installer"/"bootstrap-release.ps1";VERSION_FILE=ROOT_DIR/"version"
 legacy.STATIC_FILES["/agent-updates.js"]=legacy.WEB_DIR/"agent-updates.js";legacy.STATIC_FILES["/infrastructure-role-ui.js"]=legacy.WEB_DIR/"infrastructure-role-ui.js";legacy.STATIC_FILES["/game-data-orchestration.js"]=legacy.WEB_DIR/"game-data-orchestration.js"
 legacy.STATIC_FILES["/agent-terminal.css"] = legacy.WEB_DIR / "agent-terminal.css"
@@ -59,15 +59,17 @@ def _serve_windows_bootstrap(self):
  except OSError:self.send_error(404);return
  prefix=f'$env:CAPIVARA_RELEASE_TAG = if ($env:CAPIVARA_RELEASE_TAG) {{ $env:CAPIVARA_RELEASE_TAG }} else {{ "v{version}" }}\r\n';body=(prefix+script).encode();self.send_response(200);self.send_header("Content-Type","text/plain; charset=utf-8");self.send_header("Content-Length",str(len(body)));self.send_header("Cache-Control","no-store");self.end_headers();self.wfile.write(body)
 def _require_session_page(self,path):
- user=session_user_from_headers(self.headers)
+ customer_page=path in {"/customer-change-password.html","/customer-members.html"}
+ area="customer" if customer_page else "controller"
+ user=session_user_from_headers(self.headers,area=area)
  if user is None:
-  _redirect(self,"/customer-login.html" if path in {"/customer-change-password.html","/customer-members.html"} else "/login.html");return None
- allowed={"customer"} if path in {"/customer-change-password.html","/customer-members.html"} else {"admin","controller","operator"}
+  _redirect(self,"/customer-login.html" if customer_page else "/login.html");return None
+ allowed={"customer"} if customer_page else {"admin","controller","operator"}
  if user.get("role") not in allowed:self.forbidden();return None
  return user
 def _require_customer_password_rotation(self,path):
  if path not in CUSTOMER_PASSWORD_GATED_PAGES:return True
- user=session_user_from_headers(self.headers)
+ user=session_user_from_headers(self.headers,area="customer")
  if user is None:return True
  if user.get("role")!="customer":return True
  try:required=CustomerAdminRepository(_backend()).password_change_required(str(user.get("username") or ""))
@@ -75,8 +77,8 @@ def _require_customer_password_rotation(self,path):
  if required:_redirect(self,"/customer-change-password.html");return False
  return True
 def _customer_api_user(self):
- user=_user(self)
- if user is None:return None
+ user=_customer_authenticate(self.headers)
+ if user is None:self.unauthorized();return None
  if user.get("role")!="customer":self.forbidden();return None
  return user
 def integrated_get(self):
@@ -150,7 +152,7 @@ def integrated_post(self):
   result=(dispatch_customer_team("POST",path,payload=payload,user=user,backend=_backend()) if path in CUSTOMER_TEAM_PATHS else dispatch_customer_invitations("POST",path,payload=payload,user=user,backend=_backend()))
   if result is not None:status,body=result;self.send_json(status,body);return
  if path in CUSTOMER_ADMIN_POST_PATHS:
-  user=_user(self)
+  user=_customer_api_user(self) if path==CUSTOMER_PASSWORD_CHANGE else _user(self)
   if user is None:return
   payload,error=_payload(self)
   if error:self.send_json(400,error);return

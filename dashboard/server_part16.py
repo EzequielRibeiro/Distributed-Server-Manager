@@ -9,7 +9,9 @@ from agent_game_data_http import GAME_DATA_FILES_PATH, dispatch_agent_game_data_
 
 legacy = integration.legacy
 _previous_post = legacy.DashboardHandler.do_POST
-_authenticate = integration._authenticate
+_controller_authenticate = integration._controller_authenticate
+_customer_authenticate = integration._customer_authenticate
+_authenticate = _controller_authenticate
 _ROOT = Path(__file__).resolve().parents[1]
 
 
