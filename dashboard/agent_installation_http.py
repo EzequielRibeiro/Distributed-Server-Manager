@@ -2,12 +2,15 @@
 """Transport-neutral HTTP dispatchers for Agent installation UI."""
 from __future__ import annotations
 from typing import Any
-from agent_connection_api import test_agent_connection_for_user
+from agent_connection_api import test_agent_connection_for_user, test_agent_connections_for_user
 from agent_installation_api import agent_installation_status_for_user, create_agent_installation_for_user
+from agent_installation_batch_api import create_agent_installation_batch_for_user
 from agent_release_service import AgentReleaseError, list_agent_releases
 
 AGENT_INSTALLATIONS_PATH = "/api/agents/installations"
+AGENT_INSTALLATIONS_BATCH_PATH = "/api/agents/installations/batch"
 AGENT_INSTALLATION_TEST_PATH = "/api/agents/installations/test-connection"
+AGENT_INSTALLATION_TEST_BATCH_PATH = "/api/agents/installations/test-connections"
 AGENT_INSTALLATION_STATUS_PATH = "/api/agents/installations/status"
 AGENT_RELEASES_PATH = "/api/agents/releases"
 
@@ -22,6 +25,10 @@ def dispatch_agent_installation_post(path: str,payload,*,user,backend):
     try:
         if path==AGENT_INSTALLATION_TEST_PATH:
             return 200,test_agent_connection_for_user(user,payload)
+        if path==AGENT_INSTALLATION_TEST_BATCH_PATH:
+            return 200,test_agent_connections_for_user(user,payload)
+        if path==AGENT_INSTALLATIONS_BATCH_PATH:
+            return 207,create_agent_installation_batch_for_user(user,backend,payload)
         if path!=AGENT_INSTALLATIONS_PATH: return None
         return 201,create_agent_installation_for_user(user,backend,payload)
     except Exception as exc: return _error(exc)
