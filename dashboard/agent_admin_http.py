@@ -7,6 +7,7 @@ import uuid
 from urllib.parse import parse_qs, urlparse
 
 from agent_admin_repository import AgentAdminRepository
+from agent_identity_admin_repository import AgentIdentityAdminRepository, AgentIdentityRebindConflict
 from agent_pairing_repository import (
     AgentCredentialInvalid,
     AgentPairingRepository,
@@ -28,6 +29,8 @@ INSTANCE_STORAGE_POOL_MIGRATION_PATH = "/api/admin/instance/storage-pool-migrate
 DOCTOR_PATH = "/api/admin/agent/doctor"
 RELINK_PREPARE_PATH = "/api/admin/agent/relink/prepare"
 CREDENTIAL_ROTATE_PATH = "/api/admin/agent/credential-rotate"
+IDENTITY_PATH = "/api/admin/agent/identity"
+IDENTITY_REBIND_PATH = "/api/admin/agent/identity/rebind"
 REMOTE_RELINK_PATH = "/api/agent/relink"
 _STORAGE_NAMESPACE = "capivara.agent.storage"
 _DEFAULT_STORAGE_ROOT = "/var/lib/capivara-instances"
@@ -122,7 +125,7 @@ def install_agent_administration(legacy, authenticate) -> None:
 
     def do_get(self):
         parsed = urlparse(self.path)
-        if parsed.path not in {DETAIL_PATH, DOCTOR_PATH, INSTANCE_STORAGE_POOL_MIGRATION_PATH}:
+        if parsed.path not in {DETAIL_PATH, DOCTOR_PATH, INSTANCE_STORAGE_POOL_MIGRATION_PATH, IDENTITY_PATH}:
             return previous_get(self)
         user = authenticated(self)
         if user is None:
@@ -150,8 +153,11 @@ def install_agent_administration(legacy, authenticate) -> None:
             _authorize(user, detail, doctor=parsed.path == DOCTOR_PATH)
             if parsed.path == DOCTOR_PATH:
                 self.send_json(200, {"agent_id": agent_id, "doctor": repo.latest_doctor(agent_id)})
+            elif parsed.path == IDENTITY_PATH:
+                self.send_json(200, {"identity": AgentIdentityAdminRepository(backend).show(agent_id)})
             else:
                 detail["storage"] = _storage_detail(backend, agent_id)
+                detail["identity"] = AgentIdentityAdminRepository(backend).show(agent_id)
                 self.send_json(200, {"agent": detail})
         except PermissionError as exc:
             self.send_json(403, {"error": "forbidden", "message": str(exc)})
@@ -183,7 +189,7 @@ def install_agent_administration(legacy, authenticate) -> None:
                 self.send_json(500, {"error": "relink_failed", "message": "Não foi possível revincular o Agent."})
             return
 
-        if path not in {RENAME_PATH, REMOVE_PATH, STORAGE_PATH, STORAGE_MIGRATE_PATH, INSTANCE_STORAGE_POOL_MIGRATION_PATH, DOCTOR_PATH, RELINK_PREPARE_PATH, CREDENTIAL_ROTATE_PATH}:
+        if path not in {RENAME_PATH, REMOVE_PATH, STORAGE_PATH, STORAGE_MIGRATE_PATH, INSTANCE_STORAGE_POOL_MIGRATION_PATH, DOCTOR_PATH, RELINK_PREPARE_PATH, CREDENTIAL_ROTATE_PATH, IDENTITY_REBIND_PATH}:
             return previous_post(self)
         user = authenticated(self)
         if user is None:
@@ -220,6 +226,21 @@ def install_agent_administration(legacy, authenticate) -> None:
             detail = repo.detail(agent_id)
             _authorize(user, detail, doctor=path == DOCTOR_PATH)
 
+            if path == IDENTITY_REBIND_PATH:
+                if _role(user) != "admin":
+                    raise PermissionError("Somente administradores podem revincular a identidade física de um Agent")
+                if str((payload or {}).get("confirmation") or "").strip() != agent_id:
+                    raise ValueError("confirmation must exactly match agent_id")
+                result = AgentIdentityAdminRepository(backend).rebind(
+                    agent_id,
+                    expected_identity=str((payload or {}).get("expected_identity") or ""),
+                    new_identity=str((payload or {}).get("new_identity") or ""),
+                    reason=str((payload or {}).get("reason") or ""),
+                    actor=actor,
+                )
+                self.send_json(200, result)
+                return
+
             if path == REMOVE_PATH:
                 if _role(user) != "admin":
                     raise PermissionError("Somente administradores podem remover Agents")
@@ -255,6 +276,8 @@ def install_agent_administration(legacy, authenticate) -> None:
             event_type = "AGENT_CREDENTIAL_ROTATION_PREPARED" if path == CREDENTIAL_ROTATE_PATH else "AGENT_RELINK_PREPARED"
             _publish(backend, event_type=event_type, agent_id=agent_id, actor=actor, data={"token_id": issued.token_id, "expires_at": issued.expires_at})
             self.send_json(201, {"agent_id": agent_id, "controller_id": detail["controller_id"], "node_id": detail["node_id"], "fingerprint": detail.get("fingerprint"), "pairing_token": issued.token, "token_id": issued.token_id, "expires_at": issued.expires_at, "state": state, "command": "sudo -u capivara-agent python3 /opt/capivara-agent/runtime/relink_cli.py --token '<TOKEN>' && sudo systemctl restart capivara-agent.service", "warning": "O token é exibido uma única vez. Não registre o token nem o novo secret em logs."})
+        except AgentIdentityRebindConflict as exc:
+            self.send_json(409, {"error": "agent_identity_rebind_conflict", "message": str(exc)})
         except PermissionError as exc:
             self.send_json(403, {"error": "forbidden", "message": str(exc)})
         except (LookupError, KeyError) as exc:
@@ -268,4 +291,4 @@ def install_agent_administration(legacy, authenticate) -> None:
     legacy.DashboardHandler.do_POST = do_post
 
 
-__all__ = ["INSTANCE_STORAGE_POOL_MIGRATION_PATH", "install_agent_administration"]
+__all__ = ["INSTANCE_STORAGE_POOL_MIGRATION_PATH", "IDENTITY_PATH", "IDENTITY_REBIND_PATH", "install_agent_administration"]
