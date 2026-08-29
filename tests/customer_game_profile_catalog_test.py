@@ -7,11 +7,25 @@ WEB = ROOT / "dashboard" / "web"
 
 
 class CustomerGameProfileCatalogTest(unittest.TestCase):
-    def test_game_catalog_clicks_open_demo_page(self):
+    def test_game_catalog_clicks_open_demo_page_without_inline_script(self):
         html = (WEB / "customer.html").read_text(encoding="utf-8")
-        self.assertIn('#customer-catalog .catalog-game', html)
-        self.assertIn('/contract-demo.html?game=', html)
+        navigation = (WEB / "customer-navigation.js").read_text(encoding="utf-8")
+        self.assertNotIn('<script>(function()', html)
+        self.assertIn('customer-catalog', navigation)
+        self.assertIn('/contract-demo.html?game=', navigation)
         self.assertNotIn('Você não possui um contrato ativo para', html)
+
+    def test_customer_navigation_asset_is_cache_bumped(self):
+        shell = (WEB / "customer-shell.js").read_text(encoding="utf-8")
+        self.assertIn('/customer-navigation.js?v=3', shell)
+
+    def test_resource_profile_get_uses_customer_auth_in_customer_area(self):
+        source = (ROOT / "dashboard" / "server_part15.py").read_text(encoding="utf-8")
+        self.assertIn('area == "customer"', source)
+        self.assertIn('_customer_authenticate(self.headers)', source)
+        self.assertIn('user = _resource_profiles_reader(self)', source)
+        # Mutating methods remain behind the Controller authenticator.
+        self.assertGreaterEqual(source.count('user = _controller_user(self)'), 5)
 
     def test_demo_loads_real_catalog_profiles_with_customer_cookie_session(self):
         html = (WEB / "contract-demo.html").read_text(encoding="utf-8")
