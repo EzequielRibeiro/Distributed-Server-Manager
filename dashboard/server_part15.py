@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import server_part14 as integration
+import catalog_profile_presentation_assets
 from catalog_game_data_inventory_http import GAME_DATA_INVENTORY_PATH, dispatch_catalog_game_data_inventory_get
 from catalog_resource_profiles_http import (
     RESOURCE_PROFILES_PATH,
@@ -15,6 +16,8 @@ from catalog_resource_profiles_http import (
     dispatch_catalog_resource_profiles_post,
     dispatch_catalog_resource_profiles_put,
 )
+
+catalog_profile_presentation_assets.install()
 
 legacy = integration.legacy
 _previous_get = legacy.DashboardHandler.do_GET
