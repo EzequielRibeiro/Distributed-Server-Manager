@@ -412,9 +412,8 @@
     }
 
     async function init() {
-        if (!auth()) return location.replace("login.html");
         if (!agentId) {
-            showError("Agent não informado na URL.");
+            location.replace("agents.html?missing_agent=1");
             return;
         }
         const [title, description] = labels[view];
