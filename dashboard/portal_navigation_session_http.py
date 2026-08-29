@@ -29,6 +29,7 @@ CONTROLLER_PAGES = {
 CONTROLLER_ASSETS = {
     "/components/sidebar-v3.html", "/sidebar-v3.js",
     "/dashboard-home-v3.css", "/dashboard-home-v3.js",
+    "/dashboard-node-overview.css", "/dashboard-node-overview.js",
     "/telemetry-widgets.css", "/telemetry-widgets.js",
     "/catalog-v2.css", "/activity-log.js", "/customer-admin.css",
     "/customers.js", "/users.js", "/system.css", "/system.js",
