@@ -910,10 +910,19 @@ def preflight_windows_ssh(
 def remote_agent_present(
     options: SSHDeployOptions, *, runner: SSHRunner = _default_runner
 ) -> bool:
+    """Fail closed when any strong Linux Agent installation marker exists."""
+    command = (
+        "test "
+        "-f /etc/capivara-agent/agent.json "
+        "-o -f /var/lib/capivara-agent/identity.json "
+        "-o -f /etc/capivara-agent/agent.conf "
+        "-o -f /etc/systemd/system/capivara-agent.service "
+        "-o -f /opt/capivara-agent/runtime/agent.py"
+    )
     return (
         _run_ssh(
             options,
-            "test -f /var/lib/capivara-agent/identity.json -o -f /etc/capivara-agent/agent.conf",
+            command,
             runner=runner,
             timeout=options.connect_timeout + 5,
         ).returncode

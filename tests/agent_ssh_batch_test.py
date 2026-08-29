@@ -82,6 +82,20 @@ class BatchTargetParserTest(unittest.TestCase):
             batch.normalize_concurrency(21)
 
 
+class ExistingAgentProtectionContractTest(unittest.TestCase):
+    def test_linux_presence_detector_uses_current_and_legacy_markers(self):
+        text = (ROOT / "core/agent_ssh_deploy.py").read_text(encoding="utf-8")
+
+        for marker in (
+            "/etc/capivara-agent/agent.json",
+            "/var/lib/capivara-agent/identity.json",
+            "/etc/capivara-agent/agent.conf",
+            "/etc/systemd/system/capivara-agent.service",
+            "/opt/capivara-agent/runtime/agent.py",
+        ):
+            self.assertIn(marker, text)
+
+
 class CliContractTest(unittest.TestCase):
     def test_deploy_json_normalizes_database_timestamps(self):
         text = (ROOT / "database/agent_deploy_cli.py").read_text(encoding="utf-8")
