@@ -5,18 +5,18 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Perfis de jogos | Capivara DSM</title>
   <link rel="stylesheet" href="/dashboard-home-v3.css">
-  <link rel="stylesheet" href="/game-profiles.css?v=2">
+  <link rel="stylesheet" href="/game-profiles.css?v=3">
 </head>
 <body class="cap-home game-profiles-shell">
 <div id="sidebar-component"></div>
 <main class="cap-home-main game-profiles-page">
   <header class="cap-home-topbar">
-    <div class="cap-home-title"><button id="profiles-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1>Perfis de jogos</h1><p>Cadastre e mantenha as opções de recursos oferecidas nos contratos.</p></div></div>
+    <div class="cap-home-title"><button id="profiles-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1>Perfis de jogos</h1><p>Cadastre recursos e personalize a apresentação visual oferecida ao cliente.</p></div></div>
     <div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="profiles-user-name">—</strong><span id="profiles-user-role">—</span></div></div>
   </header>
   <div class="cap-home-content game-profiles-content">
     <section class="profiles-hero">
-      <div><span>CATÁLOGO COMERCIAL</span><h2>Perfis persistidos por jogo</h2><p>Criar acrescenta um novo perfil. Editar ou excluir afeta somente o perfil selecionado. Os demais permanecem intactos.</p></div>
+      <div><span>CATÁLOGO COMERCIAL</span><h2>Perfis persistidos por jogo</h2><p>Recursos técnicos continuam separados da apresentação. Opcionalmente aplique um tema, edite HTML/CSS e visualize o resultado antes de salvar.</p></div>
       <a href="/catalog.html" class="profiles-secondary">Abrir catálogo técnico</a>
     </section>
 
@@ -27,9 +27,9 @@
     </section>
 
     <section class="profiles-guidance">
-      <article><strong>Lista persistida</strong><p>Todos os perfis existentes do jogo aparecem abaixo e podem ser consultados individualmente.</p></article>
-      <article><strong>Padrão do jogo</strong><p>Defina o padrão separadamente. Um perfil padrão não pode ser excluído antes da escolha de outro.</p></article>
-      <article><strong>Contratos existentes</strong><p>Alterações no catálogo não trocam automaticamente o perfil já registrado em contratos existentes.</p></article>
+      <article><strong>Recursos do servidor</strong><p>CPU, memória, armazenamento, swap e limites continuam sendo dados operacionais usados pelo contrato e Placement.</p></article>
+      <article><strong>Apresentação segura</strong><p>HTML e CSS são sanitizados. Scripts, eventos inline e conteúdo ativo não são aceitos.</p></article>
+      <article><strong>Temas reutilizáveis</strong><p>Use Survival, Tactical, Blocks, Industrial ou Minimal Dark como ponto de partida e personalize o resultado.</p></article>
     </section>
 
     <section class="profiles-editor-card">
@@ -41,6 +41,8 @@
   </div>
   <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="/sidebar-v3.js?v=2"></script><script src="/game-profiles.js?v=2"></script>
+<script src="/sidebar-v3.js?v=2"></script>
+<script src="/game-profile-presentation.js?v=1"></script>
+<script src="/game-profiles.js?v=3"></script>
 </body>
 </html>
