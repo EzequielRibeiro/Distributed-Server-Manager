@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,12 +13,19 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-AGENT_PATH = ROOT / "agents/linux/runtime/agent.py"
+RUNTIME_DIR = ROOT / "agents/linux/runtime"
+AGENT_PATH = RUNTIME_DIR / "agent.py"
 
 
 def load_agent(host_identity_path: Path):
-    previous = os.environ.get("CAPIVARA_AGENT_HOST_IDENTITY")
+    previous_identity = os.environ.get("CAPIVARA_AGENT_HOST_IDENTITY")
+    runtime_path = str(RUNTIME_DIR)
+    inserted_runtime_path = runtime_path not in sys.path
+
     os.environ["CAPIVARA_AGENT_HOST_IDENTITY"] = str(host_identity_path)
+    if inserted_runtime_path:
+        sys.path.insert(0, runtime_path)
+
     try:
         spec = importlib.util.spec_from_file_location("capivara_agent_runtime_test", AGENT_PATH)
         module = importlib.util.module_from_spec(spec)
@@ -25,10 +33,16 @@ def load_agent(host_identity_path: Path):
         spec.loader.exec_module(module)
         return module
     finally:
-        if previous is None:
+        if inserted_runtime_path:
+            try:
+                sys.path.remove(runtime_path)
+            except ValueError:
+                pass
+
+        if previous_identity is None:
             os.environ.pop("CAPIVARA_AGENT_HOST_IDENTITY", None)
         else:
-            os.environ["CAPIVARA_AGENT_HOST_IDENTITY"] = previous
+            os.environ["CAPIVARA_AGENT_HOST_IDENTITY"] = previous_identity
 
 
 class LinuxHostIdentityMaterializationIntegrationTest(unittest.TestCase):
