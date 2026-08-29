@@ -16,20 +16,20 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from backup_client import backup_state, read_backup_result
-from broadcast_client import broadcast_state, read_broadcast_result
+from backup_client import backup_state
+from broadcast_client import broadcast_state
 from capabilities import detect_capabilities
-from configuration_client import configuration_state, read_configuration_result
-from console_client import console_state, read_console_result
-from content_client import content_state, read_content_result
+from configuration_client import configuration_state
+from console_client import console_state, read_result as read_console_result
+from content_client import content_state
 from game_data_client import read_game_data_result
-from health import health_inventory
-from instance_inventory import instance_inventory
+from instance_runtime import inventory as instance_inventory
+from instance_telemetry import collect_instance_telemetry
 from network_inventory import collect_network_inventory
-from reconciliation import reconciliation_inventory
 from runtime_events import read_runtime_events
-from runtime_metrics import runtime_metrics_snapshot
-from telemetry import collect_instance_telemetry
+from runtime_health import health_inventory
+from runtime_metrics import snapshot as runtime_metrics_snapshot
+from runtime_reconciler import reconciliation_inventory
 from update_client import read_update_result
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
@@ -51,7 +51,15 @@ def _load_config():
     config = _load_json(CONFIG_PATH)
     if not isinstance(config, dict):
         raise RuntimeError("Agent configuration is invalid")
-    required = ("agent_id", "node_id", "controller_id", "controller_url", "credential_secret", "fingerprint")
+    required = (
+        "agent_id",
+        "node_id",
+        "controller_id",
+        "controller_url",
+        "credential_id",
+        "credential_secret",
+        "fingerprint",
+    )
     missing = [key for key in required if not str(config.get(key) or "").strip()]
     if missing:
         raise RuntimeError("Agent configuration is missing: " + ", ".join(missing))
@@ -197,11 +205,7 @@ def _inventory(config):
     result_readers = (
         ("update_result", read_update_result),
         ("game_data_result", read_game_data_result),
-        ("configuration_result", read_configuration_result),
-        ("content_result", read_content_result),
         ("console_result", read_console_result),
-        ("backup_result", read_backup_result),
-        ("broadcast_result", read_broadcast_result),
     )
     for key, reader in result_readers:
         try:
@@ -225,9 +229,9 @@ def _ssl_context(config):
 def _heartbeat(config):
     controller = str(config["controller_url"]).rstrip("/")
     headers = {
-        "Authorization": "Bearer " + str(config["credential_secret"]),
-        "X-Capivara-Agent-ID": str(config["agent_id"]),
-        "X-Capivara-Node-ID": str(config["node_id"]),
+        "X-Capivara-Agent-Credential": str(config["credential_id"]),
+        "X-Capivara-Agent-Secret": str(config["credential_secret"]),
+        "X-Capivara-Agent-Fingerprint": str(config["fingerprint"]),
     }
     return _json_request(
         controller + "/api/agent/heartbeat",
