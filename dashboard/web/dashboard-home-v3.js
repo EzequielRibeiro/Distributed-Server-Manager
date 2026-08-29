@@ -2,21 +2,17 @@
 
 const HOME_API = "/api";
 const $ = id => document.getElementById(id);
-
-function auth() {
-    const token = sessionStorage.getItem("dsm_auth");
-    if (!token) {
-        window.location.replace("/login.html");
-        throw new Error("auth required");
-    }
-    return {Authorization: `Basic ${token}`, Accept: "application/json"};
-}
+const controllerHeaders = () => ({Accept: "application/json", "X-Capivara-Auth-Area": "controller"});
 
 async function get(path) {
     try {
-        const response = await fetch(`${HOME_API}${path}`, {headers: auth(), cache: "no-store"});
+        const response = await fetch(`${HOME_API}${path}`, {
+            headers: controllerHeaders(),
+            credentials: "same-origin",
+            cache: "no-store",
+        });
         if (response.status === 401) {
-            sessionStorage.clear(); window.location.replace("/login.html"); return null;
+            window.location.replace("/login.html"); return null;
         }
         if (!response.ok) return null;
         return await response.json();
@@ -118,10 +114,10 @@ function bindMobileSidebar(target,toggle){
 async function loadSidebar(){
     const target=$("sidebar-component");
     if(!target)return;
-    const response=await fetch("/components/sidebar-v3.html",{cache:"no-store"});
+    const response=await fetch("/components/sidebar-v3.html",{headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});
     if(response.ok)target.innerHTML=await response.text();
     const logout=$("btn-logout");
-    if(logout)logout.onclick=()=>{sessionStorage.clear();window.location.replace("/login.html")};
+    if(logout)logout.onclick=async()=>{try{await fetch("/api/auth/logout",{method:"POST",headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});}finally{window.location.replace("/login.html")}};
     bindMobileSidebar(target,$("home-menu-toggle"));
 }
 
