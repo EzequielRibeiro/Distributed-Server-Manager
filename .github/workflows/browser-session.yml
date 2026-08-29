@@ -10,6 +10,7 @@ on:
       - "dashboard/server_part17.py"
       - "dashboard/web/**"
       - "tests/browser_session_security_test.py"
+      - "tests/browser_session_expiration_cleanup_test.py"
       - "tests/browser_auth_legacy_dependency_test.py"
       - "tests/browser_dual_session_isolation_test.py"
       - "tests/auth_domain_composition_test.py"
@@ -25,6 +26,7 @@ on:
       - "dashboard/server_part17.py"
       - "dashboard/web/**"
       - "tests/browser_session_security_test.py"
+      - "tests/browser_session_expiration_cleanup_test.py"
       - "tests/browser_auth_legacy_dependency_test.py"
       - "tests/browser_dual_session_isolation_test.py"
       - "tests/auth_domain_composition_test.py"
@@ -45,6 +47,7 @@ jobs:
             dashboard/portal_navigation_session_http.py \
             dashboard/server_part17.py \
             tests/browser_session_security_test.py \
+            tests/browser_session_expiration_cleanup_test.py \
             tests/browser_auth_legacy_dependency_test.py \
             tests/browser_dual_session_isolation_test.py \
             tests/auth_domain_composition_test.py \
@@ -58,6 +61,7 @@ jobs:
       - name: Test browser session security and domain isolation
         run: |
           python3 -m unittest tests/browser_session_security_test.py
+          python3 -m unittest tests/browser_session_expiration_cleanup_test.py
           python3 -m unittest tests/browser_auth_legacy_dependency_test.py
           python3 -m unittest tests/browser_dual_session_isolation_test.py
           python3 -m unittest tests/auth_domain_composition_test.py
