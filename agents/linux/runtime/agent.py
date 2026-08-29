@@ -2,6 +2,7 @@
 """Capivara Linux Agent runtime: enroll once, then heartbeat permanently."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
@@ -100,6 +101,46 @@ def _post(url, payload, headers=None):
         raise RuntimeError(f"Controller unavailable: {exc.reason}") from exc
 
 
+def _read_text(path):
+    try:
+        return Path(path).read_text(encoding="utf-8").strip().lower()
+    except OSError:
+        return ""
+
+
+def _host_identity():
+    """Return a stable, non-secret identity for the physical/virtual host."""
+    machine_id = _read_text("/etc/machine-id")
+    product_uuid = _read_text("/sys/class/dmi/id/product_uuid")
+
+    macs = []
+    try:
+        interfaces = Path("/sys/class/net").iterdir()
+    except OSError:
+        interfaces = ()
+
+    for interface in interfaces:
+        if interface.name == "lo":
+            continue
+        value = _read_text(interface / "address")
+        if value and value != "00:00:00:00:00:00":
+            macs.append(value)
+
+    # Prefer machine identity + platform UUID. Network adapters can be
+    # replaced legitimately, so MAC addresses are only a fallback when the
+    # platform exposes no stable product UUID.
+    hardware_identity = product_uuid or "|".join(sorted(set(macs)))
+
+    components = [
+        "capivara-host-v1",
+        machine_id,
+        hardware_identity,
+    ]
+
+    material = "\n".join(components).encode("utf-8")
+    return "sha256:" + hashlib.sha256(material).hexdigest()
+
+
 def _memory_total_bytes():
     try:
         for line in Path("/proc/meminfo").read_text().splitlines():
@@ -148,6 +189,7 @@ def _inventory(config):
         "capivara_version": installed_version,
         "address": config.get("advertise_address"),
         "fingerprint": config["fingerprint"],
+        "host_identity": _host_identity(),
         "capabilities": detect_capabilities(),
         "cpu": {"logical_cores": os.cpu_count(), "machine": platform.machine()},
         "ram_total_bytes": _memory_total_bytes(),

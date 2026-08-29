@@ -209,6 +209,95 @@ class PublicCapEnvironmentContractTest(unittest.TestCase):
         )
 
 
+class LinuxHostIdentityContractTest(unittest.TestCase):
+    def test_agent_reports_composite_host_identity(self):
+        text = (
+            ROOT / "agents/linux/runtime/agent.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("/etc/machine-id", text)
+        self.assertIn("/sys/class/dmi/id/product_uuid", text)
+        self.assertIn("/sys/class/net", text)
+        self.assertIn("capivara-host-v1", text)
+        self.assertIn('"host_identity": _host_identity()', text)
+
+    def test_host_identity_does_not_depend_on_hostname(self):
+        text = (
+            ROOT / "agents/linux/runtime/agent.py"
+        ).read_text(encoding="utf-8")
+
+        start = text.index("def _host_identity(")
+        end = text.index("\ndef ", start + 10)
+        function = text[start:end]
+
+        self.assertNotIn("gethostname", function)
+
+
+class AgentIdentityCollisionContractTest(unittest.TestCase):
+    def test_controller_validates_host_before_any_heartbeat_metadata_write(self):
+        text = (
+            ROOT / "dashboard/agent_heartbeat_api.py"
+        ).read_text(encoding="utf-8")
+
+        start = text.index("def record_agent_heartbeat(")
+        function = text[start:]
+
+        validation = function.index("_validate_host_identity(")
+        metadata = function.index("_store_agent_metadata(")
+
+        self.assertLess(validation, metadata)
+
+    def test_controller_serializes_first_host_binding(self):
+        text = (
+            ROOT / "dashboard/agent_heartbeat_api.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "UPDATE agents SET metadata_json=metadata_json",
+            text,
+        )
+        self.assertIn(
+            "capivara_host_identity_v1",
+            text,
+        )
+        self.assertIn(
+            "AgentHostIdentityCollision",
+            text,
+        )
+
+    def test_http_returns_conflict_for_identity_collision(self):
+        text = (
+            ROOT / "dashboard/agent_remote_http.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "except AgentHostIdentityCollision as exc:",
+            text,
+        )
+        self.assertIn(
+            '"error": "agent_identity_collision"',
+            text,
+        )
+        self.assertIn(
+            "return 409",
+            text,
+        )
+
+    def test_bound_agent_missing_host_identity_fails_closed(self):
+        text = (
+            ROOT / "dashboard/agent_heartbeat_api.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "AgentHostIdentityRequired",
+            text,
+        )
+        self.assertIn(
+            '"status": "legacy-unbound"',
+            text,
+        )
+
+
 class CliContractTest(unittest.TestCase):
     def test_deploy_json_normalizes_database_timestamps(self):
         text = (ROOT / "database/agent_deploy_cli.py").read_text(encoding="utf-8")
