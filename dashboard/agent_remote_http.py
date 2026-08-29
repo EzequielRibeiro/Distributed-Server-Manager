@@ -17,6 +17,7 @@ from agent_installation_api import bind_installation_after_enrollment
 from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from agent_lifecycle_repository import AgentLifecycleRepository
+from agent_identity_incident_repository import AgentIdentityIncidentRepository
 from agent_link_incident_repository import AgentLinkIncidentRepository
 from agent_pairing_api import enroll_remote_agent
 from agent_pairing_repository import (
@@ -272,15 +273,10 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
         _attach_backup_clone_state(result, agent_id=agent_id, backend=backend)
     except AgentHostIdentityCollision as exc:
         try:
-            AgentLinkIncidentRepository(backend).open(
+            AgentIdentityIncidentRepository(backend).open_collision(
                 exc.agent_id,
-                cause="identity_collision",
-                recommended_action="Verificar clonagem e revincular o Agent conflitante",
-                message=(
-                    "Foi detectado mais de um host físico apresentando a mesma "
-                    "identidade de Agent. O heartbeat conflitante foi bloqueado "
-                    "antes de atualizar runtime, telemetria ou comandos."
-                ),
+                expected_identity=exc.expected,
+                presented_identity=exc.presented,
             )
         except Exception:
             pass
@@ -292,14 +288,8 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
         }
     except AgentHostIdentityRequired as exc:
         try:
-            AgentLinkIncidentRepository(backend).open(
+            AgentIdentityIncidentRepository(backend).open_collision(
                 exc.agent_id,
-                cause="host_identity_required",
-                recommended_action="Atualizar o runtime do Agent",
-                message=(
-                    "O Agent deixou de apresentar a identidade física exigida "
-                    "pelo vínculo atual."
-                ),
             )
         except Exception:
             pass

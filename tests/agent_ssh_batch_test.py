@@ -298,6 +298,55 @@ class AgentIdentityCollisionContractTest(unittest.TestCase):
         )
 
 
+class AgentIdentityIncidentContractTest(unittest.TestCase):
+    def test_identity_collision_has_dedicated_rule(self):
+        text = (
+            ROOT / "database/agent_identity_incident_repository.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            'RULE_ID = "agent.identity_collision"',
+            text,
+        )
+        self.assertIn(
+            '"event_type": "AGENT_IDENTITY_COLLISION"',
+            text,
+        )
+
+    def test_identity_incident_is_not_heartbeat_auto_resolved(self):
+        text = (
+            ROOT / "dashboard/agent_remote_http.py"
+        ).read_text(encoding="utf-8")
+
+        collision = text.index(
+            "except AgentHostIdentityCollision"
+        )
+        credential = text.index(
+            "except AgentCredentialInvalid"
+        )
+
+        block = text[collision:credential]
+
+        self.assertIn(
+            "AgentIdentityIncidentRepository",
+            block,
+        )
+        self.assertNotIn(
+            "AgentLinkIncidentRepository",
+            block,
+        )
+
+    def test_link_recovery_does_not_reference_identity_rule(self):
+        text = (
+            ROOT / "database/agent_link_incident_repository.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn(
+            "agent.identity_collision",
+            text,
+        )
+
+
 class CliContractTest(unittest.TestCase):
     def test_deploy_json_normalizes_database_timestamps(self):
         text = (ROOT / "database/agent_deploy_cli.py").read_text(encoding="utf-8")
