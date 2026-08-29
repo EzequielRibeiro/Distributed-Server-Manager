@@ -30,6 +30,11 @@ class _Legacy:
     STATIC_FILES = {
         "/activity-log.html": Path("activity-log.html"),
         "/contract-demo.html": Path("contract-demo.html"),
+        "/customer.html": Path("customer.html"),
+        "/customer.js": Path("customer-shell.js"),
+        "/customer-core.js": Path("customer.js"),
+        "/customer-navigation.js": Path("customer-navigation.js"),
+        "/customer.css": Path("customer.css"),
         "/components/sidebar-v3.html": Path("components/sidebar-v3.html"),
         "/catalog-page.css": Path("catalog-page.css"),
     }
@@ -74,6 +79,14 @@ class PortalNavigationSessionTest(unittest.TestCase):
         self.assertIn(("json", 401, {"error": "authentication_required"}), handler.events)
         self.assertNotIn(("header", "Location", "/login.html"), handler.events)
 
+    def test_customer_page_uses_customer_cookie_even_when_controller_cookie_also_exists(self):
+        handler = _Handler("/customer.html")
+        with patch.object(guard, "session_user_from_headers") as resolve:
+            resolve.side_effect = lambda _headers, area: {"role": "customer"} if area == "customer" else {"role": "admin"}
+            _Legacy.DashboardHandler.do_GET(handler)
+        self.assertIn(("file", "customer.html"), handler.events)
+        resolve.assert_called_once_with(handler.headers, area="customer")
+
     def test_customer_demo_uses_customer_cookie_even_when_controller_cookie_also_exists(self):
         handler = _Handler("/contract-demo.html?game=minecraft")
         with patch.object(guard, "session_user_from_headers") as resolve:
@@ -82,6 +95,29 @@ class PortalNavigationSessionTest(unittest.TestCase):
         self.assertIn(("file", "contract-demo.html"), handler.events)
         resolve.assert_called_once_with(handler.headers, area="customer")
 
+    def test_customer_bootstrap_asset_uses_customer_cookie_with_dual_sessions(self):
+        handler = _Handler("/customer.js?v=4")
+        with patch.object(guard, "session_user_from_headers") as resolve:
+            resolve.side_effect = lambda _headers, area: {"role": "customer"} if area == "customer" else {"role": "admin"}
+            _Legacy.DashboardHandler.do_GET(handler)
+        self.assertIn(("file", "customer-shell.js"), handler.events)
+        resolve.assert_called_once_with(handler.headers, area="customer")
+
+    def test_customer_dynamic_core_asset_uses_customer_cookie_with_dual_sessions(self):
+        handler = _Handler("/customer-core.js?v=3")
+        with patch.object(guard, "session_user_from_headers") as resolve:
+            resolve.side_effect = lambda _headers, area: {"role": "customer"} if area == "customer" else {"role": "admin"}
+            _Legacy.DashboardHandler.do_GET(handler)
+        self.assertIn(("file", "customer.js"), handler.events)
+        resolve.assert_called_once_with(handler.headers, area="customer")
+
+    def test_customer_asset_without_customer_session_returns_unauthorized(self):
+        handler = _Handler("/customer-navigation.js?v=2")
+        with patch.object(guard, "session_user_from_headers", return_value=None):
+            _Legacy.DashboardHandler.do_GET(handler)
+        self.assertIn(("json", 401, {"error": "authentication_required"}), handler.events)
+        self.assertNotIn(("header", "Location", "/customer-login.html"), handler.events)
+
     def test_controller_page_without_controller_session_redirects_to_controller_login(self):
         handler = _Handler("/activity-log.html")
         with patch.object(guard, "session_user_from_headers", return_value=None):
@@ -89,8 +125,8 @@ class PortalNavigationSessionTest(unittest.TestCase):
         self.assertIn(("status", 302), handler.events)
         self.assertIn(("header", "Location", "/login.html"), handler.events)
 
-    def test_customer_demo_without_customer_session_redirects_to_customer_login(self):
-        handler = _Handler("/contract-demo.html?game=dayz")
+    def test_customer_page_without_customer_session_redirects_to_customer_login(self):
+        handler = _Handler("/customer.html")
         with patch.object(guard, "session_user_from_headers", return_value=None):
             _Legacy.DashboardHandler.do_GET(handler)
         self.assertIn(("status", 302), handler.events)
