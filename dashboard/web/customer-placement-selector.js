@@ -5,6 +5,23 @@
   const PLACEMENT_TIMEOUT_MS = 8000;
   let coordinatesPromise = null;
   let placementContext = {};
+  let placementAvailable = false;
+
+  function submitButton() {
+    return document.getElementById("create-instance-submit");
+  }
+
+  function syncCreateAvailability() {
+    const button = submitButton();
+    if (!button) return;
+    button.dataset.placementAvailable = placementAvailable ? "true" : "false";
+    if (!placementAvailable) button.disabled = true;
+  }
+
+  function setPlacementAvailability(available) {
+    placementAvailable = available === true;
+    syncCreateAvailability();
+  }
 
   function setPlacementStatus(state, text) {
     const node = document.getElementById("runtime-placement-status");
@@ -23,6 +40,7 @@
   }
 
   function placementUnavailable(message, code, details = {}) {
+    setPlacementAvailability(false);
     return jsonResponse(200, {
       regions: [],
       placement_available: false,
@@ -72,6 +90,7 @@
   }
 
   async function placementRegions(options) {
+    setPlacementAvailability(false);
     setPlacementStatus("checking", "Verificando servidores disponíveis...");
 
     const coords = await coordinatesIfAlreadyAllowed();
@@ -101,11 +120,11 @@
       );
     } catch (error) {
       if (error?.name === "AbortError") {
-        const message = "Não foi possível concluir a verificação dos servidores. Tente novamente.";
+        const message = "Não foi possível concluir a verificação dos servidores. Você pode continuar navegando e tentar novamente depois.";
         setPlacementStatus("error", message);
         return placementUnavailable(message, "placement_timeout", {retryable: true});
       }
-      const message = "Falha ao verificar servidores disponíveis.";
+      const message = "Não foi possível localizar servidores agora. Você pode continuar navegando normalmente.";
       setPlacementStatus("error", message);
       return placementUnavailable(message, "placement_unreachable", {retryable: true});
     } finally {
@@ -114,7 +133,7 @@
     }
 
     if (!response.ok) {
-      const message = "Não foi possível verificar servidores disponíveis.";
+      const message = "Não foi possível verificar servidores disponíveis. A área do cliente continua disponível.";
       setPlacementStatus("error", message);
       return placementUnavailable(message, "placement_controller_error", {
         retryable: response.status >= 500,
@@ -126,7 +145,7 @@
     try {
       data = await response.clone().json();
     } catch (_error) {
-      const message = "Resposta inválida ao verificar servidores.";
+      const message = "Resposta inválida ao verificar servidores. A navegação continua disponível.";
       setPlacementStatus("error", message);
       return placementUnavailable(message, "placement_invalid_response", {retryable: true});
     }
@@ -146,6 +165,7 @@
     }
 
     const regions = available.map(publicRegion);
+    setPlacementAvailability(true);
     setPlacementStatus(
       "available",
       `${regions.length} localização${regions.length === 1 ? "" : "ões"} disponível${regions.length === 1 ? "" : "is"}.`
@@ -163,7 +183,28 @@
     return nativeFetch(input, options);
   };
 
+  document.addEventListener("click", event => {
+    const button = event.target.closest?.("#create-instance-submit");
+    if (!button || placementAvailable) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    setPlacementStatus(
+      "unavailable",
+      "A criação está indisponível porque nenhum servidor elegível foi localizado. Você pode continuar navegando normalmente."
+    );
+    syncCreateAvailability();
+  }, true);
+
   document.addEventListener("DOMContentLoaded", () => {
+    const button = submitButton();
+    if (button && window.MutationObserver) {
+      new MutationObserver(() => syncCreateAvailability()).observe(button, {
+        attributes: true,
+        attributeFilter: ["disabled"],
+      });
+    }
+    syncCreateAvailability();
+
     const selector = window.CapivaraRuntimeSelector;
     if (!selector || typeof selector.open !== "function") return;
     const originalOpen = selector.open.bind(selector);
@@ -172,6 +213,7 @@
         contract: String(contract?.id || contract?.contract_id || "").trim(),
         game: String(contract?.game_id || contract?.game || "").trim().toLowerCase(),
       };
+      setPlacementAvailability(false);
       return originalOpen(contract);
     };
   });
