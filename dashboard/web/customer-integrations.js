@@ -1,7 +1,6 @@
 (function () {
   "use strict";
 
-  const auth = () => sessionStorage.getItem("dsm_auth") || "";
   const $ = id => document.getElementById(id);
   let discord = null;
   let instances = [];
@@ -18,12 +17,17 @@
   };
 
   async function request(path, options = {}) {
-    if (!auth()) { location.href = "/login.html"; throw new Error("Sessão encerrada."); }
-    const headers = {Authorization: `Basic ${auth()}`, Accept: "application/json", ...(options.headers || {})};
+    const headers = {Accept: "application/json", ...(options.headers || {})};
     if (options.body) headers["Content-Type"] = "application/json";
-    const response = await fetch(path, {...options, headers});
+    const response = await fetch(path, {
+      ...options,
+      headers,
+      credentials: "same-origin",
+      cache: "no-store",
+    });
     if (response.status === 401) {
-      sessionStorage.removeItem("dsm_auth"); location.href = "/login.html"; throw new Error("Sessão encerrada.");
+      location.replace("/customer-login.html");
+      throw new Error("Sessão encerrada.");
     }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
@@ -159,6 +163,7 @@
 
   async function load() {
     try {
+      await request("/api/customer/auth/session");
       const [snapshot, runtime] = await Promise.all([
         request("/api/customer/integrations/discord"), request("/api/runtime/list"),
       ]);

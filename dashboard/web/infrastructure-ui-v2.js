@@ -2,16 +2,16 @@
     "use strict";
 
     const API = "/api";
-    const auth = () => sessionStorage.getItem("dsm_auth") || "";
+    const controllerHeaders = () => ({Accept: "application/json", "X-Capivara-Auth-Area": "controller"});
     let activeView = "agents";
 
     async function request(path) {
         const response = await fetch(`${API}${path}`, {
-            headers: { Authorization: `Basic ${auth()}`, Accept: "application/json" },
+            headers: controllerHeaders(),
+            credentials: "same-origin",
             cache: "no-store"
         });
         if (response.status === 401) {
-            sessionStorage.clear();
             window.location.replace("/login.html");
             throw new Error("authentication required");
         }
@@ -73,21 +73,36 @@
         if (agentLink) agentLink.classList.add("active");
     }
 
+    async function logout() {
+        try {
+            await fetch("/api/auth/logout", {
+                method: "POST",
+                headers: controllerHeaders(),
+                credentials: "same-origin",
+                cache: "no-store"
+            });
+        } finally {
+            window.location.replace("/login.html");
+        }
+    }
+
     async function loadV3Sidebar() {
         const target = document.getElementById("sidebar-component");
         if (!target) return;
         const response = await fetch("/components/sidebar-v3.html", {
-            headers: auth() ? { Authorization: `Basic ${auth()}` } : {},
+            headers: controllerHeaders(),
+            credentials: "same-origin",
             cache: "no-store"
         });
+        if (response.status === 401) {
+            window.location.replace("/login.html");
+            throw new Error("authentication required");
+        }
         if (!response.ok) throw new Error(`sidebar HTTP ${response.status}`);
         target.innerHTML = await response.text();
         activateInfrastructureNav();
-        const logout = document.getElementById("btn-logout");
-        if (logout) logout.onclick = () => {
-            sessionStorage.clear();
-            window.location.replace("/login.html");
-        };
+        const button = document.getElementById("btn-logout");
+        if (button) button.onclick = logout;
     }
 
     function wireV3Shell() {
@@ -257,7 +272,6 @@
                 if (el) el.textContent = String(value);
             });
         } catch (_) {
-            // The base Agents page already exposes operational errors.
         }
     }
 

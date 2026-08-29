@@ -7,7 +7,7 @@
     const requestedView = params.get("view") || "monitoring";
     const views = new Set(["monitoring", "events", "diagnostics", "updates", "logs"]);
     const view = views.has(requestedView) ? requestedView : "monitoring";
-    const auth = () => sessionStorage.getItem("dsm_auth") || "";
+    
     let agent = {};
     let refreshTimer = null;
 
@@ -67,11 +67,11 @@
 
     async function request(path) {
         const response = await fetch(path, {
-            headers: {Authorization: `Basic ${auth()}`, Accept: "application/json"},
+            headers: {"X-Capivara-Auth-Area":"controller", Accept: "application/json"},
             cache: "no-store",
         });
         if (response.status === 401) {
-            sessionStorage.clear();
+            
             location.replace("login.html");
             throw new Error("Sessão expirada.");
         }
@@ -404,7 +404,7 @@
     async function sidebar() {
         const response = await fetch("components/sidebar-v3.html", {cache: "no-store"});
         if (response.ok) $("sidebar-component").innerHTML = await response.text();
-        $("btn-logout")?.addEventListener("click", () => { sessionStorage.clear(); location.replace("login.html"); });
+        $("btn-logout")?.addEventListener("click", () => {  location.replace("login.html"); });
         document.querySelectorAll("nav a").forEach(link => link.classList.toggle("active", link.getAttribute("href") === "agents.html"));
         const who = await request("/api/whoami");
         $("agent-context-user").textContent = who.username || "Usuário";

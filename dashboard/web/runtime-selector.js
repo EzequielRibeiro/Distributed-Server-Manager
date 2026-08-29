@@ -37,10 +37,6 @@
 
     const $ = (id) => document.getElementById(id);
 
-    const auth = () => {
-        return sessionStorage.getItem("dsm_auth") || "";
-    };
-
 
     // =========================================================
     // Estado
@@ -144,7 +140,7 @@
 
     async function request(path, options = {}) {
         const headers = {
-            Authorization: `Basic ${auth()}`,
+            "X-Capivara-Auth-Area":"customer",
             Accept: "application/json",
         };
 
@@ -160,12 +156,14 @@
                     ...headers,
                     ...(options.headers || {}),
                 },
+                credentials: "same-origin",
+                cache: options.cache || "no-store",
             }
         );
 
         if (response.status === 401) {
-            sessionStorage.removeItem("dsm_auth");
-            window.location.href = "/login.html";
+            
+            window.location.href = "/customer-login.html";
 
             throw new Error(
                 "Sessão encerrada."

@@ -3,14 +3,17 @@
 
   const $ = id => document.getElementById(id);
   const identity = Object.fromEntries(new URLSearchParams(location.search));
-  const auth = () => sessionStorage.getItem("dsm_auth") || "";
   let polling = false;
 
   async function api(path, options = {}) {
-    const headers = {Authorization: `Basic ${auth()}`, Accept: "application/json"};
+    const headers = {Accept: "application/json", "X-Capivara-Auth-Area": "customer"};
     if (options.body) headers["Content-Type"] = "application/json";
-    const response = await fetch(path, {...options, headers});
-    const data = await response.json();
+    const response = await fetch(path, {...options, headers, credentials: "same-origin", cache: options.cache || "no-store"});
+    if (response.status === 401) {
+      location.replace("/customer-login.html");
+      throw new Error("Sessão encerrada");
+    }
+    const data = await response.json().catch(() => ({}));
     if (!response.ok && response.status !== 409) throw new Error(data.error || data.message || `HTTP ${response.status}`);
     return {status: response.status, data};
   }

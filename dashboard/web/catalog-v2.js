@@ -15,7 +15,7 @@
 
     async function request(path, options = {}) {
         const headers = {
-            Authorization: "Basic " + (sessionStorage.getItem("dsm_auth") || ""),
+            "X-Capivara-Auth-Area":"controller",
             Accept: "application/json"
         };
         if (options.body) headers["Content-Type"] = "application/json";

@@ -16,16 +16,20 @@ from placement_readiness_http import (
 legacy = integration.legacy
 part8 = integration.integration
 _previous_get = legacy.DashboardHandler.do_GET
-_previous_customer_authenticate = part8.integrated_authenticate
+_previous_customer_authenticate = part8.integrated_customer_authenticate
 legacy.STATIC_FILES["/create-server-wizard.js"] = legacy.WEB_DIR / "create-server-wizard.js"
 legacy.STATIC_FILES["/create-server-wizard.css"] = legacy.WEB_DIR / "create-server-wizard.css"
+
+
+def integrated_controller_authenticate(headers):
+    return part8.integrated_controller_authenticate(headers)
 
 
 def integrated_customer_authenticate(headers):
     """Recognize the same cookie session used by protected Customer pages."""
     return authenticate_browser_customer(
         headers,
-        session_authenticator=session_user_from_headers,
+        session_authenticator=lambda headers: session_user_from_headers(headers, area="customer"),
         fallback_authenticator=_previous_customer_authenticate,
     )
 
@@ -33,8 +37,6 @@ def integrated_customer_authenticate(headers):
 # server_part8 resolves this module global at request time.  Updating it here
 # makes injected/protected Customer assets use the established browser session
 # while preserving header-based authentication as a compatibility fallback.
-part8.integrated_authenticate = integrated_customer_authenticate
-legacy.authenticate = integrated_customer_authenticate
 
 
 def integrated_get(self):

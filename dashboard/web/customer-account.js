@@ -1,11 +1,13 @@
 (function () {
   "use strict";
-  const auth = () => sessionStorage.getItem("dsm_auth") || "";
   const $ = id => document.getElementById(id);
   async function request(path) {
-    if (!auth()) { location.href = "/customer-login.html"; throw new Error("Sessão encerrada."); }
-    const response = await fetch(path, {headers: {Authorization: `Basic ${auth()}`, Accept: "application/json"}});
-    if (response.status === 401) { sessionStorage.removeItem("dsm_auth"); sessionStorage.removeItem("dsm_customer_auth"); location.href = "/customer-login.html"; throw new Error("Sessão encerrada."); }
+    const response = await fetch(path, {
+      headers: {Accept: "application/json", "X-Capivara-Auth-Area": "customer"},
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (response.status === 401) { location.replace("/customer-login.html"); throw new Error("Sessão encerrada."); }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
     return data;
@@ -18,6 +20,7 @@
   }
   async function load() {
     try {
+      await request("/api/customer/auth/session");
       const data = await request("/api/customer/profile"); const profile = data.profile || {};
       const details = $("customer-account-details");
       details.replaceChildren(

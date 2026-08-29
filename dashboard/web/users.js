@@ -1,17 +1,17 @@
 (function () {
     "use strict";
     const byId = id => document.getElementById(id);
-    const auth = sessionStorage.getItem("dsm_auth") || "";
+    const controllerHeaders = () => ({ Accept: "application/json", "X-Capivara-Auth-Area": "controller" });
     let users = [];
     let scopes = { controllers: [] };
     let editing = null;
     const SYSTEM_ROLES = new Set(["admin", "controller", "operator"]);
 
     async function request(path, options = {}) {
-        const headers = { Authorization: `Basic ${auth}`, Accept: "application/json" };
+        const headers = { ...controllerHeaders(), ...(options.headers || {}) };
         if (options.body) headers["Content-Type"] = "application/json";
-        const response = await fetch(path, { ...options, headers, credentials: "same-origin" });
-        if (response.status === 401) { sessionStorage.removeItem("dsm_auth"); location.href = "/login.html"; throw new Error("Sessão encerrada"); }
+        const response = await fetch(path, { ...options, headers, credentials: "same-origin", cache: options.cache || "no-store" });
+        if (response.status === 401) { location.href = "/login.html"; throw new Error("Sessão encerrada"); }
         if (response.status === 403) { location.href = "/dashboard-v3.html"; throw new Error("Acesso exclusivo de administradores"); }
         if (response.status === 428) { location.href = "/system-change-password.html"; throw new Error("Troca de senha obrigatória"); }
         const data = await response.json().catch(() => ({}));
@@ -21,17 +21,17 @@
 
     async function logoutSession() {
         try {
-            if (auth) await fetch("/api/auth/logout", { method: "POST", headers: { Authorization: `Basic ${auth}`, Accept: "application/json" }, credentials: "same-origin", cache: "no-store" });
+            await fetch("/api/auth/logout", { method: "POST", headers: controllerHeaders(), credentials: "same-origin", cache: "no-store" });
         } catch (_error) {
         } finally {
-            sessionStorage.clear(); location.replace("/login.html");
+            location.replace("/login.html");
         }
     }
 
     async function loadAdminShell() {
         const host = byId("sidebar-component");
         if (host) {
-            const response = await fetch("/components/sidebar-v3.html");
+            const response = await fetch("/components/sidebar-v3.html", {credentials: "same-origin", cache: "no-store"});
             host.innerHTML = await response.text();
             host.querySelectorAll("nav a").forEach(a => a.classList.toggle("active", a.getAttribute("href") === "users.html"));
             const logout = byId("btn-logout");
@@ -155,7 +155,6 @@
     }
 
     async function init() {
-        if (!auth) { location.href = "/login.html"; return; }
         await loadAdminShell();
         byId("user-role").addEventListener("change", syncScope);
         byId("user-save").addEventListener("click", () => save().catch(error => { byId("users-message").textContent = error.message; }));

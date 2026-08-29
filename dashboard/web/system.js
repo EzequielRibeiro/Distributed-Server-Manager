@@ -1,7 +1,7 @@
 "use strict";
 const $=id=>document.getElementById(id);
-function auth(){const token=sessionStorage.getItem("dsm_auth");if(!token){window.location.replace("/login.html");throw new Error("auth required");}return{Authorization:`Basic ${token}`,Accept:"application/json"};}
-async function get(path){try{const r=await fetch(`/api${path}`,{headers:auth(),cache:"no-store"});if(r.status===401){sessionStorage.clear();window.location.replace("/login.html");return null;}if(!r.ok)return null;return await r.json();}catch(e){console.warn("[Capivara System]",path,e);return null;}}
+const controllerHeaders=()=>({Accept:"application/json","X-Capivara-Auth-Area":"controller"});
+async function get(path){try{const r=await fetch(`/api${path}`,{headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});if(r.status===401){window.location.replace("/login.html");return null;}if(!r.ok)return null;return await r.json();}catch(e){console.warn("[Capivara System]",path,e);return null;}}
 function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
 function time(v){if(!v)return"—";const d=new Date(v);return Number.isNaN(d.getTime())?String(v):d.toLocaleString("pt-BR");}
 function listOf(data,key){return Array.isArray(data)?data:(Array.isArray(data?.[key])?data[key]:[]);}
@@ -11,5 +11,6 @@ function renderTokens(data){const rows=listOf(data,"tokens");$("system-token-tot
 function eventText(e){return e?.message||e?.details||String(e?.type||e?.action||"Evento").replaceAll("_"," ");}
 function renderAudit(data){const rows=listOf(data,"events");$("system-audit-total").textContent=rows.length;$("system-audit-list").innerHTML=rows.slice(0,12).map(e=>`<div class="cap-system-row"><strong>${esc(eventText(e))}</strong><span>${esc(e.category||e.source||e.actor||"Sistema")}</span><small>${esc(time(e.timestamp||e.time||e.created_at))}</small></div>`).join("")||'<div class="cap-empty-state">Nenhum evento recente.</div>';}
 async function refresh(){const [configs,tokens,audit]=await Promise.all([get("/configurations?limit=100"),get("/api-tokens"),get("/timeline?limit=50")]);if(configs)renderConfigs(configs);if(tokens)renderTokens(tokens);if(audit)renderAudit(audit);}
-async function loadSidebar(){const target=$("sidebar-component");const r=await fetch("/components/sidebar-v3.html",{cache:"no-store"});if(r.ok)target.innerHTML=await r.text();const logout=$("btn-logout");if(logout)logout.onclick=()=>{sessionStorage.clear();window.location.replace("/login.html");};}
+async function logout(){try{await fetch("/api/auth/logout",{method:"POST",headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});}finally{window.location.replace("/login.html");}}
+async function loadSidebar(){const target=$("sidebar-component");if(!target)return;const r=await fetch("/components/sidebar-v3.html",{headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});if(r.status===401){window.location.replace("/login.html");return;}if(r.ok)target.innerHTML=await r.text();const button=$("btn-logout");if(button)button.onclick=logout;}
 document.addEventListener("DOMContentLoaded",async()=>{await loadSidebar();const user=await get("/whoami");if(user)renderUser(user);$("system-menu-toggle")?.addEventListener("click",()=>{if(window.innerWidth<=760)document.body.classList.toggle("sidebar-open");else document.body.classList.toggle("cap-sidebar-collapsed");});$("system-refresh")?.addEventListener("click",refresh);await refresh();});
