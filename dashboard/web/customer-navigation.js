@@ -1,6 +1,21 @@
 (function () {
   "use strict";
 
+  const AREA_HEADER = "X-Capivara-Auth-Area";
+  const nativeFetch = window.fetch.bind(window);
+
+  if (!window.__capivaraCustomerFetchBoundary) {
+    window.__capivaraCustomerFetchBoundary = true;
+    window.fetch = function (input, init) {
+      const options = {...(init || {})};
+      const headers = new Headers(options.headers || {});
+      headers.set(AREA_HEADER, "customer");
+      options.headers = headers;
+      if (!options.credentials) options.credentials = "same-origin";
+      return nativeFetch(input, options);
+    };
+  }
+
   const ITEMS = [
     ["/customer.html", "▣", "Meus servidores", "Instâncias contratadas"],
     ["/customer-backups.html", "↺", "Backups", "Backups de todos os servidores"],
@@ -46,10 +61,18 @@
     const logout = sidebar.querySelector("#customer-logout");
     if (logout && !logout.dataset.navigationBound) {
       logout.dataset.navigationBound = "1";
-      logout.addEventListener("click", () => {
-        sessionStorage.removeItem("dsm_auth");
-        sessionStorage.removeItem("dsm_customer_auth");
-        location.href = "/customer-login.html";
+      logout.addEventListener("click", async event => {
+        event.preventDefault();
+        try {
+          await nativeFetch("/api/customer/auth/logout", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {Accept: "application/json", [AREA_HEADER]: "customer"},
+            cache: "no-store",
+          });
+        } finally {
+          location.replace("/customer-login.html");
+        }
       });
     }
   }
