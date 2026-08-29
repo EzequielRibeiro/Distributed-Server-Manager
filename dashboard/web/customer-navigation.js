@@ -41,6 +41,21 @@
     return anchor;
   }
 
+  function installCatalogLinks() {
+    const catalog = document.getElementById("customer-catalog");
+    if (!catalog || catalog.dataset.demoNavigationBound) return;
+    catalog.dataset.demoNavigationBound = "1";
+    catalog.addEventListener("click", event => {
+      const button = event.target.closest(".catalog-game");
+      if (!button || !catalog.contains(button)) return;
+      const game = button.querySelector("strong")?.textContent?.trim();
+      if (!game) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      location.href = `/contract-demo.html?game=${encodeURIComponent(game)}`;
+    }, true);
+  }
+
   function install() {
     const sidebar = document.querySelector(".customer-sidebar");
     if (!sidebar) return;
@@ -59,6 +74,7 @@
       (brand || sidebar.firstChild)?.after(label, area);
     }
     area.replaceChildren(...ITEMS.map(link));
+    installCatalogLinks();
 
     let logout = sidebar.querySelector("#customer-logout");
     if (!logout) {
