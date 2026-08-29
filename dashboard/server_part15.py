@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import server_part14 as integration
 import catalog_profile_presentation_assets
+from catalog_game_builder_http import GAME_BUILDER_VERIFY_PATH, dispatch_catalog_game_builder_verify
 from catalog_game_data_inventory_http import GAME_DATA_INVENTORY_PATH, dispatch_catalog_game_data_inventory_get
 from catalog_resource_profiles_http import (
     RESOURCE_PROFILES_PATH,
@@ -29,6 +30,9 @@ _controller_authenticate = integration.integration._controller_authenticate
 _customer_authenticate = integration.integration._customer_authenticate
 _ROOT = Path(__file__).resolve().parents[1]
 legacy.STATIC_FILES["/game-profile-presentation.js"] = _ROOT / "dashboard" / "web" / "game-profile-presentation.js"
+legacy.STATIC_FILES["/catalog-game-create.html"] = _ROOT / "dashboard" / "web" / "catalog-game-create.html"
+legacy.STATIC_FILES["/catalog-game-create.css"] = _ROOT / "dashboard" / "web" / "catalog-game-create.css"
+legacy.STATIC_FILES["/catalog-game-create.js"] = _ROOT / "dashboard" / "web" / "catalog-game-create.js"
 
 
 def _controller_user(self):
@@ -39,11 +43,7 @@ def _controller_user(self):
 
 
 def _resource_profiles_reader(self):
-    """Authenticate the read-only profile catalog in the explicit browser area.
-
-    Resource profiles are consumed by both the Controller catalog editor and the
-    Customer server/profile selector. Mutating methods remain Controller-only.
-    """
+    """Authenticate the read-only profile catalog in the explicit browser area."""
     area = str(self.headers.get("X-Capivara-Auth-Area") or "").strip().lower()
     if area == "customer":
         user = _customer_authenticate(self.headers)
@@ -89,7 +89,7 @@ def catalog_architecture_get(self):
 
 def catalog_architecture_post(self):
     parsed = urlparse(self.path)
-    if parsed.path != RESOURCE_PROFILES_PATH:
+    if parsed.path not in {RESOURCE_PROFILES_PATH, GAME_BUILDER_VERIFY_PATH}:
         return _previous_post(self)
     user = _controller_user(self)
     if user is None:
@@ -97,7 +97,11 @@ def catalog_architecture_post(self):
     payload = _payload(self)
     if payload is None:
         return
-    status, body = dispatch_catalog_resource_profiles_post(parsed.path, payload, user=user, root=_ROOT)
+    if parsed.path == GAME_BUILDER_VERIFY_PATH:
+        result = dispatch_catalog_game_builder_verify(parsed.path, payload, user=user, root=_ROOT)
+    else:
+        result = dispatch_catalog_resource_profiles_post(parsed.path, payload, user=user, root=_ROOT)
+    status, body = result
     self.send_json(status, body)
 
 
