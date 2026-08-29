@@ -15,6 +15,7 @@ from backup_clone_http import install_backup_clone_http
 from browser_session_http import install_browser_session_http
 from catalog_runtime_policy_http import RUNTIME_POLICY_PATH,dispatch_catalog_runtime_policy_get,dispatch_catalog_runtime_policy_put
 from contract_upgrade_http import install_contract_upgrade_api
+from controller_health_http import install_controller_health_http
 from controller_telemetry import controller_telemetry
 from customer_discord_http import install_customer_discord
 from customer_discord_oauth_http import install_customer_discord_oauth_callback
@@ -106,5 +107,6 @@ install_customer_discord_oauth_callback(legacy)
 install_admin_observability(legacy,_controller_authenticate)
 install_browser_session_http(legacy,browser_login_base.credential_authenticate)
 install_portal_navigation_session_guard(legacy)
+install_controller_health_http(legacy)
 def run():run_dashboard(legacy)
 if __name__=="__main__":run()
