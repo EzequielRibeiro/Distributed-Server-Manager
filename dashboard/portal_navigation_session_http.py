@@ -19,7 +19,7 @@ CONTROLLER_PAGES = {
     "/placement.html", "/agents.html", "/add-agent.html",
     "/add-agent-linux.html", "/add-agent-windows.html", "/agent-details.html",
     "/agent-observability.html", "/servers.html", "/catalog.html",
-    "/game-profiles.html", "/operations.html", "/observability.html",
+    "/catalog-game-create.html", "/game-profiles.html", "/operations.html", "/observability.html",
     "/alerts.html", "/events.html", "/monitoring.html",
     "/controller-logs.html", "/diagnostics.html", "/help.html",
 }
@@ -40,6 +40,7 @@ CONTROLLER_ASSETS = {
     "/agent-observability.css", "/agent-observability.js",
     "/agent-queue-details-state.js", "/servers.css", "/servers.js",
     "/catalog-page.css", "/catalog-installation.css", "/catalog-page.js",
+    "/catalog-game-create.css", "/catalog-game-create.js",
     "/game-profiles.css", "/game-profiles.js", "/game-profile-presentation.js", "/operations.css",
     "/operations.js", "/observability.css", "/observability.js",
     "/help.css", "/help.js",
@@ -51,10 +52,6 @@ CUSTOMER_PAGES = {
     "/customer-integrations.html", "/customer-change-password.html",
 }
 
-# Customer pages also load passive JS/CSS requests without an auth-area header.
-# Resolve those assets explicitly with the Customer cookie, otherwise a browser
-# holding both Controller and Customer sessions reaches the legacy ambiguous
-# authentication path and the shell stays forever in its loading state.
 CUSTOMER_ASSETS = {
     "/customer.css", "/customer.js", "/customer-core.js", "/customer-navigation.js",
     "/customer-profile.js", "/customer-email-change.js", "/customer-placement-selector.js",
