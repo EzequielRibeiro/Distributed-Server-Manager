@@ -18,7 +18,9 @@ class CustomerDeletedBackupsAssetContractTest(unittest.TestCase):
         text = (ROOT / "dashboard" / "server_part10.py").read_text(encoding="utf-8")
         self.assertIn("session_user_from_headers", text)
         self.assertIn("authenticate_browser_customer", text)
-        self.assertIn("part8.integrated_authenticate = integrated_customer_authenticate", text)
+        self.assertIn("_previous_customer_authenticate = part8.integrated_customer_authenticate", text)
+        self.assertIn("return part8.integrated_controller_authenticate(headers)", text)
+        self.assertIn("authenticate_browser_customer(", text)
 
     def test_asset_exists_as_javascript_source(self):
         path = ROOT / "dashboard" / "web" / "customer-deleted-backups.js"

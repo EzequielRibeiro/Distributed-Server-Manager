@@ -3,8 +3,6 @@
 
   const $ = id => document.getElementById(id);
 
-  const auth = () =>
-    sessionStorage.getItem("dsm_auth") || "";
 
   const gameNames = {
     minecraft: "Minecraft",
@@ -25,8 +23,9 @@
 
   async function request(path, options = {}) {
     const headers = {
-      Authorization: `Basic ${auth()}`,
       Accept: "application/json",
+      "X-Capivara-Auth-Area": "customer",
+      ...(options.headers || {}),
     };
 
     if (options.body) {
@@ -37,12 +36,12 @@
       path, {
         ...options,
         headers,
+        credentials: "same-origin",
       }
     );
 
     if (response.status === 401) {
-      sessionStorage.removeItem("dsm_auth");
-      location.href = "/login.html";
+      location.replace("/customer-login.html");
 
       throw new Error(
         "Sessão encerrada."
@@ -1077,14 +1076,6 @@
   // =========================================================
 
   async function load() {
-    if (!auth()) {
-      location.href =
-        "/login.html";
-
-      return;
-    }
-
-
     const [
       user,
       runtimeData,
@@ -1112,18 +1103,8 @@
     );
 
 
-    if (
-      ![
-        "customer",
-        "admin",
-        "controller",
-      ].includes(
-        user.role
-      )
-    ) {
-      location.href =
-        "/index.html";
-
+    if (user.role !== "customer") {
+      location.replace("/customer-login.html");
       return;
     }
 
@@ -1282,13 +1263,24 @@
   if (logout) {
     logout.addEventListener(
       "click",
-      () => {
-        sessionStorage.removeItem(
-          "dsm_auth"
-        );
-
-        location.href =
-          "/login.html";
+      async () => {
+        try {
+          await fetch(
+            "/api/customer/auth/logout",
+            {
+              method: "POST",
+              headers: {
+                Accept: "application/json",
+              },
+              credentials: "same-origin",
+              cache: "no-store",
+            }
+          );
+        } finally {
+          
+          
+          location.replace("/customer-login.html");
+        }
       }
     );
   }

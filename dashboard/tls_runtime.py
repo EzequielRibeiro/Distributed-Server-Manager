@@ -74,10 +74,35 @@ def install_transport_security_headers(legacy, *, scheme: str) -> None:
         return previous_send_header(self, keyword, value)
 
     def end_headers(self):
+        # Security headers belong to the final HTTP transport boundary rather
+        # than authentication, static-file delivery, or individual routes.
+        previous_send_header(
+            self,
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "connect-src 'self'; "
+            "img-src 'self' data:; "
+            "font-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'",
+        )
+        previous_send_header(self, "X-Content-Type-Options", "nosniff")
+        previous_send_header(self, "X-Frame-Options", "DENY")
         previous_send_header(self, "Referrer-Policy", "no-referrer")
-        previous_send_header(self, "Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        previous_send_header(
+            self,
+            "Permissions-Policy",
+            "camera=(), microphone=(), geolocation=()",
+        )
         if scheme == "https":
-            previous_send_header(self, "Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+            previous_send_header(
+                self,
+                "Strict-Transport-Security",
+                "max-age=31536000; includeSubDomains",
+            )
         return previous_end_headers(self)
 
     handler.send_header = send_header
