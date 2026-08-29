@@ -153,21 +153,18 @@ function renderAgentLogs(agent, result = null) {
 }
 
 function authHeader() {
-    const token = sessionStorage.getItem("dsm_auth");
-    if (!token) {
-        window.location.replace("/login.html");
-        throw new Error("authentication required");
-    }
-    return {Authorization: `Basic ${token}`, Accept: "application/json"};
+    
+    
+    return {"X-Capivara-Auth-Area":"controller", Accept: "application/json"};
 }
 
 async function request(endpoint, options = {}) {
     const headers = {...authHeader(), ...(options.headers || {})};
     if (options.body) headers["Content-Type"] = "application/json";
 
-    const response = await fetch(`${API}${endpoint}`, {...options, headers});
+    const response = await fetch(`${API}${endpoint}`, {...options, headers, credentials:"same-origin", cache:options.cache||"no-store"});
     if (response.status === 401) {
-        sessionStorage.clear();
+        
         window.location.replace("/login.html");
         return null;
     }
@@ -190,14 +187,14 @@ function errorMessage(message = "") {
 async function loadSidebar() {
     const target = byId("sidebar-component");
     if (!target) return;
-    const response = await fetch("/components/sidebar.html");
+    const response = await fetch("/components/sidebar.html", {credentials:"same-origin", cache:"no-store"});
     if (response.ok) target.innerHTML = await response.text();
 
     const logout = byId("btn-logout");
     if (logout) {
-        logout.addEventListener("click", () => {
-            sessionStorage.clear();
-            window.location.replace("/login.html");
+        logout.addEventListener("click", async () => {
+            try { await fetch("/api/auth/logout", {method:"POST", headers:authHeader(), credentials:"same-origin", cache:"no-store"}); }
+            finally { window.location.replace("/login.html"); }
         });
     }
 }
