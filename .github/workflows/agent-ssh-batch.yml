@@ -1,0 +1,61 @@
+name: Agent SSH Batch
+
+on:
+  push:
+    paths:
+      - 'database/agent_batch_targets.py'
+      - 'database/agent_connection_test_cli.py'
+      - 'database/agent_deploy_cli.py'
+      - 'dashboard/agent_connection_api.py'
+      - 'dashboard/agent_installation_api.py'
+      - 'dashboard/agent_installation_batch_api.py'
+      - 'dashboard/agent_installation_http.py'
+      - 'dashboard/server_part12.py'
+      - 'dashboard/web/add-agent-linux.html'
+      - 'dashboard/web/add-agent-windows.html'
+      - 'dashboard/web/agent-installation-wizard.js'
+      - 'docs/agents/remote-deployment/ssh-batch.md'
+      - 'tests/agent_ssh_batch_test.py'
+      - '.github/workflows/agent-ssh-batch.yml'
+  pull_request:
+    paths:
+      - 'database/agent_batch_targets.py'
+      - 'database/agent_connection_test_cli.py'
+      - 'database/agent_deploy_cli.py'
+      - 'dashboard/agent_connection_api.py'
+      - 'dashboard/agent_installation_api.py'
+      - 'dashboard/agent_installation_batch_api.py'
+      - 'dashboard/agent_installation_http.py'
+      - 'dashboard/server_part12.py'
+      - 'dashboard/web/add-agent-linux.html'
+      - 'dashboard/web/add-agent-windows.html'
+      - 'dashboard/web/agent-installation-wizard.js'
+      - 'docs/agents/remote-deployment/ssh-batch.md'
+      - 'tests/agent_ssh_batch_test.py'
+      - '.github/workflows/agent-ssh-batch.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile changed Python modules
+        run: |
+          python -m py_compile \
+            database/agent_batch_targets.py \
+            database/agent_connection_test_cli.py \
+            database/agent_deploy_cli.py \
+            dashboard/agent_connection_api.py \
+            dashboard/agent_installation_api.py \
+            dashboard/agent_installation_batch_api.py \
+            dashboard/agent_installation_http.py \
+            dashboard/server_part12.py
+      - name: Run SSH batch contract tests
+        run: python tests/agent_ssh_batch_test.py
