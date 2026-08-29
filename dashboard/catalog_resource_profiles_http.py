@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+from html import escape
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
@@ -11,6 +13,116 @@ from urllib.parse import parse_qs
 RESOURCE_PROFILES_PATH = "/api/catalog/resource-profiles"
 _GAME_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _PROFILE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_THEME_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_ALLOWED_TAGS = {"section", "div", "article", "header", "footer", "h1", "h2", "h3", "h4", "p", "span", "strong", "em", "small", "ul", "ol", "li", "dl", "dt", "dd", "img", "br"}
+_VOID_TAGS = {"img", "br"}
+_ALLOWED_ATTRS = {"class", "title", "alt", "src"}
+_TOKEN = re.compile(r"\{\{(?:profile\.(?:name|description|cpu_cores|memory_gb|storage_gb)|game\.name|asset:[a-zA-Z0-9._-]{1,64})\}\}")
+
+
+class _SafeFragmentParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.stack: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag not in _ALLOWED_TAGS:
+            return
+        clean: list[str] = []
+        for name, value in attrs:
+            name = name.lower()
+            value = str(value or "")
+            if name not in _ALLOWED_ATTRS or name.startswith("on"):
+                continue
+            if name == "src":
+                # Images are referenced through the managed asset placeholder only.
+                if not re.fullmatch(r"\{\{asset:[a-zA-Z0-9._-]{1,64}\}\}", value):
+                    continue
+            clean.append(f'{name}="{escape(value, quote=True)}"')
+        suffix = (" " + " ".join(clean)) if clean else ""
+        self.parts.append(f"<{tag}{suffix}>")
+        if tag not in _VOID_TAGS:
+            self.stack.append(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in _VOID_TAGS or tag not in _ALLOWED_TAGS:
+            return
+        if tag in self.stack:
+            while self.stack:
+                current = self.stack.pop()
+                self.parts.append(f"</{current}>")
+                if current == tag:
+                    break
+
+    def handle_data(self, data: str) -> None:
+        # Preserve only the supported template tokens; escape everything else.
+        cursor = 0
+        for match in _TOKEN.finditer(data):
+            self.parts.append(escape(data[cursor:match.start()]))
+            self.parts.append(match.group(0))
+            cursor = match.end()
+        self.parts.append(escape(data[cursor:]))
+
+    def result(self) -> str:
+        while self.stack:
+            self.parts.append(f"</{self.stack.pop()}>")
+        return "".join(self.parts)
+
+
+def _sanitize_html_fragment(value: Any) -> str:
+    source = str(value or "").strip()
+    if not source:
+        return ""
+    if len(source) > 20000:
+        raise ValueError("profile presentation HTML is too large")
+    parser = _SafeFragmentParser()
+    parser.feed(source)
+    parser.close()
+    return parser.result()
+
+
+def _sanitize_css(value: Any) -> str:
+    css = str(value or "").strip()
+    if not css:
+        return ""
+    if len(css) > 20000:
+        raise ValueError("profile presentation CSS is too large")
+    lowered = css.lower()
+    forbidden = ("@import", "javascript:", "expression(", "behavior:", "-moz-binding", "url(data:text/html")
+    if any(token in lowered for token in forbidden):
+        raise ValueError("profile presentation CSS contains unsafe content")
+    # Keep presentation inside its sandbox card and prevent network-loaded CSS assets.
+    css = re.sub(r"url\s*\((?!\s*['\"]?\{\{asset:)[^)]+\)", "none", css, flags=re.I)
+    return css
+
+
+def _normalize_presentation(item: Any) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    theme_id = str(item.get("theme_id") or "").strip().lower()
+    if theme_id and not _THEME_ID.fullmatch(theme_id):
+        raise ValueError("presentation theme ID must be valid")
+    html = _sanitize_html_fragment(item.get("html"))
+    css = _sanitize_css(item.get("css"))
+    assets = item.get("assets") if isinstance(item.get("assets"), list) else []
+    normalized_assets = []
+    for asset in assets[:20]:
+        if not isinstance(asset, dict):
+            continue
+        name = str(asset.get("name") or "").strip()
+        path = str(asset.get("path") or "").strip()
+        if not re.fullmatch(r"[a-zA-Z0-9._-]{1,64}", name):
+            continue
+        # Managed assets may only use the dedicated application path.
+        if not re.fullmatch(r"/profile-assets/[a-zA-Z0-9._/-]{1,180}", path):
+            continue
+        normalized_assets.append({"name": name, "path": path})
+    if not (theme_id or html or css or normalized_assets):
+        return None
+    return {"theme_id": theme_id or None, "html": html, "css": css, "assets": normalized_assets}
 
 
 def _normalize_profile(item: Any) -> dict[str, Any]:
@@ -32,7 +144,7 @@ def _normalize_profile(item: Any) -> dict[str, Any]:
         raise ValueError("resource profile values must be numeric") from exc
     if memory_mb < 256 or storage_mb < 1024 or cpu_cores <= 0 or swap_mb < 0 or pids_limit < 1:
         raise ValueError("resource profile values are outside the allowed range")
-    return {
+    result = {
         "id": identifier,
         "name": name,
         "description": str(item.get("description") or "").strip(),
@@ -42,6 +154,10 @@ def _normalize_profile(item: Any) -> dict[str, Any]:
         "swap_mb": swap_mb,
         "pids_limit": pids_limit,
     }
+    presentation = _normalize_presentation(item.get("presentation"))
+    if presentation:
+        result["presentation"] = presentation
+    return result
 
 
 def _comparable_profiles(profiles: Any) -> list[dict[str, Any]] | None:
