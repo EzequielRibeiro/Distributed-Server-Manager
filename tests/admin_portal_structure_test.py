@@ -53,6 +53,18 @@ class AdminPortalStructureTest(unittest.TestCase):
         self.assertIn('window.setInterval(load,30000)', source)
         self.assertIn('X-Capivara-Auth-Area', source)
 
+    def test_operations_menu_only_exposes_implemented_destinations(self):
+        sidebar = self.source(WEB / "components" / "sidebar-v3.html")
+        operations = self.source(WEB / "operations.html")
+        script = self.source(WEB / "operations.js")
+        self.assertIn('href="operations.html"><span class="cap-nav-icon">◉</span><span>Backups</span>', sidebar)
+        self.assertIn('href="agents.html#agent-update-panel"', sidebar)
+        self.assertNotIn('operations.html#scheduler', sidebar)
+        self.assertNotIn('operations.html#updates', sidebar)
+        self.assertNotIn('id="scheduler"', operations)
+        self.assertNotIn('/api/scheduler', script)
+        self.assertIn('/components/sidebar-v3.html', script)
+
     def test_catalog_and_profiles_keep_full_admin_layout_styles(self):
         catalog = self.source(WEB / "catalog.html")
         profiles = self.source(WEB / "game-profiles.html")
