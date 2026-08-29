@@ -141,6 +141,16 @@ def _annotate_pairing(backend, *, token_id, platform, region_id, datacenter_id):
             s.close()
 
 
+def _json_timestamp(value):
+    """Return a stable JSON-native representation for database timestamps."""
+    if value is None:
+        return None
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        return isoformat()
+    return str(value)
+
+
 def _status_reader(backend, token_id):
     d = dialect_for_backend(backend)
     ph = d.placeholder
@@ -161,7 +171,7 @@ def _status_reader(backend, token_id):
                 if agent is not None:
                     payload.update(agent_status=str(agent["status"]), node_id=str(agent["node_id"]), name=str(agent["name"]))
                 if runtime is not None:
-                    payload.update(health_status=str(runtime["health_status"] or ""), last_seen=runtime["last_seen"], hostname=runtime["hostname"], address=runtime["address"])
+                    payload.update(health_status=str(runtime["health_status"] or ""), last_seen=_json_timestamp(runtime["last_seen"]), hostname=runtime["hostname"], address=runtime["address"])
                 return payload
             finally:
                 s.close()
@@ -229,7 +239,7 @@ def deploy(args):
             "node_id": online.get("node_id"),
             "agent_status": online.get("agent_status"),
             "health_status": online.get("health_status"),
-            "last_seen": online.get("last_seen"),
+            "last_seen": _json_timestamp(online.get("last_seen")),
         }
     finally:
         backend.close()
