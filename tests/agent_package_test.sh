@@ -19,7 +19,7 @@ cmp -s "${TMP}/one/${ARCHIVE}" "${TMP}/two/${ARCHIVE}" || fail "Agent package is
 (cd "${TMP}/one" && sha256sum -c "${ARCHIVE}.sha256" >/dev/null)
 mkdir "${TMP}/extract"; tar -xzf "${TMP}/one/${ARCHIVE}" -C "${TMP}/extract"; PACKAGE="${TMP}/extract/capivara-agent-linux-${VERSION}"
 for path in install-agent.sh manifest.json VERSION agent/common/identity.py agent/privileged/materialize_instance.py agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path services/capivara-agent-materialize@.service config/README.md; do [[ -f "${PACKAGE}/${path}" ]] || fail "missing Agent package file: ${path}"; done
-for file in agent.py capabilities.py network_inventory.py update_client.py update_state.py local_cli.py cap_dispatch.py game_data_client.py game_data_executor.py game_data_state.py instance_runtime.py runtime_spec.py runtime_events.py runtime_materialization.py runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py observability_client.py configuration_client.py content_client.py backup_client.py broadcast_client.py game_runtime.py provisioning_contract.py provisioning_state.py provisioning_client.py provisioning_executor.py privileged_materialization.py storage_migration_client.py; do [[ -f "${PACKAGE}/agent/runtime/${file}" ]] || fail "missing Agent package runtime file: ${file}"; grep -Fq "${file}" "${PACKAGE}/install-agent.sh" || fail "installer does not install runtime file: ${file}"; done
+for file in agent.py capabilities.py network_inventory.py update_client.py update_state.py local_cli.py cap_dispatch.py game_data_client.py game_data_executor.py game_data_state.py instance_runtime.py runtime_spec.py runtime_events.py runtime_materialization.py runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py observability_client.py configuration_client.py content_client.py backup_client.py broadcast_client.py game_runtime.py provisioning_contract.py provisioning_state.py provisioning_client.py provisioning_executor.py privileged_materialization.py storage_migration_client.py; do [[ -f "${PACKAGE}/agent/runtime/${file}" ]] || fail "missing Agent package runtime file: ${file}"; done
 
 python3 - "${PACKAGE}" "${ROOT}" <<'PY'
 import hashlib,json,pathlib,sys
@@ -38,13 +38,16 @@ grep -Fq -- '--instance-storage-root' "${INSTALLER}" || fail "local installer la
 grep -Fq 'CAPIVARA_INSTANCE_STORAGE_ROOT' "${INSTALLER}" || fail "installer lacks instance storage root environment override"
 grep -Fq "'instance_storage_root'" "${INSTALLER}" || fail "installer does not persist instance_storage_root"
 grep -Fq 'install -d -m 0711 -o root -g root "${INSTANCE_STORAGE_ROOT}"' "${INSTALLER}" || fail "installer does not prepare instance storage root"
-grep -Fq 'storage_migration_client.py' "${INSTALLER}" || fail "installer does not package storage migration client"
+grep -Fq 'mapfile -t RUNTIME_FILES' "${INSTALLER}" || fail "installer does not discover runtime modules dynamically"
+grep -Fq 'find "${PACKAGE_DIR}/agent/runtime"' "${INSTALLER}" || fail "installer does not discover packaged runtime modules"
+grep -Fq -- "-name '*.py'" "${INSTALLER}" || fail "installer runtime discovery does not select Python modules"
+grep -Fq 'for file in "${RUNTIME_FILES[@]}"' "${INSTALLER}" || fail "installer does not iterate discovered runtime modules"
+grep -Fq 'install -m "$mode" "${PACKAGE_DIR}/agent/runtime/${file}" "${INSTALL_ROOT}/runtime/${file}"' "${INSTALLER}" || fail "installer does not install discovered runtime modules"
 ! grep -Fq 'api.github.com' "${INSTALLER}" || fail "local installer depends on GitHub"
 ! grep -Fq 'git clone' "${INSTALLER}" || fail "local installer clones source"
 grep -Fq 'capivara-agent-linux-' "${BOOTSTRAP}" || fail "release bootstrap does not select Agent package"
 grep -Fq 'sha256sum' "${BOOTSTRAP}" || fail "release bootstrap does not validate checksum"
 ! grep -Fq '/main/' "${BOOTSTRAP}" || fail "release bootstrap follows mutable main"
-for file in runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py storage_migration_client.py; do grep -Fq "$file" "${INSTALLER}" || fail "installer does not install ${file}"; done
 grep -Fq 'rglob("*.py")' "${ROOT}/agents/linux/updater/updater.py" || fail "updater does not dynamically manage runtime Python modules"
 grep -Fq 'instance-locks' "${INSTALLER}" || fail "installer does not create instance lock state"
 grep -Fq 'instance-operations' "${INSTALLER}" || fail "installer does not create operation journal state"
