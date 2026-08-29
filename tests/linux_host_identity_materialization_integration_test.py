@@ -2,47 +2,47 @@
 """Behavioral tests for canonical Linux host identity selection."""
 from __future__ import annotations
 
+import ast
 import hashlib
-import importlib.util
-import os
-import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNTIME_DIR = ROOT / "agents/linux/runtime"
-AGENT_PATH = RUNTIME_DIR / "agent.py"
+AGENT_PATH = ROOT / "agents/linux/runtime/agent.py"
 
 
-def load_agent(host_identity_path: Path):
-    previous_identity = os.environ.get("CAPIVARA_AGENT_HOST_IDENTITY")
-    runtime_path = str(RUNTIME_DIR)
-    inserted_runtime_path = runtime_path not in sys.path
+def load_identity_runtime(host_identity_path: Path):
+    """Load only the identity functions from agent.py, avoiding unrelated clients."""
+    source = AGENT_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(AGENT_PATH))
+    selected = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name in {"_read_text", "_host_identity"}
+    ]
+    if {node.name for node in selected} != {"_read_text", "_host_identity"}:
+        raise AssertionError("identity functions not found in agent.py")
 
-    os.environ["CAPIVARA_AGENT_HOST_IDENTITY"] = str(host_identity_path)
-    if inserted_runtime_path:
-        sys.path.insert(0, runtime_path)
-
-    try:
-        spec = importlib.util.spec_from_file_location("capivara_agent_runtime_test", AGENT_PATH)
-        module = importlib.util.module_from_spec(spec)
-        assert spec.loader is not None
-        spec.loader.exec_module(module)
-        return module
-    finally:
-        if inserted_runtime_path:
-            try:
-                sys.path.remove(runtime_path)
-            except ValueError:
-                pass
-
-        if previous_identity is None:
-            os.environ.pop("CAPIVARA_AGENT_HOST_IDENTITY", None)
-        else:
-            os.environ["CAPIVARA_AGENT_HOST_IDENTITY"] = previous_identity
+    module = types.ModuleType("capivara_agent_identity_test")
+    module.__dict__.update(
+        {
+            "Path": Path,
+            "hashlib": hashlib,
+            "HOST_IDENTITY_PATH": host_identity_path,
+        }
+    )
+    code = compile(
+        ast.Module(body=selected, type_ignores=[]),
+        filename=str(AGENT_PATH),
+        mode="exec",
+    )
+    exec(code, module.__dict__)
+    return module
 
 
 class LinuxHostIdentityMaterializationIntegrationTest(unittest.TestCase):
@@ -50,7 +50,7 @@ class LinuxHostIdentityMaterializationIntegrationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             identity_path = Path(tmp) / "host-identity"
             identity_path.write_text("sha256:canonical\n", encoding="utf-8")
-            module = load_agent(identity_path)
+            module = load_identity_runtime(identity_path)
             with mock.patch.object(module, "_read_text", wraps=module._read_text) as reader:
                 self.assertEqual(module._host_identity(), "sha256:canonical")
                 reader.assert_called_once_with(identity_path)
@@ -58,7 +58,7 @@ class LinuxHostIdentityMaterializationIntegrationTest(unittest.TestCase):
     def test_fallback_is_deterministic_for_same_visible_inputs(self):
         with tempfile.TemporaryDirectory() as tmp:
             identity_path = Path(tmp) / "missing-host-identity"
-            module = load_agent(identity_path)
+            module = load_identity_runtime(identity_path)
 
             values = {
                 str(identity_path): "",
