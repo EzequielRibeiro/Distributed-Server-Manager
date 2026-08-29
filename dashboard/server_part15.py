@@ -24,12 +24,27 @@ _previous_patch = getattr(legacy.DashboardHandler, "do_PATCH", None)
 _previous_delete = getattr(legacy.DashboardHandler, "do_DELETE", None)
 _controller_authenticate = integration.integration._controller_authenticate
 _customer_authenticate = integration.integration._customer_authenticate
-_authenticate = _controller_authenticate
 _ROOT = Path(__file__).resolve().parents[1]
 
 
-def _user(self):
-    user = _authenticate(self.headers)
+def _controller_user(self):
+    user = _controller_authenticate(self.headers)
+    if user is None:
+        self.unauthorized()
+    return user
+
+
+def _resource_profiles_reader(self):
+    """Authenticate the read-only profile catalog in the explicit browser area.
+
+    Resource profiles are consumed by both the Controller catalog editor and the
+    Customer server/profile selector. Mutating methods remain Controller-only.
+    """
+    area = str(self.headers.get("X-Capivara-Auth-Area") or "").strip().lower()
+    if area == "customer":
+        user = _customer_authenticate(self.headers)
+    else:
+        user = _controller_authenticate(self.headers)
     if user is None:
         self.unauthorized()
     return user
@@ -47,12 +62,15 @@ def catalog_architecture_get(self):
     parsed = urlparse(self.path)
     if parsed.path not in {RESOURCE_PROFILES_PATH, GAME_DATA_INVENTORY_PATH}:
         return _previous_get(self)
-    user = _user(self)
-    if user is None:
-        return
     if parsed.path == RESOURCE_PROFILES_PATH:
+        user = _resource_profiles_reader(self)
+        if user is None:
+            return
         result = dispatch_catalog_resource_profiles_get(parsed.path, parsed.query, user=user, root=_ROOT)
     else:
+        user = _controller_user(self)
+        if user is None:
+            return
         result = dispatch_catalog_game_data_inventory_get(
             parsed.path,
             parsed.query,
@@ -69,7 +87,7 @@ def catalog_architecture_post(self):
     parsed = urlparse(self.path)
     if parsed.path != RESOURCE_PROFILES_PATH:
         return _previous_post(self)
-    user = _user(self)
+    user = _controller_user(self)
     if user is None:
         return
     payload = _payload(self)
@@ -86,7 +104,7 @@ def catalog_architecture_put(self):
             return _previous_put(self)
         self.send_json(404, {"error": "not_found"})
         return
-    user = _user(self)
+    user = _controller_user(self)
     if user is None:
         return
     payload = _payload(self)
@@ -103,7 +121,7 @@ def catalog_architecture_patch(self):
             return _previous_patch(self)
         self.send_json(404, {"error": "not_found"})
         return
-    user = _user(self)
+    user = _controller_user(self)
     if user is None:
         return
     payload = _payload(self)
@@ -120,7 +138,7 @@ def catalog_architecture_delete(self):
             return _previous_delete(self)
         self.send_json(404, {"error": "not_found"})
         return
-    user = _user(self)
+    user = _controller_user(self)
     if user is None:
         return
     status, body = dispatch_catalog_resource_profiles_delete(parsed.path, parsed.query, user=user, root=_ROOT)
