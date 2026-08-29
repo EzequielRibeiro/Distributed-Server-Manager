@@ -54,6 +54,21 @@ def _targets(args):
     return [target_from_values(host=args.host, **defaults)], False
 
 
+def _failure(target, exc):
+    return {
+        "ok": False,
+        "host": target.host,
+        "name": target.name,
+        "ssh_user": target.ssh_user,
+        "ssh_port": target.ssh_port,
+        "platform": target.platform,
+        "transport": "openssh",
+        "authentication": "password-file" if target.password_file else ("identity-file" if target.identity_file else "ssh-agent/default-key"),
+        "status": "failed",
+        "error": str(exc),
+    }
+
+
 def _test(target, connect_timeout):
     options = SSHDeployOptions(
         host=target.host,
@@ -78,19 +93,10 @@ def _test(target, connect_timeout):
             "privilege": result.get("privilege"),
             "status": "reachable",
         }
-    except AgentDeployError as exc:
-        return {
-            "ok": False,
-            "host": target.host,
-            "name": target.name,
-            "ssh_user": target.ssh_user,
-            "ssh_port": target.ssh_port,
-            "platform": target.platform,
-            "transport": "openssh",
-            "authentication": "password-file" if target.password_file else ("identity-file" if target.identity_file else "ssh-agent/default-key"),
-            "status": "failed",
-            "error": str(exc),
-        }
+    except (AgentDeployError, ValueError, OSError) as exc:
+        return _failure(target, exc)
+    except Exception:
+        return _failure(target, "unexpected SSH preflight failure")
 
 
 def _run_batch(targets, *, connect_timeout, concurrency):
