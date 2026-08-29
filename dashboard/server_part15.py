@@ -25,6 +25,7 @@ _previous_delete = getattr(legacy.DashboardHandler, "do_DELETE", None)
 _controller_authenticate = integration.integration._controller_authenticate
 _customer_authenticate = integration.integration._customer_authenticate
 _ROOT = Path(__file__).resolve().parents[1]
+legacy.STATIC_FILES["/game-profile-presentation.js"] = _ROOT / "dashboard" / "web" / "game-profile-presentation.js"
 
 
 def _controller_user(self):
