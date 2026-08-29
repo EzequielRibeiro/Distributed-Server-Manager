@@ -112,6 +112,45 @@
         host.querySelectorAll("a").forEach(link => link.addEventListener("click", () => setMobileMenu(false)));
         host.querySelector(".cap-sidebar-close")?.addEventListener("click", () => setMobileMenu(false));
 
+        const toggle = el("agent-detail-menu-toggle");
+
+        document.addEventListener("pointerdown", event => {
+            if (innerWidth > 760 || !document.body.classList.contains("sidebar-open")) return;
+            if (host.contains(event.target) || toggle?.contains(event.target)) return;
+            setMobileMenu(false);
+        });
+
+        document.addEventListener("keydown", event => {
+            if (event.key === "Escape") setMobileMenu(false);
+        });
+
+        let touchStartX = null;
+        let touchStartY = null;
+
+        host.addEventListener("touchstart", event => {
+            const touch = event.changedTouches?.[0];
+            if (!touch) return;
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+        }, {passive: true});
+
+        host.addEventListener("touchend", event => {
+            if (touchStartX === null || touchStartY === null) return;
+            const touch = event.changedTouches?.[0];
+            if (!touch) return;
+            const dx = touch.clientX - touchStartX;
+            const dy = touch.clientY - touchStartY;
+            touchStartX = null;
+            touchStartY = null;
+            if(innerWidth<=760&&dx<-60&&Math.abs(dx)>Math.abs(dy)*1.2) {
+                setMobileMenu(false);
+            }
+        }, {passive: true});
+
+        window.addEventListener("resize", () => {
+            if (innerWidth > 760) setMobileMenu(false);
+        });
+
         el("btn-logout")?.addEventListener("click", async event => {
             event.preventDefault();
             try {
@@ -301,7 +340,7 @@
     }
 
     async function load() {
-        if (!agentId) throw new Error("Agent não informado na URL.");
+        if(!agentId) throw new Error("Agent não informado na URL.");
         const [result] = await Promise.all([
             request(`/api/agent/ports?agent_id=${encodeURIComponent(agentId)}`),
             loadAdmin()
@@ -465,7 +504,7 @@
     }
 
     async function init() {
-        if (!agentId) {
+        if(!agentId) {
             location.replace("agents.html?missing_agent=1");
             return;
         }
