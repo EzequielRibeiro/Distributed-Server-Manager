@@ -11,8 +11,9 @@ on:
       - "dashboard/web/**"
       - "tests/browser_session_security_test.py"
       - "tests/browser_auth_legacy_dependency_test.py"
+      - "tests/browser_dual_session_isolation_test.py"
+      - "tests/auth_domain_composition_test.py"
       - "tests/portal_navigation_session_test.py"
-      - "tests/admin_portal_structure_test.py"
       - ".github/workflows/browser-session.yml"
   push:
     branches: [main]
@@ -25,8 +26,9 @@ on:
       - "dashboard/web/**"
       - "tests/browser_session_security_test.py"
       - "tests/browser_auth_legacy_dependency_test.py"
+      - "tests/browser_dual_session_isolation_test.py"
+      - "tests/auth_domain_composition_test.py"
       - "tests/portal_navigation_session_test.py"
-      - "tests/admin_portal_structure_test.py"
       - ".github/workflows/browser-session.yml"
 
 jobs:
@@ -44,17 +46,19 @@ jobs:
             dashboard/server_part17.py \
             tests/browser_session_security_test.py \
             tests/browser_auth_legacy_dependency_test.py \
-            tests/portal_navigation_session_test.py \
-            tests/admin_portal_structure_test.py
+            tests/browser_dual_session_isolation_test.py \
+            tests/auth_domain_composition_test.py \
+            tests/portal_navigation_session_test.py
       - name: Validate authenticated JavaScript
         run: |
           set -e
           for file in dashboard/web/*.js; do
             node --check "$file"
           done
-      - name: Test browser session security and portal structure
+      - name: Test browser session security and domain isolation
         run: |
           python3 -m unittest tests/browser_session_security_test.py
           python3 -m unittest tests/browser_auth_legacy_dependency_test.py
+          python3 -m unittest tests/browser_dual_session_isolation_test.py
+          python3 -m unittest tests/auth_domain_composition_test.py
           python3 -m unittest tests/portal_navigation_session_test.py
-          python3 -m unittest tests/admin_portal_structure_test.py
