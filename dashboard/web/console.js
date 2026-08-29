@@ -5,16 +5,10 @@
 ==================================================
 */
 
-function getAuth() {
-    return sessionStorage.getItem("dsm_auth");
-}
-
 async function executeCommand() {
     const command = document.getElementById("console-command").value;
 
-    if (!command) {
-        return;
-    }
+    if (!command) return;
 
     const output = document.getElementById("console-output");
     output.value += "\n\n$ " + command;
@@ -22,22 +16,25 @@ async function executeCommand() {
     const response = await fetch("/api/console", {
         method: "POST",
         headers: {
-            "Authorization": "Basic " + getAuth(),
+            "X-Capivara-Auth-Area": "controller",
+            "Accept": "application/json",
             "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-            command: command
-        })
+        credentials: "same-origin",
+        cache: "no-store",
+        body: JSON.stringify({command})
     });
 
-    const data = await response.json();
-
-    if (data.output) {
-        output.value += "\n" + data.output;
+    if (response.status === 401) {
+        location.replace("/login.html");
+        return;
     }
 
-    if (data.error) {
-        output.value += "\nERRO | ERROR: " + data.error;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        output.value += "\nERRO | ERROR: " + (data.error || data.message || `HTTP ${response.status}`);
+    } else if (data.output) {
+        output.value += "\n" + data.output;
     }
 
     output.scrollTop = output.scrollHeight;
@@ -45,7 +42,5 @@ async function executeCommand() {
 
 document.addEventListener("DOMContentLoaded", () => {
     const btn = document.getElementById("btn-console-execute");
-    if (btn) {
-        btn.addEventListener("click", executeCommand);
-    }
+    if (btn) btn.addEventListener("click", executeCommand);
 });
