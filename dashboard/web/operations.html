@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Operações | Capivara DSM</title>
+  <title>Backups | Capivara DSM</title>
   <link rel="stylesheet" href="/dashboard-home-v3.css">
   <link rel="stylesheet" href="/operations.css">
 </head>
@@ -13,7 +13,7 @@
   <header class="cap-home-topbar cap-operations-topbar">
     <div class="cap-home-title">
       <button id="operations-menu-toggle" type="button" aria-label="Recolher menu">☰</button>
-      <div><h1>Operações</h1><p>Backups, agendamentos e manutenção operacional do Control Plane.</p></div>
+      <div><h1>Backups</h1><p>Visão administrativa dos backups registrados pelo Controller.</p></div>
     </div>
     <div class="cap-top-status">
       <div class="cap-controller-state"><i></i><span>Controller Online</span></div>
@@ -22,11 +22,11 @@
   </header>
 
   <div class="cap-home-content cap-operations-content">
-    <section class="cap-operations-summary" aria-label="Resumo operacional">
+    <section class="cap-operations-summary" aria-label="Resumo de backups">
       <article><span>Backups</span><strong id="operations-backup-total">0</strong><small>registrados</small></article>
       <article><span>Último backup</span><strong id="operations-backup-last">—</strong><small>registro mais recente</small></article>
-      <article><span>Agendamentos</span><strong id="operations-scheduler-total">0</strong><small>jobs configurados</small></article>
-      <article><span>Atualizações</span><strong>Agents</strong><small><a href="/agents.html#agent-update-panel">Abrir manutenção</a></small></article>
+      <article><span>Escopo</span><strong>Instâncias</strong><small>operações vinculadas ao servidor</small></article>
+      <article><span>Atualizações de Agents</span><strong>Separadas</strong><small><a href="/agents.html#agent-update-panel">Abrir atualizações</a></small></article>
     </section>
 
     <section id="backups" class="cap-operations-card">
@@ -35,21 +35,12 @@
         <div><span>Total de backups</span><strong id="backup-total">0</strong></div>
         <div><span>Último backup</span><strong id="backup-last">—</strong></div>
       </div>
-      <p class="cap-operations-note">As ações específicas de criação, restauração e exclusão continuam vinculadas à instância correspondente.</p>
-    </section>
-
-    <section id="scheduler" class="cap-operations-card">
-      <div class="cap-section-heading"><div><h2>Scheduler Jobs</h2><p>Jobs operacionais publicados pelo serviço Scheduler.</p></div></div>
-      <div id="scheduler-list" class="cap-jobs-list" aria-live="polite"><div class="cap-empty-state">Carregando agendamentos...</div></div>
-    </section>
-
-    <section id="updates" class="cap-operations-card">
-      <div class="cap-section-heading"><div><h2>Atualizações de Agents</h2><p>Rollout, canal e versão dos Agents são administrados na área de Infraestrutura.</p></div><a class="cap-operations-link" href="/agents.html#agent-update-panel">Gerenciar atualizações</a></div>
-      <div class="cap-update-guide"><span>Fluxo recomendado</span><strong>Validar versão → selecionar canal → rollout em lotes → acompanhar status</strong></div>
+      <p id="backup-state" class="cap-operations-note">As ações específicas de criação, restauração e exclusão permanecem vinculadas à instância correspondente.</p>
+      <div class="cap-section-heading"><div><h2>Gerenciamento por instância</h2><p>Selecione a instância para acessar as operações disponíveis para aquele servidor.</p></div><a class="cap-operations-link" href="/servers.html">Abrir instâncias</a></div>
     </section>
   </div>
   <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="/sidebar-v3.js?v=2"></script><script src="/operations.js"></script>
+<script src="/sidebar-v3.js?v=2"></script><script src="/operations.js?v=2"></script>
 </body>
 </html>
