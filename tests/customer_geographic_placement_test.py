@@ -132,6 +132,16 @@ class CustomerGeographicPlacementTest(unittest.TestCase):
         self.assertLess(selector.index("await loadRuntimes"), selector.index("await loadRegions"))
         self.assertLess(selector.index("await loadRegions"), selector.index("renderEditions();"))
 
+    def test_missing_agent_cannot_reenable_create_button_or_block_navigation(self):
+        adapter = (ROOT / "dashboard" / "web" / "customer-placement-selector.js").read_text(encoding="utf-8")
+        self.assertIn("let placementAvailable = false", adapter)
+        self.assertIn("button.disabled = true", adapter)
+        self.assertIn('button.dataset.placementAvailable = placementAvailable ? "true" : "false"', adapter)
+        self.assertIn('event.target.closest?.("#create-instance-submit")', adapter)
+        self.assertIn("event.stopImmediatePropagation()", adapter)
+        self.assertIn("new MutationObserver(() => syncCreateAvailability())", adapter)
+        self.assertIn("Você pode continuar navegando normalmente", adapter)
+
     def test_customer_creation_response_does_not_publish_internal_placement(self):
         source = (ROOT / "dashboard" / "customer_instance_creation.py").read_text(encoding="utf-8")
         public_result = source[source.index('result={"created"'):source.index('if source_vault_id:result')]
