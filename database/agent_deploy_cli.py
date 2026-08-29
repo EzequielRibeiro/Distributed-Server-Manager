@@ -26,6 +26,7 @@ from agent_ssh_deploy import (
     bootstrap_agent,
     bootstrap_agent_package,
     bootstrap_windows_agent_ssh,
+    preflight_controller_reachability,
     preflight_ssh,
     preflight_windows_ssh,
     remote_agent_present,
@@ -79,7 +80,11 @@ def _source_address_for_host(host):
 
 
 def _controller_url(host, requested):
-    explicit = str(requested or "").strip() or str(os.environ.get("DSM_CONTROLLER_URL", "")).strip()
+    explicit = (
+        str(requested or "").strip()
+        or str(os.environ.get("DSM_CONTROLLER_PUBLIC_URL", "")).strip()
+        or str(os.environ.get("DSM_CONTROLLER_URL", "")).strip()
+    )
     if explicit:
         if not explicit.startswith(("http://", "https://")):
             raise AgentDeployError("controller URL must use http:// or https://")
@@ -205,6 +210,10 @@ def deploy(args):
             bootstrap = bootstrap_windows_agent_ssh
         else:
             preflight = preflight_ssh(options)
+            preflight["controller"] = preflight_controller_reachability(
+                options,
+                controller_url,
+            )
             present = remote_agent_present(options)
             bootstrap = bootstrap_agent
         if present:

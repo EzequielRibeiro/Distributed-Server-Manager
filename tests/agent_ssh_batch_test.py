@@ -136,6 +136,69 @@ class LinuxPackageManagerPreflightBehaviorTest(unittest.TestCase):
             deploy.preflight_ssh(options, runner=runner)
 
 
+class ControllerReversePreflightBehaviorTest(unittest.TestCase):
+    def _module(self):
+        return load_module(
+            "agent_ssh_deploy_reverse_tested",
+            ROOT / "core/agent_ssh_deploy.py",
+        )
+
+    def test_controller_https_reachability_succeeds(self):
+        deploy = self._module()
+        captured = {}
+
+        def runner(argv, stdin_text, timeout):
+            captured["argv"] = list(argv)
+            return deploy.SSHResult(
+                returncode=0,
+                stdout="",
+                stderr="",
+            )
+
+        result = deploy.preflight_controller_reachability(
+            deploy.SSHDeployOptions(
+                host="192.0.2.10",
+                ssh_user="admin",
+            ),
+            "https://controller.example.test:9443",
+            runner=runner,
+        )
+
+        self.assertTrue(result["controller_reachable"])
+        self.assertTrue(result["controller_tls_verified"])
+
+        command = captured["argv"][-1]
+        self.assertIn(
+            "https://controller.example.test:9443/health",
+            command,
+        )
+        self.assertNotIn("--insecure", command)
+        self.assertNotIn(" -k ", command)
+
+    def test_controller_unreachable_is_rejected(self):
+        deploy = self._module()
+
+        def runner(argv, stdin_text, timeout):
+            return deploy.SSHResult(
+                returncode=7,
+                stdout="",
+                stderr="curl: (7) Failed to connect to controller",
+            )
+
+        with self.assertRaisesRegex(
+            deploy.AgentDeployError,
+            "Agent-to-Controller preflight failed",
+        ):
+            deploy.preflight_controller_reachability(
+                deploy.SSHDeployOptions(
+                    host="192.0.2.10",
+                    ssh_user="admin",
+                ),
+                "https://controller.example.test:9443",
+                runner=runner,
+            )
+
+
 class CliContractTest(unittest.TestCase):
     def test_deploy_json_normalizes_database_timestamps(self):
         text = (ROOT / "database/agent_deploy_cli.py").read_text(encoding="utf-8")

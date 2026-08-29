@@ -12,6 +12,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import shutil
 import stat
 import subprocess
@@ -925,6 +926,56 @@ def preflight_windows_ssh(
         "platform": "windows",
         "architecture": lines[-1] if lines else "unknown",
         "transport": "openssh",
+    }
+
+
+def preflight_controller_reachability(
+    options: SSHDeployOptions,
+    controller_url: str,
+    *,
+    runner: SSHRunner = _default_runner,
+) -> dict[str, Any]:
+    """Verify from the prospective Linux Agent that the Controller is reachable.
+
+    The remote curl performs normal DNS resolution and TLS certificate
+    validation. No -k/--insecure fallback is allowed.
+    """
+    url = str(controller_url or "").strip().rstrip("/")
+    if not url.startswith(("http://", "https://")):
+        raise AgentDeployError(
+            "Controller URL must use http:// or https:// for reverse preflight"
+        )
+
+    health_url = url + "/health"
+    timeout = max(2, min(int(options.connect_timeout), 60))
+
+    command = (
+        "curl --fail --silent --show-error "
+        f"--connect-timeout {timeout} "
+        f"--max-time {timeout + 5} "
+        "--output /dev/null "
+        + shlex.quote(health_url)
+    )
+
+    result = _run_ssh(
+        options,
+        command,
+        runner=runner,
+        timeout=timeout + 10,
+    )
+
+    if result.returncode != 0:
+        raise AgentDeployError(
+            "Agent-to-Controller preflight failed for "
+            f"{health_url}: "
+            + _reason(result, "Controller is unreachable from remote Agent")
+        )
+
+    return {
+        "controller_url": url,
+        "controller_health_url": health_url,
+        "controller_reachable": True,
+        "controller_tls_verified": url.startswith("https://"),
     }
 
 

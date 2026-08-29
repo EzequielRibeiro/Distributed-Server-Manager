@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -14,7 +15,13 @@ for candidate in (ROOT, ROOT / "core", ROOT / "database"):
         sys.path.insert(0, str(candidate))
 
 from agent_batch_targets import load_csv_targets, normalize_concurrency, target_from_values
-from agent_ssh_deploy import AgentDeployError, SSHDeployOptions, preflight_ssh, preflight_windows_ssh
+from agent_ssh_deploy import (
+    AgentDeployError,
+    SSHDeployOptions,
+    preflight_controller_reachability,
+    preflight_ssh,
+    preflight_windows_ssh,
+)
 
 
 def build_parser():
@@ -34,6 +41,13 @@ def build_parser():
     auth.add_argument("--identity-file", help="SSH private key")
     auth.add_argument("--password-file", help="protected 0600 password file; requires sshpass")
     p.add_argument("--connect-timeout", type=int, default=10)
+    p.add_argument(
+        "--controller-url",
+        help=(
+            "Controller URL to verify from the remote Agent; defaults to "
+            "DSM_CONTROLLER_PUBLIC_URL or DSM_CONTROLLER_URL"
+        ),
+    )
     p.add_argument("--concurrency", type=int, default=5, help="batch workers, 1-20; default: 5")
     p.add_argument("--json", action="store_true")
     return p
@@ -69,7 +83,15 @@ def _failure(target, exc):
     }
 
 
-def _test(target, connect_timeout):
+def _controller_url(value=None):
+    return (
+        str(value or "").strip()
+        or str(os.environ.get("DSM_CONTROLLER_PUBLIC_URL", "")).strip()
+        or str(os.environ.get("DSM_CONTROLLER_URL", "")).strip()
+    ).rstrip("/")
+
+
+def _test(target, connect_timeout, controller_url=None):
     options = SSHDeployOptions(
         host=target.host,
         ssh_user=target.ssh_user,
@@ -80,6 +102,15 @@ def _test(target, connect_timeout):
     )
     try:
         result = (preflight_windows_ssh if target.platform == "windows" else preflight_ssh)(options)
+
+        reverse = None
+        resolved_controller_url = _controller_url(controller_url)
+        if target.platform == "linux" and resolved_controller_url:
+            reverse = preflight_controller_reachability(
+                options,
+                resolved_controller_url,
+            )
+
         return {
             "ok": True,
             "host": target.host,
@@ -91,6 +122,15 @@ def _test(target, connect_timeout):
             "transport": "openssh",
             "authentication": "password-file" if target.password_file else ("identity-file" if target.identity_file else "ssh-agent/default-key"),
             "privilege": result.get("privilege"),
+            "controller_url": (
+                reverse.get("controller_url") if reverse else None
+            ),
+            "controller_reachable": (
+                reverse.get("controller_reachable") if reverse else None
+            ),
+            "controller_tls_verified": (
+                reverse.get("controller_tls_verified") if reverse else None
+            ),
             "status": "reachable",
         }
     except (AgentDeployError, ValueError, OSError) as exc:
@@ -99,11 +139,21 @@ def _test(target, connect_timeout):
         return _failure(target, "unexpected SSH preflight failure")
 
 
-def _run_batch(targets, *, connect_timeout, concurrency):
+def _run_batch(
+    targets, *, connect_timeout, concurrency, controller_url=None
+):
     workers = min(normalize_concurrency(concurrency), len(targets))
     results = [None] * len(targets)
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cap-ssh-test") as executor:
-        futures = {executor.submit(_test, target, connect_timeout): index for index, target in enumerate(targets)}
+        futures = {
+            executor.submit(
+                _test,
+                target,
+                connect_timeout,
+                controller_url,
+            ): index
+            for index, target in enumerate(targets)
+        }
         for future in as_completed(futures):
             results[futures[future]] = future.result()
     succeeded = sum(1 for item in results if item and item["ok"])
@@ -148,13 +198,22 @@ def main(argv=None):
         if not 1 <= int(args.connect_timeout) <= 300:
             raise ValueError("--connect-timeout must be between 1 and 300")
         if batch:
-            payload = _run_batch(targets, connect_timeout=args.connect_timeout, concurrency=args.concurrency)
+            payload = _run_batch(
+                targets,
+                connect_timeout=args.connect_timeout,
+                concurrency=args.concurrency,
+                controller_url=args.controller_url,
+            )
             if args.json:
                 print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
             else:
                 _print_batch(payload)
             return 0 if payload["ok"] else 3
-        payload = _test(targets[0], args.connect_timeout)
+        payload = _test(
+            targets[0],
+            args.connect_timeout,
+            args.controller_url,
+        )
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         else:
