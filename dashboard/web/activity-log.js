@@ -1,7 +1,7 @@
 (function () {
   "use strict";
   const byId = id => document.getElementById(id);
-  const auth = sessionStorage.getItem("dsm_auth") || "";
+  const controllerHeaders = () => ({Accept: "application/json", "X-Capivara-Auth-Area": "controller"});
   const actorState = { offset: 0, hasMore: false, showAll: false, query: "" };
   const roleLabels = {
     admin: "Administrador",
@@ -12,11 +12,11 @@
 
   async function request(path) {
     const response = await fetch(path, {
-      headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
+      headers: controllerHeaders(),
       credentials: "same-origin",
       cache: "no-store",
     });
-    if (response.status === 401) { sessionStorage.clear(); location.replace("/login.html"); throw new Error("Sessão encerrada"); }
+    if (response.status === 401) { location.replace("/login.html"); throw new Error("Sessão encerrada"); }
     if (response.status === 403) { location.replace("/dashboard-v3.html"); throw new Error("Acesso exclusivo de administradores"); }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
@@ -26,13 +26,14 @@
   async function loadShell() {
     const sidebar = byId("sidebar-component");
     if (sidebar) {
-      const response = await fetch("/components/sidebar-v3.html");
+      const response = await fetch("/components/sidebar-v3.html", {headers: controllerHeaders(), credentials: "same-origin", cache: "no-store"});
+      if (response.status === 401) { location.replace("/login.html"); throw new Error("Sessão encerrada"); }
       sidebar.innerHTML = await response.text();
       sidebar.querySelectorAll("nav a").forEach(a => a.classList.toggle("active", a.getAttribute("href") === "activity-log.html"));
       const logout = byId("btn-logout");
       if (logout) logout.onclick = async () => {
-        try { await fetch("/api/auth/logout", { method: "POST", headers: { Authorization: `Basic ${auth}` }, credentials: "same-origin" }); } catch (_) {}
-        sessionStorage.clear(); location.replace("/login.html");
+        try { await fetch("/api/auth/logout", { method: "POST", headers: controllerHeaders(), credentials: "same-origin", cache: "no-store" }); } catch (_) {}
+        location.replace("/login.html");
       };
     }
     const who = await request("/api/whoami");
@@ -53,10 +54,7 @@
     const select = byId("activity-role");
     const first = select.options[0];
     const normalized = [...new Set((values || []).map(value => String(value || "").trim().toLowerCase()).filter(Boolean))];
-    select.replaceChildren(
-      first,
-      ...normalized.map(value => new Option(roleLabels[value] || value, value))
-    );
+    select.replaceChildren(first, ...normalized.map(value => new Option(roleLabels[value] || value, value)));
   }
 
   async function loadOptions() {
@@ -118,7 +116,6 @@
     if (showAll) query.set("show_all", "true");
     query.set("limit", "100");
     query.set("offset", String(offset));
-
     byId("activity-user-message").textContent = append ? "Carregando mais usuários…" : "Buscando usuários…";
     const data = await request(`/api/admin/activity-log/actors?${query.toString()}`);
     appendActors(data.actors || [], append);
@@ -129,86 +126,25 @@
     byId("activity-more-users").hidden = !actorState.hasMore;
     const total = Number(data.total || 0);
     const shown = Math.min(actorState.offset, total);
-    if (!total) {
-      byId("activity-user-message").textContent = "Nenhum usuário encontrado para os filtros informados.";
-    } else if (actorState.hasMore) {
-      byId("activity-user-message").textContent = `${shown} de ${total} usuário(s) carregado(s). Use “Carregar mais” para continuar.`;
-    } else {
-      byId("activity-user-message").textContent = `${total} usuário(s) encontrado(s). Selecione um usuário ou mantenha “Qualquer usuário da categoria”.`;
-    }
+    if (!total) byId("activity-user-message").textContent = "Nenhum usuário encontrado para os filtros informados.";
+    else if (actorState.hasMore) byId("activity-user-message").textContent = `${shown} de ${total} usuário(s) carregado(s). Use “Carregar mais” para continuar.`;
+    else byId("activity-user-message").textContent = `${total} usuário(s) encontrado(s). Selecione um usuário ou mantenha “Qualquer usuário da categoria”.`;
   }
 
-  function isoLocal(value) {
-    if (!value) return "";
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? "" : date.toISOString();
-  }
-
+  function isoLocal(value) { if (!value) return ""; const date = new Date(value); return Number.isNaN(date.getTime()) ? "" : date.toISOString(); }
   function params() {
     const query = new URLSearchParams();
-    const pairs = [
-      ["actor_role", byId("activity-role").value],
-      ["actor_id", byId("activity-user").value],
-      ["category", byId("activity-category").value],
-      ["action", byId("activity-name").value],
-      ["result", byId("activity-result").value],
-      ["start_at", isoLocal(byId("activity-start").value)],
-      ["end_at", isoLocal(byId("activity-end").value)],
-      ["limit", byId("activity-limit").value],
-    ];
-    pairs.forEach(([key, value]) => { if (value) query.set(key, value); });
+    const pairs = [["actor_role",byId("activity-role").value],["actor_id",byId("activity-user").value],["category",byId("activity-category").value],["action",byId("activity-name").value],["result",byId("activity-result").value],["start_at",isoLocal(byId("activity-start").value)],["end_at",isoLocal(byId("activity-end").value)],["limit",byId("activity-limit").value]];
+    pairs.forEach(([key,value])=>{if(value)query.set(key,value);});
     return query.toString();
   }
-
-  function formatDate(value) {
-    if (!value) return "—";
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("pt-BR");
-  }
-
-  function render(rows) {
-    const body = byId("activity-table");
-    body.replaceChildren();
-    rows.forEach(item => {
-      const row = document.createElement("tr");
-      const values = [
-        formatDate(item.occurred_at),
-        item.actor_name || item.actor_id || "—",
-        item.summary || "—",
-        item.category || "—",
-        item.result || "—",
-        item.target_name || item.target_id || "—",
-      ];
-      values.forEach(value => {
-        const td = document.createElement("td");
-        td.textContent = value;
-        row.appendChild(td);
-      });
-      body.appendChild(row);
-    });
-    byId("activity-message").textContent = `${rows.length} registro(s) exibido(s).`;
-  }
-
-  async function search() {
-    const data = await request(`/api/admin/activity-log?${params()}`);
-    render(data.activities || []);
-  }
-
-  function clearFilters() {
-    ["activity-start", "activity-end", "activity-role", "activity-user-query", "activity-user", "activity-category", "activity-name", "activity-result"].forEach(id => { byId(id).value = ""; });
-    byId("activity-limit").value = "200";
-    resetActors("Selecione uma categoria de acesso e pesquise por nome, e-mail, documento, login ou ID. Também é possível mostrar a lista completa.");
-    search().catch(showError);
-  }
-
-  function showError(error) {
-    const message = error.message || String(error);
-    byId("activity-message").textContent = message;
-    if (byId("activity-user-message")) byId("activity-user-message").textContent = message;
-  }
+  function formatDate(value){if(!value)return"—";const date=new Date(value);return Number.isNaN(date.getTime())?String(value):date.toLocaleString("pt-BR");}
+  function render(rows){const body=byId("activity-table");body.replaceChildren();rows.forEach(item=>{const row=document.createElement("tr");[formatDate(item.occurred_at),item.actor_name||item.actor_id||"—",item.summary||"—",item.category||"—",item.result||"—",item.target_name||item.target_id||"—"].forEach(value=>{const td=document.createElement("td");td.textContent=value;row.appendChild(td);});body.appendChild(row);});byId("activity-message").textContent=`${rows.length} registro(s) exibido(s).`;}
+  async function search(){const data=await request(`/api/admin/activity-log?${params()}`);render(data.activities||[]);}
+  function clearFilters(){["activity-start","activity-end","activity-role","activity-user-query","activity-user","activity-category","activity-name","activity-result"].forEach(id=>{byId(id).value="";});byId("activity-limit").value="200";resetActors("Selecione uma categoria de acesso e pesquise por nome, e-mail, documento, login ou ID. Também é possível mostrar a lista completa.");search().catch(showError);}
+  function showError(error){const message=error.message||String(error);byId("activity-message").textContent=message;if(byId("activity-user-message"))byId("activity-user-message").textContent=message;}
 
   document.addEventListener("DOMContentLoaded", async () => {
-    if (!auth) { location.replace("/login.html"); return; }
     try {
       await loadShell();
       await loadOptions();
@@ -218,15 +154,8 @@
       byId("activity-show-users").onclick = () => loadActors({ showAll: true }).catch(showError);
       byId("activity-more-users").onclick = () => loadActors({ append: true, showAll: actorState.showAll }).catch(showError);
       byId("activity-role").onchange = () => resetActors("Categoria alterada. Pesquise um usuário ou use “Mostrar lista completa”.");
-      byId("activity-user-query").oninput = () => {
-        if (byId("activity-user").value) byId("activity-user").value = "";
-      };
-      byId("activity-user-query").onkeydown = event => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          loadActors({ showAll: false }).catch(showError);
-        }
-      };
+      byId("activity-user-query").oninput = () => { if (byId("activity-user").value) byId("activity-user").value = ""; };
+      byId("activity-user-query").onkeydown = event => { if (event.key === "Enter") { event.preventDefault(); loadActors({ showAll: false }).catch(showError); } };
       await search();
     } catch (error) { showError(error); }
   });
