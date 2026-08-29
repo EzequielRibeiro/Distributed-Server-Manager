@@ -65,6 +65,19 @@ class AdminPortalStructureTest(unittest.TestCase):
         self.assertNotIn('/api/scheduler', script)
         self.assertIn('/components/sidebar-v3.html', script)
 
+    def test_agent_rollout_version_uses_compatible_release_catalog(self):
+        html = self.source(WEB / "agents.html")
+        script = self.source(WEB / "agent-updates-v3.js")
+        api = self.source(DASHBOARD / "agent_update_api.py")
+        self.assertIn('<select id="agent-rollout-version"', html)
+        self.assertNotIn('id="agent-rollout-version" type="text"', html)
+        self.assertIn('release_catalog', script)
+        self.assertIn('channel === "stable" ? catalog.filter(item => !item.prerelease) : catalog', script)
+        self.assertIn('O canal Local / manual não utiliza o catálogo remoto de releases.', script)
+        self.assertIn('list_agent_releases', api)
+        self.assertIn('AgentRuntimeRepository', api)
+        self.assertIn('include_prereleases=True', api)
+
     def test_catalog_and_profiles_keep_full_admin_layout_styles(self):
         catalog = self.source(WEB / "catalog.html")
         profiles = self.source(WEB / "game-profiles.html")
