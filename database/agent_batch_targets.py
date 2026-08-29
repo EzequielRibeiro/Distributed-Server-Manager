@@ -96,6 +96,15 @@ def target_from_values(
     )
 
 
+def _row_authentication(row: dict[str, Any], defaults: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Return effective auth, making an explicit row auth replace the global one."""
+    row_password = _clean(row.get("password_file"))
+    row_identity = _clean(row.get("identity_file"))
+    if row_password or row_identity:
+        return row_password, row_identity
+    return _clean(defaults.get("password_file")), _clean(defaults.get("identity_file"))
+
+
 def load_csv_targets(path: str | Path, *, defaults: dict[str, Any] | None = None) -> list[BatchTarget]:
     source = Path(path).expanduser().resolve()
     if not source.is_file():
@@ -119,14 +128,15 @@ def load_csv_targets(path: str | Path, *, defaults: dict[str, Any] | None = None
             if not any(_clean(v) for v in row.values()):
                 continue
             try:
+                password_file, identity_file = _row_authentication(row, defaults)
                 target = target_from_values(
                     host=row.get("host"),
                     ssh_user=_clean(row.get("user")) or _clean(row.get("ssh_user")) or defaults.get("ssh_user"),
                     ssh_port=_clean(row.get("port")) or _clean(row.get("ssh_port")) or defaults.get("ssh_port", 22),
                     platform=_clean(row.get("platform")) or defaults.get("platform", "linux"),
                     name=row.get("name"),
-                    password_file=_clean(row.get("password_file")) or defaults.get("password_file"),
-                    identity_file=_clean(row.get("identity_file")) or defaults.get("identity_file"),
+                    password_file=password_file,
+                    identity_file=identity_file,
                     region_id=_clean(row.get("region")) or _clean(row.get("region_id")) or defaults.get("region_id"),
                     datacenter_id=_clean(row.get("datacenter")) or _clean(row.get("datacenter_id")) or defaults.get("datacenter_id"),
                 )
