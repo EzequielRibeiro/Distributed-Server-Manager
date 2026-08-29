@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_release_service import list_agent_releases
+from agent_runtime_repository import AgentRuntimeRepository
 from agent_update_repository import AgentUpdateRepository
 from alert_repository import AlertSession, dialect_for_backend
 
@@ -44,6 +46,49 @@ def _scoped_agents(user: dict[str, Any], backend, requested: list[str]) -> list[
     raise PermissionError("Agent update administration is not permitted")
 
 
+def _agent_platform(backend, agent_id: str) -> str:
+    snapshot = AgentRuntimeRepository(backend).snapshot(agent_id, refresh_health=False)
+    os_name = str(snapshot.get("os_name") or "").strip().lower()
+    if "windows" in os_name:
+        return "windows"
+    if "linux" in os_name:
+        return "linux"
+    raise ValueError("Agent platform is not available; wait for the Agent inventory heartbeat")
+
+
+def agent_update_releases_for_user(
+    user,
+    backend,
+    agent_id: str,
+    channel: str = "stable",
+) -> dict[str, Any]:
+    agent_id = _scoped_agents(user or {}, backend, [agent_id])[0]
+    channel = str(channel or "stable").strip().lower()
+    if channel not in {"stable", "beta", "local/manual"}:
+        raise ValueError("invalid update channel")
+    platform = _agent_platform(backend, agent_id)
+    if channel == "local/manual":
+        return {
+            "agent_id": agent_id,
+            "platform": platform,
+            "channel": channel,
+            "catalog_available": False,
+            "releases": [],
+        }
+    releases = list_agent_releases(
+        platform,
+        include_prereleases=channel == "beta",
+        limit=30,
+    )
+    return {
+        "agent_id": agent_id,
+        "platform": platform,
+        "channel": channel,
+        "catalog_available": True,
+        "releases": releases,
+    }
+
+
 def create_agent_rollout_for_user(user, backend, payload: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("payload must be an object")
@@ -75,6 +120,7 @@ def agent_update_status_for_user(user, backend, agent_id: str) -> dict[str, Any]
 
 
 __all__ = [
+    "agent_update_releases_for_user",
     "create_agent_rollout_for_user",
     "set_agent_update_channel_for_user",
     "agent_update_status_for_user",
