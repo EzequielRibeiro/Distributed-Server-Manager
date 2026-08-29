@@ -3,12 +3,16 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
-from agent_release_service import list_agent_releases
+from agent_release_service import AgentReleaseError, list_agent_releases
 from agent_runtime_repository import AgentRuntimeRepository
 from agent_update_repository import AgentUpdateRepository
 from alert_repository import AlertSession, dialect_for_backend
+
+_RELEASE_CACHE_TTL = 60.0
+_RELEASE_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
 
 def _role(user: dict[str, Any] | None) -> str:
@@ -56,6 +60,16 @@ def _agent_platform(backend, agent_id: str) -> str:
     raise ValueError("Agent platform is not available; wait for the Agent inventory heartbeat")
 
 
+def _release_catalog(platform: str) -> list[dict[str, Any]]:
+    now = time.monotonic()
+    cached = _RELEASE_CACHE.get(platform)
+    if cached and now - cached[0] < _RELEASE_CACHE_TTL:
+        return list(cached[1])
+    releases = list_agent_releases(platform, include_prereleases=True, limit=30)
+    _RELEASE_CACHE[platform] = (now, list(releases))
+    return releases
+
+
 def agent_update_releases_for_user(
     user,
     backend,
@@ -75,11 +89,9 @@ def agent_update_releases_for_user(
             "catalog_available": False,
             "releases": [],
         }
-    releases = list_agent_releases(
-        platform,
-        include_prereleases=channel == "beta",
-        limit=30,
-    )
+    releases = _release_catalog(platform)
+    if channel == "stable":
+        releases = [release for release in releases if not release.get("prerelease")]
     return {
         "agent_id": agent_id,
         "platform": platform,
@@ -116,7 +128,20 @@ def agent_update_status_for_user(user, backend, agent_id: str) -> dict[str, Any]
     agent_id = _scoped_agents(user or {}, backend, [agent_id])[0]
     repository = AgentUpdateRepository(backend)
     repository.initialize()
-    return repository.snapshot(agent_id)
+    status = repository.snapshot(agent_id)
+    try:
+        platform = _agent_platform(backend, agent_id)
+        releases = _release_catalog(platform)
+        status["platform"] = platform
+        status["release_catalog"] = releases
+        status["release_catalog_error"] = None
+        stable = next((release for release in releases if not release.get("prerelease")), None)
+        if stable and not status.get("available_version"):
+            status["available_version"] = stable.get("tag")
+    except (AgentReleaseError, ValueError, LookupError) as exc:
+        status["release_catalog"] = []
+        status["release_catalog_error"] = str(exc)
+    return status
 
 
 __all__ = [
