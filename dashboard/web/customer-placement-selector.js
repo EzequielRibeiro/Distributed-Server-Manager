@@ -22,6 +22,17 @@
     });
   }
 
+  function placementUnavailable(message, code, details = {}) {
+    return jsonResponse(200, {
+      regions: [],
+      placement_available: false,
+      placement_state: "unavailable",
+      message,
+      code,
+      ...details,
+    }, "OK");
+  }
+
   function coordinatesIfAlreadyAllowed() {
     if (coordinatesPromise) return coordinatesPromise;
     coordinatesPromise = Promise.resolve(null);
@@ -90,39 +101,34 @@
       );
     } catch (error) {
       if (error?.name === "AbortError") {
-        setPlacementStatus(
-          "error",
-          "Não foi possível concluir a verificação dos servidores. Tente novamente."
-        );
-        return jsonResponse(504, {
-          error: "A verificação dos servidores excedeu o tempo limite. Tente novamente.",
-          code: "placement_timeout",
-        }, "Gateway Timeout");
+        const message = "Não foi possível concluir a verificação dos servidores. Tente novamente.";
+        setPlacementStatus("error", message);
+        return placementUnavailable(message, "placement_timeout", {retryable: true});
       }
-      setPlacementStatus("error", "Falha ao verificar servidores disponíveis.");
-      return jsonResponse(503, {
-        error: "Não foi possível verificar os servidores disponíveis. Tente novamente.",
-        code: "placement_unreachable",
-      }, "Service Unavailable");
+      const message = "Falha ao verificar servidores disponíveis.";
+      setPlacementStatus("error", message);
+      return placementUnavailable(message, "placement_unreachable", {retryable: true});
     } finally {
       window.clearTimeout(timer);
       upstreamSignal?.removeEventListener?.("abort", abortFromUpstream);
     }
 
     if (!response.ok) {
-      setPlacementStatus("error", "Não foi possível verificar servidores disponíveis.");
-      return response;
+      const message = "Não foi possível verificar servidores disponíveis.";
+      setPlacementStatus("error", message);
+      return placementUnavailable(message, "placement_controller_error", {
+        retryable: response.status >= 500,
+        upstream_status: response.status,
+      });
     }
 
     let data;
     try {
       data = await response.clone().json();
     } catch (_error) {
-      setPlacementStatus("error", "Resposta inválida ao verificar servidores.");
-      return jsonResponse(502, {
-        error: "O Controller retornou uma resposta inválida ao verificar os servidores.",
-        code: "placement_invalid_response",
-      }, "Bad Gateway");
+      const message = "Resposta inválida ao verificar servidores.";
+      setPlacementStatus("error", message);
+      return placementUnavailable(message, "placement_invalid_response", {retryable: true});
     }
 
     const locations = Array.isArray(data.locations) ? data.locations : [];
@@ -133,10 +139,10 @@
         ? "Nenhum servidor está disponível para este jogo nesta região no momento."
         : "Nenhum servidor elegível foi localizado para este jogo no momento.";
       setPlacementStatus("unavailable", message);
-      return jsonResponse(503, {
-        error: `${message} Verifique se há Agent online, vinculado a uma região e com capacidade compatível.`,
-        code: "placement_no_available_agent",
-      }, "Service Unavailable");
+      return placementUnavailable(message, "placement_no_available_agent", {
+        retryable: true,
+        locations_found: locations.length,
+      });
     }
 
     const regions = available.map(publicRegion);
@@ -144,7 +150,11 @@
       "available",
       `${regions.length} localização${regions.length === 1 ? "" : "ões"} disponível${regions.length === 1 ? "" : "is"}.`
     );
-    return jsonResponse(response.status, {regions}, response.statusText);
+    return jsonResponse(response.status, {
+      regions,
+      placement_available: true,
+      placement_state: "available",
+    }, response.statusText);
   }
 
   window.fetch = function (input, options) {
