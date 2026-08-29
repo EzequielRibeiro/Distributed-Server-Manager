@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Novo jogo | Capivara DSM</title>
+  <link rel="stylesheet" href="/dashboard-home-v3.css">
+  <link rel="stylesheet" href="/catalog-game-create.css?v=1">
+</head>
+<body class="cap-home catalog-game-builder-shell">
+<div id="sidebar-component"></div>
+<main class="cap-home-main catalog-game-builder-page">
+  <header class="cap-home-topbar">
+    <div class="cap-home-title"><button id="builder-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1>Adicionar jogo ao catálogo</h1><p>Escolha a origem do servidor, informe os dados e verifique a definição antes de publicar.</p></div></div>
+  </header>
+  <div class="cap-home-content builder-content">
+    <section class="builder-hero"><div><span>CATÁLOGO UNIVERSAL</span><h2>Como o servidor do jogo será obtido?</h2><p>O provedor define como o Agent localizará e materializará os arquivos do servidor. A verificação é não destrutiva.</p></div></section>
+
+    <section class="provider-grid" aria-label="Provedores do jogo">
+      <button class="provider-card" type="button" data-provider="steam"><strong>Steam</strong><span>SteamCMD / App ID</span><small>DayZ, Arma 3, Rust e outros servidores distribuídos pela Steam.</small></button>
+      <button class="provider-card" type="button" data-provider="http"><strong>HTTP / arquivo</strong><span>URL direta ou archive</span><small>ZIP, tar.gz e outros artefatos publicados em HTTP/HTTPS.</small></button>
+      <button class="provider-card" type="button" data-provider="github"><strong>GitHub Release</strong><span>Assets publicados</span><small>Artefatos de releases hospedados no GitHub.</small></button>
+      <button class="provider-card" type="button" data-provider="local"><strong>Jogo local</strong><span>Diretório existente</span><small>Usa arquivos já presentes no host/Agent, sem download externo.</small></button>
+      <button class="provider-card assistant" type="button" data-provider="minecraft"><strong>Minecraft</strong><span>Assistente especializado</span><small>Escolhe a estratégia real por edição: HTTP/GitHub para Java e HTTP para Bedrock.</small></button>
+    </section>
+
+    <section id="builder-form-section" class="builder-panel" hidden>
+      <div class="builder-panel-heading"><div><span id="provider-kicker">PROVEDOR</span><h2 id="provider-title">Configuração</h2><p id="provider-description"></p></div><button id="builder-change-provider" class="builder-secondary" type="button">Trocar provedor</button></div>
+      <form id="builder-form">
+        <div class="builder-fields">
+          <label>ID do jogo<input name="game_id" required placeholder="dayz"></label>
+          <label>Nome para exibição<input name="name" required placeholder="DayZ"></label>
+          <label>ID do runtime<input name="runtime_id" required placeholder="dayz.stable"></label>
+          <label>Edição<input name="edition" value="default"></label>
+          <label>Variante<input name="variant" value="stable"></label>
+          <label>Executável / comando principal<input name="executable" placeholder="DayZServer"></label>
+        </div>
+        <div id="provider-fields" class="builder-provider-fields"></div>
+        <div class="builder-actions">
+          <button id="builder-verify" class="builder-primary" type="submit">Verificar</button>
+          <button id="builder-save" class="builder-secondary" type="button" disabled>Adicionar ao catálogo</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="builder-result" class="builder-panel" hidden>
+      <div class="builder-panel-heading"><div><span>DRY-RUN</span><h2>Resultado da verificação</h2><p id="builder-result-summary"></p></div></div>
+      <div id="builder-checks" class="builder-checks"></div>
+      <pre id="builder-plan" class="builder-plan"></pre>
+    </section>
+  </div>
+  <footer class="cap-home-footer">Capivara Distributed Server Manager · Catalog Builder</footer>
+</main>
+<script src="/sidebar-v3.js?v=2"></script><script src="/catalog-game-create.js?v=1"></script>
+</body>
+</html>
