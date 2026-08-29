@@ -12,6 +12,8 @@
         failed: [100, "Falha na atualização", "A atualização não foi concluída. Consulte os detalhes e tente novamente."],
     };
     let pollTimer = null;
+    let latestStatus = {};
+    let rolloutBusy = false;
 
     async function request(path, options = {}) {
         const response = await fetch(`/api${path}`, {
@@ -45,12 +47,83 @@
         if (target) target.textContent = value || "—";
     }
 
-    function setRolloutBusy(busy) {
+    function canCreateRollout() {
+        const selector = el("agent-rollout-version");
+        return Boolean(
+            el("agent-update-selector")?.value &&
+            selector && !selector.disabled && selector.value &&
+            el("agent-rollout-channel")?.value !== "local/manual"
+        );
+    }
+
+    function refreshRolloutButton() {
         const button = el("agent-rollout-submit");
         if (!button) return;
-        button.disabled = busy;
-        button.textContent = busy ? "Atualização em andamento…" : "Criar rollout";
-        button.setAttribute("aria-busy", String(busy));
+        button.disabled = rolloutBusy || !canCreateRollout();
+        button.textContent = rolloutBusy ? "Atualização em andamento…" : "Criar rollout";
+        button.setAttribute("aria-busy", String(rolloutBusy));
+    }
+
+    function setRolloutBusy(busy) {
+        rolloutBusy = busy;
+        refreshRolloutButton();
+    }
+
+    function releaseLabel(release) {
+        const tag = String(release?.tag || "").trim();
+        const name = String(release?.name || "").trim();
+        const beta = release?.prerelease ? " · pré-release" : "";
+        return name && name !== tag ? `${tag} — ${name}${beta}` : `${tag}${beta}`;
+    }
+
+    function renderReleaseSelector(status = latestStatus) {
+        latestStatus = status || {};
+        const selector = el("agent-rollout-version");
+        const help = el("agent-rollout-version-help");
+        const channel = el("agent-rollout-channel")?.value || "stable";
+        if (!selector) return;
+        const previous = selector.value;
+        selector.replaceChildren();
+
+        if (!el("agent-update-selector")?.value) {
+            selector.add(new Option("Selecione um Agent para carregar as versões", ""));
+            selector.disabled = true;
+            if (help) help.textContent = "As versões são carregadas das releases compatíveis com a plataforma do Agent.";
+            refreshRolloutButton();
+            return;
+        }
+        if (channel === "local/manual") {
+            selector.add(new Option("Catálogo remoto indisponível para Local / manual", ""));
+            selector.disabled = true;
+            setText("agent-available-version", "—");
+            if (help) help.textContent = "O canal Local / manual não utiliza o catálogo remoto de releases.";
+            refreshRolloutButton();
+            return;
+        }
+
+        const catalog = Array.isArray(status.release_catalog) ? status.release_catalog : [];
+        const releases = channel === "stable" ? catalog.filter(item => !item.prerelease) : catalog;
+        if (!releases.length) {
+            selector.add(new Option("Nenhuma versão compatível disponível", ""));
+            selector.disabled = true;
+            setText("agent-available-version", "—");
+            if (help) help.textContent = status.release_catalog_error
+                ? `Não foi possível consultar as releases: ${status.release_catalog_error}`
+                : "Nenhuma release compatível foi encontrada para este Agent e canal.";
+            refreshRolloutButton();
+            return;
+        }
+
+        selector.add(new Option("Selecione uma versão disponível", ""));
+        for (const release of releases) {
+            const tag = String(release.tag || "").trim();
+            if (tag) selector.add(new Option(releaseLabel(release), tag));
+        }
+        selector.disabled = false;
+        if (previous && releases.some(item => String(item.tag || "") === previous)) selector.value = previous;
+        setText("agent-available-version", releases[0]?.tag || "—");
+        if (help) help.textContent = `${releases.length} versão(ões) compatível(is) para ${status.platform || "a plataforma do Agent"} · canal ${channel}.`;
+        refreshRolloutButton();
     }
 
     function renderErrorDetails(status, state) {
@@ -127,11 +200,14 @@
         const agentId = el("agent-update-selector")?.value || "";
         if (!agentId) {
             clearTimeout(pollTimer);
+            latestStatus = {};
+            renderReleaseSelector({});
             renderProgress({update_status: "idle"});
             return;
         }
         try {
             const status = await request(`/agents/updates/status?agent_id=${encodeURIComponent(agentId)}`);
+            latestStatus = status;
             setText("agent-installed-version", status.installed_version);
             setText("agent-available-version", status.available_version);
             setText("agent-update-status", status.update_status);
@@ -139,6 +215,7 @@
             el("agent-update-channel").value = status.update_channel || "stable";
             el("agent-rollout-channel").value = status.update_channel || "stable";
             el("agent-rollout-agents").value = agentId;
+            renderReleaseSelector(status);
             renderProgress(status);
             schedulePoll(status);
             showError();
@@ -159,6 +236,7 @@
             });
             el("agent-update-channel").value = result.update_channel;
             el("agent-rollout-channel").value = result.update_channel;
+            renderReleaseSelector(latestStatus);
             showError();
         } catch (error) {
             showError(error.message);
@@ -167,6 +245,12 @@
 
     async function createRollout(event) {
         event.preventDefault();
+        const version = el("agent-rollout-version")?.value || "";
+        if (!version) return showError("Selecione uma versão disponível para o rollout.");
+        const installed = String(latestStatus.installed_version || "").replace(/^v/, "");
+        if (installed && installed === String(version).replace(/^v/, "")) {
+            return showError("A versão selecionada já está instalada neste Agent.");
+        }
         const agentIds = el("agent-rollout-agents").value.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean);
         setRolloutBusy(true);
         renderProgress({update_status: "planned"});
@@ -175,7 +259,7 @@
                 method: "POST",
                 body: JSON.stringify({
                     agent_ids: agentIds,
-                    desired_version: el("agent-rollout-version").value.trim(),
+                    desired_version: version,
                     update_channel: el("agent-rollout-channel").value,
                     batch_size: Number(el("agent-rollout-batch-size").value)
                 })
@@ -189,7 +273,7 @@
                 update_status: "failed",
                 last_error: error.message,
                 agent_id: el("agent-update-selector")?.value,
-                desired_version: el("agent-rollout-version")?.value,
+                desired_version: version,
                 update_channel: el("agent-rollout-channel")?.value,
             });
             setRolloutBusy(false);
@@ -202,6 +286,8 @@
             clearTimeout(pollTimer);
             loadStatus();
         });
+        el("agent-rollout-channel")?.addEventListener("change", () => renderReleaseSelector(latestStatus));
+        el("agent-rollout-version")?.addEventListener("change", refreshRolloutButton);
         el("agent-update-channel-form")?.addEventListener("submit", saveChannel);
         el("agent-rollout-form")?.addEventListener("submit", createRollout);
         try { await loadAgents(); } catch (error) { showError(error.message); }
