@@ -5,7 +5,7 @@ ROOT=Path(__file__).resolve().parents[1]
 class AgentDashboardUiContractTest(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
-  web=ROOT/"dashboard/web";cls.html=(web/"agents.html").read_text();cls.add_agent=(web/"add-agent.html").read_text();cls.add_agent_linux=(web/"add-agent-linux.html").read_text() if (web/"add-agent-linux.html").exists() else cls.add_agent;cls.add_agent_windows=(web/"add-agent-windows.html").read_text() if (web/"add-agent-windows.html").exists() else cls.add_agent;cls.detail=(web/"agent-details.html").read_text();cls.fleet_js=(web/"agents-v3.js").read_text();cls.detail_js=(web/"agent-details.js").read_text();cls.install=(web/"agent-installation.js").read_text();cls.sidebar=(web/"components/sidebar-v3.html").read_text();cls.servers_html=(web/"servers.html").read_text();cls.servers_js=(web/"servers.js").read_text();cls.servers_css=(web/"servers.css").read_text();cls.home=(web/"dashboard-v3.html").read_text();cls.home_js=(web/"dashboard-home-v3.js").read_text();cls.telemetry_js=(web/"telemetry-widgets.js").read_text();cls.infrastructure_html=(web/"infrastructure.html").read_text();cls.infrastructure_js=(web/"infrastructure-v3.js").read_text();cls.infrastructure_css=(web/"infrastructure-v3.css").read_text();cls.service=(ROOT/"systemd/dsm-dashboard.service").read_text();cls.composition=(ROOT/"dashboard/server_part14.py").read_text();cls.resource_composition=(ROOT/"dashboard/server_part15.py").read_text();cls.file_composition=(ROOT/"dashboard/server_part16.py").read_text();cls.latest_composition=(ROOT/"dashboard/server_part17.py").read_text()
+  web=ROOT/"dashboard/web";cls.html=(web/"agents.html").read_text();cls.add_agent=(web/"add-agent.html").read_text();cls.add_agent_linux=(web/"add-agent-linux.html").read_text() if (web/"add-agent-linux.html").exists() else cls.add_agent;cls.add_agent_windows=(web/"add-agent-windows.html").read_text() if (web/"add-agent-windows.html").exists() else cls.add_agent;cls.detail=(web/"agent-details.html").read_text();cls.fleet_js=(web/"agents-v3.js").read_text();cls.detail_js=(web/"agent-details.js").read_text();cls.detail_sidebar_js=(web/"agent-details-sidebar.js").read_text();cls.install=(web/"agent-installation.js").read_text();cls.sidebar=(web/"components/sidebar-v3.html").read_text();cls.servers_html=(web/"servers.html").read_text();cls.servers_js=(web/"servers.js").read_text();cls.servers_css=(web/"servers.css").read_text();cls.home=(web/"dashboard-v3.html").read_text();cls.home_js=(web/"dashboard-home-v3.js").read_text();cls.telemetry_js=(web/"telemetry-widgets.js").read_text();cls.infrastructure_html=(web/"infrastructure.html").read_text();cls.infrastructure_js=(web/"infrastructure-v3.js").read_text();cls.infrastructure_css=(web/"infrastructure-v3.css").read_text();cls.service=(ROOT/"systemd/dsm-dashboard.service").read_text();cls.composition=(ROOT/"dashboard/server_part14.py").read_text();cls.resource_composition=(ROOT/"dashboard/server_part15.py").read_text();cls.file_composition=(ROOT/"dashboard/server_part16.py").read_text();cls.latest_composition=(ROOT/"dashboard/server_part17.py").read_text()
  def test_agents_page_is_fleet_only_and_uses_v3_shell(self):
   for text in ("dashboard-home-v3.css","agents-v3.css","agents-v3.js","Frota de Agents",'href="add-agent.html"'):self.assertIn(text,self.html)
   for text in ("SteamCMD funcionando","SteamCMD não instalado","data-install-steamcmd","install-steamcmd"):self.assertIn(text,self.fleet_js)
@@ -34,7 +34,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
   self.assertLess(self.detail.index('id="agent-telemetry"'),self.detail.index('id="agent-admin-panel"'))
  def test_agent_details_require_agent_context(self):
   self.assertIn('location.replace("agents.html?missing_agent=1")',self.detail_js)
-  self.assertIn('if(!agentId)',self.detail_js)
+  self.assertIn('if (!agentId)',self.detail_js)
   self.assertIn('agent-details.html?agent_id=${encodeURIComponent(id)}',self.fleet_js)
   self.assertIn('agent-observability.html?agent_id=${encodeURIComponent(agentId)}&view=${encodeURIComponent(view)}',self.detail_js)
  def test_agent_detail_support_assets_are_registered(self):
@@ -45,8 +45,9 @@ class AgentDashboardUiContractTest(unittest.TestCase):
  def test_mobile_sidebar_can_be_closed_without_browser_back(self):
   for marker in ('class="cap-sidebar-close"','aria-label="Fechar menu"'):
    self.assertIn(marker,self.sidebar)
-  for marker in ("pointerdown","touchstart","touchend","dx<-60","Escape","sidebar-open"):
-   self.assertIn(marker,self.detail_js)
+  detail_mobile=self.detail_js+"\n"+self.detail_sidebar_js
+  for marker in ("pointerdown","touchstart","touchend","dx < -60","Escape","sidebar-open"):
+   self.assertIn(marker,detail_mobile)
   for marker in ("bindMobileSidebar","pointerdown","touchstart","touchend","dx<-60","Escape"):
    self.assertIn(marker,self.home_js)
   self.assertIn("cap-sidebar-close", (ROOT/"dashboard/web/dashboard-home-v3.css").read_text())
