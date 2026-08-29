@@ -24,8 +24,6 @@ CONTROLLER_PAGES = {
     "/controller-logs.html", "/diagnostics.html", "/help.html",
 }
 
-# Browser subresources do not carry X-Capivara-Auth-Area either. Keep this
-# allow-list explicit so Customer assets can continue to use their own domain.
 CONTROLLER_ASSETS = {
     "/components/sidebar-v3.html", "/sidebar-v3.js",
     "/dashboard-home-v3.css", "/dashboard-home-v3.js",
@@ -47,7 +45,27 @@ CONTROLLER_ASSETS = {
     "/help.css", "/help.js",
 }
 
-CUSTOMER_PAGES = {"/contract-demo.html"}
+CUSTOMER_PAGES = {
+    "/customer.html", "/contract-demo.html", "/customer-instance.html",
+    "/customer-members.html", "/customer-account.html", "/customer-backups.html",
+    "/customer-integrations.html", "/customer-change-password.html",
+}
+
+# Customer pages also load passive JS/CSS requests without an auth-area header.
+# Resolve those assets explicitly with the Customer cookie, otherwise a browser
+# holding both Controller and Customer sessions reaches the legacy ambiguous
+# authentication path and the shell stays forever in its loading state.
+CUSTOMER_ASSETS = {
+    "/customer.css", "/customer.js", "/customer-core.js", "/customer-navigation.js",
+    "/customer-profile.js", "/customer-email-change.js", "/customer-placement-selector.js",
+    "/runtime-selector.js", "/create-server-wizard.css", "/create-server-wizard.js",
+    "/customer-instance.js", "/customer-instance-v2.js", "/customer-instance-v2-wrapper.js",
+    "/customer-instance-events.css", "/customer-instance-events.js",
+    "/customer-instance-activity.js", "/customer-instance-connection.js",
+    "/customer-instance-delete.js", "/customer-backup-transfer.js",
+    "/customer-team.css", "/customer-members.js", "/customer-account.js",
+    "/customer-backups.js", "/customer-integrations.css", "/customer-integrations.js",
+}
 
 
 def _redirect(handler, location: str) -> None:
@@ -63,6 +81,15 @@ def _controller_user(handler):
     if user is None:
         return None
     if str(user.get("role") or "").lower() not in {"admin", "controller", "operator"}:
+        return False
+    return user
+
+
+def _customer_user(handler):
+    user = session_user_from_headers(handler.headers, area="customer")
+    if user is None:
+        return None
+    if str(user.get("role") or "").lower() != "customer":
         return False
     return user
 
@@ -88,12 +115,15 @@ def install_portal_navigation_session_guard(legacy) -> None:
                 self.send_file(target)
                 return
 
-        if path in CUSTOMER_PAGES:
-            user = session_user_from_headers(self.headers, area="customer")
+        if path in CUSTOMER_PAGES or path in CUSTOMER_ASSETS:
+            user = _customer_user(self)
             if user is None:
-                _redirect(self, "/customer-login.html")
+                if path in CUSTOMER_PAGES:
+                    _redirect(self, "/customer-login.html")
+                else:
+                    self.send_json(401, {"error": "authentication_required"})
                 return
-            if str(user.get("role") or "").lower() != "customer":
+            if user is False:
                 self.send_json(403, {"error": "forbidden"})
                 return
             target = legacy.STATIC_FILES.get(path)
@@ -106,4 +136,7 @@ def install_portal_navigation_session_guard(legacy) -> None:
     legacy.DashboardHandler.do_GET = guarded_get
 
 
-__all__ = ["CONTROLLER_PAGES", "CONTROLLER_ASSETS", "CUSTOMER_PAGES", "install_portal_navigation_session_guard"]
+__all__ = [
+    "CONTROLLER_PAGES", "CONTROLLER_ASSETS", "CUSTOMER_PAGES", "CUSTOMER_ASSETS",
+    "install_portal_navigation_session_guard",
+]
