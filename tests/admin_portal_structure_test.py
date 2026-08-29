@@ -78,6 +78,16 @@ class AdminPortalStructureTest(unittest.TestCase):
         self.assertIn('AgentRuntimeRepository', api)
         self.assertIn('include_prereleases=True', api)
 
+    def test_servers_page_loads_sidebar_with_controller_session(self):
+        html = self.source(WEB / "servers.html")
+        source = self.source(WEB / "servers.js")
+        self.assertIn('id="sidebar-component"', html)
+        self.assertIn('servers.js?v=7', html)
+        self.assertIn('fetch("components/sidebar-v3.html",{headers:controllerHeaders()', source)
+        self.assertIn('credentials:"same-origin"', source)
+        self.assertIn('"X-Capivara-Auth-Area":"controller"', source)
+        self.assertNotIn('if(!auth())', source)
+
     def test_catalog_and_profiles_keep_full_admin_layout_styles(self):
         catalog = self.source(WEB / "catalog.html")
         profiles = self.source(WEB / "game-profiles.html")
