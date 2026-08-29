@@ -109,7 +109,7 @@ class CustomerGeographicPlacementTest(unittest.TestCase):
 
     def test_customer_page_loads_safe_adapter_before_runtime_selector(self):
         html = (ROOT / "dashboard" / "web" / "customer.html").read_text(encoding="utf-8")
-        self.assertIn("/customer-placement-selector.js", html)
+        self.assertIn("/customer-placement-selector.js?v=3", html)
         self.assertLess(html.index("/customer-placement-selector.js"), html.index("/runtime-selector.js"))
         script = (ROOT / "dashboard" / "web" / "customer-placement-selector.js").read_text(encoding="utf-8")
         self.assertIn("/api/customer/placement/locations", script)
@@ -120,6 +120,17 @@ class CustomerGeographicPlacementTest(unittest.TestCase):
         self.assertNotIn("agent_id", script)
         self.assertNotIn("public_host", script)
         self.assertNotIn("fingerprint", script)
+
+    def test_offline_placement_does_not_block_game_runtime_profiles(self):
+        adapter = (ROOT / "dashboard" / "web" / "customer-placement-selector.js").read_text(encoding="utf-8")
+        selector = (ROOT / "dashboard" / "web" / "runtime-selector.js").read_text(encoding="utf-8")
+        self.assertIn("function placementUnavailable", adapter)
+        self.assertIn("return jsonResponse(200", adapter)
+        self.assertIn("placement_available: false", adapter)
+        self.assertIn('placement_state: "unavailable"', adapter)
+        self.assertIn('placementUnavailable(message, "placement_no_available_agent"', adapter)
+        self.assertLess(selector.index("await loadRuntimes"), selector.index("await loadRegions"))
+        self.assertLess(selector.index("await loadRegions"), selector.index("renderEditions();"))
 
     def test_customer_creation_response_does_not_publish_internal_placement(self):
         source = (ROOT / "dashboard" / "customer_instance_creation.py").read_text(encoding="utf-8")
