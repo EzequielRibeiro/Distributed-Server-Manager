@@ -15,6 +15,7 @@ on:
       - "tests/browser_dual_session_isolation_test.py"
       - "tests/auth_domain_composition_test.py"
       - "tests/portal_navigation_session_test.py"
+      - "tests/agent_observability_auth_test.py"
       - ".github/workflows/browser-session.yml"
   push:
     branches: [main]
@@ -31,6 +32,7 @@ on:
       - "tests/browser_dual_session_isolation_test.py"
       - "tests/auth_domain_composition_test.py"
       - "tests/portal_navigation_session_test.py"
+      - "tests/agent_observability_auth_test.py"
       - ".github/workflows/browser-session.yml"
 
 jobs:
@@ -51,7 +53,8 @@ jobs:
             tests/browser_auth_legacy_dependency_test.py \
             tests/browser_dual_session_isolation_test.py \
             tests/auth_domain_composition_test.py \
-            tests/portal_navigation_session_test.py
+            tests/portal_navigation_session_test.py \
+            tests/agent_observability_auth_test.py
       - name: Validate authenticated JavaScript
         run: |
           set -e
@@ -66,3 +69,4 @@ jobs:
           python3 -m unittest tests/browser_dual_session_isolation_test.py
           python3 -m unittest tests/auth_domain_composition_test.py
           python3 -m unittest tests/portal_navigation_session_test.py
+          python3 -m unittest tests/agent_observability_auth_test.py
