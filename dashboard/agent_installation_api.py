@@ -2,6 +2,7 @@
 """Agent installation planning, remote bootstrap and progress tracking."""
 from __future__ import annotations
 import os
+import stat
 from pathlib import Path
 from typing import Any
 from agent_install_command import linux_agent_install_command
@@ -50,26 +51,35 @@ def _local_instruction(platform: str, controller_url: str, pairing_token: str) -
         return ".\\install-agent.ps1 -ControllerUrl '"+controller_url.replace("'","''")+"' -PairingToken '"+pairing_token.replace("'","''")+"'"
     return "sudo ./install-agent.sh --controller-url "+controller_url+" --pairing-token "+pairing_token
 
-def _dashboard_password_file(raw: Any) -> str | None:
+def _protected_dashboard_file(raw: Any, *, env_name: str, default_root: str, label: str) -> str | None:
     value=str(raw or "").strip()
     if not value: return None
-    root=Path(os.environ.get("DSM_REMOTE_DEPLOY_SECRET_DIR","/etc/capivara/secrets/remote-deploy")).resolve()
+    root=Path(os.environ.get(env_name,default_root)).resolve()
     path=Path(value).expanduser().resolve()
     try: path.relative_to(root)
-    except ValueError as exc: raise ValueError(f"password_file must be inside {root}") from exc
+    except ValueError as exc: raise ValueError(f"{label} must be inside {root}") from exc
+    if not path.is_file(): raise ValueError(f"{label} was not found: {path}")
+    mode=stat.S_IMODE(path.stat().st_mode)
+    if mode & 0o077: raise ValueError(f"{label} has unsafe permissions {mode:04o}; use 0600 or more restrictive")
     return str(path)
+
+def _dashboard_password_file(raw: Any) -> str | None:
+    return _protected_dashboard_file(raw,env_name="DSM_REMOTE_DEPLOY_SECRET_DIR",default_root="/etc/capivara/secrets/remote-deploy",label="password_file")
+
+def _dashboard_identity_file(raw: Any) -> str | None:
+    return _protected_dashboard_file(raw,env_name="DSM_REMOTE_DEPLOY_IDENTITY_DIR",default_root="/etc/capivara/ssh/remote-deploy",label="identity_file")
 
 def _ssh_options(payload: dict[str,Any]) -> SSHDeployOptions:
     if payload.get("password") not in (None,"") or payload.get("ssh_password") not in (None,""):
         raise ValueError("SSH passwords are never accepted directly; use a protected password_file")
-    if payload.get("identity_file") not in (None,""):
-        raise ValueError("identity_file paths are not accepted from the Dashboard; configure the Controller SSH identity")
-    host=str(payload.get("ssh_host","") or "").strip(); user=str(payload.get("ssh_user","") or "").strip()
+    host=str(payload.get("ssh_host",payload.get("host","")) or "").strip(); user=str(payload.get("ssh_user",payload.get("user","")) or "").strip()
     if not host: raise ValueError("ssh_host is required for remote installation")
     if not user: raise ValueError("ssh_user is required for remote installation")
-    try: port=int(payload.get("ssh_port",22) or 22)
+    try: port=int(payload.get("ssh_port",payload.get("port",22)) or 22)
     except (TypeError,ValueError) as exc: raise ValueError("ssh_port must be an integer") from exc
-    return SSHDeployOptions(host=host,ssh_user=user,ssh_port=port,password_file=_dashboard_password_file(payload.get("password_file")))
+    password_file=_dashboard_password_file(payload.get("password_file")); identity_file=_dashboard_identity_file(payload.get("identity_file"))
+    if password_file and identity_file: raise ValueError("use either password_file or identity_file, not both")
+    return SSHDeployOptions(host=host,ssh_user=user,ssh_port=port,password_file=password_file,identity_file=identity_file)
 
 def _bootstrap_timeout(payload: dict[str,Any]) -> int:
     try: timeout=int(payload.get("bootstrap_timeout",900) or 900)
@@ -145,7 +155,7 @@ def create_agent_installation_for_user(user: dict[str,Any]|None, backend, payloa
         assert ssh_options is not None and bootstrap_timeout is not None
         try: _run_ssh_bootstrap(platform,ssh_options,controller_url=controller_url,pairing_token=issued.token,release_tag=release_tag,timeout=bootstrap_timeout,ssh_runner=ssh_runner)
         except Exception: _expire_installation_token(backend,issued.token_id); raise
-        remote_bootstrap={"state":"completed","host":ssh_options.host,"ssh_user":ssh_options.ssh_user,"ssh_port":ssh_options.ssh_port,"transport":"openssh","platform":ssh_preflight.get("platform") if ssh_preflight else platform,"architecture":ssh_preflight.get("architecture") if ssh_preflight else None,"release_tag":release_tag}
+        remote_bootstrap={"state":"completed","host":ssh_options.host,"ssh_user":ssh_options.ssh_user,"ssh_port":ssh_options.ssh_port,"transport":"openssh","authentication":"password-file" if ssh_options.password_file else ("identity-file" if ssh_options.identity_file else "ssh-agent/default-key"),"platform":ssh_preflight.get("platform") if ssh_preflight else platform,"architecture":ssh_preflight.get("architecture") if ssh_preflight else None,"release_tag":release_tag}
     else:
         assert winrm_options is not None
         try: bootstrap_windows_agent(winrm_options,controller_url=controller_url,pairing_token=issued.token,release_tag=release_tag,runner=winrm_runner)
