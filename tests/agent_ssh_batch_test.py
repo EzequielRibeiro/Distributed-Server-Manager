@@ -82,6 +82,14 @@ class BatchTargetParserTest(unittest.TestCase):
             batch.normalize_concurrency(21)
 
 
+class CliContractTest(unittest.TestCase):
+    def test_deploy_json_normalizes_database_timestamps(self):
+        text = (ROOT / "database/agent_deploy_cli.py").read_text(encoding="utf-8")
+        self.assertIn("def _json_timestamp(value):", text)
+        self.assertIn('last_seen=_json_timestamp(runtime["last_seen"])', text)
+        self.assertIn('"last_seen": _json_timestamp(online.get("last_seen"))', text)
+
+
 class DashboardContractTest(unittest.TestCase):
     def test_linux_and_windows_offer_batch_and_both_auth_methods(self):
         for relative in ("dashboard/web/add-agent-linux.html", "dashboard/web/add-agent-windows.html"):
