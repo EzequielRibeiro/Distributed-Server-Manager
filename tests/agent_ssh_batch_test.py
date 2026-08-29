@@ -105,6 +105,37 @@ class LinuxPackageManagerPreflightContractTest(unittest.TestCase):
         self.assertIn("dpkg --configure -a", text)
 
 
+class LinuxPackageManagerPreflightBehaviorTest(unittest.TestCase):
+    def test_broken_dpkg_state_is_rejected(self):
+        deploy = load_module(
+            "agent_ssh_deploy_dpkg_tested",
+            ROOT / "core/agent_ssh_deploy.py",
+        )
+
+        def runner(argv, stdin_text, timeout):
+            return deploy.SSHResult(
+                returncode=42,
+                stdout="",
+                stderr=(
+                    "The following packages are only half configured.\n"
+                    "CAPIVARA_PACKAGE_MANAGER_NOT_READY: "
+                    "dpkg audit reported incomplete package state\n"
+                ),
+            )
+
+        options = deploy.SSHDeployOptions(
+            host="192.0.2.10",
+            ssh_user="root",
+            ssh_port=22,
+        )
+
+        with self.assertRaisesRegex(
+            deploy.AgentDeployError,
+            "package manager is not ready",
+        ):
+            deploy.preflight_ssh(options, runner=runner)
+
+
 class CliContractTest(unittest.TestCase):
     def test_deploy_json_normalizes_database_timestamps(self):
         text = (ROOT / "database/agent_deploy_cli.py").read_text(encoding="utf-8")
