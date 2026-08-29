@@ -54,6 +54,19 @@ class AgentAdminMaintenanceTest(unittest.TestCase):
         self.backend.close()
         self.temp.cleanup()
 
+    def _prepared_relink_token(self):
+        token = self.pairing.issue_token(
+            controller_id=self.controller_id,
+            created_by="admin",
+        )
+        self.admin.record_relink_prepared(
+            self.agent_id,
+            token_id=token.token_id,
+            expires_at=token.expires_at,
+            actor="admin",
+        )
+        return token
+
     def test_rename_changes_administrative_name_without_identity(self):
         result = self.admin.rename(self.agent_id, "Agent Produção", actor="admin")
         detail = self.admin.detail(self.agent_id)
@@ -87,7 +100,7 @@ class AgentAdminMaintenanceTest(unittest.TestCase):
         self.assertIsNone(self.admin.doctor_command_for_agent(self.agent_id))
 
     def test_relink_rotates_credential_and_preserves_agent_identity(self):
-        token = self.pairing.issue_token(controller_id=self.controller_id, created_by="admin")
+        token = self._prepared_relink_token()
         recovered = AgentRelinkRepository(self.backend).relink(
             pairing_token=token.token,
             agent_id=self.agent_id,
@@ -112,7 +125,7 @@ class AgentAdminMaintenanceTest(unittest.TestCase):
         self.assertEqual(authenticated["agent_id"], self.agent_id)
 
     def test_relink_rejects_fingerprint_change(self):
-        token = self.pairing.issue_token(controller_id=self.controller_id, created_by="admin")
+        token = self._prepared_relink_token()
         with self.assertRaises(AgentCredentialInvalid):
             AgentRelinkRepository(self.backend).relink(
                 pairing_token=token.token,

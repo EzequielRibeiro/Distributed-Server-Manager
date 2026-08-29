@@ -2,6 +2,7 @@
 """Capivara Linux Agent runtime: enroll once, then heartbeat permanently."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
@@ -50,6 +51,9 @@ CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/
 DEFAULT_HEARTBEAT_SECONDS = 30
 DEFAULT_RECONCILE_SECONDS = 15
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
+HOST_IDENTITY_PATH = Path(
+    os.environ.get("CAPIVARA_AGENT_HOST_IDENTITY", str(STATE_DIR / "host-identity"))
+)
 AGENT_LOG = STATE_DIR / "agent-runtime.log"
 
 
@@ -100,6 +104,49 @@ def _post(url, payload, headers=None):
         raise RuntimeError(f"Controller unavailable: {exc.reason}") from exc
 
 
+
+def _read_text(path):
+    try:
+        return Path(path).read_text(encoding="utf-8").strip().lower()
+    except OSError:
+        return ""
+
+
+def _host_identity():
+    """Return the canonical, non-secret identity for the physical/virtual host."""
+    canonical = _read_text(HOST_IDENTITY_PATH)
+    if canonical:
+        return canonical
+
+    # Backward-compatible fallback until the privileged materializer has run.
+    machine_id = _read_text("/etc/machine-id")
+    product_uuid = _read_text("/sys/class/dmi/id/product_uuid")
+
+    macs = []
+    try:
+        interfaces = Path("/sys/class/net").iterdir()
+    except OSError:
+        interfaces = ()
+
+    for interface in interfaces:
+        if interface.name == "lo":
+            continue
+        value = _read_text(interface / "address")
+        if value and value != "00:00:00:00:00:00":
+            macs.append(value)
+
+    hardware_identity = product_uuid or "|".join(sorted(set(macs)))
+
+    material = "\n".join(
+        [
+            "capivara-host-v1",
+            machine_id,
+            hardware_identity,
+        ]
+    ).encode("utf-8")
+
+    return "sha256:" + hashlib.sha256(material).hexdigest()
+
 def _memory_total_bytes():
     try:
         for line in Path("/proc/meminfo").read_text().splitlines():
@@ -148,6 +195,7 @@ def _inventory(config):
         "capivara_version": installed_version,
         "address": config.get("advertise_address"),
         "fingerprint": config["fingerprint"],
+        "host_identity": _host_identity(),
         "capabilities": detect_capabilities(),
         "cpu": {"logical_cores": os.cpu_count(), "machine": platform.machine()},
         "ram_total_bytes": _memory_total_bytes(),

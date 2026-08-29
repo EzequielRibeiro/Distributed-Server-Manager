@@ -8,11 +8,16 @@ from typing import Any
 
 from agent_admin_repository import AgentAdminRepository
 from agent_game_data_repository import AgentGameDataRepository
-from agent_heartbeat_api import record_agent_heartbeat
+from agent_heartbeat_api import (
+    AgentHostIdentityCollision,
+    AgentHostIdentityRequired,
+    record_agent_heartbeat,
+)
 from agent_installation_api import bind_installation_after_enrollment
 from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from agent_lifecycle_repository import AgentLifecycleRepository
+from agent_identity_incident_repository import AgentIdentityIncidentRepository
 from agent_link_incident_repository import AgentLinkIncidentRepository
 from agent_pairing_api import enroll_remote_agent
 from agent_pairing_repository import (
@@ -266,6 +271,34 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
         _attach_doctor_state(result, body, agent_id=agent_id, backend=backend)
         _reconcile_link_incident(result, agent_id=agent_id, backend=backend)
         _attach_backup_clone_state(result, agent_id=agent_id, backend=backend)
+    except AgentHostIdentityCollision as exc:
+        try:
+            AgentIdentityIncidentRepository(backend).open_collision(
+                exc.agent_id,
+                expected_identity=exc.expected,
+                presented_identity=exc.presented,
+            )
+        except Exception:
+            pass
+        return 409, {
+            "error": "agent_identity_collision",
+            "message": (
+                "A identidade deste Agent já está vinculada a outro host."
+            ),
+        }
+    except AgentHostIdentityRequired as exc:
+        try:
+            AgentIdentityIncidentRepository(backend).open_collision(
+                exc.agent_id,
+            )
+        except Exception:
+            pass
+        return 409, {
+            "error": "agent_host_identity_required",
+            "message": (
+                "Este Agent precisa informar sua identidade física."
+            ),
+        }
     except AgentCredentialInvalid:
         try:
             incidents = AgentLinkIncidentRepository(backend)

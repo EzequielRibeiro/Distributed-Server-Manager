@@ -20,6 +20,125 @@ from observability_repository import ObservabilityRepository
 from universal_event_repository import UniversalEventRepository
 from alert_repository import AlertSession,dialect_for_backend
 
+HOST_IDENTITY_METADATA_KEY = "capivara_host_identity_v1"
+
+
+class AgentHostIdentityRequired(PermissionError):
+    def __init__(self, agent_id):
+        self.agent_id = str(agent_id)
+        super().__init__(
+            f"Agent {self.agent_id} must report host_identity"
+        )
+
+
+class AgentHostIdentityCollision(PermissionError):
+    def __init__(self, agent_id, expected, presented):
+        self.agent_id = str(agent_id)
+        self.expected = str(expected)
+        self.presented = str(presented)
+        super().__init__(
+            f"Agent host identity collision: {self.agent_id}"
+        )
+
+
+def _metadata_dict(raw):
+    if raw is None:
+        return {}
+
+    if isinstance(raw, dict):
+        return dict(raw)
+
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            value = json.loads(raw.decode("utf-8"))
+        except Exception:
+            return {}
+    else:
+        try:
+            value = json.loads(str(raw))
+        except Exception:
+            return {}
+
+    return value if isinstance(value, dict) else {}
+
+
+def _validate_host_identity(agent_id, body, *, backend):
+    """Bind one physical host identity to one logical Agent."""
+    presented = str(body.get("host_identity") or "").strip()
+
+    dialect = dialect_for_backend(backend)
+    ph = dialect.placeholder
+
+    with backend.transaction() as connection:
+        session = AlertSession(backend, connection)
+        try:
+            # Serialize concurrent attempts to establish the first binding.
+            session.execute(
+                f"UPDATE agents SET metadata_json=metadata_json WHERE id={ph}",
+                (agent_id,),
+            )
+
+            row = session.execute(
+                f"SELECT metadata_json FROM agents WHERE id={ph}",
+                (agent_id,),
+            ).fetchone()
+
+            if row is None:
+                raise LookupError(f"Agent not found: {agent_id}")
+
+            metadata = _metadata_dict(row["metadata_json"])
+
+            expected = str(
+                metadata.get(HOST_IDENTITY_METADATA_KEY) or ""
+            ).strip()
+
+            # A binding already exists: fail closed.
+            if expected:
+                if not presented:
+                    raise AgentHostIdentityRequired(agent_id)
+
+                if presented != expected:
+                    raise AgentHostIdentityCollision(
+                        agent_id,
+                        expected,
+                        presented,
+                    )
+
+                return {
+                    "status": "matched",
+                    "host_identity": expected,
+                }
+
+            # Compatibility with Agents running an older runtime.
+            if not presented:
+                return {
+                    "status": "legacy-unbound",
+                    "host_identity": None,
+                }
+
+            # First modern heartbeat establishes the binding.
+            metadata[HOST_IDENTITY_METADATA_KEY] = presented
+
+            session.execute(
+                f"UPDATE agents SET metadata_json={ph} WHERE id={ph}",
+                (
+                    json.dumps(
+                        metadata,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    agent_id,
+                ),
+            )
+
+            return {
+                "status": "bound",
+                "host_identity": presented,
+            }
+        finally:
+            session.close()
+
+
 def _metric_token(value:Any)->str:
  text=re.sub(r"[^a-z0-9.]+",".",str(value or "").strip().lower().replace("_","."));return text.strip(".") or "unknown"
 def _telemetry_from_heartbeat(body):
@@ -153,6 +272,7 @@ def record_agent_heartbeat(authenticated_agent_id,payload,*,backend,root=None):
  if not agent_id:raise PermissionError("authenticated Agent identity required")
  body=payload if isinstance(payload,dict) else {};claimed=str(body.get("agent_id") or agent_id).strip()
  if claimed!=agent_id:raise PermissionError("Agent identity mismatch")
+ _validate_host_identity(agent_id,body,backend=backend)
  _store_agent_metadata(agent_id,body,backend=backend);repository=AgentRuntimeRepository(backend);repository.initialize();inventory_fields={"hostname":body.get("hostname"),"os_name":body.get("os") or body.get("os_name"),"architecture":body.get("architecture"),"capivara_version":body.get("capivara_version"),"address":body.get("address"),"fingerprint":body.get("fingerprint"),"capabilities":body.get("capabilities"),"cpu":body.get("cpu"),"ram_total_bytes":body.get("ram_total_bytes"),"storage":body.get("storage"),"network":body.get("network"),"heartbeat_interval_seconds":int(body.get("heartbeat_interval_seconds",30)),"degraded_after_seconds":int(body.get("degraded_after_seconds",60)),"offline_after_seconds":int(body.get("offline_after_seconds",120))}
  if any(inventory_fields[n] is not None for n in ("hostname","os_name","architecture","capivara_version","address","fingerprint","capabilities","cpu","ram_total_bytes","storage","network")):repository.upsert_inventory(agent_id=agent_id,**inventory_fields)
  reconciliation=body.get("instance_reconciliation")
