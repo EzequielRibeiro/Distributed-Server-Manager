@@ -23,6 +23,8 @@ class AdminPortalStructureTest(unittest.TestCase):
         for asset in (
             "/components/sidebar-v3.html",
             "/dashboard-home-v3.css",
+            "/dashboard-node-overview.css",
+            "/dashboard-node-overview.js",
             "/catalog-page.css",
             "/catalog-page.js",
             "/game-profiles.css",
@@ -33,6 +35,23 @@ class AdminPortalStructureTest(unittest.TestCase):
         ):
             self.assertIn(f'"{asset}"', source)
         self.assertIn('area="controller"', source)
+
+    def test_dashboard_node_activity_surface_is_scalable_and_navigable(self):
+        html = self.source(WEB / "dashboard-v3.html")
+        source = self.source(WEB / "dashboard-node-overview.js")
+        self.assertIn('Players na infraestrutura', html)
+        self.assertIn('Nodes — atividade em tempo real', html)
+        self.assertIn('id="home-node-page-size"', html)
+        self.assertIn('data-sort="players"', html)
+        self.assertIn('agent-details.html?agent_id=', source)
+        self.assertIn('servers.html?agent=', source)
+        self.assertIn('agent-observability.html?agent_id=', source)
+        self.assertIn('diagnostics.html?agent_id=', source)
+        self.assertIn('controller-logs.html?agent_id=', source)
+        self.assertIn('BUCKET_MS=300000', source)
+        self.assertIn('DAY_MS=86400000', source)
+        self.assertIn('window.setInterval(load,30000)', source)
+        self.assertIn('X-Capivara-Auth-Area', source)
 
     def test_catalog_and_profiles_keep_full_admin_layout_styles(self):
         catalog = self.source(WEB / "catalog.html")
