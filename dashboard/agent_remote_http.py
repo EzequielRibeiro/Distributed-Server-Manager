@@ -8,7 +8,11 @@ from typing import Any
 
 from agent_admin_repository import AgentAdminRepository
 from agent_game_data_repository import AgentGameDataRepository
-from agent_heartbeat_api import record_agent_heartbeat
+from agent_heartbeat_api import (
+    AgentHostIdentityCollision,
+    AgentHostIdentityRequired,
+    record_agent_heartbeat,
+)
 from agent_installation_api import bind_installation_after_enrollment
 from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
@@ -266,6 +270,45 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
         _attach_doctor_state(result, body, agent_id=agent_id, backend=backend)
         _reconcile_link_incident(result, agent_id=agent_id, backend=backend)
         _attach_backup_clone_state(result, agent_id=agent_id, backend=backend)
+    except AgentHostIdentityCollision as exc:
+        try:
+            AgentLinkIncidentRepository(backend).open(
+                exc.agent_id,
+                cause="identity_collision",
+                recommended_action="Verificar clonagem e revincular o Agent conflitante",
+                message=(
+                    "Foi detectado mais de um host físico apresentando a mesma "
+                    "identidade de Agent. O heartbeat conflitante foi bloqueado "
+                    "antes de atualizar runtime, telemetria ou comandos."
+                ),
+            )
+        except Exception:
+            pass
+        return 409, {
+            "error": "agent_identity_collision",
+            "message": (
+                "A identidade deste Agent já está vinculada a outro host."
+            ),
+        }
+    except AgentHostIdentityRequired as exc:
+        try:
+            AgentLinkIncidentRepository(backend).open(
+                exc.agent_id,
+                cause="host_identity_required",
+                recommended_action="Atualizar o runtime do Agent",
+                message=(
+                    "O Agent deixou de apresentar a identidade física exigida "
+                    "pelo vínculo atual."
+                ),
+            )
+        except Exception:
+            pass
+        return 409, {
+            "error": "agent_host_identity_required",
+            "message": (
+                "Este Agent precisa informar sua identidade física."
+            ),
+        }
     except AgentCredentialInvalid:
         try:
             incidents = AgentLinkIncidentRepository(backend)
