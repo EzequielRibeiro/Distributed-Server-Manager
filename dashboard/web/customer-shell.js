@@ -29,7 +29,7 @@
 
     // Customer pages use only the dedicated Customer cookie session.
     // The Controller compatibility bridge is intentionally not loaded here.
-    load("/customer-navigation.js?v=2");
+    load("/customer-navigation.js?v=3");
     load("/customer-core.js?v=3");
   }
 
