@@ -96,6 +96,15 @@ class ExistingAgentProtectionContractTest(unittest.TestCase):
             self.assertIn(marker, text)
 
 
+class LinuxPackageManagerPreflightContractTest(unittest.TestCase):
+    def test_linux_preflight_checks_dpkg_state(self):
+        text = (ROOT / "core/agent_ssh_deploy.py").read_text(encoding="utf-8")
+        self.assertIn("dpkg --audit", text)
+        self.assertIn("/var/lib/dpkg/updates", text)
+        self.assertIn("CAPIVARA_PACKAGE_MANAGER_NOT_READY", text)
+        self.assertIn("dpkg --configure -a", text)
+
+
 class CliContractTest(unittest.TestCase):
     def test_deploy_json_normalizes_database_timestamps(self):
         text = (ROOT / "database/agent_deploy_cli.py").read_text(encoding="utf-8")
