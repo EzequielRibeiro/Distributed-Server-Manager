@@ -15,16 +15,24 @@ jobs:
           python3 -m py_compile \
             dashboard/admin_observability_api.py \
             dashboard/admin_observability_http.py \
+            dashboard/controller_journal_reader.py \
+            dashboard/controller_log_journal_http.py \
             dashboard/server_part17.py \
-            tests/p8_admin_observability_test.py
+            tests/p8_admin_observability_test.py \
+            tests/controller_log_journal_test.py
           node --check dashboard/web/admin-observability.js
       - name: Run P8 contract tests
         env:
           PYTHONPATH: dashboard:database:core:.
-        run: python3 -m unittest tests/p8_admin_observability_test.py
+        run: |
+          python3 -m unittest tests/p8_admin_observability_test.py
+          python3 -m unittest tests/controller_log_journal_test.py
       - name: Validate P8 composition contract
         run: |
           grep -F 'install_admin_observability' dashboard/server_part17.py
           grep -F '/api/admin/observability' dashboard/admin_observability_http.py
           grep -F 'CapivaraAdministrativeObservability' dashboard/admin_observability_api.py
           grep -F 'correlation_id' dashboard/web/admin-observability.js
+          grep -F 'install_controller_log_journal_http' dashboard/server_part17.py
+          grep -F 'SupplementaryGroups=systemd-journal' systemd/dsm-controller-log-reader.service
+          ! grep -F 'SupplementaryGroups=systemd-journal' systemd/dsm-dashboard.service
