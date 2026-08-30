@@ -10,6 +10,7 @@ from typing import Any
 
 
 def _run(command: list[str], timeout: int = 10) -> tuple[str, bool]:
+    """Run legacy socket collectors through subprocess.run."""
     try:
         completed = subprocess.run(
             command,
@@ -46,6 +47,7 @@ def _parse_netstat(protocol: str) -> tuple[list[int], bool]:
 
 
 def _powershell_inventory() -> tuple[dict[str, Any], bool]:
+    """Collect Windows adapter identity independently from netstat mocks."""
     script = r"""
 $ErrorActionPreference = 'Stop'
 $adapters = Get-NetIPConfiguration | ForEach-Object {
@@ -71,11 +73,14 @@ $default6 = Get-NetRoute -DestinationPrefix '::/0' -ErrorAction SilentlyContinue
   default6 = if ($default6) { [pscustomobject]@{ interface_index=$default6.InterfaceIndex; gateway=$default6.NextHop } } else { $null }
 } | ConvertTo-Json -Depth 8 -Compress
 """
-    output, complete = _run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-        timeout=15,
-    )
-    if not complete:
+    try:
+        output = subprocess.check_output(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+            text=True,
+            timeout=15,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.SubprocessError):
         return {}, False
     try:
         payload = json.loads(output)
