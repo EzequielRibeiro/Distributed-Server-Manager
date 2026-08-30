@@ -7,6 +7,7 @@ from datetime import date, datetime
 from typing import Any
 
 from agent_port_availability import effective_port_summary
+from agent_port_preflight import port_pool_preflight
 from agent_port_repository import AgentPortRepository
 from agent_runtime_repository import AgentRuntimeRepository, AgentRuntimeNotFound
 from alert_repository import AlertSession, dialect_for_backend
@@ -164,6 +165,10 @@ def agent_ports_for_user(user, backend, agent_id):
     result["agent"] = result_agent
     result["recent_logs"] = metadata.get("recent_logs", [])
     result["telemetry"] = metadata.get("telemetry", {})
+    result["preflight"] = {
+        "tcp": port_pool_preflight(backend, agent["id"], protocol="tcp"),
+        "udp": port_pool_preflight(backend, agent["id"], protocol="udp"),
+    }
     return _json_ready(result)
 
 
