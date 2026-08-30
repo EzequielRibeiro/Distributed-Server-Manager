@@ -14,6 +14,7 @@ def install_agent_public_network(legacy, authenticate):
     previous_get = legacy.DashboardHandler.do_GET
     previous_post = legacy.DashboardHandler.do_POST
     legacy.STATIC_FILES["/agent-public-network.js"] = legacy.WEB_DIR / "agent-public-network.js"
+    legacy.STATIC_FILES["/agent-network-panel.js"] = legacy.WEB_DIR / "agent-network-panel.js"
 
     def backend():
         return legacy.dashboard_repository(legacy.DATABASE_FILE).backend
