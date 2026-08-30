@@ -1,1 +1,86 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dashboard · Capivara DSM</title><link rel="stylesheet" href="dashboard-home-v3.css?v=9"><link rel="stylesheet" href="telemetry-widgets.css?v=1"></head><body class="cap-home"><div id="sidebar-component"></div><main class="cap-home-main"><header class="cap-home-topbar"><div class="cap-home-title"><button id="home-menu-toggle" type="button" aria-label="Recolher menu">☰</button><h1>Dashboard</h1></div><div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="home-user-name">—</strong><span id="home-user-role">—</span></div></div></header><div class="cap-home-content"><div class="cap-home-toolbar"><button id="home-refresh" class="cap-refresh" type="button">Atualizar · <span id="home-last-refresh">—</span></button></div><section class="cap-kpis" aria-label="Indicadores principais"><article class="cap-kpi"><div class="cap-kpi-icon">▤</div><div><label>Agents</label><strong id="home-agent-total">—</strong><small><span id="home-agent-online" class="cap-good">—</span> · <span id="home-agent-offline" class="cap-bad">—</span></small></div></article><article class="cap-kpi"><div class="cap-kpi-icon">▣</div><div><label>Instâncias</label><strong id="home-instance-total">—</strong><small>Total registrado nos Agents</small></div></article><article class="cap-kpi"><div class="cap-kpi-icon">▶</div><div><label>Em execução</label><strong id="home-running-total">—</strong><small>Instâncias reportadas em execução</small></div></article><article class="cap-kpi"><div class="cap-kpi-icon">!</div><div><label>Alertas</label><strong id="home-alert-total">—</strong><small>Eventos recentes que requerem atenção</small></div></article></section><section id="controller-telemetry" class="cap-telemetry-section" aria-label="Telemetria do Controller"><div class="cap-telemetry-empty">Carregando telemetria do Controller...</div></section><section class="cap-grid-main"><article class="cap-panel"><h2>Saúde da infraestrutura</h2><div class="cap-panel-body"><div class="cap-health-row"><span class="cap-health-name"><i id="home-controller-dot" class="cap-dot"></i>Controller</span><strong id="home-controller-health" class="cap-good">—</strong></div><div class="cap-health-row"><span class="cap-health-name"><i class="cap-dot"></i>Agents</span><strong id="home-health-agents">—</strong></div><div class="cap-health-row"><span class="cap-health-name"><i class="cap-dot"></i>Placement</span><strong class="cap-good">Integrado</strong></div><div class="cap-health-row"><span class="cap-health-name"><i class="cap-dot"></i>Event Platform</span><strong class="cap-good">Ativa</strong></div></div><div class="cap-panel-footer"><a href="agents.html">Ver diagnóstico completo ›</a></div></article><article class="cap-panel"><h2>Distribuição por Agent</h2><div id="home-agent-bars" class="cap-bars"><div class="cap-empty">Carregando...</div></div><div class="cap-panel-footer"><a href="servers.html">Ver todas as instâncias ›</a></div></article><article class="cap-panel"><h2>Alertas importantes</h2><div id="home-alerts" class="cap-panel-body"><div class="cap-empty">Carregando...</div></div><div class="cap-panel-footer"><a href="observability.html#alerts">Ver todos os alertas ›</a></div></article></section><section class="cap-grid-bottom"><article class="cap-panel"><h2>Atividade recente</h2><div id="home-events" class="cap-timeline"><div class="cap-empty">Carregando...</div></div><div class="cap-panel-footer"><a href="observability.html#events">Ver todos os eventos ›</a></div></article><article class="cap-panel"><h2>Infraestrutura</h2><div class="cap-panel-body"><div class="cap-infra-row"><span>Regions</span><strong id="home-infra-regions">—</strong></div><div class="cap-infra-row"><span>Datacenters</span><strong id="home-infra-datacenters">—</strong></div><div class="cap-infra-row"><span>Agents</span><strong id="home-infra-agents">—</strong></div><div class="cap-infra-row"><span>Agents online</span><strong id="home-infra-online" class="cap-good">—</strong></div><div class="cap-infra-row"><span>Instâncias</span><strong id="home-instance-total-copy">ver indicador</strong></div></div><div class="cap-panel-footer"><a href="agents.html">Ver infraestrutura ›</a></div></article><article class="cap-panel"><h2>Ações rápidas</h2><div class="cap-quick"><a href="servers.html" class="instance-manager-only">Instâncias</a><a href="add-agent.html" class="agent-manager-only">＋ Adicionar Agent</a><a href="customers.html" class="admin-only">＋ Criar cliente</a><a href="customers.html" class="admin-only">＋ Criar contrato</a></div></article></section></div><footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer></main><script src="telemetry-widgets.js?v=1"></script><script src="dashboard-home-v3.js?v=3"></script></body></html>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Dashboard · Capivara DSM</title>
+  <link rel="stylesheet" href="dashboard-home-v3.css?v=10">
+  <link rel="stylesheet" href="telemetry-widgets.css?v=1">
+</head>
+<body class="cap-home">
+  <div id="sidebar-component"></div>
+  <main class="cap-home-main">
+    <header class="cap-home-topbar">
+      <div class="cap-home-title">
+        <button id="home-menu-toggle" type="button" aria-label="Recolher menu">☰</button>
+        <h1>Dashboard</h1>
+      </div>
+      <div class="cap-top-status">
+        <div class="cap-controller-state"><i></i><span>Controller Online</span></div>
+        <div class="cap-user"><strong id="home-user-name">—</strong><span id="home-user-role">—</span></div>
+      </div>
+    </header>
+
+    <div class="cap-home-content">
+      <div class="cap-home-toolbar">
+        <button id="home-refresh" class="cap-refresh" type="button">Atualizar · <span id="home-last-refresh">—</span></button>
+      </div>
+
+      <section class="cap-kpis" aria-label="Indicadores principais">
+        <article class="cap-kpi"><div class="cap-kpi-icon">▤</div><div><label>Agents</label><strong id="home-agent-total">—</strong><small><span id="home-agent-online" class="cap-good">—</span> · <span id="home-agent-offline" class="cap-bad">—</span></small></div></article>
+        <article class="cap-kpi"><div class="cap-kpi-icon">▣</div><div><label>Instâncias</label><strong id="home-instance-total">—</strong><small>Total registrado nos Agents</small></div></article>
+        <article class="cap-kpi"><div class="cap-kpi-icon">▶</div><div><label>Em execução</label><strong id="home-running-total">—</strong><small>Instâncias reportadas em execução</small></div></article>
+        <article class="cap-kpi"><div class="cap-kpi-icon">!</div><div><label>Alertas</label><strong id="home-alert-total">—</strong><small>Eventos recentes que requerem atenção</small></div></article>
+      </section>
+
+      <section id="controller-telemetry" class="cap-telemetry-section" aria-label="Telemetria do Controller">
+        <div class="cap-telemetry-empty">Carregando telemetria do Controller...</div>
+      </section>
+
+      <section class="cap-panel cap-agent-table-panel" aria-labelledby="home-agent-table-title">
+        <div class="cap-panel-heading">
+          <div>
+            <h2 id="home-agent-table-title">Agents</h2>
+            <p>Visão operacional rápida dos Agents registrados no Controller.</p>
+          </div>
+          <a href="agents.html">Gerenciar Agents ›</a>
+        </div>
+        <div class="cap-agent-table-scroll">
+          <table class="cap-agent-table">
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Host</th>
+                <th>Plataforma</th>
+                <th>Região / DC</th>
+                <th>Estado</th>
+                <th>Instâncias</th>
+                <th>Último heartbeat</th>
+              </tr>
+            </thead>
+            <tbody id="home-agent-table-body">
+              <tr><td colspan="7" class="cap-agent-table-empty">Carregando Agents...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="cap-grid-main">
+        <article class="cap-panel"><h2>Saúde da infraestrutura</h2><div class="cap-panel-body"><div class="cap-health-row"><span class="cap-health-name"><i id="home-controller-dot" class="cap-dot"></i>Controller</span><strong id="home-controller-health" class="cap-good">—</strong></div><div class="cap-health-row"><span class="cap-health-name"><i class="cap-dot"></i>Agents</span><strong id="home-health-agents">—</strong></div><div class="cap-health-row"><span class="cap-health-name"><i class="cap-dot"></i>Placement</span><strong class="cap-good">Integrado</strong></div><div class="cap-health-row"><span class="cap-health-name"><i class="cap-dot"></i>Event Platform</span><strong class="cap-good">Ativa</strong></div></div><div class="cap-panel-footer"><a href="agents.html">Ver diagnóstico completo ›</a></div></article>
+        <article class="cap-panel"><h2>Distribuição por Agent</h2><div id="home-agent-bars" class="cap-bars"><div class="cap-empty">Carregando...</div></div><div class="cap-panel-footer"><a href="servers.html">Ver todas as instâncias ›</a></div></article>
+        <article class="cap-panel"><h2>Alertas importantes</h2><div id="home-alerts" class="cap-panel-body"><div class="cap-empty">Carregando...</div></div><div class="cap-panel-footer"><a href="observability.html#alerts">Ver todos os alertas ›</a></div></article>
+      </section>
+
+      <section class="cap-grid-bottom">
+        <article class="cap-panel"><h2>Atividade recente</h2><div id="home-events" class="cap-timeline"><div class="cap-empty">Carregando...</div></div><div class="cap-panel-footer"><a href="observability.html#events">Ver todos os eventos ›</a></div></article>
+        <article class="cap-panel"><h2>Infraestrutura</h2><div class="cap-panel-body"><div class="cap-infra-row"><span>Regions</span><strong id="home-infra-regions">—</strong></div><div class="cap-infra-row"><span>Datacenters</span><strong id="home-infra-datacenters">—</strong></div><div class="cap-infra-row"><span>Agents</span><strong id="home-infra-agents">—</strong></div><div class="cap-infra-row"><span>Agents online</span><strong id="home-infra-online" class="cap-good">—</strong></div><div class="cap-infra-row"><span>Instâncias</span><strong id="home-instance-total-copy">ver indicador</strong></div></div><div class="cap-panel-footer"><a href="agents.html">Ver infraestrutura ›</a></div></article>
+        <article class="cap-panel"><h2>Ações rápidas</h2><div class="cap-quick"><a href="servers.html" class="instance-manager-only">Instâncias</a><a href="add-agent.html" class="agent-manager-only">＋ Adicionar Agent</a><a href="customers.html" class="admin-only">＋ Criar cliente</a><a href="customers.html" class="admin-only">＋ Criar contrato</a></div></article>
+      </section>
+    </div>
+
+    <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
+  </main>
+  <script src="telemetry-widgets.js?v=1"></script>
+  <script src="dashboard-home-v3.js?v=4"></script>
+</body>
+</html>
