@@ -47,7 +47,7 @@ def _parse_netstat(protocol: str) -> tuple[list[int], bool]:
 
 
 def _powershell_inventory() -> tuple[dict[str, Any], bool]:
-    """Collect Windows adapter identity independently from netstat mocks."""
+    """Collect Windows adapter identity without reusing subprocess.run."""
     script = r"""
 $ErrorActionPreference = 'Stop'
 $adapters = Get-NetIPConfiguration | ForEach-Object {
@@ -73,14 +73,23 @@ $default6 = Get-NetRoute -DestinationPrefix '::/0' -ErrorAction SilentlyContinue
   default6 = if ($default6) { [pscustomobject]@{ interface_index=$default6.InterfaceIndex; gateway=$default6.NextHop } } else { $null }
 } | ConvertTo-Json -Depth 8 -Compress
 """
+    process = None
     try:
-        output = subprocess.check_output(
+        process = subprocess.Popen(
             ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-            text=True,
-            timeout=15,
+            stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            text=True,
         )
+        output, _ = process.communicate(timeout=15)
+    except subprocess.TimeoutExpired:
+        if process is not None:
+            process.kill()
+            process.communicate()
+        return {}, False
     except (OSError, subprocess.SubprocessError):
+        return {}, False
+    if process.returncode != 0:
         return {}, False
     try:
         payload = json.loads(output)
