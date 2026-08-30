@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import sys,tempfile,unittest
+import subprocess,sys,tempfile,unittest
 from datetime import datetime,timezone
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
@@ -27,4 +27,15 @@ class AutomationWorkerTest(unittest.TestCase):
  def test_schedule_minute_is_idempotent(self):
   self.repo.put_rule({"rule_id":"schedule-w","trigger":{"type":"schedule","expression":"0 19 * * *"},"actions":[{"type":"broadcast","broadcast":{"scope":"instance","target":"instance-w","message":"scheduled"}}]})
   dt=datetime(2026,8,21,19,0,tzinfo=timezone.utc);self.assertEqual(self.worker.process_schedules(dt),1);self.assertEqual(self.worker.process_schedules(dt),0);self.assertEqual(len(self.repo.list_broadcasts()),1)
+ def test_worker_imports_from_outside_repository(self):
+  script=ROOT/"dashboard"/"workers"/"automation_worker.py"
+  with tempfile.TemporaryDirectory() as cwd:
+   result=subprocess.run([sys.executable,"-I","-c",f"import runpy;runpy.run_path({str(script)!r},run_name='automation_worker_import_test')"],cwd=cwd,text=True,capture_output=True,timeout=20)
+  self.assertEqual(result.returncode,0,result.stderr)
+ def test_consolidated_worker_excludes_legacy_workers_and_supervises_children(self):
+  source=(ROOT/"dashboard"/"workers"/"worker.sh").read_text(encoding="utf-8")
+  self.assertNotIn("start_worker server_worker.sh",source)
+  self.assertNotIn("start_worker backup_worker.sh",source)
+  self.assertIn("start_python_worker automation_worker.py",source)
+  self.assertIn("wait -n",source)
 if __name__=="__main__":unittest.main()
