@@ -16,7 +16,7 @@ on:
       - 'agents/linux/runtime/broadcast_client.py'
       - 'agents/linux/runtime/agent.py'
       - 'agents/linux/runtime/adapters/base.py'
-      - 'systemd/dsm-automation-worker.service'
+      - 'systemd/dsm-dashboard-worker.service'
       - 'release/build_agent_package.sh'
       - 'bin/cap'
       - 'tests/automation_broadcast_test.py'
@@ -41,7 +41,7 @@ jobs:
           grep -Fq 'AUTOMATION_PATH' dashboard/server_part13.py
           grep -Fq 'broadcast_commands' dashboard/agent_heartbeat_api.py
           grep -Fq 'start_python_worker automation_worker.py' dashboard/workers/worker.sh
-          grep -Fq 'automation_worker.py' systemd/dsm-automation-worker.service
+          grep -Fq 'dashboard/workers/worker.sh' systemd/dsm-dashboard-worker.service
           grep -Fq 'agent/runtime/broadcast_client.py' release/build_agent_package.sh
           grep -Fq 'InstanceRuntimeAdapter' agents/linux/runtime/adapters/base.py
           grep -Fq 'import server_part16 as integration' dashboard/server_part17.py
