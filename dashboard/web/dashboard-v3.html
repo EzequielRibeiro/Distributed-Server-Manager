@@ -6,6 +6,29 @@
   <title>Dashboard · Capivara DSM</title>
   <link rel="stylesheet" href="dashboard-home-v3.css?v=10">
   <link rel="stylesheet" href="telemetry-widgets.css?v=1">
+  <style>
+    .cap-agent-table-panel{margin-top:12px}
+    .cap-panel-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 14px;border-bottom:1px solid var(--line)}
+    .cap-panel-heading h2{border:0;padding:0;margin:0}
+    .cap-panel-heading p{margin:5px 0 0;color:var(--muted);font-size:12px}
+    .cap-panel-heading>a{color:#aac7f3;text-decoration:none;white-space:nowrap}
+    .cap-agent-table-scroll{overflow-x:auto}
+    .cap-agent-table{width:100%;border-collapse:collapse;min-width:920px}
+    .cap-agent-table th,.cap-agent-table td{padding:11px 14px;text-align:left;border-bottom:1px solid #243044;vertical-align:middle}
+    .cap-agent-table th{color:#8d9aaf;font-size:11px;text-transform:uppercase;letter-spacing:.04em;background:#111a27}
+    .cap-agent-table tbody tr:hover{background:#182536}
+    .cap-agent-table td small{display:block;color:var(--muted);font-size:11px;margin-top:3px}
+    .cap-agent-name{color:#eaf1fb;text-decoration:none;font-weight:600}
+    .cap-agent-name:hover{color:#aac7f3}
+    .cap-agent-state{display:inline-flex;align-items:center;gap:7px;text-transform:capitalize}
+    .cap-agent-state i{width:8px;height:8px;border-radius:50%;background:var(--red)}
+    .cap-agent-state.online{color:var(--green)}
+    .cap-agent-state.online i{background:var(--green);box-shadow:0 0 7px #39d06f55}
+    .cap-agent-state.offline{color:var(--red)}
+    .cap-agent-number{text-align:center!important;font-variant-numeric:tabular-nums}
+    .cap-agent-table-empty{text-align:center!important;color:var(--muted);padding:22px!important}
+    @media(max-width:760px){.cap-panel-heading{align-items:flex-start;flex-direction:column}.cap-agent-table-panel{margin-top:10px}}
+  </style>
 </head>
 <body class="cap-home">
   <div id="sidebar-component"></div>
