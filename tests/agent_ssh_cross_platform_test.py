@@ -7,7 +7,7 @@ for path in (ROOT,ROOT/"core",ROOT/"database"):
     if str(path) not in sys.path:sys.path.insert(0,str(path))
 from agent_connection_test_cli import build_parser as build_test_parser
 from agent_deploy_cli import build_parser as build_deploy_parser
-from agent_ssh_deploy import AgentDeployError,SSHDeployOptions,SSHResult,bootstrap_windows_agent_ssh,build_ssh_argv,preflight_windows_ssh,validate_password_file
+from agent_ssh_deploy import AgentDeployError,SSHDeployOptions,SSHResult,_powershell_encoded_command,_windows_bootstrap_stdin,bootstrap_windows_agent_ssh,build_ssh_argv,preflight_windows_ssh,validate_password_file
 
 class AgentSSHCrossPlatformTest(unittest.TestCase):
     def test_deploy_cli_supports_windows_and_password_file(self):
@@ -40,6 +40,31 @@ class AgentSSHCrossPlatformTest(unittest.TestCase):
             observed["argv"]=list(argv);observed["stdin"]=stdin_text;return SSHResult(0,"","")
         bootstrap_windows_agent_ssh(SSHDeployOptions(host="win-node01",ssh_user="Administrator"),controller_url="https://controller.example",pairing_token=secret,runner=runner)
         self.assertNotIn(secret," ".join(observed["argv"]));self.assertIn(secret,observed["stdin"]);self.assertEqual(observed["argv"][-1],"powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -")
+
+    def test_windows_encoded_powershell_forces_utf8_output(self):
+        import base64
+        command=_powershell_encoded_command("Write-Output 'CAPIVARA_TEST'")
+        encoded=command.rsplit(" ",1)[-1]
+        script=base64.b64decode(encoded).decode("utf-16le")
+        self.assertIn("System.Text.UTF8Encoding($false)",script)
+        self.assertIn("[Console]::OutputEncoding = $utf8",script)
+        self.assertIn("$OutputEncoding = $utf8",script)
+        self.assertLess(
+            script.index("[Console]::OutputEncoding = $utf8"),
+            script.index("Write-Output 'CAPIVARA_TEST'"),
+        )
+
+    def test_windows_bootstrap_stdin_forces_utf8_output(self):
+        script=_windows_bootstrap_stdin(
+            "https://controller.example:9443",
+            "cap_pair_test-token",
+            "v2.0.15",
+        )
+        self.assertIn("System.Text.UTF8Encoding($false)",script)
+        self.assertIn("[Console]::OutputEncoding = $utf8",script)
+        self.assertIn("$OutputEncoding = $utf8",script)
+        self.assertIn("/agent/install.ps1",script)
+        self.assertIn("-ReleaseTag $payload.release_tag",script)
 
     def test_cap_help_exposes_new_agent_commands(self):
         cap=(ROOT/"bin/cap").read_text(encoding="utf-8")

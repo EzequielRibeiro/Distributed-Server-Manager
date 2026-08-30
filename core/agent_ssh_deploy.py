@@ -875,6 +875,12 @@ def preflight_ssh(
 
 
 def _powershell_encoded_command(script: str) -> str:
+    script = (
+        "$utf8 = New-Object System.Text.UTF8Encoding($false)\n"
+        "[Console]::OutputEncoding = $utf8\n"
+        "$OutputEncoding = $utf8\n"
+        + script
+    )
     encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
     return (
         "powershell.exe -NoProfile -NonInteractive "
@@ -1017,6 +1023,10 @@ def _windows_bootstrap_stdin(
         }
     ).replace("'", "''")
     return (
+        "$utf8 = New-Object System.Text.UTF8Encoding($false)\n"
+        "[Console]::OutputEncoding = $utf8\n"
+        "$OutputEncoding = $utf8\n"
+        "$ProgressPreference='SilentlyContinue'\n"
         "$ErrorActionPreference='Stop'\n"
         f"$payload=ConvertFrom-Json '{payload}'\n"
         "$url=$payload.controller_url.TrimEnd('/')+'/agent/install.ps1'\n"
