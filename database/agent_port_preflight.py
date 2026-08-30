@@ -34,12 +34,12 @@ def port_pool_preflight(
 ) -> dict[str, Any]:
     """Return allocation readiness without mutating reservations or health."""
     width = _normalize_width(required_contiguous)
+    requested_protocol = _normalize_protocol(protocol) if protocol else None
     summary = effective_port_summary(
         backend,
         str(agent_id).strip(),
         refresh_runtime_health=False,
     )
-    requested_protocol = _normalize_protocol(protocol) if protocol else None
     ranges = []
     ready_ranges = []
 
