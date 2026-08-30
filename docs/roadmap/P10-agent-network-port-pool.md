@@ -6,24 +6,22 @@ Transformar a identidade de rede e a faixa de portas do Agent em contratos expl�
 
 A implementação não cria uma segunda fonte de verdade: reutiliza `AgentRuntimeRepository`, `AgentPortRepository`, `LocationRepository` e `AgentPublicNetworkRepository` já existentes.
 
-## Cronograma atualizado
+## Estado da implementação
 
-Estimativa total: **7–10 dias úteis**, incluindo paridade Windows e E2E.
-
-| Etapa | Escopo | Estimativa | Dependência |
-| --- | --- | ---: | --- |
-| P10.1 | Inventário de rede Linux e endereço primário | 1 dia | — |
-| P10.2 | Localização/Placement e Public Host na visão do Agent | 0,5–1 dia | P10.1 |
-| P10.3 | Conectividade Agent → Controller e diagnóstico sob demanda | 1–1,5 dia | P10.1 |
-| P10.4 | Port Pool explícito no CLI e instalação batch/CSV | 1–1,5 dia | — |
-| P10.5 | Preflight TCP/UDP e integração com allocator/Doctor | 1–1,5 dia | P10.4 |
-| P10.6 | `agent-details.html`: Rede do Host, Controller e Port Pool | 1 dia | P10.1–P10.5 |
-| P10.7 | Paridade Windows e migração de Agents existentes | 1–1,5 dia | P10.1–P10.6 |
-| P10.8 | E2E, regressão, upgrade e homologação | 1 dia | P10.1–P10.7 |
+| Etapa | Escopo | Estado |
+| --- | --- | --- |
+| P10.1 | Inventário de rede Linux e endereço primário | implementado |
+| P10.2 | Localização/Placement e Public Host na visão do Agent | implementado |
+| P10.3 | Conectividade Agent → Controller e diagnóstico sob demanda | integrado e coberto por gate |
+| P10.4 | Port Pool explícito no CLI e instalação batch/CSV | implementado |
+| P10.5 | Preflight TCP/UDP e integração com allocator/Doctor | implementado como readiness antes do provisioning |
+| P10.6 | `agent-details.html`: Rede do Host, Controller e Port Pool | implementado |
+| P10.7 | Paridade Windows e migração de Agents existentes | implementado no contrato de heartbeat; sem reinstalação |
+| P10.8 | E2E, regressão, upgrade e homologação | gate dedicado criado; homologação runtime depende de deploy do código aprovado |
 
 ## P10.1 — Inventário de rede do host
 
-O heartbeat deve preservar as chaves legadas de sockets (`tcp_listen`, `udp_listen`) e acrescentar, de forma best-effort:
+O heartbeat preserva as chaves de sockets (`tcp_listen`, `udp_listen`) e acrescenta, de forma best-effort:
 
 - hostname e FQDN;
 - interface primária;
@@ -32,13 +30,12 @@ O heartbeat deve preservar as chaves legadas de sockets (`tcp_listen`, `udp_list
 - IPv4/IPv6 por interface;
 - MAC address;
 - estado e MTU;
-- tipo de interface quando disponível;
 - gateway padrão IPv4/IPv6;
-- rota padrão e IP de origem;
+- rota padrão e IP de origem no Linux;
 - servidores DNS;
 - marcadores de completude por coletor.
 
-Ausência de `ip`, `ss`, rota ou DNS não deve derrubar o Agent. O inventário parcial deve ser publicado com marcadores de completude falsos.
+Ausência de um coletor não derruba o Agent. O inventário parcial é publicado com marcadores de completude falsos.
 
 ## P10.2 — Localização e Placement
 
@@ -53,73 +50,94 @@ Datacenter e Region nunca são inferidos a partir de IP local.
 
 ## P10.3 — Conectividade com o Controller
 
-A visão administrativa deve expor:
+O comando existente `cap agent controller test [URL] --json` é o contrato de diagnóstico sob demanda e foi incorporado ao gate P10. Ele valida:
 
-- URL/host do Controller;
-- endereço resolvido;
-- porta e protocolo;
-- interface e IP local usados como origem;
-- DNS: sucesso/falha;
-- conexão TCP: sucesso/falha;
-- TLS e validade quando HTTPS;
-- latência da tentativa;
-- último heartbeat;
-- última conexão bem-sucedida;
-- falha recente/reconexões quando disponíveis.
+- resolução DNS;
+- conexão TCP;
+- TLS quando HTTPS;
+- endpoint HTTP `/ping`;
+- latência;
+- certificado e validade quando aplicável.
 
-Um teste sob demanda deve reutilizar o Doctor/Agent control plane; não deve oferecer shell arbitrário.
+A visão administrativa usa heartbeat/health para representar a conectividade contínua com o Controller atual. O teste aprofundado permanece no Agent e não oferece shell remoto arbitrário.
 
-## P10.4/P10.5 — Port Pool e preflight
+## P10.4 — Port Pool e instalação batch
 
-A faixa padrão continua `24000-24999`, mas deixa de ser implícita.
+A faixa deixa de depender de convenção implícita. A instalação individual já recebe `--port-range START-END` e `--port-protocol tcp|udp|both`.
 
-### Instalação individual
+Foi acrescentado:
 
-O CLI deve exibir e permitir configurar a faixa antes do enrollment/ativação.
+```text
+cap agent deploy-batch FILE.csv [--continue-on-error] [--json]
+```
 
-### Instalação em lote
+O CSV aceita por Agent: host, usuário SSH, plataforma, credencial por arquivo, Controller, Region, Datacenter, nome, faixa/protocolo de portas, origem do pacote e timeouts. Senha em texto puro não é uma coluna válida.
 
-O CSV deve aceitar faixa por Agent. Agents em hosts diferentes podem compartilhar a mesma faixa sem conflito entre si.
+O batch chama o pipeline normal de `agent_deploy_cli.deploy()` para cada linha; não existe um segundo mecanismo de enrollment.
 
-### Preflight
+## P10.5 — Preflight TCP/UDP
 
-Antes da ativação:
+O preflight operacional ocorre depois do primeiro heartbeat e **antes de o Agent ser considerado elegível para provisioning/allocator**. Esse ponto é deliberado: a fonte autoritativa de sockets do host é o próprio Agent instalado, não uma inspeção paralela via bootstrap SSH.
 
-1. validar limites e tamanho da faixa;
-2. coletar sockets TCP/UDP locais;
-3. comparar com reservas persistidas;
-4. classificar conflitos externos;
-5. impedir configuração inválida ou capacidade operacional insuficiente;
-6. persistir a faixa aprovada.
+O contrato `port_pool_preflight()` cruza:
 
-Portas isoladas já ocupadas não invalidam automaticamente todo o Agent; devem ser excluídas da capacidade efetiva. Falhas de coleta que impeçam uma decisão segura são tratadas como erro de preflight.
+1. faixas persistidas;
+2. reservas de instâncias;
+3. sockets TCP/UDP observados pelo heartbeat;
+4. maior bloco contíguo disponível;
+5. conflitos externos;
+6. completude do inventário de rede.
+
+Uma porta isolada ocupada reduz a capacidade efetiva sem invalidar o Agent inteiro. Inventário incompleto é sinalizado explicitamente. O allocator continua consumindo as reservas persistidas e a disponibilidade efetiva existente.
 
 ## P10.6 — Agent Details
 
-A página deve apresentar três blocos distintos:
+`agent-details.html` carrega um módulo independente de rede que mostra:
 
-1. **Identidade / Rede do Host** — IP principal e inventário de interfaces;
-2. **Conectividade com o Controller** — rota, DNS, TCP/TLS, latência e heartbeat;
-3. **Localização e Placement** — Datacenter, Region, Public Host e Node.
+- interface principal;
+- IPv4/IPv6;
+- gateways;
+- DNS;
+- interfaces, MAC, MTU e estado;
+- completude do inventário;
+- heartbeat com o Controller;
+- preflight TCP e UDP e maior bloco contíguo disponível.
 
-A seção de portas deve mostrar faixa, capacidade, reservas, conflitos externos, disponíveis e última validação.
+Localização/Placement continua em bloco distinto.
 
-## P10.7 — Compatibilidade
+## P10.7 — Compatibilidade e Windows
 
-Agents existentes sem Port Pool explicitamente configurado devem ser migrados para a faixa que já utilizam, preservando `24000-24999` quando esse for o estado legado. Não deve ser exigida reinstalação.
+Não há migração de schema. Agents existentes continuam válidos e, após receberem o runtime atualizado, passam a enriquecer o mesmo `network_json` já persistido. Não é necessária reinstalação.
 
-Linux e Windows devem publicar o mesmo contrato de negócio, ainda que usem coletores nativos diferentes.
+Linux usa coletores `ip`, `/sys`, `ss` e resolvers locais. Windows usa `Get-NetIPConfiguration`, `Get-NetRoute` e `netstat`, mas publica o mesmo contrato de negócio.
+
+Port Pools já persistidos são preservados. O legado `24000-24999` continua compatível quando já configurado; novas instalações devem declará-lo explicitamente ou escolher outra faixa.
+
+## P10.8 — Validação
+
+O workflow `P10 Agent Network and Port Pool` executa syntax gates e testes para:
+
+- inventário Linux;
+- inventário Windows;
+- endereço/Location na API;
+- conectividade com Controller;
+- batch CSV;
+- preflight;
+- UI de rede;
+- roteamento público pelo `cap`.
+
+Os workflows gerais do projeto continuam fornecendo regressão de Agent Runtime, Agent Local CLI, External Controller↔Agent E2E e CI. Homologação no host ativo é uma etapa posterior ao merge e exige rollout explicitamente autorizado.
 
 ## Critérios de conclusão
 
-- `Endereço` mostra o endereço primário reportado quando não há `advertise_address` explícito;
-- múltiplas interfaces são visíveis no inventário;
+- `Endereço` usa o endereço primário reportado quando não há `advertise_address` explícito;
+- múltiplas interfaces ficam disponíveis no inventário;
 - Location/Placement usa as fontes administrativas existentes;
 - conectividade com o Controller é mensurável e diagnosticável;
 - CLI individual e CSV tornam a faixa explícita;
-- preflight TCP/UDP é executado antes da ativação;
-- allocator nunca seleciona uma porta reservada ou em conflito externo;
-- Doctor consegue detectar conflito surgido após instalação;
+- preflight TCP/UDP bloqueia elegibilidade de provisioning quando não há capacidade segura;
+- sockets externos são descontados da capacidade efetiva;
 - Agents existentes continuam operando sem reinstalação;
-- Linux e Windows possuem paridade de contrato;
-- E2E cobre instalação individual, batch, restart, upgrade e provisionamento real.
+- Linux e Windows possuem paridade do contrato de rede;
+- CI e gates E2E passam antes do merge;
+- homologação runtime/browser é comprovada somente após rollout autorizado.
