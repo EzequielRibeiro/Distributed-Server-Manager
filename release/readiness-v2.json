@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "release_line": "2.0",
-  "release_version": "2.0.14",
-  "tag_name": "v2.0.14",
+  "release_version": "2.0.15",
+  "tag_name": "v2.0.15",
   "status": "release-approved",
   "publish_release": false,
   "release_authorized": true,
@@ -62,7 +62,11 @@
     "game_agnostic_core": true,
     "active_installation_mutation": false,
     "automatic_release_publication": false,
-    "database_schema_parity": ["sqlite", "postgresql", "mysql-mariadb"],
+    "database_schema_parity": [
+      "sqlite",
+      "postgresql",
+      "mysql-mariadb"
+    ],
     "release_tag_matches_project_version": true,
     "release_notes_required": true
   }
