@@ -55,9 +55,9 @@ def _audit_api(principal,self,status,started):
   r=ApiAccessRepository(_backend());r.initialize();remote=self.client_address[0] if getattr(self,"client_address",None) else None;r.record_request(token_id=principal.get("token_id") if principal else None,method=self.command,path=urlparse(self.path).path,status_code=status,latency_ms=(time.monotonic()-started)*1000,remote_address=remote)
  except Exception:pass
 def _serve_windows_bootstrap(self):
- try:script=WINDOWS_INSTALL_FILE.read_text(encoding="utf-8");version=VERSION_FILE.read_text(encoding="utf-8").strip()
+ try:script=WINDOWS_INSTALL_FILE.read_text(encoding="utf-8")
  except OSError:self.send_error(404);return
- prefix=f'$env:CAPIVARA_RELEASE_TAG = if ($env:CAPIVARA_RELEASE_TAG) {{ $env:CAPIVARA_RELEASE_TAG }} else {{ "v{version}" }}\r\n';body=(prefix+script).encode();self.send_response(200);self.send_header("Content-Type","text/plain; charset=utf-8");self.send_header("Content-Length",str(len(body)));self.send_header("Cache-Control","no-store");self.end_headers();self.wfile.write(body)
+ body=script.encode();self.send_response(200);self.send_header("Content-Type","text/plain; charset=utf-8");self.send_header("Content-Length",str(len(body)));self.send_header("Cache-Control","no-store");self.end_headers();self.wfile.write(body)
 def _require_session_page(self,path):
  customer_page=path in {"/customer-change-password.html","/customer-members.html"}
  area="customer" if customer_page else "controller"

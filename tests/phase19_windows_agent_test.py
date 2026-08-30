@@ -10,6 +10,14 @@ import network_inventory as windows_network_inventory
 class Phase19WindowsAgentTest(unittest.TestCase):
  def test_install_command_uses_controller_bootstrap_and_only_pairing_secret(self):
   command=windows_agent_install_command(controller_url="https://controller.example",pairing_token="cap_pair_test-token");self.assertIn("/agent/install.ps1",command);self.assertIn("cap_pair_test-token",command);self.assertNotIn("password",command.lower());self.assertNotIn("admin",command.lower())
+ def test_windows_bootstrap_keeps_param_as_first_statement(self):
+  bootstrap=(ROOT/"agents"/"windows"/"installer"/"bootstrap-release.ps1").read_text(encoding="utf-8")
+  first=bootstrap.lstrip("\ufeff\r\n ")
+  self.assertTrue(first.startswith("param("), first[:120])
+  server=(ROOT/"dashboard"/"server_part13.py").read_text(encoding="utf-8")
+  serve=server.split("def _serve_windows_bootstrap(self):",1)[1].split("def _require_session_page",1)[0]
+  self.assertNotIn("CAPIVARA_RELEASE_TAG",serve)
+  self.assertNotIn("prefix=",serve)
  def test_windows_netstat_inventory_parses_tcp_and_udp(self):
   tcp=type("Completed",(),{"stdout":"  TCP    0.0.0.0:27015   0.0.0.0:0   LISTENING  123\n"})();udp=type("Completed",(),{"stdout":"  UDP    0.0.0.0:2302    *:*                  321\n"})()
   with patch("network_inventory.subprocess.run",side_effect=[tcp,udp]):inventory=windows_network_inventory.collect_network_inventory()
