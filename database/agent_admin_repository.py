@@ -239,8 +239,47 @@ class AgentAdminRepository:
                 session.close()
         return state
 
+    def _detach_alert_history(self, session: AlertSession, agent_id: str, node_id: str) -> dict[str, int]:
+        """Resolve live alerts and detach historical Agent/node foreign keys."""
+        ph = self.dialect.placeholder
+        now = self.dialect.current_timestamp
+        alerts = session.execute(
+            "SELECT id,level,state,message FROM alerts "
+            f"WHERE agent_id={ph} OR node_id={ph} ORDER BY id",
+            (agent_id, node_id),
+        ).fetchall()
+        resolved = 0
+        for alert in alerts:
+            if str(alert["state"]) not in {"OPEN", "ACKNOWLEDGED"}:
+                continue
+            session.execute(
+                "UPDATE alerts SET state='RESOLVED', "
+                f"resolved_at={now}, updated_at={now}, suppressed_until=NULL "
+                f"WHERE id={ph}",
+                (alert["id"],),
+            )
+            session.execute(
+                "INSERT INTO alert_events(alert_id,action,level,old_state,new_state,message) "
+                f"VALUES ({self.dialect.parameters(6)})",
+                (
+                    alert["id"],
+                    "RESOLVE",
+                    alert["level"],
+                    alert["state"],
+                    "RESOLVED",
+                    alert["message"],
+                ),
+            )
+            resolved += 1
+        session.execute(
+            "UPDATE alerts SET agent_id=NULL,node_id=NULL "
+            f"WHERE agent_id={ph} OR node_id={ph}",
+            (agent_id, node_id),
+        )
+        return {"preserved": len(alerts), "resolved": resolved}
+
     def remove(self, agent_id: str, *, confirmation: str, actor: str | None = None) -> dict[str, Any]:
-        """Remove an Agent registration and its dedicated node after safety checks."""
+        """Remove an Agent registration while preserving alert history."""
         self.initialize()
         agent_id = str(agent_id or "").strip()
         confirmation = str(confirmation or "").strip()
@@ -249,6 +288,7 @@ class AgentAdminRepository:
         if confirmation != agent_id:
             raise ValueError("confirmation must exactly match agent_id")
         ph = self.dialect.placeholder
+        alert_history = {"preserved": 0, "resolved": 0}
         with self.backend.transaction() as connection:
             session = AlertSession(self.backend, connection)
             try:
@@ -266,6 +306,7 @@ class AgentAdminRepository:
                         f"Agent has {len(instances)} instance(s) and cannot be removed: {ids}{suffix}"
                     )
 
+                alert_history = self._detach_alert_history(session, agent_id, node_id)
                 session.execute(f"DELETE FROM agents WHERE id={ph}", (agent_id,))
                 session.execute(f"DELETE FROM nodes WHERE id={ph}", (node_id,))
             finally:
@@ -279,4 +320,5 @@ class AgentAdminRepository:
             "removed": True,
             "removed_by": str(actor or "system"),
             "removed_at": _now(),
+            "alert_history": alert_history,
         }
