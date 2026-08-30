@@ -58,6 +58,7 @@ def port_pool_preflight(
     network = summary.get("agent", {}).get("network")
     if not isinstance(network, dict):
         network = {}
+    inventory_complete = bool(network) and bool(network.get("complete", False))
 
     reasons: list[str] = []
     if not ranges:
@@ -66,18 +67,19 @@ def port_pool_preflight(
         reasons.append("insufficient_contiguous_capacity")
     if int(summary.get("observed_conflict_count") or 0):
         reasons.append("unmanaged_os_socket_overlap")
-    if network and not bool(network.get("complete", True)):
+    if not inventory_complete:
         reasons.append("network_inventory_incomplete")
 
     return {
         "agent_id": str(agent_id).strip(),
         "protocol": requested_protocol,
         "required_contiguous": width,
-        "ready": bool(ready_ranges),
+        "ready": bool(ready_ranges) and inventory_complete,
         "ranges": ranges,
-        "eligible_range_count": len(ready_ranges),
+        "eligible_range_count": len(ready_ranges) if inventory_complete else 0,
         "conflict_count": int(summary.get("conflict_count") or 0),
         "observed_conflict_count": int(summary.get("observed_conflict_count") or 0),
+        "network_inventory_complete": inventory_complete,
         "reasons": reasons,
     }
 
