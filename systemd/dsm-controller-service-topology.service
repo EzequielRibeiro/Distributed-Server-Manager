@@ -1,0 +1,16 @@
+[Unit]
+Description=Capivara DSM Controller Service Topology Reconciler
+After=local-fs.target
+Before=dsm-dashboard-worker.service dsm-alert-engine.service dsm-dashboard.service
+Conflicts=dsm-monitor.service dsm-scheduler.service dsm-automation-worker.service
+RequiresMountsFor=/opt/dsm
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/dsm/systemd/controller-service-topology.sh
+RemainAfterExit=yes
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
