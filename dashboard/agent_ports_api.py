@@ -45,7 +45,6 @@ def _agent_metadata(backend, agent_id: str) -> dict[str, Any]:
             session.close()
     if not row:
         return {}
-
     raw = row["metadata_json"]
     if raw is None:
         return {}
@@ -65,6 +64,27 @@ def _agent_metadata(backend, agent_id: str) -> dict[str, Any]:
     return {}
 
 
+def _agent_location(backend, agent_id: str) -> dict[str, Any]:
+    dialect = dialect_for_backend(backend)
+    ph = dialect.placeholder
+    with backend.connect() as connection:
+        session = AlertSession(backend, connection)
+        try:
+            row = session.execute(
+                "SELECT al.datacenter_id,al.public_host,al.latitude,al.longitude,"
+                "d.name AS datacenter_name,d.city,d.country_code,"
+                "r.id AS region_id,r.name AS region_name "
+                "FROM agent_locations al "
+                "JOIN datacenters d ON d.id=al.datacenter_id "
+                "JOIN regions r ON r.id=d.region_id "
+                f"WHERE al.agent_id={ph} AND al.status='active'",
+                (agent_id,),
+            ).fetchone()
+        finally:
+            session.close()
+    return dict(row) if row else {}
+
+
 def _allowed(user: dict[str, Any] | None, agent: dict[str, Any]) -> bool:
     if not user:
         return False
@@ -79,11 +99,7 @@ def _allowed(user: dict[str, Any] | None, agent: dict[str, Any]) -> bool:
 def _runtime_network_identity(snapshot: dict[str, Any]) -> dict[str, Any]:
     network = snapshot.get("network") if isinstance(snapshot.get("network"), dict) else {}
     address = snapshot.get("address") or network.get("primary_ipv4") or network.get("primary_ipv6")
-    return {
-        "hostname": snapshot.get("hostname"),
-        "address": address,
-        "network": network,
-    }
+    return {"hostname": snapshot.get("hostname"), "address": address, "network": network}
 
 
 def list_agents_for_user(user, backend):
@@ -112,6 +128,7 @@ def list_agents_for_user(user, backend):
         item["architecture"] = snapshot.get("architecture")
         item["capivara_version"] = snapshot.get("capivara_version")
         item.update(_runtime_network_identity(snapshot))
+        item.update(_agent_location(backend, str(item["id"])))
         enriched.append(item)
     return _json_ready(enriched)
 
@@ -139,6 +156,7 @@ def agent_ports_for_user(user, backend, agent_id):
         "health_status": runtime.get("health_status") or "offline",
         "last_seen": runtime.get("last_seen"),
         **_runtime_network_identity(runtime),
+        **_agent_location(backend, str(agent["id"])),
     })
     result_agent["metadata"] = metadata
     result_agent["recent_logs"] = metadata.get("recent_logs", [])
@@ -152,7 +170,6 @@ def agent_ports_for_user(user, backend, agent_id):
 def set_agent_ports_for_user(user, backend, payload):
     if not isinstance(payload, dict):
         raise ValueError("payload must be an object")
-
     repository = _repository(backend)
     agent_id = str(payload.get("agent_id", "")).strip()
     agent = repository.agent(agent_id)
@@ -160,7 +177,6 @@ def set_agent_ports_for_user(user, backend, payload):
         raise ValueError("agent not found")
     if not _allowed(user, agent):
         raise PermissionError("agent is outside user scope")
-
     protocol = str(payload.get("protocol", "both")).strip().lower()
     if protocol == "both":
         protocols = ("tcp", "udp")
@@ -168,17 +184,14 @@ def set_agent_ports_for_user(user, backend, payload):
         protocols = (protocol,)
     else:
         raise ValueError("invalid protocol")
-
     try:
         start_port = int(payload.get("start_port"))
         end_port = int(payload.get("end_port"))
     except (TypeError, ValueError) as exc:
         raise ValueError("start_port and end_port must be integers") from exc
-
     force = bool(payload.get("force", False))
     if force and user.get("role") != "admin":
         raise PermissionError("forced range changes require admin")
-
     result = repository.set_ranges(
         agent_id,
         protocols=protocols,
