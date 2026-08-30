@@ -19,14 +19,17 @@ jobs:
             dashboard/controller_log_journal_http.py \
             dashboard/server_part17.py \
             tests/p8_admin_observability_test.py \
-            tests/controller_log_journal_test.py
+            tests/controller_log_journal_test.py \
+            tests/controller_log_refresh_ui_test.py
           node --check dashboard/web/admin-observability.js
+          node --check dashboard/web/observability.js
       - name: Run P8 contract tests
         env:
           PYTHONPATH: dashboard:database:core:.
         run: |
           python3 -m unittest tests/p8_admin_observability_test.py
           python3 -m unittest tests/controller_log_journal_test.py
+          python3 -m unittest tests/controller_log_refresh_ui_test.py
       - name: Validate P8 composition contract
         run: |
           grep -F 'install_admin_observability' dashboard/server_part17.py
@@ -36,3 +39,6 @@ jobs:
           grep -F 'install_controller_log_journal_http' dashboard/server_part17.py
           grep -F 'SupplementaryGroups=systemd-journal' systemd/dsm-controller-log-reader.service
           ! grep -F 'SupplementaryGroups=systemd-journal' systemd/dsm-dashboard.service
+          grep -F 'document.createDocumentFragment()' dashboard/web/observability.js
+          grep -F 'if(t.dataset.logSignature===signature)return' dashboard/web/observability.js
+          ! grep -F 't.replaceChildren();' dashboard/web/observability.js
