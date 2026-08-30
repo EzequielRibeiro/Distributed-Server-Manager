@@ -16,6 +16,7 @@ from core.placement_diagnostics import placement_status
 from agent_runtime_repository import AgentRuntimeRepository
 from alert_repository import AlertSession
 from backend import DatabaseBackend
+from controller_service_health import controller_service_health
 
 
 class PlacementStatusRepository:
@@ -57,8 +58,6 @@ class PlacementStatusRepository:
         if initialize:
             self.initialize()
         if refresh_health:
-            # Heartbeat age reconciliation is useful for operational placement,
-            # but it is deliberately optional for read-only diagnostics.
             AgentRuntimeRepository(self.backend).refresh_health()
 
         with self.session() as session:
@@ -110,4 +109,13 @@ class PlacementStatusRepository:
             )
 
         result.update(placement_status(result))
+        service_health = controller_service_health()
+        result["controller_services"] = service_health
+        if service_health.get("checked") and not service_health.get("ready"):
+            reasons = list(result.get("placement_reasons") or [])
+            if "controller_services_not_ready" not in reasons:
+                reasons.append("controller_services_not_ready")
+            result["placement_reasons"] = reasons
+            result["placement_ready"] = False
+            result["placement_reason"] = "controller_services_not_ready"
         return result

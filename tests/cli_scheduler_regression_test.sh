@@ -6,17 +6,19 @@ INSTALLER="${ROOT}/install.sh"
 CORE_INSTALLER="${ROOT}/install-core.sh"
 CORE_ENGINE="${ROOT}/install-core-engine.sh"
 UPDATER="${ROOT}/update.sh"
+WORKER="${ROOT}/dashboard/workers/worker.sh"
 SCHEDULER_UNIT="${ROOT}/systemd/dsm-scheduler.service"
 
 fail(){ echo "FAIL: $*" >&2; exit 1; }
 
-grep -Fq 'ExecStart=/bin/bash /opt/dsm/scheduler/scheduler.sh run' \
-    "${SCHEDULER_UNIT}" \
-    || fail "scheduler unit does not use scheduler.sh run"
+[[ ! -e "${SCHEDULER_UNIT}" ]] \
+    || fail "retired standalone scheduler unit is still shipped"
+grep -Fq 'start_worker scheduler_worker.sh' "${WORKER}" \
+    || fail "consolidated Dashboard worker does not start scheduler_worker.sh"
 
-if grep -Fq 'scheduler.sh daemon' "${SCHEDULER_UNIT}"
+if grep -Fq 'scheduler.sh daemon' "${WORKER}"
 then
-    fail "scheduler unit still references unsupported daemon action"
+    fail "consolidated worker still references unsupported scheduler daemon action"
 fi
 
 grep -Fq 'install-core.sh' "${INSTALLER}" \
@@ -43,4 +45,4 @@ grep -Fq 'scheduler/cli.sh' "${ROOT}/bin/cap" \
 bash "${ROOT}/tests/scheduler_management_test.sh"
 bash "${ROOT}/tests/update_handoff_test.sh"
 
-echo "CLI, scheduler and updater handoff regression tests passed."
+echo "CLI, consolidated scheduler and updater handoff regression tests passed."
