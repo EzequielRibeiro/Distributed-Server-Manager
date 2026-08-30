@@ -1,0 +1,52 @@
+name: P10 Agent Network and Port Pool
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax
+        run: |
+          python3 -m py_compile \
+            agents/linux/runtime/network_inventory.py \
+            agents/linux/runtime/controller_cli.py \
+            agents/windows/runtime/network_inventory.py \
+            database/agent_deploy_batch_cli.py \
+            database/agent_port_availability.py \
+            database/agent_port_preflight.py \
+            dashboard/agent_ports_api.py \
+            tests/linux_agent_network_inventory_test.py \
+            tests/windows_agent_network_inventory_test.py \
+            tests/agent_network_identity_contract_test.py \
+            tests/agent_port_preflight_test.py \
+            tests/agent_deploy_batch_test.py \
+            tests/p10_controller_connectivity_contract_test.py \
+            tests/p10_agent_network_ui_contract_test.py
+          bash -n bin/cap
+          node --check dashboard/web/agent-network-panel.js
+      - name: Run P10 tests
+        env:
+          PYTHONPATH: dashboard:database:core:agents/linux/runtime:.
+        run: |
+          python3 -m unittest tests/linux_agent_network_inventory_test.py
+          python3 -m unittest tests/windows_agent_network_inventory_test.py
+          python3 -m unittest tests/agent_network_identity_contract_test.py
+          python3 -m unittest tests/agent_port_preflight_test.py
+          python3 -m unittest tests/agent_deploy_batch_test.py
+          python3 -m unittest tests/p10_controller_connectivity_contract_test.py
+          python3 -m unittest tests/p10_agent_network_ui_contract_test.py
+      - name: Validate integrated contracts
+        run: |
+          grep -F 'cap agent deploy-batch FILE.csv' bin/cap
+          grep -F 'agent_deploy_batch_cli.py' bin/cap
+          grep -F 'port_pool_preflight' dashboard/agent_ports_api.py
+          grep -F 'primary_ipv4' agents/linux/runtime/network_inventory.py
+          grep -F 'Get-NetIPConfiguration' agents/windows/runtime/network_inventory.py
+          grep -F 'agent-network-panel.js?v=1' dashboard/web/agent-details.html
+          grep -F '"/agent-network-panel.js"' dashboard/agent_public_network_http.py
+          grep -F 'cap agent controller test' dashboard/web/agent-network-panel.js
