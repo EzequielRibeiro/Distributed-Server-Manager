@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from controller_service_health import controller_service_health
 from registry_repository import RegistryRepository
 from runtime_backend import backend_from_environment
 from user_repository import UserRepository
@@ -46,6 +47,16 @@ def operational_readiness(root: Path) -> dict[str, Any]:
             _check("agent", topology["agents"] > 0,
                    f"agents={topology['agents']}"),
         ))
+        service_health = controller_service_health()
+        service_detail = "not checked"
+        if service_health.get("checked"):
+            inactive = list(service_health.get("inactive") or [])
+            service_detail = "ready" if not inactive else "inactive=" + ",".join(inactive)
+        checks.append(_check(
+            "controller_services",
+            bool(service_health.get("ready")),
+            service_detail,
+        ))
         required_directories = ("config", "data", "logs", "runtime")
         missing = [name for name in required_directories
                    if not (root / name).is_dir()]
@@ -71,6 +82,7 @@ def operational_readiness(root: Path) -> dict[str, Any]:
             "ready": ready,
             "database_backend": backend.name,
             "topology": topology,
+            "controller_services": service_health,
             "checks": checks,
         }
     finally:
