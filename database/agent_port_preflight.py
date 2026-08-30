@@ -89,15 +89,15 @@ def require_port_pool_preflight(
     agent_id: str,
     network_profile,
 ) -> dict[str, dict[str, Any]]:
-    """Fail closed before allocation when a runtime Port Pool is not eligible."""
-    if network_profile is None:
+    """Fail closed before allocation when a declared runtime Port Pool is not eligible."""
+    if not network_profile:
         return {}
 
     from core.network.port_profile import PortProfile
 
     profile = PortProfile.from_mapping(network_profile)
     if profile is None:
-        raise RuntimeError("invalid empty network profile")
+        return {}
 
     results: dict[str, dict[str, Any]] = {}
     for protocol in sorted(profile.protocols):
