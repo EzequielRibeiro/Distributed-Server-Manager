@@ -16,6 +16,8 @@ for path in (ROOT, ROOT / "database", ROOT / "dashboard", ROOT / "core"):
         sys.path.insert(0, str(path))
 
 from admin_management_repository import AdminManagementRepository
+from agent_admin_repository import AgentAdminRepository
+from alert_repository import AlertRepository
 from customer_management_repository import CustomerManagementRepository
 from runtime_backend import backend_from_environment
 from system_user_repository import SystemUserRepository
@@ -46,6 +48,7 @@ def main() -> int:
     with admin.session() as session:
         baseline = session.execute("SELECT name,checksum FROM schema_baseline").fetchall()
         existing_customers = session.execute("SELECT COUNT(*) AS total FROM customers").fetchone()
+        upgrades = session.execute("SELECT version,name FROM baseline_upgrades ORDER BY version").fetchall()
         tables = {
             str(row["table_name"])
             for row in session.execute(
@@ -56,6 +59,11 @@ def main() -> int:
         raise AssertionError(f"expected exactly one schema_baseline row, got {len(baseline)}")
     if int(existing_customers["total"] or 0) != 0:
         raise AssertionError("isolated database was not empty before bootstrap")
+    if [(int(row["version"]), str(row["name"])) for row in upgrades][-1] != (
+        4,
+        "resolved_alert_history_detach",
+    ):
+        raise AssertionError("Baseline v2 did not seed alert-history upgrade 4")
     required = {
         "customers", "dashboard_users", "service_contracts", "instances",
         "instance_permission_grants", "instance_file_commands",
@@ -77,6 +85,54 @@ def main() -> int:
             "INSERT INTO controllers(id,node_id,name,status) VALUES (%s,%s,%s,%s)",
             ("isolated-controller", "isolated-controller-node", "Isolated Controller", "active"),
         )
+        session.execute(
+            "INSERT INTO nodes(id,name,role,status) VALUES (%s,%s,%s,%s)",
+            ("isolated-agent-node", "Isolated Agent Node", "agent", "active"),
+        )
+        session.execute(
+            "INSERT INTO agents(id,controller_id,node_id,name,status) VALUES (%s,%s,%s,%s,%s)",
+            (
+                "isolated-agent",
+                "isolated-controller",
+                "isolated-agent-node",
+                "Isolated Agent",
+                "active",
+            ),
+        )
+
+    alerts = AlertRepository(backend)
+    common_alert = {
+        "rule_id": "isolated-agent-removal-rule",
+        "level": "CRITICAL",
+        "scope": "agent",
+        "controller_id": "isolated-controller",
+        "agent_id": "isolated-agent",
+        "node_id": "isolated-agent-node",
+    }
+    alerts.open_alert(alert_id="isolated-resolved-alert", message="historical", **common_alert)
+    alerts.resolve_alert("isolated-resolved-alert")
+    resolved_history_before = alerts.alert_history("isolated-resolved-alert")
+    alerts.open_alert(alert_id="isolated-open-alert", message="active", **common_alert)
+
+    removal = AgentAdminRepository(backend).remove(
+        "isolated-agent",
+        confirmation="isolated-agent",
+        actor="isolated-ci",
+    )
+    if removal["alert_history"] != {"preserved": 2, "resolved": 1}:
+        raise AssertionError(f"unexpected alert-history removal result: {removal['alert_history']}")
+    resolved_alert = alerts.get_alert("isolated-resolved-alert")
+    open_alert = alerts.get_alert("isolated-open-alert")
+    for item in (resolved_alert, open_alert):
+        if item is None or item["state"] != "RESOLVED":
+            raise AssertionError("Agent removal did not preserve resolved alert history")
+        if item["scope"] != "agent" or item["agent_id"] is not None or item["node_id"] is not None:
+            raise AssertionError("resolved Agent alert was not historically detached")
+    if alerts.alert_history("isolated-resolved-alert") != resolved_history_before:
+        raise AssertionError("already-resolved alert history changed during Agent removal")
+    open_history = alerts.alert_history("isolated-open-alert")
+    if [item["action"] for item in open_history] != ["OPEN", "RESOLVE"]:
+        raise AssertionError("open Agent alert did not receive a RESOLVE history event")
 
     system_users.save(
         username="isolated-admin",
