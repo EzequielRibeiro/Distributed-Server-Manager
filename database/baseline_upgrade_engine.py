@@ -13,6 +13,7 @@ from typing import Any, Callable, Mapping
 
 from activity_audit_schema import activity_audit_ddl
 from agent_public_network_schema import ensure_agent_public_network_schema
+from alert_scope_history_schema import alert_scope_history_ddl
 from backend import DatabaseMigrationError
 from discord_integration_schema import discord_integration_ddl
 
@@ -166,10 +167,17 @@ def _upgrade_activity_audit(backend: Any, connection: Any) -> None:
     _execute_script(backend, connection, activity_audit_ddl(backend.name))
 
 
+def _upgrade_resolved_alert_history_detach(backend: Any, connection: Any) -> None:
+    ddl = alert_scope_history_ddl(backend.name)
+    if ddl:
+        _execute_script(backend, connection, ddl)
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
     BaselineUpgrade(3, "activity_audit", _upgrade_activity_audit),
+    BaselineUpgrade(4, "resolved_alert_history_detach", _upgrade_resolved_alert_history_detach),
 )
 
 
