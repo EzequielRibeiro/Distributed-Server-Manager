@@ -5,7 +5,7 @@ import json,sys,time
 from datetime import datetime,timezone
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
-for path in (ROOT,ROOT/"database"):
+for path in (ROOT,ROOT/"core",ROOT/"database"):
  if str(path) not in sys.path:sys.path.insert(0,str(path))
 from alert_repository import AlertSession
 from automation_engine import AutomationEngine
