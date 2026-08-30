@@ -13,6 +13,7 @@ for item in (ROOT, ROOT / "database"):
 
 from agent_admin_repository import AgentAdminRepository
 from agent_pairing_repository import AgentPairingRepository
+from alert_repository import AlertRepository
 from backend import DatabaseConfig
 from backend_factory import create_backend
 from registry import installation_profile_identity
@@ -46,10 +47,50 @@ class AgentAdminRemovalTest(unittest.TestCase):
         result = self.admin.remove(self.agent_id, confirmation=self.agent_id, actor="admin")
         self.assertTrue(result["removed"])
         self.assertEqual(result["node_id"], self.node_id)
+        self.assertEqual(result["alert_history"], {"preserved": 0, "resolved": 0})
         self.assertEqual(self.count("agents", "id", self.agent_id), 0)
         self.assertEqual(self.count("nodes", "id", self.node_id), 0)
         self.assertEqual(self.count("agent_credentials", "agent_id", self.agent_id), 0)
         self.assertEqual(self.count("agent_runtime_inventory", "agent_id", self.agent_id), 0)
+
+    def test_remove_preserves_resolved_and_resolves_open_alert_history(self):
+        alerts = AlertRepository(self.backend)
+        resolved_id = "agent-remove-resolved"
+        open_id = "agent-remove-open"
+        common = {
+            "rule_id": "agent-remove-test-rule",
+            "level": "CRITICAL",
+            "scope": "agent",
+            "controller_id": self.controller_id,
+            "agent_id": self.agent_id,
+            "node_id": self.node_id,
+        }
+        alerts.open_alert(alert_id=resolved_id, message="historical", **common)
+        alerts.resolve_alert(resolved_id)
+        before_resolved_history = alerts.alert_history(resolved_id)
+        alerts.open_alert(alert_id=open_id, message="active", **common)
+
+        result = self.admin.remove(self.agent_id, confirmation=self.agent_id, actor="admin")
+
+        self.assertEqual(result["alert_history"], {"preserved": 2, "resolved": 1})
+        self.assertEqual(self.count("agents", "id", self.agent_id), 0)
+        self.assertEqual(self.count("nodes", "id", self.node_id), 0)
+
+        resolved = alerts.get_alert(resolved_id)
+        active = alerts.get_alert(open_id)
+        self.assertIsNotNone(resolved)
+        self.assertIsNotNone(active)
+        self.assertEqual(resolved["state"], "RESOLVED")
+        self.assertEqual(active["state"], "RESOLVED")
+        self.assertIsNone(resolved["agent_id"])
+        self.assertIsNone(resolved["node_id"])
+        self.assertIsNone(active["agent_id"])
+        self.assertIsNone(active["node_id"])
+        self.assertEqual(alerts.alert_history(resolved_id), before_resolved_history)
+        active_history = alerts.alert_history(open_id)
+        self.assertEqual([item["action"] for item in active_history], ["OPEN", "RESOLVE"])
+        self.assertEqual(active_history[-1]["old_state"], "OPEN")
+        self.assertEqual(active_history[-1]["new_state"], "RESOLVED")
 
     def test_remove_requires_exact_agent_id_confirmation(self):
         with self.assertRaisesRegex(ValueError, "confirmation must exactly match agent_id"):
