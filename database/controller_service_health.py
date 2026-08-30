@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 REQUIRED_CONTROLLER_SERVICES = (
+    "dsm-controller-service-topology.service",
     "dsm-controller-log-reader.service",
     "dsm-dashboard-worker.service",
     "dsm-alert-engine.service",
