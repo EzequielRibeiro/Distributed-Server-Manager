@@ -25,7 +25,39 @@ function text(id, value, fallback = "—") { const element = $(id); if (element)
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char])); }
 function isOnline(agent) { return ["online","healthy","ok","active","running"].includes(String(agent?.health_status || agent?.health || agent?.status || "").toLowerCase()); }
 function formatTime(value) { if (!value) return "—"; const date = typeof value === "number" ? new Date(value * 1000) : new Date(value); return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleTimeString("pt-BR", {hour:"2-digit",minute:"2-digit"}); }
+function formatDateTime(value) { if (!value) return "—"; const date = typeof value === "number" ? new Date(value * 1000) : new Date(value); return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("pt-BR", {dateStyle:"short",timeStyle:"medium"}); }
 function eventText(event) { const type=String(event?.type||event?.action||"Evento").replaceAll("_"," ").toLowerCase(); const message=event?.message||event?.details||event?.data?.message||""; return message?`${type} · ${message}`:type; }
+function agentHost(agent) { return agent?.hostname || agent?.address || agent?.ip || agent?.public_host || agent?.node_id || "—"; }
+function agentPlatform(agent) { return agent?.platform || agent?.system || agent?.os_name || agent?.os || "—"; }
+function agentLocation(agent) {
+    const region = agent?.region_id || agent?.region || "";
+    const datacenter = agent?.datacenter_id || agent?.datacenter || "";
+    return [region, datacenter].filter(Boolean).join(" / ") || "—";
+}
+function agentState(agent) { return String(agent?.health_status || agent?.health || agent?.status || "unknown"); }
+
+function renderAgentTable(agents) {
+    const body = $("home-agent-table-body");
+    if (!body) return;
+    if (!agents.length) {
+        body.innerHTML = '<tr><td colspan="7" class="cap-agent-table-empty">Nenhum Agent registrado.</td></tr>';
+        return;
+    }
+    body.innerHTML = agents.map(agent => {
+        const state = agentState(agent);
+        const online = isOnline(agent);
+        const heartbeat = agent.last_heartbeat || agent.heartbeat_at || agent.last_seen || agent.updated_at;
+        return `<tr>
+            <td><a class="cap-agent-name" href="agents.html">${escapeHtml(agent.name || agent.id || "Agent")}</a><small>${escapeHtml(agent.id || "—")}</small></td>
+            <td>${escapeHtml(agentHost(agent))}</td>
+            <td>${escapeHtml(agentPlatform(agent))}</td>
+            <td>${escapeHtml(agentLocation(agent))}</td>
+            <td><span class="cap-agent-state ${online ? "online" : "offline"}"><i></i>${escapeHtml(state)}</span></td>
+            <td class="cap-agent-number">${escapeHtml(Number(agent.instance_count || 0))}</td>
+            <td>${escapeHtml(formatDateTime(heartbeat))}</td>
+        </tr>`;
+    }).join("");
+}
 
 function renderAgents(result) {
     const agents = Array.isArray(result?.agents) ? result.agents : [];
@@ -33,6 +65,7 @@ function renderAgents(result) {
     const instances = agents.reduce((total, agent) => total + Number(agent.instance_count || 0), 0);
     const running = agents.reduce((total, agent) => total + Number(agent.running_instance_count || agent.instances_running || 0), 0);
     text("home-agent-total", agents.length); text("home-agent-online", `${online} online`); text("home-agent-offline", `${Math.max(0, agents.length-online)} offline`); text("home-instance-total", instances); text("home-instance-total-copy", instances); text("home-running-total", running); text("home-infra-agents", agents.length); text("home-infra-online", online);
+    renderAgentTable(agents);
     const list=$("home-agent-bars"); if(list){const maxInstances=Math.max(1,...agents.map(agent=>Number(agent.instance_count||0)));list.innerHTML=agents.slice(0,7).map(agent=>{const count=Number(agent.instance_count||0);const pct=Math.round((count/maxInstances)*100);return `<div class="cap-bar-row"><span>${escapeHtml(agent.name||agent.id)}</span><div class="cap-bar"><i style="width:${pct}%"></i></div><b>${count}</b></div>`}).join("")||'<div class="cap-empty">Nenhum Agent registrado.</div>'}
     const health=$("home-health-agents"); if(health){health.textContent=agents.length?`${online} / ${agents.length} online`:"Nenhum Agent";health.className=online===agents.length&&agents.length?"cap-good":"cap-warn"}
 }
