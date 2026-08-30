@@ -128,6 +128,14 @@ class AgentPortPreflightTest(unittest.TestCase):
         self.assertEqual(result, {})
         preflight.assert_not_called()
 
+    def test_required_gate_is_noop_for_empty_network_profile(self):
+        with mock.patch.object(agent_port_preflight, "port_pool_preflight") as preflight:
+            result = agent_port_preflight.require_port_pool_preflight(
+                object(), "agent-1", {}
+            )
+        self.assertEqual(result, {})
+        preflight.assert_not_called()
+
     def test_customer_creation_calls_required_preflight_before_reservation(self):
         source = (ROOT / "dashboard" / "customer_instance_creation.py").read_text(
             encoding="utf-8"
