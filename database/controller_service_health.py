@@ -18,7 +18,19 @@ REQUIRED_CONTROLLER_SERVICES = (
 
 
 def _systemd_available() -> bool:
-    return Path("/run/systemd/system").is_dir() and shutil.which("systemctl") is not None
+    installed_dashboard = any(
+        path.is_file()
+        for path in (
+            Path("/etc/systemd/system/dsm-dashboard.service"),
+            Path("/usr/lib/systemd/system/dsm-dashboard.service"),
+            Path("/lib/systemd/system/dsm-dashboard.service"),
+        )
+    )
+    return (
+        installed_dashboard
+        and Path("/run/systemd/system").is_dir()
+        and shutil.which("systemctl") is not None
+    )
 
 
 def controller_service_health() -> dict[str, Any]:
@@ -30,7 +42,7 @@ def controller_service_health() -> dict[str, Any]:
             "required": list(REQUIRED_CONTROLLER_SERVICES),
             "inactive": [],
             "states": {},
-            "reason": "systemd_unavailable",
+            "reason": "controller_systemd_not_installed",
         }
 
     states: dict[str, str] = {}
