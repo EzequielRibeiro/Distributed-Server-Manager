@@ -6,6 +6,8 @@ transport, while keeping platform-specific preflight and bootstrap commands.
 """
 from __future__ import annotations
 
+import base64
+
 import hashlib
 import ipaddress
 import json
@@ -871,6 +873,16 @@ def preflight_ssh(
     }
 
 
+
+def _powershell_encoded_command(script: str) -> str:
+    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    return (
+        "powershell.exe -NoProfile -NonInteractive "
+        "-ExecutionPolicy Bypass "
+        f"-EncodedCommand {encoded}"
+    )
+
+
 def preflight_windows_ssh(
     options: SSHDeployOptions, *, runner: SSHRunner = _default_runner
 ) -> dict[str, Any]:
@@ -884,9 +896,7 @@ def preflight_windows_ssh(
     )
     result = _run_ssh(
         options,
-        'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "'
-        + powershell
-        + '"',
+        _powershell_encoded_command(powershell),
         runner=runner,
         timeout=options.connect_timeout + 15,
     )
@@ -932,9 +942,7 @@ def remote_windows_agent_present_ssh(
     return (
         _run_ssh(
             options,
-            'powershell.exe -NoProfile -NonInteractive -Command "'
-            + powershell
-            + '"',
+            _powershell_encoded_command(powershell),
             runner=runner,
             timeout=options.connect_timeout + 5,
         ).returncode
