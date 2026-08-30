@@ -1,7 +1,7 @@
 [Unit]
 Description=Capivara DSM Dashboard Web Interface
-After=network-online.target
-Wants=network-online.target
+After=network-online.target dsm-controller-log-reader.service
+Wants=network-online.target dsm-controller-log-reader.service
 RequiresMountsFor=/opt/dsm
 
 [Service]
