@@ -47,26 +47,21 @@ def _agent_metadata(backend, agent_id: str) -> dict[str, Any]:
         return {}
 
     raw = row["metadata_json"]
-
     if raw is None:
         return {}
-
     if isinstance(raw, dict):
         return raw
-
     if isinstance(raw, (bytes, bytearray)):
         try:
             raw = raw.decode("utf-8")
         except UnicodeDecodeError:
             return {}
-
     if isinstance(raw, str):
         try:
             value = json.loads(raw)
         except (TypeError, ValueError):
             return {}
         return value if isinstance(value, dict) else {}
-
     return {}
 
 
@@ -79,6 +74,16 @@ def _allowed(user: dict[str, Any] | None, agent: dict[str, Any]) -> bool:
     if role == "controller":
         return bool(user.get("scope_id") and user.get("scope_id") == agent.get("controller_id"))
     return False
+
+
+def _runtime_network_identity(snapshot: dict[str, Any]) -> dict[str, Any]:
+    network = snapshot.get("network") if isinstance(snapshot.get("network"), dict) else {}
+    address = snapshot.get("address") or network.get("primary_ipv4") or network.get("primary_ipv6")
+    return {
+        "hostname": snapshot.get("hostname"),
+        "address": address,
+        "network": network,
+    }
 
 
 def list_agents_for_user(user, backend):
@@ -106,6 +111,7 @@ def list_agents_for_user(user, backend):
         item["os_name"] = snapshot.get("os_name")
         item["architecture"] = snapshot.get("architecture")
         item["capivara_version"] = snapshot.get("capivara_version")
+        item.update(_runtime_network_identity(snapshot))
         enriched.append(item)
     return _json_ready(enriched)
 
@@ -130,6 +136,9 @@ def agent_ports_for_user(user, backend, agent_id):
         "os_name": runtime.get("os_name"),
         "architecture": runtime.get("architecture"),
         "capivara_version": runtime.get("capivara_version"),
+        "health_status": runtime.get("health_status") or "offline",
+        "last_seen": runtime.get("last_seen"),
+        **_runtime_network_identity(runtime),
     })
     result_agent["metadata"] = metadata
     result_agent["recent_logs"] = metadata.get("recent_logs", [])
