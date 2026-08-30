@@ -45,6 +45,26 @@ class AgentPortPreflightTest(unittest.TestCase):
         self.assertIn("unmanaged_os_socket_overlap", result["reasons"])
         self.assertIn("network_inventory_incomplete", result["reasons"])
 
+    def test_incomplete_inventory_blocks_otherwise_free_range(self):
+        with mock.patch.object(
+            agent_port_preflight,
+            "effective_port_summary",
+            return_value=self.summary(contiguous=100, complete=False),
+        ):
+            result = agent_port_preflight.port_pool_preflight(object(), "agent-1", protocol="tcp", required_contiguous=4)
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["eligible_range_count"], 0)
+        self.assertFalse(result["network_inventory_complete"])
+        self.assertEqual(result["reasons"], ["network_inventory_incomplete"])
+
+    def test_missing_inventory_blocks_otherwise_free_range(self):
+        summary = self.summary(contiguous=100)
+        summary["agent"]["network"] = {}
+        with mock.patch.object(agent_port_preflight, "effective_port_summary", return_value=summary):
+            result = agent_port_preflight.port_pool_preflight(object(), "agent-1", protocol="tcp", required_contiguous=4)
+        self.assertFalse(result["ready"])
+        self.assertIn("network_inventory_incomplete", result["reasons"])
+
     def test_protocol_validation_is_fail_closed(self):
         with self.assertRaises(ValueError):
             agent_port_preflight.port_pool_preflight(object(), "agent-1", protocol="sctp")
