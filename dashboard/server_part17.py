@@ -34,6 +34,7 @@ from customer_profile_self_service_http import install_customer_profile_self_ser
 from dashboard_activity_http import install_dashboard_activity_audit
 from deleted_backup_vault_http import install_deleted_backup_vault_http
 from json_serialization import normalize_json_value
+from operations import operational_readiness
 from portal_navigation_session_http import install_portal_navigation_session_guard
 from storage_pool_source_cleanup_http import install_storage_pool_source_cleanup
 from system_user_admin_http import install_system_user_administration
@@ -50,8 +51,33 @@ def _area_aware_authenticate(headers):
  return _legacy_ambiguous_authenticate(headers)
 
 
+def _operational_dashboard_health():
+ """Expose the same Controller readiness contract used by `cap operations readiness`."""
+ try:
+  readiness=operational_readiness(_ROOT)
+ except Exception:
+  return {"score":0,"status":"critical","ready":False,"states":{"readiness":False},"generated_at":int(legacy.time.time())}
+ checks=list(readiness.get("checks") or [])
+ states={str(item.get("name") or "unknown"):bool(item.get("healthy")) for item in checks}
+ total=len(states);healthy=sum(1 for value in states.values() if value)
+ score=int((healthy/total)*100) if total else (100 if readiness.get("ready") else 0)
+ ready=bool(readiness.get("ready"))
+ return {
+  "score":score,
+  "status":"healthy" if ready else "critical",
+  "ready":ready,
+  "states":states,
+  "checks":checks,
+  "database_backend":readiness.get("database_backend"),
+  "controller_services":readiness.get("controller_services"),
+  "topology":readiness.get("topology"),
+  "generated_at":int(legacy.time.time()),
+ }
+
+
 browser_login_base.integrated_authenticate=_area_aware_authenticate
 legacy.authenticate=_area_aware_authenticate
+legacy.dashboard_health=_operational_dashboard_health
 legacy.STATIC_FILES.update({"/browser-auth-client.js":legacy.WEB_DIR/"browser-auth-client.js","/telemetry-widgets.css":legacy.WEB_DIR/"telemetry-widgets.css","/telemetry-widgets.js":legacy.WEB_DIR/"telemetry-widgets.js","/customer-placement-selector.js":legacy.WEB_DIR/"customer-placement-selector.js","/customer-profile.js":legacy.WEB_DIR/"customer-profile.js","/customer-email-change.js":legacy.WEB_DIR/"customer-email-change.js","/customer-navigation.js":legacy.WEB_DIR/"customer-navigation.js","/customer.js":legacy.WEB_DIR/"customer-shell.js","/customer-core.js":legacy.WEB_DIR/"customer.js","/customer-integrations.html":legacy.WEB_DIR/"customer-integrations.html","/customer-integrations.js":legacy.WEB_DIR/"customer-integrations.js","/customer-integrations.css":legacy.WEB_DIR/"customer-integrations.css","/customer-backups.html":legacy.WEB_DIR/"customer-backups.html","/customer-backups.js":legacy.WEB_DIR/"customer-backups.js","/customer-account.html":legacy.WEB_DIR/"customer-account.html","/customer-account.js":legacy.WEB_DIR/"customer-account.js"})
 def json_safe_send_json(self,code,payload):return _previous_send_json(self,code,normalize_json_value(payload))
 def _controller_telemetry_get(self,parsed):
