@@ -4,8 +4,7 @@
 
 [Unit]
 Description=Capivara DSM Dashboard Worker
-After=network.target dsm-monitor.service dsm-scheduler.service
-Wants=dsm-scheduler.service
+After=network.target
 RequiresMountsFor=/opt/dsm
 
 [Service]
