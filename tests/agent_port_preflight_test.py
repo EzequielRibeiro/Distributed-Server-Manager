@@ -69,6 +69,81 @@ class AgentPortPreflightTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             agent_port_preflight.port_pool_preflight(object(), "agent-1", protocol="sctp")
 
+    def test_required_gate_uses_runtime_block_size_for_each_protocol(self):
+        profile = {
+            "allocation": "block",
+            "block_size": 4,
+            "ports": [
+                {"name": "game", "protocol": "udp", "offset": 0},
+                {"name": "query", "protocol": "tcp", "offset": 1},
+            ],
+        }
+        ready = {
+            "ready": True,
+            "reasons": [],
+        }
+        with mock.patch.object(
+            agent_port_preflight,
+            "port_pool_preflight",
+            return_value=ready,
+        ) as preflight:
+            result = agent_port_preflight.require_port_pool_preflight(
+                object(), "agent-1", profile
+            )
+        self.assertEqual(set(result), {"tcp", "udp"})
+        self.assertEqual(preflight.call_count, 2)
+        for call in preflight.call_args_list:
+            self.assertEqual(call.kwargs["required_contiguous"], 4)
+
+    def test_required_gate_blocks_provisioning_when_any_protocol_is_not_ready(self):
+        profile = {
+            "allocation": "block",
+            "block_size": 2,
+            "ports": [
+                {"name": "game", "protocol": "udp", "offset": 0},
+            ],
+        }
+        blocked = {
+            "ready": False,
+            "reasons": ["network_inventory_incomplete"],
+        }
+        with mock.patch.object(
+            agent_port_preflight,
+            "port_pool_preflight",
+            return_value=blocked,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "agent port pool preflight failed for udp: network_inventory_incomplete",
+            ):
+                agent_port_preflight.require_port_pool_preflight(
+                    object(), "agent-1", profile
+                )
+
+    def test_required_gate_is_noop_without_network_profile(self):
+        with mock.patch.object(agent_port_preflight, "port_pool_preflight") as preflight:
+            result = agent_port_preflight.require_port_pool_preflight(
+                object(), "agent-1", None
+            )
+        self.assertEqual(result, {})
+        preflight.assert_not_called()
+
+    def test_required_gate_is_noop_for_empty_network_profile(self):
+        with mock.patch.object(agent_port_preflight, "port_pool_preflight") as preflight:
+            result = agent_port_preflight.require_port_pool_preflight(
+                object(), "agent-1", {}
+            )
+        self.assertEqual(result, {})
+        preflight.assert_not_called()
+
+    def test_customer_creation_calls_required_preflight_before_reservation(self):
+        source = (ROOT / "dashboard" / "customer_instance_creation.py").read_text(
+            encoding="utf-8"
+        )
+        gate = source.index("require_port_pool_preflight(")
+        reservation = source.index("plan=repository.create_customer_instance(")
+        self.assertLess(gate, reservation)
+
 
 if __name__ == "__main__":
     unittest.main()

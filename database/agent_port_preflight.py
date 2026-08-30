@@ -84,4 +84,38 @@ def port_pool_preflight(
     }
 
 
-__all__ = ["port_pool_preflight"]
+def require_port_pool_preflight(
+    backend,
+    agent_id: str,
+    network_profile,
+) -> dict[str, dict[str, Any]]:
+    """Fail closed before allocation when a declared runtime Port Pool is not eligible."""
+    if not network_profile:
+        return {}
+
+    from core.network.port_profile import PortProfile
+
+    profile = PortProfile.from_mapping(network_profile)
+    if profile is None:
+        return {}
+
+    results: dict[str, dict[str, Any]] = {}
+    for protocol in sorted(profile.protocols):
+        result = port_pool_preflight(
+            backend,
+            str(agent_id).strip(),
+            protocol=protocol,
+            required_contiguous=profile.block_size,
+        )
+        results[protocol] = result
+        if not result.get("ready"):
+            reasons = ",".join(str(item) for item in result.get("reasons", []))
+            raise RuntimeError(
+                "agent port pool preflight failed "
+                f"for {protocol}: {reasons or 'not_ready'}"
+            )
+
+    return results
+
+
+__all__ = ["port_pool_preflight", "require_port_pool_preflight"]
