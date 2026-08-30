@@ -61,8 +61,8 @@ def effective_port_summary(
     except AgentRuntimeNotFound:
         runtime = {}
     # ``agents.status`` is the administrative lifecycle (for example active),
-    # not connectivity.  Expose the derived heartbeat projection separately so
-    # the Dashboard never mistakes an enabled but powered-off Agent for online.
+    # not connectivity. Expose the heartbeat projection and network snapshot
+    # separately so callers can reason about actual allocation readiness.
     base_agent = dict(base.get("agent") or {})
     for field in (
         "hostname", "os_name", "architecture", "capivara_version", "address",
@@ -70,8 +70,9 @@ def effective_port_summary(
     ):
         if field in runtime:
             base_agent[field] = runtime.get(field)
-    base["agent"] = base_agent
     network = runtime.get("network") if isinstance(runtime.get("network"), dict) else {}
+    base_agent["network"] = network
+    base["agent"] = base_agent
 
     reservations = base.get("reservations", [])
     observed_conflicts: list[dict[str, Any]] = []
