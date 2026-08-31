@@ -6,13 +6,13 @@
     <title>Capivara DSM - Adicionar Agent</title>
     <link rel="stylesheet" href="dashboard-home-v3.css">
     <link rel="stylesheet" href="agents.css">
-    <link rel="stylesheet" href="add-agent-v3.css?v=2">
+    <link rel="stylesheet" href="add-agent-v3.css?v=4">
 </head>
 <body class="cap-home cap-add-agent-shell">
 <div id="sidebar-component"></div>
 <main class="cap-home-main cap-add-agent-page">
     <header class="cap-home-topbar">
-        <div class="cap-home-title"><button id="add-agent-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1>Adicionar Agent</h1><p>Escolha o sistema operacional do novo host.</p></div></div>
+        <div class="cap-home-title"><button id="add-agent-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1>Adicionar Agent</h1><p>Instale um único Agent ou prepare vários hosts em lote.</p></div></div>
         <div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="add-agent-user">—</strong><span id="add-agent-role">—</span></div></div>
     </header>
     <div class="cap-home-content cap-add-agent-content">
@@ -20,8 +20,8 @@
         <div id="agents-error" class="agents-error" hidden></div>
         <section class="agent-detail add-agent-panel agent-manager-only">
             <div class="cap-add-agent-heading">
-                <h2>Qual sistema receberá o Agent?</h2>
-                <p>Linux e Windows agora possuem assistentes independentes, com pré-requisitos, transporte remoto e ajuda próprios.</p>
+                <h2>Como deseja instalar?</h2>
+                <p>Use o assistente individual para um host ou a instalação em lote para validar e instalar vários hosts de forma independente.</p>
             </div>
             <div class="cap-agent-platform-grid">
                 <a class="cap-agent-platform-card" href="add-agent-linux.html">
@@ -35,6 +35,12 @@
                     <strong>Agent Windows</strong>
                     <span>Windows Server e Windows compatíveis. OpenSSH é o transporte preferencial; WinRM permanece disponível.</span>
                     <b>Instalar Agent Windows →</b>
+                </a>
+                <a class="cap-agent-platform-card cap-agent-platform-card-wide" href="add-agent-batch.html">
+                    <span class="cap-agent-platform-icon" aria-hidden="true">▦</span>
+                    <strong>Instalação em lote</strong>
+                    <span>Adicione vários hosts, teste a conectividade individualmente e instale somente os hosts aprovados no preflight.</span>
+                    <b>Preparar lote de Agents →</b>
                 </a>
             </div>
             <div class="cap-agent-help-strip">
