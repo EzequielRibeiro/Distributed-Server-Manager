@@ -2,13 +2,14 @@
 """Windows host/process telemetry for the Capivara Agent.
 
 The collector uses only the Python standard library plus native Windows APIs.
-Returned keys intentionally mirror agents/linux/runtime/host_telemetry.py so the
-Controller can consume one platform-neutral telemetry contract.
+Returned keys intentionally mirror the platform-neutral telemetry contract
+consumed by the Controller.
 """
 from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
+import json
 import os
 import shutil
 import subprocess
@@ -17,7 +18,7 @@ from typing import Any
 
 _previous_cpu: tuple[int, int] | None = None
 _previous_network: tuple[float, int, int] | None = None
-_previous_process: tuple[float, int] | None = None
+_previous_process: tuple[float, float] | None = None
 
 
 class FILETIME(ctypes.Structure):
@@ -35,21 +36,6 @@ class MEMORYSTATUSEX(ctypes.Structure):
         ("ullTotalVirtual", ctypes.c_ulonglong),
         ("ullAvailVirtual", ctypes.c_ulonglong),
         ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-    ]
-
-
-class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
-    _fields_ = [
-        ("cb", wintypes.DWORD),
-        ("PageFaultCount", wintypes.DWORD),
-        ("PeakWorkingSetSize", ctypes.c_size_t),
-        ("WorkingSetSize", ctypes.c_size_t),
-        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-        ("PagefileUsage", ctypes.c_size_t),
-        ("PeakPagefileUsage", ctypes.c_size_t),
     ]
 
 
@@ -143,30 +129,43 @@ def _disk() -> dict[str, int | float | None]:
     }
 
 
-def _network_totals() -> tuple[int, int] | None:
-    script = r"""
-$ErrorActionPreference='Stop'
-$stats = Get-NetAdapterStatistics -ErrorAction Stop
-$rx = 0L
-$tx = 0L
-foreach ($item in $stats) {
-  $rx += [int64]$item.ReceivedBytes
-  $tx += [int64]$item.SentBytes
-}
-Write-Output ($rx.ToString() + ',' + $tx.ToString())
-"""
+def _run_powershell_json(script: str, timeout: int = 12) -> Any:
     try:
         completed = subprocess.run(
             ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
             check=True,
             capture_output=True,
             text=True,
-            timeout=12,
+            timeout=timeout,
         )
-        line = completed.stdout.strip().splitlines()[-1]
-        rx_text, tx_text = line.split(",", 1)
-        return int(rx_text), int(tx_text)
-    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return json.loads(completed.stdout.strip())
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def _network_totals() -> tuple[int, int] | None:
+    # Get-NetAdapterStatistics returned empty counters on the tested Intel
+    # PRO/1000 MT adapter, while the Win32_PerfRawData provider exposed valid
+    # byte counters. Sum all non-loopback interfaces so the collector works on
+    # physical hosts, Hyper-V guests and VirtualBox guests alike.
+    script = r"""
+$ErrorActionPreference='Stop'
+$items = @(Get-CimInstance Win32_PerfRawData_Tcpip_NetworkInterface -ErrorAction Stop |
+  Where-Object { $_.Name -and $_.Name -notmatch 'Loopback' })
+$rx = 0L
+$tx = 0L
+foreach ($item in $items) {
+  $rx += [int64]$item.BytesReceivedPersec
+  $tx += [int64]$item.BytesSentPersec
+}
+@{rx=$rx;tx=$tx} | ConvertTo-Json -Compress
+"""
+    payload = _run_powershell_json(script)
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return int(payload.get("rx", 0)), int(payload.get("tx", 0))
+    except (TypeError, ValueError):
         return None
 
 
@@ -205,87 +204,53 @@ def _uptime_seconds() -> float | None:
         return None
 
 
-def _process_times_100ns() -> int | None:
-    creation = FILETIME()
-    exit_time = FILETIME()
-    kernel = FILETIME()
-    user = FILETIME()
-    try:
-        handle = ctypes.windll.kernel32.GetCurrentProcess()
-        ok = ctypes.windll.kernel32.GetProcessTimes(
-            handle,
-            ctypes.byref(creation),
-            ctypes.byref(exit_time),
-            ctypes.byref(kernel),
-            ctypes.byref(user),
-        )
-    except Exception:
-        return None
-    if not ok:
-        return None
-    return _filetime_value(kernel) + _filetime_value(user)
-
-
-def _process_cpu_pct() -> float | None:
-    global _previous_process
-    now = time.monotonic()
-    total = _process_times_100ns()
-    if total is None:
-        return None
-    previous = _previous_process
-    _previous_process = (now, total)
-    if previous is None:
-        return None
-    elapsed = now - previous[0]
-    if elapsed <= 0:
-        return None
-    cpu_seconds = max(0.0, (total - previous[1]) / 10_000_000.0)
-    cores = max(1, int(os.cpu_count() or 1))
-    return round(max(0.0, min(100.0, 100.0 * cpu_seconds / elapsed / cores)), 2)
-
-
-def _process_memory_rss() -> int | None:
-    counters = PROCESS_MEMORY_COUNTERS()
-    counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
-    try:
-        handle = ctypes.windll.kernel32.GetCurrentProcess()
-        ok = ctypes.windll.psapi.GetProcessMemoryInfo(
-            handle, ctypes.byref(counters), counters.cb
-        )
-    except Exception:
-        return None
-    return int(counters.WorkingSetSize) if ok else None
-
-
-def _thread_count() -> int | None:
+def _process_snapshot() -> dict[str, int | float | None]:
     pid = os.getpid()
-    command = f"$p=Get-Process -Id {pid}; [Console]::Out.Write($p.Threads.Count)"
-    try:
-        completed = subprocess.run(
-            [
-                "powershell.exe",
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                command,
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=8,
-        )
-        return int(completed.stdout.strip())
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return None
+    script = rf"""
+$ErrorActionPreference='Stop'
+$p = Get-Process -Id {pid} -ErrorAction Stop
+@{{
+  pid=[int]$p.Id
+  working_set=[int64]$p.WorkingSet64
+  threads=[int]$p.Threads.Count
+  cpu_seconds=if ($null -eq $p.CPU) {{ $null }} else {{ [double]$p.CPU }}
+}} | ConvertTo-Json -Compress
+"""
+    payload = _run_powershell_json(script, timeout=8)
+    if not isinstance(payload, dict):
+        return {
+            "pid": pid,
+            "memory_rss_bytes": None,
+            "threads": None,
+            "cpu_seconds": None,
+        }
+    return {
+        "pid": int(payload.get("pid") or pid),
+        "memory_rss_bytes": int(payload["working_set"]) if payload.get("working_set") is not None else None,
+        "threads": int(payload["threads"]) if payload.get("threads") is not None else None,
+        "cpu_seconds": float(payload["cpu_seconds"]) if payload.get("cpu_seconds") is not None else None,
+    }
 
 
 def _agent_process() -> dict[str, Any]:
-    return {
-        "pid": os.getpid(),
-        "cpu_usage_pct": _process_cpu_pct(),
-        "memory_rss_bytes": _process_memory_rss(),
-        "threads": _thread_count(),
-    }
+    global _previous_process
+    now = time.monotonic()
+    snapshot = _process_snapshot()
+    cpu_seconds = snapshot.pop("cpu_seconds", None)
+    cpu_usage = None
+    if isinstance(cpu_seconds, (int, float)):
+        previous = _previous_process
+        _previous_process = (now, float(cpu_seconds))
+        if previous is not None:
+            elapsed = now - previous[0]
+            if elapsed > 0:
+                cpu_delta = max(0.0, float(cpu_seconds) - previous[1])
+                cores = max(1, int(os.cpu_count() or 1))
+                cpu_usage = round(
+                    max(0.0, min(100.0, 100.0 * cpu_delta / elapsed / cores)), 2
+                )
+    snapshot["cpu_usage_pct"] = cpu_usage
+    return snapshot
 
 
 def collect_host_telemetry() -> dict[str, Any]:
