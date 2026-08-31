@@ -9,16 +9,17 @@ on:
       - 'dashboard/web/add-agent.html'
       - 'dashboard/web/add-agent-linux.html'
       - 'dashboard/web/add-agent-windows.html'
+      - 'dashboard/web/add-agent-batch.html'
       - 'dashboard/web/add-agent-v3.css'
       - 'dashboard/web/agent-installation.js'
       - 'dashboard/web/agent-installation-wizard.js'
-      - 'dashboard/web/agent-installation-remote-check.js'
+      - 'dashboard/web/agent-installation-batch.js'
       - 'database/agent_installation_preconfiguration.py'
       - 'core/agent_ssh_deploy.py'
       - 'core/windows_agent_ssh_deploy.py'
       - 'tests/dashboard_remote_agent_install_test.py'
       - 'tests/agent_installation_wizard_steps_test.py'
-      - 'tests/agent_connection_controller_probe_test.py'
+      - 'tests/agent_batch_installation_ui_test.py'
       - 'tests/agent_ssh_cross_platform_test.py'
       - 'docs/architecture/dashboard-remote-agent-install.md'
       - '.github/workflows/dashboard-remote-agent-install.yml'
@@ -31,16 +32,17 @@ on:
       - 'dashboard/web/add-agent.html'
       - 'dashboard/web/add-agent-linux.html'
       - 'dashboard/web/add-agent-windows.html'
+      - 'dashboard/web/add-agent-batch.html'
       - 'dashboard/web/add-agent-v3.css'
       - 'dashboard/web/agent-installation.js'
       - 'dashboard/web/agent-installation-wizard.js'
-      - 'dashboard/web/agent-installation-remote-check.js'
+      - 'dashboard/web/agent-installation-batch.js'
       - 'database/agent_installation_preconfiguration.py'
       - 'core/agent_ssh_deploy.py'
       - 'core/windows_agent_ssh_deploy.py'
       - 'tests/dashboard_remote_agent_install_test.py'
       - 'tests/agent_installation_wizard_steps_test.py'
-      - 'tests/agent_connection_controller_probe_test.py'
+      - 'tests/agent_batch_installation_ui_test.py'
       - 'tests/agent_ssh_cross_platform_test.py'
       - '.github/workflows/dashboard-remote-agent-install.yml'
 
@@ -68,14 +70,14 @@ jobs:
             core/windows_agent_ssh_deploy.py \
             tests/dashboard_remote_agent_install_test.py \
             tests/agent_installation_wizard_steps_test.py \
-            tests/agent_connection_controller_probe_test.py \
+            tests/agent_batch_installation_ui_test.py \
             tests/agent_ssh_cross_platform_test.py
 
       - name: Validate Dashboard JavaScript
         run: |
           node --check dashboard/web/agent-installation.js
           node --check dashboard/web/agent-installation-wizard.js
-          node --check dashboard/web/agent-installation-remote-check.js
+          node --check dashboard/web/agent-installation-batch.js
 
       - name: Test remote install and preconfiguration contracts
         run: python3 -m unittest tests/dashboard_remote_agent_install_test.py
@@ -83,8 +85,8 @@ jobs:
       - name: Test multi-step Agent wizard
         run: python3 -m unittest tests/agent_installation_wizard_steps_test.py
 
-      - name: Test Agent to Controller reachability probe
-        run: python3 -m unittest tests/agent_connection_controller_probe_test.py
+      - name: Test batch Agent installation UI
+        run: python3 -m unittest tests/agent_batch_installation_ui_test.py
 
       - name: Test cross-platform SSH contracts
         run: python3 -m unittest tests/agent_ssh_cross_platform_test.py
