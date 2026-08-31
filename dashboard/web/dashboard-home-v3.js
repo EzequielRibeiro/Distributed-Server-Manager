@@ -183,6 +183,7 @@ function bindMobileSidebar(target,toggle){
     target.querySelector(".cap-sidebar-close")?.addEventListener("click",()=>setOpen(false));
     target.querySelectorAll("a").forEach(link=>link.addEventListener("click",()=>setOpen(false)));
     document.addEventListener("pointerdown",event=>{if(!isMobile()||!document.body.classList.contains("sidebar-open"))return;if(target.contains(event.target)||toggle.contains(event.target))return;setOpen(false);});
+    document.addEventListener("keydown",event=>{if(event.key==="Escape")setOpen(false);});
     let startX=null,startY=null;
     target.addEventListener("touchstart",event=>{const touch=event.changedTouches?.[0];if(!touch)return;startX=touch.clientX;startY=touch.clientY;},{passive:true});
     target.addEventListener("touchend",event=>{if(startX===null||startY===null)return;const touch=event.changedTouches?.[0];if(!touch)return;const dx=touch.clientX-startX,dy=touch.clientY-startY;startX=null;startY=null;if(isMobile()&&dx<-60&&Math.abs(dx)>Math.abs(dy)*1.2)setOpen(false);},{passive:true});
