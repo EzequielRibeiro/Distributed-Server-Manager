@@ -60,10 +60,10 @@ def main() -> int:
     if int(existing_customers["total"] or 0) != 0:
         raise AssertionError("isolated database was not empty before bootstrap")
     if [(int(row["version"]), str(row["name"])) for row in upgrades][-1] != (
-        4,
-        "resolved_alert_history_detach",
+        5,
+        "alert_events_note_action",
     ):
-        raise AssertionError("Baseline v2 did not seed alert-history upgrade 4")
+        raise AssertionError("Baseline v2 did not seed alert NOTE upgrade 5")
     required = {
         "customers", "dashboard_users", "service_contracts", "instances",
         "instance_permission_grants", "instance_file_commands",
@@ -113,6 +113,7 @@ def main() -> int:
     alerts.resolve_alert("isolated-resolved-alert")
     resolved_history_before = alerts.alert_history("isolated-resolved-alert")
     alerts.open_alert(alert_id="isolated-open-alert", message="active", **common_alert)
+    alerts.note_alert("isolated-open-alert", "isolated PostgreSQL NOTE contract")
 
     removal = AgentAdminRepository(backend).remove(
         "isolated-agent",
@@ -131,8 +132,8 @@ def main() -> int:
     if alerts.alert_history("isolated-resolved-alert") != resolved_history_before:
         raise AssertionError("already-resolved alert history changed during Agent removal")
     open_history = alerts.alert_history("isolated-open-alert")
-    if [item["action"] for item in open_history] != ["OPEN", "RESOLVE"]:
-        raise AssertionError("open Agent alert did not receive a RESOLVE history event")
+    if [item["action"] for item in open_history] != ["OPEN", "NOTE", "RESOLVE"]:
+        raise AssertionError("open Agent alert did not preserve NOTE before RESOLVE history")
 
     system_users.save(
         username="isolated-admin",
