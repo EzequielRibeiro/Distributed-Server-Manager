@@ -8,14 +8,14 @@
   <link rel="stylesheet" href="/observability.css">
   <style>
     .cap-alert-item{grid-template-columns:auto minmax(0,1fr) auto;align-items:start}
-    .cap-alert-heading{display:flex;flex-direction:column;gap:4px;min-width:0}
-    .cap-alert-heading>strong{display:block}
-    .cap-alert-id{display:block;color:#8fa0b4;font-size:.78rem;overflow-wrap:anywhere}
+    .cap-alert-heading{display:flex!important;flex-direction:column!important;align-items:flex-start!important;gap:6px!important;min-width:0;width:100%}
+    .cap-alert-heading>strong{display:block!important;width:100%}
+    .cap-alert-id{display:block!important;width:100%;margin-top:2px;color:#8fa0b4;font-size:.78rem;overflow-wrap:anywhere}
     .cap-alert-item-main{min-width:0}
     .cap-alert-item-main p{margin:0 0 5px}
-    .cap-alert-item-main small{display:block;color:#7e8b9b;overflow-wrap:anywhere}
-    .cap-alert-controls{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
-    .cap-alert-controls button,.cap-alert-controls a,.cap-alert-control-link{display:inline-flex!important;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.1)!important;background:#1c2632!important;color:#eef4fb!important;border-radius:8px!important;padding:7px 10px!important;text-decoration:none!important;cursor:pointer;font:inherit;line-height:1.2}
+    .cap-alert-item-main>small{display:block;color:#7e8b9b;overflow-wrap:anywhere;margin-top:14px}
+    .cap-alert-controls{display:flex!important;flex-wrap:wrap!important;column-gap:10px!important;row-gap:10px!important;margin-top:12px}
+    .cap-alert-controls button,.cap-alert-controls a,.cap-alert-control-link{display:inline-flex!important;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.1)!important;background:#1c2632!important;color:#eef4fb!important;border-radius:8px!important;padding:7px 10px!important;text-decoration:none!important;cursor:pointer;font:inherit;line-height:1.2;margin:0!important}
     .cap-alert-controls .danger{border-color:#704047!important;background:#39262b!important;color:#ffb4b8!important}
     .cap-alert-controls button:disabled{opacity:.55;cursor:wait}
     .cap-alert-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:14px 0 16px}
@@ -66,7 +66,7 @@
     <div class="cap-alert-dialog-head"><div><h2>Histórico do alerta</h2><p id="alert-history-title">—</p></div><button id="alert-history-close" type="button">Fechar</button></div>
     <div id="alert-history-body" class="cap-alert-history-body"><div class="cap-empty-state">Carregando...</div></div>
   </dialog>
-  <script src="/alerts-page-enhancements.js?v=4"></script>
+  <script src="/alerts-page-enhancements.js?v=5"></script>
   <script src="/observability.js?v=6"></script>
 </body>
 </html>

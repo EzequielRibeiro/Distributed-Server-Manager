@@ -59,18 +59,38 @@
     if (label.textContent !== desired) label.textContent = desired;
   }
 
+  function convertViewAgentToButton(main) {
+    const controls = main?.querySelector(":scope > .cap-alert-controls");
+    if (!controls) return null;
+
+    const existingButton = controls.querySelector("button[data-agent-href]");
+    if (existingButton) return existingButton;
+
+    const link = controls.querySelector('a[href*="agent-details.html?agent_id="]');
+    if (!link) return null;
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Ver Agent";
+    button.className = "cap-alert-control-link";
+    button.dataset.agentHref = link.getAttribute("href") || "";
+    link.replaceWith(button);
+    return button;
+  }
+
   function labelAlertScope(card) {
     const main = card.querySelector(":scope > .cap-alert-item-main");
     const scope = main?.querySelector(":scope > small");
-    if (!scope || scope.dataset.capIdentifiersLabeled === "1") return;
+    if (!scope) return;
+
+    const viewAgent = convertViewAgentToButton(main);
+    if (scope.dataset.capIdentifiersLabeled === "1") return;
 
     const original = String(scope.textContent || "").trim();
-    const viewAgent = main.querySelector('.cap-alert-controls a[href*="agent-details.html?agent_id="]');
     if (viewAgent) {
-      viewAgent.classList.add("cap-alert-control-link");
       let currentAgentId = "";
       try {
-        currentAgentId = new URL(viewAgent.href, location.href).searchParams.get("agent_id") || "";
+        currentAgentId = new URL(viewAgent.dataset.agentHref || "", location.href).searchParams.get("agent_id") || "";
       } catch (_) {
         currentAgentId = "";
       }
@@ -128,6 +148,13 @@
       location.href = "alerts.html";
     });
   }
+
+  document.addEventListener("click", event => {
+    const button = event.target.closest("button[data-agent-href]");
+    if (!button) return;
+    const href = String(button.dataset.agentHref || "").trim();
+    if (href) location.href = href;
+  });
 
   document.addEventListener("DOMContentLoaded", () => {
     configureAgentScope();

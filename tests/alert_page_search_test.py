@@ -47,7 +47,9 @@ class AlertPageSearchTest(unittest.TestCase):
         self.assertIn("ID do alerta: ${id}", enhancement)
         self.assertIn("ID do Agent: ${currentAgentId}", enhancement)
         self.assertIn("cap-alert-control-link", enhancement)
-        self.assertIn("cap-alert-control-link", html)
+        self.assertIn("button[data-agent-href]", enhancement)
+        self.assertIn("column-gap:10px!important", html)
+        self.assertIn("margin-top:14px", html)
         self.assertIn('url.searchParams.set("agent_id", agentId)', enhancement)
         self.assertIn('url.searchParams.set("q", query)', enhancement)
 
