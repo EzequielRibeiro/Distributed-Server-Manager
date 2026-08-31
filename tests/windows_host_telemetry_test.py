@@ -76,7 +76,7 @@ class WindowsHostTelemetryTest(unittest.TestCase):
         self.assertEqual(result["agent"], agent)
         self.assertEqual(result["top_processes"], [])
 
-    def test_windows_perf_sources_cover_disk_io_and_queue(self):
+    def test_windows_perf_sources_cover_disk_io_queue_and_temperature(self):
         source = (WINDOWS_RUNTIME / "host_telemetry.py").read_text(encoding="utf-8")
         self.assertIn("Win32_PerfFormattedData_PerfDisk_PhysicalDisk", source)
         self.assertIn("DiskReadBytesPersec", source)
@@ -86,11 +86,13 @@ class WindowsHostTelemetryTest(unittest.TestCase):
         self.assertIn("ProcessorQueueLength", source)
         self.assertIn("MSAcpi_ThermalZoneTemperature", source)
 
-    def test_runtime_metrics_publishes_host_telemetry(self):
+    def test_runtime_metrics_publishes_host_telemetry_and_windows_queue(self):
         source = (WINDOWS_RUNTIME / "runtime_metrics.py").read_text(encoding="utf-8")
         self.assertIn("from host_telemetry import collect_host_telemetry", source)
         self.assertIn("telemetry = collect_host_telemetry()", source)
         self.assertIn('payload["telemetry"] = telemetry', source)
+        self.assertIn("capivara.host.processor.queue_length", source)
+        self.assertIn('"platform": "windows"', source)
 
     def test_windows_package_includes_host_telemetry(self):
         builder = (ROOT / "release" / "build_windows_agent_package.py").read_text(encoding="utf-8")
