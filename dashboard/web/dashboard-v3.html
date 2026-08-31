@@ -7,18 +7,25 @@
   <link rel="stylesheet" href="dashboard-home-v3.css?v=10">
   <link rel="stylesheet" href="telemetry-widgets.css?v=1">
   <style>
-    .cap-agent-table-panel{margin-top:12px}
+    .cap-agent-table-panel{margin-top:12px;overflow:visible}
     .cap-panel-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 14px;border-bottom:1px solid var(--line)}
     .cap-panel-heading h2{border:0;padding:0;margin:0}
     .cap-panel-heading p{margin:5px 0 0;color:var(--muted);font-size:12px}
     .cap-panel-heading>a{color:#aac7f3;text-decoration:none;white-space:nowrap}
-    .cap-agent-table-scroll{overflow-x:auto}
-    .cap-agent-table{width:100%;border-collapse:collapse;min-width:920px}
-    .cap-agent-table th,.cap-agent-table td{padding:11px 14px;text-align:left;border-bottom:1px solid #243044;vertical-align:middle}
-    .cap-agent-table th{color:#8d9aaf;font-size:11px;text-transform:uppercase;letter-spacing:.04em;background:#111a27}
-    .cap-agent-table tbody tr:hover{background:#182536}
-    .cap-agent-table td small{display:block;color:var(--muted);font-size:11px;margin-top:3px;overflow-wrap:anywhere}
-    .cap-agent-name{color:#eaf1fb;text-decoration:none;font-weight:600;overflow-wrap:anywhere}
+    .cap-agent-table-scroll{overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch;position:relative}
+    .cap-agent-table{width:100%;min-width:1080px;border-collapse:separate;border-spacing:0;table-layout:auto}
+    .cap-agent-table th,.cap-agent-table td{padding:11px 14px;text-align:left;border-bottom:1px solid #243044;vertical-align:middle;white-space:nowrap;background:#121b29}
+    .cap-agent-table th{color:#8d9aaf;font-size:11px;text-transform:uppercase;letter-spacing:.04em;background:#111a27;position:sticky;top:0;z-index:2}
+    .cap-agent-table tbody tr:hover td{background:#182536}
+    .cap-agent-table td:first-child,.cap-agent-table th:first-child{position:sticky;left:0;z-index:3;min-width:240px;max-width:300px}
+    .cap-agent-table th:first-child{z-index:4;background:#111a27}
+    .cap-agent-table td:first-child{background:#121b29;box-shadow:6px 0 12px #0002}
+    .cap-agent-table tbody tr:hover td:first-child{background:#182536}
+    .cap-agent-table td:last-child,.cap-agent-table th:last-child{position:sticky;right:0;z-index:3;width:58px;min-width:58px;max-width:58px;text-align:center;background:#121b29;box-shadow:-6px 0 12px #0002}
+    .cap-agent-table th:last-child{z-index:4;background:#111a27}
+    .cap-agent-table tbody tr:hover td:last-child{background:#182536}
+    .cap-agent-table td small{display:block;color:var(--muted);font-size:11px;margin-top:3px;max-width:260px;overflow:hidden;text-overflow:ellipsis}
+    .cap-agent-name{color:#eaf1fb;text-decoration:none;font-weight:600;display:block;max-width:260px;overflow:hidden;text-overflow:ellipsis}
     .cap-agent-name:hover{color:#aac7f3}
     .cap-agent-state{display:inline-flex;align-items:center;gap:7px;text-transform:capitalize}
     .cap-agent-state i{width:8px;height:8px;border-radius:50%;background:var(--red);flex:0 0 auto}
@@ -26,27 +33,26 @@
     .cap-agent-state.online i{background:var(--green);box-shadow:0 0 7px #39d06f55}
     .cap-agent-state.offline{color:var(--red)}
     .cap-agent-number{text-align:center!important;font-variant-numeric:tabular-nums}
-    .cap-agent-table-empty{text-align:center!important;color:var(--muted);padding:22px!important}
+    .cap-agent-table-empty{text-align:center!important;color:var(--muted);padding:22px!important;position:static!important}
+    .cap-agent-actions-cell{overflow:visible!important}
+    .cap-agent-action-wrap{position:relative;display:inline-flex;justify-content:center}
+    .cap-agent-action-toggle{width:38px;height:38px;border:1px solid #314158;border-radius:6px;background:#182334;color:#dbe7f7;font-size:22px;line-height:1;cursor:pointer}
+    .cap-agent-action-toggle:hover,.cap-agent-action-toggle[aria-expanded="true"]{background:#223249;border-color:#48617f}
+    .cap-agent-action-menu{display:none;position:absolute;right:0;top:43px;z-index:50;min-width:170px;padding:6px;background:#111a27;border:1px solid #304057;border-radius:7px;box-shadow:0 12px 28px #0008;text-align:left}
+    .cap-agent-action-menu.is-open{display:block}
+    .cap-agent-action-menu a{display:block;padding:10px 11px;border-radius:5px;color:#dce8f8;text-decoration:none;font-size:13px}
+    .cap-agent-action-menu a:hover{background:#1e2d42;color:white}
     @media(max-width:760px){
-      .cap-agent-table-panel{margin-top:10px;overflow:visible}
-      .cap-panel-heading{align-items:flex-start;flex-direction:column;gap:9px;padding:14px}
-      .cap-panel-heading p{line-height:1.45}
-      .cap-agent-table-scroll{overflow:visible;padding:10px}
-      .cap-agent-table{min-width:0;border-collapse:separate;border-spacing:0;width:100%}
-      .cap-agent-table thead{display:none}
-      .cap-agent-table tbody{display:grid;gap:10px}
-      .cap-agent-table tbody tr{display:block;border:1px solid #2a374b;border-radius:8px;background:#111b29;overflow:hidden}
-      .cap-agent-table tbody tr:hover{background:#111b29}
-      .cap-agent-table td{display:grid;grid-template-columns:minmax(92px,34%) minmax(0,1fr);gap:10px;align-items:start;padding:10px 12px;border-bottom:1px solid #243044;min-width:0;overflow-wrap:anywhere;word-break:break-word}
-      .cap-agent-table td:last-child{border-bottom:0}
-      .cap-agent-table td::before{content:attr(data-label);color:#8d9aaf;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding-top:2px}
-      .cap-agent-table td[data-label="Agent"]{grid-template-columns:1fr;padding:13px 12px;background:#172335}
-      .cap-agent-table td[data-label="Agent"]::before{display:none}
-      .cap-agent-table td[data-label="Agent"] .cap-agent-name{font-size:15px;color:#dce9ff}
-      .cap-agent-table td[data-label="Agent"] small{font-size:10px;line-height:1.35;margin-top:5px}
-      .cap-agent-table .cap-agent-number{text-align:left!important}
-      .cap-agent-table-empty{display:block!important;padding:18px!important}
-      .cap-agent-table-empty::before{display:none!important}
+      .cap-agent-table-panel{margin-top:10px}
+      .cap-panel-heading{align-items:flex-start;flex-direction:column;gap:8px;padding:13px 14px}
+      .cap-panel-heading p{line-height:1.4}
+      .cap-agent-table-scroll{width:100%;max-width:100%}
+      .cap-agent-table{min-width:1040px}
+      .cap-agent-table th,.cap-agent-table td{padding:10px 12px;font-size:13px}
+      .cap-agent-table td:first-child,.cap-agent-table th:first-child{min-width:185px;max-width:185px}
+      .cap-agent-name{max-width:160px}
+      .cap-agent-table td small{max-width:160px}
+      .cap-agent-action-menu{position:fixed;right:18px;top:auto;bottom:18px;min-width:210px}
     }
   </style>
 </head>
@@ -88,7 +94,7 @@
           </div>
           <a href="agents.html">Gerenciar Agents ›</a>
         </div>
-        <div class="cap-agent-table-scroll">
+        <div class="cap-agent-table-scroll" tabindex="0" aria-label="Tabela de Agents; deslize horizontalmente para ver todas as colunas">
           <table class="cap-agent-table">
             <thead>
               <tr>
@@ -99,10 +105,11 @@
                 <th>Estado</th>
                 <th>Instâncias</th>
                 <th>Último heartbeat</th>
+                <th aria-label="Ações"></th>
               </tr>
             </thead>
             <tbody id="home-agent-table-body">
-              <tr><td colspan="7" class="cap-agent-table-empty">Carregando Agents...</td></tr>
+              <tr><td colspan="8" class="cap-agent-table-empty">Carregando Agents...</td></tr>
             </tbody>
           </table>
         </div>
@@ -124,6 +131,6 @@
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
   </main>
   <script src="telemetry-widgets.js?v=1"></script>
-  <script src="dashboard-home-v3.js?v=5"></script>
+  <script src="dashboard-home-v3.js?v=6"></script>
 </body>
 </html>
