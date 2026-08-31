@@ -32,7 +32,7 @@ jobs:
           test -f "dist/capivara-agent-windows-${VERSION}.zip"
           test -f "dist/capivara-agent-windows-${VERSION}.zip.sha256"
           test -f "dist/capivara-agent-windows-${VERSION}.manifest.json"
-          sha256sum -c "dist/capivara-agent-windows-${VERSION}.zip.sha256"
+          (cd dist && sha256sum -c "capivara-agent-windows-${VERSION}.zip.sha256")
 
       - name: Upload Windows Agent artifact
         uses: actions/upload-artifact@v4
