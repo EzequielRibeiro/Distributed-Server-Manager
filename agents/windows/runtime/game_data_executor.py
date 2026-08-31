@@ -7,16 +7,46 @@ from game_data_files import execute_file_operation
 from game_data_integrity import inspect_game_data
 from game_data_state import GAME_DATA_ROOT,record_game_data,write_json
 FILE_ACTIONS={"file-list","file-read","file-write","file-create","file-mkdir","file-rename","file-delete","file-upload"}
+STEAMCMD_URL="https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 def _safe(v,label):
  t=str(v or "").strip();allowed="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
  if not t or any(c not in allowed for c in t):raise ValueError(f"invalid {label}")
  return t
 def _target(sel):
  game=_safe(sel.get("game"),"game");leaf=_safe(Path(str(sel.get("install_dir") or "serverfiles")).name or "serverfiles","install target");target=(GAME_DATA_ROOT/game/leaf).resolve();target.relative_to(GAME_DATA_ROOT);return target
+def _managed_steamcmd():
+ root=Path(os.environ.get("PROGRAMDATA") or r"C:\ProgramData")/"CapivaraAgent"/"tools"/"steamcmd"
+ return root/"steamcmd.exe"
 def _steamcmd():
- for c in (shutil.which("steamcmd.exe"),shutil.which("steamcmd"),os.environ.get("STEAMCMD_PATH")):
+ for c in (shutil.which("steamcmd.exe"),shutil.which("steamcmd"),os.environ.get("STEAMCMD_PATH"),str(_managed_steamcmd())):
   if c and Path(c).is_file():return str(c)
  raise RuntimeError("SteamCMD is not available on this Windows Agent")
+def _probe_steamcmd(executable):
+ cp=subprocess.run([str(executable),"+quit"],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=300,check=False,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+ print(cp.stdout or "",end="",flush=True)
+ if cp.returncode!=0:raise RuntimeError(f"SteamCMD validation failed with exit code {cp.returncode}")
+def _install_steamcmd():
+ try:
+  existing=_steamcmd();_probe_steamcmd(existing)
+  return {"provider":"system","component":"steamcmd","installed":True,"reused":True,"path":existing}
+ except RuntimeError:
+  pass
+ target=_managed_steamcmd().parent;target.parent.mkdir(parents=True,exist_ok=True)
+ with tempfile.TemporaryDirectory(prefix="capivara-steamcmd-") as td:
+  td_path=Path(td);archive=td_path/"steamcmd.zip";staging=td_path/"steamcmd"
+  _download(STEAMCMD_URL,archive)
+  if not zipfile.is_zipfile(archive):raise RuntimeError("SteamCMD download is not a valid ZIP archive")
+  staging.mkdir();z=zipfile.ZipFile(archive)
+  for i in z.infolist():_safe_member(i.filename)
+  z.extractall(staging);z.close()
+  executable=staging/"steamcmd.exe"
+  if not executable.is_file():raise RuntimeError("SteamCMD archive does not contain steamcmd.exe")
+  _probe_steamcmd(executable)
+  if target.exists():shutil.rmtree(target)
+  shutil.move(str(staging),str(target))
+ installed=_managed_steamcmd()
+ if not installed.is_file():raise RuntimeError("SteamCMD installation did not produce steamcmd.exe")
+ return {"provider":"system","component":"steamcmd","installed":True,"reused":False,"path":str(installed)}
 def _run_steam(sel,target):
  install=sel.get("install") if isinstance(sel.get("install"),dict) else {};app=str(install.get("package_id") or "").strip()
  if not app.isdigit():raise ValueError("Steam package_id is missing or invalid")
@@ -35,7 +65,7 @@ def _verify(path,expected):
   for chunk in iter(lambda:f.read(1024*1024),b""):h.update(chunk)
  if h.hexdigest().lower()!=e:raise RuntimeError("download checksum mismatch")
 def _safe_member(name):
- p=PurePosixPath(name)
+ normalized=str(name or "").replace("\\","/");p=PurePosixPath(normalized)
  if p.is_absolute() or ".." in p.parts:raise RuntimeError("unsafe archive member")
 def _run_http(sel,target):
  install=sel.get("install") if isinstance(sel.get("install"),dict) else {};asset=sel.get("asset") if isinstance(sel.get("asset"),dict) else {};url=str(asset.get("url") or install.get("url") or "")
@@ -64,7 +94,9 @@ def _install(sel,target,provider):
  elif provider in {"http","http-archive","github"}:_run_http(sel,target)
  else:raise RuntimeError(f"provider not supported by standalone Windows Agent: {provider}")
 def execute(command:dict[str,Any]):
- action=str(command.get("action") or "install").lower();sel=command.get("selection")
+ action=str(command.get("action") or "install").lower()
+ if action=="install-steamcmd":return _install_steamcmd()
+ sel=command.get("selection")
  if not isinstance(sel,dict):raise ValueError("runtime selection is missing")
  target=_target(sel);provider=str(sel.get("provider") or "").lower();reused=False
  if action=="ensure":
