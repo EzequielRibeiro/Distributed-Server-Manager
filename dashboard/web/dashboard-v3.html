@@ -15,24 +15,14 @@
     .cap-panel-heading p{margin:5px 0 0;color:var(--muted);font-size:12px}
     .cap-panel-heading>a{color:#aac7f3;text-decoration:none;white-space:nowrap}
 
-    .cap-agent-zurb{width:100%;min-width:0;max-width:100%;overflow:hidden;background:#121b29}
-    .cap-agent-y-scroll{display:flex;width:100%;min-width:0;max-width:100%;max-height:360px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable}
-    .cap-agent-fixed{flex:0 0 178px;width:178px;min-width:178px;background:#121b29;border-right:1px solid #314158;box-shadow:6px 0 12px #0004;z-index:3}
-    .cap-agent-wide{flex:1 1 auto;min-width:0;overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y;scrollbar-width:auto;scrollbar-color:#51627d #0b1320}
-    .cap-agent-wide::-webkit-scrollbar,.cap-agent-y-scroll::-webkit-scrollbar{width:12px;height:12px}
-    .cap-agent-wide::-webkit-scrollbar-track,.cap-agent-y-scroll::-webkit-scrollbar-track{background:#0b1320}
-    .cap-agent-wide::-webkit-scrollbar-thumb,.cap-agent-y-scroll::-webkit-scrollbar-thumb{background:#51627d;border:3px solid #0b1320;border-radius:8px}
-
-    .cap-agent-fixed-table,.cap-agent-wide-table{border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:10px}
-    .cap-agent-fixed-table{width:178px;min-width:178px}
-    .cap-agent-wide-table{width:760px;min-width:760px}
-    .cap-agent-wide-table col:nth-child(1){width:120px}.cap-agent-wide-table col:nth-child(2){width:100px}.cap-agent-wide-table col:nth-child(3){width:145px}.cap-agent-wide-table col:nth-child(4){width:110px}.cap-agent-wide-table col:nth-child(5){width:85px}.cap-agent-wide-table col:nth-child(6){width:145px}.cap-agent-wide-table col:nth-child(7){width:55px}
-    .cap-agent-fixed-table th,.cap-agent-fixed-table td,.cap-agent-wide-table th,.cap-agent-wide-table td{height:48px;padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#121b29;box-sizing:border-box}
-    .cap-agent-fixed-table th,.cap-agent-wide-table th{position:sticky;top:0;z-index:5;height:34px;color:var(--muted);font-weight:600;background:#172235}
-    .cap-agent-fixed-table th{z-index:8}
-    .cap-agent-fixed-table tbody tr:hover td,.cap-agent-wide-table tbody tr:hover td{background:#182536}
-    .cap-agent-fixed-table td small{display:block;color:var(--muted);font-size:9px;margin-top:2px;max-width:150px;overflow:hidden;text-overflow:ellipsis}
-    .cap-agent-name{color:#eaf1fb;text-decoration:none;font-weight:600;display:block;max-width:150px;overflow:hidden;text-overflow:ellipsis}
+    .cap-agent-table-scroll{width:100%;max-width:100%;overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch;background:#121b29}
+    .cap-agent-table{width:max-content;min-width:900px;border-collapse:collapse;table-layout:fixed;font-size:10px}
+    .cap-agent-table col:nth-child(1){width:170px}.cap-agent-table col:nth-child(2){width:120px}.cap-agent-table col:nth-child(3){width:100px}.cap-agent-table col:nth-child(4){width:145px}.cap-agent-table col:nth-child(5){width:110px}.cap-agent-table col:nth-child(6){width:85px}.cap-agent-table col:nth-child(7){width:150px}.cap-agent-table col:nth-child(8){width:55px}
+    .cap-agent-table th,.cap-agent-table td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#121b29;box-sizing:border-box}
+    .cap-agent-table th{color:var(--muted);font-weight:600;background:#172235}
+    .cap-agent-table tbody tr:hover td{background:#182536}
+    .cap-agent-table td small{display:block;color:var(--muted);font-size:9px;margin-top:2px;max-width:145px;overflow:hidden;text-overflow:ellipsis}
+    .cap-agent-name{color:#eaf1fb;text-decoration:none;font-weight:600;display:block;max-width:145px;overflow:hidden;text-overflow:ellipsis}
     .cap-agent-name:hover{color:#aac7f3}
     .cap-agent-state{display:inline-flex;align-items:center;gap:6px;text-transform:capitalize}
     .cap-agent-state i{width:7px;height:7px;border-radius:50%;background:var(--red);flex:0 0 auto}
@@ -40,7 +30,8 @@
     .cap-agent-state.online i{background:var(--green);box-shadow:0 0 7px #39d06f55}
     .cap-agent-state.offline{color:var(--red)}
     .cap-agent-number{text-align:center!important;font-variant-numeric:tabular-nums}
-    .cap-agent-empty{height:auto!important;text-align:center!important;color:var(--muted);padding:18px!important}
+    .cap-agent-table-empty{text-align:center!important;color:var(--muted);padding:18px!important}
+    .cap-agent-actions-cell{overflow:visible!important}
     .cap-agent-action-wrap{position:relative;display:inline-flex;justify-content:center}
     .cap-agent-action-toggle{width:30px;height:28px;border:1px solid #314158;border-radius:5px;background:#182334;color:#dbe7f7;font-size:18px;line-height:1;cursor:pointer}
     .cap-agent-action-toggle:hover,.cap-agent-action-toggle[aria-expanded="true"]{background:#223249;border-color:#48617f}
@@ -54,11 +45,9 @@
       .cap-agent-table-panel{margin-top:10px;width:100%;max-width:100%;overflow:hidden}
       .cap-panel-heading{align-items:flex-start;flex-direction:column;gap:8px;padding:12px 14px}
       .cap-panel-heading p{line-height:1.4}
-      .cap-agent-y-scroll{height:300px;max-height:300px}
-      .cap-agent-fixed{flex-basis:154px;width:154px;min-width:154px}
-      .cap-agent-fixed-table{width:154px;min-width:154px}
-      .cap-agent-fixed-table td small,.cap-agent-name{max-width:128px}
-      .cap-agent-wide-table{width:740px;min-width:740px}
+      .cap-agent-table-scroll{width:100%;max-width:100%;overflow-x:auto;overflow-y:visible}
+      .cap-agent-table{width:900px;min-width:900px;font-size:10px}
+      .cap-agent-table td small,.cap-agent-name{max-width:140px}
       .cap-agent-scroll-hint{display:block}
       .cap-agent-action-menu{position:fixed;right:18px;top:auto;bottom:18px;min-width:210px}
     }
@@ -102,24 +91,27 @@
           </div>
           <a href="agents.html">Gerenciar Agents ›</a>
         </div>
-        <div class="cap-agent-zurb">
-          <div class="cap-agent-y-scroll" tabindex="0" aria-label="Tabela de Agents; a coluna Agent é fixa e as demais colunas possuem rolagem horizontal">
-            <div class="cap-agent-fixed">
-              <table class="cap-agent-fixed-table">
-                <thead><tr><th>Agent</th></tr></thead>
-                <tbody id="home-agent-fixed-body"><tr><td class="cap-agent-empty">Carregando...</td></tr></tbody>
-              </table>
-            </div>
-            <div class="cap-agent-wide">
-              <table class="cap-agent-wide-table">
-                <colgroup><col><col><col><col><col><col><col></colgroup>
-                <thead><tr><th>Host</th><th>Plataforma</th><th>Região / DC</th><th>Estado</th><th>Instâncias</th><th>Último heartbeat</th><th aria-label="Ações"></th></tr></thead>
-                <tbody id="home-agent-wide-body"><tr><td colspan="7" class="cap-agent-empty">Carregando Agents...</td></tr></tbody>
-              </table>
-            </div>
-          </div>
-          <div class="cap-agent-scroll-hint" aria-hidden="true">↔ Deslize a área à direita para ver as demais colunas · ↕ role a lista normalmente</div>
+        <div class="cap-agent-table-scroll" tabindex="0" aria-label="Tabela de Agents com rolagem horizontal">
+          <table class="cap-agent-table">
+            <colgroup><col><col><col><col><col><col><col><col></colgroup>
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Host</th>
+                <th>Plataforma</th>
+                <th>Região / DC</th>
+                <th>Estado</th>
+                <th>Instâncias</th>
+                <th>Último heartbeat</th>
+                <th aria-label="Ações"></th>
+              </tr>
+            </thead>
+            <tbody id="home-agent-table-body">
+              <tr><td colspan="8" class="cap-agent-table-empty">Carregando Agents...</td></tr>
+            </tbody>
+          </table>
         </div>
+        <div class="cap-agent-scroll-hint" aria-hidden="true">↔ Deslize horizontalmente para ver todas as colunas</div>
       </section>
 
       <section class="cap-grid-main">
@@ -134,6 +126,6 @@
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
   </main>
   <script src="telemetry-widgets.js?v=1"></script>
-  <script src="dashboard-home-v3.js?v=8"></script>
+  <script src="dashboard-home-v3.js?v=9"></script>
 </body>
 </html>
