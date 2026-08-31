@@ -49,6 +49,7 @@ $python = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
 if (-not $python) { Fail "Python 3 não encontrado no PATH" }
 Install-ControllerCa $ControllerCaFile
 
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $PackageDir = (Resolve-Path $PackageDir).Path
 $required = @(
     "manifest.json", "VERSION", "agent\common\identity.py",
@@ -66,8 +67,15 @@ for relative in manifest.get('required_files',[]):
  path=root/relative; assert path.is_file(), f'arquivo ausente: {relative}'
  expected=(manifest.get('files',{}).get(relative) or {}).get('sha256'); assert expected and hashlib.sha256(path.read_bytes()).hexdigest()==expected, f'hash inválido: {relative}'
 '@
-& $python -c $verify $PackageDir
-if ($LASTEXITCODE -ne 0) { Fail "falha ao validar pacote" }
+$verifyScript = Join-Path ([IO.Path]::GetTempPath()) ("capivara-package-verify-" + [guid]::NewGuid().ToString('N') + ".py")
+try {
+    [System.IO.File]::WriteAllText($verifyScript, $verify, $utf8NoBom)
+    & $python $verifyScript $PackageDir
+    $verifyExitCode = $LASTEXITCODE
+} finally {
+    Remove-Item -Force -ErrorAction SilentlyContinue $verifyScript
+}
+if ($verifyExitCode -ne 0) { Fail "falha ao validar pacote" }
 
 $version = (Get-Content (Join-Path $PackageDir "VERSION") -Raw).Trim().TrimStart([char]0xFEFF)
 $guiAvailable = Test-GuiAvailable
@@ -79,15 +87,21 @@ Copy-Item (Join-Path $PackageDir "agent\updater\updater.py") "$InstallRoot\updat
 Copy-Item (Join-Path $PackageDir "service\*.ps1") "$InstallRoot\service" -Force
 Copy-Item (Join-Path $PackageDir "gui\*.ps1") "$InstallRoot\gui" -Force
 Copy-Item (Join-Path $PackageDir "manifest.json") "$InstallRoot\manifest.json" -Force
-$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText("$InstallRoot\VERSION", $version + [Environment]::NewLine, $utf8NoBom)
 
 $identityCode = @'
 import importlib.util,json,pathlib,sys
 p=pathlib.Path(sys.argv[1]); s=importlib.util.spec_from_file_location('cap_identity',p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(json.dumps(m.generate_local_identity()))
 '@
-$identityJson = & $python -c $identityCode "$InstallRoot\common\identity.py"
-if ($LASTEXITCODE -ne 0) { Fail "falha ao gerar identidade local" }
+$identityScript = Join-Path ([IO.Path]::GetTempPath()) ("capivara-identity-" + [guid]::NewGuid().ToString('N') + ".py")
+try {
+    [System.IO.File]::WriteAllText($identityScript, $identityCode, $utf8NoBom)
+    $identityJson = & $python $identityScript "$InstallRoot\common\identity.py"
+    $identityExitCode = $LASTEXITCODE
+} finally {
+    Remove-Item -Force -ErrorAction SilentlyContinue $identityScript
+}
+if ($identityExitCode -ne 0) { Fail "falha ao gerar identidade local" }
 $localIdentity = $identityJson | ConvertFrom-Json
 $config = [ordered]@{
     agent_id=$localIdentity.agent_id; node_id=$localIdentity.node_id; hostname=$localIdentity.hostname; fingerprint=$localIdentity.fingerprint; identity_nonce=$localIdentity.identity_nonce
