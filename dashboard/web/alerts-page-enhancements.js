@@ -100,6 +100,7 @@
         ? `ID do Agent: ${currentAgentId}${instanceId ? ` · ID da instância: ${instanceId}` : ""}`
         : `Escopo: ${original}`;
       if (scope.textContent !== desired) scope.textContent = desired;
+      if (currentAgentId) scope.classList.add("cap-alert-agent-id");
     } else if (original) {
       const desired = `Escopo: ${original}`;
       if (scope.textContent !== desired) scope.textContent = desired;
