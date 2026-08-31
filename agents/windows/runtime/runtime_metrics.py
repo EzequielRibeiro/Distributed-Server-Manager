@@ -8,6 +8,7 @@ from typing import Any
 
 import instance_runtime
 from host_telemetry import collect_host_telemetry
+from process_telemetry import collect_top_processes
 from queue_observability import collect_queue_observability
 from storage_pools import pool_inventory
 
@@ -167,6 +168,7 @@ def snapshot(*, queue_depth: dict[str, int] | None = None) -> dict[str, Any]:
     payload["storage_pools"] = pools
 
     telemetry = collect_host_telemetry()
+    telemetry["top_processes"] = collect_top_processes(5)
     if pools:
         telemetry["storage_pools"] = pools
     payload["telemetry"] = telemetry
