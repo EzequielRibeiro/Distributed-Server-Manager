@@ -15,14 +15,12 @@
     .cap-panel-heading p{margin:5px 0 0;color:var(--muted);font-size:12px}
     .cap-panel-heading>a{color:#aac7f3;text-decoration:none;white-space:nowrap}
 
-    .cap-agent-table-scroll{display:block;width:100%;overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch;background:#121b29}
-    .cap-agent-table{width:900px;min-width:900px;border-collapse:collapse;font-size:10px}
-    .cap-agent-table col:nth-child(1){width:170px}.cap-agent-table col:nth-child(2){width:120px}.cap-agent-table col:nth-child(3){width:100px}.cap-agent-table col:nth-child(4){width:145px}.cap-agent-table col:nth-child(5){width:110px}.cap-agent-table col:nth-child(6){width:85px}.cap-agent-table col:nth-child(7){width:150px}.cap-agent-table col:nth-child(8){width:55px}
-    .cap-agent-table th,.cap-agent-table td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#121b29;box-sizing:border-box}
+    .cap-agent-table{border-collapse:collapse;border-spacing:0;width:100%;border:1px solid var(--line);font-size:10px}
+    .cap-agent-table th,.cap-agent-table td{text-align:left;padding:8px;white-space:nowrap;border-bottom:1px solid var(--line);background:#121b29}
     .cap-agent-table th{color:var(--muted);font-weight:600;background:#172235}
     .cap-agent-table tbody tr:hover td{background:#182536}
-    .cap-agent-table td small{display:block;color:var(--muted);font-size:9px;margin-top:2px;max-width:145px;overflow:hidden;text-overflow:ellipsis}
-    .cap-agent-name{color:#eaf1fb;text-decoration:none;font-weight:600;display:block;max-width:145px;overflow:hidden;text-overflow:ellipsis}
+    .cap-agent-table td small{display:block;color:var(--muted);font-size:9px;margin-top:2px}
+    .cap-agent-name{color:#eaf1fb;text-decoration:none;font-weight:600;display:block}
     .cap-agent-name:hover{color:#aac7f3}
     .cap-agent-state{display:inline-flex;align-items:center;gap:6px;text-transform:capitalize}
     .cap-agent-state i{width:7px;height:7px;border-radius:50%;background:var(--red);flex:0 0 auto}
@@ -88,9 +86,8 @@
           </div>
           <a href="agents.html">Gerenciar Agents ›</a>
         </div>
-        <div class="cap-agent-table-scroll" tabindex="0" aria-label="Tabela de Agents com rolagem horizontal">
+        <div style="overflow-x:auto;">
           <table class="cap-agent-table">
-            <colgroup><col><col><col><col><col><col><col><col></colgroup>
             <thead>
               <tr>
                 <th>Agent</th>
