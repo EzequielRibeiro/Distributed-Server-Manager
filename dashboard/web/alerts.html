@@ -1,3 +1,50 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Alertas | Capivara DSM</title><link rel="stylesheet" href="/dashboard-home-v3.css"><link rel="stylesheet" href="/observability.css"></head>
-<body class="cap-home cap-observability-shell" data-observability-view="alerts"><div id="sidebar-component"></div><main class="cap-home-main cap-observability-page"><header class="cap-home-topbar cap-observability-topbar"><div class="cap-home-title"><button id="observability-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1>Alertas</h1><p>Alertas ativos e ocorrências que exigem atenção administrativa.</p></div></div><div class="cap-top-status"><div class="cap-controller-state"><i></i><span id="observability-controller-status">Controller Online</span></div><div class="cap-user"><strong id="observability-user-name">—</strong><span id="observability-user-role">—</span></div></div></header><div class="cap-home-content cap-observability-content"><section class="cap-observability-card"><div class="cap-section-heading"><div><h2>Alertas importantes</h2><p>Eventos de severidade warning, error, critical ou fatal.</p></div><button id="observability-refresh" type="button">Atualizar</button></div><div id="observability-alerts" class="cap-alert-list"><div class="cap-empty-state">Carregando alertas...</div></div></section></div><footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer></main><script src="/observability.js?v=5"></script></body></html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Alertas | Capivara DSM</title>
+  <link rel="stylesheet" href="/dashboard-home-v3.css">
+  <link rel="stylesheet" href="/observability.css">
+  <style>
+    .cap-alert-item{grid-template-columns:auto minmax(0,1fr) auto;align-items:start}
+    .cap-alert-item-main{min-width:0}
+    .cap-alert-item-main p{margin:0 0 5px}
+    .cap-alert-item-main small{display:block;color:#7e8b9b;overflow-wrap:anywhere}
+    .cap-alert-controls{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+    .cap-alert-controls button,.cap-alert-controls a{border:1px solid rgba(255,255,255,.1);background:#1c2632;color:#eef4fb;border-radius:8px;padding:7px 10px;text-decoration:none;cursor:pointer;font:inherit}
+    .cap-alert-controls .danger{border-color:#704047;background:#39262b;color:#ffb4b8}
+    .cap-alert-controls button:disabled{opacity:.55;cursor:wait}
+    #alert-history-dialog{width:min(760px,calc(100vw - 24px));max-height:80vh;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:#111923;color:#eef4fb;padding:0;box-shadow:0 24px 70px #000b}
+    #alert-history-dialog::backdrop{background:#0009}
+    .cap-alert-dialog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:18px;border-bottom:1px solid rgba(255,255,255,.08)}
+    .cap-alert-dialog-head h2{margin:0 0 4px}.cap-alert-dialog-head p{margin:0;color:#8d99a8}
+    .cap-alert-dialog-head button{border:1px solid rgba(255,255,255,.1);background:#1c2632;color:#eef4fb;border-radius:8px;padding:7px 10px;cursor:pointer}
+    .cap-alert-history-body{padding:16px;overflow:auto;max-height:65vh}
+    .cap-alert-history-row{padding:12px;border:1px solid rgba(255,255,255,.07);border-radius:10px;background:rgba(255,255,255,.025);margin-bottom:10px}
+    .cap-alert-history-row strong{display:block;margin-bottom:5px}.cap-alert-history-row small{display:block;color:#8d99a8;margin-top:5px}
+    @media(max-width:640px){.cap-alert-item{grid-template-columns:1fr}.cap-alert-item time{justify-self:start}}
+  </style>
+</head>
+<body class="cap-home cap-observability-shell" data-observability-view="alerts">
+  <div id="sidebar-component"></div>
+  <main class="cap-home-main cap-observability-page">
+    <header class="cap-home-topbar cap-observability-topbar">
+      <div class="cap-home-title"><button id="observability-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1>Alertas</h1><p>Alertas ativos, resolvidos e histórico administrativo.</p></div></div>
+      <div class="cap-top-status"><div class="cap-controller-state"><i></i><span id="observability-controller-status">Controller Online</span></div><div class="cap-user"><strong id="observability-user-name">—</strong><span id="observability-user-role">—</span></div></div>
+    </header>
+    <div class="cap-home-content cap-observability-content">
+      <section class="cap-observability-card">
+        <div class="cap-section-heading"><div><h2>Alertas</h2><p>Use as ações para reconhecer, documentar, resolver ou reabrir ocorrências.</p></div><button id="observability-refresh" type="button">Atualizar</button></div>
+        <div id="observability-alerts" class="cap-alert-list"><div class="cap-empty-state">Carregando alertas...</div></div>
+      </section>
+    </div>
+    <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
+  </main>
+  <dialog id="alert-history-dialog">
+    <div class="cap-alert-dialog-head"><div><h2>Histórico do alerta</h2><p id="alert-history-title">—</p></div><button id="alert-history-close" type="button">Fechar</button></div>
+    <div id="alert-history-body" class="cap-alert-history-body"><div class="cap-empty-state">Carregando...</div></div>
+  </dialog>
+  <script src="/observability.js?v=6"></script>
+</body>
+</html>
