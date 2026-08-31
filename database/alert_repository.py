@@ -277,6 +277,15 @@ class AlertRepository:
             (alert_id, action, level, old_state, new_state, message),
         )
 
+    @staticmethod
+    def _operator_message(value: str | None) -> str | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        if len(text) > 4000:
+            raise ValueError("alert note must not exceed 4000 characters")
+        return text
+
     def open_alert(
         self,
         *,
@@ -357,10 +366,12 @@ class AlertRepository:
         action: str,
         timestamp_column: str,
         missing_is_none: bool = False,
+        event_message: str | None = None,
     ) -> dict[str, Any] | None:
         self.initialize()
         ph = self.dialect.placeholder
         now = self.dialect.current_timestamp
+        operator_message = self._operator_message(event_message)
         with self.transaction() as session:
             current = session.execute(
                 f"SELECT * FROM alerts WHERE id={ph}", (alert_id,)
@@ -379,8 +390,15 @@ class AlertRepository:
                 f"updated_at={now}{extra} WHERE id={ph}",
                 (state, alert_id),
             )
-            self._event(session, alert_id, action, current["level"],
-                        current["state"], state, current["message"])
+            self._event(
+                session,
+                alert_id,
+                action,
+                current["level"],
+                current["state"],
+                state,
+                operator_message or current["message"],
+            )
             row = session.execute(
                 f"SELECT * FROM alerts WHERE id={ph}", (alert_id,)
             ).fetchone()
@@ -392,11 +410,93 @@ class AlertRepository:
             timestamp_column="acknowledged_at",
         )
 
-    def resolve_alert(self, alert_id: str) -> dict[str, Any] | None:
+    def resolve_alert(
+        self,
+        alert_id: str,
+        note: str | None = None,
+    ) -> dict[str, Any] | None:
         return self._transition(
-            alert_id, state="RESOLVED", action="RESOLVE",
-            timestamp_column="resolved_at", missing_is_none=True,
+            alert_id,
+            state="RESOLVED",
+            action="RESOLVE",
+            timestamp_column="resolved_at",
+            missing_is_none=True,
+            event_message=note,
         )
+
+    def note_alert(
+        self,
+        alert_id: str,
+        note: str,
+    ) -> dict[str, Any]:
+        message = self._operator_message(note)
+        if message is None:
+            raise ValueError("alert note is required")
+        self.initialize()
+        ph = self.dialect.placeholder
+        now = self.dialect.current_timestamp
+        with self.transaction() as session:
+            current = session.execute(
+                f"SELECT * FROM alerts WHERE id={ph}", (alert_id,)
+            ).fetchone()
+            if current is None:
+                raise ValueError("alert not found")
+            session.execute(
+                f"UPDATE alerts SET updated_at={now} WHERE id={ph}",
+                (alert_id,),
+            )
+            self._event(
+                session,
+                alert_id,
+                "NOTE",
+                current["level"],
+                current["state"],
+                current["state"],
+                message,
+            )
+            row = session.execute(
+                f"SELECT * FROM alerts WHERE id={ph}", (alert_id,)
+            ).fetchone()
+        return dict(row)
+
+    def reopen_alert(
+        self,
+        alert_id: str,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        message = self._operator_message(note)
+        self.initialize()
+        ph = self.dialect.placeholder
+        now = self.dialect.current_timestamp
+        with self.transaction() as session:
+            current = session.execute(
+                f"SELECT * FROM alerts WHERE id={ph}", (alert_id,)
+            ).fetchone()
+            if current is None:
+                raise ValueError("alert not found")
+            if current["state"] not in {"RESOLVED", "SUPPRESSED"}:
+                raise ValueError("only RESOLVED or SUPPRESSED alerts can be reopened")
+            old_state = current["state"]
+            session.execute(
+                "UPDATE alerts SET state='OPEN', "
+                f"opened_at={now}, updated_at={now}, "
+                "acknowledged_at=NULL, resolved_at=NULL, "
+                f"suppressed_until=NULL WHERE id={ph}",
+                (alert_id,),
+            )
+            self._event(
+                session,
+                alert_id,
+                "REOPEN",
+                current["level"],
+                old_state,
+                "OPEN",
+                message or current["message"],
+            )
+            row = session.execute(
+                f"SELECT * FROM alerts WHERE id={ph}", (alert_id,)
+            ).fetchone()
+        return dict(row)
 
     def suppress_alert(
         self,
