@@ -9,14 +9,14 @@
   <style>
     html,body{max-width:100%;overflow-x:hidden}
     .cap-home-main,.cap-home-content,.cap-home-content>*{min-width:0;max-width:100%}
-    .cap-agent-table-panel{margin-top:12px;min-width:0;width:100%;max-width:100%;overflow:hidden}
+    .cap-agent-table-panel{margin-top:12px;min-width:0;width:100%;max-width:100%;overflow:visible}
     .cap-panel-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 14px;border-bottom:1px solid var(--line)}
     .cap-panel-heading h2{border:0;padding:0;margin:0}
     .cap-panel-heading p{margin:5px 0 0;color:var(--muted);font-size:12px}
     .cap-panel-heading>a{color:#aac7f3;text-decoration:none;white-space:nowrap}
 
-    .cap-agent-table-scroll{width:100%;max-width:100%;overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch;background:#121b29}
-    .cap-agent-table{width:max-content;min-width:900px;border-collapse:collapse;table-layout:fixed;font-size:10px}
+    .cap-agent-table-scroll{display:block;width:100%;overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch;background:#121b29}
+    .cap-agent-table{width:900px;min-width:900px;border-collapse:collapse;font-size:10px}
     .cap-agent-table col:nth-child(1){width:170px}.cap-agent-table col:nth-child(2){width:120px}.cap-agent-table col:nth-child(3){width:100px}.cap-agent-table col:nth-child(4){width:145px}.cap-agent-table col:nth-child(5){width:110px}.cap-agent-table col:nth-child(6){width:85px}.cap-agent-table col:nth-child(7){width:150px}.cap-agent-table col:nth-child(8){width:55px}
     .cap-agent-table th,.cap-agent-table td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#121b29;box-sizing:border-box}
     .cap-agent-table th{color:var(--muted);font-weight:600;background:#172235}
@@ -42,12 +42,9 @@
     .cap-agent-scroll-hint{display:none;padding:7px 12px;color:var(--muted);font-size:10px;border-top:1px solid var(--line);background:#101927}
 
     @media(max-width:760px){
-      .cap-agent-table-panel{margin-top:10px;width:100%;max-width:100%;overflow:hidden}
+      .cap-agent-table-panel{margin-top:10px;width:100%;overflow:visible}
       .cap-panel-heading{align-items:flex-start;flex-direction:column;gap:8px;padding:12px 14px}
       .cap-panel-heading p{line-height:1.4}
-      .cap-agent-table-scroll{width:100%;max-width:100%;overflow-x:auto;overflow-y:visible}
-      .cap-agent-table{width:900px;min-width:900px;font-size:10px}
-      .cap-agent-table td small,.cap-agent-name{max-width:140px}
       .cap-agent-scroll-hint{display:block}
       .cap-agent-action-menu{position:fixed;right:18px;top:auto;bottom:18px;min-width:210px}
     }
