@@ -17,17 +17,37 @@
     .cap-agent-table th,.cap-agent-table td{padding:11px 14px;text-align:left;border-bottom:1px solid #243044;vertical-align:middle}
     .cap-agent-table th{color:#8d9aaf;font-size:11px;text-transform:uppercase;letter-spacing:.04em;background:#111a27}
     .cap-agent-table tbody tr:hover{background:#182536}
-    .cap-agent-table td small{display:block;color:var(--muted);font-size:11px;margin-top:3px}
-    .cap-agent-name{color:#eaf1fb;text-decoration:none;font-weight:600}
+    .cap-agent-table td small{display:block;color:var(--muted);font-size:11px;margin-top:3px;overflow-wrap:anywhere}
+    .cap-agent-name{color:#eaf1fb;text-decoration:none;font-weight:600;overflow-wrap:anywhere}
     .cap-agent-name:hover{color:#aac7f3}
     .cap-agent-state{display:inline-flex;align-items:center;gap:7px;text-transform:capitalize}
-    .cap-agent-state i{width:8px;height:8px;border-radius:50%;background:var(--red)}
+    .cap-agent-state i{width:8px;height:8px;border-radius:50%;background:var(--red);flex:0 0 auto}
     .cap-agent-state.online{color:var(--green)}
     .cap-agent-state.online i{background:var(--green);box-shadow:0 0 7px #39d06f55}
     .cap-agent-state.offline{color:var(--red)}
     .cap-agent-number{text-align:center!important;font-variant-numeric:tabular-nums}
     .cap-agent-table-empty{text-align:center!important;color:var(--muted);padding:22px!important}
-    @media(max-width:760px){.cap-panel-heading{align-items:flex-start;flex-direction:column}.cap-agent-table-panel{margin-top:10px}}
+    @media(max-width:760px){
+      .cap-agent-table-panel{margin-top:10px;overflow:visible}
+      .cap-panel-heading{align-items:flex-start;flex-direction:column;gap:9px;padding:14px}
+      .cap-panel-heading p{line-height:1.45}
+      .cap-agent-table-scroll{overflow:visible;padding:10px}
+      .cap-agent-table{min-width:0;border-collapse:separate;border-spacing:0;width:100%}
+      .cap-agent-table thead{display:none}
+      .cap-agent-table tbody{display:grid;gap:10px}
+      .cap-agent-table tbody tr{display:block;border:1px solid #2a374b;border-radius:8px;background:#111b29;overflow:hidden}
+      .cap-agent-table tbody tr:hover{background:#111b29}
+      .cap-agent-table td{display:grid;grid-template-columns:minmax(92px,34%) minmax(0,1fr);gap:10px;align-items:start;padding:10px 12px;border-bottom:1px solid #243044;min-width:0;overflow-wrap:anywhere;word-break:break-word}
+      .cap-agent-table td:last-child{border-bottom:0}
+      .cap-agent-table td::before{content:attr(data-label);color:#8d9aaf;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding-top:2px}
+      .cap-agent-table td[data-label="Agent"]{grid-template-columns:1fr;padding:13px 12px;background:#172335}
+      .cap-agent-table td[data-label="Agent"]::before{display:none}
+      .cap-agent-table td[data-label="Agent"] .cap-agent-name{font-size:15px;color:#dce9ff}
+      .cap-agent-table td[data-label="Agent"] small{font-size:10px;line-height:1.35;margin-top:5px}
+      .cap-agent-table .cap-agent-number{text-align:left!important}
+      .cap-agent-table-empty{display:block!important;padding:18px!important}
+      .cap-agent-table-empty::before{display:none!important}
+    }
   </style>
 </head>
 <body class="cap-home">
@@ -104,6 +124,6 @@
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
   </main>
   <script src="telemetry-widgets.js?v=1"></script>
-  <script src="dashboard-home-v3.js?v=4"></script>
+  <script src="dashboard-home-v3.js?v=5"></script>
 </body>
 </html>
