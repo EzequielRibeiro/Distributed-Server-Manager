@@ -15,10 +15,10 @@
     .cap-panel-heading p{margin:5px 0 0;color:var(--muted);font-size:12px}
     .cap-panel-heading>a{color:#aac7f3;text-decoration:none;white-space:nowrap}
 
-    .cap-agent-table{border-collapse:collapse;border-spacing:0;width:100%;border:1px solid var(--line);font-size:10px}
-    .cap-agent-table th,.cap-agent-table td{text-align:left;padding:8px}
-    .cap-agent-table th{color:var(--muted);font-weight:600;background:#172235}
-    .cap-agent-table td{background:#121b29;border-bottom:1px solid var(--line)}
+    .cap-agent-table-wrap{padding:0;border:0;border-radius:0;box-shadow:none;background:#121b29}
+    .cap-agent-table{font-size:10px}
+    .cap-agent-table th{background:#172235}
+    .cap-agent-table td{background:#121b29}
     .cap-agent-table tbody tr:hover td{background:#182536}
     .cap-agent-table td small{display:block;color:var(--muted);font-size:9px;margin-top:2px}
     .cap-agent-name{color:#eaf1fb;text-decoration:none;font-weight:600;display:block}
@@ -87,8 +87,8 @@
           </div>
           <a href="agents.html">Gerenciar Agents ›</a>
         </div>
-        <div style="overflow-x:auto;">
-          <table class="cap-agent-table">
+        <div class="cap-telemetry-table-wrap cap-agent-table-wrap" tabindex="0" aria-label="Tabela de Agents com rolagem">
+          <table class="cap-telemetry-table cap-agent-table">
             <thead>
               <tr>
                 <th>Agent</th>
