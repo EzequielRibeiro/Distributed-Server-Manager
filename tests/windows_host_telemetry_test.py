@@ -76,9 +76,29 @@ class WindowsHostTelemetryTest(unittest.TestCase):
         self.assertEqual(result["agent"], agent)
         self.assertEqual(result["top_processes"], [])
 
+    def test_disk_activity_derives_rates_from_raw_counter_deltas(self):
+        host_telemetry._previous_disk = None
+        with (
+            patch.object(
+                host_telemetry,
+                "_disk_raw_totals",
+                side_effect=[(1000, 2000, 10, 20), (5000, 8000, 30, 50)],
+            ),
+            patch.object(host_telemetry.time, "monotonic", side_effect=[10.0, 12.0]),
+        ):
+            first = host_telemetry._disk_activity()
+            second = host_telemetry._disk_activity()
+
+        self.assertIsNone(first["read_bytes_per_second"])
+        self.assertIsNone(first["write_bytes_per_second"])
+        self.assertEqual(second["read_bytes_per_second"], 2000.0)
+        self.assertEqual(second["write_bytes_per_second"], 3000.0)
+        self.assertEqual(second["read_iops"], 10.0)
+        self.assertEqual(second["write_iops"], 15.0)
+
     def test_windows_perf_sources_cover_disk_io_queue_and_temperature(self):
         source = (WINDOWS_RUNTIME / "host_telemetry.py").read_text(encoding="utf-8")
-        self.assertIn("Win32_PerfFormattedData_PerfDisk_PhysicalDisk", source)
+        self.assertIn("Win32_PerfRawData_PerfDisk_PhysicalDisk", source)
         self.assertIn("DiskReadBytesPersec", source)
         self.assertIn("DiskWriteBytesPersec", source)
         self.assertIn("DiskReadsPersec", source)
