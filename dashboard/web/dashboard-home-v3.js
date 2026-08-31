@@ -99,11 +99,13 @@ function renderTimeline(result) {
     if(list){list.innerHTML=events.slice(0,5).map(event=>`<div class="cap-event"><time>${escapeHtml(formatTime(event.timestamp||event.time))}</time><i class="cap-event-dot"></i><div><p>${escapeHtml(eventText(event))}</p><small>${escapeHtml(event.category||event.source||"Sistema")}</small></div></div>`).join("")||'<div class="cap-empty">Nenhuma atividade recente.</div>'}
 }
 
-function renderActiveAlerts(result) {
+function renderActiveAlerts(result, alertResult) {
     const summary = result?.summary || {};
     const alertsSummary = summary?.alerts || {};
-    const recentAlerts = Array.isArray(result?.recent?.alerts) ? result.recent.alerts : [];
-    const active = Number(alertsSummary.active || 0);
+    const recentAlerts = Array.isArray(alertResult?.alerts)
+        ? alertResult.alerts
+        : Array.isArray(result?.recent?.alerts) ? result.recent.alerts : [];
+    const active = Number(alertsSummary.active ?? alertResult?.count ?? recentAlerts.length ?? 0);
     text("home-alert-total", active);
     const target = $("home-alerts");
     if (!target) return;
@@ -169,8 +171,8 @@ function renderUser(user) { const role=user?.role||"";text("home-user-name",user
 function renderControllerTelemetry(result){if(!result)return;window.CapivaraTelemetry?.render($("controller-telemetry"),result.current||{},result.history||[],{label:"Controller",processKey:"controller",description:"Telemetria do host do Control Plane e consumo exclusivo do processo da Dashboard/Controller."})}
 
 async function refresh() {
-    const [user,agents,infrastructure,timeline,health,controllerTelemetry,observability]=await Promise.all([get("/whoami"),get("/agents"),get("/infrastructure?active_only=true"),get("/timeline?limit=30"),get("/health"),get("/controller/telemetry?window_seconds=3600"),get("/admin/observability")]);
-    if(user)renderUser(user);renderAgents(agents);renderInfrastructure(infrastructure);renderTimeline(timeline);renderHealth(health);renderControllerTelemetry(controllerTelemetry);renderActiveAlerts(observability);text("home-last-refresh",new Date().toLocaleTimeString("pt-BR"));
+    const [user,agents,infrastructure,timeline,health,controllerTelemetry,observability,activeAlertDetails]=await Promise.all([get("/whoami"),get("/agents"),get("/infrastructure?active_only=true"),get("/timeline?limit=30"),get("/health"),get("/controller/telemetry?window_seconds=3600"),get("/admin/observability"),get("/admin/alerts?active=true&limit=3")]);
+    if(user)renderUser(user);renderAgents(agents);renderInfrastructure(infrastructure);renderTimeline(timeline);renderHealth(health);renderControllerTelemetry(controllerTelemetry);renderActiveAlerts(observability,activeAlertDetails);text("home-last-refresh",new Date().toLocaleTimeString("pt-BR"));
 }
 
 function bindMobileSidebar(target,toggle){
