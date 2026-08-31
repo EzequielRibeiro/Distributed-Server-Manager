@@ -6,6 +6,8 @@ from pathlib import Path,PurePosixPath
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));PROGRAM_FILES=Path(os.environ.get("ProgramFiles",r"C:\Program Files"));STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));DATA_ROOT=STATE_DIR.parent;INSTALL_ROOT=Path(os.environ.get("CAPIVARA_AGENT_ROOT",PROGRAM_FILES/"CapivaraAgent"));REQUEST_PATH=STATE_DIR/"update-request.json";RESULT_PATH=STATE_DIR/"update-result.json";REPOSITORY=os.environ.get("CAPIVARA_AGENT_GITHUB_REPOSITORY","EzequielRibeiro/Distributed-Server-Manager");TASK_NAME=os.environ.get("CAPIVARA_AGENT_TASK_NAME","CapivaraAgent")
 def _write_result(status:str,**extra):
  STATE_DIR.mkdir(parents=True,exist_ok=True);temp=RESULT_PATH.with_suffix(".tmp");temp.write_text(json.dumps({"status":status,**extra},indent=2,sort_keys=True)+"\n",encoding="utf-8");temp.replace(RESULT_PATH)
+def _read_request()->dict:
+ return json.loads(REQUEST_PATH.read_text(encoding="utf-8-sig"))
 def _download(url:str,target:Path):
  request=urllib.request.Request(url,headers={"User-Agent":"Capivara-Agent-Windows-Updater"})
  with urllib.request.urlopen(request,timeout=60) as response,target.open("wb") as output:shutil.copyfileobj(response,output)
@@ -64,7 +66,7 @@ def _reconcile_runtime_integration()->dict:
   gui_enabled='"gui_enabled":true' in (result.stdout or "").replace(" ","").lower()
  return {"task_reconciled":True,"task_restarted":stopped,"task_running":running,"gui_enabled":gui_enabled}
 def apply_request()->int:
- request=json.loads(REQUEST_PATH.read_text(encoding="utf-8-sig"));version=str(request.get("desired_version","")).strip();channel=str(request.get("channel","stable")).strip().lower()
+ request=_read_request();version=str(request.get("desired_version","")).strip();channel=str(request.get("channel","stable")).strip().lower()
  if not version:raise RuntimeError("desired_version is required")
  if channel=="local/manual":raise RuntimeError("local/manual update requires an administrator supplied package")
  tag=version if version.startswith("v") else f"v{version}";plain=version[1:] if version.startswith("v") else version;archive_name=f"capivara-agent-windows-{plain}.zip";base=f"https://github.com/{REPOSITORY}/releases/download/{tag}"
