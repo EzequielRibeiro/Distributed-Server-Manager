@@ -9,11 +9,9 @@
     }
 
     async function remoteCheck(event) {
-        const button = event.target.closest?.("#test-agent-connection");
-        if (!button) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
+        event?.preventDefault?.();
 
+        const button = el("test-agent-connection");
         const out = el("agent-connection-result");
         const controllerUrl = el("agent-controller-url")?.value.trim() || "";
         if (!controllerUrl) {
@@ -48,9 +46,23 @@
         }
     }
 
-    document.addEventListener("click", remoteCheck, true);
+    function ownConnectionButton() {
+        const oldButton = el("test-agent-connection");
+        if (!oldButton || oldButton.dataset.controllerProbeOwned === "true") return;
+
+        const button = oldButton.cloneNode(true);
+        button.dataset.controllerProbeOwned = "true";
+        button.textContent = "Testar OpenSSH + Controller";
+        oldButton.replaceWith(button);
+        button.addEventListener("click", remoteCheck);
+    }
+
     document.addEventListener("change", event => {
         if (event.target.matches?.('input[name="agent-method"]')) syncMethodNote();
     });
-    window.addEventListener("load", syncMethodNote);
+
+    window.addEventListener("load", () => {
+        syncMethodNote();
+        ownConnectionButton();
+    });
 })();
