@@ -79,6 +79,15 @@ class WindowsProcessAndStorageUiTest(unittest.TestCase):
         self.assertIn('credentials:"same-origin"', source)
         self.assertIn("/api/admin/agent/storage-pools", source)
 
+    def test_legacy_storage_pools_skip_admin_read(self):
+        source = (ROOT / "dashboard" / "web" / "agent-storage-pools.js").read_text(encoding="utf-8")
+        self.assertIn("const legacyOnly=pools.length>0&&pools.every", source)
+        self.assertIn("if(legacyOnly){renderObserved(pools);return;}", source)
+        self.assertLess(
+            source.index("/api/agent/ports?agent_id="),
+            source.index("/api/admin/agent/storage-pools?agent_id="),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
