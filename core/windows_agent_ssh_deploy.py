@@ -53,6 +53,24 @@ def _windows_bootstrap_stdin(
     )
 
 
+def _stdin_script_command() -> str:
+    """Read all SSH stdin before executing it as one PowerShell script.
+
+    Windows PowerShell's ``-Command -`` consumes stdin as interactive command
+    input. Multiline constructs such as functions and try/catch blocks can be
+    accepted with exit code zero without the complete script ever executing.
+    Keep the secret-bearing bootstrap body on stdin, but make argv contain only
+    a non-secret encoded wrapper that buffers stdin and executes one ScriptBlock.
+    """
+    wrapper = (
+        "$ErrorActionPreference='Stop'\n"
+        "$source=[Console]::In.ReadToEnd()\n"
+        "$block=[ScriptBlock]::Create($source)\n"
+        "& $block\n"
+    )
+    return _powershell_encoded_command(wrapper)
+
+
 def _installed_state_command(success_marker: str) -> str:
     powershell = (
         "$ErrorActionPreference='Stop';"
@@ -104,7 +122,7 @@ def bootstrap_windows_agent_ssh(
 
     result = _run_ssh(
         options,
-        "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -",
+        _stdin_script_command(),
         runner=runner,
         stdin_text=_windows_bootstrap_stdin(
             controller_url,
