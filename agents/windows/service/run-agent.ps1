@@ -22,5 +22,10 @@ function Rotate-AgentLog {
     Move-Item $logPath "$logPath.1" -Force
 }
 Rotate-AgentLog
-& $PythonExe $AgentScript *>> $logPath
+
+$runtimeDir = Split-Path -Parent $AgentScript
+$entrypoint = Join-Path $runtimeDir 'agent_entrypoint.py'
+$scriptToRun = if (Test-Path $entrypoint -PathType Leaf) { $entrypoint } else { $AgentScript }
+
+& $PythonExe $scriptToRun *>> $logPath
 exit $LASTEXITCODE
