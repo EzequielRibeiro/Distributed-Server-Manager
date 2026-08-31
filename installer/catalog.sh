@@ -210,6 +210,7 @@ catalog_prepare_environment()
           archive_type:($resolved_install.archive_type // $definition.artifact.archive_type // null)
         }),
         install_dir:($definition.installation.directory // ("/opt/dsm/game-data/"+$definition.game+"/"+$definition.variant)),
+        installer:($definition.installation.installer // null),
         executable:$definition.process.executable,
         build_config:($definition.build // {}),
         resolved_at:(now|floor)
