@@ -43,6 +43,20 @@ def _filetime_value(value: FILETIME) -> int:
     return (int(value.dwHighDateTime) << 32) | int(value.dwLowDateTime)
 
 
+def _run_powershell_json(script: str, timeout: int = 12) -> Any:
+    try:
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return json.loads(completed.stdout.strip())
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
 def _cpu_times() -> tuple[int, int] | None:
     idle = FILETIME()
     kernel = FILETIME()
@@ -102,52 +116,100 @@ def _memory() -> dict[str, int | float | None]:
     }
 
 
-def _disk() -> dict[str, int | float | None]:
-    root = os.environ.get("SystemDrive", "C:") + "\\"
-    try:
-        usage = shutil.disk_usage(root)
-    except OSError:
+def _performance_snapshot() -> dict[str, float | None]:
+    script = r"""
+$ErrorActionPreference='Stop'
+$disk = Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -ErrorAction Stop |
+  Where-Object { $_.Name -eq '_Total' } |
+  Select-Object -First 1
+$system = Get-CimInstance Win32_PerfFormattedData_PerfOS_System -ErrorAction Stop |
+  Select-Object -First 1
+@{
+  read_bytes_per_second = if ($null -eq $disk) { $null } else { [double]$disk.DiskReadBytesPersec }
+  write_bytes_per_second = if ($null -eq $disk) { $null } else { [double]$disk.DiskWriteBytesPersec }
+  read_iops = if ($null -eq $disk) { $null } else { [double]$disk.DiskReadsPersec }
+  write_iops = if ($null -eq $disk) { $null } else { [double]$disk.DiskWritesPersec }
+  processor_queue_length = if ($null -eq $system) { $null } else { [double]$system.ProcessorQueueLength }
+} | ConvertTo-Json -Compress
+"""
+    payload = _run_powershell_json(script)
+    if not isinstance(payload, dict):
         return {
-            "total_bytes": None,
-            "used_bytes": None,
-            "free_bytes": None,
-            "usage_pct": None,
             "read_bytes_per_second": None,
             "write_bytes_per_second": None,
             "read_iops": None,
             "write_iops": None,
+            "processor_queue_length": None,
         }
+    result: dict[str, float | None] = {}
+    for key in (
+        "read_bytes_per_second",
+        "write_bytes_per_second",
+        "read_iops",
+        "write_iops",
+        "processor_queue_length",
+    ):
+        value = payload.get(key)
+        try:
+            result[key] = float(value) if value is not None else None
+        except (TypeError, ValueError):
+            result[key] = None
+    return result
+
+
+def _disk(perf: dict[str, float | None] | None = None) -> dict[str, int | float | None]:
+    perf = perf or {}
+    root = os.environ.get("SystemDrive", "C:") + "\\"
+    try:
+        usage = shutil.disk_usage(root)
+    except OSError:
+        total = used = free = usage_pct = None
+    else:
+        total = usage.total
+        used = usage.used
+        free = usage.free
+        usage_pct = round(100.0 * usage.used / usage.total, 2) if usage.total else None
     return {
-        "total_bytes": usage.total,
-        "used_bytes": usage.used,
-        "free_bytes": usage.free,
-        "usage_pct": round(100.0 * usage.used / usage.total, 2) if usage.total else None,
-        "read_bytes_per_second": None,
-        "write_bytes_per_second": None,
-        "read_iops": None,
-        "write_iops": None,
+        "total_bytes": total,
+        "used_bytes": used,
+        "free_bytes": free,
+        "usage_pct": usage_pct,
+        "read_bytes_per_second": perf.get("read_bytes_per_second"),
+        "write_bytes_per_second": perf.get("write_bytes_per_second"),
+        "read_iops": perf.get("read_iops"),
+        "write_iops": perf.get("write_iops"),
     }
 
 
-def _run_powershell_json(script: str, timeout: int = 12) -> Any:
-    try:
-        completed = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        return json.loads(completed.stdout.strip())
-    except (OSError, subprocess.SubprocessError, ValueError):
+def _temperature_c() -> float | None:
+    # ACPI thermal zones are not guaranteed to expose CPU temperature, and
+    # hypervisors commonly expose no thermal sensor at all. Publish a value only
+    # when Windows reports a plausible sensor reading; otherwise return None.
+    script = r"""
+$ErrorActionPreference='Stop'
+$zones = @(Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop)
+$values = @()
+foreach ($zone in $zones) {
+  if ($null -eq $zone.CurrentTemperature) { continue }
+  $c = ([double]$zone.CurrentTemperature / 10.0) - 273.15
+  if ($c -ge -20 -and $c -le 150) { $values += $c }
+}
+if ($values.Count -eq 0) { $null | ConvertTo-Json -Compress }
+else { (($values | Measure-Object -Average).Average) | ConvertTo-Json -Compress }
+"""
+    value = _run_powershell_json(script, timeout=8)
+    if value is None:
         return None
+    try:
+        temperature = float(value)
+    except (TypeError, ValueError):
+        return None
+    if temperature < -20 or temperature > 150:
+        return None
+    return round(temperature, 1)
 
 
 def _network_totals() -> tuple[int, int] | None:
-    # Get-NetAdapterStatistics returned empty counters on the tested Intel
-    # PRO/1000 MT adapter, while the Win32_PerfRawData provider exposed valid
-    # byte counters. Sum all non-loopback interfaces so the collector works on
-    # physical hosts, Hyper-V guests and VirtualBox guests alike.
     script = r"""
 $ErrorActionPreference='Stop'
 $items = @(Get-CimInstance Win32_PerfRawData_Tcpip_NetworkInterface -ErrorAction Stop |
@@ -255,17 +317,22 @@ def _agent_process() -> dict[str, Any]:
 
 def collect_host_telemetry() -> dict[str, Any]:
     """Collect one platform-neutral Windows telemetry sample."""
+    perf = _performance_snapshot()
     return {
         "schema_version": 1,
         "collected_at_unix": round(time.time(), 3),
         "host": {
             "cpu_usage_pct": _cpu_usage_pct(),
             "memory": _memory(),
-            "disk": _disk(),
+            "disk": _disk(perf),
+            # Linux load average has no equivalent Windows semantic. Keep the
+            # platform-neutral fields empty and publish Processor Queue Length
+            # separately for Windows-specific pressure diagnostics.
             "load_average": {"1m": None, "5m": None, "15m": None},
+            "processor_queue_length": perf.get("processor_queue_length"),
             "uptime_seconds": _uptime_seconds(),
             "network": _network(),
-            "temperature_c": None,
+            "temperature_c": _temperature_c(),
         },
         "agent": _agent_process(),
         "top_processes": [],
