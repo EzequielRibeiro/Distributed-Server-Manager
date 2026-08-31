@@ -47,13 +47,24 @@ function closeAgentMenus(except = null) {
 }
 
 function renderAgentTable(agents) {
-    const body = $("home-agent-table-body");
-    if (!body) return;
+    const fixedBody = $("home-agent-fixed-body");
+    const wideBody = $("home-agent-wide-body");
+    if (!fixedBody || !wideBody) return;
     if (!agents.length) {
-        body.innerHTML = '<tr><td colspan="8" class="cap-agent-table-empty">Nenhum Agent registrado.</td></tr>';
+        fixedBody.innerHTML = '<tr><td class="cap-agent-empty">Nenhum Agent</td></tr>';
+        wideBody.innerHTML = '<tr><td colspan="7" class="cap-agent-empty">Nenhum Agent registrado.</td></tr>';
         return;
     }
-    body.innerHTML = agents.map(agent => {
+
+    fixedBody.innerHTML = agents.map(agent => {
+        const id = String(agent.id || "");
+        const detailsUrl = `agent-details.html?agent_id=${encodeURIComponent(id)}`;
+        return `<tr>
+            <td><a class="cap-agent-name" href="${detailsUrl}">${escapeHtml(agent.name || agent.id || "Agent")}</a><small title="${escapeHtml(agent.id || "—")}">${escapeHtml(compactAgentId(agent.id))}</small></td>
+        </tr>`;
+    }).join("");
+
+    wideBody.innerHTML = agents.map(agent => {
         const id = String(agent.id || "");
         const state = agentState(agent);
         const online = isOnline(agent);
@@ -61,7 +72,6 @@ function renderAgentTable(agents) {
         const detailsUrl = `agent-details.html?agent_id=${encodeURIComponent(id)}`;
         const instancesUrl = `servers.html?agent=${encodeURIComponent(id)}`;
         return `<tr>
-            <td><a class="cap-agent-name" href="${detailsUrl}">${escapeHtml(agent.name || agent.id || "Agent")}</a><small title="${escapeHtml(agent.id || "—")}">${escapeHtml(compactAgentId(agent.id))}</small></td>
             <td>${escapeHtml(agentHost(agent))}</td>
             <td>${escapeHtml(agentPlatform(agent))}</td>
             <td>${escapeHtml(agentLocation(agent))}</td>
@@ -117,36 +127,8 @@ function bindMobileSidebar(target,toggle){
     window.addEventListener("resize",()=>{if(!isMobile())setOpen(false);});
 }
 
-function bindAgentTableScroll(){
-    const viewport=document.querySelector(".cap-agent-table-scroll");
-    if(!viewport)return;
-    let active=false,startX=0,startY=0,startLeft=0,startTop=0;
-    viewport.addEventListener("touchstart",event=>{
-        if(event.touches.length!==1)return;
-        const touch=event.touches[0];
-        active=true;
-        startX=touch.clientX;
-        startY=touch.clientY;
-        startLeft=viewport.scrollLeft;
-        startTop=viewport.scrollTop;
-    },{passive:true});
-    viewport.addEventListener("touchmove",event=>{
-        if(!active||event.touches.length!==1)return;
-        const touch=event.touches[0];
-        const dx=touch.clientX-startX;
-        const dy=touch.clientY-startY;
-        if(Math.abs(dx)<3&&Math.abs(dy)<3)return;
-        event.preventDefault();
-        viewport.scrollLeft=startLeft-dx;
-        viewport.scrollTop=startTop-dy;
-    },{passive:false});
-    const stop=()=>{active=false;};
-    viewport.addEventListener("touchend",stop,{passive:true});
-    viewport.addEventListener("touchcancel",stop,{passive:true});
-}
-
 function bindAgentActionMenus(){
-    const table=$("home-agent-table-body");
+    const table=$("home-agent-wide-body");
     if(!table)return;
     table.addEventListener("click",event=>{
         const button=event.target.closest(".cap-agent-action-toggle");
@@ -172,7 +154,6 @@ async function loadSidebar(){
 
 document.addEventListener("DOMContentLoaded",async()=>{
     await loadSidebar();
-    bindAgentTableScroll();
     bindAgentActionMenus();
     $("home-refresh")?.addEventListener("click",refresh);
     await refresh();
