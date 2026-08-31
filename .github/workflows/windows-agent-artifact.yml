@@ -1,0 +1,46 @@
+name: Windows Agent Artifact
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'version'
+      - 'release/**'
+      - 'agents/windows/**'
+      - 'agents/common/**'
+      - '.github/workflows/windows-agent-artifact.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build Windows Agent package
+        run: python3 release/build_windows_agent_package.py HEAD dist
+
+      - name: Verify package outputs
+        run: |
+          VERSION="$(cat version)"
+          test -f "dist/capivara-agent-windows-${VERSION}.zip"
+          test -f "dist/capivara-agent-windows-${VERSION}.zip.sha256"
+          test -f "dist/capivara-agent-windows-${VERSION}.manifest.json"
+          sha256sum -c "dist/capivara-agent-windows-${VERSION}.zip.sha256"
+
+      - name: Upload Windows Agent artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: capivara-agent-windows-${{ github.sha }}
+          path: |
+            dist/capivara-agent-windows-*.zip
+            dist/capivara-agent-windows-*.zip.sha256
+            dist/capivara-agent-windows-*.manifest.json
+          if-no-files-found: error
+          retention-days: 14
