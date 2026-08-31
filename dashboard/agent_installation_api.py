@@ -12,8 +12,11 @@ from agent_release_service import resolve_agent_release
 from alert_repository import AlertSession, dialect_for_backend
 from infrastructure_repository import InfrastructureRepository
 from core.agent_ssh_deploy import (
-    AgentDeployError, SSHDeployOptions, bootstrap_agent, bootstrap_windows_agent_ssh,
-    preflight_ssh, preflight_windows_ssh, remote_agent_present, remote_windows_agent_present_ssh,
+    AgentDeployError, SSHDeployOptions, bootstrap_agent,
+    preflight_ssh, preflight_windows_ssh, remote_agent_present,
+)
+from core.windows_agent_ssh_deploy import (
+    bootstrap_windows_agent_ssh, remote_windows_agent_present_ssh,
 )
 from core.agent_winrm_deploy import (
     WinRMDeployError, bootstrap_windows_agent, load_winrm_profile, preflight_winrm,
