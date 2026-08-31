@@ -32,6 +32,18 @@ def _safe_relative_path(value: Any, *, allow_empty: bool = True) -> str:
     return path.as_posix()
 
 
+def _runtime_definition(root: Path, environment_id: str) -> dict[str, Any]:
+    games = root / "catalog" / "v2" / "games"
+    for path in games.glob("*/runtimes/*.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(payload, dict) and str(payload.get("id") or "") == environment_id:
+            return payload
+    raise ValueError("runtime not found in Catalog")
+
+
 def prepare_runtime_selection(root: Path, environment_id: str, selector: str) -> dict[str, Any]:
     environment_id = str(environment_id or "").strip(); selector = str(selector or "current").strip()
     if not _ENVIRONMENT_ID.fullmatch(environment_id): raise ValueError("valid environment_id is required")
@@ -44,6 +56,12 @@ def prepare_runtime_selection(root: Path, environment_id: str, selector: str) ->
     try: selection = json.loads(completed.stdout)
     except json.JSONDecodeError as exc: raise RuntimeError("catalog returned an invalid runtime selection") from exc
     if not isinstance(selection, dict) or selection.get("kind") != "RuntimeSelection": raise RuntimeError("catalog returned an invalid runtime selection")
+    definition = _runtime_definition(root, environment_id)
+    installation = definition.get("installation") if isinstance(definition.get("installation"), dict) else {}
+    installer = installation.get("installer")
+    if installer is not None:
+        if not isinstance(installer, dict): raise RuntimeError("catalog runtime installer contract is invalid")
+        selection = dict(selection); selection["installer"] = dict(installer)
     return selection
 
 
