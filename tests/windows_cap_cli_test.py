@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "agents" / "windows" / "runtime"
 SERVICE = ROOT / "agents" / "windows" / "service"
+RELEASE = ROOT / "release"
 
 spec = importlib.util.spec_from_file_location("windows_local_cli", RUNTIME / "local_cli.py")
 local_cli = importlib.util.module_from_spec(spec)
@@ -54,6 +55,11 @@ class WindowsCapCliTest(unittest.TestCase):
         launcher = (SERVICE / "run-agent.ps1").read_text(encoding="utf-8")
         self.assertIn("SetEnvironmentVariable('Path', $newMachinePath, 'Machine')", launcher)
         self.assertIn("$runtimeDir = Split-Path -Parent $AgentScript", launcher)
+
+    def test_windows_package_builder_includes_cli_launchers(self):
+        source = (RELEASE / "build_windows_agent_package.py").read_text(encoding="utf-8")
+        self.assertIn('endswith((".py",".ps1",".cmd"))', source)
+        self.assertIn('"local_cap_cli":True', source)
 
     def test_uninstall_is_confirmation_gated_and_preserves_data_by_default(self):
         source = (RUNTIME / "local_cli.py").read_text(encoding="utf-8")
