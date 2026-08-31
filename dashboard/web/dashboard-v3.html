@@ -52,7 +52,7 @@
       .cap-panel-heading{align-items:flex-start;flex-direction:column;gap:8px;padding:12px 14px}
       .cap-panel-heading p{line-height:1.4}
       .cap-agent-scroll-shell{width:100%;max-width:100%;overflow:hidden}
-      .cap-agent-table-scroll{width:100%;max-width:100%;height:300px;max-height:300px;overflow:auto}
+      .cap-agent-table-scroll{width:100%;max-width:100%;height:300px;max-height:300px;overflow:auto;touch-action:none}
       .cap-agent-table{width:940px;min-width:940px;font-size:10px}
       .cap-agent-table col:nth-child(1){width:160px}
       .cap-agent-table th,.cap-agent-table td{padding:8px 9px}
@@ -121,7 +121,7 @@
               </tbody>
             </table>
           </div>
-          <div class="cap-agent-scroll-hint" aria-hidden="true">↔ Deslize horizontalmente; a coluna Agent permanece fixa</div>
+          <div class="cap-agent-scroll-hint" aria-hidden="true">↔ Arraste para os lados · ↕ arraste para cima/baixo dentro da tabela</div>
         </div>
       </section>
 
@@ -137,6 +137,6 @@
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
   </main>
   <script src="telemetry-widgets.js?v=1"></script>
-  <script src="dashboard-home-v3.js?v=6"></script>
+  <script src="dashboard-home-v3.js?v=7"></script>
 </body>
 </html>
