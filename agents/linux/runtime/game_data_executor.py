@@ -6,6 +6,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from game_data_files import execute_file_operation
 from game_data_integrity import inspect_game_data
+from game_data_installer import execute_installer
 from game_data_state import GAME_DATA_ROOT, record_game_data, write_json
 FILE_ACTIONS={"file-list","file-read","file-write","file-create","file-mkdir","file-rename","file-delete","file-upload"}
 def _safe_name(value:Any,label:str)->str:
@@ -92,6 +93,7 @@ def _install(selection:dict[str,Any],target:Path,provider:str)->None:
  if provider=="steam":_run_steam(selection,target)
  elif provider in {"http","http-archive","github"}:_run_http(selection,target)
  else:raise RuntimeError(f"provider not supported by standalone Linux Agent: {provider}")
+ execute_installer(selection,target)
 def _execute(command:dict[str,Any])->dict[str,Any]:
  action=str(command.get("action") or "install").lower();selection=command.get("selection")
  if action=="install-steamcmd":return _install_steamcmd()
