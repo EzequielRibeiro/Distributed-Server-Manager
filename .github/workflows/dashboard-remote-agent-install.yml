@@ -12,6 +12,7 @@ on:
       - 'dashboard/web/add-agent-v3.css'
       - 'dashboard/web/agent-installation.js'
       - 'dashboard/web/agent-installation-wizard.js'
+      - 'dashboard/web/agent-installation-remote-check.js'
       - 'database/agent_installation_preconfiguration.py'
       - 'core/agent_ssh_deploy.py'
       - 'core/windows_agent_ssh_deploy.py'
@@ -32,6 +33,7 @@ on:
       - 'dashboard/web/add-agent-v3.css'
       - 'dashboard/web/agent-installation.js'
       - 'dashboard/web/agent-installation-wizard.js'
+      - 'dashboard/web/agent-installation-remote-check.js'
       - 'database/agent_installation_preconfiguration.py'
       - 'core/agent_ssh_deploy.py'
       - 'core/windows_agent_ssh_deploy.py'
@@ -70,6 +72,7 @@ jobs:
         run: |
           node --check dashboard/web/agent-installation.js
           node --check dashboard/web/agent-installation-wizard.js
+          node --check dashboard/web/agent-installation-remote-check.js
 
       - name: Test remote install and preconfiguration contracts
         run: python3 -m unittest tests/dashboard_remote_agent_install_test.py
