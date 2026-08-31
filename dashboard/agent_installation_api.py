@@ -114,9 +114,9 @@ def create_agent_installation_for_user(user: dict[str,Any]|None, backend, payloa
     if not controller_url.startswith(("http://","https://")): raise ValueError("controller_url must use http:// or https://")
     release=None; release_tag="local"
     if method in {"github","ssh","winrm"}:
-        requested=str(payload.get("release_tag") or "").strip()
-        if requested: release=resolve_agent_release(requested,platform); release_tag=str(release["tag"])
-        else: release_tag="latest"
+        requested=str(payload.get("release_tag") or "latest").strip()
+        release=resolve_agent_release(requested,platform)
+        release_tag=str(release["tag"])
     preconfiguration=normalize_preconfiguration(payload); region,datacenter=_location(backend,region_id,datacenter_id)
     ssh_options=None; ssh_preflight=None; bootstrap_timeout=None
     if method=="ssh":
