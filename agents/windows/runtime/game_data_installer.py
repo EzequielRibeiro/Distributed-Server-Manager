@@ -38,7 +38,22 @@ def _installer_artifact(selection: dict[str, Any], installer: dict[str, Any]) ->
     return str(asset.get("name") or install.get("asset") or "").strip()
 
 
-def validate_installer(selection: dict[str, Any], target: Path) -> tuple[list[str], int, list[Path]] | None:
+def _normalize_launch_args(installer: dict[str, Any], target: Path) -> None:
+    launch = installer.get("launch_args")
+    if launch is None:
+        return
+    if not isinstance(launch, dict):
+        raise ValueError("installer launch_args must be an object")
+    pattern = _safe_relative(launch.get("windows_glob"), "Windows launch args glob").as_posix()
+    output = _inside(target, _safe_relative(launch.get("output") or "capivara-launch.args", "launch args output"))
+    matches = [path for path in target.glob(pattern) if path.is_file()]
+    if len(matches) != 1:
+        raise RuntimeError("typed installer did not produce exactly one Windows launch args file")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(matches[0], output)
+
+
+def validate_installer(selection: dict[str, Any], target: Path) -> tuple[list[str], int, list[Path], dict[str, Any]] | None:
     installer = selection.get("installer")
     if installer is None:
         return None
@@ -69,14 +84,14 @@ def validate_installer(selection: dict[str, Any], target: Path) -> tuple[list[st
     java = shutil.which("java.exe") or shutil.which("java")
     if not java:
         raise RuntimeError("Java is not available on this Agent")
-    return [java, "-jar", str(artifact), *[str(arg) for arg in args]], timeout, expected_paths
+    return [java, "-jar", str(artifact), *[str(arg) for arg in args]], timeout, expected_paths, installer
 
 
 def execute_installer(selection: dict[str, Any], target: Path) -> None:
     validated = validate_installer(selection, target)
     if validated is None:
         return
-    argv, timeout, expected_paths = validated
+    argv, timeout, expected_paths, installer = validated
     completed = subprocess.run(
         argv,
         cwd=str(target),
@@ -90,6 +105,7 @@ def execute_installer(selection: dict[str, Any], target: Path) -> None:
     )
     if completed.returncode != 0:
         raise RuntimeError(f"typed installer failed with exit code {completed.returncode}")
+    _normalize_launch_args(installer, target)
     missing = [path.name for path in expected_paths if not path.exists()]
     if missing:
         raise RuntimeError("typed installer did not produce expected outputs: " + ", ".join(missing))
