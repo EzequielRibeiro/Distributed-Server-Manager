@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import os,sys,tempfile,unittest
+import base64,os,sys,tempfile,unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 for path in (ROOT,ROOT/"core",ROOT/"database"):
     if str(path) not in sys.path:sys.path.insert(0,str(path))
 from agent_connection_test_cli import build_parser as build_test_parser
 from agent_deploy_cli import build_parser as build_deploy_parser
-from agent_ssh_deploy import AgentDeployError,SSHDeployOptions,SSHResult,_powershell_encoded_command,_windows_bootstrap_stdin,bootstrap_windows_agent_ssh,build_ssh_argv,preflight_windows_ssh,validate_password_file
+from agent_ssh_deploy import AgentDeployError,SSHDeployOptions,SSHResult,_powershell_encoded_command,build_ssh_argv,preflight_windows_ssh,validate_password_file
+from core.windows_agent_ssh_deploy import _stdin_script_command,_windows_bootstrap_stdin,bootstrap_windows_agent_ssh
 
 class AgentSSHCrossPlatformTest(unittest.TestCase):
     def test_deploy_cli_supports_windows_and_password_file(self):
@@ -35,31 +36,41 @@ class AgentSSHCrossPlatformTest(unittest.TestCase):
         self.assertEqual(result["platform"],"windows");self.assertEqual(result["architecture"],"AMD64");self.assertIn("powershell.exe",observed["argv"][-1])
 
     def test_windows_pairing_token_travels_on_stdin_only(self):
-        observed={};secret="pairing-WINDOWS-SECRET"
+        calls=[];secret="pairing-WINDOWS-SECRET"
         def runner(argv,stdin_text,timeout):
-            observed["argv"]=list(argv);observed["stdin"]=stdin_text;return SSHResult(0,"","")
+            calls.append((list(argv),stdin_text,timeout))
+            if len(calls)==1:return SSHResult(0,"CAPIVARA_WINDOWS_BOOTSTRAP_OK\n","")
+            return SSHResult(0,"CAPIVARA_WINDOWS_INSTALL_VERIFY_OK\n","")
         bootstrap_windows_agent_ssh(SSHDeployOptions(host="win-node01",ssh_user="Administrator"),controller_url="https://controller.example",pairing_token=secret,runner=runner)
-        self.assertNotIn(secret," ".join(observed["argv"]));self.assertIn(secret,observed["stdin"]);self.assertEqual(observed["argv"][-1],"powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -")
+        bootstrap_argv,bootstrap_stdin,_=calls[0]
+        self.assertNotIn(secret," ".join(bootstrap_argv));self.assertIn(secret,bootstrap_stdin)
+        self.assertIn("-EncodedCommand",bootstrap_argv[-1]);self.assertNotIn("-Command -",bootstrap_argv[-1])
+        encoded=bootstrap_argv[-1].rsplit(" ",1)[-1]
+        wrapper=base64.b64decode(encoded).decode("utf-16le")
+        self.assertIn("[Console]::In.ReadToEnd()",wrapper)
+        self.assertIn("[ScriptBlock]::Create($source)",wrapper)
+        self.assertNotIn(secret,wrapper)
+
+    def test_windows_stdin_wrapper_buffers_complete_script(self):
+        command=_stdin_script_command()
+        self.assertIn("-EncodedCommand",command);self.assertNotIn("-Command -",command)
+        encoded=command.rsplit(" ",1)[-1]
+        script=base64.b64decode(encoded).decode("utf-16le")
+        self.assertIn("[Console]::In.ReadToEnd()",script)
+        self.assertIn("[ScriptBlock]::Create($source)",script)
+        self.assertIn("& $block",script)
 
     def test_windows_encoded_powershell_forces_utf8_output(self):
-        import base64
         command=_powershell_encoded_command("Write-Output 'CAPIVARA_TEST'")
         encoded=command.rsplit(" ",1)[-1]
         script=base64.b64decode(encoded).decode("utf-16le")
         self.assertIn("System.Text.UTF8Encoding($false)",script)
         self.assertIn("[Console]::OutputEncoding = $utf8",script)
         self.assertIn("$OutputEncoding = $utf8",script)
-        self.assertLess(
-            script.index("[Console]::OutputEncoding = $utf8"),
-            script.index("Write-Output 'CAPIVARA_TEST'"),
-        )
+        self.assertLess(script.index("[Console]::OutputEncoding = $utf8"),script.index("Write-Output 'CAPIVARA_TEST'"))
 
     def test_windows_bootstrap_stdin_forces_utf8_output(self):
-        script=_windows_bootstrap_stdin(
-            "https://controller.example:9443",
-            "cap_pair_test-token",
-            "v2.0.15",
-        )
+        script=_windows_bootstrap_stdin("https://controller.example:9443","cap_pair_test-token","v2.0.16")
         self.assertIn("System.Text.UTF8Encoding($false)",script)
         self.assertIn("[Console]::OutputEncoding = $utf8",script)
         self.assertIn("$OutputEncoding = $utf8",script)
