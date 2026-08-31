@@ -3,9 +3,12 @@ name: Catalog Architecture
 on:
   pull_request:
     paths:
+      - 'catalog/**'
+      - 'installer/version_resolvers/**'
       - 'dashboard/catalog_controller_runtime_policy.py'
       - 'dashboard/catalog_runtime_policy_http.py'
       - 'dashboard/catalog_provisioning_resolver.py'
+      - 'dashboard/agent_game_data_api.py'
       - 'dashboard/agent_instance_provisioning_api.py'
       - 'dashboard/server_part17.py'
       - 'dashboard/web/catalog*'
@@ -16,6 +19,7 @@ on:
       - 'database/agent_instance_provisioning_repository.py'
       - 'release/build_agent_package.sh'
       - 'tests/catalog_architecture_stages_5_10_test.py'
+      - 'tests/minecraft_installer_runtime_test.py'
       - '.github/workflows/catalog-architecture.yml'
   push:
     branches: [main]
@@ -37,21 +41,29 @@ jobs:
             dashboard/catalog_controller_runtime_policy.py \
             dashboard/catalog_runtime_policy_http.py \
             dashboard/catalog_provisioning_resolver.py \
+            dashboard/agent_game_data_api.py \
             dashboard/agent_instance_provisioning_api.py \
             dashboard/server_part17.py \
             agents/linux/runtime/catalog_runtime_policy.py \
+            agents/linux/runtime/game_data_installer.py \
             agents/linux/runtime/game_data_integrity.py \
             agents/linux/runtime/game_data_reconcile.py \
             agents/linux/runtime/game_data_executor.py \
             agents/windows/runtime/catalog_runtime_policy.py \
+            agents/windows/runtime/game_data_installer.py \
             agents/windows/runtime/game_data_files.py \
             agents/windows/runtime/game_data_integrity.py \
             agents/windows/runtime/game_data_executor.py \
-            tests/catalog_architecture_stages_5_10_test.py
+            tests/catalog_architecture_stages_5_10_test.py \
+            tests/minecraft_installer_runtime_test.py
+      - name: Validate resolver Bash syntax
+        run: |
+          bash -n installer/version_resolvers/forge_maven.sh
+          bash -n installer/version_resolvers/neoforge_maven.sh
       - name: Validate Dashboard JavaScript
         run: node --check dashboard/web/catalog-page.js
       - name: Test stages 5-10
-        run: python3 -m unittest tests/catalog_architecture_stages_5_10_test.py
+        run: python3 -m unittest tests/catalog_architecture_stages_5_10_test.py tests/minecraft_installer_runtime_test.py
       - name: Test Linux Agent package
         run: bash tests/agent_package_test.sh
       - name: Test Windows Agent package
