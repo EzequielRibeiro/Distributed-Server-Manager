@@ -12,6 +12,17 @@ from controller_session import session_user_from_headers
 ALERTS_API = "/api/admin/alerts"
 ALERT_API = "/api/admin/alert"
 ALERT_ACTION_API = "/api/admin/alert/action"
+IDENTITY_COLLISION_RULE_ID = "agent.identity_collision"
+
+
+def generic_alert_action_allowed(alert, action: str) -> bool:
+    """Keep specialized incidents out of generic resolution paths."""
+    normalized_action = str(action or "").strip().lower()
+    rule_id = str((alert or {}).get("rule_id") or "").strip()
+    return not (
+        normalized_action == "resolve"
+        and rule_id == IDENTITY_COLLISION_RULE_ID
+    )
 
 
 def install_alert_management(legacy, authenticate) -> None:
@@ -113,6 +124,19 @@ def install_alert_management(legacy, authenticate) -> None:
         if before is None:
             self.send_json(404, {"error": "alert not found"})
             return
+        if not generic_alert_action_allowed(before, action):
+            self.send_json(
+                409,
+                {
+                    "error": (
+                        "identity collision alerts must be resolved through the "
+                        "Agent identity repair workflow"
+                    ),
+                    "code": "specialized_resolution_required",
+                    "rule_id": IDENTITY_COLLISION_RULE_ID,
+                },
+            )
+            return
         try:
             if action == "acknowledge":
                 result = repo.acknowledge_alert(alert_id)
@@ -180,4 +204,11 @@ def install_alert_management(legacy, authenticate) -> None:
     legacy.DashboardHandler.do_POST = do_post
 
 
-__all__ = ["ALERTS_API", "ALERT_API", "ALERT_ACTION_API", "install_alert_management"]
+__all__ = [
+    "ALERTS_API",
+    "ALERT_API",
+    "ALERT_ACTION_API",
+    "IDENTITY_COLLISION_RULE_ID",
+    "generic_alert_action_allowed",
+    "install_alert_management",
+]
