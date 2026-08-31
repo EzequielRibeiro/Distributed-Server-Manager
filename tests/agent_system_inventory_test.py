@@ -73,6 +73,13 @@ class AgentSystemInventoryTest(unittest.TestCase):
         self.assertIn('Build ${build}', script)
         self.assertIn('Arquitetura ${architecture}', script)
 
+    def test_dashboard_system_renderer_defends_against_legacy_overwrite_race(self):
+        script = (ROOT / "dashboard" / "web" / "agent-system-details.js").read_text(encoding="utf-8")
+        self.assertIn("let lastPayload = null", script)
+        self.assertIn("new MutationObserver", script)
+        self.assertIn("renderPayload(lastPayload)", script)
+        self.assertIn('observer.observe(root, {childList: true, subtree: true, characterData: true})', script)
+
 
 if __name__ == "__main__":
     unittest.main()
