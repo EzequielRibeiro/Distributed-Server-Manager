@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from agent_ssh_deploy import (
+from core.agent_ssh_deploy import (
     AgentDeployError,
     SSHDeployOptions,
     SSHRunner,
