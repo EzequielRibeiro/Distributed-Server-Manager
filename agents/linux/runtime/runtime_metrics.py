@@ -13,6 +13,7 @@ from host_telemetry import collect_host_telemetry
 from observability_client import collect_observability
 from queue_observability import collect_queue_observability
 from storage_pools import pool_inventory
+from system_inventory import collect_system_inventory
 
 
 def _path() -> Path:
@@ -138,6 +139,7 @@ def snapshot(*, queue_depth: dict[str, int] | None = None) -> dict[str, Any]:
     payload["observability_samples"] = samples
 
     telemetry = collect_host_telemetry()
+    telemetry["system"] = collect_system_inventory()
     if pools:
         telemetry["storage_pools"] = pools
     payload["telemetry"] = telemetry
