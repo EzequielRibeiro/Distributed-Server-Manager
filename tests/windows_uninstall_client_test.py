@@ -4,7 +4,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -45,47 +44,54 @@ class WindowsUninstallClientTest(unittest.TestCase):
         self.env.stop()
         self.temp.cleanup()
 
-    def command(self, *, mode="preserve-data"):
+    def command(self, *, mode="preserve-data", phase="prepare"):
         return {
             "kind": "AgentUninstallCommand",
             "schema_version": 1,
             "request_id": "uninstall-test-1",
             "action": "uninstall-agent",
             "mode": mode,
+            "phase": phase,
         }
 
-    def test_accept_validates_typed_contract_and_persists_result(self):
-        result = self.client.accept_command(self.command())
+    def test_prepare_validates_typed_contract_and_persists_result(self):
+        result = self.client.handle_command(self.command())
         self.assertEqual(result["status"], "accepted")
         self.assertEqual(self.client.read_result()["request_id"], "uninstall-test-1")
         staged = json.loads(self.client.REQUEST_PATH.read_text(encoding="utf-8"))
         self.assertEqual(staged["mode"], "preserve-data")
 
-    def test_rejects_arbitrary_action(self):
+    def test_rejects_arbitrary_action_or_phase(self):
         command = self.command()
         command["action"] = "powershell"
         with self.assertRaisesRegex(ValueError, "invalid uninstall action"):
-            self.client.accept_command(command)
+            self.client.handle_command(command)
+        command = self.command(phase="execute-shell")
+        with self.assertRaisesRegex(ValueError, "invalid uninstall phase"):
+            self.client.handle_command(command)
 
     def test_commit_requires_matching_staged_request(self):
-        self.client.accept_command(self.command())
+        self.client.handle_command(self.command())
+        command = self.command(phase="commit")
+        command["request_id"] = "uninstall-other"
         with self.assertRaisesRegex(RuntimeError, "does not match commit"):
-            self.client.commit("uninstall-other")
+            self.client.handle_command(command)
 
     @patch("subprocess.Popen")
     def test_commit_launches_detached_preserve_data_uninstall(self, popen):
-        self.client.accept_command(self.command())
-        result = self.client.commit("uninstall-test-1")
+        self.client.handle_command(self.command())
+        result = self.client.handle_command(self.command(phase="commit"))
         self.assertEqual(result["status"], "committed")
         args = popen.call_args.args[0]
         command = args[-1]
         self.assertIn("uninstall-agent.ps1", command)
         self.assertNotIn("-Purge", command)
+        self.assertEqual(self.client.read_result()["status"], "committed")
 
     @patch("subprocess.Popen")
     def test_commit_adds_purge_only_for_explicit_purge_mode(self, popen):
-        self.client.accept_command(self.command(mode="purge"))
-        result = self.client.commit("uninstall-test-1")
+        self.client.handle_command(self.command(mode="purge"))
+        result = self.client.handle_command(self.command(mode="purge", phase="commit"))
         self.assertEqual(result["mode"], "purge")
         self.assertIn("-Purge", popen.call_args.args[0][-1])
 
