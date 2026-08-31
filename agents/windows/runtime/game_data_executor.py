@@ -1,6 +1,6 @@
 """Execute resolved game-data selections on a Windows Agent."""
 from __future__ import annotations
-import hashlib,json,os,shutil,subprocess,sys,tarfile,tempfile,urllib.request,zipfile
+import hashlib,json,os,shutil,subprocess,sys,tarfile,tempfile,time,urllib.request,zipfile
 from pathlib import Path,PurePosixPath
 from typing import Any
 from game_data_files import execute_file_operation
@@ -21,10 +21,15 @@ def _steamcmd():
  for c in (shutil.which("steamcmd.exe"),shutil.which("steamcmd"),os.environ.get("STEAMCMD_PATH"),str(_managed_steamcmd())):
   if c and Path(c).is_file():return str(c)
  raise RuntimeError("SteamCMD is not available on this Windows Agent")
-def _probe_steamcmd(executable):
- cp=subprocess.run([str(executable),"+quit"],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=300,check=False,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
- print(cp.stdout or "",end="",flush=True)
- if cp.returncode!=0:raise RuntimeError(f"SteamCMD validation failed with exit code {cp.returncode}")
+def _probe_steamcmd(executable,attempts=3,retry_delay=3):
+ last_returncode=None
+ for attempt in range(attempts):
+  cp=subprocess.run([str(executable),"+quit"],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=300,check=False,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+  print(cp.stdout or "",end="",flush=True)
+  if cp.returncode==0:return
+  last_returncode=cp.returncode
+  if attempt+1<attempts:time.sleep(retry_delay)
+ raise RuntimeError(f"SteamCMD validation failed with exit code {last_returncode} after {attempts} attempts")
 def _install_steamcmd():
  try:
   existing=_steamcmd();_probe_steamcmd(existing)

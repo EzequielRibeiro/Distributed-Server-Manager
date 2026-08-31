@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -28,6 +29,19 @@ class WindowsSteamCmdInstallTest(unittest.TestCase):
     self.assertTrue(result["installed"])
     self.assertFalse(result["reused"])
     self.assertEqual(result["component"],"steamcmd")
+
+ def test_probe_retries_after_bootstrap_exit_code_7(self):
+  runs=[SimpleNamespace(returncode=7,stdout="bootstrap\n"),SimpleNamespace(returncode=0,stdout="ok\n")]
+  with mock.patch.object(game_data_executor.subprocess,"run",side_effect=runs) as run,mock.patch.object(game_data_executor.time,"sleep") as sleep:
+   game_data_executor._probe_steamcmd(r"C:\\steamcmd.exe",attempts=3,retry_delay=0)
+  self.assertEqual(run.call_count,2)
+  sleep.assert_called_once_with(0)
+
+ def test_probe_fails_after_all_attempts(self):
+  runs=[SimpleNamespace(returncode=7,stdout="bootstrap\n") for _ in range(3)]
+  with mock.patch.object(game_data_executor.subprocess,"run",side_effect=runs),mock.patch.object(game_data_executor.time,"sleep"):
+   with self.assertRaisesRegex(RuntimeError,"exit code 7 after 3 attempts"):
+    game_data_executor._probe_steamcmd(r"C:\\steamcmd.exe",attempts=3,retry_delay=0)
 
  def test_managed_steamcmd_is_reported_as_capability(self):
   with tempfile.TemporaryDirectory() as td:
