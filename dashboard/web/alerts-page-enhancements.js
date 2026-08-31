@@ -55,7 +55,8 @@
       label.className = "cap-alert-id";
       heading.append(label);
     }
-    label.textContent = `ID do alerta: ${id}`;
+    const desired = `ID do alerta: ${id}`;
+    if (label.textContent !== desired) label.textContent = desired;
   }
 
   function labelAlertScope(card) {
@@ -75,11 +76,13 @@
       }
       const parts = original.split(" · ").map(value => value.trim()).filter(Boolean);
       const instanceId = parts.length > 1 ? parts[1] : "";
-      scope.textContent = currentAgentId
+      const desired = currentAgentId
         ? `ID do Agent: ${currentAgentId}${instanceId ? ` · ID da instância: ${instanceId}` : ""}`
         : `Escopo: ${original}`;
+      if (scope.textContent !== desired) scope.textContent = desired;
     } else if (original) {
-      scope.textContent = `Escopo: ${original}`;
+      const desired = `Escopo: ${original}`;
+      if (scope.textContent !== desired) scope.textContent = desired;
     }
     scope.dataset.capIdentifiersLabeled = "1";
   }
