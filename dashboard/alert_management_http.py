@@ -40,7 +40,8 @@ def install_alert_management(legacy, authenticate) -> None:
             return previous_get(self)
         if authorized(self) is None:
             return
-        repo = AlertRepository(backend())
+        current_backend = backend()
+        repo = AlertRepository(current_backend)
         query = parse_qs(parsed.query)
         if parsed.path == ALERT_API:
             alert_id = str((query.get("id") or [""])[0]).strip()
@@ -51,7 +52,20 @@ def install_alert_management(legacy, authenticate) -> None:
             if alert is None:
                 self.send_json(404, {"error": "alert not found"})
                 return
-            self.send_json(200, {"alert": alert, "history": repo.alert_history(alert_id)})
+            audit = ActivityAuditRepository(current_backend).search(
+                category="alerts",
+                target_type="alert",
+                target_id=alert_id,
+                limit=200,
+            )
+            self.send_json(
+                200,
+                {
+                    "alert": alert,
+                    "history": repo.alert_history(alert_id),
+                    "audit": audit,
+                },
+            )
             return
         active = str((query.get("active") or ["true"])[0]).lower() not in {"0", "false", "no"}
         level = str((query.get("level") or [""])[0]).strip().upper() or None
@@ -93,7 +107,8 @@ def install_alert_management(legacy, authenticate) -> None:
             self.send_json(400, {"error": "invalid alert action"})
             return
         note = str(payload.get("note") or payload.get("message") or "").strip()
-        repo = AlertRepository(backend())
+        current_backend = backend()
+        repo = AlertRepository(current_backend)
         before = repo.get_alert(alert_id)
         if before is None:
             self.send_json(404, {"error": "alert not found"})
@@ -136,7 +151,7 @@ def install_alert_management(legacy, authenticate) -> None:
         }
         if note:
             changes["note"] = {"after": note[:4000]}
-        ActivityAuditRepository(backend()).record_action(
+        ActivityAuditRepository(current_backend).record_action(
             actor_id=actor_id,
             actor_name=who,
             actor_role=actor_role,
