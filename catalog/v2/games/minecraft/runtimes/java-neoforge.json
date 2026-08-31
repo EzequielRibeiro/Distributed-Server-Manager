@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "minecraft.java.neoforge",
+  "name": "Minecraft Java NeoForge",
+  "game": "minecraft",
+  "edition": "java",
+  "variant": "neoforge",
+  "loader": "neoforge",
+  "version": {
+    "strategy": "dynamic",
+    "resolver": "neoforge_maven"
+  },
+  "process": {
+    "engine": "java",
+    "executable": "@java",
+    "artifact_mode": "directory",
+    "args": [
+      "@user_jvm_args.txt",
+      "@capivara-launch.args",
+      "nogui"
+    ]
+  },
+  "requirements": {
+    "os": ["linux", "windows"],
+    "architectures": ["x86_64", "aarch64"],
+    "java": {"min": 17, "max": 25}
+  },
+  "artifact": {
+    "provider": "http",
+    "auth": "anonymous"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/minecraft/neoforge",
+    "installer": {
+      "type": "java_jar",
+      "args": ["--installServer"],
+      "timeout_seconds": 1200,
+      "launch_args": {
+        "linux_glob": "libraries/net/neoforged/neoforge/*/unix_args.txt",
+        "windows_glob": "libraries/net/neoforged/neoforge/*/win_args.txt",
+        "output": "capivara-launch.args"
+      },
+      "expected_outputs": [
+        "libraries",
+        "user_jvm_args.txt",
+        "capivara-launch.args"
+      ]
+    }
+  }
+}
