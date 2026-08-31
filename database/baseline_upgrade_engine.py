@@ -13,6 +13,7 @@ from typing import Any, Callable, Mapping
 
 from activity_audit_schema import activity_audit_ddl
 from agent_public_network_schema import ensure_agent_public_network_schema
+from alert_event_action_schema import action_check_expression
 from alert_scope_history_schema import alert_scope_history_ddl
 from backend import DatabaseMigrationError
 from discord_integration_schema import discord_integration_ddl
@@ -173,11 +174,147 @@ def _upgrade_resolved_alert_history_detach(backend: Any, connection: Any) -> Non
         _execute_script(backend, connection, ddl)
 
 
+def _constraint_contains_note(backend: Any, connection: Any) -> bool:
+    if backend.name == "postgresql":
+        row = connection.execute(
+            "SELECT pg_get_constraintdef(oid) AS definition "
+            "FROM pg_constraint "
+            "WHERE conrelid='public.alert_events'::regclass "
+            "AND conname='alert_events_action_check'"
+        ).fetchone()
+        return bool(row and "NOTE" in str(row["definition"]).upper())
+    if backend.name == "mysql":
+        cursor = connection.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                "SELECT CHECK_CLAUSE AS definition "
+                "FROM information_schema.CHECK_CONSTRAINTS "
+                "WHERE CONSTRAINT_SCHEMA=DATABASE() "
+                "AND CONSTRAINT_NAME='chk_alert_events_action'"
+            )
+            row = cursor.fetchone()
+        finally:
+            cursor.close()
+        return bool(row and "NOTE" in str(row["definition"]).upper())
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='alert_events'"
+    ).fetchone()
+    return bool(row and "NOTE" in str(row["sql"]).upper())
+
+
+def _mysql_is_mariadb(connection: Any) -> bool:
+    cursor = connection.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT VERSION() AS version")
+        row = cursor.fetchone()
+    finally:
+        cursor.close()
+    return bool(row and "mariadb" in str(row["version"]).lower())
+
+
+def _upgrade_alert_events_note_sqlite(connection: Any) -> None:
+    if "alert_events__note_upgrade_new" in {
+        str(row["name"])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }:
+        raise DatabaseMigrationError(
+            "stale alert_events__note_upgrade_new table blocks NOTE action upgrade"
+        )
+
+    objects = connection.execute(
+        "SELECT type,name,sql FROM sqlite_master "
+        "WHERE tbl_name='alert_events' "
+        "AND type IN ('index','trigger') "
+        "AND sql IS NOT NULL ORDER BY type,name"
+    ).fetchall()
+
+    connection.execute(
+        """
+CREATE TABLE alert_events__note_upgrade_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (
+        action IN ('OPEN','REOPEN','ESCALATE','ACK','RESOLVE','SUPPRESS','NOTE')
+    ),
+    level TEXT NOT NULL CHECK (level IN ('INFO','WARNING','CRITICAL')),
+    old_state TEXT,
+    new_state TEXT NOT NULL CHECK (
+        new_state IN ('OPEN','ACKNOWLEDGED','RESOLVED','SUPPRESSED')
+    ),
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    ),
+    FOREIGN KEY (alert_id) REFERENCES alerts(id) ON DELETE CASCADE
+)
+"""
+    )
+    connection.execute(
+        "INSERT INTO alert_events__note_upgrade_new("
+        "id,alert_id,action,level,old_state,new_state,message,created_at"
+        ") SELECT id,alert_id,action,level,old_state,new_state,message,created_at "
+        "FROM alert_events"
+    )
+    connection.execute("DROP TABLE alert_events")
+    connection.execute(
+        "ALTER TABLE alert_events__note_upgrade_new RENAME TO alert_events"
+    )
+    for row in objects:
+        connection.execute(str(row["sql"]))
+
+
+def _upgrade_alert_events_note_action(backend: Any, connection: Any) -> None:
+    if "alert_events" not in _table_names(backend, connection):
+        raise DatabaseMigrationError("alert_events table is missing")
+    if _constraint_contains_note(backend, connection):
+        return
+
+    expression = action_check_expression()
+    if backend.name == "postgresql":
+        connection.execute(
+            "ALTER TABLE public.alert_events "
+            "DROP CONSTRAINT IF EXISTS alert_events_action_check"
+        )
+        connection.execute(
+            "ALTER TABLE public.alert_events "
+            "ADD CONSTRAINT alert_events_action_check CHECK (" + expression + ")"
+        )
+        return
+
+    if backend.name == "mysql":
+        cursor = connection.cursor()
+        try:
+            if _mysql_is_mariadb(connection):
+                cursor.execute(
+                    "ALTER TABLE alert_events DROP CONSTRAINT chk_alert_events_action"
+                )
+            else:
+                cursor.execute(
+                    "ALTER TABLE alert_events DROP CHECK chk_alert_events_action"
+                )
+            cursor.execute(
+                "ALTER TABLE alert_events "
+                "ADD CONSTRAINT chk_alert_events_action CHECK (" + expression + ")"
+            )
+        finally:
+            cursor.close()
+        return
+
+    if backend.name == "sqlite":
+        _upgrade_alert_events_note_sqlite(connection)
+        return
+
+    raise DatabaseMigrationError(f"unsupported baseline backend: {backend.name}")
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
     BaselineUpgrade(3, "activity_audit", _upgrade_activity_audit),
     BaselineUpgrade(4, "resolved_alert_history_detach", _upgrade_resolved_alert_history_detach),
+    BaselineUpgrade(5, "alert_events_note_action", _upgrade_alert_events_note_action),
 )
 
 
