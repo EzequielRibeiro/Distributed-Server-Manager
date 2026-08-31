@@ -53,7 +53,22 @@
   }
 
   function refreshAlerts() {
-    document.getElementById("observability-refresh")?.click();
+    const button = document.getElementById("observability-refresh");
+    if (button) button.click();
+  }
+
+  function runSearch() {
+    clearTimeout(searchTimer);
+    const button = document.getElementById("alert-search-button");
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Pesquisando…";
+      setTimeout(() => {
+        button.disabled = false;
+        button.textContent = "Pesquisar";
+      }, 500);
+    }
+    refreshAlerts();
   }
 
   function configureAgentScope() {
@@ -74,12 +89,22 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     configureAgentScope();
+
     const input = document.getElementById("alert-search");
+    const button = document.getElementById("alert-search-button");
+
+    button?.addEventListener("click", runSearch);
+    input?.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        runSearch();
+      }
+    });
+    input?.addEventListener("search", runSearch);
     input?.addEventListener("input", () => {
       clearTimeout(searchTimer);
-      searchTimer = setTimeout(refreshAlerts, 250);
+      if (!searchValue()) searchTimer = setTimeout(refreshAlerts, 150);
     });
-    input?.addEventListener("search", refreshAlerts);
 
     const list = document.getElementById("observability-alerts");
     if (list) {
