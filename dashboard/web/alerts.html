@@ -8,6 +8,9 @@
   <link rel="stylesheet" href="/observability.css">
   <style>
     .cap-alert-item{grid-template-columns:auto minmax(0,1fr) auto;align-items:start}
+    .cap-alert-heading{display:flex;flex-direction:column;gap:4px;min-width:0}
+    .cap-alert-heading>strong{display:block}
+    .cap-alert-id{display:block;color:#8fa0b4;font-size:.78rem;overflow-wrap:anywhere}
     .cap-alert-item-main{min-width:0}
     .cap-alert-item-main p{margin:0 0 5px}
     .cap-alert-item-main small{display:block;color:#7e8b9b;overflow-wrap:anywhere}
@@ -15,6 +18,12 @@
     .cap-alert-controls button,.cap-alert-controls a{border:1px solid rgba(255,255,255,.1);background:#1c2632;color:#eef4fb;border-radius:8px;padding:7px 10px;text-decoration:none;cursor:pointer;font:inherit}
     .cap-alert-controls .danger{border-color:#704047;background:#39262b;color:#ffb4b8}
     .cap-alert-controls button:disabled{opacity:.55;cursor:wait}
+    .cap-alert-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:14px 0 16px}
+    .cap-alert-search{flex:1 1 320px;min-width:0;border:1px solid rgba(255,255,255,.12);background:#0d1722;color:#eef4fb;border-radius:10px;padding:11px 13px;font:inherit;outline:none}
+    .cap-alert-search:focus{border-color:#54708d;box-shadow:0 0 0 3px rgba(84,112,141,.18)}
+    .cap-alert-agent-scope{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:9px 11px;border:1px solid rgba(255,255,255,.09);border-radius:10px;background:rgba(255,255,255,.025);color:#a9b7c7;font-size:.9rem}
+    .cap-alert-agent-scope strong{color:#eef4fb;overflow-wrap:anywhere}
+    .cap-alert-agent-scope a{color:#b9d6f5;text-decoration:none}
     #alert-history-dialog{width:min(760px,calc(100vw - 24px));max-height:80vh;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:#111923;color:#eef4fb;padding:0;box-shadow:0 24px 70px #000b}
     #alert-history-dialog::backdrop{background:#0009}
     .cap-alert-dialog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:18px;border-bottom:1px solid rgba(255,255,255,.08)}
@@ -23,7 +32,7 @@
     .cap-alert-history-body{padding:16px;overflow:auto;max-height:65vh}
     .cap-alert-history-row{padding:12px;border:1px solid rgba(255,255,255,.07);border-radius:10px;background:rgba(255,255,255,.025);margin-bottom:10px}
     .cap-alert-history-row strong{display:block;margin-bottom:5px}.cap-alert-history-row small{display:block;color:#8d99a8;margin-top:5px}
-    @media(max-width:640px){.cap-alert-item{grid-template-columns:1fr}.cap-alert-item time{justify-self:start}}
+    @media(max-width:640px){.cap-alert-item{grid-template-columns:1fr}.cap-alert-item time{justify-self:start}.cap-alert-toolbar{align-items:stretch}.cap-alert-agent-scope{width:100%}}
   </style>
 </head>
 <body class="cap-home cap-observability-shell" data-observability-view="alerts">
@@ -36,6 +45,12 @@
     <div class="cap-home-content cap-observability-content">
       <section class="cap-observability-card">
         <div class="cap-section-heading"><div><h2>Alertas</h2><p>Use as ações para reconhecer, documentar, resolver ou reabrir ocorrências.</p></div><button id="observability-refresh" type="button">Atualizar</button></div>
+        <div class="cap-alert-toolbar">
+          <input id="alert-search" class="cap-alert-search" type="search" autocomplete="off" placeholder="Buscar por ID, regra, nível, estado, mensagem, Agent ou instância" aria-label="Buscar alertas">
+          <div id="alert-agent-scope" class="cap-alert-agent-scope" hidden>
+            <span>Agent:</span><strong id="alert-agent-scope-value">—</strong><a id="alert-agent-scope-clear" href="alerts.html">Mostrar todos os alertas</a>
+          </div>
+        </div>
         <div id="observability-alerts" class="cap-alert-list"><div class="cap-empty-state">Carregando alertas...</div></div>
       </section>
     </div>
@@ -45,6 +60,7 @@
     <div class="cap-alert-dialog-head"><div><h2>Histórico do alerta</h2><p id="alert-history-title">—</p></div><button id="alert-history-close" type="button">Fechar</button></div>
     <div id="alert-history-body" class="cap-alert-history-body"><div class="cap-empty-state">Carregando...</div></div>
   </dialog>
+  <script src="/alerts-page-enhancements.js?v=1"></script>
   <script src="/observability.js?v=6"></script>
 </body>
 </html>

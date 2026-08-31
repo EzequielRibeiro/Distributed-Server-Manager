@@ -13,6 +13,18 @@ ALERTS_API = "/api/admin/alerts"
 ALERT_API = "/api/admin/alert"
 ALERT_ACTION_API = "/api/admin/alert/action"
 IDENTITY_COLLISION_RULE_ID = "agent.identity_collision"
+ALERT_SEARCH_FIELDS = (
+    "id",
+    "rule_id",
+    "level",
+    "state",
+    "message",
+    "scope",
+    "controller_id",
+    "agent_id",
+    "node_id",
+    "instance_id",
+)
 
 
 def generic_alert_action_allowed(alert, action: str) -> bool:
@@ -22,6 +34,17 @@ def generic_alert_action_allowed(alert, action: str) -> bool:
     return not (
         normalized_action == "resolve"
         and rule_id == IDENTITY_COLLISION_RULE_ID
+    )
+
+
+def alert_matches_query(alert, query: str) -> bool:
+    """Return whether a free-text query matches searchable alert fields."""
+    needle = str(query or "").strip().casefold()
+    if not needle:
+        return True
+    return any(
+        needle in str((alert or {}).get(field) or "").casefold()
+        for field in ALERT_SEARCH_FIELDS
     )
 
 
@@ -83,10 +106,12 @@ def install_alert_management(legacy, authenticate) -> None:
         state = str((query.get("state") or [""])[0]).strip().upper() or None
         agent_id = str((query.get("agent_id") or [""])[0]).strip() or None
         instance_id = str((query.get("instance_id") or [""])[0]).strip() or None
+        search_query = str((query.get("q") or [""])[0]).strip()
         try:
             limit = int((query.get("limit") or ["200"])[0])
         except ValueError:
             limit = 200
+        limit = max(1, min(limit, 1000))
         filters = {}
         if level:
             filters["level"] = level
@@ -96,8 +121,20 @@ def install_alert_management(legacy, authenticate) -> None:
             filters["agent_id"] = agent_id
         if instance_id:
             filters["instance_id"] = instance_id
-        alerts = repo.list_alerts(active_only=active, limit=max(1, min(limit, 1000)), **filters)
-        self.send_json(200, {"alerts": alerts, "count": len(alerts)})
+        if search_query:
+            candidates = repo.list_alerts(active_only=active, limit=None, **filters)
+            alerts = [row for row in candidates if alert_matches_query(row, search_query)][:limit]
+        else:
+            alerts = repo.list_alerts(active_only=active, limit=limit, **filters)
+        self.send_json(
+            200,
+            {
+                "alerts": alerts,
+                "count": len(alerts),
+                "query": search_query or None,
+                "agent_id": agent_id,
+            },
+        )
 
     def do_post(self):
         parsed = urlparse(self.path)
@@ -208,7 +245,9 @@ __all__ = [
     "ALERTS_API",
     "ALERT_API",
     "ALERT_ACTION_API",
+    "ALERT_SEARCH_FIELDS",
     "IDENTITY_COLLISION_RULE_ID",
+    "alert_matches_query",
     "generic_alert_action_allowed",
     "install_alert_management",
 ]
