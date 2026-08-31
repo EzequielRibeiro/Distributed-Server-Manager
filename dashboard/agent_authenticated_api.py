@@ -7,6 +7,7 @@ from typing import Any
 
 from agent_heartbeat_api import record_agent_heartbeat
 from agent_pairing_api import authenticate_agent_identity
+from agent_uninstall_repository import AgentUninstallRepository
 
 
 def authenticated_agent_heartbeat(
@@ -20,6 +21,8 @@ def authenticated_agent_heartbeat(
     """Authenticate the permanent Agent identity, then record its heartbeat.
 
     Pairing tokens are deliberately not accepted by this API.
+    Remote uninstall is exchanged only after permanent Agent authentication,
+    and uses a typed state machine rather than arbitrary shell execution.
     """
     identity = authenticate_agent_identity(
         backend,
@@ -27,8 +30,21 @@ def authenticated_agent_heartbeat(
         credential_secret=credential_secret,
         fingerprint=fingerprint,
     )
-    return record_agent_heartbeat(
-        identity["agent_id"],
-        payload,
+    agent_id = str(identity["agent_id"])
+    body = payload if isinstance(payload, dict) else {}
+    uninstall = AgentUninstallRepository(backend)
+    reported = body.get("uninstall_result")
+    uninstall_state = uninstall.apply_result(agent_id, reported if isinstance(reported, dict) else None)
+
+    response = record_agent_heartbeat(
+        agent_id,
+        body,
         backend=backend,
     )
+    command = uninstall.command_for_agent(agent_id)
+    if command is not None:
+        response["uninstall_command"] = command
+    state = uninstall_state or uninstall.state(agent_id)
+    if state is not None:
+        response["uninstall_state"] = state
+    return response
