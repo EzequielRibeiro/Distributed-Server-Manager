@@ -1,0 +1,1 @@
+Windows Agent: retry SteamCMD functional probe after first-run bootstrap/self-update before declaring installation failure.
