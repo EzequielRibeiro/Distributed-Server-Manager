@@ -123,6 +123,24 @@ def _storage_pool_samples(pools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return samples
 
 
+def _windows_host_samples(telemetry: dict[str, Any]) -> list[dict[str, Any]]:
+    """Publish Windows-specific pressure counters without faking Linux loadavg."""
+    host = telemetry.get("host") if isinstance(telemetry.get("host"), dict) else {}
+    queue_length = host.get("processor_queue_length")
+    if not isinstance(queue_length, (int, float)) or isinstance(queue_length, bool):
+        return []
+    return [
+        {
+            "metric_name": "capivara.host.processor.queue_length",
+            "metric_type": "gauge",
+            "value": queue_length,
+            "unit": "threads",
+            "scope_type": "agent",
+            "dimensions": {"platform": "windows"},
+        }
+    ]
+
+
 def snapshot(*, queue_depth: dict[str, int] | None = None) -> dict[str, Any]:
     payload = _read()
     if queue_depth is not None:
@@ -147,12 +165,15 @@ def snapshot(*, queue_depth: dict[str, int] | None = None) -> dict[str, Any]:
             pools = []
 
     payload["storage_pools"] = pools
-    payload["observability_samples"] = _storage_pool_samples(pools)
 
     telemetry = collect_host_telemetry()
     if pools:
         telemetry["storage_pools"] = pools
     payload["telemetry"] = telemetry
+
+    samples = _storage_pool_samples(pools)
+    samples.extend(_windows_host_samples(telemetry))
+    payload["observability_samples"] = samples
     return payload
 
 
