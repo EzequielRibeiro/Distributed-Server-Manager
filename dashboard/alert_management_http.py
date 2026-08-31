@@ -88,9 +88,11 @@ def install_alert_management(legacy, authenticate) -> None:
             return
         alert_id = str(payload.get("id") or payload.get("alert_id") or "").strip()
         action = str(payload.get("action") or "").strip().lower()
-        if not alert_id or action not in {"acknowledge", "resolve", "suppress"}:
+        allowed = {"acknowledge", "resolve", "suppress", "note", "reopen"}
+        if not alert_id or action not in allowed:
             self.send_json(400, {"error": "invalid alert action"})
             return
+        note = str(payload.get("note") or payload.get("message") or "").strip()
         repo = AlertRepository(backend())
         before = repo.get_alert(alert_id)
         if before is None:
@@ -102,9 +104,19 @@ def install_alert_management(legacy, authenticate) -> None:
                 human_action = "alert.acknowledged"
                 verb = "reconheceu"
             elif action == "resolve":
-                result = repo.resolve_alert(alert_id)
+                result = repo.resolve_alert(alert_id, note=note or None)
                 human_action = "alert.resolved"
                 verb = "resolveu"
+            elif action == "note":
+                if not note:
+                    raise ValueError("alert note is required")
+                result = repo.note_alert(alert_id, note)
+                human_action = "alert.note_added"
+                verb = "adicionou uma nota em"
+            elif action == "reopen":
+                result = repo.reopen_alert(alert_id, note=note or None)
+                human_action = "alert.reopened"
+                verb = "reabriu"
             else:
                 minutes = int(payload.get("minutes") or 60)
                 result = repo.suppress_alert(alert_id, minutes)
@@ -115,10 +127,19 @@ def install_alert_management(legacy, authenticate) -> None:
             return
         who = actor_name(user)
         actor_id = str(user.get("username") or user.get("id") or "").strip() or None
+        actor_role = str(user.get("role") or "").strip() or None
+        changes = {
+            "state": {
+                "before": before.get("state"),
+                "after": (result or {}).get("state"),
+            }
+        }
+        if note:
+            changes["note"] = {"after": note[:4000]}
         ActivityAuditRepository(backend()).record_action(
             actor_id=actor_id,
             actor_name=who,
-            actor_role=str(user.get("role") or "").strip() or None,
+            actor_role=actor_role,
             action=human_action,
             category="alerts",
             target_type="alert",
@@ -126,9 +147,19 @@ def install_alert_management(legacy, authenticate) -> None:
             target_name=str(before.get("message") or alert_id),
             result="success",
             summary=f"{who} {verb} o alerta: {before.get('message') or alert_id}.",
-            changes={"state": {"before": before.get("state"), "after": (result or {}).get("state")}},
+            changes=changes,
         )
-        self.send_json(200, {"alert": result})
+        self.send_json(
+            200,
+            {
+                "alert": result,
+                "actor": {
+                    "id": actor_id,
+                    "name": who,
+                    "role": actor_role,
+                },
+            },
+        )
 
     legacy.DashboardHandler.do_GET = do_get
     legacy.DashboardHandler.do_POST = do_post
