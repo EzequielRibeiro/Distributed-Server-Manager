@@ -46,7 +46,7 @@ def clear_result(request_id: str) -> None:
         RESULT_PATH.unlink(missing_ok=True)
 
 
-def accept_command(command: dict[str, Any]) -> dict[str, Any]:
+def _validate(command: dict[str, Any]) -> tuple[str, str, str]:
     if str(command.get("kind") or "") != "AgentUninstallCommand":
         raise ValueError("invalid uninstall command kind")
     if int(command.get("schema_version") or 0) != 1:
@@ -55,11 +55,20 @@ def accept_command(command: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("invalid uninstall action")
     request_id = str(command.get("request_id") or "").strip()
     mode = str(command.get("mode") or "").strip().lower()
+    phase = str(command.get("phase") or "").strip().lower()
     if not request_id:
         raise ValueError("uninstall request_id is required")
     if mode not in {"preserve-data", "purge"}:
         raise ValueError("invalid uninstall mode")
+    if phase not in {"prepare", "commit"}:
+        raise ValueError("invalid uninstall phase")
+    return request_id, mode, phase
 
+
+def accept_command(command: dict[str, Any]) -> dict[str, Any]:
+    request_id, mode, phase = _validate(command)
+    if phase != "prepare":
+        raise ValueError("prepare phase required")
     request = {
         "request_id": request_id,
         "mode": mode,
@@ -91,7 +100,6 @@ def commit(request_id: str) -> dict[str, Any]:
     if not script.is_file():
         raise RuntimeError("Windows Agent uninstall script is not installed")
 
-    # Copy the entry script outside InstallRoot because uninstall removes InstallRoot itself.
     staging = Path(tempfile.gettempdir()) / f"capivara-uninstall-{request_id}.ps1"
     staging.write_bytes(script.read_bytes())
     command = (
@@ -119,9 +127,18 @@ def commit(request_id: str) -> dict[str, Any]:
     request["status"] = "committed"
     request["committed_at"] = _now()
     _atomic_json(REQUEST_PATH, request)
-    return {
+    result = {
         "request_id": request_id,
         "status": "committed",
         "mode": mode,
         "committed_at": request["committed_at"],
     }
+    _atomic_json(RESULT_PATH, result)
+    return result
+
+
+def handle_command(command: dict[str, Any]) -> dict[str, Any]:
+    request_id, _mode, phase = _validate(command)
+    if phase == "prepare":
+        return accept_command(command)
+    return commit(request_id)
