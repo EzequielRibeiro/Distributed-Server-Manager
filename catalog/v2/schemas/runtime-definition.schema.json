@@ -4,19 +4,7 @@
   "title": "RuntimeDefinition",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "kind",
-    "id",
-    "game",
-    "edition",
-    "variant",
-    "version",
-    "process",
-    "requirements",
-    "artifact",
-    "installation"
-  ],
+  "required": ["schema_version", "kind", "id", "game", "edition", "variant", "version", "process", "requirements", "artifact", "installation"],
   "properties": {
     "schema_version": {"const": 2},
     "kind": {"const": "RuntimeDefinition"},
@@ -44,12 +32,7 @@
         "engine": {"enum": ["java", "native"]},
         "executable": {"type": "string", "minLength": 1},
         "artifact_mode": {"enum": ["file", "executable", "directory"]},
-        "args": {
-          "oneOf": [
-            {"type": "string"},
-            {"type": "array", "items": {"type": "string"}}
-          ]
-        }
+        "args": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]}
       }
     },
     "requirements": {"$ref": "#/$defs/requirements"},
@@ -87,21 +70,22 @@
       "properties": {
         "type": {"const": "java_jar"},
         "artifact": {"type": ["string", "null"], "pattern": "^[^/\\\\]+$"},
-        "args": {
-          "type": "array",
-          "items": {"enum": ["--installServer"]},
-          "maxItems": 4
-        },
+        "args": {"type": "array", "items": {"enum": ["--installServer"]}, "maxItems": 4},
         "timeout_seconds": {"type": "integer", "minimum": 30, "maximum": 1800},
+        "launch_args": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["linux_glob", "windows_glob", "output"],
+          "properties": {
+            "linux_glob": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+            "windows_glob": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+            "output": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"}
+          }
+        },
         "expected_outputs": {
           "type": "array",
           "maxItems": 32,
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 256,
-            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
-          }
+          "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"}
         }
       }
     },
@@ -111,13 +95,7 @@
       "properties": {
         "os": {"type": "array", "items": {"type": "string"}, "minItems": 1},
         "architectures": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-        "java": {
-          "type": ["object", "null"],
-          "properties": {
-            "min": {"type": "integer"},
-            "max": {"type": "integer"}
-          }
-        }
+        "java": {"type": ["object", "null"], "properties": {"min": {"type": "integer"}, "max": {"type": "integer"}}}
       }
     },
     "network": {
