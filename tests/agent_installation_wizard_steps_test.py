@@ -31,6 +31,14 @@ class AgentInstallationWizardStepsTest(unittest.TestCase):
         self.assertNotIn('el("agent-controller-url").value = window.location.origin', js)
         self.assertNotIn('el("agent-winrm-controller-url").value = window.location.origin', js)
 
+    def test_remote_connection_probe_owns_button_and_sends_controller_url(self):
+        js = (ROOT / "dashboard/web/agent-installation-remote-check.js").read_text(encoding="utf-8")
+        self.assertIn("controller_url: controllerUrl", js)
+        self.assertIn("oldButton.cloneNode(true)", js)
+        self.assertIn("oldButton.replaceWith(button)", js)
+        self.assertIn("Testar OpenSSH + Controller", js)
+        self.assertIn("Controller HTTPS/TLS OK", js)
+
 
 if __name__ == "__main__":
     unittest.main()
