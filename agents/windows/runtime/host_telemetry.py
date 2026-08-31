@@ -210,8 +210,8 @@ def _process_times_100ns() -> int | None:
     exit_time = FILETIME()
     kernel = FILETIME()
     user = FILETIME()
-    handle = ctypes.windll.kernel32.GetCurrentProcess()
     try:
+        handle = ctypes.windll.kernel32.GetCurrentProcess()
         ok = ctypes.windll.kernel32.GetProcessTimes(
             handle,
             ctypes.byref(creation),
@@ -247,8 +247,8 @@ def _process_cpu_pct() -> float | None:
 def _process_memory_rss() -> int | None:
     counters = PROCESS_MEMORY_COUNTERS()
     counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
-    handle = ctypes.windll.kernel32.GetCurrentProcess()
     try:
+        handle = ctypes.windll.kernel32.GetCurrentProcess()
         ok = ctypes.windll.psapi.GetProcessMemoryInfo(
             handle, ctypes.byref(counters), counters.cb
         )
@@ -258,6 +258,8 @@ def _process_memory_rss() -> int | None:
 
 
 def _thread_count() -> int | None:
+    pid = os.getpid()
+    command = f"$p=Get-Process -Id {pid}; [Console]::Out.Write($p.Threads.Count)"
     try:
         completed = subprocess.run(
             [
@@ -265,7 +267,7 @@ def _thread_count() -> int | None:
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
-                "$p=Get-Process -Id $PID; [Console]::Out.Write($p.Threads.Count)",
+                command,
             ],
             check=True,
             capture_output=True,
