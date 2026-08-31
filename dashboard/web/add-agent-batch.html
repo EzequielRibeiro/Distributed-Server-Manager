@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Capivara DSM - Instalação de Agents em lote</title>
+    <link rel="stylesheet" href="dashboard-home-v3.css">
+    <link rel="stylesheet" href="agents.css">
+    <link rel="stylesheet" href="add-agent-v3.css?v=4">
+</head>
+<body class="cap-home cap-add-agent-shell">
+<div id="sidebar-component"></div>
+<main class="cap-home-main cap-add-agent-page">
+<header class="cap-home-topbar"><div class="cap-home-title"><button id="add-agent-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1>Instalação de Agents em lote</h1><p>Valide vários hosts e instale somente os aprovados no preflight.</p></div></div><div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="add-agent-user">—</strong><span id="add-agent-role">—</span></div></div></header>
+<div class="cap-home-content cap-add-agent-content">
+<div class="cap-add-agent-actions"><a class="cap-add-agent-link" href="add-agent.html">← Voltar para Adicionar Agent</a></div><div id="agents-error" class="agents-error" hidden></div>
+<section class="agent-detail add-agent-panel agent-manager-only">
+<div class="cap-add-agent-heading"><h2>Lote OpenSSH</h2><p>O lote reutiliza o mesmo preflight e o mesmo bootstrap da instalação individual. Uma falha não interrompe os demais hosts.</p></div>
+<nav class="cap-agent-stepper" aria-label="Etapas da instalação em lote"><span data-batch-step-indicator>1 <b>Configuração</b></span><span data-batch-step-indicator>2 <b>Hosts</b></span><span data-batch-step-indicator>3 <b>Conectividade</b></span><span data-batch-step-indicator>4 <b>Instalação</b></span></nav>
+<form id="agent-batch-form" class="range-form">
+<section class="cap-agent-step" data-batch-step="configuration">
+<h3>1. Configuração comum</h3>
+<label>Plataforma<select id="batch-platform" required><option value="windows">Windows</option><option value="linux">Linux</option></select></label>
+<label>GitHub Release<select id="batch-release" required><option value="">Carregando releases...</option></select></label>
+<label>URL do Controller alcançável pelos Agents<input id="batch-controller-url" type="url" placeholder="https://controller.exemplo:9443" required autocomplete="off"></label>
+<label id="batch-controller-wrapper" hidden>Controller<select id="batch-controller"></select></label>
+<label>Região<select id="batch-region" required><option value="">Selecione uma região</option></select></label>
+<label>Datacenter<select id="batch-datacenter" required><option value="">Selecione um datacenter</option></select></label>
+<fieldset><legend>Faixa padrão de portas</legend><label>Protocolo<select id="batch-port-protocol"><option value="both">TCP + UDP</option><option value="udp">UDP</option><option value="tcp">TCP</option></select></label><label>Porta inicial<input id="batch-port-start" type="number" min="1" max="65535" value="24000"></label><label>Porta final<input id="batch-port-end" type="number" min="1" max="65535" value="24999"></label></fieldset>
+</section>
+<section class="cap-agent-step" data-batch-step="hosts" hidden>
+<h3>2. Hosts do lote</h3><p class="location-safety-note">Adicione um host por linha. O arquivo de senha permanece no Controller e nunca é enviado ao navegador.</p>
+<div class="cap-agent-inline-actions"><button id="batch-add-host" type="button">+ Adicionar host</button><button id="batch-clear-hosts" type="button">Limpar lote</button></div>
+<div class="cap-batch-table-wrap"><table class="cap-batch-table"><thead><tr><th>Host/IP</th><th>Usuário</th><th>Porta</th><th>Arquivo secreto</th><th>Nome</th><th></th></tr></thead><tbody id="batch-hosts"></tbody></table></div>
+</section>
+<section class="cap-agent-step" data-batch-step="connectivity" hidden>
+<h3>3. Teste de conectividade</h3><p class="location-safety-note">Teste todos ou repita somente as falhas. Apenas hosts com preflight aprovado serão elegíveis para instalação.</p>
+<div class="cap-agent-inline-actions"><button id="batch-test-all" type="button">Testar todos</button><button id="batch-retry-failed" type="button">Repetir falhas</button></div>
+<div class="cap-batch-table-wrap"><table class="cap-batch-table"><thead><tr><th>Host</th><th>Plataforma</th><th>Arquitetura</th><th>Autenticação</th><th>Estado</th><th>Ação</th></tr></thead><tbody id="batch-preflight-results"></tbody></table></div>
+</section>
+<section class="cap-agent-step" data-batch-step="install" hidden>
+<h3>4. Revisão e instalação</h3><div id="batch-summary" class="cap-agent-review"></div>
+<label class="inline-option"><input id="batch-ready-only" type="checkbox" checked> Instalar somente hosts com preflight aprovado</label>
+<div class="cap-agent-inline-actions"><button id="batch-install" type="button">Instalar lote aprovado</button></div>
+<div class="cap-batch-table-wrap"><table class="cap-batch-table"><thead><tr><th>Host</th><th>Agent</th><th>Instalação</th><th>Estado</th><th>Detalhe</th></tr></thead><tbody id="batch-install-results"></tbody></table></div>
+</section>
+<div class="cap-agent-step-actions"><button id="batch-prev" type="button" hidden>← Anterior</button><button id="batch-next" type="button">Próximo →</button></div><p id="batch-feedback" class="location-safety-note" role="status" aria-live="polite"></p>
+</form>
+</section></div><footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer></main>
+<script src="add-agent-page.js?v=2"></script><script src="agent-installation-batch.js?v=1"></script>
+</body></html>
