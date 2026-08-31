@@ -18,6 +18,7 @@ on:
       - 'core/windows_agent_ssh_deploy.py'
       - 'tests/dashboard_remote_agent_install_test.py'
       - 'tests/agent_installation_wizard_steps_test.py'
+      - 'tests/agent_connection_controller_probe_test.py'
       - 'tests/agent_ssh_cross_platform_test.py'
       - 'docs/architecture/dashboard-remote-agent-install.md'
       - '.github/workflows/dashboard-remote-agent-install.yml'
@@ -39,6 +40,7 @@ on:
       - 'core/windows_agent_ssh_deploy.py'
       - 'tests/dashboard_remote_agent_install_test.py'
       - 'tests/agent_installation_wizard_steps_test.py'
+      - 'tests/agent_connection_controller_probe_test.py'
       - 'tests/agent_ssh_cross_platform_test.py'
       - '.github/workflows/dashboard-remote-agent-install.yml'
 
@@ -66,6 +68,7 @@ jobs:
             core/windows_agent_ssh_deploy.py \
             tests/dashboard_remote_agent_install_test.py \
             tests/agent_installation_wizard_steps_test.py \
+            tests/agent_connection_controller_probe_test.py \
             tests/agent_ssh_cross_platform_test.py
 
       - name: Validate Dashboard JavaScript
@@ -79,6 +82,9 @@ jobs:
 
       - name: Test multi-step Agent wizard
         run: python3 -m unittest tests/agent_installation_wizard_steps_test.py
+
+      - name: Test Agent to Controller reachability probe
+        run: python3 -m unittest tests/agent_connection_controller_probe_test.py
 
       - name: Test cross-platform SSH contracts
         run: python3 -m unittest tests/agent_ssh_cross_platform_test.py
