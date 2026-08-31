@@ -2,6 +2,7 @@
 """Apply Controller-resolved Catalog runtime policies on a Windows Agent."""
 from __future__ import annotations
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 _TOKEN = re.compile(r"\{\{([A-Z][A-Z0-9_]{0,63})\}\}|\$\{([A-Z][A-Z0-9_]{0,63})\}")
@@ -13,6 +14,15 @@ def render(text: Any, values: dict[str, str]) -> str:
             raise ValueError(f"unresolved runtime variable: {name}")
         return values[name]
     return _TOKEN.sub(replace, str(text))
+
+def _resolve_executable(executable: str, root: Path) -> str:
+    if executable == "@java":
+        java = shutil.which("java.exe") or shutil.which("java")
+        if not java:
+            raise RuntimeError("Java is not available on this Agent")
+        return str(Path(java).resolve())
+    path = Path(executable)
+    return str(path if path.is_absolute() else (root / path).resolve())
 
 def apply_policy(spec: dict[str, Any], instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     policy = context.get("catalog_runtime_policy")
@@ -30,8 +40,8 @@ def apply_policy(spec: dict[str, Any], instance: dict[str, Any], context: dict[s
         values["PORT_STEAM_QUERY"] = values["PORT_GAME_AUX"]
     result = dict(spec)
     root = Path(str(context.get("content_root") or context.get("install_path") or result.get("working_directory"))).resolve()
-    executable = Path(render(policy.get("executable") or Path(str(result["executable"])).name, values))
-    result["executable"] = str(executable if executable.is_absolute() else (root / executable).resolve())
+    executable = render(policy.get("executable") or Path(str(result["executable"])).name, values)
+    result["executable"] = _resolve_executable(executable, root)
     result["arguments"] = [render(value, values) for value in policy.get("arguments", result.get("arguments", []))]
     environment = dict(result.get("environment") or {})
     environment.update({str(k): render(v, values) for k, v in (policy.get("environment") or {}).items()})
