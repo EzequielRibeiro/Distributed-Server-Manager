@@ -51,6 +51,13 @@ class AgentUninstallRepository:
             raise LookupError("Agent not found")
         return row
 
+    def _store(self, session: AlertSession, agent_id: str, metadata: dict[str, Any]) -> None:
+        ph = self.dialect.placeholder
+        session.execute(
+            f"UPDATE agents SET metadata_json={ph},updated_at=CURRENT_TIMESTAMP WHERE id={ph}",
+            (json.dumps(metadata, ensure_ascii=False, separators=(",", ":"), default=str), agent_id),
+        )
+
     def request(
         self,
         agent_id: str,
@@ -92,40 +99,56 @@ class AgentUninstallRepository:
                     "requested_by": str(requested_by or "system"),
                 }
                 metadata[_METADATA_KEY] = state
-                session.execute(
-                    f"UPDATE agents SET metadata_json={ph},updated_at=CURRENT_TIMESTAMP WHERE id={ph}",
-                    (json.dumps(metadata, ensure_ascii=False, separators=(",", ":"), default=str), agent_id),
-                )
+                self._store(session, agent_id, metadata)
                 return state
             finally:
                 session.close()
 
     def command_for_agent(self, agent_id: str) -> dict[str, Any] | None:
+        """Return at most one command for the current uninstall phase.
+
+        queued -> prepare command, then delivered
+        accepted -> commit command, then commit-delivered
+        """
         self.initialize()
-        ph = self.dialect.placeholder
         with self.backend.transaction() as connection:
             session = AlertSession(self.backend, connection)
             try:
                 row = self._row(session, agent_id)
                 metadata = _metadata(row["metadata_json"])
                 current = metadata.get(_METADATA_KEY)
-                if not isinstance(current, dict) or current.get("status") != "queued":
+                if not isinstance(current, dict):
                     return None
-                state = dict(current)
-                state["status"] = "delivered"
-                state["delivered_at"] = _now()
-                metadata[_METADATA_KEY] = state
-                session.execute(
-                    f"UPDATE agents SET metadata_json={ph},updated_at=CURRENT_TIMESTAMP WHERE id={ph}",
-                    (json.dumps(metadata, ensure_ascii=False, separators=(",", ":"), default=str), agent_id),
-                )
-                return {
-                    "kind": "AgentUninstallCommand",
-                    "schema_version": 1,
-                    "request_id": state["request_id"],
-                    "action": "uninstall-agent",
-                    "mode": state["mode"],
-                }
+                status = str(current.get("status") or "")
+                if status == "queued":
+                    state = dict(current)
+                    state["status"] = "delivered"
+                    state["delivered_at"] = _now()
+                    metadata[_METADATA_KEY] = state
+                    self._store(session, agent_id, metadata)
+                    return {
+                        "kind": "AgentUninstallCommand",
+                        "schema_version": 1,
+                        "request_id": state["request_id"],
+                        "action": "uninstall-agent",
+                        "phase": "prepare",
+                        "mode": state["mode"],
+                    }
+                if status == "accepted":
+                    state = dict(current)
+                    state["status"] = "commit-delivered"
+                    state["commit_delivered_at"] = _now()
+                    metadata[_METADATA_KEY] = state
+                    self._store(session, agent_id, metadata)
+                    return {
+                        "kind": "AgentUninstallCommand",
+                        "schema_version": 1,
+                        "request_id": state["request_id"],
+                        "action": "uninstall-agent",
+                        "phase": "commit",
+                        "mode": state["mode"],
+                    }
+                return None
             finally:
                 session.close()
 
@@ -136,10 +159,9 @@ class AgentUninstallRepository:
         if not request_id:
             return None
         status = str(result.get("status") or "").strip().lower()
-        if status not in {"completed", "failed"}:
+        if status not in {"accepted", "committed", "completed", "failed"}:
             return None
 
-        ph = self.dialect.placeholder
         with self.backend.transaction() as connection:
             session = AlertSession(self.backend, connection)
             try:
@@ -148,20 +170,29 @@ class AgentUninstallRepository:
                 current = metadata.get(_METADATA_KEY)
                 if not isinstance(current, dict) or str(current.get("request_id")) != request_id:
                     return None
+                current_status = str(current.get("status") or "")
+                allowed = {
+                    "accepted": {"delivered", "accepted"},
+                    "committed": {"commit-delivered", "committed"},
+                    "completed": {"commit-delivered", "committed", "completed"},
+                    "failed": {"delivered", "accepted", "commit-delivered", "committed", "failed"},
+                }
+                if current_status not in allowed[status]:
+                    return None
                 state = dict(current)
-                state.update(
-                    {
-                        "status": status,
-                        "completed_at": str(result.get("completed_at") or _now()),
-                        "error": str(result.get("error") or "")[:1000] or None,
-                        "host_cleanup": result.get("host_cleanup") if isinstance(result.get("host_cleanup"), dict) else None,
-                    }
-                )
+                state["status"] = status
+                stamp_key = {
+                    "accepted": "accepted_at",
+                    "committed": "committed_at",
+                    "completed": "completed_at",
+                    "failed": "completed_at",
+                }[status]
+                state[stamp_key] = str(result.get(stamp_key) or result.get("completed_at") or _now())
+                if status in {"completed", "failed"}:
+                    state["error"] = str(result.get("error") or "")[:1000] or None
+                    state["host_cleanup"] = result.get("host_cleanup") if isinstance(result.get("host_cleanup"), dict) else None
                 metadata[_METADATA_KEY] = state
-                session.execute(
-                    f"UPDATE agents SET metadata_json={ph},updated_at=CURRENT_TIMESTAMP WHERE id={ph}",
-                    (json.dumps(metadata, ensure_ascii=False, separators=(",", ":"), default=str), agent_id),
-                )
+                self._store(session, agent_id, metadata)
                 return state
             finally:
                 session.close()
