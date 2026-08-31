@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -20,6 +22,50 @@ def load(name: str, path: Path):
 
 
 class MinecraftInstallerRuntimeTest(unittest.TestCase):
+    def test_catalog_prepare_carries_installer_contract_canonically(self):
+        with tempfile.TemporaryDirectory() as td:
+            catalog_root = Path(td) / "catalog" / "v2"
+            runtime_dir = catalog_root / "games" / "fixture" / "runtimes"
+            runtime_dir.mkdir(parents=True)
+            runtime = {
+                "schema_version": 2,
+                "id": "fixture.java.installer",
+                "game": "fixture",
+                "edition": "java",
+                "variant": "installer",
+                "version": {"strategy": "static", "value": "1.0.0"},
+                "artifact": {"provider": "http-archive", "asset": "installer.jar"},
+                "installation": {
+                    "directory": "/opt/dsm/game-data/fixture/installer",
+                    "installer": {
+                        "type": "java_jar",
+                        "args": ["--installServer"],
+                        "timeout_seconds": 600,
+                        "expected_outputs": ["libraries"],
+                    },
+                },
+                "process": {"engine": "java", "executable": "@java"},
+            }
+            (runtime_dir / "installer.json").write_text(json.dumps(runtime), encoding="utf-8")
+            env = dict(os.environ)
+            env["DSM_ROOT"] = str(ROOT)
+            env["DSM_CATALOG_ROOT"] = str(catalog_root)
+            completed = subprocess.run(
+                [str(ROOT / "installer/catalog.sh"), "runtime", "prepare", "fixture.java.installer", "current", "--json"],
+                cwd=str(ROOT),
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=30,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            selection = json.loads(completed.stdout)
+            self.assertEqual(selection["kind"], "RuntimeSelection")
+            self.assertEqual(selection["runtime_definition"], "fixture.java.installer")
+            self.assertEqual(selection["installer"], runtime["installation"]["installer"])
+
     def test_linux_java_installer_is_argv_only_and_normalizes_launch_args(self):
         module = load("linux_game_data_installer", ROOT / "agents/linux/runtime/game_data_installer.py")
         with tempfile.TemporaryDirectory() as td:
