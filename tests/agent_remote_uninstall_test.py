@@ -47,6 +47,14 @@ class AgentRemoteUninstallTest(unittest.TestCase):
         self.backend.close()
         self.temp.cleanup()
 
+    def request(self, mode="preserve-data"):
+        return self.repo.request(
+            "agent-uninstall-test",
+            mode=mode,
+            requested_by="admin",
+            confirmation="agent-uninstall-test",
+        )
+
     def test_request_requires_exact_confirmation(self):
         with self.assertRaisesRegex(ValueError, "confirmation must exactly match agent_id"):
             self.repo.request(
@@ -56,46 +64,52 @@ class AgentRemoteUninstallTest(unittest.TestCase):
                 confirmation="wrong",
             )
 
-    def test_typed_command_is_delivered_only_once(self):
-        state = self.repo.request(
-            "agent-uninstall-test",
-            mode="preserve-data",
-            requested_by="admin",
-            confirmation="agent-uninstall-test",
-        )
-        self.assertEqual(state["status"], "queued")
-        command = self.repo.command_for_agent("agent-uninstall-test")
-        self.assertEqual(command["kind"], "AgentUninstallCommand")
-        self.assertEqual(command["action"], "uninstall-agent")
-        self.assertEqual(command["mode"], "preserve-data")
-        self.assertEqual(command["request_id"], state["request_id"])
+    def test_prepare_then_commit_are_delivered_as_separate_typed_phases(self):
+        state = self.request()
+        prepare = self.repo.command_for_agent("agent-uninstall-test")
+        self.assertEqual(prepare["kind"], "AgentUninstallCommand")
+        self.assertEqual(prepare["phase"], "prepare")
+        self.assertEqual(prepare["mode"], "preserve-data")
+        self.assertEqual(prepare["request_id"], state["request_id"])
         self.assertIsNone(self.repo.command_for_agent("agent-uninstall-test"))
         self.assertEqual(self.repo.state("agent-uninstall-test")["status"], "delivered")
 
-    def test_result_must_match_request_id(self):
-        state = self.repo.request(
+        accepted = self.repo.apply_result(
             "agent-uninstall-test",
-            mode="preserve-data",
-            requested_by="admin",
-            confirmation="agent-uninstall-test",
+            {"request_id": state["request_id"], "status": "accepted"},
         )
+        self.assertEqual(accepted["status"], "accepted")
+        commit = self.repo.command_for_agent("agent-uninstall-test")
+        self.assertEqual(commit["phase"], "commit")
+        self.assertEqual(commit["request_id"], state["request_id"])
+        self.assertIsNone(self.repo.command_for_agent("agent-uninstall-test"))
+        self.assertEqual(self.repo.state("agent-uninstall-test")["status"], "commit-delivered")
+
+    def test_result_must_match_request_id_and_valid_transition(self):
+        state = self.request()
         self.repo.command_for_agent("agent-uninstall-test")
         self.assertIsNone(
             self.repo.apply_result(
                 "agent-uninstall-test",
-                {"request_id": "uninstall-other", "status": "completed"},
+                {"request_id": "uninstall-other", "status": "accepted"},
             )
         )
-        completed = self.repo.apply_result(
-            "agent-uninstall-test",
-            {
-                "request_id": state["request_id"],
-                "status": "completed",
-                "host_cleanup": {"task_removed": True, "runtime_removed": True},
-            },
+        self.assertIsNone(
+            self.repo.apply_result(
+                "agent-uninstall-test",
+                {"request_id": state["request_id"], "status": "committed"},
+            )
         )
-        self.assertEqual(completed["status"], "completed")
-        self.assertTrue(completed["host_cleanup"]["task_removed"])
+        self.repo.apply_result(
+            "agent-uninstall-test",
+            {"request_id": state["request_id"], "status": "accepted"},
+        )
+        self.repo.command_for_agent("agent-uninstall-test")
+        committed = self.repo.apply_result(
+            "agent-uninstall-test",
+            {"request_id": state["request_id"], "status": "committed"},
+        )
+        self.assertEqual(committed["status"], "committed")
 
     def test_purge_is_blocked_with_registered_instances(self):
         with self.backend.transaction() as connection:
@@ -104,12 +118,7 @@ class AgentRemoteUninstallTest(unittest.TestCase):
                 ("instance-uninstall-test", "node-uninstall-test", "minecraft", "Test", "offline"),
             )
         with self.assertRaisesRegex(ValueError, "purge is blocked"):
-            self.repo.request(
-                "agent-uninstall-test",
-                mode="purge",
-                requested_by="admin",
-                confirmation="agent-uninstall-test",
-            )
+            self.request(mode="purge")
 
     def test_preserve_data_can_be_requested_with_instances(self):
         with self.backend.transaction() as connection:
@@ -117,12 +126,7 @@ class AgentRemoteUninstallTest(unittest.TestCase):
                 "INSERT INTO instances(id,node_id,game_id,name,status) VALUES (?,?,?,?,?)",
                 ("instance-preserve-test", "node-uninstall-test", "minecraft", "Test", "offline"),
             )
-        state = self.repo.request(
-            "agent-uninstall-test",
-            mode="preserve-data",
-            requested_by="admin",
-            confirmation="agent-uninstall-test",
-        )
+        state = self.request()
         self.assertEqual(state["mode"], "preserve-data")
 
 
