@@ -48,13 +48,13 @@ function renderAgentTable(agents) {
         const online = isOnline(agent);
         const heartbeat = agent.last_heartbeat || agent.heartbeat_at || agent.last_seen || agent.updated_at;
         return `<tr>
-            <td><a class="cap-agent-name" href="agents.html">${escapeHtml(agent.name || agent.id || "Agent")}</a><small>${escapeHtml(agent.id || "—")}</small></td>
-            <td>${escapeHtml(agentHost(agent))}</td>
-            <td>${escapeHtml(agentPlatform(agent))}</td>
-            <td>${escapeHtml(agentLocation(agent))}</td>
-            <td><span class="cap-agent-state ${online ? "online" : "offline"}"><i></i>${escapeHtml(state)}</span></td>
-            <td class="cap-agent-number">${escapeHtml(Number(agent.instance_count || 0))}</td>
-            <td>${escapeHtml(formatDateTime(heartbeat))}</td>
+            <td data-label="Agent"><a class="cap-agent-name" href="agents.html">${escapeHtml(agent.name || agent.id || "Agent")}</a><small>${escapeHtml(agent.id || "—")}</small></td>
+            <td data-label="Host">${escapeHtml(agentHost(agent))}</td>
+            <td data-label="Plataforma">${escapeHtml(agentPlatform(agent))}</td>
+            <td data-label="Região / DC">${escapeHtml(agentLocation(agent))}</td>
+            <td data-label="Estado"><span class="cap-agent-state ${online ? "online" : "offline"}"><i></i>${escapeHtml(state)}</span></td>
+            <td data-label="Instâncias" class="cap-agent-number">${escapeHtml(Number(agent.instance_count || 0))}</td>
+            <td data-label="Último heartbeat">${escapeHtml(formatDateTime(heartbeat))}</td>
         </tr>`;
     }).join("");
 }
