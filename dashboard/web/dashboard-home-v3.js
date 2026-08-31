@@ -123,6 +123,7 @@ function renderActiveAlerts(result, alertResult) {
         const critical = ["critical","error","fatal"].includes(severity);
         const alertId = String(alert?.id || alert?.alert_id || "");
         const code = alert?.code || alert?.rule_id || alert?.event_type || alert?.type || "Alerta";
+        const ruleId = String(alert?.rule_id || "").trim();
         const scope = alert?.agent_id || alert?.instance_id || alert?.customer_id || alert?.scope || "Sistema";
         const status = String(alert?.status || alert?.state || "OPEN").toUpperCase();
         const message = alert?.message || alert?.description || "";
@@ -130,7 +131,7 @@ function renderActiveAlerts(result, alertResult) {
         const viewAgent = agentId ? `<a class="cap-alert-action" href="agent-details.html?agent_id=${encodeURIComponent(agentId)}">Ver Agent</a>` : "";
         const acknowledge = alertId && status === "OPEN" ? `<button type="button" class="cap-alert-action" data-alert-action="acknowledge" data-alert-id="${escapeHtml(alertId)}">Reconhecer</button>` : "";
         const note = alertId ? `<button type="button" class="cap-alert-action" data-alert-action="note" data-alert-id="${escapeHtml(alertId)}">Adicionar nota</button>` : "";
-        const resolve = alertId ? `<button type="button" class="cap-alert-action cap-alert-resolve" data-alert-action="resolve" data-alert-id="${escapeHtml(alertId)}">Resolver</button>` : "";
+        const resolve = alertId && ruleId !== "agent.identity_collision" ? `<button type="button" class="cap-alert-action cap-alert-resolve" data-alert-action="resolve" data-alert-id="${escapeHtml(alertId)}">Resolver</button>` : "";
         return `<article class="cap-alert ${critical ? "" : "warning"}">
             <strong class="${critical ? "cap-bad" : "cap-warn"}">${escapeHtml(severity.toUpperCase())} · ${escapeHtml(status)}</strong>
             ${message ? `<p class="cap-alert-message">${escapeHtml(message)}</p>` : ""}
