@@ -7,13 +7,9 @@ const controllerHeaders = () => ({Accept: "application/json", "X-Capivara-Auth-A
 async function get(path) {
     try {
         const response = await fetch(`${HOME_API}${path}`, {
-            headers: controllerHeaders(),
-            credentials: "same-origin",
-            cache: "no-store",
+            headers: controllerHeaders(), credentials: "same-origin", cache: "no-store",
         });
-        if (response.status === 401) {
-            window.location.replace("/login.html"); return null;
-        }
+        if (response.status === 401) { window.location.replace("/login.html"); return null; }
         if (!response.ok) return null;
         return await response.json();
     } catch (error) {
@@ -29,32 +25,49 @@ function formatDateTime(value) { if (!value) return "—"; const date = typeof v
 function eventText(event) { const type=String(event?.type||event?.action||"Evento").replaceAll("_"," ").toLowerCase(); const message=event?.message||event?.details||event?.data?.message||""; return message?`${type} · ${message}`:type; }
 function agentHost(agent) { return agent?.hostname || agent?.address || agent?.ip || agent?.public_host || agent?.node_id || "—"; }
 function agentPlatform(agent) { return agent?.platform || agent?.system || agent?.os_name || agent?.os || "—"; }
-function agentLocation(agent) {
-    const region = agent?.region_id || agent?.region || "";
-    const datacenter = agent?.datacenter_id || agent?.datacenter || "";
-    return [region, datacenter].filter(Boolean).join(" / ") || "—";
-}
+function agentLocation(agent) { const region=agent?.region_id||agent?.region||""; const dc=agent?.datacenter_id||agent?.datacenter||""; return [region,dc].filter(Boolean).join(" / ") || "—"; }
 function agentState(agent) { return String(agent?.health_status || agent?.health || agent?.status || "unknown"); }
+
+function closeAgentMenus(except = null) {
+    document.querySelectorAll(".cap-agent-action-menu.is-open").forEach(menu => {
+        if (menu !== except) menu.classList.remove("is-open");
+    });
+    document.querySelectorAll(".cap-agent-action-toggle[aria-expanded='true']").forEach(button => {
+        if (!except || button.nextElementSibling !== except) button.setAttribute("aria-expanded", "false");
+    });
+}
 
 function renderAgentTable(agents) {
     const body = $("home-agent-table-body");
     if (!body) return;
     if (!agents.length) {
-        body.innerHTML = '<tr><td colspan="7" class="cap-agent-table-empty">Nenhum Agent registrado.</td></tr>';
+        body.innerHTML = '<tr><td colspan="8" class="cap-agent-table-empty">Nenhum Agent registrado.</td></tr>';
         return;
     }
     body.innerHTML = agents.map(agent => {
+        const id = String(agent.id || "");
         const state = agentState(agent);
         const online = isOnline(agent);
         const heartbeat = agent.last_heartbeat || agent.heartbeat_at || agent.last_seen || agent.updated_at;
+        const detailsUrl = `agent-details.html?agent_id=${encodeURIComponent(id)}`;
+        const instancesUrl = `servers.html?agent=${encodeURIComponent(id)}`;
         return `<tr>
-            <td data-label="Agent"><a class="cap-agent-name" href="agents.html">${escapeHtml(agent.name || agent.id || "Agent")}</a><small>${escapeHtml(agent.id || "—")}</small></td>
-            <td data-label="Host">${escapeHtml(agentHost(agent))}</td>
-            <td data-label="Plataforma">${escapeHtml(agentPlatform(agent))}</td>
-            <td data-label="Região / DC">${escapeHtml(agentLocation(agent))}</td>
-            <td data-label="Estado"><span class="cap-agent-state ${online ? "online" : "offline"}"><i></i>${escapeHtml(state)}</span></td>
-            <td data-label="Instâncias" class="cap-agent-number">${escapeHtml(Number(agent.instance_count || 0))}</td>
-            <td data-label="Último heartbeat">${escapeHtml(formatDateTime(heartbeat))}</td>
+            <td><a class="cap-agent-name" href="${detailsUrl}">${escapeHtml(agent.name || agent.id || "Agent")}</a><small>${escapeHtml(agent.id || "—")}</small></td>
+            <td>${escapeHtml(agentHost(agent))}</td>
+            <td>${escapeHtml(agentPlatform(agent))}</td>
+            <td>${escapeHtml(agentLocation(agent))}</td>
+            <td><span class="cap-agent-state ${online ? "online" : "offline"}"><i></i>${escapeHtml(state)}</span></td>
+            <td class="cap-agent-number">${escapeHtml(Number(agent.instance_count || 0))}</td>
+            <td>${escapeHtml(formatDateTime(heartbeat))}</td>
+            <td class="cap-agent-actions-cell">
+                <div class="cap-agent-action-wrap">
+                    <button class="cap-agent-action-toggle" type="button" aria-label="Ações de ${escapeHtml(agent.name || id || "Agent")}" aria-haspopup="menu" aria-expanded="false">⋮</button>
+                    <div class="cap-agent-action-menu" role="menu">
+                        <a role="menuitem" href="${detailsUrl}">Gerenciar Agent</a>
+                        <a role="menuitem" href="${instancesUrl}">Ver instâncias</a>
+                    </div>
+                </div>
+            </td>
         </tr>`;
     }).join("");
 }
@@ -83,79 +96,46 @@ async function refresh() {
 
 function bindMobileSidebar(target,toggle){
     if(!target||!toggle)return;
-
     const isMobile=()=>window.innerWidth<=760;
-    const setOpen=open=>{
-        document.body.classList.toggle("sidebar-open",Boolean(open)&&isMobile());
-        toggle.setAttribute("aria-expanded",Boolean(open)&&isMobile()?"true":"false");
-        toggle.setAttribute("aria-label",Boolean(open)&&isMobile()?"Fechar menu":"Abrir menu");
-    };
-
-    toggle.addEventListener("click",event=>{
-        event.stopPropagation();
-        if(isMobile()){
-            setOpen(!document.body.classList.contains("sidebar-open"));
-            return;
-        }
-        document.body.classList.toggle("cap-sidebar-collapsed");
-    });
-
+    const setOpen=open=>{document.body.classList.toggle("sidebar-open",Boolean(open)&&isMobile());toggle.setAttribute("aria-expanded",Boolean(open)&&isMobile()?"true":"false");toggle.setAttribute("aria-label",Boolean(open)&&isMobile()?"Fechar menu":"Abrir menu");};
+    toggle.addEventListener("click",event=>{event.stopPropagation();if(isMobile()){setOpen(!document.body.classList.contains("sidebar-open"));return;}document.body.classList.toggle("cap-sidebar-collapsed");});
     target.querySelector(".cap-sidebar-close")?.addEventListener("click",()=>setOpen(false));
     target.querySelectorAll("a").forEach(link=>link.addEventListener("click",()=>setOpen(false)));
+    document.addEventListener("pointerdown",event=>{if(!isMobile()||!document.body.classList.contains("sidebar-open"))return;if(target.contains(event.target)||toggle.contains(event.target))return;setOpen(false);});
+    let startX=null,startY=null;
+    target.addEventListener("touchstart",event=>{const touch=event.changedTouches?.[0];if(!touch)return;startX=touch.clientX;startY=touch.clientY;},{passive:true});
+    target.addEventListener("touchend",event=>{if(startX===null||startY===null)return;const touch=event.changedTouches?.[0];if(!touch)return;const dx=touch.clientX-startX,dy=touch.clientY-startY;startX=null;startY=null;if(isMobile()&&dx<-60&&Math.abs(dx)>Math.abs(dy)*1.2)setOpen(false);},{passive:true});
+    window.addEventListener("resize",()=>{if(!isMobile())setOpen(false);});
+}
 
-    document.addEventListener("pointerdown",event=>{
-        if(!isMobile()||!document.body.classList.contains("sidebar-open"))return;
-        if(target.contains(event.target)||toggle.contains(event.target))return;
-        setOpen(false);
+function bindAgentActionMenus(){
+    const table=$("home-agent-table-body");
+    if(!table)return;
+    table.addEventListener("click",event=>{
+        const button=event.target.closest(".cap-agent-action-toggle");
+        if(!button)return;
+        event.preventDefault();event.stopPropagation();
+        const menu=button.nextElementSibling;
+        const opening=!menu.classList.contains("is-open");
+        closeAgentMenus(menu);
+        menu.classList.toggle("is-open",opening);
+        button.setAttribute("aria-expanded",opening?"true":"false");
     });
-
-    document.addEventListener("keydown",event=>{
-        if(event.key==="Escape")setOpen(false);
-    });
-
-    let startX=null;
-    let startY=null;
-
-    target.addEventListener("touchstart",event=>{
-        const touch=event.changedTouches?.[0];
-        if(!touch)return;
-        startX=touch.clientX;
-        startY=touch.clientY;
-    },{passive:true});
-
-    target.addEventListener("touchend",event=>{
-        if(startX===null||startY===null)return;
-        const touch=event.changedTouches?.[0];
-        if(!touch)return;
-
-        const dx=touch.clientX-startX;
-        const dy=touch.clientY-startY;
-
-        startX=null;
-        startY=null;
-
-        if(isMobile()&&dx<-60&&Math.abs(dx)>Math.abs(dy)*1.2){
-            setOpen(false);
-        }
-    },{passive:true});
-
-    window.addEventListener("resize",()=>{
-        if(!isMobile())setOpen(false);
-    });
+    document.addEventListener("click",event=>{if(!event.target.closest(".cap-agent-action-wrap"))closeAgentMenus();});
+    document.addEventListener("keydown",event=>{if(event.key==="Escape")closeAgentMenus();});
 }
 
 async function loadSidebar(){
-    const target=$("sidebar-component");
-    if(!target)return;
+    const target=$("sidebar-component");if(!target)return;
     const response=await fetch("/components/sidebar-v3.html",{headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});
     if(response.ok)target.innerHTML=await response.text();
-    const logout=$("btn-logout");
-    if(logout)logout.onclick=async()=>{try{await fetch("/api/auth/logout",{method:"POST",headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});}finally{window.location.replace("/login.html")}};
+    const logout=$("btn-logout");if(logout)logout.onclick=async()=>{try{await fetch("/api/auth/logout",{method:"POST",headers:controllerHeaders(),credentials:"same-origin",cache:"no-store"});}finally{window.location.replace("/login.html")}};
     bindMobileSidebar(target,$("home-menu-toggle"));
 }
 
 document.addEventListener("DOMContentLoaded",async()=>{
     await loadSidebar();
+    bindAgentActionMenus();
     $("home-refresh")?.addEventListener("click",refresh);
     await refresh();
     window.setInterval(refresh,30000);
