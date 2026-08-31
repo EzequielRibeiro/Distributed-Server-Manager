@@ -35,20 +35,59 @@
     ).trim();
   }
 
-  function decorateAlertIds() {
-    document.querySelectorAll("#observability-alerts .cap-alert-item").forEach(card => {
-      if (card.querySelector(":scope > .cap-alert-heading")) return;
-      const status = card.querySelector(":scope > strong");
-      if (!status) return;
-      const id = alertIdFromCard(card);
-      if (!id) return;
-      const heading = document.createElement("div");
+  function labelAlertHeading(card) {
+    let heading = card.querySelector(":scope > .cap-alert-heading");
+    const status = heading?.querySelector(":scope > strong") || card.querySelector(":scope > strong");
+    if (!status) return;
+
+    if (!heading) {
+      heading = document.createElement("div");
       heading.className = "cap-alert-heading";
-      const label = document.createElement("small");
-      label.className = "cap-alert-id";
-      label.textContent = `ID: ${id}`;
       status.replaceWith(heading);
-      heading.append(status, label);
+      heading.append(status);
+    }
+
+    const id = alertIdFromCard(card);
+    if (!id) return;
+    let label = heading.querySelector(":scope > .cap-alert-id");
+    if (!label) {
+      label = document.createElement("small");
+      label.className = "cap-alert-id";
+      heading.append(label);
+    }
+    label.textContent = `ID do alerta: ${id}`;
+  }
+
+  function labelAlertScope(card) {
+    const main = card.querySelector(":scope > .cap-alert-item-main");
+    const scope = main?.querySelector(":scope > small");
+    if (!scope || scope.dataset.capIdentifiersLabeled === "1") return;
+
+    const original = String(scope.textContent || "").trim();
+    const viewAgent = main.querySelector('.cap-alert-controls a[href*="agent-details.html?agent_id="]');
+    if (viewAgent) {
+      viewAgent.classList.add("cap-alert-control-link");
+      let currentAgentId = "";
+      try {
+        currentAgentId = new URL(viewAgent.href, location.href).searchParams.get("agent_id") || "";
+      } catch (_) {
+        currentAgentId = "";
+      }
+      const parts = original.split(" · ").map(value => value.trim()).filter(Boolean);
+      const instanceId = parts.length > 1 ? parts[1] : "";
+      scope.textContent = currentAgentId
+        ? `ID do Agent: ${currentAgentId}${instanceId ? ` · ID da instância: ${instanceId}` : ""}`
+        : `Escopo: ${original}`;
+    } else if (original) {
+      scope.textContent = `Escopo: ${original}`;
+    }
+    scope.dataset.capIdentifiersLabeled = "1";
+  }
+
+  function decorateAlertCards() {
+    document.querySelectorAll("#observability-alerts .cap-alert-item").forEach(card => {
+      labelAlertHeading(card);
+      labelAlertScope(card);
     });
   }
 
@@ -108,8 +147,8 @@
 
     const list = document.getElementById("observability-alerts");
     if (list) {
-      new MutationObserver(decorateAlertIds).observe(list, {childList: true, subtree: true});
-      decorateAlertIds();
+      new MutationObserver(decorateAlertCards).observe(list, {childList: true, subtree: true});
+      decorateAlertCards();
     }
   });
 })();
