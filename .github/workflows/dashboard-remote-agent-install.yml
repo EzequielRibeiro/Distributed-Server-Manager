@@ -13,6 +13,7 @@ on:
       - 'dashboard/web/agent-installation-wizard.js'
       - 'database/agent_installation_preconfiguration.py'
       - 'core/agent_ssh_deploy.py'
+      - 'core/windows_agent_ssh_deploy.py'
       - 'tests/dashboard_remote_agent_install_test.py'
       - 'tests/agent_ssh_cross_platform_test.py'
       - 'docs/architecture/dashboard-remote-agent-install.md'
@@ -30,6 +31,7 @@ on:
       - 'dashboard/web/agent-installation-wizard.js'
       - 'database/agent_installation_preconfiguration.py'
       - 'core/agent_ssh_deploy.py'
+      - 'core/windows_agent_ssh_deploy.py'
       - 'tests/dashboard_remote_agent_install_test.py'
       - 'tests/agent_ssh_cross_platform_test.py'
       - '.github/workflows/dashboard-remote-agent-install.yml'
@@ -55,6 +57,7 @@ jobs:
             database/agent_connection_test_cli.py \
             database/agent_remote_secret_cli.py \
             core/agent_ssh_deploy.py \
+            core/windows_agent_ssh_deploy.py \
             tests/dashboard_remote_agent_install_test.py \
             tests/agent_ssh_cross_platform_test.py
 
@@ -72,6 +75,6 @@ jobs:
       - name: Security contract
         run: |
           ! grep -R --line-number 'type="password"' dashboard/web/add-agent*.html
-          ! grep -R --line-number 'StrictHostKeyChecking=no' dashboard/agent_connection_api.py dashboard/agent_installation_api.py core/agent_ssh_deploy.py
-          ! grep -R --line-number 'shell=True' dashboard/agent_connection_api.py dashboard/agent_installation_api.py core/agent_ssh_deploy.py
+          ! grep -R --line-number 'StrictHostKeyChecking=no' dashboard/agent_connection_api.py dashboard/agent_installation_api.py core/agent_ssh_deploy.py core/windows_agent_ssh_deploy.py
+          ! grep -R --line-number 'shell=True' dashboard/agent_connection_api.py dashboard/agent_installation_api.py core/agent_ssh_deploy.py core/windows_agent_ssh_deploy.py
           ! grep -R --line-number -- '--password ' database/agent_deploy_cli.py database/agent_connection_test_cli.py bin/cap
