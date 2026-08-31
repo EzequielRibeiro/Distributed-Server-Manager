@@ -5,6 +5,7 @@ from pathlib import Path,PurePosixPath
 from typing import Any
 from game_data_files import execute_file_operation
 from game_data_integrity import inspect_game_data
+from game_data_installer import execute_installer
 from game_data_state import GAME_DATA_ROOT,record_game_data,write_json
 FILE_ACTIONS={"file-list","file-read","file-write","file-create","file-mkdir","file-rename","file-delete","file-upload"}
 def _safe(v,label):
@@ -63,6 +64,7 @@ def _install(sel,target,provider):
  if provider=="steam":_run_steam(sel,target)
  elif provider in {"http","http-archive","github"}:_run_http(sel,target)
  else:raise RuntimeError(f"provider not supported by standalone Windows Agent: {provider}")
+ execute_installer(sel,target)
 def execute(command:dict[str,Any]):
  action=str(command.get("action") or "install").lower();sel=command.get("selection")
  if not isinstance(sel,dict):raise ValueError("runtime selection is missing")
