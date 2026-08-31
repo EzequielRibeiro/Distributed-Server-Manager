@@ -37,19 +37,34 @@ def _destination(relative:str)->Path|None:
  return None
 def _powershell(script:Path,*args:str)->subprocess.CompletedProcess:
  return subprocess.run(["powershell.exe","-NoProfile","-ExecutionPolicy","Bypass","-File",str(script),*map(str,args)],check=False,capture_output=True,text=True,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+def _stop_agent_task()->bool:
+ command="$t=Get-ScheduledTask -TaskName $args[0] -ErrorAction SilentlyContinue; if ($null -ne $t -and $t.State -eq 'Running') { Stop-ScheduledTask -TaskName $args[0] -ErrorAction Stop; exit 10 }; exit 0"
+ result=subprocess.run(["powershell.exe","-NoProfile","-Command",command,TASK_NAME],check=False,capture_output=True,text=True,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+ if result.returncode not in {0,10}:raise RuntimeError(f"failed to stop existing Windows Agent task: {(result.stderr or result.stdout)[-1500:]}")
+ if result.returncode==10:time.sleep(2)
+ return result.returncode==10
+def _task_is_running()->bool:
+ command="$t=Get-ScheduledTask -TaskName $args[0] -ErrorAction SilentlyContinue; if ($null -ne $t -and $t.State -eq 'Running') { exit 0 }; exit 1"
+ result=subprocess.run(["powershell.exe","-NoProfile","-Command",command,TASK_NAME],check=False,capture_output=True,text=True,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+ return result.returncode==0
 def _reconcile_runtime_integration()->dict:
  register=INSTALL_ROOT/"service"/"register-task.ps1";launcher=INSTALL_ROOT/"service"/"run-agent.ps1";agent=INSTALL_ROOT/"runtime"/"agent.py";gui=INSTALL_ROOT/"gui"/"install-gui.ps1"
  if not all(path.is_file() for path in (register,launcher,agent)):raise RuntimeError("updated Windows Agent service integration is incomplete")
- task=_powershell(register,"-PythonExe",sys.executable,"-AgentScript",str(agent),"-TaskName",TASK_NAME,"-DataRoot",str(DATA_ROOT),"-LauncherScript",str(launcher))
+ stopped=_stop_agent_task();task=_powershell(register,"-PythonExe",sys.executable,"-AgentScript",str(agent),"-TaskName",TASK_NAME,"-DataRoot",str(DATA_ROOT),"-LauncherScript",str(launcher))
  if task.returncode!=0:raise RuntimeError(f"failed to reconcile Windows Agent task: {(task.stderr or task.stdout)[-1500:]}")
+ running=False
+ for _ in range(10):
+  if _task_is_running():running=True;break
+  time.sleep(1)
+ if not running:raise RuntimeError("updated Windows Agent task did not enter Running state")
  gui_enabled=None
  if gui.is_file():
   result=_powershell(gui,"-InstallRoot",str(INSTALL_ROOT),"-DataRoot",str(DATA_ROOT),"-GuiMode","auto")
   if result.returncode!=0:raise RuntimeError(f"failed to reconcile Windows Agent GUI: {(result.stderr or result.stdout)[-1500:]}")
   gui_enabled='"gui_enabled":true' in (result.stdout or "").replace(" ","").lower()
- return {"task_reconciled":True,"gui_enabled":gui_enabled}
+ return {"task_reconciled":True,"task_restarted":stopped,"task_running":running,"gui_enabled":gui_enabled}
 def apply_request()->int:
- request=json.loads(REQUEST_PATH.read_text(encoding="utf-8"));version=str(request.get("desired_version","")).strip();channel=str(request.get("channel","stable")).strip().lower()
+ request=json.loads(REQUEST_PATH.read_text(encoding="utf-8-sig"));version=str(request.get("desired_version","")).strip();channel=str(request.get("channel","stable")).strip().lower()
  if not version:raise RuntimeError("desired_version is required")
  if channel=="local/manual":raise RuntimeError("local/manual update requires an administrator supplied package")
  tag=version if version.startswith("v") else f"v{version}";plain=version[1:] if version.startswith("v") else version;archive_name=f"capivara-agent-windows-{plain}.zip";base=f"https://github.com/{REPOSITORY}/releases/download/{tag}"
@@ -63,7 +78,7 @@ def apply_request()->int:
    destination=_destination(str(relative))
    if destination is None:continue
    source=package_root/str(relative);destination.parent.mkdir(parents=True,exist_ok=True);temporary=destination.with_suffix(destination.suffix+".new");shutil.copy2(source,temporary);os.replace(temporary,destination)
- integration=_reconcile_runtime_integration();REQUEST_PATH.unlink(missing_ok=True);_write_result("applied",installed_version=plain,rollout_id=request.get("rollout_id"),**integration);time.sleep(2);subprocess.run(["schtasks","/Run","/TN",TASK_NAME],check=False,capture_output=True);return 0
+ integration=_reconcile_runtime_integration();REQUEST_PATH.unlink(missing_ok=True);_write_result("applied",installed_version=plain,rollout_id=request.get("rollout_id"),**integration);return 0
 def main()->int:
  try:return apply_request()
  except Exception as exc:REQUEST_PATH.unlink(missing_ok=True);_write_result("failed",error=str(exc)[:2000]);subprocess.run(["schtasks","/Run","/TN",TASK_NAME],check=False,capture_output=True);return 1
