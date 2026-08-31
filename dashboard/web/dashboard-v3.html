@@ -14,13 +14,11 @@
     .cap-panel-heading h2{border:0;padding:0;margin:0}
     .cap-panel-heading p{margin:5px 0 0;color:var(--muted);font-size:12px}
     .cap-panel-heading>a{color:#aac7f3;text-decoration:none;white-space:nowrap}
-
     .cap-agent-table-wrap{padding:0;border:0;border-radius:0;box-shadow:none;background:#121b29}
     .cap-agent-table{font-size:10px}
-    .cap-agent-table th{background:#172235}
-    .cap-agent-table td{background:#121b29}
+    .cap-agent-table th{background:#172235;white-space:nowrap}
+    .cap-agent-table td{background:#121b29;white-space:nowrap}
     .cap-agent-table tbody tr:hover td{background:#182536}
-    .cap-agent-table td small{display:block;color:var(--muted);font-size:9px;margin-top:2px}
     .cap-agent-name{color:#eaf1fb;text-decoration:none;font-weight:600;display:block}
     .cap-agent-name:hover{color:#aac7f3}
     .cap-agent-state{display:inline-flex;align-items:center;gap:6px;text-transform:capitalize}
@@ -30,22 +28,20 @@
     .cap-agent-state.offline{color:var(--red)}
     .cap-agent-number{text-align:center!important;font-variant-numeric:tabular-nums}
     .cap-agent-table-empty{text-align:center!important;color:var(--muted);padding:18px!important}
-    .cap-agent-actions-cell{overflow:visible!important}
-    .cap-agent-action-wrap{position:relative;display:inline-flex;justify-content:center}
-    .cap-agent-action-toggle{width:30px;height:28px;border:1px solid #314158;border-radius:5px;background:#182334;color:#dbe7f7;font-size:18px;line-height:1;cursor:pointer}
-    .cap-agent-action-toggle:hover,.cap-agent-action-toggle[aria-expanded="true"]{background:#223249;border-color:#48617f}
-    .cap-agent-action-menu{display:none;position:absolute;right:0;top:32px;z-index:50;min-width:170px;padding:6px;background:#111a27;border:1px solid #304057;border-radius:7px;box-shadow:0 12px 28px #0008;text-align:left}
-    .cap-agent-action-menu.is-open{display:block}
-    .cap-agent-action-menu a{display:block;padding:10px 11px;border-radius:5px;color:#dce8f8;text-decoration:none;font-size:13px}
-    .cap-agent-action-menu a:hover{background:#1e2d42;color:white}
-    .cap-agent-scroll-hint{display:none;padding:7px 12px;color:var(--muted);font-size:10px;border-top:1px solid var(--line);background:#101927}
-
+    .cap-agent-id-cell,.cap-agent-hostname-cell,.cap-agent-ip-cell{white-space:nowrap}
+    .cap-alerts-top-panel{width:100%;margin-top:14px;margin-bottom:16px}
+    .cap-alert-message{margin:8px 0!important;line-height:1.4}
+    .cap-alert-meta{margin-top:8px!important;color:var(--muted)!important}
+    .cap-alert-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+    .cap-alert-action{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:7px 11px;border:1px solid var(--line);border-radius:5px;background:#1b2738;color:#eaf1fb;font:inherit;text-decoration:none;cursor:pointer}
+    .cap-alert-action:hover{background:#24344a}
+    .cap-alert-action:disabled{opacity:.55;cursor:wait}
+    .cap-alert-resolve{border-color:#704047;background:#39262b;color:#ffb4b8}
+    .cap-alert-resolve:hover{background:#472b31}
     @media(max-width:760px){
       .cap-agent-table-panel{margin-top:10px;width:100%;overflow:visible}
       .cap-panel-heading{align-items:flex-start;flex-direction:column;gap:8px;padding:12px 14px}
       .cap-panel-heading p{line-height:1.4}
-      .cap-agent-scroll-hint{display:block}
-      .cap-agent-action-menu{position:fixed;right:18px;top:auto;bottom:18px;min-width:210px}
     }
   </style>
 </head>
@@ -72,8 +68,14 @@
         <article class="cap-kpi"><div class="cap-kpi-icon">▤</div><div><label>Agents</label><strong id="home-agent-total">—</strong><small><span id="home-agent-online" class="cap-good">—</span> · <span id="home-agent-offline" class="cap-bad">—</span></small></div></article>
         <article class="cap-kpi"><div class="cap-kpi-icon">▣</div><div><label>Instâncias</label><strong id="home-instance-total">—</strong><small>Total registrado nos Agents</small></div></article>
         <article class="cap-kpi"><div class="cap-kpi-icon">▶</div><div><label>Em execução</label><strong id="home-running-total">—</strong><small>Instâncias reportadas em execução</small></div></article>
-        <article class="cap-kpi"><div class="cap-kpi-icon">!</div><div><label>Alertas</label><strong id="home-alert-total">—</strong><small>Eventos recentes que requerem atenção</small></div></article>
+        <article class="cap-kpi"><div class="cap-kpi-icon">!</div><div><label>Alertas</label><strong id="home-alert-total">—</strong><small>Alertas administrativos ativos</small></div></article>
       </section>
+
+      <article class="cap-panel cap-alerts-top-panel">
+        <h2>Alertas importantes</h2>
+        <div id="home-alerts" class="cap-panel-body"><div class="cap-empty">Carregando...</div></div>
+        <div class="cap-panel-footer"><a href="alerts.html">Ver todos os alertas ›</a></div>
+      </article>
 
       <section id="controller-telemetry" class="cap-telemetry-section" aria-label="Telemetria do Controller">
         <div class="cap-telemetry-empty">Carregando telemetria do Controller...</div>
@@ -87,18 +89,18 @@
           </div>
           <a href="agents.html">Gerenciar Agents ›</a>
         </div>
-        <div class="cap-telemetry-table-wrap cap-agent-table-wrap" tabindex="0" aria-label="Tabela de Agents com rolagem">
+        <div class="cap-telemetry-table-wrap cap-agent-table-wrap" tabindex="0" aria-label="Tabela de Agents com rolagem horizontal">
           <table class="cap-telemetry-table cap-agent-table">
             <thead>
               <tr>
                 <th>Agent</th>
-                <th>Host</th>
+                <th>Hostname</th>
+                <th>IP</th>
                 <th>Plataforma</th>
                 <th>Região / DC</th>
                 <th>Estado</th>
                 <th>Instâncias</th>
                 <th>Último heartbeat</th>
-                <th aria-label="Ações"></th>
               </tr>
             </thead>
             <tbody id="home-agent-table-body">
@@ -106,21 +108,23 @@
             </tbody>
           </table>
         </div>
-        <div class="cap-agent-scroll-hint" aria-hidden="true">↔ Deslize horizontalmente para ver todas as colunas</div>
       </section>
 
       <section class="cap-grid-main">
-        <article class="cap-panel"><h2>Saúde da infraestrutura</h2><div class="cap-panel-body"><div class="cap-health-row"><span class="cap-health-name"><i id="home-controller-dot" class="cap-dot"></i>Controller</span><strong id="home-controller-health" class="cap-good">—</strong></div><div class="cap-health-row"><span class="cap-health-name"><i class="cap-dot"></i>Agents</span><strong id="home-health-agents">—</strong></div><div class="cap-health-row"><span class="cap-health-name"><i class="cap-dot"></i>Placement</span><strong class="cap-good">Integrado</strong></div><div class="cap-health-row"><span class="cap-health-name"><i class="cap-dot"></i>Event Platform</span><strong class="cap-good">Ativa</strong></div></div><div class="cap-panel-footer"><a href="agents.html">Ver diagnóstico completo ›</a></div></article><article class="cap-panel"><h2>Distribuição por Agent</h2><div id="home-agent-bars" class="cap-bars"><div class="cap-empty">Carregando...</div></div><div class="cap-panel-footer"><a href="servers.html">Ver todas as instâncias ›</a></div></article><article class="cap-panel"><h2>Alertas importantes</h2><div id="home-alerts" class="cap-panel-body"><div class="cap-empty">Carregando...</div></div><div class="cap-panel-footer"><a href="observability.html#alerts">Ver todos os alertas ›</a></div></article>
+        <article class="cap-panel"><h2>Saúde da infraestrutura</h2><div class="cap-panel-body"><div class="cap-health-row"><span class="cap-health-name"><i id="home-controller-dot" class="cap-dot"></i>Controller</span><strong id="home-controller-health" class="cap-good">—</strong></div><div class="cap-health-row"><span class="cap-health-name"><i class="cap-dot"></i>Agents</span><strong id="home-health-agents">—</strong></div><div class="cap-health-row"><span class="cap-health-name"><i class="cap-dot"></i>Placement</span><strong class="cap-good">Integrado</strong></div><div class="cap-health-row"><span class="cap-health-name"><i class="cap-dot"></i>Event Platform</span><strong class="cap-good">Ativa</strong></div></div><div class="cap-panel-footer"><a href="agents.html">Ver diagnóstico completo ›</a></div></article>
+        <article class="cap-panel"><h2>Distribuição por Agent</h2><div id="home-agent-bars" class="cap-bars"><div class="cap-empty">Carregando...</div></div><div class="cap-panel-footer"><a href="servers.html">Ver todas as instâncias ›</a></div></article>
       </section>
 
       <section class="cap-grid-bottom">
-        <article class="cap-panel"><h2>Atividade recente</h2><div id="home-events" class="cap-timeline"><div class="cap-empty">Carregando...</div></div><div class="cap-panel-footer"><a href="observability.html#events">Ver todos os eventos ›</a></div></article><article class="cap-panel"><h2>Infraestrutura</h2><div class="cap-panel-body"><div class="cap-infra-row"><span>Regions</span><strong id="home-infra-regions">—</strong></div><div class="cap-infra-row"><span>Datacenters</span><strong id="home-infra-datacenters">—</strong></div><div class="cap-infra-row"><span>Agents</span><strong id="home-infra-agents">—</strong></div><div class="cap-infra-row"><span>Agents online</span><strong id="home-infra-online" class="cap-good">—</strong></div><div class="cap-infra-row"><span>Instâncias</span><strong id="home-instance-total-copy">ver indicador</strong></div></div><div class="cap-panel-footer"><a href="agents.html">Ver infraestrutura ›</a></div></article><article class="cap-panel"><h2>Ações rápidas</h2><div class="cap-quick"><a href="servers.html" class="instance-manager-only">Instâncias</a><a href="add-agent.html" class="agent-manager-only">＋ Adicionar Agent</a><a href="customers.html" class="admin-only">＋ Criar cliente</a><a href="customers.html" class="admin-only">＋ Criar contrato</a></div></article>
+        <article class="cap-panel"><h2>Atividade recente</h2><div id="home-events" class="cap-timeline"><div class="cap-empty">Carregando...</div></div><div class="cap-panel-footer"><a href="observability.html#events">Ver todos os eventos ›</a></div></article>
+        <article class="cap-panel"><h2>Infraestrutura</h2><div class="cap-panel-body"><div class="cap-infra-row"><span>Regions</span><strong id="home-infra-regions">—</strong></div><div class="cap-infra-row"><span>Datacenters</span><strong id="home-infra-datacenters">—</strong></div><div class="cap-infra-row"><span>Agents</span><strong id="home-infra-agents">—</strong></div><div class="cap-infra-row"><span>Agents online</span><strong id="home-infra-online" class="cap-good">—</strong></div><div class="cap-infra-row"><span>Instâncias</span><strong id="home-instance-total-copy">ver indicador</strong></div></div><div class="cap-panel-footer"><a href="agents.html">Ver infraestrutura ›</a></div></article>
+        <article class="cap-panel"><h2>Ações rápidas</h2><div class="cap-quick"><a href="servers.html" class="instance-manager-only">Instâncias</a><a href="add-agent.html" class="agent-manager-only">＋ Adicionar Agent</a><a href="customers.html" class="admin-only">＋ Criar cliente</a><a href="customers.html" class="admin-only">＋ Criar contrato</a></div></article>
       </section>
     </div>
 
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
   </main>
   <script src="telemetry-widgets.js?v=1"></script>
-  <script src="dashboard-home-v3.js?v=9"></script>
+  <script src="dashboard-home-v3.js?v=24"></script>
 </body>
 </html>
