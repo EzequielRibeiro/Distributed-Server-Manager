@@ -19,6 +19,7 @@ from typing import Any
 _previous_cpu: tuple[int, int] | None = None
 _previous_network: tuple[float, int, int] | None = None
 _previous_process: tuple[float, float] | None = None
+_previous_disk: tuple[float, int, int, int, int] | None = None
 
 
 class FILETIME(ctypes.Structure):
@@ -116,44 +117,109 @@ def _memory() -> dict[str, int | float | None]:
     }
 
 
-def _performance_snapshot() -> dict[str, float | None]:
+def _disk_raw_totals() -> tuple[int, int, int, int] | None:
+    """Read monotonic disk counters from the Windows raw PerfDisk provider.
+
+    Some storage drivers/hypervisors expose the formatted provider but keep its
+    per-second fields at zero. The raw provider still advances cumulative byte
+    and operation counters, so deriving rates from deltas is more portable.
+    """
     script = r"""
 $ErrorActionPreference='Stop'
-$disk = Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -ErrorAction Stop |
-  Where-Object { $_.Name -eq '_Total' } |
-  Select-Object -First 1
-$system = Get-CimInstance Win32_PerfFormattedData_PerfOS_System -ErrorAction Stop |
-  Select-Object -First 1
+$items = @(Get-CimInstance Win32_PerfRawData_PerfDisk_PhysicalDisk -ErrorAction Stop)
+$total = $items | Where-Object { $_.Name -eq '_Total' } | Select-Object -First 1
+if ($null -ne $total) {
+  $readBytes = [int64]$total.DiskReadBytesPersec
+  $writeBytes = [int64]$total.DiskWriteBytesPersec
+  $reads = [int64]$total.DiskReadsPersec
+  $writes = [int64]$total.DiskWritesPersec
+} else {
+  $readBytes = 0L
+  $writeBytes = 0L
+  $reads = 0L
+  $writes = 0L
+  foreach ($item in $items) {
+    if ($item.Name -eq '_Total') { continue }
+    $readBytes += [int64]$item.DiskReadBytesPersec
+    $writeBytes += [int64]$item.DiskWriteBytesPersec
+    $reads += [int64]$item.DiskReadsPersec
+    $writes += [int64]$item.DiskWritesPersec
+  }
+}
 @{
-  read_bytes_per_second = if ($null -eq $disk) { $null } else { [double]$disk.DiskReadBytesPersec }
-  write_bytes_per_second = if ($null -eq $disk) { $null } else { [double]$disk.DiskWriteBytesPersec }
-  read_iops = if ($null -eq $disk) { $null } else { [double]$disk.DiskReadsPersec }
-  write_iops = if ($null -eq $disk) { $null } else { [double]$disk.DiskWritesPersec }
-  processor_queue_length = if ($null -eq $system) { $null } else { [double]$system.ProcessorQueueLength }
+  read_bytes=$readBytes
+  write_bytes=$writeBytes
+  reads=$reads
+  writes=$writes
 } | ConvertTo-Json -Compress
 """
     payload = _run_powershell_json(script)
     if not isinstance(payload, dict):
-        return {
-            "read_bytes_per_second": None,
-            "write_bytes_per_second": None,
-            "read_iops": None,
-            "write_iops": None,
-            "processor_queue_length": None,
-        }
-    result: dict[str, float | None] = {}
-    for key in (
-        "read_bytes_per_second",
-        "write_bytes_per_second",
-        "read_iops",
-        "write_iops",
-        "processor_queue_length",
-    ):
-        value = payload.get(key)
-        try:
-            result[key] = float(value) if value is not None else None
-        except (TypeError, ValueError):
-            result[key] = None
+        return None
+    try:
+        return (
+            int(payload.get("read_bytes", 0)),
+            int(payload.get("write_bytes", 0)),
+            int(payload.get("reads", 0)),
+            int(payload.get("writes", 0)),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _disk_activity() -> dict[str, float | None]:
+    global _previous_disk
+    now = time.monotonic()
+    totals = _disk_raw_totals()
+    empty = {
+        "read_bytes_per_second": None,
+        "write_bytes_per_second": None,
+        "read_iops": None,
+        "write_iops": None,
+    }
+    if totals is None:
+        return empty
+
+    read_bytes, write_bytes, reads, writes = totals
+    previous = _previous_disk
+    _previous_disk = (now, read_bytes, write_bytes, reads, writes)
+    if previous is None:
+        return empty
+
+    elapsed = now - previous[0]
+    if elapsed <= 0:
+        return empty
+
+    # Counter resets can happen after provider/device restart. Clamp negative
+    # deltas to zero rather than publishing a bogus negative throughput.
+    return {
+        "read_bytes_per_second": round(max(0, read_bytes - previous[1]) / elapsed, 2),
+        "write_bytes_per_second": round(max(0, write_bytes - previous[2]) / elapsed, 2),
+        "read_iops": round(max(0, reads - previous[3]) / elapsed, 2),
+        "write_iops": round(max(0, writes - previous[4]) / elapsed, 2),
+    }
+
+
+def _processor_queue_length() -> float | None:
+    script = r"""
+$ErrorActionPreference='Stop'
+$system = Get-CimInstance Win32_PerfFormattedData_PerfOS_System -ErrorAction Stop |
+  Select-Object -First 1
+if ($null -eq $system) { $null | ConvertTo-Json -Compress }
+else { ([double]$system.ProcessorQueueLength) | ConvertTo-Json -Compress }
+"""
+    value = _run_powershell_json(script)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _performance_snapshot() -> dict[str, float | None]:
+    result = _disk_activity()
+    result["processor_queue_length"] = _processor_queue_length()
     return result
 
 
