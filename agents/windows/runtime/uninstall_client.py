@@ -28,6 +28,10 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def _ps_quote(value: Path) -> str:
+    return str(value).replace("'", "''")
+
+
 def read_result() -> dict[str, Any] | None:
     try:
         value = json.loads(RESULT_PATH.read_text(encoding="utf-8-sig"))
@@ -90,22 +94,27 @@ def commit(request_id: str) -> dict[str, Any]:
     # Copy the entry script outside InstallRoot because uninstall removes InstallRoot itself.
     staging = Path(tempfile.gettempdir()) / f"capivara-uninstall-{request_id}.ps1"
     staging.write_bytes(script.read_bytes())
+    command = (
+        "Start-Sleep -Seconds 3; "
+        + "& '" + _ps_quote(staging) + "' "
+        + "-InstallRoot '" + _ps_quote(INSTALL_ROOT) + "' "
+        + "-DataRoot '" + _ps_quote(STATE_DIR.parent) + "' "
+        + ("-Purge " if mode == "purge" else "")
+        + "; Remove-Item -LiteralPath '" + _ps_quote(staging) + "' -Force -ErrorAction SilentlyContinue"
+    )
     arguments = [
         "powershell.exe",
         "-NoProfile",
         "-ExecutionPolicy",
         "Bypass",
         "-Command",
-        (
-            "Start-Sleep -Seconds 3; "
-            f"& '{str(staging).replace("'", "''")}' "
-            f"-InstallRoot '{str(INSTALL_ROOT).replace("'", "''")}' "
-            f"-DataRoot '{str(STATE_DIR.parent).replace("'", "''")}' "
-            + ("-Purge " if mode == "purge" else "")
-            + f"; Remove-Item -LiteralPath '{str(staging).replace("'", "''")}' -Force -ErrorAction SilentlyContinue"
-        ),
+        command,
     ]
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    flags = (
+        getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        | getattr(subprocess, "DETACHED_PROCESS", 0)
+        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    )
     subprocess.Popen(arguments, creationflags=flags, close_fds=True)
     request["status"] = "committed"
     request["committed_at"] = _now()
