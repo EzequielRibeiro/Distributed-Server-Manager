@@ -17,27 +17,20 @@ class AgentInstallationWizardStepsTest(unittest.TestCase):
             self.assertIn('id="agent-step-next"', html)
             self.assertIn('id="agent-install-review"', html)
             self.assertIn('id="agent-release-anchor"', html)
+            self.assertNotIn("agent-installation-remote-check.js", html)
 
-    def test_wizard_validates_before_advancing_and_reviews_before_submit(self):
+    def test_wizard_only_adds_navigation_without_changing_connection_contract(self):
         js = (ROOT / "dashboard/web/agent-installation-wizard.js").read_text(encoding="utf-8")
         self.assertIn("function validateStep(index)", js)
         self.assertIn("if (!validateStep(currentStep)) return", js)
         self.assertIn("function showStep(index)", js)
         self.assertIn("function renderReview()", js)
         self.assertIn("first?.focus", js)
-        self.assertIn("Informe a URL do Controller alcançável pelo Agent", js)
-        self.assertIn("sshUrl.required = ssh", js)
-        self.assertIn("winrmUrl.required = winrm", js)
-        self.assertNotIn('el("agent-controller-url").value = window.location.origin', js)
-        self.assertNotIn('el("agent-winrm-controller-url").value = window.location.origin', js)
-
-    def test_remote_connection_probe_owns_button_and_sends_controller_url(self):
-        js = (ROOT / "dashboard/web/agent-installation-remote-check.js").read_text(encoding="utf-8")
-        self.assertIn("controller_url: controllerUrl", js)
-        self.assertIn("oldButton.cloneNode(true)", js)
-        self.assertIn("oldButton.replaceWith(button)", js)
-        self.assertIn("Testar OpenSSH + Controller", js)
-        self.assertIn("Controller HTTPS/TLS OK", js)
+        self.assertIn('request("/agents/installations/test-connection"', js)
+        self.assertIn('el("agent-controller-url").value = window.location.origin', js)
+        self.assertIn('el("agent-winrm-controller-url").value = window.location.origin', js)
+        self.assertNotIn("Controller HTTPS/TLS OK", js)
+        self.assertNotIn("controller_url: controllerUrl", js)
 
 
 if __name__ == "__main__":
