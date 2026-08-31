@@ -44,7 +44,10 @@ class AlertPageSearchTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn('id="alert-search"', html)
         self.assertIn('id="alert-agent-scope"', html)
-        self.assertIn("ID: ${id}", enhancement)
+        self.assertIn("ID do alerta: ${id}", enhancement)
+        self.assertIn("ID do Agent: ${currentAgentId}", enhancement)
+        self.assertIn("cap-alert-control-link", enhancement)
+        self.assertIn("cap-alert-control-link", html)
         self.assertIn('url.searchParams.set("agent_id", agentId)', enhancement)
         self.assertIn('url.searchParams.set("q", query)', enhancement)
 
