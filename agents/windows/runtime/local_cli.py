@@ -82,13 +82,19 @@ def _last_heartbeat_line() -> str | None:
 
 
 def _sanitized(value: Any, key: str = "") -> Any:
-    if key.lower() in _SECRET_KEYS or any(part in key.lower() for part in ("secret", "password", "token")):
+    lowered = key.lower()
+    if lowered in _SECRET_KEYS or any(part in lowered for part in ("secret", "password", "token")):
         return "<redacted>"
     if isinstance(value, dict):
         return {str(k): _sanitized(v, str(k)) for k, v in value.items()}
     if isinstance(value, list):
         return [_sanitized(item) for item in value]
     return value
+
+
+def _ps_literal(value: str | Path) -> str:
+    """Return a PowerShell single-quoted string literal."""
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def command_status(_: argparse.Namespace) -> int:
@@ -237,16 +243,20 @@ def command_uninstall(args: argparse.Namespace) -> int:
     _run("schtasks.exe", "/Delete", "/TN", TASK_NAME, "/F")
 
     cleanup = Path(tempfile.gettempdir()) / f"capivara-uninstall-{os.getpid()}.ps1"
+    runtime_literal = _ps_literal(INSTALL_ROOT / "runtime")
     lines = [
         "Start-Sleep -Seconds 2",
-        f"Remove-Item -LiteralPath '{str(INSTALL_ROOT).replace("'", "''")}' -Recurse -Force -ErrorAction SilentlyContinue",
+        f"Remove-Item -LiteralPath {_ps_literal(INSTALL_ROOT)} -Recurse -Force -ErrorAction SilentlyContinue",
     ]
     if args.purge_data:
-        lines.append(f"Remove-Item -LiteralPath '{str(DATA_ROOT).replace("'", "''")}' -Recurse -Force -ErrorAction SilentlyContinue")
+        lines.append(
+            f"Remove-Item -LiteralPath {_ps_literal(DATA_ROOT)} -Recurse -Force -ErrorAction SilentlyContinue"
+        )
     lines.extend(
         [
             "$p=[Environment]::GetEnvironmentVariable('Path','Machine')",
-            "$parts=@($p -split ';' | Where-Object { $_ -and $_ -ne '" + str(INSTALL_ROOT / "runtime").replace("'", "''") + "' })",
+            f"$runtime={runtime_literal}",
+            "$parts=@($p -split ';' | Where-Object { $_ -and $_.TrimEnd('\\') -ine $runtime.TrimEnd('\\') })",
             "[Environment]::SetEnvironmentVariable('Path',($parts -join ';'),'Machine')",
             "Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue",
         ]
@@ -266,7 +276,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cap", description="Capivara Windows Agent local administration")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    for name, fn in (("status", command_status), ("check", command_check), ("doctor", command_doctor), ("version", command_version), ("config", command_config), ("start", command_start), ("stop", command_stop), ("restart", command_restart)):
+    for name, fn in (
+        ("status", command_status),
+        ("check", command_check),
+        ("doctor", command_doctor),
+        ("version", command_version),
+        ("config", command_config),
+        ("start", command_start),
+        ("stop", command_stop),
+        ("restart", command_restart),
+    ):
         p = sub.add_parser(name)
         p.set_defaults(func=fn)
 
