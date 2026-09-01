@@ -37,9 +37,11 @@ class WindowsAgentHostTelemetryContractTest(unittest.TestCase):
 
     def test_windows_package_builder_is_recursive_for_runtime_python(self):
         builder = (ROOT / "release" / "build_windows_agent_package.py").read_text(encoding="utf-8")
-        # The release package must include newly-added runtime modules such as host_telemetry.py.
-        self.assertIn("rglob", builder)
-        self.assertIn("runtime", builder)
+        # git ls-tree -r walks the full runtime tree, so newly-added Python
+        # modules such as host_telemetry.py are included automatically.
+        self.assertIn('git_text("ls-tree","-r","--name-only",ref,"agents/windows/runtime")', builder)
+        self.assertIn('if source.endswith(".py")', builder)
+        self.assertIn('relative=source.removeprefix("agents/windows/")', builder)
 
 
 if __name__ == "__main__":
