@@ -23,13 +23,13 @@ class AgentRemoteUninstallTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.backend = create_backend(DatabaseConfig(driver="sqlite", database=str(Path(self.temp.name) / "capivara.db")))
-        controller_id = installation_profile_identity(
+        self.controller_id = installation_profile_identity(
             RegistryRepository(self.backend),
             profile="controller",
             hostname="uninstall-controller",
         )["controller_id"]
         pairing = AgentPairingRepository(self.backend)
-        token = pairing.issue_token(controller_id=controller_id, created_by="test")
+        token = pairing.issue_token(controller_id=self.controller_id, created_by="test")
         pairing.enroll(
             pairing_token=token.token,
             agent_id="agent-uninstall-test",
@@ -41,6 +41,13 @@ class AgentRemoteUninstallTest(unittest.TestCase):
             architecture="AMD64",
             address="192.0.2.90",
         )
+        with self.backend.transaction() as connection:
+            customer = connection.execute(
+                "INSERT INTO customers(controller_id,name,status) VALUES (?,?,?)",
+                (self.controller_id, "Uninstall Test Customer", "active"),
+            )
+            self.customer_id = int(customer.lastrowid)
+
         self.repo = AgentUninstallRepository(self.backend)
 
     def tearDown(self):
@@ -114,8 +121,18 @@ class AgentRemoteUninstallTest(unittest.TestCase):
     def test_purge_is_blocked_with_registered_instances(self):
         with self.backend.transaction() as connection:
             connection.execute(
-                "INSERT INTO instances(id,node_id,game_id,name,status) VALUES (?,?,?,?,?)",
-                ("instance-uninstall-test", "node-uninstall-test", "minecraft", "Test", "offline"),
+                "INSERT INTO instances(id,node_id,game_id,name,status,controller_id,agent_id,customer_id) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    "instance-uninstall-test",
+                    "node-uninstall-test",
+                    "minecraft",
+                    "Test",
+                    "offline",
+                    self.controller_id,
+                    "agent-uninstall-test",
+                    self.customer_id,
+                ),
             )
         with self.assertRaisesRegex(ValueError, "purge is blocked"):
             self.request(mode="purge")
@@ -123,8 +140,18 @@ class AgentRemoteUninstallTest(unittest.TestCase):
     def test_preserve_data_can_be_requested_with_instances(self):
         with self.backend.transaction() as connection:
             connection.execute(
-                "INSERT INTO instances(id,node_id,game_id,name,status) VALUES (?,?,?,?,?)",
-                ("instance-preserve-test", "node-uninstall-test", "minecraft", "Test", "offline"),
+                "INSERT INTO instances(id,node_id,game_id,name,status,controller_id,agent_id,customer_id) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    "instance-preserve-test",
+                    "node-uninstall-test",
+                    "minecraft",
+                    "Test",
+                    "offline",
+                    self.controller_id,
+                    "agent-uninstall-test",
+                    self.customer_id,
+                ),
             )
         state = self.request()
         self.assertEqual(state["mode"], "preserve-data")

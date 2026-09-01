@@ -46,7 +46,10 @@ class WindowsAgentUninstallContractTest(unittest.TestCase):
 
     def test_danger_zone_explicitly_describes_controller_only_removal(self):
         html = (ROOT / "dashboard" / "web" / "agent-details.html").read_text(encoding="utf-8")
-        self.assertIn("Esta ação não desinstala arquivos na máquina remota.", html)
+        self.assertIn(
+            "Esta ação remove apenas o Agent e o Node do Controller e não toca nos arquivos da máquina remota.",
+            html,
+        )
 
 
 if __name__ == "__main__":
