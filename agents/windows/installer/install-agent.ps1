@@ -53,6 +53,7 @@ $PackageDir = (Resolve-Path $PackageDir).Path
 $required = @(
     "manifest.json", "VERSION", "agent\common\identity.py",
     "agent\runtime\agent.py", "agent\runtime\capabilities.py", "agent\runtime\network_inventory.py", "agent\runtime\update_client.py", "agent\runtime\admin_gui_backend.py",
+    "agent\runtime\adapters\__init__.py", "agent\runtime\adapters\base.py", "agent\runtime\adapters\registry.py", "agent\runtime\adapters\windows_process.py", "agent\runtime\adapters\windows_service.py",
     "agent\updater\updater.py", "service\register-task.ps1", "service\run-agent.ps1", "gui\CapivaraAgentGui.ps1"
 )
 foreach ($relative in $required) { if (-not (Test-Path (Join-Path $PackageDir $relative) -PathType Leaf)) { Fail "arquivo obrigatório ausente: $relative" } }
@@ -74,7 +75,7 @@ $guiAvailable = Test-GuiAvailable
 $guiEnabled = if ($GuiMode -eq 'on') { if (-not $guiAvailable) { Fail 'GuiMode=on solicitado, mas o Windows não oferece shell gráfico/WPF' }; $true } elseif ($GuiMode -eq 'off') { $false } else { $guiAvailable }
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 New-Item -ItemType Directory -Force -Path "$InstallRoot\runtime", "$InstallRoot\common", "$InstallRoot\updater", "$InstallRoot\service", "$InstallRoot\gui", "$DataRoot\state", "$DataRoot\state\gui", "$DataRoot\logs" | Out-Null
-Copy-Item (Join-Path $PackageDir "agent\runtime\*.py") "$InstallRoot\runtime" -Force
+Copy-Item (Join-Path $PackageDir "agent\runtime\*") "$InstallRoot\runtime" -Recurse -Force
 Copy-Item (Join-Path $PackageDir "agent\common\identity.py") "$InstallRoot\common\identity.py" -Force
 Copy-Item (Join-Path $PackageDir "agent\updater\updater.py") "$InstallRoot\updater\updater.py" -Force
 Copy-Item (Join-Path $PackageDir "service\*.ps1") "$InstallRoot\service" -Force
