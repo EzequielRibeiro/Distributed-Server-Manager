@@ -85,8 +85,18 @@ class WindowsUninstallClientTest(unittest.TestCase):
         args = popen.call_args.args[0]
         command = args[-1]
         self.assertIn("uninstall-agent.ps1", command)
+        self.assertIn("FileMode]::CreateNew", command)
         self.assertNotIn("-Purge", command)
         self.assertEqual(self.client.read_result()["status"], "committed")
+
+    @patch("subprocess.Popen")
+    def test_commit_replay_does_not_spawn_again(self, popen):
+        self.client.handle_command(self.command())
+        first = self.client.handle_command(self.command(phase="commit"))
+        second = self.client.handle_command(self.command(phase="commit"))
+        self.assertEqual(first["status"], "committed")
+        self.assertEqual(second["status"], "committed")
+        self.assertEqual(popen.call_count, 1)
 
     @patch("subprocess.Popen")
     def test_commit_adds_purge_only_for_explicit_purge_mode(self, popen):
