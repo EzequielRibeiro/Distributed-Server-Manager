@@ -9,6 +9,7 @@ from admin_observability_http import install_admin_observability
 from agent_admin_http import install_agent_administration
 from agent_public_network_http import install_agent_public_network
 from agent_storage_pool_admin_http import install_agent_storage_pool_administration
+from agent_update_http import install_agent_update_http
 from alert_management_http import install_alert_management
 from artifact_transfer_http import install_artifact_transfer_http
 from backup_clone_http import install_backup_clone_http
@@ -134,5 +135,6 @@ install_admin_observability(legacy,_controller_authenticate)
 install_controller_log_journal_http(legacy,_controller_authenticate)
 install_browser_session_http(legacy,browser_login_base.credential_authenticate)
 install_portal_navigation_session_guard(legacy)
+install_agent_update_http(legacy,_controller_authenticate)
 def run():run_dashboard(legacy)
 if __name__=="__main__":run()
