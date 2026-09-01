@@ -23,6 +23,8 @@ Opções:
 Importante:
   Em acesso externo informe a porta pública/NAT que o Agent realmente alcança.
   Ex.: roteador 18080 -> Controller 8080 => o Agent usa :18080.
+  O instalador nunca sobrescreve /etc/capivara-agent/agent.json existente.
+  Para atualizar use o updater. Para recuperar credencial/identidade use o fluxo administrativo de relink.
 EOF
 }
 while (( $# )); do case "$1" in
@@ -33,6 +35,11 @@ while (( $# )); do case "$1" in
   --package-dir) [[ $# -ge 2 ]] || fail "--package-dir requer valor"; PACKAGE_DIR="$2"; shift 2;;
   --help|-h) usage; exit 0;; *) fail "opção desconhecida: $1";; esac; done
 [[ ${EUID} -eq 0 ]] || fail "execute como root"
+
+CONFIG_PATH="${CONFIG_DIR}/agent.json"
+if [[ -e "${CONFIG_PATH}" || -L "${CONFIG_PATH}" ]]; then
+  fail "${CONFIG_PATH} já existe. O instalador recusou sobrescrever a identidade persistida do Agent. Use o updater para atualização ou o fluxo administrativo de relink para recuperação; remova/mova esse arquivo somente após confirmar uma reinstalação realmente nova."
+fi
 
 normalize_controller_url(){
   python3 - "$1" <<'PY'
@@ -123,7 +130,7 @@ install_runtime_dependencies(){
     DEBIAN_FRONTEND=noninteractive apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates libc6-i386 lib32gcc-s1 lib32stdc++6
   elif command -v dnf >/dev/null 2>&1; then dnf install -y ca-certificates glibc.i686 libgcc.i686 libstdc++.i686
-  elif command -v yum >/dev/null 2>&1; then yum install -y ca-certificates glibc.i686 libgcc.i686 libstdc++.i686
+  elif command -v yum >/dev/null 2>&1; then yum install -y ca-certificates glibc.i686 libgcc.i686 libstdc++6.i686
   elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install ca-certificates glibc-32bit libgcc_s1-32bit libstdc++6-32bit
   else log "Gerenciador de pacotes não reconhecido; dependências opcionais serão reportadas pelo diagnóstico do Agent."; fi
 }
