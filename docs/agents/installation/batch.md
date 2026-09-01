@@ -99,6 +99,39 @@ O pacote local deve ser um pacote oficial Linux do Capivara, por exemplo:
 capivara-agent-linux-2.0.20.tar.gz
 ```
 
+### 4.1 Gerar o pacote local
+
+No clone atualizado do repositório do Controller:
+
+```bash
+cd /home/ezequiel/Distributed-Server-Manager-clean
+
+rm -rf /tmp/capivara-linux-package
+mkdir -p /tmp/capivara-linux-package
+
+bash release/build_agent_package.sh \
+  HEAD \
+  /tmp/capivara-linux-package
+```
+
+O builder gera:
+
+```text
+capivara-agent-linux-VERSAO.tar.gz
+capivara-agent-linux-VERSAO.tar.gz.sha256
+capivara-agent-linux-VERSAO.manifest.json
+```
+
+A versão é obtida do commit `HEAD`. Portanto, gere o pacote somente depois que a versão desejada estiver commitada.
+
+Exemplo de saída para 2.0.20:
+
+```text
+/tmp/capivara-linux-package/capivara-agent-linux-2.0.20.tar.gz
+```
+
+### 4.2 Preparar a área protegida do Controller
+
 O diretório padrão autorizado no Controller é:
 
 ```text
@@ -115,12 +148,24 @@ sudo install -d \
   /var/lib/capivara/agent-packages
 ```
 
-Coloque o pacote nesse diretório e garanta que o serviço Capivara consiga lê-lo.
+Copie o pacote gerado:
 
-Exemplo:
+```bash
+sudo install \
+  -o capivara \
+  -g capivara \
+  -m 0640 \
+  /tmp/capivara-linux-package/capivara-agent-linux-2.0.20.tar.gz \
+  /var/lib/capivara/agent-packages/capivara-agent-linux-2.0.20.tar.gz
+```
 
-```text
-/var/lib/capivara/agent-packages/capivara-agent-linux-2.0.20.tar.gz
+Confirme que o serviço consegue ler o pacote:
+
+```bash
+sudo -u capivara test -r \
+  /var/lib/capivara/agent-packages/capivara-agent-linux-2.0.20.tar.gz \
+  && echo "[OK] Capivara consegue ler o pacote" \
+  || echo "[ERRO] Capivara não consegue ler o pacote"
 ```
 
 O diretório pode ser alterado com a variável:
@@ -129,7 +174,24 @@ O diretório pode ser alterado com a variável:
 DSM_AGENT_LOCAL_PACKAGE_DIR
 ```
 
-### CSV com pacote local
+### 4.3 Validar o pacote antes do lote
+
+Use o mesmo validador empregado pelo backend:
+
+```bash
+cd /home/ezequiel/Distributed-Server-Manager-clean
+
+PYTHONPATH=. python3 - <<'PY'
+from core.agent_ssh_deploy import validate_agent_package_file
+
+path = "/var/lib/capivara/agent-packages/capivara-agent-linux-2.0.20.tar.gz"
+validated = validate_agent_package_file(path)
+print("[OK] Pacote Capivara validado:")
+print(validated)
+PY
+```
+
+### 4.4 CSV com pacote local
 
 ```csv
 host,ssh_user,platform,method,ssh_port,password_file,package_file,controller_id,controller_url,region_id,datacenter_id,name,port_range,port_protocol,release_tag,bootstrap_timeout
@@ -175,6 +237,8 @@ O pacote local **não é enviado pelo navegador**. O CSV contém somente o camin
 | `port_protocol` | `tcp`, `udp` ou `both`. |
 | `release_tag` | Release específica. Não use junto com `package_file`. |
 | `bootstrap_timeout` | Timeout do bootstrap em segundos. Exemplo: `900`. |
+
+A ordem das colunas pode ser alterada. O parser associa os valores pelo nome do cabeçalho, não por posição fixa. Preserve os nomes dos campos exatamente como documentados.
 
 ## 6. Regras e validações
 
@@ -297,7 +361,7 @@ Confirme o caminho do arquivo no **Controller**, não no host remoto.
 
 ### `invalid Linux Agent package`
 
-O arquivo não é um pacote Linux válido do Capivara ou está corrompido. Use um artefato oficial gerado pelo processo de release.
+O arquivo não é um pacote Linux válido do Capivara ou está corrompido. Gere novamente com `release/build_agent_package.sh` ou use um artefato oficial de release.
 
 ### Pacote local em Windows foi recusado
 
