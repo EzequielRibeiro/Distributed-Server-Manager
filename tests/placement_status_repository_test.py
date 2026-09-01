@@ -158,5 +158,23 @@ class PlacementStatusRepositoryTest(unittest.TestCase):
         self.assertEqual(status["placement_reasons"], ["no_eligible_agents"])
 
 
+    def test_decommissioned_agent_is_excluded_from_operational_metrics(self):
+        self.bootstrap_agent()
+        self.execute(
+            "UPDATE agents SET status='decommissioned' WHERE id='agent-main'"
+        )
+        status = self.registry.topology_status()
+        self.assertEqual(status["registered_agents"], 1)
+        self.assertEqual(status["decommissioned_agents"], 1)
+        self.assertEqual(status["agents"], 0)
+        self.assertEqual(status["pending_agents"], 0)
+        self.assertEqual(status["unlocated_agents"], 0)
+        self.assertEqual(status["online_agents"], 0)
+        self.assertEqual(status["degraded_agents"], 0)
+        self.assertEqual(status["offline_agents"], 0)
+        self.assertEqual(status["eligible_agents"], 0)
+        self.assertFalse(status["placement_ready"])
+        self.assertEqual(status["placement_reason"], "no_agents")
+
 if __name__ == "__main__":
     unittest.main()
