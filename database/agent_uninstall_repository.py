@@ -40,11 +40,22 @@ class AgentUninstallRepository:
     def initialize(self) -> None:
         self.backend.initialize()
 
-    def _row(self, session: AlertSession, agent_id: str):
+    def _row(
+        self,
+        session: AlertSession,
+        agent_id: str,
+        *,
+        for_update: bool = False,
+    ):
         ph = self.dialect.placeholder
+        lock_suffix = (
+            " FOR UPDATE"
+            if for_update and self.dialect.name in {"postgresql", "mysql"}
+            else ""
+        )
         row = session.execute(
             "SELECT id,node_id,metadata_json FROM agents "
-            f"WHERE id={ph}",
+            f"WHERE id={ph}{lock_suffix}",
             (agent_id,),
         ).fetchone()
         if row is None:
@@ -80,7 +91,7 @@ class AgentUninstallRepository:
         with self.backend.transaction() as connection:
             session = AlertSession(self.backend, connection)
             try:
-                row = self._row(session, agent_id)
+                row = self._row(session, agent_id, for_update=True)
                 instances = session.execute(
                     "SELECT id FROM instances WHERE node_id=" + ph + " ORDER BY id",
                     (str(row["node_id"]),),
@@ -105,27 +116,32 @@ class AgentUninstallRepository:
                 session.close()
 
     def command_for_agent(self, agent_id: str) -> dict[str, Any] | None:
-        """Return at most one command for the current uninstall phase.
+        """Return the typed command for the current uninstall phase.
 
-        queued -> prepare command, then delivered
-        accepted -> commit command, then commit-delivered
+        queued/delivered -> prepare
+        accepted/commit-delivered -> commit
+
+        Delivery is idempotent: an unacknowledged phase is redelivered with
+        the same request_id, while the original delivery timestamp is kept.
         """
         self.initialize()
         with self.backend.transaction() as connection:
             session = AlertSession(self.backend, connection)
             try:
-                row = self._row(session, agent_id)
+                row = self._row(session, agent_id, for_update=True)
                 metadata = _metadata(row["metadata_json"])
                 current = metadata.get(_METADATA_KEY)
                 if not isinstance(current, dict):
                     return None
                 status = str(current.get("status") or "")
-                if status == "queued":
+
+                if status in {"queued", "delivered"}:
                     state = dict(current)
-                    state["status"] = "delivered"
-                    state["delivered_at"] = _now()
-                    metadata[_METADATA_KEY] = state
-                    self._store(session, agent_id, metadata)
+                    if status == "queued":
+                        state["status"] = "delivered"
+                        state["delivered_at"] = _now()
+                        metadata[_METADATA_KEY] = state
+                        self._store(session, agent_id, metadata)
                     return {
                         "kind": "AgentUninstallCommand",
                         "schema_version": 1,
@@ -134,12 +150,14 @@ class AgentUninstallRepository:
                         "phase": "prepare",
                         "mode": state["mode"],
                     }
-                if status == "accepted":
+
+                if status in {"accepted", "commit-delivered"}:
                     state = dict(current)
-                    state["status"] = "commit-delivered"
-                    state["commit_delivered_at"] = _now()
-                    metadata[_METADATA_KEY] = state
-                    self._store(session, agent_id, metadata)
+                    if status == "accepted":
+                        state["status"] = "commit-delivered"
+                        state["commit_delivered_at"] = _now()
+                        metadata[_METADATA_KEY] = state
+                        self._store(session, agent_id, metadata)
                     return {
                         "kind": "AgentUninstallCommand",
                         "schema_version": 1,
@@ -148,6 +166,7 @@ class AgentUninstallRepository:
                         "phase": "commit",
                         "mode": state["mode"],
                     }
+
                 return None
             finally:
                 session.close()
@@ -165,7 +184,7 @@ class AgentUninstallRepository:
         with self.backend.transaction() as connection:
             session = AlertSession(self.backend, connection)
             try:
-                row = self._row(session, agent_id)
+                row = self._row(session, agent_id, for_update=True)
                 metadata = _metadata(row["metadata_json"])
                 current = metadata.get(_METADATA_KEY)
                 if not isinstance(current, dict) or str(current.get("request_id")) != request_id:

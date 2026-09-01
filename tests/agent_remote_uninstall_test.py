@@ -78,8 +78,18 @@ class AgentRemoteUninstallTest(unittest.TestCase):
         self.assertEqual(prepare["phase"], "prepare")
         self.assertEqual(prepare["mode"], "preserve-data")
         self.assertEqual(prepare["request_id"], state["request_id"])
-        self.assertIsNone(self.repo.command_for_agent("agent-uninstall-test"))
-        self.assertEqual(self.repo.state("agent-uninstall-test")["status"], "delivered")
+
+        first_delivery = self.repo.state("agent-uninstall-test")
+        self.assertEqual(first_delivery["status"], "delivered")
+        delivered_at = first_delivery["delivered_at"]
+
+        prepare_retry = self.repo.command_for_agent("agent-uninstall-test")
+        self.assertEqual(prepare_retry["phase"], "prepare")
+        self.assertEqual(prepare_retry["request_id"], state["request_id"])
+        self.assertEqual(
+            self.repo.state("agent-uninstall-test")["delivered_at"],
+            delivered_at,
+        )
 
         accepted = self.repo.apply_result(
             "agent-uninstall-test",
@@ -89,8 +99,18 @@ class AgentRemoteUninstallTest(unittest.TestCase):
         commit = self.repo.command_for_agent("agent-uninstall-test")
         self.assertEqual(commit["phase"], "commit")
         self.assertEqual(commit["request_id"], state["request_id"])
-        self.assertIsNone(self.repo.command_for_agent("agent-uninstall-test"))
-        self.assertEqual(self.repo.state("agent-uninstall-test")["status"], "commit-delivered")
+
+        first_commit_delivery = self.repo.state("agent-uninstall-test")
+        self.assertEqual(first_commit_delivery["status"], "commit-delivered")
+        commit_delivered_at = first_commit_delivery["commit_delivered_at"]
+
+        commit_retry = self.repo.command_for_agent("agent-uninstall-test")
+        self.assertEqual(commit_retry["phase"], "commit")
+        self.assertEqual(commit_retry["request_id"], state["request_id"])
+        self.assertEqual(
+            self.repo.state("agent-uninstall-test")["commit_delivered_at"],
+            commit_delivered_at,
+        )
 
     def test_result_must_match_request_id_and_valid_transition(self):
         state = self.request()
