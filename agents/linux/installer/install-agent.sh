@@ -130,7 +130,7 @@ install_runtime_dependencies(){
     DEBIAN_FRONTEND=noninteractive apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates libc6-i386 lib32gcc-s1 lib32stdc++6
   elif command -v dnf >/dev/null 2>&1; then dnf install -y ca-certificates glibc.i686 libgcc.i686 libstdc++.i686
-  elif command -v yum >/dev/null 2>&1; then yum install -y ca-certificates glibc.i686 libgcc.i686 libstdc++6.i686
+  elif command -v yum >/dev/null 2>&1; then yum install -y ca-certificates glibc.i686 libgcc.i686 libstdc++.i686
   elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install ca-certificates glibc-32bit libgcc_s1-32bit libstdc++6-32bit
   else log "Gerenciador de pacotes não reconhecido; dependências opcionais serão reportadas pelo diagnóstico do Agent."; fi
 }
