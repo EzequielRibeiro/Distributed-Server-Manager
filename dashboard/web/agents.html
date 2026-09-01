@@ -95,11 +95,12 @@
                 <form id="agent-rollout-form" class="cap-update-form">
                     <h3>Criar rollout</h3>
                     <label>Agents do rollout<textarea id="agent-rollout-agents" rows="3" placeholder="agent-a, agent-b" required></textarea></label>
-                    <label>Versão desejada<input id="agent-rollout-version" type="text" placeholder="2.0.3" required></label>
+                    <label>Versão desejada<select id="agent-rollout-version" required disabled><option value="">Selecione um Agent para carregar as versões</option></select></label>
+                    <small id="agent-rollout-version-help">Somente releases publicadas e compatíveis com a plataforma do Agent podem ser selecionadas.</small>
                     <label>Tamanho do lote<input id="agent-rollout-batch-size" type="number" min="1" value="1" required></label>
                     <label>Canal<select id="agent-rollout-channel"><option value="stable">Stable</option><option value="beta">Beta</option><option value="local/manual">Local / manual</option></select></label>
                     <p>O próximo lote só é liberado quando os lotes anteriores retornarem online na versão esperada.</p>
-                    <button id="agent-rollout-submit" class="cap-btn cap-btn-primary" type="submit">Criar rollout</button>
+                    <button id="agent-rollout-submit" class="cap-btn cap-btn-primary" type="submit" disabled>Criar rollout</button>
                 </form>
             </div>
         </section>
@@ -107,7 +108,7 @@
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
 <script src="agents-v3.js?v=5"></script>
-<script src="agent-updates-v3.js?v=3"></script>
+<script src="agent-updates-v3.js?v=4"></script>
 <script src="/infrastructure-role-ui.js"></script>
 </body>
 </html>
