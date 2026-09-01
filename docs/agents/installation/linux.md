@@ -42,16 +42,90 @@ cap agent deploy HOST \
 
 A Dashboard de lote também pode usar um pacote Linux existente no **Controller**. O pacote não é enviado pelo navegador: o CSV informa o caminho administrativo em `package_file`, e o Controller valida e transfere o arquivo por SCP.
 
-Diretório padrão autorizado:
+### Gerar o pacote local
+
+No clone atualizado do repositório do Controller:
+
+```bash
+cd /home/ezequiel/Distributed-Server-Manager-clean
+
+rm -rf /tmp/capivara-linux-package
+mkdir -p /tmp/capivara-linux-package
+
+bash release/build_agent_package.sh \
+  HEAD \
+  /tmp/capivara-linux-package
+```
+
+O builder gera três artefatos, usando a versão registrada no commit `HEAD`:
+
+```text
+capivara-agent-linux-VERSAO.tar.gz
+capivara-agent-linux-VERSAO.tar.gz.sha256
+capivara-agent-linux-VERSAO.manifest.json
+```
+
+Exemplo para a versão 2.0.20:
+
+```text
+/tmp/capivara-linux-package/capivara-agent-linux-2.0.20.tar.gz
+```
+
+> Gere o pacote a partir de um commit que já contenha a versão desejada. O builder lê os arquivos do `HEAD`, não alterações locais ainda não commitadas.
+
+### Instalar o pacote na área protegida do Controller
+
+O diretório padrão autorizado é:
 
 ```text
 /var/lib/capivara/agent-packages
 ```
 
-Exemplo:
+Crie-o, se necessário:
 
-```text
-/var/lib/capivara/agent-packages/capivara-agent-linux-2.0.20.tar.gz
+```bash
+sudo install -d \
+  -o capivara \
+  -g capivara \
+  -m 0750 \
+  /var/lib/capivara/agent-packages
+```
+
+Copie o `.tar.gz` gerado para a área protegida:
+
+```bash
+sudo install \
+  -o capivara \
+  -g capivara \
+  -m 0640 \
+  /tmp/capivara-linux-package/capivara-agent-linux-2.0.20.tar.gz \
+  /var/lib/capivara/agent-packages/capivara-agent-linux-2.0.20.tar.gz
+```
+
+Confirme que o serviço consegue ler o arquivo:
+
+```bash
+sudo -u capivara test -r \
+  /var/lib/capivara/agent-packages/capivara-agent-linux-2.0.20.tar.gz \
+  && echo "[OK] Capivara consegue ler o pacote" \
+  || echo "[ERRO] Capivara não consegue ler o pacote"
+```
+
+### Validar o pacote antes do lote
+
+Use o mesmo validador empregado pelo backend:
+
+```bash
+cd /home/ezequiel/Distributed-Server-Manager-clean
+
+PYTHONPATH=. python3 - <<'PY'
+from core.agent_ssh_deploy import validate_agent_package_file
+
+path = "/var/lib/capivara/agent-packages/capivara-agent-linux-2.0.20.tar.gz"
+validated = validate_agent_package_file(path)
+print("[OK] Pacote Capivara validado:")
+print(validated)
+PY
 ```
 
 O diretório pode ser alterado com `DSM_AGENT_LOCAL_PACKAGE_DIR`.
