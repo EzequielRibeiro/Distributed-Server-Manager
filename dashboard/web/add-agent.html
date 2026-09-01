@@ -21,7 +21,7 @@
         <section class="agent-detail add-agent-panel agent-manager-only">
             <div class="cap-add-agent-heading">
                 <h2>Qual sistema receberá o Agent?</h2>
-                <p>Linux e Windows agora possuem assistentes independentes, com pré-requisitos, transporte remoto e ajuda próprios.</p>
+                <p>Linux e Windows possuem assistentes independentes. Para vários hosts, use a instalação em lote por CSV.</p>
             </div>
             <div class="cap-agent-platform-grid">
                 <a class="cap-agent-platform-card" href="add-agent-linux.html">
@@ -36,7 +36,42 @@
                     <span>Windows Server e Windows compatíveis. OpenSSH é o transporte preferencial; WinRM permanece disponível.</span>
                     <b>Instalar Agent Windows →</b>
                 </a>
+                <a id="add-agent-batch-link" class="cap-agent-platform-card" href="#add-agent-batch">
+                    <span class="cap-agent-platform-icon" aria-hidden="true">≡</span>
+                    <strong>Agents em lote</strong>
+                    <span>Instale vários Agents Linux ou Windows a partir de um arquivo CSV, usando o fluxo seguro já existente.</span>
+                    <b>Instalar em lote →</b>
+                </a>
             </div>
+
+            <section id="add-agent-batch" class="agent-detail" hidden>
+                <div class="cap-add-agent-heading">
+                    <h2>Instalação de Agents em lote</h2>
+                    <p>Selecione um CSV. Cada linha será validada e enviada sequencialmente pelo mesmo endpoint usado pelos assistentes individuais.</p>
+                </div>
+                <form id="agent-batch-form" class="range-form">
+                    <label>Arquivo CSV
+                        <input id="agent-batch-file" type="file" accept=".csv,text/csv" required>
+                    </label>
+                    <p class="location-safety-note">Colunas obrigatórias: <code>host</code>, <code>ssh_user</code>, <code>region_id</code> e <code>datacenter_id</code>. O padrão é Linux/OpenSSH. Senhas em texto puro não são aceitas.</p>
+                    <div class="cap-agent-inline-actions">
+                        <button id="agent-batch-template" type="button">Baixar CSV modelo</button>
+                        <label class="inline-option"><input id="agent-batch-continue" type="checkbox"> Continuar em caso de erro</label>
+                    </div>
+                    <button id="agent-batch-submit" type="submit">Instalar Agents em lote</button>
+                    <p id="agent-batch-status" class="location-safety-note" role="status" aria-live="polite"></p>
+                </form>
+                <div id="agent-batch-results" hidden>
+                    <h3>Resultado do lote</h3>
+                    <div style="overflow:auto">
+                        <table>
+                            <thead><tr><th>Linha</th><th>Host</th><th>Plataforma</th><th>Status</th><th>Detalhes</th></tr></thead>
+                            <tbody id="agent-batch-results-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
             <div class="cap-agent-help-strip">
                 <div><strong>Primeira instalação?</strong><span>Veja os pré-requisitos, como preparar o acesso SSH e como usar credenciais temporárias com segurança.</span></div>
                 <a class="cap-add-agent-link" target="_blank" rel="noopener" href="https://github.com/EzequielRibeiro/Distributed-Server-Manager/tree/main/docs/agents">Ajuda de instalação ↗</a>
@@ -45,6 +80,6 @@
     </div>
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="add-agent-page.js?v=2"></script>
+<script src="add-agent-page.js?v=3"></script>
 </body>
 </html>
