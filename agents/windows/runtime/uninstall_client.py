@@ -96,14 +96,25 @@ def commit(request_id: str) -> dict[str, Any]:
     if not isinstance(request, dict) or str(request.get("request_id") or "") != request_id:
         raise RuntimeError("staged uninstall request does not match commit")
     mode = str(request.get("mode") or "").strip().lower()
+    if str(request.get("status") or "").strip().lower() == "committed":
+        return {
+            "request_id": request_id,
+            "status": "committed",
+            "mode": mode,
+            "committed_at": request.get("committed_at"),
+        }
     script = INSTALL_ROOT / "service" / "uninstall-agent.ps1"
     if not script.is_file():
         raise RuntimeError("Windows Agent uninstall script is not installed")
 
     staging = Path(tempfile.gettempdir()) / f"capivara-uninstall-{request_id}.ps1"
+    launch_lock = Path(tempfile.gettempdir()) / f"capivara-uninstall-{request_id}.launched"
     staging.write_bytes(script.read_bytes())
     command = (
-        "Start-Sleep -Seconds 3; "
+        "$lock='" + _ps_quote(launch_lock) + "'; "
+        + "try { $fs=[System.IO.File]::Open($lock,[System.IO.FileMode]::CreateNew,[System.IO.FileAccess]::Write,[System.IO.FileShare]::None); $fs.Close() } "
+        + "catch [System.IO.IOException] { exit 0 }; "
+        + "Start-Sleep -Seconds 3; "
         + "& '" + _ps_quote(staging) + "' "
         + "-InstallRoot '" + _ps_quote(INSTALL_ROOT) + "' "
         + "-DataRoot '" + _ps_quote(STATE_DIR.parent) + "' "
