@@ -45,6 +45,7 @@ jobs:
           python3 -m unittest tests/phase18_agent_updates_test.py
           python3 -m unittest tests/phase19_windows_agent_test.py
           python3 -m unittest tests/windows_agent_host_telemetry_contract_test.py
+          python3 -m unittest tests/agent_update_release_selector_test.py
           bash tests/install_manager_test.sh
           sudo --preserve-env=GITHUB_ACTIONS bash tests/linux_install_smoke_test.sh
           bash tests/update_manager_test.sh
