@@ -132,6 +132,14 @@ class AgentUpdateReleaseSelectorTest(unittest.TestCase):
         self.assertIn("/agents/updates/versions?agent_id=", javascript)
         self.assertIn("Selecione uma versão publicada para o rollout.", javascript)
 
+    def test_status_polling_reuses_loaded_release_catalog(self):
+        html = (ROOT / "dashboard" / "web" / "agents.html").read_text(encoding="utf-8")
+        javascript = (ROOT / "dashboard" / "web" / "agent-updates-v3.js").read_text(encoding="utf-8")
+        self.assertIn("let lastVersionsKey = null;", javascript)
+        self.assertIn("if (lastVersionsKey !== versionsKey(agentId, channel))", javascript)
+        self.assertIn('loadVersions("", true)', javascript)
+        self.assertIn('agent-updates-v3.js?v=5', html)
+
 
 if __name__ == "__main__":
     unittest.main()
