@@ -11,6 +11,7 @@ on:
       - 'agents/linux/installer/install-agent.sh'
       - 'agents/windows/installer/install-agent.ps1'
       - 'tests/controller_tls_transport_test.py'
+      - 'tests/controller_tls_accept_resilience_test.py'
       - '.github/workflows/controller-tls.yml'
   push:
     branches: [main]
@@ -23,6 +24,7 @@ on:
       - 'agents/linux/installer/install-agent.sh'
       - 'agents/windows/installer/install-agent.ps1'
       - 'tests/controller_tls_transport_test.py'
+      - 'tests/controller_tls_accept_resilience_test.py'
       - '.github/workflows/controller-tls.yml'
 
 jobs:
@@ -40,9 +42,11 @@ jobs:
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile('agents/windows/installer/install-agent.ps1', [ref]$tokens, [ref]$errors) | Out-Null
           if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
-          python3 -m py_compile dashboard/tls_runtime.py dashboard/server_part17.py tests/controller_tls_transport_test.py
+          python3 -m py_compile dashboard/tls_runtime.py dashboard/server_part17.py tests/controller_tls_transport_test.py tests/controller_tls_accept_resilience_test.py
       - name: Run HTTP HTTPS transport tests
-        run: python3 -m unittest tests/controller_tls_transport_test.py
+        run: |
+          python3 -m unittest tests/controller_tls_transport_test.py
+          python3 -m unittest tests/controller_tls_accept_resilience_test.py
       - name: Enforce transport boundaries
         run: |
           grep -q 'select_web_transport' install.sh
