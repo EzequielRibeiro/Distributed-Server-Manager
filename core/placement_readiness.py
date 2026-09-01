@@ -15,6 +15,7 @@ AGENT_STATES = frozenset(
         "offline",
         "disabled",
         "rejected",
+        "decommissioned",
     }
 )
 

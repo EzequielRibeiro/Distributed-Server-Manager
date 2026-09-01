@@ -200,5 +200,29 @@ class InfrastructureTopologyTest(unittest.TestCase):
             )
 
 
+
+    def test_decommissioned_agent_is_hidden_from_operational_list(self):
+        with self.backend.transaction() as connection:
+            connection.execute(
+                "UPDATE agents SET status=? WHERE id=?",
+                ("decommissioned", "agent-a"),
+            )
+
+        repository = InfrastructureRepository(self.backend)
+
+        operational = repository.agents()
+        operational_ids = {str(item["id"]) for item in operational}
+
+        self.assertNotIn("agent-a", operational_ids)
+
+        with self.backend.connect() as connection:
+            row = connection.execute(
+                "SELECT id,status FROM agents WHERE id=?",
+                ("agent-a",),
+            ).fetchone()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(str(row["status"]), "decommissioned")
+
 if __name__ == "__main__":
     unittest.main()

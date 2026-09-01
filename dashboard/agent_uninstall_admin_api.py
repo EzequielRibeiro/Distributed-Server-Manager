@@ -37,6 +37,29 @@ def agent_uninstall_state(backend, *, agent_id: str) -> dict | None:
     return AgentUninstallRepository(backend).state(agent_id)
 
 
+def reconcile_completed_agent_uninstall(
+    backend,
+    *,
+    agent_id: str,
+    confirmation: str,
+    reconciled_by: str,
+) -> dict:
+    """Reconcile a completed historical uninstall without deleting records."""
+    if confirmation != agent_id:
+        raise ValueError("confirmation must exactly match agent_id")
+
+    AgentAdminRepository(backend).detail(agent_id)
+
+    result = AgentUninstallRepository(
+        backend
+    ).reconcile_completed_decommission(agent_id)
+
+    result["reconciled_by"] = str(reconciled_by or "system")
+    result["remote_host_removal"] = False
+    result["controller_only_lifecycle_reconciliation"] = True
+    return result
+
+
 def force_remove_controller_registration(
     backend,
     *,
@@ -59,5 +82,6 @@ def force_remove_controller_registration(
 __all__ = [
     "agent_uninstall_state",
     "force_remove_controller_registration",
+    "reconcile_completed_agent_uninstall",
     "request_agent_uninstall",
 ]

@@ -9,6 +9,7 @@ from typing import Any
 
 from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
+from core.agent_lifecycle import transition_agent
 
 _METADATA_KEY = "admin_uninstall"
 _FINAL_STATES = {"completed", "failed", "cancelled"}
@@ -54,7 +55,7 @@ class AgentUninstallRepository:
             else ""
         )
         row = session.execute(
-            "SELECT id,node_id,metadata_json FROM agents "
+            "SELECT id,node_id,status,metadata_json FROM agents "
             f"WHERE id={ph}{lock_suffix}",
             (agent_id,),
         ).fetchone()
@@ -212,7 +213,76 @@ class AgentUninstallRepository:
                     state["host_cleanup"] = result.get("host_cleanup") if isinstance(result.get("host_cleanup"), dict) else None
                 metadata[_METADATA_KEY] = state
                 self._store(session, agent_id, metadata)
+
+                if status == "completed":
+                    session.execute(
+                        f"UPDATE agents "
+                        f"SET status={self.dialect.placeholder},"
+                        f"updated_at=CURRENT_TIMESTAMP "
+                        f"WHERE id={self.dialect.placeholder}",
+                        ("decommissioned", agent_id),
+                    )
+
                 return state
+            finally:
+                session.close()
+
+    def reconcile_completed_decommission(
+        self,
+        agent_id: str,
+    ) -> dict[str, Any]:
+        """Reconcile a historical completed uninstall with Agent lifecycle.
+
+        This operation preserves uninstall metadata and Controller registration.
+        Only a recorded terminal ``completed`` uninstall may decommission the
+        Agent. Repeated calls are idempotent.
+        """
+        self.initialize()
+        ph = self.dialect.placeholder
+
+        with self.backend.transaction() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                row = self._row(session, agent_id, for_update=True)
+                metadata = _metadata(row["metadata_json"])
+                current = metadata.get(_METADATA_KEY)
+
+                if not isinstance(current, dict):
+                    raise ValueError(
+                        "Agent has no recorded uninstall state"
+                    )
+
+                uninstall_status = str(
+                    current.get("status") or ""
+                ).strip().lower()
+
+                if uninstall_status != "completed":
+                    raise ValueError(
+                        "Agent uninstall must be completed before "
+                        "lifecycle reconciliation"
+                    )
+
+                transition = transition_agent(
+                    str(row["status"]),
+                    "decommissioned",
+                )
+
+                if transition.changed:
+                    session.execute(
+                        f"UPDATE agents "
+                        f"SET status={ph},updated_at=CURRENT_TIMESTAMP "
+                        f"WHERE id={ph}",
+                        (transition.target, agent_id),
+                    )
+
+                return {
+                    "agent_id": agent_id,
+                    "uninstall_status": uninstall_status,
+                    "previous_status": transition.current,
+                    "status": transition.target,
+                    "changed": transition.changed,
+                    "controller_registration_retained": True,
+                }
             finally:
                 session.close()
 

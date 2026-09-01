@@ -20,13 +20,14 @@ class InvalidAgentTransition(ValueError):
 # administration, but heartbeat health is maintained separately and MUST NOT
 # write agents.status.
 AGENT_TRANSITIONS: dict[str, frozenset[str]] = {
-    "discovered": frozenset({"pending", "disabled", "rejected"}),
-    "pending": frozenset({"pairing", "disabled", "rejected"}),
-    "pairing": frozenset({"pending", "active", "disabled", "rejected"}),
-    "active": frozenset({"offline", "disabled"}),
-    "offline": frozenset({"active", "disabled"}),
-    "disabled": frozenset({"pending"}),
-    "rejected": frozenset({"pending"}),
+    "discovered": frozenset({"pending", "disabled", "rejected", "decommissioned"}),
+    "pending": frozenset({"pairing", "disabled", "rejected", "decommissioned"}),
+    "pairing": frozenset({"pending", "active", "disabled", "rejected", "decommissioned"}),
+    "active": frozenset({"offline", "disabled", "decommissioned"}),
+    "offline": frozenset({"active", "disabled", "decommissioned"}),
+    "disabled": frozenset({"pending", "decommissioned"}),
+    "rejected": frozenset({"pending", "decommissioned"}),
+    "decommissioned": frozenset(),
 }
 
 

@@ -4344,18 +4344,33 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     DATABASE_FILE
                 ).backend
 
+                query = parse_qs(parsed.query)
+                lifecycle = str(
+                    query.get(
+                        "lifecycle",
+                        ["operational"],
+                    )[0]
+                    or "operational"
+                ).strip().lower()
+
                 self.send_json(
                     200,
                     {
                         "agents": list_agents_for_user(
                             user,
                             backend,
+                            lifecycle=lifecycle,
                         )
                     },
                 )
             except PermissionError as exc:
                 self.send_json(
                     403,
+                    {"error": str(exc)},
+                )
+            except ValueError as exc:
+                self.send_json(
+                    400,
                     {"error": str(exc)},
                 )
             return

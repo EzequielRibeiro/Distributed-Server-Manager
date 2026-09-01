@@ -103,16 +103,43 @@ def _runtime_network_identity(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {"hostname": snapshot.get("hostname"), "address": address, "network": network}
 
 
-def list_agents_for_user(user, backend):
+def list_agents_for_user(
+    user,
+    backend,
+    *,
+    lifecycle: str = "operational",
+):
     if not user:
         raise PermissionError("authentication required")
+
+    lifecycle = str(
+        lifecycle or "operational"
+    ).strip().lower()
+
+    if lifecycle not in {
+        "operational",
+        "decommissioned",
+        "all",
+    }:
+        raise ValueError(
+            "lifecycle must be operational, decommissioned, or all"
+        )
+
     repository = _repository(backend)
+
     if user.get("role") == "admin":
-        agents = repository.list_agents()
+        agents = repository.list_agents(
+            lifecycle=lifecycle,
+        )
     elif user.get("role") == "controller" and user.get("scope_id"):
-        agents = repository.list_agents(user["scope_id"])
+        agents = repository.list_agents(
+            user["scope_id"],
+            lifecycle=lifecycle,
+        )
     else:
-        raise PermissionError("agent administration is not permitted")
+        raise PermissionError(
+            "agent administration is not permitted"
+        )
     runtime = AgentRuntimeRepository(backend)
     runtime.refresh_health(controller_id=user.get("scope_id") if user.get("role") == "controller" else None)
     enriched = []

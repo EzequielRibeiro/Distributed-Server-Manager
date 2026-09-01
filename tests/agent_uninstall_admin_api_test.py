@@ -12,9 +12,11 @@ for item in (ROOT, ROOT / "database", ROOT / "dashboard"):
         sys.path.insert(0, str(item))
 
 from agent_pairing_repository import AgentPairingRepository
+from agent_uninstall_repository import AgentUninstallRepository
 from agent_uninstall_admin_api import (
     agent_uninstall_state,
     force_remove_controller_registration,
+    reconcile_completed_agent_uninstall,
     request_agent_uninstall,
 )
 from backend import DatabaseConfig
@@ -62,6 +64,103 @@ class AgentUninstallAdminApiTest(unittest.TestCase):
         self.assertTrue(result["controller_registration_retained"])
         self.assertEqual(result["uninstall"]["status"], "queued")
         self.assertEqual(agent_uninstall_state(self.backend, agent_id="agent-admin-uninstall")["status"], "queued")
+
+    def _agent_status(self):
+        with self.backend.connect() as connection:
+            row = connection.execute(
+                "SELECT status FROM agents WHERE id=?",
+                ("agent-admin-uninstall",),
+            ).fetchone()
+        return str(row["status"])
+
+    def _complete_uninstall(self):
+        repo = AgentUninstallRepository(self.backend)
+        state = repo.request(
+            "agent-admin-uninstall",
+            mode="preserve-data",
+            requested_by="admin",
+            confirmation="agent-admin-uninstall",
+        )
+        repo.command_for_agent("agent-admin-uninstall")
+        repo.apply_result(
+            "agent-admin-uninstall",
+            {
+                "request_id": state["request_id"],
+                "status": "accepted",
+            },
+        )
+        repo.command_for_agent("agent-admin-uninstall")
+        repo.apply_result(
+            "agent-admin-uninstall",
+            {
+                "request_id": state["request_id"],
+                "status": "completed",
+            },
+        )
+        return repo.state("agent-admin-uninstall")
+
+    def test_reconcile_completed_historical_uninstall(self):
+        completed = self._complete_uninstall()
+
+        # Simulate a registration completed before automatic
+        # lifecycle decommissioning existed.
+        with self.backend.transaction() as connection:
+            connection.execute(
+                "UPDATE agents SET status=? WHERE id=?",
+                ("active", "agent-admin-uninstall"),
+            )
+
+        result = reconcile_completed_agent_uninstall(
+            self.backend,
+            agent_id="agent-admin-uninstall",
+            confirmation="agent-admin-uninstall",
+            reconciled_by="admin",
+        )
+
+        self.assertTrue(result["changed"])
+        self.assertEqual(result["previous_status"], "active")
+        self.assertEqual(result["status"], "decommissioned")
+        self.assertTrue(result["controller_registration_retained"])
+        self.assertEqual(self._agent_status(), "decommissioned")
+
+        # Historical uninstall evidence must not be rewritten.
+        after = AgentUninstallRepository(
+            self.backend
+        ).state("agent-admin-uninstall")
+        self.assertEqual(after, completed)
+
+    def test_reconcile_completed_uninstall_is_idempotent(self):
+        self._complete_uninstall()
+
+        result = reconcile_completed_agent_uninstall(
+            self.backend,
+            agent_id="agent-admin-uninstall",
+            confirmation="agent-admin-uninstall",
+            reconciled_by="admin",
+        )
+
+        self.assertFalse(result["changed"])
+        self.assertEqual(result["status"], "decommissioned")
+
+    def test_reconcile_rejects_non_completed_uninstall(self):
+        request_agent_uninstall(
+            self.backend,
+            agent_id="agent-admin-uninstall",
+            mode="preserve-data",
+            confirmation="agent-admin-uninstall",
+            requested_by="admin",
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "must be completed",
+        ):
+            reconcile_completed_agent_uninstall(
+                self.backend,
+                agent_id="agent-admin-uninstall",
+                confirmation="agent-admin-uninstall",
+                reconciled_by="admin",
+            )
 
     def test_force_remove_is_explicitly_controller_only(self):
         result = force_remove_controller_registration(
