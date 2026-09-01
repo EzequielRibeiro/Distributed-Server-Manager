@@ -84,7 +84,7 @@ class WindowsUninstallClientTest(unittest.TestCase):
         self.assertEqual(result["status"], "committed")
         args = popen.call_args.args[0]
         command = args[-1]
-        self.assertIn("uninstall-agent.ps1", command)
+        self.assertIn("capivara-uninstall-uninstall-test-1.ps1", command)
         self.assertIn("FileMode]::CreateNew", command)
         self.assertNotIn("-Purge", command)
         self.assertEqual(self.client.read_result()["status"], "committed")
