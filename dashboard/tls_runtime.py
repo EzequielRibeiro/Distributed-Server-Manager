@@ -9,6 +9,7 @@ import os
 import ssl
 import threading
 from pathlib import Path
+from types import MethodType
 
 
 def _transport() -> tuple[str, str, int, str | None, str | None]:
@@ -35,6 +36,61 @@ def _transport() -> tuple[str, str, int, str | None, str | None]:
     return scheme, host, port, cert, key
 
 
+def _tls_handshake_timeout() -> float:
+    try:
+        return max(1.0, min(float(os.environ.get("DSM_TLS_HANDSHAKE_TIMEOUT", "10")), 60.0))
+    except (TypeError, ValueError):
+        return 10.0
+
+
+def _install_threaded_tls(server, context: ssl.SSLContext) -> None:
+    """Perform each TLS handshake inside the connection worker thread.
+
+    Wrapping the listening socket causes SSLSocket.accept() to perform a client
+    handshake before ThreadingHTTPServer can dispatch the accepted connection.
+    A client that opens TCP and stalls the TLS handshake can therefore block the
+    accept loop and starve every Agent/Dashboard request. Keep the listening
+    socket raw and wrap only the accepted client socket in process_request_thread.
+    """
+    timeout = _tls_handshake_timeout()
+
+    def process_request_thread(self, request, client_address):
+        secure = None
+        try:
+            request.settimeout(timeout)
+            secure = context.wrap_socket(
+                request,
+                server_side=True,
+                do_handshake_on_connect=False,
+            )
+            secure.settimeout(timeout)
+            secure.do_handshake()
+            # Preserve the historical HTTP handler behavior after the bounded
+            # handshake. Slow/long application requests remain isolated to this
+            # worker because DashboardServer uses ThreadingHTTPServer.
+            secure.settimeout(None)
+            self.finish_request(secure, client_address)
+        except (ssl.SSLError, TimeoutError, OSError):
+            # Malformed, disconnected or deliberately stalled TLS peers are
+            # connection-local failures and must never poison the accept loop.
+            pass
+        except Exception:
+            self.handle_error(secure or request, client_address)
+        finally:
+            target = secure or request
+            try:
+                self.shutdown_request(target)
+            except OSError:
+                try:
+                    target.close()
+                except OSError:
+                    pass
+
+    server.process_request_thread = MethodType(process_request_thread, server)
+    server._capivara_tls_context = context
+    server._capivara_tls_handshake_timeout = timeout
+
+
 def configure_tls(server, *, scheme: str, cert_file: str | None, key_file: str | None) -> None:
     if scheme != "https":
         return
@@ -50,7 +106,7 @@ def configure_tls(server, *, scheme: str, cert_file: str | None, key_file: str |
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.options |= getattr(ssl, "OP_NO_COMPRESSION", 0)
     context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
-    server.socket = context.wrap_socket(server.socket, server_side=True)
+    _install_threaded_tls(server, context)
 
 
 def install_transport_security_headers(legacy, *, scheme: str) -> None:
