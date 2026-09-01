@@ -12,8 +12,9 @@ from agent_release_service import resolve_agent_release
 from alert_repository import AlertSession, dialect_for_backend
 from infrastructure_repository import InfrastructureRepository
 from core.agent_ssh_deploy import (
-    AgentDeployError, SSHDeployOptions, bootstrap_agent, bootstrap_windows_agent_ssh,
-    preflight_ssh, preflight_windows_ssh, remote_agent_present, remote_windows_agent_present_ssh,
+    AgentDeployError, SSHDeployOptions, bootstrap_agent, bootstrap_agent_package,
+    bootstrap_windows_agent_ssh, preflight_ssh, preflight_windows_ssh,
+    remote_agent_present, remote_windows_agent_present_ssh,
 )
 from core.agent_winrm_deploy import (
     WinRMDeployError, bootstrap_windows_agent, load_winrm_profile, preflight_winrm,
@@ -59,6 +60,16 @@ def _dashboard_password_file(raw: Any) -> str | None:
     except ValueError as exc: raise ValueError(f"password_file must be inside {root}") from exc
     return str(path)
 
+def _dashboard_agent_package_file(raw: Any) -> str | None:
+    value=str(raw or "").strip()
+    if not value: return None
+    root=Path(os.environ.get("DSM_AGENT_LOCAL_PACKAGE_DIR","/var/lib/capivara/agent-packages")).resolve()
+    path=Path(value).expanduser().resolve()
+    try: path.relative_to(root)
+    except ValueError as exc: raise ValueError(f"package_file must be inside {root}") from exc
+    if not path.is_file(): raise ValueError(f"local Agent package not found: {path}")
+    return str(path)
+
 def _ssh_options(payload: dict[str,Any]) -> SSHDeployOptions:
     if payload.get("password") not in (None,"") or payload.get("ssh_password") not in (None,""):
         raise ValueError("SSH passwords are never accepted directly; use a protected password_file")
@@ -96,8 +107,14 @@ def _run_ssh_preflight(platform: str, options: SSHDeployOptions, ssh_runner=None
     if present: raise ValueError("Capivara Agent already detected on remote host; automatic reinstall was refused")
     return result
 
-def _run_ssh_bootstrap(platform: str, options: SSHDeployOptions, *, controller_url: str,pairing_token: str,release_tag: str,timeout: int,ssh_runner=None) -> None:
+def _run_ssh_bootstrap(platform: str, options: SSHDeployOptions, *, controller_url: str,pairing_token: str,release_tag: str,timeout: int,ssh_runner=None,package_file: str|None=None) -> None:
     try:
+        if package_file:
+            if platform!="linux": raise ValueError("local package batch installation is currently supported for Linux Agents only")
+            kwargs={"controller_url":controller_url,"pairing_token":pairing_token,"package_file":package_file,"timeout":timeout}
+            if ssh_runner is None: bootstrap_agent_package(options,**kwargs)
+            else: bootstrap_agent_package(options,runner=ssh_runner,transfer_runner=ssh_runner,**kwargs)
+            return
         kwargs={"controller_url":controller_url,"pairing_token":pairing_token,"release_tag":release_tag,"timeout":timeout}
         fn=bootstrap_windows_agent_ssh if platform=="windows" else bootstrap_agent
         if ssh_runner is None: fn(options,**kwargs)
@@ -112,8 +129,11 @@ def create_agent_installation_for_user(user: dict[str,Any]|None, backend, payloa
     if method not in {"github","local","ssh","winrm"}: raise ValueError("unsupported installation method")
     if method=="winrm" and platform!="windows": raise ValueError("remote WinRM installation supports Windows Agents only")
     if not controller_url.startswith(("http://","https://")): raise ValueError("controller_url must use http:// or https://")
-    release=None; release_tag="local"
-    if method in {"github","ssh","winrm"}:
+    package_file=_dashboard_agent_package_file(payload.get("package_file")) if method=="ssh" else None
+    if payload.get("package_file") not in (None,"") and method!="ssh": raise ValueError("package_file is supported only with SSH batch installation")
+    if package_file and platform!="linux": raise ValueError("local package batch installation is currently supported for Linux Agents only")
+    release=None; release_tag="local-package" if package_file else "local"
+    if method in {"github","ssh","winrm"} and not package_file:
         requested=str(payload.get("release_tag") or "").strip()
         if requested: release=resolve_agent_release(requested,platform); release_tag=str(release["tag"])
         else: release_tag="latest"
@@ -143,9 +163,9 @@ def create_agent_installation_for_user(user: dict[str,Any]|None, backend, payloa
     elif method=="local": instruction=_local_instruction(platform,controller_url,issued.token)
     elif method=="ssh":
         assert ssh_options is not None and bootstrap_timeout is not None
-        try: _run_ssh_bootstrap(platform,ssh_options,controller_url=controller_url,pairing_token=issued.token,release_tag=release_tag,timeout=bootstrap_timeout,ssh_runner=ssh_runner)
+        try: _run_ssh_bootstrap(platform,ssh_options,controller_url=controller_url,pairing_token=issued.token,release_tag=release_tag,timeout=bootstrap_timeout,ssh_runner=ssh_runner,package_file=package_file)
         except Exception: _expire_installation_token(backend,issued.token_id); raise
-        remote_bootstrap={"state":"completed","host":ssh_options.host,"ssh_user":ssh_options.ssh_user,"ssh_port":ssh_options.ssh_port,"transport":"openssh","platform":ssh_preflight.get("platform") if ssh_preflight else platform,"architecture":ssh_preflight.get("architecture") if ssh_preflight else None,"release_tag":release_tag}
+        remote_bootstrap={"state":"completed","host":ssh_options.host,"ssh_user":ssh_options.ssh_user,"ssh_port":ssh_options.ssh_port,"transport":"openssh-local-package" if package_file else "openssh","platform":ssh_preflight.get("platform") if ssh_preflight else platform,"architecture":ssh_preflight.get("architecture") if ssh_preflight else None,"release_tag":release_tag,"package_file":Path(package_file).name if package_file else None}
     else:
         assert winrm_options is not None
         try: bootstrap_windows_agent(winrm_options,controller_url=controller_url,pairing_token=issued.token,release_tag=release_tag,runner=winrm_runner)
