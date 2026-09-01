@@ -6,6 +6,7 @@ Esta área documenta a preparação e instalação de Agents Linux e Windows.
 
 - [Instalação do Agent Linux](installation/linux.md)
 - [Instalação do Agent Windows](installation/windows.md)
+- [Instalação de Agents em lote](installation/batch.md)
 - [Bootstrap Linux por OpenSSH](remote-deployment/linux-ssh.md)
 - [Bootstrap Windows por OpenSSH](remote-deployment/windows-ssh.md)
 - [Senha SSH em arquivo protegido](authentication/ssh-password.md)
