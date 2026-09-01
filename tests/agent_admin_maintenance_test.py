@@ -124,6 +124,34 @@ class AgentAdminMaintenanceTest(unittest.TestCase):
         )
         self.assertEqual(authenticated["agent_id"], self.agent_id)
 
+    def test_relink_rejects_decommissioned_agent_without_reactivation(self):
+        token = self._prepared_relink_token()
+
+        with self.backend.transaction() as connection:
+            connection.execute(
+                "UPDATE agents SET status='decommissioned' WHERE id=?",
+                (self.agent_id,),
+            )
+
+        with self.assertRaises(AgentCredentialInvalid):
+            AgentRelinkRepository(self.backend).relink(
+                pairing_token=token.token,
+                agent_id=self.agent_id,
+                node_id=self.node_id,
+                fingerprint=self.fingerprint,
+            )
+
+        detail = self.admin.detail(self.agent_id)
+        self.assertEqual(detail["status"], "decommissioned")
+
+        authenticated = self.pairing.authenticate
+        with self.assertRaises(AgentCredentialInvalid):
+            authenticated(
+                credential_id=self.enrolled.credential_id,
+                credential_secret=self.enrolled.credential_secret,
+                fingerprint=self.fingerprint,
+            )
+
     def test_relink_rejects_fingerprint_change(self):
         token = self._prepared_relink_token()
         with self.assertRaises(AgentCredentialInvalid):
