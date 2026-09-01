@@ -19,10 +19,16 @@ from agent_relink_repository import AgentRelinkRepository
 from configuration_repository import ConfigurationRepository
 from instance_storage_pool_migration_repository import InstanceStoragePoolMigrationRepository
 from universal_event_repository import UniversalEventRepository
+from dashboard.agent_uninstall_admin_api import (
+    agent_uninstall_state,
+    force_remove_controller_registration,
+    request_agent_uninstall,
+)
 
 DETAIL_PATH = "/api/admin/agent"
 RENAME_PATH = "/api/admin/agent/rename"
 REMOVE_PATH = "/api/admin/agent/remove"
+UNINSTALL_PATH = "/api/admin/agent/uninstall"
 STORAGE_PATH = "/api/admin/agent/storage"
 STORAGE_MIGRATE_PATH = "/api/admin/agent/storage/migrate"
 INSTANCE_STORAGE_POOL_MIGRATION_PATH = "/api/admin/instance/storage-pool-migrate"
@@ -125,7 +131,7 @@ def install_agent_administration(legacy, authenticate) -> None:
 
     def do_get(self):
         parsed = urlparse(self.path)
-        if parsed.path not in {DETAIL_PATH, DOCTOR_PATH, INSTANCE_STORAGE_POOL_MIGRATION_PATH, IDENTITY_PATH}:
+        if parsed.path not in {DETAIL_PATH, DOCTOR_PATH, INSTANCE_STORAGE_POOL_MIGRATION_PATH, IDENTITY_PATH, UNINSTALL_PATH}:
             return previous_get(self)
         user = authenticated(self)
         if user is None:
@@ -155,6 +161,10 @@ def install_agent_administration(legacy, authenticate) -> None:
                 self.send_json(200, {"agent_id": agent_id, "doctor": repo.latest_doctor(agent_id)})
             elif parsed.path == IDENTITY_PATH:
                 self.send_json(200, {"identity": AgentIdentityAdminRepository(backend).show(agent_id)})
+            elif parsed.path == UNINSTALL_PATH:
+                if _role(user) != "admin":
+                    raise PermissionError("Somente administradores podem desinstalar Agents remotamente")
+                self.send_json(200, {"agent_id": agent_id, "uninstall": agent_uninstall_state(backend, agent_id=agent_id)})
             else:
                 detail["storage"] = _storage_detail(backend, agent_id)
                 detail["identity"] = AgentIdentityAdminRepository(backend).show(agent_id)
@@ -189,7 +199,7 @@ def install_agent_administration(legacy, authenticate) -> None:
                 self.send_json(500, {"error": "relink_failed", "message": "Não foi possível revincular o Agent."})
             return
 
-        if path not in {RENAME_PATH, REMOVE_PATH, STORAGE_PATH, STORAGE_MIGRATE_PATH, INSTANCE_STORAGE_POOL_MIGRATION_PATH, DOCTOR_PATH, RELINK_PREPARE_PATH, CREDENTIAL_ROTATE_PATH, IDENTITY_REBIND_PATH}:
+        if path not in {RENAME_PATH, REMOVE_PATH, UNINSTALL_PATH, STORAGE_PATH, STORAGE_MIGRATE_PATH, INSTANCE_STORAGE_POOL_MIGRATION_PATH, DOCTOR_PATH, RELINK_PREPARE_PATH, CREDENTIAL_ROTATE_PATH, IDENTITY_REBIND_PATH}:
             return previous_post(self)
         user = authenticated(self)
         if user is None:
@@ -241,11 +251,37 @@ def install_agent_administration(legacy, authenticate) -> None:
                 self.send_json(200, result)
                 return
 
+            if path == UNINSTALL_PATH:
+                if _role(user) != "admin":
+                    raise PermissionError("Somente administradores podem desinstalar Agents remotamente")
+                result = request_agent_uninstall(
+                    backend,
+                    agent_id=agent_id,
+                    mode=str((payload or {}).get("mode") or ""),
+                    confirmation=str((payload or {}).get("confirmation") or ""),
+                    requested_by=actor,
+                )
+                uninstall = result.get("uninstall") if isinstance(result.get("uninstall"), dict) else {}
+                _publish(
+                    backend,
+                    event_type="AGENT_REMOTE_UNINSTALL_REQUESTED",
+                    agent_id=agent_id,
+                    actor=actor,
+                    data={"node_id": result.get("node_id"), "mode": uninstall.get("mode"), "request_id": uninstall.get("request_id")},
+                )
+                self.send_json(202, result)
+                return
+
             if path == REMOVE_PATH:
                 if _role(user) != "admin":
                     raise PermissionError("Somente administradores podem remover Agents")
-                result = repo.remove(agent_id, confirmation=str((payload or {}).get("confirmation") or ""), actor=actor)
-                _publish(backend, event_type="AGENT_REMOVED", agent_id=agent_id, actor=actor, data={"node_id": result["node_id"], "name": result["name"], "controller_id": result["controller_id"]})
+                result = force_remove_controller_registration(
+                    backend,
+                    agent_id=agent_id,
+                    confirmation=str((payload or {}).get("confirmation") or ""),
+                    removed_by=actor,
+                )
+                _publish(backend, event_type="AGENT_CONTROLLER_REGISTRATION_REMOVED", agent_id=agent_id, actor=actor, data={"node_id": result["node_id"], "name": result["name"], "controller_id": result["controller_id"], "controller_only": True})
                 self.send_json(200, result)
                 return
 
@@ -291,4 +327,4 @@ def install_agent_administration(legacy, authenticate) -> None:
     legacy.DashboardHandler.do_POST = do_post
 
 
-__all__ = ["INSTANCE_STORAGE_POOL_MIGRATION_PATH", "IDENTITY_PATH", "IDENTITY_REBIND_PATH", "install_agent_administration"]
+__all__ = ["INSTANCE_STORAGE_POOL_MIGRATION_PATH", "IDENTITY_PATH", "IDENTITY_REBIND_PATH", "UNINSTALL_PATH", "install_agent_administration"]

@@ -41,7 +41,7 @@ function Install-ControllerCa([string]$Path) {
 }
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-$principal = New-Object Security.Principal.WindowsPrincipal($identity)
+$principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { Fail "execute o PowerShell como Administrador" }
 if ($ControllerUrl -notmatch '^https?://') { Fail "ControllerUrl inválida" }
 if ([string]::IsNullOrWhiteSpace($PairingToken)) { Fail "PairingToken é obrigatório" }
@@ -72,6 +72,7 @@ if ($LASTEXITCODE -ne 0) { Fail "falha ao validar pacote" }
 $version = (Get-Content (Join-Path $PackageDir "VERSION") -Raw).Trim()
 $guiAvailable = Test-GuiAvailable
 $guiEnabled = if ($GuiMode -eq 'on') { if (-not $guiAvailable) { Fail 'GuiMode=on solicitado, mas o Windows não oferece shell gráfico/WPF' }; $true } elseif ($GuiMode -eq 'off') { $false } else { $guiAvailable }
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 New-Item -ItemType Directory -Force -Path "$InstallRoot\runtime", "$InstallRoot\common", "$InstallRoot\updater", "$InstallRoot\service", "$InstallRoot\gui", "$DataRoot\state", "$DataRoot\state\gui", "$DataRoot\logs" | Out-Null
 Copy-Item (Join-Path $PackageDir "agent\runtime\*.py") "$InstallRoot\runtime" -Force
 Copy-Item (Join-Path $PackageDir "agent\common\identity.py") "$InstallRoot\common\identity.py" -Force
@@ -79,7 +80,7 @@ Copy-Item (Join-Path $PackageDir "agent\updater\updater.py") "$InstallRoot\updat
 Copy-Item (Join-Path $PackageDir "service\*.ps1") "$InstallRoot\service" -Force
 Copy-Item (Join-Path $PackageDir "gui\*.ps1") "$InstallRoot\gui" -Force
 Copy-Item (Join-Path $PackageDir "manifest.json") "$InstallRoot\manifest.json" -Force
-Set-Content -Path "$InstallRoot\VERSION" -Value $version -Encoding UTF8
+[System.IO.File]::WriteAllText("$InstallRoot\VERSION", $version + [Environment]::NewLine, $utf8NoBom)
 
 $identityCode = @'
 import importlib.util,json,pathlib,sys
@@ -93,7 +94,8 @@ $config = [ordered]@{
     controller_url=$ControllerUrl.TrimEnd('/'); pairing_token=$PairingToken; capivara_version=$version
     heartbeat_interval_seconds=30; degraded_after_seconds=60; offline_after_seconds=120; gui_enabled=$guiEnabled
 }
-$config | ConvertTo-Json -Depth 6 | Set-Content -Path "$DataRoot\agent.json" -Encoding UTF8
+$configJson = $config | ConvertTo-Json -Depth 6
+[System.IO.File]::WriteAllText("$DataRoot\agent.json", $configJson + [Environment]::NewLine, $utf8NoBom)
 & icacls "$DataRoot\agent.json" /inheritance:r /grant:r "*S-1-5-18:F" "*S-1-5-32-544:F" | Out-Null
 & icacls "$DataRoot\state\gui" /grant:r "*S-1-5-32-545:(OI)(CI)RX" | Out-Null
 & icacls "$DataRoot\logs" /grant:r "*S-1-5-32-545:(OI)(CI)RX" | Out-Null

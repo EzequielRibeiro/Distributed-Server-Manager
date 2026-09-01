@@ -29,12 +29,14 @@ from agent_pairing_repository import (
     PairingTokenInvalid,
 )
 from agent_update_repository import AgentUpdateRepository
+from agent_uninstall_repository import AgentUninstallRepository
 from deleted_backup_vault_repository import DeletedBackupVaultRepository
 from instance_backup_clone_repository import InstanceBackupCloneRepository
 from instance_provisioning_projection import project_agent_provisioning
 
 ENROLL_PATH = "/api/agent/enroll"
 HEARTBEAT_PATH = "/api/agent/heartbeat"
+UNINSTALL_RESULT_PATH = "/api/agent/uninstall/result"
 ROOT = Path(__file__).resolve().parents[1]
 _LAST_VAULT_CLEANUP = 0.0
 _LINK_CRITICAL_CODES = {
@@ -78,6 +80,31 @@ def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, di
         "pairing_token_consumed": bool(result.get("pairing_token_consumed")),
         "installation_tracking_bound": tracking_bound,
     }
+
+
+def _attach_uninstall_state(result, body, *, agent_id, backend):
+    """Exchange typed remote-uninstall result and command over heartbeat."""
+    uninstall = AgentUninstallRepository(backend)
+
+    reported = (
+        body.get("uninstall_result")
+        if isinstance(body.get("uninstall_result"), dict)
+        else None
+    )
+
+    reported_state = (
+        uninstall.apply_result(agent_id, reported)
+        if reported is not None
+        else None
+    )
+
+    command = uninstall.command_for_agent(agent_id)
+    if command is not None:
+        result["uninstall_command"] = command
+
+    state = reported_state or uninstall.state(agent_id)
+    if state is not None:
+        result["uninstall_state"] = state
 
 
 def _attach_update_state(result, body, *, agent_id, backend):
@@ -243,6 +270,113 @@ def _attach_backup_clone_state(result, *, agent_id, backend):
         result["backup_clone_states"] = []
 
 
+
+def dispatch_uninstall_result(
+    payload: dict[str, Any] | None,
+    *,
+    headers,
+    backend,
+) -> tuple[int, dict[str, Any]]:
+    """Accept the terminal uninstall result without recording a heartbeat.
+
+    Permanent Agent credentials remain authoritative for identity. The Agent
+    does not choose which Controller-side Agent record receives the result.
+    """
+    credential_id = str(
+        headers.get("X-Capivara-Agent-Credential", "")
+    ).strip()
+    credential_secret = str(
+        headers.get("X-Capivara-Agent-Secret", "")
+    ).strip()
+    fingerprint = (
+        str(
+            headers.get(
+                "X-Capivara-Agent-Fingerprint",
+                "",
+            )
+        ).strip()
+        or None
+    )
+
+    body = payload if isinstance(payload, dict) else {}
+
+    try:
+        identity = AgentPairingRepository(backend).authenticate(
+            credential_id=credential_id,
+            credential_secret=credential_secret,
+            fingerprint=fingerprint,
+        )
+    except AgentCredentialInvalid:
+        return 401, {
+            "error": "agent_authentication_failed",
+            "message": "Identidade do Agent inválida.",
+        }
+
+    agent_id = str(identity["agent_id"])
+
+    claimed_agent_id = str(
+        body.get("agent_id") or ""
+    ).strip()
+
+    if claimed_agent_id and claimed_agent_id != agent_id:
+        return 409, {
+            "error": "agent_identity_mismatch",
+            "message": (
+                "O resultado não corresponde à identidade "
+                "autenticada do Agent."
+            ),
+        }
+
+    result = {
+        "request_id": str(
+            body.get("request_id") or ""
+        ).strip(),
+        "status": str(
+            body.get("status") or ""
+        ).strip().lower(),
+    }
+
+    if body.get("completed_at") is not None:
+        result["completed_at"] = body.get("completed_at")
+
+    if body.get("error") is not None:
+        result["error"] = body.get("error")
+
+    if isinstance(body.get("host_cleanup"), dict):
+        result["host_cleanup"] = body["host_cleanup"]
+
+    if (
+        not result["request_id"]
+        or result["status"] not in {"completed", "failed"}
+    ):
+        return 400, {
+            "error": "invalid_uninstall_result",
+            "message": (
+                "Resultado terminal de desinstalação inválido."
+            ),
+        }
+
+    state = AgentUninstallRepository(
+        backend
+    ).apply_result(
+        agent_id,
+        result,
+    )
+
+    if state is None:
+        return 409, {
+            "error": "uninstall_result_rejected",
+            "message": (
+                "O resultado não corresponde à solicitação "
+                "ou transição atual."
+            ),
+        }
+
+    return 200, {
+        "agent_id": agent_id,
+        "uninstall_state": state,
+    }
+
 def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> tuple[int, dict[str, Any]]:
     credential_id = str(headers.get("X-Capivara-Agent-Credential", "")).strip()
     credential_secret = str(headers.get("X-Capivara-Agent-Secret", "")).strip()
@@ -260,6 +394,7 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
         if status == "pairing":
             status = AgentLifecycleRepository(backend).transition(agent_id, "active").target
         result["status"] = status
+        _attach_uninstall_state(result, body, agent_id=agent_id, backend=backend)
         _attach_update_state(result, body, agent_id=agent_id, backend=backend)
         _attach_provisioning_state(result, body, agent_id=agent_id, backend=backend)
         provisioning_state = result.get("provisioning_state") if isinstance(result.get("provisioning_state"), dict) else {}

@@ -44,9 +44,21 @@ class WindowsAgentUninstallContractTest(unittest.TestCase):
             expected = f"capivara-agent-windows-{version}/service/uninstall-agent.ps1"
             self.assertIn(expected, names)
 
+    def test_uninstall_admin_script_is_registered_as_static_asset(self):
+        server_part14 = (
+            ROOT / "dashboard" / "server_part14.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            '"/agent-uninstall-admin.js": legacy.WEB_DIR / "agent-uninstall-admin.js"',
+            server_part14,
+        )
+
     def test_danger_zone_explicitly_describes_controller_only_removal(self):
         html = (ROOT / "dashboard" / "web" / "agent-details.html").read_text(encoding="utf-8")
-        self.assertIn("Esta ação não desinstala arquivos na máquina remota.", html)
+        self.assertIn(
+            "Esta ação remove apenas o Agent e o Node do Controller e não toca nos arquivos da máquina remota.",
+            html,
+        )
 
 
 if __name__ == "__main__":
