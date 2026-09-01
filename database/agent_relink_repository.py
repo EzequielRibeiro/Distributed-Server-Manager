@@ -93,6 +93,10 @@ class AgentRelinkRepository:
                 ).fetchone()
                 if agent is None:
                     raise LookupError("Agent not found")
+                if str(agent["status"] or "").strip().lower() == "decommissioned":
+                    raise AgentCredentialInvalid(
+                        "decommissioned Agent requires explicit administrative reactivation"
+                    )
                 if str(agent["controller_id"]) != str(token_row["controller_id"]):
                     raise PairingTokenInvalid("pairing token belongs to another Controller")
                 prepared = _metadata(agent["metadata_json"]).get("admin_relink")

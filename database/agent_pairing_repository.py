@@ -270,6 +270,8 @@ class AgentPairingRepository:
                 ).fetchone()
                 if row is None or str(row["status"]) != "active":
                     raise AgentCredentialInvalid("invalid Agent credential")
+                if str(row["agent_status"] or "").strip().lower() == "decommissioned":
+                    raise AgentCredentialInvalid("decommissioned Agent cannot authenticate")
                 expected = str(row["secret_hash"] or "")
                 if not expected or not secrets_match(secret, expected):
                     raise AgentCredentialInvalid("invalid Agent credential")

@@ -153,6 +153,30 @@ class AgentSecurePairingTest(unittest.TestCase):
                 fingerprint="sha256:other",
             )
 
+    def test_decommissioned_agent_cannot_authenticate_with_valid_credential(self):
+        issued = self.repository.issue_token(controller_id="controller-main")
+        enrolled = self.repository.enroll(
+            pairing_token=issued.token,
+            agent_id="agent-decommissioned-auth",
+            node_id="node-decommissioned-auth",
+            name="Decommissioned Auth",
+            fingerprint="sha256:decommissioned-auth",
+        )
+
+        with sqlite3.connect(self.database_path) as connection:
+            connection.execute(
+                "UPDATE agents SET status='decommissioned' WHERE id=?",
+                ("agent-decommissioned-auth",),
+            )
+            connection.commit()
+
+        with self.assertRaises(AgentCredentialInvalid):
+            self.repository.authenticate(
+                credential_id=enrolled.credential_id,
+                credential_secret=enrolled.credential_secret,
+                fingerprint="sha256:decommissioned-auth",
+            )
+
     def test_controller_scoped_token_api_and_agent_install_contract(self):
         user = {"username": "controller", "role": "controller", "scope_id": "controller-main"}
         issued = issue_pairing_token_for_user(

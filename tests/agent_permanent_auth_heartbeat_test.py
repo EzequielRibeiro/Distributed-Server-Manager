@@ -15,7 +15,7 @@ for path in (ROOT, DATABASE, DASHBOARD):
 
 from backend import DatabaseConfig
 from backend_factory import create_backend
-from agent_pairing_repository import AgentPairingRepository
+from agent_pairing_repository import AgentCredentialInvalid, AgentPairingRepository
 from agent_authenticated_api import authenticated_agent_heartbeat
 
 
@@ -82,6 +82,50 @@ class AgentPermanentHeartbeatTest(unittest.TestCase):
         self.assertTrue(token_value)
         self.assertEqual(runtime[0], "online")
         self.assertTrue(runtime[1])
+
+
+    def test_decommissioned_agent_cannot_record_authenticated_heartbeat(self):
+        repository = AgentPairingRepository(self.backend)
+        token = repository.issue_token(controller_id="controller-main")
+        identity = repository.enroll(
+            pairing_token=token.token,
+            agent_id="agent-decommissioned-heartbeat",
+            node_id="node-decommissioned-heartbeat",
+            name="Decommissioned Heartbeat",
+            fingerprint="sha256:decommissioned-heartbeat",
+        )
+
+        with sqlite3.connect(self.database_path) as connection:
+            before = connection.execute(
+                "SELECT health_status,last_seen FROM agent_runtime_inventory WHERE agent_id=?",
+                ("agent-decommissioned-heartbeat",),
+            ).fetchone()
+            connection.execute(
+                "UPDATE agents SET status='decommissioned' WHERE id=?",
+                ("agent-decommissioned-heartbeat",),
+            )
+            connection.commit()
+
+        with self.assertRaises(AgentCredentialInvalid):
+            authenticated_agent_heartbeat(
+                self.backend,
+                credential_id=identity.credential_id,
+                credential_secret=identity.credential_secret,
+                fingerprint="sha256:decommissioned-heartbeat",
+                payload={
+                    "agent_id": "agent-decommissioned-heartbeat",
+                    "hostname": "should-not-be-recorded",
+                },
+            )
+
+        with sqlite3.connect(self.database_path) as connection:
+            after = connection.execute(
+                "SELECT health_status,last_seen FROM agent_runtime_inventory WHERE agent_id=?",
+                ("agent-decommissioned-heartbeat",),
+            ).fetchone()
+
+        self.assertEqual(after, before)
+
 
 
 if __name__ == "__main__":
