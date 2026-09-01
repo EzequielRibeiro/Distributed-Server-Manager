@@ -14,6 +14,7 @@
     let pollTimer = null;
     let activeUpdate = false;
     let versionsLoading = false;
+    let lastVersionsKey = null;
 
     async function request(path, options = {}) {
         const response = await fetch(`/api${path}`, {
@@ -122,6 +123,10 @@
         }
     }
 
+    function versionsKey(agentId, channel) {
+        return `${String(agentId || "").trim()}|${String(channel || "stable").trim()}`;
+    }
+
     function resetVersionSelector(message = "Selecione um Agent para carregar as versões") {
         const selector = el("agent-rollout-version");
         if (!selector) return;
@@ -130,20 +135,37 @@
         updateRolloutAvailability();
     }
 
-    async function loadVersions(preferredVersion = "") {
+    function selectPreferredVersion(preferredVersion = "") {
+        const selector = el("agent-rollout-version");
+        if (!selector) return;
+        const installed = String(el("agent-installed-version")?.textContent || "").trim();
+        const preferred = String(preferredVersion || "").replace(/^v/, "");
+        if (preferred && [...selector.options].some(option => option.value === preferred)) selector.value = preferred;
+        else if ([...selector.options].some(option => option.value === installed)) selector.value = installed;
+        updateRolloutAvailability();
+    }
+
+    async function loadVersions(preferredVersion = "", force = false) {
         const agentId = el("agent-update-selector")?.value || "";
         const channel = el("agent-rollout-channel")?.value || "stable";
         const selector = el("agent-rollout-version");
         const help = el("agent-rollout-version-help");
         if (!selector) return;
         if (!agentId) {
+            lastVersionsKey = null;
             resetVersionSelector();
             return;
         }
         if (channel === "local/manual") {
+            lastVersionsKey = versionsKey(agentId, channel);
             resetVersionSelector("Canal Local / manual não usa rollout por release");
             if (help) help.textContent = "Use o fluxo administrativo de pacote local; uma versão arbitrária não pode ser enviada pelo rollout.";
             updateRolloutAvailability();
+            return;
+        }
+        const key = versionsKey(agentId, channel);
+        if (!force && lastVersionsKey === key && selector.options.length > 1) {
+            selectPreferredVersion(preferredVersion);
             return;
         }
         versionsLoading = true;
@@ -161,12 +183,11 @@
                 if (release.prerelease) labels.push("pré-release");
                 selector.add(new Option(`${version}${labels.length ? ` — ${labels.join(", ")}` : ""}`, version));
             }
-            const installed = String(el("agent-installed-version")?.textContent || "").trim();
-            const preferred = String(preferredVersion || result.recommended_version || "").replace(/^v/, "");
-            if ([...selector.options].some(option => option.value === preferred)) selector.value = preferred;
-            else if ([...selector.options].some(option => option.value === installed)) selector.value = installed;
+            lastVersionsKey = key;
+            selectPreferredVersion(preferredVersion || result.recommended_version || "");
             if (help) help.textContent = `${result.platform || "Agent"} · ${releases.length} release(s) publicada(s) compatível(is) no canal ${channel}.`;
         } catch (error) {
+            lastVersionsKey = null;
             resetVersionSelector("Não foi possível carregar as versões");
             if (help) help.textContent = error.message;
             showError(error.message);
@@ -184,6 +205,7 @@
         agents.forEach(agent => selector.add(new Option(agent.name || agent.id, agent.id)));
         if (location.hash === "#agent-update-panel" && agents.length === 1) {
             selector.value = agents[0].id;
+            lastVersionsKey = null;
             await loadStatus();
         }
     }
@@ -193,6 +215,7 @@
         if (!agentId) {
             clearTimeout(pollTimer);
             renderProgress({update_status: "idle"});
+            lastVersionsKey = null;
             resetVersionSelector();
             return;
         }
@@ -207,7 +230,12 @@
             el("agent-rollout-agents").value = agentId;
             renderProgress(status);
             schedulePoll(status);
-            await loadVersions(status.available_version || status.desired_version || "");
+            const channel = el("agent-rollout-channel")?.value || "stable";
+            if (lastVersionsKey !== versionsKey(agentId, channel)) {
+                await loadVersions(status.available_version || status.desired_version || "");
+            } else {
+                selectPreferredVersion(status.available_version || status.desired_version || "");
+            }
             showError();
         } catch (error) {
             showError(error.message);
@@ -226,7 +254,8 @@
             });
             el("agent-update-channel").value = result.update_channel;
             el("agent-rollout-channel").value = result.update_channel;
-            await loadVersions();
+            lastVersionsKey = null;
+            await loadVersions("", true);
             showError();
         } catch (error) {
             showError(error.message);
@@ -270,9 +299,13 @@
     document.addEventListener("DOMContentLoaded", async () => {
         el("agent-update-selector")?.addEventListener("change", () => {
             clearTimeout(pollTimer);
+            lastVersionsKey = null;
             loadStatus();
         });
-        el("agent-rollout-channel")?.addEventListener("change", () => loadVersions());
+        el("agent-rollout-channel")?.addEventListener("change", () => {
+            lastVersionsKey = null;
+            loadVersions("", true);
+        });
         el("agent-rollout-version")?.addEventListener("change", updateRolloutAvailability);
         el("agent-update-channel-form")?.addEventListener("submit", saveChannel);
         el("agent-rollout-form")?.addEventListener("submit", createRollout);
