@@ -24,24 +24,9 @@
                 <p>Linux e Windows possuem assistentes independentes. Para vários hosts, use a instalação em lote por CSV.</p>
             </div>
             <div class="cap-agent-platform-grid">
-                <a class="cap-agent-platform-card" href="add-agent-linux.html">
-                    <span class="cap-agent-platform-icon" aria-hidden="true">🐧</span>
-                    <strong>Agent Linux</strong>
-                    <span>Ubuntu, Debian e distribuições Linux compatíveis. Instalação local ou bootstrap remoto por OpenSSH.</span>
-                    <b>Instalar Agent Linux →</b>
-                </a>
-                <a class="cap-agent-platform-card" href="add-agent-windows.html">
-                    <span class="cap-agent-platform-icon" aria-hidden="true">▣</span>
-                    <strong>Agent Windows</strong>
-                    <span>Windows Server e Windows compatíveis. OpenSSH é o transporte preferencial; WinRM permanece disponível.</span>
-                    <b>Instalar Agent Windows →</b>
-                </a>
-                <a id="add-agent-batch-link" class="cap-agent-platform-card" href="#add-agent-batch">
-                    <span class="cap-agent-platform-icon" aria-hidden="true">≡</span>
-                    <strong>Agents em lote</strong>
-                    <span>Instale vários Agents Linux ou Windows a partir de um arquivo CSV, usando o fluxo seguro já existente.</span>
-                    <b>Instalar em lote →</b>
-                </a>
+                <a class="cap-agent-platform-card" href="add-agent-linux.html"><span class="cap-agent-platform-icon" aria-hidden="true">🐧</span><strong>Agent Linux</strong><span>Ubuntu, Debian e distribuições Linux compatíveis. Instalação local ou bootstrap remoto por OpenSSH.</span><b>Instalar Agent Linux →</b></a>
+                <a class="cap-agent-platform-card" href="add-agent-windows.html"><span class="cap-agent-platform-icon" aria-hidden="true">▣</span><strong>Agent Windows</strong><span>Windows Server e Windows compatíveis. OpenSSH é o transporte preferencial; WinRM permanece disponível.</span><b>Instalar Agent Windows →</b></a>
+                <a id="add-agent-batch-link" class="cap-agent-platform-card" href="#add-agent-batch"><span class="cap-agent-platform-icon" aria-hidden="true">≡</span><strong>Agents em lote</strong><span>Instale vários Agents Linux ou Windows a partir de um arquivo CSV, usando release ou pacote local Linux no Controller.</span><b>Instalar em lote →</b></a>
             </div>
 
             <section id="add-agent-batch" class="agent-detail" hidden>
@@ -50,10 +35,9 @@
                     <p>Selecione um CSV. Cada linha será validada e enviada sequencialmente pelo mesmo endpoint usado pelos assistentes individuais.</p>
                 </div>
                 <form id="agent-batch-form" class="range-form">
-                    <label>Arquivo CSV
-                        <input id="agent-batch-file" type="file" accept=".csv,text/csv" required>
-                    </label>
+                    <label>Arquivo CSV<input id="agent-batch-file" type="file" accept=".csv,text/csv" required></label>
                     <p class="location-safety-note">Colunas obrigatórias: <code>host</code>, <code>ssh_user</code>, <code>region_id</code> e <code>datacenter_id</code>. O padrão é Linux/OpenSSH. Senhas em texto puro não são aceitas.</p>
+                    <p class="location-safety-note"><strong>Pacote local Linux:</strong> use a coluna <code>package_file</code> com um arquivo <code>.tar.gz</code> já armazenado no Controller em <code>/var/lib/capivara/agent-packages</code> (ou no diretório configurado por <code>DSM_AGENT_LOCAL_PACKAGE_DIR</code>). Não preencha <code>release_tag</code> na mesma linha. O Controller valida o pacote e o transfere por SCP para o host. Pacote local Windows ainda não está habilitado.</p>
                     <p class="location-safety-note">Proteção contra duplicidade: hosts repetidos no mesmo CSV são recusados. Se o mesmo arquivo já tiver sido executado neste navegador, uma nova execução exige confirmação explícita. O Controller também recusa reinstalação automática quando detecta um Agent já presente no host.</p>
                     <div class="cap-agent-inline-actions">
                         <button id="agent-batch-template" type="button">Baixar CSV modelo</button>
@@ -62,25 +46,14 @@
                     <button id="agent-batch-submit" type="submit">Instalar Agents em lote</button>
                     <p id="agent-batch-status" class="location-safety-note" role="status" aria-live="polite"></p>
                 </form>
-                <div id="agent-batch-results" hidden>
-                    <h3>Resultado do lote</h3>
-                    <div style="overflow:auto">
-                        <table>
-                            <thead><tr><th>Linha</th><th>Host</th><th>Plataforma</th><th>Status</th><th>Detalhes</th></tr></thead>
-                            <tbody id="agent-batch-results-body"></tbody>
-                        </table>
-                    </div>
-                </div>
+                <div id="agent-batch-results" hidden><h3>Resultado do lote</h3><div style="overflow:auto"><table><thead><tr><th>Linha</th><th>Host</th><th>Plataforma</th><th>Status</th><th>Detalhes</th></tr></thead><tbody id="agent-batch-results-body"></tbody></table></div></div>
             </section>
 
-            <div class="cap-agent-help-strip">
-                <div><strong>Primeira instalação?</strong><span>Veja os pré-requisitos, como preparar o acesso SSH e como usar credenciais temporárias com segurança.</span></div>
-                <a class="cap-add-agent-link" target="_blank" rel="noopener" href="https://github.com/EzequielRibeiro/Distributed-Server-Manager/tree/main/docs/agents">Ajuda de instalação ↗</a>
-            </div>
+            <div class="cap-agent-help-strip"><div><strong>Primeira instalação?</strong><span>Veja os pré-requisitos, como preparar o acesso SSH e como usar credenciais temporárias com segurança.</span></div><a class="cap-add-agent-link" target="_blank" rel="noopener" href="https://github.com/EzequielRibeiro/Distributed-Server-Manager/tree/main/docs/agents">Ajuda de instalação ↗</a></div>
         </section>
     </div>
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="add-agent-page.js?v=4"></script>
+<script src="add-agent-page.js?v=5"></script>
 </body>
 </html>
