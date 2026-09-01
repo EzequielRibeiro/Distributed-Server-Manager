@@ -6,13 +6,17 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 DEFAULT_REPOSITORY = "EzequielRibeiro/Distributed-Server-Manager"
 DEFAULT_API = "https://api.github.com"
+DEFAULT_CACHE_TTL_SECONDS = 300
+DEFAULT_STALE_TTL_SECONDS = 3600
 _TAG_RE = re.compile(r"^v?[0-9][A-Za-z0-9._+-]{0,63}$")
+_CACHE: dict[str, tuple[float, Any]] = {}
 
 
 class AgentReleaseError(RuntimeError):
@@ -47,26 +51,49 @@ def release_supports_platform(release: dict[str, Any], platform: str) -> bool:
     return archive in names and checksum in names
 
 
+def _cache_ttl(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.environ.get(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
 def _request_json(path: str, *, timeout: int = 8) -> Any:
     api = os.environ.get("CAPIVARA_GITHUB_API", DEFAULT_API).rstrip("/")
     repository = os.environ.get("CAPIVARA_GITHUB_REPO", DEFAULT_REPOSITORY).strip()
     url = f"{api}/repos/{repository}/{path.lstrip('/')}"
-    request = Request(
-        url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "Capivara-DSM-Agent-Release-Service",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
+    now = time.monotonic()
+    ttl = _cache_ttl("CAPIVARA_GITHUB_RELEASE_CACHE_TTL", DEFAULT_CACHE_TTL_SECONDS)
+    stale_ttl = max(ttl, _cache_ttl("CAPIVARA_GITHUB_RELEASE_STALE_TTL", DEFAULT_STALE_TTL_SECONDS))
+    cached = _CACHE.get(url)
+    if cached and now - cached[0] <= ttl:
+        return cached[1]
+
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "Capivara-DSM-Agent-Release-Service",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = str(os.environ.get("CAPIVARA_GITHUB_TOKEN") or os.environ.get("GITHUB_TOKEN") or "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = Request(url, headers=headers)
     try:
         with urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
+            payload = json.loads(response.read().decode("utf-8"))
+            _CACHE[url] = (now, payload)
+            return payload
     except HTTPError as exc:
+        if cached and now - cached[0] <= stale_ttl and exc.code in {403, 429, 500, 502, 503, 504}:
+            return cached[1]
         if exc.code == 404:
             raise AgentReleaseError("GitHub release not found") from exc
+        if exc.code in {403, 429}:
+            raise AgentReleaseError("GitHub release API rate limit reached; retry after the cache refresh interval") from exc
         raise AgentReleaseError(f"GitHub release API returned HTTP {exc.code}") from exc
     except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        if cached and now - cached[0] <= stale_ttl:
+            return cached[1]
         raise AgentReleaseError(f"Unable to query GitHub releases: {exc}") from exc
 
 
