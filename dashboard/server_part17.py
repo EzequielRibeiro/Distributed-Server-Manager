@@ -54,7 +54,7 @@ def _area_aware_authenticate(headers):
 def _operational_dashboard_health():
  """Expose the same Controller readiness contract used by `cap operations readiness`."""
  try:
-  readiness=operational_readiness(_ROOT)
+  readiness=operational_readiness(Path(legacy.DSM_ROOT))
  except Exception:
   return {"score":0,"status":"critical","ready":False,"states":{"readiness":False},"generated_at":int(legacy.time.time())}
  checks=list(readiness.get("checks") or [])

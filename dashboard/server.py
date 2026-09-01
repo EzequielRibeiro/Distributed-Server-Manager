@@ -44,10 +44,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # Configurações de Ambiente
 # Environment Settings
 # =============================================================
+CODE_ROOT = Path(__file__).resolve().parents[1]
 DSM_ROOT = Path(
-    os.environ.get("DSM_ROOT", Path(__file__).resolve().parents[1])
+    os.environ.get("DSM_ROOT", CODE_ROOT)
 ).resolve()
-VERSION_FILE = DSM_ROOT / "version"
+VERSION_FILE = CODE_ROOT / "version"
 
 
 def read_dsm_version():
@@ -59,11 +60,11 @@ def read_dsm_version():
 
 
 DSM_VERSION = read_dsm_version()
-DASHBOARD_DIR = DSM_ROOT / "dashboard"
+DASHBOARD_DIR = CODE_ROOT / "dashboard"
 WEB_DIR = DASHBOARD_DIR / "web"
 API_DIR = DASHBOARD_DIR / "api"
 WORKERS_DIR = DASHBOARD_DIR / "workers"
-STATE_DIR = DASHBOARD_DIR / "state"
+STATE_DIR = DSM_ROOT / "dashboard" / "state"
 CONFIG_DIR = DASHBOARD_DIR / "config"
 NOTIFICATION_DIR = DASHBOARD_DIR / "notifications"
 LOG_DIR = DSM_ROOT / "logs"
@@ -73,7 +74,7 @@ INSTANCE_ROOT = (DSM_ROOT / "instances").resolve()
 DATABASE_FILE = Path(
     os.environ.get("DSM_DATABASE", DSM_ROOT / "data" / "capivara.db")
 ).resolve()
-DATABASE_DIR = DSM_ROOT / "database"
+DATABASE_DIR = CODE_ROOT / "database"
 
 for module_dir in (
     DATABASE_DIR,
