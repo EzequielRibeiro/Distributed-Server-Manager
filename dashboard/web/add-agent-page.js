@@ -1,6 +1,8 @@
 "use strict";
 
 const API = "/api";
+const BATCH_HISTORY_KEY = "capivara_agent_batch_history_v1";
+const BATCH_HISTORY_LIMIT = 20;
 let currentUser = null;
 let infrastructureTopology = null;
 let sidebarCollapsed = false;
@@ -125,6 +127,55 @@ function parseCsv(text) {
     });
 }
 
+function normalizeBatchHost(value) {
+    return String(value || "").trim().toLowerCase();
+}
+
+function validateUniqueBatchHosts(rows) {
+    const seen = new Map();
+    for (const row of rows) {
+        const host = normalizeBatchHost(row.host);
+        if (!host) continue;
+        if (seen.has(host)) {
+            throw new Error(`Host duplicado no CSV: ${row.host} (linhas ${seen.get(host)} e ${row._line}).`);
+        }
+        seen.set(host, row._line);
+    }
+}
+
+async function batchFingerprint(text) {
+    const normalized = String(text || "").replace(/\r\n/g, "\n").trim();
+    if (window.crypto?.subtle && window.TextEncoder) {
+        const digest = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized));
+        return Array.from(new Uint8Array(digest)).map(value => value.toString(16).padStart(2, "0")).join("");
+    }
+    let hash = 2166136261;
+    for (let i = 0; i < normalized.length; i += 1) {
+        hash ^= normalized.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return `fallback-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function readBatchHistory() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(BATCH_HISTORY_KEY) || "[]");
+        return Array.isArray(parsed) ? parsed.filter(item => item && typeof item.fingerprint === "string") : [];
+    } catch (_) {
+        return [];
+    }
+}
+
+function rememberBatchExecution(entry) {
+    const history = readBatchHistory().filter(item => item.fingerprint !== entry.fingerprint);
+    history.unshift(entry);
+    localStorage.setItem(BATCH_HISTORY_KEY, JSON.stringify(history.slice(0, BATCH_HISTORY_LIMIT)));
+}
+
+function previousBatchExecution(fingerprint) {
+    return readBatchHistory().find(item => item.fingerprint === fingerprint) || null;
+}
+
 function batchPortRange(value) {
     const raw = String(value || "").trim();
     if (!raw) return ["", ""];
@@ -233,13 +284,45 @@ async function runBatch(event) {
     const body = byId("agent-batch-results-body");
     const continueOnError = byId("agent-batch-continue")?.checked;
     const releaseCache = {};
-    body.replaceChildren();
-    results.hidden = false;
     submit.disabled = true;
     submit.setAttribute("aria-busy", "true");
+    submit.textContent = "Instalação em andamento...";
     try {
-        const rows = parseCsv(await file.text());
+        const text = await file.text();
+        const rows = parseCsv(text);
         if (!rows.length) throw new Error("CSV não contém linhas de Agents.");
+        rows.forEach(validateBatchRow);
+        validateUniqueBatchHosts(rows);
+
+        const fingerprint = await batchFingerprint(text);
+        const previous = previousBatchExecution(fingerprint);
+        if (previous) {
+            const when = previous.finished_at ? new Date(previous.finished_at).toLocaleString("pt-BR") : "data desconhecida";
+            const confirmed = window.confirm(
+                `Este mesmo CSV já foi executado em ${when}.\n\n` +
+                "Reexecutar pode tentar instalar novamente nos mesmos hosts. " +
+                "O Controller recusará hosts onde o Agent já estiver presente.\n\n" +
+                "Deseja executar o lote novamente?"
+            );
+            if (!confirmed) {
+                status.textContent = "Reexecução cancelada: este CSV já possui histórico de execução.";
+                return;
+            }
+        }
+
+        body.replaceChildren();
+        results.hidden = false;
+        rememberBatchExecution({
+            fingerprint,
+            file_name: file.name,
+            started_at: new Date().toISOString(),
+            finished_at: null,
+            state: "running",
+            rows: rows.length,
+            completed: 0,
+            failed: 0
+        });
+
         let completed = 0;
         let failed = 0;
         for (let index = 0; index < rows.length; index += 1) {
@@ -256,13 +339,26 @@ async function runBatch(event) {
                 if (!continueOnError) break;
             }
         }
+
+        rememberBatchExecution({
+            fingerprint,
+            file_name: file.name,
+            started_at: previousBatchExecution(fingerprint)?.started_at || new Date().toISOString(),
+            finished_at: new Date().toISOString(),
+            state: failed ? "completed_with_errors" : "completed",
+            rows: rows.length,
+            completed,
+            failed
+        });
         status.textContent = `Lote concluído: ${completed} iniciado(s), ${failed} falha(s).`;
+        submit.textContent = "Executar novamente";
     } catch (error) {
         errorMessage(error.message);
         status.textContent = `Falha no lote: ${error.message}`;
     } finally {
         submit.disabled = false;
         submit.removeAttribute("aria-busy");
+        if (submit.textContent === "Instalação em andamento...") submit.textContent = "Instalar Agents em lote";
     }
 }
 
@@ -275,6 +371,12 @@ function bindBatchUi() {
         panel.scrollIntoView({behavior: "smooth", block: "start"});
     });
     byId("agent-batch-template")?.addEventListener("click", downloadBatchTemplate);
+    byId("agent-batch-file")?.addEventListener("change", () => {
+        const submit = byId("agent-batch-submit");
+        if (submit) submit.textContent = "Instalar Agents em lote";
+        const status = byId("agent-batch-status");
+        if (status) status.textContent = "";
+    });
     byId("agent-batch-form")?.addEventListener("submit", runBatch);
 }
 
