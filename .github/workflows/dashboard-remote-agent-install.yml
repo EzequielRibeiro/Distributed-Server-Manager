@@ -7,6 +7,7 @@ on:
       - 'dashboard/agent_installation_api.py'
       - 'dashboard/agent_installation_http.py'
       - 'dashboard/web/add-agent.html'
+      - 'dashboard/web/add-agent-page.js'
       - 'dashboard/web/add-agent-linux.html'
       - 'dashboard/web/add-agent-windows.html'
       - 'dashboard/web/agent-installation.js'
@@ -24,6 +25,7 @@ on:
       - 'dashboard/agent_installation_api.py'
       - 'dashboard/agent_installation_http.py'
       - 'dashboard/web/add-agent.html'
+      - 'dashboard/web/add-agent-page.js'
       - 'dashboard/web/add-agent-linux.html'
       - 'dashboard/web/add-agent-windows.html'
       - 'dashboard/web/agent-installation.js'
@@ -60,6 +62,7 @@ jobs:
 
       - name: Validate Dashboard JavaScript
         run: |
+          node --check dashboard/web/add-agent-page.js
           node --check dashboard/web/agent-installation.js
           node --check dashboard/web/agent-installation-wizard.js
 
