@@ -27,5 +27,22 @@ $runtimeDir = Split-Path -Parent $AgentScript
 $entrypoint = Join-Path $runtimeDir 'agent_entrypoint.py'
 $scriptToRun = if (Test-Path $entrypoint -PathType Leaf) { $entrypoint } else { $AgentScript }
 
-& $PythonExe $scriptToRun *>> $logPath
-exit $LASTEXITCODE
+# Keep strict failure handling for launcher setup, but do not let routine stderr
+# emitted by the long-running native Python process become a terminating
+# NativeCommandError under Windows PowerShell 5.1. The Agent runtime handles
+# transient heartbeat/reconcile failures internally and is expected to remain
+# alive while reporting them to stderr.
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    & $PythonExe $scriptToRun *>> $logPath
+    $pythonExitCode = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+
+if ($null -eq $pythonExitCode) {
+    $pythonExitCode = 1
+}
+exit $pythonExitCode
