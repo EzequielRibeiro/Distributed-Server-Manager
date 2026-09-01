@@ -12,6 +12,8 @@
         failed: [100, "Falha na atualização", "A atualização não foi concluída. Consulte os detalhes e tente novamente."],
     };
     let pollTimer = null;
+    let activeUpdate = false;
+    let versionsLoading = false;
 
     async function request(path, options = {}) {
         const response = await fetch(`/api${path}`, {
@@ -29,7 +31,7 @@
             throw new Error("Sessão expirada");
         }
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(payload.error || payload.message || `HTTP ${response.status}`);
+        if (!response.ok) throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
         return payload;
     }
 
@@ -45,12 +47,21 @@
         if (target) target.textContent = value || "—";
     }
 
-    function setRolloutBusy(busy) {
+    function updateRolloutAvailability() {
         const button = el("agent-rollout-submit");
-        if (!button) return;
-        button.disabled = busy;
-        button.textContent = busy ? "Atualização em andamento…" : "Criar rollout";
-        button.setAttribute("aria-busy", String(busy));
+        const versions = el("agent-rollout-version");
+        const channel = el("agent-rollout-channel")?.value || "stable";
+        if (!button || !versions) return;
+        const manual = channel === "local/manual";
+        versions.disabled = versionsLoading || manual || !el("agent-update-selector")?.value;
+        button.disabled = activeUpdate || versionsLoading || manual || !versions.value;
+        button.textContent = activeUpdate ? "Atualização em andamento…" : "Criar rollout";
+        button.setAttribute("aria-busy", String(activeUpdate || versionsLoading));
+    }
+
+    function setRolloutBusy(busy) {
+        activeUpdate = Boolean(busy);
+        updateRolloutAvailability();
     }
 
     function renderErrorDetails(status, state) {
@@ -111,6 +122,60 @@
         }
     }
 
+    function resetVersionSelector(message = "Selecione um Agent para carregar as versões") {
+        const selector = el("agent-rollout-version");
+        if (!selector) return;
+        selector.replaceChildren(new Option(message, ""));
+        selector.value = "";
+        updateRolloutAvailability();
+    }
+
+    async function loadVersions(preferredVersion = "") {
+        const agentId = el("agent-update-selector")?.value || "";
+        const channel = el("agent-rollout-channel")?.value || "stable";
+        const selector = el("agent-rollout-version");
+        const help = el("agent-rollout-version-help");
+        if (!selector) return;
+        if (!agentId) {
+            resetVersionSelector();
+            return;
+        }
+        if (channel === "local/manual") {
+            resetVersionSelector("Canal Local / manual não usa rollout por release");
+            if (help) help.textContent = "Use o fluxo administrativo de pacote local; uma versão arbitrária não pode ser enviada pelo rollout.";
+            updateRolloutAvailability();
+            return;
+        }
+        versionsLoading = true;
+        resetVersionSelector("Carregando releases publicadas…");
+        updateRolloutAvailability();
+        try {
+            const result = await request(`/agents/updates/versions?agent_id=${encodeURIComponent(agentId)}&channel=${encodeURIComponent(channel)}`);
+            const releases = Array.isArray(result.releases) ? result.releases : [];
+            selector.replaceChildren(new Option(releases.length ? "Selecione uma versão" : "Nenhuma release compatível encontrada", ""));
+            for (const release of releases) {
+                const version = String(release.version || release.tag || "").replace(/^v/, "");
+                if (!version) continue;
+                const labels = [];
+                if (version === String(result.recommended_version || "")) labels.push("recomendada");
+                if (release.prerelease) labels.push("pré-release");
+                selector.add(new Option(`${version}${labels.length ? ` — ${labels.join(", ")}` : ""}`, version));
+            }
+            const installed = String(el("agent-installed-version")?.textContent || "").trim();
+            const preferred = String(preferredVersion || result.recommended_version || "").replace(/^v/, "");
+            if ([...selector.options].some(option => option.value === preferred)) selector.value = preferred;
+            else if ([...selector.options].some(option => option.value === installed)) selector.value = installed;
+            if (help) help.textContent = `${result.platform || "Agent"} · ${releases.length} release(s) publicada(s) compatível(is) no canal ${channel}.`;
+        } catch (error) {
+            resetVersionSelector("Não foi possível carregar as versões");
+            if (help) help.textContent = error.message;
+            showError(error.message);
+        } finally {
+            versionsLoading = false;
+            updateRolloutAvailability();
+        }
+    }
+
     async function loadAgents() {
         const selector = el("agent-update-selector");
         if (!selector) return;
@@ -128,6 +193,7 @@
         if (!agentId) {
             clearTimeout(pollTimer);
             renderProgress({update_status: "idle"});
+            resetVersionSelector();
             return;
         }
         try {
@@ -141,6 +207,7 @@
             el("agent-rollout-agents").value = agentId;
             renderProgress(status);
             schedulePoll(status);
+            await loadVersions(status.available_version || status.desired_version || "");
             showError();
         } catch (error) {
             showError(error.message);
@@ -159,6 +226,7 @@
             });
             el("agent-update-channel").value = result.update_channel;
             el("agent-rollout-channel").value = result.update_channel;
+            await loadVersions();
             showError();
         } catch (error) {
             showError(error.message);
@@ -167,6 +235,8 @@
 
     async function createRollout(event) {
         event.preventDefault();
+        const version = el("agent-rollout-version")?.value || "";
+        if (!version) return showError("Selecione uma versão publicada para o rollout.");
         const agentIds = el("agent-rollout-agents").value.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean);
         setRolloutBusy(true);
         renderProgress({update_status: "planned"});
@@ -175,7 +245,7 @@
                 method: "POST",
                 body: JSON.stringify({
                     agent_ids: agentIds,
-                    desired_version: el("agent-rollout-version").value.trim(),
+                    desired_version: version,
                     update_channel: el("agent-rollout-channel").value,
                     batch_size: Number(el("agent-rollout-batch-size").value)
                 })
@@ -189,7 +259,7 @@
                 update_status: "failed",
                 last_error: error.message,
                 agent_id: el("agent-update-selector")?.value,
-                desired_version: el("agent-rollout-version")?.value,
+                desired_version: version,
                 update_channel: el("agent-rollout-channel")?.value,
             });
             setRolloutBusy(false);
@@ -202,8 +272,11 @@
             clearTimeout(pollTimer);
             loadStatus();
         });
+        el("agent-rollout-channel")?.addEventListener("change", () => loadVersions());
+        el("agent-rollout-version")?.addEventListener("change", updateRolloutAvailability);
         el("agent-update-channel-form")?.addEventListener("submit", saveChannel);
         el("agent-rollout-form")?.addEventListener("submit", createRollout);
         try { await loadAgents(); } catch (error) { showError(error.message); }
+        updateRolloutAvailability();
     });
 })();
