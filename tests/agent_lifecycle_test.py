@@ -49,14 +49,42 @@ class AgentLifecycleTest(unittest.TestCase):
             transition_agent("active", "pairing")
 
     def test_disabled_requires_pending_before_pairing_or_active(self):
-        self.assertEqual(allowed_agent_transitions("disabled"), frozenset({"pending"}))
+        self.assertEqual(
+            allowed_agent_transitions("disabled"),
+            frozenset({"pending", "decommissioned"}),
+        )
         self.assertFalse(can_transition_agent("disabled", "active"))
         self.assertTrue(can_transition_agent("disabled", "pending"))
 
     def test_rejected_requires_administrative_reset_to_pending(self):
-        self.assertEqual(allowed_agent_transitions("rejected"), frozenset({"pending"}))
+        self.assertEqual(
+            allowed_agent_transitions("rejected"),
+            frozenset({"pending", "decommissioned"}),
+        )
         self.assertFalse(can_transition_agent("rejected", "pairing"))
         self.assertTrue(can_transition_agent("rejected", "pending"))
+
+    def test_active_can_be_decommissioned(self):
+        result = transition_agent("active", "decommissioned")
+        self.assertEqual(result.current, "active")
+        self.assertEqual(result.target, "decommissioned")
+        self.assertTrue(result.changed)
+
+    def test_offline_can_be_decommissioned(self):
+        self.assertTrue(
+            can_transition_agent("offline", "decommissioned")
+        )
+
+    def test_decommissioned_is_terminal(self):
+        self.assertEqual(
+            allowed_agent_transitions("decommissioned"),
+            frozenset(),
+        )
+        self.assertFalse(
+            can_transition_agent("decommissioned", "active")
+        )
+        with self.assertRaises(InvalidAgentTransition):
+            transition_agent("decommissioned", "active")
 
     def test_same_state_is_idempotent_noop(self):
         result = transition_agent("offline", "offline")

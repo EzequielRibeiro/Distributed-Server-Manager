@@ -56,10 +56,18 @@ class AgentPortRepositoryTest(
 
         RegistryRepository(
             backend
-        ).create_aurora(
-            password_hash="hash",
-            manifest_path="manifest",
-            metadata_json="{}",
+        ).bootstrap_installation_profile(
+            profile="hybrid",
+            node_id="node-demo",
+            node_name="Demo Node",
+            controller_id="controller-demo",
+            controller_name="Demo Controller",
+            agent_id="agent-demo",
+            agent_name="Demo Agent",
+            region_id="region-demo",
+            region_name="Demo Region",
+            datacenter_id="dc-demo",
+            datacenter_name="Demo Datacenter",
         )
 
     def tearDown(self):
@@ -101,6 +109,71 @@ class AgentPortRepositoryTest(
                 ),
             },
         )
+
+    def test_agent_listing_excludes_decommissioned_by_default(self):
+        backend = self.repository.backend
+
+        with backend.transaction() as connection:
+            connection.execute(
+                "UPDATE agents SET status=? WHERE id=?",
+                ("decommissioned", "agent-demo"),
+            )
+
+        agents = self.repository.list_agents()
+
+        self.assertNotIn(
+            "agent-demo",
+            {str(item["id"]) for item in agents},
+        )
+
+    def test_agent_listing_can_show_decommissioned(self):
+        backend = self.repository.backend
+
+        with backend.transaction() as connection:
+            connection.execute(
+                "UPDATE agents SET status=? WHERE id=?",
+                ("decommissioned", "agent-demo"),
+            )
+
+        agents = self.repository.list_agents(
+            lifecycle="decommissioned",
+        )
+
+        self.assertEqual(
+            {str(item["id"]) for item in agents},
+            {"agent-demo"},
+        )
+        self.assertEqual(
+            str(agents[0]["status"]),
+            "decommissioned",
+        )
+
+    def test_agent_listing_all_includes_decommissioned(self):
+        backend = self.repository.backend
+
+        with backend.transaction() as connection:
+            connection.execute(
+                "UPDATE agents SET status=? WHERE id=?",
+                ("decommissioned", "agent-demo"),
+            )
+
+        agents = self.repository.list_agents(
+            lifecycle="all",
+        )
+
+        self.assertIn(
+            "agent-demo",
+            {str(item["id"]) for item in agents},
+        )
+
+    def test_agent_listing_rejects_unknown_lifecycle(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "lifecycle must be",
+        ):
+            self.repository.list_agents(
+                lifecycle="unknown",
+            )
 
     def test_change_range(self):
         self.repository.set_ranges(

@@ -74,8 +74,20 @@ class AgentPortRepository:
     def list_agents(
         self,
         controller_id: str | None = None,
+        *,
+        lifecycle: str = "operational",
     ) -> list[dict[str, Any]]:
         ph = self.dialect.placeholder
+        lifecycle = str(lifecycle or "operational").strip().lower()
+
+        if lifecycle not in {
+            "operational",
+            "decommissioned",
+            "all",
+        }:
+            raise ValueError(
+                "lifecycle must be operational, decommissioned, or all"
+            )
 
         sql = (
             "SELECT "
@@ -87,15 +99,20 @@ class AgentPortRepository:
             "ON i.agent_id=a.id "
         )
 
-        params: tuple[Any, ...] = ()
+        clauses: list[str] = []
+        params: list[Any] = []
 
         if controller_id:
-            sql += (
-                f"WHERE a.controller_id={ph} "
-            )
-            params = (
-                controller_id,
-            )
+            clauses.append(f"a.controller_id={ph}")
+            params.append(controller_id)
+
+        if lifecycle == "operational":
+            clauses.append("a.status<>'decommissioned'")
+        elif lifecycle == "decommissioned":
+            clauses.append("a.status='decommissioned'")
+
+        if clauses:
+            sql += "WHERE " + " AND ".join(clauses) + " "
 
         sql += (
             "GROUP BY "
@@ -107,7 +124,7 @@ class AgentPortRepository:
         with self.session() as session:
             rows = session.execute(
                 sql,
-                params,
+                tuple(params),
             ).fetchall()
 
         return [

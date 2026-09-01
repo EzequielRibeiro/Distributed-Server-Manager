@@ -138,6 +138,64 @@ class AgentRemoteUninstallTest(unittest.TestCase):
         )
         self.assertEqual(committed["status"], "committed")
 
+    def _agent_status(self):
+        with self.backend.connect() as connection:
+            row = connection.execute(
+                "SELECT status FROM agents WHERE id=?",
+                ("agent-uninstall-test",),
+            ).fetchone()
+        return str(row["status"])
+
+    def test_completed_decommissions_agent_registration(self):
+        state = self.request()
+
+        self.repo.command_for_agent("agent-uninstall-test")
+        self.repo.apply_result(
+            "agent-uninstall-test",
+            {
+                "request_id": state["request_id"],
+                "status": "accepted",
+            },
+        )
+
+        self.repo.command_for_agent("agent-uninstall-test")
+        self.repo.apply_result(
+            "agent-uninstall-test",
+            {
+                "request_id": state["request_id"],
+                "status": "completed",
+                "host_cleanup": {
+                    "install_root_removed": True,
+                    "agent_config_removed": True,
+                },
+            },
+        )
+
+        self.assertEqual(
+            self._agent_status(),
+            "decommissioned",
+        )
+
+    def test_failed_uninstall_preserves_agent_lifecycle(self):
+        initial_status = self._agent_status()
+        state = self.request()
+
+        self.repo.command_for_agent("agent-uninstall-test")
+        failed = self.repo.apply_result(
+            "agent-uninstall-test",
+            {
+                "request_id": state["request_id"],
+                "status": "failed",
+                "error": "synthetic failure",
+            },
+        )
+
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(
+            self._agent_status(),
+            initial_status,
+        )
+
     def test_purge_is_blocked_with_registered_instances(self):
         with self.backend.transaction() as connection:
             connection.execute(

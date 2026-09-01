@@ -109,7 +109,7 @@ class InfrastructureRepository:
         """
 
         ph = self.dialect.placeholder
-        clauses: list[str] = []
+        clauses: list[str] = ["a.status<>'decommissioned'"]
         params: list[Any] = []
 
         if controller_id is not None:
@@ -144,7 +144,10 @@ class InfrastructureRepository:
         active_only: bool = False,
     ) -> list[dict[str, Any]]:
         ph = self.dialect.placeholder
-        clauses = ["al.agent_id IS NULL"]
+        clauses = [
+            "al.agent_id IS NULL",
+            "a.status<>'decommissioned'",
+        ]
         params: list[Any] = []
 
         if controller_id is not None:

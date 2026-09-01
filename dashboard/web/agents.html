@@ -42,10 +42,16 @@
         <section class="cap-agents-panel">
             <div class="cap-agents-panel-heading">
                 <div><h2>Frota de Agents</h2><p id="agents-summary-text">Carregando Agents...</p></div>
-                <div class="cap-agent-filters" aria-label="Filtro de saúde">
-                    <button class="cap-agent-filter active" data-filter="all" type="button">Todos</button>
-                    <button class="cap-agent-filter" data-filter="online" type="button">Online</button>
-                    <button class="cap-agent-filter" data-filter="offline" type="button">Offline</button>
+                <div>
+                    <div class="cap-agent-filters" aria-label="Visão administrativa dos Agents">
+                        <button class="cap-agent-lifecycle-filter active" data-lifecycle="operational" type="button">Operacionais</button>
+                        <button class="cap-agent-lifecycle-filter" data-lifecycle="decommissioned" type="button">Desativados / Removidos</button>
+                    </div>
+                    <div class="cap-agent-filters" aria-label="Filtro de saúde">
+                        <button class="cap-agent-filter active" data-filter="all" type="button">Todos</button>
+                        <button class="cap-agent-filter" data-filter="online" type="button">Online</button>
+                        <button class="cap-agent-filter" data-filter="offline" type="button">Offline</button>
+                    </div>
                 </div>
             </div>
             <div id="agents-list" class="cap-agent-grid" aria-live="polite"></div>
@@ -100,7 +106,7 @@
     </div>
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="agents-v3.js?v=4"></script>
+<script src="agents-v3.js?v=5"></script>
 <script src="agent-updates-v3.js?v=3"></script>
 <script src="/infrastructure-role-ui.js"></script>
 </body>

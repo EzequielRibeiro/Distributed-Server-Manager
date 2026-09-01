@@ -83,4 +83,12 @@ class AgentDashboardUiContractTest(unittest.TestCase):
   for text in ("Datacenter do Agent","Vincular datacenter","Alterar localização","Region derivada:",'/agent/location','datacenter_id:select.value','status:\"active\"'):self.assertIn(text,self.infrastructure_js)
   self.assertIn('infrastructure-v3.js?v=3',self.infrastructure_html);self.assertIn('infrastructure-v3.css?v=2',self.infrastructure_html)
   for text in ("cap-agent-location-form","cap-agent-location-region","cap-agent-location-feedback"):self.assertIn(text,self.infrastructure_css)
+ def test_agents_support_decommissioned_lifecycle_view(self):
+  self.assertIn('data-lifecycle="operational"',self.html)
+  self.assertIn('data-lifecycle="decommissioned"',self.html)
+  self.assertIn("Desativados / Removidos",self.html)
+  self.assertIn('lifecycle:"operational"',self.fleet_js)
+  self.assertIn("operationalAgents",self.fleet_js)
+  self.assertIn("/api/agents?lifecycle=",self.fleet_js)
+  self.assertIn('agents-v3.js?v=5',self.html)
 if __name__=="__main__":unittest.main()

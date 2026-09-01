@@ -40,6 +40,7 @@ class PlacementReadinessTest(unittest.TestCase):
                     "offline",
                     "disabled",
                     "rejected",
+                    "decommissioned",
                 }
             ),
         )
