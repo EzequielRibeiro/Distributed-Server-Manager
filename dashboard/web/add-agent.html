@@ -54,6 +54,7 @@
                         <input id="agent-batch-file" type="file" accept=".csv,text/csv" required>
                     </label>
                     <p class="location-safety-note">Colunas obrigatórias: <code>host</code>, <code>ssh_user</code>, <code>region_id</code> e <code>datacenter_id</code>. O padrão é Linux/OpenSSH. Senhas em texto puro não são aceitas.</p>
+                    <p class="location-safety-note">Proteção contra duplicidade: hosts repetidos no mesmo CSV são recusados. Se o mesmo arquivo já tiver sido executado neste navegador, uma nova execução exige confirmação explícita. O Controller também recusa reinstalação automática quando detecta um Agent já presente no host.</p>
                     <div class="cap-agent-inline-actions">
                         <button id="agent-batch-template" type="button">Baixar CSV modelo</button>
                         <label class="inline-option"><input id="agent-batch-continue" type="checkbox"> Continuar em caso de erro</label>
@@ -80,6 +81,6 @@
     </div>
     <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="add-agent-page.js?v=3"></script>
+<script src="add-agent-page.js?v=4"></script>
 </body>
 </html>
