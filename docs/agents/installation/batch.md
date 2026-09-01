@@ -2,9 +2,20 @@
 
 Este guia mostra como instalar vários Capivara Agents a partir de um único arquivo CSV, incluindo hosts **Linux e Windows no mesmo lote**.
 
-O fluxo recomendado usa **OpenSSH para as duas plataformas**. Isso permite utilizar o mesmo mecanismo seguro de autenticação por chave SSH ou por arquivo de senha protegido (`password_file`) tanto em Linux quanto em Windows.
+O fluxo recomendado usa **OpenSSH para as duas plataformas**. Para Linux, o lote também pode usar um **pacote local armazenado no Controller**, transferido por SCP para cada host antes da instalação.
 
 > A senha do usuário remoto nunca deve ser escrita diretamente no CSV. O CSV contém somente o caminho para um arquivo secreto protegido existente no Controller.
+
+## Métodos disponíveis no lote
+
+| Plataforma | Método | Fonte do Agent |
+|---|---|---|
+| Linux | `ssh` | GitHub Release recomendada ou `release_tag` específica |
+| Linux | `ssh` + `package_file` | Pacote local `.tar.gz` existente no Controller |
+| Windows | `ssh` | GitHub Release recomendada ou `release_tag` específica |
+| Windows | `winrm` | GitHub Release recomendada ou `release_tag` específica |
+
+Pacote local em lote está disponível **somente para Linux**. O Windows ainda não possui no core um fluxo equivalente de validação e transferência de ZIP local.
 
 ## Pré-requisitos
 
@@ -12,50 +23,31 @@ No Controller ou instalação Hybrid:
 
 - `cap agent deploy-batch` disponível;
 - conectividade TCP do Controller até a porta SSH dos hosts;
-- OpenSSH Server ativo nos hosts Linux e Windows;
+- OpenSSH Server ativo nos hosts Linux e Windows quando `method=ssh`;
 - usuário remoto com privilégios administrativos suficientes para instalar o Agent;
-- região, datacenter e Controller já cadastrados quando esses campos forem usados pela Dashboard;
-- `sshpass` instalado no Controller caso seja utilizada autenticação por `password_file`.
+- região, datacenter e Controller já cadastrados;
+- `sshpass` instalado no Controller quando for usada autenticação por `password_file`;
+- para pacote local Linux, o arquivo deve estar no diretório autorizado de pacotes do Controller.
 
-Para Windows em lote, este guia usa **OpenSSH**. O usuário pode ser, por exemplo, `Administrator` ou outra conta administrativa permitida pelo host.
+Para Windows em lote via OpenSSH, o usuário pode ser `Administrator` ou outra conta administrativa permitida pelo host.
 
 ## 1. Criar os arquivos secretos de senha
 
-Crie um secret separado para cada senha/host quando as credenciais forem diferentes.
-
-No Controller:
+Crie um secret separado para cada senha/host quando as credenciais forem diferentes:
 
 ```bash
 sudo cap agent secret create node-linux-01
 sudo cap agent secret create node-linux-02
 sudo cap agent secret create node-windows-01
-sudo cap agent secret create node-windows-02
 ```
 
-O Capivara solicita a senha duas vezes usando entrada oculta. A senha não é passada como argumento e não fica registrada no histórico do shell.
-
-Por padrão, os arquivos serão criados em:
+Por padrão, os arquivos ficam em:
 
 ```text
-/etc/capivara/secrets/remote-deploy/node-linux-01.secret
-/etc/capivara/secrets/remote-deploy/node-linux-02.secret
-/etc/capivara/secrets/remote-deploy/node-windows-01.secret
-/etc/capivara/secrets/remote-deploy/node-windows-02.secret
+/etc/capivara/secrets/remote-deploy/
 ```
 
-O diretório deve permanecer protegido e os arquivos de segredo devem usar permissão `0600`.
-
-Confira sem exibir o conteúdo:
-
-```bash
-sudo ls -l /etc/capivara/secrets/remote-deploy/
-```
-
-Nunca use `cat` para mostrar a senha durante diagnóstico ou documentação.
-
-### Mesmo usuário e mesma senha em vários hosts
-
-Tecnicamente várias linhas podem apontar para o mesmo `password_file` quando os hosts realmente utilizam a mesma credencial. Por segurança, prefira credenciais individuais por host ou por grupo administrativo controlado.
+Os arquivos de segredo devem permanecer com permissão `0600`. Nunca use `cat` para exibir a senha durante diagnóstico ou documentação.
 
 ## 2. Testar os hosts antes do lote
 
@@ -81,66 +73,138 @@ sudo cap agent test-connection 192.168.15.70 \
 
 Faça esse teste pelo menos em um host representativo de cada plataforma antes de iniciar um lote grande.
 
-## 3. Criar o arquivo CSV
+## 3. Instalação usando GitHub Release
 
-Crie, por exemplo:
-
-```bash
-nano ~/capivara-agents.csv
-```
-
-Exemplo com **dois hosts Linux e dois hosts Windows no mesmo arquivo**:
+Exemplo de CSV misto Linux/Windows usando a release estável recomendada:
 
 ```csv
-host,ssh_user,platform,ssh_port,password_file,controller_id,controller_url,region_id,datacenter_id,name,port_range,port_protocol,release_tag,bootstrap_timeout
-192.168.15.60,capadmin,linux,22,/etc/capivara/secrets/remote-deploy/node-linux-01.secret,controller-horizon,https://controller.capivaradsm.com.br:9443,br,sp01,Node Linux 01,24000-24999,both,,900
-192.168.15.61,capadmin,linux,22,/etc/capivara/secrets/remote-deploy/node-linux-02.secret,controller-horizon,https://controller.capivaradsm.com.br:9443,br,sp01,Node Linux 02,25000-25999,both,,900
-192.168.15.70,Administrator,windows,22,/etc/capivara/secrets/remote-deploy/node-windows-01.secret,controller-horizon,https://controller.capivaradsm.com.br:9443,br,sp01,Node Windows 01,26000-26999,both,,900
-192.168.15.71,Administrator,windows,22,/etc/capivara/secrets/remote-deploy/node-windows-02.secret,controller-horizon,https://controller.capivaradsm.com.br:9443,br,sp01,Node Windows 02,27000-27999,both,,900
+host,ssh_user,platform,method,ssh_port,password_file,package_file,controller_id,controller_url,region_id,datacenter_id,name,port_range,port_protocol,release_tag,bootstrap_timeout
+192.168.15.60,capadmin,linux,ssh,22,/etc/capivara/secrets/remote-deploy/node-linux-01.secret,,controller-horizon,https://controller.capivaradsm.com.br:9443,br,sp01,Node Linux 01,24000-24999,both,,900
+192.168.15.70,Administrator,windows,ssh,22,/etc/capivara/secrets/remote-deploy/node-windows-01.secret,,controller-horizon,https://controller.capivaradsm.com.br:9443,br,sp01,Node Windows 01,26000-26999,both,,900
 ```
 
-Substitua os valores de exemplo pelos IDs e endereços reais do seu ambiente.
+Quando `release_tag` fica vazio e `package_file` também está vazio, a Dashboard seleciona a release estável recomendada para a plataforma.
 
-### Campos mais importantes
+Para fixar uma versão, informe por exemplo:
+
+```text
+release_tag=v2.0.20
+```
+
+## 4. Instalação Linux usando pacote local do Controller
+
+O pacote local deve ser um pacote oficial Linux do Capivara, por exemplo:
+
+```text
+capivara-agent-linux-2.0.20.tar.gz
+```
+
+O diretório padrão autorizado no Controller é:
+
+```text
+/var/lib/capivara/agent-packages
+```
+
+Crie o diretório se necessário:
+
+```bash
+sudo install -d \
+  -o capivara \
+  -g capivara \
+  -m 0750 \
+  /var/lib/capivara/agent-packages
+```
+
+Coloque o pacote nesse diretório e garanta que o serviço Capivara consiga lê-lo.
+
+Exemplo:
+
+```text
+/var/lib/capivara/agent-packages/capivara-agent-linux-2.0.20.tar.gz
+```
+
+O diretório pode ser alterado com a variável:
+
+```text
+DSM_AGENT_LOCAL_PACKAGE_DIR
+```
+
+### CSV com pacote local
+
+```csv
+host,ssh_user,platform,method,ssh_port,password_file,package_file,controller_id,controller_url,region_id,datacenter_id,name,port_range,port_protocol,release_tag,bootstrap_timeout
+192.168.15.61,capadmin,linux,ssh,22,/etc/capivara/secrets/remote-deploy/node-linux-02.secret,/var/lib/capivara/agent-packages/capivara-agent-linux-2.0.20.tar.gz,controller-horizon,https://controller.capivaradsm.com.br:9443,br,sp01,Node Linux 02,25000-25999,both,,900
+```
+
+Para várias máquinas Linux, várias linhas podem reutilizar o mesmo `package_file`.
+
+### O que o Controller faz
+
+Quando `package_file` é informado, o Controller:
+
+1. confirma que o caminho está dentro do diretório autorizado;
+2. confirma que o arquivo existe;
+3. executa o preflight SSH do host;
+4. recusa instalação automática se já detectar um Capivara Agent no destino;
+5. valida o pacote Linux antes da transferência;
+6. verifica estrutura, `manifest.json`, `VERSION`, arquivos obrigatórios, tamanho e SHA-256;
+7. transfere o pacote por SCP para um caminho temporário seguro;
+8. executa o instalador do pacote no host;
+9. remove o arquivo temporário;
+10. prossegue com pairing, identidade permanente e heartbeat.
+
+O pacote local **não é enviado pelo navegador**. O CSV contém somente o caminho administrativo do arquivo já existente no Controller.
+
+## 5. Campos do CSV
 
 | Campo | Uso |
 |---|---|
 | `host` | IP ou hostname alcançável pelo Controller. Obrigatório. |
-| `ssh_user` | Usuário usado pelo OpenSSH. Obrigatório. |
-| `platform` | `linux` ou `windows`. Se omitido, o padrão do CLI é `linux`. |
-| `ssh_port` | Porta do OpenSSH. O padrão é `22`. |
+| `ssh_user` | Usuário usado pelo OpenSSH. Obrigatório no lote da Dashboard. |
+| `platform` | `linux` ou `windows`. |
+| `method` | `ssh` ou `winrm`. `package_file` exige `ssh`. |
+| `ssh_port` | Porta do OpenSSH. Padrão `22`. |
 | `password_file` | Caminho do secret protegido no Controller. Nunca coloque a senha aqui. |
-| `controller_id` | ID lógico do Controller que receberá o Agent. Na Dashboard administrativa, informe explicitamente. |
+| `package_file` | Pacote local Linux no Controller. Opcional. |
+| `controller_id` | ID lógico do Controller que receberá o Agent. |
 | `controller_url` | URL que o Agent usará para alcançar o Controller após o bootstrap. |
-| `region_id` | Região administrativa do Agent. |
-| `datacenter_id` | Datacenter administrativo do Agent. |
+| `region_id` | Região administrativa. Obrigatório na Dashboard. |
+| `datacenter_id` | Datacenter administrativo. Obrigatório na Dashboard. |
 | `name` | Nome amigável do Agent. |
 | `port_range` | Faixa reservada para instâncias, por exemplo `24000-24999`. |
 | `port_protocol` | `tcp`, `udp` ou `both`. |
-| `release_tag` | Release específica. Em branco, a Dashboard seleciona a release estável recomendada. |
+| `release_tag` | Release específica. Não use junto com `package_file`. |
 | `bootstrap_timeout` | Timeout do bootstrap em segundos. Exemplo: `900`. |
 
-## 4. Regras do CSV
+## 6. Regras e validações
 
-Para manter compatibilidade com o fluxo oficial de lote:
-
-- `host` e `ssh_user` são colunas obrigatórias;
+- `host`, `ssh_user`, `region_id` e `datacenter_id` são obrigatórios na Dashboard;
 - `platform` aceita somente `linux` ou `windows`;
-- `port_protocol` aceita somente `tcp`, `udp` ou `both`;
-- não adicione uma coluna `password`;
-- não adicione `ssh_password` ou senha em texto puro;
-- use `password_file` para autenticação por senha;
-- o caminho informado em `password_file` precisa existir no **Controller**, não no host remoto;
-- mantenha uma linha por Agent;
-- não reutilize a mesma faixa de portas entre Agents quando isso causar conflito com sua política de placement.
+- `method` aceita `ssh` ou `winrm` no lote remoto;
+- `package_file` só pode ser usado com `method=ssh`;
+- `package_file` só está disponível para `platform=linux`;
+- `package_file` e `release_tag` não podem ser usados juntos na mesma linha;
+- `password`, `ssh_password` e `winrm_password` em texto puro são recusados;
+- `identity_file` não é aceito pela Dashboard; configure a identidade SSH no Controller;
+- `password_file` precisa existir no Controller e ficar no diretório autorizado de secrets;
+- `package_file` precisa existir no Controller e ficar no diretório autorizado de pacotes;
+- hosts duplicados no mesmo CSV são recusados;
+- uma linha deve representar um único Agent;
+- evite faixas de portas conflitantes com a política de placement.
 
-O CLI também aceita campos avançados como `identity_file`, `package_file`, `pairing_ttl`, `connect_timeout` e `heartbeat_timeout`. Consulte:
+## 7. Proteção contra reexecução do lote
 
-```bash
-cap agent deploy-batch --help
-```
+A Dashboard calcula uma identificação do conteúdo do CSV e mantém histórico local das execuções recentes.
 
-## 5. Instalar pela Dashboard
+Enquanto o lote estiver rodando, o botão permanece bloqueado. Depois da conclusão, o botão passa a indicar **Executar novamente**.
+
+Se o mesmo CSV for enviado outra vez no mesmo navegador, a Dashboard exige confirmação explícita antes da nova execução.
+
+Além disso, o Controller executa preflight remoto e recusa reinstalação automática quando já detecta um Capivara Agent no host.
+
+Essa proteção evita o caso comum de duplo clique, refresh ou reenvio acidental. Uma reexecução intencional continua possível mediante confirmação administrativa.
+
+## 8. Instalar pela Dashboard
 
 Na Dashboard administrativa:
 
@@ -152,9 +216,9 @@ Na Dashboard administrativa:
 6. inicie **Instalar Agents em lote**;
 7. acompanhe o resultado de cada linha.
 
-A Dashboard envia cada host sequencialmente pelo fluxo normal de instalação. Uma falha em um host não transforma a senha em dado de formulário: somente o caminho do `password_file` é enviado ao backend.
+No resultado, a Dashboard identifica se a solicitação usou `release` ou `pacote local`.
 
-## 6. Instalar pela CLI
+## 9. Instalar pela CLI
 
 O mesmo CSV pode ser executado diretamente no Controller:
 
@@ -162,9 +226,7 @@ O mesmo CSV pode ser executado diretamente no Controller:
 sudo cap agent deploy-batch ~/capivara-agents.csv
 ```
 
-Por padrão, o processamento para na primeira falha.
-
-Para continuar com as linhas seguintes:
+Para continuar após falhas:
 
 ```bash
 sudo cap agent deploy-batch \
@@ -181,25 +243,15 @@ sudo cap agent deploy-batch \
   --json
 ```
 
-O resumo informa quantas linhas foram processadas, concluídas e falharam.
+Consulte os campos adicionais aceitos pelo CLI com:
 
-## 7. Exemplo usando chave SSH em alguns hosts e senha em outros
-
-O lote não obriga todos os hosts a usar o mesmo método de autenticação OpenSSH.
-
-Quando a identidade SSH do Controller já estiver configurada para determinado host, deixe `password_file` vazio nessa linha:
-
-```csv
-host,ssh_user,platform,ssh_port,password_file,controller_id,controller_url,region_id,datacenter_id,name,port_range,port_protocol
-192.168.15.60,capadmin,linux,22,,controller-horizon,https://controller.capivaradsm.com.br:9443,br,sp01,Linux com chave,24000-24999,both
-192.168.15.70,Administrator,windows,22,/etc/capivara/secrets/remote-deploy/node-windows-01.secret,controller-horizon,https://controller.capivaradsm.com.br:9443,br,sp01,Windows com senha protegida,26000-26999,both
+```bash
+cap agent deploy-batch --help
 ```
 
-Chaves SSH continuam sendo o método preferencial.
+## 10. Depois da instalação
 
-## 8. Depois da instalação
-
-Confirme na Dashboard que os Agents fizeram enrollment e estão Online.
+Confirme na Dashboard que cada Agent concluiu enrollment e ficou **Online**.
 
 Quando um secret de senha não for mais necessário, remova-o:
 
@@ -207,7 +259,6 @@ Quando um secret de senha não for mais necessário, remova-o:
 sudo cap agent secret delete node-linux-01
 sudo cap agent secret delete node-linux-02
 sudo cap agent secret delete node-windows-01
-sudo cap agent secret delete node-windows-02
 ```
 
 A senha administrativa usada no bootstrap não é a credencial permanente do Agent.
@@ -220,19 +271,41 @@ Verifique usuário, senha/chave e política de autenticação OpenSSH do host.
 
 ### `Connection refused` ou timeout
 
-Confirme endereço, rota, firewall e se o OpenSSH Server está ouvindo na porta indicada em `ssh_port`.
-
-### Windows não aceita SSH
-
-Confirme que o OpenSSH Server está instalado, iniciado e permitido no firewall do Windows antes de executar o lote.
+Confirme endereço, rota, firewall e se o OpenSSH Server está ouvindo na porta indicada.
 
 ### `password_file` rejeitado
 
-O arquivo precisa existir no Controller e, no fluxo da Dashboard, deve estar dentro do diretório autorizado de secrets, cujo padrão é:
+Por padrão, o arquivo precisa ficar dentro de:
 
 ```text
 /etc/capivara/secrets/remote-deploy
 ```
+
+### `package_file must be inside ...`
+
+O pacote está fora do diretório permitido. Por padrão use:
+
+```text
+/var/lib/capivara/agent-packages
+```
+
+Ou configure `DSM_AGENT_LOCAL_PACKAGE_DIR` para outro diretório administrativo controlado.
+
+### `local Agent package not found`
+
+Confirme o caminho do arquivo no **Controller**, não no host remoto.
+
+### `invalid Linux Agent package`
+
+O arquivo não é um pacote Linux válido do Capivara ou está corrompido. Use um artefato oficial gerado pelo processo de release.
+
+### Pacote local em Windows foi recusado
+
+Esse comportamento é esperado no estado atual. O lote aceita pacote local somente para Linux.
+
+### Host duplicado no CSV
+
+Remova a duplicidade. A Dashboard não permite duas linhas com o mesmo host no mesmo lote.
 
 ### Um host falhou e os seguintes não foram executados
 
@@ -240,13 +313,16 @@ Use **Continuar em caso de erro** na Dashboard ou `--continue-on-error` na CLI.
 
 ## Segurança
 
-- Nunca armazene senha no CSV.
-- Nunca envie arquivos `.secret` ao Git.
-- Nunca exponha conteúdo de secrets em screenshots, tickets ou logs.
-- Prefira chave SSH quando possível.
-- Use arquivos de senha com permissão `0600`.
-- Remova secrets temporários após o Agent ficar operacional.
-- O CSV pode conter informações de infraestrutura; trate-o como arquivo administrativo e remova-o quando não for mais necessário.
+- nunca armazene senha no CSV;
+- nunca envie arquivos `.secret` ao Git;
+- nunca exponha conteúdo de secrets em screenshots, tickets ou logs;
+- prefira chave SSH quando possível;
+- use arquivos de senha com permissão `0600`;
+- armazene pacotes locais apenas em diretório administrativo controlado;
+- não permita que usuários da Dashboard indiquem caminhos arbitrários fora do diretório autorizado;
+- use somente pacotes oficiais cuja integridade possa ser validada;
+- remova secrets temporários após o Agent ficar operacional;
+- trate o CSV como arquivo administrativo de infraestrutura.
 
 ## Guias relacionados
 
