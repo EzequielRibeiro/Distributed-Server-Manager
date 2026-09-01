@@ -3,6 +3,8 @@ param(
     [string]$DataRoot = "$env:ProgramData\CapivaraAgent",
     [string]$TaskName = "CapivaraAgent",
     [string]$LauncherTaskName = "",
+    [string]$TerminalIdentityPath = "",
+    [string]$LaunchLockPath = "",
     [switch]$Purge
 )
 
@@ -21,6 +23,160 @@ function Fail([string]$Message) {
     Write-UninstallLog "FAILED: $Message"
     throw "[Capivara Agent] $Message"
 }
+
+function Send-TerminalUninstallResult(
+    [string]$Status,
+    [string]$ErrorMessage
+) {
+    if ([string]::IsNullOrWhiteSpace($TerminalIdentityPath)) {
+        return $false
+    }
+
+    if (-not (
+        Test-Path `
+            -LiteralPath $TerminalIdentityPath `
+            -PathType Leaf
+    )) {
+        return $false
+    }
+
+    try {
+        $terminalIdentity = Get-Content `
+            -LiteralPath $TerminalIdentityPath `
+            -Raw `
+            -Encoding UTF8 |
+            ConvertFrom-Json
+
+        $controllerUrl = [string]$terminalIdentity.controller_url
+        $agentId = [string]$terminalIdentity.agent_id
+        $fingerprint = [string]$terminalIdentity.fingerprint
+        $credentialId = [string]$terminalIdentity.credential_id
+        $credentialSecret = [string]$terminalIdentity.credential_secret
+        $requestId = [string]$terminalIdentity.request_id
+
+        if (
+            [string]::IsNullOrWhiteSpace($controllerUrl) -or
+            [string]::IsNullOrWhiteSpace($agentId) -or
+            [string]::IsNullOrWhiteSpace($fingerprint) -or
+            [string]::IsNullOrWhiteSpace($credentialId) -or
+            [string]::IsNullOrWhiteSpace($credentialSecret) -or
+            [string]::IsNullOrWhiteSpace($requestId)
+        ) {
+            Write-UninstallLog (
+                "TERMINAL_REPORT_FAILED status=" +
+                $Status +
+                " reason=identity-incomplete"
+            )
+            return $false
+        }
+
+        $uri = $controllerUrl.TrimEnd('/') +
+            "/api/agent/uninstall/result"
+
+        $headers = @{
+            "X-Capivara-Agent-Credential" = $credentialId
+            "X-Capivara-Agent-Secret" = $credentialSecret
+            "X-Capivara-Agent-Fingerprint" = $fingerprint
+        }
+
+        $hostCleanup = @{
+            install_root_removed = (-not (
+                Test-Path -LiteralPath $InstallRoot
+            ))
+            agent_config_removed = (-not (
+                Test-Path -LiteralPath (
+                    Join-Path $DataRoot "agent.json"
+                )
+            ))
+            instances_preserved = (
+                Test-Path -LiteralPath (
+                    Join-Path $DataRoot "instances"
+                )
+            )
+            backups_preserved = (
+                Test-Path -LiteralPath (
+                    Join-Path $DataRoot "backups"
+                )
+            )
+        }
+
+        $payload = @{
+            agent_id = $agentId
+            request_id = $requestId
+            status = $Status
+            completed_at = (
+                Get-Date
+            ).ToUniversalTime().ToString(
+                "yyyy-MM-ddTHH:mm:ssZ"
+            )
+            host_cleanup = $hostCleanup
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($ErrorMessage)) {
+            $limit = [Math]::Min(
+                1000,
+                $ErrorMessage.Length
+            )
+            $payload.error = $ErrorMessage.Substring(
+                0,
+                $limit
+            )
+        }
+
+        $body = $payload |
+            ConvertTo-Json -Depth 5 -Compress
+
+        if ($uri.StartsWith("https://")) {
+            [Net.ServicePointManager]::SecurityProtocol = `
+                [Net.SecurityProtocolType]::Tls12
+        }
+
+        for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+                Invoke-RestMethod `
+                    -Method Post `
+                    -Uri $uri `
+                    -Headers $headers `
+                    -ContentType "application/json" `
+                    -Body $body `
+                    -TimeoutSec 20 |
+                    Out-Null
+
+                Write-UninstallLog (
+                    "TERMINAL status=" +
+                    $Status +
+                    " attempt=" +
+                    $attempt
+                )
+
+                return $true
+            }
+            catch {
+                if ($attempt -lt 5) {
+                    Start-Sleep -Seconds (
+                        [Math]::Min(10, 2 * $attempt)
+                    )
+                }
+            }
+        }
+
+        Write-UninstallLog (
+            "TERMINAL_REPORT_FAILED status=" +
+            $Status
+        )
+
+        return $false
+    }
+    catch {
+        Write-UninstallLog (
+            "TERMINAL_REPORT_FAILED status=" +
+            $Status
+        )
+
+        return $false
+    }
+}
+
 
 function Assert-SafeRoot([string]$Path, [string]$Label) {
     if ([string]::IsNullOrWhiteSpace($Path)) { Fail "$Label vazio" }
@@ -122,9 +278,26 @@ try {
     }
 
     Write-UninstallLog "COMPLETED"
+
+    [void](
+        Send-TerminalUninstallResult `
+            -Status "completed" `
+            -ErrorMessage ""
+    )
 }
 catch {
-    Write-UninstallLog ("ERROR: " + $_.Exception.Message)
+    $failureMessage = $_.Exception.Message
+
+    Write-UninstallLog (
+        "ERROR: " + $failureMessage
+    )
+
+    [void](
+        Send-TerminalUninstallResult `
+            -Status "failed" `
+            -ErrorMessage $failureMessage
+    )
+
     throw
 }
 finally {
@@ -132,6 +305,49 @@ finally {
         try { $mutex.ReleaseMutex() } catch {}
     }
     $mutex.Dispose()
+
+    # Remove the temporary credential snapshot after terminal
+    # reporting and before deleting the launcher task.
+    if (-not [string]::IsNullOrWhiteSpace(
+        $TerminalIdentityPath
+    )) {
+        try {
+            Remove-Item `
+                -LiteralPath $TerminalIdentityPath `
+                -Force `
+                -ErrorAction SilentlyContinue
+        } catch {}
+    }
+
+    # Remove the detached-launch lock after the operation has
+    # reached a terminal state.
+    if (-not [string]::IsNullOrWhiteSpace(
+        $LaunchLockPath
+    )) {
+        try {
+            Remove-Item `
+                -LiteralPath $LaunchLockPath `
+                -Force `
+                -ErrorAction SilentlyContinue
+        } catch {}
+    }
+
+    # The remote launcher runs a staged copy from %TEMP%.
+    # Delete that copy only for launcher-driven uninstalls.
+    if (-not [string]::IsNullOrWhiteSpace(
+        $LauncherTaskName
+    )) {
+        try {
+            if (-not [string]::IsNullOrWhiteSpace(
+                $PSCommandPath
+            )) {
+                Remove-Item `
+                    -LiteralPath $PSCommandPath `
+                    -Force `
+                    -ErrorAction SilentlyContinue
+            }
+        } catch {}
+    }
 
     # This script may itself be running from the temporary uninstall
     # Scheduled Task. Remove that task only after all destructive

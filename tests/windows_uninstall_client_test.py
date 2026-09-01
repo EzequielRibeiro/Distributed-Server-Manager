@@ -20,6 +20,29 @@ class WindowsUninstallClientTest(unittest.TestCase):
         self.program_files = Path(self.temp.name) / "ProgramFiles"
         self.install_root = self.program_files / "CapivaraAgent"
         self.state_dir = self.program_data / "CapivaraAgent" / "state"
+        self.config_path = (
+            self.program_data
+            / "CapivaraAgent"
+            / "agent.json"
+        )
+        self.config_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        self.config_path.write_text(
+            json.dumps(
+                {
+                    "controller_url":
+                        "https://controller.example.test:9443",
+                    "agent_id": "agent-uninstall-test",
+                    "fingerprint": "sha256:uninstall-test",
+                    "credential_id": "credential-test",
+                    "credential_secret":
+                        "secret-must-not-enter-command-line",
+                }
+            ),
+            encoding="utf-8",
+        )
         service = self.install_root / "service"
         service.mkdir(parents=True)
         (service / "uninstall-agent.ps1").write_text("param([switch]$Purge)\n", encoding="utf-8")
@@ -114,6 +137,12 @@ class WindowsUninstallClientTest(unittest.TestCase):
             uninstall_args,
         )
         self.assertIn("-LauncherTaskName", uninstall_args)
+        self.assertIn("-TerminalIdentityPath", uninstall_args)
+        self.assertIn("-LaunchLockPath", uninstall_args)
+        self.assertNotIn(
+            "secret-must-not-enter-command-line",
+            uninstall_args,
+        )
         self.assertIn(
             "CapivaraAgent-Uninstall-uninstall-test-1",
             uninstall_args,

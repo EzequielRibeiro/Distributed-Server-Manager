@@ -7,7 +7,14 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import server_part10 as integration
-from agent_remote_http import ENROLL_PATH, HEARTBEAT_PATH, dispatch_enroll, dispatch_heartbeat
+from agent_remote_http import (
+    ENROLL_PATH,
+    HEARTBEAT_PATH,
+    UNINSTALL_RESULT_PATH,
+    dispatch_enroll,
+    dispatch_heartbeat,
+    dispatch_uninstall_result,
+)
 
 legacy = integration.legacy
 _previous_post = legacy.DashboardHandler.do_POST
@@ -36,7 +43,11 @@ def integrated_get(self):
 
 def integrated_post(self):
     path = urlparse(self.path).path
-    if path not in {ENROLL_PATH, HEARTBEAT_PATH}:
+    if path not in {
+        ENROLL_PATH,
+        HEARTBEAT_PATH,
+        UNINSTALL_RESULT_PATH,
+    }:
         return _previous_post(self)
 
     try:
@@ -47,9 +58,22 @@ def integrated_post(self):
 
     backend = legacy.dashboard_repository(legacy.DATABASE_FILE).backend
     if path == ENROLL_PATH:
-        status, body = dispatch_enroll(payload, backend=backend)
+        status, body = dispatch_enroll(
+            payload,
+            backend=backend,
+        )
+    elif path == HEARTBEAT_PATH:
+        status, body = dispatch_heartbeat(
+            payload,
+            headers=self.headers,
+            backend=backend,
+        )
     else:
-        status, body = dispatch_heartbeat(payload, headers=self.headers, backend=backend)
+        status, body = dispatch_uninstall_result(
+            payload,
+            headers=self.headers,
+            backend=backend,
+        )
     self.send_json(status, body)
 
 

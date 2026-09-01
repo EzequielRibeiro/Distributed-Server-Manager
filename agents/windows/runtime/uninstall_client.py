@@ -15,6 +15,12 @@ STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", PROGRAM_DATA / "Capi
 INSTALL_ROOT = Path(os.environ.get("CAPIVARA_AGENT_ROOT", Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "CapivaraAgent"))
 REQUEST_PATH = STATE_DIR / "uninstall-request.json"
 RESULT_PATH = STATE_DIR / "uninstall-result.json"
+CONFIG_PATH = Path(
+    os.environ.get(
+        "CAPIVARA_AGENT_CONFIG",
+        STATE_DIR.parent / "agent.json",
+    )
+)
 TEMP_DIR = Path(
     os.environ.get("CAPIVARA_AGENT_TEMP_DIR", tempfile.gettempdir())
 )
@@ -88,6 +94,111 @@ def accept_command(command: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _safe_request_id(request_id: str) -> str:
+    return "".join(
+        ch for ch in str(request_id)
+        if ch.isalnum() or ch in "-_"
+    )[:80]
+
+
+def _terminal_identity_path(request_id: str) -> Path:
+    return TEMP_DIR / (
+        f"capivara-uninstall-terminal-"
+        f"{_safe_request_id(request_id)}.json"
+    )
+
+
+def _stage_terminal_identity(request_id: str) -> Path:
+    try:
+        config = json.loads(
+            CONFIG_PATH.read_text(encoding="utf-8-sig")
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(
+            "Agent identity is unavailable for terminal "
+            "uninstall result"
+        ) from exc
+
+    if not isinstance(config, dict):
+        raise RuntimeError(
+            "Agent identity is invalid for terminal "
+            "uninstall result"
+        )
+
+    required = (
+        "controller_url",
+        "agent_id",
+        "fingerprint",
+        "credential_id",
+        "credential_secret",
+    )
+
+    missing = [
+        key
+        for key in required
+        if not str(config.get(key) or "").strip()
+    ]
+
+    if missing:
+        raise RuntimeError(
+            "Agent identity is incomplete for terminal "
+            "uninstall result"
+        )
+
+    identity = {
+        "controller_url": str(
+            config["controller_url"]
+        ).strip(),
+        "agent_id": str(
+            config["agent_id"]
+        ).strip(),
+        "fingerprint": str(
+            config["fingerprint"]
+        ).strip(),
+        "credential_id": str(
+            config["credential_id"]
+        ).strip(),
+        "credential_secret": str(
+            config["credential_secret"]
+        ),
+        "request_id": str(request_id).strip(),
+    }
+
+    path = _terminal_identity_path(request_id)
+
+    _atomic_json(path, identity)
+
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                [
+                    "icacls.exe",
+                    str(path),
+                    "/inheritance:r",
+                    "/grant:r",
+                    "*S-1-5-18:F",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                creationflags=getattr(
+                    subprocess,
+                    "CREATE_NO_WINDOW",
+                    0,
+                ),
+            )
+        except (
+            subprocess.CalledProcessError,
+            OSError,
+        ) as exc:
+            path.unlink(missing_ok=True)
+            raise RuntimeError(
+                "failed to protect terminal uninstall identity"
+            ) from exc
+
+    return path
+
+
 def _launch_paths(request_id: str) -> tuple[Path, Path]:
     staging = TEMP_DIR / f"capivara-uninstall-{request_id}.ps1"
     launch_lock = TEMP_DIR / f"capivara-uninstall-{request_id}.launched"
@@ -113,11 +224,11 @@ def _launch_uninstall(request_id: str, mode: str) -> bool:
         return False
     os.close(fd)
 
-    safe_id = "".join(
-        ch for ch in request_id
-        if ch.isalnum() or ch in "-_"
-    )[:80]
+    safe_id = _safe_request_id(request_id)
     task_name = f"CapivaraAgent-Uninstall-{safe_id}"
+    terminal_identity = _stage_terminal_identity(
+        request_id
+    )
 
     powershell = (
         Path(os.environ.get("SystemRoot", r"C:\Windows"))
@@ -140,6 +251,10 @@ def _launch_uninstall(request_id: str, mode: str) -> bool:
         str(STATE_DIR.parent),
         "-LauncherTaskName",
         task_name,
+        "-TerminalIdentityPath",
+        str(terminal_identity),
+        "-LaunchLockPath",
+        str(launch_lock),
     ]
     if mode == "purge":
         uninstall_arguments.append("-Purge")
@@ -211,6 +326,7 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Principal $principal
 
     except (subprocess.CalledProcessError, OSError) as exc:
         launch_lock.unlink(missing_ok=True)
+        terminal_identity.unlink(missing_ok=True)
 
         try:
             subprocess.run(
