@@ -2,12 +2,25 @@ param(
     [string]$InstallRoot = "$env:ProgramFiles\CapivaraAgent",
     [string]$DataRoot = "$env:ProgramData\CapivaraAgent",
     [string]$TaskName = "CapivaraAgent",
+    [string]$LauncherTaskName = "",
     [switch]$Purge
 )
 
 $ErrorActionPreference = "Stop"
 
-function Fail([string]$Message) { throw "[Capivara Agent] $Message" }
+$UninstallLog = Join-Path $env:TEMP "capivara-agent-uninstall.log"
+
+function Write-UninstallLog([string]$Message) {
+    $stamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    try {
+        Add-Content -LiteralPath $UninstallLog -Value "$stamp $Message" -Encoding UTF8
+    } catch {}
+}
+
+function Fail([string]$Message) {
+    Write-UninstallLog "FAILED: $Message"
+    throw "[Capivara Agent] $Message"
+}
 
 function Assert-SafeRoot([string]$Path, [string]$Label) {
     if ([string]::IsNullOrWhiteSpace($Path)) { Fail "$Label vazio" }
@@ -37,6 +50,13 @@ try {
         Write-Host "[Capivara Agent] outra desinstalação já está em andamento; encerrando tentativa duplicada."
         exit 0
     }
+
+    Write-UninstallLog "START mode=$(if ($Purge) { 'purge' } else { 'preserve-data' }) install=$InstallRoot data=$DataRoot"
+
+    # The detached worker can start a fraction of a second before the Agent and
+    # its scheduled-task wrapper have fully released files. Give Windows a
+    # deterministic grace period before destructive cleanup.
+    Start-Sleep -Seconds 3
 
     Write-Host "[Capivara Agent] removendo integração do Windows..."
 
@@ -100,10 +120,28 @@ try {
     } else {
         Write-Host "[Capivara Agent] Agent removido. instances/backups foram preservados quando existentes."
     }
+
+    Write-UninstallLog "COMPLETED"
+}
+catch {
+    Write-UninstallLog ("ERROR: " + $_.Exception.Message)
+    throw
 }
 finally {
     if ($lockAcquired) {
         try { $mutex.ReleaseMutex() } catch {}
     }
     $mutex.Dispose()
+
+    # This script may itself be running from the temporary uninstall
+    # Scheduled Task. Remove that task only after all destructive
+    # cleanup and logging have finished.
+    if (-not [string]::IsNullOrWhiteSpace($LauncherTaskName)) {
+        try {
+            Unregister-ScheduledTask `
+                -TaskName $LauncherTaskName `
+                -Confirm:$false `
+                -ErrorAction SilentlyContinue
+        } catch {}
+    }
 }

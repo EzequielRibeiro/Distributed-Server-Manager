@@ -78,32 +78,71 @@ class WindowsUninstallClientTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "does not match commit"):
             self.client.handle_command(command)
 
-    @patch("subprocess.Popen")
-    def test_commit_launches_detached_preserve_data_uninstall(self, popen):
+    @patch("subprocess.run")
+    def test_commit_launches_independent_preserve_data_uninstall(self, run):
         self.client.handle_command(self.command())
-        result = self.client.handle_command(self.command(phase="commit"))
+
+        result = self.client.handle_command(
+            self.command(phase="commit")
+        )
+
         self.assertEqual(result["status"], "committed")
-        args = popen.call_args.args[0]
-        self.assertIn("-File", args)
+        self.assertEqual(run.call_count, 2)
+
+        register_args = run.call_args_list[0].args[0]
+        start_args = run.call_args_list[1].args[0]
+
+        self.assertIn("-File", register_args)
+        self.assertIn("-TaskName", register_args)
+        self.assertIn("-Execute", register_args)
+        self.assertIn("-Arguments", register_args)
+
+        task_name_index = register_args.index("-TaskName") + 1
+        task_name = register_args[task_name_index]
+
+        self.assertEqual(
+            task_name,
+            "CapivaraAgent-Uninstall-uninstall-test-1",
+        )
+
+        argument_index = register_args.index("-Arguments") + 1
+        uninstall_args = register_args[argument_index]
+
+        self.assertIn("-File", uninstall_args)
         self.assertIn(
             "capivara-uninstall-uninstall-test-1.ps1",
-            " ".join(str(value) for value in args),
+            uninstall_args,
         )
-        self.assertNotIn("-Command", args)
-        self.assertNotIn("-Purge", args)
-        self.assertEqual(self.client.read_result()["status"], "committed")
+        self.assertIn("-LauncherTaskName", uninstall_args)
+        self.assertIn(
+            "CapivaraAgent-Uninstall-uninstall-test-1",
+            uninstall_args,
+        )
+        self.assertNotIn("-Command", uninstall_args)
+        self.assertNotIn("-Purge", uninstall_args)
 
-    @patch("subprocess.Popen")
-    def test_commit_replay_does_not_spawn_again(self, popen):
+        self.assertEqual(start_args[0], "schtasks.exe")
+        self.assertIn("/Run", start_args)
+        self.assertNotIn("/Create", start_args)
+        self.assertNotIn("/SC", start_args)
+        self.assertNotIn("/ST", start_args)
+
+        self.assertEqual(
+            self.client.read_result()["status"],
+            "committed",
+        )
+
+    @patch("subprocess.run")
+    def test_commit_replay_does_not_spawn_again(self, run):
         self.client.handle_command(self.command())
         first = self.client.handle_command(self.command(phase="commit"))
         second = self.client.handle_command(self.command(phase="commit"))
         self.assertEqual(first["status"], "committed")
         self.assertEqual(second["status"], "committed")
-        self.assertEqual(popen.call_count, 1)
+        self.assertEqual(run.call_count, 2)
 
-    @patch("subprocess.Popen")
-    def test_committed_request_recovers_when_launch_lock_is_missing(self, popen):
+    @patch("subprocess.run")
+    def test_committed_request_recovers_when_launch_lock_is_missing(self, run):
         self.client.handle_command(self.command())
         self.client.handle_command(self.command(phase="commit"))
 
@@ -115,16 +154,35 @@ class WindowsUninstallClientTest(unittest.TestCase):
         recovered = self.client.resume_pending_commit()
 
         self.assertTrue(recovered)
-        self.assertEqual(popen.call_count, 2)
+        self.assertEqual(run.call_count, 4)
         self.assertTrue(launch_lock.exists())
 
-    @patch("subprocess.Popen")
-    def test_commit_adds_purge_only_for_explicit_purge_mode(self, popen):
-        self.client.handle_command(self.command(mode="purge"))
-        result = self.client.handle_command(self.command(mode="purge", phase="commit"))
-        self.assertEqual(result["mode"], "purge")
-        self.assertIn("-Purge", popen.call_args.args[0])
+    @patch("subprocess.run")
+    def test_commit_adds_purge_only_for_explicit_purge_mode(self, run):
+        self.client.handle_command(
+            self.command(mode="purge")
+        )
 
+        result = self.client.handle_command(
+            self.command(
+                mode="purge",
+                phase="commit",
+            )
+        )
+
+        self.assertEqual(result["mode"], "purge")
+        self.assertEqual(run.call_count, 2)
+
+        register_args = run.call_args_list[0].args[0]
+
+        self.assertIn("-Arguments", register_args)
+
+        argument_index = register_args.index("-Arguments") + 1
+        uninstall_args = register_args[argument_index]
+
+        self.assertIn("-Purge", uninstall_args)
+        self.assertNotIn("/SC", register_args)
+        self.assertNotIn("/ST", register_args)
 
 if __name__ == "__main__":
     unittest.main()

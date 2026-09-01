@@ -95,7 +95,7 @@ def _launch_paths(request_id: str) -> tuple[Path, Path]:
 
 
 def _launch_uninstall(request_id: str, mode: str) -> bool:
-    """Stage and launch the fixed uninstall script without PowerShell -Command."""
+    """Launch uninstall through an independent SYSTEM Scheduled Task."""
     script = INSTALL_ROOT / "service" / "uninstall-agent.ps1"
     if not script.is_file():
         raise RuntimeError("Windows Agent uninstall script is not installed")
@@ -104,7 +104,6 @@ def _launch_uninstall(request_id: str, mode: str) -> bool:
     staging, launch_lock = _launch_paths(request_id)
     staging.write_bytes(script.read_bytes())
 
-    # Atomic replay guard is created by Python itself, before spawning PowerShell.
     try:
         fd = os.open(
             str(launch_lock),
@@ -112,11 +111,23 @@ def _launch_uninstall(request_id: str, mode: str) -> bool:
         )
     except FileExistsError:
         return False
-
     os.close(fd)
 
-    arguments = [
-        "powershell.exe",
+    safe_id = "".join(
+        ch for ch in request_id
+        if ch.isalnum() or ch in "-_"
+    )[:80]
+    task_name = f"CapivaraAgent-Uninstall-{safe_id}"
+
+    powershell = (
+        Path(os.environ.get("SystemRoot", r"C:\Windows"))
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+
+    uninstall_arguments = [
         "-NoProfile",
         "-NonInteractive",
         "-ExecutionPolicy",
@@ -127,30 +138,110 @@ def _launch_uninstall(request_id: str, mode: str) -> bool:
         str(INSTALL_ROOT),
         "-DataRoot",
         str(STATE_DIR.parent),
+        "-LauncherTaskName",
+        task_name,
     ]
     if mode == "purge":
-        arguments.append("-Purge")
+        uninstall_arguments.append("-Purge")
 
-    flags = (
-        getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        | getattr(subprocess, "DETACHED_PROCESS", 0)
-        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    task_arguments = subprocess.list2cmdline(
+        uninstall_arguments
+    )
+
+    register_script = TEMP_DIR / (
+        f"capivara-uninstall-register-{safe_id}.ps1"
+    )
+
+    register_script.write_text(
+        """param(
+[Parameter(Mandatory=$true)][string]$TaskName,
+[Parameter(Mandatory=$true)][string]$Execute,
+[Parameter(Mandatory=$true)][string]$Arguments
+)
+$ErrorActionPreference = "Stop"
+$action = New-ScheduledTaskAction -Execute $Execute -Argument $Arguments
+$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+$settings = New-ScheduledTaskSettingsSet
+Register-ScheduledTask -TaskName $TaskName -Action $action -Principal $principal -Settings $settings -Force | Out-Null
+""",
+        encoding="utf-8",
+    )
+
+    creation_flags = getattr(
+        subprocess,
+        "CREATE_NO_WINDOW",
+        0,
     )
 
     try:
-        subprocess.Popen(
-            arguments,
-            creationflags=flags,
-            close_fds=True,
+        subprocess.run(
+            [
+                str(powershell),
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(register_script),
+                "-TaskName",
+                task_name,
+                "-Execute",
+                str(powershell),
+                "-Arguments",
+                task_arguments,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            creationflags=creation_flags,
         )
-    except Exception:
+
+        subprocess.run(
+            [
+                "schtasks.exe",
+                "/Run",
+                "/TN",
+                task_name,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            creationflags=creation_flags,
+        )
+
+    except (subprocess.CalledProcessError, OSError) as exc:
         launch_lock.unlink(missing_ok=True)
-        staging.unlink(missing_ok=True)
-        raise
+
+        try:
+            subprocess.run(
+                [
+                    "schtasks.exe",
+                    "/Delete",
+                    "/TN",
+                    task_name,
+                    "/F",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                creationflags=creation_flags,
+            )
+        except OSError:
+            pass
+
+        stderr = str(getattr(exc, "stderr", "") or "").strip()
+        stdout = str(getattr(exc, "stdout", "") or "").strip()
+        detail = stderr or stdout or str(exc)
+
+        raise RuntimeError(
+            "failed to launch Windows uninstall task: "
+            + detail
+        ) from exc
+
+    finally:
+        register_script.unlink(missing_ok=True)
 
     return True
-
-
 def resume_pending_commit() -> bool:
     """Recover a committed request whose detached launcher never started."""
     try:
