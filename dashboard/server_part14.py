@@ -49,6 +49,7 @@ DASHBOARD_V3_FILES = {
     "/agent-details.js": legacy.WEB_DIR / "agent-details.js",
     "/agent-details.css": legacy.WEB_DIR / "agent-details.css",
     "/agent-alert-link.js": legacy.WEB_DIR / "agent-alert-link.js",
+    "/agent-uninstall-admin.js": legacy.WEB_DIR / "agent-uninstall-admin.js",
     "/agent-storage-pools.js": legacy.WEB_DIR / "agent-storage-pools.js",
     "/agent-storage-pools.css": legacy.WEB_DIR / "agent-storage-pools.css",
     "/storage-pool-source-cleanup.js": legacy.WEB_DIR / "storage-pool-source-cleanup.js",

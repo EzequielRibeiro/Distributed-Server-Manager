@@ -29,6 +29,7 @@ from agent_pairing_repository import (
     PairingTokenInvalid,
 )
 from agent_update_repository import AgentUpdateRepository
+from agent_uninstall_repository import AgentUninstallRepository
 from deleted_backup_vault_repository import DeletedBackupVaultRepository
 from instance_backup_clone_repository import InstanceBackupCloneRepository
 from instance_provisioning_projection import project_agent_provisioning
@@ -78,6 +79,31 @@ def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, di
         "pairing_token_consumed": bool(result.get("pairing_token_consumed")),
         "installation_tracking_bound": tracking_bound,
     }
+
+
+def _attach_uninstall_state(result, body, *, agent_id, backend):
+    """Exchange typed remote-uninstall result and command over heartbeat."""
+    uninstall = AgentUninstallRepository(backend)
+
+    reported = (
+        body.get("uninstall_result")
+        if isinstance(body.get("uninstall_result"), dict)
+        else None
+    )
+
+    reported_state = (
+        uninstall.apply_result(agent_id, reported)
+        if reported is not None
+        else None
+    )
+
+    command = uninstall.command_for_agent(agent_id)
+    if command is not None:
+        result["uninstall_command"] = command
+
+    state = reported_state or uninstall.state(agent_id)
+    if state is not None:
+        result["uninstall_state"] = state
 
 
 def _attach_update_state(result, body, *, agent_id, backend):
@@ -260,6 +286,7 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
         if status == "pairing":
             status = AgentLifecycleRepository(backend).transition(agent_id, "active").target
         result["status"] = status
+        _attach_uninstall_state(result, body, agent_id=agent_id, backend=backend)
         _attach_update_state(result, body, agent_id=agent_id, backend=backend)
         _attach_provisioning_state(result, body, agent_id=agent_id, backend=backend)
         provisioning_state = result.get("provisioning_state") if isinstance(result.get("provisioning_state"), dict) else {}

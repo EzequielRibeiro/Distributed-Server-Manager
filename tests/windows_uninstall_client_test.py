@@ -30,6 +30,7 @@ class WindowsUninstallClientTest(unittest.TestCase):
                 "ProgramFiles": str(self.program_files),
                 "CAPIVARA_AGENT_ROOT": str(self.install_root),
                 "CAPIVARA_AGENT_STATE_DIR": str(self.state_dir),
+                "CAPIVARA_AGENT_TEMP_DIR": str(Path(self.temp.name) / "Temp"),
             },
             clear=False,
         )
@@ -83,10 +84,13 @@ class WindowsUninstallClientTest(unittest.TestCase):
         result = self.client.handle_command(self.command(phase="commit"))
         self.assertEqual(result["status"], "committed")
         args = popen.call_args.args[0]
-        command = args[-1]
-        self.assertIn("capivara-uninstall-uninstall-test-1.ps1", command)
-        self.assertIn("FileMode]::CreateNew", command)
-        self.assertNotIn("-Purge", command)
+        self.assertIn("-File", args)
+        self.assertIn(
+            "capivara-uninstall-uninstall-test-1.ps1",
+            " ".join(str(value) for value in args),
+        )
+        self.assertNotIn("-Command", args)
+        self.assertNotIn("-Purge", args)
         self.assertEqual(self.client.read_result()["status"], "committed")
 
     @patch("subprocess.Popen")
@@ -99,11 +103,27 @@ class WindowsUninstallClientTest(unittest.TestCase):
         self.assertEqual(popen.call_count, 1)
 
     @patch("subprocess.Popen")
+    def test_committed_request_recovers_when_launch_lock_is_missing(self, popen):
+        self.client.handle_command(self.command())
+        self.client.handle_command(self.command(phase="commit"))
+
+        _staging, launch_lock = self.client._launch_paths(
+            "uninstall-test-1"
+        )
+        launch_lock.unlink()
+
+        recovered = self.client.resume_pending_commit()
+
+        self.assertTrue(recovered)
+        self.assertEqual(popen.call_count, 2)
+        self.assertTrue(launch_lock.exists())
+
+    @patch("subprocess.Popen")
     def test_commit_adds_purge_only_for_explicit_purge_mode(self, popen):
         self.client.handle_command(self.command(mode="purge"))
         result = self.client.handle_command(self.command(mode="purge", phase="commit"))
         self.assertEqual(result["mode"], "purge")
-        self.assertIn("-Purge", popen.call_args.args[0][-1])
+        self.assertIn("-Purge", popen.call_args.args[0])
 
 
 if __name__ == "__main__":

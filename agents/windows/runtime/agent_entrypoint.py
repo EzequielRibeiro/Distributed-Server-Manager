@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import agent
-from uninstall_client import accept_command, clear_result, commit, read_result
+from uninstall_client import (
+    accept_command,
+    clear_result,
+    commit,
+    read_result,
+    resume_pending_commit,
+)
 
 
 def _inventory_with_uninstall(config):
@@ -58,4 +64,8 @@ agent.heartbeat = _heartbeat_with_uninstall
 
 
 if __name__ == "__main__":
+    # Recover the narrow crash window in which "committed" was persisted but
+    # the detached PowerShell process never actually received control.
+    if resume_pending_commit():
+        raise SystemExit(0)
     agent.run_forever()
