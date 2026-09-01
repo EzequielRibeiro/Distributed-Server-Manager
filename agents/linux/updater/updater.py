@@ -17,12 +17,14 @@ from typing import Any
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 INSTALL_ROOT = Path(os.environ.get("CAPIVARA_AGENT_ROOT", "/opt/capivara-agent"))
+CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
 CLI_PATH = Path(os.environ.get("CAPIVARA_AGENT_CLI_PATH", "/usr/local/bin/cap"))
 POLKIT_RULES_DIR = Path(os.environ.get("CAPIVARA_POLKIT_RULES_DIR", "/etc/polkit-1/rules.d"))
 SYSTEMD_DIR = Path(os.environ.get("SYSTEMD_DIR", "/etc/systemd/system"))
 REQUEST_PATH = STATE_DIR / "update-request.json"
 RESULT_PATH = STATE_DIR / "update-result.json"
 HISTORY_DIR = STATE_DIR / "update-history"
+AGENT_LOG = STATE_DIR / "agent-runtime.log"
 REPOSITORY = os.environ.get("CAPIVARA_AGENT_GITHUB_REPOSITORY", "EzequielRibeiro/Distributed-Server-Manager")
 
 
@@ -58,6 +60,25 @@ def _read_request_summary() -> dict[str, Any]:
     try: request = json.loads(REQUEST_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError): return {}
     return {key: request.get(key) for key in ("desired_version", "channel", "rollout_id", "batch_number")} if isinstance(request, dict) else {}
+
+
+def _load_persistent_identity() -> dict[str, Any]:
+    try:
+        config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"persistent Agent identity is unreadable: {exc}") from exc
+    if not isinstance(config, dict):
+        raise RuntimeError("persistent Agent identity must be a JSON object")
+    required = ("controller_url", "agent_id", "node_id", "fingerprint", "credential_id", "credential_secret")
+    missing = [key for key in required if not str(config.get(key) or "").strip()]
+    if missing:
+        raise RuntimeError(
+            "persistent Agent identity is incomplete; relink/recovery required before update: "
+            + ", ".join(missing)
+        )
+    if str(config.get("pairing_token") or "").strip():
+        raise RuntimeError("persistent Agent identity still contains a pairing_token; relink/recovery required before update")
+    return config
 
 
 def _download(url: str, path: Path) -> None:
@@ -189,13 +210,46 @@ def _validate_installed(version: str, manifest: dict[str, Any], mapping: list[tu
     if not CLI_PATH.is_symlink() or os.path.realpath(CLI_PATH) != os.path.realpath(INSTALL_ROOT / "runtime/cap_dispatch.py"): raise RuntimeError("Agent CLI symlink target is invalid")
 
 
-def _restart_agent() -> None:
+def _log_checkpoint() -> tuple[int | None, int]:
+    try:
+        stat = AGENT_LOG.stat()
+        return stat.st_ino, stat.st_size
+    except OSError:
+        return None, 0
+
+
+def _heartbeat_ok_since(checkpoint: tuple[int | None, int], expected_agent_id: str) -> bool:
+    old_inode, old_size = checkpoint
+    try:
+        stat = AGENT_LOG.stat()
+        start = old_size if old_inode == stat.st_ino and stat.st_size >= old_size else 0
+        with AGENT_LOG.open("rb") as handle:
+            handle.seek(start)
+            payload = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return False
+    expected = f"INFO heartbeat ok agent={expected_agent_id} health=online status=active"
+    return expected in payload
+
+
+def _restart_agent(expected_agent_id: str) -> None:
+    checkpoint = _log_checkpoint()
     completed = subprocess.run(["systemctl", "restart", "capivara-agent.service"], capture_output=True, text=True, check=False, timeout=30)
     if completed.returncode != 0: raise RuntimeError((completed.stderr or completed.stdout or "Agent restart failed")[:2000])
-    for _ in range(10):
-        if subprocess.run(["systemctl", "is-active", "--quiet", "capivara-agent.service"], check=False, timeout=5).returncode == 0: return
+    deadline = time.monotonic() + 45.0
+    observed_active = False
+    while time.monotonic() < deadline:
+        active = subprocess.run(["systemctl", "is-active", "--quiet", "capivara-agent.service"], check=False, timeout=5).returncode == 0
+        if active:
+            observed_active = True
+            if _heartbeat_ok_since(checkpoint, expected_agent_id):
+                return
+        elif observed_active:
+            raise RuntimeError("Agent service left active state before confirming a post-update heartbeat")
         time.sleep(0.5)
-    raise RuntimeError("Agent service did not become active after update")
+    if not observed_active:
+        raise RuntimeError("Agent service did not become active after update")
+    raise RuntimeError("Agent did not confirm an accepted post-update heartbeat within 45 seconds")
 
 
 def apply_request() -> int:
@@ -206,6 +260,8 @@ def apply_request() -> int:
     if not version: raise RuntimeError("desired_version is required")
     if channel not in {"stable", "beta", "local/manual"}: raise RuntimeError("unsupported update channel")
     if channel == "local/manual": raise RuntimeError("local/manual updates require administrator supplied package")
+    identity = _load_persistent_identity()
+    expected_agent_id = str(identity["agent_id"])
     plain = version[1:] if version.startswith("v") else version; tag = version if version.startswith("v") else f"v{version}"
     package_name = f"capivara-agent-linux-{plain}"; archive_name = package_name + ".tar.gz"; manifest_name = package_name + ".manifest.json"; base = f"https://github.com/{REPOSITORY}/releases/download/{tag}"
     with tempfile.TemporaryDirectory(prefix="capivara-agent-update-") as temporary:
@@ -217,7 +273,7 @@ def apply_request() -> int:
         root = extract / package_name; manifest = _verify_package(root, plain, channel, external); _validate_python(root)
         mapping = _mapping(root); cli_existed, old_cli_target = _validate_cli_target(); snapshots = _snapshot_files(mapping, work / "rollback")
         try:
-            _apply_files(mapping); _daemon_reload(); _reconcile_runtime_identity(); _reconcile_cli(); _validate_installed(plain, manifest, mapping); _restart_agent()
+            _apply_files(mapping); _daemon_reload(); _reconcile_runtime_identity(); _reconcile_cli(); _validate_installed(plain, manifest, mapping); _restart_agent(expected_agent_id)
         except Exception:
             _restore_files(snapshots); _restore_cli(cli_existed, old_cli_target)
             try: _daemon_reload()
