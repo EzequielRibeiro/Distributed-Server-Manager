@@ -64,7 +64,6 @@ class PlacementStatusRepository:
             result: dict[str, Any] = {}
             for name, table in (
                 ("controllers", "controllers"),
-                ("agents", "agents"),
                 ("customers", "customers"),
                 ("instances", "instances"),
                 ("regions", "regions"),
@@ -73,6 +72,19 @@ class PlacementStatusRepository:
             ):
                 result[name] = self._count(session, f"SELECT COUNT(*) AS total FROM {table}")
 
+            result["registered_agents"] = self._count(
+                session,
+                "SELECT COUNT(*) AS total FROM agents",
+            )
+            result["decommissioned_agents"] = self._count(
+                session,
+                "SELECT COUNT(*) AS total FROM agents WHERE status='decommissioned'",
+            )
+            result["agents"] = self._count(
+                session,
+                "SELECT COUNT(*) AS total FROM agents WHERE status<>'decommissioned'",
+            )
+
             result["pending_agents"] = self._count(
                 session,
                 "SELECT COUNT(*) AS total FROM agents WHERE status IN ('discovered','pending','pairing')",
@@ -80,19 +92,26 @@ class PlacementStatusRepository:
             result["unlocated_agents"] = self._count(
                 session,
                 "SELECT COUNT(*) AS total FROM agents a "
-                "LEFT JOIN agent_locations al ON al.agent_id=a.id WHERE al.agent_id IS NULL",
+                "LEFT JOIN agent_locations al ON al.agent_id=a.id "
+                "WHERE al.agent_id IS NULL AND a.status<>'decommissioned'",
             )
             result["online_agents"] = self._count(
                 session,
-                "SELECT COUNT(*) AS total FROM agent_runtime_inventory WHERE health_status='online'",
+                "SELECT COUNT(*) AS total FROM agent_runtime_inventory ari "
+                "JOIN agents a ON a.id=ari.agent_id "
+                "WHERE ari.health_status='online' AND a.status<>'decommissioned'",
             )
             result["degraded_agents"] = self._count(
                 session,
-                "SELECT COUNT(*) AS total FROM agent_runtime_inventory WHERE health_status='degraded'",
+                "SELECT COUNT(*) AS total FROM agent_runtime_inventory ari "
+                "JOIN agents a ON a.id=ari.agent_id "
+                "WHERE ari.health_status='degraded' AND a.status<>'decommissioned'",
             )
             result["offline_agents"] = self._count(
                 session,
-                "SELECT COUNT(*) AS total FROM agent_runtime_inventory WHERE health_status='offline'",
+                "SELECT COUNT(*) AS total FROM agent_runtime_inventory ari "
+                "JOIN agents a ON a.id=ari.agent_id "
+                "WHERE ari.health_status='offline' AND a.status<>'decommissioned'",
             )
             result["eligible_agents"] = self._count(
                 session,
