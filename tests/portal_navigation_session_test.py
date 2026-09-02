@@ -76,7 +76,7 @@ class PortalNavigationSessionTest(unittest.TestCase):
         handler = _Handler("/components/sidebar-v3.html")
         with patch.object(guard, "session_user_from_headers", return_value=None):
             _Legacy.DashboardHandler.do_GET(handler)
-        self.assertIn(("json", 401, {"error": "authentication_required"}), handler.events)
+        self.assertIn(("json", 401, {"error": "authentication_required", "area": "controller"}), handler.events)
         self.assertNotIn(("header", "Location", "/login.html"), handler.events)
 
     def test_customer_page_uses_customer_cookie_even_when_controller_cookie_also_exists(self):
@@ -115,7 +115,7 @@ class PortalNavigationSessionTest(unittest.TestCase):
         handler = _Handler("/customer-navigation.js?v=2")
         with patch.object(guard, "session_user_from_headers", return_value=None):
             _Legacy.DashboardHandler.do_GET(handler)
-        self.assertIn(("json", 401, {"error": "authentication_required"}), handler.events)
+        self.assertIn(("json", 401, {"error": "authentication_required", "area": "customer"}), handler.events)
         self.assertNotIn(("header", "Location", "/customer-login.html"), handler.events)
 
     def test_controller_page_without_controller_session_redirects_to_controller_login(self):
