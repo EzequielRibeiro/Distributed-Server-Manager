@@ -7,6 +7,7 @@ from typing import Any
 from agent_instance_reconciliation_repository import AgentInstanceReconciliationRepository
 from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
 from agent_runtime_repository import AgentRuntimeRepository
+from agent_uninstall_repository import AgentUninstallRepository
 from artifact_transfer_repository import ArtifactTransferRepository
 from automation_repository import AutomationRepository
 from backup_repository import BackupRepository
@@ -26,117 +27,46 @@ HOST_IDENTITY_METADATA_KEY = "capivara_host_identity_v1"
 class AgentHostIdentityRequired(PermissionError):
     def __init__(self, agent_id):
         self.agent_id = str(agent_id)
-        super().__init__(
-            f"Agent {self.agent_id} must report host_identity"
-        )
+        super().__init__(f"Agent {self.agent_id} must report host_identity")
 
 
 class AgentHostIdentityCollision(PermissionError):
     def __init__(self, agent_id, expected, presented):
-        self.agent_id = str(agent_id)
-        self.expected = str(expected)
-        self.presented = str(presented)
-        super().__init__(
-            f"Agent host identity collision: {self.agent_id}"
-        )
+        self.agent_id = str(agent_id);self.expected = str(expected);self.presented = str(presented)
+        super().__init__(f"Agent host identity collision: {self.agent_id}")
 
 
 def _metadata_dict(raw):
-    if raw is None:
-        return {}
-
-    if isinstance(raw, dict):
-        return dict(raw)
-
-    if isinstance(raw, (bytes, bytearray)):
-        try:
-            value = json.loads(raw.decode("utf-8"))
-        except Exception:
-            return {}
+    if raw is None:return {}
+    if isinstance(raw,dict):return dict(raw)
+    if isinstance(raw,(bytes,bytearray)):
+        try:value=json.loads(raw.decode("utf-8"))
+        except Exception:return {}
     else:
-        try:
-            value = json.loads(str(raw))
-        except Exception:
-            return {}
-
-    return value if isinstance(value, dict) else {}
+        try:value=json.loads(str(raw))
+        except Exception:return {}
+    return value if isinstance(value,dict) else {}
 
 
-def _validate_host_identity(agent_id, body, *, backend):
+def _validate_host_identity(agent_id,body,*,backend):
     """Bind one physical host identity to one logical Agent."""
-    presented = str(body.get("host_identity") or "").strip()
-
-    dialect = dialect_for_backend(backend)
-    ph = dialect.placeholder
-
+    presented=str(body.get("host_identity") or "").strip();dialect=dialect_for_backend(backend);ph=dialect.placeholder
     with backend.transaction() as connection:
-        session = AlertSession(backend, connection)
+        session=AlertSession(backend,connection)
         try:
-            # Serialize concurrent attempts to establish the first binding.
-            session.execute(
-                f"UPDATE agents SET metadata_json=metadata_json WHERE id={ph}",
-                (agent_id,),
-            )
-
-            row = session.execute(
-                f"SELECT metadata_json FROM agents WHERE id={ph}",
-                (agent_id,),
-            ).fetchone()
-
-            if row is None:
-                raise LookupError(f"Agent not found: {agent_id}")
-
-            metadata = _metadata_dict(row["metadata_json"])
-
-            expected = str(
-                metadata.get(HOST_IDENTITY_METADATA_KEY) or ""
-            ).strip()
-
-            # A binding already exists: fail closed.
+            session.execute(f"UPDATE agents SET metadata_json=metadata_json WHERE id={ph}",(agent_id,))
+            row=session.execute(f"SELECT metadata_json FROM agents WHERE id={ph}",(agent_id,)).fetchone()
+            if row is None:raise LookupError(f"Agent not found: {agent_id}")
+            metadata=_metadata_dict(row["metadata_json"]);expected=str(metadata.get(HOST_IDENTITY_METADATA_KEY) or "").strip()
             if expected:
-                if not presented:
-                    raise AgentHostIdentityRequired(agent_id)
-
-                if presented != expected:
-                    raise AgentHostIdentityCollision(
-                        agent_id,
-                        expected,
-                        presented,
-                    )
-
-                return {
-                    "status": "matched",
-                    "host_identity": expected,
-                }
-
-            # Compatibility with Agents running an older runtime.
-            if not presented:
-                return {
-                    "status": "legacy-unbound",
-                    "host_identity": None,
-                }
-
-            # First modern heartbeat establishes the binding.
-            metadata[HOST_IDENTITY_METADATA_KEY] = presented
-
-            session.execute(
-                f"UPDATE agents SET metadata_json={ph} WHERE id={ph}",
-                (
-                    json.dumps(
-                        metadata,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ),
-                    agent_id,
-                ),
-            )
-
-            return {
-                "status": "bound",
-                "host_identity": presented,
-            }
-        finally:
-            session.close()
+                if not presented:raise AgentHostIdentityRequired(agent_id)
+                if presented!=expected:raise AgentHostIdentityCollision(agent_id,expected,presented)
+                return {"status":"matched","host_identity":expected}
+            if not presented:return {"status":"legacy-unbound","host_identity":None}
+            metadata[HOST_IDENTITY_METADATA_KEY]=presented
+            session.execute(f"UPDATE agents SET metadata_json={ph} WHERE id={ph}",(json.dumps(metadata,sort_keys=True,separators=(",",":")),agent_id))
+            return {"status":"bound","host_identity":presented}
+        finally:session.close()
 
 
 def _metric_token(value:Any)->str:
@@ -199,31 +129,22 @@ def _observability_from_heartbeat(agent_id,body):
    if isinstance(value,(int,float)) and not isinstance(value,bool):result.append({"metric_name":name,"metric_type":"gauge","value":value,"unit":unit,"scope_type":"agent"})
  samples=body.get("instance_telemetry")
  if isinstance(samples,list):
-  players_online=0;players_capacity=0;instances_reporting=0;instances_running=0;storage_used=0
-  players_seen=False;capacity_seen=False;storage_seen=False
+  players_online=0;players_capacity=0;instances_reporting=0;instances_running=0;storage_used=0;players_seen=False;capacity_seen=False;storage_seen=False
   for item in samples[:500]:
    if not isinstance(item,dict):continue
-   instances_reporting+=1
-   health=str(item.get("health") or "").lower()
+   instances_reporting+=1;health=str(item.get("health") or "").lower()
    if health=="healthy":instances_running+=1
    value=item.get("players_online")
-   if isinstance(value,(int,float)) and not isinstance(value,bool):
-    players_online+=max(0,value);players_seen=True
+   if isinstance(value,(int,float)) and not isinstance(value,bool):players_online+=max(0,value);players_seen=True
    value=item.get("players_max")
-   if isinstance(value,(int,float)) and not isinstance(value,bool):
-    players_capacity+=max(0,value);capacity_seen=True
+   if isinstance(value,(int,float)) and not isinstance(value,bool):players_capacity+=max(0,value);capacity_seen=True
    value=item.get("storage_used_bytes")
-   if isinstance(value,(int,float)) and not isinstance(value,bool):
-    storage_used+=max(0,value);storage_seen=True
-  aggregates=[
-   ("capivara.agent.instances.total",instances_reporting,"instances"),
-   ("capivara.agent.instances.running",instances_running,"instances"),
-  ]
+   if isinstance(value,(int,float)) and not isinstance(value,bool):storage_used+=max(0,value);storage_seen=True
+  aggregates=[("capivara.agent.instances.total",instances_reporting,"instances"),("capivara.agent.instances.running",instances_running,"instances")]
   if players_seen:aggregates.append(("capivara.agent.players.online",players_online,"players"))
   if capacity_seen:aggregates.append(("capivara.agent.players.capacity",players_capacity,"players"))
   if storage_seen:aggregates.append(("capivara.agent.instances.storage_used_bytes",storage_used,"bytes"))
-  for name,value,unit in aggregates:
-   result.append({"metric_name":name,"metric_type":"gauge","value":value,"unit":unit,"scope_type":"agent"})
+  for name,value,unit in aggregates:result.append({"metric_name":name,"metric_type":"gauge","value":value,"unit":unit,"scope_type":"agent"})
  health_map={"healthy":1.0,"transitioning":.5,"unknown":-1.0,"degraded":0.0}
  for item in body.get("instance_runtime_health") or []:
   if not isinstance(item,dict) or not item.get("instance_id"):continue
@@ -267,6 +188,10 @@ def _storage_pool_migration_exchange(agent_id,body,*,backend):
  cmd=repo.command_for_agent(agent_id)
  if cmd is not None:repo.mark_delivered(str(cmd["migration_id"]))
  return cmd,state
+def _uninstall_exchange(agent_id,body,*,backend):
+ repo=AgentUninstallRepository(backend);repo.initialize();state=None;reported=body.get("uninstall_result")
+ if isinstance(reported,dict):state=repo.apply_result(agent_id,reported)
+ return repo.command_for_agent(agent_id),state
 def record_agent_heartbeat(authenticated_agent_id,payload,*,backend,root=None):
  agent_id=str(authenticated_agent_id or "").strip()
  if not agent_id:raise PermissionError("authenticated Agent identity required")
@@ -291,5 +216,5 @@ def record_agent_heartbeat(authenticated_agent_id,payload,*,backend,root=None):
  if isinstance(reported_broadcasts,list):automations.record_broadcast_state(agent_id,reported_broadcasts)
  broadcast_commands=automations.desired_for_agent(agent_id)
  for command in broadcast_commands:command["agent_id"]=agent_id
- console_command,console_state=_console_exchange(agent_id,body,backend=backend);file_command,file_state=_file_exchange(agent_id,body,backend=backend);resource_command,resource_state=_resource_exchange(agent_id,body,backend=backend);artifact_command,artifact_state=_artifact_exchange(agent_id,body,backend=backend,root=root);storage_pool_migration_command,storage_pool_migration_state=_storage_pool_migration_exchange(agent_id,body,backend=backend);last_seen=repository.heartbeat(agent_id)
- return {"agent_id":agent_id,"health_status":"online","last_seen":last_seen,"accepted_event_ids":event_result["accepted_event_ids"],"events_accepted":event_result["accepted"],"events_created":event_result["created"],"events_rejected":event_result["rejected"],"metrics_accepted":metric_result["accepted"],"metrics_created":metric_result["created"],"metrics_rejected":metric_result["rejected"],"instance_telemetry_accepted":telemetry_count,"configuration_commands":desired_configuration,"configuration_count":len(desired_configuration),"content_commands":desired_content,"content_count":len(desired_content),"backup_commands":backup_commands,"backup_count":len(backup_commands),"broadcast_commands":broadcast_commands,"broadcast_count":len(broadcast_commands),"console_command":console_command,"console_state":console_state,"file_command":file_command,"file_state":file_state,"resource_command":resource_command,"resource_state":resource_state,"artifact_command":artifact_command,"artifact_state":artifact_state,"storage_pool_migration_command":storage_pool_migration_command,"storage_pool_migration_state":storage_pool_migration_state}
+ console_command,console_state=_console_exchange(agent_id,body,backend=backend);file_command,file_state=_file_exchange(agent_id,body,backend=backend);resource_command,resource_state=_resource_exchange(agent_id,body,backend=backend);artifact_command,artifact_state=_artifact_exchange(agent_id,body,backend=backend,root=root);storage_pool_migration_command,storage_pool_migration_state=_storage_pool_migration_exchange(agent_id,body,backend=backend);uninstall_command,uninstall_state=_uninstall_exchange(agent_id,body,backend=backend);last_seen=repository.heartbeat(agent_id)
+ return {"agent_id":agent_id,"health_status":"online","last_seen":last_seen,"accepted_event_ids":event_result["accepted_event_ids"],"events_accepted":event_result["accepted"],"events_created":event_result["created"],"events_rejected":event_result["rejected"],"metrics_accepted":metric_result["accepted"],"metrics_created":metric_result["created"],"metrics_rejected":metric_result["rejected"],"instance_telemetry_accepted":telemetry_count,"configuration_commands":desired_configuration,"configuration_count":len(desired_configuration),"content_commands":desired_content,"content_count":len(desired_content),"backup_commands":backup_commands,"backup_count":len(backup_commands),"broadcast_commands":broadcast_commands,"broadcast_count":len(broadcast_commands),"console_command":console_command,"console_state":console_state,"file_command":file_command,"file_state":file_state,"resource_command":resource_command,"resource_state":resource_state,"artifact_command":artifact_command,"artifact_state":artifact_state,"storage_pool_migration_command":storage_pool_migration_command,"storage_pool_migration_state":storage_pool_migration_state,"uninstall_command":uninstall_command,"uninstall_state":uninstall_state}
