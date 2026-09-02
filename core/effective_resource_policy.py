@@ -44,7 +44,12 @@ class EffectiveResourcePolicy:
         return result
 
     def agent_resources(self) -> dict[str, int | float]:
-        """Translate only configured limits to Agent enforcement vocabulary."""
+        """Translate only enforceable configured limits to Agent vocabulary.
+
+        Swap remains part of the canonical policy, but current Linux and Windows
+        runtime reconcilers do not enforce it. It must not be advertised as an
+        applied runtime limit until that enforcement exists.
+        """
         result: dict[str, int | float] = {}
         if self.cpu_cores > 0:
             result["cpu_limit_cores"] = self.cpu_cores
@@ -52,8 +57,6 @@ class EffectiveResourcePolicy:
             result["memory_limit_bytes"] = self.memory_bytes
         if self.storage_bytes > 0:
             result["storage_limit_bytes"] = self.storage_bytes
-        if self.swap_bytes > 0:
-            result["swap_limit_bytes"] = self.swap_bytes
         if self.pids_limit > 0:
             result["pids_limit"] = self.pids_limit
         if self.player_limit > 0:
