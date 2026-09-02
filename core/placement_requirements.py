@@ -84,9 +84,9 @@ def _inferred_capabilities(definition: dict[str, Any]) -> set[str]:
 
     engine = str(process.get("engine") or "").strip().lower()
     operating_systems = _normalized_values(requirements.get("os"))
-    if engine == "native" and "linux" in operating_systems:
+    if engine == "native" and operating_systems == frozenset({"linux"}):
         capabilities.add("native-linux")
-    elif engine == "native" and "windows" in operating_systems:
+    elif engine == "native" and operating_systems == frozenset({"windows"}):
         capabilities.add("native-windows")
     elif engine == "java":
         capabilities.add("java")
