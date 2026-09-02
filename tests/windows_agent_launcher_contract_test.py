@@ -14,13 +14,18 @@ class WindowsAgentLauncherContractTest(unittest.TestCase):
     def test_launcher_setup_remains_strict(self):
         self.assertIn("$ErrorActionPreference = 'Stop'", self.text)
 
-    def test_native_python_runtime_uses_continue(self):
-        child = self.text.index("& $PythonExe $scriptToRun")
+    def test_native_runtime_is_redirected_by_cmd_not_powershell(self):
+        self.assertIn("$env:ComSpec /d /s /c $commandLine", self.text)
+        self.assertIn('>> "{2}" 2>&1', self.text)
+        self.assertNotIn("& $PythonExe $scriptToRun *>> $logPath", self.text)
+
+    def test_native_runtime_uses_continue(self):
+        child = self.text.index("& $env:ComSpec /d /s /c $commandLine")
         before = self.text[:child]
         self.assertIn("$ErrorActionPreference = 'Continue'", before)
 
     def test_exit_code_is_captured_before_preference_restore(self):
-        child = self.text.index("& $PythonExe $scriptToRun")
+        child = self.text.index("& $env:ComSpec /d /s /c $commandLine")
         capture = self.text.index("$pythonExitCode = $LASTEXITCODE", child)
         restore = self.text.index(
             "$ErrorActionPreference = $previousErrorActionPreference", capture
@@ -38,6 +43,9 @@ class WindowsAgentLauncherContractTest(unittest.TestCase):
     def test_launcher_exits_with_captured_python_code(self):
         self.assertIn("exit $pythonExitCode", self.text)
         self.assertNotIn("exit $LASTEXITCODE", self.text)
+
+    def test_launcher_rejects_quote_characters_in_paths(self):
+        self.assertIn("Unsupported quote character in launcher path", self.text)
 
 
 if __name__ == "__main__":
