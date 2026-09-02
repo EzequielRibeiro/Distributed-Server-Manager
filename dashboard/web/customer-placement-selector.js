@@ -3,8 +3,10 @@
 
   const nativeFetch = window.fetch.bind(window);
   const PLACEMENT_TIMEOUT_MS = 8000;
+  const CATALOG_TIMEOUT_MS = 10000;
   let coordinatesPromise = null;
   let placementContext = {};
+  let openingPromise = null;
 
   function setPlacementStatus(state, text) {
     const node = document.getElementById("runtime-placement-status");
@@ -58,6 +60,34 @@
       latency_ms: Number.isFinite(latency) ? latency : null,
       latency_kind: "estimated",
     };
+  }
+
+  function fetchWithTimeout(input, options = {}, timeoutMs = CATALOG_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const upstreamSignal = options?.signal;
+    const abortFromUpstream = () => controller.abort();
+
+    if (upstreamSignal) {
+      if (upstreamSignal.aborted) controller.abort();
+      else upstreamSignal.addEventListener("abort", abortFromUpstream, {once: true});
+    }
+
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+
+    return nativeFetch(input, {...options, signal: controller.signal})
+      .catch(error => {
+        if (error?.name === "AbortError" && !upstreamSignal?.aborted) {
+          return jsonResponse(504, {
+            error: "A consulta de ambientes excedeu o tempo limite. Tente novamente.",
+            code: "runtime_catalog_timeout",
+          }, "Gateway Timeout");
+        }
+        throw error;
+      })
+      .finally(() => {
+        window.clearTimeout(timer);
+        upstreamSignal?.removeEventListener?.("abort", abortFromUpstream);
+      });
   }
 
   async function placementRegions(options) {
@@ -134,7 +164,7 @@
         : "Nenhum servidor elegível foi localizado para este jogo no momento.";
       setPlacementStatus("unavailable", message);
       return jsonResponse(503, {
-        error: `${message} Verifique se há Agent online, vinculado a uma região e com capacidade compatível.`,
+        error: message,
         code: "placement_no_available_agent",
       }, "Service Unavailable");
     }
@@ -149,20 +179,49 @@
 
   window.fetch = function (input, options) {
     const url = typeof input === "string" ? input : input?.url;
-    if (url === "/api/customer/regions") return placementRegions(options || {});
+
+    if (url === "/api/customer/regions") {
+      return placementRegions(options || {});
+    }
+
+    if (typeof url === "string" && url.startsWith("/api/catalog/runtimes")) {
+      return fetchWithTimeout(input, options || {}, CATALOG_TIMEOUT_MS);
+    }
+
     return nativeFetch(input, options);
   };
 
   document.addEventListener("DOMContentLoaded", () => {
     const selector = window.CapivaraRuntimeSelector;
     if (!selector || typeof selector.open !== "function") return;
+
     const originalOpen = selector.open.bind(selector);
+
     selector.open = function (contract) {
+      if (openingPromise) {
+        return openingPromise;
+      }
+
       placementContext = {
         contract: String(contract?.id || contract?.contract_id || "").trim(),
         game: String(contract?.game_id || contract?.game || "").trim().toLowerCase(),
       };
-      return originalOpen(contract);
+
+      setPlacementStatus("checking", "Verificando servidores disponíveis...");
+
+      openingPromise = Promise.resolve()
+        .then(() => originalOpen(contract))
+        .catch(error => {
+          if (error?.message) {
+            setPlacementStatus("error", error.message);
+          }
+          throw error;
+        })
+        .finally(() => {
+          openingPromise = null;
+        });
+
+      return openingPromise;
     };
   });
 })();
