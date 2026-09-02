@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from core.canonical_parameter_policy import normalize_arguments
+
 _RUNTIME_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _VAR_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
@@ -70,13 +72,13 @@ def _runtime_path(root: Path, runtime_id: str) -> Path:
 def default_policy(runtime: dict[str, Any]) -> dict[str, Any]:
     process = runtime.get("process") if isinstance(runtime.get("process"), dict) else {}
     executable = str(process.get("executable") or "").strip()
-    arguments = list(process.get("args")) if isinstance(process.get("args"), list) else []
+    arguments = normalize_arguments(process.get("args"))
     return _enforce_network_policy(runtime, {
         "schema_version": 1,
         "kind": "CatalogRuntimePolicy",
         "runtime_id": str(runtime.get("id") or ""),
         "executable": executable,
-        "arguments": [str(v) for v in arguments],
+        "arguments": arguments,
         "working_directory": ".",
         "environment": {},
         "shutdown": {"mode": "signal", "value": "TERM"},
