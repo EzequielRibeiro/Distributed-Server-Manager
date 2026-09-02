@@ -63,10 +63,51 @@
         }
     }
 
+    async function verifyDestructiveTarget() {
+        if (!agentId) throw new Error("Agent ID ausente da URL.");
+
+        const displayedAgentId = String(el("detail-agent-id")?.textContent || "").trim();
+        if (!displayedAgentId || displayedAgentId === "—") {
+            throw new Error("A identidade exibida do Agent ainda não foi carregada. Atualize a página antes de continuar.");
+        }
+        if (displayedAgentId !== agentId) {
+            throw new Error(`Bloqueado: o Agent da URL (${agentId}) diverge do Agent exibido (${displayedAgentId}).`);
+        }
+
+        const detailResult = await request(`/api/admin/agent?agent_id=${encodeURIComponent(agentId)}`);
+        const detail = detailResult.agent || {};
+        const backendAgentId = String(detail.agent_id || "").trim();
+        if (backendAgentId !== agentId) {
+            throw new Error(`Bloqueado: o Controller retornou identidade divergente (${backendAgentId || "ausente"}).`);
+        }
+
+        const displayedNodeId = String(el("detail-node")?.textContent || "").trim();
+        const backendNodeId = String(detail.node_id || "").trim();
+        if (displayedNodeId && displayedNodeId !== "—" && backendNodeId && displayedNodeId !== backendNodeId) {
+            throw new Error(`Bloqueado: o Node exibido (${displayedNodeId}) diverge do Node vinculado (${backendNodeId}).`);
+        }
+
+        return {agent_id: backendAgentId, node_id: backendNodeId};
+    }
+
+    function assertMutationResponse(result, expected) {
+        const returnedAgentId = String(result?.agent_id || "").trim();
+        const returnedNodeId = String(result?.node_id || "").trim();
+        if (returnedAgentId !== expected.agent_id) {
+            throw new Error(`Resposta rejeitada: o Controller confirmou outro Agent (${returnedAgentId || "ausente"}).`);
+        }
+        if (expected.node_id && returnedNodeId && returnedNodeId !== expected.node_id) {
+            throw new Error(`Resposta rejeitada: o Controller confirmou outro Node (${returnedNodeId}).`);
+        }
+    }
+
     async function refreshState() {
         if (!agentId) return;
         try {
             const result = await request(`/api/admin/agent/uninstall?agent_id=${encodeURIComponent(agentId)}`);
+            if (String(result.agent_id || "") !== agentId) {
+                throw new Error("O estado de desinstalação retornou para outro Agent.");
+            }
             renderState(result.uninstall);
         } catch (error) {
             const box = el("agent-uninstall-state");
@@ -84,10 +125,20 @@
             window.alert("Digite o Agent ID completo para confirmar a desinstalação remota.");
             return;
         }
+
+        let expected;
+        try {
+            expected = await verifyDestructiveTarget();
+        } catch (error) {
+            const box = el("agent-uninstall-state");
+            if (box) box.textContent = error.message || String(error);
+            return;
+        }
+
         const purge = mode === "purge";
         const warning = purge
-            ? `Desinstalar ${agentId} e apagar os dados gerenciados no host? Esta operação é irreversível.`
-            : `Desinstalar ${agentId} preservando os dados das instâncias no host?`;
+            ? `Desinstalar ${expected.agent_id} (${expected.node_id || "Node desconhecido"}) e apagar os dados gerenciados no host? Esta operação é irreversível.`
+            : `Desinstalar ${expected.agent_id} (${expected.node_id || "Node desconhecido"}) preservando os dados das instâncias no host?`;
         if (!window.confirm(warning)) return;
 
         const button = el(purge ? "agent-uninstall-purge" : "agent-uninstall-preserve");
@@ -96,8 +147,9 @@
         try {
             const result = await request("/api/admin/agent/uninstall", {
                 method: "POST",
-                body: JSON.stringify({agent_id: agentId, confirmation, mode})
+                body: JSON.stringify({agent_id: expected.agent_id, confirmation, mode})
             });
+            assertMutationResponse(result, expected);
             renderState(result.uninstall);
             ensurePolling();
         } catch (error) {
@@ -114,14 +166,25 @@
             window.alert("Digite o Agent ID completo para confirmar a remoção forçada do Controller.");
             return;
         }
-        if (!window.confirm(`Remover somente o registro de ${agentId} do Controller? A máquina remota e seus arquivos NÃO serão desinstalados.`)) return;
+
+        let expected;
+        try {
+            expected = await verifyDestructiveTarget();
+        } catch (error) {
+            const box = el("agent-force-remove-state");
+            if (box) box.textContent = error.message || String(error);
+            return;
+        }
+
+        if (!window.confirm(`Remover somente o registro de ${expected.agent_id} (${expected.node_id || "Node desconhecido"}) do Controller? A máquina remota e seus arquivos NÃO serão desinstalados.`)) return;
         const button = el("agent-force-remove");
         setBusy(button, true, "Removendo…", "Remover somente registro do Controller");
         try {
             const result = await request("/api/admin/agent/remove", {
                 method: "POST",
-                body: JSON.stringify({agent_id: agentId, confirmation})
+                body: JSON.stringify({agent_id: expected.agent_id, confirmation})
             });
+            assertMutationResponse(result, expected);
             if (!result.controller_only || result.remote_host_removal !== false) {
                 throw new Error("O Controller não confirmou a semântica de remoção somente do registro.");
             }
