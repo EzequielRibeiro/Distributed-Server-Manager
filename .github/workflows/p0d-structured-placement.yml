@@ -1,0 +1,41 @@
+name: P0-D Structured Placement
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p0d-structured-placement-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  structured-placement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile placement boundary
+        run: |
+          python3 -m py_compile \
+            core/placement_requirements.py \
+            core/agent_eligibility.py \
+            dashboard/placement_eligibility.py \
+            tests/structured_placement_capabilities_test.py \
+            tests/phase22_customer_dayz_regression_test.py
+
+      - name: Test structured Catalog to Agent placement
+        run: python3 -m unittest tests/structured_placement_capabilities_test.py
+
+      - name: Test DayZ distributed placement regression
+        run: python3 -m unittest tests/phase22_customer_dayz_regression_test.py
