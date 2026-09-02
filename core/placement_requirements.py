@@ -29,6 +29,10 @@ class PlacementRequirements:
     game_id: str | None = None
     runtime_id: str | None = None
     capabilities: frozenset[str] = field(default_factory=frozenset)
+    operating_systems: frozenset[str] = field(default_factory=frozenset)
+    architectures: frozenset[str] = field(default_factory=frozenset)
+    java_min_major: int = 0
+    java_max_major: int = 0
     ports: tuple[PortRequirement, ...] = ()
     min_cpu_threads: int = 0
     min_ram_bytes: int = 0
@@ -40,6 +44,16 @@ def _positive_int(value: Any) -> int:
         return max(0, int(value or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def _normalized_values(value: Any) -> frozenset[str]:
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return frozenset()
+    return frozenset(
+        str(item).strip().lower()
+        for item in value
+        if str(item).strip()
+    )
 
 
 def load_runtime_definition(
@@ -69,13 +83,11 @@ def _inferred_capabilities(definition: dict[str, Any]) -> set[str]:
     placement = definition.get("placement") if isinstance(definition.get("placement"), dict) else {}
 
     engine = str(process.get("engine") or "").strip().lower()
-    operating_systems = {
-        str(item).strip().lower()
-        for item in requirements.get("os", [])
-        if str(item).strip()
-    }
+    operating_systems = _normalized_values(requirements.get("os"))
     if engine == "native" and "linux" in operating_systems:
         capabilities.add("native-linux")
+    elif engine == "native" and "windows" in operating_systems:
+        capabilities.add("native-windows")
     elif engine == "java":
         capabilities.add("java")
     elif engine in {"docker", "container"}:
@@ -136,16 +148,24 @@ def requirements_from_runtime_definition(
 ) -> PlacementRequirements:
     definition = definition if isinstance(definition, dict) else {}
     resource = resources if isinstance(resources, dict) else {}
+    requirements = definition.get("requirements") if isinstance(definition.get("requirements"), dict) else {}
+    java = requirements.get("java") if isinstance(requirements.get("java"), dict) else {}
     placement = definition.get("placement") if isinstance(definition.get("placement"), dict) else {}
     minimums = placement.get("resources") if isinstance(placement.get("resources"), dict) else {}
     runtime_capability = str(placement.get("runtime") or "").strip().lower() or None
     capabilities = _inferred_capabilities(definition)
     if runtime_capability:
         capabilities.add(runtime_capability)
+    java_min = _positive_int(java.get("min"))
+    java_max = _positive_int(java.get("max"))
     return PlacementRequirements(
         game_id=str(definition.get("game") or "").strip().lower() or None,
         runtime_id=runtime_capability,
         capabilities=frozenset(capabilities),
+        operating_systems=_normalized_values(requirements.get("os")),
+        architectures=_normalized_values(requirements.get("architectures")),
+        java_min_major=java_min,
+        java_max_major=java_max,
         ports=_port_requirements(definition),
         min_cpu_threads=_positive_int(resource.get("cpu_threads") or resource.get("min_cpu_threads") or minimums.get("cpu_threads")),
         min_ram_bytes=_positive_int(resource.get("ram_bytes") or resource.get("min_ram_bytes") or minimums.get("ram_bytes")),
