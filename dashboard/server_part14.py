@@ -5,9 +5,13 @@ Registers canonical UI routes without growing the legacy server.py module.
 """
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 import server_part13 as integration
 
 legacy = integration.legacy
+_previous_get = legacy.DashboardHandler.do_GET
+_controller_authenticate = integration._controller_authenticate
 
 DASHBOARD_V3_FILES = {
     # Shared v3 shell.
@@ -86,6 +90,29 @@ DASHBOARD_V3_FILES = {
 }
 
 legacy.STATIC_FILES.update(DASHBOARD_V3_FILES)
+
+
+def integrated_get(self):
+    """Serve v3 Controller pages/assets using an explicit Controller session.
+
+    Generic legacy authentication intentionally refuses to guess when a browser
+    carries both Controller and Customer sessions. Dashboard v3 resources have
+    an unambiguous area, so authenticate them explicitly as Controller assets.
+    """
+    path = urlparse(self.path).path
+    target = DASHBOARD_V3_FILES.get(path)
+    if target is None:
+        return _previous_get(self)
+
+    user = _controller_authenticate(self.headers)
+    if user is None:
+        self.unauthorized()
+        return
+
+    self.send_file(target)
+
+
+legacy.DashboardHandler.do_GET = integrated_get
 
 
 def run():
