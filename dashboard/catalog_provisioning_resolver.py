@@ -8,6 +8,7 @@ from catalog_controller_runtime_policy import load_policy
 from agent_game_data_api import prepare_runtime_selection
 from catalog_resource_profiles_http import catalog_resource_profiles
 from core.effective_resource_policy import normalize_resource_policy
+from core.canonical_parameter_policy import canonicalize_parameter_payload
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,8 +42,12 @@ def resolve_catalog_provisioning(*, environment_id: str, selector: str, selectio
     if str(resolved_selection.get("environment_id") or environment_id) != environment_id:
         raise ValueError("runtime selection does not match environment_id")
     config = dict(configuration or {})
-    policy = load_policy(root, runtime)
+    policy = canonicalize_parameter_payload(load_policy(root, runtime))
     config["catalog_runtime_policy"] = policy
+    config["canonical_parameter_policy"] = {
+        "arguments": list(policy.get("arguments") or []),
+        "environment": dict(policy.get("environment") or {}),
+    }
     profile_catalog = catalog_resource_profiles(root, str(runtime.get("game") or ""))
     profiles = [dict(item) for item in profile_catalog.get("profiles", []) if isinstance(item, dict)]
     default_profile_id = str(profile_catalog.get("default_profile_id") or "").strip()
