@@ -2,7 +2,7 @@
 """Canonical authentication-area policy for Dashboard static resources.
 
 Static JavaScript/CSS cannot add ``X-Capivara-Auth-Area`` when loaded by a
-browser ``<script>``/``<link>`` element.  The final HTTP composition layer must
+browser ``<script>``/``<link>`` element. The final HTTP composition layer must
 therefore know the intended portal area from the resource path itself instead
 of falling back to ambiguous legacy authentication.
 """
@@ -17,7 +17,12 @@ CONTROLLER_STATIC_PATHS = frozenset({
     "/dashboard-v3.html",
     "/dashboard-home-v3.css",
     "/dashboard-home-v3.js",
+    "/dashboard-node-overview.css",
+    "/dashboard-node-overview.js",
     "/components/sidebar-v3.html",
+    "/sidebar-v3.js",
+    "/activity-log.html",
+    "/activity-log.js",
     "/customers.html",
     "/customers.js",
     "/customer-create.html",
@@ -62,7 +67,10 @@ CONTROLLER_STATIC_PATHS = frozenset({
     "/agent-details.html",
     "/agent-details.js",
     "/agent-details.css",
+    "/agent-details-sidebar.js",
     "/agent-alert-link.js",
+    "/agent-network-panel.js",
+    "/agent-identity-rebind.js",
     "/agent-uninstall-admin.js",
     "/agent-storage-pools.js",
     "/agent-storage-pools.css",
@@ -76,12 +84,17 @@ CONTROLLER_STATIC_PATHS = frozenset({
     "/servers.js",
     "/servers.css",
     "/catalog.html",
+    "/catalog-v2.css",
     "/catalog-page.css",
     "/catalog-installation.css",
     "/catalog-page.js",
+    "/catalog-game-create.html",
+    "/catalog-game-create.css",
+    "/catalog-game-create.js",
     "/game-profiles.html",
     "/game-profiles.css",
     "/game-profiles.js",
+    "/game-profile-presentation.js",
     "/operations.html",
     "/operations.css",
     "/operations.js",
@@ -94,38 +107,52 @@ CONTROLLER_STATIC_PATHS = frozenset({
     "/diagnostics.html",
     "/observability.css",
     "/observability.js",
+    "/help.html",
+    "/help.css",
+    "/help.js",
 })
 
 
 CUSTOMER_STATIC_PATHS = frozenset({
-    "/create-server-wizard.js",
-    "/create-server-wizard.css",
-    "/customer-instance-events.js",
-    "/customer-instance-events.css",
-    "/customer-change-password.html",
-    "/customer-change-password.js",
+    "/customer.html",
+    "/contract-demo.html",
+    "/customer-instance.html",
     "/customer-members.html",
-    "/customer-members.js",
-    "/customer-team.css",
-    "/customer-placement-selector.js",
-    "/customer-profile.js",
-    "/customer-email-change.js",
-    "/customer-navigation.js",
+    "/customer-account.html",
+    "/customer-backups.html",
+    "/customer-integrations.html",
+    "/customer-change-password.html",
+    "/customer.css",
     "/customer.js",
     "/customer-core.js",
-    "/customer-integrations.html",
-    "/customer-integrations.js",
-    "/customer-integrations.css",
-    "/customer-backups.html",
-    "/customer-backups.js",
-    "/customer-account.html",
+    "/customer-navigation.js",
+    "/customer-profile.js",
+    "/customer-email-change.js",
+    "/customer-placement-selector.js",
+    "/runtime-selector.js",
+    "/create-server-wizard.css",
+    "/create-server-wizard.js",
+    "/customer-instance.js",
+    "/customer-instance-v2.js",
+    "/customer-instance-v2-wrapper.js",
+    "/customer-instance-events.css",
+    "/customer-instance-events.js",
+    "/customer-instance-activity.js",
+    "/customer-instance-connection.js",
+    "/customer-instance-delete.js",
+    "/customer-backup-transfer.js",
+    "/customer-team.css",
+    "/customer-members.js",
+    "/customer-change-password.js",
     "/customer-account.js",
+    "/customer-backups.js",
+    "/customer-integrations.css",
+    "/customer-integrations.js",
 })
 
 
-# These files contain reusable browser code only.  They carry no account data
-# and are consumed by both portals, so making their transport area-neutral
-# avoids forcing either Controller or Customer authentication onto the other.
+# Reusable browser code only. These resources carry no account data and are
+# consumed by both portals. Their APIs remain independently authenticated.
 SHARED_PUBLIC_STATIC_PATHS = frozenset({
     "/browser-auth-client.js",
     "/telemetry-widgets.css",
