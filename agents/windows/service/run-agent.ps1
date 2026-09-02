@@ -27,15 +27,24 @@ $runtimeDir = Split-Path -Parent $AgentScript
 $entrypoint = Join-Path $runtimeDir 'agent_entrypoint.py'
 $scriptToRun = if (Test-Path $entrypoint -PathType Leaf) { $entrypoint } else { $AgentScript }
 
-# Keep strict failure handling for launcher setup, but do not let routine stderr
-# emitted by the long-running native Python process become a terminating
-# NativeCommandError under Windows PowerShell 5.1. The Agent runtime handles
-# transient heartbeat/reconcile failures internally and is expected to remain
-# alive while reporting them to stderr.
+# Windows PowerShell 5.1 converts native stderr redirected with *>> into
+# NativeCommandError records. Besides being noisy, with strict error handling
+# that behavior used to terminate this long-running launcher on routine Agent
+# transport failures. Keep PowerShell strict for launcher setup and let cmd.exe
+# perform only the native stdout/stderr redirection so agent.log receives the
+# Python output verbatim while the Python process remains the source of truth
+# for the exit code.
+foreach ($path in @($PythonExe, $scriptToRun, $logPath)) {
+    if ($path.Contains('"')) {
+        throw "Unsupported quote character in launcher path: $path"
+    }
+}
+
+$commandLine = '""{0}" "{1}" >> "{2}" 2>&1"' -f $PythonExe, $scriptToRun, $logPath
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 try {
-    & $PythonExe $scriptToRun *>> $logPath
+    & $env:ComSpec /d /s /c $commandLine
     $pythonExitCode = $LASTEXITCODE
 }
 finally {
