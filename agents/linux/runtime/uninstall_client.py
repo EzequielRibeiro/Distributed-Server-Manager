@@ -68,18 +68,50 @@ def _validate(command: dict[str, Any]) -> tuple[str, str, str]:
     return request_id, phase, mode
 
 
-def handle_command(config: dict[str, Any], command: dict[str, Any], *, host_identity: str | None = None) -> dict[str, Any]:
+def _validate_staged_request(request_id: str, mode: str) -> dict[str, Any] | None:
+    staged = _read(REQUEST_PATH)
+    if not staged:
+        return None
+    staged_id = str(staged.get("request_id") or "").strip()
+    staged_mode = str(staged.get("mode") or "").strip().lower()
+    if staged_id != request_id:
+        raise RuntimeError("conflicting uninstall request is already staged")
+    if staged_mode != mode:
+        raise RuntimeError("staged uninstall mode does not match commit")
+    return staged
+
+
+def handle_command(
+    config: dict[str, Any],
+    command: dict[str, Any],
+    *,
+    host_identity: str | None = None,
+) -> dict[str, Any]:
     """Accept prepare or stage privileged commit without arbitrary shell input."""
     request_id, phase, mode = _validate(command)
     current = read_result()
+
     if current and str(current.get("request_id") or "") == request_id:
-        status = str(current.get("status") or "")
-        if phase == "prepare" and status in {"accepted", "committed", "completed"}:
+        status = str(current.get("status") or "").strip().lower()
+        if phase == "prepare" and status in {
+            "accepted",
+            "commit-staged",
+            "committed",
+            "completed",
+        }:
             return current
-        if phase == "commit" and status in {"committed", "completed"}:
+        if phase == "commit" and status in {
+            "commit-staged",
+            "committed",
+            "completed",
+        }:
+            _validate_staged_request(request_id, mode)
             return current
 
     if phase == "prepare":
+        staged = _read(REQUEST_PATH)
+        if staged and str(staged.get("request_id") or "").strip() != request_id:
+            raise RuntimeError("conflicting uninstall request is already staged")
         result = {
             "request_id": request_id,
             "status": "accepted",
@@ -89,34 +121,56 @@ def handle_command(config: dict[str, Any], command: dict[str, Any], *, host_iden
         _write(RESULT_PATH, result)
         return result
 
-    required = ("agent_id", "controller_url", "credential_id", "credential_secret", "fingerprint")
+    required = (
+        "agent_id",
+        "controller_url",
+        "credential_id",
+        "credential_secret",
+        "fingerprint",
+    )
     missing = [key for key in required if not str(config.get(key) or "").strip()]
     if missing:
         raise RuntimeError("cannot commit uninstall without permanent Agent credential")
 
-    request = {
-        "schema_version": 1,
-        "kind": "CapivaraLinuxUninstallRequest",
-        "request_id": request_id,
-        "mode": mode,
-        "agent_id": str(config["agent_id"]),
-        "controller_url": str(config["controller_url"]),
-        "credential_id": str(config["credential_id"]),
-        "credential_secret": str(config["credential_secret"]),
-        "fingerprint": str(config["fingerprint"]),
-        "host_identity": str(host_identity or ""),
-        "instance_storage_root": str(config.get("instance_storage_root") or "/var/lib/capivara-instances"),
-        "requested_at": _now(),
-    }
-    _write(REQUEST_PATH, request)
+    staged = _validate_staged_request(request_id, mode)
+    if staged is None:
+        request = {
+            "schema_version": 1,
+            "kind": "CapivaraLinuxUninstallRequest",
+            "request_id": request_id,
+            "mode": mode,
+            "agent_id": str(config["agent_id"]),
+            "controller_url": str(config["controller_url"]),
+            "credential_id": str(config["credential_id"]),
+            "credential_secret": str(config["credential_secret"]),
+            "fingerprint": str(config["fingerprint"]),
+            "host_identity": str(host_identity or ""),
+            "instance_storage_root": str(
+                config.get("instance_storage_root")
+                or "/var/lib/capivara-instances"
+            ),
+            "requested_at": _now(),
+        }
+        _write(REQUEST_PATH, request)
+
+    # This is intentionally local-only. The Controller does not accept
+    # commit-staged as a terminal protocol state, so it keeps redelivering the
+    # commit until the privileged executor actually starts and reports
+    # "committed" itself.
     result = {
         "request_id": request_id,
-        "status": "committed",
-        "committed_at": _now(),
+        "status": "commit-staged",
+        "staged_at": _now(),
         "mode": mode,
     }
     _write(RESULT_PATH, result)
     return result
 
 
-__all__ = ["clear_result", "handle_command", "read_result", "REQUEST_PATH", "RESULT_PATH"]
+__all__ = [
+    "clear_result",
+    "handle_command",
+    "read_result",
+    "REQUEST_PATH",
+    "RESULT_PATH",
+]
