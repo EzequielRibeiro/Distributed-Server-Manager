@@ -7,8 +7,10 @@
   let coordinatesPromise = null;
   let placementContext = {};
   let openingPromise = null;
+  let placementStatusState = "idle";
 
   function setPlacementStatus(state, text) {
+    placementStatusState = state;
     const node = document.getElementById("runtime-placement-status");
     if (!node) return;
     node.dataset.state = state;
@@ -77,6 +79,10 @@
     return nativeFetch(input, {...options, signal: controller.signal})
       .catch(error => {
         if (error?.name === "AbortError" && !upstreamSignal?.aborted) {
+          setPlacementStatus(
+            "error",
+            "A consulta de ambientes demorou demais. Tente novamente."
+          );
           return jsonResponse(504, {
             error: "A consulta de ambientes excedeu o tempo limite. Tente novamente.",
             code: "runtime_catalog_timeout",
@@ -212,7 +218,7 @@
       openingPromise = Promise.resolve()
         .then(() => originalOpen(contract))
         .catch(error => {
-          if (error?.message) {
+          if (placementStatusState !== "unavailable" && error?.message) {
             setPlacementStatus("error", error.message);
           }
           throw error;
