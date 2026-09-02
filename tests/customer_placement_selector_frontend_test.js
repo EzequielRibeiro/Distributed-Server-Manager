@@ -53,7 +53,11 @@ function installHarness({nativeFetch, originalOpen, immediateTimers = false}) {
       if (event === "DOMContentLoaded") domReadyHandler = handler;
     },
   };
-  global.navigator = {};
+  Object.defineProperty(global, "navigator", {
+    value: {},
+    configurable: true,
+    writable: true,
+  });
   global.Response = Response;
   global.AbortController = AbortController;
   global.URLSearchParams = URLSearchParams;
