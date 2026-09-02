@@ -172,7 +172,6 @@ class CustomerManagementPostgreSQLContractTest(unittest.TestCase):
         )
 
 
-
 class CustomerManagementAssetContractTest(unittest.TestCase):
     def test_pages_keep_creation_lookup_detail_and_contract_separate(self):
         web = ROOT / "dashboard" / "web"
@@ -201,6 +200,18 @@ class CustomerManagementAssetContractTest(unittest.TestCase):
         self.assertIn("contract-profile", contract)
         self.assertNotIn("customer-create-form", contract)
         self.assertNotIn("customer-search-field", contract)
+
+    def test_customer_catalog_uses_state_aware_javascript_routing(self):
+        web = ROOT / "dashboard" / "web"
+        page = (web / "customer.html").read_text(encoding="utf-8")
+        script = (web / "customer.js").read_text(encoding="utf-8")
+
+        self.assertNotIn('event.stopImmediatePropagation()', page)
+        self.assertNotIn('location.href = `/contract-demo.html?game=${encodeURIComponent(game)}`', page)
+        self.assertIn("instances.length", script)
+        self.assertIn("!hasContract", script)
+        self.assertIn("CapivaraRuntimeSelector", script)
+        self.assertIn("/contract-demo.html?game=", script)
 
 
 if __name__ == "__main__":
