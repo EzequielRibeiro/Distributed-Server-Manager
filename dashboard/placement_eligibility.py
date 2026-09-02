@@ -15,6 +15,10 @@ def requires_runtime_evidence(requirements: PlacementRequirements) -> bool:
     return bool(
         requirements.runtime_id
         or requirements.capabilities
+        or requirements.operating_systems
+        or requirements.architectures
+        or requirements.java_min_major
+        or requirements.java_max_major
         or requirements.ports
         or requirements.min_cpu_threads
         or requirements.min_ram_bytes
@@ -32,7 +36,8 @@ def evaluate_agent_for_placement(
 
     # Legacy compatibility applies only to placements with no explicit
     # technical requirements. Once a game/runtime asks for capabilities,
-    # resources or ports, the Controller requires factual heartbeat evidence.
+    # platform facts, resources or ports, the Controller requires factual
+    # heartbeat evidence.
     if runtime.get("last_seen") is None and not requires_runtime_evidence(requirements):
         return EligibilityResult(True, ())
 
