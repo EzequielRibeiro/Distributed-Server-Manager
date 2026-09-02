@@ -16,6 +16,7 @@ on:
       - 'dashboard/placement_service.py'
       - 'tests/customer_geographic_placement_test.py'
       - 'tests/geographic_placement_latency_p6_test.py'
+      - 'tests/customer_placement_selector_frontend_test.js'
       - '.github/workflows/customer-geographic-placement.yml'
   push:
     branches: [main]
@@ -33,6 +34,7 @@ on:
       - 'dashboard/placement_service.py'
       - 'tests/customer_geographic_placement_test.py'
       - 'tests/geographic_placement_latency_p6_test.py'
+      - 'tests/customer_placement_selector_frontend_test.js'
       - '.github/workflows/customer-geographic-placement.yml'
 
 permissions:
@@ -47,6 +49,8 @@ jobs:
       - name: Validate Python syntax
         run: python3 -m py_compile core/placement/placement_policy.py dashboard/placement_service.py dashboard/instance_placement.py dashboard/customer_placement_locations.py dashboard/customer_placement_locations_http.py dashboard/customer_instance_creation.py tests/customer_geographic_placement_test.py tests/geographic_placement_latency_p6_test.py
       - name: Validate JavaScript syntax
-        run: node --check dashboard/web/customer-placement-selector.js
+        run: node --check dashboard/web/customer-placement-selector.js && node --check tests/customer_placement_selector_frontend_test.js
       - name: Run geographic placement regressions
         run: python3 -m unittest tests/customer_geographic_placement_test.py tests/geographic_placement_latency_p6_test.py
+      - name: Run customer placement selector frontend regressions
+        run: node tests/customer_placement_selector_frontend_test.js
