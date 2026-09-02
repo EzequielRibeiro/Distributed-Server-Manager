@@ -45,6 +45,15 @@ class StructuredPlacementRequirementsTest(unittest.TestCase):
         self.assertIn("native-linux", linux.capabilities)
         self.assertIn("native-windows", windows.capabilities)
 
+    def test_multi_os_native_runtime_does_not_require_two_os_specific_capabilities(self):
+        result = requirements_from_runtime_definition({
+            "process": {"engine": "native"},
+            "requirements": {"os": ["linux", "windows"]},
+        })
+        self.assertNotIn("native-linux", result.capabilities)
+        self.assertNotIn("native-windows", result.capabilities)
+        self.assertEqual(result.operating_systems, frozenset({"linux", "windows"}))
+
 
 class StructuredAgentEligibilityTest(unittest.TestCase):
     def _runtime(self, *, os_name="linux", architecture="x86_64", java_major=21):
