@@ -31,9 +31,19 @@ class CanonicalParameterPolicyTest(unittest.TestCase):
     def setUpClass(cls):
         cls.linux = _load("linux_catalog_runtime_policy_p0f", ROOT / "agents/linux/runtime/catalog_runtime_policy.py")
         cls.windows = _load("windows_catalog_runtime_policy_p0f", ROOT / "agents/windows/runtime/catalog_runtime_policy.py")
+        cls.controller = _load("controller_catalog_runtime_policy_p0f", ROOT / "dashboard/catalog_controller_runtime_policy.py")
 
     def test_legacy_scalar_args_become_one_opaque_argv_element(self):
         self.assertEqual(normalize_arguments("--name=Server One"), ["--name=Server One"])
+
+    def test_controller_default_policy_preserves_scalar_catalog_args(self):
+        runtime = {
+            "id": "example.stable",
+            "process": {"executable": "server", "args": "--name=Server One"},
+            "network": {"apply": []},
+        }
+        policy = self.controller.default_policy(runtime)
+        self.assertEqual(policy["arguments"], ["--name=Server One"])
 
     def test_aliases_are_ingress_only(self):
         result = canonicalize_parameter_payload({"args": ["--port=2302"], "env": {"JAVA_HOME": "/java"}})
