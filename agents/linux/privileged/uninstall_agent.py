@@ -106,6 +106,9 @@ def _stop_runtime() -> None:
         "capivara-agent-update.path",
         "capivara-agent-update.service",
         "capivara-agent-runtime-identity.service",
+        # Prevent PathExists=request.json from starting a second executor while
+        # this oneshot is finishing and before the delayed finalizer removes state.
+        "capivara-agent-uninstall.path",
     ):
         _run("systemctl", "stop", unit, check=False)
 
