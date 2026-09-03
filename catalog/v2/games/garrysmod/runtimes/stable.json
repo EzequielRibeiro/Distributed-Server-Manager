@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "garrysmod.stable",
+  "name": "Garry's Mod Dedicated Server",
+  "game": "garrysmod",
+  "edition": "default",
+  "variant": "stable",
+  "loader": null,
+  "version": {"strategy": "static", "value": "current", "build": "steam-current"},
+  "process": {
+    "engine": "native",
+    "executable": "srcds_run",
+    "artifact_mode": "executable",
+    "args": ["-game", "garrysmod", "-console", "-strictportbind", "+maxplayers", "32", "+gamemode", "sandbox", "+map", "gm_construct"]
+  },
+  "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
+  "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "4020"},
+  "installation": {"directory": "/opt/dsm/game-data/garrysmod/serverfiles"},
+  "network": {
+    "allocation": "block",
+    "block_size": 1,
+    "ports": [
+      {"name": "game_udp", "protocol": "udp", "offset": 0},
+      {"name": "game_tcp", "protocol": "tcp", "offset": 0}
+    ],
+    "apply": [{"kind": "argument", "template": "-port {game_udp}"}]
+  }
+}
