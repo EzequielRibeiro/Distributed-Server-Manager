@@ -37,9 +37,12 @@ def _marker(home: Path, servername: str) -> Path:
 def bootstrap(*, servername: str, port: int, timeout_seconds: int = 900) -> bool:
     servername = _safe_servername(servername)
     port = _safe_port(port)
-    home = Path(os.environ.get("HOME") or "").resolve()
-    if not home.is_absolute() or str(home) == "/":
-        raise RuntimeError("Project Zomboid bootstrap requires a private HOME")
+    raw_home = str(os.environ.get("HOME") or "").strip()
+    if not raw_home or not os.path.isabs(raw_home):
+        raise RuntimeError("Project Zomboid bootstrap requires an absolute private HOME")
+    home = Path(raw_home).resolve()
+    if str(home) == "/":
+        raise RuntimeError("Project Zomboid bootstrap refuses root as HOME")
     marker = _marker(home, servername)
     if marker.is_file():
         return False
