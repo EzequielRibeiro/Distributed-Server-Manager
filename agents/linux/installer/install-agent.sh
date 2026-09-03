@@ -169,11 +169,20 @@ mapfile -t RUNTIME_FILES < <(
     -printf '%f\n' \
     | LC_ALL=C sort
 )
+mapfile -t PROFILE_FILES < <(
+  find "${PACKAGE_DIR}/agent/runtime/profiles" \
+    -maxdepth 1 \
+    -type f \
+    -name '*.py' \
+    -printf '%f\n' \
+    | LC_ALL=C sort
+)
 ((${#RUNTIME_FILES[@]} > 0)) || fail "nenhum módulo Python encontrado em agent/runtime"
+((${#PROFILE_FILES[@]} > 0)) || fail "nenhum profile Python encontrado em agent/runtime/profiles"
 for required in manifest.json VERSION agent/common/identity.py agent/privileged/materialize_instance.py agent/privileged/reconcile_runtime_identity.py agent/privileged/uninstall_agent.py agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path services/capivara-agent-materialize@.service services/capivara-agent-runtime-identity.service services/capivara-agent-uninstall.service services/capivara-agent-uninstall.path; do [[ -f "${PACKAGE_DIR}/${required}" ]] || fail "arquivo obrigatório ausente: ${required}"; done
 for file in "${RUNTIME_FILES[@]}"; do [[ -f "${PACKAGE_DIR}/agent/runtime/${file}" ]] || fail "arquivo obrigatório ausente: agent/runtime/${file}"; done
 for sub in adapters materializers; do for file in __init__.py base.py registry.py systemd.py; do [[ -f "${PACKAGE_DIR}/agent/runtime/${sub}/${file}" ]] || fail "arquivo obrigatório ausente: agent/runtime/${sub}/${file}"; done; done
-for file in __init__.py base.py registry.py dayz.py; do [[ -f "${PACKAGE_DIR}/agent/runtime/profiles/${file}" ]] || fail "arquivo obrigatório ausente: agent/runtime/profiles/${file}"; done
+for file in "${PROFILE_FILES[@]}"; do [[ -f "${PACKAGE_DIR}/agent/runtime/profiles/${file}" ]] || fail "arquivo obrigatório ausente: agent/runtime/profiles/${file}"; done
 python3 - "${PACKAGE_DIR}" <<'PY'
 import hashlib,json,pathlib,sys
 root=pathlib.Path(sys.argv[1]); manifest=json.loads((root/'manifest.json').read_text())
@@ -191,7 +200,7 @@ install -d -m 0711 -o root -g root "${INSTANCE_STORAGE_ROOT}"
 install -d -m 0700 -o capivara-agent -g capivara-agent "${CONFIG_DIR}" "${STATE_DIR}" "${STATE_DIR}/game-data" "${STATE_DIR}/game-data-jobs" "${STATE_DIR}/game-data-jobs/history" "${STATE_DIR}/game-data-state" "${STATE_DIR}/update-history" "${STATE_DIR}/instances" "${STATE_DIR}/instance-results" "${STATE_DIR}/instance-command-history" "${STATE_DIR}/events" "${STATE_DIR}/instance-provisioning" "${STATE_DIR}/instance-provisioning/history" "${STATE_DIR}/instance-workspaces" "${STATE_DIR}/privileged-materialization" "${STATE_DIR}/instance-locks" "${STATE_DIR}/instance-operations" "${STATE_DIR}/metrics" "${STATE_DIR}/storage-pool-migrations" "${STATE_DIR}/storage-pool-migrations/history" "${STATE_DIR}/uninstall"
 for file in "${RUNTIME_FILES[@]}"; do mode=0644; case "$file" in agent.py|local_cli.py|cap_dispatch.py|controller_cli.py|game_data_executor.py|provisioning_executor.py|storage_pool_migration_executor.py) mode=0755;; esac; install -m "$mode" "${PACKAGE_DIR}/agent/runtime/${file}" "${INSTALL_ROOT}/runtime/${file}"; done
 for sub in adapters materializers; do for file in __init__.py base.py registry.py systemd.py; do install -m 0644 "${PACKAGE_DIR}/agent/runtime/${sub}/${file}" "${INSTALL_ROOT}/runtime/${sub}/${file}"; done; done
-for file in __init__.py base.py registry.py dayz.py; do install -m 0644 "${PACKAGE_DIR}/agent/runtime/profiles/${file}" "${INSTALL_ROOT}/runtime/profiles/${file}"; done
+for file in "${PROFILE_FILES[@]}"; do install -m 0644 "${PACKAGE_DIR}/agent/runtime/profiles/${file}" "${INSTALL_ROOT}/runtime/profiles/${file}"; done
 install -m 0755 "${PACKAGE_DIR}/agent/privileged/materialize_instance.py" "${INSTALL_ROOT}/privileged/materialize_instance.py"
 install -m 0755 "${PACKAGE_DIR}/agent/privileged/reconcile_runtime_identity.py" "${INSTALL_ROOT}/privileged/reconcile_runtime_identity.py"
 install -m 0755 "${PACKAGE_DIR}/agent/privileged/uninstall_agent.py" "${INSTALL_ROOT}/privileged/uninstall_agent.py"

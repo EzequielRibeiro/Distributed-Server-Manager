@@ -38,6 +38,35 @@ def _absolute_list(value: Any, label: str) -> list[str]:
     return [_absolute(item, label) for item in value]
 
 
+def _arguments(value: Any, label: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 128:
+        raise RuntimeSpecError(f"invalid {label}")
+    normalized: list[str] = []
+    for item in value:
+        text = str(item)
+        if "\x00" in text or "\n" in text or "\r" in text or len(text) > 4096:
+            raise RuntimeSpecError(f"invalid {label}")
+        normalized.append(text)
+    return normalized
+
+
+def _pre_start(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 8:
+        raise RuntimeSpecError("invalid pre_start")
+    normalized: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise RuntimeSpecError("invalid pre_start entry")
+        executable = _absolute(item.get("executable"), "pre_start executable")
+        arguments = _arguments(item.get("arguments", []), "pre_start arguments")
+        normalized.append({"executable": executable, "arguments": arguments})
+    return normalized
+
+
 def validate_runtime_spec(spec: dict[str, Any], *, expected_agent_id: str | None = None) -> dict[str, Any]:
     if not isinstance(spec, dict):
         raise RuntimeSpecError("runtime spec must be an object")
@@ -56,16 +85,8 @@ def validate_runtime_spec(spec: dict[str, Any], *, expected_agent_id: str | None
         raise RuntimeSpecError("unsupported runtime materialization adapter")
     result["working_directory"] = _absolute(result.get("working_directory") or result.get("path"), "working_directory")
     result["executable"] = _absolute(result.get("executable"), "executable")
-    arguments = result.get("arguments", [])
-    if not isinstance(arguments, list) or len(arguments) > 128:
-        raise RuntimeSpecError("invalid arguments")
-    normalized_arguments: list[str] = []
-    for item in arguments:
-        value = str(item)
-        if "\x00" in value or "\n" in value or "\r" in value or len(value) > 4096:
-            raise RuntimeSpecError("invalid runtime argument")
-        normalized_arguments.append(value)
-    result["arguments"] = normalized_arguments
+    result["arguments"] = _arguments(result.get("arguments", []), "runtime arguments")
+    result["pre_start"] = _pre_start(result.get("pre_start"))
     environment = result.get("environment", {})
     if not isinstance(environment, dict) or len(environment) > 128:
         raise RuntimeSpecError("invalid environment")

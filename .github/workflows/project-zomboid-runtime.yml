@@ -1,0 +1,53 @@
+name: Project Zomboid Runtime
+
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/runtime/projectzomboid_bootstrap.py'
+      - 'agents/linux/runtime/profiles/projectzomboid.py'
+      - 'agents/linux/runtime/profiles/registry.py'
+      - 'agents/linux/runtime/runtime_spec.py'
+      - 'agents/linux/runtime/materializers/systemd.py'
+      - 'catalog/v2/games/projectzomboid/**'
+      - 'catalog/v2/support-matrix.json'
+      - 'installer/content_adapters/project-zomboid.sh'
+      - 'tests/projectzomboid_runtime_test.py'
+      - '.github/workflows/project-zomboid-runtime.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/linux/runtime/projectzomboid_bootstrap.py'
+      - 'agents/linux/runtime/profiles/projectzomboid.py'
+      - 'catalog/v2/games/projectzomboid/**'
+
+permissions:
+  contents: read
+
+jobs:
+  project-zomboid-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile runtime modules
+        run: |
+          python -m py_compile \
+            agents/linux/runtime/projectzomboid_bootstrap.py \
+            agents/linux/runtime/profiles/projectzomboid.py \
+            agents/linux/runtime/profiles/registry.py \
+            agents/linux/runtime/runtime_spec.py \
+            agents/linux/runtime/materializers/systemd.py
+      - name: Validate Project Zomboid runtime security contract
+        run: python tests/projectzomboid_runtime_test.py
+      - name: Validate catalog JSON
+        run: |
+          python -m json.tool catalog/v2/games/projectzomboid/runtimes/stable.json >/dev/null
+          python -m json.tool catalog/v2/support-matrix.json >/dev/null
+      - name: Ensure bootstrap secret is not persisted in catalog/runtime arguments
+        run: |
+          ! grep -R --line-number -- '-adminpassword' \
+            catalog/v2/games/projectzomboid \
+            agents/linux/runtime/profiles/projectzomboid.py \
+            agents/linux/runtime/materializers/systemd.py

@@ -53,7 +53,11 @@ def render_unit(spec):
  lines=["[Unit]",f"Description=Capivara instance {instance_id}","After=network-online.target","Wants=network-online.target",f"X-Capivara-GeneratedBy={_GENERATED_BY}",f"X-Capivara-Instance={instance_id}",f"X-Capivara-Agent={agent_id}",f"X-Capivara-Runtime={runtime_id}","","[Service]","Type=simple",f"User={spec['user']}",f"StateDirectory={state_directory}","StateDirectoryMode=0700",f"BindPaths={_bind_path(private_state_path,_RUNTIME_ACCOUNT_HOME)}"]
  for binding in spec.get("bind_paths",[]):lines.append(f"BindPaths={_bind_path(binding['source'],binding['target'])}")
  lines.extend([f"WorkingDirectory={_working_directory(spec['working_directory'])}",f"Environment={_quote(f'HOME={_RUNTIME_ACCOUNT_HOME}')}",f"Environment={_quote(f'XDG_DATA_HOME={_RUNTIME_ACCOUNT_HOME}/.local/share')}",f"Environment={_quote(f'XDG_CACHE_HOME={_RUNTIME_ACCOUNT_HOME}/.cache')}",f"Environment={_quote(f'XDG_CONFIG_HOME={_RUNTIME_ACCOUNT_HOME}/.config')}"])
- lines.extend(_resource_lines(spec));lines.extend(["ExecStart="+" ".join(_quote(x) for x in argv),"Restart=no","KillSignal=SIGTERM","TimeoutStopSec=60"])
+ lines.extend(_resource_lines(spec))
+ for item in spec.get("pre_start",[]):
+  pre_argv=[str(item["executable"]),*[str(x) for x in item.get("arguments",[])]]
+  lines.append("ExecStartPre="+" ".join(_quote(x) for x in pre_argv))
+ lines.extend(["ExecStart="+" ".join(_quote(x) for x in argv),"Restart=no","KillSignal=SIGTERM","TimeoutStopSec=60"])
  for key,value in sorted(dict(spec.get("environment",{})).items()):lines.append(f"Environment={_quote(f'{key}={value}')}")
  lines.extend(["","[Install]","WantedBy=multi-user.target",""]);return "\n".join(lines)
 def _owned_content(content,spec):

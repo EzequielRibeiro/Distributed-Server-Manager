@@ -15,7 +15,8 @@
   "process": {
     "engine": "native",
     "executable": "start-server.sh",
-    "artifact_mode": "executable"
+    "artifact_mode": "executable",
+    "args": ["-servername", "servertest"]
   },
   "requirements": {
     "os": ["linux"],
@@ -29,5 +30,15 @@
   },
   "installation": {
     "directory": "/opt/dsm/game-data/projectzomboid/serverfiles"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 10,
+    "ports": [
+      {"name": "game", "protocol": "udp", "offset": 0}
+    ],
+    "apply": [
+      {"kind": "argument", "template": "-port {game}"}
+    ]
   }
 }

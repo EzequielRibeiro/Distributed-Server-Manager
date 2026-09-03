@@ -7,8 +7,9 @@ from typing import Any
 
 from .base import GameRuntimeProfile, ProfileError
 from .dayz import DayZRuntimeProfile
+from .projectzomboid import ProjectZomboidRuntimeProfile
 
-_PROFILE_TYPES = (DayZRuntimeProfile,)
+_PROFILE_TYPES = (DayZRuntimeProfile, ProjectZomboidRuntimeProfile)
 _PROFILES: dict[str, type[GameRuntimeProfile]] = {}
 for profile_type in _PROFILE_TYPES:
     for game_id in profile_type.game_ids:
