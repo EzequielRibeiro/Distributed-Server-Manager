@@ -1,7 +1,6 @@
 {
-  "schema_version": 1,
-  "kind": "CatalogSupportMatrix",
-  "published_runtimes": [
+  "schema_version":1,"kind":"CatalogSupportMatrix",
+  "published_runtimes":[
     {"id":"arma3.stable","game":"arma3","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
     {"id":"armareforger.stable","game":"armareforger","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"},
     {"id":"counterstrike2.stable","game":"counterstrike2","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"},
@@ -26,67 +25,14 @@
     {"id":"rust.stable","game":"rust","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
     {"id":"satisfactory.stable","game":"satisfactory","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"},
     {"id":"sevendaystodie.stable","game":"sevendaystodie","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported","compatibility_note":"serverconfig.xml is copied into private instance state and its ServerPort property is patched by a typed Agent helper."},
-    {"id":"teamfortress2.stable","game":"teamfortress2","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"}
+    {"id":"teamfortress2.stable","game":"teamfortress2","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"},
+    {"id":"theisle.stable","game":"theisle","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported","compatibility_note":"EOS ClientId/ClientSecret are delivered as instance-scoped systemd credentials and materialized only into a private RuntimeDirectory-mounted Engine.ini."}
   ],
-  "deferred_runtimes": [
-    {
-      "id":"arksurvivalascended.stable",
-      "game":"arksurvivalascended",
-      "engine":"native",
-      "provider":"steam",
-      "version_strategy":"static",
-      "resolver":null,
-      "os":["windows"],
-      "status":"deferred",
-      "reason":"The current ARK: Survival Ascended dedicated server distribution is Windows-native; Linux hosting depends on Wine/Proton, and the canonical Capivara Linux Agent does not yet model a typed compatibility-layer runtime."
-    },
-    {
-      "id":"fivem.stable",
-      "game":"fivem",
-      "engine":"native",
-      "provider":"custom",
-      "version_strategy":"static",
-      "resolver":null,
-      "os":["linux"],
-      "status":"deferred",
-      "reason":"FXServer requires a multi-artifact transaction (server artifact plus cfx-server-data) and a customer Cfx.re license key. Capivara does not yet expose a generic secret transport that can supply that key without persisting it in provisioning/runtime metadata."
-    },
-    {
-      "id":"luanti.stable",
-      "game":"luanti",
-      "engine":"native",
-      "provider":"local",
-      "version_strategy":"static",
-      "resolver":null,
-      "os":["linux"],
-      "status":"deferred",
-      "reason":"The local artifact provider is reserved and is not executable by current Linux/Windows Agents."
-    },
-    {
-      "id":"theisle.stable",
-      "game":"theisle",
-      "engine":"native",
-      "provider":"steam",
-      "version_strategy":"static",
-      "resolver":null,
-      "os":["linux"],
-      "status":"deferred",
-      "reason":"The active Evrima server requires an explicit Steam branch and Epic Online Services dedicated-server ClientId/ClientSecret. Those customer credentials cannot yet be delivered through a non-persistent typed secret channel."
-    },
-    {
-      "id":"valheim.stable",
-      "game":"valheim",
-      "engine":"native",
-      "provider":"steam",
-      "version_strategy":"static",
-      "resolver":null,
-      "os":["linux"],
-      "status":"deferred",
-      "reason":"Valheim's normal dedicated startup policy relies on a server password supplied as a process argument. Capivara does not yet have a generic customer-secret channel that keeps that value out of persisted RuntimeSpec/systemd metadata and process inspection."
-    }
+  "deferred_runtimes":[
+    {"id":"arksurvivalascended.stable","game":"arksurvivalascended","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["windows"],"status":"deferred","reason":"The current ARK: Survival Ascended dedicated server distribution is Windows-native; Linux hosting depends on Wine/Proton, and the canonical Capivara Linux Agent does not yet model a typed compatibility-layer runtime."},
+    {"id":"fivem.stable","game":"fivem","engine":"native","provider":"custom","version_strategy":"static","resolver":null,"os":["linux"],"status":"deferred","reason":"FXServer still requires a canonical multi-artifact installation transaction (server artifact plus cfx-server-data). Runtime secret transport is now available for the Cfx.re license key."},
+    {"id":"luanti.stable","game":"luanti","engine":"native","provider":"local","version_strategy":"static","resolver":null,"os":["linux"],"status":"deferred","reason":"The local artifact provider is reserved and is not executable by current Linux/Windows Agents."},
+    {"id":"valheim.stable","game":"valheim","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"deferred","reason":"Valheim requires the server password as a process argument; publishing it would expose a customer secret through process inspection and violate the canonical runtime-secret contract."}
   ],
-  "explicitly_not_published_as_runtimes": [
-    {"id":"mohist","reason":"EOL; not part of the supported runtime set. Youer is the active hybrid successor."},
-    {"id":"starlight","reason":"Optimization/content component, not a standalone server runtime in the canonical catalog."}
-  ]
+  "explicitly_not_published_as_runtimes":[{"id":"mohist","reason":"EOL; not part of the supported runtime set. Youer is the active hybrid successor."},{"id":"starlight","reason":"Optimization/content component, not a standalone server runtime in the canonical catalog."}]
 }
