@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capivara-dsm.local/schemas/v2/configuration-precedence.schema.json",
+  "title": "ConfigurationPrecedence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["policy_version", "kind", "layers"],
+  "properties": {
+    "policy_version": {"const": 1},
+    "kind": {"const": "ConfigurationPrecedence"},
+    "layers": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "values"],
+        "properties": {
+          "source": {"enum": ["SYSTEM", "CONTRACT", "CUSTOMER"]},
+          "values": {"type": "object"}
+        }
+      }
+    }
+  }
+}
