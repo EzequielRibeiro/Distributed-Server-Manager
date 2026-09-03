@@ -116,7 +116,12 @@ if [[ -z "${CONTROLLER_URL}" ]]; then
   fi
 fi
 CONTROLLER_URL="$(normalize_controller_url "${CONTROLLER_URL}")" || fail "Controller URL inválida"
+PAIRING_TOKEN="${PAIRING_TOKEN//$'\r'/}"
+PAIRING_TOKEN="${PAIRING_TOKEN//$'\n'/}"
+PAIRING_TOKEN="${PAIRING_TOKEN#${PAIRING_TOKEN%%[![:space:]]*}}"
+PAIRING_TOKEN="${PAIRING_TOKEN%${PAIRING_TOKEN##*[![:space:]]}}"
 [[ -n "${PAIRING_TOKEN}" ]] || fail "pairing token é obrigatório"
+[[ "${PAIRING_TOKEN}" =~ ^cap_pair_[A-Za-z0-9_-]{32,}$ ]] || fail "pairing token inválido: use um token cap_pair_ emitido pelo Controller"
 [[ "${INSTANCE_STORAGE_ROOT}" == /* ]] || fail "instance storage root deve ser um caminho absoluto"
 [[ "${INSTANCE_STORAGE_ROOT}" != "/" ]] || fail "instance storage root não pode ser /"
 [[ "${INSTANCE_STORAGE_ROOT}" != *$'\n'* && "${INSTANCE_STORAGE_ROOT}" != *$'\r'* ]] || fail "instance storage root inválido"
