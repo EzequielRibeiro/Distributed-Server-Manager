@@ -13,14 +13,7 @@
     "content_type": { "enum": ["mod", "plugin", "modpack"] },
     "game": { "type": "string", "minLength": 1 },
     "version": { "type": "string" },
-    "catalog": {
-      "type": "object",
-      "required": ["provider"],
-      "properties": {
-        "provider": { "type": "string", "minLength": 1 },
-        "project_id": { "type": ["string", "null"] }
-      }
-    },
+    "catalog": { "type": "object", "required": ["provider"], "properties": { "provider": { "type": "string", "minLength": 1 }, "project_id": { "type": ["string", "null"] } } },
     "compatibility": {
       "type": "object",
       "properties": {
@@ -51,17 +44,20 @@
         "collection_id": { "type": ["string", "integer", "null"], "pattern": "^[0-9]+$" },
         "auth": { "enum": ["anonymous", "steam-session", null] }
       },
-      "allOf": [
-        {
-          "if": { "properties": { "provider": { "const": "steam-workshop" } }, "required": ["provider"] },
-          "then": {
-            "required": ["package_id", "workshop_app_id", "published_file_id"],
-            "properties": {
-              "package_id": { "type": "string", "pattern": "^[0-9]+:[0-9]+$" }
-            }
-          }
+      "allOf": [{
+        "if": { "properties": { "provider": { "const": "steam-workshop" } }, "required": ["provider"] },
+        "then": {
+          "required": ["package_id", "workshop_app_id", "published_file_id"],
+          "properties": { "package_id": { "type": "string", "pattern": "^[0-9]+:[0-9]+$" } }
         }
-      ]
+      }]
+    },
+    "installation": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "target": { "type": "string", "pattern": "^(?!/)(?!.*\\.\\.)[^\\r\\n]+$" }
+      }
     },
     "activation": {
       "type": ["object", "null"],
@@ -77,14 +73,6 @@
     }
   },
   "$defs": {
-    "relation": {
-      "type": "object",
-      "required": ["id"],
-      "properties": {
-        "id": { "type": "string" },
-        "version": { "type": ["string", "null"] },
-        "required": { "type": "boolean" }
-      }
-    }
+    "relation": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string" }, "version": { "type": ["string", "null"] }, "required": { "type": "boolean" } } }
   }
 }
