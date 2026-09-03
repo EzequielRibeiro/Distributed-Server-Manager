@@ -11,6 +11,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 $UninstallLog = Join-Path $env:TEMP "capivara-agent-uninstall.log"
+$UninstallMode = if ($Purge) { "purge" } else { "preserve-data" }
+$InstancesPresentBefore = $false
+$BackupsPresentBefore = $false
 
 function Write-UninstallLog([string]$Message) {
     $stamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -79,7 +82,13 @@ function Send-TerminalUninstallResult(
             "X-Capivara-Agent-Fingerprint" = $fingerprint
         }
 
+        $instancesPath = Join-Path $DataRoot "instances"
+        $backupsPath = Join-Path $DataRoot "backups"
+        $instancesPresentAfter = Test-Path -LiteralPath $instancesPath
+        $backupsPresentAfter = Test-Path -LiteralPath $backupsPath
+
         $hostCleanup = @{
+            mode = $UninstallMode
             install_root_removed = (-not (
                 Test-Path -LiteralPath $InstallRoot
             ))
@@ -88,15 +97,15 @@ function Send-TerminalUninstallResult(
                     Join-Path $DataRoot "agent.json"
                 )
             ))
+            instances_present_before = $InstancesPresentBefore
+            instances_present_after = $instancesPresentAfter
+            backups_present_before = $BackupsPresentBefore
+            backups_present_after = $backupsPresentAfter
             instances_preserved = (
-                Test-Path -LiteralPath (
-                    Join-Path $DataRoot "instances"
-                )
+                $InstancesPresentBefore -and $instancesPresentAfter
             )
             backups_preserved = (
-                Test-Path -LiteralPath (
-                    Join-Path $DataRoot "backups"
-                )
+                $BackupsPresentBefore -and $backupsPresentAfter
             )
         }
 
@@ -195,6 +204,8 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 
 $InstallRoot = Assert-SafeRoot $InstallRoot "InstallRoot"
 $DataRoot = Assert-SafeRoot $DataRoot "DataRoot"
+$InstancesPresentBefore = Test-Path -LiteralPath (Join-Path $DataRoot "instances")
+$BackupsPresentBefore = Test-Path -LiteralPath (Join-Path $DataRoot "backups")
 
 # Serialize concurrent/retried uninstall launches. A duplicate detached launcher may
 # still start after a Controller retry, but only one uninstall body runs at a time.
@@ -207,7 +218,7 @@ try {
         exit 0
     }
 
-    Write-UninstallLog "START mode=$(if ($Purge) { 'purge' } else { 'preserve-data' }) install=$InstallRoot data=$DataRoot"
+    Write-UninstallLog "START mode=$UninstallMode install=$InstallRoot data=$DataRoot"
 
     # The detached worker can start a fraction of a second before the Agent and
     # its scheduled-task wrapper have fully released files. Give Windows a
