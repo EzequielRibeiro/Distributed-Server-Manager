@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capivara-dsm.local/schemas/v2/installation-strategy.schema.json",
+  "title": "InstallationStrategy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["strategy_version", "kind", "runtime_id", "engine_id", "acquisition", "installer", "layout"],
+  "properties": {
+    "strategy_version": {"const": 1},
+    "kind": {"const": "InstallationStrategy"},
+    "runtime_id": {"type": "string", "minLength": 1},
+    "engine_id": {"type": "string", "minLength": 1},
+    "acquisition": {
+      "type": "object",
+      "required": ["provider"],
+      "properties": {
+        "provider": {"enum": ["steam", "http", "http-archive", "github", "local", "custom", "source-build"]},
+        "auth": {"type": ["string", "null"]},
+        "package_id": {"type": ["string", "null"]},
+        "repository": {"type": ["string", "null"]},
+        "tag": {"type": ["string", "null"]},
+        "asset": {"type": ["string", "null"]},
+        "url": {"type": ["string", "null"]},
+        "sha256": {"type": ["string", "null"]},
+        "archive_type": {"type": ["string", "null"]}
+      }
+    },
+    "installer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "idempotent"],
+      "properties": {
+        "method": {"enum": ["steamcmd", "download", "copy", "source-build", "custom"]},
+        "idempotent": {"type": "boolean"}
+      }
+    },
+    "layout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["working_dir", "artifact_target"],
+      "properties": {
+        "working_dir": {"type": "string", "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(^|/)\\.\\.(/|$)).+$"},
+        "artifact_target": {"type": "string", "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(^|/)\\.\\.(/|$)).+$"}
+      }
+    },
+    "compatibility": {"type": "object"}
+  }
+}
