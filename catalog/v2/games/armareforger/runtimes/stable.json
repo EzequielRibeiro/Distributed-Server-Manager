@@ -18,10 +18,6 @@
     "ports": [
       {"name": "game", "protocol": "udp", "offset": 0},
       {"name": "steam_query", "protocol": "udp", "offset": 1}
-    ],
-    "apply": [
-      {"kind": "argument", "template": "-bindPort {game}"},
-      {"kind": "argument", "template": "-a2sPort {steam_query}"}
     ]
   }
 }
