@@ -39,6 +39,23 @@ def _capability_set(value: Any) -> set[str]:
     return set()
 
 
+def _structured_capabilities(runtime: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    capabilities = runtime.get("capabilities")
+    capabilities = capabilities if isinstance(capabilities, dict) else {}
+    platform = capabilities.get("platform")
+    platform = platform if isinstance(platform, dict) else {}
+    java_status = capabilities.get("java_status")
+    java_status = java_status if isinstance(java_status, dict) else {}
+    return platform, java_status
+
+
+def _major(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def evaluate_agent_eligibility(
     *,
     runtime: dict[str, Any],
@@ -55,12 +72,38 @@ def evaluate_agent_eligibility(
     if health != "online":
         reasons.append("agent_not_online")
 
-    capabilities = _capability_set(runtime.get("capabilities"))
+    capability_payload = runtime.get("capabilities")
+    capabilities = _capability_set(capability_payload)
     missing = sorted(requirements.capabilities - capabilities)
     if requirements.runtime_id and requirements.runtime_id not in capabilities:
         missing.append(requirements.runtime_id)
     if missing:
         reasons.append("missing_capabilities:" + ",".join(sorted(set(missing))))
+
+    platform, java_status = _structured_capabilities(runtime)
+    if requirements.operating_systems:
+        operating_system = str(platform.get("os") or "").strip().lower()
+        if not operating_system:
+            reasons.append("platform_os_missing")
+        elif operating_system not in requirements.operating_systems:
+            reasons.append("unsupported_platform_os")
+
+    if requirements.architectures:
+        architecture = str(platform.get("architecture") or "").strip().lower()
+        if not architecture:
+            reasons.append("platform_architecture_missing")
+        elif architecture not in requirements.architectures:
+            reasons.append("unsupported_platform_architecture")
+
+    if requirements.java_min_major or requirements.java_max_major:
+        java_major = _major(java_status.get("major"))
+        if not java_major:
+            reasons.append("java_version_missing")
+        else:
+            if requirements.java_min_major and java_major < requirements.java_min_major:
+                reasons.append("java_version_too_old")
+            if requirements.java_max_major and java_major > requirements.java_max_major:
+                reasons.append("java_version_too_new")
 
     cpu = runtime.get("cpu") if isinstance(runtime.get("cpu"), dict) else {}
     threads = int(cpu.get("logical_cores") or 0)

@@ -1,0 +1,37 @@
+name: P0-F Canonical Parameter Policy
+
+on:
+  pull_request:
+    paths:
+      - 'core/canonical_parameter_policy.py'
+      - 'dashboard/catalog_provisioning_resolver.py'
+      - 'agents/linux/runtime/catalog_runtime_policy.py'
+      - 'agents/windows/runtime/catalog_runtime_policy.py'
+      - 'agents/linux/runtime/runtime_spec.py'
+      - 'agents/windows/runtime/runtime_spec.py'
+      - 'catalog/v2/**'
+      - 'tests/p0f_canonical_parameter_policy_test.py'
+      - '.github/workflows/p0f-canonical-parameter-policy.yml'
+  push:
+    branches:
+      - impl/p0f-canonical-parameter-policy
+
+jobs:
+  canonical-parameter-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile parameter boundaries
+        run: |
+          python -m py_compile \
+            core/canonical_parameter_policy.py \
+            dashboard/catalog_provisioning_resolver.py \
+            agents/linux/runtime/catalog_runtime_policy.py \
+            agents/windows/runtime/catalog_runtime_policy.py \
+            agents/linux/runtime/runtime_spec.py \
+            agents/windows/runtime/runtime_spec.py
+      - name: Run P0-F parameter gate
+        run: PYTHONPATH=.:dashboard python tests/p0f_canonical_parameter_policy_test.py

@@ -52,9 +52,11 @@ class Phase1617PlacementEligibilityTest(unittest.TestCase):
             os_name="linux",
             architecture="x86_64",
             capabilities={
+                "platform": {"os": "linux", "architecture": "x86_64"},
                 "native-linux": True,
                 "steamcmd": steamcmd,
                 "java": java,
+                "java_status": {"functional": java, "major": 21 if java else None},
                 "backup": False,
                 "mod-management": False,
             },
@@ -89,7 +91,9 @@ class Phase1617PlacementEligibilityTest(unittest.TestCase):
 
     def test_steam_native_runtime_requires_catalog_declared_infrastructure(self):
         requirements = requirements_for_instance(game_id="dayz", runtime_id="dayz.stable")
-        self.assertEqual(requirements.capabilities, frozenset({"native-linux", "steamcmd"}))
+        self.assertEqual(requirements.capabilities, frozenset({"steamcmd"}))
+        self.assertEqual(requirements.operating_systems, frozenset({"linux", "windows"}))
+        self.assertEqual(requirements.architectures, frozenset({"x86_64"}))
         self.assertEqual(len(requirements.ports), 1)
         self.assertEqual(requirements.ports[0].protocol, "udp")
         self.assertEqual(requirements.ports[0].count, 10)

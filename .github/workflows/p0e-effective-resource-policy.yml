@@ -1,0 +1,46 @@
+name: P0-E Effective Resource Policy
+
+on:
+  pull_request:
+    paths:
+      - 'core/effective_resource_policy.py'
+      - 'dashboard/catalog_provisioning_resolver.py'
+      - 'dashboard/customer_instance_creation.py'
+      - 'database/contract_upgrade_repository.py'
+      - 'database/instance_resource_repository.py'
+      - 'tests/effective_resource_policy_test.py'
+      - 'tests/p0e_effective_resource_policy_integration_test.py'
+      - '.github/workflows/p0e-effective-resource-policy.yml'
+  push:
+    branches:
+      - impl/p0e-effective-resource-policy
+    paths:
+      - 'core/effective_resource_policy.py'
+      - 'dashboard/catalog_provisioning_resolver.py'
+      - 'dashboard/customer_instance_creation.py'
+      - 'database/contract_upgrade_repository.py'
+      - 'database/instance_resource_repository.py'
+      - 'tests/effective_resource_policy_test.py'
+      - 'tests/p0e_effective_resource_policy_integration_test.py'
+      - '.github/workflows/p0e-effective-resource-policy.yml'
+
+jobs:
+  effective-resource-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile policy boundaries
+        run: |
+          python -m py_compile \
+            core/effective_resource_policy.py \
+            dashboard/catalog_provisioning_resolver.py \
+            dashboard/customer_instance_creation.py \
+            database/contract_upgrade_repository.py \
+            database/instance_resource_repository.py
+      - name: Run P0-E policy tests
+        run: |
+          PYTHONPATH=.:dashboard:database python tests/effective_resource_policy_test.py
+          PYTHONPATH=.:dashboard:database python tests/p0e_effective_resource_policy_integration_test.py

@@ -21,5 +21,16 @@
     "local",
     "custom",
     "source-build"
+  ],
+  "agent_executable_artifact_providers": [
+    "steam",
+    "http",
+    "http-archive",
+    "github"
+  ],
+  "reserved_artifact_providers": [
+    "local",
+    "custom",
+    "source-build"
   ]
 }

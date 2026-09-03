@@ -67,7 +67,11 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
             os_name="linux",
             architecture="x86_64",
             capivara_version="9.9.9-test",
-            capabilities={"native-linux": True, "steamcmd": True},
+            capabilities={
+                "platform": {"os": "linux", "architecture": "x86_64"},
+                "native-linux": True,
+                "steamcmd": True,
+            },
             cpu={"logical_cores": 8},
             ram_total_bytes=16 * 1024**3,
             storage={"root_free_bytes": 100 * 1024**3},
