@@ -9,13 +9,15 @@ on:
       - 'dashboard/instance_placement.py'
       - 'dashboard/server_part17.py'
       - 'dashboard/web/customer.html'
-      - 'dashboard/web/customer-placement-selector.js'
+      - 'dashboard/web/customer-placement-client.js'
+      - 'dashboard/web/runtime-selector.js'
       - 'core/placement/placement_policy.py'
       - 'core/placement_requirements.py'
       - 'database/location_repository.py'
       - 'dashboard/placement_service.py'
       - 'tests/customer_geographic_placement_test.py'
       - 'tests/geographic_placement_latency_p6_test.py'
+      - 'tests/customer_placement_client_frontend_test.js'
       - 'tests/customer_placement_selector_frontend_test.js'
       - '.github/workflows/customer-geographic-placement.yml'
   push:
@@ -27,13 +29,15 @@ on:
       - 'dashboard/instance_placement.py'
       - 'dashboard/server_part17.py'
       - 'dashboard/web/customer.html'
-      - 'dashboard/web/customer-placement-selector.js'
+      - 'dashboard/web/customer-placement-client.js'
+      - 'dashboard/web/runtime-selector.js'
       - 'core/placement/placement_policy.py'
       - 'core/placement_requirements.py'
       - 'database/location_repository.py'
       - 'dashboard/placement_service.py'
       - 'tests/customer_geographic_placement_test.py'
       - 'tests/geographic_placement_latency_p6_test.py'
+      - 'tests/customer_placement_client_frontend_test.js'
       - 'tests/customer_placement_selector_frontend_test.js'
       - '.github/workflows/customer-geographic-placement.yml'
 
@@ -49,8 +53,10 @@ jobs:
       - name: Validate Python syntax
         run: python3 -m py_compile core/placement/placement_policy.py dashboard/placement_service.py dashboard/instance_placement.py dashboard/customer_placement_locations.py dashboard/customer_placement_locations_http.py dashboard/customer_instance_creation.py tests/customer_geographic_placement_test.py tests/geographic_placement_latency_p6_test.py
       - name: Validate JavaScript syntax
-        run: node --check dashboard/web/customer-placement-selector.js && node --check tests/customer_placement_selector_frontend_test.js
+        run: node --check dashboard/web/customer-placement-client.js && node --check dashboard/web/runtime-selector.js && node --check tests/customer_placement_client_frontend_test.js && node --check tests/customer_placement_selector_frontend_test.js
       - name: Run geographic placement regressions
         run: python3 -m unittest tests/customer_geographic_placement_test.py tests/geographic_placement_latency_p6_test.py
-      - name: Run customer placement selector frontend regressions
+      - name: Run explicit customer placement client regressions
+        run: node tests/customer_placement_client_frontend_test.js
+      - name: Run canonical runtime selector placement regressions
         run: node tests/customer_placement_selector_frontend_test.js
