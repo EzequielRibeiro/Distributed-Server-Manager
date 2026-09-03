@@ -1,0 +1,34 @@
+name: Configuration Precedence
+
+on:
+  pull_request:
+    paths:
+      - 'core/configuration_precedence.py'
+      - 'catalog/v2/schemas/configuration-precedence.schema.json'
+      - 'docs/architecture/configuration-precedence.md'
+      - 'tests/configuration_precedence_test.py'
+      - '.github/workflows/configuration-precedence.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'core/configuration_precedence.py'
+      - 'catalog/v2/schemas/configuration-precedence.schema.json'
+      - 'docs/architecture/configuration-precedence.md'
+      - 'tests/configuration_precedence_test.py'
+      - '.github/workflows/configuration-precedence.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python
+        run: python3 -m py_compile core/configuration_precedence.py tests/configuration_precedence_test.py
+      - name: Validate schema JSON
+        run: python3 -m json.tool catalog/v2/schemas/configuration-precedence.schema.json >/dev/null
+      - name: Test canonical precedence
+        run: python3 -m unittest tests/configuration_precedence_test.py
