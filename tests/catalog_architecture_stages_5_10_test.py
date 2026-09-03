@@ -71,5 +71,8 @@ class CatalogArchitectureStages5To10Test(unittest.TestCase):
   for text in ("Parâmetros de execução","Templates de configuração","Reparar","Linux + Windows"):self.assertIn(text,html)
   for text in ("/api/catalog/runtime-policy","gameData('repair')","saveRuntimePolicy"):self.assertIn(text,js)
   self.assertIn("dashboard/server_part17.py",service)
-  for name in ("catalog_runtime_policy.py","game_data_integrity.py","game_data_reconcile.py"):self.assertIn(name,build)
+  for token in ('git -C "${ROOT}" ls-tree -r --name-only "${REF}" -- agents/linux/runtime','RUNTIME_SOURCES','copy "${source}" "agent/runtime/${relative}"'):
+   self.assertIn(token,build)
+  for name in ("catalog_runtime_policy.py","game_data_integrity.py","game_data_reconcile.py"):
+   self.assertTrue((ROOT/"agents/linux/runtime"/name).is_file())
 if __name__=="__main__":unittest.main()
