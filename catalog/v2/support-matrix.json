@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "kind": "CatalogSupportMatrix",
+  "published_runtimes": [
+    {"id":"arma3.stable","game":"arma3","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
+    {"id":"dayz.stable","game":"dayz","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
+    {"id":"mindustry.github","game":"mindustry","engine":"java","provider":"github","version_strategy":"dynamic","resolver":"github_releases","os":["linux","windows"],"status":"supported"},
+    {"id":"minecraft.bedrock.vanilla","game":"minecraft","engine":"native","provider":"http-archive","version_strategy":"dynamic","resolver":"minecraft_bedrock","os":["linux"],"status":"supported"},
+    {"id":"minecraft.java.arclight","game":"minecraft","engine":"java","provider":"github","version_strategy":"dynamic","resolver":"github_releases","os":["linux","windows"],"status":"supported"},
+    {"id":"minecraft.java.fabric","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"fabric_meta","os":["linux","windows"],"status":"supported"},
+    {"id":"minecraft.java.forge","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"forge_maven","os":["linux","windows"],"status":"supported"},
+    {"id":"minecraft.java.neoforge","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"neoforge_maven","os":["linux","windows"],"status":"supported"},
+    {"id":"minecraft.java.paper","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"papermc","os":["linux","windows"],"status":"supported"},
+    {"id":"minecraft.java.vanilla","game":"minecraft","engine":"java","provider":"http","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
+    {"id":"rust.stable","game":"rust","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"}
+  ],
+  "deferred_runtimes": [
+    {
+      "id":"luanti.stable",
+      "game":"luanti",
+      "engine":"native",
+      "provider":"local",
+      "version_strategy":"static",
+      "resolver":null,
+      "os":["linux"],
+      "status":"deferred",
+      "reason":"The local artifact provider is reserved and is not executable by current Linux/Windows Agents."
+    }
+  ],
+  "explicitly_not_published_as_runtimes": [
+    {"id":"mohist","reason":"Not part of the supported runtime set."},
+    {"id":"starlight","reason":"Optimization/content component, not a standalone server runtime in the canonical catalog."}
+  ]
+}
