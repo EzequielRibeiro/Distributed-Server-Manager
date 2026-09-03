@@ -23,7 +23,6 @@
     "ports": [
       {"name": "game_udp", "protocol": "udp", "offset": 0},
       {"name": "game_tcp", "protocol": "tcp", "offset": 0}
-    ],
-    "apply": [{"kind": "argument", "template": "-port {game_udp}"}]
+    ]
   }
 }
