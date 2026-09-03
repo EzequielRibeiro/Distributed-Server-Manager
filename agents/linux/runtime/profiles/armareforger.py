@@ -35,7 +35,7 @@ class ArmaReforgerRuntimeProfile(GameRuntimeProfile):
             "adapter": "systemd",
             "working_directory": working_directory,
             "executable": executable,
-            "arguments": ["-config", config_path, "-profile", profile_path, "-maxFPS", "60"],
+            "arguments": ["-config", config_path, "-profile", profile_path, "-bindPort", str(game_port), "-a2sPort", str(query_port), "-maxFPS", "60"],
             "pre_start": [{
                 "executable": "/usr/bin/python3",
                 "arguments": [_PREPARE_HELPER, "--config", config_path, "--game-port", str(game_port), "--query-port", str(query_port), "--name", name],
