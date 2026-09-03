@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import json,sys,tempfile,unittest
+import sys,unittest
 from datetime import datetime,timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -40,7 +40,7 @@ class UniversalServerUpdateTest(unittest.TestCase):
   self.assertIn('textContent',ui);self.assertNotIn('innerHTML',ui)
   for text in (agent,provider,executor):self.assertNotIn('shell=True',text);self.assertNotIn('os.system(',text)
   self.assertIn("instance_runtime.lifecycle(config,current,'stop')",agent);self.assertIn('instance_runtime.doctor',agent);self.assertIn('create_backup',agent)
-  self.assertIn("['-beta',branch]",executor.replace(' ',''));self.assertIn('_server_update',executor);self.assertIn('server_part18.py',service)
+  self.assertIn('argv.extend(["-beta",branch])',executor.replace(' ',''));self.assertIn('_server_update',executor);self.assertIn('server_part18.py',service)
  def test_baseline_compiler_includes_update_schema(self):
   text=(ROOT/'database/schema_baseline.py').read_text();self.assertIn('ensure_server_update_schema',text)
  def test_scheduler_hooks_existing_authenticated_game_data_transport(self):
