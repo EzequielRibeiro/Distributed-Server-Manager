@@ -55,6 +55,7 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  if result.get("storage_pool_id") is not None:result["storage_pool_id"]=_token(result.get("storage_pool_id"),"storage_pool_id")
  result["runtime_id"]=_token(result.get("runtime_id") or result["instance_id"],"runtime_id");result["adapter"]=_token(result.get("adapter") or "systemd","adapter").lower()
  if result["adapter"]!="systemd":raise RuntimeSpecError("unsupported runtime materialization adapter")
+ if result.get("runtime_directory") is not None:result["runtime_directory"]=_token(result.get("runtime_directory"),"runtime_directory")
  result["working_directory"]=_absolute(result.get("working_directory") or result.get("path"),"working_directory");result["executable"]=_absolute(result.get("executable"),"executable");result["arguments"]=_arguments(result.get("arguments",[]),"runtime arguments");result["pre_start"]=_pre_start(result.get("pre_start"));result["secret_refs"]=_secret_refs(result.get("secret_refs"),result["instance_id"])
  environment=result.get("environment",{})
  if not isinstance(environment,dict) or len(environment)>128:raise RuntimeSpecError("invalid environment")
