@@ -44,7 +44,9 @@ $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { Fail "execute o PowerShell como Administrador" }
 if ($ControllerUrl -notmatch '^https?://') { Fail "ControllerUrl inválida" }
+$PairingToken = $PairingToken.Trim()
 if ([string]::IsNullOrWhiteSpace($PairingToken)) { Fail "PairingToken é obrigatório" }
+if ($PairingToken -notmatch '^cap_pair_[A-Za-z0-9_-]{32,}$') { Fail "PairingToken inválido: use um token cap_pair_ emitido pelo Controller" }
 $python = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
 if (-not $python) { Fail "Python 3 não encontrado no PATH" }
 Install-ControllerCa $ControllerCaFile
