@@ -68,27 +68,13 @@ class AgentGameDataJobsTest(unittest.TestCase):
         self.assertNotIn("content", final["selection"]["_file_operation"])
 
     def test_repair_is_a_supported_game_data_operation(self):
-        created = self.jobs.enqueue(
-            agent_id="agent-game-data",
-            action="repair",
-            environment_id="dayz.stable",
-            selector="current",
-            selection=self.selection(),
-            requested_by="admin",
-        )
+        created = self.jobs.enqueue(agent_id="agent-game-data",action="repair",environment_id="dayz.stable",selector="current",selection=self.selection(),requested_by="admin")
         self.assertEqual(created["action"], "repair")
         self.assertEqual(created["transport_action"], "update")
         self.assertEqual(self.jobs.command_for_agent("agent-game-data")["action"], "repair")
 
     def test_steamcmd_install_is_a_supported_agent_tool_operation(self):
-        created = self.jobs.enqueue(
-            agent_id="agent-game-data",
-            action="install-steamcmd",
-            environment_id="_system.steamcmd",
-            selector="current",
-            selection={"kind": "ToolSelection", "tool": "steamcmd"},
-            requested_by="admin",
-        )
+        created = self.jobs.enqueue(agent_id="agent-game-data",action="install-steamcmd",environment_id="_system.steamcmd",selector="current",selection={"kind":"ToolSelection","tool":"steamcmd"},requested_by="admin")
         self.assertEqual(created["action"], "install-steamcmd")
         self.assertEqual(created["transport_action"], "update")
         self.assertEqual(self.jobs.command_for_agent("agent-game-data")["action"], "install-steamcmd")
@@ -114,16 +100,17 @@ class AgentGameDataJobsTest(unittest.TestCase):
         self.assertEqual(selection["kind"], "RuntimeSelection"); self.assertEqual(selection["game"], "dayz"); self.assertEqual(selection["provider"], "steam"); self.assertEqual(str(selection["install"]["package_id"]), "223350")
 
     def test_modern_integration_is_layered_without_growing_legacy_server(self):
-        for part in (14, 15, 16, 17):
+        for part in (14, 15, 16, 17, 18):
             self.assertTrue((ROOT / f"dashboard/server_part{part}.py").is_file())
         server = (ROOT / "dashboard/server_part13.py").read_text(encoding="utf-8")
         self.assertIn("dispatch_agent_game_data_get", server); self.assertIn("dispatch_agent_game_data_post", server)
         file_layer = (ROOT / "dashboard/server_part16.py").read_text(encoding="utf-8")
         self.assertIn("GAME_DATA_FILES_PATH", file_layer)
         package = (ROOT / "release/build_agent_package.sh").read_text(encoding="utf-8")
-        for filename in ("local_cli.py", "game_data_client.py", "game_data_executor.py", "game_data_files.py", "game_data_integrity.py", "game_data_reconcile.py"):
-            self.assertIn(filename, package)
-        self.assertIn('"agent/runtime/${file}"', package)
+        for filename in ("local_cli.py", "game_data_client.py", "game_data_executor.py", "game_data_files.py", "game_data_integrity.py", "game_data_reconcile.py", "server_update_provider.py", "server_update_agent.py"):
+            self.assertTrue((ROOT / "agents/linux/runtime" / filename).is_file())
+        for token in ('git -C "${ROOT}" ls-tree -r --name-only "${REF}" -- agents/linux/runtime', 'RUNTIME_SOURCES', 'copy "${source}" "agent/runtime/${relative}"'):
+            self.assertIn(token, package)
         for backend in ("sqlite", "postgresql", "mysql", "mariadb"):
             schema = (ROOT / "database" / "schemas" / f"{backend}.sql").read_text(); self.assertIn("agent_game_data_jobs", schema)
 
