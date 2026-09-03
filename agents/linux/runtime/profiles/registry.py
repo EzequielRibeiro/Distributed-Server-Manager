@@ -5,11 +5,22 @@ from __future__ import annotations
 
 from typing import Any
 
+from .armareforger import ArmaReforgerRuntimeProfile
 from .base import GameRuntimeProfile, ProfileError
+from .catalog_native import CatalogNativeRuntimeProfile
 from .dayz import DayZRuntimeProfile
+from .factorio import FactorioRuntimeProfile
 from .projectzomboid import ProjectZomboidRuntimeProfile
+from .sevendaystodie import SevenDaysToDieRuntimeProfile
 
-_PROFILE_TYPES = (DayZRuntimeProfile, ProjectZomboidRuntimeProfile)
+_PROFILE_TYPES = (
+    DayZRuntimeProfile,
+    ProjectZomboidRuntimeProfile,
+    CatalogNativeRuntimeProfile,
+    SevenDaysToDieRuntimeProfile,
+    FactorioRuntimeProfile,
+    ArmaReforgerRuntimeProfile,
+)
 _PROFILES: dict[str, type[GameRuntimeProfile]] = {}
 for profile_type in _PROFILE_TYPES:
     for game_id in profile_type.game_ids:

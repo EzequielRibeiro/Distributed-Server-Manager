@@ -14,55 +14,39 @@ CHANNEL=stable; [[ "${VERSION}" == *-* ]] && CHANNEL=beta
 PACKAGE_NAME="capivara-agent-linux-${VERSION}"; ARCHIVE_NAME="${PACKAGE_NAME}.tar.gz"
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/capivara-agent-package.XXXXXX"); PACKAGE_ROOT="${WORK_DIR}/${PACKAGE_NAME}"
 cleanup(){ rm -rf -- "${WORK_DIR}"; }; trap cleanup EXIT
-mkdir -p "${PACKAGE_ROOT}/agent/common" "${PACKAGE_ROOT}/agent/runtime/adapters" "${PACKAGE_ROOT}/agent/runtime/materializers" "${PACKAGE_ROOT}/agent/runtime/profiles" "${PACKAGE_ROOT}/agent/privileged" "${PACKAGE_ROOT}/agent/updater" "${PACKAGE_ROOT}/agent/policy" "${PACKAGE_ROOT}/services" "${PACKAGE_ROOT}/config"
-copy(){ git -C "${ROOT}" show "${REF}:$1" >"${PACKAGE_ROOT}/$2"; }
-# Stable package-path contracts used by CI and external validation:
-# agent/runtime/local_cli.py
-# agent/runtime/controller_cli.py
-# agent/runtime/doctor_client.py
-# agent/runtime/relink_cli.py
-# agent/runtime/game_data_client.py
-# agent/runtime/game_data_executor.py
-# agent/runtime/game_data_installer.py
-# agent/runtime/game_data_files.py
-# agent/runtime/game_data_integrity.py
-# agent/runtime/game_data_reconcile.py
-# agent/runtime/catalog_runtime_policy.py
-# agent/runtime/projectzomboid_bootstrap.py
-# agent/runtime/observability_client.py
-# agent/runtime/queue_observability.py
-# agent/runtime/configuration_client.py
-# agent/runtime/content_client.py
-# agent/runtime/backup_client.py
-# agent/runtime/broadcast_client.py
-# agent/runtime/console_client.py
-# agent/runtime/instance_files_client.py
-# agent/runtime/instance_telemetry.py
-# agent/runtime/resource_profile_client.py
-# agent/runtime/artifact_transfer_client.py
-# agent/runtime/storage_migration_client.py
-# agent/runtime/storage_pools.py
-# agent/runtime/storage_pool_migration_state.py
-# agent/runtime/storage_pool_migration_client.py
-# agent/runtime/storage_pool_migration_executor.py
-# agent/runtime/uninstall_client.py
-# agent/privileged/uninstall_agent.py
-# services/capivara-agent-uninstall.service
-# services/capivara-agent-uninstall.path
+mkdir -p "${PACKAGE_ROOT}/agent/common" "${PACKAGE_ROOT}/agent/runtime" "${PACKAGE_ROOT}/agent/privileged" "${PACKAGE_ROOT}/agent/updater" "${PACKAGE_ROOT}/agent/policy" "${PACKAGE_ROOT}/services" "${PACKAGE_ROOT}/config"
+copy(){ mkdir -p "$(dirname "${PACKAGE_ROOT}/$2")"; git -C "${ROOT}" show "${REF}:$1" >"${PACKAGE_ROOT}/$2"; }
+
 copy agents/linux/installer/install-agent.sh install-agent.sh
 copy agents/common/identity.py agent/common/identity.py
-for file in agent.py capabilities.py network_inventory.py host_telemetry.py update_client.py update_state.py local_cli.py controller_cli.py doctor_client.py relink_cli.py cap_dispatch.py game_data_client.py game_data_executor.py game_data_installer.py game_data_files.py game_data_integrity.py game_data_reconcile.py game_data_state.py catalog_runtime_policy.py instance_runtime.py runtime_spec.py runtime_events.py runtime_materialization.py runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py observability_client.py queue_observability.py configuration_client.py content_client.py backup_client.py broadcast_client.py console_client.py instance_files_client.py instance_telemetry.py resource_profile_client.py artifact_transfer_client.py game_runtime.py provisioning_contract.py provisioning_state.py provisioning_client.py provisioning_executor.py privileged_materialization.py projectzomboid_bootstrap.py storage_migration_client.py storage_pools.py storage_pool_migration_state.py storage_pool_migration_client.py storage_pool_migration_executor.py uninstall_client.py; do copy "agents/linux/runtime/${file}" "agent/runtime/${file}"; done
+
+# Package every Python module below agents/linux/runtime. The Agent installer and
+# updater also discover these modules dynamically, keeping source/package/install
+# parity when a new game profile or typed bootstrap helper is introduced.
+mapfile -t RUNTIME_SOURCES < <(
+  git -C "${ROOT}" ls-tree -r --name-only "${REF}" -- agents/linux/runtime |
+    awk '/\.py$/ {print}' |
+    LC_ALL=C sort
+)
+((${#RUNTIME_SOURCES[@]} > 0)) || fail "no Linux runtime Python modules found"
+for source in "${RUNTIME_SOURCES[@]}"; do
+  relative="${source#agents/linux/runtime/}"
+  copy "${source}" "agent/runtime/${relative}"
+done
+
 copy agents/linux/privileged/materialize_instance.py agent/privileged/materialize_instance.py
 copy agents/linux/privileged/reconcile_runtime_identity.py agent/privileged/reconcile_runtime_identity.py
 copy agents/linux/privileged/uninstall_agent.py agent/privileged/uninstall_agent.py
-for file in __init__.py base.py registry.py systemd.py; do copy "agents/linux/runtime/adapters/${file}" "agent/runtime/adapters/${file}"; copy "agents/linux/runtime/materializers/${file}" "agent/runtime/materializers/${file}"; done
-for file in __init__.py base.py registry.py dayz.py projectzomboid.py; do copy "agents/linux/runtime/profiles/${file}" "agent/runtime/profiles/${file}"; done
 copy agents/linux/policy/49-capivara-agent-instance-units.rules agent/policy/49-capivara-agent-instance-units.rules
 copy agents/linux/updater/updater.py agent/updater/updater.py
 for file in capivara-agent.service capivara-agent-update.service capivara-agent-update.path capivara-agent-materialize@.service capivara-agent-runtime-identity.service capivara-agent-uninstall.service capivara-agent-uninstall.path; do copy "agents/linux/services/${file}" "services/${file}"; done
 printf '%s\n' "${VERSION}" >"${PACKAGE_ROOT}/VERSION"
 printf '%s\n' 'Runtime configuration is created during installation. Pairing secrets are never packaged.' >"${PACKAGE_ROOT}/config/README.md"
-chmod 0755 "${PACKAGE_ROOT}/install-agent.sh" "${PACKAGE_ROOT}/agent/runtime/agent.py" "${PACKAGE_ROOT}/agent/runtime/local_cli.py" "${PACKAGE_ROOT}/agent/runtime/controller_cli.py" "${PACKAGE_ROOT}/agent/runtime/relink_cli.py" "${PACKAGE_ROOT}/agent/runtime/cap_dispatch.py" "${PACKAGE_ROOT}/agent/runtime/game_data_executor.py" "${PACKAGE_ROOT}/agent/runtime/provisioning_executor.py" "${PACKAGE_ROOT}/agent/runtime/storage_pool_migration_executor.py" "${PACKAGE_ROOT}/agent/privileged/materialize_instance.py" "${PACKAGE_ROOT}/agent/privileged/reconcile_runtime_identity.py" "${PACKAGE_ROOT}/agent/privileged/uninstall_agent.py" "${PACKAGE_ROOT}/agent/updater/updater.py"
+chmod 0755 "${PACKAGE_ROOT}/install-agent.sh"
+for executable in agent.py local_cli.py controller_cli.py relink_cli.py cap_dispatch.py game_data_executor.py provisioning_executor.py storage_pool_migration_executor.py; do
+  [[ ! -f "${PACKAGE_ROOT}/agent/runtime/${executable}" ]] || chmod 0755 "${PACKAGE_ROOT}/agent/runtime/${executable}"
+done
+chmod 0755 "${PACKAGE_ROOT}/agent/privileged/materialize_instance.py" "${PACKAGE_ROOT}/agent/privileged/reconcile_runtime_identity.py" "${PACKAGE_ROOT}/agent/privileged/uninstall_agent.py" "${PACKAGE_ROOT}/agent/updater/updater.py"
 find "${PACKAGE_ROOT}/agent" -type f ! -perm -0100 -exec chmod 0644 {} +
 chmod 0644 "${PACKAGE_ROOT}/services/"* "${PACKAGE_ROOT}/VERSION" "${PACKAGE_ROOT}/config/README.md"
 python3 - "${PACKAGE_ROOT}" "${VERSION}" "${COMMIT}" "${CHANNEL}" <<'PY'

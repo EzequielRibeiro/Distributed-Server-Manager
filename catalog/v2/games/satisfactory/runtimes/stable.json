@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "satisfactory.stable",
+  "name": "Satisfactory Dedicated Server",
+  "game": "satisfactory",
+  "edition": "default",
+  "variant": "stable",
+  "loader": null,
+  "version": {"strategy": "static", "value": "current", "build": "steam-current"},
+  "process": {"engine": "native", "executable": "FactoryServer.sh", "artifact_mode": "executable"},
+  "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
+  "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "1690800"},
+  "installation": {"directory": "/opt/dsm/game-data/satisfactory/serverfiles"},
+  "network": {
+    "allocation": "block",
+    "block_size": 2,
+    "ports": [
+      {"name": "game_udp", "protocol": "udp", "offset": 0},
+      {"name": "game_tcp", "protocol": "tcp", "offset": 0},
+      {"name": "reliable_tcp", "protocol": "tcp", "offset": 1}
+    ],
+    "apply": [
+      {"kind": "argument", "template": "-Port={game_udp}"},
+      {"kind": "argument", "template": "-ReliablePort={reliable_tcp}"},
+      {"kind": "argument", "template": "-ExternalReliablePort={reliable_tcp}"}
+    ]
+  }
+}

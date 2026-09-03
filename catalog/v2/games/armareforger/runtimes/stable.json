@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "armareforger.stable",
+  "name": "Arma Reforger Dedicated Server",
+  "game": "armareforger",
+  "edition": "default",
+  "variant": "stable",
+  "loader": null,
+  "version": {"strategy": "static", "value": "current", "build": "steam-current"},
+  "process": {"engine": "native", "executable": "ArmaReforgerServer", "artifact_mode": "executable"},
+  "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
+  "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "1874900"},
+  "installation": {"directory": "/opt/dsm/game-data/armareforger/serverfiles"},
+  "network": {
+    "allocation": "block",
+    "block_size": 2,
+    "ports": [
+      {"name": "game", "protocol": "udp", "offset": 0},
+      {"name": "steam_query", "protocol": "udp", "offset": 1}
+    ]
+  }
+}

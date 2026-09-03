@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "sevendaystodie.stable",
+  "name": "7 Days to Die Dedicated Server",
+  "game": "sevendaystodie",
+  "edition": "default",
+  "variant": "stable",
+  "loader": null,
+  "version": {"strategy": "static", "value": "current", "build": "steam-current"},
+  "process": {"engine": "native", "executable": "7DaysToDieServer.x86_64", "artifact_mode": "executable"},
+  "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
+  "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "294420"},
+  "installation": {"directory": "/opt/dsm/game-data/sevendaystodie/serverfiles"},
+  "network": {
+    "allocation": "block",
+    "block_size": 4,
+    "ports": [
+      {"name": "game", "protocol": "udp", "offset": 0},
+      {"name": "game_tcp", "protocol": "tcp", "offset": 0},
+      {"name": "game_aux_1", "protocol": "udp", "offset": 1},
+      {"name": "game_aux_2", "protocol": "udp", "offset": 2},
+      {"name": "game_aux_3", "protocol": "udp", "offset": 3}
+    ]
+  }
+}

@@ -83,4 +83,6 @@ jobs:
           grep -F 'CONFIGURATIONS_PATH = "/api/configurations"' dashboard/configuration_http.py
           grep -F 'configuration_commands' dashboard/agent_heartbeat_api.py
           grep -F 'configuration_state' agents/linux/runtime/agent.py
-          grep -F 'configuration_client.py' release/build_agent_package.sh
+          test -f agents/linux/runtime/configuration_client.py
+          grep -F 'ls-tree -r --name-only "${REF}" -- agents/linux/runtime' release/build_agent_package.sh
+          grep -F 'copy "${source}" "agent/runtime/${relative}"' release/build_agent_package.sh

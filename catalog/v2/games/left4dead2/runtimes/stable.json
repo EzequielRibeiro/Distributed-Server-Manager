@@ -1,0 +1,28 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "left4dead2.stable",
+  "name": "Left 4 Dead 2 Dedicated Server",
+  "game": "left4dead2",
+  "edition": "default",
+  "variant": "stable",
+  "loader": null,
+  "version": {"strategy": "static", "value": "current", "build": "steam-current"},
+  "process": {
+    "engine": "native",
+    "executable": "srcds_run",
+    "artifact_mode": "executable",
+    "args": ["-game", "left4dead2", "-console", "-usercon", "-strictportbind", "+map", "c1m1_hotel", "+maxplayers", "8"]
+  },
+  "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
+  "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "222860"},
+  "installation": {"directory": "/opt/dsm/game-data/left4dead2/serverfiles"},
+  "network": {
+    "allocation": "block",
+    "block_size": 1,
+    "ports": [
+      {"name": "game_udp", "protocol": "udp", "offset": 0},
+      {"name": "game_tcp", "protocol": "tcp", "offset": 0}
+    ]
+  }
+}

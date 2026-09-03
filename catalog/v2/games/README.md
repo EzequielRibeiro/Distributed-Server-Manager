@@ -23,19 +23,28 @@ Nem todo jogo precisa de todos os arquivos. Providers reutilizáveis permanecem 
 Publicados:
 
 - `arma3`
+- `armareforger`
 - `counterstrike2`
 - `dayz`
+- `factorio`
+- `garrysmod`
+- `left4dead2`
 - `mindustry`
 - `minecraft`
 - `palworld`
 - `projectzomboid`
 - `rust`
+- `satisfactory`
+- `sevendaystodie`
 - `teamfortress2`
 
 Adiados com definição preservada:
 
-- `fivem`
-- `luanti`
+- `arksurvivalascended` — servidor atual Windows-native; falta runtime tipado Wine/Proton ou execução canônica no Agent Windows.
+- `fivem` — instalação multi-artifact e licença Cfx.re exigem transporte genérico de segredo ainda inexistente.
+- `luanti` — provider local ainda não é executável pelos Agents.
+- `theisle` — Evrima depende de branch Steam específica e credenciais EOS que não podem ser persistidas no RuntimeSpec/systemd.
+- `valheim` — senha normal de servidor é parâmetro sensível de startup e ainda não existe canal genérico de segredo não persistente.
 
 A lista normativa de runtimes suportados e adiados está em `catalog/v2/support-matrix.json` e é verificada pelo workflow **Catalog Completion**. O arquivo `catalog/v2/steam-top25-2026-09-03.json` registra a análise de aplicabilidade do Top 25 da Steam capturado em 3 de setembro de 2026.
 
@@ -43,9 +52,9 @@ A lista normativa de runtimes suportados e adiados está em `catalog/v2/support-
 
 Um runtime em `runtimes/` precisa ter ID único, `RuntimeDefinition` v2 válido, engine/processo definidos, requisitos de SO/arquitetura, provider executável pelo Agent, Installation Strategy coerente e resolver existente quando `version.strategy=dynamic`.
 
-Providers reservados (`local`, `custom`, `source-build`) não tornam uma definição publicável até que exista uma estratégia tipada implementada em paridade nos Agents necessários. Definições preservadas nessas condições ficam em `deferred/`.
+Providers reservados (`local`, `custom`, `source-build`) não tornam uma definição publicável até que exista uma estratégia tipada implementada em paridade nos Agents necessários. Credenciais de terceiros também não podem ser introduzidas no catálogo, argumentos, ambiente, unidades systemd ou request JSON apenas para remover um estado `deferred`.
 
-Project Zomboid possui bootstrap de primeira inicialização específico no Agent Linux. O bootstrap gera localmente uma credencial administrativa descartável, envia-a somente pelo stdin do processo inicial e não a persiste em argumentos, ambiente, request JSON, unidade systemd ou logs. O estado mutável fica no HOME privado por instância.
+Project Zomboid possui bootstrap de primeira inicialização específico no Agent Linux. 7 Days to Die mantém `serverconfig.xml` no estado privado e aplica a porta por helper XML tipado. Factorio cria uma única vez o save inicial e o `server-settings.json` privados. Arma Reforger gera configuração JSON privada com portas reservadas pelo Placement. Satisfactory, Garry's Mod e Left 4 Dead 2 usam o profile nativo genérico allowlisted.
 
 Popularidade não substitui hospedabilidade. Jogos do ranking da Steam sem distribuição pública de servidor dedicado, ou que dependem exclusivamente da infraestrutura oficial do publisher, não entram em `runtimes/` apenas para aparecer na seleção do cliente.
 
