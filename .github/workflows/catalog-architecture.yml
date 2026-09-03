@@ -14,8 +14,12 @@ on:
       - 'agents/windows/runtime/catalog_runtime_policy.py'
       - 'agents/windows/runtime/game_data_*'
       - 'database/agent_instance_provisioning_repository.py'
+      - 'core/runtime_engine_contract.py'
+      - 'catalog/v2/schemas/runtime-engine-contract.schema.json'
+      - 'docs/architecture/runtime-engine-contract.md'
       - 'release/build_agent_package.sh'
       - 'tests/catalog_architecture_stages_5_10_test.py'
+      - 'tests/runtime_engine_contract_test.py'
       - '.github/workflows/catalog-architecture.yml'
   push:
     branches: [main]
@@ -47,11 +51,17 @@ jobs:
             agents/windows/runtime/game_data_files.py \
             agents/windows/runtime/game_data_integrity.py \
             agents/windows/runtime/game_data_executor.py \
-            tests/catalog_architecture_stages_5_10_test.py
+            core/runtime_engine_contract.py \
+            tests/catalog_architecture_stages_5_10_test.py \
+            tests/runtime_engine_contract_test.py
+      - name: Validate canonical Runtime Engine schema JSON
+        run: python3 -m json.tool catalog/v2/schemas/runtime-engine-contract.schema.json >/dev/null
       - name: Validate Dashboard JavaScript
         run: node --check dashboard/web/catalog-page.js
       - name: Test stages 5-10
         run: python3 -m unittest tests/catalog_architecture_stages_5_10_test.py
+      - name: Test canonical Runtime Engine contract
+        run: python3 -m unittest tests/runtime_engine_contract_test.py
       - name: Test Linux Agent package
         run: bash tests/agent_package_test.sh
       - name: Test Windows Agent package
