@@ -107,6 +107,57 @@ def _load_persistent_identity() -> dict[str, Any]:
     return config
 
 
+def _snapshot_persistent_config() -> tuple[bytes, os.stat_result]:
+    return CONFIG_PATH.read_bytes(), CONFIG_PATH.stat()
+
+
+def _write_persistent_config(payload: dict[str, Any], metadata: os.stat_result) -> None:
+    temp = CONFIG_PATH.with_name(f".{CONFIG_PATH.name}.{os.getpid()}.tmp")
+    temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(temp, metadata.st_mode & 0o7777)
+    try:
+        os.chown(temp, metadata.st_uid, metadata.st_gid)
+    except OSError:
+        pass
+    os.replace(temp, CONFIG_PATH)
+
+
+def _sync_persistent_version(version: str, identity: dict[str, Any]) -> None:
+    current = _load_persistent_identity()
+    for key in (
+        "agent_id",
+        "node_id",
+        "controller_id",
+        "fingerprint",
+        "credential_id",
+        "credential_secret",
+    ):
+        if current.get(key) != identity.get(key):
+            raise RuntimeError(f"persistent Agent identity changed during update: {key}")
+    metadata = CONFIG_PATH.stat()
+    updated = dict(current)
+    updated["capivara_version"] = version
+    _write_persistent_config(updated, metadata)
+
+
+def _restore_persistent_config(snapshot: tuple[bytes, os.stat_result]) -> None:
+    content, metadata = snapshot
+    temp = CONFIG_PATH.with_name(f".{CONFIG_PATH.name}.{os.getpid()}.rollback")
+    temp.write_bytes(content)
+    os.chmod(temp, metadata.st_mode & 0o7777)
+    try:
+        os.chown(temp, metadata.st_uid, metadata.st_gid)
+    except OSError:
+        pass
+    os.replace(temp, CONFIG_PATH)
+
+
+def _validate_persistent_version(version: str) -> None:
+    config = _load_persistent_identity()
+    if str(config.get("capivara_version") or "").strip() != version:
+        raise RuntimeError("post-update persistent capivara_version validation failed")
+
+
 def _download(url: str, path: Path) -> None:
     request = urllib.request.Request(url, headers={"User-Agent": "Capivara-Agent-Updater"})
     with urllib.request.urlopen(request, timeout=60) as response, path.open("wb") as output:
@@ -512,6 +563,7 @@ def apply_request() -> int:
         raise RuntimeError("local/manual updates require administrator supplied package")
 
     identity = _load_persistent_identity()
+    persistent_config_snapshot = _snapshot_persistent_config()
     expected_agent_id = str(identity["agent_id"])
     plain = version[1:] if version.startswith("v") else version
     tag = version if version.startswith("v") else f"v{version}"
@@ -551,12 +603,14 @@ def apply_request() -> int:
 
         try:
             _apply_files(mapping)
+            _sync_persistent_version(plain, identity)
             _ensure_state_directory(UNINSTALL_STATE_DIR)
             _daemon_reload()
             _set_uninstall_watch(True)
             _reconcile_runtime_identity()
             _reconcile_cli()
             _validate_installed(plain, manifest, mapping)
+            _validate_persistent_version(plain)
             _restart_agent(expected_agent_id)
         except Exception:
             try:
@@ -564,6 +618,7 @@ def apply_request() -> int:
             except Exception:
                 pass
             _restore_files(snapshots)
+            _restore_persistent_config(persistent_config_snapshot)
             _restore_cli(cli_existed, old_cli_target)
             try:
                 _daemon_reload()
