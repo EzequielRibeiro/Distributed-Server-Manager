@@ -28,9 +28,10 @@ def _text(value: Any, field: str) -> str:
 
 
 def _relative(value: Any, field: str) -> str:
-    text = _text(value, field).replace("\\", "/")
+    raw = _text(value, field)
+    text = raw.replace("\\", "/")
     path = PurePosixPath(text)
-    if path.is_absolute() or ".." in path.parts:
+    if path.is_absolute() or PureWindowsPath(raw).is_absolute() or ".." in path.parts:
         raise InstallationStrategyError(f"{field} must be a safe relative path")
     if any(part in {"", "."} for part in path.parts) and text not in {".", ""}:
         raise InstallationStrategyError(f"{field} must be a normalized relative path")
