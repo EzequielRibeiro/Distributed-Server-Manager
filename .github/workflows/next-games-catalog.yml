@@ -9,13 +9,12 @@ on:
       - 'agents/linux/runtime/*_prepare.py'
       - 'tests/next_games_catalog_test.py'
       - 'tests/catalog_completion_test.py'
+      - 'tests/theisle_runtime_test.py'
       - '.github/workflows/next-games-catalog.yml'
   push:
     branches: [main]
-
 permissions:
   contents: read
-
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -24,29 +23,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Compile typed runtime modules
         run: |
-          python3 -m py_compile \
-            agents/linux/runtime/profiles/catalog_native.py \
-            agents/linux/runtime/profiles/sevendaystodie.py \
-            agents/linux/runtime/profiles/factorio.py \
-            agents/linux/runtime/profiles/armareforger.py \
-            agents/linux/runtime/sevendaystodie_prepare.py \
-            agents/linux/runtime/factorio_prepare.py \
-            agents/linux/runtime/armareforger_prepare.py
+          python3 -m py_compile agents/linux/runtime/profiles/catalog_native.py agents/linux/runtime/profiles/sevendaystodie.py agents/linux/runtime/profiles/factorio.py agents/linux/runtime/profiles/armareforger.py agents/linux/runtime/profiles/theisle.py agents/linux/runtime/sevendaystodie_prepare.py agents/linux/runtime/factorio_prepare.py agents/linux/runtime/armareforger_prepare.py agents/linux/runtime/theisle_prepare.py
       - name: Validate runtime manifests and support matrix JSON
         run: |
           python3 -m json.tool catalog/v2/support-matrix.json >/dev/null
-          for file in \
-            catalog/v2/games/sevendaystodie/runtimes/stable.json \
-            catalog/v2/games/satisfactory/runtimes/stable.json \
-            catalog/v2/games/garrysmod/runtimes/stable.json \
-            catalog/v2/games/factorio/runtimes/stable.json \
-            catalog/v2/games/left4dead2/runtimes/stable.json \
-            catalog/v2/games/armareforger/runtimes/stable.json \
-            catalog/v2/games/fivem/deferred/stable.json \
-            catalog/v2/games/valheim/deferred/stable.json \
-            catalog/v2/games/arksurvivalascended/deferred/stable.json \
-            catalog/v2/games/theisle/deferred/stable.json; do
+          for file in catalog/v2/games/sevendaystodie/runtimes/stable.json catalog/v2/games/satisfactory/runtimes/stable.json catalog/v2/games/garrysmod/runtimes/stable.json catalog/v2/games/factorio/runtimes/stable.json catalog/v2/games/left4dead2/runtimes/stable.json catalog/v2/games/armareforger/runtimes/stable.json catalog/v2/games/theisle/runtimes/stable.json catalog/v2/games/fivem/deferred/stable.json catalog/v2/games/valheim/deferred/stable.json catalog/v2/games/arksurvivalascended/deferred/stable.json; do
             python3 -m json.tool "$file" >/dev/null
           done
       - name: Run dedicated server batch regression
         run: python3 -m unittest tests/next_games_catalog_test.py tests/catalog_completion_test.py
+      - name: Run The Isle secure runtime regression
+        run: python3 tests/theisle_runtime_test.py
