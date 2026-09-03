@@ -14,7 +14,12 @@ on:
       - 'dashboard/dashboard.sh'
       - 'systemd/dsm-dashboard.service'
       - 'agents/linux/runtime/content_client.py'
+      - 'agents/linux/runtime/content_update_*.py'
+      - 'agents/linux/runtime/runtime_metrics.py'
       - 'agents/linux/runtime/agent.py'
+      - 'agents/windows/runtime/content_client.py'
+      - 'agents/windows/runtime/content_update_*.py'
+      - 'agents/windows/runtime/runtime_metrics.py'
       - 'release/build_agent_package.sh'
       - 'bin/cap'
       - 'tests/universal_content_*'
@@ -28,7 +33,7 @@ jobs:
       - name: Validate syntax
         run: |
           bash -n bin/cap release/build_agent_package.sh dashboard/dashboard.sh
-          python3 -m py_compile core/content_platform.py database/content_repository.py database/content_cli.py dashboard/content_api.py dashboard/content_http.py dashboard/server_part13.py dashboard/server_part17.py dashboard/agent_heartbeat_api.py agents/linux/runtime/content_client.py agents/linux/runtime/agent.py
+          python3 -m py_compile core/content_platform.py database/content_repository.py database/content_cli.py dashboard/content_api.py dashboard/content_http.py dashboard/server_part13.py dashboard/server_part17.py dashboard/agent_heartbeat_api.py agents/linux/runtime/content_client.py agents/linux/runtime/content_update_provider.py agents/linux/runtime/content_update_inventory.py agents/linux/runtime/runtime_metrics.py agents/linux/runtime/agent.py agents/windows/runtime/content_client.py agents/windows/runtime/content_update_provider.py agents/windows/runtime/content_update_inventory.py agents/windows/runtime/runtime_metrics.py
       - name: Test Universal Content
         run: python3 -m unittest tests/universal_content_platform_test.py tests/universal_content_http_test.py
       - name: Verify composition and Agent package contracts
@@ -37,6 +42,10 @@ jobs:
           grep -Fq 'import server_part16 as integration' dashboard/server_part17.py
           grep -Fq 'server_part17.py' systemd/dsm-dashboard.service
           test -f agents/linux/runtime/content_client.py
+          test -f agents/linux/runtime/content_update_provider.py
+          test -f agents/linux/runtime/content_update_inventory.py
+          test -f agents/windows/runtime/content_update_provider.py
+          test -f agents/windows/runtime/content_update_inventory.py
           test -f agents/linux/runtime/game_data_client.py
           test -f agents/linux/runtime/observability_client.py
           grep -Fq 'ls-tree -r --name-only "${REF}" -- agents/linux/runtime' release/build_agent_package.sh
