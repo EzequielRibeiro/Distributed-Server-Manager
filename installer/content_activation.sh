@@ -27,7 +27,9 @@ activation_render()
     }
 
     TMP="$(mktemp -d)"
-    trap 'rm -rf -- "${TMP}"' RETURN
+    # The dispatcher executes adapter functions in the same shell. A RETURN trap
+    # would fire when an adapter returns and delete the accumulator too early.
+    trap 'rm -rf -- "${TMP}"' EXIT
     printf '[]\n' >"${TMP}/operations.json"
 
     while IFS= read -r ADAPTER; do
