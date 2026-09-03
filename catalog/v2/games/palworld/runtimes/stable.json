@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "palworld.stable",
+  "name": "Palworld Dedicated Server",
+  "game": "palworld",
+  "edition": "default",
+  "variant": "stable",
+  "loader": null,
+  "version": {
+    "strategy": "static",
+    "value": "current",
+    "build": "steam-current"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "PalServer.sh",
+    "artifact_mode": "executable"
+  },
+  "requirements": {
+    "os": ["linux"],
+    "architectures": ["x86_64"],
+    "java": null
+  },
+  "artifact": {
+    "provider": "steam",
+    "auth": "anonymous",
+    "package_id": "2394010"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/palworld/serverfiles"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 10,
+    "ports": [
+      {"name": "game", "protocol": "udp", "offset": 0}
+    ],
+    "apply": [
+      {"kind": "argument", "template": "-port={game}"}
+    ]
+  }
+}
