@@ -43,9 +43,11 @@ def snapshot(*,queue_depth:dict[str,int]|None=None)->dict[str,Any]:
  payload=_read()
  if queue_depth is not None:payload["queue_depth"]={str(key):max(0,int(value)) for key,value in queue_depth.items()}
  config=_agent_config();stale_after=max(30,int(config.get("queue_stale_after_seconds",300) or 300));payload["queue_health"]=collect_queue_observability(Path(instance_runtime.STATE_DIR),stale_after_seconds=stale_after);payload["queue_stale_count"]=sum(1 for item in payload["queue_health"].values() if item.get("stale"))
- try:payload["server_updates"]=refresh_server_updates(config)
+ try:
+  payload["server_updates"] = refresh_server_updates(config)
  except Exception as exc:payload["server_updates"]={"schema_version":1,"kind":"ServerUpdateInventory","checked_at":None,"games":[],"status":"probe_failed","error":str(exc)[:2000]}
- try:payload["content_updates"]=refresh_content_updates(config)
+ try:
+  payload["content_updates"] = refresh_content_updates(config)
  except Exception as exc:payload["content_updates"]={"schema_version":1,"kind":"ContentUpdateInventory","checked_at":None,"content":[],"status":"probe_failed","error":str(exc)[:2000]}
  samples=collect_observability({"agent_id":"local"})
  for sample in samples:sample.pop("agent_id",None)
