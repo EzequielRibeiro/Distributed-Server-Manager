@@ -2,6 +2,7 @@
 from __future__ import annotations
 import sys,tempfile,unittest
 from pathlib import Path
+from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1]
 for path in (ROOT/"core",ROOT/"database",ROOT/"dashboard",ROOT/"agents"/"linux"/"runtime"):
  if str(path) not in sys.path:sys.path.insert(0,str(path))
@@ -10,6 +11,7 @@ from backend import DatabaseConfig
 from backend_factory import create_backend
 from content_platform import ContentValidationError,normalize_assignment
 from content_repository import ContentRepository
+import content_client
 from content_client import _safe_target
 
 class ContentContractTest(unittest.TestCase):
@@ -26,6 +28,19 @@ class ContentContractTest(unittest.TestCase):
   root=Path("/tmp/instance")
   self.assertEqual(_safe_target(root,"mods/example"),Path("/tmp/instance/content/mods/example"))
   with self.assertRaises(ValueError):_safe_target(root,"../../etc")
+ def test_running_instance_rolls_back_content_when_readiness_fails(self):
+  with tempfile.TemporaryDirectory() as td:
+   instance=Path(td)/"instance";target=instance/"content"/"mods"/"mod-one";target.mkdir(parents=True);(target/"old.bin").write_text("old",encoding="utf-8")
+   source=Path(td)/"new.bin";source.write_text("new",encoding="utf-8")
+   cmd={"instance_id":"instance-c4","content_id":"mod-one","target":"mods/mod-one","provider":"local","artifact":{"filename":"new.bin"}}
+   lifecycle=[]
+   def life(config,iid,action):lifecycle.append(action);return {"observed_state":"stopped" if action=="stop" else "running"}
+   with patch.object(content_client,"_owned",return_value=({"instance_id":"instance-c4","agent_id":"agent-c4"},instance)),patch.object(content_client,"_source",return_value=source),patch.object(content_client.instance_runtime,"status",return_value={"observed_state":"running"}),patch.object(content_client.instance_runtime,"lifecycle",side_effect=life),patch.object(content_client.instance_runtime,"doctor",side_effect=[{"ready":False},{"ready":True}]):
+    with self.assertRaises(content_client.ContentActivationError):content_client._install({"agent_id":"agent-c4"},cmd)
+   self.assertTrue((target/"old.bin").is_file());self.assertFalse((target/"new.bin").exists());self.assertEqual(lifecycle,["stop","start","stop","start"]);self.assertFalse(target.with_name(target.name+".c4-old").exists())
+ def test_windows_content_client_has_same_readiness_contract(self):
+  text=(ROOT/"agents/windows/runtime/content_client.py").read_text(encoding="utf-8")
+  for marker in ("instance_runtime.lifecycle","instance_runtime.doctor","ContentRollbackError",".c4-old","unfinished content transaction detected"):self.assertIn(marker,text)
 
 class ContentRepositoryTest(unittest.TestCase):
  def setUp(self):

@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib,json,os,shutil,stat,tarfile,tempfile,urllib.request,zipfile
 from pathlib import Path
 from typing import Any
-from instance_runtime import get_instance
+import instance_runtime
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));CONTENT_STATE=STATE_ROOT/"managed-content";GAME_DATA_ROOT=Path(os.environ.get("CAPIVARA_AGENT_GAME_DATA_ROOT",STATE_ROOT/"game-data")).resolve()
+class ContentActivationError(RuntimeError):pass
+class ContentRollbackError(ContentActivationError):pass
 def _write(path:Path,payload:dict[str,Any]):
  path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_name(f".{path.name}.{os.getpid()}.tmp");tmp.write_text(json.dumps(payload,indent=2,sort_keys=True)+"\n",encoding="utf-8");os.replace(tmp,path)
 def _safe_component(v):
@@ -20,7 +22,7 @@ def _safe_target(root:Path,target:str)->Path:
  except ValueError as exc:raise ValueError("content target escapes instance") from exc
  return candidate
 def _owned(config,cmd):
- iid=str(cmd.get("instance_id") or "").strip();rec=get_instance(iid)
+ iid=str(cmd.get("instance_id") or "").strip();rec=instance_runtime.get_instance(iid)
  if not rec:raise LookupError("instance not found")
  if str(rec.get("agent_id") or "")!=str(config.get("agent_id") or ""):raise PermissionError("instance belongs to another Agent")
  path=Path(str(rec.get("path") or "")).resolve()
@@ -86,31 +88,55 @@ def _validate_relations(cmd):
   state=_dependency_state(iid,str(conflict))
   if state.get("status")=="applied" and state.get("installed_version"):raise RuntimeError(f"conflicting content is installed: {conflict}")
  if cid in (cmd.get("dependencies") or []) or cid in (cmd.get("conflicts") or []):raise ValueError("content cannot depend/conflict with itself")
+def _remove_path(path:Path):
+ if not path.exists():return
+ shutil.rmtree(path) if path.is_dir() else path.unlink()
+def _runtime_ready(config:dict[str,Any],iid:str)->bool:return bool(instance_runtime.doctor(config,iid).get("ready"))
+def _activate_target(config:dict[str,Any],iid:str,target:Path,payload:Path|None)->None:
+ backup=target.with_name(target.name+".c4-old")
+ if backup.exists():raise ContentActivationError("unfinished content transaction detected")
+ was_running=instance_runtime.status(config,iid).get("observed_state")=="running";previous_exists=target.exists();activated=False
+ try:
+  if was_running:instance_runtime.lifecycle(config,iid,"stop")
+  if previous_exists:os.replace(target,backup)
+  if payload is not None:os.replace(payload,target)
+  activated=True
+  if was_running:
+   instance_runtime.lifecycle(config,iid,"start")
+   if not _runtime_ready(config,iid):raise ContentActivationError("content activation failed readiness validation")
+  _remove_path(backup)
+ except Exception as exc:
+  try:
+   if was_running:
+    try:instance_runtime.lifecycle(config,iid,"stop")
+    except Exception:pass
+   if activated and target.exists():_remove_path(target)
+   if backup.exists():os.replace(backup,target)
+   if was_running:
+    instance_runtime.lifecycle(config,iid,"start")
+    if not _runtime_ready(config,iid):raise ContentRollbackError("content rollback failed readiness validation")
+  except Exception as rollback_exc:raise ContentRollbackError(f"content activation failed and rollback failed: {rollback_exc}") from exc
+  raise
 def _install(config,cmd):
- _validate_relations(cmd);_,instance=_owned(config,cmd);target=_safe_target(instance,str(cmd.get("target") or "assets"));artifact=dict(cmd.get("artifact") or {});provider=str(cmd.get("provider") or artifact.get("provider") or "");parent=target.parent;parent.mkdir(parents=True,exist_ok=True);stage=Path(tempfile.mkdtemp(prefix=f".{target.name}.c4-",dir=str(parent)));backup=target.with_name(target.name+".c4-old")
+ _validate_relations(cmd);_,instance=_owned(config,cmd);iid=str(cmd.get("instance_id") or "");target=_safe_target(instance,str(cmd.get("target") or "assets"));artifact=dict(cmd.get("artifact") or {});provider=str(cmd.get("provider") or artifact.get("provider") or "");parent=target.parent;parent.mkdir(parents=True,exist_ok=True);stage=Path(tempfile.mkdtemp(prefix=f".{target.name}.c4-",dir=str(parent)))
  try:
   source=_source(provider,artifact,stage);_sha(source,artifact.get("sha256"));payload=stage/"payload";payload.mkdir();archive=provider=="http-archive" or bool(artifact.get("archive"))
   if archive:_extract(source,payload)
   elif source.is_dir():shutil.copytree(source,payload,dirs_exist_ok=True)
   else:shutil.copy2(source,payload/(str(artifact.get("filename") or source.name or "content.bin")))
-  if backup.exists():shutil.rmtree(backup) if backup.is_dir() else backup.unlink()
-  if target.exists():os.replace(target,backup)
-  os.replace(payload,target)
-  if backup.exists():shutil.rmtree(backup) if backup.is_dir() else backup.unlink()
+  _activate_target(config,iid,target,payload)
  finally:shutil.rmtree(stage,ignore_errors=True)
  return str(target)
 def _remove(config,cmd):
- _,instance=_owned(config,cmd);target=_safe_target(instance,str(cmd.get("target") or "assets"))
- if target.exists():shutil.rmtree(target) if target.is_dir() else target.unlink()
- return str(target)
+ _,instance=_owned(config,cmd);iid=str(cmd.get("instance_id") or "");target=_safe_target(instance,str(cmd.get("target") or "assets"));_activate_target(config,iid,target,None);return str(target)
 def _apply(config,cmd):
  iid=str(cmd.get("instance_id") or "");cid=str(cmd.get("content_id") or "");revision=int(cmd.get("revision") or 0);checksum=str(cmd.get("checksum") or "");state=_state_path(iid,cid)
  try:previous=json.loads(state.read_text()) if state.exists() else {}
  except Exception:previous={}
  if previous.get("status")=="applied" and previous.get("applied_revision")==revision and previous.get("applied_checksum")==checksum:return previous
  try:
-  desired=str(cmd.get("desired_state") or "installed");path=_remove(config,cmd) if desired=="absent" else _install(config,cmd);report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":revision,"desired_checksum":checksum,"applied_checksum":checksum,"status":"applied","installed_version":None if desired=="absent" else str(cmd.get("version") or "latest"),"managed_path":path,"last_error":None}
- except Exception as exc:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"last_error":str(exc)[:2000]}
+  desired=str(cmd.get("desired_state") or "installed");path=_remove(config,cmd) if desired=="absent" else _install(config,cmd);report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":revision,"desired_checksum":checksum,"applied_checksum":checksum,"status":"applied","installed_version":None if desired=="absent" else str(cmd.get("version") or "latest"),"managed_path":path,"last_error":None,"readiness":"healthy"}
+ except Exception as exc:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"last_error":str(exc)[:2000],"readiness":"rollback_failed" if isinstance(exc,ContentRollbackError) else "rolled_back" if isinstance(exc,ContentActivationError) else "unknown"}
  _write(state,report);return report
 def apply_content_commands(config:dict[str,Any],commands:list[dict[str,Any]])->list[dict[str,Any]]:
  bounded=[c for c in commands[:200] if isinstance(c,dict)];ordered=[c for c in bounded if c.get("desired_state")=="absent"]+[c for c in bounded if c.get("desired_state")!="absent"];reports=[];pending=ordered
@@ -133,4 +159,4 @@ def content_state():
   except Exception:continue
   if isinstance(v,dict):out.append(v)
  return out[:2000]
-__all__=["apply_content_commands","content_state"]
+__all__=["ContentActivationError","ContentRollbackError","apply_content_commands","content_state"]
