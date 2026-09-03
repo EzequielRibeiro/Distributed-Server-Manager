@@ -3,23 +3,35 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
-trap 'rm -rf -- "${TMP}"' EXIT
-mkdir -p "${TMP}/project/youer/1.21.1/builds/657"
-cat >"${TMP}/project/youer/1.21.1/builds/index.json" <<'JSON'
-[
-  {"id":657},
-  {"id":656}
-]
-JSON
-printf 'fake-jar' >"${TMP}/project/youer/1.21.1/builds/657/download"
-
 PORT_FILE="${TMP}/port"
-python3 - "${TMP}" "${PORT_FILE}" <<'PY' &
-import http.server, pathlib, socketserver, sys
-root=pathlib.Path(sys.argv[1])
-port_file=pathlib.Path(sys.argv[2])
-class Handler(http.server.SimpleHTTPRequestHandler):
-    def __init__(self,*args,**kwargs): super().__init__(*args,directory=str(root),**kwargs)
+
+python3 - "${PORT_FILE}" <<'PY' &
+import http.server, json, pathlib, socketserver, sys
+port_file=pathlib.Path(sys.argv[1])
+builds=[{"id":657},{"id":656}]
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/project/youer/1.21.1/builds":
+            body=json.dumps(builds).encode()
+            self.send_response(200)
+            self.send_header("Content-Type","application/json")
+            self.send_header("Content-Length",str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if self.path in {
+            "/project/youer/1.21.1/builds/657/download",
+            "/project/youer/1.21.1/builds/656/download",
+        }:
+            body=b"fake-jar"
+            self.send_response(200)
+            self.send_header("Content-Type","application/java-archive")
+            self.send_header("Content-Length",str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_response(404)
+        self.end_headers()
     def log_message(self,*args): pass
 with socketserver.TCPServer(("127.0.0.1",0),Handler) as server:
     port_file.write_text(str(server.server_address[1]))
@@ -27,32 +39,6 @@ with socketserver.TCPServer(("127.0.0.1",0),Handler) as server:
 PY
 SERVER_PID=$!
 trap 'kill "${SERVER_PID}" 2>/dev/null || true; rm -rf -- "${TMP}"' EXIT
-for _ in $(seq 1 50); do [[ -s "${PORT_FILE}" ]] && break; sleep 0.05; done
-PORT="$(cat "${PORT_FILE}")"
-
-# The fixture exposes the API list at the exact resolver path expected by Youer.
-mkdir -p "${TMP}/project/youer/1.21.1"
-cp "${TMP}/project/youer/1.21.1/builds/index.json" "${TMP}/project/youer/1.21.1/builds.json"
-
-# Override curl-facing base with a tiny path adapter so /builds maps to builds.json.
-ADAPTER="${TMP}/adapter"
-mkdir -p "${ADAPTER}/project/youer/1.21.1/builds/657"
-cp "${TMP}/project/youer/1.21.1/builds/index.json" "${ADAPTER}/project/youer/1.21.1/builds"
-cp "${TMP}/project/youer/1.21.1/builds/657/download" "${ADAPTER}/project/youer/1.21.1/builds/657/download"
-kill "${SERVER_PID}" 2>/dev/null || true
-wait "${SERVER_PID}" 2>/dev/null || true
-python3 - "${ADAPTER}" "${PORT_FILE}" <<'PY' &
-import http.server, pathlib, socketserver, sys
-root=pathlib.Path(sys.argv[1])
-port_file=pathlib.Path(sys.argv[2])
-class Handler(http.server.SimpleHTTPRequestHandler):
-    def __init__(self,*args,**kwargs): super().__init__(*args,directory=str(root),**kwargs)
-    def log_message(self,*args): pass
-with socketserver.TCPServer(("127.0.0.1",0),Handler) as server:
-    port_file.write_text(str(server.server_address[1]))
-    server.serve_forever()
-PY
-SERVER_PID=$!
 for _ in $(seq 1 50); do [[ -s "${PORT_FILE}" ]] && break; sleep 0.05; done
 PORT="$(cat "${PORT_FILE}")"
 
