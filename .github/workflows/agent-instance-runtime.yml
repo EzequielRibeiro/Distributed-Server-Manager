@@ -85,43 +85,7 @@ jobs:
           bash -n agents/linux/installer/install-agent.sh
           bash -n release/build_agent_package.sh
           node --check dashboard/web/storage-pool-source-cleanup.js
-          python3 -m py_compile \
-            agents/linux/runtime/*.py \
-            agents/linux/runtime/adapters/*.py \
-            agents/linux/runtime/materializers/*.py \
-            agents/linux/runtime/profiles/*.py \
-            agents/linux/privileged/materialize_instance.py \
-            agents/linux/updater/updater.py \
-            database/agent_instance_runtime_repository.py \
-            database/agent_instance_provisioning_repository.py \
-            database/agent_instance_reconciliation_repository.py \
-            database/agent_instance_runtime_health_repository.py \
-            database/instance_storage_pool_migration_repository.py \
-            database/storage_pool_placement.py \
-            dashboard/agent_admin_http.py \
-            dashboard/storage_pool_source_cleanup_http.py \
-            dashboard/agent_instance_runtime_api.py \
-            dashboard/agent_instance_runtime_http.py \
-            dashboard/agent_instance_provisioning_api.py \
-            dashboard/agent_instance_provisioning_http.py \
-            dashboard/agent_heartbeat_api.py \
-            dashboard/agent_remote_http.py \
-            dashboard/server_part13.py \
-            dashboard/server_part17.py \
-            tests/agent_instance_runtime_test.py \
-            tests/agent_instance_materialization_test.py \
-            tests/agent_game_runtime_profiles_test.py \
-            tests/agent_instance_provisioning_test.py \
-            tests/agent_runtime_reconciliation_test.py \
-            tests/agent_runtime_completion_test.py \
-            tests/agent_instance_storage_root_test.py \
-            tests/agent_storage_pools_test.py \
-            tests/agent_storage_pool_telemetry_test.py \
-            tests/agent_storage_pool_migration_test.py \
-            tests/storage_pool_source_cleanup_test.py \
-            tests/storage_pool_placement_test.py \
-            tests/storage_pool_migration_controller_test.py \
-            tests/storage_pool_source_cleanup_controller_test.py
+          python3 -m py_compile agents/linux/runtime/*.py agents/linux/runtime/adapters/*.py agents/linux/runtime/materializers/*.py agents/linux/runtime/profiles/*.py agents/linux/privileged/materialize_instance.py agents/linux/updater/updater.py database/agent_instance_runtime_repository.py database/agent_instance_provisioning_repository.py database/agent_instance_reconciliation_repository.py database/agent_instance_runtime_health_repository.py database/instance_storage_pool_migration_repository.py database/storage_pool_placement.py dashboard/agent_admin_http.py dashboard/storage_pool_source_cleanup_http.py dashboard/agent_instance_runtime_api.py dashboard/agent_instance_runtime_http.py dashboard/agent_instance_provisioning_api.py dashboard/agent_instance_provisioning_http.py dashboard/agent_heartbeat_api.py dashboard/agent_remote_http.py dashboard/server_part13.py dashboard/server_part17.py tests/agent_instance_runtime_test.py tests/agent_instance_materialization_test.py tests/agent_game_runtime_profiles_test.py tests/agent_instance_provisioning_test.py tests/agent_runtime_reconciliation_test.py tests/agent_runtime_completion_test.py tests/agent_instance_storage_root_test.py tests/agent_storage_pools_test.py tests/agent_storage_pool_telemetry_test.py tests/agent_storage_pool_migration_test.py tests/storage_pool_source_cleanup_test.py tests/storage_pool_placement_test.py tests/storage_pool_migration_controller_test.py tests/storage_pool_source_cleanup_controller_test.py
       - name: Run instance runtime tests
         run: |
           python3 -m unittest tests/agent_instance_runtime_test.py
@@ -175,13 +139,17 @@ jobs:
           grep -F 'provisioning_timeout_seconds' agents/linux/runtime/runtime_limits.py agents/linux/runtime/provisioning_executor.py
           grep -F 'instance_runtime_metrics' agents/linux/runtime/agent.py
           grep -F 'agent_instance_runtime_health' dashboard/agent_heartbeat_api.py database/agent_instance_runtime_health_repository.py
-          grep -F 'runtime_lock.py' agents/linux/installer/install-agent.sh release/build_agent_package.sh
+          test -f agents/linux/runtime/runtime_lock.py
+          grep -F 'find "${PACKAGE_DIR}/agent/runtime"' agents/linux/installer/install-agent.sh
+          grep -F 'git -C "${ROOT}" ls-tree -r --name-only "${REF}" -- agents/linux/runtime' release/build_agent_package.sh
           ! grep -F 'shell=True' agents/linux/runtime/runtime_lock.py agents/linux/runtime/runtime_operations.py agents/linux/runtime/runtime_health.py agents/linux/runtime/runtime_metrics.py agents/linux/runtime/runtime_limits.py
       - name: Check storage pool boundary
         run: |
           grep -F 'storage_pool_id' agents/linux/runtime/game_runtime.py agents/linux/runtime/runtime_spec.py
           grep -F 'resolve_storage_pool' agents/linux/privileged/materialize_instance.py
-          grep -F 'storage_pools.py' agents/linux/installer/install-agent.sh release/build_agent_package.sh
+          test -f agents/linux/runtime/storage_pools.py
+          grep -F 'find "${PACKAGE_DIR}/agent/runtime"' agents/linux/installer/install-agent.sh
+          grep -F 'git -C "${ROOT}" ls-tree -r --name-only "${REF}" -- agents/linux/runtime' release/build_agent_package.sh
           grep -F '_storage_pool_samples' agents/linux/runtime/runtime_metrics.py
           grep -F 'usable_bytes' agents/linux/runtime/runtime_metrics.py
           grep -F 'telemetry["storage_pools"]' agents/linux/runtime/runtime_metrics.py
@@ -200,7 +168,7 @@ jobs:
           grep -F 'storage_pool_migration_command' agents/linux/runtime/agent.py dashboard/agent_heartbeat_api.py
           grep -F 'storage_pool_migration_result' agents/linux/runtime/agent.py dashboard/agent_heartbeat_api.py
           grep -F '/api/admin/instance/storage-pool-migrate' dashboard/agent_admin_http.py
-          grep -F 'storage_pool_migration_executor.py' agents/linux/installer/install-agent.sh release/build_agent_package.sh
+          test -f agents/linux/runtime/storage_pool_migration_executor.py
           grep -F 'cleanup-source' agents/linux/runtime/storage_pool_migration_executor.py database/instance_storage_pool_migration_repository.py
           grep -F 'INSTANCE_STORAGE_POOL_SOURCE_CLEANUP_REQUESTED' database/instance_storage_pool_migration_repository.py
           grep -F 'INSTANCE_STORAGE_POOL_SOURCE_CLEANUP_COMPLETED' agents/linux/runtime/storage_pool_migration_executor.py database/instance_storage_pool_migration_repository.py
