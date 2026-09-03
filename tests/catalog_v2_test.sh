@@ -7,10 +7,11 @@ export DSM_ROOT="${ROOT}"
 fail(){ echo "FAIL: $*" >&2; exit 1; }
 
 RUNTIMES="$("${ROOT}/installer/catalog.sh" runtime list minecraft --json)"
-[[ "$(jq 'length' <<<"${RUNTIMES}")" -eq 7 ]] || fail "expected seven installable Minecraft environments"
+[[ "$(jq 'length' <<<"${RUNTIMES}")" -eq 8 ]] || fail "expected eight installable Minecraft environments"
 jq -e 'map(.id) | index("minecraft.bedrock.vanilla") != null' <<<"${RUNTIMES}" >/dev/null || fail "Bedrock runtime missing"
 jq -e 'map(.id) | index("minecraft.java.forge") != null' <<<"${RUNTIMES}" >/dev/null || fail "Forge runtime missing"
 jq -e 'map(.id) | index("minecraft.java.neoforge") != null' <<<"${RUNTIMES}" >/dev/null || fail "NeoForge runtime missing"
+jq -e 'map(.id) | index("minecraft.java.spongevanilla") != null' <<<"${RUNTIMES}" >/dev/null || fail "SpongeVanilla runtime missing"
 jq -e 'map(.id) | map(select(test("mohist"; "i"))) | length == 0' <<<"${RUNTIMES}" >/dev/null || fail "Mohist must not be present"
 
 ALL_RUNTIMES="$("${ROOT}/installer/catalog.sh" runtime list --json)"
@@ -54,7 +55,7 @@ CONTENT="$("${ROOT}/installer/catalog.sh" content list minecraft --json)"
 jq -e 'map(.content_type) | sort == ["mod","modpack","plugin"]' <<<"${CONTENT}" >/dev/null || fail "content types missing"
 
 API_RUNTIMES="$(bash "${ROOT}/dashboard/api/catalog.sh" runtimes minecraft)"
-[[ "$(jq 'length' <<<"${API_RUNTIMES}")" -eq 7 ]] || fail "dashboard API runtime adapter invalid"
+[[ "$(jq 'length' <<<"${API_RUNTIMES}")" -eq 8 ]] || fail "dashboard API runtime adapter invalid"
 API_CONTENT="$(bash "${ROOT}/dashboard/api/catalog.sh" content minecraft)"
 [[ "$(jq 'length' <<<"${API_CONTENT}")" -eq 3 ]] || fail "dashboard API content adapter invalid"
 API_COMPATIBILITY="$(bash "${ROOT}/dashboard/api/catalog.sh" compatibility "${ROOT}/catalog/v2/examples/compatibility-allowed.json")"
