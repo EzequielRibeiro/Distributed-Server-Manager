@@ -16,7 +16,6 @@ on:
       - 'dashboard/server_part13.py'
       - 'bin/cap'
       - 'tests/universal_event_platform_test.py'
-      - 'tests/universal_event_http_test.py'
       - '.github/workflows/universal-event-platform.yml'
   push:
     branches: [main]
@@ -52,7 +51,9 @@ jobs:
         run: |
           grep -F 'cap events list' bin/cap
           grep -F 'EVENTS_PATH = "/api/events"' dashboard/universal_event_http.py
-          grep -F 'runtime_events.py' release/build_agent_package.sh
+          test -f agents/linux/runtime/runtime_events.py
+          grep -F 'git -C "${ROOT}" ls-tree -r --name-only "${REF}" -- agents/linux/runtime' release/build_agent_package.sh
+          grep -F 'copy "${source}" "agent/runtime/${relative}"' release/build_agent_package.sh
           grep -F 'read_runtime_events' agents/linux/runtime/agent.py
           grep -F 'acknowledge_runtime_events' agents/linux/runtime/agent.py
           grep -F 'accepted_event_ids' dashboard/agent_heartbeat_api.py
