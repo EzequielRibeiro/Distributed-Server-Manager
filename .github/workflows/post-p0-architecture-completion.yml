@@ -1,0 +1,28 @@
+name: Post-P0 Architecture Completion
+
+on:
+  pull_request:
+    paths:
+      - 'core/managed_configuration.py'
+      - 'core/runtime_readiness.py'
+      - 'catalog/v2/games/minecraft/runtimes/java-forge.json'
+      - 'tests/post_p0_architecture_completion_test.py'
+      - '.github/workflows/post-p0-architecture-completion.yml'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python
+        run: python3 -m py_compile core/managed_configuration.py core/runtime_readiness.py tests/post_p0_architecture_completion_test.py
+      - name: Validate Forge manifest JSON
+        run: python3 -m json.tool catalog/v2/games/minecraft/runtimes/java-forge.json >/dev/null
+      - name: Test managed configuration readiness multi-game and Forge
+        run: python3 -m unittest tests/post_p0_architecture_completion_test.py

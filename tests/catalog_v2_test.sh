@@ -7,8 +7,9 @@ export DSM_ROOT="${ROOT}"
 fail(){ echo "FAIL: $*" >&2; exit 1; }
 
 RUNTIMES="$("${ROOT}/installer/catalog.sh" runtime list minecraft --json)"
-[[ "$(jq 'length' <<<"${RUNTIMES}")" -eq 5 ]] || fail "expected five installable Minecraft environments"
+[[ "$(jq 'length' <<<"${RUNTIMES}")" -eq 6 ]] || fail "expected six installable Minecraft environments"
 jq -e 'map(.id) | index("minecraft.bedrock.vanilla") != null' <<<"${RUNTIMES}" >/dev/null || fail "Bedrock runtime missing"
+jq -e 'map(.id) | index("minecraft.java.forge") != null' <<<"${RUNTIMES}" >/dev/null || fail "Forge runtime missing"
 
 ALL_RUNTIMES="$("${ROOT}/installer/catalog.sh" runtime list --json)"
 jq -e 'map(.id) | index("arma3.stable") != null' <<<"${ALL_RUNTIMES}" >/dev/null || fail "Arma 3 environment missing"
@@ -51,7 +52,7 @@ CONTENT="$("${ROOT}/installer/catalog.sh" content list minecraft --json)"
 jq -e 'map(.content_type) | sort == ["mod","modpack","plugin"]' <<<"${CONTENT}" >/dev/null || fail "content types missing"
 
 API_RUNTIMES="$(bash "${ROOT}/dashboard/api/catalog.sh" runtimes minecraft)"
-[[ "$(jq 'length' <<<"${API_RUNTIMES}")" -eq 5 ]] || fail "dashboard API runtime adapter invalid"
+[[ "$(jq 'length' <<<"${API_RUNTIMES}")" -eq 6 ]] || fail "dashboard API runtime adapter invalid"
 API_CONTENT="$(bash "${ROOT}/dashboard/api/catalog.sh" content minecraft)"
 [[ "$(jq 'length' <<<"${API_CONTENT}")" -eq 3 ]] || fail "dashboard API content adapter invalid"
 API_COMPATIBILITY="$(bash "${ROOT}/dashboard/api/catalog.sh" compatibility "${ROOT}/catalog/v2/examples/compatibility-allowed.json")"
