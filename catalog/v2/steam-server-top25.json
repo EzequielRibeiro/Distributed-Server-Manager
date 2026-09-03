@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "kind": "SteamServerPopularitySnapshot",
-  "source": {"name":"LobbyHub","url":"https://lobbyhub.gg/charts","observed_date":"2026-09-02","metric":"tracked_servers"},
+  "source": {"name":"LobbyHub","url":"https://lobbyhub.gg/charts","observed_date":"2026-09-01","metric":"tracked_servers"},
   "selection": {"description":"Top 25 Steam games by tracked server count, re-sorted by server count rather than concurrent player rank."},
   "games": [
     {"rank":1,"game":"counter-strike-1.6","servers":253384,"catalog_publication":"supported"},
