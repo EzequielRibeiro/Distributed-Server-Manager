@@ -5,6 +5,7 @@ import os,subprocess
 from pathlib import Path
 from typing import Any,Callable
 from adapters.systemd import unit_for_instance
+from runtime_secret_store import RuntimeSecretError,credential_path
 from .base import InstanceRuntimeMaterializer,MaterializerError
 Runner=Callable[[list[str],int],tuple[int,str,str]];_GENERATED_BY="capivara-instance-runtime-v1";_RUNTIME_ACCOUNT_HOME="/var/lib/capivara-agent/runtime-home"
 def _default_runner(command,timeout):
@@ -28,8 +29,7 @@ def _instance_state(instance_id):
 def _unit_dir():return Path(os.environ.get("CAPIVARA_INSTANCE_SYSTEMD_DIR","/etc/systemd/system"))
 def unit_path_for_spec(spec):return _unit_dir()/unit_for_instance(spec)
 def _resource_lines(spec):
- lines=[]
- memory=spec.get("memory_limit_bytes")
+ lines=[];memory=spec.get("memory_limit_bytes")
  if memory is not None:
   try:memory=int(memory)
   except (TypeError,ValueError) as exc:raise MaterializerError("invalid memory_limit_bytes") from exc
@@ -48,15 +48,21 @@ def _resource_lines(spec):
   if pids<16:raise MaterializerError("TasksMax is below safe minimum")
   lines.append(f"TasksMax={pids}")
  return lines
+def _credential_lines(spec):
+ lines=[];instance_id=str(spec["instance_id"])
+ for item in spec.get("secret_refs",[]):
+  try:path=credential_path(item["ref"],expected_instance_id=instance_id,require_present=True)
+  except RuntimeSecretError as exc:raise MaterializerError(str(exc)) from exc
+  lines.append(f"LoadCredential={item['name']}:{path}")
+ return lines
 def render_unit(spec):
  instance_id=str(spec["instance_id"]);agent_id=str(spec["agent_id"]);runtime_id=str(spec["runtime_id"]);state_directory,private_state_path=_instance_state(instance_id);argv=[str(spec["executable"]),*[str(x) for x in spec.get("arguments",[])]]
  lines=["[Unit]",f"Description=Capivara instance {instance_id}","After=network-online.target","Wants=network-online.target",f"X-Capivara-GeneratedBy={_GENERATED_BY}",f"X-Capivara-Instance={instance_id}",f"X-Capivara-Agent={agent_id}",f"X-Capivara-Runtime={runtime_id}","","[Service]","Type=simple",f"User={spec['user']}",f"StateDirectory={state_directory}","StateDirectoryMode=0700",f"BindPaths={_bind_path(private_state_path,_RUNTIME_ACCOUNT_HOME)}"]
  for binding in spec.get("bind_paths",[]):lines.append(f"BindPaths={_bind_path(binding['source'],binding['target'])}")
  lines.extend([f"WorkingDirectory={_working_directory(spec['working_directory'])}",f"Environment={_quote(f'HOME={_RUNTIME_ACCOUNT_HOME}')}",f"Environment={_quote(f'XDG_DATA_HOME={_RUNTIME_ACCOUNT_HOME}/.local/share')}",f"Environment={_quote(f'XDG_CACHE_HOME={_RUNTIME_ACCOUNT_HOME}/.cache')}",f"Environment={_quote(f'XDG_CONFIG_HOME={_RUNTIME_ACCOUNT_HOME}/.config')}"])
- lines.extend(_resource_lines(spec))
+ lines.extend(_credential_lines(spec));lines.extend(_resource_lines(spec))
  for item in spec.get("pre_start",[]):
-  pre_argv=[str(item["executable"]),*[str(x) for x in item.get("arguments",[])]]
-  lines.append("ExecStartPre="+" ".join(_quote(x) for x in pre_argv))
+  pre_argv=[str(item["executable"]),*[str(x) for x in item.get("arguments",[])]];lines.append("ExecStartPre="+" ".join(_quote(x) for x in pre_argv))
  lines.extend(["ExecStart="+" ".join(_quote(x) for x in argv),"Restart=no","KillSignal=SIGTERM","TimeoutStopSec=60"])
  for key,value in sorted(dict(spec.get("environment",{})).items()):lines.append(f"Environment={_quote(f'{key}={value}')}")
  lines.extend(["","[Install]","WantedBy=multi-user.target",""]);return "\n".join(lines)
