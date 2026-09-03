@@ -48,7 +48,17 @@
         "asset": {"type": ["string", "null"]},
         "url": {"type": ["string", "null"]},
         "sha256": {"type": ["string", "null"]},
-        "archive_type": {"type": ["string", "null"]}
+        "archive_type": {"type": ["string", "null"]},
+        "steam_app_set_config": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["app_id", "key", "value"],
+          "properties": {
+            "app_id": {"type": "string", "pattern": "^[0-9]+$"},
+            "key": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$", "maxLength": 64},
+            "value": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$", "maxLength": 128}
+          }
+        }
       }
     },
     "installation": {
@@ -131,7 +141,9 @@
               "template": {"type": "string"},
               "file": {"type": "string"},
               "key": {"type": "string"},
-              "value": {"type": "string"}
+              "value": {"type": "string"},
+              "syntax": {"enum": ["equals", "semicolon", "json"]},
+              "value_type": {"enum": ["string", "integer", "boolean"]}
             }
           }
         }
