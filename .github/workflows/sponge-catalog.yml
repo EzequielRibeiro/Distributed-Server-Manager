@@ -1,0 +1,30 @@
+name: Sponge Catalog Runtime
+
+on:
+  pull_request:
+    paths:
+      - 'catalog/v2/games/minecraft/runtimes/java-spongevanilla.json'
+      - 'catalog/v2/support-matrix.json'
+      - 'installer/version_resolvers/sponge_maven.sh'
+      - 'tests/sponge_maven_resolver_test.sh'
+      - '.github/workflows/sponge-catalog.yml'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate runtime JSON
+        run: python3 -m json.tool catalog/v2/games/minecraft/runtimes/java-spongevanilla.json >/dev/null
+      - name: Validate resolver syntax
+        run: bash -n installer/version_resolvers/sponge_maven.sh
+      - name: Test resolver
+        run: bash tests/sponge_maven_resolver_test.sh
+      - name: Validate catalog completion
+        run: python3 -m unittest tests/catalog_completion_test.py

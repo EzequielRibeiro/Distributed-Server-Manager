@@ -11,6 +11,7 @@
     {"id":"minecraft.java.forge","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"forge_maven","os":["linux","windows"],"status":"supported"},
     {"id":"minecraft.java.neoforge","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"neoforge_maven","os":["linux","windows"],"status":"supported"},
     {"id":"minecraft.java.paper","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"papermc","os":["linux","windows"],"status":"supported"},
+    {"id":"minecraft.java.spongevanilla","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"sponge_maven","os":["linux","windows"],"status":"supported"},
     {"id":"minecraft.java.vanilla","game":"minecraft","engine":"java","provider":"http","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
     {"id":"rust.stable","game":"rust","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"}
   ],
