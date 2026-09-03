@@ -1,0 +1,34 @@
+name: Catalog Completion
+
+on:
+  pull_request:
+    paths:
+      - 'catalog/v2/games/**'
+      - 'catalog/v2/providers/**'
+      - 'catalog/v2/schemas/**'
+      - 'catalog/v2/support-matrix.json'
+      - 'installer/version_resolvers/**'
+      - 'agents/linux/runtime/game_data_executor.py'
+      - 'agents/windows/runtime/game_data_executor.py'
+      - 'tests/catalog_completion_test.py'
+      - '.github/workflows/catalog-completion.yml'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  completion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate support matrix JSON
+        run: python3 -m json.tool catalog/v2/support-matrix.json >/dev/null
+      - name: Validate catalog completion contract
+        run: python3 -m unittest tests/catalog_completion_test.py
+      - name: Validate provider parity
+        run: python3 -m unittest tests/catalog_agent_provider_parity_test.py tests/catalog_agent_runtime_requirements_parity_test.py
+      - name: Validate canonical Catalog v2
+        run: bash tests/catalog_v2_test.sh
