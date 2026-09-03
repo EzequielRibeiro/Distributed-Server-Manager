@@ -18,8 +18,8 @@ SOURCE_RUNTIME="${ROOT}/catalog/v2/games/dayz/runtimes/stable.json"
 [[ -f "${SOURCE_RUNTIME}" ]] || fail "canonical DayZ runtime is missing"
 [[ ! -e "${ROOT}/catalog/v2/runtimes" ]] || fail "legacy runtime tree still exists after full migration"
 
-# Every catalog game currently exposed by the dashboard must own its runtime
-# definitions in the canonical namespace.
+# Every catalog game keeps a canonical runtime namespace, even when no runtime
+# is currently publishable (Luanti is intentionally deferred).
 for GAME in arma3 dayz luanti mindustry minecraft rust
 do
     [[ -d "${ROOT}/catalog/v2/games/${GAME}/runtimes" ]] \
@@ -27,8 +27,6 @@ do
 done
 
 # 1. Legacy-only lookup remains compatible for external/older catalog roots.
-# Build a temporary legacy layout from a canonical fixture so compatibility is
-# tested independently of the repository's now fully canonical layout.
 LEGACY_ROOT="${TMP_DIR}/legacy"
 mkdir -p "${LEGACY_ROOT}/runtimes/dayz"
 cp "${SOURCE_RUNTIME}" "${LEGACY_ROOT}/runtimes/dayz/stable.json"
@@ -66,14 +64,27 @@ MIXED_SELECTION="$(DSM_CATALOG_ROOT="${MIXED_ROOT}" "${ROOT}/installer/catalog.s
 jq -e '.runtime_definition == "dayz.stable" and .provider == "steam" and .install.package_id == "223350"' \
     <<<"${MIXED_SELECTION}" >/dev/null || fail "runtime prepare bypassed path resolver"
 
-# 6. Real repository catalog must expose every migrated game through unchanged
-# public commands and no duplicate runtime IDs may be present.
+# 6. Real repository catalog must expose every supported runtime exactly once.
 ALL_RUNTIMES="$("${ROOT}/installer/catalog.sh" runtime list --json)"
-for ID in arma3.stable dayz.stable luanti.stable mindustry.github minecraft.bedrock.vanilla minecraft.java.arclight minecraft.java.fabric minecraft.java.paper minecraft.java.vanilla rust.stable
+for ID in \
+    arma3.stable \
+    dayz.stable \
+    mindustry.github \
+    minecraft.bedrock.vanilla \
+    minecraft.java.arclight \
+    minecraft.java.fabric \
+    minecraft.java.forge \
+    minecraft.java.neoforge \
+    minecraft.java.paper \
+    minecraft.java.vanilla \
+    rust.stable
 do
     [[ "$(jq --arg id "${ID}" '[.[] | select(.id == $id)] | length' <<<"${ALL_RUNTIMES}")" -eq 1 ]] \
-        || fail "migrated runtime ${ID} is missing or duplicated"
+        || fail "published runtime ${ID} is missing or duplicated"
 done
+
+[[ "$(jq '[.[] | select(.id == "luanti.stable")] | length' <<<"${ALL_RUNTIMES}")" -eq 0 ]] \
+    || fail "deferred Luanti runtime is still published"
 
 REPO_SHOW="$("${ROOT}/installer/catalog.sh" runtime show dayz.stable --json)"
 jq -e '.id == "dayz.stable" and .artifact.package_id == "223350"' <<<"${REPO_SHOW}" >/dev/null \

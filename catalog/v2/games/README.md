@@ -1,24 +1,24 @@
 # Catálogo por jogo
 
-Este diretório inicia a consolidação dos arquivos declarativos de cada jogo em um namespace canônico.
+`catalog/v2/games/` é o namespace canônico dos jogos publicados pelo Capivara DSM.
 
-A estrutura atual de `catalog/v2/runtimes/` e `catalog/v2/content/` continua ativa durante a migração. Nenhuma API deve assumir que os manifests já foram movidos para este diretório.
+Os runtimes que podem ser oferecidos ao Controller/Customer ficam exclusivamente em `games/<game>/runtimes/*.json`. Um arquivo presente em `runtimes/` é considerado publicado e, portanto, deve ser executável pelos Agents declarados no próprio `RuntimeDefinition`.
 
-## Estrutura pretendida
+## Estrutura canônica
 
 ```text
 catalog/v2/games/
 └── <game>/
-    ├── game.json
-    ├── runtimes/
-    ├── content/
-    ├── network.json
-    └── capabilities.json
+    ├── runtimes/          # RuntimeDefinition publicados
+    ├── deferred/          # definições preservadas, mas não publicáveis
+    ├── resource-profiles.json
+    ├── workspace-policy.json
+    └── outros dados específicos do jogo
 ```
 
-Nem todo jogo precisa de todos os arquivos. O objetivo é que os dados que descrevem um jogo tenham um domínio único e identificável, enquanto mecanismos compartilhados permaneçam em `catalog/v2/providers/` e contratos compartilhados em `catalog/v2/schemas/`.
+Nem todo jogo precisa de todos os arquivos. Providers reutilizáveis permanecem em `catalog/v2/providers/`, schemas compartilhados em `catalog/v2/schemas/` e resolvers de versão em `installer/version_resolvers/`.
 
-## Jogos atualmente identificados no catálogo
+## Jogos conhecidos
 
 - `arma3`
 - `dayz`
@@ -27,18 +27,18 @@ Nem todo jogo precisa de todos os arquivos. O objetivo é que os dados que descr
 - `minecraft`
 - `rust`
 
-Nesta etapa esses nomes ainda correspondem aos diretórios existentes em `catalog/v2/runtimes/`; eles serão migrados gradualmente após a auditoria das referências.
+A lista normativa de runtimes suportados está em `catalog/v2/support-matrix.json` e é verificada pelo workflow **Catalog Completion**.
 
-## O que não pertence aqui
+## Regras de publicação
 
-Providers reutilizáveis não devem ser copiados para cada jogo. Exemplos:
+Um runtime em `runtimes/` precisa ter ID único, `RuntimeDefinition` v2 válido, engine/processo definidos, requisitos de SO/arquitetura, provider executável pelo Agent, Installation Strategy coerente e resolver existente quando `version.strategy=dynamic`.
 
-- Steam;
-- HTTP / HTTP Archive;
-- GitHub Releases;
-- Modrinth;
-- providers customizados genéricos.
+Providers reservados (`local`, `custom`, `source-build`) não tornam uma definição publicável até que exista uma estratégia tipada implementada em paridade nos Agents necessários. Definições preservadas nessas condições ficam em `deferred/`.
 
-O código de operação do processo também não deve ser duplicado aqui. Adaptadores, launchers e integrações operacionais continuam em `games/<game>/`.
+`Mohist` não faz parte do conjunto oficialmente publicado. `Starlight` também não é um runtime de servidor: deve ser tratado como componente de conteúdo/otimização se for incorporado futuramente.
 
-Consulte `docs/architecture/game-directory-layout.md` para o plano de migração e regras de classificação.
+## Separação de responsabilidades
+
+Providers compartilhados não são duplicados por jogo. O Catalog descreve o que instalar e executar; o Agent executa apenas estratégias tipadas permitidas. Mods, plugins, modpacks e otimizações não devem ser registrados como runtimes só para aparecerem na seleção de servidor.
+
+Consulte também `docs/architecture/game-directory-layout.md` para regras de classificação e layout.
