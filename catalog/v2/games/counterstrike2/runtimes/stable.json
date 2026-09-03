@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "counterstrike2.stable",
+  "name": "Counter-Strike 2 Dedicated Server",
+  "game": "counterstrike2",
+  "edition": "default",
+  "variant": "stable",
+  "loader": null,
+  "version": {
+    "strategy": "static",
+    "value": "current",
+    "build": "steam-current"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "game/bin/linuxsteamrt64/cs2",
+    "artifact_mode": "executable",
+    "args": [
+      "-dedicated",
+      "+map",
+      "de_dust2"
+    ]
+  },
+  "requirements": {
+    "os": ["linux"],
+    "architectures": ["x86_64"],
+    "java": null
+  },
+  "artifact": {
+    "provider": "steam",
+    "auth": "required",
+    "package_id": "730"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/counterstrike2/serverfiles"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 10,
+    "ports": [
+      {"name": "game", "protocol": "udp", "offset": 0}
+    ],
+    "apply": [
+      {"kind": "argument", "template": "-port {game}"}
+    ]
+  }
+}
