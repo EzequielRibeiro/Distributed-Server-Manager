@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import sys,tempfile,unittest
+import io,json,sys,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1]
@@ -13,6 +13,13 @@ from content_platform import ContentValidationError,normalize_assignment
 from content_repository import ContentRepository
 import content_client
 from content_client import _safe_target
+from content_update_provider import detect_content_update,parse_workshop_manifest,parse_workshop_package
+
+class _Response:
+ def __init__(self,payload):self.payload=json.dumps(payload).encode("utf-8")
+ def __enter__(self):return self
+ def __exit__(self,*args):return False
+ def read(self):return self.payload
 
 class ContentContractTest(unittest.TestCase):
  def test_checksum_and_isolated_default_target(self):
@@ -40,7 +47,27 @@ class ContentContractTest(unittest.TestCase):
    self.assertTrue((target/"old.bin").is_file());self.assertFalse((target/"new.bin").exists());self.assertEqual(lifecycle,["stop","start","stop","start"]);self.assertFalse(target.with_name(target.name+".c4-old").exists())
  def test_windows_content_client_has_same_readiness_contract(self):
   text=(ROOT/"agents/windows/runtime/content_client.py").read_text(encoding="utf-8")
-  for marker in ("instance_runtime.lifecycle","instance_runtime.doctor","ContentRollbackError",".c4-old","unfinished content transaction detected"):self.assertIn(marker,text)
+  for marker in ("instance_runtime.lifecycle","instance_runtime.doctor","ContentRollbackError",".c4-old","unfinished content transaction detected","package_id","content_type"):self.assertIn(marker,text)
+ def test_safe_source_metadata_keeps_workshop_identity_without_full_artifact(self):
+  meta=content_client._source_metadata({"provider":"steam","content_type":"workshop","game_id":"example","target":"workshop/item","artifact":{"provider":"steam","package_id":"221100:123456","resolved_path":"example/item","download_url":"https://secret.invalid/x"}})
+  self.assertEqual(meta["package_id"],"221100:123456");self.assertEqual(meta["provider"],"steam");self.assertEqual(meta["content_type"],"workshop");self.assertNotIn("download_url",meta);self.assertNotIn("resolved_path",meta)
+ def test_workshop_detector_compares_local_and_remote_revision(self):
+  self.assertEqual(parse_workshop_package("221100:123456"),("221100","123456"))
+  manifest='''"AppWorkshop"\n{\n "WorkshopItemDetails"\n {\n  "123456"\n  {\n   "timeupdated" "100"\n  }\n }\n}'''
+  self.assertEqual(parse_workshop_manifest(manifest,"123456"),"100")
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);path=root/"tools/steamcmd/steamapps/workshop/appworkshop_221100.acf";path.parent.mkdir(parents=True);path.write_text(manifest,encoding="utf-8")
+   def opener(request,timeout=30):return _Response({"response":{"publishedfiledetails":[{"time_updated":101}]}})
+   detail=detect_content_update({"provider":"steam","content_type":"workshop","package_id":"221100:123456"},root,opener=opener,force_refresh=True)
+   self.assertEqual(detail["state"],"update_available");self.assertEqual(detail["installed_revision"],"100");self.assertEqual(detail["available_revision"],"101");self.assertTrue(detail["rollback_supported"])
+ def test_non_workshop_content_detector_fails_closed(self):
+  detail=detect_content_update({"provider":"http","content_type":"mod","package_id":"x"},Path("/tmp"));self.assertFalse(detail["detector_supported"]);self.assertEqual(detail["state"],"unsupported")
+ def test_update_inventory_is_game_neutral_and_windows_parity_exists(self):
+  for rel in ("agents/linux/runtime/content_update_provider.py","agents/linux/runtime/content_update_inventory.py","agents/windows/runtime/content_update_provider.py","agents/windows/runtime/content_update_inventory.py"):
+   text=(ROOT/rel).read_text(encoding="utf-8").lower()
+   for game in ("dayz","projectzomboid","arma3","rust","minecraft"):self.assertNotIn(game,text)
+  windows_metrics=(ROOT/"agents/windows/runtime/runtime_metrics.py").read_text(encoding="utf-8");linux_metrics=(ROOT/"agents/linux/runtime/runtime_metrics.py").read_text(encoding="utf-8")
+  self.assertIn('content_updates',windows_metrics);self.assertIn('content_updates',linux_metrics)
 
 class ContentRepositoryTest(unittest.TestCase):
  def setUp(self):
