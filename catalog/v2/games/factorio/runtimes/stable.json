@@ -20,7 +20,6 @@
   "network": {
     "allocation": "block",
     "block_size": 1,
-    "ports": [{"name": "game", "protocol": "udp", "offset": 0}],
-    "apply": [{"kind": "argument", "template": "--port {game}"}]
+    "ports": [{"name": "game", "protocol": "udp", "offset": 0}]
   }
 }
