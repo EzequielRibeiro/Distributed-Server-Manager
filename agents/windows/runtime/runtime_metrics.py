@@ -4,6 +4,7 @@ import json,os
 from pathlib import Path
 from typing import Any
 import instance_runtime
+from content_update_inventory import refresh as refresh_content_updates
 from queue_observability import collect_queue_observability
 from storage_pools import pool_inventory
 
@@ -37,10 +38,12 @@ def _storage_pool_samples(pools:list[dict[str,Any]])->list[dict[str,Any]]:
 def snapshot(*,queue_depth:dict[str,int]|None=None)->dict[str,Any]:
  payload=_read()
  if queue_depth is not None:payload["queue_depth"]={str(k):max(0,int(v)) for k,v in queue_depth.items()}
- config=_agent_config();stale_after=max(30,int(config.get("queue_stale_after_seconds",300) or 300));payload["queue_health"]=collect_queue_observability(Path(instance_runtime.STATE_DIR),stale_after_seconds=stale_after);payload["queue_stale_count"]=sum(1 for item in payload["queue_health"].values() if item.get("stale"));pools=[]
+ config=_agent_config();stale_after=max(30,int(config.get("queue_stale_after_seconds",300) or 300));payload["queue_health"]=collect_queue_observability(Path(instance_runtime.STATE_DIR),stale_after_seconds=stale_after);payload["queue_stale_count"]=sum(1 for item in payload["queue_health"].values() if item.get("stale"))
+ try:payload["content_updates"]=refresh_content_updates(config)
+ except Exception as exc:payload["content_updates"]={"schema_version":1,"kind":"ContentUpdateInventory","checked_at":None,"content":[],"status":"probe_failed","error":str(exc)[:2000]}
+ pools=[]
  if config:
   try:pools=pool_inventory(config)
   except (OSError,ValueError):pools=[]
- payload["storage_pools"]=pools;payload["observability_samples"]=_storage_pool_samples(pools);payload["telemetry"]={"storage_pools":pools} if pools else {}
- return payload
+ payload["storage_pools"]=pools;payload["observability_samples"]=_storage_pool_samples(pools);payload["telemetry"]={"storage_pools":pools} if pools else {};return payload
 __all__=["increment","observe_duration","snapshot"]
