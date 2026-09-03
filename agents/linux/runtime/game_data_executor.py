@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Execute one resolved game-data selection locally on a Linux Agent."""
 from __future__ import annotations
-import hashlib, json, os, shutil, stat, subprocess, sys, tarfile, tempfile, urllib.request, zipfile
-from pathlib import Path, PurePosixPath
+import hashlib,json,os,shutil,stat,subprocess,sys,tarfile,tempfile,urllib.request,zipfile
+from pathlib import Path,PurePosixPath
 from typing import Any
 from game_data_files import execute_file_operation
 from game_data_integrity import inspect_game_data
 from game_data_installer import execute_installer
-from game_data_state import GAME_DATA_ROOT, record_game_data, write_json
+from game_data_state import GAME_DATA_ROOT,record_game_data,write_json
 FILE_ACTIONS={"file-list","file-read","file-write","file-create","file-mkdir","file-rename","file-delete","file-upload"}
 def _safe_name(value:Any,label:str)->str:
  text=str(value or "").strip();allowed="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
@@ -29,7 +29,7 @@ def _install_steamcmd()->dict[str,Any]:
  if not binary.is_file():raise RuntimeError("SteamCMD installer did not provide steamcmd.sh")
  binary.chmod(binary.stat().st_mode|0o111)
  completed=subprocess.run([str(binary),"+quit"],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=300,check=False,env={**os.environ,"HOME":str(Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent")))})
- if completed.returncode!=0:raise RuntimeError((completed.stdout or f"SteamCMD validation failed with exit code {completed.returncode}")[-2000:])
+ if completed.returncode!=0:raise RuntimeError("SteamCMD validation failed")
  cache=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"))/"capabilities"/"steamcmd.json"
  try:cache.unlink(missing_ok=True)
  except OSError:pass
@@ -37,9 +37,13 @@ def _install_steamcmd()->dict[str,Any]:
 def _run_steam(selection:dict[str,Any],target:Path)->None:
  install=selection.get("install") if isinstance(selection.get("install"),dict) else {};app_id=str(install.get("package_id") or "").strip()
  if not app_id.isdigit():raise ValueError("Steam package_id is missing or invalid")
+ branch=str(install.get("branch") or selection.get("branch") or "public").strip();_safe_name(branch,"Steam branch")
  auth=str(selection.get("auth") or "anonymous").strip().lower();login="anonymous" if auth=="anonymous" else str(os.environ.get("DSM_STEAM_USER") or "").strip()
- if not login:raise RuntimeError("Steam authentication is required on this Agent; configure DSM_STEAM_USER and authenticate SteamCMD locally")
- target.mkdir(parents=True,exist_ok=True);cp=subprocess.run([_steamcmd(),"+force_install_dir",str(target),"+login",login,"+app_update",app_id,"validate","+quit"],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=7200,check=False,env={**os.environ,"HOME":os.environ.get("HOME","/var/lib/capivara-agent")});output=cp.stdout or "";print(output,end="" if output.endswith("\n") else "\n",flush=True)
+ if not login:raise RuntimeError("Steam authentication is required on this Agent")
+ argv=[_steamcmd(),"+force_install_dir",str(target),"+login",login,"+app_update",app_id]
+ if branch!="public":argv.extend(["-beta",branch])
+ argv.extend(["validate","+quit"]);target.mkdir(parents=True,exist_ok=True)
+ cp=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=7200,check=False,env={**os.environ,"HOME":os.environ.get("HOME","/var/lib/capivara-agent")});output=cp.stdout or ""
  if cp.returncode!=0:
   lowered=output.lower()
   if "password" in lowered or "steam guard" in lowered or "two-factor" in lowered:raise RuntimeError("Steam authentication is required or expired on this Agent")
@@ -98,7 +102,15 @@ def _execute(command:dict[str,Any])->dict[str,Any]:
  action=str(command.get("action") or "install").lower();selection=command.get("selection")
  if action=="install-steamcmd":return _install_steamcmd()
  if not isinstance(selection,dict):raise ValueError("runtime selection is missing")
- target=_target_for(selection);provider=str(selection.get("provider") or "").strip().lower();reused=False
+ target=_target_for(selection);provider=str(selection.get("provider") or "").strip().lower();reused=False;update_meta=selection.get("_server_update") if isinstance(selection.get("_server_update"),dict) else None
+ if action=="verify" and update_meta and str(update_meta.get("operation") or "check")=="check":
+  from server_update_provider import detect_update
+  return {"provider":provider,"game":selection.get("game"),"version":selection.get("version"),"target_path":str(target),"update_status":detect_update(selection,target,_steamcmd() if provider=="steam" else None)}
+ if action=="update" and update_meta:
+  from server_update_agent import perform_update
+  detail=perform_update(selection,target,lambda:_install(selection,target,provider),_steamcmd() if provider=="steam" else None)
+  integrity=inspect_game_data(target,selection)
+  return {"provider":provider,"game":selection.get("game"),"version":selection.get("version"),"target_path":str(target),"integrity":integrity,**detail}
  if action=="ensure":
   before=inspect_game_data(target,selection)
   if before.get("health")=="ok":reused=True
@@ -118,10 +130,10 @@ def main()->int:
  if len(sys.argv)!=3:print("usage: game_data_executor.py REQUEST RESULT",file=sys.stderr);return 2
  request_path=Path(sys.argv[1]);result_path=Path(sys.argv[2]);command=json.loads(request_path.read_text(encoding="utf-8"));job_id=str(command.get("job_id") or "").strip();action=str(command.get("action") or "install").strip().lower();selection=command.get("selection") if isinstance(command.get("selection"),dict) else {};write_json(result_path,{"job_id":job_id,"status":"running","progress":5})
  try:detail=_execute(command)
- except Exception as exc:write_json(result_path,{"job_id":job_id,"status":"failed","progress":100,"error":str(exc)[:2000]});print(f"game-data job failed: {exc}",file=sys.stderr,flush=True);return 1
+ except Exception as exc:write_json(result_path,{"job_id":job_id,"status":"failed","progress":100,"error":str(exc)[:2000]});print("game-data job failed",file=sys.stderr,flush=True);return 1
  completed={"job_id":job_id,"status":"completed","progress":100,**detail};write_json(result_path,completed)
  if action in {"ensure","install","update","verify","repair"}:
   try:record_game_data(job_id=job_id,action=action,selection=selection,result=completed)
-  except Exception as exc:print(f"game-data inventory warning: {exc}",file=sys.stderr,flush=True)
+  except Exception:print("game-data inventory warning",file=sys.stderr,flush=True)
  print(f"game-data job completed: {job_id}",flush=True);return 0
 if __name__=="__main__":raise SystemExit(main())
