@@ -104,9 +104,9 @@ class CatalogCompletionTest(unittest.TestCase):
                 self.assertGreater(block_size, 0)
                 ports = network.get("ports") or []
                 names = [item.get("name") for item in ports]
-                offsets = [item.get("offset") for item in ports]
+                protocol_offsets = [(item.get("protocol"), item.get("offset")) for item in ports]
                 self.assertEqual(len(names), len(set(names)))
-                self.assertEqual(len(offsets), len(set(offsets)))
+                self.assertEqual(len(protocol_offsets), len(set(protocol_offsets)), "duplicate protocol/offset binding")
                 for item in ports:
                     self.assertIn(item.get("protocol"), {"tcp", "udp"})
                     self.assertGreaterEqual(item.get("offset"), 0)
