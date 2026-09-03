@@ -129,14 +129,18 @@ def _install(config,cmd):
  return str(target)
 def _remove(config,cmd):
  _,instance=_owned(config,cmd);iid=str(cmd.get("instance_id") or "");target=_safe_target(instance,str(cmd.get("target") or "assets"));_activate_target(config,iid,target,None);return str(target)
+def _source_metadata(cmd:dict[str,Any])->dict[str,Any]:
+ artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {};package=str(artifact.get("package_id") or cmd.get("package_id") or "").strip()
+ return {"provider":str(cmd.get("provider") or artifact.get("provider") or "").strip().lower(),"content_type":str(cmd.get("content_type") or "other").strip().lower(),"package_id":package or None,"game_id":str(cmd.get("game_id") or "").strip().lower() or None,"target":str(cmd.get("target") or "").strip() or None}
 def _apply(config,cmd):
- iid=str(cmd.get("instance_id") or "");cid=str(cmd.get("content_id") or "");revision=int(cmd.get("revision") or 0);checksum=str(cmd.get("checksum") or "");state=_state_path(iid,cid)
+ iid=str(cmd.get("instance_id") or "");cid=str(cmd.get("content_id") or "");revision=int(cmd.get("revision") or 0);checksum=str(cmd.get("checksum") or "");state=_state_path(iid,cid);source_meta=_source_metadata(cmd)
  try:previous=json.loads(state.read_text()) if state.exists() else {}
  except Exception:previous={}
- if previous.get("status")=="applied" and previous.get("applied_revision")==revision and previous.get("applied_checksum")==checksum:return previous
+ if previous.get("status")=="applied" and previous.get("applied_revision")==revision and previous.get("applied_checksum")==checksum:
+  merged={**previous,**{k:v for k,v in source_meta.items() if v is not None}};_write(state,merged);return merged
  try:
-  desired=str(cmd.get("desired_state") or "installed");path=_remove(config,cmd) if desired=="absent" else _install(config,cmd);report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":revision,"desired_checksum":checksum,"applied_checksum":checksum,"status":"applied","installed_version":None if desired=="absent" else str(cmd.get("version") or "latest"),"managed_path":path,"last_error":None,"readiness":"healthy"}
- except Exception as exc:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"last_error":str(exc)[:2000],"readiness":"rollback_failed" if isinstance(exc,ContentRollbackError) else "rolled_back" if isinstance(exc,ContentActivationError) else "unknown"}
+  desired=str(cmd.get("desired_state") or "installed");path=_remove(config,cmd) if desired=="absent" else _install(config,cmd);report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":revision,"desired_checksum":checksum,"applied_checksum":checksum,"status":"applied","installed_version":None if desired=="absent" else str(cmd.get("version") or "latest"),"managed_path":path,"last_error":None,"readiness":"healthy",**source_meta}
+ except Exception as exc:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"last_error":str(exc)[:2000],"readiness":"rollback_failed" if isinstance(exc,ContentRollbackError) else "rolled_back" if isinstance(exc,ContentActivationError) else "unknown",**source_meta}
  _write(state,report);return report
 def apply_content_commands(config:dict[str,Any],commands:list[dict[str,Any]])->list[dict[str,Any]]:
  bounded=[c for c in commands[:200] if isinstance(c,dict)];ordered=[c for c in bounded if c.get("desired_state")=="absent"]+[c for c in bounded if c.get("desired_state")!="absent"];reports=[];pending=ordered
