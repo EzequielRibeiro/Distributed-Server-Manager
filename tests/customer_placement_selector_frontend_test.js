@@ -10,72 +10,36 @@ const SCRIPT = fs.readFileSync(
   "utf8"
 );
 
-function abortError() {
-  const error = new Error("aborted");
-  error.name = "AbortError";
-  return error;
-}
-
-function createStatusNode() {
-  const strong = {textContent: ""};
-  return {
-    dataset: {},
-    querySelector(selector) {
-      return selector === "strong" ? strong : null;
-    },
-    strong,
-  };
-}
-
-function installHarness({nativeFetch, originalOpen, immediateTimers = false}) {
+function installHarness({loadRegions, originalOpen}) {
   let domReadyHandler = null;
-  const statusNode = createStatusNode();
+  const nativeFetch = async () => new Response("{}", {status: 200});
 
   global.window = {
     fetch: nativeFetch,
-    setTimeout(callback, delay) {
-      if (immediateTimers && delay >= 8000) {
-        queueMicrotask(callback);
-        return 1;
-      }
-      return setTimeout(callback, delay);
-    },
-    clearTimeout(handle) {
-      if (handle !== 1) clearTimeout(handle);
-    },
+    CapivaraPlacementClient: {loadRegions},
     CapivaraRuntimeSelector: {open: originalOpen},
   };
   global.document = {
-    getElementById(id) {
-      return id === "runtime-placement-status" ? statusNode : null;
-    },
     addEventListener(event, handler) {
       if (event === "DOMContentLoaded") domReadyHandler = handler;
     },
   };
-  Object.defineProperty(global, "navigator", {
-    value: {},
-    configurable: true,
-    writable: true,
-  });
-  global.Response = Response;
-  global.AbortController = AbortController;
-  global.URLSearchParams = URLSearchParams;
 
   vm.runInThisContext(SCRIPT, {filename: "customer-placement-selector.js"});
   assert.equal(typeof domReadyHandler, "function");
+  assert.strictEqual(window.fetch, nativeFetch, "adapter must not replace window.fetch");
   domReadyHandler();
 
-  return {statusNode, selector: window.CapivaraRuntimeSelector};
+  return {selector: window.CapivaraRuntimeSelector};
 }
 
 function cleanupHarness() {
   delete global.window;
   delete global.document;
-  delete global.navigator;
 }
 
-async function testConcurrentOpenIsDeduplicated() {
+async function testConcurrentOpenIsDeduplicatedAndPreflightsPlacement() {
+  let placementCalls = 0;
   let openCalls = 0;
   let resolveFirst;
   const first = new Promise(resolve => {
@@ -83,7 +47,11 @@ async function testConcurrentOpenIsDeduplicated() {
   });
 
   const {selector} = installHarness({
-    nativeFetch: async () => new Response("{}", {status: 200}),
+    loadRegions: async context => {
+      placementCalls += 1;
+      assert.deepEqual(context, {contract: "contract-1", game: "dayz"});
+      return {regions: [{id: "br-sp"}]};
+    },
     originalOpen: async () => {
       openCalls += 1;
       if (openCalls === 1) return first;
@@ -95,111 +63,55 @@ async function testConcurrentOpenIsDeduplicated() {
   const p1 = selector.open(contract);
   const p2 = selector.open(contract);
 
-  assert.strictEqual(p1, p2, "concurrent selector opens must share the same promise");
-  assert.equal(openCalls, 0, "the wrapped open starts on the next microtask");
+  assert.strictEqual(p1, p2, "concurrent opens must share the same promise");
   await Promise.resolve();
-  assert.equal(openCalls, 1, "only one original open may run concurrently");
+  await Promise.resolve();
+  assert.equal(placementCalls, 1, "placement preflight must run once per in-flight open");
+  assert.equal(openCalls, 1, "only one selector open may run concurrently");
 
   resolveFirst("first-open");
   assert.equal(await p1, "first-open");
   assert.equal(await p2, "first-open");
 
   assert.equal(await selector.open(contract), "second-open");
-  assert.equal(openCalls, 2, "the in-flight guard must clear after completion");
+  assert.equal(placementCalls, 2, "guard must clear after completion");
+  assert.equal(openCalls, 2);
   cleanupHarness();
 }
 
-async function testNoEligibleAgentMapsToUnavailable() {
-  const {statusNode} = installHarness({
-    nativeFetch: async input => {
-      const url = typeof input === "string" ? input : input.url;
-      assert.match(url, /^\/api\/customer\/placement\/locations/);
-      return new Response(JSON.stringify({
-        locations: [
-          {
-            region_id: "br-sp",
-            name: "São Paulo",
-            country_code: "BR",
-            availability: "unavailable",
-            recommended: false,
-          },
-        ],
-      }), {
-        status: 200,
-        headers: {"Content-Type": "application/json"},
-      });
-    },
-    originalOpen: async () => undefined,
-  });
-
-  const response = await window.fetch("/api/customer/regions");
-  const body = await response.json();
-
-  assert.equal(response.status, 503);
-  assert.equal(body.code, "placement_no_available_agent");
-  assert.equal(statusNode.dataset.state, "unavailable");
-  assert.match(statusNode.strong.textContent, /Nenhum servidor está disponível/);
-  cleanupHarness();
-}
-
-async function testCatalogTimeoutReturns504AndOpenGuardClears() {
-  let catalogAttempts = 0;
+async function testUnavailablePlacementStopsSelectorOpenAndGuardClears() {
+  let placementCalls = 0;
   let openCalls = 0;
 
-  const {selector, statusNode} = installHarness({
-    immediateTimers: true,
-    nativeFetch: (input, options = {}) => {
-      const url = typeof input === "string" ? input : input.url;
-      if (!url.startsWith("/api/catalog/runtimes")) {
-        return Promise.resolve(new Response("{}", {status: 200}));
-      }
+  const unavailable = new Error("Nenhum servidor elegível foi localizado para este jogo no momento.");
+  unavailable.code = "placement_no_available_agent";
 
-      catalogAttempts += 1;
-      if (catalogAttempts > 1) {
-        return Promise.resolve(new Response(JSON.stringify({runtimes: []}), {
-          status: 200,
-          headers: {"Content-Type": "application/json"},
-        }));
-      }
-
-      return new Promise((resolve, reject) => {
-        if (options.signal?.aborted) {
-          reject(abortError());
-          return;
-        }
-        options.signal?.addEventListener("abort", () => reject(abortError()), {once: true});
-      });
+  const {selector} = installHarness({
+    loadRegions: async () => {
+      placementCalls += 1;
+      if (placementCalls === 1) throw unavailable;
+      return {regions: [{id: "br-sp"}]};
     },
     originalOpen: async () => {
       openCalls += 1;
-      const response = await window.fetch("/api/catalog/runtimes?game=dayz");
-      if (!response.ok) {
-        const body = await response.json();
-        throw new Error(body.error);
-      }
       return "ok";
     },
   });
 
   const contract = {id: "contract-2", game_id: "dayz"};
-  await assert.rejects(selector.open(contract), /tempo limite/);
-  assert.equal(openCalls, 1);
-  assert.equal(catalogAttempts, 1);
-  assert.equal(statusNode.dataset.state, "error");
-
-  const directTimeout = await window.fetch("/api/catalog/runtimes?game=dayz&retry=timeout-check");
-  assert.equal(directTimeout.status, 200, "second catalog attempt is configured as healthy");
+  await assert.rejects(selector.open(contract), /Nenhum servidor elegível/);
+  assert.equal(openCalls, 0, "selector must not open when placement preflight is unavailable");
 
   assert.equal(await selector.open(contract), "ok");
-  assert.equal(openCalls, 2, "openingPromise must clear after a rejected open");
+  assert.equal(placementCalls, 2, "rejected preflight must release in-flight guard");
+  assert.equal(openCalls, 1);
   cleanupHarness();
 }
 
 async function main() {
-  await testConcurrentOpenIsDeduplicated();
-  await testNoEligibleAgentMapsToUnavailable();
-  await testCatalogTimeoutReturns504AndOpenGuardClears();
-  console.log("customer placement selector frontend regressions: OK");
+  await testConcurrentOpenIsDeduplicatedAndPreflightsPlacement();
+  await testUnavailablePlacementStopsSelectorOpenAndGuardClears();
+  console.log("customer placement selector adapter regressions: OK");
 }
 
 main().catch(error => {
