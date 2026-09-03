@@ -28,6 +28,7 @@ Publicados:
 - `mindustry`
 - `minecraft`
 - `palworld`
+- `projectzomboid`
 - `rust`
 - `teamfortress2`
 
@@ -35,7 +36,6 @@ Adiados com definição preservada:
 
 - `fivem`
 - `luanti`
-- `projectzomboid`
 
 A lista normativa de runtimes suportados e adiados está em `catalog/v2/support-matrix.json` e é verificada pelo workflow **Catalog Completion**. O arquivo `catalog/v2/steam-top25-2026-09-03.json` registra a análise de aplicabilidade do Top 25 da Steam capturado em 3 de setembro de 2026.
 
@@ -44,6 +44,8 @@ A lista normativa de runtimes suportados e adiados está em `catalog/v2/support-
 Um runtime em `runtimes/` precisa ter ID único, `RuntimeDefinition` v2 válido, engine/processo definidos, requisitos de SO/arquitetura, provider executável pelo Agent, Installation Strategy coerente e resolver existente quando `version.strategy=dynamic`.
 
 Providers reservados (`local`, `custom`, `source-build`) não tornam uma definição publicável até que exista uma estratégia tipada implementada em paridade nos Agents necessários. Definições preservadas nessas condições ficam em `deferred/`.
+
+Project Zomboid possui bootstrap de primeira inicialização específico no Agent Linux. O bootstrap gera localmente uma credencial administrativa descartável, envia-a somente pelo stdin do processo inicial e não a persiste em argumentos, ambiente, request JSON, unidade systemd ou logs. O estado mutável fica no HOME privado por instância.
 
 Popularidade não substitui hospedabilidade. Jogos do ranking da Steam sem distribuição pública de servidor dedicado, ou que dependem exclusivamente da infraestrutura oficial do publisher, não entram em `runtimes/` apenas para aparecer na seleção do cliente.
 
