@@ -1,0 +1,32 @@
+name: Generic Update Monitor
+
+on:
+  push:
+    paths:
+      - 'installer/update_monitor.sh'
+      - 'installer/provider_versions/**'
+      - 'tests/generic_update_monitor_test.sh'
+      - '.github/workflows/generic-update-monitor.yml'
+  pull_request:
+    paths:
+      - 'installer/update_monitor.sh'
+      - 'installer/provider_versions/**'
+      - 'tests/generic_update_monitor_test.sh'
+      - '.github/workflows/generic-update-monitor.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: |
+          bash -n installer/update_monitor.sh
+          bash -n installer/provider_versions/steam.sh
+          bash -n installer/provider_versions/steam-workshop.sh
+          bash -n tests/generic_update_monitor_test.sh
+      - name: Generic update monitor contract
+        run: bash tests/generic_update_monitor_test.sh
