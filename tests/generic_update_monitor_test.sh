@@ -23,10 +23,10 @@ EOF
 export DSM_ROOT="${ROOT}"
 export DSM_PROVIDER_VERSION_ADAPTER_ROOT="${TMP}/versions"
 
-OUT="$(MOCK_REMOTE=100 "${ROOT}/installer/update_monitor.sh" probe runtime local package "${TMP}/installed")"
+OUT="$(MOCK_REMOTE=100 bash "${ROOT}/installer/update_monitor.sh" probe runtime local package "${TMP}/installed")"
 jq -e '.kind=="UpdateProbe" and .target_kind=="runtime" and .status=="current" and .update_available==false and .installed_version=="100" and .remote_version=="100"' <<<"${OUT}" >/dev/null
 
-OUT="$(MOCK_REMOTE=101 "${ROOT}/installer/update_monitor.sh" probe content local package "${TMP}/installed")"
+OUT="$(MOCK_REMOTE=101 bash "${ROOT}/installer/update_monitor.sh" probe content local package "${TMP}/installed")"
 jq -e '.target_kind=="content" and .status=="update_available" and .update_available==true and .installed_version=="100" and .remote_version=="101"' <<<"${OUT}" >/dev/null
 
 # The generic monitor must remain game-neutral.
