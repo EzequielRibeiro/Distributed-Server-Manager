@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import game_data_state
+import provisioning_state
 from server_update_provider import detect_update
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
@@ -47,6 +48,24 @@ def _interval(config: dict[str, Any]) -> int:
     return max(60, min(value, 86400))
 
 
+def _historical_selection(game: str) -> dict[str, Any] | None:
+    """Recover the latest Controller-resolved selection for already-provisioned data."""
+    root = Path(provisioning_state.HISTORY_ROOT)
+    try:
+        paths = sorted(root.glob("*.request.json"), key=lambda path: path.stat().st_mtime_ns, reverse=True)
+    except OSError:
+        return None
+    for path in paths:
+        payload = provisioning_state.read_json(path)
+        if not isinstance(payload, dict):
+            continue
+        content = payload.get("content") if isinstance(payload.get("content"), dict) else {}
+        selection = content.get("selection") if isinstance(content.get("selection"), dict) else None
+        if selection and str(selection.get("game") or "").strip() == game:
+            return dict(selection)
+    return None
+
+
 def refresh(config: dict[str, Any], *, force: bool = False) -> dict[str, Any]:
     """Refresh remote-version state without applying any update."""
     global _LAST_REFRESH_MONOTONIC
@@ -61,6 +80,8 @@ def refresh(config: dict[str, Any], *, force: bool = False) -> dict[str, Any]:
         selection = state.get("update_selection") if isinstance(state.get("update_selection"), dict) else None
         if not game or not target:
             continue
+        if not selection:
+            selection = _historical_selection(game)
         if not selection:
             items.append({
                 "game": game,
