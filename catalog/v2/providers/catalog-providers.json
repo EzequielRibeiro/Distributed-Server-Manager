@@ -32,5 +32,15 @@
     "local",
     "custom",
     "source-build"
-  ]
+  ],
+  "content_artifact_providers": [
+    "local",
+    "http",
+    "github",
+    "modrinth",
+    "steam-workshop"
+  ],
+  "content_provider_notes": {
+    "steam-workshop": "Generic SteamCMD Workshop downloader. Game-specific activation is intentionally outside the provider contract."
+  }
 }
