@@ -59,7 +59,9 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
  def test_agent_packages_include_artifact_transfer_client(self):
   linux=(ROOT/"release/build_agent_package.sh").read_text(encoding="utf-8")
   windows=(ROOT/"release/build_windows_agent_package.py").read_text(encoding="utf-8")
-  self.assertIn("artifact_transfer_client.py",linux)
+  self.assertTrue((ROOT/"agents/linux/runtime/artifact_transfer_client.py").is_file())
+  self.assertIn('git -C "${ROOT}" ls-tree -r --name-only "${REF}" -- agents/linux/runtime',linux)
+  self.assertIn('copy "${source}" "agent/runtime/${relative}"',linux)
   self.assertIn('_runtime_sources(ref)',windows)
   self.assertIn('"agents/windows/runtime"',windows)
   self.assertIn('source.endswith(".py")',windows)
