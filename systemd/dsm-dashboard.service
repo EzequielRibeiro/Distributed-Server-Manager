@@ -12,8 +12,8 @@ Group={{DSM_GROUP}}
 Environment=DSM_ROOT=/opt/dsm
 EnvironmentFile=-/opt/dsm/config/dsm.conf
 WorkingDirectory=/opt/dsm/dashboard
-# Composition base retained by dashboard/server_part18.py: dashboard/server_part17.py
-ExecStart=/usr/bin/python3 /opt/dsm/dashboard/server_part18.py
+# Composition chain retained by dashboard/server_part19.py: server_part18.py -> server_part17.py
+ExecStart=/usr/bin/python3 /opt/dsm/dashboard/server_part19.py
 Restart=always
 RestartSec=5
 TimeoutStopSec=30
