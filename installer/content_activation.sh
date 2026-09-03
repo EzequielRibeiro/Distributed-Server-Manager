@@ -19,7 +19,7 @@ activation_validate_adapter()
 
 activation_render()
 {
-    local PLAN="${1:-}" INSTANCE="${2:-}" TMP ADAPTER FILE RESULT
+    local PLAN="${1:-}" INSTANCE="${2:-}" TMP ADAPTER FILE RESULT CLEANUP_CMD
     [[ -f "${PLAN}" ]] || { activation_error "Installation plan not found."; return 2; }
     [[ -n "${INSTANCE}" && "${INSTANCE}" == /* && "${INSTANCE}" != "/" ]] || {
         activation_error "Instance path must be absolute and non-root."
@@ -27,9 +27,8 @@ activation_render()
     }
 
     TMP="$(mktemp -d)"
-    # The dispatcher executes adapter functions in the same shell. A RETURN trap
-    # would fire when an adapter returns and delete the accumulator too early.
-    trap 'rm -rf -- "${TMP}"' EXIT
+    printf -v CLEANUP_CMD 'rm -rf -- %q' "${TMP}"
+    trap "${CLEANUP_CMD}" EXIT
     printf '[]\n' >"${TMP}/operations.json"
 
     while IFS= read -r ADAPTER; do
