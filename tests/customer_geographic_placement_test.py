@@ -107,19 +107,27 @@ class CustomerGeographicPlacementTest(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(payload["error"], "invalid_request")
 
-    def test_customer_page_loads_safe_adapter_before_runtime_selector(self):
+    def test_customer_page_loads_explicit_placement_client_before_runtime_selector(self):
         html = (ROOT / "dashboard" / "web" / "customer.html").read_text(encoding="utf-8")
-        self.assertIn("/customer-placement-selector.js", html)
-        self.assertLess(html.index("/customer-placement-selector.js"), html.index("/runtime-selector.js"))
-        script = (ROOT / "dashboard" / "web" / "customer-placement-selector.js").read_text(encoding="utf-8")
-        self.assertIn("/api/customer/placement/locations", script)
-        self.assertIn("PLACEMENT_TIMEOUT_MS = 8000", script)
-        self.assertIn("placement_timeout", script)
-        self.assertIn("placement_no_available_agent", script)
-        self.assertIn("Verificando servidores disponíveis", script)
-        self.assertNotIn("agent_id", script)
-        self.assertNotIn("public_host", script)
-        self.assertNotIn("fingerprint", script)
+        self.assertIn("/customer-placement-client.js", html)
+        self.assertNotIn("/customer-placement-selector.js", html)
+        self.assertLess(html.index("/customer-placement-client.js"), html.index("/runtime-selector.js"))
+
+        client = (ROOT / "dashboard" / "web" / "customer-placement-client.js").read_text(encoding="utf-8")
+        self.assertIn("/api/customer/placement/locations", client)
+        self.assertIn("PLACEMENT_TIMEOUT_MS = 8000", client)
+        self.assertIn("placement_timeout", client)
+        self.assertIn("placement_no_available_agent", client)
+        self.assertIn("Verificando servidores disponíveis", client)
+        self.assertNotIn("window.fetch =", client)
+        self.assertNotIn("agent_id", client)
+        self.assertNotIn("public_host", client)
+        self.assertNotIn("fingerprint", client)
+
+        selector = (ROOT / "dashboard" / "web" / "runtime-selector.js").read_text(encoding="utf-8")
+        self.assertIn("CapivaraPlacementClient", selector)
+        self.assertIn("loadRegions", selector)
+        self.assertNotIn("/api/customer/regions", selector)
 
     def test_customer_creation_response_does_not_publish_internal_placement(self):
         source = (ROOT / "dashboard" / "customer_instance_creation.py").read_text(encoding="utf-8")
