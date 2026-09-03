@@ -13,6 +13,7 @@
     {"id":"minecraft.java.paper","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"papermc","os":["linux","windows"],"status":"supported"},
     {"id":"minecraft.java.spongevanilla","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"sponge_maven","os":["linux","windows"],"status":"supported"},
     {"id":"minecraft.java.vanilla","game":"minecraft","engine":"java","provider":"http","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
+    {"id":"minecraft.java.youer","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"youer_api","os":["linux","windows"],"status":"supported","minecraft_versions":["1.21.1"],"java":[21],"content_ecosystems":["neoforge-mod","bukkit-plugin","spigot-plugin"]},
     {"id":"rust.stable","game":"rust","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"}
   ],
   "deferred_runtimes": [
@@ -29,7 +30,7 @@
     }
   ],
   "explicitly_not_published_as_runtimes": [
-    {"id":"mohist","reason":"Not part of the supported runtime set."},
+    {"id":"mohist","reason":"EOL; not part of the supported runtime set. Youer is the active hybrid successor."},
     {"id":"starlight","reason":"Optimization/content component, not a standalone server runtime in the canonical catalog."}
   ]
 }
