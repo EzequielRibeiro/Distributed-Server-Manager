@@ -1,0 +1,38 @@
+name: Generic Content Providers
+
+on:
+  pull_request:
+    paths:
+      - 'installer/providers/**'
+      - 'installer/content_*.sh'
+      - 'catalog/v2/providers/**'
+      - 'catalog/v2/schemas/content-definition.schema.json'
+      - 'tests/steam_workshop_content_provider_test.sh'
+      - '.github/workflows/generic-content-providers.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'installer/providers/**'
+      - 'installer/content_*.sh'
+      - 'catalog/v2/providers/**'
+      - 'catalog/v2/schemas/content-definition.schema.json'
+      - 'tests/steam_workshop_content_provider_test.sh'
+      - '.github/workflows/generic-content-providers.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell syntax
+        run: |
+          bash -n installer/providers/steam-workshop.sh
+          bash -n tests/steam_workshop_content_provider_test.sh
+      - name: Validate provider registry
+        run: jq empty catalog/v2/providers/catalog-providers.json
+      - name: Validate ContentDefinition schema JSON
+        run: jq empty catalog/v2/schemas/content-definition.schema.json
+      - name: Run Steam Workshop provider regression
+        run: bash tests/steam_workshop_content_provider_test.sh
+      - name: Preserve canonical catalog regression
+        run: bash tests/catalog_v2_test.sh
