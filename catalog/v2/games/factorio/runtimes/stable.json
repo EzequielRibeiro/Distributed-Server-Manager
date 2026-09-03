@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "factorio.stable",
+  "name": "Factorio Headless Server",
+  "game": "factorio",
+  "edition": "headless",
+  "variant": "stable",
+  "loader": null,
+  "version": {"strategy": "static", "value": "stable", "build": "headless-linux64"},
+  "process": {"engine": "native", "executable": "factorio/bin/x64/factorio", "artifact_mode": "executable"},
+  "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
+  "artifact": {
+    "provider": "http-archive",
+    "auth": "anonymous",
+    "url": "https://www.factorio.com/get-download/stable/headless/linux64",
+    "archive_type": "tar.xz"
+  },
+  "installation": {"directory": "/opt/dsm/game-data/factorio/serverfiles"},
+  "network": {
+    "allocation": "block",
+    "block_size": 1,
+    "ports": [{"name": "game", "protocol": "udp", "offset": 0}],
+    "apply": [{"kind": "argument", "template": "--port {game}"}]
+  }
+}
