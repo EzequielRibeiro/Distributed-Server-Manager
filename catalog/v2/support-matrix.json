@@ -11,6 +11,7 @@
     {"id":"minecraft.java.forge","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"forge_maven","os":["linux","windows"],"status":"supported"},
     {"id":"minecraft.java.neoforge","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"neoforge_maven","os":["linux","windows"],"status":"supported"},
     {"id":"minecraft.java.paper","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"papermc","os":["linux","windows"],"status":"supported"},
+    {"id":"minecraft.java.purpur","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"purpur_api","os":["linux","windows"],"status":"supported","content_ecosystems":["bukkit-plugin","spigot-plugin","paper-plugin","purpur-plugin"]},
     {"id":"minecraft.java.spongevanilla","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"sponge_maven","os":["linux","windows"],"status":"supported"},
     {"id":"minecraft.java.vanilla","game":"minecraft","engine":"java","provider":"http","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
     {"id":"minecraft.java.youer","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"youer_api","os":["linux","windows"],"status":"supported","minecraft_versions":["1.21.1"],"java":[21],"content_ecosystems":["neoforge-mod","bukkit-plugin","spigot-plugin"]},
