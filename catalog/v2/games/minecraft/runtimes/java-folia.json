@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "minecraft.java.folia",
+  "name": "Minecraft Java Folia",
+  "game": "minecraft",
+  "edition": "java",
+  "variant": "folia",
+  "loader": "folia",
+  "version": {
+    "strategy": "dynamic",
+    "resolver": "papermc",
+    "config": {
+      "project": "folia",
+      "api_base": "https://fill.papermc.io/v3"
+    }
+  },
+  "process": {
+    "engine": "java",
+    "executable": "server.jar",
+    "artifact_mode": "file",
+    "args": "nogui"
+  },
+  "requirements": {
+    "os": ["linux", "windows"],
+    "architectures": ["x86_64", "aarch64"],
+    "java": {"min": 21, "max": 25}
+  },
+  "artifact": {
+    "provider": "http",
+    "auth": "anonymous"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/minecraft/folia"
+  }
+}

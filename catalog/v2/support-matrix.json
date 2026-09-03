@@ -8,6 +8,7 @@
     {"id":"minecraft.bedrock.vanilla","game":"minecraft","engine":"native","provider":"http-archive","version_strategy":"dynamic","resolver":"minecraft_bedrock","os":["linux"],"status":"supported"},
     {"id":"minecraft.java.arclight","game":"minecraft","engine":"java","provider":"github","version_strategy":"dynamic","resolver":"github_releases","os":["linux","windows"],"status":"supported"},
     {"id":"minecraft.java.fabric","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"fabric_meta","os":["linux","windows"],"status":"supported"},
+    {"id":"minecraft.java.folia","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"papermc","os":["linux","windows"],"status":"supported","content_ecosystems":["folia-plugin","paper-plugin"],"compatibility_note":"Plugins must explicitly support Folia regionised multithreading; Paper compatibility is not universal."},
     {"id":"minecraft.java.forge","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"forge_maven","os":["linux","windows"],"status":"supported"},
     {"id":"minecraft.java.neoforge","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"neoforge_maven","os":["linux","windows"],"status":"supported"},
     {"id":"minecraft.java.paper","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"papermc","os":["linux","windows"],"status":"supported"},
