@@ -42,6 +42,8 @@ jobs:
           python3 -m unittest tests/universal_observability_http_test.py
       - name: Validate distribution contracts
         run: |
-          grep -F 'observability_client.py' release/build_agent_package.sh
+          test -f agents/linux/runtime/observability_client.py
+          grep -F 'git -C "${ROOT}" ls-tree -r --name-only "${REF}" -- agents/linux/runtime' release/build_agent_package.sh
+          grep -F 'copy "${source}" "agent/runtime/${relative}"' release/build_agent_package.sh
           grep -F 'cap observe' bin/cap
           grep -F '/api/observability' dashboard/observability_http.py
