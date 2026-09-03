@@ -14,5 +14,8 @@ class CreateServerWizardContractTest(unittest.TestCase):
  def test_fallback_summary_follows_checkbox(self):self.assertIn("runtime-region-fallback",self.script);self.assertIn('checkbox.checked ? "Sim" : "Não"',self.script)
  def test_phase7_assets_are_loaded(self):self.assertIn('/create-server-wizard.css',self.html);self.assertIn('/create-server-wizard.js',self.html);self.assertIn('id="runtime-placement-status"',self.html)
  def test_service_uses_current_composed_entrypoint(self):
-  self.assertIn("dashboard/server_part17.py",self.service);composition=(ROOT/"dashboard/server_part17.py").read_text(encoding="utf-8");self.assertIn("import server_part16 as integration",composition)
+  self.assertIn("dashboard/server_part19.py",self.service)
+  part19=(ROOT/"dashboard/server_part19.py").read_text(encoding="utf-8");self.assertIn("import server_part18 as integration",part19)
+  part18=(ROOT/"dashboard/server_part18.py").read_text(encoding="utf-8");self.assertIn("import server_part17 as integration",part18)
+  part17=(ROOT/"dashboard/server_part17.py").read_text(encoding="utf-8");self.assertIn("import server_part16 as integration",part17)
 if __name__=="__main__":unittest.main()
