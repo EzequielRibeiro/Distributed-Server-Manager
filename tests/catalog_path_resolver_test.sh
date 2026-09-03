@@ -76,7 +76,9 @@ for ID in \
     minecraft.java.forge \
     minecraft.java.neoforge \
     minecraft.java.paper \
+    minecraft.java.spongevanilla \
     minecraft.java.vanilla \
+    minecraft.java.youer \
     rust.stable
 do
     [[ "$(jq --arg id "${ID}" '[.[] | select(.id == $id)] | length' <<<"${ALL_RUNTIMES}")" -eq 1 ]] \
