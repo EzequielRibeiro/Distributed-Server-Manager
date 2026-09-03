@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate syntax
         run: |
-          python3 -m py_compile core/server_update_platform.py database/server_update_schema.py database/server_update_repository.py database/agent_game_data_repository.py agents/linux/runtime/server_update_provider.py agents/linux/runtime/server_update_agent.py agents/linux/runtime/game_data_executor.py dashboard/server_update_api.py dashboard/server_update_http.py dashboard/server_update_install.py dashboard/server_part18.py tests/universal_server_update_test.py
+          python3 -m py_compile core/server_update_platform.py database/server_update_schema.py database/server_update_repository.py database/agent_game_data_repository.py agents/linux/runtime/server_update_provider.py agents/linux/runtime/server_update_transaction.py agents/linux/runtime/server_update_agent.py agents/linux/runtime/game_data_executor.py dashboard/server_update_api.py dashboard/server_update_http.py dashboard/server_update_install.py dashboard/server_part18.py tests/universal_server_update_test.py
       - name: Run Universal Server Update tests
         run: python3 -m unittest tests/universal_server_update_test.py
       - name: Validate dynamic Linux Agent packaging contract
