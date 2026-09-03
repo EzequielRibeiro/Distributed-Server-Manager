@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "theisle.stable",
+  "name": "The Isle Evrima Dedicated Server",
+  "game": "theisle",
+  "edition": "evrima",
+  "variant": "stable",
+  "loader": null,
+  "version": {"strategy": "static", "value": "evrima", "build": "steam-evrima", "config": {"steam_branch": "evrima"}},
+  "process": {"engine": "native", "executable": "TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping", "artifact_mode": "executable"},
+  "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
+  "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "412680", "branch": "evrima"},
+  "installation": {"directory": "/opt/dsm/game-data/theisle/serverfiles"},
+  "network": {"block_size": 2, "ports": [{"name":"game","protocol":"udp","offset":0},{"name":"steam_query","protocol":"udp","offset":1}]},
+  "runtime_secrets": [
+    {"name":"EOS_CLIENT_ID","required":true,"target":"file"},
+    {"name":"EOS_CLIENT_SECRET","required":true,"target":"file"}
+  ],
+  "runtime_profile": "theisle"
+}
