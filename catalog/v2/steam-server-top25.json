@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "kind": "SteamServerPopularitySnapshot",
+  "source": {"name":"LobbyHub","url":"https://lobbyhub.gg/charts","observed_date":"2026-09-02","metric":"tracked_servers"},
+  "selection": {"description":"Top 25 Steam games by tracked server count, re-sorted by server count rather than concurrent player rank."},
+  "games": [
+    {"rank":1,"game":"counter-strike-1.6","servers":253384,"catalog_publication":"supported"},
+    {"rank":2,"game":"counter-strike-2","servers":181738,"catalog_publication":"supported"},
+    {"rank":3,"game":"counter-strike-source","servers":154974,"catalog_publication":"supported"},
+    {"rank":4,"game":"project-zomboid","servers":134488,"catalog_publication":"supported"},
+    {"rank":5,"game":"team-fortress-2","servers":35962,"catalog_publication":"supported"},
+    {"rank":6,"game":"ark-survival-evolved","servers":35173,"catalog_publication":"supported"},
+    {"rank":7,"game":"7-days-to-die","servers":30280,"catalog_publication":"supported"},
+    {"rank":8,"game":"valheim","servers":28393,"catalog_publication":"supported"},
+    {"rank":9,"game":"rust","servers":26961,"catalog_publication":"supported"},
+    {"rank":10,"game":"garrys-mod","servers":26143,"catalog_publication":"supported"},
+    {"rank":11,"game":"left-4-dead-2","servers":23882,"catalog_publication":"supported"},
+    {"rank":12,"game":"enshrouded","servers":23497,"catalog_publication":"deferred"},
+    {"rank":13,"game":"dayz","servers":23097,"catalog_publication":"supported"},
+    {"rank":14,"game":"no-more-room-in-hell","servers":20065,"catalog_publication":"supported"},
+    {"rank":15,"game":"counter-strike-condition-zero","servers":17355,"catalog_publication":"deferred"},
+    {"rank":16,"game":"conan-exiles","servers":15209,"catalog_publication":"supported"},
+    {"rank":17,"game":"arma3","servers":14254,"catalog_publication":"supported"},
+    {"rank":18,"game":"unturned","servers":13562,"catalog_publication":"supported"},
+    {"rank":19,"game":"scum","servers":12385,"catalog_publication":"supported"},
+    {"rank":20,"game":"palworld","servers":12363,"catalog_publication":"supported"},
+    {"rank":21,"game":"sven-coop","servers":7685,"catalog_publication":"supported"},
+    {"rank":22,"game":"icarus","servers":7005,"catalog_publication":"deferred"},
+    {"rank":23,"game":"v-rising","servers":6600,"catalog_publication":"supported"},
+    {"rank":24,"game":"space-engineers","servers":4116,"catalog_publication":"deferred"},
+    {"rank":25,"game":"squad","servers":1423,"catalog_publication":"supported"}
+  ]
+}
