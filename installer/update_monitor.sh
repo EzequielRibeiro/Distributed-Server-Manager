@@ -43,7 +43,8 @@ update_probe()
         return 2
     }
 
-    update_load_provider "${PROVIDER}" || return 1
+    # Provider bootstrap logs go to stderr so stdout remains a stable JSON contract.
+    update_load_provider "${PROVIDER}" >&2 || return 1
 
     if ! declare -F provider_version >/dev/null 2>&1; then
         update_error "Provider ${PROVIDER} does not expose installed version."
