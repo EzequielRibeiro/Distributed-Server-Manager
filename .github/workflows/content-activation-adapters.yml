@@ -1,0 +1,36 @@
+name: Content Activation Adapters
+
+on:
+  pull_request:
+    paths:
+      - 'installer/content_activation.sh'
+      - 'installer/content_adapters/**'
+      - 'installer/content_planner.sh'
+      - 'catalog/v2/schemas/content-definition.schema.json'
+      - 'tests/content_activation_adapter_test.sh'
+      - '.github/workflows/content-activation-adapters.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'installer/content_activation.sh'
+      - 'installer/content_adapters/**'
+      - 'installer/content_planner.sh'
+      - 'catalog/v2/schemas/content-definition.schema.json'
+      - 'tests/content_activation_adapter_test.sh'
+      - '.github/workflows/content-activation-adapters.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell syntax
+        run: |
+          bash -n installer/content_activation.sh
+          bash -n installer/content_adapters/dayz.sh
+          bash -n installer/content_planner.sh
+          bash -n tests/content_activation_adapter_test.sh
+      - name: Run adapter regression
+        run: bash tests/content_activation_adapter_test.sh
+      - name: Preserve canonical content planner regression
+        run: bash tests/catalog_v2_test.sh
