@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DSM_ROOT="${DSM_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+VERSION_ADAPTER_ROOT="${DSM_PROVIDER_VERSION_ADAPTER_ROOT:-${DSM_ROOT}/installer/provider_versions}"
 
 # shellcheck source=/dev/null
 source "${DSM_ROOT}/installer/provider_loader.sh"
@@ -17,6 +18,20 @@ update_validate_kind()
     return 2
 }
 
+update_load_provider()
+{
+    local PROVIDER="${1:-}" ADAPTER
+    unset -f provider_remote_version 2>/dev/null || true
+    provider_require "${PROVIDER}" || return 1
+
+    ADAPTER="${VERSION_ADAPTER_ROOT}/${PROVIDER}.sh"
+    if [[ -f "${ADAPTER}" ]]; then
+        # Version adapters extend provider contracts without game-specific logic.
+        # shellcheck source=/dev/null
+        source "${ADAPTER}"
+    fi
+}
+
 update_probe()
 {
     local KIND="${1:-}" PROVIDER="${2:-}" PACKAGE="${3:-}" INSTALL_PATH="${4:-}"
@@ -28,7 +43,7 @@ update_probe()
         return 2
     }
 
-    provider_require "${PROVIDER}" || return 1
+    update_load_provider "${PROVIDER}" || return 1
 
     if ! declare -F provider_version >/dev/null 2>&1; then
         update_error "Provider ${PROVIDER} does not expose installed version."
@@ -66,6 +81,7 @@ update_probe()
 update_apply_runtime()
 {
     local PROVIDER="${1:-}" GAME_ID="${2:-}" PACKAGE="${3:-}" INSTALL_PATH="${4:-}" EXECUTABLE="${5:-}" INSTALL_USER="${6:-anonymous}"
+    # Atomic Engine owns staging, integrity validation, activation and rollback.
     # shellcheck source=/dev/null
     source "${DSM_ROOT}/installer/atomic_install.sh"
     atomic_install "${PROVIDER}" "${GAME_ID}" "${PACKAGE}" "${INSTALL_PATH}" "${EXECUTABLE}" "${INSTALL_USER}"
@@ -76,6 +92,7 @@ update_apply_content()
     local REQUEST="${1:-}" INSTANCE="${2:-}"
     [[ -f "${REQUEST}" ]] || { update_error "Content request not found: ${REQUEST}"; return 2; }
     [[ -n "${INSTANCE}" ]] || { update_error "Instance path is required."; return 2; }
+    # Content Manager owns planning, staging, activation adapters and rollback.
     "${DSM_ROOT}/installer/content_manager.sh" install "${REQUEST}" "${INSTANCE}"
 }
 
