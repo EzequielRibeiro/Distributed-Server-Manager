@@ -1,6 +1,6 @@
 # Catálogo por jogo
 
-`catalog/v2/games/` é o namespace canônico dos jogos publicados pelo Capivara DSM.
+`catalog/v2/games/` é o namespace canônico dos jogos publicados ou explicitamente adiados pelo Capivara DSM.
 
 Os runtimes que podem ser oferecidos ao Controller/Customer ficam exclusivamente em `games/<game>/runtimes/*.json`. Um arquivo presente em `runtimes/` é considerado publicado e, portanto, deve ser executável pelos Agents declarados no próprio `RuntimeDefinition`.
 
@@ -20,20 +20,32 @@ Nem todo jogo precisa de todos os arquivos. Providers reutilizáveis permanecem 
 
 ## Jogos conhecidos
 
+Publicados:
+
 - `arma3`
+- `counterstrike2`
 - `dayz`
-- `luanti`
 - `mindustry`
 - `minecraft`
+- `palworld`
 - `rust`
+- `teamfortress2`
 
-A lista normativa de runtimes suportados está em `catalog/v2/support-matrix.json` e é verificada pelo workflow **Catalog Completion**.
+Adiados com definição preservada:
+
+- `fivem`
+- `luanti`
+- `projectzomboid`
+
+A lista normativa de runtimes suportados e adiados está em `catalog/v2/support-matrix.json` e é verificada pelo workflow **Catalog Completion**. O arquivo `catalog/v2/steam-top25-2026-09-03.json` registra a análise de aplicabilidade do Top 25 da Steam capturado em 3 de setembro de 2026.
 
 ## Regras de publicação
 
 Um runtime em `runtimes/` precisa ter ID único, `RuntimeDefinition` v2 válido, engine/processo definidos, requisitos de SO/arquitetura, provider executável pelo Agent, Installation Strategy coerente e resolver existente quando `version.strategy=dynamic`.
 
 Providers reservados (`local`, `custom`, `source-build`) não tornam uma definição publicável até que exista uma estratégia tipada implementada em paridade nos Agents necessários. Definições preservadas nessas condições ficam em `deferred/`.
+
+Popularidade não substitui hospedabilidade. Jogos do ranking da Steam sem distribuição pública de servidor dedicado, ou que dependem exclusivamente da infraestrutura oficial do publisher, não entram em `runtimes/` apenas para aparecer na seleção do cliente.
 
 `Mohist` não faz parte do conjunto oficialmente publicado. `Starlight` também não é um runtime de servidor: deve ser tratado como componente de conteúdo/otimização se for incorporado futuramente.
 
