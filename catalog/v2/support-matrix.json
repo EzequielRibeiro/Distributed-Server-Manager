@@ -3,8 +3,12 @@
   "kind": "CatalogSupportMatrix",
   "published_runtimes": [
     {"id":"arma3.stable","game":"arma3","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
+    {"id":"armareforger.stable","game":"armareforger","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"},
     {"id":"counterstrike2.stable","game":"counterstrike2","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"},
     {"id":"dayz.stable","game":"dayz","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
+    {"id":"factorio.stable","game":"factorio","engine":"native","provider":"http-archive","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported","compatibility_note":"A private initial save and server-settings.json are created on the Agent without shell execution or credentials."},
+    {"id":"garrysmod.stable","game":"garrysmod","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"},
+    {"id":"left4dead2.stable","game":"left4dead2","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"},
     {"id":"mindustry.github","game":"mindustry","engine":"java","provider":"github","version_strategy":"dynamic","resolver":"github_releases","os":["linux","windows"],"status":"supported"},
     {"id":"minecraft.bedrock.vanilla","game":"minecraft","engine":"native","provider":"http-archive","version_strategy":"dynamic","resolver":"minecraft_bedrock","os":["linux"],"status":"supported"},
     {"id":"minecraft.java.arclight","game":"minecraft","engine":"java","provider":"github","version_strategy":"dynamic","resolver":"github_releases","os":["linux","windows"],"status":"supported"},
@@ -20,9 +24,22 @@
     {"id":"palworld.stable","game":"palworld","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"},
     {"id":"projectzomboid.stable","game":"projectzomboid","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported","content_ecosystems":["steam-workshop"],"compatibility_note":"First start uses an Agent-local one-shot stdin bootstrap; no Project Zomboid admin credential is persisted by Capivara."},
     {"id":"rust.stable","game":"rust","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
+    {"id":"satisfactory.stable","game":"satisfactory","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"},
+    {"id":"sevendaystodie.stable","game":"sevendaystodie","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported","compatibility_note":"serverconfig.xml is copied into private instance state and its ServerPort property is patched by a typed Agent helper."},
     {"id":"teamfortress2.stable","game":"teamfortress2","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"}
   ],
   "deferred_runtimes": [
+    {
+      "id":"arksurvivalascended.stable",
+      "game":"arksurvivalascended",
+      "engine":"native",
+      "provider":"steam",
+      "version_strategy":"static",
+      "resolver":null,
+      "os":["windows"],
+      "status":"deferred",
+      "reason":"The current ARK: Survival Ascended dedicated server distribution is Windows-native; Linux hosting depends on Wine/Proton, and the canonical Capivara Linux Agent does not yet model a typed compatibility-layer runtime."
+    },
     {
       "id":"fivem.stable",
       "game":"fivem",
@@ -32,7 +49,7 @@
       "resolver":null,
       "os":["linux"],
       "status":"deferred",
-      "reason":"FXServer requires a multi-artifact installation (server artifact plus cfx-server-data) and a Cfx.re license key; the current canonical installation strategy does not model that transaction safely."
+      "reason":"FXServer requires a multi-artifact transaction (server artifact plus cfx-server-data) and a customer Cfx.re license key. Capivara does not yet expose a generic secret transport that can supply that key without persisting it in provisioning/runtime metadata."
     },
     {
       "id":"luanti.stable",
@@ -44,6 +61,28 @@
       "os":["linux"],
       "status":"deferred",
       "reason":"The local artifact provider is reserved and is not executable by current Linux/Windows Agents."
+    },
+    {
+      "id":"theisle.stable",
+      "game":"theisle",
+      "engine":"native",
+      "provider":"steam",
+      "version_strategy":"static",
+      "resolver":null,
+      "os":["linux"],
+      "status":"deferred",
+      "reason":"The active Evrima server requires an explicit Steam branch and Epic Online Services dedicated-server ClientId/ClientSecret. Those customer credentials cannot yet be delivered through a non-persistent typed secret channel."
+    },
+    {
+      "id":"valheim.stable",
+      "game":"valheim",
+      "engine":"native",
+      "provider":"steam",
+      "version_strategy":"static",
+      "resolver":null,
+      "os":["linux"],
+      "status":"deferred",
+      "reason":"Valheim's normal dedicated startup policy relies on a server password supplied as a process argument. Capivara does not yet have a generic customer-secret channel that keeps that value out of persisted RuntimeSpec/systemd metadata and process inspection."
     }
   ],
   "explicitly_not_published_as_runtimes": [
