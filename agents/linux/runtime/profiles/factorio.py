@@ -35,7 +35,7 @@ class FactorioRuntimeProfile(GameRuntimeProfile):
             "adapter": "systemd",
             "working_directory": working_directory,
             "executable": executable,
-            "arguments": ["--start-server", save_path, "--server-settings", settings_path, "--console-log", log_path],
+            "arguments": ["--start-server", save_path, "--server-settings", settings_path, "--port", str(game_port), "--console-log", log_path],
             "pre_start": [{
                 "executable": "/usr/bin/python3",
                 "arguments": [_PREPARE_HELPER, "--executable", executable, "--save", save_path, "--settings", settings_path, "--name", server_name],
