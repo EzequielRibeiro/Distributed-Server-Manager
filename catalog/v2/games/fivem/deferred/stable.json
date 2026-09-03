@@ -1,0 +1,33 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "fivem.stable",
+  "name": "FiveM FXServer",
+  "game": "fivem",
+  "edition": "default",
+  "variant": "stable",
+  "loader": null,
+  "version": {
+    "strategy": "static",
+    "value": "recommended",
+    "build": "cfx-recommended"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "run.sh",
+    "artifact_mode": "directory",
+    "args": ["+exec", "server.cfg"]
+  },
+  "requirements": {
+    "os": ["linux"],
+    "architectures": ["x86_64"],
+    "java": null
+  },
+  "artifact": {
+    "provider": "custom",
+    "auth": "required"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/fivem/serverfiles"
+  }
+}

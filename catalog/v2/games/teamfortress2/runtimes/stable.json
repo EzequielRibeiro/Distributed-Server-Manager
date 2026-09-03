@@ -1,0 +1,49 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "teamfortress2.stable",
+  "name": "Team Fortress 2 Dedicated Server",
+  "game": "teamfortress2",
+  "edition": "default",
+  "variant": "stable",
+  "loader": null,
+  "version": {
+    "strategy": "static",
+    "value": "current",
+    "build": "steam-current"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "srcds_run",
+    "artifact_mode": "executable",
+    "args": [
+      "-game",
+      "tf",
+      "+map",
+      "cp_dustbowl"
+    ]
+  },
+  "requirements": {
+    "os": ["linux"],
+    "architectures": ["x86_64"],
+    "java": null
+  },
+  "artifact": {
+    "provider": "steam",
+    "auth": "anonymous",
+    "package_id": "232250"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/teamfortress2/serverfiles"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 10,
+    "ports": [
+      {"name": "game", "protocol": "udp", "offset": 0}
+    ],
+    "apply": [
+      {"kind": "argument", "template": "-port {game}"}
+    ]
+  }
+}

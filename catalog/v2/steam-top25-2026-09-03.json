@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "kind": "SteamTopPlayedCatalogSnapshot",
+  "captured_on": "2026-09-03",
+  "ranking_basis": "SteamDB live concurrent-player ranking; ranking is volatile and this file is an applicability snapshot, not a permanent popularity order.",
+  "entries": [
+    {"rank":1,"name":"Counter-Strike 2","catalog_action":"published","runtime_id":"counterstrike2.stable","note":"Dedicated server is shipped with Steam app 730; initial canonical publication targets Linux x86_64."},
+    {"rank":2,"name":"Dota 2","catalog_action":"not_published","runtime_id":null,"note":"No supported standalone customer-hosted public dedicated-server product is modeled for normal Dota matchmaking."},
+    {"rank":3,"name":"PUBG: BATTLEGROUNDS","catalog_action":"not_published","runtime_id":null,"note":"Public customer-operated dedicated server distribution is not available as a normal SteamCMD hosting target."},
+    {"rank":4,"name":"FiveM","catalog_action":"deferred","runtime_id":"fivem.stable","note":"FXServer is hostable, but requires multi-artifact installation and a Cfx.re license key not yet modeled by the canonical installation strategy."},
+    {"rank":5,"name":"Bongo Cat","catalog_action":"not_published","runtime_id":null,"note":"No dedicated game-server runtime."},
+    {"rank":6,"name":"Palworld","catalog_action":"published","runtime_id":"palworld.stable","note":"Official dedicated server is installable anonymously with SteamCMD app 2394010; initial canonical publication targets Linux x86_64."},
+    {"rank":7,"name":"Apex Legends","catalog_action":"not_published","runtime_id":null,"note":"No public customer-operated dedicated server distribution."},
+    {"rank":8,"name":"Rust","catalog_action":"already_supported","runtime_id":"rust.stable","note":"Already present in the canonical catalog."},
+    {"rank":9,"name":"Tom Clancy's Rainbow Six Siege","catalog_action":"not_published","runtime_id":null,"note":"No public customer-operated dedicated server distribution."},
+    {"rank":10,"name":"Project Zomboid","catalog_action":"deferred","runtime_id":"projectzomboid.stable","note":"SteamCMD app 380870 is available, but non-interactive first-start/config bootstrap needs a canonical strategy before publication."},
+    {"rank":11,"name":"War Thunder","catalog_action":"not_published","runtime_id":null,"note":"No supported public self-hosted dedicated-server package suitable for Capivara customer provisioning."},
+    {"rank":12,"name":"Grand Theft Auto V Legacy","catalog_action":"not_published","runtime_id":null,"note":"GTA V itself is not published as a native dedicated server; FiveM/FXServer is tracked separately."},
+    {"rank":13,"name":"EA SPORTS FC 26","catalog_action":"not_published","runtime_id":null,"note":"No public customer-operated dedicated server distribution."},
+    {"rank":14,"name":"TBH: Task Bar Hero","catalog_action":"not_published","runtime_id":null,"note":"No dedicated game-server runtime."},
+    {"rank":15,"name":"Wallpaper Engine","catalog_action":"not_published","runtime_id":null,"note":"Application, not a dedicated multiplayer game-server runtime."},
+    {"rank":16,"name":"Deadlock","catalog_action":"not_published","runtime_id":null,"note":"No stable public customer-hosting dedicated-server package is currently treated as supported."},
+    {"rank":17,"name":"Grand Theft Auto V Enhanced","catalog_action":"not_published","runtime_id":null,"note":"GTA V itself is not published as a native dedicated server; FiveM/FXServer is tracked separately."},
+    {"rank":18,"name":"Marvel Rivals","catalog_action":"not_published","runtime_id":null,"note":"No public customer-operated dedicated server distribution."},
+    {"rank":19,"name":"The Binding of Isaac: Rebirth","catalog_action":"not_published","runtime_id":null,"note":"No dedicated game-server runtime."},
+    {"rank":20,"name":"How to Fish","catalog_action":"not_published","runtime_id":null,"note":"No verified public dedicated-server target suitable for automated hosting."},
+    {"rank":21,"name":"The Blood of Dawnwalker","catalog_action":"not_published","runtime_id":null,"note":"No dedicated game-server runtime."},
+    {"rank":22,"name":"Overwatch","catalog_action":"not_published","runtime_id":null,"note":"No public customer-operated dedicated server distribution."},
+    {"rank":23,"name":"Team Fortress 2","catalog_action":"published","runtime_id":"teamfortress2.stable","note":"Dedicated server is installable anonymously with SteamCMD app 232250; initial canonical publication targets Linux x86_64."},
+    {"rank":24,"name":"Dead by Daylight","catalog_action":"not_published","runtime_id":null,"note":"No public customer-operated dedicated server distribution."},
+    {"rank":25,"name":"Spacewar","catalog_action":"not_published","runtime_id":null,"note":"Steamworks sample/test application, not a production game-server product."}
+  ]
+}
