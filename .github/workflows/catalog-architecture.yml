@@ -15,11 +15,15 @@ on:
       - 'agents/windows/runtime/game_data_*'
       - 'database/agent_instance_provisioning_repository.py'
       - 'core/runtime_engine_contract.py'
+      - 'core/installation_strategy.py'
       - 'catalog/v2/schemas/runtime-engine-contract.schema.json'
+      - 'catalog/v2/schemas/installation-strategy.schema.json'
       - 'docs/architecture/runtime-engine-contract.md'
+      - 'docs/architecture/installation-strategy.md'
       - 'release/build_agent_package.sh'
       - 'tests/catalog_architecture_stages_5_10_test.py'
       - 'tests/runtime_engine_contract_test.py'
+      - 'tests/installation_strategy_test.py'
       - '.github/workflows/catalog-architecture.yml'
   push:
     branches: [main]
@@ -52,16 +56,22 @@ jobs:
             agents/windows/runtime/game_data_integrity.py \
             agents/windows/runtime/game_data_executor.py \
             core/runtime_engine_contract.py \
+            core/installation_strategy.py \
             tests/catalog_architecture_stages_5_10_test.py \
-            tests/runtime_engine_contract_test.py
+            tests/runtime_engine_contract_test.py \
+            tests/installation_strategy_test.py
       - name: Validate canonical Runtime Engine schema JSON
         run: python3 -m json.tool catalog/v2/schemas/runtime-engine-contract.schema.json >/dev/null
+      - name: Validate canonical Installation Strategy schema JSON
+        run: python3 -m json.tool catalog/v2/schemas/installation-strategy.schema.json >/dev/null
       - name: Validate Dashboard JavaScript
         run: node --check dashboard/web/catalog-page.js
       - name: Test stages 5-10
         run: python3 -m unittest tests/catalog_architecture_stages_5_10_test.py
       - name: Test canonical Runtime Engine contract
         run: python3 -m unittest tests/runtime_engine_contract_test.py
+      - name: Test canonical Installation Strategy
+        run: python3 -m unittest tests/installation_strategy_test.py
       - name: Test Linux Agent package
         run: bash tests/agent_package_test.sh
       - name: Test Windows Agent package
