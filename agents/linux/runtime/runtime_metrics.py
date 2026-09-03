@@ -12,6 +12,7 @@ import instance_runtime
 from host_telemetry import collect_host_telemetry
 from observability_client import collect_observability
 from queue_observability import collect_queue_observability
+from server_update_inventory import refresh as refresh_server_updates
 from storage_pools import pool_inventory
 
 
@@ -123,6 +124,18 @@ def snapshot(*, queue_depth: dict[str, int] | None = None) -> dict[str, Any]:
         stale_after_seconds=stale_after,
     )
     payload["queue_stale_count"] = sum(1 for item in payload["queue_health"].values() if item.get("stale"))
+
+    try:
+        payload["server_updates"] = refresh_server_updates(config)
+    except Exception as exc:
+        payload["server_updates"] = {
+            "schema_version": 1,
+            "kind": "ServerUpdateInventory",
+            "checked_at": None,
+            "games": [],
+            "status": "probe_failed",
+            "error": str(exc)[:2000],
+        }
 
     samples = collect_observability({"agent_id": "local"})
     for sample in samples:

@@ -1,0 +1,32 @@
+name: Server Update Inventory
+
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/runtime/server_update_inventory.py'
+      - 'agents/linux/runtime/server_update_provider.py'
+      - 'agents/linux/runtime/runtime_metrics.py'
+      - 'tests/server_update_inventory_test.py'
+      - '.github/workflows/server-update-inventory.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/linux/runtime/server_update_inventory.py'
+      - 'agents/linux/runtime/server_update_provider.py'
+      - 'agents/linux/runtime/runtime_metrics.py'
+      - 'tests/server_update_inventory_test.py'
+      - '.github/workflows/server-update-inventory.yml'
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python syntax
+        run: |
+          python3 -m py_compile \
+            agents/linux/runtime/server_update_inventory.py \
+            agents/linux/runtime/runtime_metrics.py \
+            tests/server_update_inventory_test.py
+      - name: Periodic update inventory contract
+        run: python3 tests/server_update_inventory_test.py
