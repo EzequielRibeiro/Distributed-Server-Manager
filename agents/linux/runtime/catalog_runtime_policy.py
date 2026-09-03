@@ -21,6 +21,8 @@ def _values(instance: dict[str, Any], context: dict[str, Any], policy: dict[str,
             values.update({str(k): str(v) for k, v in source.items()})
     values.setdefault("INSTANCE_ID", str(instance.get("instance_id") or ""))
     values.setdefault("GAME_ID", str(instance.get("game_id") or ""))
+    values.setdefault("INSTANCE_STATE_ROOT", str(context.get("instance_state_root") or ""))
+    values.setdefault("CONTENT_ROOT", str(context.get("content_root") or context.get("install_path") or ""))
     values.setdefault("MEMORY_MB", str((context.get("resource_profile") or {}).get("memory_mb") or ""))
     ports = context.get("ports") if isinstance(context.get("ports"), dict) else {}
     for role, item in ports.items():
