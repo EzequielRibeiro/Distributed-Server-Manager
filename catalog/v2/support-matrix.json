@@ -3,6 +3,7 @@
   "kind": "CatalogSupportMatrix",
   "published_runtimes": [
     {"id":"arma3.stable","game":"arma3","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
+    {"id":"counterstrike2.stable","game":"counterstrike2","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"},
     {"id":"dayz.stable","game":"dayz","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
     {"id":"mindustry.github","game":"mindustry","engine":"java","provider":"github","version_strategy":"dynamic","resolver":"github_releases","os":["linux","windows"],"status":"supported"},
     {"id":"minecraft.bedrock.vanilla","game":"minecraft","engine":"native","provider":"http-archive","version_strategy":"dynamic","resolver":"minecraft_bedrock","os":["linux"],"status":"supported"},
@@ -16,9 +17,22 @@
     {"id":"minecraft.java.spongevanilla","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"sponge_maven","os":["linux","windows"],"status":"supported"},
     {"id":"minecraft.java.vanilla","game":"minecraft","engine":"java","provider":"http","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
     {"id":"minecraft.java.youer","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"youer_api","os":["linux","windows"],"status":"supported","minecraft_versions":["1.21.1"],"java":[21],"content_ecosystems":["neoforge-mod","bukkit-plugin","spigot-plugin"]},
-    {"id":"rust.stable","game":"rust","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"}
+    {"id":"palworld.stable","game":"palworld","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"},
+    {"id":"rust.stable","game":"rust","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
+    {"id":"teamfortress2.stable","game":"teamfortress2","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"}
   ],
   "deferred_runtimes": [
+    {
+      "id":"fivem.stable",
+      "game":"fivem",
+      "engine":"native",
+      "provider":"custom",
+      "version_strategy":"static",
+      "resolver":null,
+      "os":["linux"],
+      "status":"deferred",
+      "reason":"FXServer requires a multi-artifact installation (server artifact plus cfx-server-data) and a Cfx.re license key; the current canonical installation strategy does not model that transaction safely."
+    },
     {
       "id":"luanti.stable",
       "game":"luanti",
@@ -29,6 +43,17 @@
       "os":["linux"],
       "status":"deferred",
       "reason":"The local artifact provider is reserved and is not executable by current Linux/Windows Agents."
+    },
+    {
+      "id":"projectzomboid.stable",
+      "game":"projectzomboid",
+      "engine":"native",
+      "provider":"steam",
+      "version_strategy":"static",
+      "resolver":null,
+      "os":["linux"],
+      "status":"deferred",
+      "reason":"SteamCMD acquisition is supported, but first-start bootstrap and server configuration live outside the installation directory and are not yet represented by a non-interactive canonical strategy."
     }
   ],
   "explicitly_not_published_as_runtimes": [
