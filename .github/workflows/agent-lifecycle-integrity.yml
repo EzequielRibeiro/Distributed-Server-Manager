@@ -1,0 +1,30 @@
+name: Agent Lifecycle Integrity
+
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/installer/install-agent.sh'
+      - 'agents/linux/updater/updater.py'
+      - 'tests/agent_lifecycle_integrity_gate_test.py'
+      - '.github/workflows/agent-lifecycle-integrity.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/linux/installer/install-agent.sh'
+      - 'agents/linux/updater/updater.py'
+      - 'tests/agent_lifecycle_integrity_gate_test.py'
+      - '.github/workflows/agent-lifecycle-integrity.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate Python
+        run: python3 -m py_compile tests/agent_lifecycle_integrity_gate_test.py agents/linux/updater/updater.py
+      - name: Run lifecycle integrity gate
+        run: python3 -m unittest tests/agent_lifecycle_integrity_gate_test.py
