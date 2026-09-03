@@ -142,7 +142,8 @@ class MinecraftInstallerRuntimeTest(unittest.TestCase):
         ids = {item["id"] for item in runtimes}
         self.assertIn("minecraft.java.forge", ids)
         self.assertIn("minecraft.java.neoforge", ids)
-        self.assertFalse(any("mohist" in str(item).lower() for item in runtimes))
+        self.assertNotIn("minecraft.java.mohist", ids)
+        self.assertNotIn("mohist", ids)
         for runtime_id in ("minecraft.java.forge", "minecraft.java.neoforge"):
             runtime = next(item for item in runtimes if item["id"] == runtime_id)
             self.assertEqual(runtime["process"]["executable"], "@java")
