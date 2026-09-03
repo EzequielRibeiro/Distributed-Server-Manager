@@ -16,6 +16,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from alert_repository import AlertSession, dialect_for_backend
+
 _TOKEN = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 _SECRET = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _NAMESPACE = "capivara.runtime.secret"
@@ -81,9 +83,13 @@ class RuntimeSecretOutbox:
 
     def _instance_agent(self, instance_id: str) -> str:
         iid = _token(instance_id, "instance_id")
-        ph = "?" if self.backend.name == "sqlite" else "%s"
+        dialect = dialect_for_backend(self.backend)
         with self.backend.connect() as connection:
-            row = connection.execute(f"SELECT agent_id FROM instances WHERE id={ph}", (iid,)).fetchone()
+            session = AlertSession(self.backend, connection)
+            try:
+                row = session.execute(f"SELECT agent_id FROM instances WHERE id={dialect.placeholder}", (iid,)).fetchone()
+            finally:
+                session.close()
         if row is None or not row["agent_id"]:
             raise KeyError(iid)
         return _token(row["agent_id"], "agent_id")
@@ -105,6 +111,9 @@ class RuntimeSecretOutbox:
         job_id = "runtime-secret-" + uuid.uuid4().hex
         root = _private_root(); metadata_path = root / f"{job_id}.json"; value_path = root / f"{job_id}.secret"
         ref = f"instance/{iid}/{secret_name}"
+        # Protocol checksum is intentionally unrelated to secret bytes; otherwise
+        # low-entropy passwords could be guessed offline from a leaked digest.
+        checksum = hashlib.sha256(f"{job_id}:{ref}:{operation}".encode()).hexdigest()
         metadata = {
             "schema_version": 1,
             "job_id": job_id,
@@ -113,7 +122,7 @@ class RuntimeSecretOutbox:
             "name": secret_name,
             "ref": ref,
             "action": operation,
-            "checksum": hashlib.sha256(data).hexdigest() if data else hashlib.sha256(ref.encode()).hexdigest(),
+            "checksum": checksum,
             "requested_by": str(requested_by or "")[:191] or None,
             "created_at": int(time.time()),
         }
@@ -147,7 +156,7 @@ class RuntimeSecretOutbox:
                 if secret_path.is_symlink() or not secret_path.is_file():
                     continue
                 data = secret_path.read_bytes()
-                if hashlib.sha256(data).hexdigest() != str(meta.get("checksum")):
+                if not data or len(data) > _MAX_SECRET_BYTES:
                     continue
                 value["secret_value"] = data.decode("utf-8")
             commands.append({
