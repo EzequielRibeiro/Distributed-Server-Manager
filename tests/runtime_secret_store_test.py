@@ -76,8 +76,9 @@ class RuntimeSecretStoreTest(unittest.TestCase):
         secret = "do-not-put-this-in-unit"
         put_secret("instance/instance-1/server_password", secret, expected_instance_id="instance-1")
         unit = render_unit(validate_runtime_spec(self.spec()))
+        expected_path = Path(os.environ["CAPIVARA_RUNTIME_SECRET_ROOT"]) / "instance-1" / "server_password"
         self.assertIn("LoadCredential=SERVER_PASSWORD:", unit)
-        self.assertIn("runtime-secrets/instance-1/server_password", unit)
+        self.assertIn(str(expected_path), unit)
         self.assertNotIn(secret, unit)
         self.assertNotIn("Environment=\"SERVER_PASSWORD=", unit)
         self.assertNotIn(secret, " ".join(self.spec()["arguments"]))
