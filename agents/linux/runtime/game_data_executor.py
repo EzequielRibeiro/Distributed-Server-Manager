@@ -108,7 +108,7 @@ def _execute(command:dict[str,Any])->dict[str,Any]:
   return {"provider":provider,"game":selection.get("game"),"version":selection.get("version"),"target_path":str(target),"update_status":detect_update(selection,target,_steamcmd() if provider=="steam" else None)}
  if action=="update" and update_meta:
   from server_update_agent import perform_update
-  detail=perform_update(selection,target,lambda:_install(selection,target,provider),_steamcmd() if provider=="steam" else None)
+  detail=perform_update(selection,target,lambda destination:_install(selection,Path(destination),provider),_steamcmd() if provider=="steam" else None)
   integrity=inspect_game_data(target,selection)
   return {"provider":provider,"game":selection.get("game"),"version":selection.get("version"),"target_path":str(target),"integrity":integrity,**detail}
  if action=="ensure":

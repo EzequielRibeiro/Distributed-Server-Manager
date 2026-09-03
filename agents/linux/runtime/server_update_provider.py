@@ -65,6 +65,6 @@ def detect_update(selection:dict[str,Any],target:Path,steamcmd:str|None=None,*,r
   steamcmd=_steamcmd()
  installed=installed_steam_build(target,appid);available=upstream_steam_build(appid,branch,steamcmd,runner=runner,force_refresh=force_refresh)
  state='unknown' if not installed else 'up_to_date' if installed==available else 'update_available'
- return {'schema_version':1,'provider':'steam','detector_supported':True,'app_id':appid,'branch':branch,'installed_version':installed,'available_version':available,'state':state,'rollback_supported':False}
+ return {'schema_version':1,'provider':'steam','detector_supported':True,'app_id':appid,'branch':branch,'installed_version':installed,'available_version':available,'state':state,'rollback_supported':True}
 
 __all__=['detect_update','installed_steam_build','parse_app_info_buildid','parse_manifest_buildid','upstream_steam_build']
