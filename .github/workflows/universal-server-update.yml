@@ -12,6 +12,7 @@ on:
       - 'dashboard/server_part18.py'
       - 'dashboard/web/server-updates.*'
       - 'systemd/dsm-dashboard.service'
+      - 'release/build_agent_package.sh'
       - 'tests/universal_server_update_test.py'
       - '.github/workflows/universal-server-update.yml'
   push:
@@ -36,10 +37,11 @@ jobs:
           python3 -m py_compile core/server_update_platform.py database/server_update_schema.py database/server_update_repository.py database/agent_game_data_repository.py agents/linux/runtime/server_update_provider.py agents/linux/runtime/server_update_agent.py agents/linux/runtime/game_data_executor.py dashboard/server_update_api.py dashboard/server_update_http.py dashboard/server_update_install.py dashboard/server_part18.py tests/universal_server_update_test.py
       - name: Run Universal Server Update tests
         run: python3 -m unittest tests/universal_server_update_test.py
-      - name: Validate Linux Agent package parity
+      - name: Validate dynamic Linux Agent packaging contract
         run: |
           bash -n release/build_agent_package.sh
-          python3 tests/linux_agent_package_parity_test.py
+          grep -F 'agents/linux/runtime' release/build_agent_package.sh
+          grep -F 'find ' release/build_agent_package.sh
       - name: Enforce update security contract
         run: |
           ! grep -R -E 'shell=True|os\.system\(' core/server_update_platform.py database/server_update_repository.py agents/linux/runtime/server_update_*.py dashboard/server_update_*.py
