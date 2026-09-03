@@ -1,0 +1,34 @@
+name: Youer Catalog Runtime
+
+on:
+  pull_request:
+    paths:
+      - 'catalog/v2/games/minecraft/runtimes/java-youer.json'
+      - 'catalog/v2/support-matrix.json'
+      - 'installer/version_resolvers/youer_api.sh'
+      - 'tests/youer_api_resolver_test.sh'
+      - 'tests/catalog_v2_test.sh'
+      - 'tests/catalog_path_resolver_test.sh'
+      - '.github/workflows/youer-catalog.yml'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate runtime JSON
+        run: python3 -m json.tool catalog/v2/games/minecraft/runtimes/java-youer.json >/dev/null
+      - name: Validate resolver syntax
+        run: bash -n installer/version_resolvers/youer_api.sh
+      - name: Test resolver
+        run: bash tests/youer_api_resolver_test.sh
+      - name: Validate catalog completion
+        run: python3 -m unittest tests/catalog_completion_test.py
+      - name: Validate canonical catalog
+        run: bash tests/catalog_v2_test.sh
