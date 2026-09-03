@@ -76,6 +76,11 @@ class CatalogNativeRuntimeProfile(GameRuntimeProfile):
         ports = port_bindings(context)
         if not ports:
             raise ProfileError("generic native runtime requires reserved ports")
+        if game_id in {"garrysmod", "left4dead2"}:
+            binding = ports.get("game_udp")
+            if not binding or binding.get("protocol") != "udp":
+                raise ProfileError("Source runtime requires game_udp reservation")
+            arguments = ["-port", str(binding["port"]), *arguments]
 
         return {
             "instance_id": instance_id,
