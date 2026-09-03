@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +61,16 @@ def _merge_arguments(required: list[Any], policy_arguments: list[Any], values: d
     return merged
 
 
+def _resolve_executable(executable: str, content_root: Path) -> str:
+    if executable == "@java":
+        java = shutil.which("java")
+        if not java:
+            raise RuntimeError("Java is not available on this Agent")
+        return str(Path(java).resolve())
+    executable_path = Path(executable)
+    return str(executable_path if executable_path.is_absolute() else (content_root / executable_path).resolve())
+
+
 def apply_policy(spec: dict[str, Any], instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     policy = context.get("catalog_runtime_policy")
     if not isinstance(policy, dict) or not policy:
@@ -68,8 +79,7 @@ def apply_policy(spec: dict[str, Any], instance: dict[str, Any], context: dict[s
     values = _values(instance, context, policy)
     content_root = Path(str(context.get("content_root") or context.get("install_path") or result.get("working_directory"))).resolve()
     executable = render(policy.get("executable") or Path(str(result["executable"])).name, values)
-    executable_path = Path(executable)
-    result["executable"] = str(executable_path if executable_path.is_absolute() else (content_root / executable_path).resolve())
+    result["executable"] = _resolve_executable(executable, content_root)
     policy_arguments = policy.get("arguments") if isinstance(policy.get("arguments"), list) else []
     result["arguments"] = _merge_arguments(list(result.get("arguments") or []), policy_arguments, values)
     environment = dict(result.get("environment") or {})
