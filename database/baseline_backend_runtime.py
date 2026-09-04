@@ -180,27 +180,50 @@ def initialize_baseline(backend: Any) -> dict[str, Any]:
                     seed_current_upgrades(backend, connection)
                     _commit(connection)
                 else:
-                    # Once the ledger exists, this path is generic: future
-                    # releases only append a BaselineUpgrade. Historical
-                    # checksums are needed solely for the one-time pre-ledger
-                    # compatibility bridge.
-                    upgraded_now = apply_pending_upgrades(
-                        backend,
-                        connection,
-                        installed_checksum=installed_checksum,
+                    # A versioned ledger is authoritative once present. If it
+                    # is already fully reconciled for this release, checksum
+                    # drift only means the consolidated baseline text changed;
+                    # no DDL replay is required. Reconcile the marker after
+                    # validating the live structure.
+                    upgrades_before = upgrade_status(backend, connection)
+                    ledger_reconciled = bool(
+                        upgrades_before["ledger_present"]
+                        and not upgrades_before["pending"]
+                        and upgrades_before["current_version"]
+                        == upgrades_before["latest_version"]
                     )
-                    if not upgraded_now:
-                        raise DatabaseMigrationError(
-                            "Database Baseline v2 checksum differs but no registered upgrade is pending"
+
+                    if ledger_reconciled:
+                        _validate_structure(backend, connection)
+                        _write_marker(
+                            backend,
+                            connection,
+                            name=baseline.name,
+                            checksum=baseline.checksum,
                         )
-                    _validate_structure(backend, connection)
-                    _write_marker(
-                        backend,
-                        connection,
-                        name=baseline.name,
-                        checksum=baseline.checksum,
-                    )
-                    _commit(connection)
+                        _commit(connection)
+                    else:
+                        # Once the ledger exists, this path is generic: future
+                        # releases only append a BaselineUpgrade. Historical
+                        # checksums are needed solely for the one-time pre-ledger
+                        # compatibility bridge.
+                        upgraded_now = apply_pending_upgrades(
+                            backend,
+                            connection,
+                            installed_checksum=installed_checksum,
+                        )
+                        if not upgraded_now:
+                            raise DatabaseMigrationError(
+                                "Database Baseline v2 checksum differs but no registered upgrade is pending"
+                            )
+                        _validate_structure(backend, connection)
+                        _write_marker(
+                            backend,
+                            connection,
+                            name=baseline.name,
+                            checksum=baseline.checksum,
+                        )
+                        _commit(connection)
 
             tables = _validate_structure(backend, connection)
             upgrades = upgrade_status(backend, connection)
