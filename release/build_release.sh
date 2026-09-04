@@ -152,13 +152,15 @@ PY
 bash -n "${PACKAGE_ROOT}/update-manager/process-guard.sh" || fail "packaged process-guard.sh failed syntax validation"
 grep -q 'fully reconciled ledger is already compatible' "${PACKAGE_ROOT}/update-manager/process-guard.sh" || fail "Baseline v2 preflight hotfix missing from package"
 
-# Reproduce the PostgreSQL state that blocked v2.0.23: checksum drift with a
-# complete v5 ledger and no pending upgrades must be accepted. Prevent Python
-# bytecode generation so the release archive remains reproducible.
-PAYLOAD='{"schema_version":2,"kind":"DatabaseCheck","driver":"postgresql","connected":true,"initialized":true,"health":"error","baseline":"capivara-baseline-v2","baseline_checksum":"4e80e02a984d13199d7c9372b4828d1f2b0c1d35a77c33a2e35a531c7340c6ec","expected_baseline":"capivara-baseline-v2","expected_checksum":"3f7607066465a6ee45bde521821543b37a5797e262fdff4fad6cf9bcaae05027","checksum_matches":false,"missing_tables":[],"upgrade_ledger":true,"upgrade_version":5,"upgrade_latest":5,"pending_upgrades":[],"upgrade_error":null,"valid":false}'
+# Reproduce the PostgreSQL state that blocked the live 2.0.14 -> 2.0.24
+# upgrade: checksum drift with a complete v5 ledger must now expose the
+# registered v6 universal_server_update as pending and be accepted for the
+# controlled additive reconciliation. Prevent Python bytecode generation so
+# the release archive remains reproducible.
+PAYLOAD='{"schema_version":2,"kind":"DatabaseCheck","driver":"postgresql","connected":true,"initialized":true,"health":"error","baseline":"capivara-baseline-v2","baseline_checksum":"4e80e02a984d13199d7c9372b4828d1f2b0c1d35a77c33a2e35a531c7340c6ec","expected_baseline":"capivara-baseline-v2","expected_checksum":"3f7607066465a6ee45bde521821543b37a5797e262fdff4fad6cf9bcaae05027","checksum_matches":false,"missing_tables":[],"upgrade_ledger":true,"upgrade_version":5,"upgrade_latest":6,"pending_upgrades":[{"version":6,"name":"universal_server_update"}],"upgrade_error":null,"valid":false}'
 if ! PYTHONDONTWRITEBYTECODE=1 PAYLOAD="${PAYLOAD}" TARGET_ROOT="${PACKAGE_ROOT}" bash -c 'source "$TARGET_ROOT/update-manager/process-guard.sh"; process_guard_database_check_is_upgradeable "$PAYLOAD" "$TARGET_ROOT"'
 then
-    fail "Baseline v2 reconciled-ledger regression payload was rejected"
+    fail "Baseline v2 pending-v6 regression payload was rejected"
 fi
 
 # Development metadata and machine-generated data are not release inputs.

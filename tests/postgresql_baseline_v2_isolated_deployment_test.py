@@ -60,10 +60,10 @@ def main() -> int:
     if int(existing_customers["total"] or 0) != 0:
         raise AssertionError("isolated database was not empty before bootstrap")
     if [(int(row["version"]), str(row["name"])) for row in upgrades][-1] != (
-        5,
-        "alert_events_note_action",
+        6,
+        "universal_server_update",
     ):
-        raise AssertionError("Baseline v2 did not seed alert NOTE upgrade 5")
+        raise AssertionError("Baseline v2 did not seed universal server update upgrade 6")
     required = {
         "customers", "dashboard_users", "service_contracts", "instances",
         "instance_permission_grants", "instance_file_commands",
@@ -71,6 +71,7 @@ def main() -> int:
         "artifact_transfers", "deleted_instance_backups", "instance_backup_clones",
         "activity_audit", "universal_events", "alerts", "alert_events",
         "event_consumer_cursors", "notification_outbox",
+        "instance_update_policy", "instance_update_state", "instance_update_runs",
     }
     missing = sorted(required - tables)
     if missing:
