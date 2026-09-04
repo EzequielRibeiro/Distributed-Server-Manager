@@ -76,7 +76,7 @@
       "additionalProperties": false,
       "required": ["type", "args"],
       "properties": {
-        "type": {"const": "java_jar"},
+        "type": {"enum": ["java_jar", "quilt_server"]},
         "artifact": {"type": ["string", "null"], "pattern": "^[^/\\\\]+$"},
         "args": {"type": "array", "items": {"enum": ["--installServer"]}, "maxItems": 4},
         "timeout_seconds": {"type": "integer", "minimum": 30, "maximum": 1800},

@@ -1,0 +1,42 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "minecraft.java.quilt",
+  "name": "Minecraft Java Quilt",
+  "game": "minecraft",
+  "edition": "java",
+  "variant": "quilt",
+  "loader": "quilt",
+  "version": {
+    "strategy": "dynamic",
+    "resolver": "quilt_meta",
+    "config": {
+      "api_base": "https://meta.quiltmc.org/v3"
+    }
+  },
+  "process": {
+    "engine": "java",
+    "executable": "@java",
+    "artifact_mode": "directory",
+    "args": ["-jar", "quilt-server-launch.jar", "nogui"]
+  },
+  "requirements": {
+    "os": ["linux", "windows"],
+    "architectures": ["x86_64", "aarch64"],
+    "java": {"min": 17, "max": 25}
+  },
+  "artifact": {
+    "provider": "http",
+    "auth": "anonymous"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/minecraft/quilt",
+    "installer": {
+      "type": "quilt_server",
+      "artifact": "quilt-installer.jar",
+      "args": [],
+      "timeout_seconds": 1200,
+      "expected_outputs": ["quilt-server-launch.jar"]
+    }
+  }
+}

@@ -69,6 +69,7 @@ for ID in \
     minecraft.java.neoforge \
     minecraft.java.paper \
     minecraft.java.purpur \
+    minecraft.java.quilt \
     minecraft.java.spongevanilla \
     minecraft.java.vanilla \
     minecraft.java.youer \
