@@ -120,6 +120,7 @@ jobs:
       - name: Validate Linux Agent package
         run: |
           bash tests/agent_package_test.sh
-          grep -F 'artifact_transfer_client.py' release/build_agent_package.sh
+          grep -Fq 'agents/linux/runtime' release/build_agent_package.sh
+          grep -Fq 'RUNTIME_SOURCES' release/build_agent_package.sh
       - name: Validate Windows Agent package
         run: python3 -m unittest tests/phase19_windows_agent_test.py
