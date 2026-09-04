@@ -1,0 +1,32 @@
+name: Catalog Runtime Readiness
+on:
+  pull_request:
+    paths:
+      - 'catalog/v2/games/**'
+      - 'catalog/v2/support-matrix.json'
+      - 'catalog/v2/schemas/runtime-definition.schema.json'
+      - 'tools/catalog_runtime_readiness.py'
+      - 'tests/catalog_runtime_readiness_test.py'
+      - '.github/workflows/catalog-runtime-readiness.yml'
+  workflow_dispatch:
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install schema validator
+        run: python3 -m pip install --disable-pip-version-check jsonschema
+      - name: Validate Python syntax
+        run: python3 -m py_compile tools/catalog_runtime_readiness.py tests/catalog_runtime_readiness_test.py
+      - name: Audit every published runtime
+        run: python3 tools/catalog_runtime_readiness.py --strict
+      - name: Run readiness contract tests
+        run: python3 tests/catalog_runtime_readiness_test.py
+      - name: Ensure auditor remains game-neutral
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          text=Path('tools/catalog_runtime_readiness.py').read_text(encoding='utf-8').lower()
+          for game in ('dayz','arma3','zomboid','rust','palworld','minecraft'):
+              assert game not in text, f'game-specific logic leaked into readiness auditor: {game}'
+          PY

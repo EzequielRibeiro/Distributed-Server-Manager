@@ -48,7 +48,8 @@
         "asset": {"type": ["string", "null"]},
         "url": {"type": ["string", "null"]},
         "sha256": {"type": ["string", "null"]},
-        "archive_type": {"type": ["string", "null"]}
+        "archive_type": {"type": ["string", "null"]},
+        "branch": {"type": ["string", "null"]}
       }
     },
     "installation": {
@@ -60,7 +61,14 @@
         "installer": {"$ref": "#/$defs/installer"}
       }
     },
-    "network": {"$ref": "#/$defs/network"}
+    "network": {"$ref": "#/$defs/network"},
+    "compatibility": {"$ref": "#/$defs/compatibility"},
+    "runtime_profile": {"type": "string", "minLength": 1, "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+    "runtime_secrets": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/runtime_secret"},
+      "uniqueItems": true
+    }
   },
   "$defs": {
     "installer": {
@@ -98,6 +106,59 @@
         "java": {"type": ["object", "null"], "properties": {"min": {"type": "integer"}, "max": {"type": "integer"}}}
       }
     },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "content_ecosystems": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "compatibility_note": {"type": "string", "minLength": 1}
+      }
+    },
+    "runtime_secret": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "required", "target"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$"},
+        "required": {"type": "boolean"},
+        "target": {"type": "string", "minLength": 1}
+      }
+    },
+    "network_apply": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "template"],
+          "properties": {
+            "kind": {"const": "argument"},
+            "template": {"type": "string", "minLength": 1}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "file", "key", "value"],
+          "properties": {
+            "kind": {"const": "property"},
+            "file": {"type": "string", "minLength": 1},
+            "key": {"type": "string", "minLength": 1},
+            "value": {"type": "string"},
+            "syntax": {"type": "string", "enum": ["equals", "semicolon"]}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "from", "port"],
+          "properties": {
+            "kind": {"const": "derived"},
+            "from": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+            "port": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}
+          }
+        }
+      ]
+    },
     "network": {
       "type": "object",
       "additionalProperties": false,
@@ -122,18 +183,7 @@
         },
         "apply": {
           "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["kind"],
-            "properties": {
-              "kind": {"enum": ["argument", "property"]},
-              "template": {"type": "string"},
-              "file": {"type": "string"},
-              "key": {"type": "string"},
-              "value": {"type": "string"}
-            }
-          }
+          "items": {"$ref": "#/$defs/network_apply"}
         }
       }
     }
