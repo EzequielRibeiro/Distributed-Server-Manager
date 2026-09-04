@@ -1,10 +1,26 @@
 #!/usr/bin/env python3
 """Controller CLI for D1 automation and universal broadcast."""
 from __future__ import annotations
-import argparse,json
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+# This CLI is executed directly as /opt/dsm/database/automation_cli.py. Python
+# therefore places /opt/dsm/database on sys.path, but modules used by the
+# automation engine also import the top-level ``core`` package. Make the
+# installation root available explicitly instead of depending on an ambient
+# PYTHONPATH from a service or development checkout.
+ROOT = Path(__file__).resolve().parents[1]
+root_text = str(ROOT)
+if root_text not in sys.path:
+    sys.path.insert(0, root_text)
+
 from automation_engine import AutomationEngine
 from automation_repository import AutomationRepository
 from runtime_backend import backend_from_environment
+
 
 def main(argv=None):
  p=argparse.ArgumentParser(prog="cap automation");sub=p.add_subparsers(dest="command",required=True)
