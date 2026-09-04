@@ -112,5 +112,77 @@ class CatalogResourceProfilePolicyTest(unittest.TestCase):
         self.assertEqual(6144, profile["memory_mb"])
 
 
+class CatalogResourceProfileOverrideIntegrationTest(unittest.TestCase):
+    def _root(self) -> Path:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        (root / "catalog" / "v2" / "games" / "dayz").mkdir(parents=True)
+        return root
+
+    def _payload(self, memory_mb: int) -> dict:
+        return {
+            "schema_version": 2,
+            "kind": "GameResourceProfiles",
+            "game": "dayz",
+            "default_profile_id": "standard",
+            "profiles": [
+                {
+                    "id": "standard",
+                    "name": "Standard",
+                    "memory_mb": memory_mb,
+                    "storage_mb": 40960,
+                    "cpu_cores": 4,
+                    "swap_mb": 2048,
+                    "pids_limit": 768,
+                }
+            ],
+        }
+
+    def test_override_has_precedence_over_static_catalog(self):
+        root = self._root()
+
+        static_path = (
+            root / "catalog" / "v2" / "games" / "dayz"
+            / "resource-profiles.json"
+        )
+        static_path.write_text(
+            json.dumps(self._payload(8192)),
+            encoding="utf-8",
+        )
+
+        override_path = (
+            root / "config" / "catalog-resource-profiles" / "dayz.json"
+        )
+        override_path.parent.mkdir(parents=True)
+        override_path.write_text(
+            json.dumps(self._payload(12288)),
+            encoding="utf-8",
+        )
+
+        profile_id, profile, _catalog = resolve_catalog_resource_profile(
+            root=root,
+            game_id="dayz",
+            requested_profile_id="standard",
+            require_catalog=True,
+        )
+
+        self.assertEqual("standard", profile_id)
+        self.assertEqual(12288, profile["memory_mb"])
+
+    def test_invalid_profile_values_are_rejected(self):
+        root = self._root()
+        payload = self._payload(8192)
+        payload["profiles"][0]["cpu_cores"] = 0
+
+        path = (
+            root / "catalog" / "v2" / "games" / "dayz"
+            / "resource-profiles.json"
+        )
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "outside the allowed range"):
+            load_game_resource_profiles(root, "dayz")
+
 if __name__ == "__main__":
     unittest.main()

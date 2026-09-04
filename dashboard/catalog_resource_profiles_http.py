@@ -7,6 +7,11 @@ import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
+from core.catalog_resource_profile_policy import (
+    load_game_resource_profiles,
+    normalize_game_id,
+    normalize_resource_profile,
+)
 
 RESOURCE_PROFILES_PATH = "/api/catalog/resource-profiles"
 _GAME_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -14,34 +19,7 @@ _PROFILE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 
 def _normalize_profile(item: Any) -> dict[str, Any]:
-    if not isinstance(item, dict):
-        raise ValueError("invalid resource profile")
-    identifier = str(item.get("id") or "").strip().lower()
-    name = str(item.get("name") or "").strip()
-    if not _PROFILE_ID.fullmatch(identifier):
-        raise ValueError("resource profile ID must be valid")
-    if not name:
-        raise ValueError("resource profile name is required")
-    try:
-        memory_mb = int(item.get("memory_mb"))
-        storage_mb = int(item.get("storage_mb"))
-        cpu_cores = float(item.get("cpu_cores"))
-        swap_mb = int(item.get("swap_mb") or 0)
-        pids_limit = int(item.get("pids_limit") or 512)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("resource profile values must be numeric") from exc
-    if memory_mb < 256 or storage_mb < 1024 or cpu_cores <= 0 or swap_mb < 0 or pids_limit < 1:
-        raise ValueError("resource profile values are outside the allowed range")
-    return {
-        "id": identifier,
-        "name": name,
-        "description": str(item.get("description") or "").strip(),
-        "memory_mb": memory_mb,
-        "storage_mb": storage_mb,
-        "cpu_cores": cpu_cores,
-        "swap_mb": swap_mb,
-        "pids_limit": pids_limit,
-    }
+    return normalize_resource_profile(item)
 
 
 def _comparable_profiles(profiles: Any) -> list[dict[str, Any]] | None:
@@ -54,34 +32,8 @@ def _comparable_profiles(profiles: Any) -> list[dict[str, Any]] | None:
 
 
 def catalog_resource_profiles(root: Path, game: str) -> dict[str, Any]:
-    game = str(game or "").strip().lower()
-    if not _GAME_ID.fullmatch(game):
-        raise ValueError("valid game is required")
-    overrides_root = (root / "config" / "catalog-resource-profiles").resolve()
-    override = (overrides_root / f"{game}.json").resolve()
-    games_root = (root / "catalog" / "v2" / "games").resolve()
-    catalog_path = (games_root / game / "resource-profiles.json").resolve()
-    path = override if override.is_file() else catalog_path
-    allowed_root = overrides_root if path == override else games_root
-    try:
-        path.relative_to(allowed_root)
-    except ValueError as exc:
-        raise ValueError("invalid catalog path") from exc
-    if not path.is_file():
-        return {"schema_version": 2, "kind": "GameResourceProfiles", "game": game,
-                "default_profile_id": None, "profiles": []}
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or payload.get("kind") != "GameResourceProfiles" or payload.get("game") != game:
-        raise RuntimeError("invalid resource profile catalog")
-    profiles = payload.get("profiles") if isinstance(payload.get("profiles"), list) else []
-    identifiers = {str(item.get("id") or "") for item in profiles if isinstance(item, dict)}
-    default_profile_id = str(payload.get("default_profile_id") or "").strip().lower()
-    if not default_profile_id and profiles:
-        default_profile_id = str(profiles[0].get("id") or "").strip().lower()
-    if default_profile_id and default_profile_id not in identifiers:
-        raise RuntimeError("invalid default resource profile")
-    payload["default_profile_id"] = default_profile_id or None
-    return payload
+    game = normalize_game_id(game)
+    return load_game_resource_profiles(root, game)
 
 
 def save_catalog_resource_profiles(root: Path, game: str, profiles: Any, default_profile_id: Any = None) -> dict[str, Any]:
