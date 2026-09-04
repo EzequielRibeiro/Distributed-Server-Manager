@@ -279,7 +279,7 @@ class AgentAdminRepository:
         return {"preserved": len(alerts), "resolved": resolved}
 
     def remove(self, agent_id: str, *, confirmation: str, actor: str | None = None) -> dict[str, Any]:
-        """Remove an Agent registration while preserving alert history."""
+        """Remove a standalone Agent registration while preserving alert history."""
         self.initialize()
         agent_id = str(agent_id or "").strip()
         confirmation = str(confirmation or "").strip()
@@ -294,6 +294,16 @@ class AgentAdminRepository:
             try:
                 row = self._row(session, agent_id)
                 node_id = str(row["node_id"])
+                controller_owner = session.execute(
+                    f"SELECT id FROM controllers WHERE node_id={ph}",
+                    (node_id,),
+                ).fetchone()
+                if controller_owner is not None:
+                    raise ValueError(
+                        "Agent shares its Node with a Controller and cannot use generic removal; "
+                        "use the Hybrid -> Controller lifecycle transition"
+                    )
+
                 instances = session.execute(
                     "SELECT id,name,status FROM instances "
                     f"WHERE node_id={ph} ORDER BY id",

@@ -216,7 +216,136 @@ def promote_controller_to_hybrid(
         }
 
 
+def demote_hybrid_to_controller(
+    repository: RegistryRepository,
+    *,
+    node_id: str,
+    controller_id: str,
+    agent_id: str | None = None,
+) -> dict[str, Any]:
+    """Remove the local Hybrid Agent while preserving Node/Controller identity.
+
+    This is the inverse persisted-identity transition of
+    :func:`promote_controller_to_hybrid`.  It never deletes the shared Node or
+    Controller.  A ``controller`` node without a local Agent is treated as an
+    already-converged idempotent result.
+
+    Runtime/config cleanup remains an explicit caller responsibility, just as it
+    does for promotion.
+    """
+
+    node_id = _required(node_id, "node_id")
+    controller_id = _required(controller_id, "controller_id")
+    expected_agent_id = str(agent_id or "").strip() or None
+
+    repository.initialize()
+    ph = repository.dialect.placeholder
+
+    with repository.transaction() as session:
+        node_row = session.execute(
+            f"SELECT id,name,role,status FROM nodes WHERE id={ph}",
+            (node_id,),
+        ).fetchone()
+        if node_row is None:
+            raise InfrastructureRoleTransitionError(f"Node {node_id} does not exist")
+        node = dict(node_row)
+        current_role = str(node["role"]).strip().lower()
+        if current_role not in {"controller", "hybrid"}:
+            raise InfrastructureRoleTransitionError(
+                f"Node {node_id} has role {current_role}; only hybrid -> controller is supported"
+            )
+
+        controller_row = session.execute(
+            f"SELECT id,node_id,name,status FROM controllers WHERE id={ph}",
+            (controller_id,),
+        ).fetchone()
+        if controller_row is None:
+            raise InfrastructureRoleTransitionError(f"Controller {controller_id} does not exist")
+        controller = dict(controller_row)
+        if str(controller["node_id"]) != node_id:
+            raise InfrastructureRoleTransitionError(
+                f"Controller {controller_id} belongs to node {controller['node_id']}"
+            )
+
+        agent_row = session.execute(
+            f"SELECT id,controller_id,node_id,name,status FROM agents WHERE node_id={ph}",
+            (node_id,),
+        ).fetchone()
+        agent = None if agent_row is None else dict(agent_row)
+
+        if current_role == "controller":
+            if agent is not None:
+                raise InfrastructureRoleTransitionError(
+                    f"Controller node {node_id} still owns Agent {agent['id']}; refusing ambiguous cleanup"
+                )
+            return {
+                "transition": "hybrid_to_controller",
+                "changed": False,
+                "node_id": node_id,
+                "previous_role": "controller",
+                "node_role": "controller",
+                "controller_id": controller_id,
+                "controller_status": str(controller["status"]),
+                "agent_id": expected_agent_id,
+                "agent_removed": False,
+                "runtime_reconciliation_required": False,
+            }
+
+        if agent is not None:
+            actual_agent_id = str(agent["id"])
+            if str(agent["controller_id"]) != controller_id:
+                raise InfrastructureIdentityConflict(
+                    f"Local Agent {actual_agent_id} belongs to another Controller"
+                )
+            if expected_agent_id is not None and actual_agent_id != expected_agent_id:
+                raise InfrastructureIdentityConflict(
+                    f"Node {node_id} belongs to Agent {actual_agent_id}, not {expected_agent_id}"
+                )
+
+            instances = session.execute(
+                f"SELECT id FROM instances WHERE node_id={ph} ORDER BY id",
+                (node_id,),
+            ).fetchall()
+            if instances:
+                raise InfrastructureRoleTransitionError(
+                    f"Hybrid Agent {actual_agent_id} has {len(instances)} instance(s); migrate or remove them before demotion"
+                )
+
+            session.execute(
+                f"DELETE FROM agent_locations WHERE agent_id={ph}",
+                (actual_agent_id,),
+            )
+            session.execute(
+                f"DELETE FROM agents WHERE id={ph}",
+                (actual_agent_id,),
+            )
+            removed_agent_id = actual_agent_id
+            agent_removed = True
+        else:
+            removed_agent_id = expected_agent_id
+            agent_removed = False
+
+        session.execute(
+            f"UPDATE nodes SET role={ph} WHERE id={ph}",
+            ("controller", node_id),
+        )
+
+        return {
+            "transition": "hybrid_to_controller",
+            "changed": True,
+            "node_id": node_id,
+            "previous_role": "hybrid",
+            "node_role": "controller",
+            "controller_id": controller_id,
+            "controller_status": str(controller["status"]),
+            "agent_id": removed_agent_id,
+            "agent_removed": agent_removed,
+            "runtime_reconciliation_required": True,
+        }
+
+
 __all__ = [
     "InfrastructureRoleTransitionError",
     "promote_controller_to_hybrid",
+    "demote_hybrid_to_controller",
 ]
