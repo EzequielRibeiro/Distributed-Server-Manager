@@ -11,7 +11,7 @@ from infrastructure_role_api import (
     InfrastructureIdentityConflict,
     InfrastructureRoleTransitionError,
     local_role_status,
-    promote_local_controller_for_user,
+    set_local_role_for_user,
 )
 
 INFRASTRUCTURE_ROLE_PATH = "/api/infrastructure/role"
@@ -47,7 +47,7 @@ def dispatch_infrastructure_role_post(
     if path != INFRASTRUCTURE_ROLE_PATH:
         return None
     try:
-        result = promote_local_controller_for_user(user, backend, root, payload)
+        result = set_local_role_for_user(user, backend, root, payload)
         return 200, result
     except PermissionError as exc:
         return 403, {"error": str(exc)}
@@ -59,10 +59,10 @@ def dispatch_infrastructure_role_post(
         return 500, {
             "error": str(exc),
             "recoverable": True,
-            "message": "A identidade pode já ter sido promovida. Reexecute a promoção após corrigir a reconciliação local.",
+            "message": "A identidade pode já ter sido alterada. Reexecute a operação após corrigir a reconciliação local.",
         }
     except Exception:
-        return 500, {"error": "failed to promote Controller to Hybrid"}
+        return 500, {"error": "failed to change local infrastructure role"}
 
 
 __all__ = [
