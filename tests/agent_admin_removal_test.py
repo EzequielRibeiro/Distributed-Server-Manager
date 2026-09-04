@@ -26,6 +26,7 @@ class AgentAdminRemovalTest(unittest.TestCase):
         self.backend = create_backend(DatabaseConfig(driver="sqlite", database=str(Path(self.temp.name) / "capivara.db")))
         identity = installation_profile_identity(RegistryRepository(self.backend), profile="controller", hostname="agent-removal-controller")
         self.controller_id = str(identity["controller_id"])
+        self.controller_node_id = str(identity["node_id"])
         self.pairing = AgentPairingRepository(self.backend)
         self.agent_id = "agent-remove-test"
         self.node_id = "node-remove-test"
@@ -104,6 +105,37 @@ class AgentAdminRemovalTest(unittest.TestCase):
             self.admin.remove(self.agent_id, confirmation=self.agent_id, actor="admin")
         self.assertEqual(self.count("agents", "id", self.agent_id), 1)
         self.assertEqual(self.count("nodes", "id", self.node_id), 1)
+
+    def test_generic_remove_refuses_agent_on_controller_node(self):
+        hybrid_agent_id = "agent-local-hybrid"
+        with self.backend.transaction() as connection:
+            connection.execute(
+                "UPDATE nodes SET role='hybrid' WHERE id=?",
+                (self.controller_node_id,),
+            )
+            connection.execute(
+                "INSERT INTO agents(id,controller_id,node_id,name,status) VALUES (?,?,?,?,?)",
+                (
+                    hybrid_agent_id,
+                    self.controller_id,
+                    self.controller_node_id,
+                    "Local Hybrid Agent",
+                    "active",
+                ),
+            )
+
+        with self.assertRaisesRegex(ValueError, "shares its Node with a Controller"):
+            self.admin.remove(hybrid_agent_id, confirmation=hybrid_agent_id, actor="admin")
+
+        self.assertEqual(self.count("agents", "id", hybrid_agent_id), 1)
+        self.assertEqual(self.count("nodes", "id", self.controller_node_id), 1)
+        self.assertEqual(self.count("controllers", "id", self.controller_id), 1)
+        with self.backend.connect() as connection:
+            role = connection.execute(
+                "SELECT role FROM nodes WHERE id=?",
+                (self.controller_node_id,),
+            ).fetchone()["role"]
+        self.assertEqual(role, "hybrid")
 
     def test_same_identity_can_enroll_again_after_removal(self):
         self.admin.remove(self.agent_id, confirmation=self.agent_id, actor="admin")
