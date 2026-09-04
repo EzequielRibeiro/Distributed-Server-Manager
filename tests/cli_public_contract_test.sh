@@ -18,4 +18,14 @@ grep -Fq "'dsm' foi descontinuado como CLI pública. Use 'cap'." "${ROOT}/bin/ds
 grep -Fq 'exec "${DSM_ROOT}/bin/cap" "$@"' "${ROOT}/bin/dsm"
 [[ -x "${ROOT}/bin/dsm-compat" ]]
 
+# A implementação pode manter identificadores internos DSM_*, /opt/dsm,
+# dsm_update_* e nomes físicos legados. O que não pode reaparecer é ajuda
+# operacional ensinando o operador a executar a CLI pública antiga.
+! grep -Eq '(^|[[:space:]])dsm (server|doctor|monitor|mods|backup|config|update|steam|runtime|user|game|catalog|content|compatibility|agent|database|db|operations|ops|instance)([[:space:]]|$)' \
+    "${ROOT}/bin/dsm-compat"
+! grep -Eq '(^|[[:space:]])dsm-runtime([[:space:]]|$)' "${ROOT}/bin/dsm-runtime"
+
+grep -Fq 'cap runtime publish <host> <game> <instance> <module> <json>' "${ROOT}/bin/dsm-runtime"
+grep -Fq 'cap runtime get-resource <host> <game> <instance> <module>' "${ROOT}/bin/dsm-runtime"
+
 printf '%s\n' 'CLI public contract: OK'
