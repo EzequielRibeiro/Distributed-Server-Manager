@@ -1,4 +1,4 @@
-# Capivara DSM v2.0.22
+# Capivara DSM 2.0.22
 
 Esta release consolida o maior conjunto de mudanças desde a v2.0.21, com foco em catálogo multi-jogo, contratos canônicos de runtime, Placement estruturado, políticas de recursos e parâmetros, agentes Linux/Windows e networking público.
 
