@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from hybrid_demotion_api import HybridLocalDemotionError, demote_local_hybrid_for_user
 from infrastructure_role_api import (
     HybridLocalReconciliationError,
     InfrastructureIdentityConflict,
@@ -46,8 +47,13 @@ def dispatch_infrastructure_role_post(
 ) -> tuple[int, dict[str, Any]] | None:
     if path != INFRASTRUCTURE_ROLE_PATH:
         return None
+    data = payload if isinstance(payload, dict) else {}
+    requested_role = str(data.get("role") or "").strip().lower()
     try:
-        result = promote_local_controller_for_user(user, backend, root, payload)
+        if requested_role == "controller":
+            result = demote_local_hybrid_for_user(user, backend, root, data)
+        else:
+            result = promote_local_controller_for_user(user, backend, root, data)
         return 200, result
     except PermissionError as exc:
         return 403, {"error": str(exc)}
@@ -61,8 +67,14 @@ def dispatch_infrastructure_role_post(
             "recoverable": True,
             "message": "A identidade pode já ter sido promovida. Reexecute a promoção após corrigir a reconciliação local.",
         }
+    except HybridLocalDemotionError as exc:
+        return 500, {
+            "error": str(exc),
+            "recoverable": True,
+            "message": "A identidade pode já ter voltado a Controller. Reexecute a desativação após corrigir a configuração local.",
+        }
     except Exception:
-        return 500, {"error": "failed to promote Controller to Hybrid"}
+        return 500, {"error": "failed to change local infrastructure role"}
 
 
 __all__ = [
