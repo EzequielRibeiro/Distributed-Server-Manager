@@ -2,8 +2,14 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*.*.*'
+    paths:
+      - 'version'
+      - 'release/RELEASE_TRIGGER'
+      - '.github/workflows/release.yml'
 
 permissions:
   contents: write
@@ -11,7 +17,41 @@ permissions:
   attestations: write
 
 jobs:
+  tag:
+    if: github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release trigger
+        run: |
+          VERSION=$(tr -d '\r\n' <version)
+          test -f release/RELEASE_TRIGGER || {
+            echo 'release/RELEASE_TRIGGER is required for branch-triggered releases.' >&2
+            exit 1
+          }
+          TRIGGER=$(tr -d '\r\n' <release/RELEASE_TRIGGER)
+          test "${TRIGGER}" = "${VERSION}" || {
+            echo "Release trigger ${TRIGGER} does not match version ${VERSION}." >&2
+            exit 1
+          }
+          if git rev-parse "v${VERSION}" >/dev/null 2>&1
+          then
+            echo "Tag v${VERSION} already exists; nothing to do."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "v${VERSION}" -m "Capivara DSM v${VERSION}"
+          git push origin "v${VERSION}"
+
   publish:
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
