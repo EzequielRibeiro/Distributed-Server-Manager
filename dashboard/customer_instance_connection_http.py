@@ -63,9 +63,14 @@ def install_customer_instance_connection(legacy, authenticate):
             if network.get("public_hostname") and str(dns.get("status") or "") != "active" and network.get("public_ipv4"):
                 effective_network["public_hostname"] = None
                 fallback = True
-            endpoint = player_endpoint(effective_network, selected.get("port") if selected else None)
+            protocol = str(selected.get("protocol") or "udp") if selected else "udp"
+            endpoint = player_endpoint(
+                effective_network,
+                selected.get("port") if selected else None,
+                protocol=protocol,
+            )
             if endpoint is not None:
-                endpoint["protocol"] = str(selected.get("protocol") or "udp")
+                endpoint["protocol"] = protocol
                 endpoint["port_name"] = selected.get("name")
                 endpoint["dns_status"] = dns.get("status")
                 endpoint["fallback"] = fallback
