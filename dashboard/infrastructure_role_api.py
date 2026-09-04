@@ -10,10 +10,12 @@ from typing import Any
 
 from hybrid_local_reconciliation import (
     HybridLocalReconciliationError,
+    reconcile_local_controller_runtime,
     reconcile_local_hybrid_runtime,
 )
 from infrastructure_role_transition import (
     InfrastructureRoleTransitionError,
+    demote_hybrid_to_controller,
     promote_controller_to_hybrid,
 )
 from placement_status_repository import PlacementStatusRepository
@@ -55,8 +57,9 @@ def local_role_status(
             (effective_node,),
         ).fetchone()
         agent_row = session.execute(
-            f"SELECT id,controller_id,name,status FROM agents WHERE node_id={ph}",
-            (effective_node,),
+            "SELECT id,controller_id,name,status FROM agents "
+            f"WHERE node_id={ph} AND status<>{ph}",
+            (effective_node, "decommissioned"),
         ).fetchone()
         runtime_row = None
         if agent_row is not None:
@@ -100,7 +103,7 @@ def promote_local_controller_for_user(
     data = payload if isinstance(payload, dict) else {}
     requested_role = str(data.get("role") or "").strip().lower()
     if requested_role != "hybrid":
-        raise ValueError("only controller -> hybrid is supported")
+        raise ValueError("role must be hybrid")
 
     node_id = str(data.get("node_id") or socket.gethostname()).strip()
     if not node_id:
@@ -147,17 +150,74 @@ def promote_local_controller_for_user(
         ) from exc
 
     after = local_role_status(backend, node_id=node_id)
-    return {
-        **after,
-        "transition": transition,
-        "reconciliation": reconciliation,
-    }
+    return {**after, "transition": transition, "reconciliation": reconciliation}
+
+
+def demote_local_hybrid_for_user(
+    user: dict[str, Any] | None,
+    backend,
+    root: Path,
+    payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Deactivate the local Hybrid Agent and restore Controller-only mode."""
+    _require_admin(user)
+    data = payload if isinstance(payload, dict) else {}
+    node_id = str(data.get("node_id") or socket.gethostname()).strip()
+    if not node_id:
+        raise ValueError("node_id is required")
+
+    before = local_role_status(backend, node_id=node_id)
+    if before.get("role") not in {"hybrid", "controller"}:
+        raise InfrastructureRoleTransitionError(
+            f"Node {node_id} has role {before.get('role')}; only hybrid -> controller is supported"
+        )
+    controller_id = str(before.get("controller_id") or "").strip()
+    if not controller_id:
+        raise InfrastructureRoleTransitionError(f"Node {node_id} has no Controller identity")
+
+    transition = demote_hybrid_to_controller(
+        RegistryRepository(backend),
+        node_id=node_id,
+        controller_id=controller_id,
+    )
+    try:
+        reconciliation = reconcile_local_controller_runtime(
+            Path(root),
+            node_id=node_id,
+            hostname=socket.gethostname(),
+        )
+    except HybridLocalReconciliationError:
+        raise
+    except Exception as exc:
+        raise HybridLocalReconciliationError(
+            "persisted Hybrid deactivation succeeded, but local reconciliation failed"
+        ) from exc
+
+    after = local_role_status(backend, node_id=node_id)
+    return {**after, "transition": transition, "reconciliation": reconciliation}
+
+
+def set_local_role_for_user(
+    user: dict[str, Any] | None,
+    backend,
+    root: Path,
+    payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    data = payload if isinstance(payload, dict) else {}
+    requested_role = str(data.get("role") or "").strip().lower()
+    if requested_role == "hybrid":
+        return promote_local_controller_for_user(user, backend, root, data)
+    if requested_role == "controller":
+        return demote_local_hybrid_for_user(user, backend, root, data)
+    raise ValueError("role must be controller or hybrid")
 
 
 __all__ = [
     "InfrastructureIdentityConflict",
     "InfrastructureRoleTransitionError",
     "HybridLocalReconciliationError",
+    "demote_local_hybrid_for_user",
     "local_role_status",
     "promote_local_controller_for_user",
+    "set_local_role_for_user",
 ]
