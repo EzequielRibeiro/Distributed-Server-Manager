@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -15,7 +16,7 @@ for path in (ROOT, ROOT / "database"):
 
 from backend import DatabaseConfig
 from backend_factory import create_backend
-from hybrid_local_reconciliation import reconcile_local_hybrid_runtime
+from hybrid_local_reconciliation import _hybrid_capabilities, reconcile_local_hybrid_runtime
 from infrastructure_role_cli import promote_local_controller
 from registry import installation_profile_identity
 from registry_repository import RegistryRepository
@@ -72,6 +73,15 @@ class HybridLocalReconciliationTest(unittest.TestCase):
             "ram_total_bytes": 8 * 1024**3,
             "storage": {"root_free_bytes": 50 * 1024**3},
             "network": {"tcp_listen": [], "udp_listen": []},
+            "telemetry": {
+                "schema_version": 1,
+                "host": {
+                    "cpu_usage_pct": 12.5,
+                    "memory": {"usage_pct": 31.0},
+                    "temperature_c": 54.0,
+                },
+                "agent": {"pid": 1234, "cpu_usage_pct": 1.5},
+            },
         }
 
     def test_reconciles_agent_conf_and_runtime_without_touching_secret(self):
@@ -94,6 +104,37 @@ class HybridLocalReconciliationTest(unittest.TestCase):
         self.assertIn('AGENT_TOKEN="keep-me"', text)
         self.assertTrue(result["runtime_reconciled"])
         self.assertEqual(result["health_status"], "online")
+        self.assertEqual(result["telemetry"]["host"]["temperature_c"], 54.0)
+
+        with self.repository.transaction() as session:
+            row = session.execute(
+                "SELECT metadata_json FROM agents WHERE id=?",
+                ("agent-phase23-host",),
+            ).fetchone()
+        metadata = json.loads(row["metadata_json"] or "{}")
+        self.assertEqual(metadata["telemetry"]["host"]["cpu_usage_pct"], 12.5)
+        self.assertEqual(metadata["telemetry"]["agent"]["pid"], 1234)
+
+    def test_hybrid_capability_probe_uses_writable_local_state_root(self):
+        seen = {}
+
+        def fake_detect():
+            seen["state_root"] = os.environ.get("CAPIVARA_AGENT_STATE_DIR")
+            return {
+                "steamcmd": True,
+                "steamcmd_status": {"installed": True, "functional": True},
+            }
+
+        original = os.environ.get("CAPIVARA_AGENT_STATE_DIR")
+        with patch("hybrid_local_reconciliation.detect_capabilities", side_effect=fake_detect):
+            result = _hybrid_capabilities(self.root)
+
+        self.assertTrue(result["steamcmd"])
+        self.assertEqual(
+            seen["state_root"],
+            str(self.root / "runtime" / "state" / "hybrid-agent"),
+        )
+        self.assertEqual(os.environ.get("CAPIVARA_AGENT_STATE_DIR"), original)
 
     @unittest.skipUnless(hasattr(os, "chown"), "POSIX ownership test")
     def test_reconciliation_preserves_agent_conf_owner_group_and_mode(self):
