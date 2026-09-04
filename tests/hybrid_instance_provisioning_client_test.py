@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from dashboard.hybrid_instance_provisioning_client import _paths, _runtime_config
+from dashboard.hybrid_instance_provisioning_client import _paths, _provider_environment, _runtime_config
 
 
 class HybridProvisioningClientTest(unittest.TestCase):
@@ -23,6 +23,24 @@ class HybridProvisioningClientTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 _paths(Path(temp), "../escape")
 
+
+
+class HybridProviderEnvironmentTest(unittest.TestCase):
+    def test_steam_user_is_loaded_from_provider_config(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = root / "config" / "providers" / "steam.conf"
+            config.parent.mkdir(parents=True)
+            config.write_text(
+                'DSM_STEAM_USER="steam-account"\n'
+                'UNRELATED_VALUE="ignored"\n',
+                encoding="utf-8",
+            )
+
+            environment = _provider_environment(root)
+
+            self.assertEqual("steam-account", environment["DSM_STEAM_USER"])
+            self.assertNotIn("UNRELATED_VALUE", environment)
 
 
 class HybridProvisioningDeliveryTest(unittest.TestCase):

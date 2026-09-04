@@ -97,6 +97,39 @@ def _archive_final(root: Path, result: dict[str, Any]) -> None:
             pass
 
 
+def _provider_environment(root: Path) -> dict[str, str]:
+    """Load non-secret provider runtime settings needed by local Hybrid execution."""
+    allowed = {"DSM_STEAM_USER"}
+    result: dict[str, str] = {}
+
+    path = root / "config" / "providers" / "steam.conf"
+    if not path.is_file():
+        return result
+
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key not in allowed:
+            continue
+
+        value = value.strip()
+        if (
+            len(value) >= 2
+            and value[0] == value[-1]
+            and value[0] in {"'", '"'}
+        ):
+            value = value[1:-1]
+
+        if value:
+            result[key] = value
+
+    return result
+
+
 def _runtime_config(root: Path, agent_id: str) -> tuple[Path, dict[str, Any]]:
     state_root = _state_root(root)
     storage_root = root / "runtime" / "hybrid-instance-storage"
@@ -147,6 +180,7 @@ def _stage(root: Path, agent_id: str, command: dict[str, Any]) -> bool:
     log_handle = open(log_path, "ab", buffering=0)
     environment = {
         **os.environ,
+        **_provider_environment(root),
         "DSM_ROOT": str(root),
         "CAPIVARA_AGENT_ROOT": str(root / "agents" / "linux"),
         "CAPIVARA_AGENT_STATE_DIR": str(_state_root(root)),
