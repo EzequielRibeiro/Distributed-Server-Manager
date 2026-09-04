@@ -32,7 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION=$(tr -d '\r\n' <version)
-          TRIGGER=$(tr -d '\r\n' <release/RELEASE_TRIGGER)
+          TRIGGER=$(head -n1 release/RELEASE_TRIGGER | tr -d '\r\n')
           test "${TRIGGER}" = "${VERSION}"
           python3 tests/release_readiness_test.py
           test -f "release/RELEASE_NOTES_${VERSION}.md"
