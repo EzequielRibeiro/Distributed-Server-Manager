@@ -1,4 +1,4 @@
-# Capivara DSM v2.0.24
+# Capivara DSM 2.0.24
 
 Hotfix release for Database Baseline v2 update preflight compatibility.
 
