@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS agent_public_network_preconfiguration (
     installation_id TEXT PRIMARY KEY REFERENCES agent_pairing_tokens(id) ON DELETE CASCADE,
     public_hostname TEXT NULL,
     public_ipv4 TEXT NULL,
+    public_ipv6 TEXT NULL,
+    nat_scope TEXT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -23,6 +25,8 @@ CREATE TABLE IF NOT EXISTS agent_public_network_preconfiguration (
     installation_id VARCHAR(128) PRIMARY KEY,
     public_hostname VARCHAR(253) NULL,
     public_ipv4 VARCHAR(45) NULL,
+    public_ipv6 VARCHAR(45) NULL,
+    nat_scope VARCHAR(128) NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_agent_public_network_installation FOREIGN KEY (installation_id)
@@ -35,6 +39,8 @@ CREATE TABLE IF NOT EXISTS agent_public_network_preconfiguration (
     installation_id TEXT PRIMARY KEY REFERENCES agent_pairing_tokens(id) ON DELETE CASCADE,
     public_hostname TEXT NULL,
     public_ipv4 TEXT NULL,
+    public_ipv6 TEXT NULL,
+    nat_scope TEXT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
