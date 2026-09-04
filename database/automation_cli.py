@@ -8,14 +8,15 @@ import sys
 from pathlib import Path
 
 # This CLI is executed directly as /opt/dsm/database/automation_cli.py. Python
-# therefore places /opt/dsm/database on sys.path, but modules used by the
-# automation engine also import the top-level ``core`` package. Make the
-# installation root available explicitly instead of depending on an ambient
-# PYTHONPATH from a service or development checkout.
+# therefore places /opt/dsm/database on sys.path, while the automation stack
+# mixes imports from the repository root (``core.*``) and legacy top-level
+# modules stored inside ``core/`` (for example ``event_platform``). Make both
+# locations explicit instead of depending on an ambient PYTHONPATH.
 ROOT = Path(__file__).resolve().parents[1]
-root_text = str(ROOT)
-if root_text not in sys.path:
-    sys.path.insert(0, root_text)
+for path in (ROOT, ROOT / "core"):
+ text = str(path)
+ if text not in sys.path:
+  sys.path.insert(0, text)
 
 from automation_engine import AutomationEngine
 from automation_repository import AutomationRepository
