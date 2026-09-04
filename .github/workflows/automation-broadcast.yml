@@ -42,6 +42,7 @@ jobs:
           grep -Fq 'broadcast_commands' dashboard/agent_heartbeat_api.py
           grep -Fq 'start_python_worker automation_worker.py' dashboard/workers/worker.sh
           grep -Fq 'dashboard/workers/worker.sh' systemd/dsm-dashboard-worker.service
-          grep -Fq 'agent/runtime/broadcast_client.py' release/build_agent_package.sh
+          grep -Fq 'agents/linux/runtime' release/build_agent_package.sh
+          grep -Fq 'RUNTIME_SOURCES' release/build_agent_package.sh
           grep -Fq 'InstanceRuntimeAdapter' agents/linux/runtime/adapters/base.py
           grep -Fq 'import server_part16 as integration' dashboard/server_part17.py

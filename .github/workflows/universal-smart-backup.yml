@@ -38,6 +38,7 @@ jobs:
         run: |
           grep -Fq 'BACKUP_PATH' dashboard/server_part13.py
           grep -Fq 'import server_part16 as integration' dashboard/server_part17.py
-          grep -Fq 'agent/runtime/backup_client.py' release/build_agent_package.sh
+          grep -Fq 'agents/linux/runtime' release/build_agent_package.sh
+          grep -Fq 'RUNTIME_SOURCES' release/build_agent_package.sh
           grep -Fq 'backup-store' bin/cap
           grep -Fq 'preset-apply' bin/cap
