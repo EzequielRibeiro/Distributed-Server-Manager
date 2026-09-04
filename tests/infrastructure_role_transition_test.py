@@ -17,6 +17,7 @@ from backend import DatabaseConfig
 from backend_factory import create_backend
 from infrastructure_role_transition import (
     InfrastructureRoleTransitionError,
+    demote_hybrid_to_controller,
     promote_controller_to_hybrid,
 )
 from registry import installation_profile_identity
@@ -88,6 +89,14 @@ class ControllerToHybridTransitionTest(unittest.TestCase):
             datacenter_name="Local Default",
         )
 
+    def _demote(self):
+        return demote_hybrid_to_controller(
+            self.repository,
+            node_id=self.node_id,
+            controller_id=self.controller_id,
+            agent_id=self.agent_id,
+        )
+
     def _one(self, sql, params=()):
         with self.backend.connect() as connection:
             row = connection.execute(sql, params).fetchone()
@@ -149,6 +158,86 @@ class ControllerToHybridTransitionTest(unittest.TestCase):
             ).fetchone()["total"]
         self.assertEqual(agent_count, 1)
         self.assertEqual(location_count, 1)
+
+    def test_full_controller_hybrid_controller_hybrid_cycle(self):
+        original_node_id = self.node_id
+        original_controller_id = self.controller_id
+
+        first_promotion = self._promote()
+        demotion = self._demote()
+
+        self.assertTrue(first_promotion["changed"])
+        self.assertTrue(demotion["changed"])
+        self.assertTrue(demotion["agent_removed"])
+        self.assertEqual(demotion["previous_role"], "hybrid")
+        self.assertEqual(demotion["node_role"], "controller")
+        self.assertTrue(demotion["runtime_reconciliation_required"])
+
+        node = self._one("SELECT id,role FROM nodes WHERE id=?", (self.node_id,))
+        controller = self._one(
+            "SELECT id,node_id,status FROM controllers WHERE id=?",
+            (self.controller_id,),
+        )
+        agent = self._one("SELECT id FROM agents WHERE id=?", (self.agent_id,))
+        location = self._one(
+            "SELECT agent_id FROM agent_locations WHERE agent_id=?",
+            (self.agent_id,),
+        )
+        customer = self._one(
+            "SELECT controller_id FROM customers WHERE id=?",
+            (self.customer_id,),
+        )
+
+        self.assertEqual(node["id"], original_node_id)
+        self.assertEqual(node["role"], "controller")
+        self.assertEqual(controller["id"], original_controller_id)
+        self.assertEqual(controller["node_id"], original_node_id)
+        self.assertIsNone(agent)
+        self.assertIsNone(location)
+        self.assertEqual(customer["controller_id"], original_controller_id)
+
+        idempotent_demotion = self._demote()
+        self.assertFalse(idempotent_demotion["changed"])
+        self.assertFalse(idempotent_demotion["agent_removed"])
+        self.assertFalse(idempotent_demotion["runtime_reconciliation_required"])
+
+        second_promotion = self._promote()
+        self.assertTrue(second_promotion["changed"])
+        self.assertTrue(second_promotion["agent_created"])
+
+        node_after = self._one("SELECT id,role FROM nodes WHERE id=?", (self.node_id,))
+        controller_after = self._one(
+            "SELECT id,node_id FROM controllers WHERE id=?",
+            (self.controller_id,),
+        )
+        agent_after = self._one(
+            "SELECT id,controller_id,node_id FROM agents WHERE id=?",
+            (self.agent_id,),
+        )
+        self.assertEqual(node_after["id"], original_node_id)
+        self.assertEqual(node_after["role"], "hybrid")
+        self.assertEqual(controller_after["id"], original_controller_id)
+        self.assertEqual(controller_after["node_id"], original_node_id)
+        self.assertEqual(agent_after["controller_id"], original_controller_id)
+        self.assertEqual(agent_after["node_id"], original_node_id)
+
+    def test_demote_recovers_hybrid_role_when_local_agent_is_already_missing(self):
+        self._promote()
+        with self.backend.transaction() as connection:
+            connection.execute("DELETE FROM agent_locations WHERE agent_id=?", (self.agent_id,))
+            connection.execute("DELETE FROM agents WHERE id=?", (self.agent_id,))
+
+        result = self._demote()
+
+        self.assertTrue(result["changed"])
+        self.assertFalse(result["agent_removed"])
+        node = self._one("SELECT id,role FROM nodes WHERE id=?", (self.node_id,))
+        controller = self._one(
+            "SELECT id,node_id FROM controllers WHERE id=?",
+            (self.controller_id,),
+        )
+        self.assertEqual(node["role"], "controller")
+        self.assertEqual(controller["node_id"], self.node_id)
 
     def test_rejects_non_controller_node(self):
         with self.backend.transaction() as connection:
