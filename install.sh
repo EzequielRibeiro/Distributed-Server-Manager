@@ -264,6 +264,9 @@ prepare_web_transport_certificate "$@"
 retire_obsolete_systemd_units "$@"
 "${CORE_INSTALLER}" "$@"
 resolve_installed_service_account "$@"
+if [[ "${DSM_NODE_ROLE:-}" == "hybrid" && " ${*} " != *" --dry-run "* ]]; then
+    DSM_ROOT="${DSM_ROOT:-/opt/dsm}" "${DSM_ROOT:-/opt/dsm}/installer/install_hybrid_runtime_substrate.sh"
+fi
 reconcile_managed_tls_permissions "$@"
 persist_web_transport_config "$@"
 retire_obsolete_systemd_units "$@"

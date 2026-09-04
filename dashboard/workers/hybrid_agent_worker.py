@@ -19,6 +19,7 @@ for path in (ROOT, DATABASE, DASHBOARD):
         sys.path.insert(0, str(path))
 
 from hybrid_game_data_client import process_hybrid_game_data_cycle
+from hybrid_instance_provisioning_client import process_hybrid_instance_provisioning_cycle
 from hybrid_local_reconciliation import reconcile_local_hybrid_runtime
 from registry_repository import RegistryRepository
 from runtime_backend import backend_from_environment
@@ -79,8 +80,9 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         agent_id=agent_id,
         hostname=socket.gethostname(),
     )
+    provisioning = process_hybrid_instance_provisioning_cycle(effective_backend, root, agent_id)
     game_data = process_hybrid_game_data_cycle(effective_backend, root, agent_id)
-    return {"active": True, "agent_id": agent_id, "game_data": game_data, **result}
+    return {"active": True, "agent_id": agent_id, "provisioning": provisioning, "game_data": game_data, **result}
 
 
 def run_forever(root: Path = ROOT) -> None:

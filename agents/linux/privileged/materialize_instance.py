@@ -69,7 +69,7 @@ def _write_result(path: Path, payload: dict[str, Any]) -> None:
     temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.chmod(temp, 0o600)
     try:
-        account = pwd.getpwnam("capivara-agent")
+        account = pwd.getpwnam(os.environ.get("CAPIVARA_AGENT_RESULT_USER", "capivara-agent"))
         os.chown(temp, account.pw_uid, account.pw_gid)
     except (KeyError, OSError):
         pass

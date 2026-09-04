@@ -1,0 +1,24 @@
+[Unit]
+Description=Capivara DSM Hybrid Agent privileged materializer for %i
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=CAPIVARA_AGENT_ROOT=@DSM_ROOT@/agents/linux
+Environment=CAPIVARA_AGENT_STATE_DIR=@DSM_ROOT@/runtime/hybrid-agent-state
+Environment=CAPIVARA_AGENT_CONFIG=@DSM_ROOT@/runtime/hybrid-agent-state/agent.json
+Environment=CAPIVARA_AGENT_RESULT_USER=@DSM_USER@
+ExecStart=/usr/bin/python3 @DSM_ROOT@/agents/linux/privileged/materialize_instance.py %i
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/etc/systemd/system @DSM_ROOT@/runtime/hybrid-agent-state @DSM_ROOT@/runtime/hybrid-instance-storage @DSM_ROOT@/game-data
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true

@@ -57,7 +57,7 @@ def _invoke(action: str, spec: dict[str, Any], **extra: Any) -> dict[str, Any]:
         },
     )
     completed = subprocess.run(
-        ["systemctl", "start", f"capivara-agent-materialize@{instance_id}.service", "--no-pager"],
+        ["systemctl", "start", os.environ.get("CAPIVARA_MATERIALIZER_UNIT_TEMPLATE", "capivara-agent-materialize@{instance_id}.service").format(instance_id=instance_id), "--no-pager"],
         capture_output=True,
         text=True,
         check=False,
