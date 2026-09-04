@@ -19,9 +19,9 @@ def test_all_published_runtimes_are_contract_ready() -> None:
     result = module.audit()
     summary = result["summary"]
     assert summary["supported_games"] == 16
-    assert summary["published_runtimes"] == 26
+    assert summary["published_runtimes"] == 27
     assert summary["deferred_runtimes"] == 4
-    assert summary["contract_ready_runtimes"] == 26, result["errors"]
+    assert summary["contract_ready_runtimes"] == 27, result["errors"]
     assert summary["partial_runtimes"] == 0, result["errors"]
     assert result["errors"] == []
 
