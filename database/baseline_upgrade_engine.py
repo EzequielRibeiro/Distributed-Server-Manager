@@ -17,6 +17,7 @@ from alert_event_action_schema import action_check_expression
 from alert_scope_history_schema import alert_scope_history_ddl
 from backend import DatabaseMigrationError
 from discord_integration_schema import discord_integration_ddl
+from server_update_schema import server_update_ddl
 
 
 UpgradeApply = Callable[[Any, Any], None]
@@ -34,6 +35,12 @@ DISCORD_TABLES = {
     "customer_discord_instance_bindings",
     "customer_discord_preferences",
     "customer_discord_oauth_states",
+}
+
+SERVER_UPDATE_TABLES = {
+    "instance_update_policy",
+    "instance_update_state",
+    "instance_update_runs",
 }
 
 # Compatibility bridge for installations created before the upgrade ledger
@@ -309,12 +316,27 @@ def _upgrade_alert_events_note_action(backend: Any, connection: Any) -> None:
     raise DatabaseMigrationError(f"unsupported baseline backend: {backend.name}")
 
 
+def _upgrade_server_update_schema(backend: Any, connection: Any) -> None:
+    tables = _table_names(backend, connection)
+    present = SERVER_UPDATE_TABLES & tables
+    if present == SERVER_UPDATE_TABLES:
+        return
+    if present:
+        missing = sorted(SERVER_UPDATE_TABLES - present)
+        raise DatabaseMigrationError(
+            "partial universal server update baseline upgrade; missing tables: "
+            + ", ".join(missing)
+        )
+    _execute_script(backend, connection, server_update_ddl(backend.name))
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
     BaselineUpgrade(3, "activity_audit", _upgrade_activity_audit),
     BaselineUpgrade(4, "resolved_alert_history_detach", _upgrade_resolved_alert_history_detach),
     BaselineUpgrade(5, "alert_events_note_action", _upgrade_alert_events_note_action),
+    BaselineUpgrade(6, "universal_server_update", _upgrade_server_update_schema),
 )
 
 
