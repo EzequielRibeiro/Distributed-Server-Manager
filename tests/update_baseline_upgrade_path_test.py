@@ -89,8 +89,8 @@ class BaselineUpdatePathTest(unittest.TestCase):
             self.assertEqual(migrated.returncode, 0, migrated.stderr)
             payload = json.loads(migrated.stdout)
             self.assertTrue(payload["valid"])
-            self.assertEqual(payload["upgrade_version"], 5)
-            self.assertEqual(payload["upgrade_latest"], 5)
+            self.assertEqual(payload["upgrade_version"], 6)
+            self.assertEqual(payload["upgrade_latest"], 6)
 
             with sqlite3.connect(database) as connection:
                 tables = {
@@ -112,6 +112,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (3, "activity_audit"),
                     (4, "resolved_alert_history_detach"),
                     (5, "alert_events_note_action"),
+                    (6, "universal_server_update"),
                 ],
             )
 
@@ -145,13 +146,14 @@ process_guard_database_check_is_upgradeable "$PAYLOAD" "{ROOT}"
             "missing_tables": [],
             "upgrade_ledger": False,
             "upgrade_version": 0,
-            "upgrade_latest": 5,
+            "upgrade_latest": 6,
             "pending_upgrades": [
                 {"version": 1, "name": "discord_integration"},
                 {"version": 2, "name": "agent_public_network"},
                 {"version": 3, "name": "activity_audit"},
                 {"version": 4, "name": "resolved_alert_history_detach"},
                 {"version": 5, "name": "alert_events_note_action"},
+                {"version": 6, "name": "universal_server_update"},
             ],
             "upgrade_error": None,
             "valid": False,
@@ -175,13 +177,14 @@ process_guard_database_check_is_upgradeable "$PAYLOAD" "{ROOT}"
             "missing_tables": [],
             "upgrade_ledger": False,
             "upgrade_version": 0,
-            "upgrade_latest": 5,
+            "upgrade_latest": 6,
             "pending_upgrades": [
                 {"version": 1, "name": "discord_integration"},
                 {"version": 2, "name": "agent_public_network"},
                 {"version": 3, "name": "activity_audit"},
                 {"version": 4, "name": "resolved_alert_history_detach"},
                 {"version": 5, "name": "alert_events_note_action"},
+                {"version": 6, "name": "universal_server_update"},
             ],
             "upgrade_error": None,
             "valid": False,
