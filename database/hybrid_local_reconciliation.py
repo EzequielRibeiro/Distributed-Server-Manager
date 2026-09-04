@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Reconcile local host state after Controller -> Hybrid promotion.
-
-Database identity/topology promotion is intentionally committed before this module
-runs. Local reconciliation is idempotent and safe to retry: it updates only the
-known Agent identity fields in ``config/agent.conf`` and refreshes the local
-runtime inventory/heartbeat for the already-persisted Agent.
-"""
+"""Reconcile local host state for Controller <-> Hybrid transitions."""
 
 from __future__ import annotations
 
@@ -52,16 +46,7 @@ def _set_shell_value(text: str, key: str, value: str) -> str:
     return text + rendered + "\n"
 
 
-def reconcile_agent_conf(
-    root: Path,
-    *,
-    node_id: str,
-    agent_id: str,
-    agent_name: str,
-    agent_status: str,
-    hostname: str,
-) -> dict[str, Any]:
-    """Atomically reconcile the local shell config without touching secrets."""
+def _write_agent_conf(root: Path, values: tuple[tuple[str, str], ...]) -> dict[str, Any]:
     config = root / "config" / "agent.conf"
     if not config.is_file():
         raise HybridLocalReconciliationError(f"agent.conf not found: {config}")
@@ -69,22 +54,12 @@ def reconcile_agent_conf(
     metadata = config.stat()
     original = config.read_text(encoding="utf-8")
     updated = original
-    for key, value in (
-        ("AGENT_ID", agent_id),
-        ("AGENT_NAME", agent_name),
-        ("AGENT_STATUS", agent_status),
-        ("DSM_NODE_ID", node_id),
-        ("DSM_NODE_ROLE", "hybrid"),
-        ("HOSTNAME", hostname),
-    ):
+    for key, value in values:
         updated = _set_shell_value(updated, key, str(value))
 
     changed = updated != original
     if changed:
-        fd, temporary_name = tempfile.mkstemp(
-            prefix=f".{config.name}.",
-            dir=str(config.parent),
-        )
+        fd, temporary_name = tempfile.mkstemp(prefix=f".{config.name}.", dir=str(config.parent))
         temporary = Path(temporary_name)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -99,6 +74,57 @@ def reconcile_agent_conf(
                 temporary.unlink()
 
     return {"config_path": str(config), "config_changed": changed}
+
+
+def reconcile_agent_conf(
+    root: Path,
+    *,
+    node_id: str,
+    agent_id: str,
+    agent_name: str,
+    agent_status: str,
+    hostname: str,
+) -> dict[str, Any]:
+    """Atomically reconcile local Hybrid identity without touching secrets."""
+    return _write_agent_conf(
+        root,
+        (
+            ("AGENT_ID", agent_id),
+            ("AGENT_NAME", agent_name),
+            ("AGENT_STATUS", agent_status),
+            ("DSM_NODE_ID", node_id),
+            ("DSM_NODE_ROLE", "hybrid"),
+            ("HOSTNAME", hostname),
+        ),
+    )
+
+
+def reconcile_local_controller_runtime(
+    root: Path,
+    *,
+    node_id: str,
+    hostname: str | None = None,
+) -> dict[str, Any]:
+    """Return a former Hybrid host to Controller-only local configuration.
+
+    Secrets and the Controller/Node identity are preserved. Clearing AGENT_ID and
+    setting DSM_NODE_ROLE=controller makes the persistent Hybrid worker become
+    inactive on its next cycle instead of continuing to heartbeat a decommissioned
+    local Agent.
+    """
+    effective_hostname = str(hostname or socket.gethostname()).strip() or node_id
+    result = _write_agent_conf(
+        root,
+        (
+            ("AGENT_ID", ""),
+            ("AGENT_NAME", ""),
+            ("AGENT_STATUS", "pending"),
+            ("DSM_NODE_ID", node_id),
+            ("DSM_NODE_ROLE", "controller"),
+            ("HOSTNAME", effective_hostname),
+        ),
+    )
+    return {**result, "runtime_reconciled": True, "role": "controller"}
 
 
 def _memory_total_bytes() -> int | None:
@@ -161,10 +187,7 @@ def _default_inventory(root: Path, *, hostname: str) -> dict[str, Any]:
         "capabilities": _hybrid_capabilities(root),
         "cpu": {"logical_cores": os.cpu_count(), "machine": platform.machine()},
         "ram_total_bytes": _memory_total_bytes(),
-        "storage": {
-            "root_total_bytes": disk.total,
-            "root_free_bytes": disk.free,
-        },
+        "storage": {"root_total_bytes": disk.total, "root_free_bytes": disk.free},
         "network": collect_network_inventory(),
         "telemetry": collect_host_telemetry(),
     }
@@ -271,5 +294,6 @@ def reconcile_local_hybrid_runtime(
 __all__ = [
     "HybridLocalReconciliationError",
     "reconcile_agent_conf",
+    "reconcile_local_controller_runtime",
     "reconcile_local_hybrid_runtime",
 ]

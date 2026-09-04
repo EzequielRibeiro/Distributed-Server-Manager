@@ -4,6 +4,30 @@ from __future__ import annotations
 
 from agent_admin_repository import AgentAdminRepository
 from agent_uninstall_repository import AgentUninstallRepository
+from registry_repository import RegistryRepository
+
+
+def _node_role(backend, agent_id: str) -> str:
+    repository = RegistryRepository(backend)
+    repository.initialize()
+    ph = repository.dialect.placeholder
+    with repository.transaction() as session:
+        row = session.execute(
+            "SELECT n.role FROM agents a JOIN nodes n ON n.id=a.node_id "
+            f"WHERE a.id={ph}",
+            (agent_id,),
+        ).fetchone()
+    if row is None:
+        raise LookupError("Agent not found")
+    return str(row["role"] or "").strip().lower()
+
+
+def _reject_hybrid_standalone_removal(backend, agent_id: str) -> None:
+    if _node_role(backend, agent_id) == "hybrid":
+        raise ValueError(
+            "O Agent local do modo híbrido não usa a desinstalação/remocão de Agent standalone. "
+            "Use Agents > Este Node > Desativar Agent local · manter Controller."
+        )
 
 
 def request_agent_uninstall(
@@ -15,6 +39,7 @@ def request_agent_uninstall(
     requested_by: str,
 ) -> dict:
     """Queue a typed remote uninstall while retaining Controller registration."""
+    _reject_hybrid_standalone_removal(backend, agent_id)
     detail = AgentAdminRepository(backend).detail(agent_id)
     state = AgentUninstallRepository(backend).request(
         agent_id,
@@ -48,6 +73,7 @@ def reconcile_completed_agent_uninstall(
     if confirmation != agent_id:
         raise ValueError("confirmation must exactly match agent_id")
 
+    _reject_hybrid_standalone_removal(backend, agent_id)
     AgentAdminRepository(backend).detail(agent_id)
 
     result = AgentUninstallRepository(
@@ -68,6 +94,7 @@ def force_remove_controller_registration(
     removed_by: str,
 ) -> dict:
     """Remove only Controller records; never imply host-side uninstall."""
+    _reject_hybrid_standalone_removal(backend, agent_id)
     result = AgentAdminRepository(backend).remove(
         agent_id,
         confirmation=confirmation,
