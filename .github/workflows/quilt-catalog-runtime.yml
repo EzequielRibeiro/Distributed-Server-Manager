@@ -1,0 +1,58 @@
+name: Quilt Catalog Runtime
+
+on:
+  pull_request:
+    paths:
+      - 'catalog/v2/games/minecraft/runtimes/java-quilt.json'
+      - 'catalog/v2/support-matrix.json'
+      - 'catalog/v2/schemas/runtime-definition.schema.json'
+      - 'installer/catalog.sh'
+      - 'installer/version_resolvers/quilt_meta.sh'
+      - 'agents/linux/runtime/game_data_installer.py'
+      - 'agents/windows/runtime/game_data_installer.py'
+      - 'tests/quilt_catalog_runtime_test.sh'
+      - 'tests/catalog_v2_test.sh'
+      - 'tests/catalog_path_resolver_test.sh'
+      - 'tests/catalog_runtime_readiness_test.py'
+      - '.github/workflows/quilt-catalog-runtime.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'catalog/v2/games/minecraft/runtimes/java-quilt.json'
+      - 'catalog/v2/support-matrix.json'
+      - 'catalog/v2/schemas/runtime-definition.schema.json'
+      - 'installer/version_resolvers/quilt_meta.sh'
+      - 'agents/linux/runtime/game_data_installer.py'
+      - 'agents/windows/runtime/game_data_installer.py'
+      - 'tests/catalog_runtime_readiness_test.py'
+      - '.github/workflows/quilt-catalog-runtime.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install schema validator
+        run: python3 -m pip install --disable-pip-version-check jsonschema
+      - name: Validate JSON and Bash
+        run: |
+          jq -e . catalog/v2/games/minecraft/runtimes/java-quilt.json >/dev/null
+          jq -e . catalog/v2/schemas/runtime-definition.schema.json >/dev/null
+          jq -e . catalog/v2/support-matrix.json >/dev/null
+          bash -n installer/catalog.sh installer/version_resolvers/quilt_meta.sh tests/quilt_catalog_runtime_test.sh
+      - name: Compile typed installers
+        run: python3 -m py_compile agents/linux/runtime/game_data_installer.py agents/windows/runtime/game_data_installer.py
+      - name: Test Quilt resolver and Agent parity
+        run: bash tests/quilt_catalog_runtime_test.sh
+      - name: Validate RuntimeDefinition schema
+        run: python3 -c 'import json,jsonschema; from pathlib import Path; schema=json.loads(Path("catalog/v2/schemas/runtime-definition.schema.json").read_text()); definition=json.loads(Path("catalog/v2/games/minecraft/runtimes/java-quilt.json").read_text()); jsonschema.Draft202012Validator(schema).validate(definition)'
+      - name: Validate catalog completion
+        run: python3 tests/catalog_completion_test.py
+      - name: Validate canonical catalog and path parity
+        run: |
+          bash tests/catalog_v2_test.sh
+          bash tests/catalog_path_resolver_test.sh
+      - name: Validate catalog runtime readiness
+        run: |
+          python3 tools/catalog_runtime_readiness.py --strict
+          python3 tests/catalog_runtime_readiness_test.py
