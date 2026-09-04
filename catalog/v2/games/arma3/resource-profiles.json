@@ -1,0 +1,38 @@
+{
+  "schema_version": 2,
+  "kind": "GameResourceProfiles",
+  "game": "arma3",
+  "default_profile_id": "standard",
+  "profiles": [
+    {
+      "id": "low",
+      "name": "Low",
+      "description": "Perfil básico inicial para servidores arma3.",
+      "memory_mb": 8192,
+      "storage_mb": 30720,
+      "cpu_cores": 4,
+      "swap_mb": 2048,
+      "pids_limit": 512
+    },
+    {
+      "id": "standard",
+      "name": "Standard",
+      "description": "Perfil padrão inicial para servidores arma3.",
+      "memory_mb": 12288,
+      "storage_mb": 51200,
+      "cpu_cores": 6,
+      "swap_mb": 4096,
+      "pids_limit": 768
+    },
+    {
+      "id": "large",
+      "name": "Large",
+      "description": "Perfil ampliado inicial para servidores arma3.",
+      "memory_mb": 16384,
+      "storage_mb": 81920,
+      "cpu_cores": 8,
+      "swap_mb": 4096,
+      "pids_limit": 1024
+    }
+  ]
+}

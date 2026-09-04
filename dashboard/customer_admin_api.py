@@ -8,7 +8,7 @@ from typing import Any
 
 from activity_audit_repository import ActivityAuditRepository
 from activity_humanizer import actor_name, humanize
-from catalog_resource_profiles_http import catalog_resource_profiles
+from core.catalog_resource_profile_policy import resolve_catalog_resource_profile
 from customer_admin_repository import CustomerAdminRepository
 from customer_mailer import send_temporary_password
 from customer_management_repository import CustomerManagementRepository
@@ -236,13 +236,13 @@ def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, ba
             customer_name = str((detail.get("customer") or {}).get("name") or customer_code)
             limit = int(payload.get("instance_limit") or 1)
             game_id = str(payload.get("game_id") or "").strip().lower()
-            profile_catalog = catalog_resource_profiles(ROOT, game_id)
             requested_profile_id = str(payload.get("resource_profile_id") or "").strip().lower()
-            resource_profile_id = requested_profile_id or str(profile_catalog.get("default_profile_id") or "").strip().lower()
-            profiles = profile_catalog.get("profiles", [])
-            profile = next((item for item in profiles if str(item.get("id") or "").strip().lower() == resource_profile_id), None)
-            if profile is None:
-                raise ValueError("select a valid resource profile or configure the game default")
+            resource_profile_id, _profile, _profile_catalog = resolve_catalog_resource_profile(
+                root=ROOT,
+                game_id=game_id,
+                requested_profile_id=requested_profile_id or None,
+                require_catalog=True,
+            )
             resource_profile_source = "selected" if requested_profile_id else "game_default"
             result = management.create_contract(
                 customer_code=customer_code,
