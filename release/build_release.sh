@@ -16,7 +16,6 @@ do
         fail "required command not found: ${command_name}"
 done
 
-
 resolve_python3()
 {
     local candidate
@@ -37,7 +36,6 @@ resolve_python3()
 
     fail "required Python 3 interpreter not found"
 }
-
 
 PYTHON_BIN="$(resolve_python3)"
 
@@ -70,6 +68,69 @@ git -C "${ROOT}" archive --format=tar --prefix="${PACKAGE_NAME}/" "${COMMIT}" \
 
 [[ -d "${PACKAGE_ROOT}" && "${PACKAGE_ROOT}" == "${WORK_DIR}/"* ]] \
     || fail "unsafe staging directory"
+
+# Hotfix release packaging guard for updater rollback systemd rendering.
+# update_systemd() already renders {{DSM_USER}}/{{DSM_GROUP}}, but rollback()
+# in v2.0.22 copied restored unit templates directly to /etc/systemd/system.
+# Until the updater source is refactored around one shared unit renderer, patch
+# the packaged updater so a failed update cannot leave literal placeholders in
+# installed systemd units.
+"${PYTHON_BIN}" - "${PACKAGE_ROOT}/update.sh" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = '''        do
+            [[ -e "${UNIT_TEMPLATE}" ]] || continue
+            cp -f "${UNIT_TEMPLATE}" "${SYSTEMD_DIR}/"
+        done
+    fi
+    # Atualizar Systemd | Update Systemd
+    echo
+    echo "Recarregando Systemd..."
+'''
+new = '''        do
+            [[ -e "${UNIT_TEMPLATE}" ]] || continue
+            cp -f "${UNIT_TEMPLATE}" "${SYSTEMD_DIR}/"
+        done
+
+        # Rollback restores source templates, so render the runtime account
+        # before systemd sees the restored units.
+        for UNIT_TEMPLATE in \\
+            "${SYSTEMD_DIR}/"dsm-*.service \\
+            "${SYSTEMD_DIR}/"dsm-*.timer
+        do
+            [[ -e "${UNIT_TEMPLATE}" ]] || continue
+            sed -i \\
+                -e "s|{{DSM_USER}}|${DSM_USER}|g" \\
+                -e "s|{{DSM_GROUP}}|${DSM_GROUP}|g" \\
+                "${UNIT_TEMPLATE}"
+        done
+
+        if grep -RqsE '\\{\\{DSM_(USER|GROUP)\\}\\}' \\
+            "${SYSTEMD_DIR}/"dsm-*.service \\
+            "${SYSTEMD_DIR}/"dsm-*.timer 2>/dev/null
+        then
+            echo "[ERROR] Rollback deixou placeholders DSM em unidades systemd." >&2
+            echo "[ERROR] Rollback left DSM placeholders in systemd units." >&2
+            return 1
+        fi
+    fi
+    # Atualizar Systemd | Update Systemd
+    echo
+    echo "Recarregando Systemd..."
+'''
+if old not in text:
+    raise SystemExit("release hotfix anchor not found in update.sh")
+text = text.replace(old, new, 1)
+path.write_text(text, encoding="utf-8", newline="\n")
+PY
+
+grep -q 'Rollback left DSM placeholders in systemd units' "${PACKAGE_ROOT}/update.sh" \
+    || fail "rollback systemd rendering hotfix missing from packaged update.sh"
+bash -n "${PACKAGE_ROOT}/update.sh" \
+    || fail "packaged update.sh failed syntax validation after rollback hotfix"
 
 # Development metadata and machine-generated data are not release inputs.
 for relative_path in \
