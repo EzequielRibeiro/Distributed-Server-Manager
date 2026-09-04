@@ -4,13 +4,15 @@ The contract intentionally does not expose arbitrary shell execution.
 """
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-_ALLOWED_TYPES = {"java_jar"}
+_ALLOWED_TYPES = {"java_jar", "quilt_server"}
 _ALLOWED_JAVA_ARGS = {"--installServer"}
+_VERSION = re.compile(r"^[A-Za-z0-9._+-]{1,64}$")
 _MAX_TIMEOUT_SECONDS = 1800
 _MAX_EXPECTED_OUTPUTS = 32
 
@@ -68,10 +70,6 @@ def validate_installer(selection: dict[str, Any], target: Path) -> tuple[list[st
     if not artifact.is_file():
         raise RuntimeError("installer artifact is missing")
 
-    args = installer.get("args") or []
-    if not isinstance(args, list) or any(str(arg) not in _ALLOWED_JAVA_ARGS for arg in args):
-        raise ValueError("installer arguments are not allowed")
-
     timeout = int(installer.get("timeout_seconds") or 600)
     if timeout < 30 or timeout > _MAX_TIMEOUT_SECONDS:
         raise ValueError("installer timeout is outside allowed bounds")
@@ -84,7 +82,21 @@ def validate_installer(selection: dict[str, Any], target: Path) -> tuple[list[st
     java = shutil.which("java.exe") or shutil.which("java")
     if not java:
         raise RuntimeError("Java is not available on this Agent")
-    return [java, "-jar", str(artifact), *[str(arg) for arg in args]], timeout, expected_paths, installer
+
+    args = installer.get("args") or []
+    if installer_type == "java_jar":
+        if not isinstance(args, list) or any(str(arg) not in _ALLOWED_JAVA_ARGS for arg in args):
+            raise ValueError("installer arguments are not allowed")
+        argv = [java, "-jar", str(artifact), *[str(arg) for arg in args]]
+    else:
+        if args not in ([], None):
+            raise ValueError("Quilt installer does not accept catalog-provided arguments")
+        version = str(selection.get("version") or "").strip()
+        if not _VERSION.fullmatch(version):
+            raise ValueError("invalid Quilt Minecraft version")
+        argv = [java, "-jar", str(artifact), "install", "server", version, "--download-server", "--install-dir=."]
+
+    return argv, timeout, expected_paths, installer
 
 
 def execute_installer(selection: dict[str, Any], target: Path) -> None:
