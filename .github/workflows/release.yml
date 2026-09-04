@@ -2,8 +2,14 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*.*.*'
+    paths:
+      - 'release/RELEASE_TRIGGER'
+      - '.github/workflows/release.yml'
+      - 'release/readiness-v2.json'
 
 permissions:
   contents: write
@@ -11,10 +17,81 @@ permissions:
   attestations: write
 
 jobs:
-  publish:
+  orchestrate:
+    if: github.ref_type == 'branch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
+      - name: Validate explicit release trigger
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(tr -d '\r\n' <version)
+          TRIGGER=$(tr -d '\r\n' <release/RELEASE_TRIGGER)
+          test "${TRIGGER}" = "${VERSION}"
+          python3 tests/release_readiness_test.py
+          test -f "release/RELEASE_NOTES_${VERSION}.md"
+
+      - name: Build standalone Agent installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          bash release/build_agent_package.sh "${GITHUB_SHA}" dist
+          python3 release/build_windows_agent_package.py "${GITHUB_SHA}" dist
+
+      - name: Publish standalone Linux and Windows Agent releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(tr -d '\r\n' <version)
+          LINUX_TAG="agent-linux-v${VERSION}"
+          WINDOWS_TAG="agent-windows-v${VERSION}"
+
+          gh release view "${LINUX_TAG}" >/dev/null 2>&1 || \
+            gh release create "${LINUX_TAG}" \
+              --target "${GITHUB_SHA}" \
+              --title "Capivara Agent Linux v${VERSION}" \
+              --notes "Standalone Linux Agent installer for Capivara DSM v${VERSION}." \
+              "dist/capivara-agent-linux-${VERSION}.tar.gz" \
+              "dist/capivara-agent-linux-${VERSION}.tar.gz.sha256" \
+              "dist/capivara-agent-linux-${VERSION}.manifest.json"
+
+          gh release view "${WINDOWS_TAG}" >/dev/null 2>&1 || \
+            gh release create "${WINDOWS_TAG}" \
+              --target "${GITHUB_SHA}" \
+              --title "Capivara Agent Windows v${VERSION}" \
+              --notes "Standalone Windows Agent installer for Capivara DSM v${VERSION}." \
+              "dist/capivara-agent-windows-${VERSION}.zip" \
+              "dist/capivara-agent-windows-${VERSION}.zip.sha256" \
+              "dist/capivara-agent-windows-${VERSION}.manifest.json"
+
+      - name: Create canonical release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(tr -d '\r\n' <version)
+          TAG="v${VERSION}"
+          if git rev-parse "${TAG}" >/dev/null 2>&1; then
+            echo "${TAG} already exists"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "${TAG}" "${GITHUB_SHA}" -m "Capivara DSM ${TAG}"
+          git push origin "${TAG}"
+
+  publish:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout tag
         uses: actions/checkout@v4
@@ -36,6 +113,7 @@ jobs:
 
       - name: Validate source
         run: |
+          python3 tests/release_readiness_test.py
           git ls-files -z '*.sh' | xargs -0 -n1 bash -n
           find catalog games -type f -name '*.json' -print0 | xargs -0 -n1 jq empty
           python3 -m py_compile dashboard/server.py database/manager.py tests/dashboard_catalog_v2_test.py tests/database_test.py tests/update_baseline_upgrade_path_test.py release/build_windows_agent_package.py agents/windows/runtime/host_telemetry.py agents/windows/runtime/agent_entrypoint.py
@@ -76,30 +154,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION=$(tr -d '\r\n' <version)
-          RELEASE_FLAGS=(
-            --verify-tag
-            --title "Capivara DSM ${GITHUB_REF_NAME}"
-          )
-          if [[ -f "release/RELEASE_NOTES_${VERSION}.md" ]]
-          then
+          RELEASE_FLAGS=(--verify-tag --title "Capivara DSM ${GITHUB_REF_NAME}")
+          if [[ -f "release/RELEASE_NOTES_${VERSION}.md" ]]; then
             RELEASE_FLAGS+=(--notes-file "release/RELEASE_NOTES_${VERSION}.md")
           else
             RELEASE_FLAGS+=(--generate-notes)
           fi
-          if [[ "${GITHUB_REF_NAME}" == *-* ]]
-          then
-            RELEASE_FLAGS+=(--prerelease)
-          fi
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then RELEASE_FLAGS+=(--prerelease); fi
           gh release create "${GITHUB_REF_NAME}" \
-            dist/*.tar.gz \
-            dist/*.zip \
-            dist/*.sha256 \
-            dist/*.manifest.json \
-            dist/*.minisig \
+            dist/*.tar.gz dist/*.zip dist/*.sha256 dist/*.manifest.json dist/*.minisig \
             "${RELEASE_FLAGS[@]}" 2>/dev/null || \
           gh release create "${GITHUB_REF_NAME}" \
-            dist/*.tar.gz \
-            dist/*.zip \
-            dist/*.sha256 \
-            dist/*.manifest.json \
+            dist/*.tar.gz dist/*.zip dist/*.sha256 dist/*.manifest.json \
             "${RELEASE_FLAGS[@]}"
