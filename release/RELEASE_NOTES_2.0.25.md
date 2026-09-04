@@ -1,4 +1,4 @@
-# Capivara DSM v2.0.25
+# Capivara DSM 2.0.25
 
 Hotfix release for the Database Baseline v2 migration runtime.
 
