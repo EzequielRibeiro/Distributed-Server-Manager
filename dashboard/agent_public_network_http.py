@@ -91,6 +91,9 @@ def install_agent_public_network(legacy, authenticate):
                 {
                     "public_hostname": body.get("public_hostname"),
                     "public_ipv4": body.get("public_ipv4"),
+                    "public_ipv6": body.get("public_ipv6"),
+                    "nat_scope": body.get("nat_scope"),
+                    "port_mappings": body.get("port_mappings"),
                 },
                 actor=actor,
             )
