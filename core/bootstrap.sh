@@ -12,7 +12,9 @@
 set -Eeuo pipefail
 
 # -------------------------------------------------------------
-# Evita carregamento duplicado
+# Evita carregamento duplicado no shell atual.
+# Não exporte este marcador: processos-filho como bin/dsm-compat precisam
+# carregar o próprio bootstrap e suas funções (por exemplo config_show).
 # -------------------------------------------------------------
 if [[ "${DSM_BOOTSTRAP_LOADED:-0}" == "1" ]]
 then
@@ -26,7 +28,7 @@ then
 
 fi
 
-export DSM_BOOTSTRAP_LOADED=1
+DSM_BOOTSTRAP_LOADED=1
 
 # -------------------------------------------------------------
 # DSM Root

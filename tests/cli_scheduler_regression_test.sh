@@ -42,6 +42,13 @@ grep -Fq 'cap scheduler list|show|create|update|enable|disable|delete|run|status
 grep -Fq 'scheduler/cli.sh' "${ROOT}/bin/cap" \
     || fail "cap does not route scheduler management"
 
+# `cap` sources bootstrap before handing legacy-compatible commands to
+# bin/dsm-compat. The loaded marker must stay shell-local so the exec'd child
+# performs its own bootstrap and gets functions such as config_show.
+CONFIG_OUTPUT="$(bash -c 'source "$1/core/bootstrap.sh" >/dev/null; exec "$1/bin/dsm-compat" config show' _ "${ROOT}")"
+grep -Fq 'DSM_DATABASE_DRIVER=' <<<"${CONFIG_OUTPUT}" \
+    || fail "legacy CLI handoff did not reload bootstrap/config_show"
+
 bash "${ROOT}/tests/scheduler_management_test.sh"
 bash "${ROOT}/tests/update_handoff_test.sh"
 
