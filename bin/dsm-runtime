@@ -43,7 +43,7 @@ if [ $# -lt 6 ]
 then
 
 echo "Uso:"
-echo "dsm-runtime publish <host> <game> <instance> <module> <json>"
+echo "cap runtime publish <host> <game> <instance> <module> <json>"
 
 exit 1
 
@@ -69,7 +69,7 @@ runtime_update_resource \
 
 status)
 
-echo "DSM Runtime"
+echo "Capivara Runtime"
 echo ""
 
 find "$STATE_DIR" -name "*.json" | while read file
@@ -90,7 +90,7 @@ if [ $# -lt 5 ]
 then
 
 echo "Uso:"
-echo "dsm-runtime get <host> <game> <instance> <module>"
+echo "cap runtime get <host> <game> <instance> <module>"
 
 exit 1
 
@@ -175,11 +175,11 @@ fi
 
 get-resource)
 
-    if [ $# -lt 4 ]
+    if [ $# -lt 5 ]
     then
 
         echo "Uso:"
-        echo " dsm-runtime get-resource <host> <game> <instance> <module>"
+        echo " cap runtime get-resource <host> <game> <instance> <module>"
 
         exit 1
 
@@ -200,7 +200,7 @@ dashboard)
     then
 
         echo "Uso:"
-        echo " dsm-runtime dashboard <server> <game> <instance>"
+        echo " cap runtime dashboard <server> <game> <instance>"
 
         exit 1
 
@@ -217,19 +217,18 @@ dashboard)
 
 *)
 
-echo "DSM Runtime API"
+echo "Capivara Runtime API"
 
 echo ""
-
 echo "Uso:"
 echo ""
-echo " dsm-runtime publish <host> <game> <instance> <module> <json>"
-echo " dsm-runtime get <host> <game> <instance> <module>"
-echo " dsm-runtime get-resource <host> <game> <instance> <module>"
-echo " dsm-runtime status"
-echo " dsm-runtime list"
-echo " dsm-runtime health"
-echo " dsm-runtime dashboard <host> <game> <instance>"
+echo " cap runtime publish <host> <game> <instance> <module> <json>"
+echo " cap runtime get <host> <game> <instance> <module>"
+echo " cap runtime get-resource <host> <game> <instance> <module>"
+echo " cap runtime status"
+echo " cap runtime list"
+echo " cap runtime health"
+echo " cap runtime dashboard <host> <game> <instance>"
 
 ;;
 

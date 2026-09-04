@@ -1,24 +1,16 @@
 #!/bin/bash
 # =============================================================
-# bin/dsm - CLI de compatibilidade do Capivara DSM
+# bin/dsm-compat - camada interna de compatibilidade do Capivara
 #
-# Capivara Distributed Server Manager
+# Este arquivo preserva implementação legada/baixo nível, mas NÃO é uma
+# CLI pública. Toda ajuda e orientação ao operador deve anunciar `cap`.
 #
-# Responsável por:
-#
-# - inicializar o ambiente DSM
-# - carregar configurações
-# - executar módulos de compatibilidade e baixo nível
-#
-# CLI principal para administração e operação por role:
-#
+# CLI pública:
 #   cap help
 #   cap help --all
 #
 # Fonte única de configuração:
-#
 #   /opt/dsm/config/dsm.conf
-#
 # =============================================================
 
 set -Eeuo pipefail
@@ -31,20 +23,11 @@ then
     cd /opt 2>/dev/null || cd /
 fi
 
-# =============================================================
-# Definir DSM_ROOT
-# =============================================================
-
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
 export DSM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# =============================================================
-# Bootstrap
-# =============================================================
-
 BOOTSTRAP="${DSM_ROOT}/core/bootstrap.sh"
-
 if [ ! -f "${BOOTSTRAP}" ]
 then
     echo "Bootstrap não encontrado:"
@@ -59,10 +42,6 @@ source "${BOOTSTRAP}"
 export DSM_DATABASE_DRIVER DSM_DATABASE DSM_DATABASE_HOST DSM_DATABASE_PORT
 export DSM_DATABASE_NAME DSM_DATABASE_USER DSM_DATABASE_PASSWORD_FILE
 export DSM_DATABASE_TLS
-
-# =============================================================
-# Update Manager
-# =============================================================
 
 update_command()
 {
@@ -80,18 +59,9 @@ update_command()
     source "${module}"
 
     case "${ACTION}" in
-        check)
-            dsm_update_check
-            ;;
-
-        run)
-            dsm_update_run
-            ;;
-
-        history)
-            dsm_update_history
-            ;;
-
+        check) dsm_update_check ;;
+        run) dsm_update_run ;;
+        history) dsm_update_history ;;
         *)
             echo "Uso:" >&2
             echo "  cap update check" >&2
@@ -101,10 +71,6 @@ update_command()
             ;;
     esac
 }
-
-# =============================================================
-# Helpers
-# =============================================================
 
 section()
 {
@@ -121,120 +87,113 @@ cat <<'EOF'
 
 ============================================================
  Capivara Distributed Server Manager
- CLI DSM de compatibilidade / baixo nível
+ Camada interna de compatibilidade / baixo nível
 ============================================================
 
-Uso:
-  dsm <comando> [argumentos]
+Uso público:
+  cap <comando> [argumentos]
 
-CLI principal:
-  cap help             Mostra comandos disponíveis para a role local
-  cap help --all       Mostra todos os comandos do Capivara
+Ajuda canônica:
+  cap help
+  cap help --all
 
 Servidor de jogo:
-  dsm server start <game> <instance>
-  dsm server stop <game> <instance>
-  dsm server restart <game> <instance>
-  dsm server status <game> <instance>
-  dsm server validate <game> <instance>
+  cap server start <game> <instance>
+  cap server stop <game> <instance>
+  cap server restart <game> <instance>
+  cap server status <game> <instance>
+  cap server validate <game> <instance>
 
 Diagnóstico:
-  dsm doctor run       Executa diagnóstico completo
-  dsm doctor status    Mostra o último diagnóstico
-  dsm monitor          Executa diagnóstico do monitor local
+  cap doctor run
+  cap doctor status
+  cap monitor
 
 Mods:
-  dsm mods install ...
-  dsm mods update ...
-  dsm mods verify ...
-  dsm mods rollback ...
-  dsm mods keys ...
-  dsm mods state ...
+  cap mods install ...
+  cap mods update ...
+  cap mods verify ...
+  cap mods rollback ...
+  cap mods keys ...
+  cap mods state ...
 
 Backup local:
-  dsm backup create
-  dsm backup restore <arquivo>
-  dsm backup snapshot
+  cap backup create
+  cap backup restore <arquivo>
+  cap backup snapshot
 
 Configuração e atualização:
-  dsm config show
-  dsm update check
-  dsm update run
-  dsm update history
+  cap config show
+  cap update check
+  cap update run
+  cap update history
 
 Steam:
-  dsm steam auth
+  cap steam auth
 
 Runtime:
-  dsm runtime <comando> [argumentos]
+  cap runtime <comando> [argumentos]
 
 Usuários:
-  dsm user add <usuario> <admin|operator|controller|customer> [scope]
-  dsm user remove <usuario>
-  dsm user passwd <usuario>
-  dsm user list
+  cap user add <usuario> <admin|operator|controller|customer> [scope]
+  cap user remove <usuario>
+  cap user passwd <usuario>
+  cap user list
 
 Games:
-  dsm game install <environment-id> <version|latest|current>
-  dsm game show <environment-id> <version|latest|current>
+  cap game install <environment-id> <version|latest|current>
+  cap game show <environment-id> <version|latest|current>
 
 Catálogo e conteúdo:
-  dsm catalog runtime list [game]
-  dsm catalog runtime show <runtime-id>
-  dsm catalog runtime prepare <runtime-id> <version>
-  dsm content list [game]
-  dsm content show <content-id>
-  dsm content plan <request.json> <instance-path>
-  dsm content install <request.json> <instance-path>
-  dsm content remove <instance-path> <content-id>
-  dsm content list-installed <instance-path>
-  dsm content verify <instance-path>
-  dsm content rollback <instance-path>
-  dsm compatibility check <request.json>
+  cap catalog runtime list [game]
+  cap catalog runtime show <runtime-id>
+  cap catalog runtime prepare <runtime-id> <version>
+  cap content list [game]
+  cap content show <content-id>
+  cap content plan <request.json> <instance-path>
+  cap content install <request.json> <instance-path>
+  cap content remove <instance-path> <content-id>
+  cap content list-installed <instance-path>
+  cap content verify <instance-path>
+  cap content rollback <instance-path>
+  cap compatibility check <request.json>
 
   Use --json nos comandos catalog/content/compatibility quando suportado
   para saída estruturada destinada a scripts e APIs.
 
 Agents - portas:
-  dsm agent ports show <agent-id>
-  dsm agent ports set <agent-id> <inicio> <fim> [--protocol tcp|udp|both]
-  dsm agent ports check <agent-id>
+  cap agent ports show <agent-id>
+  cap agent ports set <agent-id> <inicio> <fim> [--protocol tcp|udp|both]
+  cap agent ports check <agent-id>
 
 Database:
-  dsm database init
-  dsm database migrate
-  dsm database status
-  dsm database check
-  dsm database backup <arquivo>
-  dsm database restore <arquivo> --confirm-restore
+  cap database init
+  cap database migrate
+  cap database status
+  cap database check
+  cap database backup <arquivo>
+  cap database restore <arquivo> --confirm-restore
 
 Operação:
-  dsm operations readiness
+  cap operations readiness
 
 Manutenção de instâncias:
-  dsm instance bootstrap ...
-  dsm instance bootstrap-status ...
-  dsm instance purge-orphan <instance-id>
+  cap instance bootstrap ...
+  cap instance bootstrap-status ...
+  cap instance purge-orphan <instance-id>
 
 Administração atual de Controller, Customer, Contract, Agent e Instance:
-  use o CLI principal `cap`.
+  use sempre a CLI pública `cap`.
 
 ============================================================
 EOF
 }
 
-# =============================================================
-# Servidor
-# =============================================================
 server_command()
 {
     local ACTION="${1:-}"
     local GAME="${2:-}"
     local INSTANCE="${3:-}"
-
-    # =========================================================
-    # Contexto da operação
-    # =========================================================
 
     if [[ -n "${GAME}" ]]
     then
@@ -246,20 +205,14 @@ server_command()
         export DSM_INSTANCE_ID="${INSTANCE}"
     fi
 
-    # =========================================================
-    # Validação
-    # =========================================================
-
     case "${ACTION}" in
-
         start|stop|restart|status|validate|publish)
-
             if [[ -z "${GAME_ID:-}" ]]
             then
                 echo "GAME_ID não definido."
                 echo
                 echo "Uso:"
-                echo "  dsm server ${ACTION} <game> <instance>"
+                echo "  cap server ${ACTION} <game> <instance>"
                 return 1
             fi
 
@@ -268,189 +221,139 @@ server_command()
                 echo "DSM_INSTANCE_ID não definido."
                 echo
                 echo "Uso:"
-                echo "  dsm server ${ACTION} <game> <instance>"
+                echo "  cap server ${ACTION} <game> <instance>"
                 return 1
             fi
-
-        ;;
-
+            ;;
     esac
 
-    # =========================================================
-    # Router
-    # =========================================================
-
     case "${ACTION}" in
-
         start)
             source "${DSM_ROOT}/server/start.sh"
             server_start
-        ;;
-
+            ;;
         stop)
             source "${DSM_ROOT}/server/stop.sh"
             server_stop
-        ;;
-
+            ;;
         restart)
             source "${DSM_ROOT}/server/restart.sh"
             server_restart
-        ;;
-
+            ;;
         status)
             source "${DSM_ROOT}/server/status.sh"
             server_status
-        ;;
-
+            ;;
         validate)
             source "${DSM_ROOT}/server/validate.sh"
             server_validate
-        ;;
-
+            ;;
         publish)
             source "${DSM_ROOT}/core/runtime/publisher.sh"
             publish_server_state
-        ;;
-
+            ;;
         *)
             usage
             return 1
-        ;;
-
+            ;;
     esac
 }
 
-# =============================================================
-# Doctor
-# =============================================================
-
 doctor_command()
 {
-case "${1:-run}" in
-
-run)
-    source "${DSM_ROOT}/doctor/runner.sh"
-;;
-
-status)
-    if [[ -f "${DSM_ROOT}/core/lib/runtime.sh" ]]
-    then
-        source "${DSM_ROOT}/core/lib/runtime.sh"
-        runtime_init
-        runtime_get doctor
-    else
-        echo "Runtime indisponível."
-        return 1
-    fi
-;;
-
-*)
-    echo
-    echo "Uso:"
-    echo " dsm doctor run"
-    echo " dsm doctor status"
-    echo
-    return 1
-;;
-
-esac
+    case "${1:-run}" in
+        run)
+            source "${DSM_ROOT}/doctor/runner.sh"
+            ;;
+        status)
+            if [[ -f "${DSM_ROOT}/core/lib/runtime.sh" ]]
+            then
+                source "${DSM_ROOT}/core/lib/runtime.sh"
+                runtime_init
+                runtime_get doctor
+            else
+                echo "Runtime indisponível."
+                return 1
+            fi
+            ;;
+        *)
+            echo
+            echo "Uso:"
+            echo " cap doctor run"
+            echo " cap doctor status"
+            echo
+            return 1
+            ;;
+    esac
 }
-
-# =============================================================
-# Monitor
-# =============================================================
 
 monitor_command()
 {
-local module="${DSM_ROOT}/monitor/diagnose.sh"
+    local module="${DSM_ROOT}/monitor/diagnose.sh"
 
-if [[ ! -f "${module}" ]]
-then
-    log_error \
-    "Módulo Monitor não encontrado:"
-    echo "${module}"
-    return 1
-fi
+    if [[ ! -f "${module}" ]]
+    then
+        log_error "Módulo Monitor não encontrado:"
+        echo "${module}"
+        return 1
+    fi
 
-source "${module}"
-diagnose_run "$@"
+    source "${module}"
+    diagnose_run "$@"
 }
-
-# =============================================================
-# Mods
-# =============================================================
 
 mods_dispatch()
 {
-local module="${DSM_ROOT}/mods/mods.sh"
+    local module="${DSM_ROOT}/mods/mods.sh"
 
-if [[ ! -f "${module}" ]]
-then
-    log_error \
-    "Dispatcher de Mods não encontrado:"
-    echo "${module}"
-    return 1
-fi
+    if [[ ! -f "${module}" ]]
+    then
+        log_error "Dispatcher de Mods não encontrado:"
+        echo "${module}"
+        return 1
+    fi
 
-bash "${module}" "$@"
+    bash "${module}" "$@"
 }
-
-# =============================================================
-# Backup
-# =============================================================
 
 backup_command()
 {
-case "${1:-}" in
-
-create)
-    source "${DSM_ROOT}/backup/create.sh"
-    backup_create
-;;
-
-restore)
-    source "${DSM_ROOT}/backup/restore.sh"
-    restore_backup "$2"
-;;
-
-snapshot)
-    source "${DSM_ROOT}/backup/snapshot.sh"
-    snapshot_create
-;;
-
-*)
-echo
-echo "Uso:"
-echo " dsm backup create"
-echo " dsm backup restore arquivo"
-echo " dsm backup snapshot"
-;;
-esac
+    case "${1:-}" in
+        create)
+            source "${DSM_ROOT}/backup/create.sh"
+            backup_create
+            ;;
+        restore)
+            source "${DSM_ROOT}/backup/restore.sh"
+            restore_backup "$2"
+            ;;
+        snapshot)
+            source "${DSM_ROOT}/backup/snapshot.sh"
+            snapshot_create
+            ;;
+        *)
+            echo
+            echo "Uso:"
+            echo " cap backup create"
+            echo " cap backup restore arquivo"
+            echo " cap backup snapshot"
+            ;;
+    esac
 }
-
-# =============================================================
-# Configuração
-# =============================================================
 
 config_command()
 {
-case "${1:-}" in
-
-show)
-    config_show
-;;
-
-*)
-echo
-echo "Uso:"
-echo " dsm config show"
-;;
-esac
+    case "${1:-}" in
+        show)
+            config_show
+            ;;
+        *)
+            echo
+            echo "Uso:"
+            echo " cap config show"
+            ;;
+    esac
 }
-
-# =============================================================
-# Instalação de jogos
-# =============================================================
 
 game_command()
 {
@@ -462,7 +365,7 @@ game_command()
             exec "${DSM_ROOT}/installer/install_selection.sh" "${ACTION}" "$@"
             ;;
         *)
-            echo "Uso: dsm game install|show <environment-id> <version|latest|current>" >&2
+            echo "Uso: cap game install|show <environment-id> <version|latest|current>" >&2
             return 2
             ;;
     esac
@@ -487,13 +390,11 @@ steam_command()
             then
                 unset DSM_STEAM_USER 2>/dev/null || true
                 unset STEAM_USER 2>/dev/null || true
-
                 # shellcheck source=/dev/null
                 source "${CONF}"
             fi
 
             local USER="${DSM_STEAM_USER:-${STEAM_USER:-}}"
-
             if [[ -z "${USER}" ]]
             then
                 echo "Usuário Steam não configurado." >&2
@@ -504,14 +405,12 @@ steam_command()
 
             # shellcheck source=/dev/null
             source "${PROVIDER}"
-
             steam_provider_authenticate "${USER}"
-        ;;
-
+            ;;
         *)
-            echo "Uso: dsm steam auth" >&2
+            echo "Uso: cap steam auth" >&2
             return 2
-        ;;
+            ;;
     esac
 }
 
@@ -544,7 +443,7 @@ instance_command()
             shift
             if [[ $# -ne 1 ]]
             then
-                echo "Uso: dsm instance purge-orphan <instance-id>" >&2
+                echo "Uso: cap instance purge-orphan <instance-id>" >&2
                 return 2
             fi
             exec python3 "${DSM_ROOT}/database/registry.py" \
@@ -562,16 +461,13 @@ agent_command()
     case "${RESOURCE}" in
         ports)
             shift
-            exec python3 \
-                "${DSM_ROOT}/database/agent_ports_cli.py" \
-                "$@"
+            exec python3 "${DSM_ROOT}/database/agent_ports_cli.py" "$@"
             ;;
-
         *)
             echo "Uso:" >&2
-            echo "  dsm agent ports show <agent-id>" >&2
-            echo "  dsm agent ports set <agent-id> <inicio> <fim> [--protocol tcp|udp|both]" >&2
-            echo "  dsm agent ports check <agent-id>" >&2
+            echo "  cap agent ports show <agent-id>" >&2
+            echo "  cap agent ports set <agent-id> <inicio> <fim> [--protocol tcp|udp|both]" >&2
+            echo "  cap agent ports check <agent-id>" >&2
             return 2
             ;;
     esac
@@ -583,146 +479,113 @@ operations_command()
         --root "${DSM_ROOT}" "$@"
 }
 
-# =============================================================
-# Entrada principal
-# =============================================================
-
 case "${1:-}" in
-
-start|stop|restart|status)
-    server_command "$@"
-;;
-
-server)
-    shift
-    server_command "$@"
-;;
-
-doctor)
-    shift
-
-    source "${DSM_ROOT}/doctor/doctor.sh"
-
-    case "${1:-run}" in
-
-        run)
-            doctor_run
+    start|stop|restart|status)
+        server_command "$@"
         ;;
+    server)
+        shift
+        server_command "$@"
+        ;;
+    doctor)
+        shift
+        source "${DSM_ROOT}/doctor/doctor.sh"
+        case "${1:-run}" in
+            run)
+                doctor_run
+                ;;
+            status)
+                if ! declare -F runtime_get >/dev/null
+                then
+                    echo "Runtime indisponível."
+                    exit 1
+                fi
 
-        status)
+                DATA="$(runtime_get doctor)"
+                if [[ -z "${DATA}" ]]
+                then
+                    echo "Nenhum diagnóstico disponível."
+                    echo
+                    echo "Execute:"
+                    echo " cap doctor run"
+                    exit 1
+                fi
 
-            if ! declare -F runtime_get >/dev/null
-            then
-                echo "Runtime indisponível."
-                exit 1
-            fi
-
-            DATA="$(runtime_get doctor)"
-
-            if [[ -z "${DATA}" ]]
-            then
-                echo "Nenhum diagnóstico disponível."
+                doctor_format_status "${DATA}"
+                ;;
+            *)
                 echo
-                echo "Execute:"
-                echo " dsm doctor run"
-                exit 1
-            fi
-
-            doctor_format_status "${DATA}"
-
+                echo "Uso:"
+                echo " cap doctor run"
+                echo " cap doctor status"
+                ;;
+        esac
         ;;
-
-        *)
-            echo
-            echo "Uso:"
-            echo " dsm doctor run"
-            echo " dsm doctor status"
-            ;;
-
-    esac
-;;
-
-monitor)
-    shift
-    monitor_command "$@"
-;;
-
-mods)
-    shift
-    mods_dispatch "$@"
-;;
-
-backup)
-    shift
-    backup_command "$@"
-;;
-
-user)
-    shift
-    exec "$DSM_ROOT/core/user_manager.sh" "$@"
-;;
-
-runtime)
-    shift
-    "${DSM_ROOT}/bin/dsm-runtime" "$@"
-;;
-
-config)
-    shift
-    config_command "$@"
-;;
-
-steam)
-    shift
-    steam_command "$@"
-;;
-
-game)
-    shift
-    game_command "$@"
-;;
-
-catalog)
-    shift
-    catalog_command "$@"
-;;
-
-content)
-    shift
-    catalog_command content "$@"
-;;
-
-compatibility)
-    shift
-    catalog_command compatibility "$@"
-;;
-
-update)
-    shift
-    update_command "$@"
-;;
-
-database|db)
-    shift
-    database_command "$@"
-;;
-
-agent)
-    shift
-    agent_command "$@"
-;;
-
-instance)
-    shift
-    instance_command "$@"
-;;
-
-operations|ops)
-    shift
-    operations_command "$@"
-;;
-
-*)
-    usage
-;;
+    monitor)
+        shift
+        monitor_command "$@"
+        ;;
+    mods)
+        shift
+        mods_dispatch "$@"
+        ;;
+    backup)
+        shift
+        backup_command "$@"
+        ;;
+    user)
+        shift
+        exec "$DSM_ROOT/core/user_manager.sh" "$@"
+        ;;
+    runtime)
+        shift
+        "${DSM_ROOT}/bin/dsm-runtime" "$@"
+        ;;
+    config)
+        shift
+        config_command "$@"
+        ;;
+    steam)
+        shift
+        steam_command "$@"
+        ;;
+    game)
+        shift
+        game_command "$@"
+        ;;
+    catalog)
+        shift
+        catalog_command "$@"
+        ;;
+    content)
+        shift
+        catalog_command content "$@"
+        ;;
+    compatibility)
+        shift
+        catalog_command compatibility "$@"
+        ;;
+    update)
+        shift
+        update_command "$@"
+        ;;
+    database|db)
+        shift
+        database_command "$@"
+        ;;
+    agent)
+        shift
+        agent_command "$@"
+        ;;
+    instance)
+        shift
+        instance_command "$@"
+        ;;
+    operations|ops)
+        shift
+        operations_command "$@"
+        ;;
+    *)
+        usage
+        ;;
 esac
