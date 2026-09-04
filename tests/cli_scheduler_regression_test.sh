@@ -49,6 +49,12 @@ CONFIG_OUTPUT="$(bash -c 'source "$1/core/bootstrap.sh" >/dev/null; exec "$1/bin
 grep -Fq 'DSM_DATABASE_DRIVER=' <<<"${CONFIG_OUTPUT}" \
     || fail "legacy CLI handoff did not reload bootstrap/config_show"
 
+# automation_cli.py is launched directly from database/. Its dependency graph
+# imports top-level core modules, so --help must work without any ambient
+# PYTHONPATH from a development checkout or systemd service.
+env -u PYTHONPATH python3 "${ROOT}/database/automation_cli.py" --help >/dev/null \
+    || fail "automation CLI cannot resolve repository-root Python modules"
+
 bash "${ROOT}/tests/scheduler_management_test.sh"
 bash "${ROOT}/tests/update_handoff_test.sh"
 
