@@ -29,6 +29,7 @@ from capabilities import detect_capabilities
 from host_telemetry import collect_host_telemetry
 from network_inventory import collect_network_inventory
 from agent_runtime_repository import AgentRuntimeRepository
+from observability_repository import ObservabilityRepository
 from registry_repository import RegistryRepository
 
 
@@ -170,6 +171,24 @@ def _default_inventory(root: Path, *, hostname: str) -> dict[str, Any]:
     }
 
 
+def _ingest_hybrid_observability(
+    repository: RegistryRepository,
+    agent_id: str,
+    telemetry: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(telemetry, dict):
+        return None
+
+    from agent_heartbeat_api import _observability_from_heartbeat
+
+    body = {"telemetry": telemetry}
+    samples = _observability_from_heartbeat(agent_id, body)
+
+    metrics = ObservabilityRepository(repository.backend)
+    metrics.initialize()
+    return metrics.ingest_agent_samples(agent_id, samples)
+
+
 def _store_hybrid_telemetry(
     repository: RegistryRepository,
     agent_id: str,
@@ -253,7 +272,13 @@ def reconcile_local_hybrid_runtime(
         storage=facts.get("storage", {}),
         network=facts.get("network", {}),
     )
-    _store_hybrid_telemetry(repository, agent_id, facts.get("telemetry"))
+    telemetry = facts.get("telemetry")
+    _store_hybrid_telemetry(repository, agent_id, telemetry)
+    observability = _ingest_hybrid_observability(
+        repository,
+        agent_id,
+        telemetry,
+    )
     last_seen = runtime.heartbeat(agent_id)
     snapshot = runtime.snapshot(agent_id)
 
@@ -263,7 +288,8 @@ def reconcile_local_hybrid_runtime(
         "health_status": snapshot.get("health_status"),
         "last_seen": last_seen,
         "capabilities": snapshot.get("capabilities", {}),
-        "telemetry": facts.get("telemetry", {}),
+        "telemetry": telemetry or {},
+        "observability": observability or {},
         "port_ranges": snapshot.get("port_ranges", []),
     }
 
