@@ -214,5 +214,49 @@ class ControllerProvisioningQueueTest(unittest.TestCase):
             )
 
 
+    def test_latest_for_instance_returns_most_recent(self):
+        first = self.jobs.enqueue(
+            agent_id="agent-b10",
+            instance_id="instance-b10",
+            environment_id="dayz.stable",
+            selector="stable",
+            selection={"game": "dayz"},
+            desired_state="running",
+        )
+
+        self.jobs.apply_result(
+            "agent-b10",
+            {
+                "provisioning_id": first["provisioning_id"],
+                "instance_id": "instance-b10",
+                "status": "completed",
+                "current_step": "completed",
+                "progress": 100,
+                "observed_state": "stopped",
+            },
+        )
+
+        second = self.jobs.enqueue(
+            agent_id="agent-b10",
+            instance_id="instance-b10",
+            environment_id="dayz.stable",
+            selector="stable",
+            selection={"game": "dayz"},
+            desired_state="running",
+        )
+
+        latest = self.jobs.latest_for_instance("instance-b10")
+
+        self.assertIsNotNone(latest)
+        self.assertEqual(
+            second["provisioning_id"],
+            latest["provisioning_id"],
+        )
+        self.assertNotEqual(
+            first["provisioning_id"],
+            latest["provisioning_id"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

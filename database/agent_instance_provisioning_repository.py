@@ -238,6 +238,23 @@ class AgentInstanceProvisioningRepository:
         )
         return state
 
+    def latest_for_instance(self, instance_id: str) -> dict[str, Any] | None:
+        instance_id = str(instance_id or "").strip()
+        if not instance_id:
+            raise ValueError("instance_id is required")
+        ph = self.dialect.placeholder
+        with self.session() as session:
+            row = session.execute(
+                "SELECT provisioning_id FROM agent_instance_provisioning "
+                f"WHERE instance_id={ph} "
+                "ORDER BY CASE WHEN status IN ('queued','delivered','running') THEN 0 ELSE 1 END, "
+                "created_at DESC, updated_at DESC, provisioning_id DESC LIMIT 1",
+                (instance_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self.snapshot(str(row["provisioning_id"]))
+
     def snapshot(self, provisioning_id: str) -> dict[str, Any]:
         ph = self.dialect.placeholder
         with self.session() as session:

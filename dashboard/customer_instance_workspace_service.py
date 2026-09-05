@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 from alert_repository import AlertSession,dialect_for_backend
+from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
+from instance_provisioning_projection import dashboard_provision_state
 from backup_repository import BackupRepository
 from catalog_resource_profiles_http import catalog_resource_profiles
 from instance_file_repository import InstanceFileRepository
@@ -19,7 +21,7 @@ def _json(value,default):
  return result if isinstance(result,type(default)) else default
 
 class CustomerInstanceWorkspaceService:
- def __init__(self,backend,root:Path):self.backend=backend;self.root=Path(root);self.repo=InstanceWorkspaceRepository(backend);self.files=InstanceFileRepository(backend);self.backups=BackupRepository(backend);self.dialect=dialect_for_backend(backend)
+ def __init__(self,backend,root:Path):self.backend=backend;self.root=Path(root);self.repo=InstanceWorkspaceRepository(backend);self.provisioning=AgentInstanceProvisioningRepository(backend);self.files=InstanceFileRepository(backend);self.backups=BackupRepository(backend);self.dialect=dialect_for_backend(backend)
  def _session(self,c):return AlertSession(self.backend,c)
  def permissions(self,user:dict[str,Any],instance_id:str)->set[str]:
   role=str((user or {}).get("role") or "").lower()
@@ -51,7 +53,7 @@ class CustomerInstanceWorkspaceService:
   context=self.require(user,instance_id,"instance.view");policy=self.repo.workspace_policy(instance_id);permissions=self.permissions(user,instance_id);telemetry=(self.repo.telemetry(instance_id,1) or [{}])[-1];location=self._location(str(context.get("agent_id") or ""));capabilities,content=self._contract_policy(context,policy);agent_meta=location.get("agent_metadata") if isinstance(location.get("agent_metadata"),dict) else {};latest={}
   for item in agent_meta.get("instance_telemetry") or []:
    if isinstance(item,dict) and str(item.get("instance_id"))==instance_id:latest=item
-  telemetry={**latest,**telemetry};storage_limit=policy.get("storage_limit_bytes");used=telemetry.get("storage_used_bytes");storage_pct=(float(used)/float(storage_limit)*100) if used is not None and storage_limit else None;metadata=context.get("instance_metadata") if isinstance(context.get("instance_metadata"),dict) else {};provision=metadata.get("provision") if isinstance(metadata,dict) else None
+  telemetry={**latest,**telemetry};storage_limit=policy.get("storage_limit_bytes");used=telemetry.get("storage_used_bytes");storage_pct=(float(used)/float(storage_limit)*100) if used is not None and storage_limit else None;metadata=context.get("instance_metadata") if isinstance(context.get("instance_metadata"),dict) else {};legacy_provision=metadata.get("provision") if isinstance(metadata,dict) else None;distributed_provision=self.provisioning.latest_for_instance(instance_id);provision=dashboard_provision_state(distributed_provision) if distributed_provision is not None else legacy_provision
   if isinstance(provision,dict) and str(provision.get("stage") or "").lower()=="completed" and int(provision.get("progress") or 0)>=100:provision=None
   return {"instance":{k:context.get(k) for k in ("id","name","game_id","edition","runtime_id","variant","game_version","status","agent_id","contract_id")},"permissions":sorted(permissions),"policy":policy,"content_policy":content.as_dict(),"content_sections":[x for x in ("mods","plugins","workshop") if content.as_dict().get(f"{x}_allowed")],"runtime_capabilities":capabilities,"ports":self._ports(instance_id),"location":{k:location.get(k) for k in ("public_host","datacenter_id","datacenter_name","city","country_code","region_id","region_name","region_country_code","agent_name")},"telemetry":telemetry,"storage":{"used_bytes":used,"limit_bytes":storage_limit,"percent":storage_pct},"provision":provision,"console":{"read":"console.read" in permissions,"execute":"console.execute" in permissions,"supported":bool((capabilities.get("console") or {}).get("supported"))},"upgrade":{"allowed":"contract.upgrade" in permissions,"current_profile_id":policy.get("resource_profile_id")}}
  def telemetry(self,user,instance_id,limit=240):self.require(user,instance_id,"instance.view");return self.repo.telemetry(instance_id,limit)

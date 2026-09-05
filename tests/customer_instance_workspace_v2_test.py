@@ -6,7 +6,8 @@ import unittest
 ROOT=Path(__file__).resolve().parents[1]
 for path in (ROOT/"dashboard",ROOT/"database",ROOT/"core"):
  if str(path) not in sys.path:sys.path.insert(0,str(path))
-from customer_instance_policy import effective_permissions,enforce_content_upload,effective_content_policy
+from customer_instance_policy import PERMISSION_PRESETS,effective_permissions,enforce_content_upload,effective_content_policy
+from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from instance_team_repository import InstanceTeamRepository
 from runtime_workspace_catalog import allowed_runtimes,runtime_allowed_by_contract
 from schema_baseline import load_schema_baseline
@@ -71,5 +72,57 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   self.assertIn('item.get("direction")!="controller_to_agent"',text)
   self.assertIn('str(item.get("status") or "")!="completed"',text)
   self.assertIn('action="restore",backup_id=backup_id',text)
+
+ def test_manager_can_retry_failed_provisioning(self):
+  self.assertIn("instance.provision.retry",PERMISSION_PRESETS["manager"])
+  self.assertNotIn("instance.provision.retry",PERMISSION_PRESETS["viewer"])
+
+ def test_overview_prefers_distributed_provisioning_state(self):
+  service=CustomerInstanceWorkspaceService.__new__(CustomerInstanceWorkspaceService)
+  service.permissions=lambda user,instance_id:{"instance.view","instance.provision.retry"}
+  service.require=lambda user,instance_id,permission:{
+   "id":instance_id,
+   "name":"Test instance",
+   "game_id":"dayz",
+   "edition":"default",
+   "runtime_id":"dayz.stable",
+   "variant":"stable",
+   "game_version":"current",
+   "status":"failed",
+   "agent_id":"agent-1",
+   "contract_id":None,
+   "instance_metadata":{"provision":{"status":"queued","stage":"legacy","progress":10}},
+  }
+  service.repo=type("Repo",(),{
+   "workspace_policy":lambda self,instance_id:{},
+   "telemetry":lambda self,instance_id,limit:[],
+  })()
+  service.provisioning=type("Provisioning",(),{
+   "latest_for_instance":lambda self,instance_id:{
+    "provisioning_id":"prov-2",
+    "instance_id":instance_id,
+    "status":"failed",
+    "current_step":"install_content",
+    "progress":100,
+    "last_error":"boom",
+    "result":{},
+   }
+  })()
+  service._location=lambda agent_id:{}
+  service._contract_policy=lambda context,policy:(
+   {},
+   type("Content",(),{"as_dict":lambda self:{}})(),
+  )
+  service._ports=lambda instance_id:[]
+
+  result=service.overview(
+   {"role":"customer","username":"owner"},
+   "instance-1",
+  )
+
+  self.assertEqual("failed",result["provision"]["status"])
+  self.assertEqual("install_content",result["provision"]["stage"])
+  self.assertEqual(100,result["provision"]["progress"])
+  self.assertEqual("prov-2",result["provision"]["provisioning_id"])
 
 if __name__=="__main__":unittest.main()

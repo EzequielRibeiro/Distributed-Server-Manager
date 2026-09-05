@@ -7,7 +7,7 @@ from pathlib import PurePosixPath
 from typing import Any, Iterable
 
 INSTANCE_PERMISSIONS = frozenset({
-    "instance.view", "instance.start", "instance.stop", "instance.restart", "instance.delete",
+    "instance.view", "instance.start", "instance.stop", "instance.restart", "instance.delete", "instance.provision.retry",
     "console.read", "console.execute",
     "files.read", "files.download", "files.upload", "files.edit", "files.delete", "files.move", "files.extract",
     "backup.read", "backup.create", "backup.download", "backup.restore", "backup.delete",
