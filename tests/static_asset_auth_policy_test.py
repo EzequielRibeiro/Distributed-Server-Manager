@@ -47,7 +47,9 @@ class StaticAssetAuthPolicyTest(unittest.TestCase):
         customer = self.policy.CUSTOMER_STATIC_PATHS
         for path in {
             "/customer-instance.html",
+            "/customer-instance-v2.css",
             "/customer-instance-v2.js",
+            "/customer-instance-core.js",
             "/customer-navigation.js",
             "/create-server-wizard.js",
         }:
