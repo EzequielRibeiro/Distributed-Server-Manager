@@ -13,7 +13,6 @@ sys.path.insert(0, str(ROOT / "database"))
 from backend import DatabaseConfig
 from backend_factory import create_backend
 from dashboard_repository import DashboardRepository, _json_ready_row
-from registry_repository import RegistryRepository
 
 
 class DashboardRepositoryTest(unittest.TestCase):
@@ -24,11 +23,79 @@ class DashboardRepositoryTest(unittest.TestCase):
         ))
         self.repository = DashboardRepository(backend)
         self.repository.initialize()
-        RegistryRepository(backend).create_aurora(
-            password_hash="hash",
-            manifest_path="manifest",
-            metadata_json="{}",
-        )
+        with self.repository.session(transaction=True) as session:
+            session.execute(
+                "INSERT INTO nodes(id,name,role,status) VALUES (?,?,?,?)",
+                ("DemoNode", "Demo Node", "hybrid", "active"),
+            )
+            session.execute(
+                "INSERT INTO controllers(id,node_id,name,status) VALUES (?,?,?,?)",
+                (
+                    "controller-demo",
+                    "DemoNode",
+                    "Controller Demo",
+                    "active",
+                ),
+            )
+            session.execute(
+                "INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)",
+                (
+                    1,
+                    "controller-demo",
+                    "Aurora",
+                    "active",
+                ),
+            )
+            session.execute(
+                "INSERT INTO dashboard_users("
+                "username,password_hash,role,scope_id,active,customer_id"
+                ") VALUES (?,?,?,?,?,?)",
+                (
+                    "aurora",
+                    "hash",
+                    "customer",
+                    "CLI-000001",
+                    1,
+                    1,
+                ),
+            )
+            session.execute(
+                "INSERT INTO agents("
+                "id,node_id,controller_id,name,status"
+                ") VALUES (?,?,?,?,?)",
+                (
+                    "agent-demo",
+                    "DemoNode",
+                    "controller-demo",
+                    "Demo Agent",
+                    "active",
+                ),
+            )
+            session.execute(
+                "INSERT INTO instances("
+                "id,node_id,game_id,edition,runtime_id,version,name,status,"
+                "manifest_path,metadata_json,controller_id,agent_id,customer_id,"
+                "variant,game_version,build_id"
+                ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    "cliente-demo",
+                    "DemoNode",
+                    "minecraft",
+                    "default",
+                    "minecraft.java",
+                    "current",
+                    "Cliente Demo",
+                    "offline",
+                    "manifest",
+                    "{}",
+                    "controller-demo",
+                    "agent-demo",
+                    1,
+                    "vanilla",
+                    "current",
+                    "current",
+                ),
+            )
 
     def tearDown(self):
         self.repository.close()
@@ -51,11 +118,24 @@ class DashboardRepositoryTest(unittest.TestCase):
         self.assertIn(("DemoNode", "minecraft", "cliente-demo"),
                       self.repository.registered_instances())
 
+    def test_registered_instance_records_exposes_database_identity(self):
+        records = self.repository.registered_instance_records()
+
+        record = next(
+            item
+            for item in records
+            if item["id"] == "cliente-demo"
+        )
+
+        self.assertEqual(record["node_id"], "DemoNode")
+        self.assertEqual(record["game_id"], "minecraft")
+        self.assertIn("status", record)
+
     def test_users_scopes_audit_and_delete(self):
         self.assertEqual(self.repository.load_users()[0]["username"], "aurora")
         options = self.repository.scope_options()
         self.assertEqual(options["controllers"][0]["id"], "controller-demo")
-        self.assertEqual(options["customers"][0]["id"], "CLI-DEMO-001")
+        self.assertEqual(options["customers"][0]["id"], 1)
         self.repository.write_audit("aurora", "cliente-demo", "test", "success", None)
         self.assertEqual(self.repository.delete_instance("cliente-demo"), 1)
 

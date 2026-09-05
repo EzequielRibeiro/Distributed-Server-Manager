@@ -2961,57 +2961,54 @@ def api_runtime_list(database_path=DATABASE_FILE):
     root = DSM_ROOT / "runtime" / "resources"
     resources = []
 
-    if not root.exists():
-        return []
-
     try:
         registered = dashboard_repository(
             database_path
-        ).registered_instances()
+        ).registered_instance_records()
     except Exception:
-        registered = None
+        registered = []
 
-    for server_dir in root.iterdir():
-        if not server_dir.is_dir():
+    for row in registered:
+        server = str(row.get("node_id") or "")
+        game = str(row.get("game_id") or "")
+        instance = str(row.get("id") or "")
+
+        if not server or not game or not instance:
             continue
 
-        for game_dir in server_dir.iterdir():
-            if not game_dir.is_dir():
-                continue
+        resource = {
+            "server": server,
+            "game": game,
+            "instance": instance,
+            "status": row.get("status") or "unknown",
+            "health": "unknown",
+        }
 
-            for instance_dir in game_dir.iterdir():
-                if not instance_dir.is_dir():
-                    continue
-                identity = (server_dir.name, game_dir.name, instance_dir.name)
-                if registered is not None and identity not in registered:
-                    continue
+        instance_dir = root / server / game / instance
 
-                server_state = read_json(instance_dir / "server.json", {})
-                instance_metadata = read_json(instance_dir / "instance.json", {})
-                if not valid_instance_metadata(instance_metadata):
-                    continue
+        if instance_dir.is_dir():
+            server_state = read_json(instance_dir / "server.json", {})
+            instance_metadata = read_json(instance_dir / "instance.json", {})
 
+            if valid_instance_metadata(instance_metadata):
                 raw_status = server_state.get("status", {})
-                status = (
-                    raw_status.get("state", "unknown")
-                    if isinstance(raw_status, dict)
-                    else raw_status
-                )
-                health = (
-                    raw_status.get("health", server_state.get("health", "unknown"))
-                    if isinstance(raw_status, dict)
-                    else server_state.get("health", "unknown")
-                )
+                if isinstance(raw_status, dict):
+                    resource["status"] = raw_status.get(
+                        "state",
+                        resource["status"],
+                    )
+                    resource["health"] = raw_status.get(
+                        "health",
+                        server_state.get("health", "unknown"),
+                    )
+                else:
+                    resource["status"] = raw_status or resource["status"]
+                    resource["health"] = server_state.get(
+                        "health",
+                        "unknown",
+                    )
 
-                resources.append(
-                    {
-                        "server": server_dir.name,
-                        "game": game_dir.name,
-                        "instance": instance_dir.name,
-                        "status": status,
-                        "health": health,
-                    }
-                )
+        resources.append(resource)
 
     return resources
 

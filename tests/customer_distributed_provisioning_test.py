@@ -41,7 +41,7 @@ class _FakeProvisioningRepository:
 class _FakeDashboardRepository:
     def __init__(self, root: Path):
         self.root = root
-        self.backend = object()
+        self.backend = types.SimpleNamespace(name="sqlite")
         self.deleted = []
         self.status_updates = []
         self.retry_status = "pending_steam_auth"
@@ -108,7 +108,13 @@ class CustomerDistributedProvisioningTest(unittest.TestCase):
             encoding="utf-8",
         )
         self.repository = _FakeDashboardRepository(self.root)
+
+        class FakeDashboardHandler:
+            def do_POST(self):
+                return None
+
         self.legacy = types.SimpleNamespace(
+            DashboardHandler=FakeDashboardHandler,
             DSM_ROOT=self.root,
             DATABASE_FILE=self.root / "capivara.db",
             INSTANCE_ROOT=self.root / "instances",
@@ -212,6 +218,228 @@ class CustomerDistributedProvisioningTest(unittest.TestCase):
         self.assertEqual(_FakeProvisioningRepository.calls[-1]["agent_id"], "agent-remote")
         self.legacy.start_instance_provisioning.assert_not_called()
         self.legacy.audit.assert_called_once()
+
+
+    def test_customer_creation_grants_manager_access_before_enqueue(self):
+        events = []
+
+        class FakeTeamRepository:
+            def __init__(self, backend):
+                self.backend = backend
+
+            def set_instance_access(
+                self,
+                customer_reference,
+                username,
+                instance_id,
+                permission_profile,
+            ):
+                events.append(
+                    (
+                        "access",
+                        customer_reference,
+                        username,
+                        instance_id,
+                        permission_profile,
+                    )
+                )
+
+        class OrderedProvisioningRepository(_FakeProvisioningRepository):
+            def enqueue(self, **kwargs):
+                events.append(("enqueue", kwargs["instance_id"]))
+                return super().enqueue(**kwargs)
+
+        with (
+            patch.object(
+                integration,
+                "occupied_ports_provider_for_backend",
+                return_value=lambda *args: set(),
+            ),
+            patch.object(
+                integration,
+                "require_port_pool_preflight",
+                return_value=None,
+            ),
+            patch.object(
+                integration,
+                "resolve_catalog_resource_policy",
+                return_value=(
+                    "low",
+                    {},
+                    {
+                        "cpu_cores": 2,
+                        "memory_mb": 6144,
+                        "storage_mb": 30720,
+                    },
+                ),
+            ),
+            patch.object(
+                integration,
+                "normalize_resource_policy",
+                return_value=types.SimpleNamespace(
+                    placement_resources=lambda: {}
+                ),
+            ),
+            patch.object(
+                integration,
+                "resolve_catalog_provisioning",
+                return_value=(
+                    {
+                        "game": "dayz",
+                        "provider": "steam",
+                        "version": "current",
+                        "install": {"package_id": "223350"},
+                    },
+                    {
+                        "catalog_runtime_id": "dayz.stable",
+                        "catalog_game_id": "dayz",
+                    },
+                ),
+            ),
+            patch.object(
+                integration,
+                "CustomerTeamRepository",
+                FakeTeamRepository,
+            ),
+            patch.object(
+                integration,
+                "AgentInstanceProvisioningRepository",
+                OrderedProvisioningRepository,
+            ),
+            patch.object(
+                integration,
+                "project_agent_provisioning",
+                side_effect=self._projection,
+            ),
+        ):
+            result = self.legacy.create_customer_instance(
+                {
+                    "role": "customer",
+                    "scope_id": 1,
+                    "username": "aurora",
+                },
+                self._payload(),
+            )
+
+        self.assertTrue(result["created"])
+        self.assertEqual(events[0], (
+            "access",
+            1,
+            "aurora",
+            "aurora-dayz-001",
+            "manager",
+        ))
+        self.assertEqual(
+            events[1],
+            ("enqueue", "aurora-dayz-001"),
+        )
+
+    def test_customer_creation_rolls_back_when_enqueue_fails(self):
+        events = []
+
+        class FakeTeamRepository:
+            def __init__(self, backend):
+                self.backend = backend
+
+            def set_instance_access(
+                self,
+                customer_reference,
+                username,
+                instance_id,
+                permission_profile,
+            ):
+                events.append(("access", instance_id))
+
+        class FailingProvisioningRepository:
+            def __init__(self, backend):
+                self.backend = backend
+
+            def initialize(self):
+                return None
+
+            def enqueue(self, **kwargs):
+                events.append(("enqueue", kwargs["instance_id"]))
+                raise RuntimeError("forced enqueue failure")
+
+        with (
+            patch.object(
+                integration,
+                "occupied_ports_provider_for_backend",
+                return_value=lambda *args: set(),
+            ),
+            patch.object(
+                integration,
+                "require_port_pool_preflight",
+                return_value=None,
+            ),
+            patch.object(
+                integration,
+                "resolve_catalog_resource_policy",
+                return_value=(
+                    "low",
+                    {},
+                    {
+                        "cpu_cores": 2,
+                        "memory_mb": 6144,
+                        "storage_mb": 30720,
+                    },
+                ),
+            ),
+            patch.object(
+                integration,
+                "normalize_resource_policy",
+                return_value=types.SimpleNamespace(
+                    placement_resources=lambda: {}
+                ),
+            ),
+            patch.object(
+                integration,
+                "resolve_catalog_provisioning",
+                return_value=(
+                    {
+                        "game": "dayz",
+                        "provider": "steam",
+                        "version": "current",
+                        "install": {"package_id": "223350"},
+                    },
+                    {
+                        "catalog_runtime_id": "dayz.stable",
+                        "catalog_game_id": "dayz",
+                    },
+                ),
+            ),
+            patch.object(
+                integration,
+                "CustomerTeamRepository",
+                FakeTeamRepository,
+            ),
+            patch.object(
+                integration,
+                "AgentInstanceProvisioningRepository",
+                FailingProvisioningRepository,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "forced enqueue failure",
+            ):
+                self.legacy.create_customer_instance(
+                    {
+                        "role": "customer",
+                        "scope_id": 1,
+                        "username": "aurora",
+                    },
+                    self._payload(),
+                )
+
+        self.assertEqual(events, [
+            ("access", "aurora-dayz-001"),
+            ("enqueue", "aurora-dayz-001"),
+        ])
+        self.assertEqual(
+            self.repository.deleted,
+            ["aurora-dayz-001"],
+        )
 
 
 if __name__ == "__main__":

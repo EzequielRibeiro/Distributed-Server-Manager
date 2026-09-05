@@ -571,6 +571,7 @@ class DashboardRepository:
             if instance is None:
                 return 0
 
+            now = self.dialect.current_timestamp
             session.execute(
                 "UPDATE alerts "
                 "SET state=CASE "
@@ -581,12 +582,12 @@ class DashboardRepository:
                 "    resolved_at=CASE "
                 "        WHEN state IN ('OPEN','ACKNOWLEDGED','SUPPRESSED') "
                 "             AND resolved_at IS NULL "
-                "        THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                f"        THEN {now} "
                 "        ELSE resolved_at "
                 "    END, "
                 "    scope='node', "
                 "    instance_id=NULL, "
-                "    updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                f"    updated_at={now} "
                 f"WHERE instance_id={ph}",
                 (instance_id,),
             )
@@ -604,6 +605,15 @@ class DashboardRepository:
                 "SELECT id,node_id,game_id FROM instances"
             ).fetchall()
         return {(row["node_id"], row["game_id"], row["id"]) for row in rows}
+
+    def registered_instance_records(self) -> list[dict[str, Any]]:
+        with self.session() as session:
+            rows = session.execute(
+                "SELECT id,node_id,game_id,name,status,metadata_json,"
+                "controller_id,agent_id,customer_id "
+                "FROM instances ORDER BY id"
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def load_users(self) -> list[dict[str, Any]]:
         with self.session() as session:

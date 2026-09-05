@@ -19,7 +19,7 @@ INSTANCE_WRITE_PROFILES = {"operator", "manager"}
 def account_role_for_user(user: dict[str, Any] | None, backend) -> str | None:
     if not user or user.get("role") != "customer" or not user.get("scope_id"):
         return None
-    return CustomerUserRepository(backend).account_role(str(user["scope_id"]), str(user["username"]))
+    return CustomerUserRepository(backend).account_role(user["scope_id"], str(user["username"]))
 
 
 def may_manage_team(user: dict[str, Any] | None, backend) -> bool:
@@ -35,9 +35,9 @@ def instance_profile(user: dict[str, Any] | None, instance_id: str, backend) -> 
     if not user or user.get("role") != "customer" or not user.get("scope_id"):
         return None
     repository=CustomerUserRepository(backend)
-    try:repository.require_instance(str(user["scope_id"]),str(instance_id))
+    try:repository.require_instance(user["scope_id"], str(instance_id))
     except PermissionError:return None
-    return repository.permission_profile(str(user["scope_id"]), str(user["username"]), str(instance_id))
+    return repository.permission_profile(user["scope_id"], str(user["username"]), str(instance_id))
 
 
 def can_access_instance(user: dict[str, Any] | None, instance_path: str | Path, backend, *, write: bool = False) -> bool:

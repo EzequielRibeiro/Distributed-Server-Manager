@@ -11,7 +11,6 @@ from customer_invitation_api import PUBLIC_INVITATION_PATHS,TEAM_INVITATION_PATH
 from customer_rbac import instance_profile as customer_instance_profile,may_create_instance
 from customer_security import customer_rate_limiter,remote_identity
 from customer_team_api import CUSTOMER_TEAM_PATHS,dispatch_customer_team
-from customer_team_repository import CustomerTeamRepository
 from customer_verification_api import CUSTOMER_VERIFICATION_PATHS,dispatch_customer_verification
 from controller_session import create_session,cookie_header,expired_cookie_header,revoke_session,session_token_from_headers,session_user_from_headers
 from login_credentials import authenticate_login_credentials
@@ -117,9 +116,7 @@ def integrated_can_access_instance(user,instance_path,write=False):
     return _original_can_access_instance(user,instance_path,write=write)
 def integrated_create_customer_instance(user,payload,root=legacy.DSM_ROOT,database_path=legacy.DATABASE_FILE):
     if user and user.get("role")=="customer" and not may_create_instance(user,_backend()):raise PermissionError("customer account role cannot create instances")
-    result=_original_create_customer_instance(user,payload,root=root,database_path=database_path)
-    if user and user.get("role")=="customer" and result.get("instance_id"):CustomerTeamRepository(_backend()).set_instance_access(str(user["scope_id"]),str(user["username"]),str(result["instance_id"]),"manager")
-    return result
+    return _original_create_customer_instance(user,payload,root=root,database_path=database_path)
 legacy.authenticate=integrated_authenticate;legacy.instance_permission_profile=integrated_instance_permission_profile;legacy.can_access_instance=integrated_can_access_instance;legacy.create_customer_instance=integrated_create_customer_instance
 
 def _instance_from_values(server,game,instance):return legacy.instance_identity_path(str(server or ""),str(game or ""),str(instance or ""))

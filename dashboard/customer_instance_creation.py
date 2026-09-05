@@ -9,6 +9,7 @@ from agent_port_preflight import require_port_pool_preflight
 from catalog_provisioning_resolver import resolve_catalog_provisioning,resolve_catalog_resource_policy
 from core.effective_resource_policy import normalize_resource_policy
 from customer_reference import resolve_customer_reference
+from customer_team_repository import CustomerTeamRepository
 from instance_backup_clone_repository import InstanceBackupCloneRepository
 from instance_network import occupied_ports_provider_for_backend
 from instance_provisioning_projection import dashboard_provision_state,project_agent_provisioning
@@ -57,6 +58,12 @@ def install_customer_instance_creation(legacy)->None:
   require_port_pool_preflight(repository.backend,placement["agent_id"],runtime_def.get("network"))
   plan=repository.create_customer_instance(customer_id=user["scope_id"],username=user["username"],game=game,runtime_id=runtime_id,edition=edition,variant=variant,version=version,build=build,instances_root=root/"instances",contract_id=contract_id,selected_agent_id=placement["agent_id"],network_profile=runtime_def.get("network"),occupied_ports_provider=occupied_ports_provider,resource_profile_id=resource_profile_id)
   try:
+   CustomerTeamRepository(repository.backend).set_instance_access(
+    customer_id,
+    str(user["username"]),
+    str(plan["instance_id"]),
+    "manager",
+   )
    state,provision=_queue_agent_provisioning(root=root,repository=repository,runtime_def=runtime_def,instance_id=plan["instance_id"],agent_id=plan["agent_id"],runtime_id=runtime_id,version=version,build=build,requested_by=str(user.get("username") or "customer"),resource_profile_id=resource_profile_id)
    clone=None
    if source_vault_id:clone,_=clones.start(customer_id=customer_id,source_vault_id=source_vault_id,target_instance_id=plan["instance_id"],target_agent_id=plan["agent_id"],provisioning_id=str(state["provisioning_id"]),requested_by=str(user.get("username") or "customer"))
