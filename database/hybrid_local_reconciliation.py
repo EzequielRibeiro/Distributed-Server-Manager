@@ -179,7 +179,7 @@ def _ingest_hybrid_observability(
     if not isinstance(telemetry, dict):
         return None
 
-    from agent_heartbeat_api import _observability_from_heartbeat
+    from dashboard.agent_heartbeat_api import _observability_from_heartbeat
 
     body = {"telemetry": telemetry}
     samples = _observability_from_heartbeat(agent_id, body)
