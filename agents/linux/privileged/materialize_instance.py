@@ -120,6 +120,54 @@ def _within(root: Path, value: str, label: str) -> Path:
     return path
 
 
+def _reject_symlinks(root: Path, *, label: str = "storage migration") -> None:
+    if root.is_symlink():
+        raise RuntimeError(f"{label} source root cannot be a symlink")
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise RuntimeError(f"{label} refuses symlink: {path.relative_to(root)}")
+
+
+def _chown_private_tree(root: Path, account: pwd.struct_passwd) -> None:
+    for current in [root, *root.rglob("*")]:
+        os.chown(current, account.pw_uid, account.pw_gid)
+        if current.is_dir():
+            os.chmod(current, 0o700)
+        elif current.is_file():
+            os.chmod(current, 0o600)
+
+
+def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd) -> None:
+    if not source.is_dir():
+        raise RuntimeError(f"seed directory source is unavailable: {source}")
+    _reject_symlinks(source, label="directory seed")
+    if target.exists():
+        if not target.is_dir() or target.is_symlink():
+            raise RuntimeError(f"seed directory target is not a private directory: {target}")
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.chown(target.parent, account.pw_uid, account.pw_gid)
+    os.chmod(target.parent, 0o700)
+    staging = target.with_name(f".{target.name}.{os.getpid()}.seed.tmp")
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+    try:
+        shutil.copytree(source, staging, copy_function=shutil.copy2, symlinks=False)
+        _reject_symlinks(staging, label="directory seed")
+        _chown_private_tree(staging, account)
+        try:
+            os.replace(staging, target)
+        except OSError:
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(staging, ignore_errors=True)
+                return
+            raise
+    except Exception:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+
 def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, storage_root: Path) -> None:
     raw_root = spec.get("instance_state_root")
     if not raw_root:
@@ -152,6 +200,10 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
             shutil.copy2(source, target)
         os.chown(target, account.pw_uid, account.pw_gid)
         os.chmod(target, 0o600)
+    for item in spec.get("seed_directories", []):
+        source = _within(working_root, str(item["source"]), "seed directory source")
+        target = _within(state_root, str(item["target"]), "seed directory target")
+        _seed_directory(source, target, account)
     for item in spec.get("bind_paths", []):
         source = _within(state_root, str(item["source"]), "bind source")
         target = _within(working_root, str(item["target"]), "bind target")
@@ -166,14 +218,6 @@ def _ensure_runtime_identity(spec: dict[str, Any], config: dict[str, Any]) -> No
     account = _validate_runtime_user(user)
     _validate_runtime_access(str(spec["working_directory"]), user)
     _prepare_private_state(spec, account, _instance_storage_root(config, spec.get("storage_pool_id")))
-
-
-def _reject_symlinks(root: Path) -> None:
-    if root.is_symlink():
-        raise RuntimeError("storage migration source root cannot be a symlink")
-    for path in root.rglob("*"):
-        if path.is_symlink():
-            raise RuntimeError(f"storage migration refuses symlink: {path.relative_to(root)}")
 
 
 def _sha256(path: Path) -> str:
