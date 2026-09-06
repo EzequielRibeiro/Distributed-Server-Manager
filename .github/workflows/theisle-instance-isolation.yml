@@ -1,0 +1,44 @@
+name: The Isle Instance Isolation
+
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/runtime/profiles/theisle.py'
+      - 'agents/linux/runtime/runtime_spec.py'
+      - 'agents/linux/runtime/materializers/systemd.py'
+      - 'agents/linux/privileged/materialize_instance.py'
+      - 'tests/theisle_runtime_test.py'
+      - '.github/workflows/theisle-instance-isolation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/linux/runtime/profiles/theisle.py'
+      - 'agents/linux/runtime/runtime_spec.py'
+      - 'agents/linux/runtime/materializers/systemd.py'
+      - 'agents/linux/privileged/materialize_instance.py'
+      - 'tests/theisle_runtime_test.py'
+      - '.github/workflows/theisle-instance-isolation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax
+        run: |
+          python3 -m py_compile \
+            agents/linux/runtime/profiles/theisle.py \
+            agents/linux/runtime/runtime_spec.py \
+            agents/linux/runtime/materializers/systemd.py \
+            tests/theisle_runtime_test.py
+      - name: Run The Isle isolation test
+        run: python3 tests/theisle_runtime_test.py
+      - name: Check persistence and secret boundaries
+        run: |
+          grep -F 'PlayerData' agents/linux/runtime/profiles/theisle.py
+          grep -F 'runtime_bind_paths' agents/linux/runtime/profiles/theisle.py agents/linux/runtime/runtime_spec.py agents/linux/runtime/materializers/systemd.py
+          ! grep -F 'EOS_CLIENT_SECRET' agents/linux/privileged/materialize_instance.py

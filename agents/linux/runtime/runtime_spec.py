@@ -56,6 +56,15 @@ def _secret_refs(value:Any,instance_id:str)->list[dict[str,str]]:
   if target!="file":raise RuntimeSpecError("unsupported secret target")
   out.append({"name":name,"ref":ref,"target":"file"});seen.add(name)
  return out
+def _runtime_bind_paths(value:Any,runtime_directory:str|None)->list[dict[str,str]]:
+ binds=_path_pairs(value,"runtime_bind_paths")
+ if not binds:return []
+ if not runtime_directory:raise RuntimeSpecError("runtime_bind_paths require runtime_directory")
+ root=Path("/run")/runtime_directory
+ for item in binds:
+  source=Path(item["source"])
+  if source!=root and root not in source.parents:raise RuntimeSpecError("runtime bind source is outside RuntimeDirectory")
+ return binds
 def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)->dict[str,Any]:
  if not isinstance(spec,dict):raise RuntimeSpecError("runtime spec must be an object")
  result=dict(spec);result["schema_version"]=1;result["kind"]="CapivaraInstanceRuntimeSpec";result["instance_id"]=_token(result.get("instance_id"),"instance_id");result["agent_id"]=_token(result.get("agent_id"),"agent_id")
@@ -63,7 +72,9 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  if result.get("storage_pool_id") is not None:result["storage_pool_id"]=_token(result.get("storage_pool_id"),"storage_pool_id")
  result["runtime_id"]=_token(result.get("runtime_id") or result["instance_id"],"runtime_id");result["adapter"]=_token(result.get("adapter") or "systemd","adapter").lower()
  if result["adapter"]!="systemd":raise RuntimeSpecError("unsupported runtime materialization adapter")
- if result.get("runtime_directory") is not None:result["runtime_directory"]=_token(result.get("runtime_directory"),"runtime_directory")
+ runtime_directory=None
+ if result.get("runtime_directory") is not None:
+  runtime_directory=_token(result.get("runtime_directory"),"runtime_directory");result["runtime_directory"]=runtime_directory
  result["working_directory"]=_absolute(result.get("working_directory") or result.get("path"),"working_directory");result["executable"]=_absolute(result.get("executable"),"executable");result["arguments"]=_arguments(result.get("arguments",[]),"runtime arguments");result["pre_start"]=_pre_start(result.get("pre_start"));result["secret_refs"]=_secret_refs(result.get("secret_refs"),result["instance_id"])
  environment=result.get("environment",{})
  if not isinstance(environment,dict) or len(environment)>128:raise RuntimeSpecError("invalid environment")
@@ -83,5 +94,6 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  result["seed_files"]=_path_pairs(result.get("seed_files"),"seed_files")
  result["seed_directories"]=_path_pairs(result.get("seed_directories"),"seed_directories")
  result["bind_paths"]=_path_pairs(result.get("bind_paths"),"bind_paths")
+ result["runtime_bind_paths"]=_runtime_bind_paths(result.get("runtime_bind_paths"),runtime_directory)
  result["path"]=result["working_directory"];return result
 __all__=["RuntimeSpecError","VALID_DESIRED_STATES","validate_runtime_spec"]
