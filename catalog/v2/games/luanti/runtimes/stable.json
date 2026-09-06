@@ -9,13 +9,13 @@
   "loader": null,
   "version": {
     "strategy": "static",
-    "value": "5.16.1"
+    "value": "5.17.0"
   },
   "process": {
     "engine": "native",
-    "executable": "luanti-5.16.1/bin/luantiserver",
+    "executable": "luanti-5.17.0/bin/luantiserver",
     "artifact_mode": "directory",
-    "args": ["--port", "{{game_port}}"]
+    "args": []
   },
   "requirements": {
     "os": ["linux"],
@@ -24,7 +24,7 @@
   "artifact": {
     "provider": "http-archive",
     "auth": "anonymous",
-    "url": "https://github.com/luanti-org/luanti/archive/refs/tags/5.16.1.tar.gz",
+    "url": "https://github.com/luanti-org/luanti/archive/refs/tags/5.17.0.tar.gz",
     "archive_type": "tar.gz"
   },
   "installation": {
@@ -32,7 +32,7 @@
     "installer": {
       "type": "cmake_source",
       "args": [],
-      "source_dir": "luanti-5.16.1",
+      "source_dir": "luanti-5.17.0",
       "build_dir": ".capivara-build",
       "timeout_seconds": 1800,
       "definitions": {
@@ -41,7 +41,7 @@
         "RUN_IN_PLACE": "TRUE",
         "CMAKE_BUILD_TYPE": "Release"
       },
-      "expected_outputs": ["luanti-5.16.1/bin/luantiserver"]
+      "expected_outputs": ["luanti-5.17.0/bin/luantiserver"]
     }
   },
   "network": {
@@ -49,12 +49,9 @@
     "block_size": 1,
     "ports": [
       {"name": "game", "protocol": "udp", "offset": 0, "bind_address": "0.0.0.0"}
-    ],
-    "apply": [
-      {"kind": "argument", "template": "--port {{game_port}}"}
     ]
   },
   "compatibility": {
-    "compatibility_note": "Luanti engine is compiled as a bare dedicated server from the pinned upstream 5.16.1 source. World game content is instance-managed and is not replaced with the upstream devtest game."
+    "compatibility_note": "Luanti engine is compiled as a bare dedicated server from the pinned upstream 5.17.0 source. World and selected game content are instance-managed; Capivara does not substitute the upstream development-test game as production content."
   }
 }
