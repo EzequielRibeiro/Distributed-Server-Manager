@@ -38,7 +38,7 @@ class PostP0ArchitectureCompletionTest(unittest.TestCase):
     def test_generic_multigame_contract_e2e_native_and_java(self):
         cases = [
             ("catalog/v2/games/dayz/runtimes/stable.json", "windows", "x86_64", "native"),
-            ("catalog/v2/games/minecraft/runtimes/java-forge.json", "linux", "x86_64", "java"),
+            ("catalog/v2/games/minecraft/deferred/java-forge.json", "linux", "x86_64", "java"),
         ]
         games = set()
         for path, os_name, arch, engine in cases:
@@ -52,13 +52,17 @@ class PostP0ArchitectureCompletionTest(unittest.TestCase):
             self.assertFalse(strategy["layout"]["working_dir"].startswith(("/", "\\")))
         self.assertGreaterEqual(len(games), 2)
 
-    def test_forge_is_generic_java_runtime_on_supported_provider(self):
-        runtime = load_runtime("catalog/v2/games/minecraft/runtimes/java-forge.json")
+    def test_forge_is_generic_java_contract_but_deferred_from_publication(self):
+        runtime = load_runtime("catalog/v2/games/minecraft/deferred/java-forge.json")
         self.assertEqual(runtime["id"], "minecraft.java.forge")
         self.assertEqual(runtime["process"]["engine"], "java")
         self.assertEqual(runtime["artifact"]["provider"], "http")
         self.assertEqual(runtime["version"]["resolver"], "forge_maven")
         self.assertNotIn("forge", (ROOT / "core/runtime_engine_contract.py").read_text(encoding="utf-8").lower())
+
+        matrix = json.loads((ROOT / "catalog/v2/support-matrix.json").read_text(encoding="utf-8"))
+        self.assertNotIn(runtime["id"], {row["id"] for row in matrix["published_runtimes"]})
+        self.assertIn(runtime["id"], {row["id"] for row in matrix["deferred_runtimes"]})
 
 
 if __name__ == "__main__":
