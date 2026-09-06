@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import importlib.util,sys,tempfile,unittest
+import importlib,sys,tempfile,unittest
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -9,11 +9,10 @@ JAVA_IDS=("minecraft.java.arclight","minecraft.java.fabric","minecraft.java.foli
 def load_module(platform:str,name:str):
  runtime=ROOT/"agents"/platform/"runtime"
  for module_name in list(sys.modules):
-  if module_name=="profiles" or module_name.startswith("profiles."):del sys.modules[module_name]
+  if module_name=="profiles" or module_name.startswith("profiles.") or module_name==name:del sys.modules[module_name]
  sys.path.insert(0,str(runtime))
  try:
-  path=runtime/("profiles/registry.py" if name=="registry" else f"{name}.py")
-  spec=importlib.util.spec_from_file_location(f"minecraft_{name}_{platform}",path);module=importlib.util.module_from_spec(spec);assert spec and spec.loader;spec.loader.exec_module(module);return module
+  return importlib.import_module("profiles.registry" if name=="registry" else name)
  finally:sys.path.remove(str(runtime))
 
 def context(install:Path,state:Path,runtime_id:str)->dict:
