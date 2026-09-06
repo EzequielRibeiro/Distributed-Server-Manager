@@ -36,27 +36,19 @@ GAME_ID="minecraft"
 VARIANT_ID="folia"
 LIST="$(version_resolver_execute list minecraft folia '')"
 jq -e '.project=="folia" and .variant=="folia" and (.versions|map(.version)|index("26.2")!=null)' <<<"${LIST}" >/dev/null
-
 FOLIA="$(version_resolver_execute resolve minecraft folia '26.2')"
 jq -e '.project=="folia" and .build==12 and .channel=="STABLE" and .selected_asset.name=="server.jar" and .selected_asset.upstream_name=="folia-26.2-12.jar" and .install.asset=="server.jar" and .install.upstream_asset=="folia-26.2-12.jar"' <<<"${FOLIA}" >/dev/null
-
 PINNED="$(version_resolver_execute resolve minecraft folia '26.2@11')"
 jq -e '.build==11 and .selected_asset.name=="server.jar"' <<<"${PINNED}" >/dev/null
-
-PAPERMC_PROJECT="paper"
-VARIANT_ID="paper"
+PAPERMC_PROJECT="paper"; VARIANT_ID="paper"
 PAPER="$(version_resolver_execute resolve minecraft paper '26.2')"
 jq -e '.project=="paper" and .selected_asset.name=="server.jar" and .selected_asset.upstream_name=="paper-26.2-48.jar" and .install.asset=="server.jar"' <<<"${PAPER}" >/dev/null
 
-RUNTIME="${ROOT}/catalog/v2/games/minecraft/deferred/java-folia.json"
+RUNTIME="${ROOT}/catalog/v2/games/minecraft/runtimes/java-folia.json"
 jq -e '.id=="minecraft.java.folia" and .version.resolver=="papermc" and .version.config.project=="folia" and .process.executable=="server.jar" and .artifact.provider=="http" and (.requirements.os|sort)==["linux","windows"]' "${RUNTIME}" >/dev/null
-
 MATRIX="${ROOT}/catalog/v2/support-matrix.json"
-jq -e '.deferred_runtimes[] | select(.id=="minecraft.java.folia") | .resolver=="papermc" and (.content_ecosystems|index("folia-plugin")!=null)' "${MATRIX}" >/dev/null
-
-if "${ROOT}/installer/catalog.sh" runtime show minecraft.java.folia --json >/dev/null 2>&1; then
-  echo "FAIL: deferred Folia runtime is still published" >&2
-  exit 1
-fi
+jq -e '.published_runtimes[] | select(.id=="minecraft.java.folia") | .resolver=="papermc" and (.content_ecosystems|index("folia-plugin")!=null)' "${MATRIX}" >/dev/null
+SHOW="$("${ROOT}/installer/catalog.sh" runtime show minecraft.java.folia --json)"
+jq -e '.id=="minecraft.java.folia"' <<<"${SHOW}" >/dev/null
 
 echo "Folia catalog runtime tests passed."
