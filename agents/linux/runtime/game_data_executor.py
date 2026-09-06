@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib,json,os,shutil,stat,subprocess,sys,tarfile,tempfile,urllib.request,zipfile
 from pathlib import Path,PurePosixPath
 from typing import Any
+from fivem_install import install_fivem
 from game_data_files import execute_file_operation
 from game_data_integrity import inspect_game_data
 from game_data_installer import execute_installer
@@ -105,6 +106,7 @@ def _run_http(selection:dict[str,Any],target:Path)->None:
 def _install(selection:dict[str,Any],target:Path,provider:str)->None:
  if provider=="steam":_run_steam(selection,target)
  elif provider in {"http","http-archive","github"}:_run_http(selection,target)
+ elif provider=="custom" and str(selection.get("game") or "").strip().lower()=="fivem":install_fivem(target)
  else:raise RuntimeError(f"provider not supported by standalone Linux Agent: {provider}")
  execute_installer(selection,target)
  _materialize_minecraft_eula(selection,target)
