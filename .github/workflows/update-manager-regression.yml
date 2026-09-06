@@ -57,6 +57,9 @@ jobs:
       - name: Test download stdout stderr contract
         run: bash tests/update_download_output_test.sh
 
+      - name: Test preserved instance data and preflight failure
+        run: bash tests/update_preserved_data_test.sh
+
       - name: Test Update Manager
         run: bash tests/update_manager_test.sh
 

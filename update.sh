@@ -96,6 +96,14 @@ BACKUP_PART=""
 BACKUP_PROCESS_PID=""
 DATABASE_BACKUP_FILE=""
 UPDATE_TRANSACTION_STARTED=0
+UPDATE_FILES_STARTED=0
+# These trees are renamed on the same filesystem, never archived or copied.
+PRESERVED_TREES=(
+    "instances"
+    "game-data"
+    "runtime/hybrid-agent-state"
+    "runtime/hybrid-instance-storage"
+)
 ACTIVE_SERVICES=()
 STOP_SERVICES=()
 RESTORE_SERVICES=()
@@ -553,7 +561,12 @@ create_backup() {
     BACKUP_PART="${BACKUP_FILE}.part"
     INSTALL_PARENT=$(dirname "${INSTALL_DIR}")
     INSTALL_NAME=$(basename "${INSTALL_DIR}")
-    INSTALL_BYTES=$(du -sb --exclude=game-data "${INSTALL_DIR}" | awk '{print $1}')
+    local -a BACKUP_EXCLUDES=()
+    local TREE
+    for TREE in "${PRESERVED_TREES[@]}"; do
+        BACKUP_EXCLUDES+=(--exclude="${INSTALL_NAME}/${TREE}")
+    done
+    INSTALL_BYTES=$(installation_backup_size | awk '{print $1}')
 
     rm -f -- "${BACKUP_PART}"
     echo "Tamanho de origem | Source size: $(format_bytes "${INSTALL_BYTES}")"
@@ -561,13 +574,13 @@ create_backup() {
     if command -v pv >/dev/null 2>&1
     then
         echo "Progresso detalhado habilitado por pv | Detailed progress enabled by pv."
-        tar -cf - --exclude="${INSTALL_NAME}/game-data" -C "${INSTALL_PARENT}" "${INSTALL_NAME}" \
+        tar -cf - "${BACKUP_EXCLUDES[@]}" -C "${INSTALL_PARENT}" "${INSTALL_NAME}" \
             | pv --force --size "${INSTALL_BYTES}" --progress --timer --eta --rate --bytes \
             | gzip -c >"${BACKUP_PART}"
     else
         echo "pv não encontrado; exibindo progresso por tempo e bytes gravados."
         echo "pv not found; showing elapsed time and bytes written."
-        tar -czf "${BACKUP_PART}" --exclude="${INSTALL_NAME}/game-data" -C "${INSTALL_PARENT}" "${INSTALL_NAME}" &
+        tar -czf "${BACKUP_PART}" "${BACKUP_EXCLUDES[@]}" -C "${INSTALL_PARENT}" "${INSTALL_NAME}" &
         BACKUP_PROCESS_PID=$!
         wait_with_progress "${BACKUP_PROCESS_PID}" "Compactando backup | Compressing backup" "${BACKUP_PART}"
         BACKUP_PROCESS_PID=""
@@ -768,9 +781,7 @@ preserve_data() {
         "data"
         "logs"
         "backups"
-        "instances"
         "custom"
-        "game-data"
     )
     local ITEM
 
@@ -832,6 +843,73 @@ validate_staging() {
 # =============================================================
 # Aplicar atualização | Apply update
 # =============================================================
+# Protected data remains outside both disposable installation and staging.
+# A stale holding directory is never deleted: fail closed after SIGKILL/power loss.
+installation_backup_size() {
+    local TREE
+    local -a EXCLUDES=()
+    for TREE in "${PRESERVED_TREES[@]}"; do
+        EXCLUDES+=(--exclude="${INSTALL_DIR}/${TREE}")
+    done
+    du -sb "${EXCLUDES[@]}" "${INSTALL_DIR}"
+}
+
+validate_preserved_data() {
+    local HOLD="${INSTALL_DIR}.update-preserved" TREE PATHNAME
+    command -v mountpoint >/dev/null || { echo "Required command missing: mountpoint" >&2; return 1; }
+    if [[ -L "${INSTALL_DIR}/runtime" ]]; then
+        echo "Linked runtime root requires separate storage migration before update." >&2
+        return 1
+    fi
+    if [[ -e "${HOLD}" || -L "${HOLD}" || -e "${INSTALL_DIR}.update-restore" ]]; then
+        echo "Unfinished update data exists: ${HOLD}. Recover it before retrying; do not delete it." >&2
+        return 1
+    fi
+    for TREE in "${PRESERVED_TREES[@]}"; do
+        PATHNAME="${INSTALL_DIR}/${TREE}"
+        [[ -e "${PATHNAME}" || -L "${PATHNAME}" ]] || continue
+        if mountpoint -q "${PATHNAME}" || [[ "$(stat -c %d "${PATHNAME}")" != "$(stat -c %d "$(dirname "${INSTALL_DIR}")")" ]]; then
+            echo "Cannot rename protected data across filesystems or mountpoints: ${PATHNAME}" >&2
+            return 1
+        fi
+    done
+}
+
+park_preserved_data() {
+    local HOLD="${INSTALL_DIR}.update-preserved" TREE SOURCE TARGET
+    [[ ! -L "${HOLD}" ]] || return 1
+    mkdir -p "${HOLD}" || return 1
+    for TREE in "${PRESERVED_TREES[@]}"; do
+        SOURCE="${INSTALL_DIR}/${TREE}"; TARGET="${HOLD}/${TREE}"
+        [[ -e "${SOURCE}" || -L "${SOURCE}" ]] || continue
+        if [[ -e "${TARGET}" || -L "${TARGET}" ]]; then
+            echo "Conflicting protected data: ${SOURCE} and ${TARGET}; nothing removed." >&2
+            return 1
+        fi
+        mkdir -p "$(dirname "${TARGET}")" || return 1
+        mv -T -- "${SOURCE}" "${TARGET}" || return 1
+    done
+}
+
+attach_preserved_data() {
+    local HOLD="${INSTALL_DIR}.update-preserved" TREE SOURCE TARGET
+    for TREE in "${PRESERVED_TREES[@]}"; do
+        SOURCE="${HOLD}/${TREE}"; TARGET="${INSTALL_DIR}/${TREE}"
+        [[ -e "${SOURCE}" || -L "${SOURCE}" ]] || continue
+        # Only an empty package placeholder is safe to replace.
+        if [[ -e "${TARGET}" || -L "${TARGET}" ]]; then
+            [[ -d "${TARGET}" && ! -L "${TARGET}" ]] || return 1
+            rmdir -- "${TARGET}" || return 1
+        fi
+        mkdir -p "$(dirname "${TARGET}")" || return 1
+        mv -T -- "${SOURCE}" "${TARGET}" || return 1
+    done
+    if [[ -d "${HOLD}" ]]; then
+        rmdir "${HOLD}/runtime" 2>/dev/null || true
+        rmdir "${HOLD}" || return 1
+    fi
+}
+
 apply_update() {
     echo
     echo "Aplicando nova versão DSM..."
@@ -841,8 +919,18 @@ apply_update() {
         echo "Staging inexistente | Staging does not exist."
         exit 1
     fi
-    rm -rf "${INSTALL_DIR}"
-    mv "${STAGING_DIR}" "${INSTALL_DIR}"
+    local TREE
+    for TREE in "${PRESERVED_TREES[@]}"; do
+        if [[ -e "${STAGING_DIR}/${TREE}" || -L "${STAGING_DIR}/${TREE}" ]]; then
+            [[ -d "${STAGING_DIR}/${TREE}" && ! -L "${STAGING_DIR}/${TREE}" ]] || return 1
+            rmdir "${STAGING_DIR}/${TREE}" || return 1
+        fi
+    done
+    UPDATE_FILES_STARTED=1
+    park_preserved_data || return 1
+    rm -rf "${INSTALL_DIR}" || return 1
+    mv "${STAGING_DIR}" "${INSTALL_DIR}" || return 1
+    attach_preserved_data || return 1
     echo
     echo "Arquivos atualizados."
     echo "Files updated."
@@ -895,14 +983,24 @@ migrate_database() {
 # =============================================================
 # Corrigir permissões | Fix permissions
 # =============================================================
+product_paths() {
+    local TREE
+    local -a PRUNE=()
+    for TREE in "${PRESERVED_TREES[@]}"; do
+        [[ ${#PRUNE[@]} -eq 0 ]] || PRUNE+=(-o)
+        PRUNE+=(-path "${INSTALL_DIR}/${TREE}")
+    done
+    find "${INSTALL_DIR}" \( "${PRUNE[@]}" \) -prune -o "$@"
+}
+
 fix_permissions() {
     echo
     echo "Corrigindo permissões..."
     echo "Fixing permissions..."
-    find "${INSTALL_DIR}" -type f -name "*.sh" -exec chmod +x {} \;
+    product_paths -type f -name "*.sh" -exec chmod +x {} \;
     chmod +x "${INSTALL_DIR}/bin/dsm"
     chmod +x "${INSTALL_DIR}/bin/cap"
-    chown -R "${DSM_USER}:${DSM_GROUP}" "${INSTALL_DIR}"
+    product_paths -exec chown -h "${DSM_USER}:${DSM_GROUP}" {} +
     echo
     echo "Permissões ajustadas."
     echo "Permissions adjusted."
@@ -1337,7 +1435,7 @@ check_disk() {
     echo "Verificando espaço em disco..."
     echo "Checking disk space..."
     # Espaço livre em MB na partição raiz | Free space in MB on root partition
-    INSTALL_BYTES=$(du -sb "${INSTALL_DIR}" | awk '{print $1}')
+    INSTALL_BYTES=$(installation_backup_size | awk '{print $1}')
     # Mínimo necessário: 2 GB livres | Minimum required: 2 GB free
     FREE_BYTES=$(df --output=avail -B1 "${INSTALL_DIR}" | tail -1 | tr -d ' ')
     REQUIRED_BYTES=$((INSTALL_BYTES * 2))
@@ -1452,6 +1550,7 @@ main() {
         echo "Não foi possível acessar o diretório pai da instalação: ${INSTALL_DIR}" >&2
         return 1
     }
+    validate_preserved_data
     initialize_logging
     # Validar instalação | Validate installation
     load_configuration
@@ -1464,6 +1563,12 @@ main() {
     read_versions
     enforce_version_policy
     confirm_update
+    # Reject active instances before any expensive backup or mutation.
+    run_process_guard
+    # Stop writers before creating a consistent filesystem/database snapshot pair.
+    capture_service_state
+    UPDATE_TRANSACTION_STARTED=1
+    stop_services
     # Segurança | Security
     if [[ "${NO_BACKUP}" -eq 1 ]]
     then
@@ -1476,11 +1581,9 @@ main() {
         create_backup
         create_database_backup
     fi
-    # Preparação | Preparation
+    # Recheck after backup in case an instance started in the meantime.
     run_process_guard
-    capture_service_state
-    UPDATE_TRANSACTION_STARTED=1
-    stop_services
+    # Preparação | Preparation
     create_staging
     preserve_data
     validate_staging
@@ -1522,15 +1625,18 @@ update_failed() {
     echo
     cleanup_partial_backup
     # Só executa rollback se existir backup | Only run rollback if backup exists
-    if [[ -n "${BACKUP_FILE}" ]] && [[ -f "${BACKUP_FILE}" ]]
+    if [[ "${UPDATE_FILES_STARTED}" -eq 1 && -n "${BACKUP_FILE}" && -f "${BACKUP_FILE}" ]]
     then
         rollback
     else
         echo
+        if [[ "${UPDATE_TRANSACTION_STARTED}" -eq 1 && "${UPDATE_FILES_STARTED}" -eq 0 ]]; then
+            restart_services || true
+        fi
         echo "Rollback não executado."
         echo "Rollback not executed."
-        echo "Nenhum backup válido disponível."
-        echo "No valid backup available."
+        echo "No file replacement started, or backup unavailable."
+        echo "No replacement started or backup unavailable; retained game data is never deleted."
     fi
     echo
     echo "Processo interrompido."
@@ -1576,7 +1682,7 @@ update_interrupted() {
 # Rollback seguro | Safe rollback
 # =============================================================
 rollback() {
-    local GAME_DATA_ROLLBACK="${INSTALL_DIR}.game-data-rollback"
+    local RESTORE_DIR="${INSTALL_DIR}.update-restore"
 
     echo
     echo "======================================"
@@ -1589,22 +1695,18 @@ rollback() {
         echo "Backup não encontrado | not found."
         return 1
     fi
-    restore_database_backup
-    echo "Removendo instalação quebrada..."
-    echo "Removing broken installation..."
-    rm -rf "${GAME_DATA_ROLLBACK}"
-    if [[ -d "${INSTALL_DIR}/game-data" ]]
-    then
-        mv "${INSTALL_DIR}/game-data" "${GAME_DATA_ROLLBACK}"
-    fi
-    rm -rf "${INSTALL_DIR}"
-    echo "Restaurando backup..."
-    echo "Restoring backup..."
-    tar -xzf "${BACKUP_FILE}" -C /opt
-    if [[ -d "${GAME_DATA_ROLLBACK}" ]]
-    then
-        mv "${GAME_DATA_ROLLBACK}" "${INSTALL_DIR}/game-data"
-    fi
+    # Validate/extract before removing anything; existing recovery state is sacred.
+    [[ ! -e "${RESTORE_DIR}" && ! -L "${RESTORE_DIR}" ]] || return 1
+    mkdir "${RESTORE_DIR}" || return 1
+    tar -xzf "${BACKUP_FILE}" -C "${RESTORE_DIR}" || return 1
+    [[ -d "${RESTORE_DIR}/$(basename "${INSTALL_DIR}")" ]] || return 1
+    stop_services || return 1
+    restore_database_backup || return 1
+    park_preserved_data || return 1
+    rm -rf "${INSTALL_DIR}" || return 1
+    mv -T "${RESTORE_DIR}/$(basename "${INSTALL_DIR}")" "${INSTALL_DIR}" || return 1
+    attach_preserved_data || return 1
+    rmdir "${RESTORE_DIR}" || return 1
     echo
     echo "Backup restaurado | restored."
     # Restaurar permissões | Restore permissions
@@ -1613,7 +1715,7 @@ rollback() {
         echo
         echo "Restaurando permissões..."
         echo "Restoring permissions..."
-        chown -R "${DSM_USER}:${DSM_GROUP}" "${INSTALL_DIR}" 2>/dev/null || true
+        product_paths -exec chown -h "${DSM_USER}:${DSM_GROUP}" {} + 2>/dev/null || true
     fi
     # Restore the unit files shipped by the previous installation before
     # reloading systemd; otherwise rollback can run old code with new units.

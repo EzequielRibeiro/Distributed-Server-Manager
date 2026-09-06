@@ -75,12 +75,12 @@ grep -Fq 'if [[ -d "${INSTALL_DIR}/runtime/state" ]]' "${UPDATE}" || fail "runti
 if grep -Fq 'find "${INSTALL_DIR}" -mindepth 1 -maxdepth 1 -print0' "${UPDATE}"; then
     fail "unmanaged top-level directories are still auto-preserved"
 fi
-grep -Fq 'tar -xzf "${BACKUP_FILE}" -C /opt' "${UPDATE}" || fail "rollback restores outside /opt"
+grep -Fq 'tar -xzf "${BACKUP_FILE}" -C "${RESTORE_DIR}"' "${UPDATE}" || fail "rollback restores outside /opt"
 grep -Fq 'REQUIRED_BYTES=$((INSTALL_BYTES * 2))' "${UPDATE}" || fail "disk check ignores installation size"
 grep -Fq 'gzip -t "${BACKUP_PART}"' "${UPDATE}" || fail "backup integrity is not validated"
 grep -Fq 'mv -- "${BACKUP_PART}" "${BACKUP_FILE}"' "${UPDATE}" || fail "backup is not activated atomically"
-grep -Fq -- '--exclude="${INSTALL_NAME}/game-data"' "${UPDATE}" || fail "downloadable game data is included in backup"
-grep -Fq 'mv "${INSTALL_DIR}/game-data" "${GAME_DATA_ROLLBACK}"' "${UPDATE}" || fail "rollback does not preserve game data"
+grep -Fq -- 'BACKUP_EXCLUDES+=(--exclude="${INSTALL_NAME}/${TREE}")' "${UPDATE}" || fail "downloadable game data is included in backup"
+grep -Fq 'park_preserved_data || return 1' "${UPDATE}" || fail "rollback does not preserve game data"
 grep -Fq 'wait_with_progress' "${UPDATE}" || fail "backup progress is not displayed"
 grep -Fq 'cd "$(dirname "${INSTALL_DIR}")"' "${UPDATE}" || fail "update can keep a deleted installation as working directory"
 grep -Fq 'validate_runtime_account' "${UPDATE}" || fail "DSM runtime account is not validated"
@@ -154,8 +154,7 @@ tar -xzf "${TMP_DIR}/backup.tar.gz" -C "${TMP_DIR}/opt"
     [[ -f "${BACKUP_FILE}" ]] || fail "validated backup was not created"
     [[ ! -e "${BACKUP_FILE}.part" ]] || fail "partial backup was not activated"
     gzip -t "${BACKUP_FILE}" || fail "generated backup is corrupt"
-    tar -xOf "${BACKUP_FILE}" dsm/instances/server01/world.dat \
-        | grep -q '^world$' || fail "generated backup has an invalid archive layout"
+    if tar -tzf "${BACKUP_FILE}" | grep -q '^dsm/instances/'; then fail "instance data included in update backup"; fi
     if tar -tzf "${BACKUP_FILE}" | grep -q '^dsm/game-data/'; then
         fail "generated backup contains downloadable game data"
     fi
