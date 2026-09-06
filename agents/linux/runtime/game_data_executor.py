@@ -15,6 +15,15 @@ def _safe_name(value:Any,label:str)->str:
  return text
 def _target_for(selection:dict[str,Any])->Path:
  game=_safe_name(selection.get("game"),"game");declared=Path(str(selection.get("install_dir") or "serverfiles"));leaf=_safe_name(declared.name if declared.name not in {"",".","/"} else "serverfiles","install target");target=(GAME_DATA_ROOT/game/leaf).resolve();target.relative_to(GAME_DATA_ROOT);return target
+def _minecraft_java_runtime(selection:dict[str,Any])->bool:
+ runtime_id=str(selection.get("runtime_definition") or selection.get("runtime_id") or "").strip().lower()
+ return runtime_id.startswith("minecraft.java.")
+def _materialize_minecraft_eula(selection:dict[str,Any],target:Path)->None:
+ if not _minecraft_java_runtime(selection):return
+ target.mkdir(parents=True,exist_ok=True)
+ eula=target/"eula.txt"
+ if eula.exists() and (not eula.is_file() or eula.is_symlink()):raise RuntimeError("Minecraft EULA seed path is unsafe")
+ eula.write_text("eula=true\n",encoding="utf-8")
 def _steamcmd()->str:
  managed=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"))/"tools"/"steamcmd"/"steamcmd.sh"
  for candidate in (shutil.which("steamcmd"),"/usr/games/steamcmd",str(managed)):
@@ -98,6 +107,7 @@ def _install(selection:dict[str,Any],target:Path,provider:str)->None:
  elif provider in {"http","http-archive","github"}:_run_http(selection,target)
  else:raise RuntimeError(f"provider not supported by standalone Linux Agent: {provider}")
  execute_installer(selection,target)
+ _materialize_minecraft_eula(selection,target)
 def _execute(command:dict[str,Any])->dict[str,Any]:
  action=str(command.get("action") or "install").lower();selection=command.get("selection")
  if action=="install-steamcmd":return _install_steamcmd()
@@ -113,10 +123,10 @@ def _execute(command:dict[str,Any])->dict[str,Any]:
   return {"provider":provider,"game":selection.get("game"),"version":selection.get("version"),"target_path":str(target),"integrity":integrity,**detail}
  if action=="ensure":
   before=inspect_game_data(target,selection)
-  if before.get("health")=="ok":reused=True
+  if before.get("health")=="ok":reused=True;_materialize_minecraft_eula(selection,target)
   else:_install(selection,target,provider)
  elif action in {"install","update","repair"}:_install(selection,target,provider)
- elif action=="verify":pass
+ elif action=="verify":_materialize_minecraft_eula(selection,target)
  elif action in FILE_ACTIONS:
   operation=command.get("file_operation")
   if not isinstance(operation,dict):raise ValueError("file operation payload is missing")

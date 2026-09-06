@@ -15,6 +15,14 @@ def _safe(v,label):
  return t
 def _target(sel):
  game=_safe(sel.get("game"),"game");leaf=_safe(Path(str(sel.get("install_dir") or "serverfiles")).name or "serverfiles","install target");target=(GAME_DATA_ROOT/game/leaf).resolve();target.relative_to(GAME_DATA_ROOT);return target
+def _minecraft_java_runtime(sel):
+ runtime_id=str(sel.get("runtime_definition") or sel.get("runtime_id") or "").strip().lower()
+ return runtime_id.startswith("minecraft.java.")
+def _materialize_minecraft_eula(sel,target):
+ if not _minecraft_java_runtime(sel):return
+ target.mkdir(parents=True,exist_ok=True);eula=target/"eula.txt"
+ if eula.exists() and (not eula.is_file() or getattr(eula,"is_junction",lambda:False)() or eula.is_symlink()):raise RuntimeError("Minecraft EULA seed path is unsafe")
+ eula.write_text("eula=true\n",encoding="utf-8")
 def _managed_steamcmd():
  root=Path(os.environ.get("PROGRAMDATA") or r"C:\ProgramData")/"CapivaraAgent"/"tools"/"steamcmd"
  return root/"steamcmd.exe"
@@ -35,17 +43,14 @@ def _install_steamcmd():
  try:
   existing=_steamcmd();_probe_steamcmd(existing)
   return {"provider":"system","component":"steamcmd","installed":True,"reused":True,"path":existing}
- except RuntimeError:
-  pass
+ except RuntimeError:pass
  target=_managed_steamcmd().parent;target.parent.mkdir(parents=True,exist_ok=True)
  with tempfile.TemporaryDirectory(prefix="capivara-steamcmd-") as td:
-  td_path=Path(td);archive=td_path/"steamcmd.zip";staging=td_path/"steamcmd"
-  _download(STEAMCMD_URL,archive)
+  td_path=Path(td);archive=td_path/"steamcmd.zip";staging=td_path/"steamcmd";_download(STEAMCMD_URL,archive)
   if not zipfile.is_zipfile(archive):raise RuntimeError("SteamCMD download is not a valid ZIP archive")
   staging.mkdir();z=zipfile.ZipFile(archive)
   for i in z.infolist():_safe_member(i.filename)
-  z.extractall(staging);z.close()
-  executable=staging/"steamcmd.exe"
+  z.extractall(staging);z.close();executable=staging/"steamcmd.exe"
   if not executable.is_file():raise RuntimeError("SteamCMD archive does not contain steamcmd.exe")
   _probe_steamcmd(executable)
   if target.exists():shutil.rmtree(target)
@@ -99,7 +104,7 @@ def _install(sel,target,provider):
  if provider=="steam":_run_steam(sel,target)
  elif provider in {"http","http-archive","github"}:_run_http(sel,target)
  else:raise RuntimeError(f"provider not supported by standalone Windows Agent: {provider}")
- execute_installer(sel,target)
+ execute_installer(sel,target);_materialize_minecraft_eula(sel,target)
 def execute(command:dict[str,Any]):
  action=str(command.get("action") or "install").lower()
  if action=="install-steamcmd":return _install_steamcmd()
@@ -107,10 +112,10 @@ def execute(command:dict[str,Any]):
  if not isinstance(sel,dict):raise ValueError("runtime selection is missing")
  target=_target(sel);provider=str(sel.get("provider") or "").lower();reused=False
  if action=="ensure":
-  if inspect_game_data(target,sel).get("health")=="ok":reused=True
+  if inspect_game_data(target,sel).get("health")=="ok":reused=True;_materialize_minecraft_eula(sel,target)
   else:_install(sel,target,provider)
  elif action in {"install","update","repair"}:_install(sel,target,provider)
- elif action=="verify":pass
+ elif action=="verify":_materialize_minecraft_eula(sel,target)
  elif action in FILE_ACTIONS:
   op=command.get("file_operation")
   if not isinstance(op,dict):raise ValueError("file operation payload is missing")

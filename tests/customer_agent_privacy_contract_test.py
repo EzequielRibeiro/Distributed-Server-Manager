@@ -70,11 +70,13 @@ class CustomerAgentPrivacyContractTest(unittest.TestCase):
             "contract_id": "contract-1",
         }
         user = {"role": "customer", "scope_id": "cli000001", "username": "cliente"}
+        team_repository = MagicMock()
 
         with (
-            patch.object(creation, "runtime_definition", return_value={"id": "dayz.stable", "variant": "stable", "network": {}}),
+            patch.object(creation, "runtime_definition", return_value={"id": "dayz.stable", "edition": "stable", "variant": "stable", "network": {}}),
             patch.object(creation, "resolve_customer_reference", return_value="cli000001"),
             patch.object(creation, "InstanceBackupCloneRepository", return_value=MagicMock()),
+            patch.object(creation, "CustomerTeamRepository", return_value=team_repository),
             patch.object(creation, "occupied_ports_provider_for_backend", return_value=lambda: set()),
             patch.object(
                 creation,
@@ -94,6 +96,9 @@ class CustomerAgentPrivacyContractTest(unittest.TestCase):
         ):
             result = legacy.create_customer_instance(user, payload)
 
+        team_repository.set_instance_access.assert_called_once_with(
+            "cli000001", "cliente", "cli000001-dayz-001", "manager"
+        )
         self.assertTrue(result["created"])
         self.assertEqual(result["placement"]["region_id"], "br-sudeste")
         self.assertNotIn("datacenter_id", result["placement"])
