@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from profiles.registry import supported_profiles
 
 _JAVA_VERSION=re.compile(r'version\s+"([^"]+)"',re.IGNORECASE)
 
@@ -44,6 +45,7 @@ def detect_capabilities()->dict[str,object]:
  java_status=_java_status();java=bool(java_status["functional"])
  return {
   "platform":{"os":"windows","architecture":_normalize_architecture()},
+  "runtime_profiles":list(supported_profiles()),
   "native-windows":True,
   "powershell":shutil.which("powershell") is not None or shutil.which("pwsh") is not None,
   "steamcmd":steamcmd,
