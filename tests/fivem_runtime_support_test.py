@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -52,3 +52,11 @@ def test_fivem_catalog_is_active_not_deferred():
     deferred = ROOT / "catalog" / "v2" / "games" / "fivem" / "deferred" / "stable.json"
     assert active.is_file()
     assert not deferred.exists()
+
+
+def test_fivem_uses_typed_executable_provider():
+    runtime = json.loads((ROOT / "catalog" / "v2" / "games" / "fivem" / "runtimes" / "stable.json").read_text())
+    providers = json.loads((ROOT / "catalog" / "v2" / "providers" / "catalog-providers.json").read_text())
+    assert runtime["artifact"]["provider"] == "fivem"
+    assert "fivem" in providers["agent_executable_artifact_providers"]
+    assert "fivem" not in providers["reserved_artifact_providers"]
