@@ -3,7 +3,7 @@ from __future__ import annotations
 import os,re
 from pathlib import Path
 from typing import Any
-_TOKEN=re.compile(r"^[A-Za-z0-9._-]{1,191}$");VALID_DESIRED_STATES={"running","stopped"}
+_TOKEN=re.compile(r"^[A-Za-z0-9._-]{1,191}$");VALID_DESIRED_STATES={"running","stopped"};VALID_EXECUTABLE_SCOPES={"working-directory","provider-content","system-java"}
 class RuntimeSpecError(ValueError):pass
 def _token(v,label):
  t=str(v or "").strip()
@@ -33,10 +33,14 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  if r["adapter"] not in {"windows-process","windows-service"}:raise RuntimeSpecError("unsupported runtime materialization adapter")
  r["working_directory"]=_absolute(r.get("working_directory") or r.get("path"),"working_directory")
  if r["adapter"]=="windows-process":r["executable"]=_absolute(r.get("executable"),"executable")
+ scope=str(r.get("executable_scope") or "working-directory").strip().lower()
+ if scope not in VALID_EXECUTABLE_SCOPES:raise RuntimeSpecError("unsupported executable_scope")
+ r["executable_scope"]=scope
+ if r.get("seed_source_root") is not None:r["seed_source_root"]=_absolute(r.get("seed_source_root"),"seed_source_root")
+ if scope=="provider-content" and not r.get("seed_source_root"):raise RuntimeSpecError("provider-content executable requires seed_source_root")
  if r.get("instance_state_root") is not None:r["instance_state_root"]=_absolute(r.get("instance_state_root"),"instance_state_root")
  r["writable_directories"]=_absolute_list(r.get("writable_directories"),"writable directory")
- r["seed_files"]=_path_pairs(r.get("seed_files"),"seed_files")
- r["seed_directories"]=_path_pairs(r.get("seed_directories"),"seed_directories")
+ r["seed_files"]=_path_pairs(r.get("seed_files"),"seed_files");r["seed_directories"]=_path_pairs(r.get("seed_directories"),"seed_directories")
  args=r.get("arguments",[])
  if not isinstance(args,list) or len(args)>128:raise RuntimeSpecError("invalid arguments")
  out=[]
@@ -54,4 +58,4 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  r["environment"]=normalized;desired=str(r.get("desired_state") or "stopped").lower()
  if desired not in VALID_DESIRED_STATES:raise RuntimeSpecError("invalid desired_state")
  r["desired_state"]=desired;r["path"]=r["working_directory"];return r
-__all__=["RuntimeSpecError","VALID_DESIRED_STATES","validate_runtime_spec"]
+__all__=["RuntimeSpecError","VALID_DESIRED_STATES","VALID_EXECUTABLE_SCOPES","validate_runtime_spec"]
