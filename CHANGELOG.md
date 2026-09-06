@@ -1,5 +1,12 @@
 # DSM CHANGELOG
 
+## v2.0.29 - 2026-09-06
+
+- Preserve instance and Hybrid game data through renames instead of update archive copies.
+- Refuse active-game updates before backup and prevent rollback after preflight rejection.
+- Protect recovery data and exclude game trees from disk estimates and permission traversal.
+- See `release/RELEASE_NOTES_2.0.29.md` for backup and recovery guidance.
+
 ## v2.0.28 — 2026-09-06
 
 - Adiciona GameDefinition e descoberta hierárquica para os 20 jogos publicados, preservando IDs e contratos RuntimeDefinition.
