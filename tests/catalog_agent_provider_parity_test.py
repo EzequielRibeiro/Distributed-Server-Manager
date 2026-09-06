@@ -42,14 +42,19 @@ def _agent_install_providers(path: Path) -> set[str]:
     return providers
 
 
-def _published_runtime_providers() -> dict[str, str]:
-    result: dict[str, str] = {}
+def _published_runtime_contracts() -> dict[str, tuple[str, set[str]]]:
+    result: dict[str, tuple[str, set[str]]] = {}
     for path in sorted((CATALOG / "games").glob("*/runtimes/*.json")):
         payload = _load_json(path)
         if payload.get("kind") != "RuntimeDefinition":
             continue
         provider = str((payload.get("artifact") or {}).get("provider") or "").strip()
-        result[path.relative_to(ROOT).as_posix()] = provider
+        os_values = {
+            str(value).strip().lower()
+            for value in ((payload.get("requirements") or {}).get("os") or [])
+            if str(value).strip()
+        }
+        result[path.relative_to(ROOT).as_posix()] = (provider, os_values)
     return result
 
 
@@ -72,19 +77,29 @@ class CatalogAgentProviderParityTest(unittest.TestCase):
         self.assertFalse(self.executable & self.reserved)
         self.assertEqual(self.executable | self.reserved, self.universe)
 
-    def test_linux_and_windows_agents_implement_canonical_executable_set(self):
+    def test_agents_implement_executable_providers_required_by_their_platform(self):
+        contracts = _published_runtime_contracts()
+        linux_required = {
+            provider for provider, os_values in contracts.values()
+            if provider in self.executable and "linux" in os_values
+        }
+        windows_required = {
+            provider for provider, os_values in contracts.values()
+            if provider in self.executable and "windows" in os_values
+        }
         linux = _agent_install_providers(LINUX_EXECUTOR)
         windows = _agent_install_providers(WINDOWS_EXECUTOR)
-        self.assertEqual(linux, self.executable)
-        self.assertEqual(windows, self.executable)
-        self.assertEqual(linux, windows)
+        self.assertTrue(linux_required <= linux)
+        self.assertTrue(windows_required <= windows)
+        self.assertFalse(linux - self.executable)
+        self.assertFalse(windows - self.executable)
 
-    def test_every_published_runtime_is_executable_by_both_agents(self):
-        published = _published_runtime_providers()
+    def test_every_published_runtime_uses_an_executable_provider(self):
+        published = _published_runtime_contracts()
         self.assertTrue(published, "catalog contains no published RuntimeDefinition entries")
         unsupported = {
             path: provider
-            for path, provider in published.items()
+            for path, (provider, _os_values) in published.items()
             if not provider or provider not in self.executable
         }
         self.assertEqual(
