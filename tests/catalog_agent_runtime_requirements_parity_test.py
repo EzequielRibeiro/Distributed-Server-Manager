@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -19,8 +20,28 @@ def _load(path: Path, name: str):
     return module
 
 
-LINUX = _load(ROOT / "agents/linux/runtime/capabilities.py", "capivara_linux_capabilities_p0c")
-WINDOWS = _load(ROOT / "agents/windows/runtime/capabilities.py", "capivara_windows_capabilities_p0c")
+def _load_capabilities(runtime_dir: Path, name: str):
+    previous_path = list(sys.path)
+    previous_profiles = {
+        key: value
+        for key, value in sys.modules.items()
+        if key == "profiles" or key.startswith("profiles.")
+    }
+    for key in list(previous_profiles):
+        sys.modules.pop(key, None)
+    sys.path.insert(0, str(runtime_dir))
+    try:
+        return _load(runtime_dir / "capabilities.py", name)
+    finally:
+        for key in list(sys.modules):
+            if key == "profiles" or key.startswith("profiles."):
+                sys.modules.pop(key, None)
+        sys.modules.update(previous_profiles)
+        sys.path[:] = previous_path
+
+
+LINUX = _load_capabilities(ROOT / "agents/linux/runtime", "capivara_linux_capabilities_p0c")
+WINDOWS = _load_capabilities(ROOT / "agents/windows/runtime", "capivara_windows_capabilities_p0c")
 
 
 class CatalogAgentRuntimeRequirementsParityTest(unittest.TestCase):

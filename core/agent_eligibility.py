@@ -39,6 +39,15 @@ def _capability_set(value: Any) -> set[str]:
     return set()
 
 
+def _runtime_profiles(value: Any) -> set[str]:
+    if not isinstance(value, dict):
+        return set()
+    profiles = value.get("runtime_profiles")
+    if not isinstance(profiles, (list, tuple, set)):
+        return set()
+    return {str(item).strip().lower() for item in profiles if str(item).strip()}
+
+
 def _structured_capabilities(runtime: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     capabilities = runtime.get("capabilities")
     capabilities = capabilities if isinstance(capabilities, dict) else {}
@@ -79,6 +88,13 @@ def evaluate_agent_eligibility(
         missing.append(requirements.runtime_id)
     if missing:
         reasons.append("missing_capabilities:" + ",".join(sorted(set(missing))))
+
+    if requirements.environment_id:
+        profiles = _runtime_profiles(capability_payload)
+        if not profiles:
+            reasons.append("runtime_profiles_missing")
+        elif requirements.environment_id not in profiles:
+            reasons.append("unsupported_runtime_profile")
 
     platform, java_status = _structured_capabilities(runtime)
     if requirements.operating_systems:

@@ -137,8 +137,15 @@ class MinecraftInstallerRuntimeTest(unittest.TestCase):
             self.assertEqual((target / "capivara-launch.args").read_text(encoding="utf-8"), args_file.read_text(encoding="utf-8"))
 
     def test_catalog_contains_forge_and_neoforge_but_not_mohist(self):
-        runtime_root = ROOT / "catalog/v2/games/minecraft/runtimes"
-        runtimes = [json.loads(path.read_text(encoding="utf-8")) for path in runtime_root.glob("*.json")]
+        runtime_roots = (
+            ROOT / "catalog/v2/games/minecraft/runtimes",
+            ROOT / "catalog/v2/games/minecraft/deferred",
+        )
+        runtimes = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for runtime_root in runtime_roots
+            for path in runtime_root.glob("*.json")
+        ]
         ids = {item["id"] for item in runtimes}
         self.assertIn("minecraft.java.forge", ids)
         self.assertIn("minecraft.java.neoforge", ids)

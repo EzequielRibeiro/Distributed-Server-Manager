@@ -14,15 +14,25 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf -- "${TMP_DIR}"' EXIT
 
 SOURCE_RUNTIME="${ROOT}/catalog/v2/games/dayz/runtimes/stable.json"
+SUPPORT_MATRIX="${ROOT}/catalog/v2/support-matrix.json"
 
 [[ -f "${SOURCE_RUNTIME}" ]] || fail "canonical DayZ runtime is missing"
+[[ -f "${SUPPORT_MATRIX}" ]] || fail "support matrix is missing"
 [[ ! -e "${ROOT}/catalog/v2/runtimes" ]] || fail "legacy runtime tree still exists after full migration"
 
-for GAME in arma3 dayz luanti mindustry minecraft rust
-do
+# Published runtimes must live under runtimes/. Deferred definitions must remain
+# outside that tree so installer/dashboard discovery stays fail-closed.
+while IFS=$'\t' read -r GAME ID
+ do
     [[ -d "${ROOT}/catalog/v2/games/${GAME}/runtimes" ]] \
-        || fail "canonical runtime directory missing for ${GAME}"
-done
+        || fail "published runtime directory missing for ${GAME} (${ID})"
+ done < <(jq -r '.published_runtimes[] | [.game,.id] | @tsv' "${SUPPORT_MATRIX}")
+
+while IFS=$'\t' read -r GAME ID
+ do
+    [[ -d "${ROOT}/catalog/v2/games/${GAME}/deferred" ]] \
+        || fail "deferred runtime directory missing for ${GAME} (${ID})"
+ done < <(jq -r '.deferred_runtimes[] | [.game,.id] | @tsv' "${SUPPORT_MATRIX}")
 
 LEGACY_ROOT="${TMP_DIR}/legacy"
 mkdir -p "${LEGACY_ROOT}/runtimes/dayz"
@@ -58,29 +68,18 @@ jq -e '.runtime_definition == "dayz.stable" and .provider == "steam" and .instal
     <<<"${MIXED_SELECTION}" >/dev/null || fail "runtime prepare bypassed path resolver"
 
 ALL_RUNTIMES="$("${ROOT}/installer/catalog.sh" runtime list --json)"
-for ID in \
-    arma3.stable \
-    dayz.stable \
-    mindustry.github \
-    minecraft.bedrock.vanilla \
-    minecraft.java.arclight \
-    minecraft.java.fabric \
-    minecraft.java.forge \
-    minecraft.java.neoforge \
-    minecraft.java.paper \
-    minecraft.java.purpur \
-    minecraft.java.quilt \
-    minecraft.java.spongevanilla \
-    minecraft.java.vanilla \
-    minecraft.java.youer \
-    rust.stable
-do
+
+while IFS= read -r ID
+ do
     [[ "$(jq --arg id "${ID}" '[.[] | select(.id == $id)] | length' <<<"${ALL_RUNTIMES}")" -eq 1 ]] \
         || fail "published runtime ${ID} is missing or duplicated"
-done
+ done < <(jq -r '.published_runtimes[].id' "${SUPPORT_MATRIX}")
 
-[[ "$(jq '[.[] | select(.id == "luanti.stable")] | length' <<<"${ALL_RUNTIMES}")" -eq 0 ]] \
-    || fail "deferred Luanti runtime is still published"
+while IFS= read -r ID
+ do
+    [[ "$(jq --arg id "${ID}" '[.[] | select(.id == $id)] | length' <<<"${ALL_RUNTIMES}")" -eq 0 ]] \
+        || fail "deferred runtime ${ID} is still published"
+ done < <(jq -r '.deferred_runtimes[].id' "${SUPPORT_MATRIX}")
 
 REPO_SHOW="$("${ROOT}/installer/catalog.sh" runtime show dayz.stable --json)"
 jq -e '.id == "dayz.stable" and .artifact.package_id == "223350"' <<<"${REPO_SHOW}" >/dev/null \

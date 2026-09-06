@@ -3,7 +3,7 @@ name: Folia Catalog Runtime
 on:
   pull_request:
     paths:
-      - 'catalog/v2/games/minecraft/runtimes/java-folia.json'
+      - 'catalog/v2/games/minecraft/deferred/java-folia.json'
       - 'catalog/v2/support-matrix.json'
       - 'installer/version_resolvers/papermc.sh'
       - 'tests/folia_catalog_runtime_test.sh'
@@ -12,7 +12,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'catalog/v2/games/minecraft/runtimes/java-folia.json'
+      - 'catalog/v2/games/minecraft/deferred/java-folia.json'
       - 'catalog/v2/support-matrix.json'
       - 'installer/version_resolvers/papermc.sh'
       - 'tests/folia_catalog_runtime_test.sh'
@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate runtime JSON
-        run: jq -e . catalog/v2/games/minecraft/runtimes/java-folia.json >/dev/null
+        run: jq -e . catalog/v2/games/minecraft/deferred/java-folia.json >/dev/null
       - name: Validate resolver syntax
         run: bash -n installer/version_resolvers/papermc.sh tests/folia_catalog_runtime_test.sh
       - name: Test Folia/PaperMC resolver contract

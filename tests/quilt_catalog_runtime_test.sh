@@ -66,6 +66,14 @@ print("Typed Quilt installer parity passed.")
 PY
 
 jq -e '.id=="minecraft.java.quilt" and .version.resolver=="quilt_meta" and .process.executable=="@java" and .process.args==["-jar","quilt-server-launch.jar","nogui"] and .installation.installer.type=="quilt_server"' \
-  "${ROOT}/catalog/v2/games/minecraft/runtimes/java-quilt.json" >/dev/null
+  "${ROOT}/catalog/v2/games/minecraft/deferred/java-quilt.json" >/dev/null
+
+jq -e '.deferred_runtimes[] | select(.id=="minecraft.java.quilt") | .resolver=="quilt_meta"' \
+  "${ROOT}/catalog/v2/support-matrix.json" >/dev/null
+
+if "${ROOT}/installer/catalog.sh" runtime show minecraft.java.quilt --json >/dev/null 2>&1; then
+  echo "FAIL: deferred Quilt runtime is still published" >&2
+  exit 1
+fi
 
 echo "Quilt catalog runtime tests passed."
