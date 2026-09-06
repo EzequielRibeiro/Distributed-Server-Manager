@@ -8,6 +8,7 @@ from .base import GameRuntimeProfile, ProfileError
 from .catalog_native import CatalogNativeRuntimeProfile
 from .dayz import DayZRuntimeProfile
 from .factorio import FactorioRuntimeProfile
+from .minecraft_bedrock import MinecraftBedrockRuntimeProfile
 from .minecraft_java import MinecraftJavaRuntimeProfile
 from .projectzomboid import ProjectZomboidRuntimeProfile
 from .sevendaystodie import SevenDaysToDieRuntimeProfile
@@ -24,6 +25,7 @@ _PROFILE_TYPES = (
     ArmaReforgerRuntimeProfile,
     TheIsleRuntimeProfile,
     MinecraftJavaRuntimeProfile,
+    MinecraftBedrockRuntimeProfile,
 )
 _PROFILES: dict[str, type[GameRuntimeProfile]] = {}
 for profile_type in _PROFILE_TYPES:
