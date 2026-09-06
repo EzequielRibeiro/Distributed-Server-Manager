@@ -1,0 +1,41 @@
+name: Arma 3 Runtime
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/runtime/profiles/arma3.py'
+      - 'agents/windows/runtime/profiles/arma3.py'
+      - 'agents/linux/runtime/profiles/registry.py'
+      - 'agents/windows/runtime/profiles/registry.py'
+      - 'catalog/v2/games/arma3/**'
+      - 'catalog/v2/support-matrix.json'
+      - 'tests/arma3_runtime_instance_isolation_test.py'
+      - '.github/workflows/arma3-runtime.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/linux/runtime/profiles/arma3.py'
+      - 'agents/windows/runtime/profiles/arma3.py'
+      - 'agents/linux/runtime/profiles/registry.py'
+      - 'agents/windows/runtime/profiles/registry.py'
+      - 'catalog/v2/games/arma3/**'
+      - 'catalog/v2/support-matrix.json'
+      - 'tests/arma3_runtime_instance_isolation_test.py'
+      - '.github/workflows/arma3-runtime.yml'
+permissions:
+  contents: read
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax
+        run: python3 -m py_compile agents/linux/runtime/profiles/arma3.py agents/windows/runtime/profiles/arma3.py tests/arma3_runtime_instance_isolation_test.py
+      - name: Prove cross-platform Arma 3 isolation
+        run: python3 -m unittest tests/arma3_runtime_instance_isolation_test.py
+      - name: Enforce catalog publication
+        run: |
+          test -f catalog/v2/games/arma3/runtimes/stable.json
+          test ! -f catalog/v2/games/arma3/deferred/stable.json
+          grep -F 'Arma3RuntimeProfile' agents/linux/runtime/profiles/registry.py
+          grep -F 'Arma3RuntimeProfile' agents/windows/runtime/profiles/registry.py
