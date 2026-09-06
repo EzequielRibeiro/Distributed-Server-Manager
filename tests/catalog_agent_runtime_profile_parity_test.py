@@ -27,6 +27,7 @@ class CatalogAgentRuntimeProfileParityTest(unittest.TestCase):
  def test_deferred_runtime_is_not_published(self):
   published={str(item.get("id") or "").lower() for item in self.matrix.get("published_runtimes",[])};deferred={str(item.get("id") or "").lower() for item in self.matrix.get("deferred_runtimes",[])}
   self.assertFalse(published & deferred);self.assertFalse(JAVA_IDS & deferred);self.assertTrue(JAVA_IDS.issubset(published))
-  for runtime_id in ("mindustry.github","arma3.stable","rust.stable","arksurvivalascended.stable"):
+  for runtime_id in ("mindustry.github","arma3.stable","rust.stable","arksurvivalascended.stable","valheim.stable"):
    self.assertIn(runtime_id,published);self.assertNotIn(runtime_id,deferred)
+  self.assertIn("valheim.stable",self.linux)
 if __name__=="__main__":unittest.main()
