@@ -32,11 +32,16 @@ class MinecraftJavaInstanceIsolationTest(unittest.TestCase):
     a=profile.build_runtime_spec({**base,"instance_id":"mc-a"},context(install,state_a,runtime_id));b=profile.build_runtime_spec({**base,"instance_id":"mc-b"},context(install,state_b,runtime_id))
     self.assertEqual(a["seed_directories"][0]["source"],str(install));self.assertEqual(b["seed_directories"][0]["source"],str(install));self.assertNotEqual(a["working_directory"],b["working_directory"]);self.assertNotEqual(a["seed_directories"][0]["target"],b["seed_directories"][0]["target"]);self.assertTrue(a["working_directory"].startswith(str(state_a)));self.assertTrue(b["working_directory"].startswith(str(state_b)))
 
- def test_bedrock_or_generic_minecraft_never_falls_into_java_profile(self):
+ def test_bedrock_never_falls_into_java_profile(self):
+  linux=load_module("linux","registry")
+  bedrock=linux.resolve_profile({"game_id":"minecraft","environment_id":"minecraft.bedrock.vanilla"})
+  self.assertEqual(bedrock.__class__.__name__,"MinecraftBedrockRuntimeProfile")
+  self.assertNotEqual(bedrock.__class__.__name__,"MinecraftJavaRuntimeProfile")
+  windows=load_module("windows","registry")
+  with self.assertRaises(Exception):windows.resolve_profile({"game_id":"minecraft","environment_id":"minecraft.bedrock.vanilla"})
   for platform in ("linux","windows"):
    registry=load_module(platform,"registry")
-   for environment_id in ("minecraft.bedrock.vanilla","minecraft"):
-    with self.assertRaises(Exception):registry.resolve_profile({"game_id":"minecraft","environment_id":environment_id})
+   with self.assertRaises(Exception):registry.resolve_profile({"game_id":"minecraft","environment_id":"minecraft"})
 
  def test_catalog_policy_runtime_id_must_match(self):
   for platform in ("linux","windows"):

@@ -21,12 +21,8 @@
     "artifact_mode": "executable"
   },
   "requirements": {
-    "os": [
-      "linux"
-    ],
-    "architectures": [
-      "x86_64"
-    ],
+    "os": ["linux"],
+    "architectures": ["x86_64"],
     "java": null
   },
   "artifact": {
@@ -41,30 +37,12 @@
     "allocation": "block",
     "block_size": 2,
     "ports": [
-      {
-        "name": "game_ipv4",
-        "protocol": "udp",
-        "offset": 0
-      },
-      {
-        "name": "game_ipv6",
-        "protocol": "udp",
-        "offset": 1
-      }
+      {"name": "game_ipv4", "protocol": "udp", "offset": 0},
+      {"name": "game_ipv6", "protocol": "udp", "offset": 1}
     ],
     "apply": [
-      {
-        "kind": "property",
-        "file": "server.properties",
-        "key": "server-port",
-        "value": "{game_ipv4}"
-      },
-      {
-        "kind": "property",
-        "file": "server.properties",
-        "key": "server-portv6",
-        "value": "{game_ipv6}"
-      }
+      {"kind": "property", "file": "server.properties", "key": "server-port", "value": "{game_ipv4}"},
+      {"kind": "property", "file": "server.properties", "key": "server-portv6", "value": "{game_ipv6}"}
     ]
   }
 }
