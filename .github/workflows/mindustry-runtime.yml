@@ -1,0 +1,24 @@
+name: Mindustry Runtime
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  runtime:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python syntax
+        run: |
+          python3 -m py_compile \
+            agents/linux/runtime/profiles/mindustry.py \
+            agents/windows/runtime/profiles/mindustry.py \
+            agents/linux/runtime/profiles/registry.py \
+            agents/windows/runtime/profiles/registry.py \
+            tests/mindustry_runtime_test.py
+      - name: Prove Mindustry runtime contract
+        run: python3 tests/mindustry_runtime_test.py
+      - name: Validate catalog layout
+        run: bash tests/catalog_v2_test.sh
