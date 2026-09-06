@@ -1,0 +1,51 @@
+name: ARK Survival Ascended Runtime
+
+on:
+  pull_request:
+    paths:
+      - 'agents/windows/runtime/runtime_spec.py'
+      - 'agents/windows/runtime/runtime_materialization.py'
+      - 'agents/windows/runtime/profiles/ark_survival_ascended.py'
+      - 'agents/windows/runtime/profiles/minecraft_java.py'
+      - 'agents/windows/runtime/profiles/mindustry.py'
+      - 'agents/windows/runtime/profiles/rust.py'
+      - 'agents/windows/runtime/profiles/registry.py'
+      - 'catalog/v2/games/arksurvivalascended/**'
+      - 'catalog/v2/support-matrix.json'
+      - 'tests/windows_runtime_seed_scope_test.py'
+      - '.github/workflows/ark-survival-ascended-runtime.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/windows/runtime/runtime_spec.py'
+      - 'agents/windows/runtime/runtime_materialization.py'
+      - 'agents/windows/runtime/profiles/ark_survival_ascended.py'
+      - 'agents/windows/runtime/profiles/minecraft_java.py'
+      - 'agents/windows/runtime/profiles/mindustry.py'
+      - 'agents/windows/runtime/profiles/rust.py'
+      - 'agents/windows/runtime/profiles/registry.py'
+      - 'catalog/v2/games/arksurvivalascended/**'
+      - 'catalog/v2/support-matrix.json'
+      - 'tests/windows_runtime_seed_scope_test.py'
+      - '.github/workflows/ark-survival-ascended-runtime.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native-windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Compile Windows runtime changes
+        run: python -m py_compile agents/windows/runtime/runtime_spec.py agents/windows/runtime/runtime_materialization.py agents/windows/runtime/profiles/ark_survival_ascended.py agents/windows/runtime/profiles/minecraft_java.py agents/windows/runtime/profiles/mindustry.py agents/windows/runtime/profiles/rust.py agents/windows/runtime/profiles/registry.py tests/windows_runtime_seed_scope_test.py tests/catalog_agent_runtime_profile_parity_test.py
+      - name: Validate ARK and Windows seed scopes natively
+        run: python -m unittest tests/windows_runtime_seed_scope_test.py
+      - name: Validate Catalog to Agent runtime parity
+        run: python -m unittest tests/catalog_agent_runtime_profile_parity_test.py
+      - name: Validate support matrix JSON
+        run: python -m json.tool catalog/v2/support-matrix.json > $null
