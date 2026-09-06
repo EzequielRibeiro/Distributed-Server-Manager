@@ -1,0 +1,52 @@
+name: Catalog Agent Runtime Parity
+
+on:
+  pull_request:
+    paths:
+      - 'catalog/v2/**'
+      - 'core/placement_requirements.py'
+      - 'core/agent_eligibility.py'
+      - 'agents/linux/runtime/capabilities.py'
+      - 'agents/linux/runtime/profiles/**'
+      - 'agents/windows/runtime/capabilities.py'
+      - 'agents/windows/runtime/profiles/**'
+      - 'tests/catalog_agent_runtime_profile_parity_test.py'
+      - 'tests/runtime_profile_placement_parity_test.py'
+      - '.github/workflows/catalog-agent-runtime-parity.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'catalog/v2/**'
+      - 'core/placement_requirements.py'
+      - 'core/agent_eligibility.py'
+      - 'agents/linux/runtime/capabilities.py'
+      - 'agents/linux/runtime/profiles/**'
+      - 'agents/windows/runtime/capabilities.py'
+      - 'agents/windows/runtime/profiles/**'
+      - 'tests/catalog_agent_runtime_profile_parity_test.py'
+      - 'tests/runtime_profile_placement_parity_test.py'
+      - '.github/workflows/catalog-agent-runtime-parity.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax and matrix
+        run: |
+          python3 -m json.tool catalog/v2/support-matrix.json >/dev/null
+          python3 -m py_compile core/placement_requirements.py core/agent_eligibility.py agents/linux/runtime/capabilities.py agents/windows/runtime/capabilities.py tests/catalog_agent_runtime_profile_parity_test.py tests/runtime_profile_placement_parity_test.py
+      - name: Validate published Catalog to Agent profile parity
+        run: python3 -m unittest tests/catalog_agent_runtime_profile_parity_test.py
+      - name: Validate fail-closed runtime profile placement
+        run: python3 -m unittest tests/runtime_profile_placement_parity_test.py
+      - name: Enforce heartbeat runtime profile evidence
+        run: |
+          grep -F 'runtime_profiles' agents/linux/runtime/capabilities.py agents/windows/runtime/capabilities.py
+          grep -F 'supported_profiles' agents/linux/runtime/capabilities.py agents/windows/runtime/capabilities.py
+          grep -F 'unsupported_runtime_profile' core/agent_eligibility.py
+          grep -F 'runtime_profiles_missing' core/agent_eligibility.py
