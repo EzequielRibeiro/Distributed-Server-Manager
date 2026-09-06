@@ -10,11 +10,13 @@ from .dayz import DayZRuntimeProfile
 from .factorio import FactorioRuntimeProfile
 from .projectzomboid import ProjectZomboidRuntimeProfile
 from .sevendaystodie import SevenDaysToDieRuntimeProfile
+from .source import SourceRuntimeProfile
 from .theisle import TheIsleRuntimeProfile
 
 _PROFILE_TYPES = (
     DayZRuntimeProfile,
     ProjectZomboidRuntimeProfile,
+    SourceRuntimeProfile,
     CatalogNativeRuntimeProfile,
     SevenDaysToDieRuntimeProfile,
     FactorioRuntimeProfile,
