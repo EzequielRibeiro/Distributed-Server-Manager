@@ -106,7 +106,7 @@ def _run_http(selection:dict[str,Any],target:Path)->None:
 def _install(selection:dict[str,Any],target:Path,provider:str)->None:
  if provider=="steam":_run_steam(selection,target)
  elif provider in {"http","http-archive","github"}:_run_http(selection,target)
- elif provider=="custom" and str(selection.get("game") or "").strip().lower()=="fivem":install_fivem(target)
+ elif provider=="fivem":install_fivem(target)
  else:raise RuntimeError(f"provider not supported by standalone Linux Agent: {provider}")
  execute_installer(selection,target)
  _materialize_minecraft_eula(selection,target)
