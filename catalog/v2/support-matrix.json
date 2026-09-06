@@ -2,6 +2,7 @@
   "schema_version": 1,
   "kind": "CatalogSupportMatrix",
   "published_runtimes": [
+    {"id":"arma3.stable","game":"arma3","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported","compatibility_note":"Platform-specific Arma 3 server executables are selected by the validated Agent runtime profile; the instance profiles/log root and reserved UDP block are private per server."},
     {"id":"armareforger.stable","game":"armareforger","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"},
     {"id":"counterstrike2.stable","game":"counterstrike2","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported","compatibility_note":"Source 2 binaries/assets stay shared while game/csgo/cfg and logs are instance-private bind mounts."},
     {"id":"dayz.stable","game":"dayz","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
@@ -29,7 +30,6 @@
     {"id":"minecraft.java.youer","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"youer_api","os":["linux","windows"],"status":"supported","minecraft_versions":["1.21.1"],"java":[21],"content_ecosystems":["neoforge-mod","bukkit-plugin","spigot-plugin"]}
   ],
   "deferred_runtimes": [
-    {"id":"arma3.stable","game":"arma3","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"deferred","reason":"Catalog definition exists, but the canonical Linux/Windows Agent runtime registries do not yet provide an Arma 3 materialization profile."},
     {"id":"rust.stable","game":"rust","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"deferred","reason":"Catalog definition exists, but canonical Linux/Windows Agent runtime registries do not yet provide a Rust materialization profile."},
     {"id":"arksurvivalascended.stable","game":"arksurvivalascended","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["windows"],"status":"deferred","reason":"The current ARK: Survival Ascended dedicated server distribution is Windows-native; the canonical Windows Agent does not yet model this runtime profile."},
     {"id":"fivem.stable","game":"fivem","engine":"native","provider":"custom","version_strategy":"static","resolver":null,"os":["linux"],"status":"deferred","reason":"FXServer still requires a canonical multi-artifact installation transaction (server artifact plus cfx-server-data). Runtime secret transport is available for the Cfx.re license key."},
