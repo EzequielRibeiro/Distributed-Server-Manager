@@ -13,6 +13,18 @@ def _absolute(v,label):
  t=str(v or "").strip()
  if not t or not os.path.isabs(t) or "\n" in t or "\r" in t:raise RuntimeSpecError(f"invalid {label}")
  return str(Path(t))
+def _path_pairs(value,label):
+ if value is None:return []
+ if not isinstance(value,list) or len(value)>128:raise RuntimeSpecError(f"invalid {label}")
+ out=[]
+ for item in value:
+  if not isinstance(item,dict):raise RuntimeSpecError(f"invalid {label} entry")
+  out.append({"source":_absolute(item.get("source"),f"{label} source"),"target":_absolute(item.get("target"),f"{label} target")})
+ return out
+def _absolute_list(value,label):
+ if value is None:return []
+ if not isinstance(value,list) or len(value)>128:raise RuntimeSpecError(f"invalid {label}")
+ return [_absolute(item,label) for item in value]
 def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)->dict[str,Any]:
  if not isinstance(spec,dict):raise RuntimeSpecError("runtime spec must be an object")
  r=dict(spec);r["schema_version"]=1;r["kind"]="CapivaraInstanceRuntimeSpec";r["instance_id"]=_token(r.get("instance_id"),"instance_id");r["agent_id"]=_token(r.get("agent_id"),"agent_id")
@@ -21,6 +33,10 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  if r["adapter"] not in {"windows-process","windows-service"}:raise RuntimeSpecError("unsupported runtime materialization adapter")
  r["working_directory"]=_absolute(r.get("working_directory") or r.get("path"),"working_directory")
  if r["adapter"]=="windows-process":r["executable"]=_absolute(r.get("executable"),"executable")
+ if r.get("instance_state_root") is not None:r["instance_state_root"]=_absolute(r.get("instance_state_root"),"instance_state_root")
+ r["writable_directories"]=_absolute_list(r.get("writable_directories"),"writable directory")
+ r["seed_files"]=_path_pairs(r.get("seed_files"),"seed_files")
+ r["seed_directories"]=_path_pairs(r.get("seed_directories"),"seed_directories")
  args=r.get("arguments",[])
  if not isinstance(args,list) or len(args)>128:raise RuntimeSpecError("invalid arguments")
  out=[]
