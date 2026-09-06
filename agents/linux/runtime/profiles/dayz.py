@@ -22,7 +22,7 @@ _STEAM_QUERY_OFFSET = 3
 
 class DayZRuntimeProfile(GameRuntimeProfile):
     game_ids = ("dayz", "dayz.stable")
-    profile_version = 4
+    profile_version = 5
 
     def migration_context(self, record: dict[str, Any]) -> dict[str, Any]:
         """Reconstruct a modern context from a pre-private-state DayZ RuntimeSpec."""
@@ -69,13 +69,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
         context: dict[str, Any],
         stored_version: int,
     ) -> dict[str, Any]:
-        """Repair the v1-v3 DayZ port-role representation without reallocating ports.
-
-        The catalog reserves DayZ as a block with game at +0, game_aux at +2 and
-        steam_query at +3. Legacy RuntimeSpecs either omitted steam_query or, during
-        the v3 migration, incorrectly aliased it to game_aux. Only that recognized
-        legacy topology is repaired; already-distinct query reservations are kept.
-        """
+        """Repair legacy DayZ port roles while preserving instance-owned state inputs."""
         upgraded = dict(context)
         ports = dict(upgraded.get("ports") or {})
         normalized = port_bindings({"ports": ports})
@@ -115,12 +109,12 @@ class DayZRuntimeProfile(GameRuntimeProfile):
         config_path = require_within(instance_state_root, context.get("config_path") or default_config, "config_path")
         configuration_root = str(Path(config_path).parent)
         profile_path = str(Path(instance_state_root) / "profiles")
-        persistence_path = str(Path(instance_state_root) / "storage_1")
 
         mission = str(context.get("mission") or context.get("dayz_mission") or "dayzOffline.chernarusplus").strip()
         if not _MISSION.fullmatch(mission):
             raise ProfileError("invalid DayZ mission")
-        persistence_target = str(Path(install_path) / "mpmissions" / mission / "storage_1")
+        mission_source = str(Path(install_path) / "mpmissions" / mission)
+        mission_private = str(Path(instance_state_root) / "mpmissions" / mission)
 
         game_port = require_port(context, "game", protocol="udp")
         game_aux_port = require_port(context, "game_aux", protocol="udp")
@@ -175,10 +169,14 @@ class DayZRuntimeProfile(GameRuntimeProfile):
                 "source": str(Path(install_path) / "serverDZ.cfg"),
                 "target": config_path,
             }],
-            "writable_directories": [profile_path, persistence_path],
+            "seed_directories": [{
+                "source": mission_source,
+                "target": mission_private,
+            }],
+            "writable_directories": [profile_path],
             "bind_paths": [{
-                "source": persistence_path,
-                "target": persistence_target,
+                "source": mission_private,
+                "target": mission_source,
             }],
         }
 
