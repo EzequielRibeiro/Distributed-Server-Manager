@@ -8,12 +8,7 @@
   "variant": "stable",
   "loader": null,
   "version": {"strategy": "static", "value": "current", "build": "steam-current"},
-  "process": {
-    "engine": "native",
-    "executable": "valheim_server.x86_64",
-    "artifact_mode": "executable",
-    "args": ["-name", "Capivara Valheim", "-port", "2456", "-world", "Dedicated", "-savedir", "./state", "-public", "1"]
-  },
+  "process": {"engine": "native", "executable": "valheim_server.x86_64", "artifact_mode": "executable", "args": []},
   "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
   "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "896660"},
   "installation": {"directory": "/opt/dsm/game-data/valheim/serverfiles"},
@@ -23,6 +18,7 @@
     "ports": [
       {"name": "game", "protocol": "udp", "offset": 0},
       {"name": "game_aux", "protocol": "udp", "offset": 1}
-    ]
+    ],
+    "apply": []
   }
 }

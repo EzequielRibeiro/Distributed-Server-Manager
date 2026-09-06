@@ -1,0 +1,44 @@
+name: Valheim Runtime
+
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/runtime/profiles/valheim.py'
+      - 'agents/linux/runtime/valheim_launch.py'
+      - 'agents/linux/runtime/profiles/registry.py'
+      - 'catalog/v2/games/valheim/**'
+      - 'catalog/v2/support-matrix.json'
+      - 'tests/valheim_runtime_test.py'
+      - 'tests/catalog_agent_runtime_profile_parity_test.py'
+      - '.github/workflows/valheim-runtime.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/linux/runtime/profiles/valheim.py'
+      - 'agents/linux/runtime/valheim_launch.py'
+      - 'agents/linux/runtime/profiles/registry.py'
+      - 'catalog/v2/games/valheim/**'
+      - 'catalog/v2/support-matrix.json'
+      - 'tests/valheim_runtime_test.py'
+      - '.github/workflows/valheim-runtime.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Valheim runtime
+        run: python3 -m py_compile agents/linux/runtime/profiles/valheim.py agents/linux/runtime/valheim_launch.py agents/linux/runtime/profiles/registry.py tests/valheim_runtime_test.py
+      - name: Run Valheim regression
+        run: python3 -m unittest tests/valheim_runtime_test.py tests/catalog_agent_runtime_profile_parity_test.py
+      - name: Validate runtime manifest
+        run: python3 -m json.tool catalog/v2/games/valheim/runtimes/stable.json >/dev/null
+      - name: Enforce credential-only password contract
+        run: |
+          ! grep -R --line-number -E '"-password"[[:space:]]*,' catalog/v2/games/valheim
+          grep -F 'VALHEIM_PASSWORD' agents/linux/runtime/profiles/valheim.py
+          grep -F 'CREDENTIALS_DIRECTORY' agents/linux/runtime/valheim_launch.py
