@@ -14,12 +14,14 @@ from .mindustry import MindustryRuntimeProfile
 from .projectzomboid import ProjectZomboidRuntimeProfile
 from .sevendaystodie import SevenDaysToDieRuntimeProfile
 from .source import SourceRuntimeProfile
+from .source2 import Source2RuntimeProfile
 from .theisle import TheIsleRuntimeProfile
 
 _PROFILE_TYPES = (
     DayZRuntimeProfile,
     ProjectZomboidRuntimeProfile,
     SourceRuntimeProfile,
+    Source2RuntimeProfile,
     CatalogNativeRuntimeProfile,
     SevenDaysToDieRuntimeProfile,
     FactorioRuntimeProfile,
