@@ -1,13 +1,14 @@
 """Allowlisted Windows game runtime profile registry."""
 from __future__ import annotations
 from typing import Any
+from .ark_survival_ascended import ArkSurvivalAscendedRuntimeProfile
 from .arma3 import Arma3RuntimeProfile
 from .base import GameRuntimeProfile,ProfileError
 from .dayz import DayZRuntimeProfile
 from .minecraft_java import MinecraftJavaRuntimeProfile
 from .mindustry import MindustryRuntimeProfile
 from .rust import RustRuntimeProfile
-_PROFILES=(DayZRuntimeProfile,MinecraftJavaRuntimeProfile,MindustryRuntimeProfile,Arma3RuntimeProfile,RustRuntimeProfile)
+_PROFILES=(DayZRuntimeProfile,MinecraftJavaRuntimeProfile,MindustryRuntimeProfile,Arma3RuntimeProfile,RustRuntimeProfile,ArkSurvivalAscendedRuntimeProfile)
 def resolve_profile(instance:dict[str,Any])->GameRuntimeProfile:
  keys={str(instance.get("game_id") or "").strip().lower(),str(instance.get("environment_id") or "").strip().lower()}
  for cls in _PROFILES:
