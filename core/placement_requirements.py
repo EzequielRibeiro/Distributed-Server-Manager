@@ -27,6 +27,7 @@ class PortRequirement:
 @dataclass(frozen=True)
 class PlacementRequirements:
     game_id: str | None = None
+    environment_id: str | None = None
     runtime_id: str | None = None
     capabilities: frozenset[str] = field(default_factory=frozenset)
     operating_systems: frozenset[str] = field(default_factory=frozenset)
@@ -160,6 +161,7 @@ def requirements_from_runtime_definition(
     java_max = _positive_int(java.get("max"))
     return PlacementRequirements(
         game_id=str(definition.get("game") or "").strip().lower() or None,
+        environment_id=str(definition.get("id") or "").strip().lower() or None,
         runtime_id=runtime_capability,
         capabilities=frozenset(capabilities),
         operating_systems=_normalized_values(requirements.get("os")),
@@ -186,6 +188,7 @@ def requirements_for_instance(
         return result
     return PlacementRequirements(
         game_id=str(game_id or "").strip().lower() or None,
+        environment_id=str(runtime_id or "").strip().lower() or None,
         min_cpu_threads=result.min_cpu_threads,
         min_ram_bytes=result.min_ram_bytes,
         min_storage_free_bytes=result.min_storage_free_bytes,
