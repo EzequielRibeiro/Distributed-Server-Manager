@@ -17,8 +17,6 @@ from .base import GameRuntimeProfile, ProfileError, port_bindings, require_absol
 class CatalogNativeRuntimeProfile(GameRuntimeProfile):
     game_ids = (
         "satisfactory", "satisfactory.stable",
-        "garrysmod", "garrysmod.stable",
-        "left4dead2", "left4dead2.stable",
     )
     profile_version = 1
 
@@ -27,7 +25,7 @@ class CatalogNativeRuntimeProfile(GameRuntimeProfile):
         agent_id = require_text(instance.get("agent_id"), "agent_id")
         game_id = require_text(instance.get("game_id"), "game_id").lower()
         environment_id = require_text(instance.get("environment_id") or f"{game_id}.stable", "environment_id")
-        if game_id not in {"satisfactory", "garrysmod", "left4dead2"}:
+        if game_id != "satisfactory":
             raise ProfileError("generic native profile is not allowlisted for this game")
 
         install_path = require_absolute(
@@ -76,11 +74,6 @@ class CatalogNativeRuntimeProfile(GameRuntimeProfile):
         ports = port_bindings(context)
         if not ports:
             raise ProfileError("generic native runtime requires reserved ports")
-        if game_id in {"garrysmod", "left4dead2"}:
-            binding = ports.get("game_udp")
-            if not binding or binding.get("protocol") != "udp":
-                raise ProfileError("Source runtime requires game_udp reservation")
-            arguments = ["-port", str(binding["port"]), *arguments]
 
         return {
             "instance_id": instance_id,
