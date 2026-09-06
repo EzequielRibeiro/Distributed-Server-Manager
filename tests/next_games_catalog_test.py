@@ -11,7 +11,7 @@ def load_module(name,path):
 class NextGamesCatalogTest(unittest.TestCase):
  def test_supported_and_deferred_decisions_are_explicit(self):
   matrix=load(ROOT/"catalog/v2/support-matrix.json");published={r["id"] for r in matrix["published_runtimes"]};deferred={r["id"] for r in matrix["deferred_runtimes"]}
-  self.assertTrue({"sevendaystodie.stable","satisfactory.stable","garrysmod.stable","factorio.stable","left4dead2.stable","armareforger.stable","theisle.stable","arksurvivalascended.stable"}<=published);self.assertTrue({"fivem.stable","valheim.stable","luanti.stable"}<=deferred);self.assertTrue(published.isdisjoint(deferred))
+  self.assertTrue({"sevendaystodie.stable","satisfactory.stable","garrysmod.stable","factorio.stable","left4dead2.stable","armareforger.stable","theisle.stable","arksurvivalascended.stable","valheim.stable"}<=published);self.assertTrue({"fivem.stable","luanti.stable"}<=deferred);self.assertTrue(published.isdisjoint(deferred))
  def test_artifact_contracts_match_known_dedicated_distributions(self):
   expected={"sevendaystodie":("294420","7DaysToDieServer.x86_64"),"satisfactory":("1690800","FactoryServer.sh"),"garrysmod":("4020","srcds_run"),"left4dead2":("222860","srcds_run"),"armareforger":("1874900","ArmaReforgerServer"),"theisle":("412680","TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping")}
   for game,(app_id,exe) in expected.items():
@@ -22,8 +22,8 @@ class NextGamesCatalogTest(unittest.TestCase):
    runtime=load(ROOT/f"catalog/v2/games/{game}/runtimes/stable.json");ports=runtime["network"]["ports"];pairs=[(x["protocol"],x["offset"]) for x in ports];self.assertEqual(len(pairs),len(set(pairs)));self.assertTrue(all(0<=x["offset"]<runtime["network"]["block_size"] for x in ports))
  def test_registry_exposes_intended_profiles(self):
   names=set(supported_profiles())
-  for key in ("sevendaystodie.stable","factorio.stable","armareforger.stable","satisfactory.stable","garrysmod.stable","left4dead2.stable","theisle.stable"):self.assertIn(key,names)
-  for key in ("fivem.stable","valheim.stable","luanti.stable","arksurvivalascended.stable"):self.assertNotIn(key,names)
+  for key in ("sevendaystodie.stable","factorio.stable","armareforger.stable","satisfactory.stable","garrysmod.stable","left4dead2.stable","theisle.stable","valheim.stable"):self.assertIn(key,names)
+  for key in ("fivem.stable","luanti.stable","arksurvivalascended.stable"):self.assertNotIn(key,names)
  def test_source_profile_keeps_port_typed(self):
   profile=resolve_profile({"environment_id":"garrysmod.stable","game_id":"garrysmod"});spec=profile.build_runtime_spec({"instance_id":"gmod-1","agent_id":"agent-1","game_id":"garrysmod","environment_id":"garrysmod.stable"},{"install_path":"/opt/dsm/game-data/garrysmod/serverfiles","instance_state_root":"/var/lib/capivara-instances/gmod-1","ports":{"game_udp":{"port":27015,"protocol":"udp"},"game_tcp":{"port":27015,"protocol":"tcp"}},"catalog_runtime_policy":{"runtime_id":"garrysmod.stable","executable":"srcds_run","working_directory":"."}});self.assertEqual(spec["arguments"][:2],["-port","27015"])
  def test_seven_days_xml_preparer_is_private(self):
