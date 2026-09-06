@@ -51,7 +51,7 @@ e=emit_runtime_event(Path(instance_runtime.STATE_DIR),"TEST",agent_id="win-agent
 ''',state_dir=state);self.assertEqual(r.returncode,0,r.stderr)
  def test_dayz_profile_and_end_to_end_provisioning(self):
   with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as install:
-   executable=Path(install)/"DayZServer_x64.exe";executable.write_bytes(b"test")
+   root=Path(install);executable=root/"DayZServer_x64.exe";executable.write_bytes(b"test");(root/"serverDZ.cfg").write_text('hostname="test";\n',encoding="utf-8");mission=root/"mpmissions"/"dayzOffline.chernarusplus"/"db";mission.mkdir(parents=True);(mission/"messages.xml").write_text("<messages/>\n",encoding="utf-8")
    r=self._run(f'''
 from pathlib import Path
 import instance_runtime
@@ -62,6 +62,7 @@ assert out["status"]=="completed",out
 assert out["runtime"]["adapter"]=="windows-process"
 assert out["observed_state"]=="stopped"
 record=instance_runtime.get_instance("srv-dayz");assert record["executable"].endswith("DayZServer_x64.exe") and record["desired_state"]=="stopped"
+state_root=Path(record["instance_state_root"]);assert (state_root/"config"/"serverDZ.cfg").is_file();assert (state_root/"mpmissions"/"dayzOffline.chernarusplus"/"db"/"messages.xml").is_file();assert any(x.startswith("-mission=") for x in record["arguments"]);assert any(x.startswith("-storage=") for x in record["arguments"])
 ''',state_dir=state);self.assertEqual(r.returncode,0,r.stderr)
  def test_content_desired_state_contract(self):
   with tempfile.TemporaryDirectory() as state:

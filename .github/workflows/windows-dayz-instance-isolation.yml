@@ -1,0 +1,35 @@
+name: Windows DayZ Instance Isolation
+
+on:
+  pull_request:
+    paths:
+      - 'agents/windows/runtime/**'
+      - 'tests/windows_dayz_instance_isolation_test.py'
+      - '.github/workflows/windows-dayz-instance-isolation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/windows/runtime/**'
+      - 'tests/windows_dayz_instance_isolation_test.py'
+      - '.github/workflows/windows-dayz-instance-isolation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax
+        run: python3 -m py_compile agents/windows/runtime/runtime_spec.py agents/windows/runtime/runtime_materialization.py agents/windows/runtime/profiles/dayz.py tests/windows_dayz_instance_isolation_test.py
+      - name: Validate two-instance DayZ isolation
+        run: python3 -m unittest tests/windows_dayz_instance_isolation_test.py
+      - name: Enforce native DayZ private-path contract
+        run: |
+          grep -F -- '-mission=' agents/windows/runtime/profiles/dayz.py
+          grep -F -- '-storage=' agents/windows/runtime/profiles/dayz.py
+          grep -F -- '-profiles=' agents/windows/runtime/profiles/dayz.py
+          grep -F 'seed_directories' agents/windows/runtime/profiles/dayz.py agents/windows/runtime/runtime_spec.py agents/windows/runtime/runtime_materialization.py
+          ! grep -F 'shell=True' agents/windows/runtime/runtime_materialization.py agents/windows/runtime/adapters/windows_process.py
