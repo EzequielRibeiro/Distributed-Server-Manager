@@ -1,0 +1,34 @@
+name: Minecraft Bedrock Runtime
+
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/runtime/profiles/minecraft_bedrock.py'
+      - 'agents/linux/runtime/profiles/registry.py'
+      - 'catalog/v2/games/minecraft/**'
+      - 'catalog/v2/support-matrix.json'
+      - 'tests/minecraft_bedrock_instance_isolation_test.py'
+      - 'tests/catalog_v2_test.sh'
+      - '.github/workflows/minecraft-bedrock-runtime.yml'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python syntax
+        run: |
+          python3 -m py_compile \
+            agents/linux/runtime/profiles/minecraft_bedrock.py \
+            agents/linux/runtime/profiles/registry.py \
+            tests/minecraft_bedrock_instance_isolation_test.py
+      - name: Prove Bedrock private state and network isolation
+        run: python3 tests/minecraft_bedrock_instance_isolation_test.py
+      - name: Prove catalog publication contract
+        run: bash tests/catalog_v2_test.sh
