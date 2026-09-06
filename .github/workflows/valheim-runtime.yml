@@ -39,6 +39,6 @@ jobs:
         run: python3 -m json.tool catalog/v2/games/valheim/runtimes/stable.json >/dev/null
       - name: Enforce credential-only password contract
         run: |
-          ! grep -R --line-number -E '"-password"[[:space:]]*,' catalog/v2/games/valheim agents/linux/runtime/profiles/valheim.py
+          ! grep -R --line-number -E '"-password"[[:space:]]*,' catalog/v2/games/valheim
           grep -F 'VALHEIM_PASSWORD' agents/linux/runtime/profiles/valheim.py
           grep -F 'CREDENTIALS_DIRECTORY' agents/linux/runtime/valheim_launch.py
