@@ -49,6 +49,9 @@ def install_customer_instance_creation(legacy)->None:
   if not re.fullmatch(r"[A-Za-z0-9._-]+",runtime_id):raise ValueError("invalid runtime_id")
   try:runtime_def=runtime_definition(root,game,runtime_id)
   except ValueError as exc:raise ValueError("requested runtime_id is not available for this game") from exc
+  runtime_edition=str(runtime_def.get("edition") or "").strip().lower()
+  if runtime_edition and edition.strip().lower()!=runtime_edition:raise ValueError("edition does not match the requested runtime")
+  if game=="minecraft" and runtime_edition=="java" and payload.get("minecraft_eula_accepted") is not True:raise ValueError("Minecraft Java EULA acceptance is required")
   variant=runtime_def.get("variant") or runtime_def.get("loader") or runtime_def.get("edition");repository=legacy.dashboard_repository(database_path);customer_id=resolve_customer_reference(user["scope_id"],public_only=isinstance(user["scope_id"],str));source_vault_id=str(payload.get("source_vault_id") or "").strip() or None;clones=InstanceBackupCloneRepository(repository.backend,root)
   if source_vault_id:clones.validate_source(source_vault_id,customer_id,game,runtime_id)
   requested_profile_id=str(payload.get("resource_profile_id") or "").strip() or None
@@ -71,7 +74,8 @@ def install_customer_instance_creation(legacy)->None:
    repository.delete_instance(plan["instance_id"])
    raise
   try:
-   legacy.audit(user,"customer.instance.create","started",plan["instance_id"],f"customer={customer_id};contract={plan['contract_id']};region={placement.get('region_id') or ''};correlation_id={correlation_id}",database_path=database_path)
+   eula_audit=";minecraft_eula=accepted" if game=="minecraft" and runtime_edition=="java" else ""
+   legacy.audit(user,"customer.instance.create","started",plan["instance_id"],f"customer={customer_id};contract={plan['contract_id']};region={placement.get('region_id') or ''};correlation_id={correlation_id}{eula_audit}",database_path=database_path)
   except Exception:pass
   # Customer responses expose only logical placement. Agent, Node, datacenter
   # and Controller filesystem details remain internal orchestration data.
