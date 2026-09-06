@@ -8,8 +8,17 @@
   "variant": "stable",
   "loader": null,
   "version": {"strategy": "static", "value": "current", "build": "steam-current"},
-  "process": {"engine": "native", "executable": "ArkAscendedServer.exe", "artifact_mode": "executable"},
+  "process": {"engine": "native", "executable": "ShooterGame/Binaries/Win64/ArkAscendedServer.exe", "artifact_mode": "executable"},
   "requirements": {"os": ["windows"], "architectures": ["x86_64"], "java": null},
   "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "2430930"},
-  "installation": {"directory": "/opt/dsm/game-data/arksurvivalascended/serverfiles"}
+  "installation": {"directory": "/opt/dsm/game-data/arksurvivalascended/serverfiles"},
+  "network": {
+    "allocation": "block",
+    "block_size": 10,
+    "ports": [
+      {"name": "game", "protocol": "udp", "offset": 0},
+      {"name": "query", "protocol": "udp", "offset": 1}
+    ],
+    "apply": []
+  }
 }

@@ -30,12 +30,10 @@ def _seed_directory(source:Path,target:Path)->None:
  if target.exists():
   if not target.is_dir() or _is_link(target):raise RuntimeError(f"seed directory target is not a private directory: {target}")
   return
- target.parent.mkdir(parents=True,exist_ok=True)
- staging=target.with_name(f".{target.name}.seed.tmp")
+ target.parent.mkdir(parents=True,exist_ok=True);staging=target.with_name(f".{target.name}.seed.tmp")
  if staging.exists():shutil.rmtree(staging,ignore_errors=True)
  try:
-  shutil.copytree(source,staging,copy_function=shutil.copy2,symlinks=False)
-  _reject_links(staging,"directory seed")
+  shutil.copytree(source,staging,copy_function=shutil.copy2,symlinks=False);_reject_links(staging,"directory seed")
   try:staging.replace(target)
   except OSError:
    if target.is_dir() and not _is_link(target):shutil.rmtree(staging,ignore_errors=True);return
@@ -44,30 +42,35 @@ def _seed_directory(source:Path,target:Path)->None:
   if staging.exists():shutil.rmtree(staging,ignore_errors=True)
   raise
 def _prepare_private_state(spec:dict[str,Any])->None:
- raw_root=spec.get("instance_state_root")
- has_private=bool(spec.get("writable_directories") or spec.get("seed_files") or spec.get("seed_directories"))
+ raw_root=spec.get("instance_state_root");has_private=bool(spec.get("writable_directories") or spec.get("seed_files") or spec.get("seed_directories"))
  if not raw_root:
   if has_private:raise RuntimeError("private runtime state requires instance_state_root")
   return
  state_root=Path(str(raw_root)).resolve(strict=False);state_root.mkdir(parents=True,exist_ok=True)
- working_root=Path(str(spec["working_directory"])).resolve(strict=False)
+ working_root=Path(str(spec["working_directory"])).resolve(strict=False);source_root=Path(str(spec.get("seed_source_root") or working_root)).resolve(strict=False)
+ if spec.get("seed_source_root"):_reject_links(source_root,"seed source")
  for item in spec.get("writable_directories",[]):_within(state_root,str(item),"writable directory").mkdir(parents=True,exist_ok=True)
  for item in spec.get("seed_files",[]):
-  source=_within(working_root,str(item["source"]),"seed source");target=_within(state_root,str(item["target"]),"seed target")
+  source=_within(source_root,str(item["source"]),"seed source");target=_within(state_root,str(item["target"]),"seed target")
   if not source.is_file() or _is_link(source):raise RuntimeError(f"seed source is unavailable or unsafe: {source}")
   target.parent.mkdir(parents=True,exist_ok=True)
   if not target.exists():shutil.copy2(source,target)
   elif not target.is_file() or _is_link(target):raise RuntimeError(f"seed target is not a private file: {target}")
  for item in spec.get("seed_directories",[]):
-  source=_within(working_root,str(item["source"]),"seed directory source");target=_within(state_root,str(item["target"]),"seed directory target");_seed_directory(source,target)
+  source=_within(source_root,str(item["source"]),"seed directory source");target=_within(state_root,str(item["target"]),"seed directory target");_seed_directory(source,target)
 def _validate_materialization(spec:dict[str,Any])->dict[str,Any]:
  if spec["adapter"]=="windows-process":
-  exe=Path(spec["executable"]);cwd=Path(spec["working_directory"])
+  exe=Path(spec["executable"]).resolve(strict=False);cwd=Path(spec["working_directory"]).resolve(strict=False);scope=spec.get("executable_scope") or "working-directory"
   if not cwd.is_dir():raise RuntimeError("runtime working directory does not exist")
   if not exe.is_file():raise RuntimeError("runtime executable does not exist")
-  try:exe.resolve(strict=False).relative_to(cwd.resolve(strict=False))
-  except ValueError:raise RuntimeError("runtime executable escapes working directory")
-  return {"materializer":"windows-process","exists":True,"owned":True,"matches":True,"executable":str(exe)}
+  if scope=="working-directory":_within(cwd,str(exe),"runtime executable")
+  elif scope=="provider-content":
+   root=Path(str(spec.get("seed_source_root") or "")).resolve(strict=False);_within(root,str(exe),"provider executable");_reject_links(root,"provider executable")
+  elif scope=="system-java":
+   java=shutil.which("java.exe") or shutil.which("java")
+   if not java or Path(java).resolve(strict=False)!=exe:raise RuntimeError("runtime Java executable is not the trusted system Java")
+  else:raise RuntimeError("unsupported runtime executable scope")
+  return {"materializer":"windows-process","exists":True,"owned":True,"matches":True,"executable":str(exe),"executable_scope":scope}
  state=resolve_adapter(spec).status(spec)
  if not state.get("available"):raise RuntimeError("Windows service runtime is unavailable")
  return {"materializer":"windows-service","exists":True,"owned":True,"matches":True,"service":state.get("service")}
