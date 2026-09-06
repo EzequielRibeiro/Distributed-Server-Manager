@@ -5,20 +5,24 @@ on:
     paths:
       - 'agents/linux/runtime/profiles/catalog_native.py'
       - 'agents/linux/runtime/profiles/source.py'
+      - 'agents/linux/runtime/profiles/source2.py'
       - 'agents/linux/runtime/profiles/registry.py'
       - 'agents/linux/runtime/runtime_spec.py'
       - 'agents/linux/privileged/materialize_instance.py'
       - 'tests/source_runtime_instance_isolation_test.py'
+      - 'tests/source2_runtime_instance_isolation_test.py'
       - '.github/workflows/source-runtime-isolation.yml'
   push:
     branches: [main]
     paths:
       - 'agents/linux/runtime/profiles/catalog_native.py'
       - 'agents/linux/runtime/profiles/source.py'
+      - 'agents/linux/runtime/profiles/source2.py'
       - 'agents/linux/runtime/profiles/registry.py'
       - 'agents/linux/runtime/runtime_spec.py'
       - 'agents/linux/privileged/materialize_instance.py'
       - 'tests/source_runtime_instance_isolation_test.py'
+      - 'tests/source2_runtime_instance_isolation_test.py'
       - '.github/workflows/source-runtime-isolation.yml'
 
 permissions:
@@ -35,11 +39,16 @@ jobs:
           python3 -m py_compile \
             agents/linux/runtime/profiles/catalog_native.py \
             agents/linux/runtime/profiles/source.py \
+            agents/linux/runtime/profiles/source2.py \
             agents/linux/runtime/profiles/registry.py \
-            tests/source_runtime_instance_isolation_test.py
+            tests/source_runtime_instance_isolation_test.py \
+            tests/source2_runtime_instance_isolation_test.py
       - name: Run Source isolation tests
-        run: python3 -m unittest tests/source_runtime_instance_isolation_test.py
+        run: |
+          python3 -m unittest tests/source_runtime_instance_isolation_test.py
+          python3 -m unittest tests/source2_runtime_instance_isolation_test.py
       - name: Enforce game-neutral materializer boundary
         run: |
-          ! grep -EFi 'garrysmod|left4dead2' agents/linux/privileged/materialize_instance.py
+          ! grep -EFi 'garrysmod|left4dead2|teamfortress2|counterstrike2' agents/linux/privileged/materialize_instance.py
           grep -F 'SourceRuntimeProfile' agents/linux/runtime/profiles/registry.py
+          grep -F 'Source2RuntimeProfile' agents/linux/runtime/profiles/registry.py
