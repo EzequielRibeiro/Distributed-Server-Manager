@@ -487,11 +487,11 @@ PROCESS_GUARD="${ROOT}/update-manager/process-guard.sh"
 [[ -f "${PROCESS_GUARD}" ]] || fail "update Process Guard module is missing"
 grep -Fq 'GUARD="${NEW_SRC}/update-manager/process-guard.sh"' "${UPDATE}" || fail "update.sh does not load the Process Guard from the release source"
 [[ "$(grep -Ec '^run_process_guard\(\)$' "${UPDATE}")" -eq 1 ]] || fail "run_process_guard function must exist exactly once"
-[[ "$(grep -Ec '^[[:space:]]+run_process_guard[[:space:]]*$' "${UPDATE}")" -eq 1 ]] || fail "run_process_guard must be called exactly once"
+[[ "$(grep -Ec '^[[:space:]]+run_process_guard[[:space:]]*$' "${UPDATE}")" -eq 2 ]] || fail "run_process_guard must run before and after backup"
 grep -Fq 'process_guard_pre_update' "${UPDATE}" || fail "update.sh does not invoke the Process Guard pre-update gate"
 
 (
-    guard_line="$(grep -nE '^[[:space:]]+run_process_guard[[:space:]]*$' "${UPDATE}" | cut -d: -f1)"
+    guard_line="$(grep -nE '^[[:space:]]+run_process_guard[[:space:]]*$' "${UPDATE}" | head -1 | cut -d: -f1)"
     capture_line="$(grep -nE '^[[:space:]]+capture_service_state[[:space:]]*$' "${UPDATE}" | cut -d: -f1)"
     transaction_line="$(grep -nE '^[[:space:]]+UPDATE_TRANSACTION_STARTED=1[[:space:]]*$' "${UPDATE}" | cut -d: -f1)"
     stop_line="$(grep -nE '^[[:space:]]+stop_services[[:space:]]*$' "${UPDATE}" | cut -d: -f1)"
