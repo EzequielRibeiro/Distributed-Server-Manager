@@ -11,7 +11,10 @@ EXPECTED_ACTIVE="$(find "${ROOT}/catalog/v2/games" -path '*/runtimes/*.json' -ty
 [[ "$(jq 'length' <<<"${ACTIVE}")" -eq "${EXPECTED_ACTIVE}" ]] || fail "active runtime list does not match published RuntimeDefinitions"
 
 MINECRAFT_ACTIVE="$("${ROOT}/installer/catalog.sh" runtime list minecraft --json)"
-[[ "$(jq 'length' <<<"${MINECRAFT_ACTIVE}")" -eq 0 ]] || fail "deferred Minecraft runtimes must not be published as executable"
+EXPECTED_MINECRAFT="$(find "${ROOT}/catalog/v2/games/minecraft/runtimes" -maxdepth 1 -name '*.json' -type f | wc -l)"
+[[ "$(jq 'length' <<<"${MINECRAFT_ACTIVE}")" -eq "${EXPECTED_MINECRAFT}" ]] || fail "Minecraft runtime list does not match published RuntimeDefinitions"
+jq -e 'all(.[]; (.game == "minecraft") and (.edition == "java"))' <<<"${MINECRAFT_ACTIVE}" >/dev/null \
+  || fail "published Minecraft runtimes must currently be Java-only"
 
 while IFS= read -r deferred; do
   runtime_id="$(jq -r '.id' "${deferred}")"
