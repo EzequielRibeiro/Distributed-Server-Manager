@@ -10,6 +10,7 @@ from .dayz import DayZRuntimeProfile
 from .factorio import FactorioRuntimeProfile
 from .minecraft_bedrock import MinecraftBedrockRuntimeProfile
 from .minecraft_java import MinecraftJavaRuntimeProfile
+from .mindustry import MindustryRuntimeProfile
 from .projectzomboid import ProjectZomboidRuntimeProfile
 from .sevendaystodie import SevenDaysToDieRuntimeProfile
 from .source import SourceRuntimeProfile
@@ -26,6 +27,7 @@ _PROFILE_TYPES = (
     TheIsleRuntimeProfile,
     MinecraftJavaRuntimeProfile,
     MinecraftBedrockRuntimeProfile,
+    MindustryRuntimeProfile,
 )
 _PROFILES: dict[str, type[GameRuntimeProfile]] = {}
 for profile_type in _PROFILE_TYPES:
