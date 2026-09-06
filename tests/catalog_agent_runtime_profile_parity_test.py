@@ -21,12 +21,12 @@ class CatalogAgentRuntimeProfileParityTest(unittest.TestCase):
     if runtime_id not in profiles:failures.append(f"{runtime_id}:{platform}")
   self.assertEqual(failures,[],"published runtimes without Agent profile: "+", ".join(failures))
  def test_windows_claims_only_materialized_runtime_families(self):
-  self.assertIn("dayz.stable",self.windows);self.assertTrue(JAVA_IDS.issubset(self.windows));self.assertIn("mindustry.github",self.windows);self.assertIn("arma3.stable",self.windows)
-  for runtime_id in ("rust.stable","minecraft.bedrock.vanilla","arksurvivalascended.stable"):
-   self.assertNotIn(runtime_id,self.windows)
+  self.assertIn("dayz.stable",self.windows);self.assertTrue(JAVA_IDS.issubset(self.windows))
+  for runtime_id in ("mindustry.github","arma3.stable","rust.stable"):self.assertIn(runtime_id,self.windows)
+  for runtime_id in ("minecraft.bedrock.vanilla","arksurvivalascended.stable"):self.assertNotIn(runtime_id,self.windows)
  def test_deferred_runtime_is_not_published(self):
   published={str(item.get("id") or "").lower() for item in self.matrix.get("published_runtimes",[])};deferred={str(item.get("id") or "").lower() for item in self.matrix.get("deferred_runtimes",[])}
   self.assertFalse(published & deferred);self.assertFalse(JAVA_IDS & deferred);self.assertTrue(JAVA_IDS.issubset(published))
-  for runtime_id in ("mindustry.github","arma3.stable"):
+  for runtime_id in ("mindustry.github","arma3.stable","rust.stable"):
    self.assertIn(runtime_id,published);self.assertNotIn(runtime_id,deferred)
 if __name__=="__main__":unittest.main()
