@@ -1,0 +1,26 @@
+name: Catalog Hierarchy
+on:
+  pull_request:
+    paths:
+      - 'catalog/v2/**'
+      - 'core/catalog_index.py'
+      - 'installer/catalog.sh'
+      - 'dashboard/server.py'
+      - 'tests/catalog_index_test.py'
+      - 'tests/dashboard_catalog_v2_test.py'
+      - '.github/workflows/catalog-hierarchy.yml'
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m pip install jsonschema
+      - run: python3 -m unittest tests/catalog_index_test.py tests/dashboard_catalog_v2_test.py
+      - run: python3 core/catalog_index.py > /dev/null
+      - run: bash installer/catalog.sh hierarchy minecraft --json
+      - run: bash tests/catalog_v2_test.sh
+      - run: python3 -m unittest tests/catalog_completion_test.py tests/installation_strategy_test.py tests/runtime_engine_contract_test.py

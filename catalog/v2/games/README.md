@@ -9,6 +9,7 @@ Os runtimes que podem ser oferecidos ao Controller/Customer ficam exclusivamente
 ```text
 catalog/v2/games/
 └── <game>/
+    ├── game.json          # GameDefinition obrigatório
     ├── runtimes/          # RuntimeDefinition publicados
     ├── deferred/          # definições preservadas, mas não publicáveis
     ├── resource-profiles.json
@@ -20,37 +21,13 @@ Nem todo jogo precisa de todos os arquivos. Providers reutilizáveis permanecem 
 
 ## Jogos conhecidos
 
-Publicados:
-
-- `arma3`
-- `armareforger`
-- `counterstrike2`
-- `dayz`
-- `factorio`
-- `garrysmod`
-- `left4dead2`
-- `mindustry`
-- `minecraft`
-- `palworld`
-- `projectzomboid`
-- `rust`
-- `satisfactory`
-- `sevendaystodie`
-- `teamfortress2`
-
-Adiados com definição preservada:
-
-- `arksurvivalascended` — servidor atual Windows-native; falta runtime tipado Wine/Proton ou execução canônica no Agent Windows.
-- `fivem` — instalação multi-artifact e licença Cfx.re exigem transporte genérico de segredo ainda inexistente.
-- `luanti` — provider local ainda não é executável pelos Agents.
-- `theisle` — Evrima depende de branch Steam específica e credenciais EOS que não podem ser persistidas no RuntimeSpec/systemd.
-- `valheim` — senha normal de servidor é parâmetro sensível de startup e ainda não existe canal genérico de segredo não persistente.
+Os 20 jogos publicados possuem `game.json`. Consulte `dsm catalog hierarchy --json` para a lista atual por edição e distribuição. Não há runtimes adiados nesta revisão. Luanti 5.17.0 está publicado com `http-archive` e `cmake_source`.
 
 A lista normativa de runtimes suportados e adiados está em `catalog/v2/support-matrix.json` e é verificada pelo workflow **Catalog Completion**. O arquivo `catalog/v2/steam-top25-2026-09-03.json` registra a análise de aplicabilidade do Top 25 da Steam capturado em 3 de setembro de 2026.
 
 ## Regras de publicação
 
-Um runtime em `runtimes/` precisa ter ID único, `RuntimeDefinition` v2 válido, engine/processo definidos, requisitos de SO/arquitetura, provider executável pelo Agent, Installation Strategy coerente e resolver existente quando `version.strategy=dynamic`.
+Um runtime em `runtimes/` precisa referenciar pelo campo `game` um `GameDefinition` válido no mesmo diretório de jogo, além de ter ID único, `RuntimeDefinition` v2 válido, engine/processo definidos, requisitos de SO/arquitetura, provider executável pelo Agent, Installation Strategy coerente e resolver existente quando `version.strategy=dynamic`.
 
 Providers reservados (`local`, `custom`, `source-build`) não tornam uma definição publicável até que exista uma estratégia tipada implementada em paridade nos Agents necessários. Credenciais de terceiros também não podem ser introduzidas no catálogo, argumentos, ambiente, unidades systemd ou request JSON apenas para remover um estado `deferred`.
 
@@ -64,4 +41,4 @@ Popularidade não substitui hospedabilidade. Jogos do ranking da Steam sem distr
 
 Providers compartilhados não são duplicados por jogo. O Catalog descreve o que instalar e executar; o Agent executa apenas estratégias tipadas permitidas. Mods, plugins, modpacks e otimizações não devem ser registrados como runtimes só para aparecerem na seleção de servidor.
 
-Consulte também `docs/architecture/game-directory-layout.md` para regras de classificação e layout.
+Consulte `catalog/v2/README.md` para o contrato de leitura hierárquica.

@@ -2,22 +2,29 @@
 
 This is the single source of truth for installable game server environments and content. Execution environment manifests use the `RuntimeDefinition` schema internally and carry their version strategy, resolver configuration, artifact provider, installation target, process metadata, and platform requirements.
 
-The published catalog currently includes Minecraft, Arma 3, Arma Reforger, Counter-Strike 2, DayZ, Factorio, Garry's Mod, Left 4 Dead 2, Mindustry, Palworld, Project Zomboid, Rust, Satisfactory, 7 Days to Die, and Team Fortress 2. Artifact acquisition supports Steam, HTTP, HTTP archives, GitHub Releases, local files, and custom providers. Additional known games may live under `games/<game>/deferred/` when their dedicated-server software exists but the current canonical installation strategy cannot yet provision it safely.
-
-The current deferred set includes FiveM, Valheim, ARK: Survival Ascended, The Isle Evrima, and Luanti. Deferred definitions are deliberately not customer-selectable. FiveM, Valheim, and The Isle require credential handling that must not leak into RuntimeSpec, systemd argv/environment, provisioning JSON, or logs. ARK: Survival Ascended currently needs a Windows-native or typed Wine/Proton execution path that the Linux Agent does not provide.
-
-The `games/` directory contains process/runtime adapters only. It is not a second catalog. Version resolvers read configuration from the JSON environment manifest and do not load variant definitions from `games/`.
-
-A dated Steam Top Played applicability snapshot is stored at `steam-top25-2026-09-03.json`. Popularity alone never makes a title publishable: a runtime is published only when the Agent can acquire, configure, and execute a customer-hostable dedicated server through a typed strategy.
+Discovery follows `GameDefinition → Edition → Distribution/variant → RuntimeDefinition`. Game identity lives in `games/<game>/game.json`; executable contracts remain in `games/<game>/runtimes/*.json`. The runtime's existing `game` field references the GameDefinition ID. Edition and distribution nodes come from `edition` and `variant`, never from parsing runtime IDs.
 
 ## Layout
 
-- `schemas/`: JSON contracts.
-- `games/`: published and deferred game/runtime definitions.
+- `games/<game>/game.json`: GameDefinition v2 with stable ID and display name.
+- `games/<game>/runtimes/`: published RuntimeDefinitions.
+- `games/<game>/deferred/`: preserved definitions excluded from discovery.
+- `schemas/`: shared JSON contracts.
 - `content/`: mod, plugin, and modpack manifests.
 - `providers/`: catalog and artifact-provider registry.
-- `examples/`: compatibility requests.
-- `support-matrix.json`: normative published/deferred runtime support state.
+- `support-matrix.json`: normative support/publication inventory.
+
+The repository-root `games/` directory holds adapters, not a second catalog.
+
+## Hierarchical read API
+
+`core.catalog_index.CatalogIndex(root).hierarchy()` returns a deterministic object with `games[].editions[].distributions[].runtime_definitions[]`. Distribution IDs equal existing `variant` values; leaves are runtime ID references. Multiple runtimes may share a distribution. `hierarchy(game_id)` filters by game, and `runtime(runtime_id)` returns a copy of the original RuntimeDefinition. Unknown IDs raise `KeyError`; invalid identities, duplicate runtime IDs and missing/mismatched game references fail validation.
+
+The authenticated Dashboard endpoint `GET /api/catalog/hierarchy` exposes the same object, optionally filtered with `?game=minecraft`. Unknown games return 404. Existing flat runtime endpoints remain compatible. The CLI exposes `dsm catalog hierarchy [GAME] --json` (JSON output also by default).
+
+This layer does not change Placement, Agents, Installation Strategy, runtime selection or IDs such as `minecraft.java.forge` and `luanti.stable`. Luanti remains published at 5.17.0 with `http-archive` acquisition and `cmake_source` installation. There are 20 published games and no deferred runtimes in this revision. No catalog/v3 is introduced.
+
+The Catalog Hierarchy workflow validates every GameDefinition against its schema and checks every published runtime's game reference. To add a game, create its `game.json` before publishing runtimes. Display metadata does not control execution.
 
 Instance content is activated transactionally as `content.new → content`, with the previous generation retained as `content.old`. The active root contains `mods/`, `plugins/`, `modpacks`, and `.dsm/content-lock.json`; instance metadata lives at `.dsm/instance-manifest.json`.
 
