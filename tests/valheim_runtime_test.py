@@ -27,12 +27,12 @@ class ValheimRuntimeTest(unittest.TestCase):
   context={"install_path":"/srv/game","instance_state_root":"/srv/state/bad","ports":{"game":{"port":2456,"protocol":"udp"},"game_aux":{"port":2459,"protocol":"udp"}},"catalog_runtime_policy":{"runtime_id":"valheim.stable","executable":"valheim_server.x86_64","arguments":[]}}
   with self.assertRaisesRegex(Exception,"game_aux"):
    resolve_profile(instance).build_runtime_spec(instance,context)
- def test_unit_contains_credential_reference_but_no_password_value(self):
+ def test_unit_contains_credential_reference_but_no_game_password_token(self):
   spec=self.build("val-a",2456)
   with patch("materializers.systemd.credential_path",return_value="/run/capivara-secrets/val-a-password"):
    unit=render_unit(spec)
   self.assertIn("LoadCredential=VALHEIM_PASSWORD:/run/capivara-secrets/val-a-password",unit)
-  self.assertIn("valheim_launch.py",unit);self.assertNotIn("-password",unit)
+  self.assertIn("valheim_launch.py",unit);self.assertIn('"--password-credential"',unit);self.assertNotIn('"-password"',unit)
  def test_launcher_reads_credential_only_at_exec(self):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);server=root/"valheim_server.x86_64";server.write_bytes(b"stub");cred=root/"VALHEIM_PASSWORD";cred.write_text("supersecret",encoding="utf-8")
