@@ -1,0 +1,35 @@
+name: Minecraft Java Runtime
+
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/runtime/profiles/minecraft_java.py'
+      - 'agents/linux/runtime/profiles/registry.py'
+      - 'agents/windows/runtime/profiles/minecraft_java.py'
+      - 'agents/windows/runtime/profiles/registry.py'
+      - 'catalog/v2/games/minecraft/**'
+      - 'catalog/v2/support-matrix.json'
+      - 'tests/minecraft_java_instance_isolation_test.py'
+      - '.github/workflows/minecraft-java-runtime.yml'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python syntax
+        run: |
+          python3 -m py_compile \
+            agents/linux/runtime/profiles/minecraft_java.py \
+            agents/linux/runtime/profiles/registry.py \
+            agents/windows/runtime/profiles/minecraft_java.py \
+            agents/windows/runtime/profiles/registry.py \
+            tests/minecraft_java_instance_isolation_test.py
+      - name: Prove Linux and Windows Minecraft Java isolation
+        run: python3 tests/minecraft_java_instance_isolation_test.py
