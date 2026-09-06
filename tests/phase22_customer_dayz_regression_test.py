@@ -69,6 +69,7 @@ class CustomerDayzFinalE2ETest(unittest.TestCase):
             capivara_version="9.9.9-test",
             capabilities={
                 "platform": {"os": "linux", "architecture": "x86_64"},
+                "runtime_profiles": ["dayz", "dayz.stable"],
                 "native-linux": True,
                 "steamcmd": True,
             },
