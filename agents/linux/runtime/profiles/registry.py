@@ -2,6 +2,7 @@
 """Allowlisted game_id/environment_id to runtime profile registry."""
 from __future__ import annotations
 from typing import Any
+from .arma3 import Arma3RuntimeProfile
 from .armareforger import ArmaReforgerRuntimeProfile
 from .base import GameRuntimeProfile, ProfileError
 from .catalog_native import CatalogNativeRuntimeProfile
@@ -16,7 +17,7 @@ from .sevendaystodie import SevenDaysToDieRuntimeProfile
 from .source import SourceRuntimeProfile
 from .source2 import Source2RuntimeProfile
 from .theisle import TheIsleRuntimeProfile
-_PROFILE_TYPES=(DayZRuntimeProfile,ProjectZomboidRuntimeProfile,SourceRuntimeProfile,Source2RuntimeProfile,CatalogNativeRuntimeProfile,SevenDaysToDieRuntimeProfile,FactorioRuntimeProfile,ArmaReforgerRuntimeProfile,TheIsleRuntimeProfile,MinecraftJavaRuntimeProfile,MinecraftBedrockRuntimeProfile,MindustryRuntimeProfile,PalworldRuntimeProfile)
+_PROFILE_TYPES=(DayZRuntimeProfile,ProjectZomboidRuntimeProfile,SourceRuntimeProfile,Source2RuntimeProfile,CatalogNativeRuntimeProfile,SevenDaysToDieRuntimeProfile,FactorioRuntimeProfile,Arma3RuntimeProfile,ArmaReforgerRuntimeProfile,TheIsleRuntimeProfile,MinecraftJavaRuntimeProfile,MinecraftBedrockRuntimeProfile,MindustryRuntimeProfile,PalworldRuntimeProfile)
 _PROFILES:dict[str,type[GameRuntimeProfile]]={}
 for profile_type in _PROFILE_TYPES:
  for game_id in profile_type.game_ids:
