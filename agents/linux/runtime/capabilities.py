@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from profiles.registry import supported_profiles
 
 _JAVA_VERSION = re.compile(r'version\s+"([^"]+)"', re.IGNORECASE)
 
@@ -141,6 +142,7 @@ def detect_capabilities() -> dict[str, object]:
 
     return {
         "platform": {"os": "linux", "architecture": _normalize_architecture()},
+        "runtime_profiles": list(supported_profiles()),
         "native-linux": True,
         "systemd": Path("/run/systemd/system").exists(),
         "steamcmd": bool(steamcmd_status["functional"]),
@@ -155,8 +157,6 @@ def detect_capabilities() -> dict[str, object]:
         },
         "docker": docker,
         "wine": wine,
-        # These keys belong to the capability vocabulary but remain false until
-        # the remote Agent runtime exposes the corresponding command surfaces.
         "backup": False,
         "mod-management": False,
     }
