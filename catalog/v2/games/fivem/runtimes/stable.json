@@ -14,9 +14,9 @@
   },
   "process": {
     "engine": "native",
-    "executable": "run.sh",
+    "executable": "server/run.sh",
     "artifact_mode": "directory",
-    "args": ["+exec", "server.cfg"]
+    "args": []
   },
   "requirements": {
     "os": ["linux"],
@@ -24,7 +24,7 @@
     "java": null
   },
   "artifact": {
-    "provider": "custom",
+    "provider": "fivem",
     "auth": "required"
   },
   "installation": {

@@ -8,6 +8,7 @@ from .base import GameRuntimeProfile, ProfileError
 from .catalog_native import CatalogNativeRuntimeProfile
 from .dayz import DayZRuntimeProfile
 from .factorio import FactorioRuntimeProfile
+from .fivem import FiveMRuntimeProfile
 from .minecraft_bedrock import MinecraftBedrockRuntimeProfile
 from .minecraft_java import MinecraftJavaRuntimeProfile
 from .mindustry import MindustryRuntimeProfile
@@ -19,7 +20,7 @@ from .source import SourceRuntimeProfile
 from .source2 import Source2RuntimeProfile
 from .theisle import TheIsleRuntimeProfile
 from .valheim import ValheimRuntimeProfile
-_PROFILE_TYPES=(DayZRuntimeProfile,ProjectZomboidRuntimeProfile,SourceRuntimeProfile,Source2RuntimeProfile,CatalogNativeRuntimeProfile,SevenDaysToDieRuntimeProfile,FactorioRuntimeProfile,Arma3RuntimeProfile,ArmaReforgerRuntimeProfile,TheIsleRuntimeProfile,MinecraftJavaRuntimeProfile,MinecraftBedrockRuntimeProfile,MindustryRuntimeProfile,PalworldRuntimeProfile,RustRuntimeProfile,ValheimRuntimeProfile)
+_PROFILE_TYPES=(DayZRuntimeProfile,ProjectZomboidRuntimeProfile,SourceRuntimeProfile,Source2RuntimeProfile,CatalogNativeRuntimeProfile,SevenDaysToDieRuntimeProfile,FactorioRuntimeProfile,Arma3RuntimeProfile,ArmaReforgerRuntimeProfile,TheIsleRuntimeProfile,MinecraftJavaRuntimeProfile,MinecraftBedrockRuntimeProfile,MindustryRuntimeProfile,PalworldRuntimeProfile,RustRuntimeProfile,ValheimRuntimeProfile,FiveMRuntimeProfile)
 _PROFILES:dict[str,type[GameRuntimeProfile]]={}
 for profile_type in _PROFILE_TYPES:
  for game_id in profile_type.game_ids:

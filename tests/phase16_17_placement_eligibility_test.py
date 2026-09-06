@@ -44,7 +44,7 @@ class Phase1617PlacementEligibilityTest(unittest.TestCase):
         self.backend.close()
         self.temp.cleanup()
 
-    def _inventory(self, *, steamcmd=True, java=True, network=None, threads=8, ram=16 * 1024**3, storage=100 * 1024**3):
+    def _inventory(self, *, steamcmd=True, java=True, network=None, threads=8, ram=16 * 1024**3, storage=100 * 1024**3, runtime_profiles=None):
         repository = AgentRuntimeRepository(self.backend)
         repository.upsert_inventory(
             agent_id=self.agent_id,
@@ -57,6 +57,7 @@ class Phase1617PlacementEligibilityTest(unittest.TestCase):
                 "steamcmd": steamcmd,
                 "java": java,
                 "java_status": {"functional": java, "major": 21 if java else None},
+                "runtime_profiles": list(runtime_profiles or ("dayz.stable",)),
                 "backup": False,
                 "mod-management": False,
             },
@@ -99,19 +100,19 @@ class Phase1617PlacementEligibilityTest(unittest.TestCase):
         self.assertEqual(requirements.ports[0].count, 10)
         self.assertTrue(requirements.ports[0].contiguous)
 
-        self._inventory(steamcmd=True)
+        self._inventory(steamcmd=True, runtime_profiles=("dayz.stable",))
         decision = choose_agent_for_instance(self.backend, controller_id=self.controller_id, requirements=requirements)
         self.assertEqual(decision["agent_id"], self.agent_id)
 
         AgentPortRepository(self.backend).set_ranges(
             self.agent_id, protocols=("udp",), start_port=24000, end_port=24009
         )
-        self._inventory(steamcmd=True, network={"tcp_listen": [], "udp_listen": [24000]})
+        self._inventory(steamcmd=True, network={"tcp_listen": [], "udp_listen": [24000]}, runtime_profiles=("dayz.stable",))
         with self.assertRaises(PlacementUnavailable):
             choose_agent_for_instance(self.backend, controller_id=self.controller_id, requirements=requirements)
 
     def test_catalog_runtime_without_required_primitive_is_not_eligible(self):
-        self._inventory(steamcmd=False)
+        self._inventory(steamcmd=False, runtime_profiles=("dayz.stable",))
         requirements = requirements_for_instance(game_id="dayz", runtime_id="dayz.stable")
         with self.assertRaises(PlacementUnavailable):
             choose_agent_for_instance(self.backend, controller_id=self.controller_id, requirements=requirements)
@@ -122,7 +123,7 @@ class Phase1617PlacementEligibilityTest(unittest.TestCase):
         )
         self.assertIn("java", requirements.capabilities)
         self.assertNotIn("minecraft-java", requirements.capabilities)
-        self._inventory(java=False)
+        self._inventory(java=False, runtime_profiles=("minecraft.java.vanilla",))
         with self.assertRaises(PlacementUnavailable):
             choose_agent_for_instance(self.backend, controller_id=self.controller_id, requirements=requirements)
 

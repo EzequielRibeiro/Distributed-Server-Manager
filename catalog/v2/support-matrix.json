@@ -8,6 +8,7 @@
     {"id":"counterstrike2.stable","game":"counterstrike2","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported","compatibility_note":"Source 2 binaries/assets stay shared while game/csgo/cfg and logs are instance-private bind mounts."},
     {"id":"dayz.stable","game":"dayz","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux","windows"],"status":"supported"},
     {"id":"factorio.stable","game":"factorio","engine":"native","provider":"http-archive","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported","compatibility_note":"A private initial save and server-settings.json are created on the Agent without shell execution or credentials."},
+    {"id":"fivem.stable","game":"fivem","engine":"native","provider":"fivem","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported","compatibility_note":"FXServer and cfx-server-data are installed as a typed multi-artifact transaction. The Cfx.re license key is stored as an instance-scoped systemd credential and injected only at exec time."},
     {"id":"garrysmod.stable","game":"garrysmod","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"},
     {"id":"left4dead2.stable","game":"left4dead2","engine":"native","provider":"steam","version_strategy":"static","resolver":null,"os":["linux"],"status":"supported"},
     {"id":"mindustry.github","game":"mindustry","engine":"java","provider":"github","version_strategy":"dynamic","resolver":"github_releases","os":["linux","windows"],"status":"supported","compatibility_note":"The provider-managed server JAR is shared read-only while each instance runs from private state; startup applies the reserved port and hosts automatically without shell or expect."},
@@ -33,7 +34,6 @@
     {"id":"minecraft.java.youer","game":"minecraft","engine":"java","provider":"http","version_strategy":"dynamic","resolver":"youer_api","os":["linux","windows"],"status":"supported","minecraft_versions":["1.21.1"],"java":[21],"content_ecosystems":["neoforge-mod","bukkit-plugin","spigot-plugin"]}
   ],
   "deferred_runtimes": [
-    {"id":"fivem.stable","game":"fivem","engine":"native","provider":"custom","version_strategy":"static","resolver":null,"os":["linux"],"status":"deferred","reason":"FXServer still requires a canonical multi-artifact installation transaction (server artifact plus cfx-server-data). Runtime secret transport is available for the Cfx.re license key."},
     {"id":"luanti.stable","game":"luanti","engine":"native","provider":"local","version_strategy":"static","resolver":null,"os":["linux"],"status":"deferred","reason":"The local artifact provider is reserved and is not executable by current Linux/Windows Agents."}
   ],
   "explicitly_not_published_as_runtimes": [

@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CATALOG = ROOT / "catalog" / "v2"
 MATRIX = CATALOG / "support-matrix.json"
 GAMES = CATALOG / "games"
+PROVIDER_REGISTRY = CATALOG / "providers" / "catalog-providers.json"
 
 PLACEHOLDER = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 PORT_PLACEHOLDERS = {
@@ -30,8 +31,6 @@ GENERIC_PLACEHOLDERS = {
     "map", "world", "save", "password", "admin_password", "memory_mb",
     "steam_game_server_login_token", "eos_client_id", "eos_client_secret",
 }
-ALLOWED_PROVIDERS = {"steam", "http", "http-archive", "github", "local", "custom", "source-build"}
-EXECUTABLE_PROVIDERS = {"steam", "http", "http-archive", "github", "source-build"}
 
 
 def load(path: Path) -> dict[str, Any]:
@@ -39,6 +38,15 @@ def load(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path}: expected JSON object")
     return value
+
+
+def provider_contract() -> tuple[set[str], set[str]]:
+    registry = load(PROVIDER_REGISTRY)
+    allowed = {str(value) for value in registry.get("artifact_providers") or []}
+    executable = {str(value) for value in registry.get("agent_executable_artifact_providers") or []}
+    if not allowed or not executable or not executable <= allowed:
+        raise ValueError("invalid catalog artifact provider registry")
+    return allowed, executable
 
 
 def runtime_files() -> dict[str, tuple[Path, dict[str, Any]]]:
@@ -128,6 +136,7 @@ def _placeholder_findings(runtime: dict[str, Any]) -> list[str]:
 
 def audit() -> dict[str, Any]:
     matrix = load(MATRIX)
+    allowed_providers, executable_providers = provider_contract()
     files = runtime_files()
     rows: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -166,9 +175,9 @@ def audit() -> dict[str, Any]:
             provider = str(artifact.get("provider") or "")
             if provider != entry.get("provider"):
                 row["findings"].append("provider mismatch")
-            if provider not in ALLOWED_PROVIDERS:
+            if provider not in allowed_providers:
                 row["findings"].append(f"unknown provider: {provider}")
-            if provider not in EXECUTABLE_PROVIDERS:
+            if provider not in executable_providers:
                 row["findings"].append(f"provider has no canonical Agent execution contract: {provider}")
             version = runtime.get("version") or {}
             if version.get("strategy") != entry.get("version_strategy"):
@@ -184,7 +193,7 @@ def audit() -> dict[str, Any]:
             row["findings"].extend(_placeholder_findings(runtime))
             hard = [f for f in row["findings"] if not f.startswith("unclassified runtime placeholder")]
             row["catalog_contract"] = "ready" if not hard else "failed"
-            row["agent_contract"] = "contract_ready" if not hard and provider in EXECUTABLE_PROVIDERS else "partial"
+            row["agent_contract"] = "contract_ready" if not hard and provider in executable_providers else "partial"
             if entry.get("compatibility_note"):
                 row["specialized_contract"] = True
                 row["compatibility_note"] = entry["compatibility_note"]

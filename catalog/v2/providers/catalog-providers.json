@@ -18,6 +18,7 @@
     "http",
     "http-archive",
     "github",
+    "fivem",
     "local",
     "custom",
     "source-build"
@@ -26,7 +27,8 @@
     "steam",
     "http",
     "http-archive",
-    "github"
+    "github",
+    "fivem"
   ],
   "reserved_artifact_providers": [
     "local",
