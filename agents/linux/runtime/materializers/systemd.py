@@ -26,6 +26,12 @@ def _instance_state(instance_id):
  token=str(instance_id or "").strip()
  if not token or any(c in token for c in ("/","\\","\x00","\n","\r")):raise MaterializerError("invalid systemd instance state directory")
  relative=f"capivara-instances/{token}";return relative,f"/var/lib/{relative}"
+def _private_state(spec):
+ state_directory,default_path=_instance_state(spec["instance_id"])
+ configured=str(spec.get("instance_state_root") or default_path).strip()
+ if not configured.startswith("/") or any(c in configured for c in (" ","\t","\x00","\n","\r",":")):
+  raise MaterializerError("invalid instance_state_root for systemd")
+ return state_directory,default_path,str(Path(configured))
 def _unit_dir():return Path(os.environ.get("CAPIVARA_INSTANCE_SYSTEMD_DIR","/etc/systemd/system"))
 def unit_path_for_spec(spec):return _unit_dir()/unit_for_instance(spec)
 def _resource_lines(spec):
@@ -56,8 +62,10 @@ def _credential_lines(spec):
   lines.append(f"LoadCredential={item['name']}:{path}")
  return lines
 def render_unit(spec):
- instance_id=str(spec["instance_id"]);agent_id=str(spec["agent_id"]);runtime_id=str(spec["runtime_id"]);state_directory,private_state_path=_instance_state(instance_id);argv=[str(spec["executable"]),*[str(x) for x in spec.get("arguments",[])]]
- lines=["[Unit]",f"Description=Capivara instance {instance_id}","After=network-online.target","Wants=network-online.target",f"X-Capivara-GeneratedBy={_GENERATED_BY}",f"X-Capivara-Instance={instance_id}",f"X-Capivara-Agent={agent_id}",f"X-Capivara-Runtime={runtime_id}","","[Service]","Type=simple",f"User={spec['user']}",f"StateDirectory={state_directory}","StateDirectoryMode=0700",f"BindPaths={_bind_path(private_state_path,_RUNTIME_ACCOUNT_HOME)}"]
+ instance_id=str(spec["instance_id"]);agent_id=str(spec["agent_id"]);runtime_id=str(spec["runtime_id"]);state_directory,default_state_path,private_state_path=_private_state(spec);argv=[str(spec["executable"]),*[str(x) for x in spec.get("arguments",[])]]
+ lines=["[Unit]",f"Description=Capivara instance {instance_id}","After=network-online.target","Wants=network-online.target",f"X-Capivara-GeneratedBy={_GENERATED_BY}",f"X-Capivara-Instance={instance_id}",f"X-Capivara-Agent={agent_id}",f"X-Capivara-Runtime={runtime_id}","","[Service]","Type=simple",f"User={spec['user']}"]
+ if private_state_path==default_state_path:lines.extend([f"StateDirectory={state_directory}","StateDirectoryMode=0700"])
+ lines.append(f"BindPaths={_bind_path(private_state_path,_RUNTIME_ACCOUNT_HOME)}")
  runtime_directory=spec.get("runtime_directory")
  if runtime_directory:lines.extend([f"RuntimeDirectory={runtime_directory}","RuntimeDirectoryMode=0700"])
  for binding in spec.get("bind_paths",[]):lines.append(f"BindPaths={_bind_path(binding['source'],binding['target'])}")
