@@ -1,0 +1,45 @@
+name: Source Runtime Isolation
+
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/runtime/profiles/catalog_native.py'
+      - 'agents/linux/runtime/profiles/source.py'
+      - 'agents/linux/runtime/profiles/registry.py'
+      - 'agents/linux/runtime/runtime_spec.py'
+      - 'agents/linux/privileged/materialize_instance.py'
+      - 'tests/source_runtime_instance_isolation_test.py'
+      - '.github/workflows/source-runtime-isolation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/linux/runtime/profiles/catalog_native.py'
+      - 'agents/linux/runtime/profiles/source.py'
+      - 'agents/linux/runtime/profiles/registry.py'
+      - 'agents/linux/runtime/runtime_spec.py'
+      - 'agents/linux/privileged/materialize_instance.py'
+      - 'tests/source_runtime_instance_isolation_test.py'
+      - '.github/workflows/source-runtime-isolation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax
+        run: |
+          python3 -m py_compile \
+            agents/linux/runtime/profiles/catalog_native.py \
+            agents/linux/runtime/profiles/source.py \
+            agents/linux/runtime/profiles/registry.py \
+            tests/source_runtime_instance_isolation_test.py
+      - name: Run Source isolation tests
+        run: python3 -m unittest tests/source_runtime_instance_isolation_test.py
+      - name: Enforce game-neutral materializer boundary
+        run: |
+          ! grep -EFi 'garrysmod|left4dead2' agents/linux/privileged/materialize_instance.py
+          grep -F 'SourceRuntimeProfile' agents/linux/runtime/profiles/registry.py
