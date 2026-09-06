@@ -12,9 +12,16 @@ import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-_ALLOWED_TYPES = {"java_jar", "quilt_server"}
+_ALLOWED_TYPES = {"java_jar", "quilt_server", "cmake_source"}
 _ALLOWED_JAVA_ARGS = {"--installServer"}
+_ALLOWED_CMAKE_DEFINITIONS = {
+    "BUILD_SERVER",
+    "BUILD_CLIENT",
+    "RUN_IN_PLACE",
+    "CMAKE_BUILD_TYPE",
+}
 _VERSION = re.compile(r"^[A-Za-z0-9._+-]{1,64}$")
+_CMAKE_VALUE = re.compile(r"^[A-Za-z0-9._+-]{1,64}$")
 _MAX_TIMEOUT_SECONDS = 1800
 _MAX_EXPECTED_OUTPUTS = 32
 
@@ -57,7 +64,32 @@ def _normalize_launch_args(installer: dict[str, Any], target: Path) -> None:
     shutil.copy2(matches[0], output)
 
 
-def validate_installer(selection: dict[str, Any], target: Path) -> tuple[list[str], int, list[Path], dict[str, Any]] | None:
+def _cmake_commands(installer: dict[str, Any], target: Path, timeout: int, expected_paths: list[Path]) -> tuple[list[list[str]], int, list[Path], dict[str, Any]]:
+    cmake = shutil.which("cmake")
+    if not cmake:
+        raise RuntimeError("CMake is not available on this Agent")
+    source_dir = _inside(target, _safe_relative(installer.get("source_dir"), "CMake source directory"))
+    if not source_dir.is_dir() or not (source_dir / "CMakeLists.txt").is_file():
+        raise RuntimeError("CMake source directory is missing or invalid")
+    build_dir = _inside(target, _safe_relative(installer.get("build_dir") or ".capivara-build", "CMake build directory"))
+    definitions = installer.get("definitions") or {}
+    if not isinstance(definitions, dict) or len(definitions) > len(_ALLOWED_CMAKE_DEFINITIONS):
+        raise ValueError("CMake definitions are invalid")
+    argv = [cmake, "-S", str(source_dir), "-B", str(build_dir)]
+    for key, raw_value in sorted(definitions.items()):
+        key = str(key)
+        value = str(raw_value)
+        if key not in _ALLOWED_CMAKE_DEFINITIONS or not _CMAKE_VALUE.fullmatch(value):
+            raise ValueError("CMake definition is not allowed")
+        argv.append(f"-D{key}={value}")
+    jobs = int(installer.get("jobs") or min(4, max(1, os.cpu_count() or 1)))
+    if jobs < 1 or jobs > 32:
+        raise ValueError("CMake parallelism is outside allowed bounds")
+    commands = [argv, [cmake, "--build", str(build_dir), "--parallel", str(jobs)]]
+    return commands, timeout, expected_paths, installer
+
+
+def validate_installer(selection: dict[str, Any], target: Path) -> tuple[Any, int, list[Path], dict[str, Any]] | None:
     installer = selection.get("installer")
     if installer is None:
         return None
@@ -67,11 +99,6 @@ def validate_installer(selection: dict[str, Any], target: Path) -> tuple[list[st
     if installer_type not in _ALLOWED_TYPES:
         raise ValueError("unsupported installer type")
 
-    artifact_name = _installer_artifact(selection, installer)
-    artifact = _inside(target, _safe_relative(artifact_name, "installer artifact"))
-    if not artifact.is_file():
-        raise RuntimeError("installer artifact is missing")
-
     timeout = int(installer.get("timeout_seconds") or 600)
     if timeout < 30 or timeout > _MAX_TIMEOUT_SECONDS:
         raise ValueError("installer timeout is outside allowed bounds")
@@ -80,6 +107,17 @@ def validate_installer(selection: dict[str, Any], target: Path) -> tuple[list[st
     if not isinstance(expected, list) or len(expected) > _MAX_EXPECTED_OUTPUTS:
         raise ValueError("installer expected_outputs are invalid")
     expected_paths = [_inside(target, _safe_relative(item, "expected output")) for item in expected]
+
+    if installer_type == "cmake_source":
+        args = installer.get("args") or []
+        if args not in ([], None):
+            raise ValueError("CMake source installer does not accept arbitrary arguments")
+        return _cmake_commands(installer, target, timeout, expected_paths)
+
+    artifact_name = _installer_artifact(selection, installer)
+    artifact = _inside(target, _safe_relative(artifact_name, "installer artifact"))
+    if not artifact.is_file():
+        raise RuntimeError("installer artifact is missing")
 
     java = shutil.which("java")
     if not java:
@@ -105,23 +143,26 @@ def execute_installer(selection: dict[str, Any], target: Path) -> None:
     validated = validate_installer(selection, target)
     if validated is None:
         return
-    argv, timeout, expected_paths, installer = validated
-    completed = subprocess.run(
-        argv,
-        cwd=str(target),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        timeout=timeout,
-        check=False,
-        env=dict(os.environ),
-    )
-    output = completed.stdout or ""
-    if output:
-        print(output, end="" if output.endswith("\n") else "\n", flush=True)
-    if completed.returncode != 0:
-        raise RuntimeError(f"typed installer failed with exit code {completed.returncode}")
+    command_or_commands, timeout, expected_paths, installer = validated
+    installer_type = str(installer.get("type") or "").strip()
+    commands = command_or_commands if installer_type == "cmake_source" else [command_or_commands]
+    for argv in commands:
+        completed = subprocess.run(
+            argv,
+            cwd=str(target),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env=dict(os.environ),
+        )
+        output = completed.stdout or ""
+        if output:
+            print(output, end="" if output.endswith("\n") else "\n", flush=True)
+        if completed.returncode != 0:
+            raise RuntimeError(f"typed installer failed with exit code {completed.returncode}")
     _normalize_launch_args(installer, target)
     missing = [path.name for path in expected_paths if not path.exists()]
     if missing:
