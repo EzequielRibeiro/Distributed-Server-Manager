@@ -4,7 +4,8 @@ from typing import Any
 from .base import GameRuntimeProfile,ProfileError
 from .dayz import DayZRuntimeProfile
 from .minecraft_java import MinecraftJavaRuntimeProfile
-_PROFILES=(DayZRuntimeProfile,MinecraftJavaRuntimeProfile)
+from .mindustry import MindustryRuntimeProfile
+_PROFILES=(DayZRuntimeProfile,MinecraftJavaRuntimeProfile,MindustryRuntimeProfile)
 def resolve_profile(instance:dict[str,Any])->GameRuntimeProfile:
  keys={str(instance.get("game_id") or "").strip().lower(),str(instance.get("environment_id") or "").strip().lower()}
  for cls in _PROFILES:
