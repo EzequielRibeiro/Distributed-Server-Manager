@@ -1,5 +1,12 @@
 # DSM CHANGELOG
 
+## v2.0.29 — 2026-09-06
+
+- Torna o fluxo de atualização mais seguro ao preservar dados de instância e game data no lugar, sem copiar árvores mutáveis para o staging da release.
+- Mantém os guards de pré-backup e pré-ativação antes de etapas destrutivas e evita rollback quando o update é recusado ainda no preflight.
+- Adiciona regressões específicas para a sequência protegida de atualização e preservação de dados.
+- Detalhes e escopo em `release/RELEASE_NOTES_2.0.29.md`.
+
 ## v2.0.28 — 2026-09-06
 
 - Adiciona GameDefinition e descoberta hierárquica para os 20 jogos publicados, preservando IDs e contratos RuntimeDefinition.
