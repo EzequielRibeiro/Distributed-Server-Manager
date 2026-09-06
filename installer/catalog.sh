@@ -221,6 +221,7 @@ catalog_usage()
 {
     cat <<'EOF'
 Usage:
+  catalog.sh hierarchy [GAME]
   catalog.sh runtime list [GAME]
   catalog.sh runtime show RUNTIME_ID
   catalog.sh runtime prepare RUNTIME_ID SELECTOR
@@ -240,6 +241,12 @@ EOF
 }
 
 case "${1:-}" in
+    hierarchy)
+        INDEX_ARGS=(--root "${CATALOG_ROOT}")
+        [[ $# -le 2 ]] || { catalog_usage; exit 2; }
+        if [[ -n "${2:-}" ]]; then INDEX_ARGS+=(--game "$2"); fi
+        exec python3 "${DSM_ROOT}/core/catalog_index.py" "${INDEX_ARGS[@]}"
+        ;;
     runtime)
         case "${2:-}" in
             list) catalog_runtime_list "${3:-}" | catalog_output runtime-list ;;

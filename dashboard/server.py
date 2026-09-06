@@ -4563,6 +4563,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         user=user,
                     )
 
+                elif action == "hierarchy":
+                    from core.catalog_index import CatalogIndex
+                    index = CatalogIndex(DSM_ROOT / "catalog" / "v2")
+                    game_id = query.get("game", [None])[0]
+                    try:
+                        data = index.hierarchy(game_id)
+                    except KeyError:
+                        self.send_json(404, {"error": "game_not_found"})
+                        return
+                    success = True
                 elif action == "runtimes":
                     success, data = catalog_api(
                         "runtimes", query.get("game", [""])[0], user=user

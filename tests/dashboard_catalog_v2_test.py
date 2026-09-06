@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import urllib.request
 import sys
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,6 +45,22 @@ class CatalogV2DashboardTest(unittest.TestCase):
 
     def test_public_ping_requires_no_credentials(self):
         self.assertEqual(self.public_json("/ping")["status"], "ok")
+
+    def test_hierarchy_http_discovery_and_unknown_game(self):
+        from core.catalog_index import CatalogIndex
+        user = {"username": "admin", "role": "admin", "scope_id": ""}
+        with patch.object(SERVER, "authenticate", return_value=user):
+            self.assertEqual(self.public_json("/api/catalog/hierarchy?game=minecraft"),
+                             CatalogIndex().hierarchy("minecraft"))
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                self.public_json("/api/catalog/hierarchy?game=unknown")
+            self.assertEqual(error.exception.code, 404)
+
+    def test_hierarchy_requires_authentication(self):
+        with patch.object(SERVER, "authenticate", return_value=None):
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                self.public_json("/api/catalog/hierarchy")
+            self.assertEqual(error.exception.code, 401)
 
     def test_dashboard_uses_project_version(self):
         expected = (ROOT / "version").read_text(encoding="utf-8").strip()
