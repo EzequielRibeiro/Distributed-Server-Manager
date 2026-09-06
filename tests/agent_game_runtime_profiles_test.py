@@ -81,6 +81,8 @@ class GameRuntimeProfilesTest(unittest.TestCase):
             "install_path": str(install), "ports": self.ports(),
         })
         private = Path("/var/lib/capivara-instances/dayz-one")
+        mission_shared = install / "mpmissions/dayzOffline.chernarusplus"
+        mission_private = private / "mpmissions/dayzOffline.chernarusplus"
         self.assertEqual(spec["executable"], str(install / "DayZServer"))
         self.assertEqual(spec["working_directory"], str(install))
         self.assertIn("-port=24010", spec["arguments"])
@@ -88,13 +90,11 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         self.assertIn(f"-profiles={private / 'profiles'}", spec["arguments"])
         self.assertEqual(spec["config_path"], str(private / "config/serverDZ.cfg"))
         self.assertEqual(spec["seed_files"], [{"source": str(install / "serverDZ.cfg"), "target": str(private / "config/serverDZ.cfg")}])
-        self.assertEqual(spec["bind_paths"], [{
-            "source": str(private / "storage_1"),
-            "target": str(install / "mpmissions/dayzOffline.chernarusplus/storage_1"),
-        }])
+        self.assertEqual(spec["seed_directories"], [{"source": str(mission_shared), "target": str(mission_private)}])
+        self.assertEqual(spec["bind_paths"], [{"source": str(mission_private), "target": str(mission_shared)}])
         self.assertEqual(spec["environment"]["CAPIVARA_GAME_PORT"], "24010")
         self.assertEqual(spec["environment"]["CAPIVARA_STEAM_QUERY_PORT"], "24013")
-        self.assertEqual(spec["profile_version"], 4)
+        self.assertEqual(spec["profile_version"], 5)
         self.assertEqual(spec["ports"], self.ports())
 
     def test_legacy_dayz_migration_recovers_missing_ports_from_provisioning_history(self):
@@ -130,15 +130,16 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         }
         migrated, changed = game_runtime.migrate_runtime_spec(self.config, legacy)
         self.assertTrue(changed)
-        self.assertEqual(migrated["profile_version"], 4)
+        self.assertEqual(migrated["profile_version"], 5)
         self.assertEqual(migrated["profile_migrated_from_version"], 1)
         self.assertEqual(migrated["ports"]["game_aux"]["port"], 24012)
         self.assertEqual(migrated["ports"]["steam_query"]["port"], 24013)
         self.assertIn("-port=24010", migrated["arguments"])
         self.assertTrue(migrated["config_path"].endswith("/dayz-one/config/serverDZ.cfg"))
         self.assertEqual(len(migrated["bind_paths"]), 1)
+        self.assertTrue(migrated["bind_paths"][0]["source"].endswith("/dayz-one/mpmissions/dayzOffline.chernarusplus"))
 
-    def test_dayz_v3_aliased_query_port_migrates_to_v4_catalog_topology(self):
+    def test_dayz_v3_aliased_query_port_migrates_to_v5_catalog_topology(self):
         install = self.root / "serverfiles"; install.mkdir()
         private = "/var/lib/capivara-instances/dayz-one"
         bad_ports = {
@@ -177,7 +178,7 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         }
         migrated, changed = game_runtime.migrate_runtime_spec(self.config, v3)
         self.assertTrue(changed)
-        self.assertEqual(migrated["profile_version"], 4)
+        self.assertEqual(migrated["profile_version"], 5)
         self.assertEqual(migrated["profile_migrated_from_version"], 3)
         self.assertEqual(migrated["ports"]["game"]["port"], 24010)
         self.assertEqual(migrated["ports"]["game_aux"]["port"], 24012)
@@ -206,6 +207,7 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         second_instance = {**self.instance, "instance_id": "dayz-two"}
         second = game_runtime.build_runtime_spec(self.config, second_instance, {"install_path": str(install), "ports": self.ports(24110)})
         self.assertNotEqual(first["config_path"], second["config_path"])
+        self.assertNotEqual(first["seed_directories"][0]["target"], second["seed_directories"][0]["target"])
         self.assertNotEqual(first["bind_paths"][0]["source"], second["bind_paths"][0]["source"])
         self.assertEqual(first["bind_paths"][0]["target"], second["bind_paths"][0]["target"])
         self.assertIn("-port=24010", first["arguments"])

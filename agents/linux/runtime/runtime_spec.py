@@ -19,6 +19,14 @@ def _absolute_list(value:Any,label:str)->list[str]:
  if value is None:return []
  if not isinstance(value,list) or len(value)>128:raise RuntimeSpecError(f"invalid {label}")
  return [_absolute(x,label) for x in value]
+def _path_pairs(value:Any,label:str)->list[dict[str,str]]:
+ if value is None:return []
+ if not isinstance(value,list) or len(value)>128:raise RuntimeSpecError(f"invalid {label}")
+ out=[]
+ for item in value:
+  if not isinstance(item,dict):raise RuntimeSpecError(f"invalid {label}")
+  out.append({"source":_absolute(item.get("source"),f"{label} source"),"target":_absolute(item.get("target"),f"{label} target")})
+ return out
 def _arguments(value:Any,label:str)->list[str]:
  if value is None:return []
  if not isinstance(value,list) or len(value)>128:raise RuntimeSpecError(f"invalid {label}")
@@ -72,13 +80,8 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  for key in ("instance_state_root","configuration_root","config_path"):
   if result.get(key) is not None:result[key]=_absolute(result[key],key)
  result["writable_directories"]=_absolute_list(result.get("writable_directories"),"writable_directories")
- seed=result.get("seed_files") or []
- if not isinstance(seed,list) or len(seed)>128:raise RuntimeSpecError("invalid seed_files")
- result["seed_files"]=[{"source":_absolute(x.get("source"),"seed source"),"target":_absolute(x.get("target"),"seed target")} for x in seed if isinstance(x,dict)]
- if len(result["seed_files"])!=len(seed):raise RuntimeSpecError("invalid seed_files")
- binds=result.get("bind_paths") or []
- if not isinstance(binds,list) or len(binds)>128:raise RuntimeSpecError("invalid bind_paths")
- result["bind_paths"]=[{"source":_absolute(x.get("source"),"bind source"),"target":_absolute(x.get("target"),"bind target")} for x in binds if isinstance(x,dict)]
- if len(result["bind_paths"])!=len(binds):raise RuntimeSpecError("invalid bind_paths")
+ result["seed_files"]=_path_pairs(result.get("seed_files"),"seed_files")
+ result["seed_directories"]=_path_pairs(result.get("seed_directories"),"seed_directories")
+ result["bind_paths"]=_path_pairs(result.get("bind_paths"),"bind_paths")
  result["path"]=result["working_directory"];return result
 __all__=["RuntimeSpecError","VALID_DESIRED_STATES","validate_runtime_spec"]
