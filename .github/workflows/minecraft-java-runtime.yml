@@ -9,7 +9,11 @@ on:
       - 'agents/windows/runtime/profiles/registry.py'
       - 'catalog/v2/games/minecraft/**'
       - 'catalog/v2/support-matrix.json'
+      - 'dashboard/customer_instance_creation.py'
+      - 'dashboard/web/customer.html'
+      - 'dashboard/web/create-server-wizard.js'
       - 'tests/minecraft_java_instance_isolation_test.py'
+      - 'tests/minecraft_java_customer_eula_test.py'
       - '.github/workflows/minecraft-java-runtime.yml'
   push:
     branches: [main]
@@ -30,6 +34,10 @@ jobs:
             agents/linux/runtime/profiles/registry.py \
             agents/windows/runtime/profiles/minecraft_java.py \
             agents/windows/runtime/profiles/registry.py \
-            tests/minecraft_java_instance_isolation_test.py
+            dashboard/customer_instance_creation.py \
+            tests/minecraft_java_instance_isolation_test.py \
+            tests/minecraft_java_customer_eula_test.py
       - name: Prove Linux and Windows Minecraft Java isolation
         run: python3 tests/minecraft_java_instance_isolation_test.py
+      - name: Prove explicit customer EULA contract
+        run: python3 tests/minecraft_java_customer_eula_test.py
