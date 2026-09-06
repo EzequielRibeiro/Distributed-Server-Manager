@@ -94,7 +94,14 @@ class AgentInstanceStorageRootTest(unittest.TestCase):
         expected = storage / "dayz-one"
         self.assertEqual(Path(spec["instance_state_root"]), expected)
         self.assertEqual(Path(spec["config_path"]), expected / "config" / "serverDZ.cfg")
-        self.assertEqual(Path(spec["bind_paths"][0]["source"]), expected / "storage_1")
+        self.assertEqual(
+            Path(spec["bind_paths"][0]["source"]),
+            expected / "mpmissions" / "dayzOffline.chernarusplus",
+        )
+        self.assertEqual(
+            Path(spec["seed_directories"][0]["target"]),
+            expected / "mpmissions" / "dayzOffline.chernarusplus",
+        )
 
     def test_client_context_cannot_override_agent_storage_policy_during_privileged_validation(self):
         module_path = ROOT / "agents" / "linux" / "privileged" / "materialize_instance.py"
