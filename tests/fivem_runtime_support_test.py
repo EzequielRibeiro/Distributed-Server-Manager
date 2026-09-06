@@ -54,9 +54,10 @@ def test_fivem_catalog_is_active_not_deferred():
     assert not deferred.exists()
 
 
-def test_fivem_uses_typed_executable_provider():
+def test_fivem_uses_typed_linux_only_executable_provider():
     runtime = json.loads((ROOT / "catalog" / "v2" / "games" / "fivem" / "runtimes" / "stable.json").read_text())
     providers = json.loads((ROOT / "catalog" / "v2" / "providers" / "catalog-providers.json").read_text())
     assert runtime["artifact"]["provider"] == "fivem"
+    assert runtime["requirements"]["os"] == ["linux"]
     assert "fivem" in providers["agent_executable_artifact_providers"]
     assert "fivem" not in providers["reserved_artifact_providers"]
