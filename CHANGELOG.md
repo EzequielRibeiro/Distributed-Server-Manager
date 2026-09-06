@@ -1,5 +1,12 @@
 # DSM CHANGELOG
 
+## v2.0.28 — 2026-09-06
+
+- Adiciona GameDefinition e descoberta hierárquica para os 20 jogos publicados, preservando IDs e contratos RuntimeDefinition.
+- Conclui a publicação dos runtimes pendentes, incluindo Luanti 5.17.0, FiveM, Valheim e ARK: Survival Ascended.
+- Reforça isolamento por instância, paridade de perfis, provisionamento Hybrid e recuperação de falhas do Customer.
+- Detalhes e escopo em `release/RELEASE_NOTES_2.0.28.md`.
+
 ## v1.4.6 — 2026-08-20
 
 - Corrige o bootstrap do Update Manager para executar o `update.sh` contido na release alvo já validada, em vez de continuar usando o updater da versão instalada
