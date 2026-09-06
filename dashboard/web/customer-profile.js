@@ -91,6 +91,98 @@
     message(body.updated ? "Perfil atualizado." : "Nenhuma alteração necessária.");
   }
 
+  function customerHeaders() {
+    return {"Accept":"application/json","X-Capivara-Auth-Area":"customer"};
+  }
+  async function customerJson(path) {
+    const response = await fetch(path, {headers: customerHeaders(), credentials:"same-origin", cache:"no-store"});
+    if (!response.ok) return null;
+    return response.json().catch(() => null);
+  }
+  function publicContractCode(resource, metadata, contracts) {
+    const candidates = [
+      resource?.contract_code,
+      resource?.contract_id,
+      metadata?.contract_code,
+      metadata?.contract_id,
+      metadata?.contract?.code,
+      metadata?.contract?.id,
+    ].map(value => String(value || "").trim()).filter(Boolean);
+    for (const candidate of candidates) {
+      const match = contracts.find(contract => String(contract.id || contract.contract_code || "") === candidate);
+      if (match) return String(match.contract_code || match.id || candidate);
+      if (/^[a-z0-9][a-z0-9._-]*-[a-f0-9]{6,}$/i.test(candidate)) return candidate;
+    }
+    return "";
+  }
+  function contractBadge(code) {
+    const node = document.createElement("small");
+    node.className = "customer-contract-code";
+    node.textContent = `Contrato: ${code}`;
+    node.title = "Código de referência do contrato deste servidor";
+    return node;
+  }
+  async function decorateServerContractCodes() {
+    const container = document.getElementById("customer-servers");
+    if (!container) return;
+    const [runtimeData, contractData] = await Promise.all([
+      customerJson("/api/runtime/list"),
+      customerJson("/api/customer/contracts"),
+    ]);
+    const resources = Array.isArray(runtimeData) ? runtimeData : (runtimeData?.resources || []);
+    const contracts = contractData?.contracts || [];
+    if (!resources.length || !contracts.length) return;
+    const enriched = await Promise.all(resources.map(async resource => {
+      let metadata = resource.metadata || {};
+      const params = new URLSearchParams(resource);
+      const summary = await customerJson(`/api/runtime?${params}`);
+      if (summary?.instance_metadata) metadata = summary.instance_metadata;
+      return {resource, metadata};
+    }));
+    const apply = () => {
+      const cards = [...container.querySelectorAll(".server-card")];
+      enriched.forEach(({resource, metadata}, index) => {
+        const card = cards[index];
+        if (!card || card.querySelector(".customer-contract-code")) return;
+        const code = publicContractCode(resource, metadata, contracts);
+        if (!code) return;
+        const title = card.querySelector(".server-card-head > div") || card;
+        title.append(contractBadge(code));
+      });
+    };
+    apply();
+    const observer = new MutationObserver(apply);
+    observer.observe(container, {childList:true, subtree:true});
+    window.setTimeout(() => observer.disconnect(), 10000);
+  }
+  async function decorateInstanceContractCode() {
+    const title = document.getElementById("title");
+    if (!title || !location.pathname.endsWith("/customer-instance.html")) return;
+    const q = new URLSearchParams(location.search);
+    const instanceId = q.get("instance") || q.get("instance_id") || "";
+    if (!instanceId) return;
+    const [runtimeData, contractData] = await Promise.all([
+      customerJson("/api/runtime/list"),
+      customerJson("/api/customer/contracts"),
+    ]);
+    const resources = Array.isArray(runtimeData) ? runtimeData : (runtimeData?.resources || []);
+    const contracts = contractData?.contracts || [];
+    const resource = resources.find(item => String(item.instance || item.instance_id || "") === instanceId) || {};
+    let metadata = resource.metadata || {};
+    if (Object.keys(resource).length) {
+      const summary = await customerJson(`/api/runtime?${new URLSearchParams(resource)}`);
+      if (summary?.instance_metadata) metadata = summary.instance_metadata;
+    }
+    const code = publicContractCode(resource, metadata, contracts);
+    if (!code || document.getElementById("instance-contract-code")) return;
+    const node = document.createElement("span");
+    node.id = "instance-contract-code";
+    node.className = "muted customer-contract-code";
+    node.textContent = `Contrato: ${code}`;
+    node.title = "Informe este código ao suporte para identificar exatamente o contrato deste servidor";
+    title.insertAdjacentElement("afterend", node);
+  }
+
   document.addEventListener("click", event => {
     const trigger = event.target.closest("[data-customer-profile]");
     if (!trigger) return;
@@ -98,4 +190,6 @@
     open();
   });
   document.addEventListener("customer-email-changed", () => { if (!ensurePanel().hidden) load().catch(() => {}); });
+  decorateServerContractCodes().catch(() => {});
+  decorateInstanceContractCode().catch(() => {});
 })();
