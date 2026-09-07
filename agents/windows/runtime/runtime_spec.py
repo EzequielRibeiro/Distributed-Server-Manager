@@ -38,7 +38,10 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  r["executable_scope"]=scope
  if r.get("seed_source_root") is not None:r["seed_source_root"]=_absolute(r.get("seed_source_root"),"seed_source_root")
  if scope=="provider-content" and not r.get("seed_source_root"):raise RuntimeSpecError("provider-content executable requires seed_source_root")
- if r.get("instance_state_root") is not None:r["instance_state_root"]=_absolute(r.get("instance_state_root"),"instance_state_root")
+ for key in ("instance_state_root","configuration_root","files_root"):
+  if r.get(key) is not None:r[key]=_absolute(r.get(key),key)
+ if r.get("files_root") is None:
+  r["files_root"]=_absolute(r.get("instance_state_root") or r.get("configuration_root") or r["working_directory"],"files_root")
  r["writable_directories"]=_absolute_list(r.get("writable_directories"),"writable directory")
  r["seed_files"]=_path_pairs(r.get("seed_files"),"seed_files");r["seed_directories"]=_path_pairs(r.get("seed_directories"),"seed_directories")
  args=r.get("arguments",[])
