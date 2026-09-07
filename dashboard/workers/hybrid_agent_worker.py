@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import socket
@@ -18,6 +19,7 @@ for path in (ROOT, DATABASE, DASHBOARD):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from hybrid_game_data_client import process_hybrid_game_data_cycle
 from hybrid_instance_provisioning_client import process_hybrid_instance_provisioning_cycle
 from hybrid_local_reconciliation import reconcile_local_hybrid_runtime
@@ -62,6 +64,57 @@ def _database_environment(root: Path) -> dict[str, str]:
     return environment
 
 
+def _hybrid_agent_config(root: Path, agent_id: str) -> dict[str, Any]:
+    path = root / "runtime" / "hybrid-agent-state" / "agent.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"Hybrid Agent config is unavailable: {exc}") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError("Hybrid Agent config must be a JSON object")
+    configured = str(value.get("agent_id") or "").strip()
+    if configured != agent_id:
+        raise RuntimeError("Hybrid Agent config identity does not match agent.conf")
+    return value
+
+
+def _instance_runtime_module(root: Path):
+    state = root / "runtime" / "hybrid-agent-state"
+    os.environ.setdefault("CAPIVARA_AGENT_ROOT", str(root / "agents" / "linux"))
+    os.environ.setdefault("CAPIVARA_AGENT_STATE_DIR", str(state))
+    os.environ.setdefault("CAPIVARA_AGENT_CONFIG", str(state / "agent.json"))
+    runtime = root / "agents" / "linux" / "runtime"
+    if str(runtime) not in sys.path:
+        sys.path.insert(0, str(runtime))
+    import instance_runtime
+    return instance_runtime
+
+
+def process_hybrid_instance_runtime_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
+    """Consume one Controller runtime command using the embedded Hybrid runtime."""
+    repository = AgentInstanceRuntimeRepository(backend)
+    command = repository.command_for_agent(agent_id)
+    if not isinstance(command, dict):
+        return {"status": "idle"}
+
+    command_id = str(command.get("command_id") or "").strip()
+    if not command_id:
+        raise RuntimeError("Hybrid instance command is missing command_id")
+
+    repository.mark_delivered(command_id)
+    runtime = _instance_runtime_module(root)
+    report = runtime.handle_command(_hybrid_agent_config(root, agent_id), command)
+    completed = repository.apply_result(agent_id, report)
+    if isinstance(completed, dict) and str(completed.get("status") or "").lower() in {"completed", "failed"}:
+        runtime.clear_result(command_id)
+    return {
+        "status": str((completed or {}).get("status") or report.get("status") or "unknown"),
+        "command_id": command_id,
+        "instance_id": command.get("instance_id"),
+        "action": command.get("action"),
+    }
+
+
 def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     config = _read_shell_values(root / "config" / "agent.conf")
     if str(config.get("DSM_NODE_ROLE", "")).strip().lower() != "hybrid":
@@ -80,9 +133,17 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         agent_id=agent_id,
         hostname=socket.gethostname(),
     )
+    instance_runtime = process_hybrid_instance_runtime_cycle(effective_backend, root, agent_id)
     provisioning = process_hybrid_instance_provisioning_cycle(effective_backend, root, agent_id)
     game_data = process_hybrid_game_data_cycle(effective_backend, root, agent_id)
-    return {"active": True, "agent_id": agent_id, "provisioning": provisioning, "game_data": game_data, **result}
+    return {
+        "active": True,
+        "agent_id": agent_id,
+        "instance_runtime": instance_runtime,
+        "provisioning": provisioning,
+        "game_data": game_data,
+        **result,
+    }
 
 
 def run_forever(root: Path = ROOT) -> None:
@@ -92,8 +153,10 @@ def run_forever(root: Path = ROOT) -> None:
             if result.get("active"):
                 game_data = result.get("game_data") if isinstance(result.get("game_data"), dict) else {}
                 state = game_data.get("state") if isinstance(game_data.get("state"), dict) else {}
+                instance_runtime = result.get("instance_runtime") if isinstance(result.get("instance_runtime"), dict) else {}
                 print(
-                    f"hybrid heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} game_data={state.get('status', 'idle')}",
+                    f"hybrid heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} "
+                    f"instance_runtime={instance_runtime.get('status', 'idle')} game_data={state.get('status', 'idle')}",
                     flush=True,
                 )
         except Exception as exc:
