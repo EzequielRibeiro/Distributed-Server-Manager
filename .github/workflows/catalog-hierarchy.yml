@@ -6,8 +6,11 @@ on:
       - 'core/catalog_index.py'
       - 'installer/catalog.sh'
       - 'dashboard/server.py'
+      - 'dashboard/web/customer.html'
+      - 'dashboard/web/runtime-selector.js'
       - 'tests/catalog_index_test.py'
       - 'tests/dashboard_catalog_v2_test.py'
+      - 'tests/customer_catalog_hierarchy_test.py'
       - '.github/workflows/catalog-hierarchy.yml'
   push:
     branches: [main]
@@ -19,7 +22,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python3 -m pip install jsonschema
-      - run: python3 -m unittest tests/catalog_index_test.py tests/dashboard_catalog_v2_test.py
+      - run: python3 -m unittest tests/catalog_index_test.py tests/dashboard_catalog_v2_test.py tests/customer_catalog_hierarchy_test.py
+      - run: node --check dashboard/web/runtime-selector.js
       - run: python3 core/catalog_index.py > /dev/null
       - run: bash installer/catalog.sh hierarchy minecraft --json
       - run: bash tests/catalog_v2_test.sh

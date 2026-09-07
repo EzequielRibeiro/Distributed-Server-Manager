@@ -1,12 +1,11 @@
 /*
 ==============================================================
  Capivara DSM
- Runtime Selector
+ Hierarchical Runtime Selector
 ==============================================================
-
- Canonical customer runtime selector. Placement/catalog discovery
- is consumed explicitly through CapivaraPlacementClient; the
- selector no longer depends on fetch interception or an outer shim.
+ Customer discovery follows the canonical CatalogIndex:
+ GameDefinition -> Edition -> Distribution -> RuntimeDefinition.
+ Flat runtime discovery is used only to hydrate canonical runtime IDs.
 ==============================================================
 */
 
@@ -19,8 +18,10 @@
     const state = {
         contract: null,
         game: null,
-        runtimes: [],
+        catalogGame: null,
+        runtimeById: new Map(),
         edition: null,
+        distribution: null,
         runtime: null,
         version: null,
         build: null,
@@ -37,7 +38,6 @@
             description: $("create-instance-description"),
             close: $("create-instance-close"),
             gameSummary: $("runtime-game-summary"),
-            editionStep: $("runtime-edition-step"),
             editions: $("runtime-editions"),
             typeStep: $("runtime-type-step"),
             types: $("runtime-types"),
@@ -58,6 +58,7 @@
             summaryRegion: $("runtime-summary-region"),
             summaryRegionFallback: $("runtime-summary-region-fallback"),
             minecraftNotice: $("minecraft-runtime-notice"),
+            minecraftEula: $("minecraft-eula-accepted"),
             submit: $("create-instance-submit"),
             message: $("customer-message"),
         };
@@ -65,10 +66,7 @@
 
     function showMessage(text) {
         const node = elements().message;
-        if (!node) {
-            console.log(text);
-            return;
-        }
+        if (!node) return;
         node.textContent = text;
         node.classList.add("show");
         clearTimeout(showMessage.timer);
@@ -82,32 +80,24 @@
             ...(options.headers || {}),
         };
         if (options.body) headers["Content-Type"] = "application/json";
-
         const response = await fetch(path, {
             ...options,
             headers,
             credentials: "same-origin",
             cache: options.cache || "no-store",
         });
-
         if (response.status === 401) {
             window.location.href = "/customer-login.html";
             throw new Error("Sessão encerrada.");
         }
-
-        const contentType = response.headers.get("content-type") || "";
-        const data = contentType.includes("application/json")
-            ? await response.json()
-            : await response.text();
-
+        const type = response.headers.get("content-type") || "";
+        const data = type.includes("application/json") ? await response.json() : await response.text();
         if (!response.ok) {
-            let errorMessage = `Erro HTTP ${response.status}`;
-            if (data && typeof data === "object" && (data.message || data.error)) {
-                errorMessage = data.message || data.error;
-            } else if (typeof data === "string" && data.trim()) {
-                errorMessage = data.trim();
-            }
-            throw new Error(errorMessage);
+            throw new Error(
+                data && typeof data === "object"
+                    ? (data.message || data.error || `Erro HTTP ${response.status}`)
+                    : (String(data || "").trim() || `Erro HTTP ${response.status}`)
+            );
         }
         return data;
     }
@@ -130,208 +120,75 @@
             .replace(/\b\w/g, (letter) => letter.toUpperCase());
     }
 
-    function gameLabel(game) {
+    function gameLabel() {
+        return state.catalogGame?.name || titleCase(state.game);
+    }
+
+    function editionLabel(value) {
+        const labels = {java: "Java Edition", bedrock: "Bedrock Edition", default: "Padrão"};
+        return labels[normalize(value)] || titleCase(value);
+    }
+
+    function distributionLabel(distribution, runtime) {
         const labels = {
-            minecraft: "Minecraft",
-            dayz: "DayZ",
-            arma3: "Arma 3",
-            rust: "Rust",
-            mindustry: "Mindustry",
+            vanilla: "Vanilla", paper: "Paper", purpur: "Purpur", fabric: "Fabric",
+            forge: "Forge", neoforge: "NeoForge", quilt: "Quilt", folia: "Folia",
+            dedicated_server: "Servidor dedicado", "dedicated-server": "Servidor dedicado",
         };
-        return labels[normalize(game)] || titleCase(game);
+        return runtime?.name || runtime?.display_name || labels[normalize(distribution?.id)] || titleCase(distribution?.id);
     }
 
-    function editionLabel(edition) {
-        const value = normalize(edition);
-        const labels = {
-            java: "Java Edition",
-            java_edition: "Java Edition",
-            "java-edition": "Java Edition",
-            bedrock: "Bedrock Edition",
-            bedrock_edition: "Bedrock Edition",
-            "bedrock-edition": "Bedrock Edition",
-            default: "Padrão",
-        };
-        return labels[value] || titleCase(edition);
+    function currentEditionNode() {
+        return state.catalogGame?.editions?.find((item) => item.id === state.edition) || null;
     }
 
-    function runtimeLabel(runtime) {
-        if (!runtime) return "—";
-        if (runtime.name) return runtime.name;
-        if (runtime.display_name) return runtime.display_name;
-        const variant = runtime.variant || runtime.loader || runtime.server_type;
-        if (variant) {
-            const labels = {
-                vanilla: "Vanilla",
-                paper: "Paper",
-                purpur: "Purpur",
-                fabric: "Fabric",
-                forge: "Forge",
-                neoforge: "NeoForge",
-                quilt: "Quilt",
-                folia: "Folia",
-                bedrock: "Bedrock Dedicated Server",
-                bds: "Bedrock Dedicated Server",
-            };
-            return labels[normalize(variant)] || titleCase(variant);
+    function currentDistributions() {
+        return Array.isArray(currentEditionNode()?.distributions) ? currentEditionNode().distributions : [];
+    }
+
+    function runtimeForDistribution(distribution) {
+        const ids = Array.isArray(distribution?.runtime_definitions) ? distribution.runtime_definitions : [];
+        for (const id of ids) {
+            const runtime = state.runtimeById.get(id);
+            if (runtime) return runtime;
         }
-        return runtime.id || "Servidor";
+        return null;
     }
 
-    function runtimeEdition(runtime) {
-        if (!runtime) return "default";
-        const explicit = runtime.edition || runtime.game_edition;
-        if (explicit) return normalize(explicit);
-        const variant = normalize(
-            runtime.variant || runtime.loader || runtime.server_type || runtime.id
-        );
-        if (variant.includes("bedrock") || variant === "bds") return "bedrock";
-        if (normalize(runtime.game) === "minecraft") return "java";
-        return "default";
-    }
+    async function loadCatalog(game) {
+        const [hierarchy, runtimeData] = await Promise.all([
+            request(`/api/catalog/hierarchy?game=${encodeURIComponent(game)}`),
+            placementClient().loadRuntimes(game),
+        ]);
+        const games = Array.isArray(hierarchy?.games) ? hierarchy.games : [];
+        const catalogGame = games.find((item) => normalize(item.id) === game);
+        if (!catalogGame) throw new Error("O jogo contratado não está publicado no catálogo hierárquico.");
 
-    function extractVersions(runtime) {
-        if (!runtime) return [];
-        let versions = [];
-        if (Array.isArray(runtime.versions)) {
-            versions = runtime.versions;
-        } else if (runtime.version && Array.isArray(runtime.version.available)) {
-            versions = runtime.version.available;
-        } else if (runtime.version && Array.isArray(runtime.version.versions)) {
-            versions = runtime.version.versions;
-        } else if (runtime.version && typeof runtime.version === "object") {
-            const single = runtime.version.value || runtime.version.version || runtime.version.id;
-            if (single) versions = [runtime.version];
-        } else if (typeof runtime.version === "string") {
-            versions = [runtime.version];
-        }
+        const runtimes = Array.isArray(runtimeData)
+            ? runtimeData
+            : Array.isArray(runtimeData?.runtimes)
+                ? runtimeData.runtimes
+                : Array.isArray(runtimeData?.entries) ? runtimeData.entries : [];
+        const runtimeById = new Map(runtimes.filter((item) => item?.id).map((item) => [item.id, item]));
 
-        const result = versions.map((entry) => {
-            if (typeof entry === "string") {
-                return {value: entry, label: entry, raw: entry};
-            }
-            if (entry && typeof entry === "object") {
-                const value = entry.value || entry.version || entry.id || entry.name;
-                if (!value) return null;
-                return {
-                    value: String(value),
-                    label: String(entry.label || entry.name || value),
-                    recommended: entry.recommended === true,
-                    current: entry.current === true,
-                    raw: entry,
-                };
-            }
-            return null;
-        }).filter(Boolean);
-
-        if (!result.length) {
-            result.push({
-                value: "current",
-                label: "Versão atual / recomendada",
-                recommended: true,
-            });
-        }
-        return result;
-    }
-
-    function extractBuilds(runtime, version) {
-        if (!runtime) return [];
-        let builds = [];
-        const rawVersion = version?.raw;
-        if (rawVersion && typeof rawVersion === "object" && Array.isArray(rawVersion.builds)) {
-            builds = rawVersion.builds;
-        }
-        if (!builds.length && Array.isArray(runtime.builds)) builds = runtime.builds;
-        if (!builds.length && runtime.build) {
-            if (Array.isArray(runtime.build.available)) builds = runtime.build.available;
-            else if (Array.isArray(runtime.build.builds)) builds = runtime.build.builds;
-            else {
-                const single = runtime.build.value || runtime.build.id || runtime.build.build;
-                if (single) builds = [runtime.build];
+        const missing = [];
+        for (const edition of catalogGame.editions || []) {
+            for (const distribution of edition.distributions || []) {
+                for (const runtimeId of distribution.runtime_definitions || []) {
+                    if (!runtimeById.has(runtimeId)) missing.push(runtimeId);
+                }
             }
         }
-
-        const result = builds.map((entry) => {
-            if (typeof entry === "string" || typeof entry === "number") {
-                return {value: String(entry), label: String(entry), raw: entry};
-            }
-            if (entry && typeof entry === "object") {
-                const value = entry.value || entry.build || entry.id || entry.name;
-                if (value === undefined || value === null) return null;
-                return {
-                    value: String(value),
-                    label: String(entry.label || entry.name || value),
-                    recommended: entry.recommended === true,
-                    current: entry.current === true,
-                    raw: entry,
-                };
-            }
-            return null;
-        }).filter(Boolean);
-
-        if (!result.length) {
-            result.push({value: "current", label: "Build recomendada", recommended: true});
+        if (missing.length) {
+            throw new Error(`Catálogo inconsistente: RuntimeDefinition ausente (${missing.join(", ")}).`);
         }
-        return result;
-    }
-
-    async function loadRuntimes(game) {
-        const data = await placementClient().loadRuntimes(game);
-        if (Array.isArray(data)) return data;
-        if (data && Array.isArray(data.runtimes)) return data.runtimes;
-        if (data && Array.isArray(data.entries)) return data.entries;
-        return [];
+        return {catalogGame, runtimeById};
     }
 
     async function loadRegions() {
-        const contractId = String(
-            state.contract?.id || state.contract?.contract_id || ""
-        ).trim();
-        const data = await placementClient().loadRegions({
-            game: state.game,
-            contract: contractId,
-        });
-        const regions = Array.isArray(data?.regions) ? data.regions : [];
-        state.regions = regions;
-        return regions;
-    }
-
-    async function openSelector(contract) {
-        if (!contract) throw new Error("Contrato não informado.");
-        const game = normalize(contract.game_id || contract.game);
-        if (!game) throw new Error("O contrato não possui jogo definido.");
-
-        state.contract = contract;
-        state.game = game;
-        state.edition = null;
-        state.runtime = null;
-        state.version = null;
-        state.build = null;
-        state.regions = [];
-        state.region = null;
-        state.allowCrossRegion = false;
-
-        const el = elements();
-        el.panel.hidden = false;
-        el.title.textContent = `Criar servidor ${gameLabel(game)}`;
-        el.description.textContent = "Escolha o ambiente de execução desta instância.";
-        el.gameSummary.textContent = gameLabel(game);
-        resetSelectionUI();
-        showMessage("Carregando ambientes disponíveis…");
-
-        const [runtimes] = await Promise.all([
-            loadRuntimes(game),
-            loadRegions(),
-        ]);
-        state.runtimes = runtimes;
-        renderRegions();
-
-        if (!state.runtimes.length) {
-            throw new Error("Nenhum ambiente de execução está disponível para este jogo.");
-        }
-
-        renderEditions();
-        el.panel.scrollIntoView({behavior: "smooth", block: "start"});
+        const contractId = String(state.contract?.id || state.contract?.contract_id || "").trim();
+        const data = await placementClient().loadRegions({game: state.game, contract: contractId});
+        state.regions = Array.isArray(data?.regions) ? data.regions : [];
     }
 
     function resetSelectionUI() {
@@ -344,280 +201,44 @@
         el.regionStep.hidden = true;
         el.summaryStep.hidden = true;
         el.minecraftNotice.hidden = true;
+        if (el.minecraftEula) el.minecraftEula.checked = false;
         el.version.replaceChildren(new Option("Selecione…", ""));
         el.build.replaceChildren(new Option("Selecione…", ""));
         el.submit.disabled = true;
     }
 
-    function availableEditions() {
-        const values = new Map();
-        for (const runtime of state.runtimes) {
-            const edition = runtimeEdition(runtime);
-            if (!values.has(edition)) values.set(edition, editionLabel(edition));
-        }
-        return [...values.entries()].map(([value, label]) => ({value, label}));
-    }
+    async function openSelector(contract) {
+        if (!contract) throw new Error("Contrato não informado.");
+        const game = normalize(contract.game_id || contract.game);
+        if (!game) throw new Error("O contrato não possui jogo definido.");
 
-    function renderEditions() {
-        const el = elements();
-        el.editions.replaceChildren();
-        const editions = availableEditions();
-
-        if (editions.length === 1) {
-            state.edition = editions[0].value;
-            state.runtime = null;
-            state.version = null;
-            state.build = null;
-            el.editions.append(createSelectionCard(
-                editions[0].label,
-                "Edição disponível",
-                true,
-                () => {}
-            ));
-            renderRuntimeTypes();
-            return;
-        }
-
-        editions.forEach((edition) => {
-            const description = edition.value === "java"
-                ? "Ecossistema Java: Vanilla, Paper, Fabric, Forge e outros."
-                : edition.value === "bedrock"
-                    ? "Servidor oficial compatível com clientes Bedrock."
-                    : "Ambiente disponível para este jogo.";
-            el.editions.append(createSelectionCard(
-                edition.label,
-                description,
-                state.edition === edition.value,
-                () => selectEdition(edition.value)
-            ));
-        });
-    }
-
-    function selectEdition(edition) {
-        state.edition = edition;
+        state.contract = contract;
+        state.game = game;
+        state.catalogGame = null;
+        state.runtimeById = new Map();
+        state.edition = null;
+        state.distribution = null;
         state.runtime = null;
         state.version = null;
         state.build = null;
+        state.region = null;
+        state.allowCrossRegion = false;
+
+        const el = elements();
+        el.panel.hidden = false;
+        el.title.textContent = `Criar servidor ${titleCase(game)}`;
+        el.description.textContent = "Escolha a edição e a distribuição publicadas no catálogo.";
+        resetSelectionUI();
+        showMessage("Carregando catálogo e ambientes disponíveis…");
+
+        const [catalog] = await Promise.all([loadCatalog(game), loadRegions()]);
+        state.catalogGame = catalog.catalogGame;
+        state.runtimeById = catalog.runtimeById;
+        el.title.textContent = `Criar servidor ${gameLabel()}`;
+        el.gameSummary.textContent = gameLabel();
+        renderRegions();
         renderEditions();
-        renderRuntimeTypes();
-    }
-
-    function matchingRuntimes() {
-        return state.runtimes.filter((runtime) => runtimeEdition(runtime) === state.edition);
-    }
-
-    function renderRuntimeTypes() {
-        const el = elements();
-        el.typeStep.hidden = false;
-        el.versionStep.hidden = true;
-        el.buildStep.hidden = true;
-        el.regionStep.hidden = true;
-        el.summaryStep.hidden = true;
-        el.submit.disabled = true;
-        el.types.replaceChildren();
-
-        const runtimes = matchingRuntimes();
-        if (!runtimes.length) {
-            el.types.textContent = "Nenhum servidor disponível para esta edição.";
-            return;
-        }
-
-        runtimes.forEach((runtime) => {
-            const provider = runtime.artifact?.provider || runtime.provider || "";
-            const variant = runtime.variant || runtime.loader || runtime.server_type || "";
-            const details = [
-                variant ? titleCase(variant) : null,
-                provider ? `Provider: ${provider}` : null,
-            ].filter(Boolean).join(" · ");
-            el.types.append(createSelectionCard(
-                runtimeLabel(runtime),
-                details || "Ambiente de execução",
-                state.runtime?.id === runtime.id,
-                () => selectRuntime(runtime)
-            ));
-        });
-
-        if (runtimes.length === 1 && !state.runtime) selectRuntime(runtimes[0]);
-    }
-
-    function selectRuntime(runtime) {
-        state.runtime = runtime;
-        state.version = null;
-        state.build = null;
-        renderRuntimeTypes();
-        renderVersions().catch((error) => {
-            console.error(error);
-            showMessage(`Não foi possível carregar as versões: ${error.message}`);
-        });
-    }
-
-    async function renderVersions() {
-        const el = elements();
-        el.version.replaceChildren(new Option("Carregando versões…", ""));
-        el.version.disabled = true;
-        el.versionStep.hidden = false;
-        el.buildStep.hidden = true;
-        el.summaryStep.hidden = true;
-
-        let versions = [];
-        const runtime = state.runtime;
-        if (!runtime) return;
-        const strategy = runtime.version?.strategy || "static";
-
-        try {
-            if (strategy === "dynamic") {
-                const data = await request(
-                    `/api/catalog/versions?runtime=${encodeURIComponent(runtime.id)}`
-                );
-                versions = Array.isArray(data) ? data : (data.versions || []);
-            } else {
-                versions = extractVersions(runtime);
-            }
-
-            if (!versions.length) {
-                throw new Error("Nenhuma versão disponível para este tipo de servidor.");
-            }
-
-            versions = versions.map((entry) => {
-                if (typeof entry === "string" || typeof entry === "number") {
-                    return {value: String(entry), label: String(entry), raw: entry};
-                }
-                return {
-                    value: String(entry.value || entry.version || entry.id),
-                    label: String(
-                        entry.label || entry.name || entry.version || entry.value || entry.id
-                    ),
-                    recommended: entry.recommended === true,
-                    current: entry.current === true,
-                    raw: entry,
-                };
-            });
-
-            runtime.versions = versions;
-            el.version.replaceChildren(new Option("Selecione…", ""));
-            versions.forEach((version) => {
-                el.version.append(new Option(
-                    version.label + ((version.recommended || version.current) ? " — recomendada" : ""),
-                    version.value
-                ));
-            });
-            el.version.disabled = false;
-
-            const recommended = versions.find((item) => item.recommended || item.current);
-            if (versions.length === 1 || recommended) {
-                const selected = recommended || versions[0];
-                el.version.value = selected.value;
-                await selectVersion(selected.value);
-            }
-        } catch (error) {
-            el.version.replaceChildren(new Option("Nenhuma versão disponível", ""));
-            el.version.disabled = true;
-            throw error;
-        }
-    }
-
-    async function selectVersion(value) {
-        const versions = extractVersions(state.runtime);
-        state.version = versions.find((entry) => entry.value === value) || null;
-        state.build = null;
-        if (!state.version) {
-            elements().buildStep.hidden = true;
-            elements().summaryStep.hidden = true;
-            return;
-        }
-        await renderBuilds();
-    }
-
-    async function renderBuilds() {
-        const el = elements();
-        el.build.replaceChildren(new Option("Carregando builds…", ""));
-        el.build.disabled = true;
-        el.buildStep.hidden = false;
-        el.summaryStep.hidden = true;
-
-        const runtime = state.runtime;
-        const version = state.version;
-        if (!runtime || !version) return;
-        let builds = [];
-
-        try {
-            const strategy = runtime.version?.strategy || "static";
-            if (strategy === "dynamic") {
-                const data = await request(
-                    `/api/catalog/builds?${new URLSearchParams({
-                        runtime: runtime.id,
-                        version: version.value,
-                    })}`
-                );
-                builds = Array.isArray(data) ? data : (data.builds || []);
-            } else {
-                const staticBuild = runtime.version?.build;
-                if (staticBuild) {
-                    builds = [{
-                        value: String(staticBuild),
-                        label: "Build recomendada",
-                        recommended: true,
-                    }];
-                } else {
-                    builds = extractBuilds(runtime, version);
-                }
-            }
-
-            if (!builds.length) {
-                builds = [{
-                    value: "current",
-                    label: "Build atual / recomendada",
-                    recommended: true,
-                }];
-            }
-
-            builds = builds.map((entry) => {
-                if (typeof entry === "string" || typeof entry === "number") {
-                    return {value: String(entry), label: String(entry), raw: entry};
-                }
-                return {
-                    value: String(entry.value || entry.build || entry.id),
-                    label: String(
-                        entry.label || entry.name || entry.build || entry.value || entry.id
-                    ),
-                    recommended: entry.recommended === true,
-                    current: entry.current === true,
-                    raw: entry,
-                };
-            });
-
-            if (state.version.raw && typeof state.version.raw === "object") {
-                state.version.raw.builds = builds;
-            } else {
-                state.version.raw = {value: state.version.value, builds};
-            }
-
-            el.build.replaceChildren(new Option("Selecione…", ""));
-            builds.forEach((build) => {
-                el.build.append(new Option(
-                    build.label + ((build.recommended || build.current) ? " — recomendada" : ""),
-                    build.value
-                ));
-            });
-            el.build.disabled = false;
-
-            const recommended = builds.find((item) => item.recommended || item.current);
-            if (builds.length === 1 || recommended) {
-                const selected = recommended || builds[0];
-                el.build.value = selected.value;
-                selectBuild(selected.value);
-            }
-        } catch (error) {
-            el.build.replaceChildren(new Option("Nenhuma build disponível", ""));
-            el.build.disabled = true;
-            throw error;
-        }
-    }
-
-    function selectBuild(value) {
-        const builds = extractBuilds(state.runtime, state.version);
-        state.build = builds.find((entry) => entry.value === value) || null;
-        updateSummary();
+        el.panel.scrollIntoView({behavior: "smooth", block: "start"});
     }
 
     function createSelectionCard(title, description, selected, callback) {
@@ -634,50 +255,228 @@
         return button;
     }
 
+    function renderEditions() {
+        const el = elements();
+        el.editions.replaceChildren();
+        const editions = Array.isArray(state.catalogGame?.editions) ? state.catalogGame.editions : [];
+        if (!editions.length) throw new Error("O jogo não possui edições publicadas.");
+
+        for (const edition of editions) {
+            const description = edition.id === "java"
+                ? "Ecossistema Java: escolha a distribuição do servidor."
+                : edition.id === "bedrock"
+                    ? "Servidor compatível com clientes Bedrock."
+                    : "Edição publicada no catálogo.";
+            el.editions.append(createSelectionCard(
+                editionLabel(edition.id),
+                description,
+                state.edition === edition.id,
+                () => selectEdition(edition.id)
+            ));
+        }
+        if (editions.length === 1 && !state.edition) selectEdition(editions[0].id);
+    }
+
+    function selectEdition(edition) {
+        state.edition = edition;
+        state.distribution = null;
+        state.runtime = null;
+        state.version = null;
+        state.build = null;
+        renderEditions();
+        renderDistributions();
+    }
+
+    function renderDistributions() {
+        const el = elements();
+        el.typeStep.hidden = false;
+        el.versionStep.hidden = true;
+        el.buildStep.hidden = true;
+        el.regionStep.hidden = true;
+        el.summaryStep.hidden = true;
+        el.types.replaceChildren();
+        const distributions = currentDistributions();
+
+        if (!distributions.length) {
+            el.types.textContent = "Nenhuma distribuição publicada para esta edição.";
+            return;
+        }
+
+        for (const distribution of distributions) {
+            const runtime = runtimeForDistribution(distribution);
+            if (!runtime) continue;
+            const provider = runtime.artifact?.provider || runtime.provider || "";
+            el.types.append(createSelectionCard(
+                distributionLabel(distribution, runtime),
+                provider ? `Provider: ${provider}` : "Distribuição publicada",
+                state.distribution === distribution.id && state.runtime?.id === runtime.id,
+                () => selectDistribution(distribution, runtime)
+            ));
+        }
+        if (distributions.length === 1 && !state.distribution) {
+            const runtime = runtimeForDistribution(distributions[0]);
+            if (runtime) selectDistribution(distributions[0], runtime);
+        }
+    }
+
+    function selectDistribution(distribution, runtime) {
+        state.distribution = distribution.id;
+        state.runtime = runtime;
+        state.version = null;
+        state.build = null;
+        renderDistributions();
+        renderVersions().catch((error) => showMessage(`Não foi possível carregar as versões: ${error.message}`));
+    }
+
+    function extractVersions(runtime) {
+        let versions = [];
+        if (Array.isArray(runtime?.versions)) versions = runtime.versions;
+        else if (Array.isArray(runtime?.version?.available)) versions = runtime.version.available;
+        else if (Array.isArray(runtime?.version?.versions)) versions = runtime.version.versions;
+        else if (runtime?.version && typeof runtime.version === "object" && runtime.version.value) versions = [runtime.version];
+        else if (typeof runtime?.version === "string") versions = [runtime.version];
+        return versions.map((entry) => {
+            if (typeof entry === "string" || typeof entry === "number") return {value: String(entry), label: String(entry), raw: entry};
+            const value = entry?.value || entry?.version || entry?.id || entry?.name;
+            return value ? {
+                value: String(value), label: String(entry.label || entry.name || value),
+                recommended: entry.recommended === true, current: entry.current === true, raw: entry,
+            } : null;
+        }).filter(Boolean);
+    }
+
+    async function renderVersions() {
+        const el = elements();
+        const runtime = state.runtime;
+        if (!runtime) return;
+        el.versionStep.hidden = false;
+        el.version.disabled = true;
+        el.version.replaceChildren(new Option("Carregando versões…", ""));
+        let versions = [];
+        if (runtime.version?.strategy === "dynamic") {
+            const data = await request(`/api/catalog/versions?runtime=${encodeURIComponent(runtime.id)}`);
+            versions = Array.isArray(data) ? data : (data.versions || []);
+        } else {
+            versions = extractVersions(runtime);
+        }
+        if (!versions.length) versions = [{value: "current", label: "Versão atual / recomendada", recommended: true}];
+        versions = versions.map((entry) => typeof entry === "object" && entry.value !== undefined ? entry : {
+            value: String(entry.value || entry.version || entry.id),
+            label: String(entry.label || entry.name || entry.version || entry.value || entry.id),
+            recommended: entry.recommended === true,
+            current: entry.current === true,
+            raw: entry,
+        });
+        runtime.versions = versions;
+        el.version.replaceChildren(new Option("Selecione…", ""));
+        for (const version of versions) {
+            el.version.append(new Option(
+                version.label + ((version.recommended || version.current) ? " — recomendada" : ""),
+                version.value
+            ));
+        }
+        el.version.disabled = false;
+        const selected = versions.find((item) => item.recommended || item.current) || (versions.length === 1 ? versions[0] : null);
+        if (selected) {
+            el.version.value = selected.value;
+            await selectVersion(selected.value);
+        }
+    }
+
+    function extractBuilds(runtime, version) {
+        let builds = Array.isArray(version?.raw?.builds) ? version.raw.builds : [];
+        if (!builds.length && Array.isArray(runtime?.builds)) builds = runtime.builds;
+        if (!builds.length && runtime?.build?.value) builds = [runtime.build];
+        return builds.map((entry) => {
+            if (typeof entry === "string" || typeof entry === "number") return {value: String(entry), label: String(entry), raw: entry};
+            const value = entry?.value || entry?.build || entry?.id || entry?.name;
+            return value === undefined ? null : {
+                value: String(value), label: String(entry.label || entry.name || value),
+                recommended: entry.recommended === true, current: entry.current === true, raw: entry,
+            };
+        }).filter(Boolean);
+    }
+
+    async function selectVersion(value) {
+        state.version = extractVersions(state.runtime).find((entry) => entry.value === value)
+            || state.runtime.versions?.find((entry) => entry.value === value) || null;
+        state.build = null;
+        if (state.version) await renderBuilds();
+    }
+
+    async function renderBuilds() {
+        const el = elements();
+        el.buildStep.hidden = false;
+        el.build.disabled = true;
+        el.build.replaceChildren(new Option("Carregando builds…", ""));
+        let builds = [];
+        if (state.runtime.version?.strategy === "dynamic") {
+            const data = await request(`/api/catalog/builds?${new URLSearchParams({
+                runtime: state.runtime.id,
+                version: state.version.value,
+            })}`);
+            builds = Array.isArray(data) ? data : (data.builds || []);
+        } else {
+            builds = extractBuilds(state.runtime, state.version);
+        }
+        if (!builds.length) builds = [{value: "current", label: "Build atual / recomendada", recommended: true}];
+        builds = builds.map((entry) => typeof entry === "object" && entry.value !== undefined ? entry : {
+            value: String(entry.value || entry.build || entry.id),
+            label: String(entry.label || entry.name || entry.build || entry.value || entry.id),
+            recommended: entry.recommended === true,
+            current: entry.current === true,
+            raw: entry,
+        });
+        state.version.raw = (state.version.raw && typeof state.version.raw === "object") ? state.version.raw : {value: state.version.value};
+        state.version.raw.builds = builds;
+        el.build.replaceChildren(new Option("Selecione…", ""));
+        for (const build of builds) {
+            el.build.append(new Option(
+                build.label + ((build.recommended || build.current) ? " — recomendada" : ""),
+                build.value
+            ));
+        }
+        el.build.disabled = false;
+        const selected = builds.find((item) => item.recommended || item.current) || (builds.length === 1 ? builds[0] : null);
+        if (selected) {
+            el.build.value = selected.value;
+            selectBuild(selected.value);
+        }
+    }
+
+    function selectBuild(value) {
+        state.build = extractBuilds(state.runtime, state.version).find((entry) => entry.value === value)
+            || state.version.raw?.builds?.find((entry) => entry.value === value) || null;
+        updateSummary();
+    }
+
     function regionLabel(region) {
         if (!region) return "";
-        const parts = [];
-        if (region.name) parts.push(region.name);
-        if (region.country_code) parts.push(region.country_code);
-        return parts.join(" - ") || region.id || "Região";
+        return [region.name, region.country_code].filter(Boolean).join(" - ") || region.id || "Região";
     }
 
     function renderRegions() {
         const el = elements();
         el.region.replaceChildren(new Option("Selecione…", ""));
-        for (const region of state.regions) {
-            el.region.append(new Option(regionLabel(region), region.id));
-        }
+        for (const region of state.regions) el.region.append(new Option(regionLabel(region), region.id));
         el.region.disabled = state.regions.length === 0;
-        if (!state.regions.length) {
-            el.region.replaceChildren(new Option("Nenhuma região disponível", ""));
-            el.regionHelp.textContent = "Nenhum servidor elegível está disponível para esta instância.";
-        } else {
-            el.regionHelp.textContent =
-                "A recomendação considera disponibilidade e latência estimada. O Controller selecionará o Agent adequado.";
-        }
-    }
-
-    function selectRegion(value) {
-        state.region = state.regions.find((region) => region.id === value) || null;
-        updateSummary();
+        el.regionHelp.textContent = state.regions.length
+            ? "A recomendação considera disponibilidade e latência estimada. O Controller selecionará o Agent adequado."
+            : "Nenhum servidor elegível está disponível para esta instância.";
     }
 
     function updateSummary() {
         const el = elements();
-        const complete = Boolean(
-            state.game && state.edition && state.runtime && state.version && state.build
-        );
+        const complete = Boolean(state.game && state.edition && state.distribution && state.runtime && state.version && state.build);
         el.regionStep.hidden = !complete;
         el.summaryStep.hidden = !complete;
         if (!complete) {
             el.submit.disabled = true;
             return;
         }
-
-        el.summaryGame.textContent = gameLabel(state.game);
+        el.summaryGame.textContent = gameLabel();
         el.summaryEdition.textContent = editionLabel(state.edition);
-        el.summaryRuntime.textContent = runtimeLabel(state.runtime);
+        el.summaryRuntime.textContent = distributionLabel({id: state.distribution}, state.runtime);
         el.summaryVersion.textContent = state.version.label;
         el.summaryBuild.textContent = state.build.label;
         el.summaryRegion.textContent = state.region ? regionLabel(state.region) : "Automática";
@@ -687,80 +486,62 @@
     }
 
     function createPayload() {
-        if (!state.contract || !state.game || !state.runtime || !state.version || !state.build) {
-            throw new Error("A seleção do servidor está incompleta.");
-        }
+        if (!state.contract || !state.runtime || !state.version || !state.build) throw new Error("A seleção do servidor está incompleta.");
         return {
             game: state.game,
             contract_id: state.contract.id,
             resource_profile_id: state.contract.resource_profile_id || null,
             runtime_id: state.runtime.id,
             edition: state.edition,
-            variant: state.runtime.variant || state.runtime.loader || state.runtime.server_type || null,
+            variant: state.distribution,
             version: state.version.value,
             build: state.build.value,
             runtime: {
                 id: state.runtime.id,
                 game: state.game,
                 edition: state.edition,
-                variant: state.runtime.variant || state.runtime.loader || state.runtime.server_type || null,
+                variant: state.distribution,
                 version: state.version.value,
                 build: state.build.value,
             },
-            placement: {
-                region_id: state.region?.id || null,
-                allow_cross_region: state.allowCrossRegion,
-            },
+            placement: {region_id: state.region?.id || null, allow_cross_region: state.allowCrossRegion},
         };
     }
 
     async function createInstance() {
         if (state.creating) return;
-        const payload = createPayload();
         const el = elements();
+        const payload = createPayload();
         state.creating = true;
         el.submit.disabled = true;
-        const originalText = el.submit.textContent;
+        const original = el.submit.textContent;
         el.submit.textContent = "Criando servidor…";
-
         try {
-            const result = await request("/api/instance/create", {
-                method: "POST",
-                body: JSON.stringify(payload),
-            });
+            const result = await request("/api/instance/create", {method: "POST", body: JSON.stringify(payload)});
             showMessage("Servidor criado. O provisionamento foi iniciado.");
             closeSelector();
-
-            if (result && result.instance_id && result.node_id && result.game) {
-                const params = new URLSearchParams({
-                    server: result.node_id,
-                    game: result.game,
-                    instance: result.instance_id,
-                });
-                window.location.href = `/customer-instance.html?${params.toString()}`;
-                return result;
+            if (result?.instance_id && result?.node_id && result?.game) {
+                const params = new URLSearchParams({server: result.node_id, game: result.game, instance: result.instance_id});
+                window.location.href = `/customer-instance.html?${params}`;
+                return;
             }
-
-            if (window.CapivaraCustomer && typeof window.CapivaraCustomer.reload === "function") {
-                await window.CapivaraCustomer.reload();
-            } else {
-                window.location.reload();
-            }
-            return result;
+            if (window.CapivaraCustomer?.reload) await window.CapivaraCustomer.reload();
+            else window.location.reload();
         } finally {
             state.creating = false;
-            el.submit.textContent = originalText;
+            el.submit.textContent = original;
             if (!el.panel.hidden) updateSummary();
         }
     }
 
     function closeSelector() {
-        const el = elements();
-        el.panel.hidden = true;
+        elements().panel.hidden = true;
         state.contract = null;
         state.game = null;
-        state.runtimes = [];
+        state.catalogGame = null;
+        state.runtimeById = new Map();
         state.edition = null;
+        state.distribution = null;
         state.runtime = null;
         state.version = null;
         state.build = null;
@@ -772,51 +553,30 @@
 
     function installEvents() {
         const el = elements();
-        if (el.close) el.close.addEventListener("click", closeSelector);
-        if (el.version) {
-            el.version.addEventListener("change", () => {
-                selectVersion(el.version.value).catch((error) => {
-                    console.error(error);
-                    showMessage(`Não foi possível carregar as builds: ${error.message}`);
-                });
-            });
-        }
-        if (el.build) {
-            el.build.addEventListener("change", () => selectBuild(el.build.value));
-        }
-        if (el.region) {
-            el.region.addEventListener("change", () => selectRegion(el.region.value));
-        }
-        if (el.regionFallback) {
-            el.regionFallback.addEventListener("change", () => {
-                state.allowCrossRegion = Boolean(el.regionFallback.checked);
-                updateSummary();
-            });
-        }
-        if (el.submit) {
-            el.submit.addEventListener("click", () => {
-                createInstance().catch((error) => {
-                    console.error(error);
-                    showMessage(`Não foi possível criar o servidor: ${error.message}`);
-                });
-            });
-        }
+        el.close?.addEventListener("click", closeSelector);
+        el.version?.addEventListener("change", () => selectVersion(el.version.value).catch((e) => showMessage(e.message)));
+        el.build?.addEventListener("change", () => selectBuild(el.build.value));
+        el.region?.addEventListener("change", () => {
+            state.region = state.regions.find((region) => region.id === el.region.value) || null;
+            updateSummary();
+        });
+        el.regionFallback?.addEventListener("change", () => {
+            state.allowCrossRegion = Boolean(el.regionFallback.checked);
+            updateSummary();
+        });
+        el.minecraftEula?.addEventListener("change", updateSummary);
+        el.submit?.addEventListener("click", () => createInstance().catch((e) => showMessage(`Não foi possível criar o servidor: ${e.message}`)));
     }
 
     function open(contract) {
         if (openingPromise) return openingPromise;
-
-        openingPromise = Promise.resolve()
-            .then(() => openSelector(contract))
+        openingPromise = openSelector(contract)
             .catch((error) => {
                 console.error(error);
-                showMessage(`Não foi possível carregar os tipos de servidor: ${error.message}`);
+                showMessage(`Não foi possível carregar o catálogo: ${error.message}`);
                 throw error;
             })
-            .finally(() => {
-                openingPromise = null;
-            });
-
+            .finally(() => { openingPromise = null; });
         return openingPromise;
     }
 
@@ -828,6 +588,7 @@
                 contract: state.contract,
                 game: state.game,
                 edition: state.edition,
+                distribution: state.distribution,
                 runtime: state.runtime,
                 version: state.version,
                 build: state.build,
