@@ -1090,6 +1090,53 @@ update_systemd() {
 }
 
 # =============================================================
+# Reconciliar substrato privilegiado Hybrid durante upgrade
+# Reconcile privileged Hybrid substrate during upgrade
+# =============================================================
+reconcile_hybrid_runtime_substrate() {
+    local INSTALLER="${INSTALL_DIR}/installer/install_hybrid_runtime_substrate.sh"
+    local AGENT_CONFIG="${INSTALL_DIR}/runtime/hybrid-agent-state/agent.json"
+    local LEGACY_MATERIALIZER="${SYSTEMD_DIR}/dsm-hybrid-agent-materialize@.service"
+
+    if [[ "${SYSTEMD_ENABLED}" -ne 1 ]]
+    then
+        echo
+        echo "Substrato Hybrid ignorado: systemd desativado."
+        echo "Hybrid substrate skipped: systemd disabled."
+        return 0
+    fi
+
+    # Only reconcile installations that are already operating as Hybrid.
+    # The persisted embedded-Agent config is the canonical marker; the
+    # legacy materializer unit keeps upgrades from older Hybrid versions
+    # compatible when agent.json is temporarily unavailable.
+    if [[ ! -f "${AGENT_CONFIG}" && ! -f "${LEGACY_MATERIALIZER}" ]]
+    then
+        echo
+        echo "Substrato Hybrid não aplicável a esta instalação."
+        echo "Hybrid substrate not applicable to this installation."
+        return 0
+    fi
+
+    if [[ ! -f "${INSTALLER}" ]]
+    then
+        echo
+        echo "[ERROR] Instalador do substrato Hybrid ausente: ${INSTALLER}" >&2
+        echo "[ERROR] Hybrid substrate installer is missing: ${INSTALLER}" >&2
+        return 1
+    fi
+
+    echo
+    echo "Reconciliando substrato privilegiado Hybrid..."
+    echo "Reconciling privileged Hybrid substrate..."
+
+    DSM_ROOT="${INSTALL_DIR}" bash "${INSTALLER}"
+
+    echo "[OK] Substrato privilegiado Hybrid reconciliado."
+    echo "[OK] Privileged Hybrid substrate reconciled."
+}
+
+# =============================================================
 # Migrar workers legados do Dashboard | Migrate legacy Dashboard workers
 # =============================================================
 migrate_dashboard_worker_services() {
@@ -1595,6 +1642,7 @@ main() {
     fix_permissions
     install_command
     update_systemd
+    reconcile_hybrid_runtime_substrate
     migrate_dashboard_worker_services
     # Inicialização | Startup
     restart_services
