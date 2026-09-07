@@ -103,22 +103,6 @@ def _owned(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     return record
 
 
-def list_instances(config: dict[str, Any]) -> list[dict[str, Any]]:
-    local_agent = str(config.get("agent_id") or "").strip()
-    values: list[dict[str, Any]] = []
-    try:
-        paths = sorted(INSTANCE_DIR.glob("*.json"))
-    except OSError:
-        paths = []
-    for path in paths:
-        item = _read(path)
-        if item and str(item.get("agent_id") or "") == local_agent:
-            values.append({"instance_id": item.get("instance_id"), "game_id": item.get("game_id"),
-                           "environment_id": item.get("environment_id"), "adapter": item.get("adapter"),
-                           "observed_state": item.get("observed_state", "unknown")})
-    return values
-
-
 def _adapter_state(record: dict[str, Any]) -> dict[str, Any] | None:
     if not str(record.get("adapter") or "").strip():
         return None
@@ -136,6 +120,26 @@ def _observed_state(adapter_state: dict[str, Any] | None, fallback: Any) -> str:
     if active in {"inactive", "deactivating"}: return "stopped"
     if active == "activating": return "starting"
     return str(fallback or "unknown")
+
+
+def list_instances(config: dict[str, Any]) -> list[dict[str, Any]]:
+    local_agent = str(config.get("agent_id") or "").strip()
+    values: list[dict[str, Any]] = []
+    try:
+        paths = sorted(INSTANCE_DIR.glob("*.json"))
+    except OSError:
+        paths = []
+    for path in paths:
+        item = _read(path)
+        if item and str(item.get("agent_id") or "") == local_agent:
+            try:
+                adapter_state = _adapter_state(item)
+            except (AdapterError, OSError, RuntimeError, ValueError):
+                adapter_state = None
+            values.append({"instance_id": item.get("instance_id"), "game_id": item.get("game_id"),
+                           "environment_id": item.get("environment_id"), "adapter": item.get("adapter"),
+                           "observed_state": _observed_state(adapter_state, item.get("observed_state", "unknown"))})
+    return values
 
 
 def status(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
