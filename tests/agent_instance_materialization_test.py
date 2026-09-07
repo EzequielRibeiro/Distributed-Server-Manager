@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "agents" / "linux" / "runtime"
-if str(RUNTIME) not in sys.path:
-    sys.path.insert(0, str(RUNTIME))
+PRIVILEGED = ROOT / "agents" / "linux" / "privileged"
+for path in (RUNTIME, PRIVILEGED):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 import instance_runtime
+import materialize_instance
 import runtime_materialization
 from adapters.base import InstanceRuntimeAdapter
 from materializers.systemd import SystemdMaterializer, render_unit, unit_path_for_spec
@@ -150,6 +155,48 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
         self.assertTrue(result["changed"])
         self.assertEqual(result["observed_state"], "running")
         self.assertEqual(instance_runtime.get_instance("instance-one")["desired_state"], "running")
+
+    def test_inventory_observes_live_adapter_state_instead_of_stale_cache(self):
+        adapter = FakeAdapter(running=False)
+        original = instance_runtime.resolve_adapter
+        instance_runtime.resolve_adapter = lambda spec: adapter
+        try:
+            instance_runtime.register_instance({
+                "instance_id": "instance-live",
+                "agent_id": "agent-one",
+                "game_id": "dayz",
+                "environment_id": "dayz.stable",
+                "adapter": "systemd",
+                "observed_state": "running",
+            })
+            inventory = instance_runtime.list_instances(self.config)
+        finally:
+            instance_runtime.resolve_adapter = original
+        self.assertEqual(inventory[0]["observed_state"], "stopped")
+
+    def test_hybrid_runtime_boundary_is_repaired_for_runtime_group(self):
+        state = self.root / "hybrid-agent-state"
+        game_data = state / "game-data"
+        working = game_data / "dayz" / "serverfiles"
+        working.mkdir(parents=True)
+        os.chmod(state, 0o700)
+        os.chmod(game_data, 0o700)
+        original_state = materialize_instance.STATE_DIR
+        materialize_instance.STATE_DIR = state
+        current_gid = state.stat().st_gid
+        runtime_group = type("Group", (), {"gr_gid": current_gid})()
+        try:
+            with mock.patch.object(materialize_instance.grp, "getgrnam", return_value=runtime_group):
+                materialize_instance._prepare_runtime_access(str(working), "capivara-instance")
+                materialize_instance._validate_runtime_access(str(working), "capivara-instance")
+        finally:
+            materialize_instance.STATE_DIR = original_state
+        self.assertEqual(state.stat().st_gid, current_gid)
+        self.assertEqual(game_data.stat().st_gid, current_gid)
+        self.assertEqual(stat.S_IMODE(state.stat().st_mode) & 0o010, 0o010)
+        self.assertEqual(stat.S_IMODE(game_data.stat().st_mode) & 0o050, 0o050)
+        self.assertEqual(stat.S_IMODE(state.stat().st_mode) & 0o007, 0)
+        self.assertEqual(stat.S_IMODE(game_data.stat().st_mode) & 0o007, 0)
 
 
 if __name__ == "__main__":
