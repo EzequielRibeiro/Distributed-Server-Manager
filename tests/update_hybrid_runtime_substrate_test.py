@@ -58,5 +58,71 @@ class UpdateHybridRuntimeSubstrateTest(unittest.TestCase):
         self.assertIn("return 0", function)
 
 
+    def test_rollback_reconciles_restored_hybrid_substrate(self):
+        start = UPDATE.index("rollback() {")
+        rollback = UPDATE[start:]
+
+        self.assertIn(
+            'RESTORED_HYBRID_INSTALLER="${INSTALL_DIR}/installer/install_hybrid_runtime_substrate.sh"',
+            rollback,
+        )
+        self.assertIn(
+            'RESTORED_HYBRID_CONFIG="${INSTALL_DIR}/runtime/hybrid-agent-state/agent.json"',
+            rollback,
+        )
+        self.assertIn(
+            'DSM_ROOT="${INSTALL_DIR}" bash "${RESTORED_HYBRID_INSTALLER}"',
+            rollback,
+        )
+
+        reconcile = rollback.index(
+            'DSM_ROOT="${INSTALL_DIR}" bash "${RESTORED_HYBRID_INSTALLER}"'
+        )
+        daemon_reload = rollback.index("systemctl daemon-reload", reconcile)
+
+        self.assertLess(reconcile, daemon_reload)
+
+    def test_homologation_checks_hybrid_substrate(self):
+        homologation = (
+            ROOT / "tests" / "test_server_update_homologation.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "assert_hybrid_substrate_ready()",
+            homologation,
+        )
+        self.assertIn(
+            "dsm-hybrid-agent-files-access@.service",
+            homologation,
+        )
+        self.assertIn(
+            "dsm-hybrid-agent-files-access@",
+            homologation,
+        )
+        self.assertIn(
+            "capivara-agent",
+            homologation,
+        )
+
+        success_health = homologation.index(
+            "capture_dsm_health after-success"
+        )
+        success_assert = homologation.index(
+            "assert_hybrid_substrate_ready",
+            success_health,
+        )
+
+        rollback_health = homologation.index(
+            "capture_dsm_health after-rollback"
+        )
+        rollback_assert = homologation.index(
+            "assert_hybrid_substrate_ready",
+            rollback_health,
+        )
+
+        self.assertLess(success_health, success_assert)
+        self.assertLess(rollback_health, rollback_assert)
+
+
 if __name__ == "__main__":
     unittest.main()

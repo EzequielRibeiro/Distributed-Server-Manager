@@ -1778,6 +1778,33 @@ rollback() {
             cp -f "${UNIT_TEMPLATE}" "${SYSTEMD_DIR}/"
         done
     fi
+	    # Reconcile privileged Hybrid substrate from the restored package.
+    # Rollback restores /opt/dsm, but generated units, Polkit policy and
+    # supplementary group membership live outside the installation tree.
+    # Re-running the restored package's canonical installer makes the host
+    # compatible with that restored release without attempting destructive
+    # reversal of shared OS-level group membership.
+    if [[ "${SYSTEMD_ENABLED}" -eq 1 ]]
+    then
+        local RESTORED_HYBRID_INSTALLER="${INSTALL_DIR}/installer/install_hybrid_runtime_substrate.sh"
+        local RESTORED_HYBRID_CONFIG="${INSTALL_DIR}/runtime/hybrid-agent-state/agent.json"
+        local RESTORED_MATERIALIZER="${SYSTEMD_DIR}/dsm-hybrid-agent-materialize@.service"
+
+        if [[ -f "${RESTORED_HYBRID_CONFIG}" || -f "${RESTORED_MATERIALIZER}" ]]
+        then
+            if [[ -f "${RESTORED_HYBRID_INSTALLER}" ]]
+            then
+                echo
+                echo "Reconciliando substrato Hybrid após rollback..."
+                echo "Reconciling Hybrid substrate after rollback..."
+                DSM_ROOT="${INSTALL_DIR}" bash "${RESTORED_HYBRID_INSTALLER}" || return 1
+            else
+                echo
+                echo "Pacote restaurado não possui instalador de substrato Hybrid; mantendo estado compatível legado."
+                echo "Restored package has no Hybrid substrate installer; preserving legacy-compatible state."
+            fi
+        fi
+    fi
     # Atualizar Systemd | Update Systemd
     echo
     echo "Recarregando Systemd..."
