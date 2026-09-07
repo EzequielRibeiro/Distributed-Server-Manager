@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'agents/linux/**'
+      - 'dashboard/workers/hybrid_agent_worker.py'
       - 'bin/cap'
       - 'release/build_agent_package.sh'
       - 'tests/agent_local_cli_test.py'
@@ -12,12 +13,14 @@ on:
       - 'tests/agent_local_game_data_cli_test.py'
       - 'tests/agent_update_lifecycle_test.py'
       - 'tests/hybrid_local_cli_context_test.py'
+      - 'tests/hybrid_instance_runtime_queue_test.py'
       - 'tests/agent_package_test.sh'
       - '.github/workflows/agent-local-cli.yml'
   push:
     branches: [main]
     paths:
       - 'agents/linux/**'
+      - 'dashboard/workers/hybrid_agent_worker.py'
       - 'bin/cap'
       - 'release/build_agent_package.sh'
       - 'tests/agent_local_cli_test.py'
@@ -26,6 +29,7 @@ on:
       - 'tests/agent_local_game_data_cli_test.py'
       - 'tests/agent_update_lifecycle_test.py'
       - 'tests/hybrid_local_cli_context_test.py'
+      - 'tests/hybrid_instance_runtime_queue_test.py'
       - 'tests/agent_package_test.sh'
       - '.github/workflows/agent-local-cli.yml'
 
@@ -57,12 +61,14 @@ jobs:
             agents/linux/runtime/game_data_executor.py \
             agents/linux/runtime/game_data_state.py \
             agents/linux/updater/updater.py \
+            dashboard/workers/hybrid_agent_worker.py \
             tests/agent_local_cli_test.py \
             tests/agent_controller_cli_test.py \
             tests/agent_local_game_data_state_test.py \
             tests/agent_local_game_data_cli_test.py \
             tests/agent_update_lifecycle_test.py \
-            tests/hybrid_local_cli_context_test.py
+            tests/hybrid_local_cli_context_test.py \
+            tests/hybrid_instance_runtime_queue_test.py
       - name: Run local CLI tests
         run: |
           python3 -m unittest \
@@ -71,6 +77,7 @@ jobs:
             tests/agent_local_game_data_state_test.py \
             tests/agent_local_game_data_cli_test.py \
             tests/agent_update_lifecycle_test.py \
-            tests/hybrid_local_cli_context_test.py
+            tests/hybrid_local_cli_context_test.py \
+            tests/hybrid_instance_runtime_queue_test.py
       - name: Validate Agent package
         run: bash tests/agent_package_test.sh
