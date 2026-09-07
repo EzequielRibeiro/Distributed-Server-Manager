@@ -92,6 +92,35 @@ capture_host_state() {
     } >"${EVIDENCE_DIR}/${label}-host-state.txt" 2>&1
 }
 
+assert_hybrid_substrate_ready() {
+    local marker="/opt/dsm/runtime/hybrid-agent-state/agent.json"
+    local materializer="/etc/systemd/system/dsm-hybrid-agent-materialize@.service"
+    local files_access="/etc/systemd/system/dsm-hybrid-agent-files-access@.service"
+    local polkit="/etc/polkit-1/rules.d/49-capivara-hybrid-materializer.rules"
+    local dsm_user="${DSM_USER:-capivara}"
+
+    # Controller-only installations must not be forced to have Hybrid assets.
+    [[ -f "${marker}" || -f "${materializer}" ]] || return 0
+
+    # Older restored packages may legitimately predate files-access.
+    if [[ ! -f /opt/dsm/installer/install_hybrid_runtime_substrate.sh ]]
+    then
+        return 0
+    fi
+
+    [[ -f "${files_access}" ]] \
+        || fail "Hybrid files-access systemd unit is missing"
+
+    [[ -f "${polkit}" ]] \
+        || fail "Hybrid Polkit rule is missing"
+
+    grep -q 'dsm-hybrid-agent-files-access@' "${polkit}" \
+        || fail "Hybrid Polkit rule does not authorize files-access unit"
+
+    id -nG "${dsm_user}" | tr ' ' '\n' | grep -qx 'capivara-agent' \
+        || fail "${dsm_user} is not a member of capivara-agent"
+}
+
 capture_dsm_health() {
     local label="$1"
     local deadline
@@ -248,6 +277,7 @@ assert_inactive "$(unit_name disabled)"
     || fail "configuration changed during same-version update"
 CURRENT_PHASE="successful-update-health"
 capture_dsm_health after-success
+assert_hybrid_substrate_ready
 
 # Rollback matrix: active+enabled on first start, fails during post-update
 # restart, then succeeds when rollback restores the previous installation.
@@ -291,6 +321,7 @@ printf '%s\n' "${ROLLBACK_DIAGNOSTIC_DIR}" \
     >"${EVIDENCE_DIR}/rollback-diagnostic-directories.txt"
 CURRENT_PHASE="rollback-health"
 capture_dsm_health after-rollback
+assert_hybrid_substrate_ready
 CURRENT_PHASE="final-host-state"
 if ! capture_host_state after
 then

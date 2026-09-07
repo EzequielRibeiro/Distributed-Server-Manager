@@ -68,9 +68,6 @@ old = '''        do
             cp -f "${UNIT_TEMPLATE}" "${SYSTEMD_DIR}/"
         done
     fi
-    # Atualizar Systemd | Update Systemd
-    echo
-    echo "Recarregando Systemd..."
 '''
 new = '''        do
             [[ -e "${UNIT_TEMPLATE}" ]] || continue
@@ -99,9 +96,6 @@ new = '''        do
             return 1
         fi
     fi
-    # Atualizar Systemd | Update Systemd
-    echo
-    echo "Recarregando Systemd..."
 '''
 if "Rollback left DSM placeholders in systemd units" not in text:
     if old not in text:
