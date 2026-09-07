@@ -20,11 +20,20 @@ class HybridLocalCliContextTest(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.runtime = self.root / "agents" / "linux" / "runtime"
         self.state = self.root / "runtime" / "hybrid-agent-state"
+        self.config_dir = self.root / "config"
         self.runtime.mkdir(parents=True)
         self.state.mkdir(parents=True)
+        self.config_dir.mkdir(parents=True)
         shutil.copy2(DISPATCH, self.runtime / "cap_dispatch.py")
         (self.state / "agent.json").write_text(
-            json.dumps({"agent_id": "hybrid-agent", "node_id": "hybrid-node"}),
+            json.dumps({"agent_id": "hybrid-agent"}),
+            encoding="utf-8",
+        )
+        (self.config_dir / "agent.conf").write_text(
+            'AGENT_ID="hybrid-agent"\n'
+            'AGENT_NAME="Hybrid Test"\n'
+            'DSM_NODE_ID="hybrid-node"\n'
+            'DSM_NODE_ROLE="hybrid"\n',
             encoding="utf-8",
         )
         (self.runtime / "controller_cli.py").write_text(
@@ -33,6 +42,20 @@ class HybridLocalCliContextTest(unittest.TestCase):
         )
         (self.runtime / "local_cli.py").write_text(
             "import json, os\n"
+            "def _doctor(config):\n"
+            "    return {\n"
+            "        'status': 'critical', 'ready': False,\n"
+            "        'identity': {'agent_id': config.get('agent_id'), 'node_id': None, 'enrolled': False},\n"
+            "        'service': {'service': os.environ.get('CAPIVARA_AGENT_SERVICE'), 'healthy': True},\n"
+            "        'heartbeat': {'controller': {'configured': False, 'reachable': False}},\n"
+            "        'findings': [\n"
+            "            {'code': 'identity_incomplete', 'severity': 'critical', 'message': 'standalone'},\n"
+            "            {'code': 'not_enrolled', 'severity': 'critical', 'message': 'standalone'},\n"
+            "            {'code': 'service_inactive', 'severity': 'critical', 'message': 'standalone'},\n"
+            "            {'code': 'controller_unreachable', 'severity': 'warning', 'message': 'standalone'},\n"
+            "            {'code': 'steamcmd_not_functional', 'severity': 'warning', 'message': 'real warning'},\n"
+            "        ],\n"
+            "    }\n"
             "def main(args=None):\n"
             "    print(json.dumps({\n"
             "        'root': os.environ.get('CAPIVARA_AGENT_ROOT'),\n"
@@ -64,6 +87,9 @@ class HybridLocalCliContextTest(unittest.TestCase):
             "CAPIVARA_AGENT_ROOT",
             "CAPIVARA_AGENT_STATE_DIR",
             "CAPIVARA_AGENT_CONFIG",
+            "CAPIVARA_AGENT_MODE",
+            "CAPIVARA_AGENT_SERVICE",
+            "CAPIVARA_DSM_ROOT",
         ):
             env.pop(key, None)
         return env
@@ -91,6 +117,25 @@ class HybridLocalCliContextTest(unittest.TestCase):
         self.assertEqual(payload["action"], "start")
         self.assertEqual(payload["state"], str(self.state))
         self.assertEqual(payload["config_path"], str(self.state / "agent.json"))
+
+    def test_hybrid_doctor_uses_embedded_identity_and_service_contract(self) -> None:
+        payload = self._run("agent", "doctor", "--json")
+        self.assertEqual(payload["mode"], "hybrid")
+        self.assertEqual(payload["identity"]["agent_id"], "hybrid-agent")
+        self.assertEqual(payload["identity"]["node_id"], "hybrid-node")
+        self.assertEqual(payload["identity"]["credential_type"], "embedded-database")
+        self.assertTrue(payload["identity"]["enrolled"])
+        self.assertEqual(payload["heartbeat"]["controller"]["transport"], "embedded-database")
+        self.assertTrue(payload["heartbeat"]["controller"]["reachable"])
+        self.assertEqual(payload["service"]["service"], "dsm-dashboard-worker.service")
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertNotIn("identity_incomplete", codes)
+        self.assertNotIn("not_enrolled", codes)
+        self.assertNotIn("service_inactive", codes)
+        self.assertNotIn("controller_unreachable", codes)
+        self.assertIn("steamcmd_not_functional", codes)
+        self.assertEqual(payload["status"], "degraded")
+        self.assertTrue(payload["ready"])
 
     def test_explicit_agent_context_overrides_embedded_defaults(self) -> None:
         override_root = self.root / "override-agent"
