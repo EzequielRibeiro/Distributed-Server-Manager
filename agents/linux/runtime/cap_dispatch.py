@@ -188,19 +188,28 @@ def _public_network_cli(args: list[str]) -> int:
         return 2
 
 
+def _hybrid_doctor_args(args: list[str]) -> list[str] | None:
+    """Accept both direct dispatcher and canonical `cap agent doctor` forwarding shapes."""
+    if args and args[0] == "doctor":
+        return args[1:]
+    if len(args) >= 2 and args[:2] == ["agent", "doctor"]:
+        return args[2:]
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) >= 3 and args[:3] == ["agent", "network", "public"]:
         return _public_network_cli(args[3:])
     if len(args) >= 2 and args[0] == "agent" and args[1] == "controller":
         return controller_cli.main(args[2:])
-    if len(args) >= 2 and args[:2] == ["agent", "doctor"] and os.environ.get("CAPIVARA_AGENT_MODE") == "hybrid":
-        extra = args[2:]
-        if extra not in ([], ["--json"]):
+    doctor_extra = _hybrid_doctor_args(args)
+    if doctor_extra is not None and os.environ.get("CAPIVARA_AGENT_MODE") == "hybrid":
+        if doctor_extra not in ([], ["--json"]):
             print("error: unsupported agent doctor option", file=sys.stderr)
             return 2
         try:
-            _emit(_hybrid_doctor(), as_json=extra == ["--json"])
+            _emit(_hybrid_doctor(), as_json=doctor_extra == ["--json"])
             return 0
         except (RuntimeError, ValueError) as exc:
             print(f"error: {exc}", file=sys.stderr)

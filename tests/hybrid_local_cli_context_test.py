@@ -104,6 +104,26 @@ class HybridLocalCliContextTest(unittest.TestCase):
         )
         return json.loads(result.stdout)
 
+    def _assert_hybrid_doctor(self, payload: dict[str, object]) -> None:
+        self.assertEqual(payload["mode"], "hybrid")
+        identity = payload["identity"]
+        self.assertEqual(identity["agent_id"], "hybrid-agent")
+        self.assertEqual(identity["node_id"], "hybrid-node")
+        self.assertEqual(identity["credential_type"], "embedded-database")
+        self.assertTrue(identity["enrolled"])
+        heartbeat = payload["heartbeat"]
+        self.assertEqual(heartbeat["controller"]["transport"], "embedded-database")
+        self.assertTrue(heartbeat["controller"]["reachable"])
+        self.assertEqual(payload["service"]["service"], "dsm-dashboard-worker.service")
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertNotIn("identity_incomplete", codes)
+        self.assertNotIn("not_enrolled", codes)
+        self.assertNotIn("service_inactive", codes)
+        self.assertNotIn("controller_unreachable", codes)
+        self.assertIn("steamcmd_not_functional", codes)
+        self.assertEqual(payload["status"], "degraded")
+        self.assertTrue(payload["ready"])
+
     def test_agent_cli_uses_embedded_hybrid_paths(self) -> None:
         payload = self._run("agent", "status", "--json")
         self.assertEqual(payload["root"], str(self.root / "agents" / "linux"))
@@ -119,23 +139,11 @@ class HybridLocalCliContextTest(unittest.TestCase):
         self.assertEqual(payload["config_path"], str(self.state / "agent.json"))
 
     def test_hybrid_doctor_uses_embedded_identity_and_service_contract(self) -> None:
-        payload = self._run("agent", "doctor", "--json")
-        self.assertEqual(payload["mode"], "hybrid")
-        self.assertEqual(payload["identity"]["agent_id"], "hybrid-agent")
-        self.assertEqual(payload["identity"]["node_id"], "hybrid-node")
-        self.assertEqual(payload["identity"]["credential_type"], "embedded-database")
-        self.assertTrue(payload["identity"]["enrolled"])
-        self.assertEqual(payload["heartbeat"]["controller"]["transport"], "embedded-database")
-        self.assertTrue(payload["heartbeat"]["controller"]["reachable"])
-        self.assertEqual(payload["service"]["service"], "dsm-dashboard-worker.service")
-        codes = {item["code"] for item in payload["findings"]}
-        self.assertNotIn("identity_incomplete", codes)
-        self.assertNotIn("not_enrolled", codes)
-        self.assertNotIn("service_inactive", codes)
-        self.assertNotIn("controller_unreachable", codes)
-        self.assertIn("steamcmd_not_functional", codes)
-        self.assertEqual(payload["status"], "degraded")
-        self.assertTrue(payload["ready"])
+        self._assert_hybrid_doctor(self._run("agent", "doctor", "--json"))
+
+    def test_canonical_cap_forwarded_doctor_uses_hybrid_contract(self) -> None:
+        # bin/cap strips the leading `agent` token before invoking cap_dispatch.py.
+        self._assert_hybrid_doctor(self._run("doctor", "--json"))
 
     def test_explicit_agent_context_overrides_embedded_defaults(self) -> None:
         override_root = self.root / "override-agent"
