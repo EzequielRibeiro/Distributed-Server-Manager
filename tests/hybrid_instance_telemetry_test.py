@@ -88,6 +88,27 @@ class HybridInstanceTelemetryTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "invalid payload"):
             self._run({"instance_id": "instance-owned"})
 
+    def test_missing_bootstrap_config_does_not_break_hybrid_heartbeat(self) -> None:
+        with (
+            patch.object(worker, "_hybrid_agent_config", return_value=None),
+            patch.object(worker, "_instance_telemetry_module") as telemetry_module,
+        ):
+            result = worker.process_hybrid_instance_telemetry_cycle(
+                object(), ROOT, "agent-hybrid"
+            )
+
+        self.assertEqual(
+            result,
+            {
+                "status": "unavailable",
+                "reason": "config_unavailable",
+                "samples": 0,
+                "accepted": 0,
+                "rejected": 0,
+            },
+        )
+        telemetry_module.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
