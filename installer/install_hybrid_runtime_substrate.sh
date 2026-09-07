@@ -14,6 +14,7 @@ DSM_GROUP="${DSM_GROUP:-capivara}"
 getent group capivara-agent >/dev/null 2>&1 || groupadd --system capivara-agent
 id capivara-instance >/dev/null 2>&1 || useradd --system --gid capivara-agent --home /nonexistent --shell /usr/sbin/nologin capivara-instance
 usermod -a -G capivara-agent capivara-instance >/dev/null 2>&1 || true
+usermod -a -G capivara-agent "${DSM_USER}" >/dev/null 2>&1 || true
 
 install -d -m 0700 -o "${DSM_USER}" -g "${DSM_GROUP}" \
   "${DSM_ROOT}/runtime/hybrid-agent-state" \
@@ -24,14 +25,21 @@ install -d -m 0700 -o "${DSM_USER}" -g "${DSM_GROUP}" \
 
 install -d -m 0711 -o root -g root "${DSM_ROOT}/runtime/hybrid-instance-storage"
 
-template="${DSM_ROOT}/systemd/dsm-hybrid-agent-materialize@.service.in"
-[[ -f "${template}" ]] || { echo "[ERRO] template ausente: ${template}" >&2; exit 1; }
+materializer_template="${DSM_ROOT}/systemd/dsm-hybrid-agent-materialize@.service.in"
+files_access_template="${DSM_ROOT}/systemd/dsm-hybrid-agent-files-access@.service.in"
+[[ -f "${materializer_template}" ]] || { echo "[ERRO] template ausente: ${materializer_template}" >&2; exit 1; }
+[[ -f "${files_access_template}" ]] || { echo "[ERRO] template ausente: ${files_access_template}" >&2; exit 1; }
 
 sed \
   -e "s|@DSM_ROOT@|${DSM_ROOT}|g" \
   -e "s|@DSM_USER@|${DSM_USER}|g" \
-  "${template}" > /etc/systemd/system/dsm-hybrid-agent-materialize@.service
+  "${materializer_template}" > /etc/systemd/system/dsm-hybrid-agent-materialize@.service
 chmod 0644 /etc/systemd/system/dsm-hybrid-agent-materialize@.service
+
+sed \
+  -e "s|@DSM_ROOT@|${DSM_ROOT}|g" \
+  "${files_access_template}" > /etc/systemd/system/dsm-hybrid-agent-files-access@.service
+chmod 0644 /etc/systemd/system/dsm-hybrid-agent-files-access@.service
 
 if command -v pkaction >/dev/null 2>&1 || [[ -d /etc/polkit-1/rules.d ]]; then
   install -d -m 0755 /etc/polkit-1/rules.d
@@ -40,7 +48,10 @@ polkit.addRule(function(action, subject) {
     if (action.id == "org.freedesktop.systemd1.manage-units" &&
         subject.user == "${DSM_USER}") {
         var unit = action.lookup("unit");
-        if (unit && unit.indexOf("dsm-hybrid-agent-materialize@") === 0) {
+        if (unit && (
+            unit.indexOf("dsm-hybrid-agent-materialize@") === 0 ||
+            unit.indexOf("dsm-hybrid-agent-files-access@") === 0
+        )) {
             return polkit.Result.YES;
         }
     }

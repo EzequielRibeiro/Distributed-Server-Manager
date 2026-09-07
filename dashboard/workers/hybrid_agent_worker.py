@@ -7,6 +7,7 @@ import json
 import os
 import re
 import socket
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -38,6 +39,7 @@ _ALLOWED_DB_KEYS = {
     "DSM_DATABASE_PASSWORD_FILE",
     "DSM_DATABASE_TLS",
 }
+_SAFE_INSTANCE_ID = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 
 
 def _read_shell_values(path: Path) -> dict[str, str]:
@@ -100,10 +102,77 @@ def _instance_runtime_module(root: Path):
     return instance_runtime
 
 
+def _runtime_reconciler_module(root: Path):
+    _instance_runtime_module(root)
+    import runtime_reconciler
+    return runtime_reconciler
+
+
 def _instance_telemetry_module(root: Path):
     _instance_runtime_module(root)
     import instance_telemetry
     return instance_telemetry
+
+
+def _prepare_hybrid_customer_files_access(instance_id: str) -> None:
+    if not _SAFE_INSTANCE_ID.fullmatch(instance_id):
+        raise ValueError("invalid instance_id for Hybrid files access helper")
+    template = os.environ.get(
+        "CAPIVARA_HYBRID_FILES_ACCESS_UNIT_TEMPLATE",
+        "dsm-hybrid-agent-files-access@{instance_id}.service",
+    )
+    unit = template.format(instance_id=instance_id)
+    subprocess.run(
+        ["systemctl", "start", unit, "--no-pager"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def process_hybrid_instance_reconcile_cycle(root: Path, agent_id: str) -> dict[str, Any]:
+    """Reconcile embedded Hybrid runtimes and repair customer-manageable file access."""
+    config = _hybrid_agent_config(root, agent_id, optional=True)
+    if config is None:
+        return {
+            "status": "unavailable",
+            "reason": "config_unavailable",
+            "instances": 0,
+            "healthy": 0,
+            "files_access_prepared": 0,
+            "files_access_failed": 0,
+        }
+
+    reconciler = _runtime_reconciler_module(root)
+    results = reconciler.reconcile_all(config)
+    if not isinstance(results, list):
+        raise RuntimeError("Hybrid runtime reconciler returned an invalid payload")
+
+    healthy = 0
+    prepared = 0
+    access_failed = 0
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        if str(result.get("status") or "").lower() == "healthy":
+            healthy += 1
+        instance_id = str(result.get("instance_id") or "").strip()
+        if not instance_id:
+            continue
+        try:
+            _prepare_hybrid_customer_files_access(instance_id)
+            prepared += 1
+        except (OSError, ValueError, subprocess.SubprocessError):
+            access_failed += 1
+
+    return {
+        "status": "completed",
+        "instances": len(results),
+        "healthy": healthy,
+        "files_access_prepared": prepared,
+        "files_access_failed": access_failed,
+    }
 
 
 def process_hybrid_instance_runtime_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
@@ -195,6 +264,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         agent_id=agent_id,
         hostname=socket.gethostname(),
     )
+    instance_reconcile = process_hybrid_instance_reconcile_cycle(root, agent_id)
     instance_runtime = process_hybrid_instance_runtime_cycle(effective_backend, root, agent_id)
     instance_telemetry = process_hybrid_instance_telemetry_cycle(effective_backend, root, agent_id)
     provisioning = process_hybrid_instance_provisioning_cycle(effective_backend, root, agent_id)
@@ -202,6 +272,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     return {
         "active": True,
         "agent_id": agent_id,
+        "instance_reconcile": instance_reconcile,
         "instance_runtime": instance_runtime,
         "instance_telemetry": instance_telemetry,
         "provisioning": provisioning,
@@ -217,10 +288,13 @@ def run_forever(root: Path = ROOT) -> None:
             if result.get("active"):
                 game_data = result.get("game_data") if isinstance(result.get("game_data"), dict) else {}
                 state = game_data.get("state") if isinstance(game_data.get("state"), dict) else {}
+                instance_reconcile = result.get("instance_reconcile") if isinstance(result.get("instance_reconcile"), dict) else {}
                 instance_runtime = result.get("instance_runtime") if isinstance(result.get("instance_runtime"), dict) else {}
                 instance_telemetry = result.get("instance_telemetry") if isinstance(result.get("instance_telemetry"), dict) else {}
                 print(
                     f"hybrid heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} "
+                    f"instance_reconcile={instance_reconcile.get('healthy', 0)}/{instance_reconcile.get('instances', 0)} "
+                    f"instance_files={instance_reconcile.get('files_access_prepared', 0)} "
                     f"instance_runtime={instance_runtime.get('status', 'idle')} "
                     f"instance_telemetry={instance_telemetry.get('accepted', 0)} "
                     f"game_data={state.get('status', 'idle')}",
