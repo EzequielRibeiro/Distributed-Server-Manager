@@ -1778,7 +1778,7 @@ rollback() {
             cp -f "${UNIT_TEMPLATE}" "${SYSTEMD_DIR}/"
         done
     fi
-	    # Reconcile privileged Hybrid substrate from the restored package.
+    # Reconcile privileged Hybrid substrate from the restored package.
     # Rollback restores /opt/dsm, but generated units, Polkit policy and
     # supplementary group membership live outside the installation tree.
     # Re-running the restored package's canonical installer makes the host
