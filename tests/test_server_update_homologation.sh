@@ -23,6 +23,12 @@ command -v systemctl >/dev/null
 systemctl show-environment >/dev/null 2>&1 \
     || { echo "An active systemd manager is required" >&2; exit 77; }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HEALTH_HELPER="${SCRIPT_DIR}/lib/homologation_dashboard_health.sh"
+[[ -r "${HEALTH_HELPER}" ]] || { echo "Dashboard health helper not found" >&2; exit 2; }
+# shellcheck source=tests/lib/homologation_dashboard_health.sh
+source "${HEALTH_HELPER}"
+
 TEST_ID="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
 EVIDENCE_ROOT="${DSM_HOMOLOGATION_EVIDENCE_ROOT:-/var/tmp/dsm-update-homologation}"
 EVIDENCE_DIR="${EVIDENCE_ROOT}/${TEST_ID}"
@@ -88,7 +94,6 @@ capture_host_state() {
 
 capture_dsm_health() {
     local label="$1"
-    local dashboard_port="8080"
     local deadline
     /opt/dsm/bin/cap --help >"${EVIDENCE_DIR}/${label}-cap-help.txt" 2>&1
     deadline=$((SECONDS + 60))
@@ -100,16 +105,9 @@ capture_dsm_health() {
     done
     if systemctl is-active --quiet dsm-dashboard.service
     then
-        if [[ -r /opt/dsm/dashboard/config/dashboard.conf ]]
-        then
-            dashboard_port="$(awk -F= '$1 == "PORT" {gsub(/[^0-9]/, "", $2); print $2; exit}' \
-                /opt/dsm/dashboard/config/dashboard.conf)"
-            dashboard_port="${dashboard_port:-8080}"
-        fi
         deadline=$((SECONDS + 60))
-        until curl --fail --silent --show-error --max-time 10 \
-            "http://127.0.0.1:${dashboard_port}/health" \
-            >"${EVIDENCE_DIR}/${label}-dashboard-health.json" 2>&1
+        until dsm_dashboard_health_probe \
+            "${EVIDENCE_DIR}/${label}-dashboard-health.json"
         do
             (( SECONDS < deadline )) || fail "dashboard did not become ready (${label})"
             sleep 2
