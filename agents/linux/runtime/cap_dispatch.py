@@ -16,6 +16,28 @@ RUNTIME_DIR = Path(__file__).resolve().parent
 if str(RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_DIR))
 
+
+def _configure_embedded_hybrid_context() -> None:
+    """Use the canonical local-Agent paths when runtime is embedded in DSM Hybrid."""
+    try:
+        dsm_root = RUNTIME_DIR.parents[2]
+    except IndexError:
+        return
+
+    hybrid_state = dsm_root / "runtime" / "hybrid-agent-state"
+    hybrid_config = hybrid_state / "agent.json"
+    if not hybrid_config.is_file():
+        return
+
+    os.environ.setdefault("CAPIVARA_AGENT_ROOT", str(dsm_root / "agents" / "linux"))
+    os.environ.setdefault("CAPIVARA_AGENT_STATE_DIR", str(hybrid_state))
+    os.environ.setdefault("CAPIVARA_AGENT_CONFIG", str(hybrid_config))
+
+
+# Configure the environment before importing Agent modules because several of
+# them resolve CONFIG/STATE paths at import time. Explicit caller overrides win.
+_configure_embedded_hybrid_context()
+
 import controller_cli
 import local_cli
 from instance_runtime import lifecycle
