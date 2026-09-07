@@ -23,6 +23,7 @@ from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from hybrid_game_data_client import process_hybrid_game_data_cycle
 from hybrid_instance_provisioning_client import process_hybrid_instance_provisioning_cycle
 from hybrid_local_reconciliation import reconcile_local_hybrid_runtime
+from instance_workspace_repository import InstanceWorkspaceRepository
 from registry_repository import RegistryRepository
 from runtime_backend import backend_from_environment
 
@@ -64,10 +65,19 @@ def _database_environment(root: Path) -> dict[str, str]:
     return environment
 
 
-def _hybrid_agent_config(root: Path, agent_id: str) -> dict[str, Any]:
+def _hybrid_agent_config(
+    root: Path,
+    agent_id: str,
+    *,
+    optional: bool = False,
+) -> dict[str, Any] | None:
     path = root / "runtime" / "hybrid-agent-state" / "agent.json"
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        if optional:
+            return None
+        raise RuntimeError(f"Hybrid Agent config is unavailable: {exc}") from exc
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"Hybrid Agent config is unavailable: {exc}") from exc
     if not isinstance(value, dict):
@@ -88,6 +98,12 @@ def _instance_runtime_module(root: Path):
         sys.path.insert(0, str(runtime))
     import instance_runtime
     return instance_runtime
+
+
+def _instance_telemetry_module(root: Path):
+    _instance_runtime_module(root)
+    import instance_telemetry
+    return instance_telemetry
 
 
 def process_hybrid_instance_runtime_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
@@ -115,6 +131,52 @@ def process_hybrid_instance_runtime_cycle(backend, root: Path, agent_id: str) ->
     }
 
 
+def process_hybrid_instance_telemetry_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
+    """Collect and persist telemetry for instances owned by the embedded Hybrid Agent."""
+    config = _hybrid_agent_config(root, agent_id, optional=True)
+    if config is None:
+        return {
+            "status": "unavailable",
+            "reason": "config_unavailable",
+            "samples": 0,
+            "accepted": 0,
+            "rejected": 0,
+        }
+
+    telemetry = _instance_telemetry_module(root)
+    samples = telemetry.collect_instance_telemetry(config)
+    if not isinstance(samples, list):
+        raise RuntimeError("Hybrid instance telemetry collector returned an invalid payload")
+
+    repository = InstanceWorkspaceRepository(backend)
+    repository.initialize()
+    accepted = 0
+    rejected = 0
+    for sample in samples[:500]:
+        if not isinstance(sample, dict):
+            rejected += 1
+            continue
+        instance_id = str(sample.get("instance_id") or "").strip()
+        if not instance_id:
+            rejected += 1
+            continue
+        try:
+            context = repository.instance_context(instance_id)
+            if str(context.get("agent_id") or "") != agent_id:
+                rejected += 1
+                continue
+            repository.record_telemetry(instance_id, sample)
+            accepted += 1
+        except (KeyError, ValueError, PermissionError):
+            rejected += 1
+    return {
+        "status": "completed",
+        "samples": len(samples),
+        "accepted": accepted,
+        "rejected": rejected,
+    }
+
+
 def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     config = _read_shell_values(root / "config" / "agent.conf")
     if str(config.get("DSM_NODE_ROLE", "")).strip().lower() != "hybrid":
@@ -134,12 +196,14 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         hostname=socket.gethostname(),
     )
     instance_runtime = process_hybrid_instance_runtime_cycle(effective_backend, root, agent_id)
+    instance_telemetry = process_hybrid_instance_telemetry_cycle(effective_backend, root, agent_id)
     provisioning = process_hybrid_instance_provisioning_cycle(effective_backend, root, agent_id)
     game_data = process_hybrid_game_data_cycle(effective_backend, root, agent_id)
     return {
         "active": True,
         "agent_id": agent_id,
         "instance_runtime": instance_runtime,
+        "instance_telemetry": instance_telemetry,
         "provisioning": provisioning,
         "game_data": game_data,
         **result,
@@ -154,9 +218,12 @@ def run_forever(root: Path = ROOT) -> None:
                 game_data = result.get("game_data") if isinstance(result.get("game_data"), dict) else {}
                 state = game_data.get("state") if isinstance(game_data.get("state"), dict) else {}
                 instance_runtime = result.get("instance_runtime") if isinstance(result.get("instance_runtime"), dict) else {}
+                instance_telemetry = result.get("instance_telemetry") if isinstance(result.get("instance_telemetry"), dict) else {}
                 print(
                     f"hybrid heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} "
-                    f"instance_runtime={instance_runtime.get('status', 'idle')} game_data={state.get('status', 'idle')}",
+                    f"instance_runtime={instance_runtime.get('status', 'idle')} "
+                    f"instance_telemetry={instance_telemetry.get('accepted', 0)} "
+                    f"game_data={state.get('status', 'idle')}",
                     flush=True,
                 )
         except Exception as exc:
