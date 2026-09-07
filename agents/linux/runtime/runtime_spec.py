@@ -88,8 +88,10 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  result["user"]=user;desired=str(result.get("desired_state") or "stopped").strip().lower()
  if desired not in VALID_DESIRED_STATES:raise RuntimeSpecError("invalid desired_state")
  result["desired_state"]=desired
- for key in ("instance_state_root","configuration_root","config_path"):
+ for key in ("instance_state_root","configuration_root","config_path","files_root"):
   if result.get(key) is not None:result[key]=_absolute(result[key],key)
+ if result.get("files_root") is None:
+  result["files_root"]=_absolute(result.get("instance_state_root") or result.get("configuration_root") or result["working_directory"],"files_root")
  result["writable_directories"]=_absolute_list(result.get("writable_directories"),"writable_directories")
  result["seed_files"]=_path_pairs(result.get("seed_files"),"seed_files")
  result["seed_directories"]=_path_pairs(result.get("seed_directories"),"seed_directories")
