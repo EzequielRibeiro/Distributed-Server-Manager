@@ -18,7 +18,12 @@ assert.match(
 assert.match(
   selector,
   /\.loadRuntimes\(game\)/,
-  "runtime catalog must be loaded through the explicit placement client"
+  "runtime catalog hydration must be loaded through the explicit placement client"
+);
+assert.match(
+  selector,
+  /\/api\/catalog\/hierarchy\?game=/,
+  "runtime discovery must use the canonical catalog hierarchy"
 );
 assert.match(
   selector,
@@ -50,9 +55,10 @@ assert.match(
   /customer-placement-client\.js\?v=1/,
   "customer page must load the explicit placement client"
 );
-assert.match(
-  html,
-  /runtime-selector\.js\?v=3/,
+const placementClientIndex = html.indexOf("/customer-placement-client.js?v=1");
+const runtimeSelectorIndex = html.indexOf("/runtime-selector.js?v=4");
+assert.ok(
+  placementClientIndex >= 0 && runtimeSelectorIndex > placementClientIndex,
   "customer page must load the canonical selector after the placement client"
 );
 assert.doesNotMatch(
