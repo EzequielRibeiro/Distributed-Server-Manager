@@ -65,10 +65,19 @@ def _database_environment(root: Path) -> dict[str, str]:
     return environment
 
 
-def _hybrid_agent_config(root: Path, agent_id: str) -> dict[str, Any]:
+def _hybrid_agent_config(
+    root: Path,
+    agent_id: str,
+    *,
+    optional: bool = False,
+) -> dict[str, Any] | None:
     path = root / "runtime" / "hybrid-agent-state" / "agent.json"
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        if optional:
+            return None
+        raise RuntimeError(f"Hybrid Agent config is unavailable: {exc}") from exc
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"Hybrid Agent config is unavailable: {exc}") from exc
     if not isinstance(value, dict):
@@ -124,8 +133,17 @@ def process_hybrid_instance_runtime_cycle(backend, root: Path, agent_id: str) ->
 
 def process_hybrid_instance_telemetry_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
     """Collect and persist telemetry for instances owned by the embedded Hybrid Agent."""
+    config = _hybrid_agent_config(root, agent_id, optional=True)
+    if config is None:
+        return {
+            "status": "unavailable",
+            "reason": "config_unavailable",
+            "samples": 0,
+            "accepted": 0,
+            "rejected": 0,
+        }
+
     telemetry = _instance_telemetry_module(root)
-    config = _hybrid_agent_config(root, agent_id)
     samples = telemetry.collect_instance_telemetry(config)
     if not isinstance(samples, list):
         raise RuntimeError("Hybrid instance telemetry collector returned an invalid payload")
