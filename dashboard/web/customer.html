@@ -37,7 +37,7 @@
         <div id="runtime-placement-status" class="runtime-placement-status" role="status" aria-live="polite" data-state="checking"><strong>Verificando ambientes...</strong></div>
         <div class="runtime-step"><div class="runtime-step-header"><span class="runtime-step-number">1</span><div><strong>Jogo contratado</strong><small>O jogo é definido pelo contrato.</small></div></div><div id="runtime-game-summary" class="runtime-current-selection">—</div></div>
         <div id="runtime-edition-step" class="runtime-step"><div class="runtime-step-header"><span class="runtime-step-number">2</span><div><strong>Edição</strong><small>Escolha a edição do jogo.</small></div></div><div id="runtime-editions" class="runtime-selector-grid"></div></div>
-        <div id="runtime-type-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">3</span><div><strong>Tipo de servidor</strong><small>Escolha a implementação desejada.</small></div></div><div id="runtime-types" class="runtime-selector-grid"></div></div>
+        <div id="runtime-type-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">3</span><div><strong>Distribuição</strong><small>Escolha a distribuição ou implementação publicada para esta edição.</small></div></div><div id="runtime-types" class="runtime-selector-grid"></div></div>
         <div id="runtime-version-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">4</span><div><strong>Versão</strong><small>Escolha a versão do jogo.</small></div></div><label class="runtime-field" for="runtime-version">Versão<select id="runtime-version"><option value="">Selecione…</option></select></label></div>
         <div id="runtime-build-step" class="runtime-step" hidden><div class="runtime-step-header"><span class="runtime-step-number">5</span><div><strong>Build</strong><small>Escolha uma build específica ou utilize a recomendada.</small></div></div><label class="runtime-field" for="runtime-build">Build<select id="runtime-build"><option value="">Selecione…</option></select></label></div>
         <div id="runtime-region-step" class="runtime-step" hidden>
@@ -48,8 +48,8 @@
         </div>
         <div id="runtime-summary-step" class="runtime-step" hidden>
           <div class="runtime-step-header"><span class="runtime-step-number">7</span><div><strong>Confirmar servidor</strong><small>Revise as escolhas antes da criação.</small></div></div>
-          <div id="runtime-selection-summary" class="runtime-selection-summary"><div><span>Jogo</span><strong id="runtime-summary-game">—</strong></div><div><span>Edição</span><strong id="runtime-summary-edition">—</strong></div><div><span>Servidor</span><strong id="runtime-summary-runtime">—</strong></div><div><span>Versão</span><strong id="runtime-summary-version">—</strong></div><div><span>Build</span><strong id="runtime-summary-build">—</strong></div><div><span>Localização</span><strong id="runtime-summary-region">—</strong></div><div><span>Fallback regional</span><strong id="runtime-summary-region-fallback">Não</strong></div></div>
-          <div id="minecraft-runtime-notice" class="runtime-notice" hidden><strong>Tipo de servidor Minecraft</strong><p>A escolha determina quais mods, plugins e recursos poderão ser utilizados posteriormente.</p><label class="runtime-region-fallback"><input id="minecraft-eula-accepted" type="checkbox"><span>Li e aceito a Minecraft EULA para esta instância Java.</span></label><small>O aceite é obrigatório para criar servidores Minecraft Java e é validado novamente pelo Controller.</small></div>
+          <div id="runtime-selection-summary" class="runtime-selection-summary"><div><span>Jogo</span><strong id="runtime-summary-game">—</strong></div><div><span>Edição</span><strong id="runtime-summary-edition">—</strong></div><div><span>Distribuição</span><strong id="runtime-summary-runtime">—</strong></div><div><span>Versão</span><strong id="runtime-summary-version">—</strong></div><div><span>Build</span><strong id="runtime-summary-build">—</strong></div><div><span>Localização</span><strong id="runtime-summary-region">—</strong></div><div><span>Fallback regional</span><strong id="runtime-summary-region-fallback">Não</strong></div></div>
+          <div id="minecraft-runtime-notice" class="runtime-notice" hidden><strong>Distribuição Minecraft</strong><p>A escolha determina quais mods, plugins e recursos poderão ser utilizados posteriormente.</p><label class="runtime-region-fallback"><input id="minecraft-eula-accepted" type="checkbox"><span>Li e aceito a Minecraft EULA para esta instância Java.</span></label><small>O aceite é obrigatório para criar servidores Minecraft Java e é validado novamente pelo Controller.</small></div>
           <div class="runtime-create-actions"><button id="create-instance-submit" class="button" type="button" disabled>Criar servidor</button></div>
         </div>
       </article>
@@ -61,7 +61,7 @@
 <script src="/customer-profile.js?v=3"></script>
 <script src="/customer-email-change.js?v=1"></script>
 <script src="/customer-placement-client.js?v=1"></script>
-<script src="/runtime-selector.js?v=3"></script>
+<script src="/runtime-selector.js?v=4"></script>
 <script src="/create-server-wizard.js?v=2"></script>
 </body>
 </html>
