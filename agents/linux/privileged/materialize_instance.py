@@ -8,6 +8,7 @@ import json
 import os
 import pwd
 import shutil
+import stat
 import sys
 from pathlib import Path
 from typing import Any
@@ -92,21 +93,55 @@ def _validate_runtime_user(user: str) -> pwd.struct_passwd:
     return account
 
 
-def _validate_runtime_access(working_directory: str, user: str) -> None:
+def _runtime_boundary(working_directory: str, user: str) -> tuple[Path, Path] | None:
     if user != _DEFAULT_RUNTIME_USER:
-        return
+        return None
     state = STATE_DIR.resolve()
     game_data = (STATE_DIR / "game-data").resolve()
     working = Path(working_directory).resolve()
     try:
         working.relative_to(game_data)
     except ValueError:
-        return
+        return None
     if not state.is_dir() or not game_data.is_dir() or not working.is_dir():
         raise RuntimeError("runtime working directory is unavailable")
-    if not (state.stat().st_mode & 0o010):
+    return state, game_data
+
+
+def _prepare_runtime_access(working_directory: str, user: str) -> None:
+    boundary = _runtime_boundary(working_directory, user)
+    if boundary is None:
+        return
+    try:
+        runtime_group = grp.getgrnam(_AGENT_GROUP)
+    except KeyError as exc:
+        raise RuntimeError("capivara-agent group is unavailable") from exc
+    for path, required in ((boundary[0], 0o010), (boundary[1], 0o050)):
+        current = path.stat()
+        if current.st_gid != runtime_group.gr_gid:
+            os.chown(path, -1, runtime_group.gr_gid)
+            current = path.stat()
+        mode = stat.S_IMODE(current.st_mode)
+        if (mode & required) != required:
+            os.chmod(path, mode | required)
+
+
+def _validate_runtime_access(working_directory: str, user: str) -> None:
+    boundary = _runtime_boundary(working_directory, user)
+    if boundary is None:
+        return
+    try:
+        runtime_group = grp.getgrnam(_AGENT_GROUP)
+    except KeyError as exc:
+        raise RuntimeError("capivara-agent group is unavailable") from exc
+    state, game_data = boundary
+    state_stat = state.stat()
+    game_stat = game_data.stat()
+    if state_stat.st_gid != runtime_group.gr_gid or game_stat.st_gid != runtime_group.gr_gid:
+        raise RuntimeError("Hybrid runtime directories are not owned by the runtime group")
+    if not (state_stat.st_mode & 0o010):
         raise RuntimeError("Agent state root is not traversable by runtime group")
-    if (game_data.stat().st_mode & 0o050) != 0o050:
+    if (game_stat.st_mode & 0o050) != 0o050:
         raise RuntimeError("game-data is not readable/traversable by runtime group")
 
 
@@ -216,6 +251,7 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
 def _ensure_runtime_identity(spec: dict[str, Any], config: dict[str, Any]) -> None:
     user = str(spec.get("user") or _DEFAULT_RUNTIME_USER)
     account = _validate_runtime_user(user)
+    _prepare_runtime_access(str(spec["working_directory"]), user)
     _validate_runtime_access(str(spec["working_directory"]), user)
     _prepare_private_state(spec, account, _instance_storage_root(config, spec.get("storage_pool_id")))
 
