@@ -55,15 +55,35 @@ def main() -> int:
                 "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
             ).fetchall()
         }
+        backup_unique_constraints = session.execute(
+            "SELECT conname,pg_get_constraintdef(oid) AS definition "
+            "FROM pg_constraint "
+            "WHERE conrelid='public.backup_jobs'::regclass AND contype='u'"
+        ).fetchall()
+        backup_indexes = session.execute(
+            "SELECT indexname,indexdef FROM pg_indexes "
+            "WHERE schemaname='public' AND tablename='backup_jobs'"
+        ).fetchall()
     if len(baseline) != 1:
         raise AssertionError(f"expected exactly one schema_baseline row, got {len(baseline)}")
     if int(existing_customers["total"] or 0) != 0:
         raise AssertionError("isolated database was not empty before bootstrap")
     if [(int(row["version"]), str(row["name"])) for row in upgrades][-1] != (
-        6,
-        "universal_server_update",
+        7,
+        "backup_job_retry_identity",
     ):
-        raise AssertionError("Baseline v2 did not seed universal server update upgrade 6")
+        raise AssertionError("Baseline v2 did not seed backup job retry identity upgrade 7")
+    if any(
+        "UNIQUE (backup_id)" in str(row["definition"])
+        for row in backup_unique_constraints
+    ):
+        raise AssertionError("backup_jobs.backup_id remained UNIQUE after upgrade 7")
+    if not any(
+        str(row["indexname"]) == "idx_backup_jobs_backup_id"
+        and "(backup_id)" in str(row["indexdef"])
+        for row in backup_indexes
+    ):
+        raise AssertionError("backup_jobs backup_id lookup index is missing after upgrade 7")
     required = {
         "customers", "dashboard_users", "service_contracts", "instances",
         "instance_permission_grants", "instance_file_commands",
