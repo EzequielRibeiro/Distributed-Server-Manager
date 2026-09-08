@@ -53,6 +53,50 @@ class _PostgresConnection:
         return _Result()
 
 
+class _MySqlCursor:
+    def __init__(self, connection, dictionary=False):
+        self.connection = connection
+        self.dictionary = dictionary
+        self.rows = []
+
+    def execute(self, sql, params=()):
+        self.connection.statements.append((sql, params))
+        if "information_schema.tables" in sql:
+            self.rows = [{"table_name": "backup_jobs"}]
+        elif "information_schema.STATISTICS" in sql:
+            self.rows = [
+                {
+                    "index_name": "backup_id",
+                    "non_unique": 0,
+                    "columns_csv": "backup_id",
+                },
+                {
+                    "index_name": "keep_unrelated_unique",
+                    "non_unique": 0,
+                    "columns_csv": "instance_id,command_id",
+                },
+            ]
+        else:
+            self.rows = []
+
+    def fetchall(self):
+        return list(self.rows)
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+    def close(self):
+        return None
+
+
+class _MySqlConnection:
+    def __init__(self):
+        self.statements = []
+
+    def cursor(self, dictionary=False):
+        return _MySqlCursor(self, dictionary=dictionary)
+
+
 class BackupJobRetryIdentityTest(unittest.TestCase):
     def test_upgrade_registry_advances_to_retry_identity_v7(self):
         self.assertEqual(upgrades.latest_upgrade_version(), 7)
@@ -110,6 +154,20 @@ class BackupJobRetryIdentityTest(unittest.TestCase):
         self.assertIn(
             "CREATE INDEX IF NOT EXISTS idx_backup_jobs_backup_id "
             "ON public.backup_jobs(backup_id)",
+            sql,
+        )
+
+    def test_mysql_drops_only_standalone_backup_id_unique_index(self):
+        connection = _MySqlConnection()
+        backend = SimpleNamespace(name="mysql")
+
+        upgrades._upgrade_backup_job_retry_identity(backend, connection)
+
+        sql = "\n".join(statement for statement, _ in connection.statements)
+        self.assertIn("ALTER TABLE backup_jobs DROP INDEX `backup_id`", sql)
+        self.assertNotIn("DROP INDEX `keep_unrelated_unique`", sql)
+        self.assertIn(
+            "CREATE INDEX idx_backup_jobs_backup_id ON backup_jobs(backup_id)",
             sql,
         )
 
