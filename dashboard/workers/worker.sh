@@ -84,6 +84,7 @@ main(){
     start_worker monitor_worker.sh
     start_python_worker automation_worker.py
     start_python_worker hybrid_agent_worker.py
+    start_python_worker hybrid_customer_workspace_worker.py
 
     supervise_workers
 }
