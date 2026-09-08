@@ -19,6 +19,7 @@ from alert_repository import AlertSession
 from backup_intelligence import aggregate_health, evaluate_policy
 from backup_platform import BackupValidationError, normalize_policy
 from event_platform import utc_now
+from instance_backup_policy_defaults import default_instance_backup_policy
 
 
 def _datetime(value: Any) -> datetime | None:
@@ -76,12 +77,12 @@ class BackupRepository:
         with self.backend.transaction() as connection:
             session = AlertSession(self.backend, connection)
             try:
-                values=(item["agent_id"],1 if item["enabled"] else 0,item["mode"],item["consistency"],item["compression"],item["interval_seconds"],item["retention_count"],includes,excludes,revision,item["checksum"],requested_by,now)
+                values=(item["agent_id"],bool(item["enabled"]),item["mode"],item["consistency"],item["compression"],item["interval_seconds"],item["retention_count"],includes,excludes,revision,item["checksum"],requested_by,now)
                 if old:
                     session.execute(f"UPDATE backup_policies SET agent_id={self.ph},enabled={self.ph},mode={self.ph},consistency={self.ph},compression={self.ph},interval_seconds={self.ph},retention_count={self.ph},include_json={self.ph},exclude_json={self.ph},revision={self.ph},checksum={self.ph},requested_by={self.ph},updated_at={self.ph} WHERE policy_id={self.ph}",(*values,pid))
                 else:
                     session.execute(f"INSERT INTO backup_policies(policy_id,instance_id,agent_id,enabled,mode,consistency,compression,interval_seconds,retention_count,include_json,exclude_json,revision,checksum,requested_by,created_at,updated_at) VALUES ({','.join([self.ph]*16)})",(pid,iid,*values,now))
-                session.execute(f"INSERT INTO backup_policy_revisions(policy_id,revision,enabled,mode,consistency,compression,interval_seconds,retention_count,include_json,exclude_json,checksum,requested_by,created_at) VALUES ({','.join([self.ph]*13)})",(pid,revision,1 if item["enabled"] else 0,item["mode"],item["consistency"],item["compression"],item["interval_seconds"],item["retention_count"],includes,excludes,item["checksum"],requested_by,now))
+                session.execute(f"INSERT INTO backup_policy_revisions(policy_id,revision,enabled,mode,consistency,compression,interval_seconds,retention_count,include_json,exclude_json,checksum,requested_by,created_at) VALUES ({','.join([self.ph]*13)})",(pid,revision,bool(item["enabled"]),item["mode"],item["consistency"],item["compression"],item["interval_seconds"],item["retention_count"],includes,excludes,item["checksum"],requested_by,now))
             finally: session.close()
         return {"policy": self.get_policy(iid), "changed": True}
 
@@ -136,9 +137,37 @@ class BackupRepository:
             policy=self.get_policy(instance_id)
             if policy is None:raise BackupValidationError("backup policy does not exist")
             if agent_id and str(policy.get("agent_id") or "")!=str(agent_id):return aggregate_health([])
-            return evaluate_policy(policy,self.list_jobs(instance_id=instance_id,limit=100),now=now)
-        rows=[]
-        for policy in self.list_policies(agent_id=agent_id):rows.append(evaluate_policy(policy,self.list_jobs(instance_id=policy["instance_id"],limit=100),now=now))
+            return evaluate_policy(
+                policy,
+                self.list_jobs(
+                    instance_id=instance_id,
+                    limit=100,
+                ),
+                now=now,
+                schedule=self._workspace_schedule(
+                    instance_id
+                ),
+            )
+
+        rows = []
+
+        for policy in self.list_policies(
+            agent_id=agent_id
+        ):
+            rows.append(
+                evaluate_policy(
+                    policy,
+                    self.list_jobs(
+                        instance_id=policy["instance_id"],
+                        limit=100,
+                    ),
+                    now=now,
+                    schedule=self._workspace_schedule(
+                        policy["instance_id"]
+                    ),
+                )
+            )
+
         return aggregate_health(rows)
 
     # -------------------------------------------------------- Customer schedule
@@ -176,7 +205,123 @@ class BackupRepository:
             if completed and completed.astimezone(zone).date()==local.date():return False
         return True
 
+    def _ensure_workspace_policies(self, agent_id):
+        """Materialize Workspace defaults and missing canonical policies."""
+        with self.backend.connect() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                try:
+                    rows = session.execute(
+                        "SELECT i.id AS instance_id, "
+                        "w.instance_id AS workspace_instance_id "
+                        "FROM instances i "
+                        "LEFT JOIN instance_backup_policy w "
+                        "ON w.instance_id=i.id "
+                        f"WHERE i.agent_id={self.ph} "
+                        "ORDER BY i.id",
+                        (agent_id,),
+                    ).fetchall()
+                except Exception:
+                    # Mixed-version/migration compatibility: an older
+                    # database may not have the Workspace schedule table.
+                    return 0
+            finally:
+                session.close()
+
+        created = 0
+
+        for row in rows:
+            item = dict(row)
+            instance_id = str(
+                item.get("instance_id") or ""
+            ).strip()
+
+            if not instance_id:
+                continue
+
+            # Existing canonical policies without a Workspace schedule
+            # are legacy/admin policies. Preserve their interval_seconds
+            # scheduling semantics; schedule_due() deliberately falls
+            # back to that path when _workspace_schedule() returns None.
+            existing_policy = self.get_policy(instance_id)
+            if existing_policy is not None:
+                continue
+
+            # Instances that have neither a canonical policy nor a
+            # persisted Workspace schedule receive the same default that
+            # the Customer Workspace UI/API already exposes.
+            workspace_instance_id = str(
+                item.get("workspace_instance_id") or ""
+            ).strip()
+
+            if not workspace_instance_id:
+                default = default_instance_backup_policy(
+                    instance_id
+                )
+
+                try:
+                    with self.backend.transaction() as connection:
+                        session = AlertSession(
+                            self.backend,
+                            connection,
+                        )
+                        try:
+                            session.execute(
+                                "INSERT INTO instance_backup_policy("
+                                "instance_id,enabled,schedule_time,"
+                                "schedule_timezone,healthy_only,"
+                                "keep_single_operational"
+                                ") VALUES ("
+                                + ",".join([self.ph] * 6)
+                                + ")",
+                                (
+                                    default["instance_id"],
+                                    default["enabled"],
+                                    default["schedule_time"],
+                                    default["schedule_timezone"],
+                                    default["healthy_only"],
+                                    default[
+                                        "keep_single_operational"
+                                    ],
+                                ),
+                            )
+                        finally:
+                            session.close()
+
+                except Exception:
+                    # A concurrent scheduler/Workspace save may have
+                    # inserted the row after the LEFT JOIN above.
+                    # Accept only a proven concurrent winner; do not hide
+                    # genuine database failures.
+                    if self._workspace_schedule(
+                        instance_id
+                    ) is None:
+                        raise
+
+            # Canonical policy remains the administrative/global gate.
+            # Workspace enabled/disabled is deliberately a second,
+            # independent gate evaluated by _workspace_due().
+            try:
+                result = self.put_policy(
+                    {"instance_id": instance_id},
+                    requested_by="scheduler",
+                )
+
+            except Exception:
+                # Concurrent canonical-policy creation is safe only when
+                # a fresh read proves another scheduler won the UNIQUE
+                # race.
+                if self.get_policy(instance_id) is None:
+                    raise
+                continue
+
+            if bool((result or {}).get("changed")):
+                created += 1
+
+        return created
+
     def schedule_due(self, agent_id, *, now_epoch=None):
+        self._ensure_workspace_policies(agent_id)
         now_utc=datetime.fromtimestamp(float(now_epoch),tz=timezone.utc) if now_epoch is not None else datetime.now(timezone.utc);now_value=now_utc.timestamp();created=[]
         for policy in self.list_policies(agent_id=agent_id):
             if not policy["enabled"]:continue

@@ -13,13 +13,17 @@ def _safe(v):
  return s
 def _write(path,payload):
  path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_name(f".{path.name}.{os.getpid()}.tmp");tmp.write_text(json.dumps(payload,indent=2,sort_keys=True)+"\n",encoding="utf-8");os.replace(tmp,path)
+def _backup_root(rec):
+ raw=rec.get("files_root") or rec.get("instance_state_root") or rec.get("configuration_root") or rec.get("working_directory") or rec.get("path")
+ if not str(raw or "").strip():raise ValueError("instance backup root is not configured")
+ root=Path(str(raw)).resolve()
+ if not root.is_dir():raise FileNotFoundError("instance backup root missing")
+ return root
 def _owned(config,iid):
  rec=get_instance(_safe(iid))
  if not rec:raise LookupError("instance not found")
  if str(rec.get("agent_id") or "")!=str(config.get("agent_id") or ""):raise PermissionError("instance belongs to another Agent")
- root=Path(str(rec.get("path") or "")).resolve()
- if not root.is_dir():raise FileNotFoundError("instance path missing")
- return rec,root
+ return rec,_backup_root(rec)
 def _digest(path):
  h=hashlib.sha256()
  with path.open("rb") as f:
@@ -56,7 +60,7 @@ def _safe_extract(archive,dest):
     if handle:
      try:manifest=json.loads(handle.read().decode("utf-8"))
      except Exception as exc:raise ValueError("backup manifest is invalid") from exc
-  tar.extractall(base,members=members)
+  tar.extractall(base,members=members,filter="data")
  if manifest is not None and (manifest.get("kind")!="CapivaraInstanceBackup" or manifest.get("backup_format")!="capivara-instance"):raise ValueError("unsupported backup manifest")
  return manifest
 def _retention(instance_dir,keep):

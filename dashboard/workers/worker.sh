@@ -6,6 +6,7 @@ WORKERS_DIR="${DSM_ROOT}/dashboard/workers"
 LOG="${DSM_ROOT}/logs/dashboard_worker.log"
 PIDS=()
 WORKER_NAMES=()
+STOP_REQUESTED=0
 
 log(){ echo "$(date '+%F %T') $*" >> "$LOG"; }
 
@@ -46,19 +47,33 @@ stop_children(){
     wait 2>/dev/null || true
 }
 
+request_stop(){
+    STOP_REQUESTED=1
+    log "Shutdown solicitado; encerrando workers filhos"
+    stop_children
+}
+
 supervise_workers(){
     local STATUS=0
+
     set +e
     wait -n "${PIDS[@]}"
     STATUS=$?
     set -e
+
+    if [[ "${STOP_REQUESTED}" -eq 1 ]]; then
+        log "Shutdown controlado concluído"
+        return 0
+    fi
+
     log "Worker filho encerrou inesperadamente (status=${STATUS}); reiniciando grupo via systemd"
     return 1
 }
 
 main(){
     mkdir -p "$(dirname "$LOG")"
-    trap stop_children EXIT INT TERM
+    trap stop_children EXIT
+    trap request_stop INT TERM
 
     # Workers legados server_worker.sh e backup_worker.sh não pertencem mais
     # ao runtime consolidado. As funções atuais vivem nas plataformas de

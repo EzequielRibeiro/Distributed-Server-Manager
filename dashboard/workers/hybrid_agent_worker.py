@@ -21,6 +21,8 @@ for path in (ROOT, DATABASE, DASHBOARD):
         sys.path.insert(0, str(path))
 
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
+from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
+from backup_repository import BackupRepository
 from hybrid_game_data_client import process_hybrid_game_data_cycle
 from hybrid_instance_provisioning_client import process_hybrid_instance_provisioning_cycle
 from hybrid_local_reconciliation import reconcile_local_hybrid_runtime
@@ -112,6 +114,18 @@ def _instance_telemetry_module(root: Path):
     _instance_runtime_module(root)
     import instance_telemetry
     return instance_telemetry
+
+
+def _runtime_health_module(root: Path):
+    _instance_runtime_module(root)
+    import runtime_health
+    return runtime_health
+
+
+def _backup_client_module(root: Path):
+    _instance_runtime_module(root)
+    import backup_client
+    return backup_client
 
 
 def _prepare_hybrid_customer_files_access(instance_id: str) -> None:
@@ -246,6 +260,125 @@ def process_hybrid_instance_telemetry_cycle(backend, root: Path, agent_id: str) 
     }
 
 
+def process_hybrid_instance_health_cycle(
+    backend,
+    root: Path,
+    agent_id: str,
+) -> dict[str, Any]:
+    """Persist embedded Hybrid instance runtime health in Controller state."""
+    config = _hybrid_agent_config(root, agent_id, optional=True)
+    if config is None:
+        return {
+            "status": "unavailable",
+            "reason": "config_unavailable",
+            "samples": 0,
+            "applied": 0,
+            "healthy": 0,
+            "degraded": 0,
+            "unknown": 0,
+        }
+
+    runtime_health = _runtime_health_module(root)
+    inventory = runtime_health.health_inventory(config)
+
+    if not isinstance(inventory, list):
+        raise RuntimeError(
+            "Hybrid runtime health collector returned an invalid payload"
+        )
+
+    inventory = [
+        dict(item)
+        for item in inventory[:1000]
+        if isinstance(item, dict)
+    ]
+
+    repository = AgentInstanceRuntimeHealthRepository(backend)
+    repository.initialize()
+    applied = repository.apply_inventory(agent_id, inventory)
+
+    if not isinstance(applied, list):
+        raise RuntimeError(
+            "Hybrid runtime health repository returned an invalid result"
+        )
+
+    return {
+        "status": "completed",
+        "samples": len(inventory),
+        "applied": len(applied),
+        "healthy": sum(
+            1
+            for item in applied
+            if str(item.get("health") or "").lower() == "healthy"
+        ),
+        "degraded": sum(
+            1
+            for item in applied
+            if str(item.get("health") or "").lower() == "degraded"
+        ),
+        "unknown": sum(
+            1
+            for item in applied
+            if str(item.get("health") or "").lower() == "unknown"
+        ),
+    }
+
+
+def process_hybrid_backup_cycle(
+    backend,
+    root: Path,
+    agent_id: str,
+) -> dict[str, Any]:
+    """Round-trip Universal Smart Backup commands for the embedded Hybrid Agent."""
+    config = _hybrid_agent_config(root, agent_id, optional=True)
+    if config is None:
+        return {
+            "status": "unavailable",
+            "reason": "config_unavailable",
+            "reported": 0,
+            "commands": 0,
+            "accepted": 0,
+            "completed": 0,
+            "failed": 0,
+        }
+
+    client = _backup_client_module(root)
+    repository = BackupRepository(backend)
+    repository.initialize()
+
+    previous = client.backup_state()
+    if not isinstance(previous, list):
+        raise RuntimeError("Hybrid backup client returned an invalid state payload")
+    previous = [item for item in previous if isinstance(item, dict)]
+    reported = repository.record_agent_state(agent_id, previous)
+
+    commands = repository.commands_for_agent(agent_id)
+    if not isinstance(commands, list):
+        raise RuntimeError("Hybrid backup repository returned an invalid command payload")
+    commands = [item for item in commands if isinstance(item, dict)]
+
+    reports = client.apply_backup_commands(config, commands)
+    if not isinstance(reports, list):
+        raise RuntimeError("Hybrid backup client returned an invalid result payload")
+    reports = [item for item in reports if isinstance(item, dict)]
+
+    accepted = repository.record_agent_state(agent_id, reports)
+
+    return {
+        "status": "completed",
+        "reported": reported,
+        "commands": len(commands),
+        "accepted": accepted,
+        "completed": sum(
+            1 for item in reports
+            if str(item.get("status") or "").lower() == "completed"
+        ),
+        "failed": sum(
+            1 for item in reports
+            if str(item.get("status") or "").lower() == "failed"
+        ),
+    }
+
+
 def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     config = _read_shell_values(root / "config" / "agent.conf")
     if str(config.get("DSM_NODE_ROLE", "")).strip().lower() != "hybrid":
@@ -267,6 +400,8 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     instance_reconcile = process_hybrid_instance_reconcile_cycle(root, agent_id)
     instance_runtime = process_hybrid_instance_runtime_cycle(effective_backend, root, agent_id)
     instance_telemetry = process_hybrid_instance_telemetry_cycle(effective_backend, root, agent_id)
+    instance_health = process_hybrid_instance_health_cycle(effective_backend, root, agent_id)
+    backup = process_hybrid_backup_cycle(effective_backend, root, agent_id)
     provisioning = process_hybrid_instance_provisioning_cycle(effective_backend, root, agent_id)
     game_data = process_hybrid_game_data_cycle(effective_backend, root, agent_id)
     return {
@@ -275,6 +410,8 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         "instance_reconcile": instance_reconcile,
         "instance_runtime": instance_runtime,
         "instance_telemetry": instance_telemetry,
+        "instance_health": instance_health,
+        "backup": backup,
         "provisioning": provisioning,
         "game_data": game_data,
         **result,
@@ -291,12 +428,16 @@ def run_forever(root: Path = ROOT) -> None:
                 instance_reconcile = result.get("instance_reconcile") if isinstance(result.get("instance_reconcile"), dict) else {}
                 instance_runtime = result.get("instance_runtime") if isinstance(result.get("instance_runtime"), dict) else {}
                 instance_telemetry = result.get("instance_telemetry") if isinstance(result.get("instance_telemetry"), dict) else {}
+                instance_health = result.get("instance_health") if isinstance(result.get("instance_health"), dict) else {}
+                backup = result.get("backup") if isinstance(result.get("backup"), dict) else {}
                 print(
                     f"hybrid heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} "
                     f"instance_reconcile={instance_reconcile.get('healthy', 0)}/{instance_reconcile.get('instances', 0)} "
                     f"instance_files={instance_reconcile.get('files_access_prepared', 0)} "
                     f"instance_runtime={instance_runtime.get('status', 'idle')} "
                     f"instance_telemetry={instance_telemetry.get('accepted', 0)} "
+                    f"instance_health={instance_health.get('healthy', 0)}/{instance_health.get('applied', 0)} "
+                    f"backup={backup.get('completed', 0)}c/{backup.get('failed', 0)}f "
                     f"game_data={state.get('status', 'idle')}",
                     flush=True,
                 )

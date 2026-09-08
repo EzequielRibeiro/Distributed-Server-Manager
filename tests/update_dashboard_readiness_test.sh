@@ -27,6 +27,67 @@ RESTORE_SERVICES=(dsm-dashboard.service)
 DSM_DATABASE_DRIVER=sqlite
 CAPTURE="${TMP}/dashboard-readiness.txt"
 
+# A falha transitória inicial não deve poluir um update que termina saudável.
+READINESS_TIMEOUT=2
+READINESS_INTERVAL=0
+CURL_COUNT="${TMP}/curl-count"
+printf '0\n' >"${CURL_COUNT}"
+
+curl() {
+    local COUNT
+    COUNT="$(cat "${CURL_COUNT}")"
+    COUNT=$((COUNT + 1))
+    printf '%s\n' "${COUNT}" >"${CURL_COUNT}"
+
+    if [[ "${COUNT}" -eq 1 ]]
+    then
+        echo "curl: (7) simulated transient failure" >&2
+        return 7
+    fi
+
+    return 0
+}
+
+TRANSIENT_ERR="${TMP}/transient.err"
+
+wait_for_dashboard_readiness \
+    "https://127.0.0.1:9443/health" \
+    "https" \
+    2>"${TRANSIENT_ERR}"
+
+[[ "$(cat "${CURL_COUNT}")" == "2" ]]
+[[ ! -s "${TRANSIENT_ERR}" ]]
+
+unset -f curl
+
+# Uma falha persistente continua sendo erro e preserva o último diagnóstico.
+READINESS_TIMEOUT=0
+
+curl() {
+    echo "curl: (7) simulated persistent failure" >&2
+    return 7
+}
+
+PERSISTENT_ERR="${TMP}/persistent.err"
+
+if wait_for_dashboard_readiness \
+    "https://127.0.0.1:9443/health" \
+    "https" \
+    2>"${PERSISTENT_ERR}"
+then
+    PERSISTENT_RC=0
+else
+    PERSISTENT_RC=$?
+fi
+
+[[ "${PERSISTENT_RC}" -ne 0 ]]
+
+grep -Fq     "Timeout aguardando Dashboard"     "${PERSISTENT_ERR}"
+
+grep -Fq     "curl: (7) simulated persistent failure"     "${PERSISTENT_ERR}"
+
+unset -f curl
+
 wait_for_service_readiness() { :; }
 wait_for_dashboard_readiness() {
     printf '%s|%s\n' "$1" "$2" >"${CAPTURE}"

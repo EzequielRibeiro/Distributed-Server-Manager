@@ -1265,6 +1265,7 @@ wait_for_dashboard_readiness() {
     local DASHBOARD_URL="$1"
     local DASHBOARD_SCHEME="${2:-http}"
     local DEADLINE=$((SECONDS + READINESS_TIMEOUT))
+    local LAST_ERROR=""
     local -a CURL_ARGS=(--fail --silent --show-error --max-time 5)
 
     # The loopback readiness probe verifies that the HTTPS listener is alive,
@@ -1275,13 +1276,26 @@ wait_for_dashboard_readiness() {
         CURL_ARGS+=(--insecure)
     fi
 
-    until curl "${CURL_ARGS[@]}" "${DASHBOARD_URL}" >/dev/null
+    while true
     do
+        # Transient startup failures are expected while the listener is being
+        # created. Keep them out of successful update logs, but retain the last
+        # curl error so a real timeout remains actionable.
+        if LAST_ERROR="$(curl "${CURL_ARGS[@]}" "${DASHBOARD_URL}" 2>&1 >/dev/null)"
+        then
+            return 0
+        fi
+
         if (( SECONDS >= DEADLINE ))
         then
             echo "[ERROR] Timeout aguardando Dashboard | waiting for Dashboard: ${DASHBOARD_URL}" >&2
+            if [[ -n "${LAST_ERROR}" ]]
+            then
+                echo "[ERROR] Último erro curl | Last curl error: ${LAST_ERROR}" >&2
+            fi
             return 1
         fi
+
         sleep "${READINESS_INTERVAL}"
     done
 }

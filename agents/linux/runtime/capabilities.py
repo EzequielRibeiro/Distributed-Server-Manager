@@ -157,7 +157,7 @@ def detect_capabilities() -> dict[str, object]:
         },
         "docker": docker,
         "wine": wine,
-        "backup": False,
+        "backup": True,
         "mod-management": False,
     }
 

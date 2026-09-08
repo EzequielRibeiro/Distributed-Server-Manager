@@ -2,8 +2,9 @@
 """Operational intelligence for Capivara Universal Smart Backup."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 PRESETS: dict[str, dict[str, Any]] = {
     "balanced": {
@@ -92,11 +93,75 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _workspace_next_due(
+    schedule: Mapping[str, Any],
+    completed: Iterable[Mapping[str, Any]],
+    current: datetime,
+) -> datetime | None:
+    timezone_name = str(
+        schedule.get("schedule_timezone") or "UTC"
+    )
+
+    try:
+        zone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        zone = timezone.utc
+
+    parts = str(
+        schedule.get("schedule_time") or "04:00"
+    ).split(":")
+
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+    except (ValueError, IndexError):
+        return None
+
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+
+    local_now = current.astimezone(zone)
+
+    scheduled_today = local_now.replace(
+        hour=hour,
+        minute=minute,
+        second=0,
+        microsecond=0,
+    )
+
+    completed_today = False
+
+    for row in completed:
+        completed_at = _parse_time(
+            row.get("completed_at")
+            or row.get("updated_at")
+            or row.get("created_at")
+        )
+
+        if (
+            completed_at is not None
+            and completed_at.astimezone(zone).date()
+            == local_now.date()
+        ):
+            completed_today = True
+            break
+
+    if completed_today:
+        scheduled_local = scheduled_today + timedelta(
+            days=1
+        )
+    else:
+        scheduled_local = scheduled_today
+
+    return scheduled_local.astimezone(timezone.utc)
+
+
 def evaluate_policy(
     policy: Mapping[str, Any],
     jobs: Iterable[Mapping[str, Any]],
     *,
     now: datetime | None = None,
+    schedule: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     current = now or datetime.now(timezone.utc)
     if current.tzinfo is None:
@@ -117,9 +182,61 @@ def evaluate_policy(
 
     last_success = completed[0] if completed else None
     last_success_at = event_time(last_success) if last_success else None
-    interval = max(300, int(policy.get("interval_seconds") or 21600))
-    next_due = None if last_success_at is None else last_success_at.timestamp() + interval
-    seconds_until_due = None if next_due is None else int(next_due - current.timestamp())
+
+    interval = max(
+        300,
+        int(policy.get("interval_seconds") or 21600),
+    )
+
+    workspace_schedule = (
+        dict(schedule)
+        if schedule is not None
+        else None
+    )
+
+    schedule_source = (
+        "workspace"
+        if workspace_schedule is not None
+        else "interval"
+    )
+
+    workspace_enabled = (
+        bool(workspace_schedule.get("enabled"))
+        if workspace_schedule is not None
+        else True
+    )
+
+    if workspace_schedule is not None:
+        next_due_dt = _workspace_next_due(
+            workspace_schedule,
+            completed,
+            current,
+        )
+
+        next_due = (
+            next_due_dt.timestamp()
+            if next_due_dt is not None
+            else None
+        )
+
+        # Workspace schedules are daily. A backup only becomes
+        # overdue after missing an entire daily schedule window.
+        overdue_window = 86400
+
+    else:
+        next_due = (
+            None
+            if last_success_at is None
+            else last_success_at.timestamp() + interval
+        )
+
+        overdue_window = interval
+
+    seconds_until_due = (
+        None
+        if next_due is None
+        else int(next_due - current.timestamp())
+    )
 
     consecutive_failures = 0
     for row in creates:
@@ -134,27 +251,73 @@ def evaluate_policy(
     terminal_success = sum(1 for row in terminal if str(row.get("status")) == "completed")
     success_rate = round((terminal_success / len(terminal)) * 100.0, 1) if terminal else None
 
-    enabled = bool(policy.get("enabled"))
+    canonical_enabled = bool(policy.get("enabled"))
+    enabled = canonical_enabled and workspace_enabled
+
     if not enabled:
         health = "disabled"
-        recommendation = "Ative a política para retomar a proteção automática."
+        recommendation = (
+            "Ative a política para retomar a proteção automática."
+        )
+
     elif consecutive_failures >= 2:
         health = "degraded"
-        recommendation = "Investigue as falhas recentes antes da próxima janela de backup."
+        recommendation = (
+            "Investigue as falhas recentes antes da próxima "
+            "janela de backup."
+        )
+
+    elif (
+        workspace_schedule is not None
+        and last_success_at is None
+        and seconds_until_due is not None
+        and seconds_until_due <= 0
+    ):
+        health = "due"
+        recommendation = (
+            "A janela agendada está aberta e ainda não há "
+            "backup concluído hoje."
+        )
+
     elif last_success_at is None:
         created_at = _parse_time(policy.get("created_at"))
-        if created_at and (current - created_at).total_seconds() >= interval:
+
+        if (
+            workspace_schedule is None
+            and created_at
+            and (current - created_at).total_seconds()
+            >= interval
+        ):
             health = "overdue"
-            recommendation = "Nenhum backup concluído dentro do intervalo esperado; solicite ou investigue a execução."
+            recommendation = (
+                "Nenhum backup concluído dentro do intervalo "
+                "esperado; solicite ou investigue a execução."
+            )
         else:
             health = "never_run"
-            recommendation = "A política ainda não possui backup concluído."
-    elif seconds_until_due is not None and seconds_until_due < -interval:
+            recommendation = (
+                "A política ainda não possui backup concluído."
+            )
+
+    elif (
+        seconds_until_due is not None
+        and seconds_until_due < -overdue_window
+    ):
         health = "overdue"
-        recommendation = "O backup está atrasado além de uma janela completa; verifique Agent e fila de jobs."
-    elif seconds_until_due is not None and seconds_until_due <= 0:
+        recommendation = (
+            "O backup está atrasado além de uma janela "
+            "completa; verifique Agent e fila de jobs."
+        )
+
+    elif (
+        seconds_until_due is not None
+        and seconds_until_due <= 0
+    ):
         health = "due"
-        recommendation = "Backup vencido e elegível para execução automática."
+        recommendation = (
+            "Backup vencido e elegível para execução automática."
+        )
+
     else:
         health = "healthy"
         recommendation = "Política dentro da janela esperada."
@@ -173,6 +336,23 @@ def evaluate_policy(
         "policy_id": policy.get("policy_id"),
         "policy_revision": policy.get("revision"),
         "enabled": enabled,
+        "canonical_enabled": canonical_enabled,
+        "workspace_enabled": (
+            workspace_enabled
+            if workspace_schedule is not None
+            else None
+        ),
+        "schedule_source": schedule_source,
+        "schedule_time": (
+            workspace_schedule.get("schedule_time")
+            if workspace_schedule is not None
+            else None
+        ),
+        "schedule_timezone": (
+            workspace_schedule.get("schedule_timezone")
+            if workspace_schedule is not None
+            else None
+        ),
         "health": health,
         "interval_seconds": interval,
         "last_success_at": _iso(last_success_at),

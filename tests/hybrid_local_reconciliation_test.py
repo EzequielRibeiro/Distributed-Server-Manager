@@ -119,22 +119,86 @@ class HybridLocalReconciliationTest(unittest.TestCase):
         seen = {}
 
         def fake_detect():
-            seen["state_root"] = os.environ.get("CAPIVARA_AGENT_STATE_DIR")
+            seen["state_root"] = os.environ.get(
+                "CAPIVARA_AGENT_STATE_DIR"
+            )
             return {
                 "steamcmd": True,
-                "steamcmd_status": {"installed": True, "functional": True},
+                "backup": True,
+                "steamcmd_status": {
+                    "installed": True,
+                    "functional": True,
+                },
             }
 
         original = os.environ.get("CAPIVARA_AGENT_STATE_DIR")
-        with patch("hybrid_local_reconciliation.detect_capabilities", side_effect=fake_detect):
+
+        with patch(
+            "hybrid_local_reconciliation.detect_capabilities",
+            side_effect=fake_detect,
+        ):
             result = _hybrid_capabilities(self.root)
 
         self.assertTrue(result["steamcmd"])
+        self.assertTrue(result["backup"])
         self.assertEqual(
             seen["state_root"],
-            str(self.root / "runtime" / "state" / "hybrid-agent"),
+            str(
+                self.root
+                / "runtime"
+                / "state"
+                / "hybrid-agent"
+            ),
         )
-        self.assertEqual(os.environ.get("CAPIVARA_AGENT_STATE_DIR"), original)
+        self.assertEqual(
+            os.environ.get("CAPIVARA_AGENT_STATE_DIR"),
+            original,
+        )
+
+    def test_linux_detector_advertises_backup_capability(self):
+        import capabilities as linux_capabilities
+
+        with (
+            patch.object(
+                linux_capabilities,
+                "_steamcmd_status",
+                return_value={
+                    "installed": False,
+                    "functional": False,
+                    "state": "missing",
+                    "path": None,
+                    "runtime_32bit": True,
+                    "missing_dependencies": [],
+                },
+            ),
+            patch.object(
+                linux_capabilities,
+                "_java_status",
+                return_value={
+                    "installed": False,
+                    "functional": False,
+                    "state": "missing",
+                    "path": None,
+                    "version": None,
+                    "major": None,
+                },
+            ),
+            patch.object(
+                linux_capabilities,
+                "supported_profiles",
+                return_value=[],
+            ),
+            patch.object(
+                linux_capabilities.shutil,
+                "which",
+                return_value=None,
+            ),
+        ):
+            result = linux_capabilities.detect_capabilities()
+
+        self.assertTrue(result["native-linux"])
+        self.assertTrue(result["backup"])
+        self.assertFalse(result["mod-management"])
 
     @unittest.skipUnless(hasattr(os, "chown"), "POSIX ownership test")
     def test_reconciliation_preserves_agent_conf_owner_group_and_mode(self):
