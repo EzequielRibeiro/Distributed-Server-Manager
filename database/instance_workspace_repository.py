@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
 from customer_instance_policy import INSTANCE_PERMISSIONS, effective_permissions
+from instance_backup_policy_defaults import default_instance_backup_policy
 
 FINAL_CONSOLE_STATES = {"completed", "failed"}
 CONTRACT_CHANGE_STATES = {
@@ -229,7 +230,7 @@ class InstanceWorkspaceRepository:
         with self.session() as session:
             row = session.execute(f"SELECT * FROM instance_backup_policy WHERE instance_id={ph}", (instance_id,)).fetchone()
         if row is None:
-            return {"instance_id": instance_id, "enabled": True, "schedule_time": "04:00", "schedule_timezone": "UTC", "healthy_only": True, "keep_single_operational": True}
+            return default_instance_backup_policy(instance_id)
         result = dict(row)
         for key in ("enabled", "healthy_only", "keep_single_operational"):
             result[key] = bool(result.get(key))
