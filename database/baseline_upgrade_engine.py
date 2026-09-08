@@ -330,6 +330,106 @@ def _upgrade_server_update_schema(backend: Any, connection: Any) -> None:
     _execute_script(backend, connection, server_update_ddl(backend.name))
 
 
+def _upgrade_backup_job_retry_identity(backend: Any, connection: Any) -> None:
+    """Make backup_id an artifact reference, not a unique job identity.
+
+    command_id uniquely identifies each create/restore/delete operation. A failed
+    restore must therefore be retryable with a new command_id while preserving
+    the same backup_id and the previous failed job as audit history.
+    """
+    if "backup_jobs" not in _table_names(backend, connection):
+        raise DatabaseMigrationError("backup_jobs table is missing")
+
+    if backend.name == "sqlite":
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_backup_jobs_backup_id "
+            "ON backup_jobs(backup_id)"
+        )
+        return
+
+    if backend.name == "postgresql":
+        rows = connection.execute(
+            "SELECT c.conname, "
+            "array_agg(a.attname ORDER BY k.ordinality) AS columns "
+            "FROM pg_constraint c "
+            "JOIN LATERAL unnest(c.conkey) WITH ORDINALITY "
+            "AS k(attnum, ordinality) ON TRUE "
+            "JOIN pg_attribute a ON a.attrelid=c.conrelid "
+            "AND a.attnum=k.attnum "
+            "WHERE c.conrelid='public.backup_jobs'::regclass "
+            "AND c.contype='u' GROUP BY c.conname"
+        ).fetchall()
+        for row in rows:
+            columns = tuple(row["columns"] or ())
+            if columns != ("backup_id",):
+                continue
+            name = str(row["conname"])
+            quoted = name.replace('"', '""')
+            connection.execute(
+                f'ALTER TABLE public.backup_jobs DROP CONSTRAINT "{quoted}"'
+            )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_backup_jobs_backup_id "
+            "ON public.backup_jobs(backup_id)"
+        )
+        return
+
+    if backend.name == "mysql":
+        cursor = connection.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                "SELECT INDEX_NAME AS index_name, NON_UNIQUE AS non_unique, "
+                "GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',') "
+                "AS columns_csv FROM information_schema.STATISTICS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='backup_jobs' "
+                "GROUP BY INDEX_NAME, NON_UNIQUE"
+            )
+            indexes = cursor.fetchall()
+        finally:
+            cursor.close()
+
+        normal_backup_index = False
+        for row in indexes:
+            name = str(row.get("index_name") or "")
+            columns = tuple(
+                item.strip()
+                for item in str(row.get("columns_csv") or "").split(",")
+                if item.strip()
+            )
+            non_unique = int(row.get("non_unique") or 0)
+            if columns != ("backup_id",):
+                if name == "idx_backup_jobs_backup_id":
+                    raise DatabaseMigrationError(
+                        "idx_backup_jobs_backup_id exists with incompatible columns"
+                    )
+                continue
+            if non_unique:
+                normal_backup_index = True
+                continue
+            if name == "PRIMARY":
+                raise DatabaseMigrationError(
+                    "backup_id unexpectedly participates in the primary key"
+                )
+            quoted = name.replace("`", "``")
+            drop = connection.cursor()
+            try:
+                drop.execute(f"ALTER TABLE backup_jobs DROP INDEX `{quoted}`")
+            finally:
+                drop.close()
+
+        if not normal_backup_index:
+            create = connection.cursor()
+            try:
+                create.execute(
+                    "CREATE INDEX idx_backup_jobs_backup_id ON backup_jobs(backup_id)"
+                )
+            finally:
+                create.close()
+        return
+
+    raise DatabaseMigrationError(f"unsupported baseline backend: {backend.name}")
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -337,6 +437,7 @@ UPGRADES = (
     BaselineUpgrade(4, "resolved_alert_history_detach", _upgrade_resolved_alert_history_detach),
     BaselineUpgrade(5, "alert_events_note_action", _upgrade_alert_events_note_action),
     BaselineUpgrade(6, "universal_server_update", _upgrade_server_update_schema),
+    BaselineUpgrade(7, "backup_job_retry_identity", _upgrade_backup_job_retry_identity),
 )
 
 
