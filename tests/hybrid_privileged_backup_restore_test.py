@@ -109,6 +109,11 @@ class HybridPrivilegedBackupRestoreTest(unittest.TestCase):
                 "backup_id": "backup-1",
                 "artifact_path": "/tmp/backup-1.tar.gz",
             }
+            files_access = {
+                "instance_id": "instance-1",
+                "directories": 2,
+                "files": 3,
+            }
             with (
                 patch.object(restore_instance_backup, "REQUEST_ROOT", requests),
                 patch.object(
@@ -127,13 +132,21 @@ class HybridPrivilegedBackupRestoreTest(unittest.TestCase):
                     return_value=operation,
                 ) as direct,
                 patch.object(
+                    restore_instance_backup.prepare_customer_files,
+                    "run",
+                    return_value=files_access,
+                ) as prepare_files,
+                patch.object(
                     restore_instance_backup,
                     "_write_result",
                 ),
             ):
                 result = restore_instance_backup.run(command_id)
             self.assertEqual(result["status"], "completed")
-            self.assertEqual(result["operation"], operation)
+            self.assertEqual(
+                result["operation"],
+                {**operation, "files_access": files_access},
+            )
             direct.assert_called_once_with(
                 {"agent_id": "agent-1"},
                 {
@@ -143,6 +156,7 @@ class HybridPrivilegedBackupRestoreTest(unittest.TestCase):
                     "backup_id": "backup-1",
                 },
             )
+            prepare_files.assert_called_once_with("instance-1")
 
     def test_installer_preserves_private_storage_boundary(self):
         installer = (
