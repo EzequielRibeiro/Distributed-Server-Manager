@@ -1,0 +1,74 @@
+name: Hybrid Customer Workspace Parity
+
+on:
+  pull_request:
+    paths:
+      - 'dashboard/workers/hybrid_customer_workspace_worker.py'
+      - 'dashboard/workers/worker.sh'
+      - 'installer/install_hybrid_runtime_substrate.sh'
+      - 'dashboard/customer_instance_workspace_http.py'
+      - 'dashboard/artifact_transfer_http.py'
+      - 'dashboard/web/customer-instance*'
+      - 'dashboard/web/customer-backup-transfer.js'
+      - 'tests/hybrid_customer_workspace_worker_test.py'
+      - 'tests/hybrid_customer_workspace_parity_test.py'
+      - '.github/workflows/hybrid-customer-workspace-parity.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/workers/hybrid_customer_workspace_worker.py'
+      - 'dashboard/workers/worker.sh'
+      - 'installer/install_hybrid_runtime_substrate.sh'
+      - 'dashboard/customer_instance_workspace_http.py'
+      - 'dashboard/artifact_transfer_http.py'
+      - 'dashboard/web/customer-instance*'
+      - 'dashboard/web/customer-backup-transfer.js'
+      - 'tests/hybrid_customer_workspace_worker_test.py'
+      - 'tests/hybrid_customer_workspace_parity_test.py'
+      - '.github/workflows/hybrid-customer-workspace-parity.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Hybrid Customer Workspace Parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate shell syntax
+        run: |
+          bash -n dashboard/workers/worker.sh
+          bash -n installer/install_hybrid_runtime_substrate.sh
+
+      - name: Validate Python
+        run: |
+          python3 -m py_compile \
+            dashboard/workers/hybrid_customer_workspace_worker.py \
+            dashboard/customer_instance_workspace_http.py \
+            dashboard/artifact_transfer_http.py \
+            tests/hybrid_customer_workspace_worker_test.py \
+            tests/hybrid_customer_workspace_parity_test.py
+
+      - name: Validate Customer JavaScript
+        run: |
+          for file in \
+            dashboard/web/customer-instance-v2.js \
+            dashboard/web/customer-instance-connection.js \
+            dashboard/web/customer-instance-delete.js \
+            dashboard/web/customer-backup-transfer.js
+          do
+            node --check "$file"
+          done
+
+      - name: Run Hybrid Customer Workspace tests
+        run: |
+          python3 -m unittest \
+            tests/hybrid_customer_workspace_worker_test.py \
+            tests/hybrid_customer_workspace_parity_test.py
+
+      - name: Run Workspace regression
+        run: python3 -m unittest tests/customer_instance_workspace_v2_test.py

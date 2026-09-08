@@ -5,6 +5,7 @@ from urllib.parse import parse_qs,urlparse
 from controller_session import session_user_from_headers
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from instance_activity_repository import InstanceActivityRepository
+from json_serialization import to_json_compatible
 PREFIX="/api/customer/instance/workspace"
 ROUTES={PREFIX,PREFIX+"/telemetry",PREFIX+"/console",PREFIX+"/startup",PREFIX+"/files/status",PREFIX+"/backup-policy",PREFIX+"/backups",PREFIX+"/upgrade-options",PREFIX+"/upgrade",PREFIX+"/runtime-options",PREFIX+"/permissions"}
 _FILE_ACTIVITY={"write_text":"FILE_EDIT_REQUESTED","upload":"FILE_UPLOAD_REQUESTED","delete":"FILE_DELETE_REQUESTED","move":"FILE_MOVE_REQUESTED","rename":"FILE_RENAME_REQUESTED","mkdir":"DIRECTORY_CREATE_REQUESTED","extract":"ARCHIVE_EXTRACT_REQUESTED","download":"FILE_DOWNLOAD_REQUESTED"}
@@ -15,6 +16,7 @@ def install_customer_instance_workspace(legacy,authenticate):
  def backend():return legacy.dashboard_repository(legacy.DATABASE_FILE).backend
  def service():return CustomerInstanceWorkspaceService(backend(),legacy.DSM_ROOT)
  def activity_repo():return InstanceActivityRepository(backend())
+ def send(self,status,payload):return self.send_json(status,to_json_compatible(payload))
  def user_for(self):
   value=session_user_from_headers(self.headers)
   if value is not None:return value
@@ -33,10 +35,12 @@ def install_customer_instance_workspace(legacy,authenticate):
    activity_repo().record(instance_id=instance_id,customer_id=context.get("customer_id"),username=str(user.get("username") or ""),role=str(user.get("role") or ""),activity=activity,category=category,result=result,target_type=target_type,target_name=target_name,details=details)
   except Exception:pass
  def error(self,exc):
-  if isinstance(exc,PermissionError):self.send_json(403,{"error":"forbidden","message":str(exc)});return
-  if isinstance(exc,KeyError):self.send_json(404,{"error":"not_found","message":"Registro não encontrado."});return
-  if isinstance(exc,(ValueError,LookupError)):self.send_json(400,{"error":"invalid_request","message":str(exc)});return
-  self.send_json(500,{"error":"workspace_failed","message":"Não foi possível concluir a operação da instância."})
+  if isinstance(exc,PermissionError):send(self,403,{"error":"forbidden","message":str(exc)});return
+  if isinstance(exc,KeyError):send(self,404,{"error":"not_found","message":"Registro não encontrado."});return
+  if isinstance(exc,(ValueError,LookupError)):send(self,400,{"error":"invalid_request","message":str(exc)});return
+  internal=getattr(self,"_internal_error",None)
+  if callable(internal):internal(exc);return
+  send(self,500,{"error":"workspace_failed","message":"Não foi possível concluir a operação da instância."})
  def get(self):
   parsed=urlparse(self.path);path=parsed.path
   if path not in ROUTES:return previous_get(self)
@@ -56,7 +60,7 @@ def install_customer_instance_workspace(legacy,authenticate):
    elif path==PREFIX+"/runtime-options":data={"runtimes":api.runtime_options(user,instance_id)}
    elif path==PREFIX+"/permissions":data={"permissions":sorted(api.permissions(user,instance_id))}
    else:data={"changes":api.repo.list_contract_changes(instance_id)}
-   self.send_json(200,data)
+   send(self,200,data)
   except Exception as exc:error(self,exc)
  def post(self):
   parsed=urlparse(self.path);path=parsed.path
@@ -75,13 +79,13 @@ def install_customer_instance_workspace(legacy,authenticate):
     action=str(body.get("action") or "").lower();data=api.request_backup(user,instance_id,action,body.get("backup_id"));code=202;record(api,user,instance_id,f"BACKUP_{action.upper()}_REQUESTED","backup",target_type="backup",target_name=body.get("backup_id"),details={"job_id":data.get("job_id") or data.get("command_id")})
    else:
     data=api.request_upgrade(user,instance_id,body.get("profile_id"));code=202;record(api,user,instance_id,"CONTRACT_UPGRADE_REQUESTED","contract",target_type="resource_profile",target_name=body.get("profile_id"),details={"request_id":data.get("request_id")})
-   self.send_json(code,data)
+   send(self,code,data)
   except Exception as exc:error(self,exc)
  def patch(self):
   parsed=urlparse(self.path);path=parsed.path
   if path not in {PREFIX+"/startup",PREFIX+"/backup-policy"}:
    if previous_patch is not None:return previous_patch(self)
-   self.send_json(404,{"error":"not_found"});return
+   send(self,404,{"error":"not_found"});return
   user=require_user(self)
   if user is None:return
   try:
@@ -90,7 +94,7 @@ def install_customer_instance_workspace(legacy,authenticate):
     data=api.save_startup(user,instance_id,body.get("values"));record(api,user,instance_id,"STARTUP_CONFIGURATION_CHANGED","configuration",details={"fields":sorted((body.get("values") or {}).keys())},result="success")
    else:
     data=api.save_backup_policy(user,instance_id,body);record(api,user,instance_id,"BACKUP_SCHEDULE_CHANGED","backup",details={"enabled":bool(body.get("enabled",True)),"schedule_time":body.get("schedule_time"),"schedule_timezone":body.get("schedule_timezone")},result="success")
-   self.send_json(200,data)
+   send(self,200,data)
   except Exception as exc:error(self,exc)
  legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post;legacy.DashboardHandler.do_PATCH=patch
 
