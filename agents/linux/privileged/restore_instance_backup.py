@@ -18,6 +18,7 @@ if str(RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_DIR))
 
 import backup_client
+import prepare_customer_files
 
 STATE_DIR = Path(
     os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent")
@@ -101,6 +102,15 @@ def run(command_id: str) -> dict[str, Any]:
             "backup_id": backup_id,
         },
     )
+
+    # The atomic staging directory is created by root. Reapply the existing
+    # customer-files boundary before reporting success so the unprivileged
+    # Hybrid worker and the capivara-instance runtime retain their group access.
+    files_access = prepare_customer_files.run(instance_id)
+    operation = {
+        **operation,
+        "files_access": files_access,
+    }
 
     result = {
         "status": "completed",
