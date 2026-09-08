@@ -56,7 +56,8 @@ class HybridCustomerWorkspaceParityTest(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("to_json_compatible(payload)", source)
-        self.assertIn('getattr(self,"_internal_error",None)', source)
+        compact_source = "".join(source.split())
+        self.assertIn('getattr(self,"_internal_error",None)', compact_source)
         payload = {
             "created_at": datetime(2026, 9, 8, 9, 0, tzinfo=timezone.utc),
             "ratio": Decimal("1.25"),

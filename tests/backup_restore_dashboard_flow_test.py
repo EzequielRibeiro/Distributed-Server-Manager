@@ -26,7 +26,8 @@ class BackupRestoreDashboardFlowTest(unittest.TestCase):
         self.assertIn('role in {"admin","controller"}', service)
         self.assertIn('"restore":"backup.restore"', service)
         self.assertIn('"delete":"backup.delete"', service)
-        self.assertIn('{"customer","admin","controller"}', http)
+        compact_http = "".join(http.split())
+        self.assertIn('{"customer","admin","controller"}', compact_http)
 
     def test_selected_backup_can_be_downloaded_and_restored(self):
         js = (ROOT / "dashboard/web/customer-backup-transfer.js").read_text(encoding="utf-8")
