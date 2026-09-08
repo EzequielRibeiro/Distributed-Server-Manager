@@ -48,9 +48,11 @@ polkit.addRule(function(action, subject) {
     if (action.id == "org.freedesktop.systemd1.manage-units" &&
         subject.user == "${DSM_USER}") {
         var unit = action.lookup("unit");
+        var instanceUnit = /^capivara-instance-[A-Za-z0-9._-]{1,191}\\.service$/;
         if (unit && (
             unit.indexOf("dsm-hybrid-agent-materialize@") === 0 ||
-            unit.indexOf("dsm-hybrid-agent-files-access@") === 0
+            unit.indexOf("dsm-hybrid-agent-files-access@") === 0 ||
+            instanceUnit.test(unit)
         )) {
             return polkit.Result.YES;
         }
