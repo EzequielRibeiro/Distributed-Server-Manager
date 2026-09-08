@@ -30,6 +30,27 @@ class HybridCustomerWorkspaceParityTest(unittest.TestCase):
         self.assertNotIn('unit.indexOf("capivara-instance-") === 0', source)
         self.assertNotIn('unit.indexOf("capivara-instance-") == 0', source)
 
+    def test_hybrid_agent_state_allows_runtime_traversal_without_listing(self):
+        source = (ROOT / "installer" / "install_hybrid_runtime_substrate.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'install -d -m 0710 -o "${DSM_USER}" -g capivara-agent \\\n  "${DSM_ROOT}/runtime/hybrid-agent-state"',
+            source,
+        )
+        self.assertIn(
+            '"${DSM_ROOT}/runtime/hybrid-agent-state/backups"',
+            source,
+        )
+        self.assertIn(
+            '"${DSM_ROOT}/runtime/hybrid-agent-state/backup-results"',
+            source,
+        )
+        self.assertNotIn(
+            'install -d -m 0750 -o "${DSM_USER}" -g capivara-agent \\\n  "${DSM_ROOT}/runtime/hybrid-agent-state"',
+            source,
+        )
+
     def test_workspace_http_normalizes_database_native_values(self):
         source = (DASHBOARD / "customer_instance_workspace_http.py").read_text(
             encoding="utf-8"
