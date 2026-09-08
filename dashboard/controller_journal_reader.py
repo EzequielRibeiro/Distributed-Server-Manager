@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Restricted journal reader for Controller services.
+"""Restricted journal reader for Controller and local instance services.
 
 This process is the only Dashboard-side component granted membership in
 systemd-journal. It exposes a small AF_UNIX protocol to the unprivileged web
-process and never accepts unit names or commands from clients.
+process and never accepts unit names or commands from clients. Instance log
+requests accept only a validated instance_id and derive the systemd unit
+internally.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import socket
 import struct
 import subprocess
@@ -20,6 +23,7 @@ DEFAULT_SOCKET = "/run/capivara-controller-log/reader.sock"
 MAX_REQUEST_BYTES = 4096
 MIN_LIMIT = 20
 MAX_LIMIT = 2000
+INSTANCE_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 CONTROLLER_UNITS = (
     "dsm-dashboard.service",
     "dsm-dashboard-worker.service",
@@ -53,10 +57,27 @@ def journal_command(limit: int) -> list[str]:
     return command
 
 
-def read_controller_logs(limit: int) -> dict[str, object]:
+def instance_journal_command(instance_id: str, limit: int) -> list[str]:
+    instance_id = str(instance_id or "").strip()
+    if not INSTANCE_ID_RE.fullmatch(instance_id):
+        raise ValueError("invalid_instance_id")
+    return [
+        JOURNALCTL,
+        "--quiet",
+        "--no-pager",
+        "-o",
+        "short-iso",
+        "-n",
+        str(clamp_limit(limit)),
+        "-u",
+        f"capivara-instance-{instance_id}.service",
+    ]
+
+
+def _run_journal(command: list[str], *, source: str, limit: int, instance_id: str | None = None) -> dict[str, object]:
     try:
         completed = subprocess.run(
-            journal_command(limit),
+            command,
             check=False,
             capture_output=True,
             text=True,
@@ -80,13 +101,26 @@ def read_controller_logs(limit: int) -> dict[str, object]:
         }
 
     lines = (completed.stdout or "").splitlines()
-    return {
+    result: dict[str, object] = {
         "ok": True,
-        "source": "controller",
+        "source": source,
         "backend": "systemd-journal",
         "logs": lines[-clamp_limit(limit):],
         "total_returned": min(len(lines), clamp_limit(limit)),
     }
+    if instance_id is not None:
+        result["instance_id"] = instance_id
+    return result
+
+
+def read_controller_logs(limit: int) -> dict[str, object]:
+    return _run_journal(journal_command(limit), source="controller", limit=limit)
+
+
+def read_instance_logs(instance_id: str, limit: int) -> dict[str, object]:
+    instance_id = str(instance_id or "").strip()
+    command = instance_journal_command(instance_id, limit)
+    return _run_journal(command, source="instance", limit=limit, instance_id=instance_id)
 
 
 def _peer_uid(connection: socket.socket) -> int | None:
@@ -142,9 +176,17 @@ def serve(socket_path: str) -> None:
                     continue
                 try:
                     request = _read_request(connection)
-                    if request.get("operation") != "controller_logs":
+                    operation = str(request.get("operation") or "")
+                    if operation == "controller_logs":
+                        payload = read_controller_logs(clamp_limit(request.get("limit")))
+                    elif operation == "instance_logs":
+                        payload = read_instance_logs(
+                            str(request.get("instance_id") or ""),
+                            clamp_limit(request.get("limit")),
+                        )
+                    else:
                         raise ValueError("unsupported_operation")
-                    _reply(connection, read_controller_logs(clamp_limit(request.get("limit"))))
+                    _reply(connection, payload)
                 except (ValueError, json.JSONDecodeError) as exc:
                     _reply(connection, {"ok": False, "error": "invalid_request", "message": str(exc), "logs": []})
     finally:
