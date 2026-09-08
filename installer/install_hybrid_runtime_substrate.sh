@@ -16,13 +16,20 @@ id capivara-instance >/dev/null 2>&1 || useradd --system --gid capivara-agent --
 usermod -a -G capivara-agent capivara-instance >/dev/null 2>&1 || true
 usermod -a -G capivara-agent "${DSM_USER}" >/dev/null 2>&1 || true
 
+# The instance runtime account must be able to traverse the Hybrid Agent state
+# root to reach shared game-data, but it must not be able to list that root.
+# Keep sensitive control/backup directories private to the DSM service account.
+install -d -m 0710 -o "${DSM_USER}" -g capivara-agent \
+  "${DSM_ROOT}/runtime/hybrid-agent-state"
+
 install -d -m 0700 -o "${DSM_USER}" -g "${DSM_GROUP}" \
-  "${DSM_ROOT}/runtime/hybrid-agent-state" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/instance-provisioning" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/instance-provisioning/history" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/instance-workspaces" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/privileged-materialization" \
-  "${DSM_ROOT}/runtime/hybrid-agent-state/privileged-backup-restore"
+  "${DSM_ROOT}/runtime/hybrid-agent-state/privileged-backup-restore" \
+  "${DSM_ROOT}/runtime/hybrid-agent-state/backups" \
+  "${DSM_ROOT}/runtime/hybrid-agent-state/backup-results"
 
 install -d -m 0711 -o root -g root "${DSM_ROOT}/runtime/hybrid-instance-storage"
 
