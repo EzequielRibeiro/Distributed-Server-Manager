@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   readiness:
+    name: Release Readiness Gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
