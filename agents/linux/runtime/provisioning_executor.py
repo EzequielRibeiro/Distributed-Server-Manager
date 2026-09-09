@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 import time
+import traceback
 from typing import Any
 
 from game_data_executor import _execute as execute_game_data
@@ -22,6 +25,41 @@ from runtime_events import emit_runtime_event
 from runtime_limits import runtime_limits
 from runtime_metrics import increment, observe_duration
 from runtime_operations import runtime_operation
+
+
+_SECRET_PATTERNS = (
+    re.compile(r"(?i)(authorization\s*:\s*bearer\s+)[^\s,;]+"),
+    re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+"),
+    re.compile(
+        r"(?i)(\b(?:password|passwd|token|secret|api[_-]?key|steam[_-]?(?:password|token|guard))\b"
+        r"\s*(?::|=)\s*)[^\s,;]+"
+    ),
+    re.compile(r"(?i)([?&](?:token|access_token|api_key|apikey|password|secret)=)[^&#\s]+"),
+)
+
+
+def _sanitize_failure_text(value: Any, *, limit: int) -> str:
+    """Redact common credentials and normalize sensitive host paths."""
+    text = str(value or "").replace("\x00", "")
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub(lambda match: match.group(1) + "[REDACTED]", text)
+    text = re.sub(r"(?i)(\+login\s+)\S+(?:\s+\S+)?", r"\1[REDACTED]", text)
+    text = re.sub(r"(?i)/opt/dsm/", "<DSM_ROOT>/", text)
+    text = re.sub(r"(?i)/home/[^/\s]+/", "<HOME>/", text)
+    text = re.sub(r"(?i)[A-Z]:\\Users\\[^\\\s]+\\", "<USER_HOME>/", text)
+    return text[:limit]
+
+
+def _failure_diagnostics(request: dict[str, Any], exc: Exception) -> dict[str, Any]:
+    """Build a bounded diagnostic payload safe enough to leave the Agent."""
+    return {
+        "error": _sanitize_failure_text(exc, limit=2000),
+        "exception_type": type(exc).__name__[:256],
+        "traceback": _sanitize_failure_text(traceback.format_exc(limit=32), limit=16000),
+        "source": "agent.provisioning_executor",
+        "failed_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        "correlation_id": str(request.get("provisioning_id") or "")[:256],
+    }
 
 
 def _workspace(instance_id: str) -> Path:
@@ -130,10 +168,12 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
                 compensation.append("staging_cleanup_failed")
         compensation.extend(["content_preserved_for_retry", "port_reservations_preserved"])
         increment("provisioning_failed")
-        failed = _result(result_path, request, status="failed", current_step=step, progress=100,
-                         error=str(exc)[:2000], compensation=compensation)
-        _event("INSTANCE_PROVISIONING_FAILED", request, step=step, progress=100,
-               data={"error": str(exc)[:2000], "compensation": compensation})
+        diagnostics = _failure_diagnostics(request, exc)
+        failed = _result(result_path, request, status="failed", current_step=step, progress=99,
+                         compensation=compensation, **diagnostics)
+        _event("INSTANCE_PROVISIONING_FAILED", request, step=step, progress=99,
+               data={"error": diagnostics["error"], "exception_type": diagnostics["exception_type"],
+                     "correlation_id": diagnostics["correlation_id"], "compensation": compensation})
         return failed
 
 
@@ -147,9 +187,12 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
             result = _execute_locked(config, request, result_path, deadline)
     except Exception as exc:
         increment("provisioning_conflict_or_failure")
-        result = _result(result_path, request, status="failed", current_step="operation_lock", progress=100,
-                         error=str(exc)[:2000], compensation=["content_preserved_for_retry", "port_reservations_preserved"])
-        _event("INSTANCE_PROVISIONING_FAILED", request, step="operation_lock", progress=100, data={"error": str(exc)[:2000]})
+        diagnostics = _failure_diagnostics(request, exc)
+        result = _result(result_path, request, status="failed", current_step="operation_lock", progress=99,
+                         compensation=["content_preserved_for_retry", "port_reservations_preserved"], **diagnostics)
+        _event("INSTANCE_PROVISIONING_FAILED", request, step="operation_lock", progress=99,
+               data={"error": diagnostics["error"], "exception_type": diagnostics["exception_type"],
+                     "correlation_id": diagnostics["correlation_id"]})
     observe_duration("provisioning", int((time.monotonic() - started) * 1000))
     return result
 
