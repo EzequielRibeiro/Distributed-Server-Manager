@@ -48,6 +48,24 @@ class InstanceRuntimeStatusUiTest(unittest.TestCase):
         )
         self.assertIn("paradas confirmadas", page)
 
+    def test_manage_action_stays_in_controller_instance_context(self):
+        script = (WEB / "servers.js").read_text(encoding="utf-8")
+        styles = (WEB / "servers.css").read_text(encoding="utf-8")
+
+        self.assertNotIn('href="catalog.html">Gerenciar</a>', script)
+        self.assertIn('type="button">Gerenciar</button>', script)
+        self.assertIn('id="instance-manage-dialog"', script)
+        self.assertIn('request(`/api/runtime?${new URLSearchParams(id)}`)', script)
+        self.assertIn('request(`/api/instance/${action}`', script)
+        self.assertIn('"X-Capivara-Auth-Area":"controller"', script)
+        self.assertIn('.cap-manage-dialog', styles)
+
+    def test_instance_management_assets_bust_previous_cache(self):
+        page = (WEB / "servers.html").read_text(encoding="utf-8")
+
+        self.assertIn('servers.css?v=8', page)
+        self.assertIn('servers.js?v=8', page)
+
 
 if __name__ == "__main__":
     unittest.main()
