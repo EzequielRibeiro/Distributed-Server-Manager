@@ -26,6 +26,11 @@ jobs:
 
       - name: Install validation tools
         run: |
+          if command -v jq >/dev/null 2>&1; then
+            jq --version
+            exit 0
+          fi
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install --yes jq
 
