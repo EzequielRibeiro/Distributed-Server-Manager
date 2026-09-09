@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from activity_audit_schema import activity_audit_ddl
+from agent_log_event_schema import agent_log_event_ddl
 from agent_public_network_schema import ensure_agent_public_network_schema
 from alert_event_action_schema import action_check_expression
 from alert_scope_history_schema import alert_scope_history_ddl
@@ -430,6 +431,12 @@ def _upgrade_backup_job_retry_identity(backend: Any, connection: Any) -> None:
     raise DatabaseMigrationError(f"unsupported baseline backend: {backend.name}")
 
 
+def _upgrade_agent_log_events(backend: Any, connection: Any) -> None:
+    if "agent_log_events" in _table_names(backend, connection):
+        return
+    _execute_script(backend, connection, agent_log_event_ddl(backend.name))
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -438,6 +445,7 @@ UPGRADES = (
     BaselineUpgrade(5, "alert_events_note_action", _upgrade_alert_events_note_action),
     BaselineUpgrade(6, "universal_server_update", _upgrade_server_update_schema),
     BaselineUpgrade(7, "backup_job_retry_identity", _upgrade_backup_job_retry_identity),
+    BaselineUpgrade(8, "agent_log_events", _upgrade_agent_log_events),
 )
 
 
