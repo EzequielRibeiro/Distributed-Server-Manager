@@ -1,0 +1,29 @@
+name: Provisioning Failure Progress
+
+on:
+  pull_request:
+    paths:
+      - "dashboard/instance_provisioning_projection.py"
+      - "tests/provisioning_failure_progress_test.py"
+      - ".github/workflows/provisioning-failure-progress.yml"
+  push:
+    branches: [main]
+    paths:
+      - "dashboard/instance_provisioning_projection.py"
+      - "tests/provisioning_failure_progress_test.py"
+      - ".github/workflows/provisioning-failure-progress.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Provisioning Failure Progress Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python syntax
+        run: python3 -m py_compile dashboard/instance_provisioning_projection.py tests/provisioning_failure_progress_test.py
+      - name: Run failure progress contract tests
+        run: python3 -m unittest tests/provisioning_failure_progress_test.py

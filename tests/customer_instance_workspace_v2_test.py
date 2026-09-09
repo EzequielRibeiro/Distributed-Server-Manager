@@ -122,7 +122,7 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
 
   self.assertEqual("failed",result["provision"]["status"])
   self.assertEqual("install_content",result["provision"]["stage"])
-  self.assertEqual(100,result["provision"]["progress"])
+  self.assertEqual(99,result["provision"]["progress"])
   self.assertEqual("prov-2",result["provision"]["provisioning_id"])
 
 if __name__=="__main__":unittest.main()
