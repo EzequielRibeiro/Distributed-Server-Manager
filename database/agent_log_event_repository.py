@@ -116,7 +116,10 @@ class AgentLogEventRepository:
                 "ON CONFLICT(event_id) DO NOTHING"
             )
         if self.backend.name == "mysql":
-            return f"INSERT IGNORE INTO agent_log_events({names}) VALUES ({placeholders})"
+            return (
+                f"INSERT INTO agent_log_events({names}) VALUES ({placeholders}) "
+                "ON DUPLICATE KEY UPDATE event_id=VALUES(event_id)"
+            )
         raise ValueError(f"unsupported Agent log backend: {self.backend.name}")
 
     def ingest_agent_logs(
@@ -168,8 +171,8 @@ class AgentLogEventRepository:
                         event["provisioning_id"],
                     )
                     result = session.execute(insert_sql, values)
-                    # SQLite, psycopg and mysql-connector all expose rowcount for
-                    # INSERT ... DO NOTHING / INSERT IGNORE as 1 or 0.
+                    # SQLite, psycopg and mysql-connector expose rowcount for
+                    # conflict-ignore/no-op duplicate handling as 1 or 0.
                     if int(getattr(result, "rowcount", 0) or 0) > 0:
                         created += 1
             finally:
