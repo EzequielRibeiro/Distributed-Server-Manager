@@ -172,7 +172,7 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
             rule_id="instance_provisioning_failed",
             level="CRITICAL",
             message=message,
-            scope="INSTANCE",
+            scope="instance",
             controller_id=controller_id,
             agent_id=str(state.get("agent_id") or "") or None,
             node_id=str(context.get("node_id") or "") or None,
