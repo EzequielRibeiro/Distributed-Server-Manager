@@ -63,7 +63,8 @@ class AgentFailureCaptureTest(unittest.TestCase):
     def test_agent_failure_is_below_100_and_sanitized_before_result_persistence(self):
         def fail(_command):
             raise RuntimeError(
-                "install failed password=hunter2 Authorization: Bearer super-secret +login steamuser steampass"
+                "install failed password=hunter2 Authorization: Bearer super-secret +login steamuser steampass "
+                "at C:\\Users\\Ezequiel\\Capivara\\server.exe"
             )
 
         provisioning_executor.execute_game_data = fail
@@ -84,6 +85,8 @@ class AgentFailureCaptureTest(unittest.TestCase):
         self.assertNotIn("hunter2", rendered)
         self.assertNotIn("super-secret", rendered)
         self.assertNotIn("steampass", rendered)
+        self.assertNotIn("Ezequiel", rendered)
+        self.assertIn("<USER_HOME>/", rendered)
         self.assertIn("[REDACTED]", rendered)
 
 
@@ -180,6 +183,7 @@ class ControllerFailureDiagnosticsTest(unittest.TestCase):
             "traceback": (
                 "Traceback (most recent call last):\n"
                 "  File \"/opt/dsm/agents/linux/runtime/provisioning_executor.py\", line 1\n"
+                "  File \"C:\\Users\\Ezequiel\\Capivara\\runtime.py\", line 2\n"
                 "RuntimeError: token=trace-secret password=trace-pass"
             ),
         }
@@ -218,11 +222,13 @@ class ControllerFailureDiagnosticsTest(unittest.TestCase):
         self.assertEqual(admin_view["exception_type"], "RuntimeError")
         self.assertEqual(admin_view["correlation_id"], self.created["provisioning_id"])
         self.assertIn("<DSM_ROOT>/", admin_view["traceback"])
+        self.assertIn("<USER_HOME>/", admin_view["traceback"])
         rendered = str(admin_view)
         self.assertNotIn("topsecret", rendered)
         self.assertNotIn("abc123", rendered)
         self.assertNotIn("trace-secret", rendered)
         self.assertNotIn("trace-pass", rendered)
+        self.assertNotIn("Ezequiel", rendered)
         self.assertIn("[REDACTED]", rendered)
 
     def test_failure_opens_one_rich_critical_alert_and_repeated_result_is_deduplicated(self):
