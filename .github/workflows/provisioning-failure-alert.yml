@@ -1,0 +1,29 @@
+name: Provisioning Failure Alert
+
+on:
+  pull_request:
+    paths:
+      - 'dashboard/agent_instance_provisioning_repository.py'
+      - 'tests/provisioning_failure_diagnostics_test.py'
+      - '.github/workflows/provisioning-failure-alert.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/agent_instance_provisioning_repository.py'
+      - 'tests/provisioning_failure_diagnostics_test.py'
+      - '.github/workflows/provisioning-failure-alert.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Provisioning Failure Alert Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python syntax
+        run: python3 -m py_compile dashboard/agent_instance_provisioning_repository.py tests/provisioning_failure_diagnostics_test.py
+      - name: Run rich diagnostics and alert regression
+        run: python3 -m unittest tests/provisioning_failure_diagnostics_test.py

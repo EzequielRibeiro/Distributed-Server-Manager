@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Dashboard-facing provisioning repository with safe failure diagnostics.
 
-The canonical persistence implementation lives in ``database/``.  Dashboard
+The canonical persistence implementation lives in ``database/``. Dashboard
 services historically import repositories as top-level modules while running
-with ``dashboard`` first on ``sys.path``.  This adapter keeps that import
+with ``dashboard`` first on ``sys.path``. This adapter keeps that import
 contract, adds diagnostics at the Controller trust boundary, and deliberately
 projects sensitive traceback data only through an explicit Admin-only API.
 """
@@ -168,7 +168,7 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
             rule_id="instance_provisioning_failed",
             level="CRITICAL",
             message=message,
-            scope="INSTANCE",
+            scope="instance",
             controller_id=controller_id,
             agent_id=str(state.get("agent_id") or "") or None,
             node_id=str(context.get("node_id") or "") or None,
