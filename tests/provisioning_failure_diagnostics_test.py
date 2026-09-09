@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import json
 import sys
 import tempfile
 import unittest
@@ -22,6 +24,7 @@ from agent_instance_provisioning_api import (
 from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
 from agent_pairing_repository import AgentPairingRepository
 from agent_remote_http import dispatch_enroll, dispatch_heartbeat
+from alert_cli import _json_default
 from alert_repository import AlertRepository
 from backend import DatabaseConfig
 from backend_factory import create_backend
@@ -168,9 +171,10 @@ class ControllerFailureDiagnosticsTest(unittest.TestCase):
         self.backend.close()
         self.temp.cleanup()
 
-    def _failure(self):
+    def _failure(self, provisioning_id=None):
+        provisioning_id = provisioning_id or self.created["provisioning_id"]
         return {
-            "provisioning_id": self.created["provisioning_id"],
+            "provisioning_id": provisioning_id,
             "instance_id": "instance-diagnostics",
             "status": "failed",
             "current_step": "install_content",
@@ -179,7 +183,7 @@ class ControllerFailureDiagnosticsTest(unittest.TestCase):
             "exception_type": "RuntimeError",
             "source": "agent.provisioning_executor",
             "failed_at": "2026-09-09T15:30:00.000Z",
-            "correlation_id": self.created["provisioning_id"],
+            "correlation_id": provisioning_id,
             "traceback": (
                 "Traceback (most recent call last):\n"
                 "  File \"/opt/dsm/agents/linux/runtime/provisioning_executor.py\", line 1\n"
@@ -236,7 +240,7 @@ class ControllerFailureDiagnosticsTest(unittest.TestCase):
         self.jobs.apply_result("agent-diagnostics", failure)
         self.jobs.apply_result("agent-diagnostics", failure)
 
-        alert_id = f"instance-provisioning-failed:{self.created['provisioning_id']}"
+        alert_id = "instance-provisioning-failed:instance-diagnostics"
         alerts = AlertRepository(self.backend)
         alert = alerts.get_alert(alert_id)
         self.assertIsNotNone(alert)
@@ -249,6 +253,35 @@ class ControllerFailureDiagnosticsTest(unittest.TestCase):
         self.assertIn("etapa=install_content", alert["message"])
         self.assertIn(self.created["provisioning_id"], alert["message"])
         self.assertEqual(len(alerts.alert_history(alert_id)), 1)
+
+    def test_distinct_failures_for_same_instance_keep_one_active_alert(self):
+        self.jobs.apply_result("agent-diagnostics", self._failure())
+        second = self.jobs.enqueue(
+            agent_id="agent-diagnostics",
+            instance_id="instance-diagnostics",
+            environment_id="palworld.stable",
+            selector="stable",
+            selection={"game": "palworld", "provider": "steam", "install": {"package_id": "2394010"}},
+            desired_state="running",
+        )
+        second_state = self.jobs.apply_result(
+            "agent-diagnostics", self._failure(second["provisioning_id"])
+        )
+        self.assertEqual(second_state["status"], "failed")
+        alerts = AlertRepository(self.backend).list_alerts(
+            active_only=True,
+            rule_id="instance_provisioning_failed",
+            instance_id="instance-diagnostics",
+        )
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0]["id"], "instance-provisioning-failed:instance-diagnostics")
+
+
+class AlertCliJsonTest(unittest.TestCase):
+    def test_datetime_is_serialized_as_iso8601(self):
+        timestamp = datetime(2026, 9, 9, 22, 3, 45, tzinfo=timezone.utc)
+        rendered = json.dumps({"opened_at": timestamp}, default=_json_default)
+        self.assertIn("2026-09-09T22:03:45+00:00", rendered)
 
 
 if __name__ == "__main__":

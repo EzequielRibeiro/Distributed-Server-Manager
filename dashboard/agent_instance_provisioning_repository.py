@@ -163,17 +163,26 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
             f"operation={provisioning_id}; exception={exception_type}; erro={error}",
             limit=4000,
         )
-        AlertRepository(self.backend).open_alert(
-            alert_id=f"instance-provisioning-failed:{provisioning_id}",
-            rule_id="instance_provisioning_failed",
-            level="CRITICAL",
-            message=message,
-            scope="instance",
-            controller_id=controller_id,
-            agent_id=str(state.get("agent_id") or "") or None,
-            node_id=str(context.get("node_id") or "") or None,
-            instance_id=instance_id or None,
-        )
+        # One active provisioning-failure alert is allowed per instance by the
+        # alert-store business key. Keep a stable id for future occurrences and
+        # never allow an observability side effect to block the provisioning
+        # state machine. Existing deployments can still contain a legacy
+        # provisioning-specific active id; in that case the unique index may
+        # reject this first stable-id insert until that alert is resolved.
+        try:
+            AlertRepository(self.backend).open_alert(
+                alert_id=f"instance-provisioning-failed:{instance_id}",
+                rule_id="instance_provisioning_failed",
+                level="CRITICAL",
+                message=message,
+                scope="instance",
+                controller_id=controller_id,
+                agent_id=str(state.get("agent_id") or "") or None,
+                node_id=str(context.get("node_id") or "") or None,
+                instance_id=instance_id or None,
+            )
+        except Exception:
+            return
 
     def apply_result(self, agent_id: str, result: dict[str, Any] | None) -> dict[str, Any] | None:
         if not isinstance(result, dict):

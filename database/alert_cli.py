@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+from datetime import date, datetime
 import json
 import sys
 from pathlib import Path
@@ -54,12 +55,21 @@ def normalize_level(value):
     return level
 
 
+def _json_default(value):
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    raise TypeError(
+        f"Object of type {type(value).__name__} is not JSON serializable"
+    )
+
+
 def print_json(payload):
     print(
         json.dumps(
             payload,
             ensure_ascii=False,
             separators=(",", ":"),
+            default=_json_default,
         )
     )
 
