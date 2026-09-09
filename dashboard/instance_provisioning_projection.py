@@ -55,7 +55,10 @@ def dashboard_provision_state(state: dict[str, Any] | None) -> dict[str, Any]:
     else:
         status = "failed"
         stage = step or "failed"
-        progress = max(progress, 35)
+        # A terminal failure must never be presented as 100% complete.  The
+        # Agent may report progress=100 when the final reconcile/start step
+        # fails, but 100 is reserved for a successfully completed operation.
+        progress = max(35, min(progress, 99))
         message = "Não foi possível concluir o provisionamento no Agent."
 
     payload: dict[str, Any] = {
