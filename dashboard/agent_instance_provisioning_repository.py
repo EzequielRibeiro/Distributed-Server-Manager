@@ -138,8 +138,12 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
         ph = self.dialect.placeholder
         with self.session() as session:
             row = session.execute(
-                "SELECT i.node_id,i.game_id,i.controller_id,i.customer_id,c.name AS customer_name "
-                "FROM instances i LEFT JOIN customers c ON c.id=i.customer_id "
+                "SELECT i.node_id,i.game_id,"
+                "COALESCE(NULLIF(i.controller_id,''),NULLIF(c.controller_id,''),NULLIF(a.controller_id,'')) AS controller_id,"
+                "i.customer_id,c.name AS customer_name "
+                "FROM instances i "
+                "LEFT JOIN customers c ON c.id=i.customer_id "
+                "LEFT JOIN agents a ON a.id=i.agent_id "
                 f"WHERE i.id={ph}",
                 (instance_id,),
             ).fetchone()
