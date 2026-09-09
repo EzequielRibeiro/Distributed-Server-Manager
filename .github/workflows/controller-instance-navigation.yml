@@ -1,0 +1,37 @@
+name: Controller Instance Navigation
+
+on:
+  pull_request:
+    paths:
+      - "dashboard/web/servers.js"
+      - "dashboard/web/servers.html"
+      - "dashboard/web/customer-instance.html"
+      - "dashboard/web/controller-instance-auth.js"
+      - "tests/controller_instance_navigation_test.py"
+      - ".github/workflows/controller-instance-navigation.yml"
+  push:
+    branches: [main]
+    paths:
+      - "dashboard/web/servers.js"
+      - "dashboard/web/servers.html"
+      - "dashboard/web/customer-instance.html"
+      - "dashboard/web/controller-instance-auth.js"
+      - "tests/controller_instance_navigation_test.py"
+      - ".github/workflows/controller-instance-navigation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Controller Instance Navigation Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate JavaScript syntax
+        run: |
+          node --check dashboard/web/servers.js
+          node --check dashboard/web/controller-instance-auth.js
+      - name: Run navigation contract tests
+        run: python3 -m unittest tests/controller_instance_navigation_test.py
