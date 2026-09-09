@@ -6,6 +6,7 @@ on:
       - 'agents/linux/runtime/instance_telemetry.py'
       - 'agents/linux/runtime/materializers/systemd.py'
       - 'dashboard/customer_instance_workspace_service.py'
+      - 'dashboard/web/customer-instance-v2.js'
       - 'tests/instance_runtime_telemetry_test.py'
       - '.github/workflows/instance-runtime-telemetry.yml'
   push:
@@ -14,6 +15,7 @@ on:
       - 'agents/linux/runtime/instance_telemetry.py'
       - 'agents/linux/runtime/materializers/systemd.py'
       - 'dashboard/customer_instance_workspace_service.py'
+      - 'dashboard/web/customer-instance-v2.js'
       - 'tests/instance_runtime_telemetry_test.py'
       - '.github/workflows/instance-runtime-telemetry.yml'
 
@@ -33,6 +35,7 @@ jobs:
             agents/linux/runtime/materializers/systemd.py \
             dashboard/customer_instance_workspace_service.py \
             tests/instance_runtime_telemetry_test.py
+          node --check dashboard/web/customer-instance-v2.js
       - name: Test systemd telemetry
         run: |
           python3 -m unittest \
@@ -62,3 +65,8 @@ jobs:
           grep -F 'IPEgressBytes' agents/linux/runtime/instance_telemetry.py
           grep -F 'Source Engine Query' agents/linux/runtime/instance_telemetry.py
           ! grep -F 'storage_used_bytes": 0' agents/linux/runtime/instance_telemetry.py
+          grep -F 'function knownNumber' dashboard/web/customer-instance-v2.js
+          grep -F 'function setProgress' dashboard/web/customer-instance-v2.js
+          ! grep -F 'players_online??0' dashboard/web/customer-instance-v2.js
+          ! grep -F 'Number(x.memory_bytes||0)' dashboard/web/customer-instance-v2.js
+          ! grep -F 'Number(x.network_rx_bytes||0)' dashboard/web/customer-instance-v2.js
