@@ -33,8 +33,28 @@ jobs:
             agents/linux/runtime/materializers/systemd.py \
             dashboard/customer_instance_workspace_service.py \
             tests/instance_runtime_telemetry_test.py
-      - name: Run telemetry regression tests
-        run: python3 -m unittest tests/instance_runtime_telemetry_test.py
+      - name: Test systemd telemetry
+        run: |
+          python3 -m unittest \
+            tests.instance_runtime_telemetry_test.InstanceRuntimeTelemetryTest.test_systemd_unit_enables_ip_accounting \
+            tests.instance_runtime_telemetry_test.InstanceRuntimeTelemetryTest.test_systemd_network_returns_instance_counters \
+            tests.instance_runtime_telemetry_test.InstanceRuntimeTelemetryTest.test_unavailable_systemd_network_is_unknown_not_zero
+      - name: Test DayZ A2S telemetry
+        run: |
+          python3 -m unittest \
+            tests.instance_runtime_telemetry_test.InstanceRuntimeTelemetryTest.test_dayz_uses_reserved_steam_query_port \
+            tests.instance_runtime_telemetry_test.InstanceRuntimeTelemetryTest.test_native_a2s_info_parses_players \
+            tests.instance_runtime_telemetry_test.InstanceRuntimeTelemetryTest.test_native_a2s_info_handles_challenge \
+            tests.instance_runtime_telemetry_test.InstanceRuntimeTelemetryTest.test_native_a2s_failure_is_unknown
+      - name: Test storage telemetry
+        run: |
+          python3 -m unittest \
+            tests.instance_runtime_telemetry_test.InstanceRuntimeTelemetryTest.test_storage_zero_only_for_measurable_empty_directory \
+            tests.instance_runtime_telemetry_test.InstanceRuntimeTelemetryTest.test_storage_scan_error_is_unknown_not_partial
+      - name: Test workspace quota separation
+        run: |
+          python3 -m unittest \
+            tests.instance_runtime_telemetry_test.InstanceRuntimeTelemetryTest.test_workspace_keeps_usage_separate_from_quota
       - name: Check telemetry boundary
         run: |
           grep -F 'IPAccounting=yes' agents/linux/runtime/materializers/systemd.py
