@@ -6,7 +6,11 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import parse_qs
 
-from agent_instance_provisioning_api import instance_provisioning_status, queue_instance_provisioning
+from agent_instance_provisioning_api import (
+    instance_provisioning_diagnostics,
+    instance_provisioning_status,
+    queue_instance_provisioning,
+)
 
 INSTANCE_PROVISIONING_PATH = "/api/instances/provisioning"
 
@@ -24,14 +28,22 @@ def dispatch_instance_provisioning_post(path: str, payload: dict[str, Any] | Non
         return 500, {"error": "instance_provisioning_failed", "message": "Não foi possível iniciar o provisionamento."}
 
 
+def _wants_diagnostics(query: dict[str, list[str]]) -> bool:
+    value = str((query.get("diagnostics") or query.get("include_diagnostics") or [""])[0]).strip().lower()
+    return value in {"1", "true", "yes", "admin"}
+
+
 def dispatch_instance_provisioning_get(path: str, query_string: str, *, user, backend) -> tuple[int, dict[str, Any]]:
     if path != INSTANCE_PROVISIONING_PATH:
         return 404, {"error": "not_found"}
     query = parse_qs(query_string)
+    provisioning_id = (query.get("provisioning_id") or [""])[0]
     try:
-        return 200, instance_provisioning_status((query.get("provisioning_id") or [""])[0], user=user, backend=backend)
+        if _wants_diagnostics(query):
+            return 200, instance_provisioning_diagnostics(provisioning_id, user=user, backend=backend)
+        return 200, instance_provisioning_status(provisioning_id, user=user, backend=backend)
     except PermissionError:
-        return 403, {"error": "forbidden", "message": "Acesso administrativo necessário."}
+        return 403, {"error": "forbidden", "message": "Acesso administrativo insuficiente para esta consulta."}
     except KeyError:
         return 404, {"error": "not_found", "message": "Provisionamento não encontrado."}
     except ValueError as exc:
