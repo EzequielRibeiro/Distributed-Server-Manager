@@ -12,7 +12,8 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "agents" / "linux" / "runtime"
 DASHBOARD = ROOT / "dashboard"
-for path in (RUNTIME, DASHBOARD):
+DATABASE = ROOT / "database"
+for path in (RUNTIME, DASHBOARD, DATABASE):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
