@@ -63,7 +63,7 @@ def _credential_lines(spec):
  return lines
 def render_unit(spec):
  instance_id=str(spec["instance_id"]);agent_id=str(spec["agent_id"]);runtime_id=str(spec["runtime_id"]);state_directory,default_state_path,private_state_path=_private_state(spec);argv=[str(spec["executable"]),*[str(x) for x in spec.get("arguments",[])]]
- lines=["[Unit]",f"Description=Capivara instance {instance_id}","After=network-online.target","Wants=network-online.target",f"X-Capivara-GeneratedBy={_GENERATED_BY}",f"X-Capivara-Instance={instance_id}",f"X-Capivara-Agent={agent_id}",f"X-Capivara-Runtime={runtime_id}","","[Service]","Type=simple",f"User={spec['user']}"]
+ lines=["[Unit]",f"Description=Capivara instance {instance_id}","After=network-online.target","Wants=network-online.target",f"X-Capivara-GeneratedBy={_GENERATED_BY}",f"X-Capivara-Instance={instance_id}",f"X-Capivara-Agent={agent_id}",f"X-Capivara-Runtime={runtime_id}","","[Service]","Type=simple",f"User={spec['user']}","IPAccounting=yes"]
  if private_state_path==default_state_path:lines.extend([f"StateDirectory={state_directory}","StateDirectoryMode=0700"])
  lines.append(f"BindPaths={_bind_path(private_state_path,_RUNTIME_ACCOUNT_HOME)}")
  runtime_directory=spec.get("runtime_directory")
