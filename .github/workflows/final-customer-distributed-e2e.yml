@@ -27,6 +27,7 @@ permissions:
 
 jobs:
   final-customer-distributed-e2e:
+    name: Final Customer Distributed E2E Gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
