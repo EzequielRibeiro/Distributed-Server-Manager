@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Dashboard-facing provisioning repository with safe failure diagnostics.
 
-The canonical persistence implementation lives in ``database/``.  Dashboard
+The canonical persistence implementation lives in ``database/``. Dashboard
 services historically import repositories as top-level modules while running
-with ``dashboard`` first on ``sys.path``.  This adapter keeps that import
+with ``dashboard`` first on ``sys.path``. This adapter keeps that import
 contract, adds diagnostics at the Controller trust boundary, and deliberately
 projects sensitive traceback data only through an explicit Admin-only API.
 """
@@ -138,12 +138,8 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
         ph = self.dialect.placeholder
         with self.session() as session:
             row = session.execute(
-                "SELECT i.node_id,i.game_id,"
-                "COALESCE(NULLIF(i.controller_id,''),NULLIF(c.controller_id,''),NULLIF(a.controller_id,'')) AS controller_id,"
-                "i.customer_id,c.name AS customer_name "
-                "FROM instances i "
-                "LEFT JOIN customers c ON c.id=i.customer_id "
-                "LEFT JOIN agents a ON a.id=i.agent_id "
+                "SELECT i.node_id,i.game_id,i.controller_id,i.customer_id,c.name AS customer_name "
+                "FROM instances i LEFT JOIN customers c ON c.id=i.customer_id "
                 f"WHERE i.id={ph}",
                 (instance_id,),
             ).fetchone()
