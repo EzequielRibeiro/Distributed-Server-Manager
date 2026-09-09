@@ -5,14 +5,12 @@ on:
     paths:
       - 'dashboard/agent_instance_provisioning_repository.py'
       - 'tests/provisioning_failure_diagnostics_test.py'
-      - 'tests/provisioning_alert_controller_fallback_test.py'
       - '.github/workflows/provisioning-failure-alert.yml'
   push:
     branches: [main]
     paths:
       - 'dashboard/agent_instance_provisioning_repository.py'
       - 'tests/provisioning_failure_diagnostics_test.py'
-      - 'tests/provisioning_alert_controller_fallback_test.py'
       - '.github/workflows/provisioning-failure-alert.yml'
 
 permissions:
@@ -26,8 +24,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate Python syntax
-        run: python3 -m py_compile dashboard/agent_instance_provisioning_repository.py tests/provisioning_alert_controller_fallback_test.py
-      - name: Run rich diagnostics regression
+        run: python3 -m py_compile dashboard/agent_instance_provisioning_repository.py tests/provisioning_failure_diagnostics_test.py
+      - name: Run rich diagnostics and alert regression
         run: python3 -m unittest tests/provisioning_failure_diagnostics_test.py
-      - name: Run legacy Controller fallback regression
-        run: python3 tests/provisioning_alert_controller_fallback_test.py
