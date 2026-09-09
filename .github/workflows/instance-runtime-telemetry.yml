@@ -1,0 +1,44 @@
+name: Instance Runtime Telemetry
+
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/runtime/instance_telemetry.py'
+      - 'agents/linux/runtime/materializers/systemd.py'
+      - 'dashboard/customer_instance_workspace_service.py'
+      - 'tests/instance_runtime_telemetry_test.py'
+      - '.github/workflows/instance-runtime-telemetry.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/linux/runtime/instance_telemetry.py'
+      - 'agents/linux/runtime/materializers/systemd.py'
+      - 'dashboard/customer_instance_workspace_service.py'
+      - 'tests/instance_runtime_telemetry_test.py'
+      - '.github/workflows/instance-runtime-telemetry.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax
+        run: |
+          python3 -m py_compile \
+            agents/linux/runtime/instance_telemetry.py \
+            agents/linux/runtime/materializers/systemd.py \
+            dashboard/customer_instance_workspace_service.py \
+            tests/instance_runtime_telemetry_test.py
+      - name: Run telemetry regression tests
+        run: python3 -m unittest tests/instance_runtime_telemetry_test.py
+      - name: Check telemetry boundary
+        run: |
+          grep -F 'IPAccounting=yes' agents/linux/runtime/materializers/systemd.py
+          grep -F 'IPIngressBytes' agents/linux/runtime/instance_telemetry.py
+          grep -F 'IPEgressBytes' agents/linux/runtime/instance_telemetry.py
+          grep -F 'Source Engine Query' agents/linux/runtime/instance_telemetry.py
+          ! grep -F 'storage_used_bytes": 0' agents/linux/runtime/instance_telemetry.py
