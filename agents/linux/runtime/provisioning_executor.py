@@ -46,7 +46,7 @@ def _sanitize_failure_text(value: Any, *, limit: int) -> str:
     text = re.sub(r"(?i)(\+login\s+)\S+(?:\s+\S+)?", r"\1[REDACTED]", text)
     text = re.sub(r"(?i)/opt/dsm/", "<DSM_ROOT>/", text)
     text = re.sub(r"(?i)/home/[^/\s]+/", "<HOME>/", text)
-    text = re.sub(r"(?i)[A-Z]:\\Users\\[^\\\s]+\\", "<USER_HOME>\\", text)
+    text = re.sub(r"(?i)[A-Z]:\\Users\\[^\\\s]+\\", "<USER_HOME>/", text)
     return text[:limit]
 
 
