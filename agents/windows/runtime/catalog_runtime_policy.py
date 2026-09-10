@@ -82,6 +82,12 @@ def apply_policy(spec: dict[str, Any], instance: dict[str, Any], context: dict[s
     result["catalog_variables"] = values
     return result
 
+def _command_line(key: str, value: str) -> tuple[re.Pattern[str], str]:
+    if any(ch in value for ch in ('\x00', '\r', '\n', '"')):
+        raise ValueError("invalid command-style network property value")
+    pattern = re.compile(rf'(?m)^\s*{re.escape(key)}\s+(?:"(?:\\.|[^"])*"|[^\r\n#]+)\s*$')
+    return pattern, f'{key} "{value}"'
+
 def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
     root=Path(str(spec.get("working_directory") or spec.get("path") or "")).resolve();values=dict(spec.get("catalog_variables") or {});written=[]
     for item in spec.get("catalog_network_properties") or []:
@@ -93,8 +99,7 @@ def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
         key=str(item.get("key") or "");value=render(item.get("value") or "",values);syntax=str(item.get("syntax") or "equals")
         text=target.read_text(encoding="utf-8",errors="replace") if target.exists() else ""
         if syntax == "command":
-            pattern=re.compile(rf'(?m)^\s*{re.escape(key)}\s+(?:"(?:\\.|[^"])*"|[^\r\n#]+)\s*$')
-            line=f'{key} "{value}"'
+            pattern,line=_command_line(key,value)
         else:
             pattern=re.compile(rf"(?m)^\s*{re.escape(key)}\s*=\s*[^\r\n;]*(?:;)?\s*$")
             line=f"{key} = {value};" if syntax=="semicolon" else f"{key}={value}"
