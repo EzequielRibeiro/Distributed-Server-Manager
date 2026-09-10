@@ -52,11 +52,27 @@ class PalworldOptionalSeedTest(unittest.TestCase):
                     "optional": True,
                 }
             ],
+            "working_file_copies": [
+                {
+                    "source": "/srv/palworld/linux64/steamclient.so",
+                    "target": "/srv/palworld/Pal/Binaries/Linux/steamclient.so",
+                }
+            ],
         }
 
     def test_runtime_spec_preserves_explicit_optional_seed_directory(self) -> None:
         result = validate_runtime_spec(self._base_spec(), expected_agent_id="agent-test")
         self.assertEqual(result["seed_directories"][0]["optional"], True)
+
+    def test_runtime_spec_preserves_working_file_copy(self) -> None:
+        result = validate_runtime_spec(self._base_spec(), expected_agent_id="agent-test")
+        self.assertEqual(
+            result["working_file_copies"],
+            [{
+                "source": "/srv/palworld/linux64/steamclient.so",
+                "target": "/srv/palworld/Pal/Binaries/Linux/steamclient.so",
+            }],
+        )
 
     def test_runtime_spec_rejects_non_boolean_optional_seed_directory(self) -> None:
         spec = self._base_spec()
@@ -64,7 +80,7 @@ class PalworldOptionalSeedTest(unittest.TestCase):
         with self.assertRaises(RuntimeSpecError):
             validate_runtime_spec(spec)
 
-    def test_palworld_profile_marks_saved_seed_optional(self) -> None:
+    def test_palworld_profile_marks_saved_seed_optional_and_bootstraps_steamclient(self) -> None:
         runtime = PalworldRuntimeProfile().build_runtime_spec(
             {"instance_id": "palworld-test", "agent_id": "agent-test", "environment_id": "palworld.stable"},
             {
@@ -74,11 +90,18 @@ class PalworldOptionalSeedTest(unittest.TestCase):
                 "ports": {"game": {"port": 8211, "protocol": "udp"}},
             },
         )
+        self.assertEqual(runtime["profile_version"], 2)
         self.assertEqual(runtime["seed_directories"], [
             {
                 "source": "/srv/palworld/Pal/Saved",
                 "target": "/var/lib/capivara-instances/palworld-test/Pal/Saved",
                 "optional": True,
+            }
+        ])
+        self.assertEqual(runtime["working_file_copies"], [
+            {
+                "source": "/srv/palworld/linux64/steamclient.so",
+                "target": "/srv/palworld/Pal/Binaries/Linux/steamclient.so",
             }
         ])
 
@@ -98,6 +121,45 @@ class PalworldOptionalSeedTest(unittest.TestCase):
             root = Path(tmp)
             with self.assertRaisesRegex(RuntimeError, "seed directory source is unavailable"):
                 module._seed_directory(root / "missing", root / "private" / "Saved", account)
+
+    def test_working_file_copy_is_idempotent_and_refreshes_changed_source(self) -> None:
+        module = _load_materializer_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "linux64" / "steamclient.so"
+            target = root / "Pal" / "Binaries" / "Linux" / "steamclient.so"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"steamclient-v1")
+            spec = {
+                "working_directory": str(root),
+                "working_file_copies": [{"source": str(source), "target": str(target)}],
+            }
+
+            first = module._sync_working_file_copies(spec)
+            self.assertTrue(first[0]["changed"])
+            self.assertEqual(target.read_bytes(), b"steamclient-v1")
+
+            second = module._sync_working_file_copies(spec)
+            self.assertFalse(second[0]["changed"])
+
+            source.write_bytes(b"steamclient-v2")
+            third = module._sync_working_file_copies(spec)
+            self.assertTrue(third[0]["changed"])
+            self.assertEqual(target.read_bytes(), b"steamclient-v2")
+
+    def test_working_file_copy_rejects_target_escape(self) -> None:
+        module = _load_materializer_module()
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            root = Path(tmp)
+            source = root / "linux64" / "steamclient.so"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"steamclient")
+            spec = {
+                "working_directory": str(root),
+                "working_file_copies": [{"source": str(source), "target": str(Path(outside) / "steamclient.so")}],
+            }
+            with self.assertRaisesRegex(RuntimeError, "escapes its allowed root"):
+                module._sync_working_file_copies(spec)
 
 
 if __name__ == "__main__":
