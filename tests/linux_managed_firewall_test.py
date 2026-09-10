@@ -126,7 +126,7 @@ def test_result_preserves_request_owner(tmp_path, monkeypatch):
     def record_chown(path, uid, gid):
         chowns.append((Path(path), uid, gid))
 
-    monkeypatch.setattr(module.os, "chown", record_chown)
+    monkeypatch.setattr(firewall.os, "chown", record_chown)
 
     def runner(command, timeout):
         if command == ["ufw", "status"]:
