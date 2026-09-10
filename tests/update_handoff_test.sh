@@ -67,6 +67,7 @@ cat >"${PACKAGE_SRC}/update.sh" <<EOF
 #!/usr/bin/env bash
 [[ "\$1" == "${HANDOFF_DIR}/capivara-dsm-1.4.6" ]] || exit 41
 printf 'target\n' >"${MARKER}"
+printf '1.4.6\n' >"${DSM_ROOT}/version"
 EOF
 chmod +x "${PACKAGE_SRC}/update.sh"
 
@@ -92,5 +93,7 @@ dsm_update_run >/dev/null
 [[ -f "${MARKER}" ]] || fail "no updater was executed"
 [[ "$(cat "${MARKER}")" == "target" ]] \
     || fail "installed updater executed instead of target release updater"
+[[ "$(cat "${DSM_ROOT}/version")" == "1.4.6" ]] \
+    || fail "target updater did not install the expected version"
 
 printf 'Target updater handoff regression passed.\n'

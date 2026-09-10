@@ -385,6 +385,33 @@ dsm_update_run()
     fi
 
     # =========================================================
+    # Confirma instalação efetiva antes de registrar sucesso.
+    #
+    # O updater alvo pode retornar 0 sem aplicar a atualização
+    # (por exemplo, quando o usuário cancela uma confirmação
+    # interativa). O histórico/evento de sucesso só é válido se
+    # a instalação realmente estiver na versão esperada.
+    # =========================================================
+
+    installed_version=$(cat "$INSTALL_DIR/version" 2>/dev/null || true)
+
+    if [ "$installed_version" != "$latest_version" ]
+    then
+        log_error "Updater alvo terminou sem instalar a versão esperada: esperado=$latest_version instalado=${installed_version:-unknown}"
+
+        dsm_update_notify \
+        "DSM Update" \
+        "Atualização não concluída"
+
+        events_emit \
+        "DSM_UPDATE_FAILED" \
+        "$latest_version" \
+        2>/dev/null || true
+
+        return 1
+    fi
+
+    # =========================================================
     # Histórico e eventos
     # =========================================================
 
