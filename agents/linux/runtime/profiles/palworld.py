@@ -7,7 +7,7 @@ from .base import GameRuntimeProfile, ProfileError, port_bindings, require_absol
 
 class PalworldRuntimeProfile(GameRuntimeProfile):
     game_ids = ("palworld", "palworld.stable")
-    profile_version = 2
+    profile_version = 3
 
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         instance_id=require_text(instance.get("instance_id") or instance.get("id"),"instance_id")
@@ -19,15 +19,20 @@ class PalworldRuntimeProfile(GameRuntimeProfile):
         executable_value=str(policy.get("executable") or "PalServer.sh").strip()
         if Path(executable_value).is_absolute():raise ProfileError("Palworld executable must be relative to provisioned content")
         executable=require_within(install_path,str(Path(install_path)/executable_value),"executable")
-        ports=port_bindings(context);binding=ports.get("game") or ports.get("game_udp")
-        if not binding or binding.get("protocol")!="udp":raise ProfileError("Palworld requires a UDP game reservation")
+        ports=port_bindings(context)
+        game_binding=ports.get("game") or ports.get("game_udp")
+        if not game_binding or game_binding.get("protocol")!="udp":raise ProfileError("Palworld requires a UDP game reservation")
+        rcon_binding=ports.get("rcon")
+        if rcon_binding and rcon_binding.get("protocol")!="tcp":raise ProfileError("Palworld RCON reservation must use TCP")
+        rest_binding=ports.get("rest_api")
+        if rest_binding and rest_binding.get("protocol")!="tcp":raise ProfileError("Palworld REST API reservation must use TCP")
         state_root=require_absolute(context.get("instance_state_root") or f"/var/lib/capivara-instances/{instance_id}","instance_state_root")
         shared_saved=Path(install_path)/"Pal"/"Saved";private_saved=Path(state_root)/"Pal"/"Saved"
         steamclient_source=Path(install_path)/"linux64"/"steamclient.so"
         steamclient_target=Path(install_path)/"Pal"/"Binaries"/"Linux"/"steamclient.so"
         raw_args=context.get("arguments") or []
         if not isinstance(raw_args,list):raise ProfileError("invalid Palworld runtime arguments")
-        arguments=[f"-port={binding['port']}",*[str(x) for x in raw_args]]
+        arguments=[f"-port={game_binding['port']}",*[str(x) for x in raw_args]]
         if any("\x00" in x or "\n" in x or "\r" in x for x in arguments):raise ProfileError("invalid Palworld runtime argument")
         raw_env=context.get("environment") or {}
         if not isinstance(raw_env,dict):raise ProfileError("invalid Palworld runtime environment")
