@@ -158,11 +158,17 @@ def run(instance_id: str, runner: Runner = _default_runner) -> dict[str, Any]:
         result = {"status": "completed", "instance_id": instance_id, "operation": operation}
     except Exception as exc:
         result = {"status": "failed", "instance_id": instance_id, "error": str(exc)[:2000]}
-    request_stat = request_path.stat()
+    owner = None
+    try:
+        request_stat = request_path.stat()
+        owner = (request_stat.st_uid, request_stat.st_gid)
+    except OSError:
+        pass
+
     _atomic_json(
         result_path,
         result,
-        owner=(request_stat.st_uid, request_stat.st_gid),
+        owner=owner,
     )
     return result
 
