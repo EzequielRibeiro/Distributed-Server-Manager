@@ -82,6 +82,41 @@ def _read_shell_values(path: Path) -> dict[str, str]:
     return result
 
 
+def _hybrid_identity() -> tuple[dict[str, Any], str, str]:
+    """Resolve the embedded Agent identity from canonical persisted Hybrid state."""
+    config = _config()
+    root = Path(os.environ.get("CAPIVARA_DSM_ROOT", RUNTIME_DIR.parents[2]))
+    shell = _read_shell_values(root / "config" / "agent.conf")
+    agent_id = str(shell.get("AGENT_ID") or config.get("agent_id") or "").strip()
+    node_id = str(shell.get("DSM_NODE_ID") or config.get("node_id") or "").strip()
+    return config, agent_id, node_id
+
+
+def _hybrid_health() -> dict[str, Any]:
+    """Report embedded Hybrid health without probing the Controller over HTTP."""
+    _config_payload, agent_id, node_id = _hybrid_identity()
+    service = local_cli._service_state()
+    identity_complete = bool(agent_id and node_id)
+    return {
+        "schema_version": 1,
+        "kind": "CapivaraAgentHealth",
+        "mode": "hybrid",
+        "healthy": bool(service.get("healthy") and identity_complete),
+        "service": service,
+        "controller": {
+            "configured": identity_complete,
+            "reachable": identity_complete,
+            "transport": "embedded-database",
+            "error": None if identity_complete else "embedded Hybrid identity is incomplete",
+        },
+        "identity": {
+            "agent_id": agent_id or None,
+            "node_id": node_id or None,
+            "enrollment_mode": "embedded-database",
+        },
+    }
+
+
 def _hybrid_doctor() -> dict[str, Any]:
     """Adapt the standalone local Doctor contract to the embedded Hybrid runtime."""
     payload = local_cli._doctor(_config())
@@ -197,12 +232,32 @@ def _hybrid_doctor_args(args: list[str]) -> list[str] | None:
     return None
 
 
+def _hybrid_health_args(args: list[str]) -> list[str] | None:
+    """Accept both direct dispatcher and canonical `cap agent health` forwarding shapes."""
+    if args and args[0] == "health":
+        return args[1:]
+    if len(args) >= 2 and args[:2] == ["agent", "health"]:
+        return args[2:]
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) >= 3 and args[:3] == ["agent", "network", "public"]:
         return _public_network_cli(args[3:])
     if len(args) >= 2 and args[0] == "agent" and args[1] == "controller":
         return controller_cli.main(args[2:])
+    health_extra = _hybrid_health_args(args)
+    if health_extra is not None and os.environ.get("CAPIVARA_AGENT_MODE") == "hybrid":
+        if health_extra not in ([], ["--json"]):
+            print("error: unsupported agent health option", file=sys.stderr)
+            return 2
+        try:
+            _emit(_hybrid_health(), as_json=health_extra == ["--json"])
+            return 0
+        except (RuntimeError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
     doctor_extra = _hybrid_doctor_args(args)
     if doctor_extra is not None and os.environ.get("CAPIVARA_AGENT_MODE") == "hybrid":
         if doctor_extra not in ([], ["--json"]):
