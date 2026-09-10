@@ -91,8 +91,14 @@ def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
         target=(root/relative).resolve();target.relative_to(root)
         if target.is_symlink():raise ValueError("network property file cannot be a symbolic link")
         key=str(item.get("key") or "");value=render(item.get("value") or "",values);syntax=str(item.get("syntax") or "equals")
-        pattern=re.compile(rf"(?m)^\s*{re.escape(key)}\s*=\s*[^\r\n;]*(?:;)?\s*$");line=f"{key} = {value};" if syntax=="semicolon" else f"{key}={value}"
-        text=target.read_text(encoding="utf-8",errors="replace") if target.exists() else "";text=pattern.sub(line,text,count=1) if pattern.search(text) else text.rstrip("\n")+("\n" if text else "")+line+"\n"
+        text=target.read_text(encoding="utf-8",errors="replace") if target.exists() else ""
+        if syntax == "command":
+            pattern=re.compile(rf'(?m)^\s*{re.escape(key)}\s+(?:"(?:\\.|[^"])*"|[^\r\n#]+)\s*$')
+            line=f'{key} "{value}"'
+        else:
+            pattern=re.compile(rf"(?m)^\s*{re.escape(key)}\s*=\s*[^\r\n;]*(?:;)?\s*$")
+            line=f"{key} = {value};" if syntax=="semicolon" else f"{key}={value}"
+        text=pattern.sub(line,text,count=1) if pattern.search(text) else text.rstrip("\n")+("\n" if text else "")+line+"\n"
         target.parent.mkdir(parents=True,exist_ok=True);target.write_text(text,encoding="utf-8");written.append(relative.as_posix())
     return written
 
