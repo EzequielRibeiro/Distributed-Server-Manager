@@ -1,4 +1,12 @@
 # DSM CHANGELOG
+## v2.0.36 — 2026-09-10
+- Migra regras UFW legadas do Capivara para o modelo de ownership do firewall gerenciado.
+- Exige correspondência exata de protocolo e porta antes da migração.
+- Preserva regras administrativas, externas e regras da mesma porta com protocolo diferente.
+- Garante que regras migradas possam ser removidas corretamente pelo lifecycle da instância.
+- Adiciona regressão baseada no cenário DayZ real do `horizon-server`.
+- Detalhes e escopo em `release/RELEASE_NOTES_2.0.36.md`.
+
 ## v2.0.35 — 2026-09-10
 - Implementa exposição de rede explícita e fail-closed para runtimes do catálogo.
 - Adiciona firewall gerenciado por instância em Linux/UFW, Hybrid e Windows/NetSecurity.
