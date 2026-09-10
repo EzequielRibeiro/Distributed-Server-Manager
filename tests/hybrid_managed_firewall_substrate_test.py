@@ -23,8 +23,15 @@ def test_hybrid_substrate_installs_managed_firewall_contract():
         in installer
     )
     assert (
-        'unit.indexOf("dsm-hybrid-agent-firewall@") === 0'
+        'var firewallUnit = '
+        '/^dsm-hybrid-agent-firewall@'
+        '[A-Za-z0-9._-]{1,191}\\\\.service$/;'
         in installer
+    )
+    assert 'verb == "start"' in installer
+    assert (
+        'unit.indexOf("dsm-hybrid-agent-firewall@") === 0'
+        not in installer
     )
 
 
@@ -61,4 +68,27 @@ def test_hybrid_provisioning_uses_hybrid_firewall_unit():
         '"CAPIVARA_FIREWALL_UNIT_TEMPLATE": '
         '"dsm-hybrid-agent-firewall@{instance_id}.service"'
         in client
+    )
+
+
+def test_hybrid_firewall_polkit_boundary_is_strict():
+    installer = (
+        ROOT / "installer" / "install_hybrid_runtime_substrate.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "var verb = action.lookup(\"verb\");" in installer
+    assert (
+        "firewallUnit.test(unit) && verb == \"start\""
+        in installer
+    )
+    assert (
+        'unit.indexOf("dsm-hybrid-agent-firewall@") === 0'
+        not in installer
+    )
+
+    # Reject arbitrary suffixes by requiring a complete .service match.
+    assert (
+        "/^dsm-hybrid-agent-firewall@"
+        "[A-Za-z0-9._-]{1,191}\\\\.service$/"
+        in installer
     )

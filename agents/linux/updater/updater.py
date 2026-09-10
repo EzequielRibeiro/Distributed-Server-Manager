@@ -616,6 +616,7 @@ def apply_request() -> int:
         try:
             _apply_files(mapping)
             _sync_persistent_version(plain, identity)
+            _ensure_state_directory(STATE_DIR / "privileged-firewall")
             _ensure_state_directory(UNINSTALL_STATE_DIR)
             _daemon_reload()
             _set_uninstall_watch(True)
