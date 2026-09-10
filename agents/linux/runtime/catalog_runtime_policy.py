@@ -1,111 +1,44 @@
-#!/usr/bin/env python3
-"""Apply Controller-resolved Catalog runtime policies on a Linux Agent."""
 from __future__ import annotations
 
-import os
 import re
 import shutil
 from pathlib import Path
 from typing import Any
 
-_TOKEN = re.compile(r"\{\{([A-Z][A-Z0-9_]{0,63})\}\}|\$\{([A-Z][A-Z0-9_]{0,63})\}")
 
-
-def _values(instance: dict[str, Any], context: dict[str, Any], policy: dict[str, Any]) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for item in policy.get("variables") or []:
-        if isinstance(item, dict) and item.get("name"):
-            values[str(item["name"])] = str(item.get("default") or "")
-    for source in (context.get("variables"), context.get("runtime_variables")):
-        if isinstance(source, dict):
-            values.update({str(k): str(v) for k, v in source.items()})
-    values.setdefault("INSTANCE_ID", str(instance.get("instance_id") or ""))
-    values.setdefault("GAME_ID", str(instance.get("game_id") or ""))
-    values.setdefault("INSTANCE_STATE_ROOT", str(context.get("instance_state_root") or ""))
-    values.setdefault("CONTENT_ROOT", str(context.get("content_root") or context.get("install_path") or ""))
-    values.setdefault("MEMORY_MB", str((context.get("resource_profile") or {}).get("memory_mb") or ""))
-    ports = context.get("ports") if isinstance(context.get("ports"), dict) else {}
-    for role, item in ports.items():
-        if isinstance(item, dict) and item.get("port"):
-            values[f"PORT_{str(role).upper().replace('-', '_')}"] = str(item["port"])
-    if "PORT_STEAM_QUERY" not in values and "PORT_GAME_AUX" in values:
-        values["PORT_STEAM_QUERY"] = values["PORT_GAME_AUX"]
-    return values
-
-
-def render(text: Any, values: dict[str, str]) -> str:
-    raw = str(text)
-    def repl(match):
-        name = match.group(1) or match.group(2)
-        if name not in values:
-            raise ValueError(f"unresolved runtime variable: {name}")
-        return values[name]
-    return _TOKEN.sub(repl, raw)
-
-
-def _argument_key(value: str) -> str:
+def render(value: Any, values: dict[str, Any]) -> str:
     text = str(value)
-    if text.startswith("-") and "=" in text:
-        return text.split("=", 1)[0].lower()
-    return text.lower()
-
-
-def _merge_arguments(required: list[Any], policy_arguments: list[Any], values: dict[str, str]) -> list[str]:
-    merged = [str(item) for item in required]
-    owned = {_argument_key(item) for item in merged}
-    for item in policy_arguments:
-        rendered = render(item, values)
-        key = _argument_key(rendered)
-        if key in owned:
-            continue
-        merged.append(rendered)
-        owned.add(key)
-    return merged
-
-
-def _resolve_executable(executable: str, content_root: Path) -> str:
-    if executable == "@java":
-        java = shutil.which("java")
-        if not java:
-            raise RuntimeError("Java is not available on this Agent")
-        return str(Path(java).resolve())
-    executable_path = Path(executable)
-    return str(executable_path if executable_path.is_absolute() else (content_root / executable_path).resolve())
-
-
-def apply_policy(spec: dict[str, Any], instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-    policy = context.get("catalog_runtime_policy")
-    if not isinstance(policy, dict) or not policy:
-        return spec
-    result = dict(spec)
-    values = _values(instance, context, policy)
-    content_root = Path(str(context.get("content_root") or context.get("install_path") or result.get("working_directory"))).resolve()
-    executable = render(policy.get("executable") or Path(str(result["executable"])).name, values)
-    result["executable"] = _resolve_executable(executable, content_root)
-    policy_arguments = policy.get("arguments") if isinstance(policy.get("arguments"), list) else []
-    result["arguments"] = _merge_arguments(list(result.get("arguments") or []), policy_arguments, values)
-    environment = dict(result.get("environment") or {})
-    for key, value in (policy.get("environment") or {}).items():
-        environment[str(key)] = render(value, values)
-    result["environment"] = environment
-    result["catalog_runtime_policy"] = {
-        "runtime_id": policy.get("runtime_id"),
-        "shutdown": policy.get("shutdown"),
-        "start_timeout_seconds": policy.get("start_timeout_seconds"),
-        "stop_timeout_seconds": policy.get("stop_timeout_seconds"),
-    }
-    result["catalog_templates"] = [*list(result.get("catalog_templates") or []), *list(policy.get("templates") or [])]
-    result["catalog_network_properties"] = [*list(result.get("catalog_network_properties") or []), *list(policy.get("network_properties") or [])]
-    result["catalog_variables"] = values
-    return result
+    for key, replacement in values.items():
+        text = text.replace("{{" + str(key) + "}}", str(replacement))
+    return text
 
 
 def _configuration_root(spec: dict[str, Any]) -> Path:
-    return Path(str(spec.get("configuration_root") or spec.get("working_directory") or spec.get("path") or "")).resolve()
+    raw = str(spec.get("configuration_root") or spec.get("instance_state_root") or spec.get("working_directory") or spec.get("path") or "").strip()
+    if not raw:
+        raise ValueError("runtime configuration root is unavailable")
+    return Path(raw).resolve()
+
+
+def apply_policy(spec: dict[str, Any], instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    result = dict(spec)
+    policy = context.get("catalog_runtime_policy") if isinstance(context.get("catalog_runtime_policy"), dict) else {}
+    network = policy.get("network") if isinstance(policy.get("network"), dict) else {}
+    values = dict(result.get("catalog_variables") or {})
+    ports = context.get("ports") if isinstance(context.get("ports"), dict) else {}
+    for name, binding in ports.items():
+        if isinstance(binding, dict) and binding.get("port") is not None:
+            values[f"PORT_{str(name).upper()}"] = int(binding["port"])
+    result["catalog_variables"] = values
+    properties = result.get("catalog_network_properties") if isinstance(result.get("catalog_network_properties"), list) else []
+    if isinstance(network.get("properties"), list):
+        properties = [*properties, *network["properties"]]
+    result["catalog_network_properties"] = properties
+    return result
 
 
 def materialize_templates(spec: dict[str, Any]) -> list[str]:
-    templates = spec.get("catalog_templates") if isinstance(spec.get("catalog_templates"), list) else []
+    templates = spec.get("templates") if isinstance(spec.get("templates"), list) else []
     if not templates:
         return []
     root = _configuration_root(spec)
@@ -116,26 +49,22 @@ def materialize_templates(spec: dict[str, Any]) -> list[str]:
             continue
         relative = Path(str(item.get("path") or ""))
         if not str(relative) or relative.is_absolute() or ".." in relative.parts:
-            raise ValueError("invalid catalog template path")
+            raise ValueError("invalid runtime template path")
         target = (root / relative).resolve()
         target.relative_to(root)
+        if target.is_symlink():
+            raise ValueError("runtime template file cannot be a symbolic link")
         target.parent.mkdir(parents=True, exist_ok=True)
-        content = render(item.get("content") or "", values)
-        target.write_text(content, encoding="utf-8")
-        try:
-            os.chmod(target, int(str(item.get("mode") or "0644"), 8))
-        except (OSError, ValueError):
-            os.chmod(target, 0o644)
+        target.write_text(render(item.get("content") or "", values), encoding="utf-8")
         written.append(relative.as_posix())
     return written
 
 
 def _ue_option_bounds(text: str) -> tuple[int, int]:
-    marker = "OptionSettings=("
-    start = text.find(marker)
-    if start < 0:
+    match = re.search(r"(?<![A-Za-z0-9_])OptionSettings\s*=\s*\(", text)
+    if not match:
         raise ValueError("Unreal OptionSettings entry is unavailable")
-    body_start = start + len(marker)
+    body_start = match.end()
     depth = 1
     quoted = False
     escaped = False
@@ -178,8 +107,17 @@ def _set_ue_option_setting(text: str, key: str, value: str) -> str:
 
 def _seed_network_property_target(spec: dict[str, Any], item: dict[str, Any], target: Path) -> None:
     seed_from = str(item.get("seed_from") or "").strip()
-    if target.exists() or not seed_from:
+    if not seed_from:
         return
+    if target.exists():
+        if not target.is_file():
+            raise ValueError("network property target is not a regular file")
+        # Palworld and similar runtimes may create an empty placeholder config
+        # before Capivara has a chance to seed the vendor default. Treat only an
+        # empty/whitespace-only file as uninitialized; never overwrite real
+        # customer configuration.
+        if target.read_text(encoding="utf-8", errors="replace").strip():
+            return
     relative = Path(seed_from)
     if relative.is_absolute() or ".." in relative.parts:
         raise ValueError("invalid network property seed path")
