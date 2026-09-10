@@ -146,3 +146,28 @@ def test_result_preserves_request_owner(tmp_path, monkeypatch):
     assert result_path.stat().st_uid == expected_owner[0]
     assert result_path.stat().st_gid == expected_owner[1]
     assert result_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_missing_request_returns_failed_result_without_stat_crash(tmp_path, monkeypatch):
+    import importlib
+    import os
+
+    monkeypatch.setenv("CAPIVARA_AGENT_STATE_DIR", str(tmp_path))
+
+    import agents.linux.privileged.reconcile_firewall as firewall
+
+    firewall = importlib.reload(firewall)
+
+    result = firewall.run("missing-instance")
+
+    assert result["status"] == "failed"
+    assert result["instance_id"] == "missing-instance"
+    assert "No such file" in result["error"] or "not found" in result["error"].lower()
+
+    result_path = (
+        tmp_path
+        / "privileged-firewall"
+        / "missing-instance.result.json"
+    )
+
+    assert result_path.is_file()
