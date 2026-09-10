@@ -14,6 +14,8 @@ STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-a
 REQUEST_DIR = STATE_DIR / "privileged-firewall"
 _TOKEN = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 _NUMBERED = re.compile(r"^\[\s*(\d+)\]\s+(.*)$")
+_TARGET = re.compile(r"^(\d{1,5})/(tcp|udp)(?:\s|$)", re.IGNORECASE)
+_LEGACY_CAPIVARA_COMMENT = re.compile(r"^Capivara(?:\s|$)", re.IGNORECASE)
 Runner = Callable[[list[str], int], tuple[int, str, str]]
 
 
@@ -68,12 +70,11 @@ def _ufw_active(runner: Runner) -> bool:
     return code == 0 and stdout.strip().lower().startswith("status: active")
 
 
-def _owned_ufw_rules(runner: Runner, instance_id: str) -> dict[str, list[int]]:
+def _listed_ufw_rules(runner: Runner) -> list[dict[str, Any]]:
     code, stdout, stderr = runner(["ufw", "status", "numbered"], 10)
     if code != 0:
         raise RuntimeError((stderr or stdout or "ufw status numbered failed")[:2000])
-    prefix = f"capivara:{instance_id}:"
-    result: dict[str, list[int]] = {}
+    result: list[dict[str, Any]] = []
     for line in stdout.splitlines():
         match = _NUMBERED.match(line.strip())
         if not match:
@@ -81,11 +82,59 @@ def _owned_ufw_rules(runner: Runner, instance_id: str) -> dict[str, list[int]]:
         number = int(match.group(1))
         body = match.group(2)
         marker = body.find("#")
-        if marker < 0:
-            continue
-        comment = body[marker + 1:].strip()
+        comment = body[marker + 1:].strip() if marker >= 0 else ""
+        target_text = body[:marker].strip() if marker >= 0 else body.strip()
+        target = _TARGET.match(target_text)
+        port = int(target.group(1)) if target else None
+        protocol = target.group(2).lower() if target else None
+        result.append({
+            "number": number,
+            "port": port,
+            "protocol": protocol,
+            "comment": comment,
+        })
+    return result
+
+
+def _owned_ufw_rules(listed: list[dict[str, Any]], instance_id: str) -> dict[str, list[int]]:
+    prefix = f"capivara:{instance_id}:"
+    result: dict[str, list[int]] = {}
+    for item in listed:
+        comment = str(item.get("comment") or "")
         if comment.startswith(prefix):
-            result.setdefault(comment, []).append(number)
+            result.setdefault(comment, []).append(int(item["number"]))
+    return result
+
+
+def _legacy_migration_numbers(
+    listed: list[dict[str, Any]],
+    desired: list[dict[str, Any]],
+    existing_owned: dict[str, list[int]],
+) -> dict[str, list[int]]:
+    """Return legacy Capivara rules that can be safely replaced by owned rules.
+
+    Migration is intentionally narrow: only a numbered UFW rule with a legacy
+    Capivara comment and the exact desired protocol/port pair is eligible.
+    Rules without a Capivara marker, malformed targets, or already-owned rules
+    are never adopted or removed.
+    """
+    result: dict[str, list[int]] = {}
+    for wanted in desired:
+        comment = wanted["comment"]
+        if comment in existing_owned:
+            continue
+        protocol = wanted["protocol"]
+        port = wanted["port"]
+        matches = [
+            int(item["number"])
+            for item in listed
+            if item.get("protocol") == protocol
+            and item.get("port") == port
+            and _LEGACY_CAPIVARA_COMMENT.match(str(item.get("comment") or ""))
+            and not str(item.get("comment") or "").lower().startswith("capivara:")
+        ]
+        if matches:
+            result[comment] = matches
     return result
 
 
@@ -94,20 +143,36 @@ def reconcile_ufw(instance_id: str, desired: list[dict[str, Any]], runner: Runne
         if desired:
             raise RuntimeError("no supported active Linux firewall backend; UFW is not active")
         return {"backend": "none", "changed": False, "rules": []}
-    existing = _owned_ufw_rules(runner, instance_id)
+
+    listed = _listed_ufw_rules(runner)
+    existing = _owned_ufw_rules(listed, instance_id)
     wanted = {item["comment"]: item for item in desired}
-    stale_numbers = sorted(
-        (number for comment, numbers in existing.items() if comment not in wanted for number in numbers),
+    legacy = _legacy_migration_numbers(listed, desired, existing)
+
+    delete_numbers = sorted(
+        {
+            number
+            for comment, numbers in existing.items()
+            if comment not in wanted
+            for number in numbers
+        }
+        | {
+            number
+            for numbers in legacy.values()
+            for number in numbers
+        },
         reverse=True,
     )
+
     changed = False
-    for number in stale_numbers:
+    for number in delete_numbers:
         code, stdout, stderr = runner(["ufw", "--force", "delete", str(number)], 15)
         if code != 0:
             raise RuntimeError((stderr or stdout or f"failed to delete Capivara UFW rule {number}")[:2000])
         changed = True
+
     for comment, item in wanted.items():
-        if comment in existing:
+        if comment in existing and comment not in legacy:
             continue
         code, stdout, stderr = runner(
             ["ufw", "allow", f"{item['port']}/{item['protocol']}", "comment", comment], 15
@@ -115,6 +180,7 @@ def reconcile_ufw(instance_id: str, desired: list[dict[str, Any]], runner: Runne
         if code != 0:
             raise RuntimeError((stderr or stdout or "failed to create Capivara UFW rule")[:2000])
         changed = True
+
     return {"backend": "ufw", "changed": changed,
             "rules": [{k: item[k] for k in ("name", "protocol", "port", "comment")} for item in desired]}
 
