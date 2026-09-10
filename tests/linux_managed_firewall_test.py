@@ -103,8 +103,8 @@ def test_result_preserves_request_owner(tmp_path, monkeypatch):
     request_dir = tmp_path / "privileged-firewall"
     request_dir.mkdir()
 
-    old_request_dir = module.REQUEST_DIR
-    module.REQUEST_DIR = request_dir
+    old_request_dir = firewall.REQUEST_DIR
+    firewall.REQUEST_DIR = request_dir
 
     instance_id = "instance-owner"
     request_path = request_dir / f"{instance_id}.request.json"
@@ -123,11 +123,8 @@ def test_result_preserves_request_owner(tmp_path, monkeypatch):
     expected_owner = (request_path.stat().st_uid, request_path.stat().st_gid)
     chowns = []
 
-    real_chown = module.os.chown
-
     def record_chown(path, uid, gid):
         chowns.append((Path(path), uid, gid))
-        real_chown(path, uid, gid)
 
     monkeypatch.setattr(module.os, "chown", record_chown)
 
@@ -137,9 +134,9 @@ def test_result_preserves_request_owner(tmp_path, monkeypatch):
         raise AssertionError(command)
 
     try:
-        result = module.run(instance_id, runner)
+        result = firewall.run(instance_id, runner)
     finally:
-        module.REQUEST_DIR = old_request_dir
+        firewall.REQUEST_DIR = old_request_dir
 
     assert result["status"] == "completed"
     assert chowns
