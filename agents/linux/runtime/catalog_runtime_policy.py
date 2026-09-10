@@ -200,6 +200,13 @@ def _seed_network_property_target(spec: dict[str, Any], item: dict[str, Any], ta
     shutil.copy2(source, target)
 
 
+def _command_line(key: str, value: str) -> tuple[re.Pattern[str], str]:
+    if any(ch in value for ch in ('\x00', '\r', '\n', '"')):
+        raise ValueError("invalid command-style network property value")
+    pattern = re.compile(rf'(?m)^\s*{re.escape(key)}\s+(?:"(?:\\.|[^"])*"|[^\r\n#]+)\s*$')
+    return pattern, f'{key} "{value}"'
+
+
 def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
     properties = spec.get("catalog_network_properties") if isinstance(spec.get("catalog_network_properties"), list) else []
     root = _configuration_root(spec)
@@ -222,6 +229,9 @@ def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
         text = target.read_text(encoding="utf-8", errors="replace") if target.exists() else ""
         if syntax == "ue_option_settings":
             text = _set_ue_option_setting(text, key, value)
+        elif syntax == "command":
+            pattern, line = _command_line(key, value)
+            text = pattern.sub(line, text, count=1) if pattern.search(text) else text.rstrip("\n") + ("\n" if text else "") + line + "\n"
         else:
             separator = r"\s*=\s*"
             pattern = re.compile(rf"(?m)^\s*{re.escape(key)}{separator}[^\r\n;]*(?:;)?\s*$")
