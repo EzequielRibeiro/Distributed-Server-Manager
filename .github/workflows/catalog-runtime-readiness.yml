@@ -25,7 +25,7 @@ jobs:
       - name: Run readiness contract tests
         run: |
           python3 tests/catalog_runtime_readiness_test.py
-          python3 tests/network_exposure_policy_test.py
+          python3 -m unittest tests.network_exposure_policy_test -v
       - name: Ensure auditor remains game-neutral
         run: |
           python3 - <<'PY'
