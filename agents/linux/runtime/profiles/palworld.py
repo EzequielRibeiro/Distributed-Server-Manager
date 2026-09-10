@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Palworld Linux runtime profile with isolated saved state and bootstrap file preparation."""
+"""Palworld Linux runtime profile with isolated saved state and network configuration."""
 from __future__ import annotations
 from pathlib import Path
 from typing import Any
@@ -7,7 +7,7 @@ from .base import GameRuntimeProfile, ProfileError, port_bindings, require_absol
 
 class PalworldRuntimeProfile(GameRuntimeProfile):
     game_ids = ("palworld", "palworld.stable")
-    profile_version = 3
+    profile_version = 4
 
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         instance_id=require_text(instance.get("instance_id") or instance.get("id"),"instance_id")
@@ -23,9 +23,9 @@ class PalworldRuntimeProfile(GameRuntimeProfile):
         game_binding=ports.get("game") or ports.get("game_udp")
         if not game_binding or game_binding.get("protocol")!="udp":raise ProfileError("Palworld requires a UDP game reservation")
         rcon_binding=ports.get("rcon")
-        if rcon_binding and rcon_binding.get("protocol")!="tcp":raise ProfileError("Palworld RCON reservation must use TCP")
+        if not rcon_binding or rcon_binding.get("protocol")!="tcp":raise ProfileError("Palworld requires a TCP RCON reservation")
         rest_binding=ports.get("rest_api")
-        if rest_binding and rest_binding.get("protocol")!="tcp":raise ProfileError("Palworld REST API reservation must use TCP")
+        if not rest_binding or rest_binding.get("protocol")!="tcp":raise ProfileError("Palworld requires a TCP REST API reservation")
         state_root=require_absolute(context.get("instance_state_root") or f"/var/lib/capivara-instances/{instance_id}","instance_state_root")
         shared_saved=Path(install_path)/"Pal"/"Saved";private_saved=Path(state_root)/"Pal"/"Saved"
         steamclient_source=Path(install_path)/"linux64"/"steamclient.so"
@@ -37,6 +37,10 @@ class PalworldRuntimeProfile(GameRuntimeProfile):
         raw_env=context.get("environment") or {}
         if not isinstance(raw_env,dict):raise ProfileError("invalid Palworld runtime environment")
         environment={str(k):str(v) for k,v in raw_env.items()};environment.update({"CAPIVARA_INSTANCE_ID":instance_id,"CAPIVARA_GAME_ID":"palworld"})
+        network_properties=[
+            {"path":"PalWorldSettings.ini","key":"RCONPort","value":"{{PORT_RCON}}","syntax":"ue_option_settings","seed_from":"DefaultPalWorldSettings.ini"},
+            {"path":"PalWorldSettings.ini","key":"RESTAPIPort","value":"{{PORT_REST_API}}","syntax":"ue_option_settings","seed_from":"DefaultPalWorldSettings.ini"},
+        ]
         return {
             "instance_id":instance_id,"agent_id":agent_id,"game_id":"palworld","environment_id":environment_id,
             "runtime_id":str(instance.get("runtime_id") or instance_id),"adapter":"systemd","working_directory":install_path,
@@ -47,6 +51,7 @@ class PalworldRuntimeProfile(GameRuntimeProfile):
             "seed_directories":[{"source":str(shared_saved),"target":str(private_saved),"optional":True}],
             "working_file_copies":[{"source":str(steamclient_source),"target":str(steamclient_target)}],
             "bind_paths":[{"source":str(private_saved),"target":str(shared_saved)}],
+            "catalog_network_properties":network_properties,
         }
 
 __all__=["PalworldRuntimeProfile"]
