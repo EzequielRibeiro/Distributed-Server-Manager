@@ -119,12 +119,28 @@ def reconcile_ufw(instance_id: str, desired: list[dict[str, Any]], runner: Runne
             "rules": [{k: item[k] for k in ("name", "protocol", "port", "comment")} for item in desired]}
 
 
-def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
+def _atomic_json(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    owner: tuple[int, int] | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(temp, 0o600)
-    os.replace(temp, path)
+    try:
+        temp.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.chmod(temp, 0o600)
+        if owner is not None:
+            os.chown(temp, owner[0], owner[1])
+        os.replace(temp, path)
+    finally:
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def run(instance_id: str, runner: Runner = _default_runner) -> dict[str, Any]:
@@ -142,7 +158,12 @@ def run(instance_id: str, runner: Runner = _default_runner) -> dict[str, Any]:
         result = {"status": "completed", "instance_id": instance_id, "operation": operation}
     except Exception as exc:
         result = {"status": "failed", "instance_id": instance_id, "error": str(exc)[:2000]}
-    _atomic_json(result_path, result)
+    request_stat = request_path.stat()
+    _atomic_json(
+        result_path,
+        result,
+        owner=(request_stat.st_uid, request_stat.st_gid),
+    )
     return result
 
 

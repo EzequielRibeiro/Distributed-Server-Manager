@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
+
 import importlib.util
 from pathlib import Path
 
@@ -95,3 +97,55 @@ if __name__ == "__main__":
     test_inactive_backend_fails_closed_when_public_rule_is_required()
     test_rule_validation_rejects_injection_and_invalid_protocol()
     print("linux managed firewall: OK")
+
+
+def test_result_preserves_request_owner(tmp_path, monkeypatch):
+    request_dir = tmp_path / "privileged-firewall"
+    request_dir.mkdir()
+
+    old_request_dir = module.REQUEST_DIR
+    module.REQUEST_DIR = request_dir
+
+    instance_id = "instance-owner"
+    request_path = request_dir / f"{instance_id}.request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "kind": "CapivaraPrivilegedFirewallRequest",
+                "instance_id": instance_id,
+                "rules": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    request_path.chmod(0o600)
+
+    expected_owner = (request_path.stat().st_uid, request_path.stat().st_gid)
+    chowns = []
+
+    real_chown = module.os.chown
+
+    def record_chown(path, uid, gid):
+        chowns.append((Path(path), uid, gid))
+        real_chown(path, uid, gid)
+
+    monkeypatch.setattr(module.os, "chown", record_chown)
+
+    def runner(command, timeout):
+        if command == ["ufw", "status"]:
+            return 0, "Status: inactive\n", ""
+        raise AssertionError(command)
+
+    try:
+        result = module.run(instance_id, runner)
+    finally:
+        module.REQUEST_DIR = old_request_dir
+
+    assert result["status"] == "completed"
+    assert chowns
+    assert chowns[-1][1:] == expected_owner
+
+    result_path = request_dir / f"{instance_id}.result.json"
+    assert result_path.stat().st_uid == expected_owner[0]
+    assert result_path.stat().st_gid == expected_owner[1]
+    assert result_path.stat().st_mode & 0o777 == 0o600

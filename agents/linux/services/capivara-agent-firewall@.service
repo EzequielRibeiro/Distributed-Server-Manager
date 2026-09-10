@@ -11,6 +11,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
+ReadWritePaths=/etc/ufw
 PrivateDevices=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
