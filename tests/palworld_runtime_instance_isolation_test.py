@@ -40,9 +40,9 @@ class PalworldRuntimeIsolationTest(unittest.TestCase):
  def test_catalog_reserves_palworld_game_rcon_and_rest_ports(self):
   runtime=json.loads((ROOT/"catalog"/"v2"/"games"/"palworld"/"runtimes"/"stable.json").read_text(encoding="utf-8"))
   self.assertEqual([
-   {"name":"game","protocol":"udp","offset":0},
-   {"name":"rcon","protocol":"tcp","offset":1},
-   {"name":"rest_api","protocol":"tcp","offset":2},
+   {"name":"game","protocol":"udp","offset":0,"exposure":"public"},
+   {"name":"rcon","protocol":"tcp","offset":1,"exposure":"none"},
+   {"name":"rest_api","protocol":"tcp","offset":2,"exposure":"none"},
   ],runtime["network"]["ports"])
   self.assertEqual([{"kind":"argument","template":"-port={game}"}],runtime["network"]["apply"])
  def test_materializes_admin_ports_inside_unreal_option_settings(self):
