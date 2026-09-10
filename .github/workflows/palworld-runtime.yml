@@ -4,6 +4,7 @@ on:
     paths:
       - 'agents/linux/privileged/materialize_instance.py'
       - 'agents/linux/runtime/runtime_spec.py'
+      - 'agents/linux/runtime/catalog_runtime_policy.py'
       - 'agents/linux/runtime/profiles/palworld.py'
       - 'agents/linux/runtime/profiles/registry.py'
       - 'catalog/v2/games/palworld/**'
@@ -16,6 +17,7 @@ on:
     paths:
       - 'agents/linux/privileged/materialize_instance.py'
       - 'agents/linux/runtime/runtime_spec.py'
+      - 'agents/linux/runtime/catalog_runtime_policy.py'
       - 'agents/linux/runtime/profiles/palworld.py'
       - 'agents/linux/runtime/profiles/registry.py'
       - 'catalog/v2/games/palworld/**'
@@ -32,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate syntax
-        run: python3 -m py_compile agents/linux/privileged/materialize_instance.py agents/linux/runtime/runtime_spec.py agents/linux/runtime/profiles/palworld.py agents/linux/runtime/profiles/registry.py tests/palworld_optional_seed_test.py tests/palworld_runtime_instance_isolation_test.py
+        run: python3 -m py_compile agents/linux/privileged/materialize_instance.py agents/linux/runtime/runtime_spec.py agents/linux/runtime/catalog_runtime_policy.py agents/linux/runtime/profiles/palworld.py agents/linux/runtime/profiles/registry.py tests/palworld_optional_seed_test.py tests/palworld_runtime_instance_isolation_test.py
       - name: Prove Palworld isolation and fresh-install seed behavior
         run: python3 -m unittest tests/palworld_runtime_instance_isolation_test.py tests/palworld_optional_seed_test.py
       - name: Enforce active catalog publication
