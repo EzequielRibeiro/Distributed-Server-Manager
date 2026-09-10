@@ -14,13 +14,13 @@ Discovery follows `GameDefinition → Edition → Distribution/variant → Runti
 - `providers/`: catalog and artifact-provider registry.
 - `support-matrix.json`: normative support/publication inventory.
 
-The repository-root `games/` directory holds adapters, not a second catalog.
+The repository-root `games/` directory holds operational adapters, not a second catalog. Provider/version/build/install authority belongs here in Catalog v2; legacy fields retained by root adapters are compatibility data only.
 
 ## Hierarchical read API
 
 `core.catalog_index.CatalogIndex(root).hierarchy()` returns a deterministic object with `games[].editions[].distributions[].runtime_definitions[]`. Distribution IDs equal existing `variant` values; leaves are runtime ID references. Multiple runtimes may share a distribution. `hierarchy(game_id)` filters by game, and `runtime(runtime_id)` returns a copy of the original RuntimeDefinition. Unknown IDs raise `KeyError`; invalid identities, duplicate runtime IDs and missing/mismatched game references fail validation.
 
-The authenticated Dashboard endpoint `GET /api/catalog/hierarchy` exposes the same object, optionally filtered with `?game=minecraft`. Unknown games return 404. Existing flat runtime endpoints remain compatible. The CLI exposes `dsm catalog hierarchy [GAME] --json` (JSON output also by default).
+The authenticated Dashboard endpoint `GET /api/catalog/hierarchy` exposes the same object, optionally filtered with `?game=minecraft`. Unknown games return 404. Existing flat runtime endpoints remain compatible. The public CLI exposes `cap catalog hierarchy [GAME] --json` through the compatibility dispatcher (JSON output also by default).
 
 This layer does not change Placement, Agents, Installation Strategy, runtime selection or IDs such as `minecraft.java.forge` and `luanti.stable`. Luanti remains published at 5.17.0 with `http-archive` acquisition and `cmake_source` installation. There are 20 published games and no deferred runtimes in this revision. No catalog/v3 is introduced.
 
@@ -33,13 +33,13 @@ Native Linux games with simple lifecycle requirements can use the allowlisted `c
 ## CLI
 
 ```bash
-dsm catalog runtime list
-dsm catalog runtime list rust
-dsm catalog runtime show rust.stable
-dsm catalog runtime prepare rust.stable current
-dsm catalog runtime prepare mindustry.github latest
-dsm content list minecraft
-dsm compatibility check catalog/v2/examples/compatibility-allowed.json
+cap catalog runtime list
+cap catalog runtime list rust
+cap catalog runtime show rust.stable
+cap catalog runtime prepare rust.stable current
+cap catalog runtime prepare mindustry.github latest
+cap content list minecraft
+cap compatibility check catalog/v2/examples/compatibility-allowed.json
 ```
 
-Append `--json` when output is consumed by scripts, the Dashboard API, or another service.
+Append `--json` when output is consumed by scripts, the Dashboard API, or another service. `cap` is the public CLI; `dsm` remains only as a temporary compatibility surface.
