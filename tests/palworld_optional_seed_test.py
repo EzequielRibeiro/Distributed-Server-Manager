@@ -14,6 +14,7 @@ RUNTIME = ROOT / "agents" / "linux" / "runtime"
 if str(RUNTIME) not in sys.path:
     sys.path.insert(0, str(RUNTIME))
 
+from catalog_runtime_policy import materialize_network_properties
 from runtime_spec import RuntimeSpecError, validate_runtime_spec
 from profiles.palworld import PalworldRuntimeProfile
 
@@ -101,6 +102,31 @@ class PalworldOptionalSeedTest(unittest.TestCase):
             root = Path(tmp);source = root / "linux64" / "steamclient.so";source.parent.mkdir(parents=True);source.write_bytes(b"steamclient")
             spec = {"working_directory": str(root), "working_file_copies": [{"source": str(source), "target": str(Path(outside) / "steamclient.so")}]}
             with self.assertRaisesRegex(RuntimeError, "escapes its allowed root"):module._sync_working_file_copies(spec)
+
+    def test_whitespace_only_palworld_config_is_reseeded_before_network_properties(self) -> None:
+        default = "[/Script/Pal.PalGameWorldSettings]\nOptionSettings=(RCONEnabled=False,RCONPort=25575,RESTAPIEnabled=False,RESTAPIPort=8212)\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp);working = root / "serverfiles";config_root = root / "private" / "Pal" / "Saved" / "Config" / "LinuxServer"
+            working.mkdir(parents=True);config_root.mkdir(parents=True)
+            (working / "DefaultPalWorldSettings.ini").write_text(default, encoding="utf-8")
+            target = config_root / "PalWorldSettings.ini";target.write_text("\n", encoding="utf-8")
+            spec = {"working_directory": str(working), "configuration_root": str(config_root), "catalog_variables": {"PORT_RCON": 24011, "PORT_REST_API": 24012}, "catalog_network_properties": [{"path": "PalWorldSettings.ini", "key": "RCONPort", "value": "{{PORT_RCON}}", "syntax": "ue_option_settings", "seed_from": "DefaultPalWorldSettings.ini"}, {"path": "PalWorldSettings.ini", "key": "RESTAPIPort", "value": "{{PORT_REST_API}}", "syntax": "ue_option_settings", "seed_from": "DefaultPalWorldSettings.ini"}]}
+            materialize_network_properties(spec)
+            text = target.read_text(encoding="utf-8")
+            self.assertIn("RCONPort=24011", text);self.assertIn("RESTAPIPort=24012", text);self.assertIn("RCONEnabled=False", text);self.assertIn("RESTAPIEnabled=False", text)
+
+    def test_nonempty_palworld_config_is_preserved_while_ports_change(self) -> None:
+        custom = "[/Script/Pal.PalGameWorldSettings]\nOptionSettings=(ServerName=\"Customer\",RCONEnabled=False,RCONPort=25575,RESTAPIEnabled=False,RESTAPIPort=8212)\n"
+        default = "[/Script/Pal.PalGameWorldSettings]\nOptionSettings=(ServerName=\"Default\",RCONEnabled=False,RCONPort=25575,RESTAPIEnabled=False,RESTAPIPort=8212)\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp);working = root / "serverfiles";config_root = root / "private" / "Pal" / "Saved" / "Config" / "LinuxServer"
+            working.mkdir(parents=True);config_root.mkdir(parents=True)
+            (working / "DefaultPalWorldSettings.ini").write_text(default, encoding="utf-8")
+            target = config_root / "PalWorldSettings.ini";target.write_text(custom, encoding="utf-8")
+            spec = {"working_directory": str(working), "configuration_root": str(config_root), "catalog_variables": {"PORT_RCON": 24011, "PORT_REST_API": 24012}, "catalog_network_properties": [{"path": "PalWorldSettings.ini", "key": "RCONPort", "value": "{{PORT_RCON}}", "syntax": "ue_option_settings", "seed_from": "DefaultPalWorldSettings.ini"}, {"path": "PalWorldSettings.ini", "key": "RESTAPIPort", "value": "{{PORT_REST_API}}", "syntax": "ue_option_settings", "seed_from": "DefaultPalWorldSettings.ini"}]}
+            materialize_network_properties(spec)
+            text = target.read_text(encoding="utf-8")
+            self.assertIn('ServerName="Customer"', text);self.assertNotIn('ServerName="Default"', text);self.assertIn("RCONPort=24011", text);self.assertIn("RESTAPIPort=24012", text)
 
 
 if __name__ == "__main__":
