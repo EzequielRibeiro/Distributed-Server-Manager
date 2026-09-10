@@ -42,7 +42,7 @@ def test_runtime_schema_models_current_network_operations() -> None:
     assert set(by_kind) == {"argument", "property", "derived"}
     assert {"from", "port"}.issubset(by_kind["derived"]["properties"])
     assert by_kind["derived"]["required"] == ["kind", "from", "port"]
-    assert set(by_kind["property"]["properties"]["syntax"]["enum"]) == {"equals", "semicolon"}
+    assert set(by_kind["property"]["properties"]["syntax"]["enum"]) == {"equals", "semicolon", "command"}
 
 
 def test_every_published_runtime_validates_against_canonical_schema() -> None:
