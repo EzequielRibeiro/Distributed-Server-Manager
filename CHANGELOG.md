@@ -1,5 +1,14 @@
 # DSM CHANGELOG
 ## v2.0.36 — 2026-09-10
+
+## 2.0.37 - 2026-09-10
+
+### Fixed
+
+- Reconcile managed game firewall rules before Hybrid instance start and restart.
+- Recover Catalog network exposure for existing Hybrid RuntimeSpecs created before managed firewall exposure persistence.
+- Fail closed when firewall reconciliation fails instead of starting a game runtime without managed network policy.
+
 - Migra regras UFW legadas do Capivara para o modelo de ownership do firewall gerenciado.
 - Exige correspondência exata de protocolo e porta antes da migração.
 - Preserva regras administrativas, externas e regras da mesma porta com protocolo diferente.
