@@ -27,6 +27,7 @@ install -d -m 0700 -o "${DSM_USER}" -g "${DSM_GROUP}" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/instance-provisioning/history" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/instance-workspaces" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/privileged-materialization" \
+  "${DSM_ROOT}/runtime/hybrid-agent-state/privileged-firewall" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/privileged-backup-restore" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/backups" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/backup-results"
@@ -36,9 +37,11 @@ install -d -m 0711 -o root -g root "${DSM_ROOT}/runtime/hybrid-instance-storage"
 materializer_template="${DSM_ROOT}/systemd/dsm-hybrid-agent-materialize@.service.in"
 files_access_template="${DSM_ROOT}/systemd/dsm-hybrid-agent-files-access@.service.in"
 backup_restore_template="${DSM_ROOT}/systemd/dsm-hybrid-agent-backup-restore@.service.in"
+firewall_template="${DSM_ROOT}/systemd/dsm-hybrid-agent-firewall@.service.in"
 [[ -f "${materializer_template}" ]] || { echo "[ERRO] template ausente: ${materializer_template}" >&2; exit 1; }
 [[ -f "${files_access_template}" ]] || { echo "[ERRO] template ausente: ${files_access_template}" >&2; exit 1; }
 [[ -f "${backup_restore_template}" ]] || { echo "[ERRO] template ausente: ${backup_restore_template}" >&2; exit 1; }
+[[ -f "${firewall_template}" ]] || { echo "[ERRO] template ausente: ${firewall_template}" >&2; exit 1; }
 
 sed \
   -e "s|@DSM_ROOT@|${DSM_ROOT}|g" \
@@ -56,6 +59,11 @@ sed \
   -e "s|@DSM_USER@|${DSM_USER}|g" \
   "${backup_restore_template}" > /etc/systemd/system/dsm-hybrid-agent-backup-restore@.service
 chmod 0644 /etc/systemd/system/dsm-hybrid-agent-backup-restore@.service
+
+sed \
+  -e "s|@DSM_ROOT@|${DSM_ROOT}|g" \
+  "${firewall_template}" > /etc/systemd/system/dsm-hybrid-agent-firewall@.service
+chmod 0644 /etc/systemd/system/dsm-hybrid-agent-firewall@.service
 
 install -d -m 0755 /etc/systemd/system/dsm-dashboard-worker.service.d
 cat > /etc/systemd/system/dsm-dashboard-worker.service.d/40-hybrid-backup-restore.conf <<EOF
@@ -76,6 +84,7 @@ polkit.addRule(function(action, subject) {
             unit.indexOf("dsm-hybrid-agent-materialize@") === 0 ||
             unit.indexOf("dsm-hybrid-agent-files-access@") === 0 ||
             unit.indexOf("dsm-hybrid-agent-backup-restore@") === 0 ||
+            unit.indexOf("dsm-hybrid-agent-firewall@") === 0 ||
             instanceUnit.test(unit)
         )) {
             return polkit.Result.YES;

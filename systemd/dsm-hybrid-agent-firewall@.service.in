@@ -1,0 +1,22 @@
+[Unit]
+Description=Capivara DSM Hybrid Agent managed firewall reconciler for %i
+After=network-pre.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=CAPIVARA_AGENT_ROOT=@DSM_ROOT@/agents/linux
+Environment=CAPIVARA_AGENT_STATE_DIR=@DSM_ROOT@/runtime/hybrid-agent-state
+ExecStart=/usr/bin/python3 @DSM_ROOT@/agents/linux/privileged/reconcile_firewall.py %i
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/etc/ufw @DSM_ROOT@/runtime/hybrid-agent-state/privileged-firewall
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
