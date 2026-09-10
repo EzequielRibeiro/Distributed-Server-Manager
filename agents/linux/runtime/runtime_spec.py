@@ -99,6 +99,7 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  result["writable_directories"]=_absolute_list(result.get("writable_directories"),"writable_directories")
  result["seed_files"]=_path_pairs(result.get("seed_files"),"seed_files")
  result["seed_directories"]=_path_pairs(result.get("seed_directories"),"seed_directories",allow_optional=True)
+ result["working_file_copies"]=_path_pairs(result.get("working_file_copies"),"working_file_copies")
  result["bind_paths"]=_path_pairs(result.get("bind_paths"),"bind_paths")
  result["runtime_bind_paths"]=_runtime_bind_paths(result.get("runtime_bind_paths"),runtime_directory)
  result["path"]=result["working_directory"];return result
