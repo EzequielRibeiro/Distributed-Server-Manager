@@ -76,7 +76,17 @@ def apply_policy(spec: dict[str, Any], instance: dict[str, Any], context: dict[s
     for key, value in (policy.get("environment") or {}).items():
         environment[str(key)] = render(value, values)
     result["environment"] = environment
-    result["catalog_runtime_policy"] = {"runtime_id": policy.get("runtime_id"), "shutdown": policy.get("shutdown"), "start_timeout_seconds": policy.get("start_timeout_seconds"), "stop_timeout_seconds": policy.get("stop_timeout_seconds")}
+    result["catalog_runtime_policy"] = {
+        "runtime_id": policy.get("runtime_id"),
+        "shutdown": policy.get("shutdown"),
+        "start_timeout_seconds": policy.get("start_timeout_seconds"),
+        "stop_timeout_seconds": policy.get("stop_timeout_seconds"),
+        "network_exposure": [
+            dict(item)
+            for item in (policy.get("network_exposure") or [])
+            if isinstance(item, dict)
+        ],
+    }
     result["catalog_templates"] = list(policy.get("templates") or [])
     result["catalog_network_properties"] = list(policy.get("network_properties") or [])
     result["catalog_variables"] = values
