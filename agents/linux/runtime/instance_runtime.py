@@ -189,6 +189,10 @@ def lifecycle(config: dict[str, Any], instance_id: str, action: str) -> dict[str
     limits = runtime_limits(config)
     with runtime_operation(config, instance_id, f"lifecycle:{action}", lock_timeout_seconds=limits.lock_timeout_seconds):
         record = _owned(config, instance_id)
+        firewall = None
+        if action in {"start", "restart"} and isinstance(record.get("catalog_runtime_policy"), dict):
+            from privileged_firewall import reconcile as reconcile_firewall
+            firewall = reconcile_firewall(record)
         adapter = resolve_adapter(record)
         operation = getattr(adapter, action)
         result = operation(record)
@@ -199,9 +203,12 @@ def lifecycle(config: dict[str, Any], instance_id: str, action: str) -> dict[str
         updated["observed_state"] = observed_state
         register_instance(updated)
         increment(f"lifecycle_{action}")
-        return {"schema_version": 1, "kind": "CapivaraInstanceLifecycle", "scope": "instance-local",
-                "instance_id": record["instance_id"], "agent_id": record["agent_id"], "adapter": adapter.name,
-                "action": action, "observed_state": observed_state, "operation": result}
+        payload = {"schema_version": 1, "kind": "CapivaraInstanceLifecycle", "scope": "instance-local",
+                   "instance_id": record["instance_id"], "agent_id": record["agent_id"], "adapter": adapter.name,
+                   "action": action, "observed_state": observed_state, "operation": result}
+        if firewall is not None:
+            payload["firewall"] = firewall
+        return payload
 
 
 def remove(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
