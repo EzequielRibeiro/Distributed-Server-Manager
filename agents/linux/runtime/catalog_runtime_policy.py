@@ -40,7 +40,7 @@ def render(text: Any, values: dict[str, str]) -> str:
         name = match.group(1) or match.group(2)
         if name not in values:
             raise ValueError(f"unresolved runtime variable: {name}")
-        return values[name]
+        return str(values[name])
 
     return _TOKEN.sub(repl, raw)
 
