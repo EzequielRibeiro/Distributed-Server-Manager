@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""FiveM Linux runtime profile with credential-backed Cfx.re license injection."""
+"""FiveM Linux runtime profile with private server-data and credential-backed Cfx.re licensing."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,7 +12,7 @@ _LAUNCHER = "/opt/capivara-agent/runtime/fivem_launch.py"
 
 class FiveMRuntimeProfile(GameRuntimeProfile):
     game_ids = ("fivem", "fivem.stable")
-    profile_version = 1
+    profile_version = 2
 
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         iid = require_text(instance.get("instance_id") or instance.get("id"), "instance_id")
@@ -25,11 +25,22 @@ class FiveMRuntimeProfile(GameRuntimeProfile):
             raise ProfileError("matching Catalog runtime policy is required for FiveM")
 
         server = require_within(install, str(Path(install) / "server" / "run.sh"), "executable")
-        data = require_within(install, str(Path(install) / "server-data"), "server-data")
+        shared_data = require_within(install, str(Path(install) / "server-data"), "server-data")
+        private_data = require_within(state, str(Path(state) / "fivem" / "server-data"), "private server-data")
         ports = port_bindings(context)
         game = ports.get("game")
-        if not game:
-            raise ProfileError("FiveM requires a reserved game port")
+        game_tcp = ports.get("game_tcp")
+        if not isinstance(game, dict) or str(game.get("protocol") or "").lower() != "udp":
+            raise ProfileError("FiveM requires a reserved UDP game port")
+        if not isinstance(game_tcp, dict) or str(game_tcp.get("protocol") or "").lower() != "tcp":
+            raise ProfileError("FiveM requires a reserved TCP game port")
+        try:
+            udp_port = int(game.get("port"))
+            tcp_port = int(game_tcp.get("port"))
+        except (TypeError, ValueError) as exc:
+            raise ProfileError("FiveM endpoint ports must be numeric") from exc
+        if udp_port != tcp_port:
+            raise ProfileError("FiveM TCP and UDP endpoints must share the same port")
 
         raw_extra = context.get("arguments") or []
         if not isinstance(raw_extra, list):
@@ -48,9 +59,9 @@ class FiveMRuntimeProfile(GameRuntimeProfile):
             "environment_id": eid,
             "runtime_id": str(instance.get("runtime_id") or iid),
             "adapter": "systemd",
-            "working_directory": data,
+            "working_directory": install,
             "executable": "/usr/bin/python3",
-            "arguments": [_LAUNCHER, "--server", server, "--data", data, "--license-credential", "FIVEM_LICENSE_KEY", *extra],
+            "arguments": [_LAUNCHER, "--server", server, "--data", shared_data, "--license-credential", "FIVEM_LICENSE_KEY", *extra],
             "secret_refs": [{"name": "FIVEM_LICENSE_KEY", "ref": f"instance/{iid}/FIVEM_LICENSE_KEY", "target": "file"}],
             "environment": {"CAPIVARA_INSTANCE_ID": iid, "CAPIVARA_GAME_ID": "fivem"},
             "user": str(context.get("user") or "capivara-instance"),
@@ -59,10 +70,15 @@ class FiveMRuntimeProfile(GameRuntimeProfile):
             "profile_version": self.profile_version,
             "ports": ports,
             "instance_state_root": state,
-            "configuration_root": str(Path(state) / "fivem"),
+            "configuration_root": private_data,
             "writable_directories": [str(Path(state) / "fivem")],
             "seed_files": [],
-            "seed_directories": [],
+            "seed_directories": [
+                {"source": "server-data", "target": "fivem/server-data", "optional": False}
+            ],
+            "bind_paths": [
+                {"source": "fivem/server-data", "target": "server-data"}
+            ],
         }
 
 
