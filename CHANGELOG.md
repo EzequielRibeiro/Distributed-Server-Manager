@@ -1,4 +1,12 @@
 # DSM CHANGELOG
+## v2.0.35 — 2026-09-10
+- Implementa exposição de rede explícita e fail-closed para runtimes do catálogo.
+- Adiciona firewall gerenciado por instância em Linux/UFW, Hybrid e Windows/NetSecurity.
+- Reforça ownership, idempotência, remoção segura, polkit Hybrid e compatibilidade de atualização de Agents existentes.
+- Formaliza e testa a unicidade `(node_id, protocol, port)` usada pelo lifecycle de firewall.
+- Consolida a conclusão dos runtimes e contratos de rede publicados após a v2.0.34.
+- Detalhes e escopo em `release/RELEASE_NOTES_2.0.35.md`.
+
 
 ## v2.0.29 — 2026-09-06
 
