@@ -7,35 +7,17 @@
   "edition": "default",
   "variant": "stable",
   "loader": null,
-  "version": {
-    "strategy": "static",
-    "value": "recommended",
-    "build": "cfx-recommended"
-  },
-  "process": {
-    "engine": "native",
-    "executable": "server/run.sh",
-    "artifact_mode": "directory",
-    "args": []
-  },
-  "requirements": {
-    "os": ["linux"],
-    "architectures": ["x86_64"],
-    "java": null
-  },
-  "artifact": {
-    "provider": "fivem",
-    "auth": "required"
-  },
-  "installation": {
-    "directory": "/opt/dsm/game-data/fivem/serverfiles"
-  },
+  "version": {"strategy": "static", "value": "recommended", "build": "cfx-recommended"},
+  "process": {"engine": "native", "executable": "server/run.sh", "artifact_mode": "directory", "args": []},
+  "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
+  "artifact": {"provider": "fivem", "auth": "required"},
+  "installation": {"directory": "/opt/dsm/game-data/fivem/serverfiles"},
   "network": {
     "allocation": "block",
     "block_size": 1,
     "ports": [
-      {"name": "game", "protocol": "udp", "offset": 0},
-      {"name": "game_tcp", "protocol": "tcp", "offset": 0}
+      {"name": "game", "protocol": "udp", "offset": 0, "exposure": "public"},
+      {"name": "game_tcp", "protocol": "tcp", "offset": 0, "exposure": "public"}
     ],
     "apply": [
       {"kind": "property", "file": "server.cfg", "key": "endpoint_add_udp", "value": "0.0.0.0:{game}", "syntax": "command"},

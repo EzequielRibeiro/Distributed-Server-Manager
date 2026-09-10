@@ -16,8 +16,8 @@
     "allocation": "block",
     "block_size": 2,
     "ports": [
-      {"name": "game", "protocol": "udp", "offset": 0},
-      {"name": "steam_query", "protocol": "udp", "offset": 1}
+      {"name": "game", "protocol": "udp", "offset": 0, "exposure": "public"},
+      {"name": "steam_query", "protocol": "udp", "offset": 1, "exposure": "public"}
     ]
   }
 }

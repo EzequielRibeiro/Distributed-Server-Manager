@@ -12,13 +12,5 @@
   "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
   "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "896660"},
   "installation": {"directory": "/opt/dsm/game-data/valheim/serverfiles"},
-  "network": {
-    "allocation": "block",
-    "block_size": 2,
-    "ports": [
-      {"name": "game", "protocol": "udp", "offset": 0},
-      {"name": "game_aux", "protocol": "udp", "offset": 1}
-    ],
-    "apply": []
-  }
+  "network": {"allocation": "block", "block_size": 2, "ports": [{"name": "game", "protocol": "udp", "offset": 0, "exposure": "public"}, {"name": "game_aux", "protocol": "udp", "offset": 1, "exposure": "public"}], "apply": []}
 }

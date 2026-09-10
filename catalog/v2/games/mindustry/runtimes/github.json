@@ -7,40 +7,10 @@
   "edition": "default",
   "variant": "dedicated-server",
   "loader": null,
-  "version": {
-    "strategy": "dynamic",
-    "resolver": "github_releases",
-    "config": {
-      "repository": "Anuken/Mindustry",
-      "asset_pattern": "server-release.jar",
-      "discovery_limit": 20
-    }
-  },
-  "process": {
-    "engine": "java",
-    "executable": "@java",
-    "artifact_mode": "file"
-  },
-  "requirements": {
-    "os": ["linux", "windows"],
-    "architectures": ["x86_64", "aarch64"],
-    "java": {"min": 17, "max": 25}
-  },
-  "artifact": {
-    "provider": "github",
-    "auth": "anonymous",
-    "repository": "Anuken/Mindustry",
-    "asset": "server-release.jar"
-  },
-  "installation": {
-    "directory": "/opt/dsm/game-data/mindustry/serverfiles"
-  },
-  "network": {
-    "allocation": "block",
-    "block_size": 1,
-    "ports": [
-      {"name": "game_tcp", "protocol": "tcp", "offset": 0},
-      {"name": "game_udp", "protocol": "udp", "offset": 0}
-    ]
-  }
+  "version": {"strategy": "dynamic", "resolver": "github_releases", "config": {"repository": "Anuken/Mindustry", "asset_pattern": "server-release.jar", "discovery_limit": 20}},
+  "process": {"engine": "java", "executable": "@java", "artifact_mode": "file"},
+  "requirements": {"os": ["linux", "windows"], "architectures": ["x86_64", "aarch64"], "java": {"min": 17, "max": 25}},
+  "artifact": {"provider": "github", "auth": "anonymous", "repository": "Anuken/Mindustry", "asset": "server-release.jar"},
+  "installation": {"directory": "/opt/dsm/game-data/mindustry/serverfiles"},
+  "network": {"allocation": "block", "block_size": 1, "ports": [{"name": "game_tcp", "protocol": "tcp", "offset": 0, "exposure": "public"}, {"name": "game_udp", "protocol": "udp", "offset": 0, "exposure": "public"}]}
 }

@@ -12,15 +12,5 @@
   "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
   "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "294420"},
   "installation": {"directory": "/opt/dsm/game-data/sevendaystodie/serverfiles"},
-  "network": {
-    "allocation": "block",
-    "block_size": 4,
-    "ports": [
-      {"name": "game", "protocol": "udp", "offset": 0},
-      {"name": "game_tcp", "protocol": "tcp", "offset": 0},
-      {"name": "game_aux_1", "protocol": "udp", "offset": 1},
-      {"name": "game_aux_2", "protocol": "udp", "offset": 2},
-      {"name": "game_aux_3", "protocol": "udp", "offset": 3}
-    ]
-  }
+  "network": {"allocation": "block", "block_size": 4, "ports": [{"name": "game", "protocol": "udp", "offset": 0, "exposure": "public"}, {"name": "game_tcp", "protocol": "tcp", "offset": 0, "exposure": "public"}, {"name": "game_aux_1", "protocol": "udp", "offset": 1, "exposure": "public"}, {"name": "game_aux_2", "protocol": "udp", "offset": 2, "exposure": "public"}, {"name": "game_aux_3", "protocol": "udp", "offset": 3, "exposure": "public"}]}
 }
