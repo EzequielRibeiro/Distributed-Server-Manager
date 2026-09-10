@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Palworld Linux runtime profile with instance-private Pal/Saved state."""
+"""Palworld Linux runtime profile with isolated saved state and bootstrap file preparation."""
 from __future__ import annotations
 from pathlib import Path
 from typing import Any
@@ -7,7 +7,7 @@ from .base import GameRuntimeProfile, ProfileError, port_bindings, require_absol
 
 class PalworldRuntimeProfile(GameRuntimeProfile):
     game_ids = ("palworld", "palworld.stable")
-    profile_version = 1
+    profile_version = 2
 
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         instance_id=require_text(instance.get("instance_id") or instance.get("id"),"instance_id")
@@ -23,6 +23,8 @@ class PalworldRuntimeProfile(GameRuntimeProfile):
         if not binding or binding.get("protocol")!="udp":raise ProfileError("Palworld requires a UDP game reservation")
         state_root=require_absolute(context.get("instance_state_root") or f"/var/lib/capivara-instances/{instance_id}","instance_state_root")
         shared_saved=Path(install_path)/"Pal"/"Saved";private_saved=Path(state_root)/"Pal"/"Saved"
+        steamclient_source=Path(install_path)/"linux64"/"steamclient.so"
+        steamclient_target=Path(install_path)/"Pal"/"Binaries"/"Linux"/"steamclient.so"
         raw_args=context.get("arguments") or []
         if not isinstance(raw_args,list):raise ProfileError("invalid Palworld runtime arguments")
         arguments=[f"-port={binding['port']}",*[str(x) for x in raw_args]]
@@ -38,6 +40,7 @@ class PalworldRuntimeProfile(GameRuntimeProfile):
             "ports":ports,"instance_state_root":state_root,"configuration_root":str(private_saved/"Config"/"LinuxServer"),
             "writable_directories":[str(private_saved)],"seed_files":[],
             "seed_directories":[{"source":str(shared_saved),"target":str(private_saved),"optional":True}],
+            "working_file_copies":[{"source":str(steamclient_source),"target":str(steamclient_target)}],
             "bind_paths":[{"source":str(private_saved),"target":str(shared_saved)}],
         }
 
