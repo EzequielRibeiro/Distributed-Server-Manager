@@ -94,8 +94,8 @@ def apply_policy(spec: dict[str, Any], instance: dict[str, Any], context: dict[s
         "start_timeout_seconds": policy.get("start_timeout_seconds"),
         "stop_timeout_seconds": policy.get("stop_timeout_seconds"),
     }
-    result["catalog_templates"] = list(policy.get("templates") or [])
-    result["catalog_network_properties"] = list(policy.get("network_properties") or [])
+    result["catalog_templates"] = [*list(result.get("catalog_templates") or []), *list(policy.get("templates") or [])]
+    result["catalog_network_properties"] = [*list(result.get("catalog_network_properties") or []), *list(policy.get("network_properties") or [])]
     result["catalog_variables"] = values
     return result
 
@@ -130,6 +130,68 @@ def materialize_templates(spec: dict[str, Any]) -> list[str]:
     return written
 
 
+def _ue_option_bounds(text: str) -> tuple[int, int]:
+    marker = "OptionSettings=("
+    start = text.find(marker)
+    if start < 0:
+        raise ValueError("Unreal OptionSettings entry is unavailable")
+    body_start = start + len(marker)
+    depth = 1
+    quoted = False
+    escaped = False
+    for index in range(body_start, len(text)):
+        ch = text[index]
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\" and quoted:
+            escaped = True
+            continue
+        if ch == '"':
+            quoted = not quoted
+            continue
+        if quoted:
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return body_start, index
+    raise ValueError("Unreal OptionSettings entry is malformed")
+
+
+def _set_ue_option_setting(text: str, key: str, value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        raise ValueError("invalid Unreal OptionSettings key")
+    start, end = _ue_option_bounds(text)
+    body = text[start:end]
+    pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(key)}\s*=\s*(?:\"(?:\\.|[^\"])*\"|[^,)]*)")
+    replacement = f"{key}={value}"
+    if pattern.search(body):
+        body = pattern.sub(replacement, body, count=1)
+    else:
+        body = body.rstrip()
+        body = f"{body},{replacement}" if body else replacement
+    return text[:start] + body + text[end:]
+
+
+def _seed_network_property_target(spec: dict[str, Any], item: dict[str, Any], target: Path) -> None:
+    seed_from = str(item.get("seed_from") or "").strip()
+    if target.exists() or not seed_from:
+        return
+    relative = Path(seed_from)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("invalid network property seed path")
+    working_root = Path(str(spec.get("working_directory") or spec.get("path") or "")).resolve()
+    source = (working_root / relative).resolve()
+    source.relative_to(working_root)
+    if source.is_symlink() or not source.is_file():
+        raise ValueError("network property seed file is unavailable")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+
+
 def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
     properties = spec.get("catalog_network_properties") if isinstance(spec.get("catalog_network_properties"), list) else []
     root = _configuration_root(spec)
@@ -145,14 +207,18 @@ def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
         target.relative_to(root)
         if target.is_symlink():
             raise ValueError("network property file cannot be a symbolic link")
+        _seed_network_property_target(spec, item, target)
         key = str(item.get("key") or "")
         value = render(item.get("value") or "", values)
         syntax = str(item.get("syntax") or "equals")
-        separator = r"\s*=\s*"
-        pattern = re.compile(rf"(?m)^\s*{re.escape(key)}{separator}[^\r\n;]*(?:;)?\s*$")
-        line = f"{key} = {value};" if syntax == "semicolon" else f"{key}={value}"
         text = target.read_text(encoding="utf-8", errors="replace") if target.exists() else ""
-        text = pattern.sub(line, text, count=1) if pattern.search(text) else text.rstrip("\n") + ("\n" if text else "") + line + "\n"
+        if syntax == "ue_option_settings":
+            text = _set_ue_option_setting(text, key, value)
+        else:
+            separator = r"\s*=\s*"
+            pattern = re.compile(rf"(?m)^\s*{re.escape(key)}{separator}[^\r\n;]*(?:;)?\s*$")
+            line = f"{key} = {value};" if syntax == "semicolon" else f"{key}={value}"
+            text = pattern.sub(line, text, count=1) if pattern.search(text) else text.rstrip("\n") + ("\n" if text else "") + line + "\n"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
         written.append(relative.as_posix())
