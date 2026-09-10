@@ -32,6 +32,11 @@ class Finding:
     recommendation: str | None = None
 
 
+def _requires_permanent_agent_credential(node_role: Any) -> bool:
+    """Return whether an Agent must authenticate with a persisted remote credential."""
+    return str(node_role or "").strip().lower() != "hybrid"
+
+
 class InfrastructureDoctor:
     def __init__(self, backend):
         self.backend = backend
@@ -136,12 +141,13 @@ class InfrastructureDoctor:
                 ))
 
         credential_rows = self._rows(
-            "SELECT a.id AS agent_id,COUNT(ac.id) AS active_credentials "
-            "FROM agents a LEFT JOIN agent_credentials ac ON ac.agent_id=a.id AND ac.status='active' "
-            "GROUP BY a.id ORDER BY a.id"
+            "SELECT a.id AS agent_id,n.role AS node_role,COUNT(ac.id) AS active_credentials "
+            "FROM agents a LEFT JOIN nodes n ON n.id=a.node_id "
+            "LEFT JOIN agent_credentials ac ON ac.agent_id=a.id AND ac.status='active' "
+            "GROUP BY a.id,n.role ORDER BY a.id"
         )
         for row in credential_rows:
-            if int(row["active_credentials"] or 0) == 0:
+            if _requires_permanent_agent_credential(row.get("node_role")) and int(row["active_credentials"] or 0) == 0:
                 findings.append(Finding(
                     "agent_missing_credential", "critical", "agents",
                     "Agent não possui credencial permanente ativa.", str(row["agent_id"]),
