@@ -6,9 +6,5 @@
   "requirements": { "os": ["linux", "windows"], "architectures": ["x86_64", "aarch64"], "java": { "min": 17, "max": 25 } },
   "artifact": { "provider": "http", "auth": "anonymous" },
   "installation": { "directory": "/opt/dsm/game-data/minecraft/fabric" },
-  "network": {
-    "allocation": "block", "block_size": 1,
-    "ports": [{"name": "game", "protocol": "tcp", "offset": 0}],
-    "apply": [{"kind": "property", "file": "server.properties", "key": "server-port", "value": "{game}", "syntax": "equals"}]
-  }
+  "network": {"allocation":"block","block_size":1,"ports":[{"name":"game","protocol":"tcp","offset":0,"exposure":"public"}],"apply":[{"kind":"property","file":"server.properties","key":"server-port","value":"{game}"}]}
 }

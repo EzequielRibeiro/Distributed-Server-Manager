@@ -12,13 +12,6 @@
   "requirements": {"os": ["linux", "windows"], "architectures": ["x86_64", "aarch64"], "java": {"min": 21, "max": 21}},
   "artifact": {"provider": "http", "auth": "anonymous"},
   "installation": {"directory": "/opt/dsm/game-data/minecraft/youer"},
-  "compatibility": {
-    "content_ecosystems": ["neoforge-mod", "bukkit-plugin", "spigot-plugin"],
-    "compatibility_note": "Youer combines NeoForge mod support with Bukkit/Spigot plugin APIs. Individual mod/plugin compatibility can vary; Paper/Purpur compatibility must not be assumed universal."
-  },
-  "network": {
-    "allocation": "block", "block_size": 1,
-    "ports": [{"name": "game", "protocol": "tcp", "offset": 0}],
-    "apply": [{"kind": "property", "file": "server.properties", "key": "server-port", "value": "{game}", "syntax": "equals"}]
-  }
+  "network": {"allocation":"block","block_size":1,"ports":[{"name":"game","protocol":"tcp","offset":0,"exposure":"public"}],"apply":[{"kind":"property","file":"server.properties","key":"server-port","value":"{game}"}]},
+  "compatibility": {"content_ecosystems": ["neoforge-mod", "bukkit-plugin", "spigot-plugin"], "compatibility_note": "Youer combines NeoForge mod support with Bukkit/Spigot plugin APIs. Individual mod/plugin compatibility can vary; Paper/Purpur compatibility must not be assumed universal."}
 }
