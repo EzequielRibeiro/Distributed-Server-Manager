@@ -105,7 +105,7 @@ def _network_findings(runtime: dict[str, Any]) -> list[str]:
         elif kind == "property":
             if not all(str(op.get(k) or "") for k in ("file", "key")) or "value" not in op:
                 findings.append("network property operation incomplete")
-            if op.get("syntax") not in {None, "equals", "semicolon"}:
+            if op.get("syntax") not in {None, "equals", "semicolon", "command"}:
                 findings.append(f"unsupported network property syntax: {op.get('syntax')!r}")
         elif kind == "derived":
             source = str(op.get("from") or "")
