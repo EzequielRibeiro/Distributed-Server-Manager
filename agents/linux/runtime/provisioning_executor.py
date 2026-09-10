@@ -18,6 +18,7 @@ from game_data_executor import _execute as execute_game_data
 import game_runtime
 import instance_runtime
 import privileged_materialization
+import privileged_firewall
 import runtime_materialization
 from provisioning_contract import validate_provisioning_request
 from provisioning_state import write_json
@@ -138,6 +139,20 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
         materialized = True
         _event("INSTANCE_PROVISIONING_STEP", request, step=step, progress=88, data={"adapter": spec.get("adapter")})
 
+        step = "apply_firewall"; _check_deadline(deadline, step)
+        _result(result_path, request, status="running", current_step=step, progress=90)
+        firewall = privileged_firewall.reconcile(spec)
+        _event(
+            "INSTANCE_PROVISIONING_STEP",
+            request,
+            step=step,
+            progress=90,
+            data={
+                "backend": firewall.get("backend"),
+                "changed": bool(firewall.get("changed")),
+            },
+        )
+
         step = "initial_reconcile"; _check_deadline(deadline, step)
         _result(result_path, request, status="running", current_step=step, progress=92)
         reconciliation = runtime_materialization.reconcile(config, request["instance_id"])
@@ -157,7 +172,10 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
     except Exception as exc:
         if materialized:
             try:
-                privileged_materialization.remove(config, request["instance_id"]); compensation.append("runtime_removed")
+                cleanup = privileged_materialization.remove(config, request["instance_id"])
+                if isinstance(cleanup, dict) and cleanup.get("firewall") is not None:
+                    compensation.append("firewall_removed")
+                compensation.append("runtime_removed")
             except Exception:
                 compensation.append("runtime_cleanup_failed")
         if workspace:

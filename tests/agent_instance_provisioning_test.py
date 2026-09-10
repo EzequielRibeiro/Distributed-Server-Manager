@@ -72,6 +72,8 @@ class ProvisioningExecutorTest(unittest.TestCase):
         self.old_content = provisioning_executor.execute_game_data
         self.old_build = provisioning_executor.game_runtime.build_runtime_spec
         self.old_materialize = provisioning_executor.privileged_materialization.materialize
+        self.old_firewall_reconcile = provisioning_executor.privileged_firewall.reconcile
+        self.old_firewall_remove = provisioning_executor.privileged_firewall.remove
         self.old_reconcile = provisioning_executor.runtime_materialization.reconcile
         self.old_remove = provisioning_executor.privileged_materialization.remove
 
@@ -80,6 +82,8 @@ class ProvisioningExecutorTest(unittest.TestCase):
         provisioning_executor.execute_game_data = self.old_content
         provisioning_executor.game_runtime.build_runtime_spec = self.old_build
         provisioning_executor.privileged_materialization.materialize = self.old_materialize
+        provisioning_executor.privileged_firewall.reconcile = self.old_firewall_reconcile
+        provisioning_executor.privileged_firewall.remove = self.old_firewall_remove
         provisioning_executor.runtime_materialization.reconcile = self.old_reconcile
         provisioning_executor.privileged_materialization.remove = self.old_remove
         self.temp.cleanup()
@@ -94,6 +98,11 @@ class ProvisioningExecutorTest(unittest.TestCase):
             "adapter": "systemd", "profile": "dayz", "profile_version": 1,
         }
         provisioning_executor.privileged_materialization.materialize = lambda config, spec: {"operation": {"changed": True}}
+        provisioning_executor.privileged_firewall.reconcile = lambda spec: {
+            "backend": "ufw",
+            "changed": True,
+            "rules": [],
+        }
         provisioning_executor.runtime_materialization.reconcile = lambda config, instance_id: {"observed_state": "running"}
 
     def test_pipeline_runs_content_profile_materialization_and_reconcile(self):
@@ -110,10 +119,14 @@ class ProvisioningExecutorTest(unittest.TestCase):
         self._wire_success()
         removed = []
         provisioning_executor.runtime_materialization.reconcile = lambda config, instance_id: (_ for _ in ()).throw(RuntimeError("start failed"))
-        provisioning_executor.privileged_materialization.remove = lambda config, instance_id: removed.append(instance_id) or {"operation": {"changed": True}}
+        provisioning_executor.privileged_materialization.remove = lambda config, instance_id: removed.append(instance_id) or {
+            "firewall": {"backend": "ufw", "changed": True, "rules": []},
+            "operation": {"changed": True},
+        }
         result = provisioning_executor.execute(self.config, self.request, self.result_path)
         self.assertEqual(result["status"], "failed")
         self.assertEqual(removed, ["instance-one"])
+        self.assertIn("firewall_removed", result["compensation"])
         self.assertIn("runtime_removed", result["compensation"])
         self.assertIn("content_preserved_for_retry", result["compensation"])
         self.assertIn("port_reservations_preserved", result["compensation"])

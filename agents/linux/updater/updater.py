@@ -261,6 +261,12 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
             "agent/privileged/materialize_instance.py",
         ),
         (
+            package_root / "agent/privileged/reconcile_firewall.py",
+            INSTALL_ROOT / "privileged/reconcile_firewall.py",
+            0o755,
+            "agent/privileged/reconcile_firewall.py",
+        ),
+        (
             package_root / "agent/privileged/reconcile_runtime_identity.py",
             INSTALL_ROOT / "privileged/reconcile_runtime_identity.py",
             0o755,
@@ -283,6 +289,12 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
             SYSTEMD_DIR / "capivara-agent-materialize@.service",
             0o644,
             "services/capivara-agent-materialize@.service",
+        ),
+        (
+            package_root / "services/capivara-agent-firewall@.service",
+            SYSTEMD_DIR / "capivara-agent-firewall@.service",
+            0o644,
+            "services/capivara-agent-firewall@.service",
         ),
         (
             package_root / "services/capivara-agent-runtime-identity.service",

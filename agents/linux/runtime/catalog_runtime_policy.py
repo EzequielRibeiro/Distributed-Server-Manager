@@ -95,6 +95,11 @@ def apply_policy(spec: dict[str, Any], instance: dict[str, Any], context: dict[s
         "shutdown": policy.get("shutdown"),
         "start_timeout_seconds": policy.get("start_timeout_seconds"),
         "stop_timeout_seconds": policy.get("stop_timeout_seconds"),
+        "network_exposure": [
+            dict(item)
+            for item in (policy.get("network_exposure") or [])
+            if isinstance(item, dict)
+        ],
     }
     result["catalog_templates"] = list(policy.get("templates") or [])
     policy_properties = list(policy.get("network_properties") or [])

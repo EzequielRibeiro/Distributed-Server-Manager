@@ -35,18 +35,19 @@ for source in "${RUNTIME_SOURCES[@]}"; do
 done
 
 copy agents/linux/privileged/materialize_instance.py agent/privileged/materialize_instance.py
+copy agents/linux/privileged/reconcile_firewall.py agent/privileged/reconcile_firewall.py
 copy agents/linux/privileged/reconcile_runtime_identity.py agent/privileged/reconcile_runtime_identity.py
 copy agents/linux/privileged/uninstall_agent.py agent/privileged/uninstall_agent.py
 copy agents/linux/policy/49-capivara-agent-instance-units.rules agent/policy/49-capivara-agent-instance-units.rules
 copy agents/linux/updater/updater.py agent/updater/updater.py
-for file in capivara-agent.service capivara-agent-update.service capivara-agent-update.path capivara-agent-materialize@.service capivara-agent-runtime-identity.service capivara-agent-uninstall.service capivara-agent-uninstall.path; do copy "agents/linux/services/${file}" "services/${file}"; done
+for file in capivara-agent.service capivara-agent-update.service capivara-agent-update.path capivara-agent-materialize@.service capivara-agent-firewall@.service capivara-agent-runtime-identity.service capivara-agent-uninstall.service capivara-agent-uninstall.path; do copy "agents/linux/services/${file}" "services/${file}"; done
 printf '%s\n' "${VERSION}" >"${PACKAGE_ROOT}/VERSION"
 printf '%s\n' 'Runtime configuration is created during installation. Pairing secrets are never packaged.' >"${PACKAGE_ROOT}/config/README.md"
 chmod 0755 "${PACKAGE_ROOT}/install-agent.sh"
 for executable in agent.py local_cli.py controller_cli.py relink_cli.py cap_dispatch.py game_data_executor.py provisioning_executor.py storage_pool_migration_executor.py; do
   [[ ! -f "${PACKAGE_ROOT}/agent/runtime/${executable}" ]] || chmod 0755 "${PACKAGE_ROOT}/agent/runtime/${executable}"
 done
-chmod 0755 "${PACKAGE_ROOT}/agent/privileged/materialize_instance.py" "${PACKAGE_ROOT}/agent/privileged/reconcile_runtime_identity.py" "${PACKAGE_ROOT}/agent/privileged/uninstall_agent.py" "${PACKAGE_ROOT}/agent/updater/updater.py"
+chmod 0755 "${PACKAGE_ROOT}/agent/privileged/materialize_instance.py" "${PACKAGE_ROOT}/agent/privileged/reconcile_firewall.py" "${PACKAGE_ROOT}/agent/privileged/reconcile_runtime_identity.py" "${PACKAGE_ROOT}/agent/privileged/uninstall_agent.py" "${PACKAGE_ROOT}/agent/updater/updater.py"
 find "${PACKAGE_ROOT}/agent" -type f ! -perm -0100 -exec chmod 0644 {} +
 chmod 0644 "${PACKAGE_ROOT}/services/"* "${PACKAGE_ROOT}/VERSION" "${PACKAGE_ROOT}/config/README.md"
 python3 - "${PACKAGE_ROOT}" "${VERSION}" "${COMMIT}" "${CHANNEL}" <<'PY'

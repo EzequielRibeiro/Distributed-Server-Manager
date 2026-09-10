@@ -23,5 +23,9 @@ polkit.addRule(function(action, subject) {
         return polkit.Result.YES;
     }
 
+    if (/^capivara-agent-firewall@[A-Za-z0-9._-]{1,191}\.service$/.test(unit) && verb === "start") {
+        return polkit.Result.YES;
+    }
+
     return polkit.Result.NOT_HANDLED;
 });

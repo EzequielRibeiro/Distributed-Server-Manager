@@ -97,6 +97,37 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         self.assertEqual(spec["profile_version"], 6)
         self.assertEqual(spec["ports"], self.ports())
 
+    def test_catalog_network_exposure_survives_runtime_spec_build(self):
+        install = self.root / "serverfiles"
+        install.mkdir()
+        exposure = [
+            {"name": "game", "protocol": "udp", "exposure": "public"},
+            {"name": "game_aux", "protocol": "udp", "exposure": "public"},
+            {"name": "steam_query", "protocol": "udp", "exposure": "public"},
+        ]
+        spec = game_runtime.build_runtime_spec(
+            self.config,
+            self.instance,
+            {
+                "install_path": str(install),
+                "ports": self.ports(),
+                "catalog_runtime_policy": {
+                    "runtime_id": "dayz.stable",
+                    "executable": "DayZServer",
+                    "arguments": [],
+                    "environment": {},
+                    "variables": [],
+                    "templates": [],
+                    "network_properties": [],
+                    "network_exposure": exposure,
+                },
+            },
+        )
+        self.assertEqual(
+            spec["catalog_runtime_policy"]["network_exposure"],
+            exposure,
+        )
+
     def test_legacy_dayz_migration_recovers_missing_ports_from_provisioning_history(self):
         install = self.root / "serverfiles"; install.mkdir()
         history = provisioning_state.HISTORY_ROOT

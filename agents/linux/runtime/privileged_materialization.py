@@ -128,11 +128,19 @@ def materialize(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def remove(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
+    from privileged_firewall import remove as remove_firewall
+
     record = instance_runtime._owned(config, instance_id)
     normalized = validate_runtime_spec(record, expected_agent_id=str(config.get("agent_id") or ""))
     adapter = resolve_adapter(normalized)
     state = adapter.status(normalized)
     stopped = adapter.stop(normalized) if bool(state.get("running")) else None
+
+    # Remove externally reachable rules only after the process is stopped.
+    # If firewall cleanup fails, keep materialization/registration intact so
+    # the operation can be retried safely.
+    firewall = remove_firewall(normalized)
+
     operation = _invoke("remove", normalized)
     try:
         instance_runtime._instance_path(instance_id).unlink()
@@ -143,7 +151,13 @@ def remove(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
         instance_id=normalized["instance_id"], agent_id=normalized["agent_id"],
         data={"changed": bool(operation.get("changed"))},
     )
-    return {"instance_id": normalized["instance_id"], "stop": stopped, "operation": operation, "event": event}
+    return {
+        "instance_id": normalized["instance_id"],
+        "stop": stopped,
+        "firewall": firewall,
+        "operation": operation,
+        "event": event,
+    }
 
 
 __all__ = ["materialize", "migrate_storage_copy", "migrate_storage_pool_copy", "remove"]
