@@ -172,8 +172,10 @@ def _chown_private_tree(root: Path, account: pwd.struct_passwd) -> None:
             os.chmod(current, 0o600)
 
 
-def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd) -> None:
+def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, optional: bool = False) -> None:
     if not source.is_dir():
+        if optional:
+            return
         raise RuntimeError(f"seed directory source is unavailable: {source}")
     _reject_symlinks(source, label="directory seed")
     if target.exists():
@@ -238,7 +240,7 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
     for item in spec.get("seed_directories", []):
         source = _within(working_root, str(item["source"]), "seed directory source")
         target = _within(state_root, str(item["target"]), "seed directory target")
-        _seed_directory(source, target, account)
+        _seed_directory(source, target, account, optional=bool(item.get("optional", False)))
     for item in spec.get("bind_paths", []):
         source = _within(state_root, str(item["source"]), "bind source")
         target = _within(working_root, str(item["target"]), "bind target")
