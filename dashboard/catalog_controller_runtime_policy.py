@@ -179,7 +179,7 @@ def validate_policy(payload: dict[str, Any], *, runtime_id: str) -> dict[str, An
             raise ValueError("network property path must stay inside the instance")
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]{0,127}", key):
             raise ValueError("invalid network property key")
-        if syntax not in {"equals", "semicolon"}:
+        if syntax not in {"equals", "semicolon", "command"}:
             raise ValueError("invalid network property syntax")
         normalized_properties.append({"path": relative, "key": key, "value": str(item.get("value") or ""), "syntax": syntax})
     result["network_properties"] = normalized_properties
