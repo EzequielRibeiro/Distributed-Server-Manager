@@ -38,6 +38,60 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temp, path)
 
 
+def _hybrid_catalog_exposure(spec: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Recover exposure for pre-firewall Hybrid RuntimeSpecs from the local catalog.
+
+    RuntimeSpecs created before managed firewall support can contain a valid
+    catalog_runtime_policy and resolved ports while lacking network_exposure.
+    Hybrid nodes have the canonical catalog locally, so use it only as a
+    compatibility fallback. New RuntimeSpecs continue to use their persisted
+    Controller-resolved policy.
+    """
+    if os.environ.get("CAPIVARA_AGENT_MODE") != "hybrid":
+        return None
+
+    root_value = str(os.environ.get("CAPIVARA_DSM_ROOT") or "").strip()
+    if not root_value:
+        return None
+
+    game_id = _token(spec.get("game_id"), "game_id", 64).lower()
+    runtime_id = _token(spec.get("runtime_id"), "runtime_id", 191)
+    runtime_root = Path(root_value) / "catalog" / "v2" / "games" / game_id / "runtimes"
+    if not runtime_root.is_dir():
+        raise ValueError(f"catalog runtime directory is unavailable for {runtime_id}")
+
+    definition: dict[str, Any] | None = None
+    for path in sorted(runtime_root.glob("*.json")):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(value, dict) and str(value.get("id") or "").strip() == runtime_id:
+            definition = value
+            break
+
+    if definition is None:
+        raise ValueError(f"catalog runtime definition is unavailable for {runtime_id}")
+
+    network = definition.get("network")
+    raw_ports = network.get("ports") if isinstance(network, dict) else None
+    if not isinstance(raw_ports, list):
+        raise ValueError(f"catalog network ports are unavailable for {runtime_id}")
+
+    exposure: list[dict[str, Any]] = []
+    for raw in raw_ports:
+        if not isinstance(raw, dict):
+            raise ValueError(f"invalid catalog network port for {runtime_id}")
+        exposure.append(
+            {
+                "name": raw.get("name"),
+                "protocol": raw.get("protocol"),
+                "exposure": raw.get("exposure", "none"),
+            }
+        )
+    return exposure
+
+
 def public_rules(spec: dict[str, Any]) -> list[dict[str, Any]]:
     """Resolve explicit public Catalog exposure against reserved RuntimeSpec ports."""
     policy = spec.get("catalog_runtime_policy")
@@ -45,6 +99,8 @@ def public_rules(spec: dict[str, Any]) -> list[dict[str, Any]]:
         raise ValueError("catalog runtime policy is required for managed firewall")
 
     exposure = policy.get("network_exposure")
+    if not isinstance(exposure, list):
+        exposure = _hybrid_catalog_exposure(spec)
     if not isinstance(exposure, list):
         raise ValueError("catalog network exposure is required for managed firewall")
 
@@ -126,10 +182,14 @@ def reconcile(spec: dict[str, Any], *, rules: list[dict[str, Any]] | None = None
         },
     )
 
-    unit = os.environ.get(
-        "CAPIVARA_FIREWALL_UNIT_TEMPLATE",
-        "capivara-agent-firewall@{instance_id}.service",
-    ).format(instance_id=instance_id)
+    default_unit = (
+        "dsm-hybrid-agent-firewall@{instance_id}.service"
+        if os.environ.get("CAPIVARA_AGENT_MODE") == "hybrid"
+        else "capivara-agent-firewall@{instance_id}.service"
+    )
+    unit = os.environ.get("CAPIVARA_FIREWALL_UNIT_TEMPLATE", default_unit).format(
+        instance_id=instance_id
+    )
 
     completed = subprocess.run(
         ["systemctl", "start", unit, "--no-pager"],
