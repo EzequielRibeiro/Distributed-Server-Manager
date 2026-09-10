@@ -37,7 +37,7 @@ class PalworldRuntimeProfile(GameRuntimeProfile):
             "desired_state":str(instance.get("desired_state") or context.get("desired_state") or "stopped"),"profile":"palworld","profile_version":self.profile_version,
             "ports":ports,"instance_state_root":state_root,"configuration_root":str(private_saved/"Config"/"LinuxServer"),
             "writable_directories":[str(private_saved)],"seed_files":[],
-            "seed_directories":[{"source":str(shared_saved),"target":str(private_saved)}],
+            "seed_directories":[{"source":str(shared_saved),"target":str(private_saved),"optional":True}],
             "bind_paths":[{"source":str(private_saved),"target":str(shared_saved)}],
         }
 
