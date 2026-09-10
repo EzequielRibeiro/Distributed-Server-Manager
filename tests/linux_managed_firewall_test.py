@@ -90,12 +90,99 @@ def test_rule_validation_rejects_injection_and_invalid_protocol() -> None:
             raise AssertionError(f"unsafe firewall rule accepted: {rule!r}")
 
 
+def _desired_dayz(instance_id: str = "cli-000001-dayz-001"):
+    return firewall._validate_rules(
+        instance_id,
+        [
+            {"name": "game", "protocol": "udp", "port": 24000},
+            {"name": "game_aux", "protocol": "udp", "port": 24002},
+            {"name": "steam_query", "protocol": "udp", "port": 24003},
+        ],
+    )
+
+
+def test_migrates_real_legacy_dayz_rules_to_owned_comments() -> None:
+    runner = FakeRunner(
+        "Status: active\n"
+        "[54] 24000/udp ALLOW IN Anywhere # Capivara DayZ game\n"
+        "[55] 24002/udp ALLOW IN Anywhere # Capivara DayZ game aux\n"
+        "[56] 24003/udp ALLOW IN Anywhere # Capivara DayZ Steam query\n"
+    )
+    result = firewall.reconcile_ufw("cli-000001-dayz-001", _desired_dayz(), runner)
+    assert result["changed"] is True
+    for number in (56, 55, 54):
+        assert ["ufw", "--force", "delete", str(number)] in runner.commands
+    assert ["ufw", "allow", "24000/udp", "comment", "capivara:cli-000001-dayz-001:game:udp:24000"] in runner.commands
+    assert ["ufw", "allow", "24002/udp", "comment", "capivara:cli-000001-dayz-001:game_aux:udp:24002"] in runner.commands
+    assert ["ufw", "allow", "24003/udp", "comment", "capivara:cli-000001-dayz-001:steam_query:udp:24003"] in runner.commands
+
+
+def test_legacy_migration_never_removes_external_rule() -> None:
+    runner = FakeRunner(
+        "Status: active\n"
+        "[ 1] 24000/udp ALLOW IN Anywhere # administrator-manual-rule\n"
+        "[ 2] 22/tcp ALLOW IN Anywhere # Capivara SSH historical\n"
+    )
+    desired = firewall._validate_rules(
+        "cli-000001-dayz-001",
+        [{"name": "game", "protocol": "udp", "port": 24000}],
+    )
+    firewall.reconcile_ufw("cli-000001-dayz-001", desired, runner)
+    assert ["ufw", "--force", "delete", "1"] not in runner.commands
+    assert ["ufw", "--force", "delete", "2"] not in runner.commands
+    assert ["ufw", "allow", "24000/udp", "comment", "capivara:cli-000001-dayz-001:game:udp:24000"] in runner.commands
+
+
+def test_canonical_rule_is_idempotent_after_legacy_migration() -> None:
+    runner = FakeRunner(
+        "Status: active\n"
+        "[ 1] 24000/udp ALLOW IN Anywhere # capivara:cli-000001-dayz-001:game:udp:24000\n"
+    )
+    desired = firewall._validate_rules(
+        "cli-000001-dayz-001",
+        [{"name": "game", "protocol": "udp", "port": 24000}],
+    )
+    result = firewall.reconcile_ufw("cli-000001-dayz-001", desired, runner)
+    assert result["changed"] is False
+    assert len(runner.commands) == 2
+
+
+def test_remove_cleans_canonical_rule_after_legacy_migration() -> None:
+    runner = FakeRunner(
+        "Status: active\n"
+        "[ 1] 24000/udp ALLOW IN Anywhere # capivara:cli-000001-dayz-001:game:udp:24000\n"
+        "[ 2] 22/tcp ALLOW IN Anywhere # administrator-ssh\n"
+    )
+    result = firewall.reconcile_ufw("cli-000001-dayz-001", [], runner)
+    assert result["changed"] is True
+    assert ["ufw", "--force", "delete", "1"] in runner.commands
+    assert ["ufw", "--force", "delete", "2"] not in runner.commands
+
+
+def test_legacy_migration_requires_exact_protocol_match() -> None:
+    runner = FakeRunner(
+        "Status: active\n"
+        "[ 1] 24000/tcp ALLOW IN Anywhere # Capivara old tcp rule\n"
+    )
+    desired = firewall._validate_rules(
+        "cli-000001-dayz-001",
+        [{"name": "game", "protocol": "udp", "port": 24000}],
+    )
+    firewall.reconcile_ufw("cli-000001-dayz-001", desired, runner)
+    assert ["ufw", "--force", "delete", "1"] not in runner.commands
+
+
 if __name__ == "__main__":
     test_adds_only_explicit_desired_rule_with_owned_comment()
     test_existing_owned_rule_is_idempotent()
     test_removes_only_stale_rules_owned_by_same_instance()
     test_inactive_backend_fails_closed_when_public_rule_is_required()
     test_rule_validation_rejects_injection_and_invalid_protocol()
+    test_migrates_real_legacy_dayz_rules_to_owned_comments()
+    test_legacy_migration_never_removes_external_rule()
+    test_canonical_rule_is_idempotent_after_legacy_migration()
+    test_remove_cleans_canonical_rule_after_legacy_migration()
+    test_legacy_migration_requires_exact_protocol_match()
     print("linux managed firewall: OK")
 
 
@@ -150,24 +237,17 @@ def test_result_preserves_request_owner(tmp_path, monkeypatch):
 
 def test_missing_request_returns_failed_result_without_stat_crash(tmp_path, monkeypatch):
     import importlib
-    import os
 
     monkeypatch.setenv("CAPIVARA_AGENT_STATE_DIR", str(tmp_path))
 
-    import agents.linux.privileged.reconcile_firewall as firewall
+    import agents.linux.privileged.reconcile_firewall as firewall_module
 
-    firewall = importlib.reload(firewall)
-
-    result = firewall.run("missing-instance")
+    reloaded = importlib.reload(firewall_module)
+    result = reloaded.run("missing-instance")
 
     assert result["status"] == "failed"
     assert result["instance_id"] == "missing-instance"
     assert "No such file" in result["error"] or "not found" in result["error"].lower()
 
-    result_path = (
-        tmp_path
-        / "privileged-firewall"
-        / "missing-instance.result.json"
-    )
-
+    result_path = tmp_path / "privileged-firewall" / "missing-instance.result.json"
     assert result_path.is_file()
