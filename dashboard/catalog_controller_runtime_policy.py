@@ -13,6 +13,7 @@ from core.canonical_parameter_policy import normalize_arguments
 _RUNTIME_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _VAR_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+_PORT_NAME = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _MAX_TEMPLATE_BYTES = 1024 * 1024
 
 
@@ -26,8 +27,22 @@ def _network_variable_template(value: object) -> str:
     )
 
 
+def _catalog_network_exposure(runtime: dict[str, Any]) -> list[dict[str, str]]:
+    network = runtime.get("network") if isinstance(runtime.get("network"), dict) else {}
+    result: list[dict[str, str]] = []
+    for item in network.get("ports") or []:
+        if not isinstance(item, dict):
+            continue
+        result.append({
+            "name": str(item.get("name") or ""),
+            "protocol": str(item.get("protocol") or "").lower(),
+            "exposure": str(item.get("exposure") or "none").lower(),
+        })
+    return result
+
+
 def _enforce_network_policy(runtime: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
-    """Network bindings declared by the Catalog cannot be removed by UI overrides."""
+    """Network bindings/exposure declared by Catalog cannot be removed by UI overrides."""
     result = dict(policy)
     arguments = list(result.get("arguments") or [])
     properties = [dict(item) for item in result.get("network_properties") or [] if isinstance(item, dict)]
@@ -51,6 +66,7 @@ def _enforce_network_policy(runtime: dict[str, Any], policy: dict[str, Any]) -> 
             properties.append(required)
     result["arguments"] = arguments
     result["network_properties"] = properties
+    result["network_exposure"] = _catalog_network_exposure(runtime)
     return result
 
 
@@ -87,6 +103,7 @@ def default_policy(runtime: dict[str, Any]) -> dict[str, Any]:
         "variables": [],
         "templates": [],
         "network_properties": [],
+        "network_exposure": [],
     })
 
 
@@ -183,6 +200,26 @@ def validate_policy(payload: dict[str, Any], *, runtime_id: str) -> dict[str, An
             raise ValueError("invalid network property syntax")
         normalized_properties.append({"path": relative, "key": key, "value": str(item.get("value") or ""), "syntax": syntax})
     result["network_properties"] = normalized_properties
+    exposure = result.get("network_exposure", [])
+    if not isinstance(exposure, list) or len(exposure) > 128:
+        raise ValueError("invalid network exposure")
+    normalized_exposure: list[dict[str, str]] = []
+    seen_exposure: set[str] = set()
+    for item in exposure:
+        if not isinstance(item, dict):
+            raise ValueError("invalid network exposure entry")
+        name = str(item.get("name") or "").strip()
+        protocol = str(item.get("protocol") or "").strip().lower()
+        scope = str(item.get("exposure") or "none").strip().lower()
+        if not _PORT_NAME.fullmatch(name) or name in seen_exposure:
+            raise ValueError("invalid network exposure port name")
+        if protocol not in {"tcp", "udp"}:
+            raise ValueError("invalid network exposure protocol")
+        if scope not in {"public", "private", "none"}:
+            raise ValueError("invalid network exposure scope")
+        normalized_exposure.append({"name": name, "protocol": protocol, "exposure": scope})
+        seen_exposure.add(name)
+    result["network_exposure"] = normalized_exposure
     return result
 
 
