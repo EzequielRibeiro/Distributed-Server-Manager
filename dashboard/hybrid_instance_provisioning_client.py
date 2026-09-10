@@ -187,6 +187,7 @@ def _stage(root: Path, agent_id: str, command: dict[str, Any]) -> bool:
         "CAPIVARA_AGENT_CONFIG": str(config_path),
         "CAPIVARA_INSTANCE_WORKSPACE_ROOT": str(_state_root(root) / "instance-workspaces"),
         "CAPIVARA_MATERIALIZER_UNIT_TEMPLATE": "dsm-hybrid-agent-materialize@{instance_id}.service",
+        "CAPIVARA_FIREWALL_UNIT_TEMPLATE": "dsm-hybrid-agent-firewall@{instance_id}.service",
     }
     runtime_dir = root / "agents" / "linux" / "runtime"
     python_path = [str(runtime_dir), str(root), str(root / "database"), str(root / "dashboard")]

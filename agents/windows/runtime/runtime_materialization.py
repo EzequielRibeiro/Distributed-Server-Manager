@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 import instance_runtime
+import managed_firewall
 from catalog_runtime_policy import materialize_network_properties
 from adapters import resolve_adapter
 from runtime_events import emit_runtime_event
@@ -81,14 +82,15 @@ def materialize(config:dict[str,Any],spec:dict[str,Any])->dict[str,Any]:
  except Exception as exc:
   emit_runtime_event(_events(),"INSTANCE_RUNTIME_FAILED",agent_id=agent_id,instance_id=normalized["instance_id"],data={"phase":"materialize","error":str(exc)[:2000]});raise
 def reconcile(config:dict[str,Any],instance_id:str)->dict[str,Any]:
- record=instance_runtime._owned(config,instance_id);normalized=validate_runtime_spec(record,expected_agent_id=str(config.get("agent_id") or ""));_prepare_private_state(normalized);_validate_materialization(normalized);adapter=resolve_adapter(normalized);before=adapter.status(normalized);desired=normalized["desired_state"];running=bool(before.get("running") or before.get("active_state")=="active");operation=None
+ record=instance_runtime._owned(config,instance_id);normalized=validate_runtime_spec(record,expected_agent_id=str(config.get("agent_id") or ""));_prepare_private_state(normalized);_validate_materialization(normalized);firewall=managed_firewall.reconcile(normalized);adapter=resolve_adapter(normalized);before=adapter.status(normalized);desired=normalized["desired_state"];running=bool(before.get("running") or before.get("active_state")=="active");operation=None
  if desired=="running" and not running:operation=adapter.start(normalized)
  elif desired=="stopped" and running:operation=adapter.stop(normalized)
- after=adapter.status(normalized);observed=instance_runtime._observed_state(after,record.get("observed_state"));updated=instance_runtime.register_instance({**record,"observed_state":observed});event=emit_runtime_event(_events(),"INSTANCE_RUNTIME_RECONCILED" if operation else "INSTANCE_RUNTIME_IN_SYNC",agent_id=normalized["agent_id"],instance_id=normalized["instance_id"],data={"desired_state":desired,"observed_state":observed,"changed":operation is not None});return {"instance_id":normalized["instance_id"],"desired_state":desired,"observed_state":observed,"changed":operation is not None,"operation":operation,"instance":updated,"event":event}
+ after=adapter.status(normalized);observed=instance_runtime._observed_state(after,record.get("observed_state"));updated=instance_runtime.register_instance({**record,"observed_state":observed});event=emit_runtime_event(_events(),"INSTANCE_RUNTIME_RECONCILED" if operation else "INSTANCE_RUNTIME_IN_SYNC",agent_id=normalized["agent_id"],instance_id=normalized["instance_id"],data={"desired_state":desired,"observed_state":observed,"changed":operation is not None});return {"instance_id":normalized["instance_id"],"desired_state":desired,"observed_state":observed,"changed":operation is not None,"operation":operation,"firewall":firewall,"instance":updated,"event":event}
 def remove(config:dict[str,Any],instance_id:str)->dict[str,Any]:
  record=instance_runtime._owned(config,instance_id);normalized=validate_runtime_spec(record,expected_agent_id=str(config.get("agent_id") or ""));adapter=resolve_adapter(normalized);state=adapter.status(normalized);stopped=None
  if bool(state.get("running") or state.get("active_state")=="active"):stopped=adapter.stop(normalized)
+ firewall=managed_firewall.remove(normalized)
  try:instance_runtime._instance_path(instance_id).unlink()
  except FileNotFoundError:pass
- event=emit_runtime_event(_events(),"INSTANCE_RUNTIME_REMOVED",agent_id=normalized["agent_id"],instance_id=normalized["instance_id"],data={"changed":True});return {"instance_id":normalized["instance_id"],"stop":stopped,"operation":{"action":"remove","changed":True},"event":event}
+ event=emit_runtime_event(_events(),"INSTANCE_RUNTIME_REMOVED",agent_id=normalized["agent_id"],instance_id=normalized["instance_id"],data={"changed":True});return {"instance_id":normalized["instance_id"],"stop":stopped,"firewall":firewall,"operation":{"action":"remove","changed":True},"event":event}
 __all__=["materialize","reconcile","remove"]

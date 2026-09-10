@@ -7,30 +7,10 @@
   "edition": "java",
   "variant": "purpur",
   "loader": "purpur",
-  "version": {
-    "strategy": "dynamic",
-    "resolver": "purpur_api",
-    "config": {
-      "project": "purpur",
-      "api_base": "https://api.purpurmc.org/v2"
-    }
-  },
-  "process": {
-    "engine": "java",
-    "executable": "server.jar",
-    "artifact_mode": "file",
-    "args": "nogui"
-  },
-  "requirements": {
-    "os": ["linux", "windows"],
-    "architectures": ["x86_64", "aarch64"],
-    "java": {"min": 17, "max": 25}
-  },
-  "artifact": {
-    "provider": "http",
-    "auth": "anonymous"
-  },
-  "installation": {
-    "directory": "/opt/dsm/game-data/minecraft/purpur"
-  }
+  "version": {"strategy": "dynamic", "resolver": "purpur_api", "config": {"project": "purpur", "api_base": "https://api.purpurmc.org/v2"}},
+  "process": {"engine": "java", "executable": "server.jar", "artifact_mode": "file", "args": "nogui"},
+  "requirements": {"os": ["linux", "windows"], "architectures": ["x86_64", "aarch64"], "java": {"min": 17, "max": 25}},
+  "artifact": {"provider": "http", "auth": "anonymous"},
+  "installation": {"directory": "/opt/dsm/game-data/minecraft/purpur"},
+  "network": {"allocation":"block","block_size":1,"ports":[{"name":"game","protocol":"tcp","offset":0,"exposure":"public"}],"apply":[{"kind":"property","file":"server.properties","key":"server-port","value":"{game}"}]}
 }

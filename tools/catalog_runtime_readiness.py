@@ -72,8 +72,8 @@ def _args(runtime: dict[str, Any]) -> list[str]:
 def _network_findings(runtime: dict[str, Any]) -> list[str]:
     findings: list[str] = []
     network = runtime.get("network")
-    if not network:
-        return findings
+    if not isinstance(network, dict) or not network:
+        return ["runtime network contract missing"]
     ports = network.get("ports") or []
     names: set[str] = set()
     offsets: dict[str, int] = {}
@@ -84,12 +84,15 @@ def _network_findings(runtime: dict[str, Any]) -> list[str]:
     for item in ports:
         name = str(item.get("name") or "")
         proto = str(item.get("protocol") or "")
+        exposure = str(item.get("exposure") or "")
         offset = item.get("offset")
         if not name or name in names:
             findings.append(f"invalid/duplicate port name: {name!r}")
         names.add(name)
         if proto not in {"tcp", "udp"}:
             findings.append(f"invalid protocol for {name}: {proto!r}")
+        if exposure not in {"public", "private", "none"}:
+            findings.append(f"port {name} exposure must be explicitly public, private, or none")
         if not isinstance(offset, int) or offset < 0 or offset >= block_size:
             findings.append(f"port {name} offset {offset!r} outside allocated block")
         else:
@@ -105,7 +108,7 @@ def _network_findings(runtime: dict[str, Any]) -> list[str]:
         elif kind == "property":
             if not all(str(op.get(k) or "") for k in ("file", "key")) or "value" not in op:
                 findings.append("network property operation incomplete")
-            if op.get("syntax") not in {None, "equals", "semicolon"}:
+            if op.get("syntax") not in {None, "equals", "semicolon", "command"}:
                 findings.append(f"unsupported network property syntax: {op.get('syntax')!r}")
         elif kind == "derived":
             source = str(op.get("from") or "")

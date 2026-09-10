@@ -140,13 +140,35 @@
     "network_apply": {
       "oneOf": [
         {"type":"object","additionalProperties":false,"required":["kind","template"],"properties":{"kind":{"const":"argument"},"template":{"type":"string","minLength":1}}},
-        {"type":"object","additionalProperties":false,"required":["kind","file","key","value"],"properties":{"kind":{"const":"property"},"file":{"type":"string","minLength":1},"key":{"type":"string","minLength":1},"value":{"type":"string"},"syntax":{"type":"string","enum":["equals","semicolon"]}}},
+        {"type":"object","additionalProperties":false,"required":["kind","file","key","value"],"properties":{"kind":{"const":"property"},"file":{"type":"string","minLength":1},"key":{"type":"string","minLength":1},"value":{"type":"string"},"syntax":{"type":"string","enum":["equals","semicolon","command"]}}},
         {"type":"object","additionalProperties":false,"required":["kind","from","port"],"properties":{"kind":{"const":"derived"},"from":{"type":"string","pattern":"^[a-z][a-z0-9_]{0,63}$"},"port":{"type":"string","pattern":"^[a-z][a-z0-9_]{0,63}$"}}}
       ]
     },
     "network": {
-      "type":"object","additionalProperties":false,"required":["allocation","block_size","ports"],
-      "properties":{"allocation":{"const":"block"},"block_size":{"type":"integer","minimum":1,"maximum":65535},"ports":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["name","protocol","offset"],"properties":{"name":{"type":"string","pattern":"^[a-z][a-z0-9_]{0,63}$"},"protocol":{"enum":["tcp","udp"]},"offset":{"type":"integer","minimum":0,"maximum":65534},"bind_address":{"type":"string","minLength":1}}}},"apply":{"type":"array","items":{"$ref":"#/$defs/network_apply"}}}
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allocation", "block_size", "ports"],
+      "properties": {
+        "allocation": {"const": "block"},
+        "block_size": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "ports": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "protocol", "offset"],
+            "properties": {
+              "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+              "protocol": {"enum": ["tcp", "udp"]},
+              "offset": {"type": "integer", "minimum": 0, "maximum": 65534},
+              "bind_address": {"type": "string", "minLength": 1},
+              "exposure": {"enum": ["public", "private", "none"]}
+            }
+          }
+        },
+        "apply": {"type": "array", "items": {"$ref": "#/$defs/network_apply"}}
+      }
     }
   }
 }

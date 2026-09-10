@@ -12,13 +12,5 @@
   "requirements": {"os": ["linux", "windows"], "architectures": ["x86_64"], "java": null},
   "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "258550"},
   "installation": {"directory": "/opt/dsm/game-data/rust/serverfiles"},
-  "network": {
-    "allocation": "block", "block_size": 10,
-    "ports": [
-      {"name":"game","protocol":"udp","offset":0},
-      {"name":"rcon","protocol":"tcp","offset":1},
-      {"name":"query","protocol":"udp","offset":2}
-    ],
-    "apply": []
-  }
+  "network": {"allocation": "block", "block_size": 10, "ports": [{"name":"game","protocol":"udp","offset":0,"exposure":"public"}, {"name":"rcon","protocol":"tcp","offset":1,"exposure":"none"}, {"name":"query","protocol":"udp","offset":2,"exposure":"public"}], "apply": []}
 }

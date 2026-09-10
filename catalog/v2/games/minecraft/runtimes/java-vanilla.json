@@ -5,5 +5,6 @@
   "process": { "engine": "java", "executable": "server.jar", "artifact_mode": "file" },
   "requirements": { "os": ["linux", "windows"], "architectures": ["x86_64", "aarch64"], "java": { "min": 21, "max": 25 } },
   "artifact": { "provider": "http", "auth": "anonymous", "url": "https://piston-data.mojang.com/v1/objects/6bce4ef400e4efaa63a13d5e6f6b500be969ef81/server.jar", "asset": "server.jar" },
-  "installation": { "directory": "/opt/dsm/game-data/minecraft/vanilla" }
+  "installation": { "directory": "/opt/dsm/game-data/minecraft/vanilla" },
+  "network": {"allocation":"block","block_size":1,"ports":[{"name":"game","protocol":"tcp","offset":0,"exposure":"public"}],"apply":[{"kind":"property","file":"server.properties","key":"server-port","value":"{game}"}]}
 }

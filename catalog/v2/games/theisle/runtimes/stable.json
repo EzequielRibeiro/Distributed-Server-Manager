@@ -5,7 +5,7 @@
   "requirements":{"os":["linux"],"architectures":["x86_64"],"java":null},
   "artifact":{"provider":"steam","auth":"anonymous","package_id":"412680","branch":"evrima"},
   "installation":{"directory":"/opt/dsm/game-data/theisle/serverfiles"},
-  "network":{"allocation":"block","block_size":2,"ports":[{"name":"game","protocol":"udp","offset":0},{"name":"steam_query","protocol":"udp","offset":1}]},
+  "network":{"allocation":"block","block_size":2,"ports":[{"name":"game","protocol":"udp","offset":0,"exposure":"public"},{"name":"steam_query","protocol":"udp","offset":1,"exposure":"public"}]},
   "runtime_secrets":[{"name":"EOS_CLIENT_ID","required":true,"target":"file"},{"name":"EOS_CLIENT_SECRET","required":true,"target":"file"}],
   "runtime_profile":"theisle"
 }

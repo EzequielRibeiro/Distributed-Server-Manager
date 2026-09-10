@@ -12,5 +12,5 @@
   "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
   "artifact": {"provider": "steam", "auth": "required", "package_id": "730"},
   "installation": {"directory": "/opt/dsm/game-data/counterstrike2/serverfiles"},
-  "network": {"allocation": "block", "block_size": 10, "ports": [{"name": "game", "protocol": "udp", "offset": 0}], "apply": [{"kind": "argument", "template": "-port {game}"}]}
+  "network": {"allocation": "block", "block_size": 10, "ports": [{"name": "game", "protocol": "udp", "offset": 0, "exposure": "public"}], "apply": [{"kind": "argument", "template": "-port {game}"}]}
 }

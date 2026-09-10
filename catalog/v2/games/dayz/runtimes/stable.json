@@ -7,74 +7,23 @@
   "edition": "default",
   "variant": "stable",
   "loader": null,
-  "version": {
-    "strategy": "static",
-    "value": "current",
-    "build": "steam-current"
-  },
-  "process": {
-    "engine": "native",
-    "executable": "DayZServer",
-    "artifact_mode": "executable",
-    "args": [
-      "-config=serverDZ.cfg"
-    ]
-  },
-  "requirements": {
-    "os": [
-      "linux",
-      "windows"
-    ],
-    "architectures": [
-      "x86_64"
-    ],
-    "java": null
-  },
-  "artifact": {
-    "provider": "steam",
-    "auth": "required",
-    "package_id": "223350"
-  },
-  "installation": {
-    "directory": "/opt/dsm/game-data/dayz/serverfiles"
-  },
+  "version": {"strategy": "static", "value": "current", "build": "steam-current"},
+  "process": {"engine": "native", "executable": "DayZServer", "artifact_mode": "executable", "args": ["-config=serverDZ.cfg"]},
+  "requirements": {"os": ["linux", "windows"], "architectures": ["x86_64"], "java": null},
+  "artifact": {"provider": "steam", "auth": "required", "package_id": "223350"},
+  "installation": {"directory": "/opt/dsm/game-data/dayz/serverfiles"},
   "network": {
     "allocation": "block",
     "block_size": 10,
     "ports": [
-      {
-        "name": "game",
-        "protocol": "udp",
-        "offset": 0
-      },
-      {
-        "name": "game_aux",
-        "protocol": "udp",
-        "offset": 2
-      },
-      {
-        "name": "steam_query",
-        "protocol": "udp",
-        "offset": 3
-      }
+      {"name": "game", "protocol": "udp", "offset": 0, "exposure": "public"},
+      {"name": "game_aux", "protocol": "udp", "offset": 2, "exposure": "public"},
+      {"name": "steam_query", "protocol": "udp", "offset": 3, "exposure": "public"}
     ],
     "apply": [
-      {
-        "kind": "argument",
-        "template": "-port={game}"
-      },
-      {
-        "kind": "derived",
-        "port": "game_aux",
-        "from": "game"
-      },
-      {
-        "kind": "property",
-        "file": "serverDZ.cfg",
-        "key": "steamQueryPort",
-        "value": "{steam_query}",
-        "syntax": "semicolon"
-      }
+      {"kind": "argument", "template": "-port={game}"},
+      {"kind": "derived", "port": "game_aux", "from": "game"},
+      {"kind": "property", "file": "serverDZ.cfg", "key": "steamQueryPort", "value": "{steam_query}", "syntax": "semicolon"}
     ]
   }
 }

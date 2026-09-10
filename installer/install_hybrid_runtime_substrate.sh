@@ -27,6 +27,7 @@ install -d -m 0700 -o "${DSM_USER}" -g "${DSM_GROUP}" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/instance-provisioning/history" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/instance-workspaces" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/privileged-materialization" \
+  "${DSM_ROOT}/runtime/hybrid-agent-state/privileged-firewall" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/privileged-backup-restore" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/backups" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/backup-results"
@@ -36,9 +37,11 @@ install -d -m 0711 -o root -g root "${DSM_ROOT}/runtime/hybrid-instance-storage"
 materializer_template="${DSM_ROOT}/systemd/dsm-hybrid-agent-materialize@.service.in"
 files_access_template="${DSM_ROOT}/systemd/dsm-hybrid-agent-files-access@.service.in"
 backup_restore_template="${DSM_ROOT}/systemd/dsm-hybrid-agent-backup-restore@.service.in"
+firewall_template="${DSM_ROOT}/systemd/dsm-hybrid-agent-firewall@.service.in"
 [[ -f "${materializer_template}" ]] || { echo "[ERRO] template ausente: ${materializer_template}" >&2; exit 1; }
 [[ -f "${files_access_template}" ]] || { echo "[ERRO] template ausente: ${files_access_template}" >&2; exit 1; }
 [[ -f "${backup_restore_template}" ]] || { echo "[ERRO] template ausente: ${backup_restore_template}" >&2; exit 1; }
+[[ -f "${firewall_template}" ]] || { echo "[ERRO] template ausente: ${firewall_template}" >&2; exit 1; }
 
 sed \
   -e "s|@DSM_ROOT@|${DSM_ROOT}|g" \
@@ -57,6 +60,11 @@ sed \
   "${backup_restore_template}" > /etc/systemd/system/dsm-hybrid-agent-backup-restore@.service
 chmod 0644 /etc/systemd/system/dsm-hybrid-agent-backup-restore@.service
 
+sed \
+  -e "s|@DSM_ROOT@|${DSM_ROOT}|g" \
+  "${firewall_template}" > /etc/systemd/system/dsm-hybrid-agent-firewall@.service
+chmod 0644 /etc/systemd/system/dsm-hybrid-agent-firewall@.service
+
 install -d -m 0755 /etc/systemd/system/dsm-dashboard-worker.service.d
 cat > /etc/systemd/system/dsm-dashboard-worker.service.d/40-hybrid-backup-restore.conf <<EOF
 [Service]
@@ -71,7 +79,14 @@ polkit.addRule(function(action, subject) {
     if (action.id == "org.freedesktop.systemd1.manage-units" &&
         subject.user == "${DSM_USER}") {
         var unit = action.lookup("unit");
+        var verb = action.lookup("verb");
         var instanceUnit = /^capivara-instance-[A-Za-z0-9._-]{1,191}\\.service$/;
+        var firewallUnit = /^dsm-hybrid-agent-firewall@[A-Za-z0-9._-]{1,191}\\.service$/;
+
+        if (unit && firewallUnit.test(unit) && verb == "start") {
+            return polkit.Result.YES;
+        }
+
         if (unit && (
             unit.indexOf("dsm-hybrid-agent-materialize@") === 0 ||
             unit.indexOf("dsm-hybrid-agent-files-access@") === 0 ||
