@@ -12,5 +12,16 @@
   "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
   "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "2394010"},
   "installation": {"directory": "/opt/dsm/game-data/palworld/serverfiles"},
-  "network": {"allocation": "block", "block_size": 10, "ports": [{"name": "game", "protocol": "udp", "offset": 0}], "apply": [{"kind": "argument", "template": "-port={game}"}]}
+  "network": {
+    "allocation": "block",
+    "block_size": 10,
+    "ports": [
+      {"name": "game", "protocol": "udp", "offset": 0},
+      {"name": "rcon", "protocol": "tcp", "offset": 1},
+      {"name": "rest_api", "protocol": "tcp", "offset": 2}
+    ],
+    "apply": [
+      {"kind": "argument", "template": "-port={game}"}
+    ]
+  }
 }

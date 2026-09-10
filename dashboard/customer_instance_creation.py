@@ -110,7 +110,7 @@ def install_customer_instance_creation(legacy)->None:
   if user is None:self.unauthorized();return
   if not legacy.can_write(user):self.forbidden();return
   try:
-   body=self.read_json_body();instance_id=str(body.get("instance_id") or "").strip();repository=legacy.dashboard_repository(legacy.DATABASE_FILE)
+   body=self.read_json_body();instance_id=str(body.get("instance_id") or body.get("instance") or "").strip();repository=legacy.dashboard_repository(legacy.DATABASE_FILE)
    if not _retry_permission(user,repository,instance_id):self.forbidden();return
    result=retry_instance_provisioning(user,instance_id)
   except PermissionError:self.forbidden();return

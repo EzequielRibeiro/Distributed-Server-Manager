@@ -172,8 +172,10 @@ def _chown_private_tree(root: Path, account: pwd.struct_passwd) -> None:
             os.chmod(current, 0o600)
 
 
-def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd) -> None:
+def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, optional: bool = False) -> None:
     if not source.is_dir():
+        if optional:
+            return
         raise RuntimeError(f"seed directory source is unavailable: {source}")
     _reject_symlinks(source, label="directory seed")
     if target.exists():
@@ -238,7 +240,7 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
     for item in spec.get("seed_directories", []):
         source = _within(working_root, str(item["source"]), "seed directory source")
         target = _within(state_root, str(item["target"]), "seed directory target")
-        _seed_directory(source, target, account)
+        _seed_directory(source, target, account, optional=bool(item.get("optional", False)))
     for item in spec.get("bind_paths", []):
         source = _within(state_root, str(item["source"]), "bind source")
         target = _within(working_root, str(item["target"]), "bind target")
@@ -262,6 +264,47 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _sync_working_file_copies(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    working_root = Path(str(spec["working_directory"])).resolve()
+    results: list[dict[str, Any]] = []
+    for item in spec.get("working_file_copies", []):
+        raw_source = Path(str(item["source"]))
+        raw_target = Path(str(item["target"]))
+        if raw_source.is_symlink():
+            raise RuntimeError(f"working file copy source cannot be a symlink: {raw_source}")
+        if raw_target.is_symlink():
+            raise RuntimeError(f"working file copy target cannot be a symlink: {raw_target}")
+        source = _within(working_root, str(raw_source), "working file copy source")
+        target = _within(working_root, str(raw_target), "working file copy target")
+        if source == target:
+            raise RuntimeError("working file copy source and target must differ")
+        if not source.is_file():
+            raise RuntimeError(f"working file copy source is unavailable: {source}")
+        if target.exists() and not target.is_file():
+            raise RuntimeError(f"working file copy target is not a regular file: {target}")
+        changed = (
+            not target.exists()
+            or source.stat().st_size != target.stat().st_size
+            or _sha256(source) != _sha256(target)
+        )
+        if changed:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temp = target.with_name(f".{target.name}.{os.getpid()}.copy.tmp")
+            try:
+                shutil.copy2(source, temp)
+                source_stat = source.stat()
+                os.chown(temp, source_stat.st_uid, source_stat.st_gid)
+                os.replace(temp, target)
+            except Exception:
+                try:
+                    temp.unlink()
+                except FileNotFoundError:
+                    pass
+                raise
+        results.append({"source": str(source), "target": str(target), "changed": changed})
+    return results
 
 
 def _verify_tree(source: Path, target: Path) -> tuple[int, int]:
@@ -380,8 +423,10 @@ def run(instance_id: str) -> dict[str, Any]:
     action = str(request.get("action") or "").strip().lower()
     materializer = resolve_materializer(spec)
     templates: list[Any] = []
+    working_file_copies: list[dict[str, Any]] = []
     if action == "apply":
         _ensure_runtime_identity(spec, config)
+        working_file_copies = _sync_working_file_copies(spec)
         templates = materialize_templates(spec)
         templates.extend(materialize_network_properties(spec))
         operation = materializer.apply(spec)
@@ -398,7 +443,8 @@ def run(instance_id: str) -> dict[str, Any]:
     else:
         raise RuntimeError("unsupported privileged materialization action")
     result = {"status": "completed", "action": action, "instance_id": instance_id,
-              "agent_id": local_agent_id, "operation": operation, "templates": templates}
+              "agent_id": local_agent_id, "operation": operation, "templates": templates,
+              "working_file_copies": working_file_copies}
     _write_result(result_path, result)
     return result
 
