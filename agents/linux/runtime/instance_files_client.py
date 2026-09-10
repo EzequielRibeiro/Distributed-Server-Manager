@@ -111,12 +111,69 @@ def _path_under(relative: Path, roots: set[str]) -> bool:
     return any(text == root or text.startswith(root.rstrip("/") + "/") for root in roots)
 
 
-def _guard_path_policy(relative: Path, policy: dict[str, Any], *, upload: bool = False) -> None:
+def _workspace_areas(policy: dict[str, Any]) -> list[tuple[Path, str]]:
+    file_policy = policy.get("file_policy") if isinstance(policy.get("file_policy"), dict) else {}
+    raw = file_policy.get("areas")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise PermissionError("invalid customer file workspace policy")
+
+    result = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise PermissionError("invalid customer file workspace area")
+
+        path = _relative(item.get("path"))
+        access = str(item.get("access") or "").strip().lower()
+
+        if not path.parts or access not in {"read_only", "read_write"}:
+            raise PermissionError("invalid customer file workspace area")
+
+        result.append((path, access))
+
+    result.sort(key=lambda item: len(item[0].parts), reverse=True)
+    return result
+
+
+def _workspace_access(relative: Path, policy: dict[str, Any]) -> str | None:
+    areas = _workspace_areas(policy)
+
+    if not areas:
+        return "read_write"
+
+    if not relative.parts:
+        return "read_only"
+
+    for area, access in areas:
+        if _path_under(relative, {area.as_posix().lower()}):
+            return access
+
+    return None
+
+
+def _guard_path_policy(
+    relative: Path,
+    policy: dict[str, Any],
+    *,
+    upload: bool = False,
+    mutate: bool = False,
+) -> None:
     file_policy = policy.get("file_policy") if isinstance(policy.get("file_policy"), dict) else {}
     content = policy.get("content_policy") if isinstance(policy.get("content_policy"), dict) else {}
     protected = _parts_set(file_policy.get("protected_paths")) | {".dsm", "runtime"}
+
     if relative.parts and str(relative.parts[0]).lower() in protected:
         raise PermissionError("protected instance path")
+
+    access = _workspace_access(relative, policy)
+
+    if relative.parts and access is None:
+        raise PermissionError("instance path is outside customer workspace")
+
+    if mutate and access != "read_write":
+        raise PermissionError("instance path is read-only")
+
     if not upload:
         return
     if not bool(content.get("external_upload_allowed", True)):
@@ -168,21 +225,32 @@ def _ensure_quota(root: Path, policy: dict[str, Any], added: int, *, replacing: 
         raise OSError(f"storage quota exceeded: {projected} > {limit}")
 
 
-def _entry(root: Path, path: Path) -> dict[str, Any]:
+def _entry(root: Path, path: Path, policy: dict[str, Any]) -> dict[str, Any]:
     stat = path.stat()
-    rel = path.relative_to(root).as_posix()
+    relative = path.relative_to(root)
+    rel = relative.as_posix()
+    access = _workspace_access(relative, policy)
+
     return {
         "name": path.name,
         "path": rel,
         "directory": path.is_dir(),
         "size": None if path.is_dir() else stat.st_size,
         "modified_at": int(stat.st_mtime),
-        "editable": path.is_file() and path.suffix.lower() in EDITABLE_SUFFIXES and stat.st_size <= 2 * 1024 * 1024,
+        "access": access,
+        "editable": (
+            access == "read_write"
+            and path.is_file()
+            and path.suffix.lower() in EDITABLE_SUFFIXES
+            and stat.st_size <= 2 * 1024 * 1024
+        ),
     }
-
 
 def _list(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, Any]:
     directory = _resolve(root, path_value)
+    directory_rel = directory.relative_to(root)
+    if directory_rel.parts:
+        _guard_path_policy(directory_rel, policy)
     if not directory.is_dir(): raise ValueError("path is not a directory")
     entries = []
     for child in sorted(directory.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
@@ -190,8 +258,17 @@ def _list(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, Any]
         rel = child.relative_to(root)
         try: _guard_path_policy(rel, policy)
         except PermissionError: continue
-        entries.append(_entry(root, child))
-    return {"path": directory.relative_to(root).as_posix() or ".", "entries": entries, "usage_bytes": _usage(root), "limit_bytes": _quota(policy)}
+        entries.append(_entry(root, child, policy))
+    access = _workspace_access(directory_rel, policy)
+    if access is None:
+        raise PermissionError("path is outside customer workspace")
+    return {
+        "path": directory_rel.as_posix() or ".",
+        "access": access,
+        "entries": entries,
+        "usage_bytes": _usage(root),
+        "limit_bytes": _quota(policy),
+    }
 
 
 def _read_text(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, Any]:
@@ -202,7 +279,7 @@ def _read_text(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str,
 
 
 def _write_text(root: Path, path_value: Any, payload: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
-    path = _resolve(root, path_value, missing=True); rel = path.relative_to(root); _guard_path_policy(rel, policy, upload=True)
+    path = _resolve(root, path_value, missing=True); rel = path.relative_to(root); _guard_path_policy(rel, policy, upload=True, mutate=True)
     content = payload.get("content")
     if not isinstance(content, str): raise ValueError("content must be text")
     encoded = content.encode("utf-8")
@@ -224,7 +301,7 @@ def _decode_upload(payload: dict[str, Any]) -> bytes:
 
 
 def _upload(root: Path, path_value: Any, payload: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
-    path = _resolve(root, path_value, missing=True); rel = path.relative_to(root); _guard_path_policy(rel, policy, upload=True)
+    path = _resolve(root, path_value, missing=True); rel = path.relative_to(root); _guard_path_policy(rel, policy, upload=True, mutate=True)
     if not path.parent.is_dir(): raise ValueError("destination directory does not exist")
     data = _decode_upload(payload); _ensure_quota(root, policy, len(data), replacing=path)
     temp = path.with_name(f".{path.name}.{os.getpid()}.upload"); temp.write_bytes(data); os.replace(temp, path)
@@ -240,7 +317,7 @@ def _download(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, 
 
 
 def _mkdir(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, Any]:
-    path = _resolve(root, path_value, missing=True); rel = path.relative_to(root); _guard_path_policy(rel, policy, upload=True)
+    path = _resolve(root, path_value, missing=True); rel = path.relative_to(root); _guard_path_policy(rel, policy, upload=True, mutate=True)
     if path.exists(): raise FileExistsError(rel.as_posix())
     if not path.parent.is_dir(): raise ValueError("parent directory does not exist")
     path.mkdir(mode=0o750)
@@ -248,7 +325,7 @@ def _mkdir(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, Any
 
 
 def _delete(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, Any]:
-    path = _resolve(root, path_value); rel = path.relative_to(root); _guard_path_policy(rel, policy)
+    path = _resolve(root, path_value); rel = path.relative_to(root); _guard_path_policy(rel, policy, mutate=True)
     if path == root: raise PermissionError("instance files root cannot be deleted")
     if path.is_dir(): shutil.rmtree(path)
     else: path.unlink()
@@ -258,7 +335,7 @@ def _delete(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, An
 def _move(root: Path, source_value: Any, target_value: Any, policy: dict[str, Any]) -> dict[str, Any]:
     source = _resolve(root, source_value); target = _resolve(root, target_value, missing=True)
     source_rel = source.relative_to(root); target_rel = target.relative_to(root)
-    _guard_path_policy(source_rel, policy); _guard_path_policy(target_rel, policy, upload=True)
+    _guard_path_policy(source_rel, policy, mutate=True); _guard_path_policy(target_rel, policy, upload=True, mutate=True)
     if source == root or target == root: raise PermissionError("invalid move target")
     if target.exists(): raise FileExistsError(target_rel.as_posix())
     if not target.parent.is_dir(): raise ValueError("target parent does not exist")
@@ -294,6 +371,8 @@ def _archive_members(data: bytes, name: str):
 def _extract(root: Path, archive_value: Any, target_value: Any, policy: dict[str, Any]) -> dict[str, Any]:
     archive_path = _resolve(root, archive_value); archive_rel = archive_path.relative_to(root); _guard_path_policy(archive_rel, policy)
     target = _resolve(root, target_value or archive_path.parent.relative_to(root), missing=True)
+    target_rel = target.relative_to(root)
+    _guard_path_policy(target_rel, policy, upload=True, mutate=True)
     if not target.exists(): target.mkdir(parents=False)
     if not target.is_dir(): raise ValueError("extract target is not a directory")
     data = archive_path.read_bytes()
@@ -305,7 +384,7 @@ def _extract(root: Path, archive_value: Any, target_value: Any, policy: dict[str
         for raw_name, size, directory, opener in members:
             rel_member = _relative(raw_name)
             destination = (target / rel_member).resolve(strict=False); destination.relative_to(root)
-            rel = destination.relative_to(root); _guard_path_policy(rel, policy, upload=True)
+            rel = destination.relative_to(root); _guard_path_policy(rel, policy, upload=True, mutate=True)
             total += max(0, int(size or 0))
             planned.append((destination, directory, opener))
         _ensure_quota(root, policy, total)

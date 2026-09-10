@@ -2,6 +2,7 @@
 """Service layer for Customer Instance Workspace v2."""
 from __future__ import annotations
 import json
+import socket
 from pathlib import Path
 from typing import Any
 from alert_repository import AlertSession,dialect_for_backend
@@ -9,10 +10,64 @@ from agent_instance_provisioning_repository import AgentInstanceProvisioningRepo
 from instance_provisioning_projection import dashboard_provision_state
 from backup_repository import BackupRepository
 from catalog_resource_profiles_http import catalog_resource_profiles
+from configuration_repository import ConfigurationRepository
+from core.configuration.manifest import ConfigurationManifest
+from core.configuration_precedence import resolve_configuration_precedence
 from instance_file_repository import InstanceFileRepository
 from instance_workspace_policy import INSTANCE_PERMISSIONS,effective_content_policy,require_permission,validate_startup_values
 from instance_workspace_repository import InstanceWorkspaceRepository
 from runtime_workspace_catalog import allowed_runtimes,contract_entitlements,runtime_workspace_capabilities
+
+INSTANCE_LOG_SOCKET = "/run/capivara-controller-log/reader.sock"
+
+
+def _instance_journal_output(instance_id: str, limit: int) -> list[dict[str, Any]]:
+    request = json.dumps({
+        "operation": "instance_logs",
+        "instance_id": str(instance_id),
+        "limit": max(1, min(int(limit), 1000)),
+    }).encode("utf-8") + b"\n"
+
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(3)
+            client.connect(INSTANCE_LOG_SOCKET)
+            client.sendall(request)
+
+            data = b""
+            while len(data) < 2 * 1024 * 1024:
+                chunk = client.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+                if b"\n" in data:
+                    data = data.split(b"\n", 1)[0]
+                    break
+    except OSError:
+        return []
+
+    try:
+        payload = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return []
+
+    if not isinstance(payload, dict) or payload.get("ok") is not True:
+        return []
+
+    logs = payload.get("logs")
+    if not isinstance(logs, list):
+        return []
+
+    return [
+        {
+            "stream": "journal",
+            "line": str(line)[:2000],
+            "created_at": None,
+        }
+        for line in logs
+        if isinstance(line, str)
+    ]
+
 
 def _json(value,default):
  if isinstance(value,(dict,list)):return value
@@ -36,6 +91,60 @@ class CustomerInstanceWorkspaceService:
    try:rows=s.execute(f"SELECT name,protocol,port,bind_address FROM instance_ports WHERE instance_id={ph} ORDER BY port,name",(instance_id,)).fetchall()
    finally:s.close()
   return [dict(x) for x in rows]
+ def _managed_configuration_entry(self,context):
+  game_id=str(context.get("game_id") or "").strip().lower()
+  runtime_id=str(context.get("runtime_id") or "").strip()
+  if not game_id or not runtime_id:return None
+  runtime_dir=self.root/"catalog"/"v2"/"games"/game_id/"runtimes"
+  if not runtime_dir.is_dir():return None
+  definition=None
+  for path in sorted(runtime_dir.glob("*.json")):
+   try:value=json.loads(path.read_text(encoding="utf-8"))
+   except (OSError,json.JSONDecodeError):continue
+   if str(value.get("id") or "").strip()==runtime_id:
+    definition=value;break
+  if not isinstance(definition,dict):return None
+  manifest=ConfigurationManifest.from_runtime_definition(definition)
+  return next((entry for entry in manifest.entries if entry.id=="server"),None)
+
+ def _effective_game_configuration(self,context,policy,customer):
+  entry=self._managed_configuration_entry(context)
+  if entry is None:return None
+
+  allowed={prop.key:prop for prop in entry.properties}
+
+  system={}
+  for item in self._ports(str(context.get("id") or context.get("instance_id") or "")):
+   if str(item.get("name") or "").strip().lower()=="steam_query":
+    system["steamQueryPort"]=int(item["port"])
+    break
+
+  contract={}
+  if policy.get("player_limit") is not None:
+   contract["maxPlayers"]=int(policy["player_limit"])
+
+  customer_values={
+   key:value
+   for key,value in dict(customer or {}).items()
+   if key in allowed and allowed[key].source=="CUSTOMER"
+  }
+  system={
+   key:value
+   for key,value in system.items()
+   if key in allowed and allowed[key].source=="SYSTEM"
+  }
+  contract={
+   key:value
+   for key,value in contract.items()
+   if key in allowed and allowed[key].source=="CONTRACT"
+  }
+
+  return resolve_configuration_precedence(
+   system=system,
+   contract=contract,
+   customer=customer_values,
+  )
+
  def _location(self,agent_id):
   ph=self.dialect.placeholder
   with self.backend.connect() as c:
@@ -57,7 +166,11 @@ class CustomerInstanceWorkspaceService:
   if isinstance(provision,dict) and str(provision.get("stage") or "").lower()=="completed" and int(provision.get("progress") or 0)>=100:provision=None
   return {"instance":{k:context.get(k) for k in ("id","name","game_id","edition","runtime_id","variant","game_version","status","agent_id","contract_id")},"permissions":sorted(permissions),"policy":policy,"content_policy":content.as_dict(),"content_sections":[x for x in ("mods","plugins","workshop") if content.as_dict().get(f"{x}_allowed")],"runtime_capabilities":capabilities,"ports":self._ports(instance_id),"location":{k:location.get(k) for k in ("public_host","datacenter_id","datacenter_name","city","country_code","region_id","region_name","region_country_code","agent_name")},"telemetry":telemetry,"storage":{"used_bytes":used,"limit_bytes":storage_limit,"percent":storage_pct},"provision":provision,"console":{"read":"console.read" in permissions,"execute":"console.execute" in permissions,"supported":bool((capabilities.get("console") or {}).get("supported"))},"upgrade":{"allowed":"contract.upgrade" in permissions,"current_profile_id":policy.get("resource_profile_id")}}
  def telemetry(self,user,instance_id,limit=240):self.require(user,instance_id,"instance.view");return self.repo.telemetry(instance_id,limit)
- def console_output(self,user,instance_id,limit=300):self.require(user,instance_id,"console.read");return self.repo.console_output(instance_id,limit)
+ def console_output(self,user,instance_id,limit=300):
+  self.require(user,instance_id,"console.read")
+  journal=_instance_journal_output(instance_id,limit)
+  if journal:return journal
+  return self.repo.console_output(instance_id,limit)
  def send_console(self,user,instance_id,command):
   context=self.require(user,instance_id,"console.execute");caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""))
   if not bool((caps.get("console") or {}).get("supported")):raise PermissionError("runtime game console is not available")
@@ -65,7 +178,42 @@ class CustomerInstanceWorkspaceService:
  def startup(self,user,instance_id):
   context=self.require(user,instance_id,"startup.read");policy=self.repo.workspace_policy(instance_id);caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));return {"values":policy.get("startup") or {},"declaration":caps.get("startup_parameters") or {},"resource_limits":{k:policy.get(k) for k in ("cpu_limit_cores","memory_limit_bytes","storage_limit_bytes","player_limit")}}
  def save_startup(self,user,instance_id,values):
-  context=self.require(user,instance_id,"startup.write");policy=self.repo.workspace_policy(instance_id);caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));policy["startup"]=validate_startup_values(values,caps.get("startup_parameters") or {});return self.repo.save_workspace_policy(instance_id,policy)
+  context=self.require(user,instance_id,"startup.write")
+  policy=self.repo.workspace_policy(instance_id)
+  caps=runtime_workspace_capabilities(
+   self.root,
+   str(context.get("game_id") or ""),
+   str(context.get("runtime_id") or ""),
+  )
+  customer=validate_startup_values(
+   values,
+   caps.get("startup_parameters") or {},
+  )
+  saved=self.repo.save_workspace_policy(
+   instance_id,
+   {**policy,"startup":customer},
+  )
+
+  resolved=self._effective_game_configuration(
+   context,
+   saved,
+   customer,
+  )
+
+  if resolved is not None:
+   configurations=ConfigurationRepository(self.backend)
+   configurations.initialize()
+   configurations.put(
+    {
+     "scope_type":"instance",
+     "scope_id":instance_id,
+     "namespace":"capivara.game.server",
+     "value":resolved["effective"],
+    },
+    updated_by=str((user or {}).get("username") or "customer"),
+   )
+
+  return saved
  def _file_command_policy(self,context,policy):
   caps,content=self._contract_policy(context,policy);return {"storage_limit_bytes":policy.get("storage_limit_bytes"),"content_policy":content.as_dict(),"file_policy":dict(caps.get("file_policy") or {})}
  def queue_file(self,user,instance_id,action,*,path=None,target_path=None,payload=None):

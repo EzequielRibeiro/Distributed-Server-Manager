@@ -132,14 +132,39 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
     os.chmod(storage_root, 0o711)
     state_root.mkdir(parents=True, exist_ok=True)
     os.chown(state_root, account.pw_uid, account.pw_gid)
-    os.chmod(state_root, 0o700)
+    # Runtime state remains private by default. When the customer
+    # files root is the instance state root, the Agent group must also
+    # be able to enumerate explicitly exposed workspace areas.
+    files_root_raw = spec.get("files_root")
+    files_root = Path(str(files_root_raw)).resolve() if files_root_raw else None
+    if files_root is not None:
+        try:
+            files_root.relative_to(state_root)
+        except ValueError as exc:
+            raise RuntimeError("customer files root is outside instance state root") from exc
+    if files_root == state_root:
+        os.chmod(state_root, 0o750)
+    else:
+        os.chmod(state_root, 0o710)
 
     working_root = Path(str(spec["working_directory"])).resolve()
     for item in spec.get("writable_directories", []):
         path = _within(state_root, str(item), "writable directory")
         path.mkdir(parents=True, exist_ok=True)
         os.chown(path, account.pw_uid, account.pw_gid)
-        os.chmod(path, 0o700)
+        configuration_root_raw = spec.get("configuration_root")
+        configuration_root = Path(str(configuration_root_raw)).resolve() if configuration_root_raw else None
+        if configuration_root is not None and path == configuration_root:
+            os.chmod(path, 0o770)
+        elif files_root is not None:
+            try:
+                path.relative_to(files_root)
+            except ValueError:
+                os.chmod(path, 0o700)
+            else:
+                os.chmod(path, 0o750)
+        else:
+            os.chmod(path, 0o700)
     for item in spec.get("seed_files", []):
         source = _within(working_root, str(item["source"]), "seed source")
         target = _within(state_root, str(item["target"]), "seed target")
@@ -147,17 +172,39 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
             raise RuntimeError(f"seed source is unavailable: {source}")
         target.parent.mkdir(parents=True, exist_ok=True)
         os.chown(target.parent, account.pw_uid, account.pw_gid)
-        os.chmod(target.parent, 0o700)
+        configuration_root = Path(str(spec.get("configuration_root") or "")).resolve()
+        if target.parent == configuration_root:
+            os.chmod(target.parent, 0o770)
+        elif files_root is not None:
+            try:
+                target.parent.relative_to(files_root)
+            except ValueError:
+                os.chmod(target.parent, 0o700)
+            else:
+                os.chmod(target.parent, 0o750)
+        else:
+            os.chmod(target.parent, 0o700)
         if not target.exists():
             shutil.copy2(source, target)
         os.chown(target, account.pw_uid, account.pw_gid)
-        os.chmod(target, 0o600)
+        if target.parent == configuration_root:
+            os.chmod(target, 0o660)
+        else:
+            os.chmod(target, 0o600)
     for item in spec.get("bind_paths", []):
         source = _within(state_root, str(item["source"]), "bind source")
         target = _within(working_root, str(item["target"]), "bind target")
         source.mkdir(parents=True, exist_ok=True)
         os.chown(source, account.pw_uid, account.pw_gid)
-        os.chmod(source, 0o700)
+        if files_root is not None:
+            try:
+                source.relative_to(files_root)
+            except ValueError:
+                os.chmod(source, 0o700)
+            else:
+                os.chmod(source, 0o750)
+        else:
+            os.chmod(source, 0o700)
         target.mkdir(parents=True, exist_ok=True)
 
 

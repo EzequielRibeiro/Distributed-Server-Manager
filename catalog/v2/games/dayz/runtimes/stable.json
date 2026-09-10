@@ -76,5 +76,90 @@
         "syntax": "semicolon"
       }
     ]
+  },
+  "configuration": {
+    "files": [
+      {
+        "id": "server",
+        "path": "serverDZ.cfg",
+        "category": "game",
+        "label": "Configuração do servidor",
+        "editable": false,
+        "optional": false,
+        "format": "semicolon_properties",
+        "properties": [
+          {
+            "key": "hostname",
+            "source": "CUSTOMER",
+            "type": "string"
+          },
+          {
+            "key": "description",
+            "source": "CUSTOMER",
+            "type": "string"
+          },
+          {
+            "key": "enableWhitelist",
+            "source": "CUSTOMER",
+            "type": "boolean"
+          },
+          {
+            "key": "disable3rdPerson",
+            "source": "CUSTOMER",
+            "type": "boolean"
+          },
+          {
+            "key": "disableCrosshair",
+            "source": "CUSTOMER",
+            "type": "boolean"
+          },
+          {
+            "key": "disableVoN",
+            "source": "CUSTOMER",
+            "type": "boolean"
+          },
+          {
+            "key": "vonCodecQuality",
+            "source": "CUSTOMER",
+            "type": "integer"
+          },
+          {
+            "key": "motdInterval",
+            "source": "CUSTOMER",
+            "type": "integer"
+          },
+          {
+            "key": "serverTime",
+            "source": "CUSTOMER",
+            "type": "string"
+          },
+          {
+            "key": "serverTimeAcceleration",
+            "source": "CUSTOMER",
+            "type": "integer"
+          },
+          {
+            "key": "serverNightTimeAcceleration",
+            "source": "CUSTOMER",
+            "type": "integer"
+          },
+          {
+            "key": "serverTimePersistent",
+            "source": "CUSTOMER",
+            "type": "boolean"
+          },
+          {
+            "key": "maxPlayers",
+            "source": "CONTRACT",
+            "type": "integer"
+          },
+          {
+            "key": "steamQueryPort",
+            "source": "SYSTEM",
+            "type": "integer"
+          }
+        ]
+      }
+    ]
   }
 }

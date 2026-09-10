@@ -57,7 +57,7 @@ def _credential_lines(spec):
  return lines
 def render_unit(spec):
  instance_id=str(spec["instance_id"]);agent_id=str(spec["agent_id"]);runtime_id=str(spec["runtime_id"]);state_directory,private_state_path=_instance_state(instance_id);argv=[str(spec["executable"]),*[str(x) for x in spec.get("arguments",[])]]
- lines=["[Unit]",f"Description=Capivara instance {instance_id}","After=network-online.target","Wants=network-online.target",f"X-Capivara-GeneratedBy={_GENERATED_BY}",f"X-Capivara-Instance={instance_id}",f"X-Capivara-Agent={agent_id}",f"X-Capivara-Runtime={runtime_id}","","[Service]","Type=simple",f"User={spec['user']}",f"StateDirectory={state_directory}","StateDirectoryMode=0700",f"BindPaths={_bind_path(private_state_path,_RUNTIME_ACCOUNT_HOME)}"]
+ lines=["[Unit]",f"Description=Capivara instance {instance_id}","After=network-online.target","Wants=network-online.target",f"X-Capivara-GeneratedBy={_GENERATED_BY}",f"X-Capivara-Instance={instance_id}",f"X-Capivara-Agent={agent_id}",f"X-Capivara-Runtime={runtime_id}","","[Service]","Type=simple","IPAccounting=yes",f"User={spec['user']}",f"StateDirectory={state_directory}","StateDirectoryMode=0700",f"BindPaths={_bind_path(private_state_path,_RUNTIME_ACCOUNT_HOME)}"]
  runtime_directory=spec.get("runtime_directory")
  if runtime_directory:lines.extend([f"RuntimeDirectory={runtime_directory}","RuntimeDirectoryMode=0700"])
  for binding in spec.get("bind_paths",[]):lines.append(f"BindPaths={_bind_path(binding['source'],binding['target'])}")

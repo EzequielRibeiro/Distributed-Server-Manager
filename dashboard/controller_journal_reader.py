@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import socket
 import struct
 import subprocess
@@ -51,6 +52,64 @@ def journal_command(limit: int) -> list[str]:
     for unit in CONTROLLER_UNITS:
         command.extend(("-u", unit))
     return command
+
+
+INSTANCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,190}$")
+
+
+def instance_unit(instance_id: object) -> str:
+    value = str(instance_id or "").strip()
+    if not INSTANCE_ID_RE.fullmatch(value):
+        raise ValueError("invalid_instance_id")
+    return f"capivara-instance-{value}.service"
+
+
+def read_instance_logs(instance_id: object, limit: int) -> dict[str, object]:
+    unit = instance_unit(instance_id)
+    try:
+        completed = subprocess.run(
+            [
+                JOURNALCTL,
+                "--quiet",
+                "--no-pager",
+                "-o",
+                "short-iso",
+                "-n",
+                str(clamp_limit(limit)),
+                "-u",
+                unit,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {
+            "ok": False,
+            "error": "journal_unavailable",
+            "message": str(exc),
+            "logs": [],
+        }
+
+    stderr = (completed.stderr or "").strip()
+    if completed.returncode != 0:
+        return {
+            "ok": False,
+            "error": "journal_read_failed",
+            "message": stderr or f"journalctl exited with {completed.returncode}",
+            "logs": [],
+        }
+
+    lines = (completed.stdout or "").splitlines()
+    return {
+        "ok": True,
+        "source": "instance",
+        "instance_id": str(instance_id),
+        "backend": "systemd-journal",
+        "logs": lines[-clamp_limit(limit):],
+        "total_returned": min(len(lines), clamp_limit(limit)),
+    }
 
 
 def read_controller_logs(limit: int) -> dict[str, object]:
@@ -142,9 +201,19 @@ def serve(socket_path: str) -> None:
                     continue
                 try:
                     request = _read_request(connection)
-                    if request.get("operation") != "controller_logs":
+                    operation = request.get("operation")
+                    if operation == "controller_logs":
+                        payload = read_controller_logs(
+                            clamp_limit(request.get("limit"))
+                        )
+                    elif operation == "instance_logs":
+                        payload = read_instance_logs(
+                            request.get("instance_id"),
+                            clamp_limit(request.get("limit")),
+                        )
+                    else:
                         raise ValueError("unsupported_operation")
-                    _reply(connection, read_controller_logs(clamp_limit(request.get("limit"))))
+                    _reply(connection, payload)
                 except (ValueError, json.JSONDecodeError) as exc:
                     _reply(connection, {"ok": False, "error": "invalid_request", "message": str(exc), "logs": []})
     finally:

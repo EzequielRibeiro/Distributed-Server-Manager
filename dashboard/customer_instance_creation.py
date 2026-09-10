@@ -13,6 +13,7 @@ from customer_team_repository import CustomerTeamRepository
 from instance_backup_clone_repository import InstanceBackupCloneRepository
 from instance_network import occupied_ports_provider_for_backend
 from instance_provisioning_projection import dashboard_provision_state,project_agent_provisioning
+from instance_workspace_repository import InstanceWorkspaceRepository
 
 def runtime_directory(root:Path,game:str)->Path:return Path(root)/"catalog"/"v2"/"games"/game/"runtimes"
 def runtime_definition(root:Path,game:str,runtime_id:str)->dict[str,Any]:
@@ -64,6 +65,23 @@ def install_customer_instance_creation(legacy)->None:
     str(plan["instance_id"]),
     "manager",
    )
+
+   effective = normalize_resource_policy(effective_resource_policy)
+   workspace = InstanceWorkspaceRepository(repository.backend)
+   workspace.initialize()
+   current_policy = workspace.workspace_policy(str(plan["instance_id"]))
+   workspace.save_workspace_policy(
+    str(plan["instance_id"]),
+    {
+     **current_policy,
+     "resource_profile_id": resource_profile_id,
+     "cpu_limit_cores": effective.cpu_cores,
+     "memory_limit_bytes": effective.memory_bytes,
+     "storage_limit_bytes": effective.storage_bytes,
+     "player_limit": effective.player_limit or None,
+    },
+   )
+
    state,provision=_queue_agent_provisioning(root=root,repository=repository,runtime_def=runtime_def,instance_id=plan["instance_id"],agent_id=plan["agent_id"],runtime_id=runtime_id,version=version,build=build,requested_by=str(user.get("username") or "customer"),resource_profile_id=resource_profile_id)
    clone=None
    if source_vault_id:clone,_=clones.start(customer_id=customer_id,source_vault_id=source_vault_id,target_instance_id=plan["instance_id"],target_agent_id=plan["agent_id"],provisioning_id=str(state["provisioning_id"]),requested_by=str(user.get("username") or "customer"))

@@ -64,12 +64,14 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
   name=str(key);text=str(value)
   if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}",name) or any(c in text for c in ("\x00","\n","\r")):raise RuntimeSpecError("invalid environment entry")
   normalized_environment[name]=text
- result["environment"]=normalized_environment;user=str(result.get("user") or "capivara-instance").strip()
+ result["environment"]=normalized_environment
+ result["telemetry"]=_normalize_telemetry(result.get("telemetry"))
+ user=str(result.get("user") or "capivara-instance").strip()
  if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,63}",user):raise RuntimeSpecError("invalid runtime user")
  result["user"]=user;desired=str(result.get("desired_state") or "stopped").strip().lower()
  if desired not in VALID_DESIRED_STATES:raise RuntimeSpecError("invalid desired_state")
  result["desired_state"]=desired
- for key in ("instance_state_root","configuration_root","config_path"):
+ for key in ("instance_state_root","configuration_root","config_path","files_root"):
   if result.get(key) is not None:result[key]=_absolute(result[key],key)
  result["writable_directories"]=_absolute_list(result.get("writable_directories"),"writable_directories")
  seed=result.get("seed_files") or []
@@ -81,4 +83,39 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  result["bind_paths"]=[{"source":_absolute(x.get("source"),"bind source"),"target":_absolute(x.get("target"),"bind target")} for x in binds if isinstance(x,dict)]
  if len(result["bind_paths"])!=len(binds):raise RuntimeSpecError("invalid bind_paths")
  result["path"]=result["working_directory"];return result
+def _normalize_telemetry(value):
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise RuntimeSpecError("invalid telemetry")
+
+    result = {}
+
+    argv = value.get("query_argv")
+    if argv is not None:
+        if not isinstance(argv, list) or not argv or len(argv) > 32:
+            raise RuntimeSpecError("invalid telemetry.query_argv")
+        normalized = []
+        for item in argv:
+            text = str(item)
+            if "\x00" in text or "\n" in text or "\r" in text or len(text) > 4096:
+                raise RuntimeSpecError("invalid telemetry.query_argv")
+            normalized.append(text)
+        if not normalized[0].startswith("/"):
+            raise RuntimeSpecError("telemetry query executable must be absolute")
+        result["query_argv"] = normalized
+
+    timeout = value.get("query_timeout_seconds")
+    if timeout is not None:
+        try:
+            timeout = int(timeout)
+        except (TypeError, ValueError):
+            raise RuntimeSpecError("invalid telemetry.query_timeout_seconds")
+        if timeout < 1 or timeout > 15:
+            raise RuntimeSpecError("invalid telemetry.query_timeout_seconds")
+        result["query_timeout_seconds"] = timeout
+
+    return result
+
+
 __all__=["RuntimeSpecError","VALID_DESIRED_STATES","validate_runtime_spec"]

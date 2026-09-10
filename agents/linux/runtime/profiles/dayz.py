@@ -22,7 +22,7 @@ _STEAM_QUERY_OFFSET = 3
 
 class DayZRuntimeProfile(GameRuntimeProfile):
     game_ids = ("dayz", "dayz.stable")
-    profile_version = 4
+    profile_version = 6
 
     def migration_context(self, record: dict[str, Any]) -> dict[str, Any]:
         """Reconstruct a modern context from a pre-private-state DayZ RuntimeSpec."""
@@ -168,7 +168,19 @@ class DayZRuntimeProfile(GameRuntimeProfile):
                 "game_aux": {"port": game_aux_port, "protocol": "udp"},
                 "steam_query": {"port": steam_query_port, "protocol": "udp"},
             },
+            "telemetry": {
+                "query_argv": [
+                    "/usr/bin/python3",
+                    str(Path(__file__).resolve().parents[1] / "steam_a2s_query.py"),
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(steam_query_port),
+                ],
+                "query_timeout_seconds": 5,
+            },
             "instance_state_root": instance_state_root,
+            "files_root": instance_state_root,
             "configuration_root": configuration_root,
             "config_path": config_path,
             "seed_files": [{

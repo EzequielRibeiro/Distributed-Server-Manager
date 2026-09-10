@@ -80,10 +80,57 @@ def _cpu_percent(instance_id: str, process_ticks: int) -> float | None:
 
 def _network(interface: str | None) -> tuple[int | None, int | None]:
     interface = str(interface or "").strip()
-    if not interface or "/" in interface or ".." in interface: return None, None
+    if not interface or "/" in interface or ".." in interface:
+        return None, None
     base = Path("/sys/class/net") / interface / "statistics"
-    try: rx = int((base / "rx_bytes").read_text().strip()); tx = int((base / "tx_bytes").read_text().strip()); return rx, tx
-    except (OSError, ValueError): return None, None
+    try:
+        rx = int((base / "rx_bytes").read_text().strip())
+        tx = int((base / "tx_bytes").read_text().strip())
+        return rx, tx
+    except (OSError, ValueError):
+        return None, None
+
+
+def _systemd_network(instance_id: str) -> tuple[int | None, int | None]:
+    unit = f"capivara-instance-{instance_id}.service"
+    try:
+        result = subprocess.run(
+            [
+                "systemctl",
+                "show",
+                unit,
+                "--property=IPAccounting",
+                "--property=IPIngressBytes",
+                "--property=IPEgressBytes",
+                "--no-pager",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None, None
+
+    if result.returncode != 0:
+        return None, None
+
+    values = {}
+    for line in (result.stdout or "").splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            values[key.strip()] = value.strip()
+
+    if values.get("IPAccounting", "").lower() != "yes":
+        return None, None
+
+    try:
+        rx = int(values["IPIngressBytes"])
+        tx = int(values["IPEgressBytes"])
+    except (KeyError, TypeError, ValueError):
+        return None, None
+
+    return rx, tx
 
 
 def _storage_used(path_value: Any, *, max_entries: int = 200000) -> int | None:
@@ -137,6 +184,8 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
             memory = _rss_bytes(pid)
         telemetry_config = record.get("telemetry") if isinstance(record.get("telemetry"), dict) else {}
         rx, tx = _network(telemetry_config.get("network_interface"))
+        if rx is None and tx is None and adapter == "systemd":
+            rx, tx = _systemd_network(instance_id)
         game = _game_query(telemetry_config)
         try:
             view = instance_runtime.status(config, instance_id)

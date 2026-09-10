@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "kind": "GameWorkspacePolicy",
+  "game": "dayz",
+  "products": {},
+  "runtimes": {
+    "dayz.stable": {
+      "label": "DayZ Stable",
+      "file_policy": {
+        "areas": [
+          {
+            "path": "config",
+            "access": "read_write"
+          },
+          {
+            "path": "profiles",
+            "access": "read_only"
+          },
+          {
+            "path": "storage_1",
+            "access": "read_only"
+          }
+        ]
+      },
+      "startup_parameters": {
+        "hostname": {
+          "type": "string",
+          "max_length": 128,
+          "customer_editable": true
+        },
+        "description": {
+          "type": "string",
+          "max_length": 256,
+          "customer_editable": true
+        },
+        "enableWhitelist": {
+          "type": "boolean",
+          "customer_editable": true
+        },
+        "disable3rdPerson": {
+          "type": "boolean",
+          "customer_editable": true
+        },
+        "disableCrosshair": {
+          "type": "boolean",
+          "customer_editable": true
+        },
+        "disableVoN": {
+          "type": "boolean",
+          "customer_editable": true
+        },
+        "vonCodecQuality": {
+          "type": "integer",
+          "min": 1,
+          "max": 30,
+          "customer_editable": true
+        },
+        "motdInterval": {
+          "type": "integer",
+          "min": 1,
+          "max": 600,
+          "customer_editable": true
+        },
+        "serverTime": {
+          "type": "string",
+          "max_length": 32,
+          "customer_editable": true
+        },
+        "serverTimeAcceleration": {
+          "type": "integer",
+          "min": 0,
+          "max": 24,
+          "customer_editable": true
+        },
+        "serverNightTimeAcceleration": {
+          "type": "integer",
+          "min": 0,
+          "max": 64,
+          "customer_editable": true
+        },
+        "serverTimePersistent": {
+          "type": "boolean",
+          "customer_editable": true
+        }
+      },
+      "managed_configuration": {
+        "files": {
+          "config/serverDZ.cfg": {
+            "syntax": "semicolon",
+            "customer_keys": [
+              "hostname",
+              "description",
+              "password",
+              "passwordAdmin",
+              "enableWhitelist",
+              "disable3rdPerson",
+              "disableCrosshair",
+              "disableVoN",
+              "vonCodecQuality",
+              "motdInterval",
+              "serverTime",
+              "serverTimeAcceleration",
+              "serverNightTimeAcceleration",
+              "serverTimePersistent"
+            ],
+            "system_keys": [
+              "steamQueryPort"
+            ],
+            "contract_keys": [
+              "maxPlayers"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
