@@ -12,7 +12,7 @@ A successful build therefore is not sufficient evidence that the public release 
 
 `.github/workflows/published-release-smoke.yml` runs when a canonical `v<SemVer>` GitHub Release is published. The intermediate `agent-linux-v<version>` and `agent-windows-v<version>` publication events are intentionally ignored because the canonical release does not exist yet at that point.
 
-The workflow can also be run manually for a specific canonical tag. On pull requests that change the validator itself, it resolves the latest stable canonical release and exercises the validator against already-published production artifacts.
+The workflow can also be run manually for a specific canonical tag. Pull requests that change the publication validator compile it and execute the local release-builder regression, including manifest/file-count parity. They do not reinterpret or weaken an already-published release merely to make the pull request green. The public transport proof is produced only by validating the real canonical release after publication, or by an explicit manual run against a chosen tag.
 
 ## Required canonical assets
 
@@ -46,6 +46,10 @@ Additional release assets such as signatures are allowed, but the required set m
 10. The standalone Linux and Windows Agent release tags resolve to the same commit as the canonical release, contain their required three assets, and publish byte-identical copies of the corresponding canonical Agent artifacts.
 
 The validation reads published artifacts only. It does not install the package, modify an active Controller/Agent, write under `/opt/dsm`, or alter game instances.
+
+## Generated manifest boundary
+
+The repository root must not carry a historical `release-manifest.json` as a source file. `release/build_release.sh` generates that manifest inside the staged package for the exact release commit. `tests/release_build_test.sh` verifies that its declared `file_count` equals the number of regular files actually packaged, preventing a stale source manifest from shifting the count.
 
 ## Relationship to rollout
 
