@@ -88,12 +88,18 @@ def _remote_inventory_response(
     matching Agent/node identity and a complete protocol inventory with a known
     source. Missing, incomplete or malformed data fails closed rather than
     being interpreted as an empty host.
+
+    This path is intentionally observational. Instance allocation can call it
+    while holding its own database transaction, so refreshing Agent health here
+    would introduce a nested write transaction (and lock SQLite). Health is
+    refreshed by the heartbeat/monitoring paths before placement; inspection
+    consumes that persisted projection without mutating it.
     """
 
     try:
         snapshot = repository.snapshot(
             request.agent_id,
-            refresh_health=True,
+            refresh_health=False,
         )
     except AgentRuntimeNotFound as exc:
         raise PortInspectionError(
