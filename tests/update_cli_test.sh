@@ -54,9 +54,9 @@ print("controller")
 EOF
 
 # -------------------------------------------------------------
-# Update Manager stub
+# Update Manager stubs
 #
-# Impede acesso a rede, releases e update.sh real.
+# Impedem acesso a rede, releases e update.sh real.
 # -------------------------------------------------------------
 
 cat >"${FAKE_ROOT}/update-manager/update-manager.sh" <<'EOF'
@@ -81,7 +81,14 @@ dsm_update_history()
 }
 EOF
 
-chmod +x "${FAKE_ROOT}/update-manager/update-manager.sh"
+cat >"${FAKE_ROOT}/update-manager/preflight-latest.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "STUB_UPDATE_PREFLIGHT"
+EOF
+
+chmod +x \
+    "${FAKE_ROOT}/update-manager/update-manager.sh" \
+    "${FAKE_ROOT}/update-manager/preflight-latest.sh"
 
 # -------------------------------------------------------------
 # check
@@ -95,6 +102,28 @@ STATUS=$?
 
 [[ "${OUTPUT}" == "STUB_UPDATE_CHECK" ]] \
     || fail "dsm update check nao chegou ao dispatcher esperado"
+
+# -------------------------------------------------------------
+# preflight - legado e CLI publica devem chegar ao mesmo contrato
+# -------------------------------------------------------------
+
+OUTPUT="$(DSM_QUIET_DEPRECATION=1 "${FAKE_ROOT}/bin/dsm" update preflight)"
+STATUS=$?
+
+[[ "${STATUS}" -eq 0 ]] \
+    || fail "dsm update preflight retornou ${STATUS}"
+
+[[ "${OUTPUT}" == "STUB_UPDATE_PREFLIGHT" ]] \
+    || fail "dsm update preflight nao chegou ao dispatcher esperado"
+
+OUTPUT="$("${FAKE_ROOT}/bin/cap" update preflight)"
+STATUS=$?
+
+[[ "${STATUS}" -eq 0 ]] \
+    || fail "cap update preflight retornou ${STATUS}"
+
+[[ "${OUTPUT}" == "STUB_UPDATE_PREFLIGHT" ]] \
+    || fail "cap update preflight nao chegou ao dispatcher esperado"
 
 # -------------------------------------------------------------
 # run
@@ -137,6 +166,9 @@ set -e
 grep -q 'cap update check' <<<"${OUTPUT}" \
     || fail "usage nao contem update check"
 
+grep -q 'cap update preflight' <<<"${OUTPUT}" \
+    || fail "usage nao contem update preflight"
+
 grep -q 'cap update run' <<<"${OUTPUT}" \
     || fail "usage nao contem update run"
 
@@ -161,5 +193,7 @@ set -e
 
 [[ ! -e "${FAKE_ROOT}/update.sh" ]] \
     || fail "ambiente de teste contem update.sh inesperadamente"
+
+bash "${ROOT}/tests/update_preflight_test.sh"
 
 echo "Update CLI tests passed."
