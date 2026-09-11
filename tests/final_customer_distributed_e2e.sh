@@ -19,6 +19,7 @@ tests=(
   tests/agent_link_recovery_e2e_test.py
   tests/customer_workspace_architecture_boundary_test.py
   tests/phase22_customer_dayz_regression_test.py
+  tests/customer_agent_provisioning_handoff_e2e_test.py
 )
 
 for test_file in "${tests[@]}"; do
@@ -27,7 +28,9 @@ for test_file in "${tests[@]}"; do
 done
 
 # Cross-layer privacy/correlation guard: the canonical regressions themselves
-# must continue to carry assertions for these contracts.
+# must continue to carry assertions for these contracts. The handoff proof is
+# deliberately required here so the final gate cannot regress to a test-double
+# provisioner while still claiming distributed provisioning coverage.
 python3 - <<'PY'
 from pathlib import Path
 
@@ -46,6 +49,12 @@ required = {
     ),
     "tests/agent_queue_observability_test.py": (
         "retry",
+    ),
+    "tests/customer_agent_provisioning_handoff_e2e_test.py": (
+        "AgentInstanceProvisioningRepository",
+        "CapivaraInstanceProvisioningRequest",
+        "command_for_agent",
+        "catalog_runtime_policy",
     ),
 }
 
