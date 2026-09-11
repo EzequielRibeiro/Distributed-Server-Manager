@@ -57,11 +57,14 @@ for forbidden_path in .git .idea .artifacts cache logs packages instances tools/
 "${PYTHON_BIN}" - "${TMP_DIR}/first/${MANIFEST_NAME}" "${PACKAGE_ROOT}/release-manifest.json" "${VERSION}" "${COMMIT}" <<'PY'
 import json,pathlib,sys
 external_path, internal_path, expected_version, expected_commit = sys.argv[1:]
-external=pathlib.Path(external_path).read_bytes(); internal=pathlib.Path(internal_path).read_bytes()
+external=pathlib.Path(external_path).read_bytes(); internal_path=pathlib.Path(internal_path); internal=internal_path.read_bytes()
 if external != internal: raise SystemExit("external and packaged manifests differ")
 manifest=json.loads(internal)
 if manifest["version"] != expected_version: raise SystemExit("manifest version mismatch")
 if manifest["git_commit"] != expected_commit: raise SystemExit("manifest commit mismatch")
 if manifest["kind"] != "CapivaraReleaseManifest": raise SystemExit("manifest kind mismatch")
+actual_file_count=sum(1 for path in internal_path.parent.rglob("*") if path.is_file())
+if manifest["file_count"] != actual_file_count:
+    raise SystemExit(f"manifest file_count mismatch: {manifest['file_count']} != {actual_file_count}")
 PY
 printf 'Release build tests passed.\n'
