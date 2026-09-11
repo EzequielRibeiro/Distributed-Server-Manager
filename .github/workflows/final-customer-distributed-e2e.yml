@@ -9,6 +9,8 @@ on:
       - 'dashboard/**'
       - 'database/**'
       - 'agents/**'
+      - 'catalog/v2/games/**'
+      - 'core/placement_requirements.py'
       - 'tests/final_customer_distributed_e2e.sh'
       - 'tests/final_customer_distributed_e2e_manifest.json'
       - 'tests/customer_self_service_profile_test.py'
@@ -20,6 +22,7 @@ on:
       - 'tests/agent_link_recovery_e2e_test.py'
       - 'tests/customer_workspace_architecture_boundary_test.py'
       - 'tests/phase22_customer_dayz_regression_test.py'
+      - 'tests/customer_agent_provisioning_handoff_e2e_test.py'
       - '.github/workflows/final-customer-distributed-e2e.yml'
 
 permissions:
@@ -41,6 +44,9 @@ jobs:
 
       - name: Validate traceability manifest
         run: python3 -m json.tool tests/final_customer_distributed_e2e_manifest.json >/dev/null
+
+      - name: Compile customer provisioning handoff proof
+        run: python3 -m py_compile tests/customer_agent_provisioning_handoff_e2e_test.py
 
       - name: Run integrated Customer and distributed operations regression
         run: bash tests/final_customer_distributed_e2e.sh
