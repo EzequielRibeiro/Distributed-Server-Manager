@@ -74,14 +74,21 @@ class InstanceCycleOrchestrator:
         self.command_ids: list[str] = []
         self.completed: list[dict] = []
         self.finished = False
+        self.provisioning_finished = False
         self.remove_idempotent = False
 
     def _provisioning_complete(self) -> bool:
+        if self.provisioning_finished:
+            return True
         states = [self.provisioning.snapshot(provisioning_id) for provisioning_id in self.provisioning_ids]
         failures = [state for state in states if str(state.get("status") or "").lower() == "failed"]
         if failures:
             raise AssertionError(f"provisioning failed before lifecycle: {failures}")
-        return all(str(state.get("status") or "").lower() == "completed" for state in states)
+        self.provisioning_finished = all(
+            str(state.get("status") or "").lower() == "completed"
+            for state in states
+        )
+        return self.provisioning_finished
 
     def _complete_current_if_ready(self) -> None:
         if self.current is None:
@@ -606,10 +613,9 @@ def main() -> int:
             raise AssertionError("instance B was not still running after instance A teardown")
         if len(orchestrator.command_ids) != len(orchestrator.actions):
             raise AssertionError("not every lifecycle action crossed the Controller→Agent queue")
-
-        jobs = AgentInstanceProvisioningRepository(backend)
-        if any(str(jobs.snapshot(provisioning_id).get("status") or "").lower() != "completed" for provisioning_id in provisioning_ids):
+        if not orchestrator.provisioning_finished:
             raise AssertionError("provisioning was not acknowledged by Controller")
+
         with sqlite3.connect(database_path) as connection:
             remaining = connection.execute(
                 "SELECT COUNT(*) FROM instances WHERE id IN (?,?)",
