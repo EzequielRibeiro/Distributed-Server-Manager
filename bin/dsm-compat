@@ -47,6 +47,19 @@ update_command()
 {
     local ACTION="${1:-}"
     local module="${DSM_ROOT}/update-manager/update-manager.sh"
+    local preflight="${DSM_ROOT}/update-manager/preflight-latest.sh"
+
+    if [[ "${ACTION}" == "preflight" ]]
+    then
+        if [[ ! -f "${preflight}" ]]
+        then
+            echo "Preflight de atualização não encontrado:" >&2
+            echo "${preflight}" >&2
+            return 1
+        fi
+        bash "${preflight}"
+        return $?
+    fi
 
     if [[ ! -f "${module}" ]]
     then
@@ -65,6 +78,7 @@ update_command()
         *)
             echo "Uso:" >&2
             echo "  cap update check" >&2
+            echo "  sudo cap update preflight" >&2
             echo "  cap update run" >&2
             echo "  cap update history" >&2
             return 2
@@ -125,6 +139,7 @@ Backup local:
 Configuração e atualização:
   cap config show
   cap update check
+  sudo cap update preflight
   cap update run
   cap update history
 
