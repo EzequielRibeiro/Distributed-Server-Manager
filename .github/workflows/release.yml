@@ -8,9 +8,6 @@ on:
       - 'v*.*.*'
     paths:
       - 'release/RELEASE_TRIGGER'
-      - '.github/workflows/release.yml'
-      - 'release/readiness-v2.json'
-      - 'release/RELEASE_NOTES_*.md'
 
 permissions:
   contents: write
@@ -38,6 +35,31 @@ jobs:
           python3 tests/release_readiness_test.py
           test -f "release/RELEASE_NOTES_${VERSION}.md"
 
+      - name: Guard canonical release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(tr -d '\r\n' <version)
+          TAG="v${VERSION}"
+
+          RELEASE_EXISTS=0
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            RELEASE_EXISTS=1
+          fi
+
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            TAG_COMMIT=$(git rev-list -n 1 "${TAG}")
+            if [[ "${TAG_COMMIT}" != "${GITHUB_SHA}" ]]; then
+              echo "Refusing to move existing ${TAG}: it resolves to ${TAG_COMMIT}, current release commit is ${GITHUB_SHA}." >&2
+              exit 1
+            fi
+          elif [[ "${RELEASE_EXISTS}" == "1" ]]; then
+            echo "Refusing to continue: GitHub Release ${TAG} exists but refs/tags/${TAG} is missing." >&2
+            exit 1
+          fi
+
       - name: Build standalone Agent installers
         shell: bash
         run: |
@@ -55,6 +77,20 @@ jobs:
           VERSION=$(tr -d '\r\n' <version)
           LINUX_TAG="agent-linux-v${VERSION}"
           WINDOWS_TAG="agent-windows-v${VERSION}"
+
+          for STANDALONE_TAG in "${LINUX_TAG}" "${WINDOWS_TAG}"; do
+            if gh release view "${STANDALONE_TAG}" >/dev/null 2>&1; then
+              if ! git rev-parse -q --verify "refs/tags/${STANDALONE_TAG}" >/dev/null; then
+                echo "Standalone release ${STANDALONE_TAG} exists without a matching tag." >&2
+                exit 1
+              fi
+              STANDALONE_COMMIT=$(git rev-list -n 1 "${STANDALONE_TAG}")
+              if [[ "${STANDALONE_COMMIT}" != "${GITHUB_SHA}" ]]; then
+                echo "Refusing to reuse ${STANDALONE_TAG}: it resolves to ${STANDALONE_COMMIT}, current release commit is ${GITHUB_SHA}." >&2
+                exit 1
+              fi
+            fi
+          done
 
           gh release view "${LINUX_TAG}" >/dev/null 2>&1 || \
             gh release create "${LINUX_TAG}" \
@@ -74,16 +110,26 @@ jobs:
               "dist/capivara-agent-windows-${VERSION}.zip.sha256" \
               "dist/capivara-agent-windows-${VERSION}.manifest.json"
 
-      - name: Move canonical release tag to approved release commit
+      - name: Ensure canonical release tag matches approved release commit
         shell: bash
         run: |
           set -euo pipefail
           VERSION=$(tr -d '\r\n' <version)
           TAG="v${VERSION}"
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git tag -fa "${TAG}" "${GITHUB_SHA}" -m "Capivara DSM ${TAG}"
-          git push --force origin "refs/tags/${TAG}"
+
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            TAG_COMMIT=$(git rev-list -n 1 "${TAG}")
+            if [[ "${TAG_COMMIT}" != "${GITHUB_SHA}" ]]; then
+              echo "Refusing to move existing ${TAG}: it resolves to ${TAG_COMMIT}, current release commit is ${GITHUB_SHA}." >&2
+              exit 1
+            fi
+            echo "Tag ${TAG} already points to ${GITHUB_SHA}; leaving it unchanged."
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git tag -a "${TAG}" "${GITHUB_SHA}" -m "Capivara DSM ${TAG}"
+            git push origin "refs/tags/${TAG}"
+          fi
 
       - name: Publish canonical GitHub Release
         env:
@@ -99,7 +145,12 @@ jobs:
           bash release/build_agent_package.sh "${GITHUB_SHA}" dist
           python3 release/build_windows_agent_package.py "${GITHUB_SHA}" dist
           if gh release view "${TAG}" >/dev/null 2>&1; then
-            echo "Release ${TAG} already exists."
+            TAG_COMMIT=$(git rev-list -n 1 "${TAG}")
+            if [[ "${TAG_COMMIT}" != "${GITHUB_SHA}" ]]; then
+              echo "Existing release ${TAG} belongs to ${TAG_COMMIT}; refusing to publish assets for ${GITHUB_SHA}." >&2
+              exit 1
+            fi
+            echo "Release ${TAG} already exists for ${GITHUB_SHA}; leaving assets unchanged."
           else
             RELEASE_FLAGS=(--verify-tag --title "Capivara DSM ${TAG}" --notes-file "release/RELEASE_NOTES_${VERSION}.md")
             gh release create "${TAG}" \
@@ -186,24 +237,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           VERSION=$(tr -d '\r\n' <version)
+          TAG_COMMIT=$(git rev-list -n 1 "${GITHUB_REF_NAME}")
+          if [[ "${TAG_COMMIT}" != "${GITHUB_SHA}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} resolves to ${TAG_COMMIT}, but workflow commit is ${GITHUB_SHA}." >&2
+            exit 1
+          fi
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            echo "Release ${GITHUB_REF_NAME} already exists."
-            exit 0
-          fi
-          RELEASE_FLAGS=(--verify-tag --title "Capivara DSM ${GITHUB_REF_NAME}")
-          if [[ -f "release/RELEASE_NOTES_${VERSION}.md" ]]; then
-            RELEASE_FLAGS+=(--notes-file "release/RELEASE_NOTES_${VERSION}.md")
+            echo "Release ${GITHUB_REF_NAME} already exists for ${GITHUB_SHA}; leaving assets unchanged."
           else
-            RELEASE_FLAGS+=(--generate-notes)
+            RELEASE_FLAGS=(--verify-tag --title "Capivara DSM ${GITHUB_REF_NAME}")
+            if [[ -f "release/RELEASE_NOTES_${VERSION}.md" ]]; then
+              RELEASE_FLAGS+=(--notes-file "release/RELEASE_NOTES_${VERSION}.md")
+            else
+              RELEASE_FLAGS+=(--generate-notes)
+            fi
+            if [[ "${GITHUB_REF_NAME}" == *-* ]]; then RELEASE_FLAGS+=(--prerelease); fi
+            gh release create "${GITHUB_REF_NAME}" \
+              dist/*.tar.gz dist/*.zip dist/*.sha256 dist/*.manifest.json dist/*.minisig \
+              "${RELEASE_FLAGS[@]}" 2>/dev/null || \
+            gh release create "${GITHUB_REF_NAME}" \
+              dist/*.tar.gz dist/*.zip dist/*.sha256 dist/*.manifest.json \
+              "${RELEASE_FLAGS[@]}"
           fi
-          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then RELEASE_FLAGS+=(--prerelease); fi
-          gh release create "${GITHUB_REF_NAME}" \
-            dist/*.tar.gz dist/*.zip dist/*.sha256 dist/*.manifest.json dist/*.minisig \
-            "${RELEASE_FLAGS[@]}" 2>/dev/null || \
-          gh release create "${GITHUB_REF_NAME}" \
-            dist/*.tar.gz dist/*.zip dist/*.sha256 dist/*.manifest.json \
-            "${RELEASE_FLAGS[@]}"
 
       - name: Validate canonical public release
         env:
