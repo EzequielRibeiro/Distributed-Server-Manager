@@ -42,10 +42,10 @@ def _hybrid_catalog_exposure(spec: dict[str, Any]) -> list[dict[str, Any]] | Non
     """Recover exposure for pre-firewall Hybrid RuntimeSpecs from the local catalog.
 
     RuntimeSpecs created before managed firewall support can contain a valid
-    catalog_runtime_policy and resolved ports while lacking network_exposure.
-    Hybrid nodes have the canonical catalog locally, so use it only as a
-    compatibility fallback. New RuntimeSpecs continue to use their persisted
-    Controller-resolved policy.
+    catalog_runtime_policy and resolved ports while network_exposure is missing
+    or persisted as an empty legacy list. Hybrid nodes have the canonical
+    catalog locally, so use it only as a compatibility fallback. New
+    RuntimeSpecs continue to use their persisted Controller-resolved policy.
     """
     if os.environ.get("CAPIVARA_AGENT_MODE") != "hybrid":
         return None
@@ -99,8 +99,17 @@ def public_rules(spec: dict[str, Any]) -> list[dict[str, Any]]:
         raise ValueError("catalog runtime policy is required for managed firewall")
 
     exposure = policy.get("network_exposure")
-    if not isinstance(exposure, list):
-        exposure = _hybrid_catalog_exposure(spec)
+    should_recover_hybrid = (
+        not isinstance(exposure, list)
+        or (
+            not exposure
+            and os.environ.get("CAPIVARA_AGENT_MODE") == "hybrid"
+        )
+    )
+    if should_recover_hybrid:
+        recovered = _hybrid_catalog_exposure(spec)
+        if recovered is not None:
+            exposure = recovered
     if not isinstance(exposure, list):
         raise ValueError("catalog network exposure is required for managed firewall")
 

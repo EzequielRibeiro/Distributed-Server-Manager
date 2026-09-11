@@ -238,3 +238,71 @@ def test_stop_does_not_reconcile_firewall():
             privileged_firewall.reconcile = old_reconcile
             instance_runtime.STATE_DIR = old_state
             instance_runtime.INSTANCE_DIR = old_instances
+
+
+def test_hybrid_legacy_empty_exposure_recovers_palworld_public_rule():
+    old_mode = os.environ.get("CAPIVARA_AGENT_MODE")
+    old_root = os.environ.get("CAPIVARA_DSM_ROOT")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        runtime_dir = root / "catalog" / "v2" / "games" / "palworld" / "runtimes"
+        runtime_dir.mkdir(parents=True)
+        (runtime_dir / "stable.json").write_text(
+            json.dumps(
+                {
+                    "id": "palworld.stable",
+                    "network": {
+                        "ports": [
+                            {"name": "game", "protocol": "udp", "offset": 0, "exposure": "public"},
+                            {"name": "rcon", "protocol": "tcp", "offset": 1, "exposure": "none"},
+                            {"name": "rest_api", "protocol": "tcp", "offset": 2, "exposure": "none"},
+                        ]
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        value = {
+            "instance_id": "cli-000001-palworld-001",
+            "agent_id": "agent-horizon-server",
+            "game_id": "palworld",
+            "runtime_id": "palworld.stable",
+            "catalog_runtime_policy": {
+                "runtime_id": "palworld.stable",
+                "network_exposure": [],
+            },
+            "ports": {
+                "game": {"port": 24010, "protocol": "udp"},
+                "rcon": {"port": 24011, "protocol": "tcp"},
+                "rest_api": {"port": 24012, "protocol": "tcp"},
+            },
+        }
+        try:
+            os.environ["CAPIVARA_AGENT_MODE"] = "hybrid"
+            os.environ["CAPIVARA_DSM_ROOT"] = str(root)
+            assert privileged_firewall.public_rules(value) == [
+                {"name": "game", "protocol": "udp", "port": 24010},
+            ]
+        finally:
+            if old_mode is None:
+                os.environ.pop("CAPIVARA_AGENT_MODE", None)
+            else:
+                os.environ["CAPIVARA_AGENT_MODE"] = old_mode
+            if old_root is None:
+                os.environ.pop("CAPIVARA_DSM_ROOT", None)
+            else:
+                os.environ["CAPIVARA_DSM_ROOT"] = old_root
+
+
+def test_non_hybrid_explicit_empty_exposure_stays_empty():
+    old_mode = os.environ.get("CAPIVARA_AGENT_MODE")
+    try:
+        os.environ["CAPIVARA_AGENT_MODE"] = "agent"
+        value = spec()
+        value["catalog_runtime_policy"]["network_exposure"] = []
+        assert privileged_firewall.public_rules(value) == []
+    finally:
+        if old_mode is None:
+            os.environ.pop("CAPIVARA_AGENT_MODE", None)
+        else:
+            os.environ["CAPIVARA_AGENT_MODE"] = old_mode
