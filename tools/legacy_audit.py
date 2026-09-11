@@ -187,6 +187,11 @@ def main() -> int:
     aggregate = ROOT / "dashboard" / "workers" / "worker.sh"
     if aggregate.is_file():
         aggregate_text = aggregate.read_text(encoding="utf-8")
+        executable_lines = [
+            line
+            for line in aggregate_text.splitlines()
+            if not line.lstrip().startswith("#")
+        ]
         for retired_worker in (
             "events_worker.sh",
             "event_queue_worker.sh",
@@ -195,7 +200,7 @@ def main() -> int:
             "server_worker.sh",
             "backup_worker.sh",
         ):
-            if retired_worker in aggregate_text:
+            if any(retired_worker in line for line in executable_lines):
                 failures.append(f"aggregate dashboard worker still launches retired {retired_worker}")
 
     state_initializer = ROOT / "dashboard" / "state" / "init_state.sh"
