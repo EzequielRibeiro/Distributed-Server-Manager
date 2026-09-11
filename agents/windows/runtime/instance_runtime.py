@@ -5,6 +5,7 @@ from datetime import datetime,timezone
 from pathlib import Path
 from typing import Any
 from adapters import AdapterError,resolve_adapter
+import managed_firewall
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));INSTANCE_DIR=STATE_DIR/"instances";RESULT_DIR=STATE_DIR/"instance-results";HISTORY_DIR=STATE_DIR/"instance-command-history";_TOKEN=re.compile(r"^[A-Za-z0-9._-]{1,191}$");VALID_ACTIONS={"status","doctor","start","stop","restart"};LIFECYCLE_ACTIONS={"start","stop","restart"}
 def _now():return datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
 def _token(value:Any,label:str)->str:
@@ -68,7 +69,13 @@ def lifecycle(config,instance_id,action):
  from runtime_metrics import increment
  from runtime_operations import runtime_operation
  with runtime_operation(config,instance_id,f"lifecycle:{action}",lock_timeout_seconds=float(config.get("runtime_lock_timeout_seconds",5))):
-  record=_owned(config,instance_id);adapter=resolve_adapter(record);result=getattr(adapter,action)(record);state=result.get("state") if isinstance(result,dict) else None;observed_state=_observed_state(state if isinstance(state,dict) else None,record.get("observed_state"));updated=dict(record);updated["desired_state"]="stopped" if action=="stop" else "running";updated["observed_state"]=observed_state;register_instance(updated);increment(f"lifecycle_{action}");return {"schema_version":1,"kind":"CapivaraInstanceLifecycle","scope":"instance-local","instance_id":record["instance_id"],"agent_id":record["agent_id"],"adapter":adapter.name,"action":action,"observed_state":observed_state,"operation":result}
+  record=_owned(config,instance_id);managed=isinstance(record.get("catalog_runtime_policy"),dict);firewall=None
+  if action in {"start","restart"} and managed:firewall=managed_firewall.reconcile(record)
+  adapter=resolve_adapter(record);result=getattr(adapter,action)(record);state=result.get("state") if isinstance(result,dict) else None;observed_state=_observed_state(state if isinstance(state,dict) else None,record.get("observed_state"));updated=dict(record);updated["desired_state"]="stopped" if action=="stop" else "running";updated["observed_state"]=observed_state;register_instance(updated)
+  if action=="stop" and managed:firewall=managed_firewall.remove(record)
+  increment(f"lifecycle_{action}");payload={"schema_version":1,"kind":"CapivaraInstanceLifecycle","scope":"instance-local","instance_id":record["instance_id"],"agent_id":record["agent_id"],"adapter":adapter.name,"action":action,"observed_state":observed_state,"operation":result}
+  if firewall is not None:payload["firewall"]=firewall
+  return payload
 def inventory(config):return list_instances(config)
 def _history(command_id):return HISTORY_DIR/f"{_token(command_id,'command_id')}.json"
 def _result(command_id):return RESULT_DIR/f"{_token(command_id,'command_id')}.json"
