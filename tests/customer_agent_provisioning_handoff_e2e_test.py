@@ -107,7 +107,14 @@ class CustomerAgentProvisioningHandoffE2E(unittest.TestCase):
             cpu={"logical_cores": 8},
             ram_total_bytes=16 * 1024**3,
             storage={"root_free_bytes": 100 * 1024**3},
-            network={"tcp_listen": [], "udp_listen": [], "complete": True},
+            network={
+                "source": "ss",
+                "tcp_listen": [],
+                "udp_listen": [],
+                "tcp_complete": True,
+                "udp_complete": True,
+                "complete": True,
+            },
         )
         runtime.heartbeat(self.agent_id)
 
