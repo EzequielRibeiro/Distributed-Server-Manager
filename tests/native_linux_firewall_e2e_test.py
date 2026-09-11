@@ -107,14 +107,27 @@ def main() -> int:
     instance_b = _instance_id("b")
     spec_a = _spec(instance_a, 40110)
     spec_b = _spec(instance_b, 40210)
-    desired_a = privileged_firewall.public_rules(spec_a)
-    desired_b = privileged_firewall.public_rules(spec_b)
+    resolved_a = privileged_firewall.public_rules(spec_a)
+    resolved_b = privileged_firewall.public_rules(spec_b)
 
-    if {(rule["name"], rule["protocol"], rule["port"]) for rule in desired_a} != {
+    if {(rule["name"], rule["protocol"], rule["port"]) for rule in resolved_a} != {
         ("game", "udp", 40110),
         ("rcon", "tcp", 40111),
     }:
-        raise AssertionError(f"unexpected resolved exposure for A: {desired_a!r}")
+        raise AssertionError(f"unexpected resolved exposure for A: {resolved_a!r}")
+
+    # Cross the same validation/ownership boundary used by the root-owned helper.
+    # public_rules() intentionally does not manufacture privileged UFW comments;
+    # _validate_rules() validates the request and assigns instance-scoped ownership.
+    desired_a = reconciler._validate_rules(instance_a, resolved_a)
+    desired_b = reconciler._validate_rules(instance_b, resolved_b)
+
+    expected_comments_a = {
+        f"capivara:{instance_a}:game:udp:40110",
+        f"capivara:{instance_a}:rcon:tcp:40111",
+    }
+    if {rule["comment"] for rule in desired_a} != expected_comments_a:
+        raise AssertionError(f"unexpected privileged ownership comments: {desired_a!r}")
 
     # Start from a clean instance-owned state without touching unrelated rules.
     reconciler.reconcile_ufw(instance_a, [])
