@@ -202,6 +202,9 @@ def lifecycle(config: dict[str, Any], instance_id: str, action: str) -> dict[str
         updated["desired_state"] = "stopped" if action == "stop" else "running"
         updated["observed_state"] = observed_state
         register_instance(updated)
+        if action == "stop" and isinstance(record.get("catalog_runtime_policy"), dict):
+            from privileged_firewall import remove as remove_firewall
+            firewall = remove_firewall(record)
         increment(f"lifecycle_{action}")
         payload = {"schema_version": 1, "kind": "CapivaraInstanceLifecycle", "scope": "instance-local",
                    "instance_id": record["instance_id"], "agent_id": record["agent_id"], "adapter": adapter.name,
