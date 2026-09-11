@@ -14,6 +14,7 @@ SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
 export DSM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 UPDATE_MANAGER_ROOT="${DSM_ROOT}/update-manager"
+PREFLIGHT_WORKDIR=""
 
 # shellcheck source=/dev/null
 source "${DSM_ROOT}/core/bootstrap.sh"
@@ -21,6 +22,11 @@ source "${DSM_ROOT}/core/bootstrap.sh"
 if ! declare -F log_info >/dev/null 2>&1 || ! declare -F log_error >/dev/null 2>&1
 then
     [[ ! -f "${DSM_ROOT}/core/logger.sh" ]] || source "${DSM_ROOT}/core/logger.sh"
+fi
+
+if ! declare -F is_semver >/dev/null 2>&1 || ! declare -F semver_compare >/dev/null 2>&1
+then
+    [[ ! -f "${DSM_ROOT}/core/semver.sh" ]] || source "${DSM_ROOT}/core/semver.sh"
 fi
 
 declare -F log_info >/dev/null 2>&1 || log_info() { printf '%s\n' "$*"; }
@@ -32,6 +38,15 @@ source "${UPDATE_MANAGER_ROOT}/config.conf"
 source "${UPDATE_MANAGER_ROOT}/github-client.sh"
 # shellcheck source=/dev/null
 source "${UPDATE_MANAGER_ROOT}/verify-release.sh"
+
+preflight_latest_cleanup()
+{
+    if [[ -n "${PREFLIGHT_WORKDIR:-}" && -d "${PREFLIGHT_WORKDIR}" ]]
+    then
+        rm -rf -- "${PREFLIGHT_WORKDIR}"
+    fi
+    PREFLIGHT_WORKDIR=""
+}
 
 preflight_latest_fail()
 {
@@ -88,7 +103,6 @@ preflight_latest_run()
     local comparison
     local download_url
     local checksum_url
-    local workdir
     local package
     local checksum_file
     local checksum
@@ -142,11 +156,11 @@ preflight_latest_run()
     [[ -n "${download_url}" && -n "${checksum_url}" ]] \
         || { preflight_latest_fail "Release sem pacote/checksum oficial"; return 1; }
 
-    workdir="$(mktemp -d -t capivara-update-preflight.XXXXXX)"
-    trap 'rm -rf -- "${workdir}"' EXIT
-    package="${workdir}/capivara-dsm-${latest_version}.tar.gz"
+    PREFLIGHT_WORKDIR="$(mktemp -d -t capivara-update-preflight.XXXXXX)"
+    trap preflight_latest_cleanup EXIT
+    package="${PREFLIGHT_WORKDIR}/capivara-dsm-${latest_version}.tar.gz"
     checksum_file="${package}.sha256"
-    extract_root="${workdir}/release"
+    extract_root="${PREFLIGHT_WORKDIR}/release"
     mkdir -p "${extract_root}"
 
     printf 'PRECHECK INFO: baixando release %s em diretório temporário\n' "${latest_version}"
