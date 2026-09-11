@@ -194,4 +194,6 @@ set -e
 [[ ! -e "${FAKE_ROOT}/update.sh" ]] \
     || fail "ambiente de teste contem update.sh inesperadamente"
 
+bash "${ROOT}/tests/update_preflight_test.sh"
+
 echo "Update CLI tests passed."
