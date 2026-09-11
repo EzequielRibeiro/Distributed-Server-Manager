@@ -91,8 +91,8 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $prefixA = "Capivara:ci-native-fw-a-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT:"
-          $prefixB = "Capivara:ci-native-fw-b-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT:"
+          $prefixA = "Capivara:ci-native-fw-a-${env:GITHUB_RUN_ID}-${env:GITHUB_RUN_ATTEMPT}:"
+          $prefixB = "Capivara:ci-native-fw-b-${env:GITHUB_RUN_ID}-${env:GITHUB_RUN_ATTEMPT}:"
           Get-NetFirewallRule -Group 'Capivara Managed Game Firewall' -ErrorAction SilentlyContinue |
             Where-Object { $_.DisplayName -like ($prefixA + '*') -or $_.DisplayName -like ($prefixB + '*') } |
             Remove-NetFirewallRule -ErrorAction SilentlyContinue
