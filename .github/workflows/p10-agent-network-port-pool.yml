@@ -27,6 +27,7 @@ jobs:
             tests/agent_port_preflight_test.py \
             tests/agent_deploy_batch_test.py \
             tests/instance_port_reconcile_test.py \
+            tests/instance_port_reconcile_apply_coverage_test.py \
             tests/p10_controller_connectivity_contract_test.py \
             tests/p10_agent_network_ui_contract_test.py
           bash -n bin/cap
@@ -41,6 +42,7 @@ jobs:
           python3 -m unittest tests/agent_port_preflight_test.py
           python3 -m unittest tests/agent_deploy_batch_test.py
           python3 -m unittest tests/instance_port_reconcile_test.py
+          python3 -m unittest tests/instance_port_reconcile_apply_coverage_test.py
           python3 -m unittest tests/p10_controller_connectivity_contract_test.py
           python3 -m unittest tests/p10_agent_network_ui_contract_test.py
       - name: Validate integrated contracts
