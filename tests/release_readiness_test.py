@@ -85,6 +85,25 @@ def main():
     ):
         assert phrase in doc
 
+    release_workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    validator_command = "python3 tests/published_release_smoke_test.py"
+    assert release_workflow.count(validator_command) == 2, (
+        "release workflow must validate public assets after both canonical publication paths"
+    )
+
+    orchestrate_publish = release_workflow.index("- name: Publish canonical GitHub Release")
+    orchestrate_smoke = release_workflow.index("- name: Validate canonical public release", orchestrate_publish)
+    publish_job = release_workflow.index("\n  publish:")
+    assert orchestrate_publish < orchestrate_smoke < publish_job, (
+        "orchestrated release smoke must run after canonical GitHub Release publication"
+    )
+
+    tag_publish = release_workflow.index("- name: Publish GitHub Release if missing", publish_job)
+    tag_smoke = release_workflow.index("- name: Validate canonical public release", tag_publish)
+    assert tag_publish < tag_smoke, (
+        "tag release smoke must run after GitHub Release publication"
+    )
+
     print(f"P9 release readiness contract: OK ({version})")
 
 

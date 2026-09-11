@@ -10,9 +10,13 @@ A successful build therefore is not sufficient evidence that the public release 
 
 ## Automatic boundary
 
-`.github/workflows/published-release-smoke.yml` runs when a canonical `v<SemVer>` GitHub Release is published. The intermediate `agent-linux-v<version>` and `agent-windows-v<version>` publication events are intentionally ignored because the canonical release does not exist yet at that point.
+The canonical publisher in `.github/workflows/release.yml` runs `tests/published_release_smoke_test.py` immediately **after** the canonical GitHub Release has been created or confirmed. This is the authoritative automatic path because releases created by a workflow with `GITHUB_TOKEN` do not recursively start another workflow from the resulting `release` event.
 
-The workflow can also be run manually for a specific canonical tag. Pull requests that change the publication validator compile it and execute the local release-builder regression, including manifest/file-count parity. They do not reinterpret or weaken an already-published release merely to make the pull request green. The public transport proof is produced only by validating the real canonical release after publication, or by an explicit manual run against a chosen tag.
+`.github/workflows/published-release-smoke.yml` remains available for canonical `v<SemVer>` release events created outside that `GITHUB_TOKEN` publication path and for explicit manual validation. The intermediate `agent-linux-v<version>` and `agent-windows-v<version>` publication events are intentionally ignored because the canonical release does not exist yet at that point.
+
+Pull requests that change the publication validator compile it and execute the local release-builder regression, including manifest/file-count parity. They do not reinterpret or weaken an already-published release merely to make the pull request green. The public transport proof is produced only by validating the real canonical release after publication, either inline in the publisher or by an explicit release/manual validation run.
+
+`tests/release_readiness_test.py` protects this ordering contract: both canonical publication paths in `release.yml` must invoke the public validator only after their GitHub Release publication step.
 
 ## Required canonical assets
 
