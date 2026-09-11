@@ -7,7 +7,10 @@ on:
       - 'agents/windows/**'
       - 'dashboard/agent_remote_http.py'
       - 'dashboard/agent_heartbeat_api.py'
+      - 'dashboard/catalog_controller_runtime_policy.py'
       - 'database/agent_admin_repository.py'
+      - 'database/agent_instance_provisioning_repository.py'
+      - 'database/agent_instance_runtime_repository.py'
       - 'database/agent_pairing_repository.py'
       - 'database/agent_runtime_repository.py'
       - 'tests/external_agent_network_probe.py'
@@ -21,7 +24,10 @@ on:
       - 'agents/windows/**'
       - 'dashboard/agent_remote_http.py'
       - 'dashboard/agent_heartbeat_api.py'
+      - 'dashboard/catalog_controller_runtime_policy.py'
       - 'database/agent_admin_repository.py'
+      - 'database/agent_instance_provisioning_repository.py'
+      - 'database/agent_instance_runtime_repository.py'
       - 'database/agent_pairing_repository.py'
       - 'database/agent_runtime_repository.py'
       - 'tests/external_agent_network_probe.py'
@@ -49,7 +55,7 @@ jobs:
           sudo apt-get install --yes iproute2 iptables openssl
       - name: Compile P4 Linux harness
         run: python3 -m py_compile tests/external_agent_network_probe.py tests/external_controller_agent_network_e2e.py
-      - name: Run HTTPS DNS NAT outage reconnect E2E
+      - name: Run HTTPS DNS NAT outage reconnect and instance lifecycle E2E
         run: sudo --preserve-env=PATH python3 tests/external_controller_agent_network_e2e.py
       - name: Enforce Linux P4 contract
         run: |
@@ -63,6 +69,13 @@ jobs:
           grep -F 'rtt_ms' tests/external_agent_network_probe.py
           grep -F 'request_doctor' tests/external_controller_agent_network_e2e.py
           grep -F 'doctor_completed_after_reconnect' tests/external_controller_agent_network_e2e.py
+          grep -F 'AgentInstanceProvisioningRepository' tests/external_controller_agent_network_e2e.py
+          grep -F 'AgentInstanceRuntimeRepository' tests/external_controller_agent_network_e2e.py
+          grep -F 'catalog_runtime_policy' tests/external_controller_agent_network_e2e.py
+          grep -F '"private_closed"' tests/external_controller_agent_network_e2e.py
+          grep -F '"reconcile_before_start_restart"' tests/external_controller_agent_network_e2e.py
+          grep -F '"isolation_between_instances"' tests/external_controller_agent_network_e2e.py
+          grep -F '"native_firewall_gate": "separate"' tests/external_controller_agent_network_e2e.py
 
   windows-native-reconnect:
     runs-on: windows-2025
