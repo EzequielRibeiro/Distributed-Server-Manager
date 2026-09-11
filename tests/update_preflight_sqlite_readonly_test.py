@@ -77,33 +77,69 @@ class UpdatePreflightSQLiteReadOnlyTest(unittest.TestCase):
             self.assertTrue(result["valid"])
             self.assertEqual(before, after)
             self.assertFalse((root / "capivara.db-journal").exists())
-            self.assertFalse((root / "capivara.db-wal").exists())
 
-    def test_status_preserves_existing_database_bytes_and_tree(self) -> None:
+    def test_wal_database_validation_does_not_touch_db_wal_or_shm(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             database = root / "capivara.db"
             backend = self.backend(database)
             backend.initialize()
 
-            before = snapshot_tree(root)
-            result = backend.status()
-            after = snapshot_tree(root)
+            writer = sqlite3.connect(database)
+            try:
+                mode = writer.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+                self.assertEqual("wal", str(mode).lower())
+                writer.execute(
+                    "CREATE TABLE IF NOT EXISTS readonly_probe(id INTEGER PRIMARY KEY)"
+                )
+                writer.execute("INSERT INTO readonly_probe DEFAULT VALUES")
+                writer.commit()
 
-            self.assertEqual("ok", result["health"])
-            self.assertEqual(before, after)
+                self.assertTrue((root / "capivara.db-wal").is_file())
+                self.assertTrue((root / "capivara.db-shm").is_file())
 
-    def test_read_only_connection_rejects_sql_writes(self) -> None:
+                before = snapshot_tree(root)
+                result = backend.health_check()
+                after = snapshot_tree(root)
+
+                self.assertTrue(result["valid"])
+                self.assertEqual(before, after)
+            finally:
+                writer.close()
+
+    def test_rollback_journal_fails_closed_without_source_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            database = Path(temporary) / "capivara.db"
+            root = Path(temporary)
+            database = root / "capivara.db"
             backend = self.backend(database)
             backend.initialize()
+            journal = root / "capivara.db-journal"
+            journal.write_bytes(b"active-journal-sentinel")
 
-            with backend.read_only_connect() as connection:
-                with self.assertRaises(sqlite3.OperationalError):
-                    connection.execute("CREATE TABLE forbidden_write(id INTEGER)")
+            before = snapshot_tree(root)
+            with self.assertRaises(DatabaseConnectionError):
+                backend.health_check()
+            after = snapshot_tree(root)
 
-            with backend.read_only_connect() as connection:
+            self.assertEqual(before, after)
+
+    def test_snapshot_connection_rejects_validation_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "capivara.db"
+            backend = self.backend(database)
+            backend.initialize()
+            before = snapshot_tree(root)
+
+            with backend.read_only_snapshot() as snapshot:
+                with snapshot.connect() as connection:
+                    with self.assertRaises(sqlite3.OperationalError):
+                        connection.execute("CREATE TABLE forbidden_write(id INTEGER)")
+
+            after = snapshot_tree(root)
+            self.assertEqual(before, after)
+
+            with sqlite3.connect(database) as connection:
                 names = {
                     str(row[0])
                     for row in connection.execute(
