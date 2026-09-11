@@ -167,7 +167,7 @@ class BaselineSQLiteBackend(SQLiteBackend):
         return baseline_status(self)
 
     def health_check(self) -> Mapping[str, Any]:
-        return validate_baseline(self)
+        return self.health_check_read_only()
 
     def current_schema_version(self) -> int:
         return 0
