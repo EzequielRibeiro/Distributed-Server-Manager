@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.util
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Any
@@ -76,9 +77,19 @@ def _ufw_output() -> str:
     return completed.stdout
 
 
+def _canonical_ufw_line(line: str) -> str:
+    # UFW rule numbers are positional and are renumbered whenever an earlier
+    # rule is deleted. They are not part of the rule's semantic identity.
+    return re.sub(r"^\[\s*\d+\]\s*", "", line.strip())
+
+
 def _owned_lines(instance_id: str) -> list[str]:
     marker = f"# capivara:{instance_id}:"
-    return [line.strip() for line in _ufw_output().splitlines() if marker in line]
+    return sorted(
+        _canonical_ufw_line(line)
+        for line in _ufw_output().splitlines()
+        if marker in line
+    )
 
 
 def _assert_expected_rules(instance_id: str, base_port: int) -> list[str]:
