@@ -143,7 +143,7 @@ preflight_latest_run()
         || { preflight_latest_fail "Release sem pacote/checksum oficial"; return 1; }
 
     workdir="$(mktemp -d -t capivara-update-preflight.XXXXXX)"
-    trap 'rm -rf -- "${workdir}"' RETURN
+    trap 'rm -rf -- "${workdir}"' EXIT
     package="${workdir}/capivara-dsm-${latest_version}.tar.gz"
     checksum_file="${package}.sha256"
     extract_root="${workdir}/release"
