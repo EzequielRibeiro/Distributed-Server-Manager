@@ -1,0 +1,98 @@
+name: Native Firewall E2E
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'agents/linux/runtime/privileged_firewall.py'
+      - 'agents/linux/privileged/reconcile_firewall.py'
+      - 'agents/windows/runtime/managed_firewall.py'
+      - 'tests/native_linux_firewall_e2e_test.py'
+      - 'tests/native_windows_firewall_e2e_test.py'
+      - '.github/workflows/native-firewall-e2e.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/linux/runtime/privileged_firewall.py'
+      - 'agents/linux/privileged/reconcile_firewall.py'
+      - 'agents/windows/runtime/managed_firewall.py'
+      - 'tests/native_linux_firewall_e2e_test.py'
+      - 'tests/native_windows_firewall_e2e_test.py'
+      - '.github/workflows/native-firewall-e2e.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-firewall-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-ufw:
+    name: Native Linux UFW
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare disposable UFW backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v ufw >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ufw
+          fi
+          sudo ufw --force reset
+          # Keep the ephemeral runner permissive; the E2E validates Capivara's
+          # owned allow rules rather than changing runner connectivity policy.
+          sudo ufw default allow incoming
+          sudo ufw default allow outgoing
+          sudo ufw --force enable
+          sudo ufw status verbose
+      - name: Validate real Capivara UFW reconciliation
+        shell: bash
+        run: sudo --preserve-env=GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT python3 tests/native_linux_firewall_e2e_test.py
+      - name: Cleanup disposable UFW backend
+        if: always()
+        shell: bash
+        run: |
+          sudo ufw --force reset || true
+          sudo ufw --force disable || true
+
+  windows-firewall:
+    name: Native Windows Firewall
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify elevated Windows Firewall runner
+        shell: pwsh
+        run: |
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+          if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            throw 'Native Windows Firewall E2E requires an elevated runner.'
+          }
+          $service = Get-Service -Name MpsSvc
+          if ($service.Status -ne 'Running') {
+            Start-Service -Name MpsSvc
+          }
+          Get-NetFirewallProfile | Select-Object Name, Enabled
+      - name: Validate real Capivara Windows Firewall reconciliation
+        shell: pwsh
+        run: python tests/native_windows_firewall_e2e_test.py
+      - name: Cleanup test-owned Windows Firewall rules
+        if: always()
+        shell: pwsh
+        run: |
+          $prefixA = "Capivara:ci-native-fw-a-${env:GITHUB_RUN_ID}-${env:GITHUB_RUN_ATTEMPT}:"
+          $prefixB = "Capivara:ci-native-fw-b-${env:GITHUB_RUN_ID}-${env:GITHUB_RUN_ATTEMPT}:"
+          Get-NetFirewallRule -Group 'Capivara Managed Game Firewall' -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -like ($prefixA + '*') -or $_.DisplayName -like ($prefixB + '*') } |
+            Remove-NetFirewallRule -ErrorAction SilentlyContinue
