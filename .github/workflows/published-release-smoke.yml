@@ -7,11 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Canonical Capivara release tag to validate (for example v2.0.42)
+        description: Canonical Capivara release tag to validate (for example v2.0.43)
         required: false
         type: string
   pull_request:
     paths:
+      - 'release/build_release.sh'
+      - 'release-manifest.json'
+      - 'tests/release_build_test.sh'
       - 'tests/published_release_smoke_test.py'
       - '.github/workflows/published-release-smoke.yml'
       - 'docs/PUBLISHED_RELEASE_VALIDATION.md'
@@ -32,8 +35,18 @@ jobs:
     steps:
       - name: Checkout validation code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compile published release validator
+        run: python3 -m py_compile tests/published_release_smoke_test.py
+
+      - name: Validate release builder contract on pull request
+        if: github.event_name == 'pull_request'
+        run: bash tests/release_build_test.sh
 
       - name: Resolve published release
+        if: github.event_name != 'pull_request'
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -59,10 +72,8 @@ jobs:
           echo "tag=${tag}" >>"${GITHUB_OUTPUT}"
           echo "Validating published release ${tag}"
 
-      - name: Compile published release validator
-        run: python3 -m py_compile tests/published_release_smoke_test.py
-
       - name: Validate public GitHub release assets
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
