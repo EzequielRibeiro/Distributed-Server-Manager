@@ -20,8 +20,22 @@
     },
     {
       "id": "distributed-instance-lifecycle",
-      "tests": ["tests/phase22_customer_dayz_regression_test.py", "tests/customer_workspace_architecture_boundary_test.py"],
-      "covers": ["Customer contract", "placement", "port reservation", "provisioning handoff", "distributed architecture boundary", "safe HTTP failure boundary"]
+      "tests": [
+        "tests/phase22_customer_dayz_regression_test.py",
+        "tests/customer_agent_provisioning_handoff_e2e_test.py",
+        "tests/customer_workspace_architecture_boundary_test.py"
+      ],
+      "covers": [
+        "Customer contract",
+        "real placement eligibility",
+        "real port reservation",
+        "production AgentInstanceProvisioningRepository handoff",
+        "Agent-deliverable CapivaraInstanceProvisioningRequest",
+        "Catalog runtime policy propagation",
+        "active provisioning idempotence",
+        "distributed architecture boundary",
+        "safe HTTP failure boundary"
+      ]
     },
     {
       "id": "agent-operational-queue",
