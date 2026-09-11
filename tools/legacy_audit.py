@@ -28,6 +28,8 @@ RETIRED_PATHS = {
     "dashboard/workers/alerts_worker.sh",
     "dashboard/workers/collect_alerts.sh",
     "dashboard/workers/mods_worker.sh",
+    "dashboard/workers/server_worker.sh",
+    "dashboard/workers/backup_worker.sh",
     "dashboard/alerts/alert_engine.sh",
     "dashboard/api/alerts.sh",
     "dashboard/notifications/notification_engine.sh",
@@ -68,10 +70,8 @@ RETIRED_PREFIXES = (
 DOCUMENTED_COMPATIBILITY = {
     "update.sh",
     "dashboard/workers/dashboard_worker.sh",
-    "dashboard/workers/server_worker.sh",
     "dashboard/workers/metrics_worker.sh",
     "dashboard/workers/monitor_worker.sh",
-    "dashboard/workers/backup_worker.sh",
 }
 
 JUNK_PATTERNS = (
@@ -192,6 +192,8 @@ def main() -> int:
             "event_queue_worker.sh",
             "alerts_worker.sh",
             "mods_worker.sh",
+            "server_worker.sh",
+            "backup_worker.sh",
         ):
             if retired_worker in aggregate_text:
                 failures.append(f"aggregate dashboard worker still launches retired {retired_worker}")
