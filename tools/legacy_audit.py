@@ -51,6 +51,8 @@ RETIRED_PATHS = {
     "database/registry_demo_v2.py",
     "runtime/runtime_manager.sh",
     "runtime/workers/sync_worker.sh",
+    "server/process.sh",
+    "server/pid.sh",
     "tools/tools/install_steamcmd.sh",
     ".github/workflows/publish-v2-release.yml",
 }
