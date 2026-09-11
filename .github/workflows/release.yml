@@ -110,6 +110,17 @@ jobs:
               "${RELEASE_FLAGS[@]}"
           fi
 
+      - name: Validate canonical public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(tr -d '\r\n' <version)
+          python3 tests/published_release_smoke_test.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --tag "v${VERSION}"
+
   publish:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
@@ -193,3 +204,12 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             dist/*.tar.gz dist/*.zip dist/*.sha256 dist/*.manifest.json \
             "${RELEASE_FLAGS[@]}"
+
+      - name: Validate canonical public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 tests/published_release_smoke_test.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --tag "${GITHUB_REF_NAME}"
