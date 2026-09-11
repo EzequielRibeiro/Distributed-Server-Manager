@@ -12,11 +12,15 @@ A successful build therefore is not sufficient evidence that the public release 
 
 The canonical publisher in `.github/workflows/release.yml` runs `tests/published_release_smoke_test.py` immediately **after** the canonical GitHub Release has been created or confirmed. This is the authoritative automatic path because releases created by a workflow with `GITHUB_TOKEN` do not recursively start another workflow from the resulting `release` event.
 
+Publication by a branch push is intentionally narrower than ordinary workflow maintenance. Only a change to `release/RELEASE_TRIGGER` may start the branch publisher. Changes to `release.yml`, readiness metadata, or release notes by themselves must not republish the current version.
+
+The publisher is idempotent and fail-closed around release identity. If the canonical tag already exists, it must resolve to the current approved release commit; it is left unchanged. An existing tag is never force-moved. If a canonical GitHub Release already exists, its tag identity must match the current release commit and its assets are left unchanged before the public smoke validator rechecks them. Existing standalone Linux and Windows Agent releases are subject to the same commit-identity check before reuse.
+
 `.github/workflows/published-release-smoke.yml` remains available for canonical `v<SemVer>` release events created outside that `GITHUB_TOKEN` publication path and for explicit manual validation. The intermediate `agent-linux-v<version>` and `agent-windows-v<version>` publication events are intentionally ignored because the canonical release does not exist yet at that point.
 
 Pull requests that change the publication validator compile it and execute the local release-builder regression, including manifest/file-count parity. They do not reinterpret or weaken an already-published release merely to make the pull request green. The public transport proof is produced only by validating the real canonical release after publication, either inline in the publisher or by an explicit release/manual validation run.
 
-`tests/release_readiness_test.py` protects this ordering contract: both canonical publication paths in `release.yml` must invoke the public validator only after their GitHub Release publication step.
+`tests/release_readiness_test.py` protects the publication ordering and idempotency contracts: both canonical publication paths in `release.yml` must invoke the public validator only after their GitHub Release publication step, ordinary workflow/readiness/note edits may not trigger republishing, and canonical tag force-push/force-retag operations are forbidden.
 
 ## Required canonical assets
 
@@ -54,6 +58,10 @@ The validation reads published artifacts only. It does not install the package, 
 ## Generated manifest boundary
 
 The repository root must not carry a historical `release-manifest.json` as a source file. `release/build_release.sh` generates that manifest inside the staged package for the exact release commit. `tests/release_build_test.sh` verifies that its declared `file_count` equals the number of regular files actually packaged, preventing a stale source manifest from shifting the count.
+
+## Recovery of a mismatched historical tag
+
+If a public release was already published and its tag was later moved to another commit while its assets remained unchanged, the release is inconsistent and must be treated as failed by the smoke gate. The publisher must not attempt to hide that state by rebuilding or overwriting the existing assets. Recovery consists of restoring the historical tag to the commit declared by the already-published manifests, or superseding the broken release with a new patch release after the historical inconsistency is explicitly accounted for.
 
 ## Relationship to rollout
 

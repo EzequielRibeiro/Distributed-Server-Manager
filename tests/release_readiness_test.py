@@ -104,6 +104,32 @@ def main():
         "tag release smoke must run after GitHub Release publication"
     )
 
+    push_block = release_workflow.split("on:\n  push:\n", 1)[1].split("\n\npermissions:", 1)[0]
+    assert "- 'release/RELEASE_TRIGGER'" in push_block, (
+        "release publication by branch push must require an explicit RELEASE_TRIGGER change"
+    )
+    for forbidden_path in (
+        ".github/workflows/release.yml",
+        "release/readiness-v2.json",
+        "release/RELEASE_NOTES_*.md",
+    ):
+        assert forbidden_path not in push_block, (
+            f"release publisher must not rerun an existing version because {forbidden_path} changed"
+        )
+
+    assert "git push --force" not in release_workflow, (
+        "canonical release tags are immutable after publication; force-push is forbidden"
+    )
+    assert "git tag -f" not in release_workflow and "git tag -fa" not in release_workflow, (
+        "canonical release tags must never be force-moved"
+    )
+    assert "- name: Guard canonical release identity" in release_workflow
+    assert "- name: Ensure canonical release tag matches approved release commit" in release_workflow
+    assert 'git rev-parse -q --verify "refs/tags/${TAG}"' in release_workflow
+    assert 'TAG_COMMIT=$(git rev-list -n 1 "${TAG}")' in release_workflow
+    assert "Refusing to move existing ${TAG}" in release_workflow
+    assert 'git push origin "refs/tags/${TAG}"' in release_workflow
+
     print(f"P9 release readiness contract: OK ({version})")
 
 
