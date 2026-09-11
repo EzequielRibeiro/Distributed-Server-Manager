@@ -203,7 +203,7 @@ def test_lifecycle_is_fail_closed_when_firewall_reconcile_fails():
             instance_runtime.INSTANCE_DIR = old_instances
 
 
-def test_stop_does_not_reconcile_firewall():
+def test_stop_reconciles_firewall_to_empty_rules():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         old_state = instance_runtime.STATE_DIR
@@ -219,20 +219,24 @@ def test_stop_does_not_reconcile_firewall():
                 calls.append("stop")
                 return {"changed": True, "state": {"available": True, "active_state": "inactive", "running": False}}
 
+        def reconcile_firewall(record, *, rules=None):
+            calls.append(("firewall", rules))
+            return {"backend": "ufw", "changed": True, "rules": list(rules or [])}
+
         try:
             instance_runtime.STATE_DIR = root
             instance_runtime.INSTANCE_DIR = root / "instances"
             instance_runtime.resolve_adapter = lambda record: Adapter()
-            privileged_firewall.reconcile = lambda record: calls.append("firewall")
+            privileged_firewall.reconcile = reconcile_firewall
             instance_runtime.register_instance(legacy_dayz_spec())
             result = instance_runtime.lifecycle(
                 {"agent_id": "agent-horizon-server"},
                 "cli-000001-dayz-001",
                 "stop",
             )
-            assert calls == ["stop"]
+            assert calls == ["stop", ("firewall", [])]
             assert result["observed_state"] == "stopped"
-            assert "firewall" not in result
+            assert result["firewall"] == {"backend": "ufw", "changed": True, "rules": []}
         finally:
             instance_runtime.resolve_adapter = old_resolve
             privileged_firewall.reconcile = old_reconcile
