@@ -141,4 +141,6 @@ then
     fail "incomplete target package passed preflight"
 fi
 
+python3 "${ROOT}/tests/update_preflight_sqlite_readonly_test.py"
+
 echo "Update preflight tests passed."
