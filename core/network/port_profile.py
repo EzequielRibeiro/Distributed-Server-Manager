@@ -310,6 +310,26 @@ class PortProfile:
             applications=tuple(applications),
         )
 
+    @classmethod
+    def from_reservations(
+        cls,
+        raw: Mapping[str, Any] | None,
+    ) -> "PortProfile | None":
+        """Parse only the reservation contract, independent of runtime apply strategy.
+
+        Some runtimes consume reserved roles outside Catalog ``network.apply`` (for
+        example through a game-specific Runtime Profile). Reservation allocation and
+        reconciliation must still validate the block, roles, protocols, offsets, and
+        bind addresses without requiring Catalog application coverage.
+        """
+        if raw is None:
+            return None
+        if not isinstance(raw, Mapping):
+            raise ValueError("network profile must be an object")
+        reservation_profile = dict(raw)
+        reservation_profile.pop("apply", None)
+        return cls.from_mapping(reservation_profile)
+
     @property
     def protocols(self) -> set[str]:
         return {

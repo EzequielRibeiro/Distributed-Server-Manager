@@ -123,7 +123,7 @@ def reconcile_instance_ports(
 ) -> dict[str, Any]:
     """Backfill missing current-profile reservations atomically and idempotently."""
     repository.initialize()
-    profile = PortProfile.from_mapping(network_profile)
+    profile = PortProfile.from_reservations(network_profile)
     if profile is None:
         raise InstancePortReconcileError("runtime network profile is unavailable")
     if occupied_ports_provider is None:
