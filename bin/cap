@@ -99,7 +99,7 @@ cat >&2 <<'EOF'
 
 Todas as roles conhecidas:
   cap config show
-  cap update check|run|history
+  cap update check|preflight|run|history
   cap help --all
 
 Ajuda detalhada:
