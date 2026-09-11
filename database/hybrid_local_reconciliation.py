@@ -29,6 +29,7 @@ from capabilities import detect_capabilities
 from host_telemetry import collect_host_telemetry
 from network_inventory import collect_network_inventory
 from agent_runtime_repository import AgentRuntimeRepository
+from hybrid_runtime_port_backfill import reconcile_hybrid_runtime_ports
 from observability_repository import ObservabilityRepository
 from registry_repository import RegistryRepository
 
@@ -282,6 +283,16 @@ def reconcile_local_hybrid_runtime(
     last_seen = runtime.heartbeat(agent_id)
     snapshot = runtime.snapshot(agent_id)
 
+    # Controller/Hybrid database reservations are authoritative. Reconcile them
+    # only after publishing fresh network inventory and before the Hybrid worker
+    # reaches RuntimeSpec migration/reconciliation. Any failure propagates and
+    # keeps the runtime loop fail-closed.
+    instance_port_reconcile = reconcile_hybrid_runtime_ports(
+        repository.backend,
+        root,
+        agent_id,
+    )
+
     return {
         **config_result,
         "runtime_reconciled": True,
@@ -291,6 +302,7 @@ def reconcile_local_hybrid_runtime(
         "telemetry": telemetry or {},
         "observability": observability or {},
         "port_ranges": snapshot.get("port_ranges", []),
+        "instance_port_reconcile": instance_port_reconcile,
     }
 
 
