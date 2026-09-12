@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'core/content_platform.py'
+      - 'core/content_provider_contract.py'
       - 'database/content_*'
       - 'database/migrations/035_universal_content.sql'
       - 'database/migrations_mysql/035_universal_content.sql'
@@ -14,15 +15,20 @@ on:
       - 'dashboard/dashboard.sh'
       - 'systemd/dsm-dashboard.service'
       - 'agents/linux/runtime/content_client.py'
+      - 'agents/linux/runtime/content_provider*.py'
       - 'agents/linux/runtime/content_update_*.py'
+      - 'agents/linux/runtime/capabilities.py'
       - 'agents/linux/runtime/runtime_metrics.py'
       - 'agents/linux/runtime/agent.py'
       - 'agents/windows/runtime/content_client.py'
+      - 'agents/windows/runtime/content_provider*.py'
       - 'agents/windows/runtime/content_update_*.py'
+      - 'agents/windows/runtime/capabilities.py'
       - 'agents/windows/runtime/runtime_metrics.py'
       - 'release/build_agent_package.sh'
       - 'bin/cap'
       - 'tests/universal_content_*'
+      - 'tests/content_provider_*'
       - '.github/workflows/universal-content.yml'
   workflow_dispatch:
 jobs:
@@ -33,17 +39,21 @@ jobs:
       - name: Validate syntax
         run: |
           bash -n bin/cap release/build_agent_package.sh dashboard/dashboard.sh
-          python3 -m py_compile core/content_platform.py database/content_repository.py database/content_cli.py dashboard/content_api.py dashboard/content_http.py dashboard/server_part13.py dashboard/server_part17.py dashboard/agent_heartbeat_api.py agents/linux/runtime/content_client.py agents/linux/runtime/content_update_provider.py agents/linux/runtime/content_update_inventory.py agents/linux/runtime/runtime_metrics.py agents/linux/runtime/agent.py agents/windows/runtime/content_client.py agents/windows/runtime/content_update_provider.py agents/windows/runtime/content_update_inventory.py agents/windows/runtime/runtime_metrics.py
+          python3 -m py_compile core/content_platform.py core/content_provider_contract.py database/content_repository.py database/content_cli.py dashboard/content_api.py dashboard/content_http.py dashboard/server_part13.py dashboard/server_part17.py dashboard/agent_heartbeat_api.py agents/linux/runtime/content_client.py agents/linux/runtime/content_provider.py agents/linux/runtime/content_provider_steam_workshop.py agents/linux/runtime/content_update_provider.py agents/linux/runtime/content_update_inventory.py agents/linux/runtime/capabilities.py agents/linux/runtime/runtime_metrics.py agents/linux/runtime/agent.py agents/windows/runtime/content_client.py agents/windows/runtime/content_provider.py agents/windows/runtime/content_provider_steam_workshop.py agents/windows/runtime/content_update_provider.py agents/windows/runtime/content_update_inventory.py agents/windows/runtime/capabilities.py agents/windows/runtime/runtime_metrics.py
       - name: Test Universal Content
-        run: python3 -m unittest tests/universal_content_platform_test.py tests/universal_content_http_test.py
+        run: python3 -m unittest tests/universal_content_platform_test.py tests/universal_content_http_test.py tests/content_provider_contract_test.py tests/content_provider_capability_test.py tests/content_provider_steam_workshop_test.py tests/content_provider_preflight_test.py
       - name: Verify composition and Agent package contracts
         run: |
           grep -Fq 'CONTENT_PATH' dashboard/server_part13.py
           grep -Fq 'import server_part16 as integration' dashboard/server_part17.py
           grep -Fq 'server_part17.py' systemd/dsm-dashboard.service
           test -f agents/linux/runtime/content_client.py
+          test -f agents/linux/runtime/content_provider.py
+          test -f agents/linux/runtime/content_provider_steam_workshop.py
           test -f agents/linux/runtime/content_update_provider.py
           test -f agents/linux/runtime/content_update_inventory.py
+          test -f agents/windows/runtime/content_provider.py
+          test -f agents/windows/runtime/content_provider_steam_workshop.py
           test -f agents/windows/runtime/content_update_provider.py
           test -f agents/windows/runtime/content_update_inventory.py
           test -f agents/linux/runtime/game_data_client.py
