@@ -13,7 +13,40 @@ from backend import DatabaseBackend
 from core.agent_health import utc_timestamp
 
 VALID_ACTIONS = {"status", "doctor", "start", "stop", "restart", "remove"}
+LIFECYCLE_ACTIONS = {"start", "stop", "restart"}
+ACTIVE_STATES = {"queued", "delivered"}
 FINAL_STATES = {"completed", "failed"}
+
+
+class InstanceLifecycleCommandConflict(RuntimeError):
+    """A different lifecycle command is already active for an instance."""
+
+    def __init__(
+        self,
+        *,
+        instance_id: str,
+        requested_action: str,
+        active_action: str,
+        command_id: str,
+    ):
+        self.instance_id = str(instance_id)
+        self.requested_action = str(requested_action)
+        self.active_action = str(active_action)
+        self.command_id = str(command_id)
+        super().__init__(
+            f"Instance {self.instance_id} already has active lifecycle command "
+            f"{self.active_action} ({self.command_id})"
+        )
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "error": "lifecycle_operation_in_progress",
+            "message": str(self),
+            "instance_id": self.instance_id,
+            "requested_action": self.requested_action,
+            "active_action": self.active_action,
+            "command_id": self.command_id,
+        }
 
 
 class AgentInstanceRuntimeRepository:
@@ -47,11 +80,40 @@ class AgentInstanceRuntimeRepository:
             agent = session.execute(f"SELECT status FROM agents WHERE id={ph}", (agent_id,)).fetchone()
             if agent is None or str(agent["status"] or "").lower() != "active":
                 raise ValueError("Agent must be active")
-            instance = session.execute(f"SELECT agent_id FROM instances WHERE id={ph}", (instance_id,)).fetchone()
+
+            # Lifecycle arbitration is serialized on the authoritative instance
+            # row. PostgreSQL/MySQL use a row-level lock; SQLite transactions are
+            # opened with BEGIN IMMEDIATE by SQLiteBackend, which serializes the
+            # check-and-insert sequence without unsupported FOR UPDATE syntax.
+            instance_query = f"SELECT agent_id FROM instances WHERE id={ph}"
+            if str(getattr(self.backend, "name", "")).strip().lower() != "sqlite":
+                instance_query += " FOR UPDATE"
+            instance = session.execute(instance_query, (instance_id,)).fetchone()
             if instance is None:
                 raise ValueError("Instance not found")
             if str(instance["agent_id"] or "") != agent_id:
                 raise PermissionError("Instance belongs to another Agent")
+
+            if action in LIFECYCLE_ACTIONS:
+                existing = session.execute(
+                    "SELECT command_id,action FROM agent_instance_commands "
+                    f"WHERE instance_id={ph} AND action IN ('start','stop','restart') "
+                    "AND status IN ('queued','delivered') "
+                    "ORDER BY created_at ASC LIMIT 1",
+                    (instance_id,),
+                ).fetchone()
+                if existing is not None:
+                    command_id = str(existing["command_id"])
+                    active_action = str(existing["action"] or "").strip().lower()
+                    if active_action == action:
+                        return self.snapshot(command_id)
+                    raise InstanceLifecycleCommandConflict(
+                        instance_id=instance_id,
+                        requested_action=action,
+                        active_action=active_action,
+                        command_id=command_id,
+                    )
+
             if action == "remove":
                 existing = session.execute(
                     "SELECT command_id FROM agent_instance_commands "
@@ -164,4 +226,11 @@ class AgentInstanceRuntimeRepository:
         return completed
 
 
-__all__ = ["AgentInstanceRuntimeRepository", "FINAL_STATES", "VALID_ACTIONS"]
+__all__ = [
+    "ACTIVE_STATES",
+    "AgentInstanceRuntimeRepository",
+    "FINAL_STATES",
+    "InstanceLifecycleCommandConflict",
+    "LIFECYCLE_ACTIONS",
+    "VALID_ACTIONS",
+]
