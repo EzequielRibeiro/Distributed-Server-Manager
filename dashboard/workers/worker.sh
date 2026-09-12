@@ -39,6 +39,18 @@ start_python_worker(){
     register_worker "${WORKER}" "$!"
 }
 
+start_python_worker_with_env(){
+    local WORKER="$1"
+    shift
+    if [[ ! -f "${WORKERS_DIR}/${WORKER}" ]]; then
+        log "Worker obrigatório inexistente: ${WORKER}"
+        return 1
+    fi
+    log "Iniciando ${WORKER}"
+    env "$@" python3 "${WORKERS_DIR}/${WORKER}" >> "$LOG" 2>&1 &
+    register_worker "${WORKER}" "$!"
+}
+
 stop_children(){
     local PID
     for PID in "${PIDS[@]:-}"; do
@@ -77,7 +89,9 @@ main(){
 
     start_worker scheduler_worker.sh
     start_python_worker automation_worker.py
-    start_python_worker hybrid_agent_worker.py
+    start_python_worker_with_env hybrid_agent_worker.py \
+        "CAPIVARA_AGENT_MODE=hybrid" \
+        "CAPIVARA_DSM_ROOT=${DSM_ROOT}"
     start_python_worker hybrid_customer_workspace_worker.py
 
     supervise_workers
