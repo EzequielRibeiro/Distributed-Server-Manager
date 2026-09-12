@@ -41,6 +41,7 @@ class AgentInstanceRuntimeLifecycleArbitrationTest(unittest.TestCase):
         self.controller_id = str(identity["controller_id"])
         self.agent_id = "agent-lifecycle-test"
         self.node_id = "node-lifecycle-test"
+        self.customer_id = 1
         pairing = AgentPairingRepository(self.backend)
         token = pairing.issue_token(controller_id=self.controller_id, created_by="test")
         pairing.enroll(
@@ -64,11 +65,15 @@ class AgentInstanceRuntimeLifecycleArbitrationTest(unittest.TestCase):
                 "UPDATE nodes SET status='online' WHERE id=?",
                 (self.node_id,),
             )
+            connection.execute(
+                "INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)",
+                (self.customer_id, self.controller_id, "Lifecycle Customer", "active"),
+            )
             for index, instance_id in enumerate(self.instance_ids, start=1):
                 connection.execute(
                     "INSERT INTO instances("
-                    "id,node_id,game_id,name,status,controller_id,agent_id"
-                    ") VALUES(?,?,?,?,?,?,?)",
+                    "id,node_id,game_id,name,status,controller_id,agent_id,customer_id"
+                    ") VALUES(?,?,?,?,?,?,?,?)",
                     (
                         instance_id,
                         self.node_id,
@@ -77,6 +82,7 @@ class AgentInstanceRuntimeLifecycleArbitrationTest(unittest.TestCase):
                         "offline",
                         self.controller_id,
                         self.agent_id,
+                        self.customer_id,
                     ),
                 )
         self.runtime = AgentInstanceRuntimeRepository(self.backend)
