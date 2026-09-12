@@ -42,6 +42,12 @@ def normalize_resource_profile(item: Any) -> dict[str, Any]:
         )
         swap_mb = int(item.get("swap_mb") or 0)
         pids_limit = int(item.get("pids_limit") or 512)
+        raw_player_limit = item.get("player_limit")
+        player_limit = (
+            int(raw_player_limit)
+            if raw_player_limit not in (None, "")
+            else None
+        )
     except (TypeError, ValueError) as exc:
         raise ValueError("resource profile values must be numeric") from exc
 
@@ -51,6 +57,7 @@ def normalize_resource_profile(item: Any) -> dict[str, Any]:
         or (cpu_cores is not None and cpu_cores <= 0)
         or swap_mb < 0
         or pids_limit < 1
+        or (player_limit is not None and player_limit < 1)
     ):
         raise ValueError("resource profile values are outside the allowed range")
 
@@ -65,6 +72,8 @@ def normalize_resource_profile(item: Any) -> dict[str, Any]:
     }
     if cpu_cores is not None:
         profile["cpu_cores"] = cpu_cores
+    if player_limit is not None:
+        profile["player_limit"] = player_limit
     return profile
 
 
