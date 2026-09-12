@@ -18,11 +18,13 @@ def ensure_content_contract_v2_schema(sql:str,backend:str)->str:
     if re.search(r"ALTER\s+TABLE\s+content_assignments\s+ADD\s+COLUMN\s+activation_state\b",sql,re.IGNORECASE):return sql
     integer="BIGINT" if backend=="postgresql" else "INTEGER"
     if backend in {"mysql","mariadb"}:
-        state_type="VARCHAR(16)";security_type="VARCHAR(32)";json_type="JSON NOT NULL"
-        provenance=f"provenance_json {json_type}"
-        metadata=f"metadata_json {json_type}"
+        state_type="VARCHAR(16)";security_type="VARCHAR(32)"
+        provenance="provenance_json LONGTEXT NOT NULL"
+        metadata="metadata_json LONGTEXT NOT NULL"
     else:
-        state_type="TEXT";security_type="TEXT";provenance="provenance_json TEXT NOT NULL DEFAULT '{}'";metadata="metadata_json TEXT NOT NULL DEFAULT '{}'"
+        state_type="TEXT";security_type="TEXT"
+        provenance="provenance_json TEXT NOT NULL DEFAULT '{}'"
+        metadata="metadata_json TEXT NOT NULL DEFAULT '{}'"
     statements=[
         f"ALTER TABLE content_assignments ADD COLUMN activation_state {state_type} NOT NULL DEFAULT 'enabled' CHECK (activation_state IN ('enabled','disabled'));",
         f"ALTER TABLE content_assignments ADD COLUMN activation_order {integer} NOT NULL DEFAULT 0 CHECK (activation_order BETWEEN 0 AND 1000000);",
