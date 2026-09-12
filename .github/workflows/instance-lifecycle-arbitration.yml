@@ -1,0 +1,42 @@
+name: Instance Lifecycle Arbitration
+
+on:
+  pull_request:
+    paths:
+      - 'database/agent_instance_runtime_repository.py'
+      - 'dashboard/instance_runtime_command.py'
+      - 'dashboard/web/customer-instance-runtime-live.js'
+      - 'tests/agent_instance_runtime_lifecycle_arbitration_test.py'
+      - 'tests/customer_instance_lifecycle_controls_test.py'
+      - '.github/workflows/instance-lifecycle-arbitration.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'database/agent_instance_runtime_repository.py'
+      - 'dashboard/instance_runtime_command.py'
+      - 'dashboard/web/customer-instance-runtime-live.js'
+      - 'tests/agent_instance_runtime_lifecycle_arbitration_test.py'
+      - 'tests/customer_instance_lifecycle_controls_test.py'
+      - '.github/workflows/instance-lifecycle-arbitration.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax
+        run: |
+          python3 -m py_compile \
+            database/agent_instance_runtime_repository.py \
+            dashboard/instance_runtime_command.py \
+            tests/agent_instance_runtime_lifecycle_arbitration_test.py \
+            tests/customer_instance_lifecycle_controls_test.py
+          node --check dashboard/web/customer-instance-runtime-live.js
+      - name: Run lifecycle arbitration regressions
+        run: |
+          python3 -m unittest tests/agent_instance_runtime_lifecycle_arbitration_test.py
+          python3 -m unittest tests/customer_instance_lifecycle_controls_test.py
