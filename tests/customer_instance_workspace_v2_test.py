@@ -79,6 +79,7 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
 
  def test_overview_prefers_distributed_provisioning_state(self):
   service=CustomerInstanceWorkspaceService.__new__(CustomerInstanceWorkspaceService)
+  service.root=ROOT
   service.permissions=lambda user,instance_id:{"instance.view","instance.provision.retry"}
   service.require=lambda user,instance_id,permission:{
    "id":instance_id,
