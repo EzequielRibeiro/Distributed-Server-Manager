@@ -15,20 +15,26 @@ def ensure_content_contract_v2_schema(sql:str,backend:str)->str:
         raise ValueError(f"{backend} baseline has no content_assignments table")
     # Snapshots are historical consolidated inputs. The canonical Baseline v2
     # is the loader output, so extensions are appended here before checksum.
-    if re.search(r"\bactivation_state\b",sql,re.IGNORECASE):return sql
+    if re.search(r"ALTER\s+TABLE\s+content_assignments\s+ADD\s+COLUMN\s+activation_state\b",sql,re.IGNORECASE):return sql
     integer="BIGINT" if backend=="postgresql" else "INTEGER"
+    if backend in {"mysql","mariadb"}:
+        state_type="VARCHAR(16)";security_type="VARCHAR(32)";json_type="JSON NOT NULL"
+        provenance=f"provenance_json {json_type}"
+        metadata=f"metadata_json {json_type}"
+    else:
+        state_type="TEXT";security_type="TEXT";provenance="provenance_json TEXT NOT NULL DEFAULT '{}'";metadata="metadata_json TEXT NOT NULL DEFAULT '{}'"
     statements=[
-        "ALTER TABLE content_assignments ADD COLUMN activation_state TEXT NOT NULL DEFAULT 'enabled' CHECK (activation_state IN ('enabled','disabled'));",
+        f"ALTER TABLE content_assignments ADD COLUMN activation_state {state_type} NOT NULL DEFAULT 'enabled' CHECK (activation_state IN ('enabled','disabled'));",
         f"ALTER TABLE content_assignments ADD COLUMN activation_order {integer} NOT NULL DEFAULT 0 CHECK (activation_order BETWEEN 0 AND 1000000);",
-        "ALTER TABLE content_assignments ADD COLUMN provenance_json TEXT NOT NULL DEFAULT '{}';",
-        "ALTER TABLE content_assignments ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}';",
-        f"ALTER TABLE content_assignments ADD COLUMN security_state TEXT NOT NULL DEFAULT 'unscanned' CHECK (security_state IN ({_SECURITY_STATES}));",
-        "ALTER TABLE content_assignment_revisions ADD COLUMN activation_state TEXT NOT NULL DEFAULT 'enabled' CHECK (activation_state IN ('enabled','disabled'));",
+        f"ALTER TABLE content_assignments ADD COLUMN {provenance};",
+        f"ALTER TABLE content_assignments ADD COLUMN {metadata};",
+        f"ALTER TABLE content_assignments ADD COLUMN security_state {security_type} NOT NULL DEFAULT 'unscanned' CHECK (security_state IN ({_SECURITY_STATES}));",
+        f"ALTER TABLE content_assignment_revisions ADD COLUMN activation_state {state_type} NOT NULL DEFAULT 'enabled' CHECK (activation_state IN ('enabled','disabled'));",
         f"ALTER TABLE content_assignment_revisions ADD COLUMN activation_order {integer} NOT NULL DEFAULT 0 CHECK (activation_order BETWEEN 0 AND 1000000);",
-        "ALTER TABLE content_assignment_revisions ADD COLUMN provenance_json TEXT NOT NULL DEFAULT '{}';",
-        "ALTER TABLE content_assignment_revisions ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}';",
-        f"ALTER TABLE content_assignment_revisions ADD COLUMN security_state TEXT NOT NULL DEFAULT 'unscanned' CHECK (security_state IN ({_SECURITY_STATES}));",
-        f"ALTER TABLE agent_content_state ADD COLUMN security_state TEXT NOT NULL DEFAULT 'unscanned' CHECK (security_state IN ({_SECURITY_STATES}));",
+        f"ALTER TABLE content_assignment_revisions ADD COLUMN {provenance};",
+        f"ALTER TABLE content_assignment_revisions ADD COLUMN {metadata};",
+        f"ALTER TABLE content_assignment_revisions ADD COLUMN security_state {security_type} NOT NULL DEFAULT 'unscanned' CHECK (security_state IN ({_SECURITY_STATES}));",
+        f"ALTER TABLE agent_content_state ADD COLUMN security_state {security_type} NOT NULL DEFAULT 'unscanned' CHECK (security_state IN ({_SECURITY_STATES}));",
     ]
     return sql.rstrip()+"\n\n-- Universal Content Contract v2\n"+"\n".join(statements)+"\n"
 
