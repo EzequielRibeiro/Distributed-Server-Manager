@@ -30,6 +30,13 @@ RETIRED_PATHS = {
     "dashboard/workers/mods_worker.sh",
     "dashboard/workers/server_worker.sh",
     "dashboard/workers/backup_worker.sh",
+    "dashboard/workers/dashboard_worker.sh",
+    "dashboard/workers/metrics_worker.sh",
+    "dashboard/workers/monitor_worker.sh",
+    "dashboard/api/metrics.sh",
+    "dashboard/api/monitor.sh",
+    "dashboard/api/health.sh",
+    "bin/dsm",
     "dashboard/alerts/alert_engine.sh",
     "dashboard/api/alerts.sh",
     "dashboard/notifications/notification_engine.sh",
@@ -67,12 +74,7 @@ RETIRED_PREFIXES = (
     "runtime/resources/DemoNode/",
 )
 
-DOCUMENTED_COMPATIBILITY = {
-    "update.sh",
-    "dashboard/workers/dashboard_worker.sh",
-    "dashboard/workers/metrics_worker.sh",
-    "dashboard/workers/monitor_worker.sh",
-}
+DOCUMENTED_COMPATIBILITY = set()
 
 JUNK_PATTERNS = (
     re.compile(r"(?:^|/)(?:copy of |old_|old-|legacy_copy)", re.I),
@@ -199,6 +201,9 @@ def main() -> int:
             "mods_worker.sh",
             "server_worker.sh",
             "backup_worker.sh",
+            "dashboard_worker.sh",
+            "metrics_worker.sh",
+            "monitor_worker.sh",
         ):
             if any(retired_worker in line for line in executable_lines):
                 failures.append(f"aggregate dashboard worker still launches retired {retired_worker}")
@@ -208,10 +213,17 @@ def main() -> int:
         state_text = state_initializer.read_text(encoding="utf-8")
         match = re.search(r"FILES=\((.*?)\)", state_text, re.S)
         initializer_entries = set(match.group(1).split()) if match else set()
-        for durable_projection in ("alerts", "events"):
-            if durable_projection in initializer_entries:
+        for retired_projection in (
+            "alerts",
+            "events",
+            "dashboard",
+            "server",
+            "metrics",
+            "monitor",
+        ):
+            if retired_projection in initializer_entries:
                 failures.append(
-                    f"dashboard state initializer recreates durable projection: {durable_projection}_state.json"
+                    f"dashboard state initializer recreates retired projection: {retired_projection}_state.json"
                 )
 
     if failures:

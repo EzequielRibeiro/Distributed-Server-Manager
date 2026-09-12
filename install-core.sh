@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Compatibility entrypoint kept small so install.sh remains stable while the
-# implementation can be hardened without duplicating the interactive wizard.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENGINE="${ROOT}/install-core-engine.sh"
 
@@ -13,6 +11,54 @@ ENGINE="${ROOT}/install-core-engine.sh"
 
 # shellcheck source=install-core-engine.sh
 source "${ENGINE}"
+
+# The public and installed CLI contract is cap-only. Keep the monolithic
+# engine's internal path variables pointed at the canonical CLI until their
+# historical names are removed from the engine itself.
+DSM_BIN="${CAP_BIN}"
+DSM_LINK="${CAP_LINK}"
+
+local_source_available()
+{
+    [[ -f "${INSTALLER_DIR}/version" ]] \
+        && [[ -f "${INSTALLER_DIR}/bin/cap" ]] \
+        && [[ -f "${INSTALLER_DIR}/core/bootstrap.sh" ]] \
+        && [[ -f "${INSTALLER_DIR}/config/dsm.conf" ]]
+}
+
+verify_source_tree()
+{
+    local -a required=(
+        version
+        bin/cap
+        core/bootstrap.sh
+        core/semver.sh
+        core/archive_security.sh
+        core/archive_inspector.py
+        config/dsm.conf
+        database/manager.py
+        database/registry.py
+        database/registry_repository.py
+        database/runtime_backend.py
+        database/backend_factory.py
+        database/schemas/sqlite.sql
+        database/schemas/postgresql.sql
+        database/schemas/mysql.sql
+        database/schemas/mariadb.sql
+        installer/database_setup.sh
+        systemd/dsm-dashboard.service
+    )
+    local -a missing=()
+    local relative
+    for relative in "${required[@]}"; do
+        [[ -e "${DSM_SOURCE}/${relative}" ]] || missing+=("${relative}")
+    done
+    if (( ${#missing[@]} > 0 )); then
+        printf '[Capivara][ERRO] Pacote incompleto:\n' >&2
+        printf '  - %s\n' "${missing[@]}" >&2
+        exit 1
+    fi
+}
 
 # The outer install.sh already chooses controller/agent/hybrid. When that value
 # is present, do not present the role catalogue a second time; only collect any
@@ -47,44 +93,24 @@ EOF_ROLE
         section "Conta de serviço"
     fi
 
-    prompt_value \
-        DSM_SERVICE_USER \
-        "Usuário de serviço" \
-        "${CURRENT_MACHINE_USER}"
-
-    prompt_value \
-        DSM_SERVICE_GROUP \
-        "Grupo de serviço" \
-        "${CURRENT_MACHINE_GROUP}"
+    prompt_value DSM_SERVICE_USER "Usuário de serviço" "${CURRENT_MACHINE_USER}"
+    prompt_value DSM_SERVICE_GROUP "Grupo de serviço" "${CURRENT_MACHINE_GROUP}"
 
     if (( role_preselected == 0 ))
     then
-        prompt_value \
-            DSM_NODE_ROLE \
-            "Papel (controller/agent/hybrid)" \
-            "agent"
+        prompt_value DSM_NODE_ROLE "Papel (controller/agent/hybrid)" "agent"
     fi
 
-    validate_account_name \
-        "${DSM_SERVICE_USER}" \
-        "Usuário"
-
-    validate_account_name \
-        "${DSM_SERVICE_GROUP}" \
-        "Grupo"
+    validate_account_name "${DSM_SERVICE_USER}" "Usuário"
+    validate_account_name "${DSM_SERVICE_GROUP}" "Grupo"
 
     case "${DSM_NODE_ROLE}" in
-        controller|agent|hybrid)
-            ;;
-        *)
-            die "DSM_NODE_ROLE inválido: ${DSM_NODE_ROLE}"
-            ;;
+        controller|agent|hybrid) ;;
+        *) die "DSM_NODE_ROLE inválido: ${DSM_NODE_ROLE}" ;;
     esac
 }
 
 # Preserve the database manager exit status across the temporary DSM_ROOT swap.
-# Without this, restoring DSM_ROOT becomes the function's final successful
-# command and can turn an authentication failure into a false positive.
 run_source_database_manager()
 {
     local saved_root="${DSM_ROOT}"
@@ -104,11 +130,8 @@ eval "$(declare -f system_requirements_preflight | sed '1s/system_requirements_p
 controller_feature_requirements()
 {
     case "${DSM_NODE_ROLE:-}" in
-        controller|hybrid)
-            ;;
-        *)
-            return 0
-            ;;
+        controller|hybrid) ;;
+        *) return 0 ;;
     esac
 
     section "Dependências por recurso"

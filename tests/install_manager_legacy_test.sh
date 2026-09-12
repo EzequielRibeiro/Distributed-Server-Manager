@@ -4,25 +4,26 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALLER="${ROOT}/install.sh"
 CORE_INSTALLER="${ROOT}/install-core.sh"
-CLI="${ROOT}/bin/dsm"
+ENGINE="${ROOT}/install-core-engine.sh"
+CLI="${ROOT}/bin/cap"
 fail(){ echo "FAIL: $*" >&2; exit 1; }
 EXPECTED_VERSION=$(tr -d '\r\n' <"${ROOT}/version")
-bash -n "${INSTALLER}"; bash -n "${CORE_INSTALLER}"
+bash -n "${INSTALLER}"; bash -n "${CORE_INSTALLER}"; bash -n "${ENGINE}"
 if grep -qE 'mine|/home/mine' "${ROOT}/config/dsm.conf"; then fail "distributed dsm.conf contains a machine-specific account"; fi
-grep -Fq -- '--exclude "config/dsm.conf"' "${CORE_INSTALLER}" || fail "installer overwrites an existing dsm.conf"
-grep -Fq -- '--exclude "config/agent.conf"' "${CORE_INSTALLER}" || fail "installer overwrites an existing agent.conf"
-grep -Fq 'write_dsm_config' "${CORE_INSTALLER}" || fail "installer does not configure dsm.conf"
-grep -Fq 'select_installation_source' "${CORE_INSTALLER}" || fail "interactive installer does not offer source selection"
-grep -Fq 'if ! pwd -P >/dev/null 2>&1' "${CLI}" || fail "dsm CLI cannot recover from a removed working directory"
-grep -Fq -- '--local' "${CORE_INSTALLER}" || fail "local installation option is unavailable"
-grep -Fq 'run mkdir -p "$(dirname "${DSM_LINK}")"' "${CORE_INSTALLER}" || fail "installer does not create custom CLI link parent"
-grep -Fq 'guard_existing_installation' "${CORE_INSTALLER}" || fail "existing installation is not guarded"
-grep -Fq 'initialize_database' "${CORE_INSTALLER}" || fail "installer does not initialize the database"
-grep -Fq 'initialize_infrastructure_identity' "${CORE_INSTALLER}" || fail "installer does not bootstrap infrastructure identity"
-grep -Fq 'bootstrap-profile' "${CORE_INSTALLER}" || fail "installer does not use Registry profile bootstrap"
-grep -Fq 'initialize_runtime_state' "${CORE_INSTALLER}" || fail "installer does not initialize dashboard runtime state"
-grep -Fq 'mkdir -p "${SYSTEMD_DIR}"' "${CORE_INSTALLER}" || fail "installer does not create a custom systemd unit directory"
-grep -Fq -- '--reinstall' "${CORE_INSTALLER}" || fail "explicit reinstall option is unavailable"
+grep -Fq -- '--exclude "config/dsm.conf"' "${ENGINE}" || fail "installer overwrites an existing dsm.conf"
+grep -Fq -- '--exclude "config/agent.conf"' "${ENGINE}" || fail "installer overwrites an existing agent.conf"
+grep -Fq 'write_dsm_config' "${ENGINE}" || fail "installer does not configure dsm.conf"
+grep -Fq 'select_installation_source' "${ENGINE}" || fail "interactive installer does not offer source selection"
+grep -Fq 'SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"' "${CLI}" || fail "cap CLI does not resolve its installed path safely"
+grep -Fq -- '--local' "${ENGINE}" || fail "local installation option is unavailable"
+grep -Fq 'run mkdir -p "$(dirname "${CAP_LINK}")"' "${ENGINE}" || fail "installer does not create custom cap CLI link parent"
+grep -Fq 'guard_existing_installation' "${ENGINE}" || fail "existing installation is not guarded"
+grep -Fq 'initialize_database' "${ENGINE}" || fail "installer does not initialize the database"
+grep -Fq 'initialize_infrastructure_identity' "${ENGINE}" || fail "installer does not bootstrap infrastructure identity"
+grep -Fq 'bootstrap-profile' "${ENGINE}" || fail "installer does not use Registry profile bootstrap"
+grep -Fq 'initialize_runtime_state' "${ENGINE}" || fail "installer does not initialize dashboard runtime state"
+grep -Fq 'mkdir -p "${SYSTEMD_DIR}"' "${ENGINE}" || fail "installer does not create a custom systemd unit directory"
+grep -Fq -- '--reinstall' "${ENGINE}" || fail "explicit reinstall option is unavailable"
 grep -Fq 'retire_obsolete_systemd_units' "${INSTALLER}" || fail "installer does not reconcile retired systemd units"
 for retired in dsm-notification-engine.timer dsm-notification-center.timer dsm-backup-worker.service dsm-events-worker.service dsm-metrics-worker.service dsm-mods-worker.service dsm-server-worker.service; do
     grep -Fq "${retired}" "${INSTALLER}" || fail "retired unit is not reconciled: ${retired}"
@@ -37,7 +38,7 @@ core = text.index('"${CORE_INSTALLER}" "$@"', pre)
 post = text.index('retire_obsolete_systemd_units "$@"', core)
 assert pre < core < post
 PY
-python3 - "${CORE_INSTALLER}" <<'PY' || fail "profile bootstrap is not ordered after database initialization"
+python3 - "${ENGINE}" <<'PY' || fail "profile bootstrap is not ordered after database initialization"
 from pathlib import Path
 import sys
 text=Path(sys.argv[1]).read_text(encoding="utf-8"); main=text.split("main()",1)[1]

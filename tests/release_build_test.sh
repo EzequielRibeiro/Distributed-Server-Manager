@@ -32,7 +32,7 @@ mkdir -p "${TMP_DIR}/extract"
 tar -xzf "${TMP_DIR}/first/${ARCHIVE_NAME}" -C "${TMP_DIR}/extract"
 PACKAGE_ROOT="${TMP_DIR}/extract/capivara-dsm-${VERSION}"
 for relative_path in \
-    version install.sh update.sh bin/dsm core/bootstrap.sh \
+    version install.sh update.sh bin/cap core/bootstrap.sh \
     dashboard/server.py dashboard/server_part13.py dashboard/agent_remote_http.py \
     dashboard/agent_update_api.py dashboard/agent_update_http.py dashboard/windows_agent_install_command.py \
     installer/catalog.sh installer/compatibility_resolver.sh \
@@ -49,6 +49,7 @@ for relative_path in \
 do
     [[ -f "${PACKAGE_ROOT}/${relative_path}" ]] || fail "required packaged file missing: ${relative_path}"
 done
+[[ ! -e "${PACKAGE_ROOT}/bin/dsm" ]] || fail "retired dsm CLI alias was packaged"
 for backend in sqlite postgresql mysql mariadb; do
     [[ -f "${PACKAGE_ROOT}/database/schemas/${backend}.sql" ]] \
         || fail "packaged consolidated schema missing: ${backend}"

@@ -208,19 +208,6 @@ SERVER_NAME = f"DSM Dashboard v{DSM_VERSION}"
 DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
 # =============================================================
-# Dashboard State
-# =============================================================
-STATE_FILES = {
-    "dashboard": STATE_DIR / "dashboard_state.json",
-    "server": STATE_DIR / "server_state.json",
-    "metrics": STATE_DIR / "metrics_state.json",
-    "monitor": STATE_DIR / "monitor_state.json",
-    "alerts": STATE_DIR / "alerts_state.json",
-    "scheduler": STATE_DIR / "scheduler_state.json",
-    "events": STATE_DIR / "events_state.json",
-}
-
-# =============================================================
 # Rotas | Routes
 # =============================================================
 STATIC_FILES = {
@@ -276,8 +263,6 @@ STATIC_FILES = {
 
 API_ROUTES = {
     "server": "server.sh",
-    "monitor": "monitor.sh",
-    "metrics": "metrics.sh",
     "mods": "mods.sh",
     "backup": "backup.sh",
     "scheduler": "scheduler.sh",
@@ -287,7 +272,6 @@ API_ROUTES = {
     "notifications": "notifications.sh",
     "console": "console.sh",
     "realtime": "realtime.sh",
-    "health": "health.sh",
     "dsm": "dsm.sh",
     "runtime": "runtime.sh",
 }
@@ -3195,81 +3179,6 @@ def delete_dashboard_user(username, current_username):
     return {"deleted": True, "username": username}
 
 
-# =============================================================
-# Dashboard State Engine
-# =============================================================
-class DashboardState:
-    """
-    Gerencia os arquivos JSON produzidos pelos Workers.
-    Manages JSON files produced by Workers.
-    """
-
-    def __init__(self):
-        self.files = STATE_FILES
-        self.cache = {}
-        self.cache_time = {}
-        self.cache_ttl = 2
-
-    def load(self, name):
-        path = self.files.get(name)
-        return read_json(path, {}) if path else {}
-
-    def cached(self, name):
-        now = time.time()
-        if name in self.cache:
-            if now - self.cache_time[name] < self.cache_ttl:
-                return self.cache[name]
-        data = self.load(name)
-        self.cache[name] = data
-        self.cache_time[name] = now
-        return data
-
-    def save(self, name, payload):
-        path = self.files.get(name)
-        if path:
-            write_json(path, payload)
-            self.cache[name] = payload
-            self.cache_time[name] = time.time()
-
-
-STATE = DashboardState()
-
-
-def api_server_real():
-    return read_json(STATE_FILES["server"], {"status": "unknown"})
-
-
-def api_resources_real():
-    data = read_json(STATE_FILES["metrics"], {})
-    memory_free = float(data.get("memory", {}).get("free_pct", 0))
-    memory_used = round(100 - memory_free, 1)
-
-    return {
-        "host": {"host_pct": float(data.get("cpu", {}).get("host_pct", 0))},
-        "cpu": {
-            "cpu_pct": float(data.get("cpu", {}).get("host_pct", 0)),
-            "cores": data.get("cpu", {}).get("cores", 0),
-        },
-        "ram": {
-            "ram_pct": data.get("memory", {}).get("used_pct", 0),
-            "total_mb": data.get("memory", {}).get("total_mb", 0),
-            "used_mb": data.get("memory", {}).get("used_mb", 0),
-            "available_mb": data.get("memory", {}).get("available_mb", 0),
-            "dayz_mb": data.get("memory", {}).get("dayz_mb", 0),
-            "dayz_pct": data.get("memory", {}).get("dayz_pct", 0),
-        },
-        "disk": {
-            "disk_pct": float(data.get("disk", {}).get("used_pct", 0)),
-            "total_gb": data.get("disk", {}).get("total_gb", 0),
-            "used_gb": data.get("disk", {}).get("used_gb", 0),
-            "free_gb": data.get("disk", {}).get("free_gb", 0),
-        },
-        "network": data.get("network", {}),
-        "temperature": data.get("temperature", {}),
-        "updated_at": data.get("updated_at", 0),
-    }
-
-
 def api_mods_real():
     ok, data = run_api_script("mods.sh")
     if ok:
@@ -3298,13 +3207,6 @@ def api_backups_real():
             "error", "Erro ao executar backups.sh | Error executing backups.sh"
         ),
     }
-
-
-def api_events_real():
-    data = read_json(STATE_FILES["events"], [])
-    if isinstance(data, dict):
-        return data.get("events", [])
-    return data
 
 
 def api_current_operation():
@@ -3463,58 +3365,42 @@ def api_log_viewer(
     }
 
 
-def api_logs():
-    DAYZ_LOG_DIR = Path("/home/mine/steamcmd/serverfiles/profiles")
-    if not DAYZ_LOG_DIR.exists():
-        return {"logs": []}
-
-    rpt_files = sorted(
-        DAYZ_LOG_DIR.glob("*.RPT"), key=lambda x: x.stat().st_mtime, reverse=True
-    )
-    if not rpt_files:
-        return {"logs": []}
-
-    logfile = rpt_files[0]
-    try:
-        with logfile.open("r", encoding="utf-8", errors="ignore") as fp:
-            lines = fp.readlines()
-        return {"file": logfile.name, "logs": [line.rstrip() for line in lines[-100:]]}
-    except Exception as exc:
-        return {"error": str(exc), "logs": []}
-
-
-def dashboard_summary():
-    return {
-        "dashboard": STATE.cached("dashboard"),
-        "server": STATE.cached("server"),
-        "metrics": STATE.cached("metrics"),
-        "monitor": STATE.cached("monitor"),
-        "alerts": STATE.cached("alerts"),
-        "scheduler": STATE.cached("scheduler"),
-        "events": STATE.cached("events"),
-        "generated_at": int(time.time()),
-    }
-
-
 def dashboard_health():
-    states = {key: path.exists() for key, path in STATE.files.items()}
-    total = len(states)
-    online = sum(1 for value in states.values() if value)
-    score = int((online / total) * 100) if total > 0 else 0
-
-    if score >= 90:
-        status = "healthy"
-    elif score >= 70:
-        status = "warning"
-    else:
-        status = "critical"
-
-    return {
-        "score": score,
-        "status": status,
-        "states": states,
-        "generated_at": int(time.time()),
-    }
+    """Return fail-closed Controller health from the authoritative database backend."""
+    generated_at = int(time.time())
+    try:
+        result = dashboard_repository(DATABASE_FILE).backend.health_check()
+        database = dict(result) if isinstance(result, dict) else {}
+        reported = str(
+            database.get("status")
+            or database.get("health")
+            or ""
+        ).strip().lower()
+        connected = database.get("connected")
+        if connected is None:
+            connected = reported in {"ok", "healthy", "online", "ready"}
+        healthy = bool(connected) and reported not in {
+            "error", "failed", "critical", "offline", "missing", "unhealthy"
+        }
+        safe_database = {
+            key: database[key]
+            for key in ("driver", "status", "health", "connected")
+            if key in database
+        }
+        safe_database["connected"] = bool(connected)
+        return {
+            "score": 100 if healthy else 0,
+            "status": "healthy" if healthy else "critical",
+            "components": {"database": safe_database},
+            "generated_at": generated_at,
+        }
+    except Exception:
+        return {
+            "score": 0,
+            "status": "critical",
+            "components": {"database": {"connected": False}},
+            "generated_at": generated_at,
+        }
 
 
 # =============================================================
@@ -4619,13 +4505,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         endpoints = {
             "/api/whoami": lambda: {"username": user["username"], "role": user["role"]},
-            "/api/server": api_server_real,
-            "/api/resources": api_resources_real,
             "/api/mods": api_mods_real,
             "/api/backups": api_backups_real,
-            "/api/events": api_events_real,
-            "/api/logs": api_logs,
-            "/api/dashboard/summary": dashboard_summary,
             "/api/health": dashboard_health,
             "/api/notifications": lambda: api_notifications(
                 user,

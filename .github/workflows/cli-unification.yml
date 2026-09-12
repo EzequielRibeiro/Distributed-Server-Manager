@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - 'bin/cap'
-      - 'bin/dsm'
       - 'bin/dsm-compat'
       - 'bin/dsm-runtime'
       - 'core/role_context.py'
@@ -22,7 +21,6 @@ on:
     branches: [main]
     paths:
       - 'bin/cap'
-      - 'bin/dsm'
       - 'bin/dsm-compat'
       - 'bin/dsm-runtime'
       - 'core/role_context.py'
@@ -51,7 +49,6 @@ jobs:
       - name: Validate syntax
         run: |
           bash -n bin/cap
-          bash -n bin/dsm
           bash -n bin/dsm-compat
           bash -n bin/dsm-runtime
           bash -n tests/cli_public_contract_test.sh
