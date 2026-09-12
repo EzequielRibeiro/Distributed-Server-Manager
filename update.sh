@@ -1133,11 +1133,13 @@ wait_for_dashboard_readiness() {
     local DASHBOARD_SCHEME="${2:-http}"
     local DEADLINE=$((SECONDS + READINESS_TIMEOUT))
     local LAST_ERROR=""
-    local -a CURL_ARGS=(--fail --silent --show-error --max-time 5)
+    local RESPONSE=""
+    local -a CURL_ARGS=(--silent --show-error --max-time 5)
 
-    # The loopback readiness probe verifies that the HTTPS listener is alive,
-    # not the public certificate identity. A public certificate normally does
-    # not contain 127.0.0.1, so only this local probe skips hostname validation.
+    # The public health endpoint is diagnostic and always returns JSON. Update
+    # readiness remains fail-closed by accepting only an explicit healthy state.
+    # For HTTPS loopback probing, skip hostname validation because the public
+    # certificate normally does not contain 127.0.0.1.
     if [[ "${DASHBOARD_SCHEME}" == "https" ]]
     then
         CURL_ARGS+=(--insecure)
@@ -1145,12 +1147,15 @@ wait_for_dashboard_readiness() {
 
     while true
     do
-        # Transient startup failures are expected while the listener is being
-        # created. Keep them out of successful update logs, but retain the last
-        # curl error so a real timeout remains actionable.
-        if LAST_ERROR="$(curl "${CURL_ARGS[@]}" "${DASHBOARD_URL}" 2>&1 >/dev/null)"
+        if RESPONSE="$(curl "${CURL_ARGS[@]}" "${DASHBOARD_URL}" 2>&1)"
         then
-            return 0
+            if python3 -c 'import json,sys; payload=json.load(sys.stdin); raise SystemExit(0 if str(payload.get("status") or "").lower() == "healthy" else 1)' <<<"${RESPONSE}" 2>/dev/null
+            then
+                return 0
+            fi
+            LAST_ERROR="Dashboard health is not healthy: ${RESPONSE}"
+        else
+            LAST_ERROR="${RESPONSE}"
         fi
 
         if (( SECONDS >= DEADLINE ))
@@ -1158,7 +1163,7 @@ wait_for_dashboard_readiness() {
             echo "[ERROR] Timeout aguardando Dashboard | waiting for Dashboard: ${DASHBOARD_URL}" >&2
             if [[ -n "${LAST_ERROR}" ]]
             then
-                echo "[ERROR] Último erro curl | Last curl error: ${LAST_ERROR}" >&2
+                echo "[ERROR] Último erro | Last error: ${LAST_ERROR}" >&2
             fi
             return 1
         fi

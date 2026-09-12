@@ -108,10 +108,12 @@ fi
 grep -Fq 'ExecStart=/bin/bash /opt/dsm/dashboard/workers/worker.sh' \
     "${ROOT}/systemd/dsm-dashboard-worker.service" \
     || fail "dashboard worker service points to a missing launcher"
-grep -Fq 'start_worker dashboard_worker.sh' "${ROOT}/dashboard/workers/worker.sh" \
-    || fail "dashboard aggregate state worker is not started"
-grep -Fq 'migrate_dashboard_worker_services' "${UPDATE}" \
-    || fail "legacy dashboard worker services are not migrated"
+if grep -Eq 'start_worker (dashboard_worker|metrics_worker|monitor_worker)\.sh' "${ROOT}/dashboard/workers/worker.sh"; then
+    fail "retired dashboard state worker is still launched"
+fi
+if grep -Fq 'migrate_dashboard_worker_services' "${UPDATE}"; then
+    fail "retired dashboard worker migration still exists"
+fi
 
 UPDATE_MANAGER="${ROOT}/update-manager/update-manager.sh"
 grep -Fq 'installed_version=$(cat "$INSTALL_DIR/version" 2>/dev/null || true)' \
@@ -128,13 +130,13 @@ trap 'rm -rf -- "${TMP_DIR}"' EXIT
 
 STATE_ROOT="${TMP_DIR}/dashboard-state-root"
 DSM_ROOT="${STATE_ROOT}" bash "${ROOT}/dashboard/state/init_state.sh" >/dev/null
-for state_name in dashboard server metrics monitor doctor scheduler; do
+for state_name in doctor scheduler; do
     [[ -f "${STATE_ROOT}/dashboard/state/${state_name}_state.json" ]] \
         || fail "missing initialized dashboard state: ${state_name}"
 done
-for retired_state in alerts events; do
+for retired_state in alerts events dashboard server metrics monitor; do
     [[ ! -e "${STATE_ROOT}/dashboard/state/${retired_state}_state.json" ]] \
-        || fail "database-backed ${retired_state} state was recreated as JSON"
+        || fail "retired ${retired_state} state was recreated as JSON"
 done
 if find "${STATE_ROOT}/dashboard/state" -maxdepth 1 -name '*.state.json' | grep -q .; then
     fail "dashboard states use the obsolete .state.json naming"
@@ -297,47 +299,6 @@ fi
 
 (
     source "${UPDATE}"
-    SYSTEMD_DIR="${TMP_DIR}/migration-systemd"
-    SYSTEMD_ENABLED=1
-    SYSTEMCTL_LOG="${TMP_DIR}/migration-systemctl.log"
-    mkdir -p "${SYSTEMD_DIR}"
-    for unit in \
-        dsm-dashboard-worker.service \
-        dsm-backup-worker.service \
-        dsm-events-worker.service \
-        dsm-metrics-worker.service \
-        dsm-mods-worker.service \
-        dsm-server-worker.service
-    do
-        : >"${SYSTEMD_DIR}/${unit}"
-    done
-    : >"${SYSTEMCTL_LOG}"
-    RESTORE_SERVICES=(
-        dsm-metrics-worker.service
-        dsm-event-queue-worker.service
-    )
-    systemctl() {
-        printf '%s\n' "$*" >>"${SYSTEMCTL_LOG}"
-    }
-
-    migrate_dashboard_worker_services >/dev/null
-
-    [[ "${ACTIVE_SERVICES[*]}" == \
-        "dsm-event-queue-worker.service dsm-dashboard-worker.service" ]] \
-        || fail "legacy active workers were not consolidated"
-    grep -q '^disable --now dsm-metrics-worker.service$' "${SYSTEMCTL_LOG}" \
-        || fail "legacy metrics worker was not disabled"
-    grep -q '^enable dsm-dashboard-worker.service$' "${SYSTEMCTL_LOG}" \
-        || fail "dashboard aggregate worker was not enabled"
-
-    migrate_dashboard_worker_services >/dev/null
-    [[ "${ACTIVE_SERVICES[*]}" == \
-        "dsm-event-queue-worker.service dsm-dashboard-worker.service" ]] \
-        || fail "dashboard worker migration is not idempotent"
-)
-
-(
-    source "${UPDATE}"
     CONFIG_FILE="${TMP_DIR}/versioned-dsm.conf"
     NEW_VERSION="1.1.0"
     printf 'DSM_VERSION="1.0.0"\nINSTALLER_VERSION="1.0.0"\nLOCAL_SETTING="preserved"\n' \
@@ -483,7 +444,7 @@ UPDATE_MANAGER="${ROOT}/update-manager/update-manager.sh"
     trap 'rm -rf -- "${TEST_ROOT}"' EXIT
     mkdir -p "${PACKAGE_ROOT}/bin" "${PACKAGE_ROOT}/core"
     printf '%s\n' "${PACKAGE_VERSION}" >"${PACKAGE_ROOT}/version"
-    printf '%s\n' '#!/usr/bin/env bash' >"${PACKAGE_ROOT}/bin/dsm"
+    printf '%s\n' '#!/usr/bin/env bash' >"${PACKAGE_ROOT}/bin/cap"
     printf '%s\n' '#!/usr/bin/env bash' >"${PACKAGE_ROOT}/core/bootstrap.sh"
     tar -czf "${PACKAGE}" -C "${TEST_ROOT}" "${PACKAGE_NAME}"
     VERIFY_CHECKSUM=1; log_error(){ :; }
@@ -556,18 +517,6 @@ grep -Fq 'process_guard_pre_update' "${UPDATE}" || fail "update.sh does not invo
     wait "${TEST_PID}"; TEST_PID=""
     ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats an empty transient cgroup as active"
     process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update after transient unit becomes empty"
-)
-
-(
-    source "${UPDATE}"
-    INSTALL_DIR="${TMP_DIR}/legacy-install"; DSM_USER=""; DSM_GROUP=""; DSM_HOME=""; mkdir -p "${INSTALL_DIR}"
-    stat(){ [[ "$1" == "-c" && "$2" == "%U" ]] && { printf '%s\n' "legacy-user"; return 0; }; return 1; }
-    id(){ [[ "$1" == "-gn" && "$2" == "legacy-user" ]] && { printf '%s\n' "legacy-group"; return 0; }; return 1; }
-    getent(){ [[ "$1" == "passwd" && "$2" == "legacy-user" ]] && { printf '%s\n' "legacy-user:x:1000:1000::/home/legacy-user:/bin/bash"; return 0; }; return 1; }
-    resolve_legacy_runtime_account >/dev/null
-    [[ "${DSM_USER}" == "legacy-user" ]] || fail "legacy DSM user was not detected"
-    [[ "${DSM_GROUP}" == "legacy-group" ]] || fail "legacy DSM group was not detected"
-    [[ "${DSM_HOME}" == "/home/legacy-user" ]] || fail "legacy DSM home was not detected"
 )
 
 (

@@ -286,7 +286,7 @@ verify_release()
 
     REQUIRED_FILES="
 version
-bin/dsm
+bin/cap
 core/bootstrap.sh
 "
 

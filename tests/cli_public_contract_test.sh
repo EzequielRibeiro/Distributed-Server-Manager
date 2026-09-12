@@ -14,8 +14,7 @@ grep -Fq 'cap agent update status|history|check' "${ROOT}/bin/cap"
 grep -Fq 'cap database|db init|migrate|status|check|backup|restore' "${ROOT}/bin/cap"
 grep -Fq 'cap server start|stop|restart|status|validate|publish' "${ROOT}/bin/cap"
 
-grep -Fq "'dsm' foi descontinuado como CLI pública. Use 'cap'." "${ROOT}/bin/dsm"
-grep -Fq 'exec "${DSM_ROOT}/bin/cap" "$@"' "${ROOT}/bin/dsm"
+[[ ! -e "${ROOT}/bin/dsm" ]]
 [[ -x "${ROOT}/bin/dsm-compat" ]]
 
 # A implementação pode manter identificadores internos DSM_*, /opt/dsm,

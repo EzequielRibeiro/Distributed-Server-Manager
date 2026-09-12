@@ -45,6 +45,7 @@ curl() {
         return 7
     fi
 
+    printf '%s\n' '{"status":"healthy"}'
     return 0
 }
 
@@ -104,12 +105,7 @@ validate_runtime_readiness >/dev/null
 [[ "$(cat "${CAPTURE}")" == "http://127.0.0.1:18080/health|http" ]]
 
 unset DSM_WEB_PORT
-cat >"${INSTALL_DIR}/dashboard/config/dashboard.conf" <<'CONF'
-[DASHBOARD]
-HOST=0.0.0.0
-PORT=8181
-CONF
 validate_runtime_readiness >/dev/null
-[[ "$(cat "${CAPTURE}")" == "http://127.0.0.1:8181/health|http" ]]
+[[ "$(cat "${CAPTURE}")" == "http://127.0.0.1:8080/health|http" ]]
 
 printf 'update_dashboard_readiness_test: OK\n'

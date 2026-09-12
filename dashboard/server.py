@@ -3948,8 +3948,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/health":
-            health = dashboard_health()
-            self.send_json(200 if health.get("status") == "healthy" else 503, health)
+            self.send_json(200, dashboard_health())
             return
 
         if path == "/ping":
