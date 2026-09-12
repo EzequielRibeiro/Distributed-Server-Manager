@@ -23,7 +23,10 @@ for import_path in (DSM_ROOT, DATABASE_DIR):
     if import_path_text not in sys.path:
         sys.path.insert(0, import_path_text)
 
-from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
+from agent_instance_runtime_repository import (
+    AgentInstanceRuntimeRepository,
+    InstanceLifecycleCommandConflict,
+)
 from runtime_backend import backend_from_environment
 
 VALID_ACTIONS = {"start", "stop", "restart", "status"}
@@ -121,6 +124,9 @@ def main(argv: list[str]) -> int:
         return 2
     try:
         result = execute(argv[1], argv[2])
+    except InstanceLifecycleCommandConflict as exc:
+        print(json.dumps(exc.as_dict(), ensure_ascii=False, separators=(",", ":")), file=sys.stderr)
+        return 3
     except Exception as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 1
