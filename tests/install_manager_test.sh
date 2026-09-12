@@ -3,21 +3,14 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORE_INSTALLER="${ROOT}/install-core.sh"
-ENGINE="${ROOT}/install-core-engine.sh"
 LEGACY_TEST="${ROOT}/tests/install_manager_legacy_test.sh"
 fail(){ echo "FAIL: $*" >&2; exit 1; }
 
-# Run the historical suite against the unchanged implementation body. The
-# public entrypoint is restored immediately afterwards and is tested below.
-TMP_WRAPPER="$(mktemp)"
-cp "${CORE_INSTALLER}" "${TMP_WRAPPER}"
-restore_wrapper(){ cp "${TMP_WRAPPER}" "${CORE_INSTALLER}"; chmod +x "${CORE_INSTALLER}"; rm -f "${TMP_WRAPPER}"; }
-trap restore_wrapper EXIT
-cp "${ENGINE}" "${CORE_INSTALLER}"
-chmod +x "${CORE_INSTALLER}"
+# Run the historical regression coverage through the canonical public wrapper.
+# Structural assertions that still need the monolithic implementation body are
+# responsible for inspecting install-core-engine.sh directly; never replace the
+# wrapper during the test because that bypasses its cap-only contract.
 bash "${LEGACY_TEST}"
-restore_wrapper
-trap - EXIT
 
 bash -n "${CORE_INSTALLER}"
 
