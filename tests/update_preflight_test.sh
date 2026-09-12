@@ -4,7 +4,7 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_PREFLIGHT="${ROOT}/update-manager/preflight.sh"
 LATEST_PREFLIGHT="${ROOT}/update-manager/preflight-latest.sh"
-DSM_COMPAT="${ROOT}/bin/dsm-compat"
+CAP_CLI="${ROOT}/bin/cap"
 
 fail()
 {
@@ -62,8 +62,8 @@ grep -Fq 'process_guard_pre_update' "${TARGET_PREFLIGHT}" \
     || fail "target preflight does not reuse the target database/process guard"
 grep -Fq 'UPDATE PREFLIGHT READY' "${TARGET_PREFLIGHT}" \
     || fail "target preflight success contract is missing"
-grep -Fq 'cap update preflight' "${DSM_COMPAT}" \
-    || fail "preflight is not exposed by the update CLI dispatcher"
+grep -Fq 'cap update preflight' "${CAP_CLI}" \
+    || fail "preflight is not exposed by the canonical cap update CLI"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf -- "${TMP_DIR}"' EXIT

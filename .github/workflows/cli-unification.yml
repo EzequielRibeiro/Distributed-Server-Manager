@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - 'bin/cap'
-      - 'bin/dsm-compat'
       - 'bin/dsm-runtime'
       - 'core/role_context.py'
       - 'core/user_manager.sh'
@@ -13,6 +12,7 @@ on:
       - 'tests/cli_unification_test.sh'
       - 'tests/cli_role_context_test.py'
       - 'tests/cli_role_enforcement_test.sh'
+      - 'tests/dsm_compat_retirement_test.py'
       - 'docs/architecture/cli-unification-v2.md'
       - 'docs/architecture/cli-unification.md'
       - 'docs/architecture/cli-role-enforcement.md'
@@ -21,7 +21,6 @@ on:
     branches: [main]
     paths:
       - 'bin/cap'
-      - 'bin/dsm-compat'
       - 'bin/dsm-runtime'
       - 'core/role_context.py'
       - 'core/user_manager.sh'
@@ -30,6 +29,7 @@ on:
       - 'tests/cli_unification_test.sh'
       - 'tests/cli_role_context_test.py'
       - 'tests/cli_role_enforcement_test.sh'
+      - 'tests/dsm_compat_retirement_test.py'
       - 'docs/architecture/cli-unification-v2.md'
       - 'docs/architecture/cli-unification.md'
       - 'docs/architecture/cli-role-enforcement.md'
@@ -49,20 +49,22 @@ jobs:
       - name: Validate syntax
         run: |
           bash -n bin/cap
-          bash -n bin/dsm-compat
           bash -n bin/dsm-runtime
           bash -n tests/cli_public_contract_test.sh
           bash -n tests/cli_unification_test.sh
           bash -n tests/cli_role_enforcement_test.sh
-          python3 -m py_compile core/role_context.py tests/cli_role_context_test.py
+          python3 -m py_compile core/role_context.py tests/cli_role_context_test.py tests/dsm_compat_retirement_test.py
 
       - name: Test public CLI contract
         run: bash tests/cli_public_contract_test.sh
 
+      - name: Test retired compatibility layer
+        run: python3 tests/dsm_compat_retirement_test.py
+
       - name: Test role resolver
         run: python3 -m unittest tests/cli_role_context_test.py
 
-      - name: Test cap compatibility routing
+      - name: Test cap direct routing
         run: bash tests/cli_unification_test.sh
 
       - name: Test role enforcement
