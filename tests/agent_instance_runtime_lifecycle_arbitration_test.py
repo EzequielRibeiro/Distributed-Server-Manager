@@ -56,6 +56,14 @@ class AgentInstanceRuntimeLifecycleArbitrationTest(unittest.TestCase):
         )
         self.instance_ids = ("instance-lifecycle-01", "instance-lifecycle-02")
         with self.backend.transaction() as connection:
+            connection.execute(
+                "UPDATE agents SET status='active' WHERE id=?",
+                (self.agent_id,),
+            )
+            connection.execute(
+                "UPDATE nodes SET status='online' WHERE id=?",
+                (self.node_id,),
+            )
             for index, instance_id in enumerate(self.instance_ids, start=1):
                 connection.execute(
                     "INSERT INTO instances("
