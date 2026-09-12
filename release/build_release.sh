@@ -60,7 +60,6 @@ git -C "${ROOT}" archive --format=tar --prefix="${PACKAGE_NAME}/" "${COMMIT}" | 
 "${PYTHON_BIN}" - "${PACKAGE_ROOT}/update.sh" <<'PY'
 from pathlib import Path
 import sys
-
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 old = '''        do
@@ -107,14 +106,9 @@ PY
 grep -q 'Rollback left DSM placeholders in systemd units' "${PACKAGE_ROOT}/update.sh" || fail "rollback systemd rendering hotfix missing from packaged update.sh"
 bash -n "${PACKAGE_ROOT}/update.sh" || fail "packaged update.sh failed syntax validation after rollback hotfix"
 
-# Hotfix Database Baseline v2 preflight classification. Once a validated
-# versioned ledger exists, checksum drift between consolidated baselines is
-# acceptable when the ledger is already fully reconciled, or when all pending
-# upgrades are registered for the target release.
 "${PYTHON_BIN}" - "${PACKAGE_ROOT}/update-manager/process-guard.sh" <<'PY'
 from pathlib import Path
 import sys
-
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 old = '''# Once a valid ledger exists, a checksum change is advanced only through the
@@ -146,18 +140,12 @@ PY
 bash -n "${PACKAGE_ROOT}/update-manager/process-guard.sh" || fail "packaged process-guard.sh failed syntax validation"
 grep -q 'fully reconciled ledger is already compatible' "${PACKAGE_ROOT}/update-manager/process-guard.sh" || fail "Baseline v2 preflight hotfix missing from package"
 
-# Reproduce an installed Baseline v2 database that is fully reconciled through
-# upgrade 6. The target release registers upgrade 7, so the preflight must
-# recognize backup_job_retry_identity as the sole controlled additive upgrade
-# and allow the update to proceed. Prevent Python bytecode generation so the
-# release archive remains reproducible.
 PAYLOAD='{"schema_version":2,"kind":"DatabaseCheck","driver":"postgresql","connected":true,"initialized":true,"health":"error","baseline":"capivara-baseline-v2","baseline_checksum":"4e80e02a984d13199d7c9372b4828d1f2b0c1d35a77c33a2e35a531c7340c6ec","expected_baseline":"capivara-baseline-v2","expected_checksum":"3f7607066465a6ee45bde521821543b37a5797e262fdff4fad6cf9bcaae05027","checksum_matches":false,"missing_tables":[],"upgrade_ledger":true,"upgrade_version":6,"upgrade_latest":7,"pending_upgrades":[{"version":7,"name":"backup_job_retry_identity"}],"upgrade_error":null,"valid":false}'
 if ! PYTHONDONTWRITEBYTECODE=1 PAYLOAD="${PAYLOAD}" TARGET_ROOT="${PACKAGE_ROOT}" bash -c 'source "$TARGET_ROOT/update-manager/process-guard.sh"; process_guard_database_check_is_upgradeable "$PAYLOAD" "$TARGET_ROOT"'
 then
     fail "Baseline v2 pending-v7 regression payload was rejected"
 fi
 
-# Development metadata and machine-generated data are not release inputs.
 for relative_path in \
     .artifacts .idea .github .gitignore .gitattributes \
     backups cache logs tmp packages instances export import \
@@ -182,7 +170,7 @@ REQUIRED_FILES=(
     version
     install.sh
     update.sh
-    bin/dsm
+    bin/cap
     core/bootstrap.sh
     dashboard/server.py
     dashboard/server_part8.py
@@ -201,6 +189,7 @@ REQUIRED_FILES=(
 for relative_path in "${REQUIRED_FILES[@]}"; do
     [[ -f "${PACKAGE_ROOT}/${relative_path}" ]] || fail "required release file missing: ${relative_path}"
 done
+[[ ! -e "${PACKAGE_ROOT}/bin/dsm" ]] || fail "retired dsm CLI alias was packaged"
 
 FILE_COUNT=$(find "${PACKAGE_ROOT}" -type f | wc -l | tr -d ' ')
 CREATED_AT=$("${PYTHON_BIN}" - "${SOURCE_DATE_EPOCH}" <<'PY'
@@ -214,7 +203,6 @@ PY
 import json
 import pathlib
 import sys
-
 target, version, commit, created_at, archive, file_count = sys.argv[1:]
 manifest = {
     "schema_version": 1,
@@ -226,7 +214,7 @@ manifest = {
     "archive": archive,
     "file_count": int(file_count) + 1,
     "required_files": [
-        "version", "install.sh", "update.sh", "bin/dsm", "core/bootstrap.sh",
+        "version", "install.sh", "update.sh", "bin/cap", "core/bootstrap.sh",
         "dashboard/server.py", "dashboard/server_part8.py", "database/manager.py",
         "database/runtime_backend.py", "database/operations.py",
         "database/schemas/sqlite.sql", "database/schemas/postgresql.sql",
