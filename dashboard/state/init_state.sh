@@ -2,8 +2,9 @@
 # =============================================================
 # DSM Dashboard
 # init_state.sh
-# Inicializa somente estado operacional transitório do Dashboard.
-# Eventos, alertas e auditoria duráveis pertencem exclusivamente ao database.
+# Inicializa somente estado operacional transitório ainda atual.
+# Eventos, alertas, telemetria, runtime e saúde são autoritativos nas
+# plataformas/repositórios atuais, não em projeções JSON legadas.
 # =============================================================
 
 set -euo pipefail
@@ -13,10 +14,6 @@ STATE_DIR="$DSM_ROOT/dashboard/state"
 mkdir -p "$STATE_DIR"
 
 FILES=(
-    dashboard
-    server
-    metrics
-    monitor
     doctor
     scheduler
 )
@@ -30,8 +27,12 @@ for file in "${FILES[@]}"; do
     fi
 done
 
-# Não preserve projeções duráveis antigas em JSON durante reinstalação.
+# Projeções aposentadas não são preservadas durante reinstalação/atualização.
 rm -f \
+    "$STATE_DIR/dashboard_state.json" \
+    "$STATE_DIR/server_state.json" \
+    "$STATE_DIR/metrics_state.json" \
+    "$STATE_DIR/monitor_state.json" \
     "$STATE_DIR/alerts_state.json" \
     "$STATE_DIR/events_state.json"
 
