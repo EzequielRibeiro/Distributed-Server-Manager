@@ -11,7 +11,7 @@ async function loadGames(){
   const data=await app.request("/api/catalog/runtimes");const runtimes=Array.isArray(data)?data:(data.runtimes||[]);const games=[...new Set(runtimes.map(item=>String(item.game||"").toLowerCase()).filter(Boolean))].sort();
   const select=$("contract-game");select.replaceChildren(option("","Selecione um jogo"),...games.map(game=>option(game,game)));
 }
-function profileLabel(profile){const ram=(Number(profile.memory_mb||0)/1024).toFixed(1).replace(".0","");const storage=(Number(profile.storage_mb||0)/1024).toFixed(1).replace(".0","");return `${profile.name||profile.id} · ${profile.cpu_cores} CPU · ${ram} GB RAM · ${storage} GB disco`;}
+function profileLabel(profile){const ram=(Number(profile.memory_mb||0)/1024).toFixed(1).replace(".0","");const storage=(Number(profile.storage_mb||0)/1024).toFixed(1).replace(".0","");const players=Number(profile.player_limit||0);return `${profile.name||profile.id} · ${profile.cpu_cores} CPU · ${ram} GB RAM · ${storage} GB disco${players>0?` · até ${players} jogadores`:""}`;}
 function renderProfile(){const id=$("contract-profile").value||defaultProfile,profile=profiles.find(item=>String(item.id)===id);$("contract-profile-summary").textContent=profile?`${profile.name||profile.id}: ${profile.description||"Sem descrição"} · ${profileLabel(profile)}${id===defaultProfile?" · perfil padrão do jogo":""}.`:"Nenhum perfil disponível para este jogo.";}
 async function loadProfiles(){
   const game=$("contract-game").value,select=$("contract-profile");select.replaceChildren();profiles=[];defaultProfile="";
