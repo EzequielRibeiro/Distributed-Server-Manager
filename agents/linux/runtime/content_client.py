@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Safe desired-state content reconciler for the Linux Agent."""
 from __future__ import annotations
-import hashlib,json,os,shutil,tarfile,tempfile,urllib.request,zipfile
+import hashlib,json,os,shutil,tarfile,tempfile,zipfile
 from pathlib import Path
 from typing import Any
 import instance_runtime
+from content_provider import resolve_source
 STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));CONTENT_STATE=STATE_ROOT/"managed-content";GAME_DATA_ROOT=Path(os.environ.get("CAPIVARA_GAME_DATA_ROOT",str(STATE_ROOT/"game-data"))).resolve()
 class ContentActivationError(RuntimeError):pass
 class ContentRollbackError(ContentActivationError):pass
@@ -53,27 +54,7 @@ def _extract(archive,dest):
     if not (m.isfile() or m.isdir()) or m.issym() or m.islnk():raise ValueError("unsafe archive member")
    t.extractall(dest,members=members,filter="data");return
  raise ValueError("unsupported archive format")
-def _controlled_local(raw):
- raw=str(raw or "").strip()
- if not raw:raise ValueError("resolved artifact path required")
- candidate=(GAME_DATA_ROOT/raw).resolve() if not Path(raw).is_absolute() else Path(raw).resolve()
- try:candidate.relative_to(GAME_DATA_ROOT)
- except ValueError as exc:raise ValueError("local artifact outside game-data root") from exc
- if not candidate.exists():raise FileNotFoundError("local artifact missing")
- return candidate
-def _download(artifact,dest):
- url=str(artifact.get("url") or artifact.get("download_url") or "").strip()
- if not url.startswith("https://"):raise ValueError("remote content requires HTTPS")
- req=urllib.request.Request(url,headers={"User-Agent":"Capivara-Agent/1"})
- with urllib.request.urlopen(req,timeout=60) as r,dest.open("wb") as f:shutil.copyfileobj(r,f,length=1024*1024)
- return dest
-def _source(provider,artifact,stage):
- resolved=artifact.get("resolved_path")
- if resolved:return _controlled_local(resolved)
- if provider=="local":return _controlled_local(artifact.get("package_id") or artifact.get("path"))
- if provider in {"http","http-archive","github","modrinth"} and (artifact.get("url") or artifact.get("download_url")):return _download(artifact,stage/"artifact")
- if provider in {"steam","modrinth","custom","source-build"}:raise RuntimeError(f"{provider} content must be resolved by an Agent provider capability before reconciliation")
- raise RuntimeError(f"provider not executable by Linux Agent: {provider}")
+def _source(provider,artifact,stage):return resolve_source(provider,artifact,stage,GAME_DATA_ROOT)
 def _dependency_state(instance_id,content_id):
  p=_state_path(instance_id,content_id)
  try:return json.loads(p.read_text()) if p.exists() else {}
