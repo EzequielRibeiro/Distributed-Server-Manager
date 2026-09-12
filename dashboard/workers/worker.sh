@@ -75,13 +75,7 @@ main(){
     trap stop_children EXIT
     trap request_stop INT TERM
 
-    # Workers legados server_worker.sh e backup_worker.sh não pertencem mais
-    # ao runtime consolidado. As funções atuais vivem nas plataformas de
-    # eventos/runtime e backup do Capivara.
-    start_worker dashboard_worker.sh
-    start_worker metrics_worker.sh
     start_worker scheduler_worker.sh
-    start_worker monitor_worker.sh
     start_python_worker automation_worker.py
     start_python_worker hybrid_agent_worker.py
     start_python_worker hybrid_customer_workspace_worker.py
