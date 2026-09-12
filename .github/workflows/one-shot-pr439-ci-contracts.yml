@@ -18,11 +18,13 @@ jobs:
           ref: cleanup/remove-remaining-compatibility
           fetch-depth: 0
       - name: Apply deterministic contract updates
-        run: python3 tools/apply_pr439_ci_contracts.py
+        run: |
+          python3 tools/apply_pr439_ci_contracts.py
+          python3 tools/apply_pr439_ci_contracts_extra.py
       - name: Validate targeted contracts
         run: |
           python3 -m py_compile dashboard/server.py tools/legacy_audit.py
-          bash -n update.sh tests/update_dashboard_readiness_test.sh tests/update_manager_test.sh tests/cli_public_contract_test.sh
+          bash -n update.sh update-manager/verify-release.sh tests/update_dashboard_readiness_test.sh tests/update_manager_test.sh tests/cli_public_contract_test.sh
           bash tests/update_dashboard_readiness_test.sh
           bash tests/update_manager_test.sh
           bash tests/cli_public_contract_test.sh
