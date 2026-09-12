@@ -14,6 +14,7 @@ from pathlib import Path
 from profiles.registry import supported_profiles
 
 _JAVA_VERSION = re.compile(r'version\s+"([^"]+)"', re.IGNORECASE)
+_CONTENT_PROVIDERS = ("github", "http", "http-archive", "local", "modrinth", "steam", "steam-workshop")
 
 
 def _normalize_architecture(value: str | None = None) -> str:
@@ -143,6 +144,8 @@ def detect_capabilities() -> dict[str, object]:
     return {
         "platform": {"os": "linux", "architecture": _normalize_architecture()},
         "runtime_profiles": list(supported_profiles()),
+        "content_provider_contract": 1,
+        "content_providers": list(_CONTENT_PROVIDERS),
         "native-linux": True,
         "systemd": Path("/run/systemd/system").exists(),
         "steamcmd": bool(steamcmd_status["functional"]),
