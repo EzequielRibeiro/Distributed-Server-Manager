@@ -4739,7 +4739,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return
                 action = path.rsplit("/", 1)[-1]
                 success, result = control_instance(user, instance, action)
-                self.send_json(200 if success else 422, result)
+                status = 200 if success else (
+                    409
+                    if isinstance(result, dict)
+                    and result.get("error") == "lifecycle_operation_in_progress"
+                    else 422
+                )
+                self.send_json(status, result)
             except (ValueError, OSError) as exc:
                 self.send_json(400, {"error": str(exc)})
             return
