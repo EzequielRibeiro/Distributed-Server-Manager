@@ -19,6 +19,8 @@ jobs:
           fetch-depth: 0
       - name: Apply deterministic cleanup
         run: python3 tools/apply_remaining_compat_cleanup.py
+      - name: Stage transformed sources
+        run: git add -A
       - name: Validate transformed sources
         run: |
           python3 -m py_compile dashboard/server.py tools/legacy_audit.py
@@ -28,7 +30,6 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -A
           git diff --cached --quiet && exit 0
           git commit -m 'refactor: apply remaining compatibility cleanup'
           git push origin HEAD:cleanup/remove-remaining-compatibility
