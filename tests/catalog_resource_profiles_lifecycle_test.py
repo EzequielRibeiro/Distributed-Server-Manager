@@ -34,8 +34,8 @@ class CatalogResourceProfilesLifecycleTest(unittest.TestCase):
                 "game": "minecraft",
                 "default_profile_id": "standard",
                 "profiles": [
-                    self.profile("standard", "Standard", cpu=2, memory=4096),
-                    self.profile("large", "Large", cpu=4, memory=8192),
+                    self.profile("standard", "Standard", cpu=2, memory=4096, players=20),
+                    self.profile("large", "Large", cpu=4, memory=8192, players=40),
                 ],
             }),
             encoding="utf-8",
@@ -45,7 +45,7 @@ class CatalogResourceProfilesLifecycleTest(unittest.TestCase):
         self.temp.cleanup()
 
     @staticmethod
-    def profile(identifier, name, *, cpu=2, memory=4096):
+    def profile(identifier, name, *, cpu=2, memory=4096, players=20):
         return {
             "id": identifier,
             "name": name,
@@ -53,15 +53,17 @@ class CatalogResourceProfilesLifecycleTest(unittest.TestCase):
             "cpu_cores": cpu,
             "memory_mb": memory,
             "storage_mb": 20480,
+            "player_limit": players,
             "swap_mb": 1024,
             "pids_limit": 512,
         }
 
     def test_create_appends_without_replacing_existing_profiles(self):
         result = create_catalog_resource_profile(
-            self.root, "minecraft", self.profile("small", "Small", cpu=1, memory=2048)
+            self.root, "minecraft", self.profile("small", "Small", cpu=1, memory=2048, players=10)
         )
         self.assertEqual([p["id"] for p in result["profiles"]], ["standard", "large", "small"])
+        self.assertEqual(result["profiles"][-1]["player_limit"], 10)
         self.assertEqual(result["default_profile_id"], "standard")
 
     def test_duplicate_create_is_rejected_without_mutating_catalog(self):
@@ -74,13 +76,38 @@ class CatalogResourceProfilesLifecycleTest(unittest.TestCase):
 
     def test_update_changes_only_selected_profile(self):
         result = update_catalog_resource_profile(
-            self.root, "minecraft", "large", self.profile("large", "Large Plus", cpu=6, memory=12288)
+            self.root, "minecraft", "large", self.profile("large", "Large Plus", cpu=6, memory=12288, players=60)
         )
         standard, large = result["profiles"]
         self.assertEqual(standard["name"], "Standard")
         self.assertEqual(standard["cpu_cores"], 2.0)
+        self.assertEqual(standard["player_limit"], 20)
         self.assertEqual(large["name"], "Large Plus")
         self.assertEqual(large["cpu_cores"], 6.0)
+        self.assertEqual(large["player_limit"], 60)
+
+    def test_explicit_non_positive_player_limit_is_rejected(self):
+        invalid = self.profile("invalid", "Invalid", players=0)
+        with self.assertRaisesRegex(ValueError, "outside the allowed range"):
+            create_catalog_resource_profile(self.root, "minecraft", invalid)
+
+    def test_legacy_profile_without_player_limit_remains_loadable(self):
+        legacy_dir = self.root / "catalog" / "v2" / "games" / "legacy"
+        legacy_dir.mkdir(parents=True)
+        legacy = self.profile("standard", "Standard")
+        legacy.pop("player_limit")
+        (legacy_dir / "resource-profiles.json").write_text(
+            json.dumps({
+                "schema_version": 2,
+                "kind": "GameResourceProfiles",
+                "game": "legacy",
+                "default_profile_id": "standard",
+                "profiles": [legacy],
+            }),
+            encoding="utf-8",
+        )
+        result = catalog_resource_profiles(self.root, "legacy")
+        self.assertNotIn("player_limit", result["profiles"][0])
 
     def test_default_change_does_not_modify_profile_collection(self):
         before = catalog_resource_profiles(self.root, "minecraft")["profiles"]
@@ -104,6 +131,8 @@ class CatalogResourceProfilesLifecycleTest(unittest.TestCase):
         self.assertIn('method:"POST"', script)
         self.assertIn('method:"PATCH"', script)
         self.assertIn('method:"DELETE"', script)
+        self.assertIn('data-players', script)
+        self.assertIn('player_limit', script)
         html = (ROOT / "dashboard" / "web" / "game-profiles.html").read_text(encoding="utf-8")
         self.assertNotIn("Salvar perfis e padrão", html)
 
