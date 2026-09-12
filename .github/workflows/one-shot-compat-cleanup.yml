@@ -1,0 +1,34 @@
+name: One-shot compatibility cleanup
+
+on:
+  push:
+    branches:
+      - cleanup/remove-remaining-compatibility
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message != 'refactor: apply remaining compatibility cleanup'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cleanup/remove-remaining-compatibility
+          fetch-depth: 0
+      - name: Apply deterministic cleanup
+        run: python3 tools/apply_remaining_compat_cleanup.py
+      - name: Validate transformed sources
+        run: |
+          python3 -m py_compile dashboard/server.py tools/legacy_audit.py
+          bash -n update.sh dashboard/workers/worker.sh dashboard/state/init_state.sh
+          python3 tools/legacy_audit.py
+      - name: Commit transformed sources
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m 'refactor: apply remaining compatibility cleanup'
+          git push origin HEAD:cleanup/remove-remaining-compatibility
