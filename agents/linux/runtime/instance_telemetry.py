@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Per-instance telemetry for the Linux Agent.
 
-CPU/RSS and systemd IP accounting are collected from the instance unit, not
-from the Agent host. A dedicated network interface remains a fallback for
-runtimes that expose one. DayZ query telemetry uses its reserved Steam query
-port directly through A2S_INFO without an external helper process.
+CPU and memory are collected from the complete systemd cgroup when available,
+so wrapper processes do not hide resource usage from child game processes.
+MainPID /proc sampling remains a compatibility fallback. Systemd IP accounting
+is collected from the unit, and DayZ query telemetry uses its reserved Steam
+query port directly through A2S_INFO without an external helper process.
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ import instance_runtime
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 SAMPLE_STATE_DIR = STATE_DIR / "instance-telemetry"
+CGROUP_ROOT = Path(os.environ.get("CAPIVARA_CGROUP_ROOT", "/sys/fs/cgroup"))
 _A2S_INFO_REQUEST = b"\xff\xff\xff\xffTSource Engine Query\x00"
 _A2S_HEADER = b"\xff\xff\xff\xff"
 
@@ -38,6 +40,66 @@ def _systemd_main_pid(instance_id: str) -> int | None:
         return value if result.returncode == 0 and value > 0 else None
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
+
+
+def _systemd_cgroup(instance_id: str) -> str | None:
+    """Return the unit ControlGroup only when it is an absolute safe path."""
+    unit = f"capivara-instance-{instance_id}.service"
+    try:
+        result = subprocess.run(
+            ["systemctl", "show", unit, "--property=ControlGroup", "--value", "--no-pager"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    value = str(result.stdout or "").strip()
+    if result.returncode != 0 or not value.startswith("/") or ".." in Path(value).parts:
+        return None
+    return value
+
+
+def _cgroup_path(control_group: str) -> Path | None:
+    """Resolve a systemd ControlGroup below the configured cgroup v2 root."""
+    value = str(control_group or "").strip()
+    if not value.startswith("/") or ".." in Path(value).parts:
+        return None
+    try:
+        root = CGROUP_ROOT.resolve()
+        candidate = (root / value.lstrip("/")).resolve()
+        candidate.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    return candidate
+
+
+def _cgroup_usage(control_group: str) -> tuple[int | None, int | None]:
+    """Return aggregate cgroup v2 CPU usage_usec and memory.current counters."""
+    base = _cgroup_path(control_group)
+    if base is None:
+        return None, None
+    cpu_usage = None
+    memory_current = None
+    try:
+        for line in (base / "cpu.stat").read_text(encoding="utf-8").splitlines():
+            key, _, raw = line.partition(" ")
+            if key != "usage_usec":
+                continue
+            value = int(raw.strip())
+            if value >= 0:
+                cpu_usage = value
+            break
+    except (OSError, ValueError):
+        pass
+    try:
+        value = int((base / "memory.current").read_text(encoding="utf-8").strip())
+        if value >= 0:
+            memory_current = value
+    except (OSError, ValueError):
+        pass
+    return cpu_usage, memory_current
 
 
 def _systemd_network(instance_id: str) -> tuple[int | None, int | None]:
@@ -101,7 +163,23 @@ def _host_uptime() -> float | None:
         return None
 
 
-def _cpu_percent(instance_id: str, process_ticks: int) -> float | None:
+def _cpu_percent_from_counter(
+    instance_id: str,
+    counter: int,
+    *,
+    units_per_second: int,
+    source: str,
+) -> float | None:
+    """Convert a monotonic CPU-time counter into percent without mixing sources."""
+    try:
+        counter = int(counter)
+        units_per_second = int(units_per_second)
+    except (TypeError, ValueError):
+        return None
+    source = str(source or "").strip()
+    if counter < 0 or units_per_second <= 0 or not source:
+        return None
+
     now = time.monotonic()
     path = SAMPLE_STATE_DIR / f"{instance_id}.json"
     previous = None
@@ -109,22 +187,56 @@ def _cpu_percent(instance_id: str, process_ticks: int) -> float | None:
         previous = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         pass
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(".tmp")
-    temp.write_text(json.dumps({"monotonic": now, "ticks": process_ticks}), encoding="utf-8")
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temp.write_text(
+        json.dumps({"monotonic": now, "counter": counter, "source": source}),
+        encoding="utf-8",
+    )
     os.chmod(temp, 0o600)
     os.replace(temp, path)
+
     if not isinstance(previous, dict):
         return None
+    previous_source = previous.get("source")
+    if previous_source is None and "ticks" in previous:
+        previous_source = "proc"
+    if str(previous_source or "") != source:
+        return None
     try:
+        previous_counter = previous.get("counter")
+        if previous_counter is None and source == "proc":
+            previous_counter = previous.get("ticks")
         elapsed = now - float(previous["monotonic"])
-        delta = process_ticks - int(previous["ticks"])
+        delta = counter - int(previous_counter)
         if elapsed <= 0 or delta < 0:
             return None
-        hz = int(os.sysconf("SC_CLK_TCK"))
-        return round((delta / hz) / elapsed * 100.0, 2)
-    except (KeyError, TypeError, ValueError, OSError):
+        return round((delta / units_per_second) / elapsed * 100.0, 2)
+    except (KeyError, TypeError, ValueError):
         return None
+
+
+def _cpu_percent(instance_id: str, process_ticks: int) -> float | None:
+    try:
+        hz = int(os.sysconf("SC_CLK_TCK"))
+    except (ValueError, OSError):
+        return None
+    return _cpu_percent_from_counter(
+        instance_id,
+        process_ticks,
+        units_per_second=hz,
+        source="proc",
+    )
+
+
+def _cgroup_cpu_percent(instance_id: str, usage_usec: int) -> float | None:
+    return _cpu_percent_from_counter(
+        instance_id,
+        usage_usec,
+        units_per_second=1_000_000,
+        source="cgroup-v2",
+    )
 
 
 def _network(interface: str | None) -> tuple[int | None, int | None]:
@@ -286,18 +398,31 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
         adapter = str(record.get("adapter") or "").strip().lower()
         pid = _systemd_main_pid(instance_id) if adapter == "systemd" else None
         cpu = memory = uptime = None
+
+        cgroup_cpu_counter = None
+        if adapter == "systemd":
+            control_group = _systemd_cgroup(instance_id)
+            if control_group:
+                cgroup_cpu_counter, cgroup_memory = _cgroup_usage(control_group)
+                if cgroup_cpu_counter is not None:
+                    cpu = _cgroup_cpu_percent(instance_id, cgroup_cpu_counter)
+                if cgroup_memory is not None:
+                    memory = cgroup_memory
+
         if pid:
             stat = _proc_stat(pid)
             if stat:
                 ticks, started = stat
-                cpu = _cpu_percent(instance_id, ticks)
+                if cgroup_cpu_counter is None:
+                    cpu = _cpu_percent(instance_id, ticks)
                 host_uptime = _host_uptime()
                 if host_uptime is not None:
                     try:
                         uptime = max(0, int(host_uptime - (started / int(os.sysconf("SC_CLK_TCK")))))
                     except (ValueError, OSError, ZeroDivisionError):
                         uptime = None
-            memory = _rss_bytes(pid)
+            if memory is None:
+                memory = _rss_bytes(pid)
 
         telemetry_config = record.get("telemetry") if isinstance(record.get("telemetry"), dict) else {}
         rx, tx = _systemd_network(instance_id) if adapter == "systemd" else (None, None)

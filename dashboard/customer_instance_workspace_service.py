@@ -49,8 +49,30 @@ class CustomerInstanceWorkspaceService:
   for key,column in (("mods","mods_allowed"),("plugins","plugins_allowed"),("workshop","workshop_allowed"),("external_upload","external_upload_allowed"),("custom_runtime","custom_runtime_allowed")):
    if column in policy:entitlements[key]=bool(entitlements.get(key)) and bool(policy.get(column))
   return capabilities,effective_content_policy(entitlements,capabilities)
+ def _effective_workspace_policy(self,context,policy=None):
+  """Overlay missing resource limits from the selected Catalog profile.
+
+  Persisted workspace overrides remain authoritative. This read-time projection
+  keeps older rows with nullable limits aligned with the purchased profile
+  without mutating storage during an overview or telemetry request.
+  """
+  value=dict(policy if isinstance(policy,dict) else self.repo.workspace_policy(str(context.get("id") or "")))
+  game_id=str(context.get("game_id") or "").strip()
+  if not game_id:return value
+  try:catalog=catalog_resource_profiles(self.root,game_id)
+  except (ValueError,OSError):return value
+  profiles=[item for item in (catalog.get("profiles") or []) if isinstance(item,dict)]
+  profile_id=str(value.get("resource_profile_id") or catalog.get("default_profile_id") or "").strip().lower()
+  if not profile_id:return value
+  profile=next((item for item in profiles if str(item.get("id") or "").strip().lower()==profile_id),None)
+  if profile is None:return value
+  if not value.get("resource_profile_id"):value["resource_profile_id"]=profile_id
+  if value.get("cpu_limit_cores") is None and profile.get("cpu_cores") is not None:value["cpu_limit_cores"]=float(profile["cpu_cores"])
+  if value.get("memory_limit_bytes") is None and profile.get("memory_mb") is not None:value["memory_limit_bytes"]=int(profile["memory_mb"])*1024*1024
+  if value.get("storage_limit_bytes") is None and profile.get("storage_mb") is not None:value["storage_limit_bytes"]=int(profile["storage_mb"])*1024*1024
+  return value
  def overview(self,user,instance_id):
-  context=self.require(user,instance_id,"instance.view");policy=self.repo.workspace_policy(instance_id);permissions=self.permissions(user,instance_id);telemetry=(self.repo.telemetry(instance_id,1) or [{}])[-1];location=self._location(str(context.get("agent_id") or ""));capabilities,content=self._contract_policy(context,policy);agent_meta=location.get("agent_metadata") if isinstance(location.get("agent_metadata"),dict) else {};latest={}
+  context=self.require(user,instance_id,"instance.view");policy=self._effective_workspace_policy(context);permissions=self.permissions(user,instance_id);telemetry=(self.repo.telemetry(instance_id,1) or [{}])[-1];location=self._location(str(context.get("agent_id") or ""));capabilities,content=self._contract_policy(context,policy);agent_meta=location.get("agent_metadata") if isinstance(location.get("agent_metadata"),dict) else {};latest={}
   for item in agent_meta.get("instance_telemetry") or []:
    if isinstance(item,dict) and str(item.get("instance_id"))==instance_id:latest=item
   telemetry={**latest,**telemetry};storage_limit=policy.get("storage_limit_bytes");used=telemetry.get("storage_used_bytes");storage_pct=(float(used)/float(storage_limit)*100) if used is not None and storage_limit else None;metadata=context.get("instance_metadata") if isinstance(context.get("instance_metadata"),dict) else {};legacy_provision=metadata.get("provision") if isinstance(metadata,dict) else None;distributed_provision=self.provisioning.latest_for_instance(instance_id);provision=dashboard_provision_state(distributed_provision) if distributed_provision is not None else legacy_provision
@@ -63,7 +85,7 @@ class CustomerInstanceWorkspaceService:
   if not bool((caps.get("console") or {}).get("supported")):raise PermissionError("runtime game console is not available")
   return self.repo.enqueue_console(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,command_text=command,requested_by=str(user.get("username") or ""))
  def startup(self,user,instance_id):
-  context=self.require(user,instance_id,"startup.read");policy=self.repo.workspace_policy(instance_id);caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));return {"values":policy.get("startup") or {},"declaration":caps.get("startup_parameters") or {},"resource_limits":{k:policy.get(k) for k in ("cpu_limit_cores","memory_limit_bytes","storage_limit_bytes","player_limit")}}
+  context=self.require(user,instance_id,"startup.read");policy=self._effective_workspace_policy(context);caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));return {"values":policy.get("startup") or {},"declaration":caps.get("startup_parameters") or {},"resource_limits":{k:policy.get(k) for k in ("cpu_limit_cores","memory_limit_bytes","storage_limit_bytes","player_limit")}}
  def save_startup(self,user,instance_id,values):
   context=self.require(user,instance_id,"startup.write");policy=self.repo.workspace_policy(instance_id);caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));policy["startup"]=validate_startup_values(values,caps.get("startup_parameters") or {});return self.repo.save_workspace_policy(instance_id,policy)
  def _file_command_policy(self,context,policy):
@@ -71,7 +93,7 @@ class CustomerInstanceWorkspaceService:
  def queue_file(self,user,instance_id,action,*,path=None,target_path=None,payload=None):
   action=str(action or "").strip().lower();required={"list":"files.read","usage":"files.read","read_text":"files.read","download":"files.download","write_text":"files.edit","upload":"files.upload","mkdir":"files.upload","delete":"files.delete","rename":"files.move","move":"files.move","extract":"files.extract"}.get(action)
   if required is None:raise ValueError("invalid file action")
-  context=self.require(user,instance_id,required);policy=self.repo.workspace_policy(instance_id);return self.files.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action=action,requested_by=str(user.get("username") or ""),path=path,target_path=target_path,payload=payload if isinstance(payload,dict) else {},policy=self._file_command_policy(context,policy))
+  context=self.require(user,instance_id,required);policy=self._effective_workspace_policy(context);return self.files.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action=action,requested_by=str(user.get("username") or ""),path=path,target_path=target_path,payload=payload if isinstance(payload,dict) else {},policy=self._file_command_policy(context,policy))
  def file_status(self,user,instance_id,command_id):
   self.require(user,instance_id,"files.read");state=self.files.snapshot(str(command_id or ""))
   if str(state.get("instance_id") or "")!=str(instance_id):raise PermissionError("file command belongs to another instance")
@@ -84,7 +106,7 @@ class CustomerInstanceWorkspaceService:
   if required is None:raise ValueError("invalid backup action")
   self.require(user,instance_id,required);self.backups.initialize();return self.backups.request(instance_id,action=action,backup_id=backup_id,reason="customer",requested_by=str(user.get("username") or "customer"))
  def upgrade_options(self,user,instance_id):
-  context=self.require(user,instance_id,"contract.read");current=self.repo.workspace_policy(instance_id);catalog=catalog_resource_profiles(self.root,str(context.get("game_id") or ""));current_id=current.get("resource_profile_id");profiles=[]
+  context=self.require(user,instance_id,"contract.read");current=self._effective_workspace_policy(context);catalog=catalog_resource_profiles(self.root,str(context.get("game_id") or ""));current_id=current.get("resource_profile_id");profiles=[]
   for item in catalog.get("profiles") or []:
    if not isinstance(item,dict):continue
    profile=dict(item);profile["current"]=str(profile.get("id"))==str(current_id);profile["upgrade"]=(not profile["current"] and (current.get("memory_limit_bytes") is None or int(profile.get("memory_mb") or 0)*1024*1024>=int(current.get("memory_limit_bytes") or 0)) and (current.get("storage_limit_bytes") is None or int(profile.get("storage_mb") or 0)*1024*1024>=int(current.get("storage_limit_bytes") or 0)));profiles.append(profile)
