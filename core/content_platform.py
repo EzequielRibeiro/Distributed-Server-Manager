@@ -33,8 +33,10 @@ def _structured(raw:Any,label:str)->dict[str,Any]:
  if len(encoded)>_MAX_STRUCTURED_BYTES:raise ContentValidationError(f"{label} exceeds maximum size")
  return value
 def _activation_order(raw:Any)->int:
+ if isinstance(raw,bool):raise ContentValidationError("invalid activation_order")
  try:value=int(0 if raw is None or raw=="" else raw)
  except (TypeError,ValueError) as exc:raise ContentValidationError("invalid activation_order") from exc
+ if isinstance(raw,float) and raw!=value:raise ContentValidationError("invalid activation_order")
  if value<0 or value>1000000:raise ContentValidationError("invalid activation_order")
  return value
 def normalize_assignment(raw:Mapping[str,Any],*,expected_agent_id:str|None=None)->dict[str,Any]:
@@ -49,9 +51,10 @@ def normalize_assignment(raw:Mapping[str,Any],*,expected_agent_id:str|None=None)
  if activation_state not in _ACTIVATION_STATES:raise ContentValidationError("invalid activation_state")
  if state=="absent" and activation_state!="disabled":raise ContentValidationError("absent content cannot be enabled")
  activation_order=_activation_order(raw.get("activation_order"))
- version=str(raw.get("version") or "latest").strip()[:191] or "latest";provider=str(raw.get("provider") or (raw.get("artifact") or {}).get("provider") or "").strip().lower()
+ artifact=_structured(raw.get("artifact"),"artifact")
+ version=str(raw.get("version") or "latest").strip()[:191] or "latest";provider=str(raw.get("provider") or artifact.get("provider") or "").strip().lower()
  if provider not in _PROVIDERS:raise ContentValidationError("invalid provider")
- artifact=_structured(raw.get("artifact"),"artifact");artifact["provider"]=provider
+ artifact["provider"]=provider
  provenance=_structured(raw.get("provenance") or raw.get("source"),"provenance");metadata=_structured(raw.get("metadata"),"metadata")
  requested_security_state=str(raw.get("security_state") or "unscanned").strip().lower()
  if requested_security_state!="unscanned":raise ContentValidationError("security_state is Controller/Agent managed")
