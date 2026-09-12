@@ -67,20 +67,16 @@ class AgentInstanceRuntimeLifecycleArbitrationTest(unittest.TestCase):
             for index, instance_id in enumerate(self.instance_ids, start=1):
                 connection.execute(
                     "INSERT INTO instances("
-                    "id,node_id,name,game_id,status,agent_id,runtime_adapter,runtime_root,runtime_account,created_at,updated_at"
-                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    "id,node_id,game_id,name,status,controller_id,agent_id"
+                    ") VALUES(?,?,?,?,?,?,?)",
                     (
                         instance_id,
                         self.node_id,
+                        "dayz",
                         f"Lifecycle {index}",
-                        "dayz",
-                        "online",
+                        "offline",
+                        self.controller_id,
                         self.agent_id,
-                        "dayz",
-                        f"/srv/capivara/{instance_id}",
-                        "capivara",
-                        "2026-09-12T00:00:00Z",
-                        "2026-09-12T00:00:00Z",
                     ),
                 )
         self.runtime = AgentInstanceRuntimeRepository(self.backend)
