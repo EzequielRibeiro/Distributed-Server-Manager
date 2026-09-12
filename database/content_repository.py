@@ -10,6 +10,8 @@ from alert_repository import AlertSession
 from content_platform import ContentValidationError,normalize_assignment
 from event_platform import utc_now
 
+_SECURITY_STATES={"unscanned","clean","suspicious","blocked","scan_failed"}
+
 class ContentRepository:
  def __init__(self,backend): self.backend=backend
  def initialize(self): self.backend.initialize()
@@ -18,10 +20,15 @@ class ContentRepository:
  def _row(self,row):
   if row is None:return None
   v=dict(row)
-  for col,name,default in (("artifact_json","artifact",{}),("dependencies_json","dependencies",[]),("conflicts_json","conflicts",[])):
-   try:v[name]=json.loads(v.pop(col))
+  for col,name,default in (("artifact_json","artifact",{}),("provenance_json","provenance",{}),("metadata_json","metadata",{}),("dependencies_json","dependencies",[]),("conflicts_json","conflicts",[])):
+   raw=v.pop(col,None)
+   try:v[name]=json.loads(raw) if raw is not None else default
    except (TypeError,json.JSONDecodeError):v[name]=default
-  v["kind"]="CapivaraContentAssignment";v["schema_version"]=1
+  desired=str(v.get("desired_state") or "installed")
+  v["activation_state"]=str(v.get("activation_state") or ("enabled" if desired=="installed" else "disabled"))
+  v["activation_order"]=int(v.get("activation_order") or 0)
+  v["security_state"]=str(v.get("security_state") or "unscanned")
+  v["kind"]="CapivaraContentAssignment";v["schema_version"]=2
   return v
  def _instance(self,instance_id):
   with self.backend.connect() as c:
@@ -60,16 +67,16 @@ class ContentRepository:
   item=normalize_assignment(body,expected_agent_id=agent_id);self._preflight_provider(agent_id,item["provider"]);existing=self.get(item["instance_id"],item["content_id"])
   if existing and existing.get("checksum")==item["checksum"]: return {"assignment":existing,"changed":False}
   aid=str(existing["assignment_id"]) if existing else str(uuid.uuid4()); rev=int(existing.get("revision") or 0)+1 if existing else 1
-  now=utc_now(); artifact=json.dumps(item["artifact"],sort_keys=True,separators=(",",":"),ensure_ascii=False); deps=json.dumps(item["dependencies"],separators=(",",":")); conflicts=json.dumps(item["conflicts"],separators=(",",":"))
+  now=utc_now();artifact=json.dumps(item["artifact"],sort_keys=True,separators=(",",":"),ensure_ascii=False);provenance=json.dumps(item["provenance"],sort_keys=True,separators=(",",":"),ensure_ascii=False);metadata=json.dumps(item["metadata"],sort_keys=True,separators=(",",":"),ensure_ascii=False);deps=json.dumps(item["dependencies"],separators=(",",":"));conflicts=json.dumps(item["conflicts"],separators=(",",":"))
   with self.backend.transaction() as c:
    s=AlertSession(self.backend,c)
    try:
-    vals=(item["agent_id"],item["game_id"],item["content_type"],item["desired_state"],item["version"],item["provider"],item["target"],artifact,deps,conflicts,rev,item["checksum"],requested_by,now)
+    vals=(item["agent_id"],item["game_id"],item["content_type"],item["desired_state"],item["activation_state"],item["activation_order"],item["version"],item["provider"],item["target"],artifact,provenance,metadata,item["security_state"],deps,conflicts,rev,item["checksum"],requested_by,now)
     if existing:
-     s.execute(f"UPDATE content_assignments SET agent_id={self.ph},game_id={self.ph},content_type={self.ph},desired_state={self.ph},version={self.ph},provider={self.ph},target={self.ph},artifact_json={self.ph},dependencies_json={self.ph},conflicts_json={self.ph},revision={self.ph},checksum={self.ph},requested_by={self.ph},updated_at={self.ph} WHERE assignment_id={self.ph}",(*vals,aid))
+     s.execute(f"UPDATE content_assignments SET agent_id={self.ph},game_id={self.ph},content_type={self.ph},desired_state={self.ph},activation_state={self.ph},activation_order={self.ph},version={self.ph},provider={self.ph},target={self.ph},artifact_json={self.ph},provenance_json={self.ph},metadata_json={self.ph},security_state={self.ph},dependencies_json={self.ph},conflicts_json={self.ph},revision={self.ph},checksum={self.ph},requested_by={self.ph},updated_at={self.ph} WHERE assignment_id={self.ph}",(*vals,aid))
     else:
-     s.execute(f"INSERT INTO content_assignments(assignment_id,instance_id,agent_id,content_id,game_id,content_type,desired_state,version,provider,target,artifact_json,dependencies_json,conflicts_json,revision,checksum,requested_by,created_at,updated_at) VALUES ({','.join([self.ph]*18)})",(aid,item["instance_id"],item["agent_id"],item["content_id"],item["game_id"],item["content_type"],item["desired_state"],item["version"],item["provider"],item["target"],artifact,deps,conflicts,rev,item["checksum"],requested_by,now,now))
-    s.execute(f"INSERT INTO content_assignment_revisions(assignment_id,revision,desired_state,version,provider,target,artifact_json,dependencies_json,conflicts_json,checksum,requested_by,created_at) VALUES ({','.join([self.ph]*12)})",(aid,rev,item["desired_state"],item["version"],item["provider"],item["target"],artifact,deps,conflicts,item["checksum"],requested_by,now))
+     s.execute(f"INSERT INTO content_assignments(assignment_id,instance_id,agent_id,content_id,game_id,content_type,desired_state,activation_state,activation_order,version,provider,target,artifact_json,provenance_json,metadata_json,security_state,dependencies_json,conflicts_json,revision,checksum,requested_by,created_at,updated_at) VALUES ({','.join([self.ph]*23)})",(aid,item["instance_id"],item["agent_id"],item["content_id"],item["game_id"],item["content_type"],item["desired_state"],item["activation_state"],item["activation_order"],item["version"],item["provider"],item["target"],artifact,provenance,metadata,item["security_state"],deps,conflicts,rev,item["checksum"],requested_by,now,now))
+    s.execute(f"INSERT INTO content_assignment_revisions(assignment_id,revision,desired_state,activation_state,activation_order,version,provider,target,artifact_json,provenance_json,metadata_json,security_state,dependencies_json,conflicts_json,checksum,requested_by,created_at) VALUES ({','.join([self.ph]*17)})",(aid,rev,item["desired_state"],item["activation_state"],item["activation_order"],item["version"],item["provider"],item["target"],artifact,provenance,metadata,item["security_state"],deps,conflicts,item["checksum"],requested_by,now))
    finally:s.close()
   return {"assignment":self.get(item["instance_id"],item["content_id"]),"changed":True}
  def list(self,*,agent_id=None,instance_id=None,desired_state=None,limit=500):
@@ -79,7 +86,7 @@ class ContentRepository:
   where=" WHERE "+" AND ".join(clauses) if clauses else "";params.append(max(1,min(int(limit),2000)))
   with self.backend.connect() as c:
    s=AlertSession(self.backend,c)
-   try:return [self._row(r) for r in s.execute(f"SELECT * FROM content_assignments{where} ORDER BY instance_id,content_id LIMIT {self.ph}",tuple(params)).fetchall()]
+   try:return [self._row(r) for r in s.execute(f"SELECT * FROM content_assignments{where} ORDER BY instance_id,activation_order,content_id LIMIT {self.ph}",tuple(params)).fetchall()]
    finally:s.close()
  def history(self,assignment_id):
   with self.backend.connect() as c:
@@ -88,9 +95,11 @@ class ContentRepository:
     out=[]
     for row in s.execute(f"SELECT * FROM content_assignment_revisions WHERE assignment_id={self.ph} ORDER BY revision DESC",(assignment_id,)).fetchall():
      v=dict(row)
-     for col,name,default in (("artifact_json","artifact",{}),("dependencies_json","dependencies",[]),("conflicts_json","conflicts",[])):
-      try:v[name]=json.loads(v.pop(col))
+     for col,name,default in (("artifact_json","artifact",{}),("provenance_json","provenance",{}),("metadata_json","metadata",{}),("dependencies_json","dependencies",[]),("conflicts_json","conflicts",[])):
+      raw=v.pop(col,None)
+      try:v[name]=json.loads(raw) if raw is not None else default
       except Exception:v[name]=default
+     desired=str(v.get("desired_state") or "installed");v["activation_state"]=str(v.get("activation_state") or ("enabled" if desired=="installed" else "disabled"));v["activation_order"]=int(v.get("activation_order") or 0);v["security_state"]=str(v.get("security_state") or "unscanned");v["schema_version"]=2
      out.append(v)
     return out
    finally:s.close()
@@ -117,10 +126,12 @@ class ContentRepository:
      if not inst or str(dict(inst)["agent_id"] or "")!=agent_id or not cid:continue
      desired_rev=int(r.get("desired_revision") or r.get("applied_revision") or 0);desired_sum=str(r.get("desired_checksum") or r.get("applied_checksum") or "")
      if not desired_rev or not desired_sum:continue
+     security_state=str(r.get("security_state") or "unscanned").strip().lower()
+     if security_state not in _SECURITY_STATES:continue
      existing=s.execute(f"SELECT agent_id FROM agent_content_state WHERE agent_id={self.ph} AND instance_id={self.ph} AND content_id={self.ph}",(agent_id,iid,cid)).fetchone()
-     vals=(desired_rev,int(r.get("applied_revision") or 0) or None,desired_sum,str(r.get("applied_checksum") or "") or None,str(r.get("status") or "unknown"),r.get("installed_version"),r.get("last_error"),r.get("reported_at") or now,now)
-     if existing:s.execute(f"UPDATE agent_content_state SET desired_revision={self.ph},applied_revision={self.ph},desired_checksum={self.ph},applied_checksum={self.ph},status={self.ph},installed_version={self.ph},last_error={self.ph},reported_at={self.ph},updated_at={self.ph} WHERE agent_id={self.ph} AND instance_id={self.ph} AND content_id={self.ph}",(*vals,agent_id,iid,cid))
-     else:s.execute(f"INSERT INTO agent_content_state(agent_id,instance_id,content_id,desired_revision,applied_revision,desired_checksum,applied_checksum,status,installed_version,last_error,reported_at,updated_at) VALUES ({','.join([self.ph]*12)})",(agent_id,iid,cid,*vals))
+     vals=(desired_rev,int(r.get("applied_revision") or 0) or None,desired_sum,str(r.get("applied_checksum") or "") or None,str(r.get("status") or "unknown"),r.get("installed_version"),security_state,r.get("last_error"),r.get("reported_at") or now,now)
+     if existing:s.execute(f"UPDATE agent_content_state SET desired_revision={self.ph},applied_revision={self.ph},desired_checksum={self.ph},applied_checksum={self.ph},status={self.ph},installed_version={self.ph},security_state={self.ph},last_error={self.ph},reported_at={self.ph},updated_at={self.ph} WHERE agent_id={self.ph} AND instance_id={self.ph} AND content_id={self.ph}",(*vals,agent_id,iid,cid))
+     else:s.execute(f"INSERT INTO agent_content_state(agent_id,instance_id,content_id,desired_revision,applied_revision,desired_checksum,applied_checksum,status,installed_version,security_state,last_error,reported_at,updated_at) VALUES ({','.join([self.ph]*13)})",(agent_id,iid,cid,*vals))
      accepted+=1
    finally:s.close()
   return accepted
