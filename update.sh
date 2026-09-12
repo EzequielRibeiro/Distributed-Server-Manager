@@ -51,7 +51,6 @@ CONFIG_FILE="${INSTALL_DIR}/config/dsm.conf"
 BACKUP_DIR="/opt/dsm-backups"
 STAGING_DIR="/opt/dsm-update-stage"
 SYSTEMD_DIR="/etc/systemd/system"
-BIN_LINK="/usr/local/bin/dsm"
 CAP_LINK="/usr/local/bin/cap"
 
 #############################################
@@ -199,62 +198,6 @@ initialize_logging() {
 
 
 # =============================================================
-# Migração de conta de runtime para instalações legadas
-# Legacy runtime account migration
-# =============================================================
-
-resolve_legacy_runtime_account() {
-    local detected_user=""
-    local detected_group=""
-    local detected_home=""
-
-    if [[ -z "${DSM_USER:-}" ]]
-    then
-        detected_user=$(stat -c '%U' "${INSTALL_DIR}" 2>/dev/null || true)
-
-        if [[ -n "${detected_user}" && "${detected_user}" != "root" ]]
-        then
-            DSM_USER="${detected_user}"
-
-            echo
-            echo "DSM_USER legado detectado automaticamente:"
-            echo "${DSM_USER}"
-        fi
-    fi
-
-    if [[ -n "${DSM_USER:-}" && -z "${DSM_GROUP:-}" ]]
-    then
-        detected_group=$(id -gn "${DSM_USER}" 2>/dev/null || true)
-
-        if [[ -n "${detected_group}" ]]
-        then
-            DSM_GROUP="${detected_group}"
-
-            echo
-            echo "DSM_GROUP legado detectado automaticamente:"
-            echo "${DSM_GROUP}"
-        fi
-    fi
-
-    if [[ -n "${DSM_USER:-}" && -z "${DSM_HOME:-}" ]]
-    then
-        detected_home=$(
-            getent passwd "${DSM_USER}" 2>/dev/null |
-                cut -d: -f6
-        )
-
-        if [[ -n "${detected_home}" ]]
-        then
-            DSM_HOME="${detected_home}"
-
-            echo
-            echo "DSM_HOME legado detectado automaticamente:"
-            echo "${DSM_HOME}"
-        fi
-    fi
-}
-
-# =============================================================
 # Carregar configuração DSM existente
 # Load existing DSM configuration
 # =============================================================
@@ -271,7 +214,6 @@ load_configuration() {
     echo "Loading DSM configuration..."
     source "${CONFIG_FILE}"
 
-    resolve_legacy_runtime_account
 
     export DSM_DATABASE_DRIVER DSM_DATABASE DSM_DATABASE_HOST DSM_DATABASE_PORT
     export DSM_DATABASE_NAME DSM_DATABASE_USER DSM_DATABASE_PASSWORD_FILE
@@ -366,7 +308,6 @@ validate_package() {
     echo "Validating DSM package..."
     REQUIRED_FILES=(
         "version"
-        "bin/dsm"
         "bin/cap"
         "core/bootstrap.sh"
     )
@@ -821,7 +762,6 @@ validate_staging() {
     echo "Validando nova instalação..."
     echo "Validating new installation..."
     REQUIRED=(
-        "bin/dsm"
         "bin/cap"
         "core/bootstrap.sh"
     )
@@ -998,7 +938,6 @@ fix_permissions() {
     echo "Corrigindo permissões..."
     echo "Fixing permissions..."
     product_paths -type f -name "*.sh" -exec chmod +x {} \;
-    chmod +x "${INSTALL_DIR}/bin/dsm"
     chmod +x "${INSTALL_DIR}/bin/cap"
     product_paths -exec chown -h "${DSM_USER}:${DSM_GROUP}" {} +
     echo
@@ -1007,22 +946,20 @@ fix_permissions() {
 }
 
 # =============================================================
-# Criar links globais DSM/Capivara | Create global DSM/Capivara links
+# Instalar comando global Capivara | Install global Capivara command
 # =============================================================
 install_command() {
     echo
-    echo "Atualizando comandos globais..."
-    echo "Updating global commands."
+    echo "Atualizando comando global Capivara..."
+    echo "Updating global Capivara command."
 
-    ln -sf "${INSTALL_DIR}/bin/dsm" "${BIN_LINK}"
     ln -sf "${INSTALL_DIR}/bin/cap" "${CAP_LINK}"
-
-    chmod +x "${BIN_LINK}"
     chmod +x "${CAP_LINK}"
 
-    echo
-    echo "Comandos DSM e Capivara atualizados."
-    echo "DSM and Capivara commands updated."
+    # `cap` is the only public CLI. Remove any obsolete public dsm alias.
+    rm -f -- /usr/local/bin/dsm
+
+    echo "Comando Capivara atualizado | Capivara command updated."
 }
 
 # =============================================================
@@ -1096,97 +1033,27 @@ update_systemd() {
 reconcile_hybrid_runtime_substrate() {
     local INSTALLER="${INSTALL_DIR}/installer/install_hybrid_runtime_substrate.sh"
     local AGENT_CONFIG="${INSTALL_DIR}/runtime/hybrid-agent-state/agent.json"
-    local LEGACY_MATERIALIZER="${SYSTEMD_DIR}/dsm-hybrid-agent-materialize@.service"
 
     if [[ "${SYSTEMD_ENABLED}" -ne 1 ]]
     then
-        echo
         echo "Substrato Hybrid ignorado: systemd desativado."
-        echo "Hybrid substrate skipped: systemd disabled."
         return 0
     fi
 
-    # Only reconcile installations that are already operating as Hybrid.
-    # The persisted embedded-Agent config is the canonical marker; the
-    # legacy materializer unit keeps upgrades from older Hybrid versions
-    # compatible when agent.json is temporarily unavailable.
-    if [[ ! -f "${AGENT_CONFIG}" && ! -f "${LEGACY_MATERIALIZER}" ]]
+    # The persisted embedded-Agent config is the only supported Hybrid marker.
+    if [[ ! -f "${AGENT_CONFIG}" ]]
     then
-        echo
         echo "Substrato Hybrid não aplicável a esta instalação."
-        echo "Hybrid substrate not applicable to this installation."
         return 0
     fi
 
     if [[ ! -f "${INSTALLER}" ]]
     then
-        echo
         echo "[ERROR] Instalador do substrato Hybrid ausente: ${INSTALLER}" >&2
-        echo "[ERROR] Hybrid substrate installer is missing: ${INSTALLER}" >&2
         return 1
     fi
 
-    echo
-    echo "Reconciliando substrato privilegiado Hybrid..."
-    echo "Reconciling privileged Hybrid substrate..."
-
     DSM_ROOT="${INSTALL_DIR}" bash "${INSTALLER}"
-
-    echo "[OK] Substrato privilegiado Hybrid reconciliado."
-    echo "[OK] Privileged Hybrid substrate reconciled."
-}
-
-# =============================================================
-# Migrar workers legados do Dashboard | Migrate legacy Dashboard workers
-# =============================================================
-migrate_dashboard_worker_services() {
-    local aggregate_unit="dsm-dashboard-worker.service"
-    local service_name
-    local active_service
-    local aggregate_recorded=0
-    local legacy_restore_required=0
-    local legacy_worker_units=(
-        dsm-backup-worker.service
-        dsm-events-worker.service
-        dsm-metrics-worker.service
-        dsm-mods-worker.service
-        dsm-server-worker.service
-    )
-    local migrated_active_services=()
-
-    [[ "${SYSTEMD_ENABLED}" -eq 1 ]] || return 0
-    [[ -f "${SYSTEMD_DIR}/${aggregate_unit}" ]] || return 0
-
-    echo
-    echo "Migrando workers legados do Dashboard..."
-    echo "Migrating legacy Dashboard workers..."
-
-    for service_name in "${legacy_worker_units[@]}"
-    do
-        if [[ -f "${SYSTEMD_DIR}/${service_name}" ]]
-        then
-            systemctl disable --now "${service_name}" 2>/dev/null || true
-        fi
-    done
-
-    for active_service in "${RESTORE_SERVICES[@]}"
-    do
-        case " ${legacy_worker_units[*]} " in
-            *" ${active_service} "*) legacy_restore_required=1; continue ;;
-        esac
-        migrated_active_services+=("${active_service}")
-        [[ "${active_service}" == "${aggregate_unit}" ]] && aggregate_recorded=1
-    done
-
-    if [[ "${legacy_restore_required}" -eq 1 && "${aggregate_recorded}" -eq 0 ]]
-    then
-        migrated_active_services+=("${aggregate_unit}")
-        systemctl enable "${aggregate_unit}"
-    fi
-    RESTORE_SERVICES=("${migrated_active_services[@]}")
-    ACTIVE_SERVICES=("${RESTORE_SERVICES[@]}")
-
-    echo "[OK] Workers consolidados em ${aggregate_unit}."
 }
 
 # =============================================================
@@ -1338,14 +1205,6 @@ validate_runtime_readiness() {
                 ;;
         esac
 
-        # Compatibility fallback for installations created before DSM_WEB_PORT
-        # became authoritative in config/dsm.conf.
-        if [[ -z "${DASHBOARD_PORT_VALUE}" \
-            && -r "${INSTALL_DIR}/dashboard/config/dashboard.conf" ]]
-        then
-            DASHBOARD_PORT_VALUE=$(awk -F= '$1 == "PORT" {gsub(/[^0-9]/, "", $2); print $2; exit}' \
-                "${INSTALL_DIR}/dashboard/config/dashboard.conf")
-        fi
 
         if [[ -z "${DASHBOARD_PORT_VALUE}" ]]
         then
@@ -1397,23 +1256,6 @@ validate_final_installation() {
     echo
     echo "Arquivos principais OK."
     echo "Main files OK."
-}
-
-# =============================================================
-# Executar Doctor DSM | Run DSM Doctor
-# =============================================================
-run_doctor() {
-    echo
-    echo "Executando diagnóstico DSM..."
-    echo "Running DSM diagnosis..."
-    if [[ -x "${INSTALL_DIR}/bin/dsm" ]]
-    then
-        "${INSTALL_DIR}/bin/dsm" doctor || echo "Aviso | Warning: Doctor encontrou problemas | found issues."
-    else
-        echo
-        echo "Comando DSM não encontrado | DSM command not found."
-        exit 1
-    fi
 }
 
 # =============================================================
@@ -1657,13 +1499,11 @@ main() {
     install_command
     update_systemd
     reconcile_hybrid_runtime_substrate
-    migrate_dashboard_worker_services
     # Inicialização | Startup
     restart_services
     # Validação | Validation
     validate_final_installation
     validate_runtime_readiness
-    run_doctor
     check_services
     # Finalização | Finalization
     cleanup_update
@@ -1793,30 +1633,18 @@ rollback() {
         done
     fi
     # Reconcile privileged Hybrid substrate from the restored package.
-    # Rollback restores /opt/dsm, but generated units, Polkit policy and
-    # supplementary group membership live outside the installation tree.
-    # Re-running the restored package's canonical installer makes the host
-    # compatible with that restored release without attempting destructive
-    # reversal of shared OS-level group membership.
     if [[ "${SYSTEMD_ENABLED}" -eq 1 ]]
     then
         local RESTORED_HYBRID_INSTALLER="${INSTALL_DIR}/installer/install_hybrid_runtime_substrate.sh"
         local RESTORED_HYBRID_CONFIG="${INSTALL_DIR}/runtime/hybrid-agent-state/agent.json"
-        local RESTORED_MATERIALIZER="${SYSTEMD_DIR}/dsm-hybrid-agent-materialize@.service"
 
-        if [[ -f "${RESTORED_HYBRID_CONFIG}" || -f "${RESTORED_MATERIALIZER}" ]]
+        if [[ -f "${RESTORED_HYBRID_CONFIG}" ]]
         then
-            if [[ -f "${RESTORED_HYBRID_INSTALLER}" ]]
-            then
-                echo
-                echo "Reconciliando substrato Hybrid após rollback..."
-                echo "Reconciling Hybrid substrate after rollback..."
-                DSM_ROOT="${INSTALL_DIR}" bash "${RESTORED_HYBRID_INSTALLER}" || return 1
-            else
-                echo
-                echo "Pacote restaurado não possui instalador de substrato Hybrid; mantendo estado compatível legado."
-                echo "Restored package has no Hybrid substrate installer; preserving legacy-compatible state."
-            fi
+            [[ -f "${RESTORED_HYBRID_INSTALLER}" ]] || {
+                echo "Restored Hybrid installation is missing its substrate installer." >&2
+                return 1
+            }
+            DSM_ROOT="${INSTALL_DIR}" bash "${RESTORED_HYBRID_INSTALLER}" || return 1
         fi
     fi
     # Atualizar Systemd | Update Systemd

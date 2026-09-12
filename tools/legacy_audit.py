@@ -33,6 +33,10 @@ RETIRED_PATHS = {
     "dashboard/workers/dashboard_worker.sh",
     "dashboard/workers/metrics_worker.sh",
     "dashboard/workers/monitor_worker.sh",
+    "dashboard/api/metrics.sh",
+    "dashboard/api/monitor.sh",
+    "dashboard/api/health.sh",
+    "bin/dsm",
     "dashboard/alerts/alert_engine.sh",
     "dashboard/api/alerts.sh",
     "dashboard/notifications/notification_engine.sh",
@@ -70,9 +74,7 @@ RETIRED_PREFIXES = (
     "runtime/resources/DemoNode/",
 )
 
-DOCUMENTED_COMPATIBILITY = {
-    "update.sh",
-}
+DOCUMENTED_COMPATIBILITY = set()
 
 JUNK_PATTERNS = (
     re.compile(r"(?:^|/)(?:copy of |old_|old-|legacy_copy)", re.I),
