@@ -10,6 +10,7 @@ from pathlib import Path
 from profiles.registry import supported_profiles
 
 _JAVA_VERSION=re.compile(r'version\s+"([^"]+)"',re.IGNORECASE)
+_BASE_CONTENT_PROVIDERS=("github","http","http-archive","local","modrinth")
 
 def _managed_steamcmd()->Path:
  return Path(os.environ.get("PROGRAMDATA") or r"C:\ProgramData")/"CapivaraAgent"/"tools"/"steamcmd"/"steamcmd.exe"
@@ -42,10 +43,14 @@ def _java_status()->dict[str,object]:
 
 def detect_capabilities()->dict[str,object]:
  steamcmd=shutil.which("steamcmd.exe") is not None or shutil.which("steamcmd") is not None or _managed_steamcmd().is_file()
+ content_providers=list(_BASE_CONTENT_PROVIDERS)
+ if steamcmd:content_providers.extend(("steam","steam-workshop"))
  java_status=_java_status();java=bool(java_status["functional"])
  return {
   "platform":{"os":"windows","architecture":_normalize_architecture()},
   "runtime_profiles":list(supported_profiles()),
+  "content_provider_contract":1,
+  "content_providers":content_providers,
   "native-windows":True,
   "powershell":shutil.which("powershell") is not None or shutil.which("pwsh") is not None,
   "steamcmd":steamcmd,

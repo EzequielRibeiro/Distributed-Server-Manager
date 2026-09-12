@@ -14,6 +14,7 @@ from pathlib import Path
 from profiles.registry import supported_profiles
 
 _JAVA_VERSION = re.compile(r'version\s+"([^"]+)"', re.IGNORECASE)
+_BASE_CONTENT_PROVIDERS = ("github", "http", "http-archive", "local", "modrinth")
 
 
 def _normalize_architecture(value: str | None = None) -> str:
@@ -135,6 +136,10 @@ def _steamcmd_status() -> dict[str, object]:
 def detect_capabilities() -> dict[str, object]:
     """Return factual host/runtime primitives suitable for generic placement."""
     steamcmd_status = _steamcmd_status()
+    steamcmd_ready = bool(steamcmd_status["functional"])
+    content_providers = list(_BASE_CONTENT_PROVIDERS)
+    if steamcmd_ready:
+        content_providers.extend(("steam", "steam-workshop"))
     java_status = _java_status()
     java = bool(java_status["functional"])
     docker = shutil.which("docker") is not None
@@ -143,9 +148,11 @@ def detect_capabilities() -> dict[str, object]:
     return {
         "platform": {"os": "linux", "architecture": _normalize_architecture()},
         "runtime_profiles": list(supported_profiles()),
+        "content_provider_contract": 1,
+        "content_providers": content_providers,
         "native-linux": True,
         "systemd": Path("/run/systemd/system").exists(),
-        "steamcmd": bool(steamcmd_status["functional"]),
+        "steamcmd": steamcmd_ready,
         "steamcmd_status": steamcmd_status,
         "java": java,
         "java_status": java_status,

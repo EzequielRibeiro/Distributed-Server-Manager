@@ -28,6 +28,25 @@ class ContentRepository:
    s=AlertSession(self.backend,c)
    try:return s.execute(f"SELECT id,agent_id,game_id FROM instances WHERE id={self.ph}",(instance_id,)).fetchone()
    finally:s.close()
+ def _agent_content_providers(self,agent_id):
+  """Return advertised providers, or None for an Agent using the legacy contract."""
+  if not agent_id:return None
+  with self.backend.connect() as c:
+   s=AlertSession(self.backend,c)
+   try:row=s.execute(f"SELECT capabilities_json FROM agent_runtime_inventory WHERE agent_id={self.ph}",(agent_id,)).fetchone()
+   finally:s.close()
+  if row is None:return None
+  raw=row["capabilities_json"]
+  try:capabilities=raw if isinstance(raw,dict) else json.loads(raw or "{}")
+  except (TypeError,json.JSONDecodeError):return None
+  if not isinstance(capabilities,dict) or int(capabilities.get("content_provider_contract") or 0)<1:return None
+  providers=capabilities.get("content_providers")
+  if not isinstance(providers,list):return set()
+  return {str(value).strip().lower() for value in providers if str(value).strip()}
+ def _preflight_provider(self,agent_id,provider):
+  advertised=self._agent_content_providers(agent_id)
+  if advertised is None:return
+  if str(provider).strip().lower() not in advertised:raise ContentValidationError(f"Agent does not support content provider: {provider}")
  def get(self,instance_id,content_id):
   with self.backend.connect() as c:
    s=AlertSession(self.backend,c)
@@ -38,7 +57,7 @@ class ContentRepository:
   if inst is None: raise ContentValidationError("instance does not exist")
   agent_id=str(dict(inst)["agent_id"] or "").strip(); game_id=str(dict(inst).get("game_id") or body.get("game_id") or "").strip()
   body["agent_id"]=agent_id; body["game_id"]=game_id
-  item=normalize_assignment(body,expected_agent_id=agent_id); existing=self.get(item["instance_id"],item["content_id"])
+  item=normalize_assignment(body,expected_agent_id=agent_id);self._preflight_provider(agent_id,item["provider"]);existing=self.get(item["instance_id"],item["content_id"])
   if existing and existing.get("checksum")==item["checksum"]: return {"assignment":existing,"changed":False}
   aid=str(existing["assignment_id"]) if existing else str(uuid.uuid4()); rev=int(existing.get("revision") or 0)+1 if existing else 1
   now=utc_now(); artifact=json.dumps(item["artifact"],sort_keys=True,separators=(",",":"),ensure_ascii=False); deps=json.dumps(item["dependencies"],separators=(",",":")); conflicts=json.dumps(item["conflicts"],separators=(",",":"))
