@@ -5,18 +5,22 @@ on:
   pull_request:
     paths:
       - 'agents/linux/runtime/privileged_firewall.py'
+      - 'agents/linux/runtime/instance_telemetry.py'
       - 'agents/linux/privileged/reconcile_firewall.py'
       - 'agents/windows/runtime/managed_firewall.py'
       - 'tests/native_linux_firewall_e2e_test.py'
+      - 'tests/native_linux_broadcast_e2e_test.py'
       - 'tests/native_windows_firewall_e2e_test.py'
       - '.github/workflows/native-firewall-e2e.yml'
   push:
     branches: [main]
     paths:
       - 'agents/linux/runtime/privileged_firewall.py'
+      - 'agents/linux/runtime/instance_telemetry.py'
       - 'agents/linux/privileged/reconcile_firewall.py'
       - 'agents/windows/runtime/managed_firewall.py'
       - 'tests/native_linux_firewall_e2e_test.py'
+      - 'tests/native_linux_broadcast_e2e_test.py'
       - 'tests/native_windows_firewall_e2e_test.py'
       - '.github/workflows/native-firewall-e2e.yml'
 
@@ -46,19 +50,25 @@ jobs:
             sudo apt-get install -y ufw
           fi
           sudo ufw --force reset
-          # Keep the ephemeral runner permissive; the E2E validates Capivara's
-          # owned allow rules rather than changing runner connectivity policy.
-          sudo ufw default allow incoming
+          # The hosted runner is disposable. Default-deny incoming lets the
+          # broadcast gate prove that Capivara's owned rule is what makes the
+          # external A2S endpoint reachable; outbound traffic remains allowed.
+          sudo ufw default deny incoming
           sudo ufw default allow outgoing
           sudo ufw --force enable
           sudo ufw status verbose
       - name: Validate real Capivara UFW reconciliation
         shell: bash
         run: sudo --preserve-env=GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT python3 tests/native_linux_firewall_e2e_test.py
+      - name: Validate external A2S broadcast through managed UFW
+        shell: bash
+        run: sudo --preserve-env=GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT python3 tests/native_linux_broadcast_e2e_test.py
       - name: Cleanup disposable UFW backend
         if: always()
         shell: bash
         run: |
+          sudo ip netns del capivara-broadcast-e2e 2>/dev/null || true
+          sudo ip link del cap-br-host 2>/dev/null || true
           sudo ufw --force reset || true
           sudo ufw --force disable || true
 
