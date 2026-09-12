@@ -14,6 +14,23 @@ from core.agent_health import utc_timestamp
 
 VALID_ACTIONS = {"status", "doctor", "start", "stop", "restart", "remove"}
 FINAL_STATES = {"completed", "failed"}
+ACTIVE_STATES = {"queued", "delivered"}
+LIFECYCLE_ACTIONS = {"start", "stop", "restart"}
+
+
+class AgentInstanceRuntimeBusyError(RuntimeError):
+    """Raised when a lifecycle command is already active for an instance."""
+
+    def __init__(self, *, instance_id: str, requested_action: str, active_command: dict[str, Any]):
+        self.instance_id = instance_id
+        self.requested_action = requested_action
+        self.active_command = dict(active_command)
+        self.command_id = str(active_command.get("command_id") or "")
+        self.active_action = str(active_command.get("action") or "")
+        self.active_status = str(active_command.get("status") or "")
+        super().__init__(
+            f"Instance lifecycle operation already in progress: {self.active_action} ({self.active_status})"
+        )
 
 
 class AgentInstanceRuntimeRepository:
@@ -43,6 +60,7 @@ class AgentInstanceRuntimeRepository:
         if action not in VALID_ACTIONS:
             raise ValueError("invalid instance runtime action")
         ph = self.dialect.placeholder
+        existing_command_id: str | None = None
         with self.session(transaction=True) as session:
             agent = session.execute(f"SELECT status FROM agents WHERE id={ph}", (agent_id,)).fetchone()
             if agent is None or str(agent["status"] or "").lower() != "active":
@@ -52,7 +70,30 @@ class AgentInstanceRuntimeRepository:
                 raise ValueError("Instance not found")
             if str(instance["agent_id"] or "") != agent_id:
                 raise PermissionError("Instance belongs to another Agent")
-            if action == "remove":
+
+            # Serialize enqueue decisions for one instance. The no-op UPDATE takes a
+            # row/write lock on PostgreSQL and a write lock under SQLite, preventing
+            # simultaneous requests from both observing an empty active-command set.
+            session.execute(f"UPDATE instances SET id=id WHERE id={ph}", (instance_id,))
+
+            if action in LIFECYCLE_ACTIONS:
+                active = session.execute(
+                    "SELECT command_id,action,status FROM agent_instance_commands "
+                    f"WHERE instance_id={ph} AND action IN ('start','stop','restart') "
+                    "AND status IN ('queued','delivered') ORDER BY created_at ASC LIMIT 1",
+                    (instance_id,),
+                ).fetchone()
+                if active is not None:
+                    active_command = dict(active)
+                    if str(active_command.get("action") or "").lower() == action:
+                        existing_command_id = str(active_command["command_id"])
+                    else:
+                        raise AgentInstanceRuntimeBusyError(
+                            instance_id=instance_id,
+                            requested_action=action,
+                            active_command=active_command,
+                        )
+            elif action == "remove":
                 existing = session.execute(
                     "SELECT command_id FROM agent_instance_commands "
                     f"WHERE instance_id={ph} AND action={ph} AND status IN ('queued','delivered') "
@@ -60,14 +101,18 @@ class AgentInstanceRuntimeRepository:
                     (instance_id, action),
                 ).fetchone()
                 if existing is not None:
-                    return self.snapshot(str(existing["command_id"]))
-            command_id = "instance-cmd-" + uuid.uuid4().hex
-            now = utc_timestamp()
-            session.execute(
-                "INSERT INTO agent_instance_commands(command_id,agent_id,instance_id,action,status,requested_by,created_at,updated_at) "
-                f"VALUES ({self.dialect.parameters(8)})",
-                (command_id, agent_id, instance_id, action, "queued", str(requested_by or "").strip() or None, now, now),
-            )
+                    existing_command_id = str(existing["command_id"])
+
+            if existing_command_id is None:
+                command_id = "instance-cmd-" + uuid.uuid4().hex
+                now = utc_timestamp()
+                session.execute(
+                    "INSERT INTO agent_instance_commands(command_id,agent_id,instance_id,action,status,requested_by,created_at,updated_at) "
+                    f"VALUES ({self.dialect.parameters(8)})",
+                    (command_id, agent_id, instance_id, action, "queued", str(requested_by or "").strip() or None, now, now),
+                )
+            else:
+                command_id = existing_command_id
         return self.snapshot(command_id)
 
     def snapshot(self, command_id: str) -> dict[str, Any]:
@@ -164,4 +209,11 @@ class AgentInstanceRuntimeRepository:
         return completed
 
 
-__all__ = ["AgentInstanceRuntimeRepository", "FINAL_STATES", "VALID_ACTIONS"]
+__all__ = [
+    "ACTIVE_STATES",
+    "AgentInstanceRuntimeBusyError",
+    "AgentInstanceRuntimeRepository",
+    "FINAL_STATES",
+    "LIFECYCLE_ACTIONS",
+    "VALID_ACTIONS",
+]
