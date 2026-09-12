@@ -161,7 +161,10 @@ class HybridAgentWorkerTest(unittest.TestCase):
 
     def test_dashboard_worker_starts_persistent_worker(self):
         shell = (ROOT / "dashboard" / "workers" / "worker.sh").read_text(encoding="utf-8")
-        self.assertIn("start_python_worker hybrid_agent_worker.py", shell)
+        self.assertIn("start_python_worker_with_env hybrid_agent_worker.py", shell)
+        self.assertIn('"CAPIVARA_AGENT_MODE=hybrid"', shell)
+        self.assertIn('"CAPIVARA_DSM_ROOT=${DSM_ROOT}"', shell)
+        self.assertIn('env "$@" python3 "${WORKERS_DIR}/${WORKER}"', shell)
 
     def test_hybrid_health_cycle_persists_runtime_inventory(self):
         from types import SimpleNamespace
