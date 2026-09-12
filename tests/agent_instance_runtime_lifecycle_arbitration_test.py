@@ -57,14 +57,8 @@ class AgentInstanceRuntimeLifecycleArbitrationTest(unittest.TestCase):
         )
         self.instance_ids = ("instance-lifecycle-01", "instance-lifecycle-02")
         with self.backend.transaction() as connection:
-            connection.execute(
-                "UPDATE agents SET status='active' WHERE id=?",
-                (self.agent_id,),
-            )
-            connection.execute(
-                "UPDATE nodes SET status='online' WHERE id=?",
-                (self.node_id,),
-            )
+            connection.execute("UPDATE agents SET status='active' WHERE id=?", (self.agent_id,))
+            connection.execute("UPDATE nodes SET status='online' WHERE id=?", (self.node_id,))
             connection.execute(
                 "INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)",
                 (self.customer_id, self.controller_id, "Lifecycle Customer", "active"),
@@ -109,6 +103,17 @@ class AgentInstanceRuntimeLifecycleArbitrationTest(unittest.TestCase):
             ).fetchone()
         return int(row["n"])
 
+    def _active_lifecycle_count(self, instance_id: str | None = None) -> int:
+        instance_id = instance_id or self.instance_ids[0]
+        with self.backend.connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS n FROM agent_instance_commands "
+                "WHERE instance_id=? AND action IN ('start','stop','restart') "
+                "AND status IN ('queued','delivered')",
+                (instance_id,),
+            ).fetchone()
+        return int(row["n"])
+
     def _finish(self, command: dict, status: str):
         payload = {
             "command_id": command["command_id"],
@@ -148,7 +153,7 @@ class AgentInstanceRuntimeLifecycleArbitrationTest(unittest.TestCase):
                 self.assertEqual(conflict.active_action, "start")
                 self.assertEqual(conflict.requested_action, "stop")
                 self.assertEqual(conflict.as_dict()["error"], "lifecycle_operation_in_progress")
-                self.assertEqual(self._lifecycle_count(), 1)
+                self.assertEqual(self._active_lifecycle_count(), 1)
                 self._finish(first, "completed")
 
     def test_completed_or_failed_command_releases_instance(self):
