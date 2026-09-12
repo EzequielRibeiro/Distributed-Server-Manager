@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import socket
 import sys
 import tempfile
@@ -78,6 +79,98 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
         rendered = systemd_materializer.render_unit(spec)
         self.assertIn("\nIPAccounting=yes\n", rendered)
 
+    def test_systemd_cgroup_returns_safe_control_group(self):
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout="/system.slice/capivara-instance-dayz-001.service\n",
+        )
+        with patch.object(telemetry.subprocess, "run", return_value=completed) as run:
+            value = telemetry._systemd_cgroup("dayz-001")
+        self.assertEqual(value, "/system.slice/capivara-instance-dayz-001.service")
+        command = run.call_args.args[0]
+        self.assertIn("capivara-instance-dayz-001.service", command)
+        self.assertIn("--property=ControlGroup", command)
+
+        unsafe = SimpleNamespace(returncode=0, stdout="/system.slice/../escape\n")
+        with patch.object(telemetry.subprocess, "run", return_value=unsafe):
+            self.assertIsNone(telemetry._systemd_cgroup("dayz-001"))
+
+    def test_cgroup_usage_reads_aggregate_cpu_and_memory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            group = root / "system.slice" / "capivara-instance-dayz-001.service"
+            group.mkdir(parents=True)
+            (group / "cpu.stat").write_text(
+                "usage_usec 3456789\nuser_usec 2000000\nsystem_usec 1456789\n",
+                encoding="utf-8",
+            )
+            (group / "memory.current").write_text("987654321\n", encoding="utf-8")
+            with patch.object(telemetry, "CGROUP_ROOT", root):
+                self.assertEqual(
+                    telemetry._cgroup_usage("/system.slice/capivara-instance-dayz-001.service"),
+                    (3456789, 987654321),
+                )
+                self.assertEqual(telemetry._cgroup_usage("/../escape"), (None, None))
+
+    def test_cpu_counter_does_not_mix_proc_and_cgroup_units(self):
+        with tempfile.TemporaryDirectory() as directory:
+            samples = Path(directory) / "samples"
+            with patch.object(telemetry, "SAMPLE_STATE_DIR", samples), patch.object(
+                telemetry.time,
+                "monotonic",
+                side_effect=[100.0, 102.0, 104.0, 106.0],
+            ):
+                self.assertIsNone(
+                    telemetry._cpu_percent_from_counter(
+                        "dayz-001", 1_000_000, units_per_second=1_000_000, source="cgroup-v2"
+                    )
+                )
+                self.assertEqual(
+                    telemetry._cpu_percent_from_counter(
+                        "dayz-001", 2_000_000, units_per_second=1_000_000, source="cgroup-v2"
+                    ),
+                    50.0,
+                )
+                self.assertIsNone(
+                    telemetry._cpu_percent_from_counter(
+                        "dayz-001", 100, units_per_second=100, source="proc"
+                    )
+                )
+                self.assertEqual(
+                    telemetry._cpu_percent_from_counter(
+                        "dayz-001", 200, units_per_second=100, source="proc"
+                    ),
+                    50.0,
+                )
+
+    def test_collect_systemd_prefers_cgroup_for_cpu_and_memory(self):
+        record = {
+            "instance_id": "dayz-001",
+            "agent_id": "agent-001",
+            "adapter": "systemd",
+            "game_id": "test-game",
+            "instance_state_root": "/instance",
+        }
+        with patch.object(telemetry.instance_runtime, "list_instances", return_value=[record]), patch.object(
+            telemetry.instance_runtime, "get_instance", return_value=record
+        ), patch.object(telemetry.instance_runtime, "status", return_value={"observed_state": "running"}), patch.object(
+            telemetry, "_systemd_main_pid", return_value=123
+        ), patch.object(telemetry, "_systemd_cgroup", return_value="/system.slice/test.service"), patch.object(
+            telemetry, "_cgroup_usage", return_value=(3_000_000, 987654321)
+        ), patch.object(telemetry, "_cgroup_cpu_percent", return_value=72.5), patch.object(
+            telemetry, "_proc_stat", return_value=(100, 0)
+        ), patch.object(telemetry, "_rss_bytes") as rss, patch.object(
+            telemetry, "_host_uptime", return_value=10.0
+        ), patch.object(telemetry, "_systemd_network", return_value=(None, None)), patch.object(
+            telemetry, "_network", return_value=(None, None)
+        ), patch.object(telemetry, "_storage_used", return_value=None), patch.object(
+            telemetry, "_game_query", return_value={}
+        ):
+            result = telemetry.collect_instance_telemetry({"agent_id": "agent-001"})[0]
+        self.assertEqual(result["cpu_percent"], 72.5)
+        self.assertEqual(result["memory_bytes"], 987654321)
+        rss.assert_not_called()
+
     def test_systemd_network_returns_instance_counters(self):
         completed = SimpleNamespace(
             returncode=0,
@@ -152,8 +245,45 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
             with patch.object(telemetry.os, "walk", side_effect=OSError("denied")):
                 self.assertIsNone(telemetry._storage_used(directory))
 
+    def test_effective_workspace_policy_fills_only_missing_catalog_limits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = root / "catalog" / "v2" / "games" / "dayz"
+            catalog.mkdir(parents=True)
+            (catalog / "resource-profiles.json").write_text(
+                json.dumps({
+                    "schema_version": 2,
+                    "kind": "GameResourceProfiles",
+                    "game": "dayz",
+                    "default_profile_id": "medium",
+                    "profiles": [{
+                        "id": "medium",
+                        "name": "Medium",
+                        "cpu_cores": 2,
+                        "memory_mb": 4096,
+                        "storage_mb": 20480,
+                    }],
+                }),
+                encoding="utf-8",
+            )
+            service = object.__new__(CustomerInstanceWorkspaceService)
+            service.root = root
+            policy = service._effective_workspace_policy(
+                {"id": "dayz-001", "game_id": "dayz"},
+                {
+                    "resource_profile_id": "medium",
+                    "cpu_limit_cores": None,
+                    "memory_limit_bytes": None,
+                    "storage_limit_bytes": 999,
+                },
+            )
+        self.assertEqual(policy["cpu_limit_cores"], 2.0)
+        self.assertEqual(policy["memory_limit_bytes"], 4096 * 1024 * 1024)
+        self.assertEqual(policy["storage_limit_bytes"], 999)
+
     def test_workspace_keeps_usage_separate_from_quota(self):
         service = object.__new__(CustomerInstanceWorkspaceService)
+        service.root = ROOT
         service.repo = SimpleNamespace(
             workspace_policy=lambda _instance_id: {"storage_limit_bytes": 10_000},
             telemetry=lambda _instance_id, _limit: [{"storage_used_bytes": None}],
