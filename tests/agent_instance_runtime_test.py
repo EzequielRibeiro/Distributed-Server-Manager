@@ -120,7 +120,7 @@ class SystemdAdapterTest(unittest.TestCase):
         states = iter(["inactive", "active"])
 
         def runner(command, timeout):
-            calls.append(list(command))
+            calls.append((list(command), timeout))
             if command[1] == "show":
                 active = next(states)
                 return 0, f"LoadState=loaded\nActiveState={active}\nSubState={'running' if active == 'active' else 'dead'}", ""
@@ -128,7 +128,8 @@ class SystemdAdapterTest(unittest.TestCase):
 
         result = SystemdAdapter(runner=runner).start({"instance_id": "srv-001"})
         self.assertTrue(result["changed"])
-        self.assertEqual(calls[1], ["systemctl", "start", "capivara-instance-srv-001.service", "--no-pager"])
+        self.assertEqual(calls[1][0], ["systemctl", "start", "capivara-instance-srv-001.service", "--no-pager"])
+        self.assertEqual(calls[1][1], 30)
 
     def test_start_is_idempotent_when_already_running(self):
         def runner(command, timeout):
@@ -137,6 +138,38 @@ class SystemdAdapterTest(unittest.TestCase):
         result = SystemdAdapter(runner=runner).start({"instance_id": "srv-001"})
         self.assertFalse(result["changed"])
         self.assertTrue(result["idempotent"])
+
+    def test_stop_waits_longer_than_materialized_systemd_stop_budget(self):
+        calls = []
+        states = iter(["active", "inactive"])
+
+        def runner(command, timeout):
+            calls.append((list(command), timeout))
+            if command[1] == "show":
+                active = next(states)
+                return 0, f"LoadState=loaded\nActiveState={active}\nSubState={'running' if active == 'active' else 'dead'}", ""
+            return 0, "", ""
+
+        result = SystemdAdapter(runner=runner).stop({"instance_id": "srv-001"})
+        self.assertTrue(result["changed"])
+        self.assertEqual(calls[1][0], ["systemctl", "stop", "capivara-instance-srv-001.service", "--no-pager"])
+        self.assertGreater(calls[1][1], 60)
+
+    def test_restart_uses_stop_capable_timeout_budget(self):
+        calls = []
+        states = iter(["active", "active"])
+
+        def runner(command, timeout):
+            calls.append((list(command), timeout))
+            if command[1] == "show":
+                active = next(states)
+                return 0, f"LoadState=loaded\nActiveState={active}\nSubState=running", ""
+            return 0, "", ""
+
+        result = SystemdAdapter(runner=runner).restart({"instance_id": "srv-001"})
+        self.assertTrue(result["changed"])
+        self.assertEqual(calls[1][0], ["systemctl", "restart", "capivara-instance-srv-001.service", "--no-pager"])
+        self.assertGreater(calls[1][1], 60)
 
 
 class ControllerInstanceRuntimeQueueTest(unittest.TestCase):

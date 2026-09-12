@@ -12,6 +12,12 @@ from .base import AdapterError, InstanceRuntimeAdapter
 _INSTANCE_ID = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 Runner = Callable[[list[str], int], tuple[int, str, str]]
 
+# Capivara materializes instance units with TimeoutStopSec=60.  The client-side
+# systemctl budget must be strictly longer than systemd's stop budget; otherwise
+# a legitimate stop can be reported as failed before systemd reaches its final
+# inactive/failed state and the explicit-stop normalization can run.
+_SYSTEMD_STOP_COMMAND_TIMEOUT_SECONDS = 75
+
 
 def _default_runner(command: list[str], timeout: int) -> tuple[int, str, str]:
     try:
@@ -40,6 +46,10 @@ class SystemdAdapter(InstanceRuntimeAdapter):
     def __init__(self, runner: Runner | None = None, *, timeout: int = 30):
         self.runner = runner or _default_runner
         self.timeout = max(1, min(int(timeout), 120))
+        self.stop_command_timeout = max(
+            self.timeout,
+            _SYSTEMD_STOP_COMMAND_TIMEOUT_SECONDS,
+        )
 
     def _show(self, instance: dict[str, Any]) -> dict[str, Any]:
         unit = unit_for_instance(instance)
@@ -108,7 +118,15 @@ class SystemdAdapter(InstanceRuntimeAdapter):
                 return {"action": action, "changed": True, "idempotent": True, "state": normalized}
             return {"action": action, "changed": False, "idempotent": True, "state": before}
         unit = str(before["unit"])
-        code, stdout, stderr = self.runner(["systemctl", action, unit, "--no-pager"], self.timeout)
+        command_timeout = (
+            self.stop_command_timeout
+            if action in {"stop", "restart"}
+            else self.timeout
+        )
+        code, stdout, stderr = self.runner(
+            ["systemctl", action, unit, "--no-pager"],
+            command_timeout,
+        )
         if code != 0:
             detail = (stderr or stdout or f"systemctl {action} failed")[:2000]
             raise AdapterError(detail)
