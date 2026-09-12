@@ -37,6 +37,7 @@ RETIRED_PATHS = {
     "dashboard/api/monitor.sh",
     "dashboard/api/health.sh",
     "bin/dsm",
+    "bin/dsm-compat",
     "dashboard/alerts/alert_engine.sh",
     "dashboard/api/alerts.sh",
     "dashboard/notifications/notification_engine.sh",
@@ -84,8 +85,6 @@ JUNK_PATTERNS = (
 
 DSM_PATH_PATTERN = re.compile(r"/opt/dsm/([A-Za-z0-9_./-]+)")
 TIMER_UNIT_PATTERN = re.compile(r"^Unit=([^\s]+)$", re.M)
-# Functional/provider markers. Plain historical prose such as "no dependency on
-# LinuxGSM" is not a runtime integration and therefore is not treated as one.
 LINUXGSM_PATTERN = re.compile(
     r"(?:linuxgsm\.sh|LINUXGSM_PATH|LGSM_[A-Z0-9_]+|config-lgsm|lgsm/functions|LGSM_ROOT|LGSM_CONFIG)",
     re.I,
@@ -167,6 +166,13 @@ def audit_source_markers(files: list[str], failures: list[str]) -> None:
 
         if not relative.startswith(("docs/", "tests/")) and DEMO_PATTERN.search(text):
             failures.append(f"demo topology marker outside docs/tests: {relative}")
+
+    cap = ROOT / "bin" / "cap"
+    if cap.is_file():
+        cap_text = cap.read_text(encoding="utf-8", errors="replace")
+        for marker in ("LEGACY_DSM", "legacy_exec", "dsm-compat"):
+            if marker in cap_text:
+                failures.append(f"canonical cap CLI still references retired compatibility layer: {marker}")
 
 
 def main() -> int:

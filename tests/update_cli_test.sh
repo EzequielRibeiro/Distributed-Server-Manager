@@ -4,7 +4,6 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CAP_CLI="${ROOT}/bin/cap"
-DSM_COMPAT="${ROOT}/bin/dsm-compat"
 
 fail()
 {
@@ -23,8 +22,7 @@ mkdir -p \
     "${FAKE_ROOT}/update-manager"
 
 cp "${CAP_CLI}" "${FAKE_ROOT}/bin/cap"
-cp "${DSM_COMPAT}" "${FAKE_ROOT}/bin/dsm-compat"
-chmod +x "${FAKE_ROOT}/bin/cap" "${FAKE_ROOT}/bin/dsm-compat"
+chmod +x "${FAKE_ROOT}/bin/cap"
 
 cat >"${FAKE_ROOT}/core/bootstrap.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -92,6 +90,7 @@ set -e
 [[ "${STATUS}" -eq 2 ]] || fail "update sem acao deveria retornar 2; retornou ${STATUS}"
 
 [[ ! -e "${FAKE_ROOT}/bin/dsm" ]] || fail "alias dsm foi reintroduzido no fixture"
+[[ ! -e "${FAKE_ROOT}/bin/dsm-compat" ]] || fail "dispatcher dsm-compat foi reintroduzido no fixture"
 [[ ! -e "${FAKE_ROOT}/update.sh" ]] || fail "ambiente de teste contem update.sh inesperadamente"
 
 bash "${ROOT}/tests/update_preflight_test.sh"

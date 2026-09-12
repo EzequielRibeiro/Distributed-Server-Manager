@@ -24,10 +24,10 @@ fi
 grep -Fq 'install-core.sh' "${INSTALLER}" \
     || fail "installer wrapper does not delegate to install-core.sh"
 
-# install-core.sh is now a compatibility entrypoint; the historical installer
-# implementation lives in install-core-engine.sh and is sourced by it.
+# install-core.sh is the public wrapper; the implementation lives in
+# install-core-engine.sh and is sourced by it.
 grep -Fq 'install-core-engine.sh' "${CORE_INSTALLER}" \
-    || fail "installer compatibility entrypoint does not load its engine"
+    || fail "installer wrapper does not load its engine"
 grep -Fq 'bin/cap' "${CORE_ENGINE}" \
     || fail "installer does not validate/install bin/cap"
 grep -Fq '/usr/local/bin/cap' "${CORE_ENGINE}" \
@@ -42,12 +42,12 @@ grep -Fq 'cap scheduler list|show|create|update|enable|disable|delete|run|status
 grep -Fq 'scheduler/cli.sh' "${ROOT}/bin/cap" \
     || fail "cap does not route scheduler management"
 
-# `cap` sources bootstrap before handing legacy-compatible commands to
-# bin/dsm-compat. The loaded marker must stay shell-local so the exec'd child
-# performs its own bootstrap and gets functions such as config_show.
-CONFIG_OUTPUT="$(bash -c 'source "$1/core/bootstrap.sh" >/dev/null; exec "$1/bin/dsm-compat" config show' _ "${ROOT}")"
+# The canonical cap CLI must bootstrap its own shell context before dispatching
+# config commands. CAPIVARA_NODE_ROLE is the explicit read-only resolver override
+# and is intentionally not replaced by config/dsm.conf during bootstrap.
+CONFIG_OUTPUT="$(CAPIVARA_NODE_ROLE=controller "${ROOT}/bin/cap" config show)"
 grep -Fq 'DSM_DATABASE_DRIVER=' <<<"${CONFIG_OUTPUT}" \
-    || fail "legacy CLI handoff did not reload bootstrap/config_show"
+    || fail "canonical cap config handoff did not load bootstrap/config_show"
 
 # automation_cli.py is launched directly from database/. Its dependency graph
 # imports top-level core modules, so --help must work without any ambient
