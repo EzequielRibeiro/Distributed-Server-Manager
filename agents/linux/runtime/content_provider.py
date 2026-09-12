@@ -8,7 +8,6 @@ resolver without teaching the reconciler game/provider-specific behavior.
 """
 from __future__ import annotations
 
-import importlib
 import shutil
 import urllib.request
 from pathlib import Path
@@ -99,16 +98,9 @@ def resolve_source(
     return source
 
 
-def _load_builtin_capabilities() -> None:
-    # Capability modules are Agent-owned code. Assignment payloads can select a
-    # registered provider but can never name/import modules or executable code.
-    importlib.import_module("content_provider_steam_workshop")
-
-
 register_provider("local", _local_resolver)
 for _remote_provider in ("http", "http-archive", "github", "modrinth"):
     register_provider(_remote_provider, _https_resolver)
-_load_builtin_capabilities()
 
 
 __all__ = [
