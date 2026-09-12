@@ -37,7 +37,8 @@ cleanup()
 trap cleanup EXIT
 
 export DSM_ROOT="${TEST_ROOT}/dsm"
-export DSM_LINK="${TEST_ROOT}/bin/dsm"
+export CAP_LINK="${TEST_ROOT}/bin/cap"
+unset DSM_LINK || true
 export SYSTEMD_DIR="${TEST_ROOT}/systemd"
 export DSM_SERVICE_USER="root"
 export DSM_SERVICE_GROUP="root"
@@ -53,8 +54,10 @@ fi
 
 bash "${SOURCE_ROOT}/install.sh" "${INSTALL_ARGS[@]}"
 
-[[ -x "${DSM_ROOT}/bin/dsm" ]]
-[[ -L "${DSM_LINK}" ]]
+[[ -x "${DSM_ROOT}/bin/cap" ]]
+[[ ! -e "${DSM_ROOT}/bin/dsm" ]]
+[[ -L "${CAP_LINK}" ]]
+[[ ! -e "${TEST_ROOT}/bin/dsm" ]]
 if [[ "${DSM_DATABASE_DRIVER}" == "sqlite" ]]
 then
     [[ -f "${DSM_DATABASE}" ]]
@@ -84,7 +87,7 @@ grep -q '^DSM_NODE_ROLE="controller"$' "${DSM_ROOT}/config/agent.conf"
 grep -q '^DSM_NODE_ID="' "${DSM_ROOT}/config/agent.conf"
 
 password_file="${TEST_ROOT}/admin-password"
-printf 'Capivara-Smoke-Admin-2026!\n' >"${password_file}"
+printf 'Smoke-Admin-Aa1-%s!\n' "$$" >"${password_file}"
 chmod 600 "${password_file}"
 
 python3 "${DSM_ROOT}/database/registry.py" \
