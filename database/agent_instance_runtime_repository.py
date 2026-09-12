@@ -76,6 +76,7 @@ class AgentInstanceRuntimeRepository:
         if action not in VALID_ACTIONS:
             raise ValueError("invalid instance runtime action")
         ph = self.dialect.placeholder
+        existing_command_id: str | None = None
         with self.session(transaction=True) as session:
             agent = session.execute(f"SELECT status FROM agents WHERE id={ph}", (agent_id,)).fetchone()
             if agent is None or str(agent["status"] or "").lower() != "active":
@@ -106,15 +107,16 @@ class AgentInstanceRuntimeRepository:
                     command_id = str(existing["command_id"])
                     active_action = str(existing["action"] or "").strip().lower()
                     if active_action == action:
-                        return self.snapshot(command_id)
-                    raise InstanceLifecycleCommandConflict(
-                        instance_id=instance_id,
-                        requested_action=action,
-                        active_action=active_action,
-                        command_id=command_id,
-                    )
+                        existing_command_id = command_id
+                    else:
+                        raise InstanceLifecycleCommandConflict(
+                            instance_id=instance_id,
+                            requested_action=action,
+                            active_action=active_action,
+                            command_id=command_id,
+                        )
 
-            if action == "remove":
+            if action == "remove" and existing_command_id is None:
                 existing = session.execute(
                     "SELECT command_id FROM agent_instance_commands "
                     f"WHERE instance_id={ph} AND action={ph} AND status IN ('queued','delivered') "
@@ -122,14 +124,18 @@ class AgentInstanceRuntimeRepository:
                     (instance_id, action),
                 ).fetchone()
                 if existing is not None:
-                    return self.snapshot(str(existing["command_id"]))
-            command_id = "instance-cmd-" + uuid.uuid4().hex
-            now = utc_timestamp()
-            session.execute(
-                "INSERT INTO agent_instance_commands(command_id,agent_id,instance_id,action,status,requested_by,created_at,updated_at) "
-                f"VALUES ({self.dialect.parameters(8)})",
-                (command_id, agent_id, instance_id, action, "queued", str(requested_by or "").strip() or None, now, now),
-            )
+                    existing_command_id = str(existing["command_id"])
+
+            if existing_command_id is None:
+                command_id = "instance-cmd-" + uuid.uuid4().hex
+                now = utc_timestamp()
+                session.execute(
+                    "INSERT INTO agent_instance_commands(command_id,agent_id,instance_id,action,status,requested_by,created_at,updated_at) "
+                    f"VALUES ({self.dialect.parameters(8)})",
+                    (command_id, agent_id, instance_id, action, "queued", str(requested_by or "").strip() or None, now, now),
+                )
+            else:
+                command_id = existing_command_id
         return self.snapshot(command_id)
 
     def snapshot(self, command_id: str) -> dict[str, Any]:
