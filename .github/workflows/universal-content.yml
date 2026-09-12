@@ -5,9 +5,7 @@ on:
       - 'core/content_platform.py'
       - 'core/content_provider_contract.py'
       - 'database/content_*'
-      - 'database/migrations/035_universal_content.sql'
-      - 'database/migrations_mysql/035_universal_content.sql'
-      - 'database/migrations_postgresql/035_universal_content.sql'
+      - 'database/schema_baseline.py'
       - 'dashboard/content_*'
       - 'dashboard/server_part13.py'
       - 'dashboard/server_part17.py'
@@ -39,9 +37,9 @@ jobs:
       - name: Validate syntax
         run: |
           bash -n bin/cap release/build_agent_package.sh dashboard/dashboard.sh
-          python3 -m py_compile core/content_platform.py core/content_provider_contract.py database/content_repository.py database/content_cli.py dashboard/content_api.py dashboard/content_http.py dashboard/server_part13.py dashboard/server_part17.py dashboard/agent_heartbeat_api.py agents/linux/runtime/content_client.py agents/linux/runtime/content_provider.py agents/linux/runtime/content_provider_steam_workshop.py agents/linux/runtime/content_update_provider.py agents/linux/runtime/content_update_inventory.py agents/linux/runtime/capabilities.py agents/linux/runtime/runtime_metrics.py agents/linux/runtime/agent.py agents/windows/runtime/content_client.py agents/windows/runtime/content_provider.py agents/windows/runtime/content_provider_steam_workshop.py agents/windows/runtime/content_update_provider.py agents/windows/runtime/content_update_inventory.py agents/windows/runtime/capabilities.py agents/windows/runtime/runtime_metrics.py
+          python3 -m py_compile core/content_platform.py core/content_provider_contract.py database/content_contract_v2_schema.py database/content_repository.py database/content_cli.py database/schema_baseline.py dashboard/content_api.py dashboard/content_http.py dashboard/server_part13.py dashboard/server_part17.py dashboard/agent_heartbeat_api.py agents/linux/runtime/content_client.py agents/linux/runtime/content_provider.py agents/linux/runtime/content_provider_steam_workshop.py agents/linux/runtime/content_update_provider.py agents/linux/runtime/content_update_inventory.py agents/linux/runtime/capabilities.py agents/linux/runtime/runtime_metrics.py agents/linux/runtime/agent.py agents/windows/runtime/content_client.py agents/windows/runtime/content_provider.py agents/windows/runtime/content_provider_steam_workshop.py agents/windows/runtime/content_update_provider.py agents/windows/runtime/content_update_inventory.py agents/windows/runtime/capabilities.py agents/windows/runtime/runtime_metrics.py
       - name: Test Universal Content
-        run: python3 -m unittest tests/universal_content_platform_test.py tests/universal_content_http_test.py tests/content_provider_contract_test.py tests/content_provider_capability_test.py tests/content_provider_capabilities_advertisement_test.py tests/content_provider_steam_workshop_test.py tests/content_provider_preflight_test.py
+        run: python3 -m unittest tests/universal_content_platform_test.py tests/universal_content_contract_v2_test.py tests/universal_content_http_test.py tests/content_provider_contract_test.py tests/content_provider_capability_test.py tests/content_provider_capabilities_advertisement_test.py tests/content_provider_steam_workshop_test.py tests/content_provider_preflight_test.py
       - name: Verify composition and Agent package contracts
         run: |
           grep -Fq 'CONTENT_PATH' dashboard/server_part13.py
