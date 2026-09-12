@@ -2,8 +2,8 @@
 """Canonical provider-resolution contract for Universal Content.
 
 The Controller may describe *what* content is desired, but it never supplies a
-shell command.  Agents resolve that description through capabilities installed
-locally for their operating system/mode.
+shell command or third-party credential. Agents resolve that description
+through capabilities installed locally for their operating system/mode.
 """
 from __future__ import annotations
 
@@ -23,7 +23,11 @@ OFFICIAL_CONTENT_PROVIDERS = frozenset({
     "steam-workshop",
 })
 
-_FORBIDDEN_ARTIFACT_KEYS = frozenset({"command", "shell", "exec", "script"})
+_FORBIDDEN_ARTIFACT_KEYS = frozenset({
+    "command", "shell", "exec", "script",
+    "password", "passwd", "token", "secret", "api_key", "apikey",
+    "authorization", "credential", "credentials", "steam_password", "steam_guard",
+})
 
 
 class ContentProviderContractError(ValueError):
@@ -37,15 +41,27 @@ def normalize_provider_name(value: Any) -> str:
     return provider
 
 
+def _reject_unsafe_artifact(value: Any) -> None:
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            if str(key).strip().lower() in _FORBIDDEN_ARTIFACT_KEYS:
+                raise ContentProviderContractError(
+                    "artifact may not contain executable commands or credentials"
+                )
+            _reject_unsafe_artifact(nested)
+    elif isinstance(value, (list, tuple)):
+        for nested in value:
+            _reject_unsafe_artifact(nested)
+
+
 def provider_request(assignment: Mapping[str, Any]) -> dict[str, Any]:
-    """Build the command-free request an Agent provider capability consumes."""
+    """Build the command-free, credential-free request an Agent capability consumes."""
     if not isinstance(assignment, Mapping):
         raise ContentProviderContractError("content assignment must be an object")
 
     artifact_raw = assignment.get("artifact")
     artifact = dict(artifact_raw) if isinstance(artifact_raw, Mapping) else {}
-    if _FORBIDDEN_ARTIFACT_KEYS.intersection(artifact):
-        raise ContentProviderContractError("artifact may not contain executable commands")
+    _reject_unsafe_artifact(artifact)
 
     provider = normalize_provider_name(
         assignment.get("provider") or artifact.get("provider")
@@ -63,7 +79,7 @@ def provider_request(assignment: Mapping[str, Any]) -> dict[str, Any]:
     ).strip()
 
     # A resolved path is an Agent-local hand-off and remains constrained by the
-    # reconciler's game-data root.  It is never interpreted as a command.
+    # reconciler's game-data root. It is never interpreted as a command.
     resolved_path = str(artifact.get("resolved_path") or "").strip() or None
     if not package_id and not resolved_path:
         raise ContentProviderContractError("content provider package is required")
