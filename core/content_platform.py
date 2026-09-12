@@ -5,6 +5,7 @@ import hashlib,json,re
 from typing import Any,Mapping
 _TOKEN=re.compile(r"^[A-Za-z0-9._:-]{1,191}$")
 _TYPES={"mod","plugin","modpack","map","asset","workshop","other"};_STATES={"installed","absent"};_PROVIDERS={"steam","steam-workshop","http","http-archive","github","modrinth","local","custom","source-build"}
+_FORBIDDEN_ARTIFACT_KEYS={"command","shell","exec","script","password","passwd","token","secret","api_key","apikey","authorization","credential","credentials","steam_password","steam_guard"}
 class ContentValidationError(ValueError):pass
 def _j(v:Any)->str:return json.dumps(v,sort_keys=True,separators=(",",":"),ensure_ascii=False)
 def _token(v:Any,label:str)->str:
@@ -15,6 +16,13 @@ def _target(v:Any)->str:
  s=str(v or "").strip().replace("\\","/")
  if not s or s.startswith("/") or any(p in {"",".",".."} for p in s.split("/")):raise ContentValidationError("invalid target")
  return s[:500]
+def _reject_unsafe_artifact(value:Any)->None:
+ if isinstance(value,Mapping):
+  for key,nested in value.items():
+   if str(key).strip().lower() in _FORBIDDEN_ARTIFACT_KEYS:raise ContentValidationError("artifact may not contain executable commands or credentials")
+   _reject_unsafe_artifact(nested)
+ elif isinstance(value,(list,tuple)):
+  for nested in value:_reject_unsafe_artifact(nested)
 def normalize_assignment(raw:Mapping[str,Any],*,expected_agent_id:str|None=None)->dict[str,Any]:
  if not isinstance(raw,Mapping):raise ContentValidationError("content assignment must be an object")
  agent=_token(raw.get("agent_id") or expected_agent_id,"agent_id")
@@ -25,8 +33,7 @@ def normalize_assignment(raw:Mapping[str,Any],*,expected_agent_id:str|None=None)
  if state not in _STATES:raise ContentValidationError("invalid desired_state")
  version=str(raw.get("version") or "latest").strip()[:191] or "latest";provider=str(raw.get("provider") or (raw.get("artifact") or {}).get("provider") or "").strip().lower()
  if provider not in _PROVIDERS:raise ContentValidationError("invalid provider")
- artifact=dict(raw.get("artifact") or {})
- if any(k in artifact for k in ("command","shell","exec","script")):raise ContentValidationError("artifact may not contain executable commands")
+ artifact=dict(raw.get("artifact") or {});_reject_unsafe_artifact(artifact)
  artifact["provider"]=provider;base={"mod":"mods","plugin":"plugins","modpack":"modpacks","map":"maps","workshop":"workshop"}.get(ctype,"assets");target=_target(raw.get("target") or f"{base}/{content}")
  deps=[_token(v,"dependency") for v in (raw.get("dependencies") or [])][:200];conflicts=[_token(v,"conflict") for v in (raw.get("conflicts") or [])][:200]
  identity={"agent_id":agent,"instance_id":instance,"content_id":content,"game_id":game,"content_type":ctype,"desired_state":state,"version":version,"provider":provider,"target":target,"artifact":artifact,"dependencies":deps,"conflicts":conflicts};checksum=hashlib.sha256(_j(identity).encode()).hexdigest()
