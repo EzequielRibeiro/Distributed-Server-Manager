@@ -142,6 +142,7 @@ jobs:
           rm -rf dist
           mkdir -p dist
           release/build_release.sh "${GITHUB_SHA}" dist
+          python3 release/legacy_updater_bridge.py "dist/capivara-dsm-${VERSION}.tar.gz"
           bash release/build_agent_package.sh "${GITHUB_SHA}" dist
           python3 release/build_windows_agent_package.py "${GITHUB_SHA}" dist
           if gh release view "${TAG}" >/dev/null 2>&1; then
@@ -215,11 +216,14 @@ jobs:
           bash tests/update_cli_test.sh
           bash tests/catalog_v2_test.sh
           bash tests/release_build_test.sh
+          python3 tests/legacy_updater_bridge_test.py
           bash tests/agent_package_test.sh
 
       - name: Build release artifacts
         run: |
+          VERSION=$(tr -d '\r\n' <version)
           release/build_release.sh "${GITHUB_SHA}" dist
+          python3 release/legacy_updater_bridge.py "dist/capivara-dsm-${VERSION}.tar.gz"
           bash release/build_agent_package.sh "${GITHUB_SHA}" dist
           python3 release/build_windows_agent_package.py "${GITHUB_SHA}" dist
 

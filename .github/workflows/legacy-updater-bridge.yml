@@ -1,0 +1,38 @@
+name: Legacy Updater Bridge
+
+on:
+  pull_request:
+    paths:
+      - 'release/legacy_updater_bridge.py'
+      - 'tests/legacy_updater_bridge_test.py'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/legacy-updater-bridge.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'release/legacy_updater_bridge.py'
+      - 'tests/legacy_updater_bridge_test.py'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/legacy-updater-bridge.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate Python
+        run: |
+          python3 -m py_compile \
+            release/legacy_updater_bridge.py \
+            tests/legacy_updater_bridge_test.py
+
+      - name: Validate legacy updater bridge
+        run: python3 tests/legacy_updater_bridge_test.py
