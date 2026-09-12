@@ -4,7 +4,7 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALLER="${ROOT}/install.sh"
 CORE_INSTALLER="${ROOT}/install-core.sh"
-CLI="${ROOT}/bin/dsm"
+CLI="${ROOT}/bin/cap"
 fail(){ echo "FAIL: $*" >&2; exit 1; }
 EXPECTED_VERSION=$(tr -d '\r\n' <"${ROOT}/version")
 bash -n "${INSTALLER}"; bash -n "${CORE_INSTALLER}"
@@ -13,7 +13,7 @@ grep -Fq -- '--exclude "config/dsm.conf"' "${CORE_INSTALLER}" || fail "installer
 grep -Fq -- '--exclude "config/agent.conf"' "${CORE_INSTALLER}" || fail "installer overwrites an existing agent.conf"
 grep -Fq 'write_dsm_config' "${CORE_INSTALLER}" || fail "installer does not configure dsm.conf"
 grep -Fq 'select_installation_source' "${CORE_INSTALLER}" || fail "interactive installer does not offer source selection"
-grep -Fq 'if ! pwd -P >/dev/null 2>&1' "${CLI}" || fail "dsm CLI cannot recover from a removed working directory"
+grep -Fq 'SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"' "${CLI}" || fail "cap CLI does not resolve its installed path safely"
 grep -Fq -- '--local' "${CORE_INSTALLER}" || fail "local installation option is unavailable"
 grep -Fq 'run mkdir -p "$(dirname "${DSM_LINK}")"' "${CORE_INSTALLER}" || fail "installer does not create custom CLI link parent"
 grep -Fq 'guard_existing_installation' "${CORE_INSTALLER}" || fail "existing installation is not guarded"
