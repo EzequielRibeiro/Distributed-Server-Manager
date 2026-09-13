@@ -271,13 +271,26 @@ catalog_builds()
             select(. != null and tostring != "") |
             tostring] |
         reduce .[] as $value ([]; if index($value) then . else . + [$value] end) |
-        reverse |
-        map({value:.,label:("Build " + .),recommended:false}) |
-        if length > 0 then .[0].recommended = true else . end
+        map({value:.,label:("Build " + .),recommended:false})
     ' <<<"${RESPONSE}")"
 
     if [[ "$(jq 'length' <<<"${BUILDS}")" -gt 0 ]]
     then
+        if RESOLVED="$(canonical_resolver_call "${FILE}" "${RESOLVER}" resolve "${VERSION}" 2>/dev/null)" && \
+           ! jq -e '.error?' >/dev/null 2>&1 <<<"${RESOLVED}"
+        then
+            local RECOMMENDED_BUILD
+            RECOMMENDED_BUILD="$(jq -r '.build // .tag // empty | tostring' <<<"${RESOLVED}")"
+            if [[ -n "${RECOMMENDED_BUILD}" ]]
+            then
+                BUILDS="$(jq -c --arg recommended "${RECOMMENDED_BUILD}" '
+                    map(.value as $value |
+                        .recommended =
+                            ($value == $recommended or
+                             ($recommended | endswith("-" + $value))))
+                ' <<<"${BUILDS}")"
+            fi
+        fi
         printf '%s\n' "${BUILDS}"
         return
     fi
