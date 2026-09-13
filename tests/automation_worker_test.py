@@ -7,9 +7,10 @@ ROOT=Path(__file__).resolve().parents[1]
 for path in (ROOT/"core",ROOT/"database",ROOT/"dashboard",ROOT/"dashboard"/"workers"):
  if str(path) not in sys.path:sys.path.insert(0,str(path))
 from automation_repository import AutomationRepository
-from automation_worker import AutomationWorker,cron_matches
+from automation_worker import AutomationWorker,_database_environment,cron_matches
 from backend import DatabaseConfig
 from backend_factory import create_backend
+from runtime_backend import database_config_from_environment
 from universal_event_repository import UniversalEventRepository
 class AutomationWorkerTest(unittest.TestCase):
  def setUp(self):
@@ -27,6 +28,23 @@ class AutomationWorkerTest(unittest.TestCase):
  def test_schedule_minute_is_idempotent(self):
   self.repo.put_rule({"rule_id":"schedule-w","trigger":{"type":"schedule","expression":"0 19 * * *"},"actions":[{"type":"broadcast","broadcast":{"scope":"instance","target":"instance-w","message":"scheduled"}}]})
   dt=datetime(2026,8,21,19,0,tzinfo=timezone.utc);self.assertEqual(self.worker.process_schedules(dt),1);self.assertEqual(self.worker.process_schedules(dt),0);self.assertEqual(len(self.repo.list_broadcasts()),1)
+ def test_database_environment_uses_configured_controller_backend(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);(root/"config").mkdir()
+   (root/"config"/"dsm.conf").write_text(
+    'DSM_DATABASE_DRIVER="postgresql"\nDSM_DATABASE_HOST="db.internal"\nDSM_DATABASE_PORT="5433"\nDSM_DATABASE_NAME="capivara_test"\nDSM_DATABASE_USER="capivara"\nDSM_DATABASE_PASSWORD_FILE="/run/secrets/db"\nDSM_DATABASE_TLS="require"\nUNRELATED_SECRET="do-not-import"\n',encoding="utf-8")
+   environment={"PATH":"/usr/bin","DSM_ROOT":str(root)}
+   effective=_database_environment(root,environment)
+   self.assertNotIn("UNRELATED_SECRET",effective)
+   config=database_config_from_environment(effective)
+   self.assertEqual(config.driver,"postgresql");self.assertEqual(config.host,"db.internal");self.assertEqual(config.port,5433);self.assertEqual(config.database,"capivara_test");self.assertEqual(config.user,"capivara");self.assertEqual(config.tls_mode,"require")
+ def test_database_environment_preserves_explicit_service_values(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);(root/"config").mkdir()
+   (root/"config"/"dsm.conf").write_text('DSM_DATABASE_DRIVER="postgresql"\nDSM_DATABASE_HOST="db.internal"\n',encoding="utf-8")
+   effective=_database_environment(root,{"DSM_DATABASE_DRIVER":"sqlite","DSM_DATABASE":"/tmp/explicit.db"})
+   config=database_config_from_environment(effective)
+   self.assertEqual(config.driver,"sqlite");self.assertEqual(config.database,"/tmp/explicit.db")
  def test_worker_imports_from_outside_repository(self):
   script=ROOT/"dashboard"/"workers"/"automation_worker.py"
   with tempfile.TemporaryDirectory() as cwd:
