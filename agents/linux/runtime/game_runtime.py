@@ -21,7 +21,7 @@ _INSTANCE_ID = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 _PROFILE_CONTEXT_KEYS = (
     "install_path", "content_root", "working_directory", "executable", "ports", "environment", "arguments", "user",
     "desired_state", "instance_state_root", "storage_pool_id", "config_path", "mission", "dayz_mission", "catalog_runtime_policy",
-    "variables", "runtime_variables", "resource_profile",
+    "variables", "runtime_variables", "resource_profile", "catalog_content_policy",
 )
 
 
@@ -76,7 +76,7 @@ def _historical_provisioning_context(instance_id: str) -> dict[str, Any]:
         if isinstance(ports, dict) and ports:
             recovered["ports"] = dict(ports)
         for key in (
-            "environment_id", "runtime_id", "catalog_runtime_policy", "mission", "dayz_mission",
+            "environment_id", "runtime_id", "catalog_runtime_policy", "catalog_content_policy", "mission", "dayz_mission",
             "resource_profile", "resource_profile_id", "storage_pool_id",
         ):
             if key in payload:

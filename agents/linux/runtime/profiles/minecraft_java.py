@@ -45,6 +45,13 @@ class MinecraftJavaRuntimeProfile(GameRuntimeProfile):
         if str(policy.get("engine") or "java").strip().lower() not in {"", "java"}:
             raise ProfileError("Minecraft Java runtime policy must use the Java engine")
 
+        catalog_content = context.get("catalog_content_policy") or {}
+        if not isinstance(catalog_content, dict):
+            raise ProfileError("invalid Catalog content policy")
+        managed_content = catalog_content.get("managed") or {}
+        if not isinstance(managed_content, dict):
+            raise ProfileError("invalid managed content policy")
+
         install_path = require_absolute(
             context.get("install_path") or context.get("content_root") or instance.get("path"),
             "install_path",
@@ -80,6 +87,7 @@ class MinecraftJavaRuntimeProfile(GameRuntimeProfile):
             "desired_state": str(instance.get("desired_state") or context.get("desired_state") or "stopped"),
             "profile": "minecraft-java",
             "profile_version": self.profile_version,
+            "content_projection": dict(managed_content),
             "ports": ports,
             "instance_state_root": state_root,
             "configuration_root": runtime_root,

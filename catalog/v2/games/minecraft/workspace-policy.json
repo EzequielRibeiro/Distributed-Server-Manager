@@ -11,7 +11,7 @@
     "modified": {
       "label": "Minecraft Modificado",
       "entitlements": {"mods": true, "plugins": true, "workshop": true, "external_upload": true, "custom_runtime": false},
-      "allowed_runtimes": ["minecraft.java.vanilla", "minecraft.java.paper", "minecraft.java.fabric", "minecraft.java.arclight", "minecraft.bedrock.vanilla"]
+      "allowed_runtimes": ["minecraft.java.vanilla", "minecraft.java.paper", "minecraft.java.purpur", "minecraft.java.folia", "minecraft.java.fabric", "minecraft.java.forge", "minecraft.java.neoforge", "minecraft.java.quilt", "minecraft.java.spongevanilla", "minecraft.java.arclight", "minecraft.java.youer", "minecraft.bedrock.vanilla"]
     }
   },
   "runtimes": {
@@ -53,6 +53,48 @@
       "console": {"supported": true},
       "startup_parameters": {"java_version": {"type": "select", "allowed": [17, 21, 25], "customer_editable": true}},
       "file_policy": {"protected_paths": ["runtime", ".dsm"], "mod_paths": ["mods"], "runtime_extensions": [".jar"]}
+    },
+    "minecraft.java.purpur": {
+      "label": "Java Purpur", "family": "java", "mods": false, "plugins": true, "workshop": false, "external_upload": true, "custom_runtime": false,
+      "console": {"supported": true},
+      "startup_parameters": {"java_version": {"type": "select", "allowed": [17, 21, 25], "customer_editable": true}},
+      "file_policy": {"protected_paths": ["runtime", ".dsm"], "plugin_paths": ["plugins"], "runtime_extensions": [".jar"]}
+    },
+    "minecraft.java.folia": {
+      "label": "Java Folia", "family": "java", "mods": false, "plugins": true, "workshop": false, "external_upload": true, "custom_runtime": false,
+      "console": {"supported": true},
+      "startup_parameters": {"java_version": {"type": "select", "allowed": [17, 21, 25], "customer_editable": true}},
+      "file_policy": {"protected_paths": ["runtime", ".dsm"], "plugin_paths": ["plugins"], "runtime_extensions": [".jar"]}
+    },
+    "minecraft.java.forge": {
+      "label": "Java Forge", "family": "java", "mods": true, "plugins": false, "workshop": false, "external_upload": true, "custom_runtime": false,
+      "console": {"supported": true},
+      "startup_parameters": {"java_version": {"type": "select", "allowed": [17, 21, 25], "customer_editable": true}},
+      "file_policy": {"protected_paths": ["runtime", ".dsm"], "mod_paths": ["mods"], "runtime_extensions": [".jar"]}
+    },
+    "minecraft.java.neoforge": {
+      "label": "Java NeoForge", "family": "java", "mods": true, "plugins": false, "workshop": false, "external_upload": true, "custom_runtime": false,
+      "console": {"supported": true},
+      "startup_parameters": {"java_version": {"type": "select", "allowed": [17, 21, 25], "customer_editable": true}},
+      "file_policy": {"protected_paths": ["runtime", ".dsm"], "mod_paths": ["mods"], "runtime_extensions": [".jar"]}
+    },
+    "minecraft.java.quilt": {
+      "label": "Java Quilt", "family": "java", "mods": true, "plugins": false, "workshop": false, "external_upload": true, "custom_runtime": false,
+      "console": {"supported": true},
+      "startup_parameters": {"java_version": {"type": "select", "allowed": [17, 21, 25], "customer_editable": true}},
+      "file_policy": {"protected_paths": ["runtime", ".dsm"], "mod_paths": ["mods"], "runtime_extensions": [".jar"]}
+    },
+    "minecraft.java.spongevanilla": {
+      "label": "Java SpongeVanilla", "family": "java", "mods": false, "plugins": true, "workshop": false, "external_upload": true, "custom_runtime": false,
+      "console": {"supported": true},
+      "startup_parameters": {"java_version": {"type": "select", "allowed": [17, 21, 25], "customer_editable": true}},
+      "file_policy": {"protected_paths": ["runtime", ".dsm"], "plugin_paths": ["mods"], "runtime_extensions": [".jar"]}
+    },
+    "minecraft.java.youer": {
+      "label": "Java Youer", "family": "java", "mods": true, "plugins": true, "workshop": false, "external_upload": true, "custom_runtime": false,
+      "console": {"supported": true},
+      "startup_parameters": {"java_version": {"type": "select", "allowed": [17, 21, 25], "customer_editable": true}},
+      "file_policy": {"protected_paths": ["runtime", ".dsm"], "mod_paths": ["mods"], "plugin_paths": ["plugins"], "runtime_extensions": [".jar"]}
     },
     "minecraft.java.arclight": {
       "label": "Java Arclight",
