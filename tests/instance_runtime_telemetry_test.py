@@ -78,6 +78,32 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
         rendered = systemd_materializer.render_unit(spec)
         self.assertIn("\nIPAccounting=yes\n", rendered)
 
+    def test_systemd_resources_cover_whole_unit(self):
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout="CPUUsageNSec=2500000000\nMemoryCurrent=949792768\n",
+        )
+        with patch.object(telemetry.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(telemetry._systemd_resources("palworld-001"), (2500000000, 949792768))
+        command = run.call_args.args[0]
+        self.assertIn("capivara-instance-palworld-001.service", command)
+        self.assertIn("--property=CPUUsageNSec", command)
+        self.assertIn("--property=MemoryCurrent", command)
+
+    def test_unavailable_systemd_resources_are_unknown(self):
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout="CPUUsageNSec=[not set]\nMemoryCurrent=\n",
+        )
+        with patch.object(telemetry.subprocess, "run", return_value=completed):
+            self.assertEqual(telemetry._systemd_resources("palworld-001"), (None, None))
+
+    def test_systemd_cpu_percent_uses_unit_counter_delta(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(telemetry, "SAMPLE_STATE_DIR", Path(directory)):
+            with patch.object(telemetry.time, "monotonic", side_effect=[100.0, 102.0]):
+                self.assertIsNone(telemetry._systemd_cpu_percent("palworld-001", 1_000_000_000))
+                self.assertEqual(telemetry._systemd_cpu_percent("palworld-001", 1_500_000_000), 25.0)
+
     def test_systemd_network_returns_instance_counters(self):
         completed = SimpleNamespace(
             returncode=0,
