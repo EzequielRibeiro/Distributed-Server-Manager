@@ -36,6 +36,11 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   self.assertIn('data-view="console"',html);self.assertIn('data-view="team"',html);self.assertIn('data-view="upgrade"',html)
   self.assertNotIn("Log em tempo real",html);self.assertNotIn('data-view="events"',html)
   self.assertIn("customer-instance-v2.js",html);self.assertIn("customer-backup-transfer.js",html)
+  for chart_id in ("cpu-chart","memory-chart","network-chart","players-chart","latency-chart"):
+   self.assertIn(f'id="{chart_id}"',html)
+  telemetry_js=(ROOT/"dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
+  for marker in ("networkRate",'network_rx_bytes','network_tx_bytes','sampled_at','telemetry-window'):
+   self.assertIn(marker,telemetry_js)
   transfer=(ROOT/"dashboard/web/customer-backup-transfer.js").read_text(encoding="utf-8")
   for route in ("/api/customer/artifacts/backup-export","/api/customer/artifacts/backup-import","/api/customer/artifacts/upload","/api/customer/artifacts/restore-import"):
    self.assertIn(route,transfer)
