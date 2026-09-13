@@ -10,11 +10,12 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 STATE_ROOT = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 CONTENT_STATE = STATE_ROOT / "managed-content"
 ACTIVATION_STATE = STATE_ROOT / "content-activation"
+_ALLOWED_ACTIVATION_KEYS = frozenset({"adapter", "mode", "identifier"})
 
 
 def _safe_component(value: Any) -> str:
@@ -30,6 +31,10 @@ def _write(path: Path, payload: dict[str, Any]) -> None:
     temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.chmod(temp, 0o600)
     os.replace(temp, path)
+
+
+def _state_path(instance_id: Any, content_id: Any) -> Path:
+    return CONTENT_STATE / _safe_component(instance_id) / f"{_safe_component(content_id)}.json"
 
 
 def _load_instance_states(instance_id: str) -> list[dict[str, Any]]:
@@ -55,6 +60,22 @@ def _order(value: Any) -> int:
     except (TypeError, ValueError):
         return 0
     return max(0, min(result, 1_000_000))
+
+
+def _activation(command: Mapping[str, Any]) -> dict[str, str]:
+    metadata = command.get("metadata") if isinstance(command.get("metadata"), Mapping) else {}
+    raw = command.get("activation") if isinstance(command.get("activation"), Mapping) else metadata.get("activation")
+    if not isinstance(raw, Mapping):
+        return {}
+    result: dict[str, str] = {}
+    for key in _ALLOWED_ACTIVATION_KEYS:
+        value = raw.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            result[key] = text[:191]
+    return result
 
 
 def _entry(state: dict[str, Any]) -> dict[str, Any] | None:
@@ -96,6 +117,50 @@ def refresh_activation_snapshot(instance_id: str) -> dict[str, Any]:
     return snapshot
 
 
+def synchronize_activation_state(commands: list[dict[str, Any]], reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Persist assignment activation semantics after content reconciliation.
+
+    Content installation remains owned by content_client. This function only enriches
+    a successfully written managed-content state with command-free activation fields
+    and then atomically refreshes the deterministic per-instance snapshot.
+    """
+    command_index: dict[tuple[str, str], dict[str, Any]] = {}
+    for command in commands:
+        if not isinstance(command, dict):
+            continue
+        iid = str(command.get("instance_id") or "").strip()
+        cid = str(command.get("content_id") or "").strip()
+        if iid and cid:
+            command_index[(iid, cid)] = command
+
+    changed_instances: set[str] = set()
+    for report in reports:
+        if not isinstance(report, dict) or str(report.get("status") or "") != "applied":
+            continue
+        iid = str(report.get("instance_id") or "").strip()
+        cid = str(report.get("content_id") or "").strip()
+        command = command_index.get((iid, cid))
+        if command is None:
+            continue
+        path = _state_path(iid, cid)
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(state, dict):
+            continue
+        desired_state = str(command.get("desired_state") or "installed").strip().lower()
+        default_activation = "enabled" if desired_state == "installed" else "disabled"
+        state["desired_state"] = desired_state
+        state["activation_state"] = str(command.get("activation_state") or default_activation).strip().lower()
+        state["activation_order"] = _order(command.get("activation_order"))
+        state["activation"] = _activation(command)
+        _write(path, state)
+        changed_instances.add(iid)
+
+    return [refresh_activation_snapshot(iid) for iid in sorted(changed_instances)]
+
+
 def activation_snapshot(instance_id: str) -> dict[str, Any]:
     iid = _safe_component(instance_id)
     path = ACTIVATION_STATE / f"{iid}.json"
@@ -106,4 +171,9 @@ def activation_snapshot(instance_id: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else build_activation_snapshot(iid)
 
 
-__all__ = ["activation_snapshot", "build_activation_snapshot", "refresh_activation_snapshot"]
+__all__ = [
+    "activation_snapshot",
+    "build_activation_snapshot",
+    "refresh_activation_snapshot",
+    "synchronize_activation_state",
+]
