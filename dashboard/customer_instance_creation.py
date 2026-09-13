@@ -25,7 +25,18 @@ def runtime_definition(root:Path,game:str,runtime_id:str)->dict[str,Any]:
  raise ValueError("runtime definition not found")
 def _selector(runtime_def,version,build):
  resolver=str((runtime_def.get("version") or {}).get("resolver") or "").strip().lower()
- return f"{version}@{build}" if resolver=="papermc" and build else version or str(runtime_def.get("variant") or runtime_def.get("edition") or "current")
+ version=str(version or "").strip();build=str(build or "").strip()
+ fallback=version or str(runtime_def.get("variant") or runtime_def.get("edition") or "current")
+ if not build:return fallback
+ if resolver in {"papermc","forge_maven","neoforge_maven","purpur_api","sponge_maven","youer_api"}:
+  return f"{fallback}@{build}"
+ if resolver=="github_releases":
+  return fallback
+ if resolver=="fabric_meta":
+  match=re.fullmatch(r"loader-(.+)_installer-(.+)",build)
+  if not match:raise ValueError("invalid Fabric build selector")
+  return f"{fallback}@{match.group(1)}@{match.group(2)}"
+ return fallback
 def _queue_agent_provisioning(*,root,repository,runtime_def,instance_id,agent_id,runtime_id,version,build,requested_by,resource_profile_id=None):
  selector=_selector(runtime_def,version,build);requested_configuration={}
  if resource_profile_id:requested_configuration["resource_profile_id"]=resource_profile_id
