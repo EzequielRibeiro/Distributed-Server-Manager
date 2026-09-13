@@ -78,7 +78,8 @@ def _create(config,cmd):
   if cons=="stopped" and was_running:lifecycle(config,iid,"start")
 def _artifact(iid,bid):
  idir=(BACKUP_ROOT/_safe(iid)).resolve();idir.relative_to(BACKUP_ROOT);matches=list(idir.glob(f"{_safe(bid)}.tar*"))
- if len(matches)!=1:raise FileNotFoundError("backup artifact not found")
+ if not matches:raise FileNotFoundError("backup artifact not found")
+ if len(matches)>1:raise RuntimeError("multiple backup artifacts found")
  return matches[0]
 def _validate_manifest(record,manifest):
  if not manifest:return
@@ -111,7 +112,10 @@ def _restore(config,cmd):
  finally:shutil.rmtree(stage,ignore_errors=True)
  return {"backup_id":str(cmd.get("backup_id")),"artifact_path":str(artifact),"size_bytes":artifact.stat().st_size,"sha256":_digest(artifact)}
 def _delete(config,cmd):
- iid=str(cmd["instance_id"]);_owned(config,iid);artifact=_artifact(iid,str(cmd.get("backup_id") or ""));artifact.unlink();return {"backup_id":str(cmd.get("backup_id")),"artifact_path":str(artifact)}
+ iid=str(cmd["instance_id"]);_owned(config,iid);bid=str(cmd.get("backup_id") or "")
+ try:artifact=_artifact(iid,bid)
+ except FileNotFoundError:return {"backup_id":bid,"artifact_path":None,"already_absent":True}
+ artifact.unlink();return {"backup_id":bid,"artifact_path":str(artifact),"already_absent":False}
 def apply_backup_commands(config:dict[str,Any],commands:list[dict[str,Any]])->list[dict[str,Any]]:
  reports=[]
  for cmd in commands[:20]:

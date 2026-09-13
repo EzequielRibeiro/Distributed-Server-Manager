@@ -34,6 +34,22 @@
     return `${n.toLocaleString("pt-BR", {maximumFractionDigits: 1})} ${units[index]}`;
   }
 
+
+  function availableBackupJobs(jobs) {
+    const deleted = new Set((jobs || [])
+      .filter(job => job.action === "delete" && job.status === "completed" && job.backup_id)
+      .map(job => String(job.backup_id)));
+    const seen = new Set();
+    return (jobs || [])
+      .filter(job => job.action === "create" && job.status === "completed" && job.backup_id && !deleted.has(String(job.backup_id)))
+      .filter(job => {
+        const id = String(job.backup_id);
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+  }
+
   function instanceUrl(item) {
     return "/customer-instance.html?" + new URLSearchParams({
       server: item.server || "",
@@ -56,9 +72,7 @@
         request(`/api/customer/instance/workspace/backups?instance_id=${encodeURIComponent(instanceId)}`),
         request(`/api/customer/instance/workspace/backup-policy?instance_id=${encodeURIComponent(instanceId)}`),
       ]);
-      const completed = (jobs.jobs || [])
-        .filter(job => job.action === "create" && job.status === "completed")
-        .slice(0, 1)[0];
+      const completed = availableBackupJobs(jobs.jobs || [])[0];
       status.textContent = completed ? "Protegido" : "Sem backup";
       status.classList.add(completed ? "online" : "warning");
       list.innerHTML = `<div><strong>Último backup</strong><small class="integration-muted">${completed ? `${completed.backup_id || "backup"} · ${fmtBytes(completed.size_bytes)}` : "Nenhum backup operacional disponível"}</small></div><div><strong>Backup automático</strong><small class="integration-muted">${policy.enabled === false ? "Desabilitado" : `Ativo · ${policy.schedule_time || "04:00"} · ${policy.schedule_timezone || "UTC"}`}</small></div>`;

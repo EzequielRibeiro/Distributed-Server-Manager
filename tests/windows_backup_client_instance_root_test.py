@@ -211,6 +211,23 @@ class WindowsBackupClientInstanceRootTest(unittest.TestCase):
             "shared-still-safe",
         )
 
+    def test_delete_missing_artifact_is_idempotent(self):
+        with patch.object(
+            backup_client,
+            "get_instance",
+            return_value=self.record,
+        ):
+            deleted = backup_client._delete(
+                self.config,
+                {
+                    "instance_id": "instance-safe",
+                    "backup_id": "already-gone",
+                },
+            )
+
+        self.assertTrue(deleted["already_absent"])
+        self.assertIsNone(deleted["artifact_path"])
+
     def test_legacy_path_only_record_remains_supported(self):
         legacy = {
             "instance_id": "legacy-instance",
