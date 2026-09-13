@@ -128,8 +128,44 @@ class BackupRepository:
             try:return [dict(row) for row in session.execute(f"SELECT * FROM backup_jobs{where} ORDER BY created_at DESC LIMIT {self.ph}",tuple(params)).fetchall()]
             finally:session.close()
 
+    @staticmethod
+    def effective_jobs(jobs):
+        """Hide completed create jobs whose artifact was deleted successfully."""
+        rows = [dict(job) for job in jobs]
+        deleted = {
+            (str(job.get("instance_id") or ""), str(job.get("backup_id")))
+            for job in rows
+            if str(job.get("action") or "").lower() == "delete"
+            and str(job.get("status") or "").lower() == "completed"
+            and job.get("backup_id")
+        }
+        if not deleted:
+            return rows
+        return [
+            job
+            for job in rows
+            if not (
+                str(job.get("action") or "").lower() == "create"
+                and str(job.get("status") or "").lower() == "completed"
+                and (
+                    str(job.get("instance_id") or ""),
+                    str(job.get("backup_id") or ""),
+                ) in deleted
+            )
+        ]
+
+    def list_effective_jobs(self, *, instance_id=None, agent_id=None, status=None, limit=500):
+        return self.effective_jobs(
+            self.list_jobs(
+                instance_id=instance_id,
+                agent_id=agent_id,
+                status=status,
+                limit=limit,
+            )
+        )
+
     def latest_completed(self, instance_id):
-        jobs=self.list_jobs(instance_id=instance_id,limit=200)
+        jobs=self.list_effective_jobs(instance_id=instance_id,limit=200)
         return next((job for job in jobs if job.get("action")=="create" and job.get("status")=="completed" and job.get("backup_id")),None)
 
     def health(self, *, instance_id=None, agent_id=None, now=None):
@@ -139,7 +175,7 @@ class BackupRepository:
             if agent_id and str(policy.get("agent_id") or "")!=str(agent_id):return aggregate_health([])
             return evaluate_policy(
                 policy,
-                self.list_jobs(
+                self.list_effective_jobs(
                     instance_id=instance_id,
                     limit=100,
                 ),
@@ -157,7 +193,7 @@ class BackupRepository:
             rows.append(
                 evaluate_policy(
                     policy,
-                    self.list_jobs(
+                    self.list_effective_jobs(
                         instance_id=policy["instance_id"],
                         limit=100,
                     ),
@@ -325,7 +361,7 @@ class BackupRepository:
         now_utc=datetime.fromtimestamp(float(now_epoch),tz=timezone.utc) if now_epoch is not None else datetime.now(timezone.utc);now_value=now_utc.timestamp();created=[]
         for policy in self.list_policies(agent_id=agent_id):
             if not policy["enabled"]:continue
-            jobs=self.list_jobs(instance_id=policy["instance_id"],limit=100)
+            jobs=self.list_effective_jobs(instance_id=policy["instance_id"],limit=100)
             if any(job["status"] in {"pending","running"} for job in jobs):continue
             schedule=self._workspace_schedule(policy["instance_id"])
             if schedule is not None:

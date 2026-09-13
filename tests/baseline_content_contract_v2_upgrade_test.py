@@ -25,6 +25,8 @@ class ContentContractV2BaselineUpgradeTest(unittest.TestCase):
 CREATE TABLE content_assignments(id TEXT PRIMARY KEY);
 CREATE TABLE content_assignment_revisions(id TEXT PRIMARY KEY);
 CREATE TABLE agent_content_state(id TEXT PRIMARY KEY);
+CREATE TABLE backup_jobs(command_id TEXT PRIMARY KEY,backup_id TEXT,action TEXT,status TEXT);
+CREATE UNIQUE INDEX idx_backup_jobs_backup_id ON backup_jobs(backup_id) WHERE backup_id IS NOT NULL;
 CREATE TABLE baseline_upgrades(version INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE,applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 INSERT INTO content_assignments(id) VALUES ('assignment-1');
 INSERT INTO content_assignment_revisions(id) VALUES ('revision-1');
@@ -35,12 +37,12 @@ INSERT INTO agent_content_state(id) VALUES ('state-1');
         connection.commit()
         return connection
 
-    def test_ledger_v7_materializes_content_contract_v2(self):
+    def test_ledger_v7_materializes_content_contract_v2_and_retry_repair(self):
         connection=self.old_connection()
         try:
             completed=apply_pending_upgrades(SQLiteBackend(),connection,installed_checksum="historical-v7-checksum")
-            self.assertEqual(completed,[8])
-            self.assertEqual(upgrade_status(SQLiteBackend(),connection)["current_version"],8)
+            self.assertEqual(completed,[8,9])
+            self.assertEqual(upgrade_status(SQLiteBackend(),connection)["current_version"],9)
             row=connection.execute("SELECT activation_state,activation_order,provenance_json,metadata_json,security_state FROM content_assignments").fetchone()
             self.assertEqual(tuple(row),("enabled",0,"{}","{}","unscanned"))
             revision=connection.execute("SELECT activation_state,activation_order,provenance_json,metadata_json,security_state FROM content_assignment_revisions").fetchone()
@@ -58,7 +60,7 @@ INSERT INTO agent_content_state(id) VALUES ('state-1');
         finally:
             connection.close()
 
-    def test_checksum_mismatch_with_v7_ledger_reconciles_through_v8(self):
+    def test_checksum_mismatch_with_v7_ledger_reconciles_through_v9(self):
         manager=ROOT/"database"/"manager.py"
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/"dsm"
@@ -69,20 +71,22 @@ INSERT INTO agent_content_state(id) VALUES ('state-1');
             initialized=run("init")
             self.assertEqual(initialized.returncode,0,initialized.stderr)
             with sqlite3.connect(database) as connection:
-                connection.execute("DELETE FROM baseline_upgrades WHERE version=8")
+                connection.execute("DELETE FROM baseline_upgrades WHERE version>=8")
+                connection.execute("DROP INDEX IF EXISTS idx_backup_jobs_backup_id")
+                connection.execute("CREATE UNIQUE INDEX idx_backup_jobs_backup_id ON backup_jobs(backup_id) WHERE backup_id IS NOT NULL")
                 connection.execute("UPDATE schema_baseline SET checksum=?",("historical-v7-baseline-checksum",))
                 connection.commit()
             before=run("check")
             self.assertEqual(before.returncode,1,before.stderr)
             payload=json.loads(before.stdout)
             self.assertEqual(payload["upgrade_version"],7)
-            self.assertEqual(payload["upgrade_latest"],8)
-            self.assertEqual(payload["pending_upgrades"],[{"version":8,"name":"universal_content_contract_v2"}])
+            self.assertEqual(payload["upgrade_latest"],9)
+            self.assertEqual(payload["pending_upgrades"],[{"version":8,"name":"universal_content_contract_v2"},{"version":9,"name":"backup_job_retry_identity_repair"}])
             migrated=run("migrate")
             self.assertEqual(migrated.returncode,0,migrated.stderr)
             payload=json.loads(migrated.stdout)
             self.assertTrue(payload["valid"])
-            self.assertEqual(payload["upgrade_version"],8)
+            self.assertEqual(payload["upgrade_version"],9)
             self.assertTrue(payload["checksum_matches"])
 
 if __name__=="__main__":

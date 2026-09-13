@@ -41,9 +41,9 @@ class AlertNoteBaselineContractTest(unittest.TestCase):
                     self.assertIn(f"'{action}'", block)
 
     def test_upgrade_five_is_registered(self):
-        self.assertEqual(5, latest_upgrade_version())
-        self.assertEqual(5, UPGRADES[-1].version)
-        self.assertEqual("alert_events_note_action", UPGRADES[-1].name)
+        self.assertGreaterEqual(latest_upgrade_version(), 5)
+        self.assertEqual(5, UPGRADES[4].version)
+        self.assertEqual("alert_events_note_action", UPGRADES[4].name)
 
 
 class AlertNoteSQLiteUpgradeTest(unittest.TestCase):

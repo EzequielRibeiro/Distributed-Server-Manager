@@ -26,6 +26,7 @@ class BackupRestoreDashboardFlowTest(unittest.TestCase):
         self.assertIn('role in {"admin","controller"}', service)
         self.assertIn('"restore":"backup.restore"', service)
         self.assertIn('"delete":"backup.delete"', service)
+        self.assertIn('list_effective_jobs(instance_id=instance_id,limit=100)', service)
         compact_http = "".join(http.split())
         self.assertIn('{"customer","admin","controller"}', compact_http)
 
