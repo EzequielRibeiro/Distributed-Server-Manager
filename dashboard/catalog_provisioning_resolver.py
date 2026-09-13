@@ -69,6 +69,7 @@ def resolve_catalog_provisioning(*, environment_id: str, selector: str, selectio
         config["agent_resource_limits"] = effective.agent_resources()
     config["catalog_runtime_id"] = str(runtime.get("id") or environment_id)
     config["catalog_game_id"] = str(runtime.get("game") or "")
+    config["catalog_content_policy"] = dict(runtime.get("content") or {})
     return resolved_selection, config
 
 __all__ = ["resolve_catalog_provisioning", "resolve_catalog_resource_policy"]
