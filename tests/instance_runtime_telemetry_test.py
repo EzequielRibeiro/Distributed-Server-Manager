@@ -152,6 +152,31 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
             with patch.object(telemetry.os, "walk", side_effect=OSError("denied")):
                 self.assertIsNone(telemetry._storage_used(directory))
 
+    def test_workspace_resolves_resource_limits_from_catalog_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "catalog" / "v2" / "games" / "dayz" / "resource-profiles.json"
+            target.parent.mkdir(parents=True)
+            target.write_text('{"schema_version":2,"kind":"GameResourceProfiles","game":"dayz","default_profile_id":"standard","profiles":[{"id":"standard","name":"Standard","memory_mb":8192,"storage_mb":40960,"cpu_cores":4,"swap_mb":2048,"pids_limit":768}]}\n')
+            service = object.__new__(CustomerInstanceWorkspaceService)
+            service.root = root
+            result = service._resolved_resource_policy(
+                {"game_id": "dayz", "contract_metadata": {"resource_profile_id": "standard"}, "instance_metadata": {}},
+                {"resource_profile_id": "standard", "cpu_limit_cores": None, "memory_limit_bytes": None, "storage_limit_bytes": None, "player_limit": None},
+            )
+            self.assertEqual(result["cpu_limit_cores"], 4.0)
+            self.assertEqual(result["memory_limit_bytes"], 8192 * 1024 * 1024)
+            self.assertEqual(result["storage_limit_bytes"], 40960 * 1024 * 1024)
+
+    def test_explicit_workspace_quota_wins_over_catalog_profile(self):
+        service = object.__new__(CustomerInstanceWorkspaceService)
+        service.root = Path("/does/not/need/to/exist")
+        result = service._resolved_resource_policy(
+            {"game_id": "dayz", "contract_metadata": {"resource_profile_id": "standard"}, "instance_metadata": {}},
+            {"resource_profile_id": "standard", "storage_limit_bytes": 12345},
+        )
+        self.assertEqual(result["storage_limit_bytes"], 12345)
+
     def test_workspace_keeps_usage_separate_from_quota(self):
         service = object.__new__(CustomerInstanceWorkspaceService)
         service.repo = SimpleNamespace(
