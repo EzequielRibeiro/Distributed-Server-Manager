@@ -7,10 +7,13 @@ import instance_runtime
 import managed_firewall
 from catalog_runtime_policy import materialize_network_properties
 from adapters import resolve_adapter
-from content_activation_runtime import materialize_content_activation
+from content_activation_projection import activation_snapshot
+from content_activation_runtime import materialize_content_activation,project_runtime_spec
 from runtime_events import emit_runtime_event
 from runtime_spec import validate_runtime_spec
 def _events():return Path(instance_runtime.STATE_DIR)
+def _project(spec):
+ iid=str(spec.get("instance_id") or "").strip();return project_runtime_spec(spec,activation_snapshot(iid)) if iid else dict(spec)
 def _within(root:Path,value:str,label:str)->Path:
  root=root.resolve(strict=False);path=Path(value).resolve(strict=False)
  try:path.relative_to(root)
@@ -19,8 +22,7 @@ def _within(root:Path,value:str,label:str)->Path:
 def _is_link(path:Path)->bool:
  try:
   if path.is_symlink():return True
-  checker=getattr(path,"is_junction",None)
-  return bool(checker and checker())
+  checker=getattr(path,"is_junction",None);return bool(checker and checker())
  except OSError:return True
 def _reject_links(root:Path,label:str)->None:
  if _is_link(root):raise RuntimeError(f"{label} root cannot be a link or junction")
@@ -48,8 +50,7 @@ def _prepare_private_state(spec:dict[str,Any])->None:
  if not raw_root:
   if has_private:raise RuntimeError("private runtime state requires instance_state_root")
   return
- state_root=Path(str(raw_root)).resolve(strict=False);state_root.mkdir(parents=True,exist_ok=True)
- working_root=Path(str(spec["working_directory"])).resolve(strict=False);source_root=Path(str(spec.get("seed_source_root") or working_root)).resolve(strict=False)
+ state_root=Path(str(raw_root)).resolve(strict=False);state_root.mkdir(parents=True,exist_ok=True);working_root=Path(str(spec["working_directory"])).resolve(strict=False);source_root=Path(str(spec.get("seed_source_root") or working_root)).resolve(strict=False)
  if spec.get("seed_source_root"):_reject_links(source_root,"seed source")
  for item in spec.get("writable_directories",[]):_within(state_root,str(item),"writable directory").mkdir(parents=True,exist_ok=True)
  for item in spec.get("seed_files",[]):
@@ -58,16 +59,14 @@ def _prepare_private_state(spec:dict[str,Any])->None:
   target.parent.mkdir(parents=True,exist_ok=True)
   if not target.exists():shutil.copy2(source,target)
   elif not target.is_file() or _is_link(target):raise RuntimeError(f"seed target is not a private file: {target}")
- for item in spec.get("seed_directories",[]):
-  source=_within(source_root,str(item["source"]),"seed directory source");target=_within(state_root,str(item["target"]),"seed directory target");_seed_directory(source,target)
+ for item in spec.get("seed_directories",[]):source=_within(source_root,str(item["source"]),"seed directory source");target=_within(state_root,str(item["target"]),"seed directory target");_seed_directory(source,target)
 def _validate_materialization(spec:dict[str,Any])->dict[str,Any]:
  if spec["adapter"]=="windows-process":
   exe=Path(spec["executable"]).resolve(strict=False);cwd=Path(spec["working_directory"]).resolve(strict=False);scope=spec.get("executable_scope") or "working-directory"
   if not cwd.is_dir():raise RuntimeError("runtime working directory does not exist")
   if not exe.is_file():raise RuntimeError("runtime executable does not exist")
   if scope=="working-directory":_within(cwd,str(exe),"runtime executable")
-  elif scope=="provider-content":
-   root=Path(str(spec.get("seed_source_root") or "")).resolve(strict=False);_within(root,str(exe),"provider executable");_reject_links(root,"provider executable")
+  elif scope=="provider-content":root=Path(str(spec.get("seed_source_root") or "")).resolve(strict=False);_within(root,str(exe),"provider executable");_reject_links(root,"provider executable")
   elif scope=="system-java":
    java=shutil.which("java.exe") or shutil.which("java")
    if not java or Path(java).resolve(strict=False)!=exe:raise RuntimeError("runtime Java executable is not the trusted system Java")
@@ -77,13 +76,14 @@ def _validate_materialization(spec:dict[str,Any])->dict[str,Any]:
  if not state.get("available"):raise RuntimeError("Windows service runtime is unavailable")
  return {"materializer":"windows-service","exists":True,"owned":True,"matches":True,"service":state.get("service")}
 def materialize(config:dict[str,Any],spec:dict[str,Any])->dict[str,Any]:
- agent_id=str(config.get("agent_id") or "").strip();normalized=validate_runtime_spec(spec,expected_agent_id=agent_id);emit_runtime_event(_events(),"INSTANCE_RUNTIME_MATERIALIZING",agent_id=agent_id,instance_id=normalized["instance_id"])
+ agent_id=str(config.get("agent_id") or "").strip();projected=_project(spec);normalized=validate_runtime_spec(projected,expected_agent_id=agent_id);emit_runtime_event(_events(),"INSTANCE_RUNTIME_MATERIALIZING",agent_id=agent_id,instance_id=normalized["instance_id"])
  try:
-  _prepare_private_state(normalized);content_files=materialize_content_activation(normalized);operation=_validate_materialization(normalized);properties=materialize_network_properties(spec);record=instance_runtime.register_instance({**normalized,"observed_state":"unknown","materialized":True});event=emit_runtime_event(_events(),"INSTANCE_RUNTIME_READY",agent_id=agent_id,instance_id=normalized["instance_id"],data={"adapter":normalized["adapter"],"changed":True,"content_files":content_files});return {"spec":normalized,"instance":record,"operation":{"action":"materialize","changed":True,"state":operation,"network_properties":properties,"content_files":content_files},"event":event}
- except Exception as exc:
-  emit_runtime_event(_events(),"INSTANCE_RUNTIME_FAILED",agent_id=agent_id,instance_id=normalized["instance_id"],data={"phase":"materialize","error":str(exc)[:2000]});raise
+  _prepare_private_state(normalized);content_files=materialize_content_activation(normalized);operation=_validate_materialization(normalized);properties=materialize_network_properties(normalized);record=instance_runtime.register_instance({**normalized,"observed_state":"unknown","materialized":True});event=emit_runtime_event(_events(),"INSTANCE_RUNTIME_READY",agent_id=agent_id,instance_id=normalized["instance_id"],data={"adapter":normalized["adapter"],"changed":True,"content_files":content_files});return {"spec":normalized,"instance":record,"operation":{"action":"materialize","changed":True,"state":operation,"network_properties":properties,"content_files":content_files},"event":event}
+ except Exception as exc:emit_runtime_event(_events(),"INSTANCE_RUNTIME_FAILED",agent_id=agent_id,instance_id=normalized["instance_id"],data={"phase":"materialize","error":str(exc)[:2000]});raise
 def reconcile(config:dict[str,Any],instance_id:str)->dict[str,Any]:
- record=instance_runtime._owned(config,instance_id);normalized=validate_runtime_spec(record,expected_agent_id=str(config.get("agent_id") or ""));_prepare_private_state(normalized);content_files=materialize_content_activation(normalized);_validate_materialization(normalized);firewall=managed_firewall.reconcile(normalized);adapter=resolve_adapter(normalized);before=adapter.status(normalized);desired=normalized["desired_state"];running=bool(before.get("running") or before.get("active_state")=="active");operation=None
+ record=instance_runtime._owned(config,instance_id);projected=_project(record)
+ if projected!=record:record=instance_runtime.register_instance(projected)
+ normalized=validate_runtime_spec(record,expected_agent_id=str(config.get("agent_id") or ""));_prepare_private_state(normalized);content_files=materialize_content_activation(normalized);_validate_materialization(normalized);firewall=managed_firewall.reconcile(normalized);adapter=resolve_adapter(normalized);before=adapter.status(normalized);desired=normalized["desired_state"];running=bool(before.get("running") or before.get("active_state")=="active");operation=None
  if desired=="running" and not running:operation=adapter.start(normalized)
  elif desired=="stopped" and running:operation=adapter.stop(normalized)
  after=adapter.status(normalized);observed=instance_runtime._observed_state(after,record.get("observed_state"));updated=instance_runtime.register_instance({**record,"observed_state":observed});event=emit_runtime_event(_events(),"INSTANCE_RUNTIME_RECONCILED" if operation else "INSTANCE_RUNTIME_IN_SYNC",agent_id=normalized["agent_id"],instance_id=normalized["instance_id"],data={"desired_state":desired,"observed_state":observed,"changed":operation is not None,"content_files":content_files});return {"instance_id":normalized["instance_id"],"desired_state":desired,"observed_state":observed,"changed":operation is not None,"operation":operation,"firewall":firewall,"content_files":content_files,"instance":updated,"event":event}
