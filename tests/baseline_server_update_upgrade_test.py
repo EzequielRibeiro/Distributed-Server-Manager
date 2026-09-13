@@ -48,7 +48,7 @@ class BaselineServerUpdateUpgradeTest(unittest.TestCase):
             self.assertEqual(initialized.returncode, 0, initialized.stderr)
 
             with sqlite3.connect(database) as connection:
-                connection.execute("DELETE FROM baseline_upgrades WHERE version=6")
+                connection.execute("DELETE FROM baseline_upgrades WHERE version>=6")
                 for table in SERVER_UPDATE_TABLES:
                     connection.execute(f"DROP TABLE {table}")
                 connection.execute(
@@ -61,18 +61,20 @@ class BaselineServerUpdateUpgradeTest(unittest.TestCase):
             self.assertEqual(before.returncode, 1, before.stderr)
             before_payload = json.loads(before.stdout)
             self.assertEqual(before_payload["upgrade_version"], 5)
-            self.assertEqual(before_payload["upgrade_latest"], 6)
+            self.assertEqual(before_payload["upgrade_latest"], 8)
             self.assertEqual(
                 before_payload["pending_upgrades"],
-                [{"version": 6, "name": "universal_server_update"}],
+                [{"version": 6, "name": "universal_server_update"},
+                 {"version": 7, "name": "backup_job_retry_identity"},
+                 {"version": 8, "name": "universal_content_contract_v2"}],
             )
 
             migrated = self.manager(root, database, "migrate")
             self.assertEqual(migrated.returncode, 0, migrated.stderr)
             migrated_payload = json.loads(migrated.stdout)
             self.assertTrue(migrated_payload["valid"])
-            self.assertEqual(migrated_payload["upgrade_version"], 6)
-            self.assertEqual(migrated_payload["upgrade_latest"], 6)
+            self.assertEqual(migrated_payload["upgrade_version"], 8)
+            self.assertEqual(migrated_payload["upgrade_latest"], 8)
 
             with sqlite3.connect(database) as connection:
                 tables = {
@@ -98,7 +100,7 @@ class BaselineServerUpdateUpgradeTest(unittest.TestCase):
             self.assertEqual(initialized.returncode, 0, initialized.stderr)
 
             with sqlite3.connect(database) as connection:
-                connection.execute("DELETE FROM baseline_upgrades WHERE version=6")
+                connection.execute("DELETE FROM baseline_upgrades WHERE version>=6")
                 connection.execute("DROP TABLE instance_update_state")
                 connection.execute("DROP TABLE instance_update_runs")
                 connection.execute(

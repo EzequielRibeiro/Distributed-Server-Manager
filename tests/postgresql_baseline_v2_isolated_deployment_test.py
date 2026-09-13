@@ -68,11 +68,11 @@ def main() -> int:
         raise AssertionError(f"expected exactly one schema_baseline row, got {len(baseline)}")
     if int(existing_customers["total"] or 0) != 0:
         raise AssertionError("isolated database was not empty before bootstrap")
-    if [(int(row["version"]), str(row["name"])) for row in upgrades][-1] != (
-        7,
-        "backup_job_retry_identity",
-    ):
-        raise AssertionError("Baseline v2 did not seed backup job retry identity upgrade 7")
+    ledger = [(int(row["version"]), str(row["name"])) for row in upgrades]
+    if (7, "backup_job_retry_identity") not in ledger:
+        raise AssertionError("Baseline v2 did not retain backup job retry identity upgrade 7")
+    if ledger[-1] != (8, "universal_content_contract_v2"):
+        raise AssertionError("Baseline v2 did not seed Universal Content Contract v2 upgrade 8")
     if any(
         "UNIQUE (backup_id)" in str(row["definition"])
         for row in backup_unique_constraints

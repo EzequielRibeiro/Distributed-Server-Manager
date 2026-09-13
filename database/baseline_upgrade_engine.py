@@ -17,6 +17,7 @@ from alert_event_action_schema import action_check_expression
 from alert_scope_history_schema import alert_scope_history_ddl
 from backend import DatabaseMigrationError
 from discord_integration_schema import discord_integration_ddl
+from content_contract_v2_schema import content_contract_v2_ddl
 from server_update_schema import server_update_ddl
 
 
@@ -41,6 +42,16 @@ SERVER_UPDATE_TABLES = {
     "instance_update_policy",
     "instance_update_state",
     "instance_update_runs",
+}
+
+CONTENT_CONTRACT_V2_COLUMNS = {
+    "content_assignments": {
+        "activation_state", "activation_order", "provenance_json", "metadata_json", "security_state"
+    },
+    "content_assignment_revisions": {
+        "activation_state", "activation_order", "provenance_json", "metadata_json", "security_state"
+    },
+    "agent_content_state": {"security_state"},
 }
 
 # Compatibility bridge for installations created before the upgrade ledger
@@ -93,6 +104,31 @@ def _table_names(backend: Any, connection: Any) -> set[str]:
             "SELECT name AS table_name FROM sqlite_master WHERE type='table'"
         ).fetchall()
     return {str(row["table_name"]) for row in rows}
+
+
+def _column_names(backend: Any, connection: Any, table: str) -> set[str]:
+    if backend.name == "postgresql":
+        rows = connection.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name=%s",
+            (table,),
+        ).fetchall()
+    elif backend.name == "mysql":
+        cursor = connection.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema=DATABASE() AND table_name=%s",
+                (table,),
+            )
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+    else:
+        quoted = table.replace('"', '""')
+        rows = connection.execute(f'PRAGMA table_info("{quoted}")').fetchall()
+    key = "name" if backend.name == "sqlite" else "column_name"
+    return {str(row[key]) for row in rows}
 
 
 def _ledger_sql(backend_name: str) -> str:
@@ -430,6 +466,76 @@ def _upgrade_backup_job_retry_identity(backend: Any, connection: Any) -> None:
     raise DatabaseMigrationError(f"unsupported baseline backend: {backend.name}")
 
 
+def _upgrade_content_contract_v2(backend: Any, connection: Any) -> None:
+    tables = _table_names(backend, connection)
+    required_tables = set(CONTENT_CONTRACT_V2_COLUMNS)
+    missing_tables = sorted(required_tables - tables)
+    if missing_tables:
+        raise DatabaseMigrationError(
+            "Universal Content Contract v2 baseline upgrade missing tables: "
+            + ", ".join(missing_tables)
+        )
+
+    present: set[tuple[str, str]] = set()
+    expected: set[tuple[str, str]] = set()
+    for table, required_columns in CONTENT_CONTRACT_V2_COLUMNS.items():
+        columns = _column_names(backend, connection, table)
+        expected.update((table, column) for column in required_columns)
+        present.update((table, column) for column in required_columns if column in columns)
+
+    if present == expected:
+        return
+    if present:
+        missing = sorted(f"{table}.{column}" for table, column in expected - present)
+        raise DatabaseMigrationError(
+            "partial Universal Content Contract v2 baseline upgrade; missing columns: "
+            + ", ".join(missing)
+        )
+
+    ddl = content_contract_v2_ddl(backend.name)
+    if backend.name == "mysql":
+        # LONGTEXT defaults are not portable across supported MySQL/MariaDB
+        # versions. Add nullable JSON text columns first, backfill historical
+        # rows, then make them NOT NULL to match the consolidated baseline.
+        ddl = ddl.replace(
+            "provenance_json LONGTEXT NOT NULL;", "provenance_json LONGTEXT NULL;"
+        ).replace(
+            "metadata_json LONGTEXT NOT NULL;", "metadata_json LONGTEXT NULL;"
+        )
+    _execute_script(backend, connection, ddl)
+
+    if backend.name == "mysql":
+        cursor = connection.cursor()
+        try:
+            for table in ("content_assignments", "content_assignment_revisions"):
+                cursor.execute(
+                    f"UPDATE {table} SET provenance_json='{{}}' WHERE provenance_json IS NULL"
+                )
+                cursor.execute(
+                    f"UPDATE {table} SET metadata_json='{{}}' WHERE metadata_json IS NULL"
+                )
+                cursor.execute(
+                    f"ALTER TABLE {table} MODIFY COLUMN provenance_json LONGTEXT NOT NULL"
+                )
+                cursor.execute(
+                    f"ALTER TABLE {table} MODIFY COLUMN metadata_json LONGTEXT NOT NULL"
+                )
+        finally:
+            cursor.close()
+
+    missing_after: list[str] = []
+    for table, required_columns in CONTENT_CONTRACT_V2_COLUMNS.items():
+        columns = _column_names(backend, connection, table)
+        missing_after.extend(
+            f"{table}.{column}" for column in required_columns if column not in columns
+        )
+    if missing_after:
+        raise DatabaseMigrationError(
+            "Universal Content Contract v2 baseline upgrade incomplete; missing columns: "
+            + ", ".join(sorted(missing_after))
+        )
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -438,6 +544,7 @@ UPGRADES = (
     BaselineUpgrade(5, "alert_events_note_action", _upgrade_alert_events_note_action),
     BaselineUpgrade(6, "universal_server_update", _upgrade_server_update_schema),
     BaselineUpgrade(7, "backup_job_retry_identity", _upgrade_backup_job_retry_identity),
+    BaselineUpgrade(8, "universal_content_contract_v2", _upgrade_content_contract_v2),
 )
 
 
