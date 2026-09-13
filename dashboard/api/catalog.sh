@@ -7,10 +7,9 @@
 set -Eeuo pipefail
 
 DSM_ROOT="${DSM_ROOT:-/opt/dsm}"
-
 CATALOG="${DSM_ROOT}/installer/catalog.sh"
 PROVIDER_LOADER="${DSM_ROOT}/installer/provider_loader.sh"
-
+RESOLVER_ROOT="${DSM_ROOT}/installer/version_resolvers"
 CATALOG_V2_ROOT="${DSM_ROOT}/catalog/v2"
 CATALOG_ROOT="${CATALOG_V2_ROOT}"
 CATALOG_PATHS="${DSM_ROOT}/installer/catalog_paths.sh"
@@ -23,1038 +22,346 @@ source "${CATALOG_PATHS}"
 ACTION="${1:-list}"
 shift || true
 
-# =============================================================
-# Catalog v2 compatibility
-#
-# O Dashboard usa ações HTTP simplificadas enquanto o
-# installer/catalog.sh usa a hierarquia:
-#
-#   content list
-#   content show
-#   content list-installed
-#
-# Este adaptador mantém a API web estável sem duplicar a
-# implementação do Catalog v2.
-# =============================================================
-
 case "${ACTION}" in
     content)
-        exec "${CATALOG}"             content list "${1:-}" --json
+        exec "${CATALOG}" content list "${1:-}" --json
         ;;
-
     content-definition)
         [[ -n "${1:-}" ]] || {
             printf '{"error":"missing_content_id"}\n'
             exit 2
         }
-
-        exec "${CATALOG}"             content show "${1}" --json
+        exec "${CATALOG}" content show "${1}" --json
         ;;
-
     installed)
         [[ -n "${1:-}" ]] || {
             printf '{"error":"missing_instance_path"}\n'
             exit 2
         }
-
-        exec "${CATALOG}"             content list-installed "${1}" --json
+        exec "${CATALOG}" content list-installed "${1}" --json
         ;;
 esac
-
 
 json_error()
 {
     local CODE="${1:-catalog_error}"
     local MESSAGE="${2:-Erro no catálogo.}"
-
-    jq -nc \
-        --arg error "${CODE}" \
-        --arg message "${MESSAGE}" \
-        '{
-            error: $error,
-            message: $message
-        }'
+    jq -nc --arg error "${CODE}" --arg message "${MESSAGE}" \
+        '{error:$error,message:$message}'
 }
-
-
-# =============================================================
-# Runtime helpers
-# =============================================================
 
 runtime_file_by_id()
 {
     local RUNTIME_ID="${1:-}"
-
     [[ -n "${RUNTIME_ID}" ]] || return 1
     catalog_runtime_find "${RUNTIME_ID}"
 }
-
 
 catalog_runtimes()
 {
     catalog_runtime_list "${1:-}"
 }
 
-
 catalog_runtime()
 {
-    local RUNTIME_ID="${1:-}"
-
-    if [[ -z "${RUNTIME_ID}" ]]
-    then
-        json_error \
-            "missing_runtime_id" \
-            "Informe o ID do runtime."
+    local RUNTIME_ID="${1:-}" FILE
+    [[ -n "${RUNTIME_ID}" ]] || {
+        json_error "missing_runtime_id" "Informe o ID do runtime."
         return 2
-    fi
-
-    local FILE
-
-    if ! FILE="$(
-        runtime_file_by_id "${RUNTIME_ID}"
-    )"
-    then
-        json_error \
-            "runtime_not_found" \
-            "Runtime não encontrado: ${RUNTIME_ID}"
+    }
+    FILE="$(runtime_file_by_id "${RUNTIME_ID}")" || {
+        json_error "runtime_not_found" "Runtime não encontrado: ${RUNTIME_ID}"
         return 2
-    fi
-
+    }
     jq '.' "${FILE}"
 }
 
+# -----------------------------------------------------------------------------
+# Canonical resolver bridge
+#
+# Runtime discovery and resolution are owned by installer/version_resolvers.
+# Dashboard must not maintain a second resolver whitelist. This bridge exports
+# RuntimeDefinition configuration, invokes the canonical resolver in a subshell,
+# and normalizes its result into the stable HTTP/UI contract.
+# -----------------------------------------------------------------------------
 
-# =============================================================
-# PaperMC
-# =============================================================
-
-papermc_versions()
+resolver_name_for_file()
 {
-    local RUNTIME_FILE="${1:?runtime file required}"
-
-    local API_BASE
-    local PROJECT
-
-    API_BASE="$(
-        jq -r \
-            '.version.config.api_base // "https://fill.papermc.io/v3"' \
-            "${RUNTIME_FILE}"
-    )"
-
-    PROJECT="$(
-        jq -r \
-            '.version.config.project // "paper"' \
-            "${RUNTIME_FILE}"
-    )"
-
-    local RESPONSE
-
-    RESPONSE="$(
-        curl \
-            -fsSL \
-            --connect-timeout 10 \
-            --max-time 30 \
-            "${API_BASE}/projects/${PROJECT}"
-    )" || {
-        json_error \
-            "resolver_request_failed" \
-            "Não foi possível consultar as versões do PaperMC."
-        return 1
-    }
-
-
-    #  A API do Paper pode evoluir no formato.
-    #  Tentamos aceitar tanto um array direto quanto
-    #  grupos de versões.
-
-    jq -c '
-        def flatten_versions:
-            if (.versions | type) == "array" then
-                .versions
-            elif (.versions | type) == "object" then
-                [
-                    .versions[]
-                    | if type == "array"
-                      then .[]
-                      else .
-                      end
-                ]
-            else
-                []
-            end;
-
-        flatten_versions
-        | unique
-        | sort
-        | reverse
-        | map({
-            value: tostring,
-            label: tostring
-        })
-        | if length > 0
-          then .[0].recommended = true | .
-          else .
-          end
-    ' <<<"${RESPONSE}"
+    jq -r '.version.resolver // empty' "$1"
 }
 
+resolver_file_for_name()
+{
+    local RESOLVER="${1:-}"
+    [[ "${RESOLVER}" =~ ^[A-Za-z0-9_.-]+$ ]] || return 1
+    local FILE="${RESOLVER_ROOT}/${RESOLVER}.sh"
+    [[ -f "${FILE}" ]] || return 1
+    printf '%s\n' "${FILE}"
+}
 
-papermc_builds()
+canonical_resolver_call()
 {
     local RUNTIME_FILE="${1:?runtime file required}"
-    local VERSION="${2:-}"
+    local RESOLVER="${2:?resolver required}"
+    local RESOLVER_ACTION="${3:?resolver action required}"
+    local SELECTOR="${4:-}"
+    local RESOLVER_FILE
 
-    if [[ -z "${VERSION}" ]]
+    RESOLVER_FILE="$(resolver_file_for_name "${RESOLVER}")" || return 2
+
+    (
+        export GAME_ID VARIANT_ID
+        export VERSION_REPOSITORY VERSION_ASSET_PATTERN
+        export VERSION_GAME_VERSION_ASSET_REGEX VERSION_DISCOVERY_LIMIT
+        export PAPERMC_PROJECT PAPERMC_API_BASE FABRIC_META_BASE
+        export BEDROCK_DOWNLOAD_PAGE BEDROCK_LINUX_BASE
+        export PURPUR_PROJECT PURPUR_API_BASE QUILT_META_BASE YOUER_API_BASE
+        export FORGE_MAVEN_BASE NEOFORGE_MAVEN_BASE SPONGE_MAVEN_BASE
+
+        GAME_ID="$(jq -r '.game // empty' "${RUNTIME_FILE}")"
+        VARIANT_ID="$(jq -r '.variant // empty' "${RUNTIME_FILE}")"
+        VERSION_REPOSITORY="$(jq -r '.version.config.repository // empty' "${RUNTIME_FILE}")"
+        VERSION_ASSET_PATTERN="$(jq -r '.version.config.asset_pattern // "*"' "${RUNTIME_FILE}")"
+        VERSION_GAME_VERSION_ASSET_REGEX="$(jq -r '.version.config.game_version_asset_regex // empty' "${RUNTIME_FILE}")"
+        VERSION_DISCOVERY_LIMIT="$(jq -r '.version.config.discovery_limit // 50' "${RUNTIME_FILE}")"
+        PAPERMC_PROJECT="$(jq -r '.version.config.project // "paper"' "${RUNTIME_FILE}")"
+        PAPERMC_API_BASE="$(jq -r '.version.config.api_base // "https://fill.papermc.io/v3"' "${RUNTIME_FILE}")"
+        FABRIC_META_BASE="$(jq -r '.version.config.api_base // "https://meta.fabricmc.net/v2"' "${RUNTIME_FILE}")"
+        BEDROCK_DOWNLOAD_PAGE="$(jq -r '.version.config.download_page // "https://www.minecraft.net/en-us/download/server/bedrock"' "${RUNTIME_FILE}")"
+        BEDROCK_LINUX_BASE="$(jq -r '.version.config.linux_base // "https://www.minecraft.net/bedrockdedicatedserver/bin-linux"' "${RUNTIME_FILE}")"
+        PURPUR_PROJECT="$(jq -r '.version.config.project // "purpur"' "${RUNTIME_FILE}")"
+        PURPUR_API_BASE="$(jq -r '.version.config.api_base // "https://api.purpurmc.org/v2"' "${RUNTIME_FILE}")"
+        QUILT_META_BASE="$(jq -r '.version.config.api_base // "https://meta.quiltmc.org/v3"' "${RUNTIME_FILE}")"
+        YOUER_API_BASE="$(jq -r '.version.config.api_base // "https://api.mohistmc.com/project/youer"' "${RUNTIME_FILE}")"
+        FORGE_MAVEN_BASE="$(jq -r '.version.config.maven_base // empty' "${RUNTIME_FILE}")"
+        NEOFORGE_MAVEN_BASE="$(jq -r '.version.config.maven_base // empty' "${RUNTIME_FILE}")"
+        SPONGE_MAVEN_BASE="$(jq -r '.version.config.maven_base // empty' "${RUNTIME_FILE}")"
+
+        [[ -n "${FORGE_MAVEN_BASE}" ]] || unset FORGE_MAVEN_BASE
+        [[ -n "${NEOFORGE_MAVEN_BASE}" ]] || unset NEOFORGE_MAVEN_BASE
+        [[ -n "${SPONGE_MAVEN_BASE}" ]] || unset SPONGE_MAVEN_BASE
+
+        # shellcheck source=/dev/null
+        source "${RESOLVER_FILE}"
+        declare -F version_resolver_execute >/dev/null 2>&1 || return 2
+        version_resolver_execute \
+            "${RESOLVER_ACTION}" \
+            "${GAME_ID}" \
+            "${VARIANT_ID}" \
+            "${SELECTOR}"
+    )
+}
+
+canonical_resolver_list()
+{
+    local RUNTIME_FILE="${1:?runtime file required}"
+    local RESOLVER="${2:?resolver required}"
+    local RESPONSE
+
+    if ! resolver_file_for_name "${RESOLVER}" >/dev/null
     then
-        json_error \
-            "missing_version" \
-            "Informe a versão do Minecraft."
+        json_error "unsupported_version_resolver" "Resolver de versão não suportado: ${RESOLVER}"
         return 2
     fi
 
-    local API_BASE
-    local PROJECT
-
-    API_BASE="$(
-        jq -r \
-            '.version.config.api_base // "https://fill.papermc.io/v3"' \
-            "${RUNTIME_FILE}"
-    )"
-
-    PROJECT="$(
-        jq -r \
-            '.version.config.project // "paper"' \
-            "${RUNTIME_FILE}"
-    )"
-
-    local RESPONSE
-
-    RESPONSE="$(
-        curl \
-            -fsSL \
-            --connect-timeout 10 \
-            --max-time 30 \
-            "${API_BASE}/projects/${PROJECT}/versions/${VERSION}/builds"
-    )" || {
-        json_error \
-            "resolver_request_failed" \
-            "Não foi possível consultar as builds do PaperMC."
-        return 1
-    }
-
-    jq -c '
-        (
-            if type == "array" then
-                .
-            elif (.builds | type) == "array" then
-                .builds
-            else
-                []
-            end
-        )
-        |
-        map(
-            . as $raw
-            |
-            (
-                .id
-                // .build
-                // .number
-                // .build_number
-            ) as $number
-            |
-            {
-                value: ($number | tostring),
-                label: ("Build " + ($number | tostring)),
-                channel: (.channel // null),
-                raw: $raw
-            }
-        )
-        |
-        sort_by(.value | tonumber)
-        |
-        reverse
-        |
-        if length > 0
-        then .[0].recommended = true
-        else .
-        end
-    ' <<<"${RESPONSE}"
-
-}
-
-
-# =============================================================
-# Fabric Meta
-# =============================================================
-
-fabric_versions()
-{
-    local RUNTIME_FILE="${1:?runtime file required}"
-
-    local API_BASE
-
-    API_BASE="$(
-        jq -r \
-            '.version.config.api_base // "https://meta.fabricmc.net/v2"' \
-            "${RUNTIME_FILE}"
-    )"
-
-    local RESPONSE
-
-    RESPONSE="$(
-        curl \
-            -fsSL \
-            --connect-timeout 10 \
-            --max-time 30 \
-            "${API_BASE}/versions/game"
-    )" || {
-        json_error \
-            "resolver_request_failed" \
-            "Não foi possível consultar as versões do Fabric."
-        return 1
-    }
-
-    jq -c '
-        map(
-            select(.stable == true)
-            | {
-                value: (.version | tostring),
-                label: (.version | tostring),
-                recommended: false,
-                raw: .
-            }
-        )
-        | if length > 0
-          then .[0].recommended = true | .
-          else .
-          end
-    ' <<<"${RESPONSE}"
-}
-
-
-fabric_builds()
-{
-    local RUNTIME_FILE="${1:?runtime file required}"
-    local VERSION="${2:-}"
-
-    if [[ -z "${VERSION}" ]]
+    if ! RESPONSE="$(canonical_resolver_call "${RUNTIME_FILE}" "${RESOLVER}" list "" 2>/dev/null)"
     then
-        json_error \
-            "missing_version" \
-            "Informe a versão do Minecraft."
-        return 2
-    fi
-
-    local API_BASE
-
-    API_BASE="$(
-        jq -r \
-            '.version.config.api_base // "https://meta.fabricmc.net/v2"' \
-            "${RUNTIME_FILE}"
-    )"
-
-    local RESPONSE
-
-    RESPONSE="$(
-        curl \
-            -fsSL \
-            --connect-timeout 10 \
-            --max-time 30 \
-            "${API_BASE}/versions/loader/${VERSION}"
-    )" || {
-        json_error \
-            "resolver_request_failed" \
-            "Não foi possível consultar os loaders do Fabric."
-        return 1
-    }
-
-    jq -c '
-        map({
-            value:
-                (
-                    .loader.version
-                    // .version
-                    // .loader
-                    | tostring
-                ),
-
-            label:
-                (
-                    "Loader "
-                    +
-                    (
-                        .loader.version
-                        // .version
-                        // .loader
-                        | tostring
-                    )
-                ),
-
-            recommended:
-                (
-                    .loader.stable
-                    // .stable
-                    // false
-                ),
-
-            raw: .
-        })
-        | if length > 0 and
-             (map(select(.recommended == true)) | length) == 0
-          then .[0].recommended = true | .
-          else .
-          end
-    ' <<<"${RESPONSE}"
-}
-
-
-# =============================================================
-# Arclight / GitHub Releases
-# =============================================================
-
-arclight_versions()
-{
-    local RUNTIME_FILE="${1:?runtime file required}"
-
-    local REPOSITORY
-    local LIMIT
-
-    REPOSITORY="$(
-        jq -r \
-            '.version.config.repository // .artifact.repository // empty' \
-            "${RUNTIME_FILE}"
-    )"
-
-    LIMIT="$(
-        jq -r \
-            '.version.config.discovery_limit // 50' \
-            "${RUNTIME_FILE}"
-    )"
-
-    if [[ -z "${REPOSITORY}" ]]
-    then
-        json_error \
-            "resolver_configuration_error" \
-            "Repositório GitHub do Arclight não configurado."
+        json_error "resolver_request_failed" "Não foi possível consultar as versões deste runtime."
         return 1
     fi
 
-    local RESPONSE
-
-    RESPONSE="$(
-        curl \
-            -fsSL \
-            --connect-timeout 10 \
-            --max-time 30 \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${REPOSITORY}/releases?per_page=${LIMIT}"
-    )" || {
-        json_error \
-            "resolver_request_failed" \
-            "Não foi possível consultar as releases do Arclight."
-        return 1
-    }
-
-    jq -c '
-        [
-            .[]
-            | .assets[]?
-            | .name
-            | capture(
-                "arclight-(?:fabric|forge|neoforge)-(?<version>1\\.[0-9]+(?:\\.[0-9]+)?)-"
-            )?
-            | .version
-        ]
-        | map(select(. != null))
-        | unique
-        | sort
-        | reverse
-        | map({
-            value: .,
-            label: .
-        })
-        | if length > 0
-          then .[0].recommended = true | .
-          else .
-          end
-    ' <<<"${RESPONSE}"
-}
-
-
-arclight_builds()
-{
-    local RUNTIME_FILE="${1:?runtime file required}"
-    local VERSION="${2:-}"
-
-    if [[ -z "${VERSION}" ]]
+    if ! jq -e 'type == "object" and (.versions | type) == "array"' >/dev/null 2>&1 <<<"${RESPONSE}"
     then
-        json_error \
-            "missing_version" \
-            "Informe a versão do Minecraft."
-        return 2
-    fi
-
-    local REPOSITORY
-    local LIMIT
-
-    REPOSITORY="$(
-        jq -r \
-            '.version.config.repository // .artifact.repository // empty' \
-            "${RUNTIME_FILE}"
-    )"
-
-    LIMIT="$(
-        jq -r \
-            '.version.config.discovery_limit // 50' \
-            "${RUNTIME_FILE}"
-    )"
-
-    local RESPONSE
-
-    RESPONSE="$(
-        curl \
-            -fsSL \
-            --connect-timeout 10 \
-            --max-time 30 \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${REPOSITORY}/releases?per_page=${LIMIT}"
-    )" || {
-        json_error \
-            "resolver_request_failed" \
-            "Não foi possível consultar as builds do Arclight."
-        return 1
-    }
-
-    jq -c \
-        --arg version "${VERSION}" '
-        [
-            .[]
-            | . as $release
-            | .assets[]?
-            | select(
-                (.name | test(
-                    "arclight-(fabric|forge|neoforge)-"
-                    + ($version | gsub("\\."; "\\."))
-                    + "-"
-                ))
-            )
-            | {
-                value:
-                    (
-                        (.id // .name)
-                        | tostring
-                    ),
-
-                label:
-                    .name,
-
-                download_url:
-                    .browser_download_url,
-
-                release:
-                    $release.tag_name,
-
-                raw:
-                    .
-            }
-        ]
-        | if length > 0
-          then .[0].recommended = true | .
-          else .
-          end
-    ' <<<"${RESPONSE}"
-}
-
-
-# =============================================================
-# Minecraft Bedrock
-# =============================================================
-
-bedrock_versions()
-{
-    local RUNTIME_FILE="${1:?runtime file required}"
-
-    local PAGE
-
-    PAGE="$(
-        jq -r \
-            '.version.config.download_page // empty' \
-            "${RUNTIME_FILE}"
-    )"
-
-    if [[ -z "${PAGE}" ]]
-    then
-        json_error \
-            "resolver_configuration_error" \
-            "Página de download do Bedrock não configurada."
+        json_error "resolver_invalid_response" "O resolver retornou uma resposta inválida."
         return 1
     fi
 
-    local HTML
-
-    HTML="$(
-        curl \
-            -fsSL \
-            --connect-timeout 10 \
-            --max-time 30 \
-            "${PAGE}"
-    )" || {
-        json_error \
-            "resolver_request_failed" \
-            "Não foi possível consultar o Minecraft Bedrock."
-        return 1
-    }
-
-    local URL
-
-    URL="$(
-        grep -oE \
-            'https://[^"[:space:]]*bedrock-server-[0-9.]+\.zip' \
-            <<<"${HTML}" |
-        head -n 1
-    )"
-
-    if [[ -z "${URL}" ]]
-    then
-        json_error \
-            "resolver_parse_failed" \
-            "Não foi possível identificar a versão atual do Bedrock."
-        return 1
-    fi
-
-    local VERSION
-
-    VERSION="$(
-        sed -nE \
-            's/.*bedrock-server-([0-9.]+)\.zip.*/\1/p' \
-            <<<"${URL}"
-    )"
-
-    jq -nc \
-        --arg version "${VERSION}" \
-        --arg url "${URL}" \
-        '[
-            {
-                value: $version,
-                label: $version,
-                recommended: true,
-                raw: {
-                    download_url: $url
-                }
-            }
-        ]'
+    printf '%s\n' "${RESPONSE}"
 }
-
-
-bedrock_builds()
-{
-    local VERSION="${2:-}"
-
-    if [[ -z "${VERSION}" ]]
-    then
-        json_error \
-            "missing_version" \
-            "Informe a versão do Bedrock."
-        return 2
-    fi
-
-    jq -nc \
-        --arg version "${VERSION}" \
-        '[
-            {
-                value: "current",
-                label: ("Build oficial " + $version),
-                recommended: true
-            }
-        ]'
-}
-
-
-# =============================================================
-# Resolução genérica
-# =============================================================
 
 catalog_versions()
 {
-    local RUNTIME_ID="${1:-}"
+    local RUNTIME_ID="${1:-}" FILE STRATEGY RESOLVER RESPONSE STATUS
 
-    if [[ -z "${RUNTIME_ID}" ]]
-    then
-        json_error \
-            "missing_runtime_id" \
-            "Informe o runtime."
+    [[ -n "${RUNTIME_ID}" ]] || {
+        json_error "missing_runtime_id" "Informe o runtime."
         return 2
-    fi
-
-    local FILE
-
-    if ! FILE="$(
-        runtime_file_by_id "${RUNTIME_ID}"
-    )"
-    then
-        json_error \
-            "runtime_not_found" \
-            "Runtime não encontrado: ${RUNTIME_ID}"
+    }
+    FILE="$(runtime_file_by_id "${RUNTIME_ID}")" || {
+        json_error "runtime_not_found" "Runtime não encontrado: ${RUNTIME_ID}"
         return 2
-    fi
+    }
 
-    local STRATEGY
-    local RESOLVER
-
-    STRATEGY="$(
-        jq -r \
-            '.version.strategy // "static"' \
-            "${FILE}"
-    )"
-
-    RESOLVER="$(
-        jq -r \
-            '.version.resolver // empty' \
-            "${FILE}"
-    )"
-
+    STRATEGY="$(jq -r '.version.strategy // "static"' "${FILE}")"
     if [[ "${STRATEGY}" == "static" ]]
     then
-        jq -c '
-            [
-                {
-                    value:
-                        (
-                            .version.value
-                            // .version.version
-                            // "current"
-                            | tostring
-                        ),
-
-                    label:
-                        (
-                            .version.value
-                            // .version.version
-                            // "Versão atual / recomendada"
-                            | tostring
-                        ),
-
-                    recommended: true,
-
-                    raw: .version
-                }
-            ]
-        ' "${FILE}"
-
+        jq -c '[{value:(.version.value // .version.version // "current" | tostring),label:(.version.value // .version.version // "Versão atual / recomendada" | tostring),recommended:true,raw:.version}]' "${FILE}"
         return
     fi
 
-    case "${RESOLVER}" in
-        papermc)
-            papermc_versions "${FILE}"
-            ;;
+    RESOLVER="$(resolver_name_for_file "${FILE}")"
+    [[ -n "${RESOLVER}" ]] || {
+        json_error "missing_version_resolver" "Runtime dinâmico sem resolver de versão."
+        return 2
+    }
 
-        fabric_meta)
-            fabric_versions "${FILE}"
-            ;;
+    if RESPONSE="$(canonical_resolver_list "${FILE}" "${RESOLVER}")"
+    then
+        :
+    else
+        STATUS=$?
+        printf '%s\n' "${RESPONSE}"
+        return "${STATUS}"
+    fi
 
-        github_releases)
-            arclight_versions "${FILE}"
-            ;;
-
-        minecraft_bedrock)
-            bedrock_versions "${FILE}"
-            ;;
-
-        *)
-            json_error \
-                "unsupported_version_resolver" \
-                "Resolver de versão não suportado: ${RESOLVER}"
-            return 2
-            ;;
-    esac
+    jq -c '
+        [.versions[]? |
+            (.version // .minecraft_versions[0] // empty) |
+            select(. != null and tostring != "") |
+            tostring] |
+        reduce .[] as $value ([]; if index($value) then . else . + [$value] end) |
+        map({value:.,label:.,recommended:false}) |
+        if length > 0 then .[0].recommended = true else . end
+    ' <<<"${RESPONSE}"
 }
-
 
 catalog_builds()
 {
-    local RUNTIME_ID="${1:-}"
-    local VERSION="${2:-}"
+    local RUNTIME_ID="${1:-}" VERSION="${2:-}" FILE STRATEGY RESOLVER RESPONSE BUILDS RESOLVED STATUS
 
-    if [[ -z "${RUNTIME_ID}" ]]
-    then
-        json_error \
-            "missing_runtime_id" \
-            "Informe o runtime."
+    [[ -n "${RUNTIME_ID}" ]] || {
+        json_error "missing_runtime_id" "Informe o runtime."
         return 2
-    fi
-
-    local FILE
-
-    if ! FILE="$(
-        runtime_file_by_id "${RUNTIME_ID}"
-    )"
-    then
-        json_error \
-            "runtime_not_found" \
-            "Runtime não encontrado: ${RUNTIME_ID}"
+    }
+    [[ -n "${VERSION}" ]] || {
+        json_error "missing_version" "Informe a versão do runtime."
         return 2
-    fi
+    }
+    FILE="$(runtime_file_by_id "${RUNTIME_ID}")" || {
+        json_error "runtime_not_found" "Runtime não encontrado: ${RUNTIME_ID}"
+        return 2
+    }
 
-    local STRATEGY
-    local RESOLVER
-
-    STRATEGY="$(
-        jq -r \
-            '.version.strategy // "static"' \
-            "${FILE}"
-    )"
-
-    RESOLVER="$(
-        jq -r \
-            '.version.resolver // empty' \
-            "${FILE}"
-    )"
-
+    STRATEGY="$(jq -r '.version.strategy // "static"' "${FILE}")"
     if [[ "${STRATEGY}" == "static" ]]
     then
-        local BUILD
-
-        BUILD="$(
-            jq -r \
-                '.version.build // empty' \
-                "${FILE}"
-        )"
-
-        if [[ -n "${BUILD}" ]]
-        then
-            jq -nc \
-                --arg build "${BUILD}" \
-                '[
-                    {
-                        value: $build,
-                        label: "Build recomendada",
-                        recommended: true
-                    }
-                ]'
-        else
-            jq -nc '
-                [
-                    {
-                        value: "current",
-                        label: "Build atual / recomendada",
-                        recommended: true
-                    }
-                ]
-            '
-        fi
-
+        jq -c '[{value:(.version.build // "current" | tostring),label:(if .version.build then "Build recomendada" else "Build atual / recomendada" end),recommended:true}]' "${FILE}"
         return
     fi
 
-    case "${RESOLVER}" in
-        papermc)
-            papermc_builds \
-                "${FILE}" \
-                "${VERSION}"
-            ;;
+    RESOLVER="$(resolver_name_for_file "${FILE}")"
+    [[ -n "${RESOLVER}" ]] || {
+        json_error "missing_version_resolver" "Runtime dinâmico sem resolver de versão."
+        return 2
+    }
 
-        fabric_meta)
-            fabric_builds \
-                "${FILE}" \
-                "${VERSION}"
-            ;;
+    if RESPONSE="$(canonical_resolver_list "${FILE}" "${RESOLVER}")"
+    then
+        :
+    else
+        STATUS=$?
+        printf '%s\n' "${RESPONSE}"
+        return "${STATUS}"
+    fi
 
-        github_releases)
-            arclight_builds \
-                "${FILE}" \
-                "${VERSION}"
-            ;;
+    BUILDS="$(jq -c --arg version "${VERSION}" '
+        [.versions[]? |
+            select((.version // "" | tostring) == $version) |
+            (.build // .full // empty) |
+            select(. != null and tostring != "") |
+            tostring] |
+        reduce .[] as $value ([]; if index($value) then . else . + [$value] end) |
+        reverse |
+        map({value:.,label:("Build " + .),recommended:false}) |
+        if length > 0 then .[0].recommended = true else . end
+    ' <<<"${RESPONSE}")"
 
-        minecraft_bedrock)
-            bedrock_builds \
-                "${FILE}" \
-                "${VERSION}"
-            ;;
+    if [[ "$(jq 'length' <<<"${BUILDS}")" -gt 0 ]]
+    then
+        printf '%s\n' "${BUILDS}"
+        return
+    fi
 
-        *)
-            json_error \
-                "unsupported_build_resolver" \
-                "Resolver de build não suportado: ${RESOLVER}"
-            return 2
-            ;;
-    esac
+    if ! RESOLVED="$(canonical_resolver_call "${FILE}" "${RESOLVER}" resolve "${VERSION}" 2>/dev/null)"
+    then
+        json_error "resolver_request_failed" "Não foi possível consultar as builds desta versão."
+        return 1
+    fi
+
+    if jq -e '.error?' >/dev/null 2>&1 <<<"${RESOLVED}"
+    then
+        json_error "build_not_found" "Nenhuma build compatível foi encontrada para esta versão."
+        return 1
+    fi
+
+    jq -c '[{value:(.build // .tag // "current" | tostring),label:("Build " + (.build // .tag // "current" | tostring)),recommended:true,raw:.}]' <<<"${RESOLVED}"
 }
-
-
-# =============================================================
-# Busca externa
-# =============================================================
 
 catalog_search()
 {
-    local PROVIDER="${1:-modrinth}"
-    local QUERY="${2:-}"
-    local GAME="${3:-minecraft}"
-    local GAME_VERSION="${4:-}"
-    local LOADER="${5:-}"
-    local CONTENT_TYPE="${6:-mod}"
-    local LIMIT="${7:-20}"
+    local PROVIDER="${1:-modrinth}" QUERY="${2:-}" GAME="${3:-minecraft}"
+    local GAME_VERSION="${4:-}" LOADER="${5:-}" CONTENT_TYPE="${6:-mod}" LIMIT="${7:-20}"
 
-    if [[ "${PROVIDER}" != "modrinth" ]]
-    then
-        json_error \
-            "unsupported_search_provider" \
-            "Provider de busca não suportado: ${PROVIDER}"
+    [[ "${PROVIDER}" == "modrinth" ]] || {
+        json_error "unsupported_search_provider" "Provider de busca não suportado: ${PROVIDER}"
         return 2
-    fi
-
-    if [[ -z "${QUERY}" ]]
-    then
-        json_error \
-            "missing_query" \
-            "Informe um termo de busca."
+    }
+    [[ -n "${QUERY}" ]] || {
+        json_error "missing_query" "Informe um termo de busca."
         return 2
-    fi
-
-    if [[ "${GAME}" != "minecraft" ]]
-    then
-        json_error \
-            "unsupported_game" \
-            "A busca Modrinth está disponível inicialmente para Minecraft."
+    }
+    [[ "${GAME}" == "minecraft" ]] || {
+        json_error "unsupported_game" "A busca Modrinth está disponível inicialmente para Minecraft."
         return 2
-    fi
-
-    if [[ ! -f "${PROVIDER_LOADER}" ]]
-    then
-        json_error \
-            "provider_loader_missing" \
-            "Provider Loader não encontrado."
+    }
+    [[ -f "${PROVIDER_LOADER}" ]] || {
+        json_error "provider_loader_missing" "Provider Loader não encontrado."
         return 1
-    fi
+    }
 
     # shellcheck source=/dev/null
     source "${PROVIDER_LOADER}"
-
-    if ! provider_require "${PROVIDER}"
-    then
-        json_error \
-            "provider_unavailable" \
-            "Provider ${PROVIDER} não disponível."
+    provider_require "${PROVIDER}" || {
+        json_error "provider_unavailable" "Provider ${PROVIDER} não disponível."
         return 1
-    fi
-
-    if ! declare -F \
-        provider_search \
-        >/dev/null 2>&1
-    then
-        json_error \
-            "provider_search_unsupported" \
-            "Provider não implementa busca."
+    }
+    declare -F provider_search >/dev/null 2>&1 || {
+        json_error "provider_search_unsupported" "Provider não implementa busca."
         return 1
-    fi
-
-    provider_search \
-        "${QUERY}" \
-        "${GAME_VERSION}" \
-        "${LOADER}" \
-        "${CONTENT_TYPE}" \
-        "${LIMIT}"
+    }
+    provider_search "${QUERY}" "${GAME_VERSION}" "${LOADER}" "${CONTENT_TYPE}" "${LIMIT}"
 }
 
-
-# =============================================================
-# Ações
-# =============================================================
-
 case "${ACTION}" in
-
-    # ---------------------------------------------------------
-    # Compatibilidade
-    # ---------------------------------------------------------
-
     compatibility)
         [[ -n "${1:-}" ]] || {
             printf '{"error":"missing_compatibility_request"}\n'
             exit 2
         }
-
-        exec "${CATALOG}"             compatibility check "$1" --json
+        exec "${CATALOG}" compatibility check "$1" --json
         ;;
-
-    # ---------------------------------------------------------
-    # Catálogo V2
-    # ---------------------------------------------------------
-
     runtimes)
         catalog_runtimes "$@"
         ;;
-
     runtime)
         catalog_runtime "$@"
         ;;
-
     versions)
         catalog_versions "$@"
         ;;
-
     builds)
         catalog_builds "$@"
         ;;
-
-
-    # ---------------------------------------------------------
-    # Catálogo legado
-    # ---------------------------------------------------------
-
     list|editions|variants|versions-legacy|resolve|prepare)
         LEGACY_ACTION="${ACTION}"
-
-        if [[ "${ACTION}" == "versions-legacy" ]]
-        then
-            LEGACY_ACTION="versions"
-        fi
-
-        exec \
-            "${CATALOG}" \
-            "${LEGACY_ACTION}" \
-            "$@"
+        [[ "${ACTION}" != "versions-legacy" ]] || LEGACY_ACTION="versions"
+        exec "${CATALOG}" "${LEGACY_ACTION}" "$@"
         ;;
-
-
-    # ---------------------------------------------------------
-    # Busca externa
-    # ---------------------------------------------------------
-
     search)
         catalog_search "$@"
         ;;
-
-
-    # ---------------------------------------------------------
-    # Inválida
-    # ---------------------------------------------------------
-
     *)
-        jq -nc \
-            --arg action "${ACTION}" \
-            '{
-                error:
-                    "invalid_catalog_action",
-
-                action:
-                    $action,
-
-                actions: [
-                    "runtimes",
-                    "runtime",
-                    "versions",
-                    "builds",
-                    "search",
-                    "list",
-                    "editions",
-                    "variants",
-                    "resolve",
-                    "prepare"
-                ]
-            }'
-
+        jq -nc --arg action "${ACTION}" '{error:"invalid_catalog_action",action:$action,actions:["runtimes","runtime","versions","builds","search","list","editions","variants","resolve","prepare"]}'
         exit 2
         ;;
 esac
