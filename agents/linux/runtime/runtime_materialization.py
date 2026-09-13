@@ -8,6 +8,7 @@ from typing import Any
 
 import instance_runtime
 from adapters import resolve_adapter
+from content_activation_runtime import materialize_content_activation
 from materializers import resolve_materializer
 from runtime_events import emit_runtime_event
 from runtime_spec import validate_runtime_spec
@@ -23,6 +24,7 @@ def materialize(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
     emit_runtime_event(_state_dir(), "INSTANCE_RUNTIME_MATERIALIZING", instance_id=normalized["instance_id"], agent_id=agent_id)
     materializer = resolve_materializer(normalized)
     try:
+        content_files = materialize_content_activation(normalized)
         operation = materializer.apply(normalized)
         record = instance_runtime.register_instance({
             **normalized,
@@ -31,9 +33,9 @@ def materialize(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
         })
         event = emit_runtime_event(
             _state_dir(), "INSTANCE_RUNTIME_READY", instance_id=normalized["instance_id"], agent_id=agent_id,
-            data={"adapter": normalized["adapter"], "changed": bool(operation.get("changed"))},
+            data={"adapter": normalized["adapter"], "changed": bool(operation.get("changed")), "content_files": content_files},
         )
-        return {"spec": normalized, "instance": record, "operation": operation, "event": event}
+        return {"spec": normalized, "instance": record, "operation": operation, "content_files": content_files, "event": event}
     except Exception as exc:
         emit_runtime_event(
             _state_dir(), "INSTANCE_RUNTIME_FAILED", instance_id=normalized["instance_id"], agent_id=agent_id,
@@ -46,6 +48,7 @@ def reconcile(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     record = instance_runtime._owned(config, instance_id)
     normalized = validate_runtime_spec(record, expected_agent_id=str(config.get("agent_id") or ""))
     materializer = resolve_materializer(normalized)
+    content_files = materialize_content_activation(normalized)
     materialized = materializer.inspect(normalized)
     if not materialized.get("exists") or not materialized.get("owned"):
         raise RuntimeError("instance runtime is not safely materialized")
@@ -64,7 +67,7 @@ def reconcile(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     event_type = "INSTANCE_RUNTIME_RECONCILED" if operation else "INSTANCE_RUNTIME_IN_SYNC"
     event = emit_runtime_event(
         _state_dir(), event_type, instance_id=normalized["instance_id"], agent_id=normalized["agent_id"],
-        data={"desired_state": desired, "observed_state": observed, "changed": operation is not None},
+        data={"desired_state": desired, "observed_state": observed, "changed": operation is not None, "content_files": content_files},
     )
     return {
         "instance_id": normalized["instance_id"],
@@ -72,6 +75,7 @@ def reconcile(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
         "observed_state": observed,
         "changed": operation is not None,
         "operation": operation,
+        "content_files": content_files,
         "instance": updated,
         "event": event,
     }
