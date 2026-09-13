@@ -11,6 +11,7 @@
   "process": {"engine": "native", "executable": "DayZServer", "artifact_mode": "executable", "args": ["-config=serverDZ.cfg"]},
   "requirements": {"os": ["linux", "windows"], "architectures": ["x86_64"], "java": null},
   "artifact": {"provider": "steam", "auth": "required", "package_id": "223350"},
+  "content": {"steam_workshop": {"app_id": "221100"}},
   "installation": {"directory": "/opt/dsm/game-data/dayz/serverfiles"},
   "network": {
     "allocation": "block",
