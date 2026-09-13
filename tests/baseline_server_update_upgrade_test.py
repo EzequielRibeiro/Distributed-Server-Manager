@@ -61,20 +61,21 @@ class BaselineServerUpdateUpgradeTest(unittest.TestCase):
             self.assertEqual(before.returncode, 1, before.stderr)
             before_payload = json.loads(before.stdout)
             self.assertEqual(before_payload["upgrade_version"], 5)
-            self.assertEqual(before_payload["upgrade_latest"], 8)
+            self.assertEqual(before_payload["upgrade_latest"], 9)
             self.assertEqual(
                 before_payload["pending_upgrades"],
                 [{"version": 6, "name": "universal_server_update"},
                  {"version": 7, "name": "backup_job_retry_identity"},
-                 {"version": 8, "name": "universal_content_contract_v2"}],
+                 {"version": 8, "name": "universal_content_contract_v2"},
+                 {"version": 9, "name": "backup_job_retry_identity_repair"}],
             )
 
             migrated = self.manager(root, database, "migrate")
             self.assertEqual(migrated.returncode, 0, migrated.stderr)
             migrated_payload = json.loads(migrated.stdout)
             self.assertTrue(migrated_payload["valid"])
-            self.assertEqual(migrated_payload["upgrade_version"], 8)
-            self.assertEqual(migrated_payload["upgrade_latest"], 8)
+            self.assertEqual(migrated_payload["upgrade_version"], 9)
+            self.assertEqual(migrated_payload["upgrade_latest"], 9)
 
             with sqlite3.connect(database) as connection:
                 tables = {

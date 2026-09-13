@@ -1812,7 +1812,7 @@ CREATE TABLE IF NOT EXISTS backup_jobs (
  sha256 TEXT, artifact_path TEXT, started_at TEXT, completed_at TEXT, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
  FOREIGN KEY(instance_id) REFERENCES instances(id) ON DELETE CASCADE, FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_backup_jobs_backup_id ON backup_jobs(backup_id) WHERE backup_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_backup_jobs_backup_id ON backup_jobs(backup_id);
 CREATE INDEX IF NOT EXISTS idx_backup_jobs_agent_status ON backup_jobs(agent_id,status,created_at);
 CREATE INDEX IF NOT EXISTS idx_backup_jobs_instance_completed ON backup_jobs(instance_id,completed_at);
 

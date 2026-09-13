@@ -78,7 +78,7 @@ class CustomerInstanceWorkspaceService:
   return state
  def backup_policy(self,user,instance_id):self.require(user,instance_id,"backup.read");return self.repo.backup_policy(instance_id)
  def save_backup_policy(self,user,instance_id,body):self.require(user,instance_id,"backup.create");return self.repo.save_backup_policy(instance_id,enabled=bool(body.get("enabled",True)),schedule_time=body.get("schedule_time") or "04:00",schedule_timezone=body.get("schedule_timezone") or "UTC",healthy_only=True)
- def backup_jobs(self,user,instance_id):self.require(user,instance_id,"backup.read");self.backups.initialize();return self.backups.list_jobs(instance_id=instance_id,limit=100)
+ def backup_jobs(self,user,instance_id):self.require(user,instance_id,"backup.read");self.backups.initialize();return self.backups.list_effective_jobs(instance_id=instance_id,limit=100)
  def request_backup(self,user,instance_id,action,backup_id=None):
   action=str(action or "").lower();required={"create":"backup.create","restore":"backup.restore","delete":"backup.delete"}.get(action)
   if required is None:raise ValueError("invalid backup action")

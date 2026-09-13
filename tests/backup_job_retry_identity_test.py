@@ -98,10 +98,11 @@ class _MySqlConnection:
 
 
 class BackupJobRetryIdentityTest(unittest.TestCase):
-    def test_upgrade_registry_retains_retry_identity_v7_and_advances_to_content_v8(self):
-        self.assertEqual(upgrades.latest_upgrade_version(), 8)
+    def test_upgrade_registry_retains_retry_identity_and_repairs_it_at_v9(self):
+        self.assertEqual(upgrades.latest_upgrade_version(), 9)
         self.assertEqual(upgrades.UPGRADES[6].name, "backup_job_retry_identity")
-        self.assertEqual(upgrades.UPGRADES[-1].name, "universal_content_contract_v2")
+        self.assertEqual(upgrades.UPGRADES[7].name, "universal_content_contract_v2")
+        self.assertEqual(upgrades.UPGRADES[-1].name, "backup_job_retry_identity_repair")
 
     def test_sqlite_allows_multiple_jobs_for_same_backup_artifact(self):
         connection = sqlite3.connect(":memory:")
@@ -109,6 +110,10 @@ class BackupJobRetryIdentityTest(unittest.TestCase):
         connection.execute(
             "CREATE TABLE backup_jobs ("
             "command_id TEXT PRIMARY KEY, backup_id TEXT, action TEXT, status TEXT)"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX idx_backup_jobs_backup_id "
+            "ON backup_jobs(backup_id) WHERE backup_id IS NOT NULL"
         )
         backend = SimpleNamespace(name="sqlite")
 
@@ -136,6 +141,19 @@ class BackupJobRetryIdentityTest(unittest.TestCase):
         )
         self.assertEqual(int(retry_index["unique"]), 0)
         connection.close()
+
+    def test_current_baselines_make_backup_id_non_unique(self):
+        sqlite_sql = (ROOT / "database/schemas/sqlite.sql").read_text(encoding="utf-8")
+        postgres_sql = (ROOT / "database/schemas/postgresql.sql").read_text(encoding="utf-8")
+        mysql_sql = (ROOT / "database/schemas/mysql.sql").read_text(encoding="utf-8")
+        mariadb_sql = (ROOT / "database/schemas/mariadb.sql").read_text(encoding="utf-8")
+        self.assertNotIn("CREATE UNIQUE INDEX IF NOT EXISTS idx_backup_jobs_backup_id", sqlite_sql)
+        self.assertIn("CREATE INDEX IF NOT EXISTS idx_backup_jobs_backup_id ON backup_jobs(backup_id);", sqlite_sql)
+        self.assertNotIn("backup_id TEXT UNIQUE", postgres_sql)
+        self.assertIn("idx_backup_jobs_backup_id ON backup_jobs(backup_id)", postgres_sql)
+        for sql in (mysql_sql, mariadb_sql):
+            self.assertNotIn("backup_id VARCHAR(191) UNIQUE", sql)
+            self.assertIn("INDEX idx_backup_jobs_backup_id(backup_id)", sql)
 
     def test_postgresql_drops_only_standalone_backup_id_unique_constraint(self):
         connection = _PostgresConnection()

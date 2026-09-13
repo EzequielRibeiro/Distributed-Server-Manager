@@ -377,10 +377,38 @@ def _upgrade_backup_job_retry_identity(backend: Any, connection: Any) -> None:
         raise DatabaseMigrationError("backup_jobs table is missing")
 
     if backend.name == "sqlite":
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_backup_jobs_backup_id "
-            "ON backup_jobs(backup_id)"
-        )
+        indexes = connection.execute(
+            "PRAGMA index_list('backup_jobs')"
+        ).fetchall()
+        normal_backup_index = False
+        for row in indexes:
+            name = str(row["name"])
+            quoted = name.replace('"', '""')
+            columns = tuple(
+                str(item["name"])
+                for item in connection.execute(
+                    f'PRAGMA index_info("{quoted}")'
+                ).fetchall()
+            )
+            if columns != ("backup_id",):
+                if name == "idx_backup_jobs_backup_id":
+                    raise DatabaseMigrationError(
+                        "idx_backup_jobs_backup_id exists with incompatible columns"
+                    )
+                continue
+            if int(row["unique"] or 0):
+                if name.startswith("sqlite_autoindex_"):
+                    raise DatabaseMigrationError(
+                        "backup_id unique constraint requires manual SQLite table repair"
+                    )
+                connection.execute(f'DROP INDEX "{quoted}"')
+                continue
+            normal_backup_index = True
+        if not normal_backup_index:
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_backup_jobs_backup_id "
+                "ON backup_jobs(backup_id)"
+            )
         return
 
     if backend.name == "postgresql":
@@ -545,6 +573,7 @@ UPGRADES = (
     BaselineUpgrade(6, "universal_server_update", _upgrade_server_update_schema),
     BaselineUpgrade(7, "backup_job_retry_identity", _upgrade_backup_job_retry_identity),
     BaselineUpgrade(8, "universal_content_contract_v2", _upgrade_content_contract_v2),
+    BaselineUpgrade(9, "backup_job_retry_identity_repair", _upgrade_backup_job_retry_identity),
 )
 
 

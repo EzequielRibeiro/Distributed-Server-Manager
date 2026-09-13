@@ -36,6 +36,20 @@ class BackupRepositoryTest(unittest.TestCase):
   ack={"command_id":cmd["command_id"],"status":"completed","backup_id":"backup-c5","size_bytes":42,"sha256":"a"*64,"artifact_path":"/var/lib/capivara-agent/backups/instance-c5/backup-c5.tar.gz"}
   result=record_agent_heartbeat("agent-c5",{"agent_id":"agent-c5","backup_state":[ack]},backend=self.backend);self.assertEqual(result["backup_count"],0);self.assertEqual(self.repo.get_job(cmd["command_id"])["backup_id"],"backup-c5")
   self.assertEqual(self.repo.record_agent_state("other-agent",[ack]),0)
+ def test_completed_delete_removes_backup_from_effective_view(self):
+  create=self.repo.request("instance-c5",action="create",requested_by="test")
+  self.repo.record_agent_state("agent-c5",[{"command_id":create["command_id"],"status":"completed","backup_id":"backup-deleted","size_bytes":42}])
+  self.assertEqual(self.repo.latest_completed("instance-c5")["backup_id"],"backup-deleted")
+  failed=self.repo.request("instance-c5",action="delete",backup_id="backup-deleted",requested_by="test")
+  self.repo.record_agent_state("agent-c5",[{"command_id":failed["command_id"],"status":"failed","backup_id":"backup-deleted","last_error":"still present"}])
+  self.assertEqual(self.repo.latest_completed("instance-c5")["backup_id"],"backup-deleted")
+  delete=self.repo.request("instance-c5",action="delete",backup_id="backup-deleted",requested_by="test")
+  self.repo.record_agent_state("agent-c5",[{"command_id":delete["command_id"],"status":"completed","backup_id":"backup-deleted"}])
+  raw=self.repo.list_jobs(instance_id="instance-c5",limit=20);effective=self.repo.list_effective_jobs(instance_id="instance-c5",limit=20)
+  self.assertTrue(any(job.get("action")=="create" and job.get("backup_id")=="backup-deleted" for job in raw))
+  self.assertFalse(any(job.get("action")=="create" and job.get("backup_id")=="backup-deleted" for job in effective))
+  self.assertTrue(any(job.get("action")=="delete" and job.get("status")=="completed" for job in effective))
+  self.assertIsNone(self.repo.latest_completed("instance-c5"))
  def test_manual_restore_delete_and_http_rbac(self):
   self.repo.put_policy(self.policy());admin={"role":"admin","username":"root"}
   status,created=dispatch_backup_post("/api/backups",{"operation":"create","instance_id":"instance-c5"},user=admin,backend=self.backend);self.assertEqual(status,202);self.assertEqual(created["action"],"create")
