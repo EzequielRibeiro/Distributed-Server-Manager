@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib,http.client,json,os,ssl
 from pathlib import Path
 from urllib.parse import urlencode,urlparse
+from content_upload_quarantine import quarantine_destination,quarantine_relative_path,validate_quarantine_archive
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));RESULT=STATE/"artifact-results";BACKUPS=Path(os.environ.get("CAPIVARA_BACKUP_ROOT",STATE/"backups")).resolve()
 def _safe(v):
  s=str(v or "").strip()
@@ -50,18 +51,28 @@ def _get(config,transfer_id,destination,expected_size=None,expected_sha=None):
   try:tmp.unlink()
   except FileNotFoundError:pass
  return total
+def _content_upload(config,tid,command):
+ dest=quarantine_destination(tid,str(command.get("filename") or ""))
+ try:
+  transferred=_get(config,tid,dest,command.get("size_bytes"),command.get("sha256"));inspection=validate_quarantine_archive(dest);return transferred,quarantine_relative_path(dest),inspection
+ except Exception:
+  try:dest.unlink(missing_ok=True);dest.parent.rmdir()
+  except OSError:pass
+  raise
 def handle_command(config,command):
  tid=_safe(command.get("transfer_id"));path=RESULT/f"{tid}.json"
  try:old=json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
  except Exception:old=None
  if isinstance(old,dict) and old.get("status") in {"completed","failed"}:return old
  try:
-  direction=str(command.get("direction") or "");purpose=str(command.get("purpose") or "");iid=_safe(command.get("instance_id"));source=str(command.get("source_ref") or "");destination=str(command.get("destination_ref") or "")
+  direction=str(command.get("direction") or "");purpose=str(command.get("purpose") or "");iid=_safe(command.get("instance_id"));source=str(command.get("source_ref") or "");destination=str(command.get("destination_ref") or "");extra={}
   if direction=="agent_to_controller" and purpose in {"backup_export","deleted_backup_export"}:transferred=_put(config,tid,_backup_artifact(iid,source))
   elif direction=="controller_to_agent" and purpose in {"backup_import","backup_clone"}:
    backup_id=_safe(destination or source or tid);suffix=".tar.gz" if str(command.get("filename") or "").endswith(".gz") else ".tar";dest=(BACKUPS/iid/f"{backup_id}{suffix}").resolve();dest.relative_to(BACKUPS);transferred=_get(config,tid,dest,command.get("size_bytes"),command.get("sha256"))
+  elif direction=="controller_to_agent" and purpose=="content_upload":
+   transferred,relative,inspection=_content_upload(config,tid,command);extra={"quarantine_path":relative,"archive_type":inspection["archive_type"],"archive_entries":inspection["entries"],"sha256":str(command.get("sha256") or "")}
   else:raise ValueError("unsupported artifact transfer purpose")
-  result={"transfer_id":tid,"instance_id":iid,"status":"completed","transferred_bytes":transferred}
+  result={"transfer_id":tid,"instance_id":iid,"status":"completed","transferred_bytes":transferred,**extra}
  except Exception as exc:result={"transfer_id":tid,"instance_id":command.get("instance_id"),"status":"failed","error":str(exc)[:2000]}
  _write(path,result);return result
 def read_result():
