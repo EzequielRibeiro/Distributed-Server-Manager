@@ -3,6 +3,20 @@ from __future__ import annotations
 import os,re
 from pathlib import Path
 from typing import Any
+try:
+ from content_activation_minecraft import MinecraftContentActivationError,materialize_minecraft_files,project_minecraft_files
+except ModuleNotFoundError as exc:
+ if exc.name != "content_activation_minecraft":
+  raise
+ import importlib.util
+ _minecraft_path=Path(__file__).with_name("content_activation_minecraft.py")
+ _minecraft_spec=importlib.util.spec_from_file_location(f"{__name__}_minecraft",_minecraft_path)
+ if _minecraft_spec is None or _minecraft_spec.loader is None:
+  raise
+ _minecraft_module=importlib.util.module_from_spec(_minecraft_spec);_minecraft_spec.loader.exec_module(_minecraft_module)
+ MinecraftContentActivationError=_minecraft_module.MinecraftContentActivationError
+ materialize_minecraft_files=_minecraft_module.materialize_minecraft_files
+ project_minecraft_files=_minecraft_module.project_minecraft_files
 _SAFE_ID=re.compile(r"^[A-Za-z0-9._-]{1,191}$");_SAFE_MOD_ID=re.compile(r"^[^;\r\n]{1,191}$")
 class ContentRuntimeActivationError(RuntimeError):pass
 def _entries(snapshot):
@@ -49,14 +63,16 @@ def project_runtime_spec(spec:dict[str,Any],snapshot:dict[str,Any])->dict[str,An
  base=list(result.get("content_base_arguments") if isinstance(result.get("content_base_arguments"),list) else result.get("arguments") or []);content_args=[];properties=[]
  for renderer in (_dayz,_project_zomboid):
   args,props=renderer(entries);content_args.extend(args);properties.extend(props)
- result["content_base_arguments"]=[str(v) for v in base];result["arguments"]=[*result["content_base_arguments"],*content_args];result["content_configuration_properties"]=properties;result["content_activation_checksum"]=str(snapshot.get("checksum") or "");return result
+ result["content_base_arguments"]=[str(v) for v in base];result["arguments"]=[*result["content_base_arguments"],*content_args];result["content_configuration_properties"]=properties
+ try:result["content_file_projections"]=project_minecraft_files(result,entries)
+ except MinecraftContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc
+ result["content_activation_checksum"]=str(snapshot.get("checksum") or "");return result
 def _configuration_root(spec):
  raw=spec.get("instance_state_root") or spec.get("configuration_root") or spec.get("working_directory") or spec.get("path")
  if not raw:raise ContentRuntimeActivationError("content activation has no configuration root")
  return Path(str(raw)).resolve()
 def materialize_content_activation(spec):
  props=spec.get("content_configuration_properties") if isinstance(spec.get("content_configuration_properties"),list) else []
- if not props:return []
  root=_configuration_root(spec);written=[]
  for item in props:
   if not isinstance(item,dict):raise ContentRuntimeActivationError("invalid content configuration property")
@@ -69,5 +85,7 @@ def materialize_content_activation(spec):
   key=str(item.get("key") or "").strip();value=str(item.get("value") or "")
   if not _SAFE_ID.fullmatch(key) or any(c in value for c in ("\x00","\r","\n")):raise ContentRuntimeActivationError("invalid content configuration value")
   text=target.read_text(encoding="utf-8",errors="replace") if target.exists() else "";pattern=re.compile(rf"(?m)^\s*{re.escape(key)}\s*=\s*[^\r\n]*$");line=f"{key}={value}";text=pattern.sub(line,text,count=1) if pattern.search(text) else text.rstrip("\n")+("\n" if text else "")+line+"\n";target.parent.mkdir(parents=True,exist_ok=True);target.write_text(text,encoding="utf-8");written.append(relative.as_posix())
+ try:written.extend(materialize_minecraft_files(spec))
+ except MinecraftContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc
  return written
 __all__=["ContentRuntimeActivationError","materialize_content_activation","project_runtime_spec"]

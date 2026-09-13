@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Read game/runtime capabilities for Customer Instance Workspace v2.
 
-The optional ``workspace-policy.json`` inside each game catalog is the single
-place where customer-facing runtime capabilities are declared. Runtime files
-remain responsible for installation/materialization. Missing declarations fail
-closed for content and console capabilities.
+``workspace-policy.json`` carries customer UX/contract defaults while the
+RuntimeDefinition owns executable managed-content capabilities. During migration,
+legacy workspace booleans remain a fallback only when a RuntimeDefinition does not
+yet declare ``content.managed``. Missing declarations fail closed.
 """
 from __future__ import annotations
 
@@ -69,17 +69,27 @@ def runtime_workspace_capabilities(root: Path, game_id: str, runtime_id: str) ->
     item = (policy.get("runtimes") or {}).get(runtime)
     if not isinstance(item, dict):
         item = {}
+    definition = runtime_definition(root, game_id, runtime)
+    content = definition.get("content") if isinstance(definition, dict) else {}
+    managed = content.get("managed") if isinstance(content, dict) else None
+    managed_types = managed.get("types") if isinstance(managed, dict) else None
+    authoritative = isinstance(managed_types, dict)
+    mods = "mod" in managed_types if authoritative else bool(item.get("mods"))
+    plugins = "plugin" in managed_types if authoritative else bool(item.get("plugins"))
+    datapacks = "datapack" in managed_types if authoritative else False
     return {
-        "mods": bool(item.get("mods")),
-        "plugins": bool(item.get("plugins")),
+        "mods": mods,
+        "plugins": plugins,
+        "datapacks": datapacks,
+        "modpacks": False,
         "workshop": bool(item.get("workshop")),
         "external_upload": bool(item.get("external_upload", True)),
         "custom_runtime": bool(item.get("custom_runtime", False)),
         "console": dict(item.get("console") or {}),
         "startup_parameters": dict(item.get("startup_parameters") or {}),
         "file_policy": dict(item.get("file_policy") or {}),
-        "label": str(item.get("label") or runtime),
-        "family": str(item.get("family") or ""),
+        "label": str(item.get("label") or definition.get("name") or runtime),
+        "family": str(item.get("family") or definition.get("edition") or ""),
     }
 
 
