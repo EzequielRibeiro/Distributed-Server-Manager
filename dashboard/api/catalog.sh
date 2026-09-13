@@ -214,15 +214,33 @@ catalog_versions()
         return "${STATUS}"
     fi
 
-    jq -c '
+    local VERSIONS RECOMMENDED_VERSION="" CANDIDATE RESOLVED
+    VERSIONS="$(jq -c '
         [.versions[]? |
             (.version // .minecraft_versions[0] // empty) |
             select(. != null and tostring != "") |
             tostring] |
         reduce .[] as $value ([]; if index($value) then . else . + [$value] end) |
-        map({value:.,label:.,recommended:false}) |
-        if length > 0 then .[0].recommended = true else . end
-    ' <<<"${RESPONSE}"
+        map({value:.,label:.,recommended:false})
+    ' <<<"${RESPONSE}")"
+
+    while IFS= read -r CANDIDATE
+    do
+        [[ -n "${CANDIDATE}" ]] || continue
+        if RESOLVED="$(canonical_resolver_call "${FILE}" "${RESOLVER}" resolve "${CANDIDATE}" 2>/dev/null)" && \
+           ! jq -e '.error?' >/dev/null 2>&1 <<<"${RESOLVED}"
+        then
+            RECOMMENDED_VERSION="${CANDIDATE}"
+            break
+        fi
+    done < <(jq -r '.[].value' <<<"${VERSIONS}")
+
+    if [[ -n "${RECOMMENDED_VERSION}" ]]
+    then
+        jq -c --arg recommended "${RECOMMENDED_VERSION}" 'map(.recommended = (.value == $recommended))' <<<"${VERSIONS}"
+    else
+        printf '%s\n' "${VERSIONS}"
+    fi
 }
 
 catalog_builds()
