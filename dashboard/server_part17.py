@@ -18,6 +18,7 @@ from catalog_runtime_policy_http import RUNTIME_POLICY_PATH,dispatch_catalog_run
 from contract_upgrade_http import install_contract_upgrade_api
 from controller_log_journal_http import install_controller_log_journal_http
 from controller_telemetry import controller_telemetry
+from customer_content_http import install_customer_content_http
 from customer_discord_http import install_customer_discord
 from customer_discord_oauth_http import install_customer_discord_oauth_callback
 from customer_discord_schema_runtime import ensure_customer_discord_schema
@@ -46,37 +47,19 @@ install_runtime_instance_projection(legacy)
 install_customer_instance_creation(legacy);install_customer_management_dashboard(legacy)
 _previous_get=legacy.DashboardHandler.do_GET;_previous_put=getattr(legacy.DashboardHandler,"do_PUT",None);_previous_send_json=legacy.DashboardHandler.send_json;_controller_authenticate=integration._controller_authenticate;_customer_authenticate=integration._customer_authenticate;_legacy_ambiguous_authenticate=browser_login_base.integrated_authenticate;_ROOT=Path(__file__).resolve().parents[1];_CONTROLLER_TELEMETRY_PATH="/api/controller/telemetry"
 
-
 def _area_aware_authenticate(headers):
  area=str(headers.get("X-Capivara-Auth-Area") or "").strip().lower()
  if area=="controller":return _controller_authenticate(headers)
  if area=="customer":return _customer_authenticate(headers)
  return _legacy_ambiguous_authenticate(headers)
 
-
 def _operational_dashboard_health():
- """Expose the same Controller readiness contract used by `cap operations readiness`."""
  try:
   readiness=operational_readiness(Path(legacy.DSM_ROOT))
  except Exception:
   return {"score":0,"status":"critical","ready":False,"states":{"readiness":False},"generated_at":int(legacy.time.time())}
- checks=list(readiness.get("checks") or [])
- states={str(item.get("name") or "unknown"):bool(item.get("healthy")) for item in checks}
- total=len(states);healthy=sum(1 for value in states.values() if value)
- score=int((healthy/total)*100) if total else (100 if readiness.get("ready") else 0)
- ready=bool(readiness.get("ready"))
- return {
-  "score":score,
-  "status":"healthy" if ready else "critical",
-  "ready":ready,
-  "states":states,
-  "checks":checks,
-  "database_backend":readiness.get("database_backend"),
-  "controller_services":readiness.get("controller_services"),
-  "topology":readiness.get("topology"),
-  "generated_at":int(legacy.time.time()),
- }
-
+ checks=list(readiness.get("checks") or []);states={str(item.get("name") or "unknown"):bool(item.get("healthy")) for item in checks};total=len(states);healthy=sum(1 for value in states.values() if value);score=int((healthy/total)*100) if total else (100 if readiness.get("ready") else 0);ready=bool(readiness.get("ready"))
+ return {"score":score,"status":"healthy" if ready else "critical","ready":ready,"states":states,"checks":checks,"database_backend":readiness.get("database_backend"),"controller_services":readiness.get("controller_services"),"topology":readiness.get("topology"),"generated_at":int(legacy.time.time())}
 
 browser_login_base.integrated_authenticate=_area_aware_authenticate
 legacy.authenticate=_area_aware_authenticate
@@ -111,6 +94,7 @@ def catalog_architecture_put(self):
 legacy.DashboardHandler.send_json=json_safe_send_json;legacy.DashboardHandler.do_GET=catalog_architecture_get;legacy.DashboardHandler.do_PUT=catalog_architecture_put
 install_system_user_administration(legacy,_controller_authenticate)
 install_customer_instance_workspace(legacy,_customer_authenticate)
+install_customer_content_http(legacy,_customer_authenticate)
 install_customer_instance_connection(legacy,_customer_authenticate)
 install_customer_instance_team(legacy,_customer_authenticate)
 install_customer_instance_activity(legacy,_customer_authenticate)
