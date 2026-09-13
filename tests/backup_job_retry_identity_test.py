@@ -98,9 +98,10 @@ class _MySqlConnection:
 
 
 class BackupJobRetryIdentityTest(unittest.TestCase):
-    def test_upgrade_registry_advances_to_retry_identity_v7(self):
-        self.assertEqual(upgrades.latest_upgrade_version(), 7)
-        self.assertEqual(upgrades.UPGRADES[-1].name, "backup_job_retry_identity")
+    def test_upgrade_registry_retains_retry_identity_v7_and_advances_to_content_v8(self):
+        self.assertEqual(upgrades.latest_upgrade_version(), 8)
+        self.assertEqual(upgrades.UPGRADES[6].name, "backup_job_retry_identity")
+        self.assertEqual(upgrades.UPGRADES[-1].name, "universal_content_contract_v2")
 
     def test_sqlite_allows_multiple_jobs_for_same_backup_artifact(self):
         connection = sqlite3.connect(":memory:")

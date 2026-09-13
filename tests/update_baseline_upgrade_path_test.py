@@ -89,8 +89,8 @@ class BaselineUpdatePathTest(unittest.TestCase):
             self.assertEqual(migrated.returncode, 0, migrated.stderr)
             payload = json.loads(migrated.stdout)
             self.assertTrue(payload["valid"])
-            self.assertEqual(payload["upgrade_version"], 7)
-            self.assertEqual(payload["upgrade_latest"], 7)
+            self.assertEqual(payload["upgrade_version"], 8)
+            self.assertEqual(payload["upgrade_latest"], 8)
 
             with sqlite3.connect(database) as connection:
                 tables = {
@@ -114,6 +114,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (5, "alert_events_note_action"),
                     (6, "universal_server_update"),
                     (7, "backup_job_retry_identity"),
+                    (8, "universal_content_contract_v2"),
                 ],
             )
 
@@ -147,7 +148,7 @@ process_guard_database_check_is_upgradeable "$PAYLOAD" "{ROOT}"
             "missing_tables": [],
             "upgrade_ledger": False,
             "upgrade_version": 0,
-            "upgrade_latest": 7,
+            "upgrade_latest": 8,
             "pending_upgrades": [
                 {"version": 1, "name": "discord_integration"},
                 {"version": 2, "name": "agent_public_network"},
@@ -156,6 +157,7 @@ process_guard_database_check_is_upgradeable "$PAYLOAD" "{ROOT}"
                 {"version": 5, "name": "alert_events_note_action"},
                 {"version": 6, "name": "universal_server_update"},
                 {"version": 7, "name": "backup_job_retry_identity"},
+                {"version": 8, "name": "universal_content_contract_v2"},
             ],
             "upgrade_error": None,
             "valid": False,
@@ -179,7 +181,7 @@ process_guard_database_check_is_upgradeable "$PAYLOAD" "{ROOT}"
             "missing_tables": [],
             "upgrade_ledger": False,
             "upgrade_version": 0,
-            "upgrade_latest": 7,
+            "upgrade_latest": 8,
             "pending_upgrades": [
                 {"version": 1, "name": "discord_integration"},
                 {"version": 2, "name": "agent_public_network"},
@@ -188,6 +190,7 @@ process_guard_database_check_is_upgradeable "$PAYLOAD" "{ROOT}"
                 {"version": 5, "name": "alert_events_note_action"},
                 {"version": 6, "name": "universal_server_update"},
                 {"version": 7, "name": "backup_job_retry_identity"},
+                {"version": 8, "name": "universal_content_contract_v2"},
             ],
             "upgrade_error": None,
             "valid": False,
