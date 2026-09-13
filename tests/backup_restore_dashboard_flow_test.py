@@ -8,7 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 class BackupRestoreDashboardFlowTest(unittest.TestCase):
     def test_restore_surface_lists_all_completed_backups(self):
         js = (ROOT / "dashboard/web/customer-backup-transfer.js").read_text(encoding="utf-8")
-        self.assertIn('filter(x=>x.action==="create"&&x.status==="completed"&&x.backup_id)', js)
+        self.assertIn('availableBackupJobs', js)
+        self.assertIn('x.action==="create"&&x.status==="completed"&&x.backup_id', js)
+        self.assertIn('x.action==="delete"&&x.status==="completed"&&x.backup_id', js)
         self.assertNotIn('.slice(0,1)', js)
         self.assertIn('job.completed_at||job.created_at', js)
 
@@ -26,6 +28,7 @@ class BackupRestoreDashboardFlowTest(unittest.TestCase):
         self.assertIn('role in {"admin","controller"}', service)
         self.assertIn('"restore":"backup.restore"', service)
         self.assertIn('"delete":"backup.delete"', service)
+        self.assertIn('list_effective_jobs(instance_id=instance_id,limit=100)', service)
         compact_http = "".join(http.split())
         self.assertIn('{"customer","admin","controller"}', compact_http)
 

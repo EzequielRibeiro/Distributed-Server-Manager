@@ -41,15 +41,22 @@ class HybridInstanceTelemetryTest(unittest.TestCase):
             "instance-foreign": {"agent_id": "agent-other"},
         }
         _FakeWorkspaceRepository.recorded = []
+        self.observability_samples = []
 
     def _run(self, samples):
         telemetry = SimpleNamespace(
             collect_instance_telemetry=lambda config: samples,
         )
+        def ingest(_backend, agent_id, accepted):
+            self.assertEqual(agent_id, "agent-hybrid")
+            self.observability_samples.extend(dict(item) for item in accepted)
+            return {"accepted": len(accepted)}
+
         with (
             patch.object(worker, "_instance_telemetry_module", return_value=telemetry),
             patch.object(worker, "_hybrid_agent_config", return_value={"agent_id": "agent-hybrid"}),
             patch.object(worker, "InstanceWorkspaceRepository", _FakeWorkspaceRepository),
+            patch.object(worker, "_ingest_hybrid_instance_observability", side_effect=ingest),
         ):
             return worker.process_hybrid_instance_telemetry_cycle(
                 object(), ROOT, "agent-hybrid"
@@ -76,6 +83,7 @@ class HybridInstanceTelemetryTest(unittest.TestCase):
             {"status": "completed", "samples": 4, "accepted": 1, "rejected": 3},
         )
         self.assertEqual(_FakeWorkspaceRepository.recorded, [("instance-owned", owned)])
+        self.assertEqual(self.observability_samples, [owned])
 
     def test_rejects_unknown_instance_without_persisting(self) -> None:
         result = self._run([{"instance_id": "missing", "health": "healthy"}])
@@ -83,6 +91,51 @@ class HybridInstanceTelemetryTest(unittest.TestCase):
         self.assertEqual(result["accepted"], 0)
         self.assertEqual(result["rejected"], 1)
         self.assertEqual(_FakeWorkspaceRepository.recorded, [])
+        self.assertEqual(self.observability_samples, [])
+
+    def test_observability_projection_contains_node_activity_metrics(self) -> None:
+        captured = {}
+
+        class FakeObservabilityRepository:
+            def __init__(self, backend):
+                captured["backend"] = backend
+
+            def initialize(self):
+                captured["initialized"] = True
+
+            def ingest_agent_samples(self, agent_id, samples):
+                captured["agent_id"] = agent_id
+                captured["samples"] = list(samples)
+                return {"accepted": len(samples)}
+
+        backend = object()
+        sample = {
+            "instance_id": "instance-owned",
+            "players_online": 3,
+            "players_max": 16,
+            "storage_used_bytes": 4096,
+            "health": "healthy",
+        }
+        with patch.object(worker, "ObservabilityRepository", FakeObservabilityRepository):
+            result = worker._ingest_hybrid_instance_observability(
+                backend, "agent-hybrid", [sample]
+            )
+
+        names = {item["metric_name"] for item in captured["samples"]}
+        self.assertTrue(captured["initialized"])
+        self.assertIs(captured["backend"], backend)
+        self.assertEqual(captured["agent_id"], "agent-hybrid")
+        self.assertEqual(result["accepted"], 5)
+        self.assertEqual(
+            names,
+            {
+                "capivara.agent.players.online",
+                "capivara.agent.players.capacity",
+                "capivara.agent.instances.running",
+                "capivara.agent.instances.total",
+                "capivara.agent.instances.storage_used_bytes",
+            },
+        )
 
     def test_invalid_collector_payload_fails_closed(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "invalid payload"):

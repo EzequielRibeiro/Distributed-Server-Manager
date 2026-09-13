@@ -71,7 +71,7 @@ def main() -> int:
     ledger = [(int(row["version"]), str(row["name"])) for row in upgrades]
     if (7, "backup_job_retry_identity") not in ledger:
         raise AssertionError("Baseline v2 did not retain backup job retry identity upgrade 7")
-    if ledger[-1] != (8, "universal_content_contract_v2"):
+    if ledger[-1] != (9, "backup_job_retry_identity_repair"):
         raise AssertionError("Baseline v2 did not seed Universal Content Contract v2 upgrade 8")
     if any(
         "UNIQUE (backup_id)" in str(row["definition"])

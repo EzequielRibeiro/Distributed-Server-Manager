@@ -20,7 +20,7 @@ class AgentHeartbeatTelemetryContractTest(unittest.TestCase):
             "host": {
                 "cpu_usage_pct": 12.5,
                 "memory": {"usage_pct": 33.0},
-                "disk": {"usage_pct": 44.0},
+                "disk": {"usage_pct": 44.0, "free_bytes": 987654321},
                 "network": {"rx_bytes_per_second": 1000.0, "tx_bytes_per_second": 500.0},
                 "temperature_c": 51.0,
             },
@@ -42,8 +42,16 @@ class AgentHeartbeatTelemetryContractTest(unittest.TestCase):
             "capivara.agent.cpu.usage_pct",
             "capivara.agent.memory.rss_bytes",
             "capivara.agent.threads",
+            "capivara.agent.storage.free_bytes",
         ):
             self.assertIn(expected, names)
+
+        storage_free = next(
+            item for item in samples
+            if item["metric_name"] == "capivara.agent.storage.free_bytes"
+        )
+        self.assertEqual(storage_free["value"], 987654321)
+        self.assertEqual(storage_free["unit"], "bytes")
 
 
 

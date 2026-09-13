@@ -239,8 +239,10 @@ def _artifact(instance_id, backup_id):
     instance_dir = (BACKUP_ROOT / _safe(instance_id)).resolve()
     instance_dir.relative_to(BACKUP_ROOT)
     matches = list(instance_dir.glob(f"{_safe(backup_id)}.tar*"))
-    if len(matches) != 1:
+    if not matches:
         raise FileNotFoundError("backup artifact not found")
+    if len(matches) > 1:
+        raise RuntimeError("multiple backup artifacts found")
     return matches[0]
 
 
@@ -419,11 +421,22 @@ def _restore(config, command):
 def _delete(config, command):
     instance_id = str(command["instance_id"])
     _owned(config, instance_id)
-    artifact = _artifact(instance_id, str(command.get("backup_id") or ""))
+    backup_id = str(command.get("backup_id") or "")
+    try:
+        artifact = _artifact(instance_id, backup_id)
+    except FileNotFoundError:
+        # Desired state is already satisfied. Treat retries and retention-pruned
+        # artifacts as successful deletes instead of poisoning the job history.
+        return {
+            "backup_id": backup_id,
+            "artifact_path": None,
+            "already_absent": True,
+        }
     artifact.unlink()
     return {
-        "backup_id": str(command.get("backup_id")),
+        "backup_id": backup_id,
         "artifact_path": str(artifact),
+        "already_absent": False,
     }
 
 
