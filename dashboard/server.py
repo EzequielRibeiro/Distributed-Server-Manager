@@ -3430,8 +3430,16 @@ def run_api_script(script_name, *args, user=None, timeout=300):
             env=env,
         )
         if process.returncode != 0:
+            raw_error = process.stderr.strip() or process.stdout.strip()
+            try:
+                structured_error = json.loads(raw_error) if raw_error else None
+            except json.JSONDecodeError:
+                structured_error = None
+            if isinstance(structured_error, dict):
+                structured_error.setdefault("exit_code", process.returncode)
+                return False, structured_error
             return False, {
-                "error": process.stderr.strip() or process.stdout.strip(),
+                "error": raw_error,
                 "exit_code": process.returncode,
             }
         stdout = process.stdout.strip()
