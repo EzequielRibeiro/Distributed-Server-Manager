@@ -11,13 +11,18 @@ class ContentActivationApplyError(RuntimeError):pass
 def _ready(config:dict[str,Any],instance_id:str)->bool:
  return bool(instance_runtime.doctor(config,instance_id).get("ready"))
 
+def _materializable(record:dict[str,Any])->bool:
+ return bool(str(record.get("executable") or "").strip() and str(record.get("working_directory") or record.get("path") or "").strip())
+
 def apply_activation_snapshots(config:dict[str,Any],snapshots:list[dict[str,Any]])->list[dict[str,Any]]:
  results=[]
  for snapshot in snapshots:
   iid=str(snapshot.get("instance_id") or "").strip()
   if not iid:continue
-  previous=instance_runtime._owned(config,iid);projected=project_runtime_spec(previous,snapshot)
-  old_checksum=str(previous.get("content_activation_checksum") or "");new_checksum=str(projected.get("content_activation_checksum") or "")
+  previous=instance_runtime._owned(config,iid);new_checksum=str(snapshot.get("checksum") or "")
+  if not _materializable(previous):
+   results.append({"instance_id":iid,"changed":False,"skipped":True,"reason":"runtime_not_materialized","checksum":new_checksum});continue
+  projected=project_runtime_spec(previous,snapshot);old_checksum=str(previous.get("content_activation_checksum") or "");new_checksum=str(projected.get("content_activation_checksum") or "")
   if old_checksum==new_checksum:
    results.append({"instance_id":iid,"changed":False,"checksum":new_checksum});continue
   was_running=instance_runtime.status(config,iid).get("observed_state")=="running"
