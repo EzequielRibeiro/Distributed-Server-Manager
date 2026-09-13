@@ -22,6 +22,7 @@ class AgentDashboardNodeMetricsContractTest(unittest.TestCase):
             "capivara.agent.instances.running",
             "capivara.agent.instances.total",
             "capivara.agent.instances.storage_used_bytes",
+            "capivara.agent.storage.free_bytes",
         )
 
         for metric in expected:

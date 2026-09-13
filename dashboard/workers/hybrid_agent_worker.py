@@ -27,6 +27,7 @@ from hybrid_game_data_client import process_hybrid_game_data_cycle
 from hybrid_instance_provisioning_client import process_hybrid_instance_provisioning_cycle
 from hybrid_local_reconciliation import reconcile_local_hybrid_runtime
 from instance_workspace_repository import InstanceWorkspaceRepository
+from observability_repository import ObservabilityRepository
 from registry_repository import RegistryRepository
 from runtime_backend import backend_from_environment
 
@@ -214,6 +215,16 @@ def process_hybrid_instance_runtime_cycle(backend, root: Path, agent_id: str) ->
     }
 
 
+def _ingest_hybrid_instance_observability(backend, agent_id: str, samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Project accepted Hybrid instance samples into the shared observability timeline."""
+    from agent_heartbeat_api import _observability_from_heartbeat
+
+    metrics = _observability_from_heartbeat(agent_id, {"instance_telemetry": samples})
+    repository = ObservabilityRepository(backend)
+    repository.initialize()
+    return repository.ingest_agent_samples(agent_id, metrics)
+
+
 def process_hybrid_instance_telemetry_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
     """Collect and persist telemetry for instances owned by the embedded Hybrid Agent."""
     config = _hybrid_agent_config(root, agent_id, optional=True)
@@ -235,6 +246,7 @@ def process_hybrid_instance_telemetry_cycle(backend, root: Path, agent_id: str) 
     repository.initialize()
     accepted = 0
     rejected = 0
+    accepted_samples: list[dict[str, Any]] = []
     for sample in samples[:500]:
         if not isinstance(sample, dict):
             rejected += 1
@@ -250,8 +262,11 @@ def process_hybrid_instance_telemetry_cycle(backend, root: Path, agent_id: str) 
                 continue
             repository.record_telemetry(instance_id, sample)
             accepted += 1
+            accepted_samples.append(dict(sample))
         except (KeyError, ValueError, PermissionError):
             rejected += 1
+
+    _ingest_hybrid_instance_observability(backend, agent_id, accepted_samples)
     return {
         "status": "completed",
         "samples": len(samples),
