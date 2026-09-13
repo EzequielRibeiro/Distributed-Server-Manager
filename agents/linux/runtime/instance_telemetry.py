@@ -40,6 +40,42 @@ def _systemd_main_pid(instance_id: str) -> int | None:
         return None
 
 
+def _systemd_resources(instance_id: str) -> tuple[int | None, int | None]:
+    """Return cumulative CPU nanoseconds and current memory for the whole unit."""
+    unit = f"capivara-instance-{instance_id}.service"
+    try:
+        result = subprocess.run(
+            [
+                "systemctl",
+                "show",
+                unit,
+                "--property=CPUUsageNSec",
+                "--property=MemoryCurrent",
+                "--no-pager",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None, None
+    if result.returncode != 0:
+        return None, None
+    values: dict[str, int] = {}
+    for line in (result.stdout or "").splitlines():
+        key, separator, raw = line.partition("=")
+        if not separator or key not in {"CPUUsageNSec", "MemoryCurrent"}:
+            continue
+        try:
+            value = int(raw.strip())
+        except ValueError:
+            continue
+        if value >= 0:
+            values[key] = value
+    return values.get("CPUUsageNSec"), values.get("MemoryCurrent")
+
+
 def _systemd_network(instance_id: str) -> tuple[int | None, int | None]:
     """Return per-unit IPAccounting counters without inventing zero values."""
     unit = f"capivara-instance-{instance_id}.service"
@@ -98,6 +134,31 @@ def _host_uptime() -> float | None:
     try:
         return float(Path("/proc/uptime").read_text(encoding="utf-8").split()[0])
     except (OSError, ValueError, IndexError):
+        return None
+
+
+def _systemd_cpu_percent(instance_id: str, usage_nsec: int) -> float | None:
+    now = time.monotonic()
+    path = SAMPLE_STATE_DIR / f"{instance_id}.systemd.json"
+    previous = None
+    try:
+        previous = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(".tmp")
+    temp.write_text(json.dumps({"monotonic": now, "usage_nsec": usage_nsec}), encoding="utf-8")
+    os.chmod(temp, 0o600)
+    os.replace(temp, path)
+    if not isinstance(previous, dict):
+        return None
+    try:
+        elapsed = now - float(previous["monotonic"])
+        delta = usage_nsec - int(previous["usage_nsec"])
+        if elapsed <= 0 or delta < 0:
+            return None
+        return round((delta / 1_000_000_000.0) / elapsed * 100.0, 2)
+    except (KeyError, TypeError, ValueError):
         return None
 
 
@@ -286,18 +347,25 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
         adapter = str(record.get("adapter") or "").strip().lower()
         pid = _systemd_main_pid(instance_id) if adapter == "systemd" else None
         cpu = memory = uptime = None
+        if adapter == "systemd":
+            cpu_usage_nsec, unit_memory = _systemd_resources(instance_id)
+            if cpu_usage_nsec is not None:
+                cpu = _systemd_cpu_percent(instance_id, cpu_usage_nsec)
+            memory = unit_memory
         if pid:
             stat = _proc_stat(pid)
             if stat:
                 ticks, started = stat
-                cpu = _cpu_percent(instance_id, ticks)
+                if cpu is None:
+                    cpu = _cpu_percent(instance_id, ticks)
                 host_uptime = _host_uptime()
                 if host_uptime is not None:
                     try:
                         uptime = max(0, int(host_uptime - (started / int(os.sysconf("SC_CLK_TCK")))))
                     except (ValueError, OSError, ZeroDivisionError):
                         uptime = None
-            memory = _rss_bytes(pid)
+            if memory is None:
+                memory = _rss_bytes(pid)
 
         telemetry_config = record.get("telemetry") if isinstance(record.get("telemetry"), dict) else {}
         rx, tx = _systemd_network(instance_id) if adapter == "systemd" else (None, None)
