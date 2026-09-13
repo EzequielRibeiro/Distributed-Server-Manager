@@ -5,6 +5,7 @@ CONTROLLER_URL=""; CONTROLLER_CA_FILE=""; PAIRING_TOKEN="${CAPIVARA_PAIRING_TOKE
 INSTALL_ROOT="${CAPIVARA_AGENT_ROOT:-/opt/capivara-agent}"; CONFIG_DIR="${CAPIVARA_AGENT_CONFIG_DIR:-/etc/capivara-agent}"
 STATE_DIR="${CAPIVARA_AGENT_STATE_DIR:-/var/lib/capivara-agent}"; INSTANCE_STORAGE_ROOT="${CAPIVARA_INSTANCE_STORAGE_ROOT:-/var/lib/capivara-instances}"; SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 POLKIT_RULES_DIR="${CAPIVARA_POLKIT_RULES_DIR:-/etc/polkit-1/rules.d}"; CLI_PATH="${CAPIVARA_AGENT_CLI_PATH:-/usr/local/bin/cap}"
+AGENT_USER="capivara-agent"; AGENT_GROUP="capivara-agent"
 fail(){ printf '[Capivara Agent][ERRO] %s\n' "$*" >&2; exit 1; }; log(){ printf '[Capivara Agent] %s\n' "$*"; }
 usage(){ cat <<'EOF'
 Uso:
@@ -126,6 +127,16 @@ PAIRING_TOKEN="${PAIRING_TOKEN%${PAIRING_TOKEN##*[![:space:]]}}"
 [[ "${INSTANCE_STORAGE_ROOT}" != "/" ]] || fail "instance storage root não pode ser /"
 [[ "${INSTANCE_STORAGE_ROOT}" != *$'\n'* && "${INSTANCE_STORAGE_ROOT}" != *$'\r'* ]] || fail "instance storage root inválido"
 unset CAPIVARA_PAIRING_TOKEN
+
+ensure_agent_account(){
+  if ! getent group "${AGENT_GROUP}" >/dev/null 2>&1; then
+    groupadd --system "${AGENT_GROUP}"
+  fi
+  if ! id "${AGENT_USER}" >/dev/null 2>&1; then
+    useradd --system --gid "${AGENT_GROUP}" --home "${STATE_DIR}" --create-home --shell /usr/sbin/nologin "${AGENT_USER}"
+  fi
+}
+
 install_runtime_dependencies(){
   local machine
   machine="$(uname -m)"
@@ -158,7 +169,7 @@ install_controller_ca(){
 }
 install_runtime_dependencies
 install_controller_ca
-for cmd in python3 install systemctl; do command -v "$cmd" >/dev/null || fail "comando necessário ausente: $cmd"; done
+for cmd in python3 install systemctl getent groupadd useradd id; do command -v "$cmd" >/dev/null || fail "comando necessário ausente: $cmd"; done
 [[ -n "${PACKAGE_DIR}" ]] || PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; PACKAGE_DIR="$(cd "${PACKAGE_DIR}" && pwd)"
 
 mapfile -t RUNTIME_FILES < <(
@@ -194,7 +205,7 @@ for rel in manifest.get('required_files',[]):
 PY
 VERSION=$(tr -d '\r\n' <"${PACKAGE_DIR}/VERSION")
 if [[ -e "${CLI_PATH}" || -L "${CLI_PATH}" ]]; then EXISTING="$(readlink -f "${CLI_PATH}" 2>/dev/null || true)"; OLD="${INSTALL_ROOT}/runtime/local_cli.py"; NEW="${INSTALL_ROOT}/runtime/cap_dispatch.py"; [[ "${EXISTING}" == "${OLD}" || "${EXISTING}" == "${NEW}" ]] || fail "${CLI_PATH} já existe e não pertence ao Capivara Agent"; fi
-id capivara-agent >/dev/null 2>&1 || useradd --system --home "${STATE_DIR}" --create-home --shell /usr/sbin/nologin capivara-agent
+ensure_agent_account
 install -d -m 0755 -o root -g root "${INSTALL_ROOT}" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/runtime/adapters" "${INSTALL_ROOT}/runtime/materializers" "${INSTALL_ROOT}/runtime/profiles" "${INSTALL_ROOT}/privileged" "${INSTALL_ROOT}/common" "${INSTALL_ROOT}/updater"
 install -d -m 0711 -o root -g root "${INSTANCE_STORAGE_ROOT}"
 install -d -m 0700 -o capivara-agent -g capivara-agent "${CONFIG_DIR}" "${STATE_DIR}" "${STATE_DIR}/game-data" "${STATE_DIR}/game-data-jobs" "${STATE_DIR}/game-data-jobs/history" "${STATE_DIR}/game-data-state" "${STATE_DIR}/update-history" "${STATE_DIR}/instances" "${STATE_DIR}/instance-results" "${STATE_DIR}/instance-command-history" "${STATE_DIR}/events" "${STATE_DIR}/instance-provisioning" "${STATE_DIR}/instance-provisioning/history" "${STATE_DIR}/instance-workspaces" "${STATE_DIR}/privileged-materialization" "${STATE_DIR}/privileged-firewall" "${STATE_DIR}/instance-locks" "${STATE_DIR}/instance-operations" "${STATE_DIR}/metrics" "${STATE_DIR}/storage-pool-migrations" "${STATE_DIR}/storage-pool-migrations/history" "${STATE_DIR}/uninstall"
