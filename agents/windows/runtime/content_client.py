@@ -6,6 +6,7 @@ from typing import Any
 import instance_runtime
 from content_provider import resolve_source
 import content_provider_steam_workshop  # noqa: F401
+from content_activation_projection import synchronize_activation_state
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));CONTENT_STATE=STATE_ROOT/"managed-content";GAME_DATA_ROOT=Path(os.environ.get("CAPIVARA_AGENT_GAME_DATA_ROOT",STATE_ROOT/"game-data")).resolve()
 class ContentActivationError(RuntimeError):pass
 class ContentRollbackError(ContentActivationError):pass
@@ -135,7 +136,7 @@ def apply_content_commands(config:dict[str,Any],commands:list[dict[str,Any]])->l
    else:progress=True
   if not retry or not progress:break
   pending=retry
- return reports[-200:]
+ final=reports[-200:];synchronize_activation_state(bounded,final);return final
 def content_state():
  out=[]
  try:paths=sorted(CONTENT_STATE.glob("*/*.json"))
