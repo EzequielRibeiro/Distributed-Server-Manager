@@ -39,6 +39,11 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   transfer=(ROOT/"dashboard/web/customer-backup-transfer.js").read_text(encoding="utf-8")
   for route in ("/api/customer/artifacts/backup-export","/api/customer/artifacts/backup-import","/api/customer/artifacts/upload","/api/customer/artifacts/restore-import"):
    self.assertIn(route,transfer)
+  self.assertIn("availableBackupJobs",transfer)
+  self.assertIn('x.action==="delete"&&x.status==="completed"',transfer)
+  overview=(ROOT/"dashboard/web/customer-backups.js").read_text(encoding="utf-8")
+  self.assertIn("availableBackupJobs",overview)
+  self.assertIn('job.action === "delete" && job.status === "completed"',overview)
  def test_create_from_retained_backup_reuses_normal_instance_creation(self):
   creation=(ROOT/"dashboard/customer_instance_creation.py").read_text(encoding="utf-8")
   self.assertIn('source_vault_id',creation);self.assertIn('InstanceBackupCloneRepository',creation);self.assertIn('backup_clone',creation);self.assertIn('_queue_agent_provisioning',creation)
