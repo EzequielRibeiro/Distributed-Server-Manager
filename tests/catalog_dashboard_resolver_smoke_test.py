@@ -83,7 +83,29 @@ version_resolver_execute() {
         builds = self.run_catalog("builds", runtime_id, "1.21.1")
         self.assertEqual(0, builds.returncode, builds.stderr)
         build_payload = json.loads(builds.stdout)
-        self.assertEqual(["41", "42"], [item["value"] for item in build_payload])
+        self.assertEqual(["42", "41"], [item["value"] for item in build_payload])
+        self.assertEqual(["42"], [item["value"] for item in build_payload if item["recommended"]])
+
+    def test_maven_full_build_marks_suffix_as_recommended(self) -> None:
+        runtime_id = self.write_runtime("fake_maven")
+        self.write_resolver(
+            "fake_maven",
+            r'''#!/usr/bin/env bash
+version_resolver_execute() {
+    local action="$1" selector="${4:-}"
+    case "$action" in
+        list) printf '%s\n' '{"versions":[{"version":"1.21.1","build":"52.1.15"},{"version":"1.21.1","build":"52.1.16"}]}' ;;
+        resolve) printf '{"version":"%s","build":"1.21.1-52.1.16"}\n' "$selector" ;;
+        *) return 2 ;;
+    esac
+}
+''',
+        )
+
+        builds = self.run_catalog("builds", runtime_id, "1.21.1")
+        self.assertEqual(0, builds.returncode, builds.stderr)
+        payload = json.loads(builds.stdout)
+        self.assertEqual(["52.1.16"], [item["value"] for item in payload if item["recommended"]])
 
     def test_missing_resolver_returns_json_error(self) -> None:
         runtime_id = self.write_runtime("does_not_exist")
