@@ -11,6 +11,7 @@
   "process": {"engine": "native", "executable": "start-server.sh", "artifact_mode": "executable", "args": ["-servername", "servertest"]},
   "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
   "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "380870"},
+  "content": {"steam_workshop": {"app_id": "108600"}},
   "installation": {"directory": "/opt/dsm/game-data/projectzomboid/serverfiles"},
   "network": {"allocation": "block", "block_size": 10, "ports": [{"name": "game", "protocol": "udp", "offset": 0, "exposure": "public"}], "apply": [{"kind": "argument", "template": "-port {game}"}]}
 }
