@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """D1 controller worker: consume C1 events, C3 metrics and schedule triggers."""
 from __future__ import annotations
-import json,sys,time
+import json,os,re,sys,time
 from datetime import datetime,timezone
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[2]
+ROOT=Path(os.environ.get("DSM_ROOT",Path(__file__).resolve().parents[2])).resolve()
 for path in (ROOT,ROOT/"core",ROOT/"database"):
  if str(path) not in sys.path:sys.path.insert(0,str(path))
 from alert_repository import AlertSession
@@ -12,6 +12,28 @@ from automation_engine import AutomationEngine
 from automation_execution_repository import AutomationExecutionRepository
 from automation_repository import AutomationRepository
 from runtime_backend import backend_from_environment
+
+_ALLOWED_DB_KEYS={
+ "DSM_DATABASE_DRIVER","DSM_DATABASE","DSM_DATABASE_HOST","DSM_DATABASE_PORT",
+ "DSM_DATABASE_NAME","DSM_DATABASE_USER","DSM_DATABASE_PASSWORD_FILE","DSM_DATABASE_TLS",
+}
+def _read_shell_values(path):
+ if not path.is_file():return {}
+ result={}
+ pattern=re.compile(r'^([A-Z0-9_]+)=(?:"([^"]*)"|\'([^\']*)\'|([^#\s]*))\s*$')
+ for raw in path.read_text(encoding="utf-8").splitlines():
+  line=raw.strip()
+  if not line or line.startswith("#"):continue
+  match=pattern.match(line)
+  if not match:continue
+  result[match.group(1)]=next((v for v in match.groups()[1:] if v is not None),"")
+ return result
+def _database_environment(root=ROOT,environment=None):
+ effective=dict(os.environ if environment is None else environment)
+ for key,value in _read_shell_values(Path(root)/"config"/"dsm.conf").items():
+  if key in _ALLOWED_DB_KEYS and key not in effective:effective[key]=value
+ effective.setdefault("DSM_ROOT",str(root))
+ return effective
 
 def _field_matches(expr,value):
  expr=str(expr).strip()
@@ -81,7 +103,7 @@ class AutomationWorker:
   return count
  def tick(self):return {"events":self.process_events(),"metrics":self.process_metrics(),"schedules":self.process_schedules()}
 def run_forever(interval=5):
- backend=backend_from_environment();worker=AutomationWorker(backend)
+ backend=backend_from_environment(_database_environment(ROOT));worker=AutomationWorker(backend)
  while True:
   try:worker.tick()
   except Exception as exc:print(f"automation worker failed: {exc}",file=sys.stderr,flush=True)
