@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+import importlib.util,tempfile,unittest
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[1]
+
+def _load(path:Path,name:str):
+ spec=importlib.util.spec_from_file_location(name,path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+
+class ContentActivationRuntimeTest(unittest.TestCase):
+ @classmethod
+ def setUpClass(cls):cls.module=_load(ROOT/"agents/linux/runtime/content_activation_runtime.py","content_activation_runtime_tested")
+ def _spec(self,root:Path):
+  return {"instance_id":"i1","arguments":["-config=server.cfg"],"working_directory":str(root/"server"),"instance_state_root":str(root/"state")}
+ def test_dayz_projection_uses_managed_paths_and_preserves_base_arguments(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);(root/"server").mkdir();mod_a=root/"content"/"a";mod_b=root/"content"/"b";mod_a.mkdir(parents=True);mod_b.mkdir(parents=True)
+   snapshot={"checksum":"abc","entries":[
+    {"content_id":"a","game_id":"dayz","managed_path":str(mod_a),"activation":{"mode":"mod"}},
+    {"content_id":"b","game_id":"dayz","managed_path":str(mod_b),"activation":{"mode":"server-mod"}},
+   ]}
+   projected=self.module.project_runtime_spec(self._spec(root),snapshot)
+   self.assertEqual(projected["content_base_arguments"],["-config=server.cfg"])
+   self.assertEqual(projected["arguments"],["-config=server.cfg",f"-mod={mod_a}",f"-serverMod={mod_b}"])
+   self.assertEqual(projected["content_activation_checksum"],"abc")
+   empty=self.module.project_runtime_spec(projected,{"checksum":"empty","entries":[]})
+   self.assertEqual(empty["arguments"],["-config=server.cfg"])
+ def test_project_zomboid_projection_and_materialization(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);(root/"server").mkdir();(root/"state").mkdir()
+   snapshot={"checksum":"pz","entries":[
+    {"content_id":"a","game_id":"projectzomboid","package_id":"108600:111","activation":{"identifier":"Alpha"}},
+    {"content_id":"b","game_id":"projectzomboid","package_id":"108600:222","activation":{"identifier":"Beta"}},
+   ]}
+   projected=self.module.project_runtime_spec(self._spec(root),snapshot)
+   self.assertEqual(projected["arguments"],["-config=server.cfg"])
+   props=projected["content_configuration_properties"]
+   self.assertEqual([p["key"] for p in props],["WorkshopItems","Mods"])
+   written=self.module.materialize_content_activation(projected)
+   self.assertEqual(written,["Zomboid/Server/servertest.ini","Zomboid/Server/servertest.ini"])
+   text=(root/"state"/"Zomboid"/"Server"/"servertest.ini").read_text(encoding="utf-8")
+   self.assertIn("WorkshopItems=111;222",text);self.assertIn("Mods=Alpha;Beta",text)
+   self.module.materialize_content_activation(projected)
+   text2=(root/"state"/"Zomboid"/"Server"/"servertest.ini").read_text(encoding="utf-8")
+   self.assertEqual(text,text2)
+ def test_cross_game_or_invalid_adapter_fails_closed(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);(root/"server").mkdir()
+   with self.assertRaises(self.module.ContentRuntimeActivationError):self.module.project_runtime_spec(self._spec(root),{"checksum":"x","entries":[{"content_id":"a","game_id":"dayz","managed_path":"/tmp/a","activation":{"adapter":"project-zomboid"}}]})
+   with self.assertRaises(self.module.ContentRuntimeActivationError):self.module.project_runtime_spec(self._spec(root),{"checksum":"x","entries":[{"content_id":"a","game_id":"projectzomboid","package_id":"221100:1","activation":{"identifier":"A"}}]})
+
+if __name__=="__main__":unittest.main()
