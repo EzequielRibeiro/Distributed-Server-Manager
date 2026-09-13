@@ -4,11 +4,15 @@ from __future__ import annotations
 import hashlib,http.client,json,os,ssl
 from pathlib import Path
 from urllib.parse import urlencode,urlparse
-STATE=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));RESULT=STATE/"artifact-results";BACKUPS=Path(os.environ.get("CAPIVARA_BACKUP_ROOT",str(STATE/"backups"))).resolve()
+STATE=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));RESULT=STATE/"artifact-results";BACKUPS=Path(os.environ.get("CAPIVARA_BACKUP_ROOT",str(STATE/"backups"))).resolve();GAME_DATA_ROOT=Path(os.environ.get("CAPIVARA_GAME_DATA_ROOT",str(STATE/"game-data"))).resolve()
 def _safe(v):
  s=str(v or "").strip()
  if not s or len(s)>191 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for c in s):raise ValueError("invalid artifact token")
  return s
+def _safe_filename(v):
+ name=Path(str(v or "content-upload.bin")).name
+ if not name or name in {".",".."} or any(c in name for c in ("\x00","\r","\n")):raise ValueError("invalid artifact filename")
+ return name[:255]
 def _write(path,payload):
  path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_suffix(".tmp");tmp.write_text(json.dumps(payload,indent=2,sort_keys=True)+"\n",encoding="utf-8");os.chmod(tmp,0o600);os.replace(tmp,path)
 def _headers(config):return {"X-Capivara-Agent-Credential":str(config["credential_id"]),"X-Capivara-Agent-Secret":str(config["credential_secret"]),"X-Capivara-Agent-Fingerprint":str(config["fingerprint"])}
@@ -22,6 +26,8 @@ def _backup_artifact(instance_id,backup_id):
  directory=(BACKUPS/_safe(instance_id)).resolve();directory.relative_to(BACKUPS);matches=[p for p in directory.glob(f"{_safe(backup_id)}.tar*") if p.is_file() and not p.is_symlink()]
  if len(matches)!=1:raise FileNotFoundError("backup artifact not found")
  return matches[0]
+def _content_upload_destination(instance_id,transfer_id,filename):
+ directory=(GAME_DATA_ROOT/"content-uploads"/_safe(instance_id)/_safe(transfer_id)).resolve();directory.relative_to(GAME_DATA_ROOT);destination=(directory/_safe_filename(filename)).resolve();destination.relative_to(GAME_DATA_ROOT);return destination
 def _put(config,transfer_id,path):
  conn,u=_connection(config);size=path.stat().st_size;endpoint=(u.path.rstrip("/")+"/api/agent/artifacts/upload?"+urlencode({"transfer_id":transfer_id})) or "/api/agent/artifacts/upload";headers={**_headers(config),"Content-Type":"application/octet-stream","Content-Length":str(size)}
  conn.putrequest("PUT",endpoint)
@@ -57,11 +63,15 @@ def handle_command(config,command):
  if isinstance(old,dict) and old.get("status") in {"completed","failed"}:return old
  try:
   direction=str(command.get("direction") or "");purpose=str(command.get("purpose") or "");iid=_safe(command.get("instance_id"));source=str(command.get("source_ref") or "");destination=str(command.get("destination_ref") or "")
+  destination_ref=None
   if direction=="agent_to_controller" and purpose in {"backup_export","deleted_backup_export"}:transferred=_put(config,tid,_backup_artifact(iid,source))
   elif direction=="controller_to_agent" and purpose in {"backup_import","backup_clone"}:
    backup_id=_safe(destination or source or tid);suffix=".tar.gz" if str(command.get("filename") or "").endswith(".gz") else ".tar";dest=(BACKUPS/iid/f"{backup_id}{suffix}").resolve();dest.relative_to(BACKUPS);transferred=_get(config,tid,dest,command.get("size_bytes"),command.get("sha256"))
+  elif direction=="controller_to_agent" and purpose=="content_upload":
+   dest=_content_upload_destination(iid,tid,command.get("filename"));transferred=_get(config,tid,dest,command.get("size_bytes"),command.get("sha256"));destination_ref=dest.relative_to(GAME_DATA_ROOT).as_posix()
   else:raise ValueError("unsupported artifact transfer purpose")
   result={"transfer_id":tid,"instance_id":iid,"status":"completed","transferred_bytes":transferred}
+  if destination_ref:result["destination_ref"]=destination_ref
  except Exception as exc:result={"transfer_id":tid,"instance_id":command.get("instance_id"),"status":"failed","error":str(exc)[:2000]}
  _write(path,result);return result
 def read_result():
