@@ -39,7 +39,12 @@ for line in sys.stdin:
     match=re.match(r"^([0-9]+\.[0-9]+(?:\.[0-9]+)?)-(.+)$", full)
     if not match: continue
     mc,build=match.groups()
-    versions.append({"version":mc,"build":build,"full":full,"minecraft_versions":[mc],"stable":("RC" not in build and "SNAPSHOT" not in build)})
+    stable=("RC" not in build and "SNAPSHOT" not in build)
+    if stable:
+        versions.append({"version":mc,"build":build,"full":full,"minecraft_versions":[mc],"stable":True})
+def key(item):
+    return tuple(int(part) if part.isdigit() else 0 for part in item["version"].split("."))
+versions.sort(key=key, reverse=True)
 print(json.dumps({"game":"minecraft","variant":"spongevanilla","source":"sponge-maven","versions":versions}))
 '
 }
