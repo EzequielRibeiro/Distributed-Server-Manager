@@ -14,6 +14,16 @@ class BackupRestoreDashboardFlowTest(unittest.TestCase):
         self.assertNotIn('.slice(0,1)', js)
         self.assertIn('job.completed_at||job.created_at', js)
 
+    def test_recent_backup_operations_expire_only_from_the_operational_view(self):
+        js = (ROOT / "dashboard/web/customer-backup-transfer.js").read_text(encoding="utf-8")
+        self.assertIn("RECENT_OPERATION_WINDOW_MS=72*60*60*1000", js)
+        self.assertIn("recentOperationalJobs", js)
+        self.assertIn('status==="pending"||status==="running"', js)
+        self.assertIn('status!=="failed"', js)
+        self.assertIn("now-timestamp<=RECENT_OPERATION_WINDOW_MS", js)
+        self.assertIn("O histórico completo permanece preservado", js)
+        self.assertNotIn("DELETE FROM backup_jobs", js)
+
     def test_restore_requires_explicit_confirmation_and_explains_impact(self):
         js = (ROOT / "dashboard/web/customer-backup-transfer.js").read_text(encoding="utf-8")
         self.assertIn('restoreWarning', js)
@@ -21,6 +31,26 @@ class BackupRestoreDashboardFlowTest(unittest.TestCase):
         self.assertIn('substituirá o estado atual da instância', js)
         self.assertIn('staging', js)
         self.assertIn('rollback', js)
+
+    def test_external_backup_upload_and_restore_are_separate_actions(self):
+        js = (ROOT / "dashboard/web/customer-backup-transfer.js").read_text(encoding="utf-8")
+        self.assertIn('>Enviar backup</button>', js)
+        self.assertIn('>Restaurar backup</button>', js)
+        self.assertIn('backup-transfer-upload', js)
+        self.assertIn('backup-transfer-restore-import', js)
+        self.assertIn('pendingImportedTransfer=completed', js)
+        self.assertIn('restore.hidden=!pendingImportedTransfer', js)
+        self.assertIn('send.disabled=!allowed||!selected', js)
+        self.assertIn('recebido e validado; pronto para restaurar', js)
+        self.assertNotIn('>Importar e restaurar</button>', js)
+
+        upload = js[js.index("async function uploadBackup"):js.index("async function restoreImportedBackup")]
+        restore = js[js.index("async function restoreImportedBackup"):js.index("function button(")]
+        self.assertIn('/api/customer/artifacts/backup-import', upload)
+        self.assertIn('/api/customer/artifacts/upload?', upload)
+        self.assertNotIn('/api/customer/artifacts/restore-import', upload)
+        self.assertIn('/api/customer/artifacts/restore-import', restore)
+        self.assertIn('confirm(restoreWarning', restore)
 
     def test_customer_and_admin_share_permission_guarded_backend(self):
         service = (ROOT / "dashboard/customer_instance_workspace_service.py").read_text(encoding="utf-8")
