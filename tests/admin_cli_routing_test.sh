@@ -11,6 +11,8 @@ grep -F 'cap instance delete' "${CAP}" >/dev/null
 grep -F 'database/customer_cli.py' "${CAP}" >/dev/null
 grep -F 'database/contract_cli.py' "${CAP}" >/dev/null
 grep -F 'database/instance_admin_cli.py' "${CAP}" >/dev/null
+grep -F 'occupied_ports_provider_for_backend' "${ROOT}/database/instance_admin_cli.py" >/dev/null
+! grep -F 'network.get("source") != "ss"' "${ROOT}/database/instance_admin_cli.py" >/dev/null
 
 bash -n "${CAP}"
 python3 -m py_compile \
