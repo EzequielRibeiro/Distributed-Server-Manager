@@ -15,6 +15,7 @@
     let activeUpdate = false;
     let versionsLoading = false;
     let lastVersionsKey = null;
+    let controllerManaged = false;
 
     async function request(path, options = {}) {
         const response = await fetch(`/api${path}`, {
@@ -54,16 +55,46 @@
         const channel = el("agent-rollout-channel")?.value || "stable";
         if (!button || !versions) return;
         const manual = channel === "local/manual";
-        versions.disabled = versionsLoading || manual || !el("agent-update-selector")?.value;
-        button.disabled = activeUpdate || versionsLoading || manual || !versions.value;
-        button.textContent = activeUpdate ? "Atualização em andamento…" : "Criar rollout";
-        button.setAttribute("aria-busy", String(activeUpdate || versionsLoading));
+        versions.disabled = controllerManaged || versionsLoading || manual || !el("agent-update-selector")?.value;
+        button.disabled = controllerManaged || activeUpdate || versionsLoading || manual || !versions.value;
+        button.textContent = controllerManaged
+            ? "Gerenciado pelo Controller"
+            : (activeUpdate ? "Atualização em andamento…" : "Criar rollout");
+        button.setAttribute("aria-busy", String(!controllerManaged && (activeUpdate || versionsLoading)));
     }
 
     function setRolloutBusy(busy) {
         activeUpdate = Boolean(busy);
         updateRolloutAvailability();
     }
+
+    function renderManagement(status = {}) {
+        controllerManaged = status.rollout_supported === false || status.update_management === "controller";
+        const message = status.management_message
+            || "Agent Hybrid acompanha a atualização do Controller; rollout remoto de Agent não é aplicável.";
+        for (const id of [
+            "agent-update-channel",
+            "agent-rollout-agents",
+            "agent-rollout-version",
+            "agent-rollout-batch-size",
+            "agent-rollout-channel",
+        ]) {
+            const field = el(id);
+            if (field) field.disabled = controllerManaged;
+        }
+        const saveButton = document.querySelector("#agent-update-channel-form button");
+        if (saveButton) saveButton.disabled = controllerManaged;
+        const help = el("agent-rollout-version-help");
+        if (controllerManaged) {
+            lastVersionsKey = null;
+            resetVersionSelector("Gerenciado pela atualização do Controller");
+            if (help) help.textContent = message;
+        } else if (help) {
+            help.textContent = "Somente releases publicadas e compatíveis com a plataforma do Agent podem ser selecionadas.";
+        }
+        updateRolloutAvailability();
+    }
+
 
     function renderErrorDetails(status, state) {
         const details = el("agent-update-error-details");
@@ -151,6 +182,11 @@
         const selector = el("agent-rollout-version");
         const help = el("agent-rollout-version-help");
         if (!selector) return;
+        if (controllerManaged) {
+            resetVersionSelector("Gerenciado pela atualização do Controller");
+            if (help) help.textContent = "Agent Hybrid acompanha a atualização do Controller; rollout remoto de Agent não é aplicável.";
+            return;
+        }
         if (!agentId) {
             lastVersionsKey = null;
             resetVersionSelector();
@@ -214,6 +250,8 @@
         const agentId = el("agent-update-selector")?.value || "";
         if (!agentId) {
             clearTimeout(pollTimer);
+            controllerManaged = false;
+            renderManagement({});
             renderProgress({update_status: "idle"});
             lastVersionsKey = null;
             resetVersionSelector();
@@ -223,18 +261,24 @@
             const status = await request(`/agents/updates/status?agent_id=${encodeURIComponent(agentId)}`);
             setText("agent-installed-version", status.installed_version);
             setText("agent-available-version", status.available_version);
-            setText("agent-update-status", status.update_status);
-            setText("agent-last-update", status.last_update);
             el("agent-update-channel").value = status.update_channel || "stable";
             el("agent-rollout-channel").value = status.update_channel || "stable";
             el("agent-rollout-agents").value = agentId;
-            renderProgress(status);
+            renderManagement(status);
+            setText("agent-update-status", controllerManaged ? "gerenciado pelo Controller" : status.update_status);
+            setText("agent-last-update", status.last_update);
+            const progressStatus = controllerManaged && ACTIVE_STATES.has(String(status.update_status || "").toLowerCase())
+                ? {...status, update_status: "idle"}
+                : status;
+            renderProgress(progressStatus);
             schedulePoll(status);
-            const channel = el("agent-rollout-channel")?.value || "stable";
-            if (lastVersionsKey !== versionsKey(agentId, channel)) {
-                await loadVersions(status.available_version || status.desired_version || "");
-            } else {
-                selectPreferredVersion(status.available_version || status.desired_version || "");
+            if (!controllerManaged) {
+                const channel = el("agent-rollout-channel")?.value || "stable";
+                if (lastVersionsKey !== versionsKey(agentId, channel)) {
+                    await loadVersions(status.available_version || status.desired_version || "");
+                } else {
+                    selectPreferredVersion(status.available_version || status.desired_version || "");
+                }
             }
             showError();
         } catch (error) {
@@ -247,6 +291,7 @@
         event.preventDefault();
         const agentId = el("agent-update-selector")?.value || "";
         if (!agentId) return showError("Selecione um Agent.");
+        if (controllerManaged) return showError("Este Agent Hybrid é atualizado junto com o Controller.");
         try {
             const result = await request("/agents/updates/channel", {
                 method: "POST",
@@ -264,6 +309,7 @@
 
     async function createRollout(event) {
         event.preventDefault();
+        if (controllerManaged) return showError("Este Agent Hybrid é atualizado junto com o Controller.");
         const version = el("agent-rollout-version")?.value || "";
         if (!version) return showError("Selecione uma versão publicada para o rollout.");
         const agentIds = el("agent-rollout-agents").value.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean);

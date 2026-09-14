@@ -13,7 +13,11 @@ for path in (ROOT, ROOT / "database", ROOT / "dashboard"):
         sys.path.insert(0, str(path))
 
 from agent_registration_repository import AgentRegistrationRepository
-from agent_update_api import agent_update_versions_for_user, create_agent_rollout_for_user
+from agent_update_api import (
+    agent_update_status_for_user,
+    agent_update_versions_for_user,
+    create_agent_rollout_for_user,
+)
 from agent_update_http import VERSIONS_PATH, dispatch_update_get
 from backend import DatabaseConfig
 from backend_factory import create_backend
@@ -105,6 +109,38 @@ class AgentUpdateReleaseSelectorTest(unittest.TestCase):
                     },
                 )
 
+    def test_hybrid_agent_is_controller_managed_and_rejects_remote_rollout(self):
+        identity = installation_profile_identity(
+            RegistryRepository(self.backend),
+            profile="hybrid",
+            hostname="hybrid-update",
+        )
+        agent_id = str(identity["agent_id"])
+
+        versions = agent_update_versions_for_user(
+            self.user, self.backend, agent_id, "stable"
+        )
+        self.assertFalse(versions["rollout_supported"])
+        self.assertEqual(versions["update_management"], "controller")
+        self.assertEqual(versions["releases"], [])
+
+        status = agent_update_status_for_user(self.user, self.backend, agent_id)
+        self.assertFalse(status["rollout_supported"])
+        self.assertEqual(status["update_management"], "controller")
+        self.assertIn("atualização do Controller", status["management_message"])
+
+        with self.assertRaisesRegex(ValueError, "Agent Hybrid acompanha a atualização do Controller"):
+            create_agent_rollout_for_user(
+                self.user,
+                self.backend,
+                {
+                    "agent_ids": [agent_id],
+                    "desired_version": "2.0.53",
+                    "update_channel": "stable",
+                    "batch_size": 1,
+                },
+            )
+
     @patch("agent_update_http.agent_update_versions_for_user")
     def test_http_versions_contract(self, versions):
         versions.return_value = {
@@ -138,7 +174,7 @@ class AgentUpdateReleaseSelectorTest(unittest.TestCase):
         self.assertIn("let lastVersionsKey = null;", javascript)
         self.assertIn("if (lastVersionsKey !== versionsKey(agentId, channel))", javascript)
         self.assertIn('loadVersions("", true)', javascript)
-        self.assertIn('agent-updates-v3.js?v=5', html)
+        self.assertIn('agent-updates-v3.js?v=6', html)
 
 
 if __name__ == "__main__":
