@@ -7,11 +7,16 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANAGER = ROOT / "database" / "manager.py"
 PROCESS_GUARD = ROOT / "update-manager" / "process-guard.sh"
+DATABASE = ROOT / "database"
+if str(DATABASE) not in sys.path:
+    sys.path.insert(0, str(DATABASE))
+from baseline_upgrade_engine import UPGRADES, latest_upgrade_version
 
 
 class BaselineUpdatePathTest(unittest.TestCase):
@@ -89,8 +94,8 @@ class BaselineUpdatePathTest(unittest.TestCase):
             self.assertEqual(migrated.returncode, 0, migrated.stderr)
             payload = json.loads(migrated.stdout)
             self.assertTrue(payload["valid"])
-            self.assertEqual(payload["upgrade_version"], 9)
-            self.assertEqual(payload["upgrade_latest"], 9)
+            self.assertEqual(payload["upgrade_version"], latest_upgrade_version())
+            self.assertEqual(payload["upgrade_latest"], latest_upgrade_version())
 
             with sqlite3.connect(database) as connection:
                 tables = {
@@ -106,17 +111,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
             self.assertIn("activity_audit", tables)
             self.assertEqual(
                 ledger,
-                [
-                    (1, "discord_integration"),
-                    (2, "agent_public_network"),
-                    (3, "activity_audit"),
-                    (4, "resolved_alert_history_detach"),
-                    (5, "alert_events_note_action"),
-                    (6, "universal_server_update"),
-                    (7, "backup_job_retry_identity"),
-                    (8, "universal_content_contract_v2"),
-                    (9, "backup_job_retry_identity_repair"),
-                ],
+                [(upgrade.version, upgrade.name) for upgrade in UPGRADES],
             )
 
     def guard_classifier(self, payload: dict[str, object]) -> subprocess.CompletedProcess[str]:
@@ -149,17 +144,9 @@ process_guard_database_check_is_upgradeable "$PAYLOAD" "{ROOT}"
             "missing_tables": [],
             "upgrade_ledger": False,
             "upgrade_version": 0,
-            "upgrade_latest": 9,
+            "upgrade_latest": latest_upgrade_version(),
             "pending_upgrades": [
-                {"version": 1, "name": "discord_integration"},
-                {"version": 2, "name": "agent_public_network"},
-                {"version": 3, "name": "activity_audit"},
-                {"version": 4, "name": "resolved_alert_history_detach"},
-                {"version": 5, "name": "alert_events_note_action"},
-                {"version": 6, "name": "universal_server_update"},
-                {"version": 7, "name": "backup_job_retry_identity"},
-                {"version": 8, "name": "universal_content_contract_v2"},
-                {"version": 9, "name": "backup_job_retry_identity_repair"},
+                {"version": upgrade.version, "name": upgrade.name} for upgrade in UPGRADES
             ],
             "upgrade_error": None,
             "valid": False,
@@ -183,17 +170,9 @@ process_guard_database_check_is_upgradeable "$PAYLOAD" "{ROOT}"
             "missing_tables": [],
             "upgrade_ledger": False,
             "upgrade_version": 0,
-            "upgrade_latest": 9,
+            "upgrade_latest": latest_upgrade_version(),
             "pending_upgrades": [
-                {"version": 1, "name": "discord_integration"},
-                {"version": 2, "name": "agent_public_network"},
-                {"version": 3, "name": "activity_audit"},
-                {"version": 4, "name": "resolved_alert_history_detach"},
-                {"version": 5, "name": "alert_events_note_action"},
-                {"version": 6, "name": "universal_server_update"},
-                {"version": 7, "name": "backup_job_retry_identity"},
-                {"version": 8, "name": "universal_content_contract_v2"},
-                {"version": 9, "name": "backup_job_retry_identity_repair"},
+                {"version": upgrade.version, "name": upgrade.name} for upgrade in UPGRADES
             ],
             "upgrade_error": None,
             "valid": False,

@@ -158,6 +158,56 @@ class MinecraftActivationTest(unittest.TestCase):
                 module.materialize_content_activation(module.project_runtime_spec(projected, update))
             self.assertEqual((runtime / "plugins" / "capivara-a.jar").read_bytes(), b"v1")
 
+    def _modpack_override_round_trip(self, platform: str) -> None:
+        module = self._runtime_module(platform)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); runtime = root / "runtime"; state = root / "state"; managed = runtime / "content" / "modpacks" / "pack"
+            (managed / "overrides" / "config").mkdir(parents=True); (managed / "server-overrides" / "config").mkdir(parents=True); state.mkdir()
+            (managed / "overrides" / "config" / "pack.toml").write_text("layer=base\n", encoding="utf-8")
+            (managed / "server-overrides" / "config" / "pack.toml").write_text("layer=server\n", encoding="utf-8")
+            spec = {"instance_id":"bundle-1","game_id":"minecraft","environment_id":"minecraft.java.fabric","working_directory":str(runtime),"instance_state_root":str(state),"arguments":[],"content_projection":_policy("mod")}
+            entry = {"content_id":"pack","game_id":"minecraft","content_type":"modpack","managed_path":str(managed),"activation":{"adapter":"minecraft-java","mode":"bundle-parent","identifier":"overrides,server-overrides"}}
+            projected = module.project_runtime_spec(spec,{"checksum":"bundle-v1","entries":[entry]})
+            self.assertEqual(projected["content_file_projections"],[])
+            self.assertEqual(projected["content_bundle_overrides"][0]["roots"],["overrides","server-overrides"])
+            self.assertEqual(module.materialize_content_activation(projected),["config/pack.toml"])
+            target=runtime/"config"/"pack.toml";self.assertEqual(target.read_text(),"layer=server\n")
+            (managed / "server-overrides" / "config" / "pack.toml").write_text("layer=server-v2\n",encoding="utf-8")
+            updated=module.project_runtime_spec(projected,{"checksum":"bundle-v2","entries":[entry]});module.materialize_content_activation(updated);self.assertEqual(target.read_text(),"layer=server-v2\n")
+            disabled=module.project_runtime_spec(updated,{"checksum":"bundle-off","entries":[]});self.assertEqual(module.materialize_content_activation(disabled),[]);self.assertFalse(target.exists())
+            restored=module.project_runtime_spec(disabled,{"checksum":"bundle-on","entries":[entry]});module.materialize_content_activation(restored);self.assertEqual(target.read_text(),"layer=server-v2\n")
+            target.write_text("customer-edit\n",encoding="utf-8");(managed / "server-overrides" / "config" / "pack.toml").write_text("layer=server-v3\n",encoding="utf-8")
+            with self.assertRaises(module.ContentRuntimeActivationError):module.materialize_content_activation(module.project_runtime_spec(restored,{"checksum":"bundle-v3","entries":[entry]}))
+            self.assertEqual(target.read_text(),"customer-edit\n")
+
+    def test_modpack_overrides_linux(self):
+        self._modpack_override_round_trip("linux")
+
+    def test_modpack_overrides_windows(self):
+        self._modpack_override_round_trip("windows")
+
+    def test_modpack_override_cannot_bypass_managed_mods(self):
+        module=self._runtime_module("linux")
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);runtime=root/"runtime";state=root/"state";managed=runtime/"content"/"modpacks"/"pack"; (managed/"overrides"/"mods").mkdir(parents=True);state.mkdir();(managed/"overrides"/"mods"/"evil.jar").write_bytes(b"jar")
+            spec={"instance_id":"bundle-2","game_id":"minecraft","environment_id":"minecraft.java.fabric","working_directory":str(runtime),"instance_state_root":str(state),"arguments":[],"content_projection":_policy("mod")}
+            entry={"content_id":"pack","game_id":"minecraft","content_type":"modpack","managed_path":str(managed),"activation":{"adapter":"minecraft-java","mode":"bundle-parent","identifier":"overrides"}}
+            with self.assertRaises(module.ContentRuntimeActivationError):module.materialize_content_activation(module.project_runtime_spec(spec,{"checksum":"bad","entries":[entry]}))
+            self.assertFalse((runtime/"mods"/"evil.jar").exists())
+
+    def test_no_bundle_without_instance_state_root_is_noop(self):
+        for platform in ("linux", "windows"):
+            with self.subTest(platform=platform):
+                module = self._runtime_module(platform)
+                self.assertEqual(
+                    module.materialize_minecraft_overrides({
+                        "game_id": "minecraft",
+                        "working_directory": "/tmp/nonexistent-runtime",
+                        "content_bundle_overrides": [],
+                    }),
+                    [],
+                )
+
     def test_catalog_policy_flows_to_linux_and_windows_profiles(self):
         for path in (ROOT / "database", ROOT / "dashboard"):
             value = str(path)

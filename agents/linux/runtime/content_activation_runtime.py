@@ -10,7 +10,7 @@ import os,re
 from pathlib import Path
 from typing import Any
 try:
- from content_activation_minecraft import MinecraftContentActivationError,materialize_minecraft_files,project_minecraft_files
+ from content_activation_minecraft import MinecraftContentActivationError,materialize_minecraft_files,materialize_minecraft_overrides,project_minecraft_bundle_overrides,project_minecraft_files
 except ModuleNotFoundError as exc:
  if exc.name != "content_activation_minecraft":
   raise
@@ -22,6 +22,8 @@ except ModuleNotFoundError as exc:
  _minecraft_module=importlib.util.module_from_spec(_minecraft_spec);_minecraft_spec.loader.exec_module(_minecraft_module)
  MinecraftContentActivationError=_minecraft_module.MinecraftContentActivationError
  materialize_minecraft_files=_minecraft_module.materialize_minecraft_files
+ materialize_minecraft_overrides=_minecraft_module.materialize_minecraft_overrides
+ project_minecraft_bundle_overrides=_minecraft_module.project_minecraft_bundle_overrides
  project_minecraft_files=_minecraft_module.project_minecraft_files
 
 _SAFE_ID=re.compile(r"^[A-Za-z0-9._-]{1,191}$")
@@ -83,7 +85,8 @@ def project_runtime_spec(spec:dict[str,Any],snapshot:dict[str,Any])->dict[str,An
  result["content_base_arguments"]=[str(v) for v in base]
  result["arguments"]=[*result["content_base_arguments"],*content_args]
  result["content_configuration_properties"]=properties
- try:result["content_file_projections"]=project_minecraft_files(result,entries)
+ try:
+  result["content_file_projections"]=project_minecraft_files(result,entries);result["content_bundle_overrides"]=project_minecraft_bundle_overrides(result,entries)
  except MinecraftContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc
  result["content_activation_checksum"]=str(snapshot.get("checksum") or "")
  return result
@@ -110,7 +113,8 @@ def materialize_content_activation(spec:dict[str,Any])->list[str]:
   pattern=re.compile(rf"(?m)^\s*{re.escape(key)}\s*=\s*[^\r\n]*$");line=f"{key}={value}"
   text=pattern.sub(line,text,count=1) if pattern.search(text) else text.rstrip("\n")+("\n" if text else "")+line+"\n"
   target.parent.mkdir(parents=True,exist_ok=True);target.write_text(text,encoding="utf-8");written.append(relative.as_posix())
- try:written.extend(materialize_minecraft_files(spec))
+ try:
+  written.extend(materialize_minecraft_files(spec));written.extend(materialize_minecraft_overrides(spec))
  except MinecraftContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc
  return written
 
