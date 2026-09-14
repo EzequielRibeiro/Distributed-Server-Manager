@@ -38,7 +38,7 @@ FILE_ACTION_PERMISSION = {
     "move": "files.move", "rename": "files.move", "mkdir": "files.upload", "extract": "files.extract",
 }
 
-CONTENT_FEATURES = frozenset({"mods", "plugins", "workshop", "external_upload", "custom_runtime"})
+CONTENT_FEATURES = frozenset({"mods", "plugins", "modpacks", "datapacks", "workshop", "external_upload", "custom_runtime"})
 
 
 @dataclass(frozen=True)
@@ -46,6 +46,8 @@ class EffectiveContentPolicy:
     modifications_allowed: bool
     mods_allowed: bool
     plugins_allowed: bool
+    modpacks_allowed: bool
+    datapacks_allowed: bool
     workshop_allowed: bool
     external_upload_allowed: bool
     custom_runtime_allowed: bool
@@ -55,6 +57,8 @@ class EffectiveContentPolicy:
             "modifications_allowed": self.modifications_allowed,
             "mods_allowed": self.mods_allowed,
             "plugins_allowed": self.plugins_allowed,
+            "modpacks_allowed": self.modpacks_allowed,
+            "datapacks_allowed": self.datapacks_allowed,
             "workshop_allowed": self.workshop_allowed,
             "external_upload_allowed": self.external_upload_allowed,
             "custom_runtime_allowed": self.custom_runtime_allowed,
@@ -88,11 +92,16 @@ def effective_content_policy(contract_entitlements: dict[str, Any] | None, runti
     entitlement = contract_entitlements or {}; capability = runtime_capabilities or {}
     def enabled(feature: str, entitlement_default: bool = False) -> bool:
         return bool(entitlement.get(feature, entitlement_default)) and bool(capability.get(feature, False))
-    mods = enabled("mods"); plugins = enabled("plugins"); workshop = enabled("workshop")
+    mods = enabled("mods"); plugins = enabled("plugins")
+    modpacks = enabled("modpacks", bool(entitlement.get("mods", False)))
+    datapacks = enabled("datapacks", bool(entitlement.get("mods", False)))
+    workshop = enabled("workshop")
     return EffectiveContentPolicy(
-        modifications_allowed=bool(mods or plugins or workshop),
+        modifications_allowed=bool(mods or plugins or modpacks or datapacks or workshop),
         mods_allowed=mods,
         plugins_allowed=plugins,
+        modpacks_allowed=modpacks,
+        datapacks_allowed=datapacks,
         workshop_allowed=workshop,
         external_upload_allowed=enabled("external_upload", True),
         custom_runtime_allowed=enabled("custom_runtime"),
@@ -103,6 +112,8 @@ def content_ui_sections(policy: EffectiveContentPolicy) -> list[str]:
     result = []
     if policy.mods_allowed: result.append("mods")
     if policy.plugins_allowed: result.append("plugins")
+    if policy.modpacks_allowed: result.append("modpacks")
+    if policy.datapacks_allowed: result.append("datapacks")
     if policy.workshop_allowed: result.append("workshop")
     return result
 

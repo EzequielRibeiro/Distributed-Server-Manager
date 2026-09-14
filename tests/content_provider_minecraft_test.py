@@ -30,7 +30,7 @@ class _Content:
  def get(self,iid,cid):return None
  def list(self,**kwargs):return []
 
-def _policy():return SimpleNamespace(modifications_allowed=True,mods_allowed=True,plugins_allowed=True,workshop_allowed=True,external_upload_allowed=True,custom_runtime_allowed=False)
+def _policy():return SimpleNamespace(modifications_allowed=True,mods_allowed=True,plugins_allowed=True,modpacks_allowed=True,datapacks_allowed=True,workshop_allowed=True,external_upload_allowed=True,custom_runtime_allowed=False)
 
 def _service(context,resolver):
  service=CustomerContentWorkspaceService.__new__(CustomerContentWorkspaceService);service.workspace=_Workspace(context,_policy());service.content=_Content();service.minecraft_resolver=resolver;return service
@@ -42,10 +42,13 @@ def _load_content_client(platform):
   'content_provider_steam_workshop':types.ModuleType('content_provider_steam_workshop'),
   'content_activation_projection':types.ModuleType('content_activation_projection'),
   'content_activation_apply':types.ModuleType('content_activation_apply'),
+  'content_security':types.ModuleType('content_security'),
  }
  stubs['content_provider'].resolve_source=lambda *args:None
  stubs['content_activation_projection'].synchronize_activation_state=lambda *args:[]
  stubs['content_activation_apply'].apply_activation_snapshots=lambda *args:None
+ stubs['content_security'].ContentSecurityRejected=type('ContentSecurityRejected',(ValueError,),{})
+ stubs['content_security'].require_clean=lambda *args,**kwargs:{'security_state':'clean'}
  path=ROOT/f'agents/{platform}/runtime/content_client.py';spec=importlib.util.spec_from_file_location(f'{platform}_minecraft_hash_test',path);module=importlib.util.module_from_spec(spec)
  with patch.dict(sys.modules,stubs):spec.loader.exec_module(module)
  return module

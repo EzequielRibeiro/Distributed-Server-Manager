@@ -191,4 +191,97 @@ def resolve_minecraft_content(provider: str, project: str, game_version: str, ru
     raise MinecraftContentResolverError("unsupported Minecraft content provider")
 
 
-__all__ = ["CURSEFORGE_API_BASE", "CURSEFORGE_MINECRAFT_GAME_ID", "MODRINTH_API_BASE", "MinecraftContentResolverError", "provider_loaders", "resolve_curseforge", "resolve_minecraft_content", "resolve_modrinth"]
+def _modpack_loader(runtime: Mapping[str, Any]) -> str:
+    loader = str(runtime.get("loader") or runtime.get("variant") or "").strip().lower()
+    if loader in {"fabric", "forge", "neoforge", "quilt"}:
+        return loader
+    if loader == "youer":
+        return "neoforge"
+    raise MinecraftContentResolverError("runtime has no proven modpack provider loader mapping")
+
+
+def _search_limit(value: Any) -> int:
+    try:
+        return max(1, min(int(value), 50))
+    except (TypeError, ValueError):
+        return 20
+
+
+def discover_modrinth(query: str, game_version: str, runtime: Mapping[str, Any], content_type: str, *, limit: int = 20, requester: Requester = _request_json) -> list[dict[str, Any]]:
+    text = str(query or "").strip()
+    ctype = str(content_type or "").strip().lower()
+    if not text:
+        raise MinecraftContentResolverError("search query is required")
+    if ctype == "modpack":
+        loaders = (_modpack_loader(runtime),); project_type = "modpack"
+    elif ctype in {"mod", "plugin"}:
+        loaders = provider_loaders(runtime, ctype); project_type = "mod"
+    else:
+        raise MinecraftContentResolverError("Modrinth discovery does not support this content type")
+    facets = [[f"project_type:{project_type}"], [f"versions:{game_version}"], [f"categories:{value}" for value in loaders]]
+    url = f"{MODRINTH_API_BASE}/search?{urlencode({'query': text, 'limit': _search_limit(limit), 'facets': json.dumps(facets, separators=(',', ':'))})}"
+    payload = requester(url, {})
+    hits = payload.get("hits") if isinstance(payload, Mapping) else []
+    out = []
+    for item in hits or []:
+        if not isinstance(item, Mapping) or str(item.get("project_type") or "").lower() != project_type:
+            continue
+        project_id = str(item.get("project_id") or "").strip()
+        slug = str(item.get("slug") or "").strip()
+        if not project_id or not slug:
+            continue
+        out.append({"provider":"modrinth","content_type":ctype,"content_id":f"modrinth:{project_id}","project_ref":slug,"project_id":project_id,"slug":slug,"name":str(item.get("title") or slug)[:300],"description":str(item.get("description") or "")[:1000],"author":str(item.get("author") or "")[:200],"downloads":int(item.get("downloads") or 0),"icon_url":str(item.get("icon_url") or "")[:1000],"project_type":project_type})
+    return out
+
+
+def _curseforge_class_id(content_type: str, api_key: str, requester: Requester) -> int:
+    payload = requester(f"{CURSEFORGE_API_BASE}/categories?{urlencode({'gameId': CURSEFORGE_MINECRAFT_GAME_ID, 'classesOnly': 'true'})}", {"x-api-key": api_key})
+    rows = payload.get("data") if isinstance(payload, Mapping) else []
+    wanted = "modpacks" if content_type == "modpack" else "mods"
+    for item in rows or []:
+        if not isinstance(item, Mapping) or not bool(item.get("isClass")):
+            continue
+        slug = str(item.get("slug") or "").strip().lower(); name = str(item.get("name") or "").strip().lower()
+        if wanted == "modpacks" and ("modpack" in slug or "modpack" in name):
+            return int(item.get("id") or 0)
+        if wanted == "mods" and (slug in {"mods", "mc-mods"} or name == "mods"):
+            return int(item.get("id") or 0)
+    raise MinecraftContentResolverError(f"CurseForge {wanted} class is unavailable")
+
+
+def discover_curseforge(query: str, game_version: str, runtime: Mapping[str, Any], content_type: str, *, limit: int = 20, api_key: str | None = None, api_key_file: str | None = None, requester: Requester = _request_json) -> list[dict[str, Any]]:
+    text = str(query or "").strip(); ctype = str(content_type or "").strip().lower()
+    if not text:
+        raise MinecraftContentResolverError("search query is required")
+    if ctype not in {"mod", "modpack"}:
+        raise MinecraftContentResolverError("CurseForge discovery supports mods and modpacks only")
+    key = str(api_key or "").strip() or _secret_file(api_key_file)
+    loader = _modpack_loader(runtime) if ctype == "modpack" else provider_loaders(runtime, ctype)[0]
+    class_id = _curseforge_class_id(ctype, key, requester)
+    query_args = {"gameId":CURSEFORGE_MINECRAFT_GAME_ID,"classId":class_id,"searchFilter":text,"gameVersion":game_version,"modLoaderType":_curseforge_loader((loader,)),"pageSize":_search_limit(limit),"sortField":2,"sortOrder":"desc"}
+    payload = requester(f"{CURSEFORGE_API_BASE}/mods/search?{urlencode(query_args)}", {"x-api-key": key})
+    rows = payload.get("data") if isinstance(payload, Mapping) else []
+    out = []
+    for item in rows or []:
+        if not isinstance(item, Mapping):
+            continue
+        project_id = int(item.get("id") or 0)
+        if project_id <= 0 or int(item.get("gameId") or 0) != CURSEFORGE_MINECRAFT_GAME_ID:
+            continue
+        slug = str(item.get("slug") or project_id); logo = item.get("logo") if isinstance(item.get("logo"), Mapping) else {}
+        out.append({"provider":"curseforge","content_type":ctype,"content_id":f"curseforge:{project_id}","project_ref":str(project_id),"project_id":str(project_id),"slug":slug[:200],"name":str(item.get("name") or slug)[:300],"description":str(item.get("summary") or "")[:1000],"author":"","downloads":int(item.get("downloadCount") or 0),"icon_url":str(logo.get("thumbnailUrl") or logo.get("url") or "")[:1000],"project_type":ctype})
+    return out
+
+
+def discover_minecraft_content(provider: str, query: str, game_version: str, runtime: Mapping[str, Any], content_type: str, *, limit: int = 20, requester: Requester = _request_json, curseforge_api_key: str | None = None, curseforge_api_key_file: str | None = None) -> list[dict[str, Any]]:
+    provider = str(provider or "").strip().lower(); game_version = str(game_version or "").strip()
+    if not game_version:
+        raise MinecraftContentResolverError("Minecraft game version is unavailable")
+    if provider == "modrinth":
+        return discover_modrinth(query, game_version, runtime, content_type, limit=limit, requester=requester)
+    if provider == "curseforge":
+        return discover_curseforge(query, game_version, runtime, content_type, limit=limit, api_key=curseforge_api_key, api_key_file=curseforge_api_key_file, requester=requester)
+    raise MinecraftContentResolverError("unsupported Minecraft discovery provider")
+
+
+__all__ = ["CURSEFORGE_API_BASE", "CURSEFORGE_MINECRAFT_GAME_ID", "MODRINTH_API_BASE", "MinecraftContentResolverError", "discover_curseforge", "discover_minecraft_content", "discover_modrinth", "provider_loaders", "resolve_curseforge", "resolve_minecraft_content", "resolve_modrinth"]

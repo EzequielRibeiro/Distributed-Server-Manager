@@ -10,7 +10,7 @@ from customer_content_upload_service import CustomerContentUploadService
 
 class _Workspace:
  def __init__(self,policy=None):
-  self.policy=policy or SimpleNamespace(external_upload_allowed=True,modifications_allowed=True,mods_allowed=True,plugins_allowed=True)
+  self.policy=policy or SimpleNamespace(external_upload_allowed=True,modifications_allowed=True,mods_allowed=True,plugins_allowed=True,modpacks_allowed=True,datapacks_allowed=True)
   self.calls=[];self.repo=SimpleNamespace(workspace_policy=lambda iid:{})
  def require(self,user,iid,permission):self.calls.append((iid,permission));return {"id":iid,"agent_id":"agent-1","customer_id":7}
  def _contract_policy(self,context,policy):return {},self.policy
@@ -35,7 +35,7 @@ class ExternalUploadTest(unittest.TestCase):
   self.assertEqual(s.workspace.calls[-1],("i1","content.install"));created=s.transfers.created[-1]
   self.assertEqual(created["purpose"],"content_upload");self.assertEqual(created["direction"],"controller_to_agent");self.assertEqual(created["agent_id"],"agent-1");self.assertEqual(item["transfer_id"],"transfer-1")
  def test_policy_blocks_external_upload(self):
-  p=SimpleNamespace(external_upload_allowed=False,modifications_allowed=True,mods_allowed=True,plugins_allowed=True)
+  p=SimpleNamespace(external_upload_allowed=False,modifications_allowed=True,mods_allowed=True,plugins_allowed=True,modpacks_allowed=True,datapacks_allowed=True)
   with self.assertRaises(PermissionError):service(p).create({"username":"alice"},"i1","mod.zip")
  def test_stage_streams_through_artifact_repository(self):
   s=service();s.stage({"username":"alice"},"transfer-1",io.BytesIO(b"abc"),3);self.assertEqual(s.transfers.staged[-1],("transfer-1",3,b"abc"))
@@ -56,7 +56,7 @@ class ExternalUploadTest(unittest.TestCase):
   s=service(status="completed");s.transfers.item["destination_ref"]="content-uploads/i1/transfer-1/mod.zip"
   with self.assertRaises(ValueError):s.finalize({"username":"alice"},"transfer-1",{"content_id":"m1","content_type":"mod"})
  def test_mod_and_plugin_capabilities_are_enforced(self):
-  p=SimpleNamespace(external_upload_allowed=True,modifications_allowed=True,mods_allowed=False,plugins_allowed=False)
+  p=SimpleNamespace(external_upload_allowed=True,modifications_allowed=True,mods_allowed=False,plugins_allowed=False,modpacks_allowed=False,datapacks_allowed=False)
   for ctype in ("mod","modpack","map","plugin"):
    with self.subTest(ctype=ctype),self.assertRaises(PermissionError):service(p,status="completed").finalize({"username":"alice"},"transfer-1",{"content_id":"x","content_type":ctype})
 

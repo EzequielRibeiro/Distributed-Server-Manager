@@ -49,6 +49,12 @@ class _FakeSocket:
 
 
 class _ContentPolicy:
+    mods_allowed = False
+    plugins_allowed = False
+    modpacks_allowed = False
+    datapacks_allowed = False
+    workshop_allowed = False
+
     def as_dict(self):
         return {}
 

@@ -26,6 +26,11 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   standard={"product_variant":"standard"};modified={"product_variant":"modified","entitlements":{"mods":True,"plugins":True,"workshop":True,"external_upload":True}}
   self.assertTrue(runtime_allowed_by_contract(ROOT,"minecraft","minecraft.java.vanilla",standard));self.assertFalse(runtime_allowed_by_contract(ROOT,"minecraft","minecraft.java.paper",standard));self.assertTrue(runtime_allowed_by_contract(ROOT,"minecraft","minecraft.java.paper",modified))
   self.assertGreater(len(allowed_runtimes(ROOT,"minecraft",modified)),len(allowed_runtimes(ROOT,"minecraft",standard)))
+ def test_instance_mod_override_disables_derived_modpacks_and_datapacks(self):
+  service=CustomerInstanceWorkspaceService.__new__(CustomerInstanceWorkspaceService);service.root=ROOT
+  context={"game_id":"minecraft","runtime_id":"minecraft.java.neoforge","contract_metadata":{"product_variant":"modified"}}
+  _,policy=service._contract_policy(context,{"mods_allowed":False})
+  self.assertFalse(policy.mods_allowed);self.assertFalse(policy.modpacks_allowed);self.assertFalse(policy.datapacks_allowed)
  def test_baseline_has_workspace_distributed_queues(self):
   for backend in ("sqlite","postgresql","mysql","mariadb"):
    sql=load_schema_baseline(backend).sql
@@ -121,7 +126,7 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   service._location=lambda agent_id:{}
   service._contract_policy=lambda context,policy:(
    {},
-   type("Content",(),{"as_dict":lambda self:{}})(),
+   type("Content",(),{"mods_allowed":False,"plugins_allowed":False,"modpacks_allowed":False,"datapacks_allowed":False,"workshop_allowed":False,"as_dict":lambda self:{}})(),
   )
   service._ports=lambda instance_id:[]
 

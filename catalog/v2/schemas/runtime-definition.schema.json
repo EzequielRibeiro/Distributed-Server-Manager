@@ -81,6 +81,25 @@
               }
             }
           }
+        },
+        "bundles": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "modpack": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["providers"],
+              "properties": {
+                "providers": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {"enum": ["modrinth", "curseforge"]}
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -109,7 +128,8 @@
       "required": ["directory", "extensions"],
       "properties": {
         "directory": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"},
-        "extensions": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "pattern": "^\\.[a-z0-9]{1,12}$"}}
+        "extensions": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "pattern": "^\\.[a-z0-9]{1,12}$"}},
+        "providers": {"type": "array", "uniqueItems": true, "items": {"enum": ["modrinth", "curseforge"]}}
       }
     },
     "installer": {

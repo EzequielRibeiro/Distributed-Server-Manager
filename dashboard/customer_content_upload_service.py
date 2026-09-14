@@ -51,7 +51,11 @@ class CustomerContentUploadService:
   if not content_id or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-" for c in content_id):raise ValueError("invalid content_id")
   ctype=str(body.get("content_type") or "other").strip().lower()
   if ctype=="plugin" and not effective.plugins_allowed:raise PermissionError("plugins are not allowed by this contract")
-  if ctype in {"mod","modpack","map"} and not effective.mods_allowed:raise PermissionError("mods are not allowed by this contract")
+  if ctype=="modpack":
+   if not effective.modpacks_allowed:raise PermissionError("modpacks are not allowed by this contract")
+   raise ValueError("external modpacks require composed bundle resolution")
+  if ctype=="datapack" and not effective.datapacks_allowed:raise PermissionError("datapacks are not allowed by this contract")
+  if ctype in {"mod","map"} and not effective.mods_allowed:raise PermissionError("mods are not allowed by this contract")
   if ctype=="workshop":raise ValueError("external uploads cannot impersonate Steam Workshop content")
   name=self._filename(item.get("filename"));tid=str(item["transfer_id"]);relative=str(item.get("destination_ref") or "").strip().replace("\\","/")
   expected=(Path("quarantine")/iid/tid/name).as_posix()
