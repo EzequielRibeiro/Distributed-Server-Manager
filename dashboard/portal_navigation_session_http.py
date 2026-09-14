@@ -41,6 +41,7 @@ CONTROLLER_PAGES = frozenset({
     "/agent-details.html",
     "/agent-observability.html",
     "/servers.html",
+    "/controller-instance.html",
     "/catalog.html",
     "/catalog-game-create.html",
     "/game-profiles.html",

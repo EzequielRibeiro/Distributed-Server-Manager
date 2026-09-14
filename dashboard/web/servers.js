@@ -2,7 +2,7 @@
 "use strict";
 
 const API="/api";
-const state={instances:[],filter:"all",query:"",sidebarCollapsed:false};
+const state={instances:[],filter:"all",query:"",sidebarCollapsed:false,role:""};
 const el=id=>document.getElementById(id);
 const controllerHeaders=()=>({"X-Capivara-Auth-Area":"controller",Accept:"application/json"});
 
@@ -39,6 +39,7 @@ async function loadSidebar(){
     el("current-user").textContent=`${who.username} (${who.role})`;
     el("servers-user-name").textContent=who.username||"—";
     el("servers-user-role").textContent=who.role||"—";
+    state.role=String(who.role||"").toLowerCase();
     document.querySelectorAll(".admin-only").forEach(x=>x.style.display=who.role==="admin"?"":"none");
     document.querySelectorAll(".agent-manager-only").forEach(x=>x.style.display=["admin","controller"].includes(who.role)?"":"none");
     document.querySelectorAll(".instance-manager-only").forEach(x=>x.style.display=["admin","controller","operator"].includes(who.role)?"":"none");
@@ -167,7 +168,8 @@ function card(i){
     const players=i.slots?`${i.players} / ${i.slots}`:String(i.players);
     const ramPct=Math.max(0,Math.min(100,i.ramMb?Math.min(100,(i.ramMb/16384)*100):0));
     const qs=new URLSearchParams({server:i.server,game:i.game,instance:i.instance});
-    a.innerHTML=`<div class="cap-instance-head"><div class="cap-instance-title"><span class="cap-game-mark">${gameIcon(i.game)}</span><div><strong>${escapeHtml(i.display)}</strong><small>${escapeHtml(i.game)} · ${escapeHtml(i.agent)}</small></div></div><span class="cap-state ${i.status}">${label}</span></div><div class="cap-instance-meta"><div><span>Jogadores</span><strong>${players}</strong></div><div><span>CPU</span><strong>${i.cpu?i.cpu.toFixed(1)+"%":"-"}</strong></div><div><span>Agent</span><strong>${escapeHtml(i.agent)}</strong></div><div><span>Localização</span><strong>${escapeHtml(i.location)}</strong></div></div><div class="cap-meter"><div class="cap-meter-row"><span>RAM</span><strong>${fmtRam(i.ramMb)}</strong></div><div class="cap-meter-track"><div class="cap-meter-fill" style="width:${ramPct}%"></div></div></div><div class="cap-instance-actions"><a class="cap-action-primary" href="console.html?${qs}">Console</a><a class="cap-action-secondary" href="customer-instance.html?${qs}&auth_area=controller">Gerenciar</a></div>`;
+    const manage=["admin","controller"].includes(state.role)?`<a class="cap-action-secondary" href="controller-instance.html?${qs}">Gerenciar</a>`:"";
+    a.innerHTML=`<div class="cap-instance-head"><div class="cap-instance-title"><span class="cap-game-mark">${gameIcon(i.game)}</span><div><strong>${escapeHtml(i.display)}</strong><small>${escapeHtml(i.game)} · ${escapeHtml(i.agent)}</small></div></div><span class="cap-state ${i.status}">${label}</span></div><div class="cap-instance-meta"><div><span>Jogadores</span><strong>${players}</strong></div><div><span>CPU</span><strong>${i.cpu?i.cpu.toFixed(1)+"%":"-"}</strong></div><div><span>Agent</span><strong>${escapeHtml(i.agent)}</strong></div><div><span>Localização</span><strong>${escapeHtml(i.location)}</strong></div></div><div class="cap-meter"><div class="cap-meter-row"><span>RAM</span><strong>${fmtRam(i.ramMb)}</strong></div><div class="cap-meter-track"><div class="cap-meter-fill" style="width:${ramPct}%"></div></div></div><div class="cap-instance-actions"><a class="cap-action-primary" href="console.html?${qs}">Console</a>${manage}</div>`;
     return a;
 }
 

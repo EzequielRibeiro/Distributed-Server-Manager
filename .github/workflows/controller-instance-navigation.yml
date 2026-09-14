@@ -7,6 +7,11 @@ on:
       - "dashboard/web/servers.html"
       - "dashboard/web/customer-instance.html"
       - "dashboard/web/controller-instance-auth.js"
+      - "dashboard/web/controller-instance.html"
+      - "dashboard/web/controller-instance.css"
+      - "dashboard/server_part14.py"
+      - "dashboard/static_asset_policy.py"
+      - "dashboard/portal_navigation_session_http.py"
       - "tests/controller_instance_navigation_test.py"
       - ".github/workflows/controller-instance-navigation.yml"
   push:
@@ -16,6 +21,11 @@ on:
       - "dashboard/web/servers.html"
       - "dashboard/web/customer-instance.html"
       - "dashboard/web/controller-instance-auth.js"
+      - "dashboard/web/controller-instance.html"
+      - "dashboard/web/controller-instance.css"
+      - "dashboard/server_part14.py"
+      - "dashboard/static_asset_policy.py"
+      - "dashboard/portal_navigation_session_http.py"
       - "tests/controller_instance_navigation_test.py"
       - ".github/workflows/controller-instance-navigation.yml"
 
