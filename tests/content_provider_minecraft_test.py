@@ -46,6 +46,8 @@ def _load_content_client(platform):
  }
  stubs['content_provider'].resolve_source=lambda *args:None
  stubs['content_activation_projection'].synchronize_activation_state=lambda *args:[]
+ stubs['content_activation_apply'].ContentActivationApplyError=type('ContentActivationApplyError',(RuntimeError,),{})
+ stubs['content_activation_apply'].ContentActivationRollbackError=type('ContentActivationRollbackError',(stubs['content_activation_apply'].ContentActivationApplyError,),{})
  stubs['content_activation_apply'].apply_activation_snapshots=lambda *args:None
  stubs['content_security'].ContentSecurityRejected=type('ContentSecurityRejected',(ValueError,),{})
  stubs['content_security'].require_clean=lambda *args,**kwargs:{'security_state':'clean'}

@@ -79,6 +79,7 @@ class ContentContractTest(unittest.TestCase):
    def opener(request,timeout=30):return _Response({"response":{"publishedfiledetails":[{"time_updated":101}]}})
    detail=detect_content_update({"provider":"steam","content_type":"workshop","package_id":"221100:123456"},root,opener=opener,force_refresh=True)
    self.assertEqual(detail["state"],"update_available");self.assertEqual(detail["installed_revision"],"100");self.assertEqual(detail["available_revision"],"101");self.assertTrue(detail["rollback_supported"])
+   canonical=detect_content_update({"provider":"steam-workshop","content_type":"workshop","package_id":"221100:123456"},root,opener=opener,force_refresh=True);self.assertTrue(canonical["detector_supported"]);self.assertEqual(canonical["state"],"update_available")
  def test_non_workshop_content_detector_fails_closed(self):
   detail=detect_content_update({"provider":"http","content_type":"mod","package_id":"x"},Path("/tmp"));self.assertFalse(detail["detector_supported"]);self.assertEqual(detail["state"],"unsupported")
  def test_update_inventory_is_game_neutral_and_windows_parity_exists(self):

@@ -15,9 +15,14 @@ class _Workspace:
  def _contract_policy(self,context,policy):return {},self.policy
 
 class _Content:
- def __init__(self,current=None):self.current=current;self.puts=[];self.bundles=[];self.bundle_states=[]
+ def __init__(self,current=None):self.current=current;self.puts=[];self.bundles=[];self.bundle_states=[];self.rollbacks=[];self.bundle_rollbacks=[]
  def list(self,**kw):return [{"content_id":"a"}]
  def customer_view(self,iid,limit=2000):return [{"content_id":"a"}]
+ def previous_revision(self,iid,cid):return None
+ def bundle_history(self,iid,cid):return []
+ def rollback(self,iid,cid,revision=None,**kwargs):self.rollbacks.append((iid,cid,revision,kwargs));return {"changed":True}
+ def rollback_bundle(self,iid,cid,revision=None,**kwargs):self.bundle_rollbacks.append((iid,cid,revision,kwargs));return {"changed":True}
+ def bundle_diff(self,iid,cid,bundle):return {"added":[],"removed":[],"updated":[],"unchanged":[]}
  def get(self,iid,cid):return dict(self.current) if self.current else None
  def put(self,payload,requested_by=None):self.puts.append((dict(payload),requested_by));return {"changed":True,"assignment":{**payload,"revision":2}}
  def put_bundle(self,parent,bundle,children,requested_by=None):self.bundles.append((dict(parent),dict(bundle),[dict(x) for x in children],requested_by));return {"changed":True,"assignment":dict(parent),"children":children}
@@ -33,7 +38,7 @@ def _current():return {"content_id":"cf","content_type":"mod","desired_state":"i
 
 class CustomerContentWorkspaceTest(unittest.TestCase):
  def test_list_requires_content_read(self):
-  service=_service(_policy());self.assertEqual(service.list({"username":"customer"},"i1"),[{"content_id":"a"}]);self.assertEqual(service.workspace.calls,[('i1','content.read')])
+  service=_service(_policy());items=service.list({"username":"customer"},"i1");self.assertEqual(items[0]["content_id"],"a");self.assertFalse(items[0]["update"]["supported"]);self.assertEqual(service.workspace.calls,[('i1','content.read')])
  def test_install_uses_install_permission_and_forbids_server_owned_fields(self):
   service=_service(_policy())
   with self.assertRaises(PermissionError):service.install({"username":"u"},"i1",{"content_id":"x","provider":"http","agent_id":"spoof"})
@@ -47,24 +52,37 @@ class CustomerContentWorkspaceTest(unittest.TestCase):
   with self.assertRaises(PermissionError):_service(_policy(workshop_allowed=False)).install({"username":"u"},"i1",{"content_id":"x","content_type":"workshop","provider":"steam-workshop"})
  def test_remove_preserves_assignment_as_absent_and_disabled(self):
   service=_service(_policy(),_current());service.mutate({"username":"u"},"i1","cf","remove",{});payload,_=service.content.puts[-1];self.assertEqual(service.workspace.calls[-1],('i1','content.remove'));self.assertEqual(payload["desired_state"],"absent");self.assertEqual(payload["activation_state"],"disabled")
- def test_enable_disable_reorder_and_update_use_install_permission(self):
-  for action,body,expected in (("disable",{},("activation_state","disabled")),("enable",{},("activation_state","enabled")),("reorder",{"activation_order":42},("activation_order",42)),("update",{"version":"2"},("version","2"))):
+ def test_enable_disable_and_reorder_use_install_permission(self):
+  for action,body,expected in (("disable",{},("activation_state","disabled")),("enable",{},("activation_state","enabled")),("reorder",{"activation_order":42},("activation_order",42))):
    with self.subTest(action=action):
     service=_service(_policy(),_current());service.mutate({"username":"u"},"i1","cf",action,body);payload,_=service.content.puts[-1];self.assertEqual(service.workspace.calls[-1],('i1','content.install'));self.assertEqual(payload[expected[0]],expected[1])
  def test_update_rejects_security_state_and_unknown_fields(self):
   service=_service(_policy(),_current())
   with self.assertRaises(PermissionError):service.mutate({"username":"u"},"i1","cf","update",{"security_state":"clean"})
   with self.assertRaises(ValueError):service.mutate({"username":"u"},"i1","cf","update",{"shell":"echo nope"})
+ def test_structured_update_is_server_resolved_and_rollback_uses_history(self):
+  context={"id":"i1","game_id":"minecraft","agent_id":"agent-1","runtime_id":"minecraft.java.fabric","game_version":"1.21.1"};current={**_current(),"provider":"modrinth","artifact":{"provider":"modrinth","package_id":"project:old","url":"https://cdn.modrinth.com/old.jar"},"provenance":{"minecraft_provider":{"project_id":"project","version_id":"old"}}};service=_service(_policy(),current,context);calls=[]
+  service.minecraft_resolver=lambda provider,project,game_version,runtime,ctype:(calls.append((provider,project,game_version,ctype)) or {"version":"2","artifact":{"provider":"modrinth","package_id":"project:new","url":"https://cdn.modrinth.com/new.jar","filename":"new.jar","sha512":"a"*128},"provenance":{"project_id":"project","version_id":"new"},"metadata":{}})
+  with patch('customer_content_workspace.runtime_definition',return_value={"loader":"fabric","content":{"managed":{"types":{"mod":{"providers":["modrinth"]}}}}}):service.mutate({"username":"u"},"i1","cf","update",{})
+  payload,_=service.content.puts[-1];self.assertEqual(calls,[('modrinth','project','1.21.1','mod')]);self.assertEqual(payload["version"],"2");self.assertEqual(payload["artifact"]["package_id"],"project:new")
+  with self.assertRaises(PermissionError):service.mutate({"username":"u"},"i1","cf","update",{"version":"client-picked"})
+  service.mutate({"username":"u"},"i1","cf","rollback",{"revision":1});self.assertEqual(service.content.rollbacks[-1][2],1)
  def test_modpack_install_uses_composed_bundle_path_and_discards_customer_url(self):
   context={"id":"i1","game_id":"minecraft","agent_id":"agent-1","runtime_id":"minecraft.java.fabric","game_version":"1.21.1"};service=_service(_policy(),context=context)
   service.modpack_resolver=lambda provider,project,parent,version,runtime:{"parent":{"version":"Pack 1","artifact":{"provider":"modrinth","url":"https://cdn.modrinth.com/pack.mrpack","filename":"pack.mrpack","sha512":"a"*128,"archive":True},"provenance":{"project_id":"p","version_id":"v"}},"bundle":{"provider":"modrinth","provider_project_id":"p","provider_version_id":"v","minecraft_version":"1.21.1","loader_id":"fabric","loader_version":"0.16","manifest_kind":"mrpack-v1","members":[{"content_id":"mb-a","path":"mods/a.jar","required":True,"artifact":{"provider":"modrinth","url":"https://cdn.modrinth.com/a.jar","filename":"a.jar","sha512":"b"*128}}],"override_roots":["overrides"]},"children":[{"content_id":"mb-a","content_type":"mod","provider":"modrinth","version":"1","artifact":{"provider":"modrinth","url":"https://cdn.modrinth.com/a.jar","filename":"a.jar","sha512":"b"*128},"target":"mods/mb-a"}]}
   with patch('customer_content_workspace.runtime_definition',return_value={"loader":"fabric","content":{"bundles":{"modpack":{"providers":["modrinth","curseforge"]}}}}):result=service.install({"username":"u"},"i1",{"content_id":"pack","content_type":"modpack","provider":"modrinth","artifact":{"package_id":"project-slug","url":"https://evil.invalid/pack"}})
   parent,bundle_value,children,requested_by=service.content.bundles[-1];self.assertEqual(parent["artifact"]["url"],"https://cdn.modrinth.com/pack.mrpack");self.assertEqual(bundle_value["provider_version_id"],"v");self.assertEqual(children[0]["content_id"],"mb-a");self.assertEqual(requested_by,"u");self.assertTrue(result["changed"])
+ def test_modpack_update_is_server_resolved_and_returns_manifest_diff(self):
+  context={"id":"i1","game_id":"minecraft","agent_id":"agent-1","runtime_id":"minecraft.java.fabric","game_version":"1.21.1"};current={**_current(),"content_id":"pack","content_type":"modpack","provider":"modrinth","artifact":{"provider":"modrinth","package_id":"pack:new"},"provenance":{"minecraft_modpack":{"project_id":"pack-project","version_id":"old"}},"metadata":{"bundle":{"parent_content_id":"pack"},"minecraft_modpack":{"provider_project_id":"pack-project","provider_version_id":"old"}}};service=_service(_policy(),current,context);service.content.bundle_diff=lambda *args:{"added":["mb-new"],"removed":[],"updated":[],"unchanged":[]};service.content.bundle_history=lambda *args:[{"revision":2},{"revision":1}]
+  service.modpack_resolver=lambda provider,project,parent,version,runtime:{"parent":{"version":"Pack 2","artifact":{"provider":"modrinth","url":"https://cdn.modrinth.com/pack2.mrpack","filename":"pack.mrpack","sha512":"a"*128,"archive":True},"provenance":{"project_id":"pack-project","version_id":"new"}},"bundle":{"provider":"modrinth","provider_project_id":"pack-project","provider_version_id":"new","minecraft_version":"1.21.1","loader_id":"fabric","loader_version":"0.16","manifest_kind":"mrpack-v1","members":[{"content_id":"mb-new","path":"mods/new.jar","required":True,"artifact":{"provider":"modrinth","url":"https://cdn.modrinth.com/new.jar","filename":"new.jar","sha512":"b"*128}}],"override_roots":["overrides"]},"children":[{"content_id":"mb-new","content_type":"mod","provider":"modrinth","version":"2","artifact":{"provider":"modrinth","url":"https://cdn.modrinth.com/new.jar","filename":"new.jar","sha512":"b"*128},"target":"mods/mb-new"}]}
+  with patch('customer_content_workspace.runtime_definition',return_value={"loader":"fabric","content":{"bundles":{"modpack":{"providers":["modrinth"]}}}}):result=service.mutate({"username":"u"},"i1","pack","update",{})
+  self.assertEqual(service.content.bundles[-1][1]["provider_version_id"],"new");self.assertEqual(result["manifest_diff"]["added"],["mb-new"]);self.assertEqual(result["previous_bundle_revision"],2);self.assertEqual(service.content.bundles[-1][0]["provenance"]["update_checkpoint"]["previous_bundle_revision"],2)
+  service.mutate({"username":"u"},"i1","pack","rollback",{"revision":1});self.assertEqual(service.content.bundle_rollbacks[-1][2],1)
  def test_modpack_lifecycle_propagates_and_generic_update_fails_closed(self):
   current={**_current(),"content_id":"pack","content_type":"modpack","provider":"modrinth","metadata":{"bundle":{"parent_content_id":"pack"}}};service=_service(_policy(),current)
   service.mutate({"username":"u"},"i1","pack","disable",{});self.assertEqual(service.content.bundle_states[-1][2]["activation_state"],"disabled")
   service.mutate({"username":"u"},"i1","pack","remove",{});self.assertEqual(service.content.bundle_states[-1][2]["desired_state"],"absent")
-  with self.assertRaises(ValueError):service.mutate({"username":"u"},"i1","pack","update",{"version":"2"})
+  with self.assertRaises(PermissionError):service.mutate({"username":"u"},"i1","pack","update",{"version":"2"})
  def test_missing_assignment_is_not_found(self):
   with self.assertRaises(KeyError):_service(_policy()).mutate({"username":"u"},"i1","missing","disable",{})
 
