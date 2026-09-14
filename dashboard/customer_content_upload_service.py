@@ -8,8 +8,9 @@ from artifact_transfer_repository import ArtifactTransferRepository
 from content_repository import ContentRepository
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 
-_ALLOWED_FIELDS=frozenset({"content_id","content_type","activation_state","activation_order","version","target","metadata","dependencies","conflicts"})
+_ALLOWED_FIELDS=frozenset({"content_id","content_type","activation_state","activation_order","version","metadata","dependencies","conflicts"})
 _ARCHIVE_SUFFIXES=(".zip",".tar",".tar.gz",".tgz")
+_UPLOAD_SUFFIXES=(*_ARCHIVE_SUFFIXES,".jar")
 
 class CustomerContentUploadService:
  def __init__(self,backend,root):
@@ -23,8 +24,9 @@ class CustomerContentUploadService:
   return context,effective,agent_id
  @staticmethod
  def _filename(value):
-  name=Path(str(value or "").strip()).name
-  if not name or name in {".",".."} or any(c in name for c in ("\x00","\r","\n")):raise ValueError("invalid upload filename")
+  raw=str(value or "").strip();name=Path(raw).name
+  if not name or name in {".",".."} or name!=raw or any(c in name for c in ("\x00","\r","\n")):raise ValueError("invalid upload filename")
+  if not name.lower().endswith(_UPLOAD_SUFFIXES):raise ValueError("unsupported external content artifact")
   return name[:255]
  def _transfer(self,user,transfer_id):
   item=self.transfers.get(str(transfer_id or ""));iid=str(item.get("instance_id") or "")
@@ -46,15 +48,18 @@ class CustomerContentUploadService:
   unknown=sorted(set(body)-_ALLOWED_FIELDS-{"instance_id","transfer_id","action"})
   if unknown:raise ValueError("unsupported content fields: "+", ".join(unknown))
   content_id=str(body.get("content_id") or "").strip()
-  if not content_id:raise ValueError("content_id is required")
+  if not content_id or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-" for c in content_id):raise ValueError("invalid content_id")
   ctype=str(body.get("content_type") or "other").strip().lower()
   if ctype=="plugin" and not effective.plugins_allowed:raise PermissionError("plugins are not allowed by this contract")
   if ctype in {"mod","modpack","map"} and not effective.mods_allowed:raise PermissionError("mods are not allowed by this contract")
   if ctype=="workshop":raise ValueError("external uploads cannot impersonate Steam Workshop content")
-  name=self._filename(item.get("filename"));tid=str(item["transfer_id"]);relative=f"content-uploads/{iid}/{tid}/{name}";lower=name.lower();archive=lower.endswith(_ARCHIVE_SUFFIXES)
+  name=self._filename(item.get("filename"));tid=str(item["transfer_id"]);relative=str(item.get("destination_ref") or "").strip().replace("\\","/")
+  expected=(Path("quarantine")/iid/tid/name).as_posix()
+  if relative!=expected:raise ValueError("content upload Agent quarantine acknowledgement is missing")
+  lower=name.lower();archive=lower.endswith(_ARCHIVE_SUFFIXES)
   metadata=body.get("metadata") if isinstance(body.get("metadata"),Mapping) else {}
   payload={key:body[key] for key in _ALLOWED_FIELDS if key in body and key not in {"metadata"}}
-  payload.update({"instance_id":iid,"content_id":content_id,"content_type":ctype,"desired_state":"installed","provider":"local","artifact":{"provider":"local","package_id":relative,"sha256":str(item.get("sha256") or "") or None,"archive":archive,"filename":name,"ephemeral_upload":True},"provenance":{"kind":"customer-upload","transfer_id":tid,"filename":name,"sha256":str(item.get("sha256") or "") or None},"metadata":dict(metadata)})
+  payload.update({"instance_id":iid,"content_id":content_id,"content_type":ctype,"desired_state":"installed","provider":"local","target":f"external/{content_id}","artifact":{"provider":"local","package_id":relative,"sha256":str(item.get("sha256") or "") or None,"archive":archive,"filename":name,"ephemeral_upload":True},"provenance":{"kind":"customer-upload","transfer_id":tid,"filename":name,"sha256":str(item.get("sha256") or "") or None,"quarantine_path":relative,"agent_validated":True},"metadata":dict(metadata)})
   return self.content.put(payload,requested_by=str(user.get("username") or "customer"))
 
 __all__=["CustomerContentUploadService"]

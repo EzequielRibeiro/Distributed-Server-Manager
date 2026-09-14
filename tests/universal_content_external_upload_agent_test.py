@@ -1,35 +1,60 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import importlib.util,os,tempfile,unittest
+import importlib.util,io,os,sys,tarfile,tempfile,unittest,zipfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
+DATABASE=ROOT/"database"
+if str(DATABASE) not in sys.path:sys.path.insert(0,str(DATABASE))
+from artifact_transfer_repository import ArtifactTransferRepository,_validated_content_upload_destination
+from backend import DatabaseConfig
+from runtime_backend import create_backend
 
-def load(path,name,env_name):
- old=os.environ.get(env_name)
- try:
-  temp=tempfile.TemporaryDirectory();os.environ[env_name]=temp.name
-  spec=importlib.util.spec_from_file_location(name,ROOT/path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-  return module,temp,old
- except Exception:
-  if old is None:os.environ.pop(env_name,None)
-  else:os.environ[env_name]=old
-  raise
+def _load(path:Path,name:str):
+ spec=importlib.util.spec_from_file_location(name,path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
 
-class AgentUploadConfinementTest(unittest.TestCase):
- def _check(self,path,name,env_name):
-  module,temp,old=load(path,name,env_name)
-  try:
-   destination=module._content_upload_destination("i1","transfer-1","mod.zip")
-   destination.relative_to(Path(temp.name).resolve());self.assertEqual(destination.name,"mod.zip")
-   self.assertIn("content-uploads",destination.parts)
-   with self.assertRaises(ValueError):module._content_upload_destination("../i1","transfer-1","mod.zip")
-   with self.assertRaises(ValueError):module._content_upload_destination("i1","../transfer","mod.zip")
-   with self.assertRaises(ValueError):module._content_upload_destination("i1","transfer-1","bad\nname.zip")
-  finally:
-   temp.cleanup()
-   if old is None:os.environ.pop(env_name,None)
-   else:os.environ[env_name]=old
- def test_linux_destination_is_confined(self):self._check(Path("agents/linux/runtime/artifact_transfer_client.py"),"linux_artifact_transfer","CAPIVARA_GAME_DATA_ROOT")
- def test_windows_destination_is_confined(self):self._check(Path("agents/windows/runtime/artifact_transfer_client.py"),"windows_artifact_transfer","CAPIVARA_AGENT_GAME_DATA_ROOT")
+class ExternalUploadAgentTest(unittest.TestCase):
+ def _module(self,platform,tmp):
+  if platform=="linux":os.environ["CAPIVARA_GAME_DATA_ROOT"]=str(Path(tmp)/"game-data")
+  else:os.environ["CAPIVARA_AGENT_GAME_DATA_ROOT"]=str(Path(tmp)/"game-data")
+  return _load(ROOT/f"agents/{platform}/runtime/content_upload_quarantine.py",f"u6_quarantine_{platform}_{id(self)}")
+ def test_zip_and_jar_are_confined_and_inspected_on_both_agents(self):
+  for platform in ("linux","windows"):
+   with self.subTest(platform=platform),tempfile.TemporaryDirectory() as tmp:
+    module=self._module(platform,tmp)
+    for filename,expected_type in (("mods.zip","zip"),("plugin.jar","jar")):
+     dest=module.quarantine_destination("i1","transfer-abc",filename);dest.parent.mkdir(parents=True,exist_ok=True)
+     with zipfile.ZipFile(dest,"w") as archive:archive.writestr("META-INF/manifest.txt","ok")
+     result=module.validate_quarantine_archive(dest);self.assertEqual(result["archive_type"],expected_type);self.assertEqual(result["entries"],1);self.assertEqual(module.quarantine_relative_path(dest),f"quarantine/i1/transfer-abc/{filename}")
+ def test_archive_path_traversal_and_tar_symlink_fail_closed(self):
+  for platform in ("linux","windows"):
+   with self.subTest(platform=platform),tempfile.TemporaryDirectory() as tmp:
+    module=self._module(platform,tmp);bad=module.quarantine_destination("i1","transfer-abc","bad.zip");bad.parent.mkdir(parents=True,exist_ok=True)
+    with zipfile.ZipFile(bad,"w") as archive:archive.writestr("../escape.txt","nope")
+    with self.assertRaises(ValueError):module.validate_quarantine_archive(bad)
+    tar=module.quarantine_destination("i1","transfer-def","bad.tar");tar.parent.mkdir(parents=True,exist_ok=True)
+    with tarfile.open(tar,"w") as archive:
+     item=tarfile.TarInfo("link");item.type=tarfile.SYMTYPE;item.linkname="target";archive.addfile(item)
+    with self.assertRaises(ValueError):module.validate_quarantine_archive(tar)
+ def test_filename_instance_and_transfer_tokens_are_restricted(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   module=self._module("linux",tmp)
+   for iid,transfer,filename in (("../i1","t1","mods.zip"),("i1","../t","mods.zip"),("i1","t1","../mods.zip"),("i1","t1","mods.exe")):
+    with self.subTest(iid=iid,transfer=transfer,filename=filename),self.assertRaises(ValueError):module.quarantine_destination(iid,transfer,filename)
+ def test_repository_persists_only_validated_agent_quarantine_ack(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);backend=create_backend(DatabaseConfig(driver="sqlite",database=str(root/"capivara.db")));backend.initialize()
+   with backend.transaction() as c:
+    c.execute("INSERT INTO nodes(id,name,role) VALUES (?,?,?)",("node-controller","Controller","controller"));c.execute("INSERT INTO nodes(id,name,role) VALUES (?,?,?)",("node-agent","Agent","agent"));c.execute("INSERT INTO controllers(id,node_id,name) VALUES (?,?,?)",("controller-u6","node-controller","Controller U6"));c.execute("INSERT INTO agents(id,controller_id,node_id,name,status) VALUES (?,?,?,?,?)",("agent-u6","controller-u6","node-agent","Agent U6","active"));customer=c.execute("INSERT INTO customers(controller_id,name) VALUES (?,?)",("controller-u6","Customer U6"));customer_id=int(customer.lastrowid);c.execute("INSERT INTO instances(id,node_id,game_id,name,status,controller_id,agent_id,customer_id) VALUES (?,?,?,?,?,?,?,?)",("instance-u6","node-agent","minecraft","Minecraft U6","stopped","controller-u6","agent-u6",customer_id))
+   repo=ArtifactTransferRepository(backend,root);item=repo.create(agent_id="agent-u6",instance_id="instance-u6",customer_id=customer_id,direction="controller_to_agent",purpose="content_upload",filename="plugin.jar",requested_by="alice");item=repo.stage_from_controller(item["transfer_id"],io.BytesIO(b"jar-bytes"),9)
+   report={"transfer_id":item["transfer_id"],"status":"completed","transferred_bytes":9,"destination_ref":f"quarantine/instance-u6/{item['transfer_id']}/plugin.jar","sha256":item["sha256"],"archive_type":"jar","archive_entries":2}
+   completed=repo.apply_agent_result("agent-u6",report);self.assertEqual(completed["status"],"completed");self.assertEqual(completed["destination_ref"],report["destination_ref"])
+   second=repo.create(agent_id="agent-u6",instance_id="instance-u6",customer_id=customer_id,direction="controller_to_agent",purpose="content_upload",filename="mod.zip",requested_by="alice");second=repo.stage_from_controller(second["transfer_id"],io.BytesIO(b"zip-bytes"),9);bad={"transfer_id":second["transfer_id"],"status":"completed","transferred_bytes":9,"destination_ref":f"quarantine/other/{second['transfer_id']}/mod.zip","sha256":second["sha256"],"archive_type":"zip","archive_entries":1};failed=repo.apply_agent_result("agent-u6",bad);self.assertEqual(failed["status"],"failed");self.assertIsNone(failed["destination_ref"]);self.assertIn("invalid content upload Agent destination",failed["last_error"])
+ def test_controller_accepts_only_exact_agent_quarantine_ack(self):
+  item={"instance_id":"i1","transfer_id":"transfer-1","filename":"plugin.jar","sha256":"a"*64}
+  good={"destination_ref":"quarantine/i1/transfer-1/plugin.jar","sha256":"a"*64,"archive_type":"jar","archive_entries":4}
+  self.assertEqual(_validated_content_upload_destination(item,good),good["destination_ref"])
+  for patch in ({"destination_ref":"quarantine/i2/transfer-1/plugin.jar"},{"sha256":"b"*64},{"archive_type":"exe"},{"archive_entries":0}):
+   bad={**good,**patch}
+   with self.subTest(patch=patch),self.assertRaises(ValueError):_validated_content_upload_destination(item,bad)
 
 if __name__=="__main__":unittest.main()

@@ -9,6 +9,21 @@ import uuid
 from alert_repository import AlertSession,dialect_for_backend
 
 FINAL={"completed","failed","cancelled","expired"};ACTIVE={"queued","delivered","transferring"}
+
+def _validated_content_upload_destination(item,report):
+ destination=str(report.get("destination_ref") or "").strip().replace("\\","/")
+ instance=str(item.get("instance_id") or "").strip();transfer=str(item.get("transfer_id") or "").strip();filename=Path(str(item.get("filename") or "")).name
+ if not instance or not transfer or not filename:raise ValueError("invalid content upload transfer identity")
+ expected=(Path("quarantine")/instance/transfer/filename).as_posix()
+ if destination!=expected:raise ValueError("invalid content upload Agent destination")
+ reported_sha=str(report.get("sha256") or "").strip().lower();expected_sha=str(item.get("sha256") or "").strip().lower()
+ if not expected_sha or reported_sha!=expected_sha:raise ValueError("content upload Agent checksum acknowledgement mismatch")
+ archive_type=str(report.get("archive_type") or "").strip().lower()
+ if archive_type not in {"zip","tar","jar"}:raise ValueError("invalid content upload Agent artifact type")
+ try:entries=int(report.get("archive_entries"))
+ except (TypeError,ValueError) as exc:raise ValueError("invalid content upload Agent archive entry count") from exc
+ if entries<1 or entries>100000:raise ValueError("invalid content upload Agent archive entry count")
+ return destination
 class ArtifactTransferRepository:
  def __init__(self,backend,root:Path):
   self.backend=backend;self.dialect=dialect_for_backend(backend);candidate=Path(root)
@@ -104,8 +119,12 @@ class ArtifactTransferRepository:
   if str(item["agent_id"])!=str(agent_id):raise PermissionError("artifact transfer belongs to another Agent")
   status=str(report.get("status") or "").lower()
   if status not in {"completed","failed"}:raise ValueError("invalid transfer result status")
+  destination_ref=item.get("destination_ref");error=str(report.get("error") or "")[:1024] or None
+  if status=="completed" and str(item.get("purpose") or "")=="content_upload":
+   try:destination_ref=_validated_content_upload_destination(item,report)
+   except ValueError as exc:status="failed";error=str(exc)[:1024];destination_ref=None
   ph=self.dialect.placeholder
-  with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status={ph},transferred_bytes={ph},last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(status,int(report.get("transferred_bytes") or item.get("size_bytes") or 0),str(report.get("error") or "")[:1024] or None,item["transfer_id"]))
+  with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status={ph},transferred_bytes={ph},destination_ref={ph},last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(status,int(report.get("transferred_bytes") or item.get("size_bytes") or 0),destination_ref,error,item["transfer_id"]))
   return self.get(item["transfer_id"])
  def cleanup_expired(self):
   now=datetime.now(timezone.utc).isoformat().replace("+00:00","Z");ph=self.dialect.placeholder

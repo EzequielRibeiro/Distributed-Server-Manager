@@ -17,7 +17,7 @@ class _Workspace:
 
 class _Transfers:
  def __init__(self,status="queued"):
-  self.created=[];self.staged=[];self.item={"transfer_id":"transfer-1","instance_id":"i1","agent_id":"agent-1","direction":"controller_to_agent","purpose":"content_upload","filename":"mod.zip","status":status,"sha256":"a"*64,"size_bytes":3}
+  self.created=[];self.staged=[];self.item={"transfer_id":"transfer-1","instance_id":"i1","agent_id":"agent-1","direction":"controller_to_agent","purpose":"content_upload","filename":"mod.zip","status":status,"sha256":"a"*64,"size_bytes":3,"destination_ref":"quarantine/i1/transfer-1/mod.zip" if status=="completed" else None}
  def create(self,**kw):self.created.append(kw);return dict(self.item)
  def get(self,tid):return dict(self.item)
  def stage_from_controller(self,tid,source,length):self.staged.append((tid,length,source.read()));self.item["status"]="queued";self.item["size_bytes"]=length;return dict(self.item)
@@ -43,11 +43,18 @@ class ExternalUploadTest(unittest.TestCase):
   with self.assertRaises(ValueError):service(status="queued").finalize({"username":"alice"},"transfer-1",{"content_id":"m1","content_type":"mod"})
  def test_finalize_injects_local_provider_and_safe_provenance(self):
   s=service(status="completed");result=s.finalize({"username":"alice"},"transfer-1",{"content_id":"m1","content_type":"mod","activation_state":"enabled"});payload,actor=s.content.puts[-1]
-  self.assertEqual(actor,"alice");self.assertEqual(payload["provider"],"local");self.assertEqual(payload["artifact"]["package_id"],"content-uploads/i1/transfer-1/mod.zip");self.assertEqual(payload["artifact"]["sha256"],"a"*64);self.assertTrue(payload["artifact"]["archive"]);self.assertEqual(payload["provenance"]["kind"],"customer-upload");self.assertEqual(result["assignment"]["content_id"],"m1")
+  self.assertEqual(actor,"alice");self.assertEqual(payload["provider"],"local");self.assertEqual(payload["target"],"external/m1");self.assertEqual(payload["artifact"]["package_id"],"quarantine/i1/transfer-1/mod.zip");self.assertEqual(payload["artifact"]["sha256"],"a"*64);self.assertTrue(payload["artifact"]["archive"]);self.assertEqual(payload["provenance"]["kind"],"customer-upload");self.assertTrue(payload["provenance"]["agent_validated"]);self.assertEqual(result["assignment"]["content_id"],"m1")
  def test_finalize_rejects_provider_artifact_and_workshop_spoofing(self):
   s=service(status="completed")
-  for body in ({"content_id":"m1","content_type":"mod","provider":"http"},{"content_id":"m1","content_type":"mod","artifact":{"path":"/etc/passwd"}},{"content_id":"m1","content_type":"workshop"}):
+  for body in ({"content_id":"m1","content_type":"mod","provider":"http"},{"content_id":"m1","content_type":"mod","artifact":{"path":"/etc/passwd"}},{"content_id":"m1","content_type":"mod","target":"../../escape"},{"content_id":"m1","content_type":"workshop"}):
    with self.subTest(body=body),self.assertRaises(ValueError):s.finalize({"username":"alice"},"transfer-1",body)
+ def test_finalize_preserves_minecraft_jar_as_file(self):
+  s=service(status="completed");s.transfers.item["filename"]="plugin.jar";s.transfers.item["destination_ref"]="quarantine/i1/transfer-1/plugin.jar"
+  s.finalize({"username":"alice"},"transfer-1",{"content_id":"plugin-1","content_type":"plugin"});payload,_=s.content.puts[-1]
+  self.assertFalse(payload["artifact"]["archive"]);self.assertEqual(payload["artifact"]["package_id"],"quarantine/i1/transfer-1/plugin.jar")
+ def test_finalize_requires_agent_quarantine_ack(self):
+  s=service(status="completed");s.transfers.item["destination_ref"]="content-uploads/i1/transfer-1/mod.zip"
+  with self.assertRaises(ValueError):s.finalize({"username":"alice"},"transfer-1",{"content_id":"m1","content_type":"mod"})
  def test_mod_and_plugin_capabilities_are_enforced(self):
   p=SimpleNamespace(external_upload_allowed=True,modifications_allowed=True,mods_allowed=False,plugins_allowed=False)
   for ctype in ("mod","modpack","map","plugin"):
