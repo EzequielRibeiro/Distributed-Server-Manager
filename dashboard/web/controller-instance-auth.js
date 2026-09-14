@@ -2,7 +2,8 @@
 "use strict";
 
 const params=new URLSearchParams(location.search);
-if(params.get("auth_area")!=="controller")return;
+const controllerMode=location.pathname.endsWith("/controller-instance.html")||params.get("auth_area")==="controller";
+if(!controllerMode)return;
 
 window.CAPIVARA_INSTANCE_AUTH_AREA="controller";
 
@@ -22,6 +23,7 @@ window.fetch=async function(input,init={}){
 };
 
 document.addEventListener("DOMContentLoaded",()=>{
+    document.body.classList.add("cap-controller-instance");
     const brand=document.querySelector(".sidebar .brand");
     if(brand)brand.href="/servers.html";
 

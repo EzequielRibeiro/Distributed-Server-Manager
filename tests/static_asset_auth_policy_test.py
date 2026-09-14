@@ -43,6 +43,21 @@ class StaticAssetAuthPolicyTest(unittest.TestCase):
         }:
             self.assertIn(path, controller)
 
+    def test_controller_instance_workspace_assets_are_controller_scoped(self):
+        controller = self.policy.CONTROLLER_STATIC_PATHS
+        for path in {
+            "/controller-instance.html",
+            "/controller-instance-base.css",
+            "/controller-instance.css",
+            "/controller-instance-auth.js",
+            "/controller-instance-core.js",
+            "/controller-instance-connection.js",
+            "/controller-instance-runtime-live.js",
+            "/controller-instance-backup-transfer.js",
+            "/controller-instance-activity.js",
+        }:
+            self.assertIn(path, controller)
+
     def test_customer_workspace_assets_are_customer_scoped(self):
         customer = self.policy.CUSTOMER_STATIC_PATHS
         for path in {
