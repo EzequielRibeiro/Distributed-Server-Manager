@@ -44,6 +44,9 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   for chart_id in ("cpu-chart","memory-chart","network-chart","players-chart","latency-chart"):
    self.assertIn(f'id="{chart_id}"',html)
   telemetry_js=(ROOT/"dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
+  self.assertIn('overview.runtime?.state||inst.status||"unknown"',telemetry_js)
+  self.assertIn('$("start").disabled=!can("instance.start")||!!pr||!startable||busy',telemetry_js)
+  self.assertIn('$("stop").disabled=!can("instance.stop")||!!pr||!running||busy',telemetry_js)
   for marker in ("networkRate",'network_rx_bytes','network_tx_bytes','sampled_at','telemetry-window',"Runtime sem query de latência","Não suportada"):
    self.assertIn(marker,telemetry_js)
   transfer=(ROOT/"dashboard/web/customer-backup-transfer.js").read_text(encoding="utf-8")
@@ -91,6 +94,48 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
  def test_manager_can_retry_failed_provisioning(self):
   self.assertIn("instance.provision.retry",PERMISSION_PRESETS["manager"])
   self.assertNotIn("instance.provision.retry",PERMISSION_PRESETS["viewer"])
+
+ def test_overview_uses_agent_runtime_state_instead_of_stale_persisted_status(self):
+  service=CustomerInstanceWorkspaceService.__new__(CustomerInstanceWorkspaceService)
+  service.permissions=lambda user,instance_id:{"instance.view","instance.start","instance.stop","instance.restart"}
+  service.require=lambda user,instance_id,permission:{
+   "id":instance_id,"name":"DayZ","game_id":"dayz","edition":"default",
+   "runtime_id":"dayz.stable","variant":"stable","game_version":"current",
+   "status":"online","agent_id":"agent-hybrid","contract_id":None,"instance_metadata":{},
+  }
+  service.runtime_health=type("Health",(),{
+   "list_for_agent":lambda self,agent_id:[{
+    "instance_id":"instance-1","desired_state":"running","observed_state":"stopped",
+    "reconcile_status":"healthy","health":"offline","operation_status":"idle",
+    "reported_at":"2026-09-14T22:55:00Z",
+   }]
+  })()
+  service.agent_runtime=type("Agent",(),{
+   "snapshot":lambda self,agent_id:{"health_status":"online"}
+  })()
+  service.repo=type("Repo",(),{
+   "workspace_policy":lambda self,instance_id:{},
+   "telemetry":lambda self,instance_id,limit:[],
+  })()
+  service.provisioning=type("Provisioning",(),{
+   "latest_for_instance":lambda self,instance_id:None
+  })()
+  service._resolved_resource_policy=lambda context,policy:{}
+  service._location=lambda agent_id:{}
+  service._contract_policy=lambda context,policy:(
+   {},type("Content",(),{
+    "mods_allowed":False,"plugins_allowed":False,"modpacks_allowed":False,
+    "datapacks_allowed":False,"workshop_allowed":False,"as_dict":lambda self:{},
+   })(),
+  )
+  service._ports=lambda instance_id:[]
+
+  result=service.overview({"role":"customer","username":"owner"},"instance-1")
+
+  self.assertEqual("offline",result["instance"]["status"])
+  self.assertEqual("online",result["instance"]["persisted_status"])
+  self.assertEqual("agent",result["runtime"]["source"])
+  self.assertEqual("stopped",result["runtime"]["observed_state"])
 
  def test_overview_prefers_distributed_provisioning_state(self):
   service=CustomerInstanceWorkspaceService.__new__(CustomerInstanceWorkspaceService)

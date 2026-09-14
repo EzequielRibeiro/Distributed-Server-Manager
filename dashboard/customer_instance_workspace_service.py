@@ -6,12 +6,15 @@ from pathlib import Path
 from typing import Any
 from alert_repository import AlertSession,dialect_for_backend
 from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
+from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
+from agent_runtime_repository import AgentRuntimeRepository
 from instance_provisioning_projection import dashboard_provision_state
 from backup_repository import BackupRepository
 from catalog_resource_profiles_http import catalog_resource_profiles
 from instance_file_repository import InstanceFileRepository
 from instance_workspace_policy import INSTANCE_PERMISSIONS,content_ui_sections,effective_content_policy,require_permission,validate_startup_values
 from instance_workspace_repository import InstanceWorkspaceRepository
+from runtime_instance_projection import project_runtime_state
 from runtime_workspace_catalog import allowed_runtimes,contract_entitlements,runtime_workspace_capabilities
 
 def _json(value,default):
@@ -21,7 +24,7 @@ def _json(value,default):
  return result if isinstance(result,type(default)) else default
 
 class CustomerInstanceWorkspaceService:
- def __init__(self,backend,root:Path):self.backend=backend;self.root=Path(root);self.repo=InstanceWorkspaceRepository(backend);self.provisioning=AgentInstanceProvisioningRepository(backend);self.files=InstanceFileRepository(backend);self.backups=BackupRepository(backend);self.dialect=dialect_for_backend(backend)
+ def __init__(self,backend,root:Path):self.backend=backend;self.root=Path(root);self.repo=InstanceWorkspaceRepository(backend);self.provisioning=AgentInstanceProvisioningRepository(backend);self.files=InstanceFileRepository(backend);self.backups=BackupRepository(backend);self.runtime_health=AgentInstanceRuntimeHealthRepository(backend);self.agent_runtime=AgentRuntimeRepository(backend);self.dialect=dialect_for_backend(backend)
  def _session(self,c):return AlertSession(self.backend,c)
  def permissions(self,user:dict[str,Any],instance_id:str)->set[str]:
   role=str((user or {}).get("role") or "").lower()
@@ -44,6 +47,15 @@ class CustomerInstanceWorkspaceService:
    finally:s.close()
   if row is None:return {}
   value=dict(row);value["agent_metadata"]=_json(value.pop("metadata_json",None),{});return value
+ def _runtime_projection(self,context):
+  agent_id=str(context.get("agent_id") or "").strip();instance_id=str(context.get("id") or context.get("instance_id") or "").strip();observation=None;agent_health="unknown"
+  if agent_id:
+   try:
+    values=self.runtime_health.list_for_agent(agent_id);observation=next((dict(item) for item in values if str(item.get("instance_id") or "")==instance_id),None)
+   except Exception:observation=None
+   try:agent_health=str(self.agent_runtime.snapshot(agent_id).get("health_status") or "unknown")
+   except Exception:agent_health="unknown"
+  return project_runtime_state(record=context,runtime_health=observation,agent_health=agent_health,fallback_state=context.get("status") or "unknown",fallback_health="unknown")
  def _contract_policy(self,context,policy):
   metadata=context.get("contract_metadata") or {};runtime_id=str(context.get("runtime_id") or "");capabilities=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),runtime_id) if runtime_id else {};entitlements=contract_entitlements(metadata)
   for key,column in (("mods","mods_allowed"),("plugins","plugins_allowed"),("workshop","workshop_allowed"),("external_upload","external_upload_allowed"),("custom_runtime","custom_runtime_allowed")):
@@ -86,12 +98,13 @@ class CustomerInstanceWorkspaceService:
   if result.get("player_limit") is None:result["player_limit"]=number(profile,"player_limit")
   return result
  def overview(self,user,instance_id):
-  context=self.require(user,instance_id,"instance.view");policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));permissions=self.permissions(user,instance_id);telemetry=(self.repo.telemetry(instance_id,1) or [{}])[-1];location=self._location(str(context.get("agent_id") or ""));capabilities,content=self._contract_policy(context,policy);agent_meta=location.get("agent_metadata") if isinstance(location.get("agent_metadata"),dict) else {};latest={}
+  context=self.require(user,instance_id,"instance.view");runtime=self._runtime_projection(context);policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));permissions=self.permissions(user,instance_id);telemetry=(self.repo.telemetry(instance_id,1) or [{}])[-1];location=self._location(str(context.get("agent_id") or ""));capabilities,content=self._contract_policy(context,policy);agent_meta=location.get("agent_metadata") if isinstance(location.get("agent_metadata"),dict) else {};latest={}
   for item in agent_meta.get("instance_telemetry") or []:
    if isinstance(item,dict) and str(item.get("instance_id"))==instance_id:latest=item
   telemetry={**latest,**telemetry};storage_limit=policy.get("storage_limit_bytes");used=telemetry.get("storage_used_bytes");storage_pct=(float(used)/float(storage_limit)*100) if used is not None and storage_limit else None;metadata=context.get("instance_metadata") if isinstance(context.get("instance_metadata"),dict) else {};legacy_provision=metadata.get("provision") if isinstance(metadata,dict) else None;distributed_provision=self.provisioning.latest_for_instance(instance_id);provision=dashboard_provision_state(distributed_provision) if distributed_provision is not None else legacy_provision
   if isinstance(provision,dict) and str(provision.get("stage") or "").lower()=="completed" and int(provision.get("progress") or 0)>=100:provision=None
-  return {"instance":{k:context.get(k) for k in ("id","name","game_id","edition","runtime_id","variant","game_version","status","agent_id","contract_id")},"permissions":sorted(permissions),"policy":policy,"content_policy":content.as_dict(),"content_sections":content_ui_sections(content),"runtime_capabilities":capabilities,"ports":self._ports(instance_id),"location":{k:location.get(k) for k in ("public_host","datacenter_id","datacenter_name","city","country_code","region_id","region_name","region_country_code","agent_name")},"telemetry":telemetry,"storage":{"used_bytes":used,"limit_bytes":storage_limit,"percent":storage_pct},"provision":provision,"console":{"read":"console.read" in permissions,"execute":"console.execute" in permissions,"supported":bool((capabilities.get("console") or {}).get("supported"))},"upgrade":{"allowed":"contract.upgrade" in permissions,"current_profile_id":policy.get("resource_profile_id")}}
+  instance={k:context.get(k) for k in ("id","name","game_id","edition","runtime_id","variant","game_version","status","agent_id","contract_id")};instance["persisted_status"]=context.get("status");instance["status"]=runtime.get("state") or "unknown"
+  return {"instance":instance,"runtime":runtime,"permissions":sorted(permissions),"policy":policy,"content_policy":content.as_dict(),"content_sections":content_ui_sections(content),"runtime_capabilities":capabilities,"ports":self._ports(instance_id),"location":{k:location.get(k) for k in ("public_host","datacenter_id","datacenter_name","city","country_code","region_id","region_name","region_country_code","agent_name")},"telemetry":telemetry,"storage":{"used_bytes":used,"limit_bytes":storage_limit,"percent":storage_pct},"provision":provision,"console":{"read":"console.read" in permissions,"execute":"console.execute" in permissions,"supported":bool((capabilities.get("console") or {}).get("supported"))},"upgrade":{"allowed":"contract.upgrade" in permissions,"current_profile_id":policy.get("resource_profile_id")}}
  def telemetry(self,user,instance_id,limit=240):self.require(user,instance_id,"instance.view");return self.repo.telemetry(instance_id,limit)
  def console_output(self,user,instance_id,limit=300):self.require(user,instance_id,"console.read");return self.repo.console_output(instance_id,limit)
  def send_console(self,user,instance_id,command):

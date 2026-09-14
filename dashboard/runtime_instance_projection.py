@@ -82,7 +82,7 @@ def _metadata_from_record(row: dict[str, Any]) -> dict[str, Any]:
     return metadata
 
 
-def _projected_state(
+def project_runtime_state(
     *,
     record: dict[str, Any],
     runtime_health: dict[str, Any] | None,
@@ -229,7 +229,7 @@ def install_runtime_instance_projection(
 
         agent_id = _safe_text(record.get("agent_id"))
         runtime_health = snapshot["runtime_by_key"].get((agent_id, identity[2])) if agent_id else None
-        projection = _projected_state(
+        projection = project_runtime_state(
             record=record,
             runtime_health=runtime_health,
             agent_health=snapshot["agent_health"].get(agent_id, "unknown"),
@@ -289,7 +289,7 @@ def install_runtime_instance_projection(
                 fallback_state = raw_status or fallback_state
                 fallback_health = raw_server_state.get("health") or fallback_health
 
-        projection = _projected_state(
+        projection = project_runtime_state(
             record=record,
             runtime_health=runtime_health,
             agent_health=snapshot["agent_health"].get(agent_id, "unknown"),
@@ -343,4 +343,4 @@ def install_runtime_instance_projection(
     }
 
 
-__all__ = ["canonical_runtime_state", "install_runtime_instance_projection"]
+__all__ = ["canonical_runtime_state", "project_runtime_state", "install_runtime_instance_projection"]

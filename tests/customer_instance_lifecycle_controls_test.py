@@ -32,6 +32,16 @@ class CustomerInstanceLifecycleControlsTest(unittest.TestCase):
         self.assertIn('if(lifecyclePending){event.preventDefault();event.stopImmediatePropagation();return}', self.source)
         self.assertIn('addEventListener("click",event=>rejectInvalidLifecycleClick(action,event),true)', self.source)
 
+    def test_runtime_state_prefers_authoritative_workspace_projection(self):
+        self.assertIn('overview?.runtime?.state||overview?.instance?.status', self.source)
+        self.assertIn('syncRuntimeState();applyControls()', self.source)
+
+    def test_unknown_runtime_state_fails_closed_for_lifecycle_actions(self):
+        self.assertIn('startable=stopped||state==="failed"', self.source)
+        self.assertIn('pr||!startable||busy', self.source)
+        self.assertIn('pr||!running||busy', self.source)
+        self.assertIn('action==="start"&&!startable', self.source)
+
     def test_pending_action_has_visible_progress_label(self):
         self.assertIn('start:"Iniciando…"', self.source)
         self.assertIn('restart:"Reiniciando…"', self.source)
