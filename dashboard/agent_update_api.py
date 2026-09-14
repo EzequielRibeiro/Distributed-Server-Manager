@@ -10,6 +10,12 @@ from agent_update_repository import AgentUpdateRepository
 from alert_repository import AlertSession, dialect_for_backend
 
 
+HYBRID_MANAGEMENT_MESSAGE = (
+    "Agent Hybrid acompanha a atualização do Controller; "
+    "rollout remoto de Agent não é aplicável."
+)
+
+
 def _role(user: dict[str, Any] | None) -> str:
     if not user:
         raise PermissionError("authentication required")
@@ -43,6 +49,56 @@ def _scoped_agents(user: dict[str, Any], backend, requested: list[str]) -> list[
             raise PermissionError("Agent is outside controller scope")
         return ids
     raise PermissionError("Agent update administration is not permitted")
+
+
+def _agent_node_roles(backend, agent_ids: list[str]) -> dict[str, str]:
+    """Return the infrastructure node role for every target Agent."""
+    dialect = dialect_for_backend(backend)
+    placeholders = dialect.parameters(len(agent_ids))
+    with backend.connect() as connection:
+        session = AlertSession(backend, connection)
+        try:
+            rows = session.execute(
+                "SELECT a.id,n.role FROM agents a JOIN nodes n ON n.id=a.node_id "
+                f"WHERE a.id IN ({placeholders})",
+                tuple(agent_ids),
+            ).fetchall()
+        finally:
+            session.close()
+    return {
+        str(row["id"]): str(row["role"] or "").strip().lower()
+        for row in rows
+    }
+
+
+def _runtime_versions(backend, agent_ids: list[str]) -> dict[str, str]:
+    """Return heartbeat/runtime-reported Capivara versions when available."""
+    dialect = dialect_for_backend(backend)
+    placeholders = dialect.parameters(len(agent_ids))
+    with backend.connect() as connection:
+        session = AlertSession(backend, connection)
+        try:
+            rows = session.execute(
+                "SELECT agent_id,capivara_version FROM agent_runtime_inventory "
+                f"WHERE agent_id IN ({placeholders})",
+                tuple(agent_ids),
+            ).fetchall()
+        finally:
+            session.close()
+    return {
+        str(row["agent_id"]): str(row["capivara_version"] or "").strip()
+        for row in rows
+        if str(row["capivara_version"] or "").strip()
+    }
+
+
+def _reject_controller_managed_agents(backend, agent_ids: list[str]) -> None:
+    roles = _agent_node_roles(backend, agent_ids)
+    managed = [agent_id for agent_id in agent_ids if roles.get(agent_id) == "hybrid"]
+    if managed:
+        raise ValueError(
+            HYBRID_MANAGEMENT_MESSAGE + " Agent(s): " + ", ".join(managed)
+        )
 
 
 def _agent_platforms(backend, agent_ids: list[str]) -> dict[str, str]:
@@ -104,8 +160,22 @@ def agent_update_versions_for_user(
     channel: str = "stable",
 ) -> dict[str, Any]:
     agent_id = _scoped_agents(user or {}, backend, [agent_id])[0]
-    platform = _agent_platforms(backend, [agent_id])[agent_id]
     normalized_channel = str(channel or "stable").strip().lower()
+    if normalized_channel not in {"stable", "beta", "local/manual"}:
+        raise ValueError("invalid update channel")
+    if _agent_node_roles(backend, [agent_id]).get(agent_id) == "hybrid":
+        return {
+            "agent_id": agent_id,
+            "platform": None,
+            "channel": normalized_channel,
+            "recommended_version": None,
+            "releases": [],
+            "update_management": "controller",
+            "rollout_supported": False,
+            "management_message": HYBRID_MANAGEMENT_MESSAGE,
+        }
+
+    platform = _agent_platforms(backend, [agent_id])[agent_id]
     releases = _published_versions_for_platform(platform, normalized_channel)
     stable = _published_versions_for_platform(platform, "stable")
     recommended = stable[0]["version"] if stable else None
@@ -115,6 +185,9 @@ def agent_update_versions_for_user(
         "channel": normalized_channel,
         "recommended_version": recommended,
         "releases": releases,
+        "update_management": "agent",
+        "rollout_supported": True,
+        "management_message": None,
     }
 
 
@@ -146,6 +219,7 @@ def create_agent_rollout_for_user(user, backend, payload: dict[str, Any] | None)
     if not isinstance(payload, dict):
         raise ValueError("payload must be an object")
     agent_ids = _scoped_agents(user or {}, backend, list(payload.get("agent_ids") or []))
+    _reject_controller_managed_agents(backend, agent_ids)
     channel = str(payload.get("update_channel", "stable")).strip().lower()
     desired_version = _validate_rollout_release(
         backend,
@@ -167,6 +241,7 @@ def set_agent_update_channel_for_user(user, backend, payload: dict[str, Any] | N
     if not isinstance(payload, dict):
         raise ValueError("payload must be an object")
     agent_id = _scoped_agents(user or {}, backend, [str(payload.get("agent_id", ""))])[0]
+    _reject_controller_managed_agents(backend, [agent_id])
     repository = AgentUpdateRepository(backend)
     repository.initialize()
     return repository.set_channel(agent_id, str(payload.get("update_channel", "")))
@@ -176,7 +251,24 @@ def agent_update_status_for_user(user, backend, agent_id: str) -> dict[str, Any]
     agent_id = _scoped_agents(user or {}, backend, [agent_id])[0]
     repository = AgentUpdateRepository(backend)
     repository.initialize()
-    return repository.snapshot(agent_id)
+    state = repository.snapshot(agent_id)
+    controller_managed = _agent_node_roles(backend, [agent_id]).get(agent_id) == "hybrid"
+    if controller_managed:
+        runtime_version = _runtime_versions(backend, [agent_id]).get(agent_id)
+        if runtime_version:
+            state["installed_version"] = runtime_version
+        state.update({
+            "update_management": "controller",
+            "rollout_supported": False,
+            "management_message": HYBRID_MANAGEMENT_MESSAGE,
+        })
+    else:
+        state.update({
+            "update_management": "agent",
+            "rollout_supported": True,
+            "management_message": None,
+        })
+    return state
 
 
 __all__ = [

@@ -28,7 +28,7 @@ def test_agents_v3_restores_remote_update_panel():
         "agent-rollout-submit",
     ):
         assert f'id="{element_id}"' in html
-    assert 'src="agent-updates-v3.js?v=3"' in html
+    assert 'src="agent-updates-v3.js?v=6"' in html
     assert 'href="agent-updates-v3.css?v=3"' in html
 
 
