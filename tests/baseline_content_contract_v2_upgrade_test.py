@@ -12,7 +12,7 @@ ROOT=Path(__file__).resolve().parents[1]
 DATABASE=ROOT/"database"
 if str(DATABASE) not in sys.path:sys.path.insert(0,str(DATABASE))
 from backend import DatabaseMigrationError
-from baseline_upgrade_engine import UPGRADES,apply_pending_upgrades,upgrade_status
+from baseline_upgrade_engine import UPGRADES,apply_pending_upgrades,latest_upgrade_version,upgrade_status
 
 class SQLiteBackend:
     name="sqlite"
@@ -41,8 +41,8 @@ INSERT INTO agent_content_state(id) VALUES ('state-1');
         connection=self.old_connection()
         try:
             completed=apply_pending_upgrades(SQLiteBackend(),connection,installed_checksum="historical-v7-checksum")
-            self.assertEqual(completed,[8,9])
-            self.assertEqual(upgrade_status(SQLiteBackend(),connection)["current_version"],9)
+            self.assertEqual(completed,[8,9,10])
+            self.assertEqual(upgrade_status(SQLiteBackend(),connection)["current_version"],latest_upgrade_version())
             row=connection.execute("SELECT activation_state,activation_order,provenance_json,metadata_json,security_state FROM content_assignments").fetchone()
             self.assertEqual(tuple(row),("enabled",0,"{}","{}","unscanned"))
             revision=connection.execute("SELECT activation_state,activation_order,provenance_json,metadata_json,security_state FROM content_assignment_revisions").fetchone()
@@ -60,7 +60,7 @@ INSERT INTO agent_content_state(id) VALUES ('state-1');
         finally:
             connection.close()
 
-    def test_checksum_mismatch_with_v7_ledger_reconciles_through_v9(self):
+    def test_checksum_mismatch_with_v7_ledger_reconciles_through_v10(self):
         manager=ROOT/"database"/"manager.py"
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/"dsm"
@@ -80,13 +80,13 @@ INSERT INTO agent_content_state(id) VALUES ('state-1');
             self.assertEqual(before.returncode,1,before.stderr)
             payload=json.loads(before.stdout)
             self.assertEqual(payload["upgrade_version"],7)
-            self.assertEqual(payload["upgrade_latest"],9)
-            self.assertEqual(payload["pending_upgrades"],[{"version":8,"name":"universal_content_contract_v2"},{"version":9,"name":"backup_job_retry_identity_repair"}])
+            self.assertEqual(payload["upgrade_latest"],latest_upgrade_version())
+            self.assertEqual(payload["pending_upgrades"],[{"version":8,"name":"universal_content_contract_v2"},{"version":9,"name":"backup_job_retry_identity_repair"},{"version":10,"name":"universal_content_bundles"}])
             migrated=run("migrate")
             self.assertEqual(migrated.returncode,0,migrated.stderr)
             payload=json.loads(migrated.stdout)
             self.assertTrue(payload["valid"])
-            self.assertEqual(payload["upgrade_version"],9)
+            self.assertEqual(payload["upgrade_version"],latest_upgrade_version())
             self.assertTrue(payload["checksum_matches"])
 
 if __name__=="__main__":

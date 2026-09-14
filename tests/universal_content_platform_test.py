@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import io,json,sys,tempfile,unittest
+import io,json,stat,sys,tempfile,unittest,zipfile
 from pathlib import Path
 from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1]
@@ -35,6 +35,17 @@ class ContentContractTest(unittest.TestCase):
   root=Path("/tmp/instance")
   self.assertEqual(_safe_target(root,"mods/example"),Path("/tmp/instance/content/mods/example"))
   with self.assertRaises(ValueError):_safe_target(root,"../../etc")
+ def test_archive_extraction_blocks_traversal_and_symlink(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);dest=root/"out";bad=root/"bad.zip"
+   with zipfile.ZipFile(bad,"w") as z:z.writestr("../escape.txt","x")
+   with self.assertRaises(ValueError):content_client._extract(bad,dest)
+   link=root/"link.zip"
+   with zipfile.ZipFile(link,"w") as z:
+    info=zipfile.ZipInfo("link");info.external_attr=(stat.S_IFLNK|0o777)<<16;z.writestr(info,"target")
+   with self.assertRaises(ValueError):content_client._extract(link,dest)
+   windows=(ROOT/"agents/windows/runtime/content_client.py").read_text(encoding="utf-8")
+   for marker in ("archive path traversal","archive has too many entries","archive expands beyond safety limit","stat.S_ISLNK"):self.assertIn(marker,windows)
  def test_running_instance_rolls_back_content_when_readiness_fails(self):
   with tempfile.TemporaryDirectory() as td:
    instance=Path(td)/"instance";target=instance/"content"/"mods"/"mod-one";target.mkdir(parents=True);(target/"old.bin").write_text("old",encoding="utf-8")

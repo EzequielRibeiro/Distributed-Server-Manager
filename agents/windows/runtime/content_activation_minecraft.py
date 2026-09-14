@@ -6,6 +6,7 @@ one owned artifact per assignment into the native ``mods/`` or ``plugins/`` tree
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -118,7 +119,7 @@ def _minecraft_policy(spec: dict[str, Any]) -> dict[str, dict[str, Any]] | None:
 
 
 def project_minecraft_files(spec: dict[str, Any], entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    minecraft_entries = [entry for entry in entries if _adapter(entry) == "minecraft-java"]
+    minecraft_entries = [entry for entry in entries if _adapter(entry) == "minecraft-java" and str((entry.get("activation") or {}).get("mode") or "").strip().lower() != "bundle-parent"]
     if not minecraft_entries:
         return []
     policy = _minecraft_policy(spec)
@@ -367,4 +368,224 @@ def materialize_minecraft_files(spec: dict[str, Any]) -> list[str]:
 
 
 
-__all__=["MinecraftContentActivationError","materialize_minecraft_files","project_minecraft_files"]
+def project_minecraft_bundle_overrides(spec: dict[str, Any], entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    parents = [entry for entry in entries if _adapter(entry) == "minecraft-java" and str((entry.get("activation") or {}).get("mode") or "").strip().lower() == "bundle-parent"]
+    if not parents:
+        return []
+    if len(parents) != 1:
+        raise MinecraftContentActivationError("Minecraft runtime supports exactly one active modpack bundle")
+    entry = parents[0]
+    activation = entry.get("activation") if isinstance(entry.get("activation"), dict) else {}
+    raw_roots = str(activation.get("identifier") or "").strip()
+    roots: list[str] = []
+    for value in raw_roots.split(",") if raw_roots else []:
+        root = value.strip()
+        if not _SAFE_ID.fullmatch(root) or root in {".", ".."}:
+            raise MinecraftContentActivationError("invalid Minecraft modpack override root")
+        if root not in roots:
+            roots.append(root)
+    if len(roots) > 8:
+        raise MinecraftContentActivationError("too many Minecraft modpack override roots")
+    return [{"content_id": str(entry.get("content_id") or ""), "managed_path": _managed_path(entry), "roots": roots}]
+
+
+def _override_manifest_path(spec: dict[str, Any]) -> Path:
+    state_raw = spec.get("instance_state_root")
+    if not state_raw:
+        raise MinecraftContentActivationError("Minecraft overrides require instance_state_root")
+    return Path(str(state_raw)).resolve() / ".dsm" / "content-activation-overrides.json"
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _read_override_manifest(path: Path) -> dict[str, str]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise MinecraftContentActivationError("invalid Minecraft override manifest") from exc
+    if not isinstance(payload, dict) or payload.get("kind") != "CapivaraContentOverrideProjection":
+        raise MinecraftContentActivationError("invalid Minecraft override manifest")
+    targets = payload.get("targets")
+    if not isinstance(targets, list) or len(targets) > 20000:
+        raise MinecraftContentActivationError("invalid Minecraft override targets")
+    result: dict[str, str] = {}
+    for item in targets:
+        if not isinstance(item, dict):
+            raise MinecraftContentActivationError("invalid Minecraft override target")
+        relative = _safe_override_target(item.get("path")).as_posix()
+        checksum = str(item.get("sha256") or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", checksum):
+            raise MinecraftContentActivationError("invalid Minecraft override checksum")
+        result[relative] = checksum
+    return result
+
+
+def _write_override_manifest(path: Path, targets: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"schema_version": 1, "kind": "CapivaraContentOverrideProjection", "targets": [{"path": key, "sha256": targets[key]} for key in sorted(targets)]}
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        os.chmod(temp, 0o600)
+    except OSError:
+        pass
+    os.replace(temp, path)
+
+
+def _safe_override_target(value: Any) -> Path:
+    text = str(value or "").strip().replace("\\", "/")
+    path = Path(text)
+    if not text or path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise MinecraftContentActivationError("invalid Minecraft override target")
+    first = path.parts[0].lower()
+    if first in {"mods", "plugins", ".dsm", "libraries", "versions", "runtime", "content", "logs"}:
+        raise MinecraftContentActivationError("Minecraft modpack override targets a protected runtime path")
+    if path.suffix.lower() in {".jar", ".exe", ".dll", ".so", ".dylib", ".bat", ".cmd", ".ps1", ".sh"}:
+        raise MinecraftContentActivationError("Minecraft modpack override contains a protected executable artifact")
+    return path
+
+
+def _bundle_source(runtime_root: Path, item: dict[str, Any]) -> Path:
+    managed = Path(str(item.get("managed_path") or ""))
+    if not managed.is_absolute() or managed.is_symlink():
+        raise MinecraftContentActivationError("invalid Minecraft modpack managed source")
+    try:
+        source = managed.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise MinecraftContentActivationError("Minecraft modpack managed source is missing") from exc
+    content_root = (runtime_root / "content").resolve()
+    try:
+        source.relative_to(content_root)
+    except ValueError as exc:
+        raise MinecraftContentActivationError("Minecraft modpack source escapes content root") from exc
+    if not source.is_dir():
+        raise MinecraftContentActivationError("Minecraft modpack source is not an extracted directory")
+    return source
+
+
+def materialize_minecraft_overrides(spec: dict[str, Any]) -> list[str]:
+    raw = spec.get("content_bundle_overrides")
+    items = raw if isinstance(raw, list) else []
+    if len(items) > 1:
+        raise MinecraftContentActivationError("Minecraft runtime supports exactly one active modpack bundle")
+    # Legacy/non-bundle RuntimeSpecs may not carry instance_state_root. With no
+    # active bundle there is nothing to apply or clean, so keep this a no-op.
+    # Once a bundle exists, instance_state_root is mandatory so ownership can be
+    # persisted and later disable/remove can safely clean managed overrides.
+    if not items and not spec.get("instance_state_root"):
+        return []
+    root = _runtime_root(spec)
+    roots: list[str] = []
+    source: Path | None = None
+    if items:
+        source = _bundle_source(root, items[0])
+        roots = items[0].get("roots") if isinstance(items[0].get("roots"), list) else []
+    desired_sources: dict[str, Path] = {}
+    desired_hashes: dict[str, str] = {}
+    count = 0
+    total = 0
+    for raw_root in roots:
+        root_name = str(raw_root or "").strip()
+        if not _SAFE_ID.fullmatch(root_name):
+            raise MinecraftContentActivationError("invalid Minecraft modpack override root")
+        if source is None:
+            raise MinecraftContentActivationError("Minecraft modpack override source is unavailable")
+        layer = source / root_name
+        if not layer.is_dir() or layer.is_symlink():
+            raise MinecraftContentActivationError("Minecraft modpack override root is missing")
+        for current, dirs, files in os.walk(layer, followlinks=False):
+            current_path = Path(current)
+            for name in list(dirs):
+                if (current_path / name).is_symlink():
+                    raise MinecraftContentActivationError("Minecraft modpack override contains a symbolic link")
+            for name in files:
+                candidate = current_path / name
+                if candidate.is_symlink() or not candidate.is_file():
+                    raise MinecraftContentActivationError("Minecraft modpack override contains an unsafe file")
+                relative = _safe_override_target(candidate.relative_to(layer).as_posix()).as_posix()
+                count += 1
+                total += candidate.stat().st_size
+                if count > 20000 or total > 4 * 1024 * 1024 * 1024:
+                    raise MinecraftContentActivationError("Minecraft modpack overrides exceed safety limits")
+                desired_sources[relative] = candidate.resolve()
+                desired_hashes[relative] = _file_sha256(candidate)
+    manifest = _override_manifest_path(spec)
+    previous = _read_override_manifest(manifest)
+    staged: dict[str, Path] = {}
+    backups: dict[str, Path] = {}
+    placed: set[str] = set()
+    try:
+        for relative_text, source_file in desired_sources.items():
+            target = _safe_runtime_target(root, _safe_override_target(relative_text))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                if relative_text not in previous:
+                    raise MinecraftContentActivationError("refusing to overwrite unmanaged Minecraft modpack file")
+                if not target.is_file() or target.is_symlink() or _file_sha256(target) != previous[relative_text]:
+                    raise MinecraftContentActivationError("managed Minecraft modpack file was modified locally")
+            stage = target.with_name(f".{target.name}.{os.getpid()}.capivara-bundle-new")
+            if stage.exists():
+                stage.unlink()
+            shutil.copy2(source_file, stage)
+            staged[relative_text] = stage
+        for relative_text, stage in staged.items():
+            target = _safe_runtime_target(root, _safe_override_target(relative_text))
+            if target.exists():
+                backup = target.with_name(f".{target.name}.{os.getpid()}.capivara-bundle-old")
+                os.replace(target, backup)
+                backups[relative_text] = backup
+            os.replace(stage, target)
+            placed.add(relative_text)
+        for relative_text, checksum in sorted(previous.items()):
+            if relative_text in desired_sources:
+                continue
+            target = _safe_runtime_target(root, _safe_override_target(relative_text))
+            if target.exists():
+                if not target.is_file() or target.is_symlink() or _file_sha256(target) != checksum:
+                    raise MinecraftContentActivationError("stale Minecraft modpack file was modified locally")
+                backup = target.with_name(f".{target.name}.{os.getpid()}.capivara-bundle-old")
+                os.replace(target, backup)
+                backups[relative_text] = backup
+        _write_override_manifest(manifest, desired_hashes)
+    except Exception:
+        for relative_text in placed:
+            target = _safe_runtime_target(root, _safe_override_target(relative_text))
+            try:
+                if target.exists() and target.is_file():
+                    target.unlink()
+            except OSError:
+                pass
+        for relative_text, backup in backups.items():
+            target = _safe_runtime_target(root, _safe_override_target(relative_text))
+            try:
+                if backup.exists():
+                    if target.exists() and target.is_file():
+                        target.unlink()
+                    os.replace(backup, target)
+            except OSError:
+                pass
+        for stage in staged.values():
+            try:
+                if stage.exists():
+                    stage.unlink()
+            except OSError:
+                pass
+        raise
+    for backup in backups.values():
+        try:
+            if backup.exists():
+                backup.unlink()
+        except OSError:
+            pass
+    return sorted(desired_sources)
+
+
+__all__=["MinecraftContentActivationError","materialize_minecraft_files","materialize_minecraft_overrides","project_minecraft_bundle_overrides","project_minecraft_files"]

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 import sys,unittest
+from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 ROOT=Path(__file__).resolve().parents[1]
@@ -9,18 +10,20 @@ for path in (ROOT/"core",ROOT/"database",ROOT/"dashboard"):
 from customer_content_workspace import CustomerContentWorkspaceService
 
 class _Workspace:
- def __init__(self,policy):self.policy=policy;self.calls=[];self.repo=SimpleNamespace(workspace_policy=lambda iid:{})
- def require(self,user,iid,permission):self.calls.append((iid,permission));return {"id":iid,"game_id":"dayz","agent_id":"agent-1"}
+ def __init__(self,policy,context=None):self.policy=policy;self.calls=[];self.repo=SimpleNamespace(workspace_policy=lambda iid:{});self.root=ROOT;self.context=context or {"id":"i1","game_id":"dayz","agent_id":"agent-1"}
+ def require(self,user,iid,permission):self.calls.append((iid,permission));return {**self.context,"id":iid}
  def _contract_policy(self,context,policy):return {},self.policy
 
 class _Content:
- def __init__(self,current=None):self.current=current;self.puts=[]
+ def __init__(self,current=None):self.current=current;self.puts=[];self.bundles=[];self.bundle_states=[]
  def list(self,**kw):return [{"content_id":"a"}]
  def get(self,iid,cid):return dict(self.current) if self.current else None
  def put(self,payload,requested_by=None):self.puts.append((dict(payload),requested_by));return {"changed":True,"assignment":{**payload,"revision":2}}
+ def put_bundle(self,parent,bundle,children,requested_by=None):self.bundles.append((dict(parent),dict(bundle),[dict(x) for x in children],requested_by));return {"changed":True,"assignment":dict(parent),"children":children}
+ def set_bundle_state(self,iid,cid,**kwargs):self.bundle_states.append((iid,cid,dict(kwargs)));return {"changed":True}
 
-def _service(policy,current=None):
- service=CustomerContentWorkspaceService.__new__(CustomerContentWorkspaceService);service.workspace=_Workspace(policy);service.content=_Content(current);return service
+def _service(policy,current=None,context=None):
+ service=CustomerContentWorkspaceService.__new__(CustomerContentWorkspaceService);service.workspace=_Workspace(policy,context);service.content=_Content(current);return service
 
 def _policy(**overrides):
  values={"modifications_allowed":True,"mods_allowed":True,"plugins_allowed":True,"workshop_allowed":True,"external_upload_allowed":False,"custom_runtime_allowed":False};values.update(overrides);return SimpleNamespace(**values)
@@ -51,6 +54,16 @@ class CustomerContentWorkspaceTest(unittest.TestCase):
   service=_service(_policy(),_current())
   with self.assertRaises(PermissionError):service.mutate({"username":"u"},"i1","cf","update",{"security_state":"clean"})
   with self.assertRaises(ValueError):service.mutate({"username":"u"},"i1","cf","update",{"shell":"echo nope"})
+ def test_modpack_install_uses_composed_bundle_path_and_discards_customer_url(self):
+  context={"id":"i1","game_id":"minecraft","agent_id":"agent-1","runtime_id":"minecraft.java.fabric","game_version":"1.21.1"};service=_service(_policy(),context=context)
+  service.modpack_resolver=lambda provider,project,parent,version,runtime:{"parent":{"version":"Pack 1","artifact":{"provider":"modrinth","url":"https://cdn.modrinth.com/pack.mrpack","filename":"pack.mrpack","sha512":"a"*128,"archive":True},"provenance":{"project_id":"p","version_id":"v"}},"bundle":{"provider":"modrinth","provider_project_id":"p","provider_version_id":"v","minecraft_version":"1.21.1","loader_id":"fabric","loader_version":"0.16","manifest_kind":"mrpack-v1","members":[{"content_id":"mb-a","path":"mods/a.jar","required":True,"artifact":{"provider":"modrinth","url":"https://cdn.modrinth.com/a.jar","filename":"a.jar","sha512":"b"*128}}],"override_roots":["overrides"]},"children":[{"content_id":"mb-a","content_type":"mod","provider":"modrinth","version":"1","artifact":{"provider":"modrinth","url":"https://cdn.modrinth.com/a.jar","filename":"a.jar","sha512":"b"*128},"target":"mods/mb-a"}]}
+  with patch('customer_content_workspace.runtime_definition',return_value={"loader":"fabric"}):result=service.install({"username":"u"},"i1",{"content_id":"pack","content_type":"modpack","provider":"modrinth","artifact":{"package_id":"project-slug","url":"https://evil.invalid/pack"}})
+  parent,bundle_value,children,requested_by=service.content.bundles[-1];self.assertEqual(parent["artifact"]["url"],"https://cdn.modrinth.com/pack.mrpack");self.assertEqual(bundle_value["provider_version_id"],"v");self.assertEqual(children[0]["content_id"],"mb-a");self.assertEqual(requested_by,"u");self.assertTrue(result["changed"])
+ def test_modpack_lifecycle_propagates_and_generic_update_fails_closed(self):
+  current={**_current(),"content_id":"pack","content_type":"modpack","provider":"modrinth","metadata":{"bundle":{"parent_content_id":"pack"}}};service=_service(_policy(),current)
+  service.mutate({"username":"u"},"i1","pack","disable",{});self.assertEqual(service.content.bundle_states[-1][2]["activation_state"],"disabled")
+  service.mutate({"username":"u"},"i1","pack","remove",{});self.assertEqual(service.content.bundle_states[-1][2]["desired_state"],"absent")
+  with self.assertRaises(ValueError):service.mutate({"username":"u"},"i1","pack","update",{"version":"2"})
  def test_missing_assignment_is_not_found(self):
   with self.assertRaises(KeyError):_service(_policy()).mutate({"username":"u"},"i1","missing","disable",{})
 

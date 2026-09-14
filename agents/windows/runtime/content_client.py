@@ -56,23 +56,30 @@ def _verify_artifact(path,artifact):
   if hasher.hexdigest().lower()!=expected:raise ValueError(f"artifact {key} mismatch")
 
 def _extract(archive,dest):
- dest.mkdir(parents=True,exist_ok=True)
+ dest.mkdir(parents=True,exist_ok=True);max_entries=100000;max_expanded=128*1024*1024*1024
  def safe(name):
-  p=(dest/name).resolve()
+  text=str(name or "").replace("\\","/");rel=Path(text)
+  if not text or text.startswith("/") or rel.is_absolute() or any(part==".." for part in rel.parts):raise ValueError("archive path traversal")
+  p=(dest/rel).resolve()
   try:p.relative_to(dest.resolve())
   except ValueError as exc:raise ValueError("archive path traversal") from exc
  if zipfile.is_zipfile(archive):
   with zipfile.ZipFile(archive) as z:
-   for i in z.infolist():
-    safe(i.filename);mode=(i.external_attr>>16)&0xFFFF
+   entries=z.infolist();total=0
+   if len(entries)>max_entries:raise ValueError("archive has too many entries")
+   for i in entries:
+    safe(i.filename);total+=max(0,int(i.file_size or 0));mode=(i.external_attr>>16)&0xFFFF
     if stat.S_ISLNK(mode):raise ValueError("unsafe archive member")
+    if total>max_expanded:raise ValueError("archive expands beyond safety limit")
    z.extractall(dest);return
  if tarfile.is_tarfile(archive):
   with tarfile.open(archive) as t:
-   members=t.getmembers()
+   members=t.getmembers();total=0
+   if len(members)>max_entries:raise ValueError("archive has too many entries")
    for m in members:
-    safe(m.name)
+    safe(m.name);total+=max(0,int(m.size or 0))
     if not (m.isfile() or m.isdir()) or m.issym() or m.islnk():raise ValueError("unsafe archive member")
+    if total>max_expanded:raise ValueError("archive expands beyond safety limit")
    t.extractall(dest,members=members);return
  raise ValueError("unsupported archive format")
 def _source(provider,artifact,stage):return resolve_source(provider,artifact,stage,GAME_DATA_ROOT)

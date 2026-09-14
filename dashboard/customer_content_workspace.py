@@ -7,6 +7,7 @@ from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from runtime_workspace_catalog import runtime_definition
 from steam_workshop_resolver import resolve_workshop_item
 from minecraft_content_resolver import resolve_minecraft_content
+from minecraft_modpack_resolver import resolve_minecraft_modpack
 
 _CUSTOMER_PROVIDERS=frozenset({"steam","steam-workshop","http","http-archive","github","modrinth","curseforge"})
 _SERVER_OWNED=frozenset({"agent_id","game_id","security_state","assignment_id","revision","checksum","requested_by","created_at","updated_at"})
@@ -16,7 +17,7 @@ _ENVELOPE_FIELDS=frozenset({"instance_id","content_id","action"})
 
 class CustomerContentWorkspaceService:
  def __init__(self,backend,root):
-  self.workspace=CustomerInstanceWorkspaceService(backend,root);self.content=ContentRepository(backend);self.workshop_resolver=resolve_workshop_item;self.minecraft_resolver=resolve_minecraft_content
+  self.workspace=CustomerInstanceWorkspaceService(backend,root);self.content=ContentRepository(backend);self.workshop_resolver=resolve_workshop_item;self.minecraft_resolver=resolve_minecraft_content;self.modpack_resolver=resolve_minecraft_modpack
  def _context_policy(self,user,instance_id,permission):
   context=self.workspace.require(user,instance_id,permission);policy=self.workspace.repo.workspace_policy(instance_id);_,content_policy=self.workspace._contract_policy(context,policy);return context,content_policy
  def _reject_server_owned(self,body):
@@ -61,6 +62,7 @@ class CustomerContentWorkspaceService:
   if provider not in {"modrinth","curseforge"}:return payload
   if str(context.get("game_id") or "").strip().lower()!="minecraft":raise PermissionError("Minecraft content provider cannot be used by this game")
   runtime_id=str(context.get("runtime_id") or "").strip();game_version=str(context.get("game_version") or "").strip();ctype=str(payload.get("content_type") or "other").strip().lower()
+  if ctype=="modpack":return payload
   if not runtime_id or not game_version:raise ValueError("Minecraft runtime/version identity is unavailable")
   definition=runtime_definition(self.workspace.root,"minecraft",runtime_id)
   if not definition:raise ValueError("Minecraft RuntimeDefinition is unavailable")
@@ -70,6 +72,22 @@ class CustomerContentWorkspaceService:
   metadata=dict(payload.get("metadata") or {});metadata["minecraft_provider"]=dict(resolved.get("metadata") or {})
   payload["provider"]=provider;payload["version"]=str(resolved["version"]);payload["artifact"]=dict(resolved["artifact"]);payload["provenance"]={"minecraft_provider":dict(resolved.get("provenance") or {})};payload["metadata"]=metadata
   return payload
+ def _resolve_minecraft_modpack(self,context,payload):
+  artifact=payload.get("artifact") if isinstance(payload.get("artifact"),Mapping) else {};provider=str(payload.get("provider") or artifact.get("provider") or "").strip().lower();ctype=str(payload.get("content_type") or "").strip().lower()
+  if ctype!="modpack" or provider not in {"modrinth","curseforge"}:return None
+  if str(context.get("game_id") or "").strip().lower()!="minecraft":raise PermissionError("Minecraft modpack provider cannot be used by this game")
+  runtime_id=str(context.get("runtime_id") or "").strip();game_version=str(context.get("game_version") or "").strip();content_id=str(payload.get("content_id") or "").strip()
+  if not runtime_id or not game_version or not content_id:raise ValueError("Minecraft runtime/version/content identity is unavailable")
+  definition=runtime_definition(self.workspace.root,"minecraft",runtime_id)
+  if not definition:raise ValueError("Minecraft RuntimeDefinition is unavailable")
+  project=str(artifact.get("package_id") or artifact.get("project_id") or artifact.get("slug") or "").strip()
+  if not project:raise ValueError(f"{provider} modpack project reference is required")
+  resolved=getattr(self,"modpack_resolver",resolve_minecraft_modpack)(provider,project,content_id,game_version,definition)
+  parent=dict(payload);parent["provider"]=provider;parent["version"]=str(resolved["parent"]["version"]);parent["artifact"]=dict(resolved["parent"]["artifact"]);parent["provenance"]={"minecraft_modpack":dict(resolved["parent"].get("provenance") or {})};metadata=dict(parent.get("metadata") or {});metadata["minecraft_modpack"]={"provider":provider,"provider_project_id":resolved["bundle"]["provider_project_id"],"provider_version_id":resolved["bundle"]["provider_version_id"],"minecraft_version":resolved["bundle"]["minecraft_version"],"loader_id":resolved["bundle"]["loader_id"],"loader_version":resolved["bundle"]["loader_version"]};parent["metadata"]=metadata
+  children=[]
+  for child in resolved["children"]:
+   item=dict(child);item["instance_id"]=str(context.get("id") or payload.get("instance_id") or "");children.append(item)
+  return parent,dict(resolved["bundle"]),children
  def _existing(self,instance_id,content_id):
   item=self.content.get(instance_id,content_id)
   if item is None:raise KeyError("content assignment not found")
@@ -79,9 +97,20 @@ class CustomerContentWorkspaceService:
  def list(self,user,instance_id):
   self._context_policy(user,instance_id,"content.read");return self.content.list(instance_id=instance_id,limit=2000)
  def install(self,user,instance_id,body):
-  context,policy=self._context_policy(user,instance_id,"content.install");payload=self._customer_payload(body);payload["instance_id"]=instance_id;payload["desired_state"]="installed";self._enforce_policy(payload,policy);self._resolve_workshop(context,payload);self._resolve_minecraft_provider(context,payload);return self.content.put(payload,requested_by=str(user.get("username") or "customer"))
+  context,policy=self._context_policy(user,instance_id,"content.install");payload=self._customer_payload(body);payload["instance_id"]=instance_id;payload["desired_state"]="installed";self._enforce_policy(payload,policy)
+  modpack=self._resolve_minecraft_modpack(context,payload)
+  if modpack is not None:
+   parent,bundle,children=modpack;return self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"))
+  self._resolve_workshop(context,payload);self._resolve_minecraft_provider(context,payload);return self.content.put(payload,requested_by=str(user.get("username") or "customer"))
  def mutate(self,user,instance_id,content_id,action,body=None):
-  action=str(action or "").strip().lower();required="content.remove" if action=="remove" else "content.install";context,policy=self._context_policy(user,instance_id,required);current=self._existing(instance_id,content_id);payload=self._desired(current);payload["instance_id"]=instance_id;resolve_update=False
+  action=str(action or "").strip().lower();required="content.remove" if action=="remove" else "content.install";context,policy=self._context_policy(user,instance_id,required);current=self._existing(instance_id,content_id)
+  if str(current.get("content_type") or "").lower()=="modpack":
+   self._enforce_policy(current,policy)
+   if action=="remove":return self.content.set_bundle_state(instance_id,content_id,desired_state="absent",activation_state="disabled",requested_by=str(user.get("username") or "customer"))
+   if action=="disable":return self.content.set_bundle_state(instance_id,content_id,desired_state="installed",activation_state="disabled",requested_by=str(user.get("username") or "customer"))
+   if action=="enable":return self.content.set_bundle_state(instance_id,content_id,desired_state="installed",activation_state="enabled",requested_by=str(user.get("username") or "customer"))
+   raise ValueError("modpack update/reorder requires Universal Content update orchestration")
+  payload=self._desired(current);payload["instance_id"]=instance_id;resolve_update=False
   if action=="remove":payload["desired_state"]="absent";payload["activation_state"]="disabled"
   elif action=="enable":payload["desired_state"]="installed";payload["activation_state"]="enabled"
   elif action=="disable":payload["desired_state"]="installed";payload["activation_state"]="disabled"

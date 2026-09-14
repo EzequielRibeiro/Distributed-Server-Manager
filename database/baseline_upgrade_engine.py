@@ -18,6 +18,7 @@ from alert_scope_history_schema import alert_scope_history_ddl
 from backend import DatabaseMigrationError
 from discord_integration_schema import discord_integration_ddl
 from content_contract_v2_schema import content_contract_v2_ddl
+from content_bundle_schema import content_bundle_ddl
 from server_update_schema import server_update_ddl
 
 
@@ -564,6 +565,26 @@ def _upgrade_content_contract_v2(backend: Any, connection: Any) -> None:
         )
 
 
+def _upgrade_content_bundle_schema(backend: Any, connection: Any) -> None:
+    required = {"content_bundles", "content_bundle_revisions"}
+    tables = _table_names(backend, connection)
+    present = required & tables
+    if present == required:
+        return
+    if present:
+        raise DatabaseMigrationError(
+            "partial Universal Content Bundle baseline upgrade; missing tables: "
+            + ", ".join(sorted(required - present))
+        )
+    _execute_script(backend, connection, content_bundle_ddl(backend.name))
+    missing = sorted(required - _table_names(backend, connection))
+    if missing:
+        raise DatabaseMigrationError(
+            "Universal Content Bundle baseline upgrade incomplete; missing tables: "
+            + ", ".join(missing)
+        )
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -574,6 +595,7 @@ UPGRADES = (
     BaselineUpgrade(7, "backup_job_retry_identity", _upgrade_backup_job_retry_identity),
     BaselineUpgrade(8, "universal_content_contract_v2", _upgrade_content_contract_v2),
     BaselineUpgrade(9, "backup_job_retry_identity_repair", _upgrade_backup_job_retry_identity),
+    BaselineUpgrade(10, "universal_content_bundles", _upgrade_content_bundle_schema),
 )
 
 
