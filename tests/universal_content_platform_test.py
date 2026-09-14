@@ -53,9 +53,17 @@ class ContentContractTest(unittest.TestCase):
    cmd={"instance_id":"instance-c4","content_id":"mod-one","target":"mods/mod-one","provider":"local","artifact":{"filename":"new.bin"}}
    lifecycle=[]
    def life(config,iid,action):lifecycle.append(action);return {"observed_state":"stopped" if action=="stop" else "running"}
-   with patch.object(content_client,"_owned",return_value=({"instance_id":"instance-c4","agent_id":"agent-c4"},instance)),patch.object(content_client,"_source",return_value=source),patch.object(content_client.instance_runtime,"status",return_value={"observed_state":"running"}),patch.object(content_client.instance_runtime,"lifecycle",side_effect=life),patch.object(content_client.instance_runtime,"doctor",side_effect=[{"ready":False},{"ready":True}]):
+   with patch.object(content_client,"_owned",return_value=({"instance_id":"instance-c4","agent_id":"agent-c4"},instance)),patch.object(content_client,"_source",return_value=source),patch.object(content_client,"require_clean",return_value={"security_state":"clean","engine":"yara-x","policy_version":1,"matches":[]}),patch.object(content_client.instance_runtime,"status",return_value={"observed_state":"running"}),patch.object(content_client.instance_runtime,"lifecycle",side_effect=life),patch.object(content_client.instance_runtime,"doctor",side_effect=[{"ready":False},{"ready":True}]):
     with self.assertRaises(content_client.ContentActivationError):content_client._install({"agent_id":"agent-c4"},cmd)
    self.assertTrue((target/"old.bin").is_file());self.assertFalse((target/"new.bin").exists());self.assertEqual(lifecycle,["stop","start","stop","start"]);self.assertFalse(target.with_name(target.name+".c4-old").exists())
+ def test_security_rejection_never_activates_content(self):
+  with tempfile.TemporaryDirectory() as td:
+   instance=Path(td)/"instance";instance.mkdir();source=Path(td)/"blocked.jar";source.write_bytes(b"blocked")
+   state=Path(td)/"state.json";cmd={"instance_id":"instance-c4","content_id":"mod-one","revision":7,"checksum":"c"*64,"version":"1","target":"mods/mod-one","provider":"local","artifact":{"filename":"blocked.jar"}}
+   verdict={"security_state":"blocked","engine":"yara-x","policy_version":1,"reason":"matched malware rule","matches":[{"rule":"known_malware","tags":["malware"]}]}
+   with patch.object(content_client,"_owned",return_value=({"instance_id":"instance-c4","agent_id":"agent-c4"},instance)),patch.object(content_client,"_source",return_value=source),patch.object(content_client,"_state_path",return_value=state),patch.object(content_client,"require_clean",side_effect=content_client.ContentSecurityRejected(verdict)),patch.object(content_client,"_activate_target") as activate:
+    result=content_client._apply({"agent_id":"agent-c4"},cmd)
+   self.assertEqual(result["status"],"security_blocked");self.assertEqual(result["security_state"],"blocked");self.assertIsNone(result["applied_revision"]);activate.assert_not_called();self.assertEqual(json.loads(state.read_text())["security_state"],"blocked")
  def test_windows_content_client_has_same_readiness_contract(self):
   text=(ROOT/"agents/windows/runtime/content_client.py").read_text(encoding="utf-8")
   for marker in ("instance_runtime.lifecycle","instance_runtime.doctor","ContentRollbackError",".c4-old","unfinished content transaction detected","package_id","content_type"):self.assertIn(marker,text)
@@ -96,6 +104,18 @@ class ContentRepositoryTest(unittest.TestCase):
   stored=self.repo.put(self.payload())["assignment"];first=record_agent_heartbeat("agent-c4",{"agent_id":"agent-c4"},backend=self.backend);self.assertEqual(first["content_count"],1);cmd=first["content_commands"][0];self.assertEqual(cmd["assignment_id"],stored["assignment_id"])
   report={"instance_id":"instance-c4","content_id":"mod-one","desired_revision":cmd["revision"],"applied_revision":cmd["revision"],"desired_checksum":cmd["checksum"],"applied_checksum":cmd["checksum"],"status":"applied","installed_version":"1.0"}
   second=record_agent_heartbeat("agent-c4",{"agent_id":"agent-c4","content_state":[report]},backend=self.backend);self.assertEqual(second["content_count"],0)
+ def test_scan_failure_backoff_does_not_redownload_same_revision(self):
+  with tempfile.TemporaryDirectory() as td:
+   state=Path(td)/"state.json";cmd={"instance_id":"instance-c4","content_id":"mod-one","revision":3,"checksum":"d"*64,"version":"1","provider":"local","target":"mods/mod-one","artifact":{}}
+   previous={"instance_id":"instance-c4","content_id":"mod-one","desired_revision":3,"desired_checksum":"d"*64,"status":"security_scan_failed","security_state":"scan_failed","security_policy_version":1,"security_retry_after_epoch":9999999999}
+   state.write_text(json.dumps(previous))
+   with patch.object(content_client,"_state_path",return_value=state),patch.object(content_client,"_install") as install:
+    result=content_client._apply({"agent_id":"agent-c4"},cmd)
+   self.assertEqual(result["status"],"security_scan_failed");install.assert_not_called()
+ def test_security_block_is_terminal_for_revision_but_scan_failure_retries(self):
+  stored=self.repo.put(self.payload())["assignment"];base={"instance_id":"instance-c4","content_id":"mod-one","desired_revision":stored["revision"],"desired_checksum":stored["checksum"],"applied_revision":None,"applied_checksum":None,"installed_version":None}
+  self.assertEqual(self.repo.record_agent_state("agent-c4",[{**base,"status":"security_blocked","security_state":"suspicious","last_error":"matched rule"}]),1);self.assertEqual(self.repo.desired_for_agent("agent-c4"),[])
+  self.assertEqual(self.repo.record_agent_state("agent-c4",[{**base,"status":"security_scan_failed","security_state":"scan_failed","last_error":"scanner unavailable"}]),1);self.assertEqual(len(self.repo.desired_for_agent("agent-c4")),1)
  def test_spoofed_or_unknown_instance_is_rejected(self):
   with self.assertRaises(ContentValidationError):self.repo.put({**self.payload(),"instance_id":"missing"})
   accepted=self.repo.record_agent_state("agent-c4",[{"instance_id":"missing","content_id":"mod","desired_revision":1,"desired_checksum":"x","status":"applied"}]);self.assertEqual(accepted,0)

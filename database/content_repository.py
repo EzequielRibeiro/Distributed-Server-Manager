@@ -188,13 +188,15 @@ class ContentRepository:
  def _applied(self,agent_id):
   with self.backend.connect() as c:
    s=AlertSession(self.backend,c)
-   try:return {(str(r["instance_id"]),str(r["content_id"])):(int(r["applied_revision"] or 0),str(r["applied_checksum"] or ""),str(r["status"] or "")) for r in s.execute(f"SELECT * FROM agent_content_state WHERE agent_id={self.ph}",(agent_id,)).fetchall()}
+   try:return {(str(r["instance_id"]),str(r["content_id"])):(int(r["desired_revision"] or 0),str(r["desired_checksum"] or ""),str(r["status"] or ""),str(r["security_state"] or "unscanned")) for r in s.execute(f"SELECT * FROM agent_content_state WHERE agent_id={self.ph}",(agent_id,)).fetchall()}
    finally:s.close()
  def desired_for_agent(self,agent_id):
   applied=self._applied(agent_id);out=[]
   for a in self.list(agent_id=agent_id,limit=2000):
    state=applied.get((a["instance_id"],a["content_id"]))
-   if state==(int(a["revision"]),str(a["checksum"]),"applied"):continue
+   if state and state[0]==int(a["revision"]) and state[1]==str(a["checksum"]):
+    if state[2]=="applied" and state[3] in {"clean","unscanned"}:continue
+    if state[2]=="security_blocked" and state[3] in {"suspicious","blocked"}:continue
    out.append(a)
   return out
  def record_agent_state(self,agent_id,reports:list[Mapping[str,Any]]):

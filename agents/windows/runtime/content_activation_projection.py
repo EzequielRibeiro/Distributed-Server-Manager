@@ -76,6 +76,11 @@ def _activation(command: Mapping[str, Any]) -> dict[str, str]:
 def _entry(state: dict[str, Any]) -> dict[str, Any] | None:
     if str(state.get("status") or "") != "applied":
         return None
+    # U7: states written under the security policy are activatable only after
+    # an explicit clean verdict. Pre-U7 states remain grandfathered until
+    # they are reconciled/scanned, avoiding a blind mass outage on upgrade.
+    if int(state.get("security_policy_version") or 0) >= 1 and str(state.get("security_state") or "unscanned") != "clean":
+        return None
     if str(state.get("desired_state") or "installed") != "installed":
         return None
     if str(state.get("activation_state") or "enabled") != "enabled":
@@ -132,7 +137,10 @@ def synchronize_activation_state(commands: list[dict[str, Any]], reports: list[d
 
     changed_instances: set[str] = set()
     for report in reports:
-        if not isinstance(report, dict) or str(report.get("status") or "") != "applied":
+        if not isinstance(report, dict):
+            continue
+        report_status = str(report.get("status") or "")
+        if report_status not in {"applied", "security_blocked", "security_scan_failed"}:
             continue
         iid = str(report.get("instance_id") or "").strip()
         cid = str(report.get("content_id") or "").strip()

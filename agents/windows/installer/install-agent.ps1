@@ -76,7 +76,7 @@ $version = (Get-Content (Join-Path $PackageDir "VERSION") -Raw).Trim()
 $guiAvailable = Test-GuiAvailable
 $guiEnabled = if ($GuiMode -eq 'on') { if (-not $guiAvailable) { Fail 'GuiMode=on solicitado, mas o Windows não oferece shell gráfico/WPF' }; $true } elseif ($GuiMode -eq 'off') { $false } else { $guiAvailable }
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-New-Item -ItemType Directory -Force -Path "$InstallRoot\runtime", "$InstallRoot\common", "$InstallRoot\updater", "$InstallRoot\service", "$InstallRoot\gui", "$DataRoot\state", "$DataRoot\state\gui", "$DataRoot\logs" | Out-Null
+New-Item -ItemType Directory -Force -Path "$InstallRoot\runtime", "$InstallRoot\common", "$InstallRoot\updater", "$InstallRoot\service", "$InstallRoot\gui", "$DataRoot\state", "$DataRoot\state\gui", "$DataRoot\security", "$DataRoot\security\yara-rules", "$DataRoot\logs" | Out-Null
 Copy-Item (Join-Path $PackageDir "agent\runtime\*") "$InstallRoot\runtime" -Recurse -Force
 Copy-Item (Join-Path $PackageDir "agent\common\identity.py") "$InstallRoot\common\identity.py" -Force
 Copy-Item (Join-Path $PackageDir "agent\updater\updater.py") "$InstallRoot\updater\updater.py" -Force
@@ -100,6 +100,7 @@ $config = [ordered]@{
 $configJson = $config | ConvertTo-Json -Depth 6
 [System.IO.File]::WriteAllText("$DataRoot\agent.json", $configJson + [Environment]::NewLine, $utf8NoBom)
 & icacls "$DataRoot\agent.json" /inheritance:r /grant:r "*S-1-5-18:F" "*S-1-5-32-544:F" | Out-Null
+& icacls "$DataRoot\security" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" | Out-Null
 & icacls "$DataRoot\state\gui" /grant:r "*S-1-5-32-545:(OI)(CI)RX" | Out-Null
 & icacls "$DataRoot\logs" /grant:r "*S-1-5-32-545:(OI)(CI)RX" | Out-Null
 
@@ -118,3 +119,4 @@ if ($guiEnabled) {
     Write-Host 'Interface gráfica não habilitada. O Agent continuará operando normalmente em modo headless.'
 }
 Write-Host "Capivara Agent Windows $version instalado. Enrollment e heartbeat usarão o mesmo protocolo do Agent Linux."
+Write-Host "U7 Content Security: novos artefatos exigem YARA-X (yr.exe) e regras em $DataRoot\security\yara-rules; sem scanner válido a ativação falha de forma fechada."

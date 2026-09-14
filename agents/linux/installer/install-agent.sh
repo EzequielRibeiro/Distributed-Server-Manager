@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 CONTROLLER_URL=""; CONTROLLER_CA_FILE=""; PAIRING_TOKEN="${CAPIVARA_PAIRING_TOKEN:-}"; PACKAGE_DIR=""
 INSTALL_ROOT="${CAPIVARA_AGENT_ROOT:-/opt/capivara-agent}"; CONFIG_DIR="${CAPIVARA_AGENT_CONFIG_DIR:-/etc/capivara-agent}"
-STATE_DIR="${CAPIVARA_AGENT_STATE_DIR:-/var/lib/capivara-agent}"; INSTANCE_STORAGE_ROOT="${CAPIVARA_INSTANCE_STORAGE_ROOT:-/var/lib/capivara-instances}"; SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
+STATE_DIR="${CAPIVARA_AGENT_STATE_DIR:-/var/lib/capivara-agent}"; SECURITY_CONFIG_DIR="${CAPIVARA_AGENT_SECURITY_CONFIG_DIR:-/etc/capivara-agent-security}"; INSTANCE_STORAGE_ROOT="${CAPIVARA_INSTANCE_STORAGE_ROOT:-/var/lib/capivara-instances}"; SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 POLKIT_RULES_DIR="${CAPIVARA_POLKIT_RULES_DIR:-/etc/polkit-1/rules.d}"; CLI_PATH="${CAPIVARA_AGENT_CLI_PATH:-/usr/local/bin/cap}"
 AGENT_USER="capivara-agent"; AGENT_GROUP="capivara-agent"
 fail(){ printf '[Capivara Agent][ERRO] %s\n' "$*" >&2; exit 1; }; log(){ printf '[Capivara Agent] %s\n' "$*"; }
@@ -208,6 +208,7 @@ if [[ -e "${CLI_PATH}" || -L "${CLI_PATH}" ]]; then EXISTING="$(readlink -f "${C
 ensure_agent_account
 install -d -m 0755 -o root -g root "${INSTALL_ROOT}" "${INSTALL_ROOT}/runtime" "${INSTALL_ROOT}/runtime/adapters" "${INSTALL_ROOT}/runtime/materializers" "${INSTALL_ROOT}/runtime/profiles" "${INSTALL_ROOT}/privileged" "${INSTALL_ROOT}/common" "${INSTALL_ROOT}/updater"
 install -d -m 0711 -o root -g root "${INSTANCE_STORAGE_ROOT}"
+install -d -m 0755 -o root -g root "${SECURITY_CONFIG_DIR}" "${SECURITY_CONFIG_DIR}/yara-rules"
 install -d -m 0700 -o capivara-agent -g capivara-agent "${CONFIG_DIR}" "${STATE_DIR}" "${STATE_DIR}/game-data" "${STATE_DIR}/game-data-jobs" "${STATE_DIR}/game-data-jobs/history" "${STATE_DIR}/game-data-state" "${STATE_DIR}/update-history" "${STATE_DIR}/instances" "${STATE_DIR}/instance-results" "${STATE_DIR}/instance-command-history" "${STATE_DIR}/events" "${STATE_DIR}/instance-provisioning" "${STATE_DIR}/instance-provisioning/history" "${STATE_DIR}/instance-workspaces" "${STATE_DIR}/privileged-materialization" "${STATE_DIR}/privileged-firewall" "${STATE_DIR}/instance-locks" "${STATE_DIR}/instance-operations" "${STATE_DIR}/metrics" "${STATE_DIR}/storage-pool-migrations" "${STATE_DIR}/storage-pool-migrations/history" "${STATE_DIR}/uninstall"
 for file in "${RUNTIME_FILES[@]}"; do mode=0644; case "$file" in agent.py|local_cli.py|cap_dispatch.py|controller_cli.py|game_data_executor.py|provisioning_executor.py|storage_pool_migration_executor.py) mode=0755;; esac; install -m "$mode" "${PACKAGE_DIR}/agent/runtime/${file}" "${INSTALL_ROOT}/runtime/${file}"; done
 for sub in adapters materializers; do for file in __init__.py base.py registry.py systemd.py; do install -m 0644 "${PACKAGE_DIR}/agent/runtime/${sub}/${file}" "${INSTALL_ROOT}/runtime/${sub}/${file}"; done; done
@@ -241,3 +242,4 @@ systemctl enable --now capivara-agent.service
 log "Agent ${VERSION} instalado com runtime serializado, crash-consistent e observável."
 log "Controller: ${CONTROLLER_URL}"
 log "Storage de instâncias: ${INSTANCE_STORAGE_ROOT}"
+log "U7 Content Security: novos artefatos exigem YARA-X (yr) e regras em ${SECURITY_CONFIG_DIR}/yara-rules; sem scanner válido a ativação falha de forma fechada."
