@@ -14,6 +14,16 @@ class BackupRestoreDashboardFlowTest(unittest.TestCase):
         self.assertNotIn('.slice(0,1)', js)
         self.assertIn('job.completed_at||job.created_at', js)
 
+    def test_recent_backup_operations_expire_only_from_the_operational_view(self):
+        js = (ROOT / "dashboard/web/customer-backup-transfer.js").read_text(encoding="utf-8")
+        self.assertIn("RECENT_OPERATION_WINDOW_MS=72*60*60*1000", js)
+        self.assertIn("recentOperationalJobs", js)
+        self.assertIn('status==="pending"||status==="running"', js)
+        self.assertIn('status!=="failed"', js)
+        self.assertIn("now-timestamp<=RECENT_OPERATION_WINDOW_MS", js)
+        self.assertIn("O histórico completo permanece preservado", js)
+        self.assertNotIn("DELETE FROM backup_jobs", js)
+
     def test_restore_requires_explicit_confirmation_and_explains_impact(self):
         js = (ROOT / "dashboard/web/customer-backup-transfer.js").read_text(encoding="utf-8")
         self.assertIn('restoreWarning', js)
