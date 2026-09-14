@@ -16,7 +16,7 @@ class _Workspace:
  def _contract_policy(self,context,policy):return {},self.policy
 
 class _Transfers:
- def __init__(self,status="queued"):
+ def __init__(self,status="staging"):
   self.created=[];self.staged=[];self.item={"transfer_id":"transfer-1","instance_id":"i1","agent_id":"agent-1","direction":"controller_to_agent","purpose":"content_upload","filename":"mod.zip","status":status,"sha256":"a"*64,"size_bytes":3,"destination_ref":"quarantine/i1/transfer-1/mod.zip" if status=="completed" else None}
  def create(self,**kw):self.created.append(kw);return dict(self.item)
  def get(self,tid):return dict(self.item)
@@ -26,7 +26,7 @@ class _Content:
  def __init__(self):self.puts=[]
  def put(self,payload,requested_by=None):self.puts.append((dict(payload),requested_by));return {"changed":True,"assignment":dict(payload,revision=1)}
 
-def service(policy=None,status="queued"):
+def service(policy=None,status="staging"):
  s=CustomerContentUploadService.__new__(CustomerContentUploadService);s.backend=None;s.root=ROOT;s.workspace=_Workspace(policy);s.transfers=_Transfers(status);s.content=_Content();return s
 
 class ExternalUploadTest(unittest.TestCase):
@@ -40,7 +40,7 @@ class ExternalUploadTest(unittest.TestCase):
  def test_stage_streams_through_artifact_repository(self):
   s=service();s.stage({"username":"alice"},"transfer-1",io.BytesIO(b"abc"),3);self.assertEqual(s.transfers.staged[-1],("transfer-1",3,b"abc"))
  def test_finalize_requires_agent_completion(self):
-  with self.assertRaises(ValueError):service(status="queued").finalize({"username":"alice"},"transfer-1",{"content_id":"m1","content_type":"mod"})
+  with self.assertRaises(ValueError):service(status="staging").finalize({"username":"alice"},"transfer-1",{"content_id":"m1","content_type":"mod"})
  def test_finalize_injects_local_provider_and_safe_provenance(self):
   s=service(status="completed");result=s.finalize({"username":"alice"},"transfer-1",{"content_id":"m1","content_type":"mod","activation_state":"enabled"});payload,actor=s.content.puts[-1]
   self.assertEqual(actor,"alice");self.assertEqual(payload["provider"],"local");self.assertEqual(payload["target"],"external/m1");self.assertEqual(payload["artifact"]["package_id"],"quarantine/i1/transfer-1/mod.zip");self.assertEqual(payload["artifact"]["sha256"],"a"*64);self.assertTrue(payload["artifact"]["archive"]);self.assertEqual(payload["provenance"]["kind"],"customer-upload");self.assertTrue(payload["provenance"]["agent_validated"]);self.assertEqual(result["assignment"]["content_id"],"m1")

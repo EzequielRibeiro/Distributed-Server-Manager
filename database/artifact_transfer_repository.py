@@ -8,7 +8,7 @@ from pathlib import Path
 import uuid
 from alert_repository import AlertSession,dialect_for_backend
 
-FINAL={"completed","failed","cancelled","expired"};ACTIVE={"queued","delivered","transferring"}
+FINAL={"completed","failed","cancelled","expired"};ACTIVE={"staging","queued","delivered","transferring"}
 
 def _validated_content_upload_destination(item,report):
  destination=str(report.get("destination_ref") or "").strip().replace("\\","/")
@@ -50,7 +50,7 @@ class ArtifactTransferRepository:
   if direction not in {"agent_to_controller","controller_to_agent"}:raise ValueError("invalid transfer direction")
   transfer_id="transfer-"+uuid.uuid4().hex;filename=Path(str(filename or "artifact.bin")).name;expires=(datetime.now(timezone.utc)+timedelta(hours=max(1,min(int(ttl_hours),168)))).isoformat().replace("+00:00","Z");path=self._path(transfer_id,filename)
   self.initialize()
-  with self.session(transaction=True) as s:s.execute("INSERT INTO artifact_transfers(transfer_id,agent_id,instance_id,customer_id,direction,purpose,source_ref,destination_ref,filename,status,controller_path,requested_by,expires_at) "+f"VALUES ({self.dialect.parameters(13)})",(transfer_id,str(agent_id),str(instance_id) if instance_id else None,int(customer_id) if customer_id is not None else None,direction,str(purpose),str(source_ref) if source_ref else None,str(destination_ref) if destination_ref else None,filename,"queued",str(path),str(requested_by or "") or None,expires))
+  with self.session(transaction=True) as s:s.execute("INSERT INTO artifact_transfers(transfer_id,agent_id,instance_id,customer_id,direction,purpose,source_ref,destination_ref,filename,status,controller_path,requested_by,expires_at) "+f"VALUES ({self.dialect.parameters(13)})",(transfer_id,str(agent_id),str(instance_id) if instance_id else None,int(customer_id) if customer_id is not None else None,direction,str(purpose),str(source_ref) if source_ref else None,str(destination_ref) if destination_ref else None,filename,"staging" if direction=="controller_to_agent" else "queued",str(path),str(requested_by or "") or None,expires))
   return self.get(transfer_id)
  def get(self,transfer_id):
   ph=self.dialect.placeholder

@@ -37,7 +37,7 @@ class CustomerContentUploadService:
   return self.transfers.create(agent_id=agent_id,instance_id=instance_id,customer_id=context.get("customer_id"),direction="controller_to_agent",purpose="content_upload",filename=name,requested_by=str(user.get("username") or ""),ttl_hours=24)
  def stage(self,user,transfer_id,source,content_length):
   item=self._transfer(user,transfer_id)
-  if str(item.get("status") or "")!="queued":raise ValueError("content upload is not pending")
+  if str(item.get("status") or "")!="staging":raise ValueError("content upload is not pending")
   return self.transfers.stage_from_controller(str(item["transfer_id"]),source,content_length)
  def status(self,user,transfer_id):return self._transfer(user,transfer_id)
  def finalize(self,user,transfer_id,body:Mapping[str,Any]):
