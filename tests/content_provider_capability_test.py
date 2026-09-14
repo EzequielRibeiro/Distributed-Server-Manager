@@ -22,7 +22,7 @@ class ContentProviderCapabilityTest(unittest.TestCase):
     def _exercise(self, module):
         self.assertEqual(
             module.registered_providers(),
-            ("github", "http", "http-archive", "local", "modrinth"),
+            ("curseforge", "github", "http", "http-archive", "local", "modrinth"),
         )
 
         with tempfile.TemporaryDirectory() as td:

@@ -18,6 +18,7 @@ OFFICIAL_CONTENT_PROVIDERS = frozenset({
     "http-archive",
     "local",
     "modrinth",
+    "curseforge",
     "source-build",
     "steam",
     "steam-workshop",

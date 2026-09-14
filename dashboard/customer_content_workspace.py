@@ -6,8 +6,9 @@ from content_repository import ContentRepository
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from runtime_workspace_catalog import runtime_definition
 from steam_workshop_resolver import resolve_workshop_item
+from minecraft_content_resolver import resolve_minecraft_content
 
-_CUSTOMER_PROVIDERS=frozenset({"steam","steam-workshop","http","http-archive","github","modrinth"})
+_CUSTOMER_PROVIDERS=frozenset({"steam","steam-workshop","http","http-archive","github","modrinth","curseforge"})
 _SERVER_OWNED=frozenset({"agent_id","game_id","security_state","assignment_id","revision","checksum","requested_by","created_at","updated_at"})
 _INSTALL_FIELDS=frozenset({"content_id","content_type","desired_state","activation_state","activation_order","version","provider","target","artifact","provenance","source","metadata","dependencies","conflicts"})
 _UPDATE_FIELDS=frozenset({"activation_state","activation_order","version","provider","target","artifact","provenance","source","metadata","dependencies","conflicts"})
@@ -15,7 +16,7 @@ _ENVELOPE_FIELDS=frozenset({"instance_id","content_id","action"})
 
 class CustomerContentWorkspaceService:
  def __init__(self,backend,root):
-  self.workspace=CustomerInstanceWorkspaceService(backend,root);self.content=ContentRepository(backend);self.workshop_resolver=resolve_workshop_item
+  self.workspace=CustomerInstanceWorkspaceService(backend,root);self.content=ContentRepository(backend);self.workshop_resolver=resolve_workshop_item;self.minecraft_resolver=resolve_minecraft_content
  def _context_policy(self,user,instance_id,permission):
   context=self.workspace.require(user,instance_id,permission);policy=self.workspace.repo.workspace_policy(instance_id);_,content_policy=self.workspace._contract_policy(context,policy);return context,content_policy
  def _reject_server_owned(self,body):
@@ -55,6 +56,20 @@ class CustomerContentWorkspaceService:
   provenance=dict(payload.get("provenance") or {});provenance["steam_workshop"]={"published_file_id":resolved["published_file_id"],"consumer_app_id":resolved["consumer_app_id"]}
   payload["provider"]="steam-workshop";payload["artifact"]=clean_artifact;payload["metadata"]=metadata;payload["provenance"]=provenance
   return payload
+ def _resolve_minecraft_provider(self,context,payload):
+  artifact=payload.get("artifact") if isinstance(payload.get("artifact"),Mapping) else {};provider=str(payload.get("provider") or artifact.get("provider") or "").strip().lower()
+  if provider not in {"modrinth","curseforge"}:return payload
+  if str(context.get("game_id") or "").strip().lower()!="minecraft":raise PermissionError("Minecraft content provider cannot be used by this game")
+  runtime_id=str(context.get("runtime_id") or "").strip();game_version=str(context.get("game_version") or "").strip();ctype=str(payload.get("content_type") or "other").strip().lower()
+  if not runtime_id or not game_version:raise ValueError("Minecraft runtime/version identity is unavailable")
+  definition=runtime_definition(self.workspace.root,"minecraft",runtime_id)
+  if not definition:raise ValueError("Minecraft RuntimeDefinition is unavailable")
+  project=str(artifact.get("package_id") or artifact.get("project_id") or artifact.get("slug") or "").strip()
+  if not project:raise ValueError(f"{provider} project reference is required")
+  resolved=getattr(self,"minecraft_resolver",resolve_minecraft_content)(provider,project,game_version,definition,ctype)
+  metadata=dict(payload.get("metadata") or {});metadata["minecraft_provider"]=dict(resolved.get("metadata") or {})
+  payload["provider"]=provider;payload["version"]=str(resolved["version"]);payload["artifact"]=dict(resolved["artifact"]);payload["provenance"]={"minecraft_provider":dict(resolved.get("provenance") or {})};payload["metadata"]=metadata
+  return payload
  def _existing(self,instance_id,content_id):
   item=self.content.get(instance_id,content_id)
   if item is None:raise KeyError("content assignment not found")
@@ -64,7 +79,7 @@ class CustomerContentWorkspaceService:
  def list(self,user,instance_id):
   self._context_policy(user,instance_id,"content.read");return self.content.list(instance_id=instance_id,limit=2000)
  def install(self,user,instance_id,body):
-  context,policy=self._context_policy(user,instance_id,"content.install");payload=self._customer_payload(body);payload["instance_id"]=instance_id;payload["desired_state"]="installed";self._enforce_policy(payload,policy);self._resolve_workshop(context,payload);return self.content.put(payload,requested_by=str(user.get("username") or "customer"))
+  context,policy=self._context_policy(user,instance_id,"content.install");payload=self._customer_payload(body);payload["instance_id"]=instance_id;payload["desired_state"]="installed";self._enforce_policy(payload,policy);self._resolve_workshop(context,payload);self._resolve_minecraft_provider(context,payload);return self.content.put(payload,requested_by=str(user.get("username") or "customer"))
  def mutate(self,user,instance_id,content_id,action,body=None):
   action=str(action or "").strip().lower();required="content.remove" if action=="remove" else "content.install";context,policy=self._context_policy(user,instance_id,required);current=self._existing(instance_id,content_id);payload=self._desired(current);payload["instance_id"]=instance_id;resolve_update=False
   if action=="remove":payload["desired_state"]="absent";payload["activation_state"]="disabled"
@@ -72,10 +87,10 @@ class CustomerContentWorkspaceService:
   elif action=="disable":payload["desired_state"]="installed";payload["activation_state"]="disabled"
   elif action=="reorder":payload["activation_order"]=(body or {}).get("activation_order")
   elif action=="update":
-   changes=self._customer_payload(body or {},update=True);payload.update(changes);payload["desired_state"]="installed";resolve_update=bool({"provider","artifact"}.intersection(changes))
+   changes=self._customer_payload(body or {},update=True);payload.update(changes);payload["desired_state"]="installed";resolve_update=bool({"provider","artifact","version"}.intersection(changes))
   else:raise ValueError("invalid content action")
   self._enforce_policy(payload,policy)
-  if resolve_update:self._resolve_workshop(context,payload)
+  if resolve_update:self._resolve_workshop(context,payload);self._resolve_minecraft_provider(context,payload)
   return self.content.put(payload,requested_by=str(user.get("username") or "customer"))
 
 __all__=["CustomerContentWorkspaceService"]

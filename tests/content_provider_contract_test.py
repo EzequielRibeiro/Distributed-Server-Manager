@@ -32,6 +32,18 @@ class ContentProviderContractTest(unittest.TestCase):
         self.assertTrue(requires_agent_capability(request))
         self.assertIn("steam-workshop", OFFICIAL_CONTENT_PROVIDERS)
 
+    def test_curseforge_is_first_class_without_credentials_in_contract(self):
+        request = provider_request({
+            "content_id": "create",
+            "game_id": "minecraft",
+            "content_type": "mod",
+            "provider": "curseforge",
+            "artifact": {"package_id": "1234:77", "url": "https://mediafilez.forgecdn.net/files/0/77/mod.jar", "sha1": "a" * 40},
+        })
+        self.assertEqual(request["provider"], "curseforge")
+        self.assertIn("curseforge", OFFICIAL_CONTENT_PROVIDERS)
+        self.assertTrue(requires_agent_capability(request))
+
     def test_remote_url_becomes_package_without_becoming_command(self):
         request = provider_request({
             "content_id": "map-one",

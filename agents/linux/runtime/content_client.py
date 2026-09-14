@@ -33,12 +33,29 @@ def _owned(config,cmd):
  path=Path(str(rec.get("path") or "")).resolve()
  if not path.is_dir():raise FileNotFoundError("instance path missing")
  return rec,path
-def _sha(path,expected):
- if not expected or path.is_dir():return
- h=hashlib.sha256()
+def _verify_artifact(path,artifact):
+ if path.is_dir():return
+ expected_size=artifact.get("size_bytes")
+ if expected_size is not None:
+  try:size=int(expected_size)
+  except (TypeError,ValueError) as exc:raise ValueError("invalid artifact size") from exc
+  if size<0 or path.stat().st_size!=size:raise ValueError("artifact size mismatch")
+ specs=(("sha512",hashlib.sha512,128),("sha256",hashlib.sha256,64),("sha1",hashlib.sha1,40));hashers={}
+ for key,factory,length in specs:
+  value=str(artifact.get(key) or "").strip().lower()
+  if not value:continue
+  if len(value)!=length:
+   raise ValueError(f"invalid artifact {key}")
+  try:int(value,16)
+  except ValueError as exc:raise ValueError(f"invalid artifact {key}") from exc
+  hashers[key]=(factory(),value)
+ if not hashers:return
  with path.open("rb") as f:
-  for chunk in iter(lambda:f.read(1024*1024),b""):h.update(chunk)
- if h.hexdigest().lower()!=str(expected).lower():raise ValueError("artifact checksum mismatch")
+  for chunk in iter(lambda:f.read(1024*1024),b""):
+   for hasher,_ in hashers.values():hasher.update(chunk)
+ for key,(hasher,expected) in hashers.items():
+  if hasher.hexdigest().lower()!=expected:raise ValueError(f"artifact {key} mismatch")
+
 def _extract(archive,dest):
  dest.mkdir(parents=True,exist_ok=True)
  def safe(name):
@@ -103,7 +120,7 @@ def _activate_target(config:dict[str,Any],iid:str,target:Path,payload:Path|None)
 def _install(config,cmd):
  _validate_relations(cmd);_,instance=_owned(config,cmd);iid=str(cmd.get("instance_id") or "");target=_safe_target(instance,str(cmd.get("target") or "assets"));artifact=dict(cmd.get("artifact") or {});provider=str(cmd.get("provider") or artifact.get("provider") or "");parent=target.parent;parent.mkdir(parents=True,exist_ok=True);stage=Path(tempfile.mkdtemp(prefix=f".{target.name}.c4-",dir=str(parent)))
  try:
-  source=_source(provider,artifact,stage);_sha(source,artifact.get("sha256"));payload=stage/"payload";payload.mkdir();archive=provider=="http-archive" or bool(artifact.get("archive"))
+  source=_source(provider,artifact,stage);_verify_artifact(source,artifact);payload=stage/"payload";payload.mkdir();archive=provider=="http-archive" or bool(artifact.get("archive"))
   if archive:_extract(source,payload)
   elif source.is_dir():shutil.copytree(source,payload,dirs_exist_ok=True)
   else:shutil.copy2(source,payload/(str(artifact.get("filename") or source.name or "content.bin")))
