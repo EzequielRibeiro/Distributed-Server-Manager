@@ -40,6 +40,7 @@
     "http",
     "github",
     "modrinth",
+    "curseforge",
     "steam-workshop"
   ],
   "content_provider_notes": {

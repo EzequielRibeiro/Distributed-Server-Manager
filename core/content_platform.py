@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib,json,re
 from typing import Any,Mapping
 _TOKEN=re.compile(r"^[A-Za-z0-9._:-]{1,191}$")
-_TYPES={"mod","plugin","modpack","map","asset","workshop","other"};_STATES={"installed","absent"};_ACTIVATION_STATES={"enabled","disabled"};_PROVIDERS={"steam","steam-workshop","http","http-archive","github","modrinth","local","custom","source-build"}
+_TYPES={"mod","plugin","modpack","map","asset","workshop","other"};_STATES={"installed","absent"};_ACTIVATION_STATES={"enabled","disabled"};_PROVIDERS={"steam","steam-workshop","http","http-archive","github","modrinth","curseforge","local","custom","source-build"}
 _FORBIDDEN_ARTIFACT_KEYS={"command","shell","exec","script","password","passwd","token","secret","api_key","apikey","authorization","credential","credentials","steam_password","steam_guard"}
 _MAX_STRUCTURED_BYTES=65536
 class ContentValidationError(ValueError):pass

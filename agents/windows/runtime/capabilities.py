@@ -10,7 +10,7 @@ from pathlib import Path
 from profiles.registry import supported_profiles
 
 _JAVA_VERSION=re.compile(r'version\s+"([^"]+)"',re.IGNORECASE)
-_BASE_CONTENT_PROVIDERS=("github","http","http-archive","local","modrinth")
+_BASE_CONTENT_PROVIDERS=("curseforge","github","http","http-archive","local","modrinth")
 
 def _managed_steamcmd()->Path:
  return Path(os.environ.get("PROGRAMDATA") or r"C:\ProgramData")/"CapivaraAgent"/"tools"/"steamcmd"/"steamcmd.exe"

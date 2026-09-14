@@ -93,7 +93,7 @@ def resolve_source(
 
 
 register_provider("local", _local_resolver)
-for _remote_provider in ("http", "http-archive", "github", "modrinth"):
+for _remote_provider in ("http", "http-archive", "github", "modrinth", "curseforge"):
     register_provider(_remote_provider, _https_resolver)
 
 
