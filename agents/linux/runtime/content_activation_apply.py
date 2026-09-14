@@ -7,6 +7,7 @@ import runtime_materialization
 from content_activation_runtime import project_runtime_spec
 
 class ContentActivationApplyError(RuntimeError):pass
+class ContentActivationRollbackError(ContentActivationApplyError):pass
 
 def _ready(config:dict[str,Any],instance_id:str)->bool:
  return bool(instance_runtime.doctor(config,instance_id).get("ready"))
@@ -42,8 +43,8 @@ def apply_activation_snapshots(config:dict[str,Any],snapshots:list[dict[str,Any]
     if was_running:
      instance_runtime.lifecycle(config,iid,"start")
      if not _ready(config,iid):raise ContentActivationApplyError("content activation rollback failed readiness validation")
-   except Exception as rollback_exc:raise ContentActivationApplyError(f"activation failed and rollback failed: {rollback_exc}") from exc
+   except Exception as rollback_exc:raise ContentActivationRollbackError(f"activation failed and rollback failed: {rollback_exc}") from exc
    raise ContentActivationApplyError(str(exc)) from exc
  return results
 
-__all__=["ContentActivationApplyError","apply_activation_snapshots"]
+__all__=["ContentActivationApplyError","ContentActivationRollbackError","apply_activation_snapshots"]

@@ -84,11 +84,11 @@ class ContentRepository:
   if str(dict(inst).get("game_id") or "").strip().lower()!="minecraft":raise ContentValidationError("content bundles currently require Minecraft")
   bundle_input=dict(bundle_raw or {});bundle_input["instance_id"]=instance_id;bundle_input["parent_content_id"]=str(parent_body.get("content_id") or "").strip();bundle=normalize_bundle(bundle_input)
   bundle_meta={"parent_content_id":bundle["parent_content_id"],"manifest_sha256":bundle["manifest_sha256"],"provider":bundle["provider"],"provider_project_id":bundle["provider_project_id"],"provider_version_id":bundle["provider_version_id"]}
-  metadata=dict(parent_body.get("metadata") or {});metadata["bundle"]=bundle_meta;metadata["activation"]={"adapter":"minecraft-java","mode":"bundle-parent","identifier":",".join(bundle["override_roots"])};parent_body["metadata"]=metadata;parent_body["content_type"]="modpack";parent_body["desired_state"]="installed";parent_body["activation_state"]="enabled"
+  metadata=dict(parent_body.get("metadata") or {});metadata["bundle"]=bundle_meta;metadata["activation"]={"adapter":"minecraft-java","mode":"bundle-parent","identifier":",".join(bundle["override_roots"])};parent_body["metadata"]=metadata;parent_body["content_type"]="modpack";parent_body.setdefault("desired_state","installed");parent_body.setdefault("activation_state","enabled")
   parent=self._prepare_assignment(parent_body,inst)
   children=[]
   for raw in children_raw:
-   body=dict(raw or {});body["instance_id"]=instance_id;meta=dict(body.get("metadata") or {});meta["bundle"]=bundle_meta;body["metadata"]=meta;body["desired_state"]="installed";children.append(self._prepare_assignment(body,inst))
+   body=dict(raw or {});body["instance_id"]=instance_id;meta=dict(body.get("metadata") or {});meta["bundle"]=bundle_meta;body["metadata"]=meta;body["desired_state"]=parent_body["desired_state"];body["activation_state"]=parent_body["activation_state"];children.append(self._prepare_assignment(body,inst))
   manifest_members={str(item.get("content_id") or ""):item for item in bundle["manifest"]["members"]};member_ids=set(manifest_members);child_ids={item["content_id"] for item in children}
   if member_ids!=child_ids:raise ContentValidationError("bundle members do not match child assignments")
   if len(child_ids)!=len(children):raise ContentValidationError("duplicate bundle child content_id")
@@ -201,6 +201,83 @@ class ContentRepository:
     worst=max([str(item.get("effective_security_state") or "unscanned"),*[str(child.get("effective_security_state") or "unscanned") for child in members]],key=lambda value:severity.get(value,2));item["effective_security_state"]=worst;item["reconciliation"]["security_state"]=worst
    item["bundle_summary"]={"child_count":len(members),"security_states":security_counts,"reconciliation_statuses":status_counts}
   return visible
+ def _revision_for(self,instance_id,content_id,revision):
+  current=self.get(instance_id,content_id)
+  if current is None:raise ContentValidationError("content assignment does not exist")
+  try:wanted=int(revision)
+  except (TypeError,ValueError) as exc:raise ContentValidationError("invalid content revision") from exc
+  for item in self.history(str(current["assignment_id"])):
+   if int(item.get("revision") or 0)==wanted:return item
+  raise ContentValidationError("content revision does not exist")
+ def previous_revision(self,instance_id,content_id):
+  current=self.get(instance_id,content_id)
+  if current is None:return None
+  identity=(str(current.get("version") or ""),str(current.get("provider") or ""),json.dumps(current.get("artifact") or {},sort_keys=True,separators=(",",":")))
+  for item in self.history(str(current["assignment_id"])):
+   if int(item.get("revision") or 0)>=int(current.get("revision") or 0):continue
+   candidate=(str(item.get("version") or ""),str(item.get("provider") or ""),json.dumps(item.get("artifact") or {},sort_keys=True,separators=(",",":")))
+   if candidate!=identity:return item
+  return None
+ def rollback(self,instance_id,content_id,revision=None,*,requested_by=None,reason=None):
+  current=self.get(instance_id,content_id)
+  if current is None:raise ContentValidationError("content assignment does not exist")
+  target=self._revision_for(instance_id,content_id,revision) if revision is not None else self.previous_revision(instance_id,content_id)
+  if target is None:raise ContentValidationError("no prior content revision is available")
+  if int(target.get("revision") or 0)>=int(current.get("revision") or 0):raise ContentValidationError("rollback target must be a prior content revision")
+  raw={key:target.get(key) for key in ("desired_state","activation_state","activation_order","version","provider","target","artifact","provenance","metadata","dependencies","conflicts")};raw["content_type"]=str(current.get("content_type") or "other")
+  raw["instance_id"]=instance_id;raw["content_id"]=content_id;raw["desired_state"]="installed" if str(current.get("desired_state") or "installed")=="installed" else str(target.get("desired_state") or "installed");raw["activation_state"]=str(current.get("activation_state") or target.get("activation_state") or "enabled");raw["activation_order"]=int(current.get("activation_order") or 0)
+  provenance=dict(raw.get("provenance") or {});provenance["rollback"]={"from_revision":int(current.get("revision") or 0),"restored_revision":int(target.get("revision") or 0),"reason":str(reason or "explicit")[:500]};raw["provenance"]=provenance
+  raw.pop("security_state",None)
+  return self.put(raw,requested_by=requested_by)
+ def _bundle_row(self,instance_id,parent_content_id):
+  with self.backend.connect() as c:
+   s=AlertSession(self.backend,c)
+   try:
+    row=s.execute(f"SELECT * FROM content_bundles WHERE instance_id={self.ph} AND parent_content_id={self.ph}",(instance_id,parent_content_id)).fetchone();return dict(row) if row else None
+   finally:s.close()
+ def bundle_history(self,instance_id,parent_content_id):
+  bundle=self._bundle_row(instance_id,parent_content_id)
+  if bundle is None:return []
+  with self.backend.connect() as c:
+   s=AlertSession(self.backend,c)
+   try:return [dict(row) for row in s.execute(f"SELECT * FROM content_bundle_revisions WHERE bundle_id={self.ph} ORDER BY revision DESC",(bundle["bundle_id"],)).fetchall()]
+   finally:s.close()
+ def _bundle_revision(self,instance_id,parent_content_id,revision):
+  for item in self.bundle_history(instance_id,parent_content_id):
+   if int(item.get("revision") or 0)==int(revision):return item
+  raise ContentValidationError("content bundle revision does not exist")
+ def _history_for_manifest(self,instance_id,content_id,manifest_sha256):
+  current=self.get(instance_id,content_id)
+  if current is None:raise ContentValidationError("bundle assignment is missing")
+  for item in self.history(str(current["assignment_id"])):
+   marker=(item.get("metadata") or {}).get("bundle") if isinstance(item.get("metadata"),dict) else None
+   if isinstance(marker,dict) and str(marker.get("manifest_sha256") or "")==str(manifest_sha256):return item
+  raise ContentValidationError("historical bundle assignment revision is unavailable")
+ def rollback_bundle(self,instance_id,parent_content_id,revision=None,*,requested_by=None,reason=None):
+  current_bundle=self._bundle_row(instance_id,parent_content_id)
+  if current_bundle is None:raise ContentValidationError("content bundle does not exist")
+  wanted=int(revision) if revision is not None else int(current_bundle.get("revision") or 0)-1
+  if wanted<1 or wanted>=int(current_bundle.get("revision") or 0):raise ContentValidationError("no prior content bundle revision is available")
+  target=self._bundle_revision(instance_id,parent_content_id,wanted)
+  try:manifest=json.loads(target.get("manifest_json") or "{}");roots=json.loads(target.get("override_roots_json") or "[]")
+  except (TypeError,json.JSONDecodeError) as exc:raise ContentValidationError("stored content bundle revision is invalid") from exc
+  if not isinstance(manifest,dict) or not isinstance(manifest.get("members"),list):raise ContentValidationError("stored content bundle manifest is invalid")
+  parent_current=self.get(instance_id,parent_content_id);parent_old=self._history_for_manifest(instance_id,parent_content_id,target["manifest_sha256"])
+  parent={key:parent_old.get(key) for key in ("version","provider","target","artifact","provenance","metadata","dependencies","conflicts","activation_order")};parent.update({"instance_id":instance_id,"content_id":parent_content_id,"content_type":"modpack","desired_state":"installed","activation_state":str((parent_current or {}).get("activation_state") or "enabled")})
+  provenance=dict(parent.get("provenance") or {});provenance["rollback"]={"from_bundle_revision":int(current_bundle.get("revision") or 0),"restored_bundle_revision":wanted,"reason":str(reason or "explicit")[:500]};parent["provenance"]=provenance
+  children=[]
+  for member in manifest.get("members") or []:
+   cid=str(member.get("content_id") or "");current_child=self.get(instance_id,cid);old=self._history_for_manifest(instance_id,cid,target["manifest_sha256"]);child={key:old.get(key) for key in ("version","provider","target","artifact","provenance","metadata","dependencies","conflicts","activation_order")};child.update({"instance_id":instance_id,"content_id":cid,"content_type":str((current_child or {}).get("content_type") or "mod"),"desired_state":"installed","activation_state":parent["activation_state"]});children.append(child)
+  bundle={"provider":target["provider"],"provider_project_id":target["provider_project_id"],"provider_version_id":target["provider_version_id"],"minecraft_version":target["minecraft_version"],"loader_id":target["loader_id"],"loader_version":target.get("loader_version"),"manifest_kind":target["manifest_kind"],"members":manifest["members"],"override_roots":roots}
+  result=self.put_bundle(parent,bundle,children,requested_by=requested_by);result["rollback_from_bundle_revision"]=int(current_bundle.get("revision") or 0);result["rollback_restored_bundle_revision"]=wanted;return result
+ def bundle_diff(self,instance_id,parent_content_id,candidate):
+  current=self._bundle_row(instance_id,parent_content_id)
+  if current is None:return {"added":[],"removed":[],"updated":[],"unchanged":[]}
+  prior=self._bundle_revision(instance_id,parent_content_id,int(current["revision"]))
+  try:old=json.loads(prior.get("manifest_json") or "{}")
+  except (TypeError,json.JSONDecodeError):old={}
+  old_members={str(item.get("content_id") or ""):item for item in old.get("members") or [] if isinstance(item,dict)};new_members={str(item.get("content_id") or ""):item for item in (candidate.get("members") or []) if isinstance(item,dict)}
+  added=sorted(set(new_members)-set(old_members));removed=sorted(set(old_members)-set(new_members));updated=sorted(cid for cid in set(old_members)&set(new_members) if (old_members[cid].get("artifact") or {})!=(new_members[cid].get("artifact") or {}));unchanged=sorted((set(old_members)&set(new_members))-set(updated));return {"added":added,"removed":removed,"updated":updated,"unchanged":unchanged}
  def history(self,assignment_id):
   with self.backend.connect() as c:
    s=AlertSession(self.backend,c)
@@ -230,7 +307,7 @@ class ContentRepository:
    out.append(a)
   return out
  def record_agent_state(self,agent_id,reports:list[Mapping[str,Any]]):
-  accepted=0;now=utc_now()
+  accepted=0;now=utc_now();automatic=[]
   with self.backend.transaction() as c:
    s=AlertSession(self.backend,c)
    try:
@@ -245,7 +322,21 @@ class ContentRepository:
      if existing:s.execute(f"UPDATE agent_content_state SET desired_revision={self.ph},applied_revision={self.ph},desired_checksum={self.ph},applied_checksum={self.ph},status={self.ph},installed_version={self.ph},security_state={self.ph},last_error={self.ph},reported_at={self.ph},updated_at={self.ph} WHERE agent_id={self.ph} AND instance_id={self.ph} AND content_id={self.ph}",(*vals,agent_id,iid,cid))
      else:s.execute(f"INSERT INTO agent_content_state(agent_id,instance_id,content_id,desired_revision,applied_revision,desired_checksum,applied_checksum,status,installed_version,security_state,last_error,reported_at,updated_at) VALUES ({','.join([self.ph]*13)})",(agent_id,iid,cid,*vals))
      accepted+=1
+     if str(r.get("status") or "")=="rolled_back" and str(r.get("readiness") or "")=="rolled_back" and int(r.get("applied_revision") or 0)>0:automatic.append({"instance_id":iid,"content_id":cid,"desired_revision":desired_rev,"desired_checksum":desired_sum,"applied_revision":int(r.get("applied_revision") or 0),"reason":str(r.get("last_error") or "readiness failed")[:500]})
    finally:s.close()
+  rolled_bundles=set()
+  for item in automatic:
+   current=self.get(item["instance_id"],item["content_id"])
+   if current is None or str(current.get("agent_id") or "")!=str(agent_id):continue
+   if int(current.get("revision") or 0)!=item["desired_revision"] or str(current.get("checksum") or "")!=item["desired_checksum"]:continue
+   marker=(current.get("metadata") or {}).get("bundle") if isinstance(current.get("metadata"),dict) else None;parent=str(marker.get("parent_content_id") or "") if isinstance(marker,dict) else ""
+   try:
+    if parent:
+     key=(item["instance_id"],parent)
+     if key in rolled_bundles:continue
+     self.rollback_bundle(item["instance_id"],parent,requested_by="agent:auto-rollback",reason=item["reason"]);rolled_bundles.add(key)
+    elif item["applied_revision"]<item["desired_revision"]:self.rollback(item["instance_id"],item["content_id"],item["applied_revision"],requested_by="agent:auto-rollback",reason=item["reason"])
+   except (ContentValidationError,ValueError,TypeError):continue
   return accepted
 
 __all__=["ContentRepository"]

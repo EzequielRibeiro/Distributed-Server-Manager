@@ -7,7 +7,7 @@ import instance_runtime
 from content_provider import resolve_source
 import content_provider_steam_workshop  # noqa: F401
 from content_activation_projection import synchronize_activation_state
-from content_activation_apply import apply_activation_snapshots
+from content_activation_apply import ContentActivationApplyError,ContentActivationRollbackError,apply_activation_snapshots
 from content_security import ContentSecurityRejected,require_clean
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));CONTENT_STATE=STATE_ROOT/"managed-content";GAME_DATA_ROOT=Path(os.environ.get("CAPIVARA_AGENT_GAME_DATA_ROOT",STATE_ROOT/"game-data")).resolve()
 try:SECURITY_RETRY_SECONDS=max(30,min(int(os.environ.get("CAPIVARA_CONTENT_SECURITY_RETRY_SECONDS","300")),3600))
@@ -144,7 +144,7 @@ def _source_metadata(cmd:dict[str,Any])->dict[str,Any]:
  artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {};package=str(artifact.get("package_id") or cmd.get("package_id") or "").strip()
  return {"provider":str(cmd.get("provider") or artifact.get("provider") or "").strip().lower(),"content_type":str(cmd.get("content_type") or "other").strip().lower(),"package_id":package or None,"game_id":str(cmd.get("game_id") or "").strip().lower() or None,"target":str(cmd.get("target") or "").strip() or None}
 def _reuse_installed(previous,cmd,source_meta):
- if previous.get("status")!="applied" or not previous.get("installed_version"):return False
+ if previous.get("status") not in {"applied","rolled_back"} or not previous.get("installed_version"):return False
  if str(cmd.get("desired_state") or "installed")!="installed":return False
  if str(previous.get("installed_version"))!=str(cmd.get("version") or "latest"):return False
  for key in ("provider","package_id","target","game_id"):
@@ -168,10 +168,16 @@ def _apply(config,cmd):
   report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":revision,"desired_checksum":checksum,"applied_checksum":checksum,"status":"applied","installed_version":None if desired=="absent" else str(cmd.get("version") or "latest"),"managed_path":path,"last_error":None,"readiness":"healthy","security_state":str(security.get("security_state") or "clean"),"security_policy_version":1,"security":{"engine":security.get("engine"),"matches":security.get("matches") or []},**source_meta}
  except ContentSecurityRejected as exc:
   verdict=exc.verdict;security_state=str(verdict.get("security_state") or "scan_failed");terminal=security_state in {"suspicious","blocked"};report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"security_blocked" if terminal else "security_scan_failed","installed_version":None,"managed_path":None,"last_error":str(verdict.get("reason") or exc)[:2000],"readiness":"security_rejected","security_state":security_state,"security_policy_version":1,"security_retry_after_epoch":None if terminal else time.time()+SECURITY_RETRY_SECONDS,"security":{"engine":verdict.get("engine"),"matches":verdict.get("matches") or []},**source_meta}
- except Exception as exc:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"rollback_failed" if isinstance(exc,ContentRollbackError) else "rolled_back" if isinstance(exc,ContentActivationError) else "unknown","security_state":"unscanned","security_policy_version":1,**source_meta}
+ except ContentRollbackError as exc:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"rollback_failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"rollback_failed","security_state":"unscanned","security_policy_version":1,**source_meta}
+ except ContentActivationError as exc:
+  if previous.get("status")=="applied" and int(previous.get("applied_revision") or 0)>0 and str(previous.get("applied_checksum") or ""):
+   restored_meta={key:(previous.get(key) if previous.get(key) is not None else source_meta.get(key)) for key in ("provider","content_type","package_id","game_id","target")}
+   report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":int(previous.get("applied_revision")),"desired_checksum":checksum,"applied_checksum":str(previous.get("applied_checksum")),"status":"rolled_back","installed_version":previous.get("installed_version"),"managed_path":previous.get("managed_path"),"last_error":str(exc)[:2000],"readiness":"rolled_back","security_state":str(previous.get("security_state") or "clean"),"security_policy_version":int(previous.get("security_policy_version") or 1),**restored_meta}
+  else:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"rolled_back","security_state":"unscanned","security_policy_version":1,**source_meta}
+ except Exception as exc:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"unknown","security_state":"unscanned","security_policy_version":1,**source_meta}
  _write(state,report);return report
 def apply_content_commands(config:dict[str,Any],commands:list[dict[str,Any]])->list[dict[str,Any]]:
- bounded=[c for c in commands[:200] if isinstance(c,dict)];ordered=[c for c in bounded if c.get("desired_state")=="absent"]+[c for c in bounded if c.get("desired_state")!="absent"];reports=[];pending=ordered
+ bounded=[c for c in commands[:200] if isinstance(c,dict)];ordered=[c for c in bounded if c.get("desired_state")=="absent"]+[c for c in bounded if c.get("desired_state")!="absent"];reports=[];pending=ordered;prior={(str(c.get("instance_id") or ""),str(c.get("content_id") or "")):_dependency_state(str(c.get("instance_id") or ""),str(c.get("content_id") or "")) for c in bounded}
  for _ in range(max(1,len(pending)+1)):
   if not pending:break
   retry=[];progress=False
@@ -181,7 +187,22 @@ def apply_content_commands(config:dict[str,Any],commands:list[dict[str,Any]])->l
    else:progress=True
   if not retry or not progress:break
   pending=retry
- final=reports[-200:];snapshots=synchronize_activation_state(bounded,final);apply_activation_snapshots(config,snapshots);return final
+ final=reports[-200:];snapshots=synchronize_activation_state(bounded,final)
+ try:apply_activation_snapshots(config,snapshots)
+ except ContentActivationRollbackError as exc:
+  for report in final:
+   if report.get("status")=="applied":report.update({"status":"rollback_failed","last_error":str(exc)[:2000],"readiness":"rollback_failed"});_write(_state_path(report.get("instance_id"),report.get("content_id")),report)
+ except ContentActivationApplyError as exc:
+  for report in final:
+   if report.get("status")!="applied":continue
+   previous=prior.get((str(report.get("instance_id") or ""),str(report.get("content_id") or ""))) or {}
+   if previous.get("status")=="applied" and int(previous.get("applied_revision") or 0)>0 and str(previous.get("applied_checksum") or ""):
+    restored={**report,"applied_revision":int(previous["applied_revision"]),"applied_checksum":str(previous["applied_checksum"]),"status":"rolled_back","installed_version":previous.get("installed_version"),"managed_path":previous.get("managed_path"),"last_error":str(exc)[:2000],"readiness":"rolled_back","security_state":str(previous.get("security_state") or "clean")}
+    for key in ("provider","content_type","package_id","game_id","target"):
+     if previous.get(key) is not None:restored[key]=previous.get(key)
+    report.clear();report.update(restored);_write(_state_path(report.get("instance_id"),report.get("content_id")),report)
+   else:report.update({"status":"failed","last_error":str(exc)[:2000],"readiness":"rolled_back"});_write(_state_path(report.get("instance_id"),report.get("content_id")),report)
+ return final
 def content_state():
  out=[]
  try:paths=sorted(CONTENT_STATE.glob("*/*.json"))

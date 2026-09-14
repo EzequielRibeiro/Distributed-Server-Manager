@@ -104,6 +104,29 @@ class CustomerContentWorkspaceService:
   for child in resolved["children"]:
    item=dict(child);item["instance_id"]=str(context.get("id") or payload.get("instance_id") or "");children.append(item)
   return parent,dict(resolved["bundle"]),children
+ def _mark_update_checkpoint(self,current,payload,*,bundle_revision=None):
+  provenance=dict(payload.get("provenance") or {});checkpoint={"previous_revision":int(current.get("revision") or 0),"previous_checksum":str(current.get("checksum") or ""),"previous_version":str(current.get("version") or ""),"activation_state":str(current.get("activation_state") or "enabled"),"activation_order":int(current.get("activation_order") or 0)}
+  if bundle_revision is not None:checkpoint["previous_bundle_revision"]=int(bundle_revision)
+  provenance["update_checkpoint"]=checkpoint;payload["provenance"]=provenance;return payload
+ def _validate_update_request(self,body):
+  keys=set((body or {}).keys())-_ENVELOPE_FIELDS
+  owned=keys&_SERVER_OWNED
+  if owned:raise PermissionError("server-owned content fields cannot be supplied: "+", ".join(sorted(owned)))
+  unknown=keys-_UPDATE_FIELDS
+  if unknown:raise ValueError("unsupported content fields: "+", ".join(sorted(unknown)))
+  if keys:raise PermissionError("content update source/version fields are server-owned")
+ def _provider_project_reference(self,item):
+  provider=str(item.get("provider") or "").strip().lower();metadata=item.get("metadata") if isinstance(item.get("metadata"),Mapping) else {};provenance=item.get("provenance") if isinstance(item.get("provenance"),Mapping) else {};artifact=item.get("artifact") if isinstance(item.get("artifact"),Mapping) else {}
+  if str(item.get("content_type") or "").lower()=="modpack":
+   marker=metadata.get("minecraft_modpack") if isinstance(metadata.get("minecraft_modpack"),Mapping) else {};value=str(marker.get("provider_project_id") or "").strip()
+   if not value:
+    marker=provenance.get("minecraft_modpack") if isinstance(provenance.get("minecraft_modpack"),Mapping) else {};value=str(marker.get("project_id") or "").strip()
+  else:
+   marker=provenance.get("minecraft_provider") if isinstance(provenance.get("minecraft_provider"),Mapping) else {};value=str(marker.get("project_id") or "").strip()
+  if value:return value
+  package=str(artifact.get("package_id") or "").strip()
+  if provider in {"modrinth","curseforge"} and ":" in package:return package.split(":",1)[0]
+  return package
  def _existing(self,instance_id,content_id):
   item=self.content.get(instance_id,content_id)
   if item is None:raise KeyError("content assignment not found")
@@ -111,7 +134,15 @@ class CustomerContentWorkspaceService:
  def _desired(self,item):
   return {key:item.get(key) for key in _INSTALL_FIELDS if key in item and key not in {"source"}}
  def list(self,user,instance_id):
-  self._context_policy(user,instance_id,"content.read");return self.content.customer_view(instance_id,limit=2000)
+  self._context_policy(user,instance_id,"content.read");items=self.content.customer_view(instance_id,limit=2000)
+  for item in items:
+   provider=str(item.get("provider") or "").strip().lower();ctype=str(item.get("content_type") or "").strip().lower();rollback_revision=None
+   if ctype=="modpack":
+    history=self.content.bundle_history(instance_id,str(item.get("content_id") or ""));rollback_revision=int(history[1]["revision"]) if len(history)>1 else None
+   else:
+    previous=self.content.previous_revision(instance_id,str(item.get("content_id") or ""));rollback_revision=int(previous["revision"]) if previous else None
+   item["update"]={"supported":provider in {"modrinth","curseforge","steam","steam-workshop"},"rollback_available":rollback_revision is not None,"rollback_revision":rollback_revision}
+  return items
  def search(self,user,instance_id,provider,content_type,query,limit=20):
   context,capabilities,policy=self._context_policy_details(user,instance_id,"content.read");provider=str(provider or "").strip().lower();ctype=str(content_type or "").strip().lower();text=str(query or "").strip()
   if not text:raise ValueError("search query is required")
@@ -135,23 +166,42 @@ class CustomerContentWorkspaceService:
    parent,bundle,children=modpack;return self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"))
   self._resolve_workshop(context,payload);self._resolve_minecraft_provider(context,payload);return self.content.put(payload,requested_by=str(user.get("username") or "customer"))
  def mutate(self,user,instance_id,content_id,action,body=None):
-  action=str(action or "").strip().lower();required="content.remove" if action=="remove" else "content.install";context,policy=self._context_policy(user,instance_id,required);current=self._existing(instance_id,content_id)
-  if str(current.get("content_type") or "").lower()=="modpack":
+  action=str(action or "").strip().lower();required="content.remove" if action=="remove" else "content.install";context,policy=self._context_policy(user,instance_id,required);current=self._existing(instance_id,content_id);actor=str(user.get("username") or "customer");ctype=str(current.get("content_type") or "").lower();provider=str(current.get("provider") or "").strip().lower()
+  if ctype=="modpack":
    self._enforce_policy(current,policy)
-   if action=="remove":return self.content.set_bundle_state(instance_id,content_id,desired_state="absent",activation_state="disabled",requested_by=str(user.get("username") or "customer"))
-   if action=="disable":return self.content.set_bundle_state(instance_id,content_id,desired_state="installed",activation_state="disabled",requested_by=str(user.get("username") or "customer"))
-   if action=="enable":return self.content.set_bundle_state(instance_id,content_id,desired_state="installed",activation_state="enabled",requested_by=str(user.get("username") or "customer"))
-   raise ValueError("modpack update/reorder requires Universal Content update orchestration")
-  payload=self._desired(current);payload["instance_id"]=instance_id;resolve_update=False
+   if action=="remove":return self.content.set_bundle_state(instance_id,content_id,desired_state="absent",activation_state="disabled",requested_by=actor)
+   if action=="disable":return self.content.set_bundle_state(instance_id,content_id,desired_state="installed",activation_state="disabled",requested_by=actor)
+   if action=="enable":return self.content.set_bundle_state(instance_id,content_id,desired_state="installed",activation_state="enabled",requested_by=actor)
+   if action=="rollback":
+    revision=(body or {}).get("revision");return self.content.rollback_bundle(instance_id,content_id,revision,requested_by=actor,reason="customer")
+   if action=="update":
+    self._validate_update_request(body)
+    if provider not in {"modrinth","curseforge"}:raise ValueError("automatic modpack update is unavailable for this provider")
+    project=self._provider_project_reference(current)
+    if not project:raise ValueError("modpack provider project identity is unavailable")
+    payload=self._desired(current);payload["instance_id"]=instance_id;payload["artifact"]={"provider":provider,"package_id":project};payload["desired_state"]="installed";self._enforce_structured_provider(context,payload);resolved=self._resolve_minecraft_modpack(context,payload)
+    if resolved is None:raise ValueError("modpack resolver is unavailable")
+    parent,bundle,children=resolved;history_before=self.content.bundle_history(instance_id,content_id);current_bundle_revision=int(history_before[0]["revision"]) if history_before else None;self._mark_update_checkpoint(current,parent,bundle_revision=current_bundle_revision);diff=self.content.bundle_diff(instance_id,content_id,bundle);result=self.content.put_bundle(parent,bundle,children,requested_by=actor);result["manifest_diff"]=diff;result["previous_bundle_revision"]=current_bundle_revision if result.get("changed") else None;return result
+   raise ValueError("modpack reorder is not supported")
+  payload=self._desired(current);payload["instance_id"]=instance_id
   if action=="remove":payload["desired_state"]="absent";payload["activation_state"]="disabled"
   elif action=="enable":payload["desired_state"]="installed";payload["activation_state"]="enabled"
   elif action=="disable":payload["desired_state"]="installed";payload["activation_state"]="disabled"
   elif action=="reorder":payload["activation_order"]=(body or {}).get("activation_order")
+  elif action=="rollback":
+   revision=(body or {}).get("revision");return self.content.rollback(instance_id,content_id,revision,requested_by=actor,reason="customer")
   elif action=="update":
-   changes=self._customer_payload(body or {},update=True);payload.update(changes);payload["desired_state"]="installed";resolve_update=bool({"provider","artifact","version"}.intersection(changes))
+   self._validate_update_request(body)
+   payload["desired_state"]="installed"
+   if provider in {"modrinth","curseforge"}:
+    project=self._provider_project_reference(current)
+    if not project:raise ValueError("content provider project identity is unavailable")
+    payload["artifact"]={"provider":provider,"package_id":project};self._enforce_structured_provider(context,payload);self._resolve_minecraft_provider(context,payload)
+   elif provider in {"steam","steam-workshop"}:self._resolve_workshop(context,payload)
+   else:raise ValueError("automatic content update is unavailable for this provider")
+   self._mark_update_checkpoint(current,payload)
   else:raise ValueError("invalid content action")
-  self._enforce_policy(payload,policy)
-  if resolve_update:self._enforce_structured_provider(context,payload);self._resolve_workshop(context,payload);self._resolve_minecraft_provider(context,payload)
-  return self.content.put(payload,requested_by=str(user.get("username") or "customer"))
+  self._enforce_policy(payload,policy);return self.content.put(payload,requested_by=actor)
+
 
 __all__=["CustomerContentWorkspaceService"]

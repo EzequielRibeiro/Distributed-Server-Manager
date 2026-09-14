@@ -57,7 +57,7 @@ def upstream_workshop_revision(package_id:str,*,ttl:int=300,opener:Callable[...,
 def detect_content_update(state:dict[str,Any],state_root:Path,*,opener=urllib.request.urlopen,force_refresh:bool=False)->dict[str,Any]:
  provider=str(state.get('provider') or '').strip().lower();ctype=str(state.get('content_type') or '').strip().lower();package=str(state.get('package_id') or '').strip()
  base={'schema_version':1,'provider':provider,'content_type':ctype,'package_id':package or None,'rollback_supported':True}
- if provider!='steam' or ctype!='workshop' or not package:return {**base,'detector_supported':False,'state':'unsupported','installed_revision':None,'available_revision':None}
+ if provider not in {'steam','steam-workshop'} or ctype!='workshop' or not package:return {**base,'detector_supported':False,'state':'unsupported','installed_revision':None,'available_revision':None}
  installed=installed_workshop_revision(state_root,package);available=upstream_workshop_revision(package,opener=opener,force_refresh=force_refresh)
  status='unknown' if not installed else 'up_to_date' if installed==available else 'update_available'
  return {**base,'detector_supported':True,'state':status,'installed_revision':installed,'available_revision':available}

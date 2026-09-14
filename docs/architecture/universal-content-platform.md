@@ -202,21 +202,19 @@ U8 usa `/api/customer/instance/workspace/content` como superfície Customer can�
 
 Tracker: #505.
 
-## U9 — Updates / Rollback
+## U9 — Updates / Rollback — em andamento
 
-Minecraft é requisito de conclusão de U9. A plataforma deve suportar:
+U9 usa as revisões imutáveis já persistidas por UCP, sem tabela paralela de updates. Update de conteúdo estruturado é server-resolved: o Customer solicita `update`, mas URL, hash e versão continuam pertencendo ao Controller/provider resolver. Modrinth/CurseForge usam a identidade de projeto persistida na provenance; Workshop usa `PublishedFileId` canônico.
 
-- update de mod/plugin individual;
-- detecção de nova versão de modpack;
-- nova `ContentRevision` sem sobrescrever destrutivamente a revisão ativa;
-- diff de manifesto resolvido;
-- staging/validação antes de tocar o runtime ativo;
-- checkpoint pré-update;
-- restart + readiness;
-- rollback para conteúdo, activation snapshot e RuntimeSpec anteriores;
-- backup de save/config quando uma transição de pack/runtime puder migrar estado persistente.
+Rollback nunca decrementa o contador de revisão. Uma revisão histórica é materializada novamente como **nova desired revision**, marcada com provenance de rollback e submetida outra vez ao gate U7. Quando o Agent restaura fisicamente a revisão anterior após falha de readiness, ele reporta `status=rolled_back` com a `applied_revision` anterior; o heartbeat converge o desired state do Controller para essa revisão histórica.
 
-Mudanças de versão Minecraft ou loader são tratadas como transição de runtime de maior risco, não como simples substituição de JAR.
+Modpacks preservam a mesma semântica como unidade composta: cada bundle revision mantém manifesto, provider/version, loader e overrides; update calcula `added/removed/updated/unchanged`, e rollback recompõe pai + children a partir da revisão histórica, criando uma nova bundle revision. Falha de readiness de um child pode reverter o bundle pai inteiro.
+
+Transições de Minecraft version/loader continuam fail-closed no resolver atual; não são tratadas como simples troca de JAR. Como U9 só aceita update dentro do runtime/loader corrente, backup obrigatório de save/config fica reservado para a futura transição de runtime de maior risco, onde deverá existir checkpoint concluído antes da promoção.
+
+A camada Agent continua responsável por staging, checksum, U7 scan, ativação, restart/readiness e rollback da projeção/target; Controller/Dashboard apenas coordenam revisions e desired state. Linux/Windows compartilham o mesmo contrato `rolled_back`.
+
+Tracker: #509.
 
 ## U10 — E2E Linux/Windows
 
