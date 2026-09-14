@@ -12,6 +12,13 @@ import subprocess
 import time
 from pathlib import Path
 from profiles.registry import supported_profiles
+try:
+    from content_security import scanner_status
+except ModuleNotFoundError:
+    import importlib.util as _importlib_util
+    _security_spec=_importlib_util.spec_from_file_location("_capivara_content_security",Path(__file__).with_name("content_security.py"))
+    if _security_spec is None or _security_spec.loader is None:raise
+    _security_module=_importlib_util.module_from_spec(_security_spec);_security_spec.loader.exec_module(_security_module);scanner_status=_security_module.scanner_status
 
 _JAVA_VERSION = re.compile(r'version\s+"([^"]+)"', re.IGNORECASE)
 _BASE_CONTENT_PROVIDERS = ("curseforge", "github", "http", "http-archive", "local", "modrinth")
@@ -142,6 +149,7 @@ def detect_capabilities() -> dict[str, object]:
         content_providers.extend(("steam", "steam-workshop"))
     java_status = _java_status()
     java = bool(java_status["functional"])
+    content_security = scanner_status()
     docker = shutil.which("docker") is not None
     wine = shutil.which("wine") is not None or shutil.which("wine64") is not None
 
@@ -150,6 +158,8 @@ def detect_capabilities() -> dict[str, object]:
         "runtime_profiles": list(supported_profiles()),
         "content_provider_contract": 1,
         "content_providers": content_providers,
+        "content_security_contract": 1,
+        "content_security": content_security,
         "native-linux": True,
         "systemd": Path("/run/systemd/system").exists(),
         "steamcmd": steamcmd_ready,

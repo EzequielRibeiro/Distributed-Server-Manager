@@ -7,7 +7,7 @@ class WindowsAgentRuntimeParityTest(unittest.TestCase):
  def _run(self,source,*,state_dir=None):
   env=os.environ.copy();env["PYTHONPATH"]=str(WINDOWS_RUNTIME)
   if state_dir:
-   env["CAPIVARA_AGENT_STATE_DIR"]=state_dir;env["CAPIVARA_BACKUP_ROOT"]=str(Path(state_dir)/"backups");env["CAPIVARA_AGENT_GAME_DATA_ROOT"]=str(Path(state_dir)/"game-data")
+   env["PROGRAMDATA"]=str(Path(state_dir)/"programdata");env["ProgramFiles"]=str(Path(state_dir)/"programfiles");env["CAPIVARA_AGENT_STATE_DIR"]=state_dir;env["CAPIVARA_BACKUP_ROOT"]=str(Path(state_dir)/"backups");env["CAPIVARA_AGENT_GAME_DATA_ROOT"]=str(Path(state_dir)/"game-data")
   return subprocess.run([sys.executable,"-c",textwrap.dedent(source)],cwd=str(ROOT),env=env,capture_output=True,text=True,check=False)
  def test_instance_command_contract_and_operation_journal(self):
   with tempfile.TemporaryDirectory() as state:
@@ -68,8 +68,9 @@ state_root=Path(record["instance_state_root"]);assert (state_root/"config"/"serv
   with tempfile.TemporaryDirectory() as state:
    r=self._run('''
 from pathlib import Path
-import instance_runtime
+import instance_runtime,content_client
 from content_client import apply_content_commands,content_state
+content_client.require_clean=lambda path:{"security_state":"clean","engine":"yara-x","policy_version":1,"matches":[]}
 config={"agent_id":"win-agent-one"};root=Path(instance_runtime.STATE_DIR)/"instance-workspaces"/"srv-content";root.mkdir(parents=True);source=Path(instance_runtime.STATE_DIR)/"game-data"/"package";source.mkdir(parents=True);(source/"mod.txt").write_text("ok")
 instance_runtime.register_instance({"instance_id":"srv-content","agent_id":"win-agent-one","path":str(root)})
 cmd={"instance_id":"srv-content","content_id":"mod-one","revision":1,"checksum":"abc","desired_state":"installed","version":"1","provider":"local","target":"mods/mod-one","artifact":{"resolved_path":str(source)}}

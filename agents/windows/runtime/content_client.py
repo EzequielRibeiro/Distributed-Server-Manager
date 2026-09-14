@@ -1,6 +1,6 @@
 """Safe desired-state content reconciler for the Windows Agent."""
 from __future__ import annotations
-import hashlib,json,os,shutil,stat,tarfile,tempfile,zipfile
+import hashlib,json,os,shutil,stat,tarfile,tempfile,time,zipfile
 from pathlib import Path
 from typing import Any
 import instance_runtime
@@ -8,7 +8,10 @@ from content_provider import resolve_source
 import content_provider_steam_workshop  # noqa: F401
 from content_activation_projection import synchronize_activation_state
 from content_activation_apply import apply_activation_snapshots
+from content_security import ContentSecurityRejected,require_clean
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));CONTENT_STATE=STATE_ROOT/"managed-content";GAME_DATA_ROOT=Path(os.environ.get("CAPIVARA_AGENT_GAME_DATA_ROOT",STATE_ROOT/"game-data")).resolve()
+try:SECURITY_RETRY_SECONDS=max(30,min(int(os.environ.get("CAPIVARA_CONTENT_SECURITY_RETRY_SECONDS","300")),3600))
+except (TypeError,ValueError):SECURITY_RETRY_SECONDS=300
 class ContentActivationError(RuntimeError):pass
 class ContentRollbackError(ContentActivationError):pass
 def _write(path:Path,payload:dict[str,Any]):
@@ -128,13 +131,13 @@ def _activate_target(config:dict[str,Any],iid:str,target:Path,payload:Path|None)
 def _install(config,cmd):
  _validate_relations(cmd);_,instance=_owned(config,cmd);iid=str(cmd.get("instance_id") or "");target=_safe_target(instance,str(cmd.get("target") or "assets"));artifact=dict(cmd.get("artifact") or {});provider=str(cmd.get("provider") or artifact.get("provider") or "");parent=target.parent;parent.mkdir(parents=True,exist_ok=True);stage=Path(tempfile.mkdtemp(prefix=f".{target.name}.c4-",dir=str(parent)))
  try:
-  source=_source(provider,artifact,stage);_verify_artifact(source,artifact);payload=stage/"payload";payload.mkdir();archive=provider=="http-archive" or bool(artifact.get("archive"))
-  if archive:_extract(source,payload)
+  source=_source(provider,artifact,stage);_verify_artifact(source,artifact);source_scan=require_clean(source);payload=stage/"payload";payload.mkdir();archive=provider=="http-archive" or bool(artifact.get("archive"));expanded_scan=None
+  if archive:_extract(source,payload);expanded_scan=require_clean(payload)
   elif source.is_dir():shutil.copytree(source,payload,dirs_exist_ok=True)
   else:shutil.copy2(source,payload/(str(artifact.get("filename") or source.name or "content.bin")))
   _activate_target(config,iid,target,payload)
  finally:shutil.rmtree(stage,ignore_errors=True)
- return str(target)
+ return str(target),expanded_scan or source_scan
 def _remove(config,cmd):
  _,instance=_owned(config,cmd);iid=str(cmd.get("instance_id") or "");target=_safe_target(instance,str(cmd.get("target") or "assets"));_activate_target(config,iid,target,None);return str(target)
 def _source_metadata(cmd:dict[str,Any])->dict[str,Any]:
@@ -151,14 +154,21 @@ def _apply(config,cmd):
  iid=str(cmd.get("instance_id") or "");cid=str(cmd.get("content_id") or "");revision=int(cmd.get("revision") or 0);checksum=str(cmd.get("checksum") or "");state=_state_path(iid,cid);source_meta=_source_metadata(cmd)
  try:previous=json.loads(state.read_text()) if state.exists() else {}
  except Exception:previous={}
- if previous.get("status")=="applied" and previous.get("applied_revision")==revision and previous.get("applied_checksum")==checksum:
+ if previous.get("status")=="applied" and previous.get("applied_revision")==revision and previous.get("applied_checksum")==checksum and previous.get("security_state")=="clean" and int(previous.get("security_policy_version") or 0)>=1:
   merged={**previous,**{k:v for k,v in source_meta.items() if v is not None}};_write(state,merged);return merged
+ if previous.get("status")=="security_scan_failed" and int(previous.get("desired_revision") or 0)==revision and str(previous.get("desired_checksum") or "")==checksum:
+  try:retry_after=float(previous.get("security_retry_after_epoch") or 0)
+  except (TypeError,ValueError):retry_after=0
+  if time.time()<retry_after:return previous
  try:
-  desired=str(cmd.get("desired_state") or "installed")
-  if _reuse_installed(previous,cmd,source_meta):path=str(previous.get("managed_path"))
-  else:path=_remove(config,cmd) if desired=="absent" else _install(config,cmd)
-  report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":revision,"desired_checksum":checksum,"applied_checksum":checksum,"status":"applied","installed_version":None if desired=="absent" else str(cmd.get("version") or "latest"),"managed_path":path,"last_error":None,"readiness":"healthy",**source_meta}
- except Exception as exc:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"last_error":str(exc)[:2000],"readiness":"rollback_failed" if isinstance(exc,ContentRollbackError) else "rolled_back" if isinstance(exc,ContentActivationError) else "unknown",**source_meta}
+  desired=str(cmd.get("desired_state") or "installed");security={"security_state":"clean","engine":"none","policy_version":1,"reason":None,"matches":[]}
+  if desired=="absent":path=_remove(config,cmd)
+  elif _reuse_installed(previous,cmd,source_meta):path=str(previous.get("managed_path"));security=require_clean(Path(path))
+  else:path,security=_install(config,cmd)
+  report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":revision,"desired_checksum":checksum,"applied_checksum":checksum,"status":"applied","installed_version":None if desired=="absent" else str(cmd.get("version") or "latest"),"managed_path":path,"last_error":None,"readiness":"healthy","security_state":str(security.get("security_state") or "clean"),"security_policy_version":1,"security":{"engine":security.get("engine"),"matches":security.get("matches") or []},**source_meta}
+ except ContentSecurityRejected as exc:
+  verdict=exc.verdict;security_state=str(verdict.get("security_state") or "scan_failed");terminal=security_state in {"suspicious","blocked"};report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"security_blocked" if terminal else "security_scan_failed","installed_version":None,"managed_path":None,"last_error":str(verdict.get("reason") or exc)[:2000],"readiness":"security_rejected","security_state":security_state,"security_policy_version":1,"security_retry_after_epoch":None if terminal else time.time()+SECURITY_RETRY_SECONDS,"security":{"engine":verdict.get("engine"),"matches":verdict.get("matches") or []},**source_meta}
+ except Exception as exc:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"rollback_failed" if isinstance(exc,ContentRollbackError) else "rolled_back" if isinstance(exc,ContentActivationError) else "unknown","security_state":"unscanned","security_policy_version":1,**source_meta}
  _write(state,report);return report
 def apply_content_commands(config:dict[str,Any],commands:list[dict[str,Any]])->list[dict[str,Any]]:
  bounded=[c for c in commands[:200] if isinstance(c,dict)];ordered=[c for c in bounded if c.get("desired_state")=="absent"]+[c for c in bounded if c.get("desired_state")!="absent"];reports=[];pending=ordered

@@ -157,9 +157,27 @@ Esse contrato é a base para atualização transacional e rollback da U9.
 
 ## U7 — Security / Malware Scan
 
-U7 é obrigatória para conteúdo Minecraft e Steam. O fluxo converge para estados de segurança comuns, incluindo `unscanned`, `clean`, `suspicious`, `blocked` e `scan_failed`.
+U7 é obrigatória para conteúdo Minecraft, Steam/Workshop e uploads externos. O fluxo converge para estados comuns: `unscanned`, `clean`, `suspicious`, `blocked` e `scan_failed`; provider ou jogo não podem alterar essa semântica.
 
-Uploads e downloads de provider não podem ganhar um atalho de segurança específico por jogo. YARA-X/quarantine e política de aprovação devem bloquear ativação quando o artifact não estiver aprovado.
+O pipeline canônico no Agent é:
+
+```text
+provider/upload
+  → staging/quarantine
+  → validação de tamanho/checksum nativo
+  → YARA-X no artefato recebido
+  → extração segura, quando aplicável
+  → YARA-X no payload expandido
+  → managed content
+  → U5 activation snapshot
+  → runtime
+```
+
+A partir de `security_policy_version=1`, **somente `clean` pode entrar no activation snapshot**. `suspicious` e `blocked` são verdicts terminais para a mesma revisão/checksum e exigem nova revisão ou intervenção administrativa; `scan_failed` é fail-closed e retryable, para permitir recuperação quando engine/regras voltarem a estar disponíveis. O scanner nunca recebe lógica específica de Minecraft, Steam ou provider.
+
+O Agent anuncia `content_security_contract=1` e o estado factual de `content_security`. Novos artefatos/revisões falham de forma fechada se `yr` ou as regras estiverem ausentes. As regras são operator-managed: Linux usa por padrão `/etc/capivara-agent-security/yara-rules` (root-owned) e Windows `%PROGRAMDATA%\CapivaraAgent\security\yara-rules` (ACL de SYSTEM/Administrators). O projeto não baixa automaticamente regras de terceiros.
+
+Para rollout seguro, estados `applied` criados antes da U7 e sem `security_policy_version` são temporariamente grandfathered; não são desativados cegamente no upgrade. Ao serem reconciliados/revisados, passam pela policy v1 e só voltam/continuam ativáveis após verdict `clean`. Isso evita indisponibilidade em massa sem criar bypass para conteúdo novo.
 
 ## U8 — Dashboard
 
