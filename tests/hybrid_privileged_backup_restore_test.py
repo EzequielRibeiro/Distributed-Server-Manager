@@ -184,6 +184,13 @@ class HybridPrivilegedBackupRestoreTest(unittest.TestCase):
             ROOT / "systemd" / "dsm-hybrid-agent-backup-restore@.service.in"
         ).read_text(encoding="utf-8")
         self.assertIn("User=root", unit)
+        self.assertIn("Environment=CAPIVARA_AGENT_MODE=hybrid", unit)
+        self.assertIn("Environment=CAPIVARA_DSM_ROOT=@DSM_ROOT@", unit)
+        self.assertIn(
+            "Environment=CAPIVARA_FIREWALL_UNIT_TEMPLATE="
+            "dsm-hybrid-agent-firewall@{instance_id}.service",
+            unit,
+        )
         self.assertIn("NoNewPrivileges=true", unit)
         self.assertIn(
             "ReadWritePaths=@DSM_ROOT@/runtime/hybrid-agent-state "
