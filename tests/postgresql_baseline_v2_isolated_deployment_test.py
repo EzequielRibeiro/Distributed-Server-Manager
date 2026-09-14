@@ -18,6 +18,7 @@ for path in (ROOT, ROOT / "database", ROOT / "dashboard", ROOT / "core"):
 from admin_management_repository import AdminManagementRepository
 from agent_admin_repository import AgentAdminRepository
 from alert_repository import AlertRepository
+from baseline_upgrade_engine import UPGRADES
 from customer_management_repository import CustomerManagementRepository
 from runtime_backend import backend_from_environment
 from system_user_repository import SystemUserRepository
@@ -69,10 +70,11 @@ def main() -> int:
     if int(existing_customers["total"] or 0) != 0:
         raise AssertionError("isolated database was not empty before bootstrap")
     ledger = [(int(row["version"]), str(row["name"])) for row in upgrades]
-    if (7, "backup_job_retry_identity") not in ledger:
-        raise AssertionError("Baseline v2 did not retain backup job retry identity upgrade 7")
-    if ledger[-1] != (9, "backup_job_retry_identity_repair"):
-        raise AssertionError("Baseline v2 did not seed Universal Content Contract v2 upgrade 8")
+    expected_ledger = [(upgrade.version, upgrade.name) for upgrade in UPGRADES]
+    if ledger != expected_ledger:
+        raise AssertionError(
+            f"Baseline v2 upgrade ledger mismatch: expected {expected_ledger}, got {ledger}"
+        )
     if any(
         "UNIQUE (backup_id)" in str(row["definition"])
         for row in backup_unique_constraints
@@ -92,6 +94,7 @@ def main() -> int:
         "activity_audit", "universal_events", "alerts", "alert_events",
         "event_consumer_cursors", "notification_outbox",
         "instance_update_policy", "instance_update_state", "instance_update_runs",
+        "content_bundles", "content_bundle_revisions",
     }
     missing = sorted(required - tables)
     if missing:
