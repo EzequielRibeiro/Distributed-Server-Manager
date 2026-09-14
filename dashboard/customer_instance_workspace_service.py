@@ -107,6 +107,15 @@ class CustomerInstanceWorkspaceService:
   return {"instance":instance,"runtime":runtime,"permissions":sorted(permissions),"policy":policy,"content_policy":content.as_dict(),"content_sections":content_ui_sections(content),"runtime_capabilities":capabilities,"ports":self._ports(instance_id),"location":{k:location.get(k) for k in ("public_host","datacenter_id","datacenter_name","city","country_code","region_id","region_name","region_country_code","agent_name")},"telemetry":telemetry,"storage":{"used_bytes":used,"limit_bytes":storage_limit,"percent":storage_pct},"provision":provision,"console":{"read":"console.read" in permissions,"execute":"console.execute" in permissions,"supported":bool((capabilities.get("console") or {}).get("supported"))},"upgrade":{"allowed":"contract.upgrade" in permissions,"current_profile_id":policy.get("resource_profile_id")}}
  def telemetry(self,user,instance_id,limit=240):self.require(user,instance_id,"instance.view");return self.repo.telemetry(instance_id,limit)
  def console_output(self,user,instance_id,limit=300):self.require(user,instance_id,"console.read");return self.repo.console_output(instance_id,limit)
+ def agent_console_output(self,user,instance_id,limit=300):
+  context=self.require(user,instance_id,"console.read");agent_id=str(context.get("agent_id") or "").strip();limit=max(1,min(int(limit),1000));location=self._location(agent_id) if agent_id else {};metadata=location.get("agent_metadata") if isinstance(location.get("agent_metadata"),dict) else {};state={}
+  for item in metadata.get("instance_console_state") or []:
+   if isinstance(item,dict) and str(item.get("instance_id") or "")==str(instance_id):state=item;break
+  output=state.get("output") if isinstance(state.get("output"),list) else [];runtime={}
+  if agent_id:
+   try:runtime=self.agent_runtime.snapshot(agent_id,refresh_health=False)
+   except Exception:runtime={}
+  return {"lines":[str(line).replace("\x00","")[:2000] for line in output[-limit:]],"transport":state.get("transport"),"supported":bool(state.get("supported")),"agent_health":str(runtime.get("health_status") or "unknown"),"last_seen":runtime.get("last_seen")}
  def send_console(self,user,instance_id,command):
   context=self.require(user,instance_id,"console.execute");caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""))
   if not bool((caps.get("console") or {}).get("supported")):raise PermissionError("runtime game console is not available")
