@@ -79,12 +79,19 @@ def _activation(command: Mapping[str, Any]) -> dict[str, str]:
 
 
 def _entry(state: dict[str, Any]) -> dict[str, Any] | None:
-    if str(state.get("status") or "") != "applied":
+    status = str(state.get("status") or "")
+    active_security = str(state.get("security_state") or "unscanned")
+    if status in {"security_blocked", "security_scan_failed"}:
+        # U10/U7 invariant: a rejected candidate revision must not remove the
+        # previously applied clean revision from the native runtime projection.
+        if not (int(state.get("applied_revision") or 0) > 0 and state.get("applied_checksum") and state.get("installed_version") and state.get("managed_path")):
+            return None
+        active_security = str(state.get("applied_security_state") or "unscanned")
+    elif status != "applied":
         return None
-    # U7: states written under the security policy are activatable only after
-    # an explicit clean verdict. Pre-U7 states remain grandfathered until
-    # they are reconciled/scanned, avoiding a blind mass outage on upgrade.
-    if int(state.get("security_policy_version") or 0) >= 1 and str(state.get("security_state") or "unscanned") != "clean":
+    # U7: the *applied* revision is activatable only after an explicit clean
+    # verdict. The desired candidate may independently be blocked/scan_failed.
+    if int(state.get("security_policy_version") or 0) >= 1 and active_security != "clean":
         return None
     if str(state.get("desired_state") or "installed") != "installed":
         return None
