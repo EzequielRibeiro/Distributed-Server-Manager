@@ -145,10 +145,34 @@ class AgentUpdateLifecycleTest(unittest.TestCase):
             {
                 "/opt/capivara-agent",
                 "/var/lib/capivara-agent",
+                "/etc/capivara-agent",
                 "/etc/systemd/system",
                 "/etc/polkit-1/rules.d",
                 "/usr/local/bin",
             }.issubset(read_write_paths)
+        )
+
+    def test_updater_refreshes_core_service_units_from_release_package(self):
+        package = self.root / "package"
+        (package / "agent/runtime").mkdir(parents=True)
+        (package / "agent/runtime/agent.py").write_text("pass\n", encoding="utf-8")
+        services = package / "services"
+        services.mkdir(parents=True)
+        for name in (
+            "capivara-agent.service",
+            "capivara-agent-update.service",
+            "capivara-agent-update.path",
+        ):
+            (services / name).write_text("[Unit]\n", encoding="utf-8")
+
+        mapping = updater._mapping(package)
+        destinations = {destination.name for _, destination, _, _ in mapping}
+        self.assertTrue(
+            {
+                "capivara-agent.service",
+                "capivara-agent-update.service",
+                "capivara-agent-update.path",
+            }.issubset(destinations)
         )
 
     def test_transaction_rollback_restores_file_and_removes_new_cli_link(self):

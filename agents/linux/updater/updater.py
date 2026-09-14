@@ -285,6 +285,24 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
             "agent/policy/49-capivara-agent-instance-units.rules",
         ),
         (
+            package_root / "services/capivara-agent.service",
+            SYSTEMD_DIR / "capivara-agent.service",
+            0o644,
+            "services/capivara-agent.service",
+        ),
+        (
+            package_root / "services/capivara-agent-update.service",
+            SYSTEMD_DIR / "capivara-agent-update.service",
+            0o644,
+            "services/capivara-agent-update.service",
+        ),
+        (
+            package_root / "services/capivara-agent-update.path",
+            SYSTEMD_DIR / "capivara-agent-update.path",
+            0o644,
+            "services/capivara-agent-update.path",
+        ),
+        (
             package_root / "services/capivara-agent-materialize@.service",
             SYSTEMD_DIR / "capivara-agent-materialize@.service",
             0o644,
@@ -625,31 +643,37 @@ def apply_request() -> int:
             _validate_installed(plain, manifest, mapping)
             _validate_persistent_version(plain)
             _restart_agent(expected_agent_id)
-        except Exception:
-            try:
-                _set_uninstall_watch(False)
-            except Exception:
-                pass
-            _restore_files(snapshots)
-            _restore_persistent_config(persistent_config_snapshot)
-            _restore_cli(cli_existed, old_cli_target)
-            try:
-                _daemon_reload()
-            except Exception:
-                pass
-            if uninstall_watch_was_enabled:
+        except Exception as update_error:
+            rollback_errors: list[str] = []
+
+            def rollback_step(label: str, action) -> None:
                 try:
-                    _set_uninstall_watch(True)
-                except Exception:
-                    pass
+                    action()
+                except Exception as rollback_error:
+                    rollback_errors.append(f"{label}: {rollback_error}")
+
+            rollback_step("disable uninstall watch", lambda: _set_uninstall_watch(False))
+            rollback_step("managed files", lambda: _restore_files(snapshots))
+            rollback_step(
+                "persistent Agent config",
+                lambda: _restore_persistent_config(persistent_config_snapshot),
+            )
+            rollback_step("CLI", lambda: _restore_cli(cli_existed, old_cli_target))
+            rollback_step("systemd daemon-reload", _daemon_reload)
+            if uninstall_watch_was_enabled:
+                rollback_step("restore uninstall watch", lambda: _set_uninstall_watch(True))
             try:
                 subprocess.run(
                     ["systemctl", "restart", "capivara-agent.service"],
                     check=False,
                     timeout=30,
                 )
-            except (OSError, subprocess.SubprocessError):
-                pass
+            except (OSError, subprocess.SubprocessError) as rollback_error:
+                rollback_errors.append(f"Agent restart: {rollback_error}")
+            if rollback_errors:
+                raise RuntimeError(
+                    f"{update_error}; rollback incomplete: " + "; ".join(rollback_errors)
+                ) from update_error
             raise
 
     REQUEST_PATH.unlink(missing_ok=True)
