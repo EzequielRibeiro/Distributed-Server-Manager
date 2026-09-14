@@ -4,13 +4,17 @@ from __future__ import annotations
 from urllib.parse import parse_qs,urlparse
 from controller_session import session_user_from_headers
 from customer_content_workspace import CustomerContentWorkspaceService
+from customer_content_upload_service import CustomerContentUploadService
 from instance_activity_repository import InstanceActivityRepository
 from json_serialization import to_json_compatible
 
 PATH="/api/customer/instance/workspace/content"
+UPLOAD=PATH+"/upload"
+UPLOAD_STATUS=UPLOAD+"/status"
+UPLOAD_FINALIZE=UPLOAD+"/finalize"
 
 def install_customer_content_http(legacy,authenticate):
- previous_get=legacy.DashboardHandler.do_GET;previous_post=legacy.DashboardHandler.do_POST
+ previous_get=legacy.DashboardHandler.do_GET;previous_post=legacy.DashboardHandler.do_POST;previous_put=getattr(legacy.DashboardHandler,"do_PUT",None)
  def backend():return legacy.dashboard_repository(legacy.DATABASE_FILE).backend
  def send(self,status,payload):return self.send_json(status,to_json_compatible(payload))
  def user_for(self):
@@ -24,6 +28,14 @@ def install_customer_content_http(legacy,authenticate):
   if str(user.get("role") or "").lower() not in {"customer","admin","controller"}:self.forbidden();return None
   return user
  def iid(parsed,body=None):return str((body or {}).get("instance_id") or (parse_qs(parsed.query,keep_blank_values=True).get("instance_id") or [""])[0] or "").strip()
+ def one(parsed,name,default=""):return (parse_qs(parsed.query,keep_blank_values=True).get(name) or [default])[0]
+ def content_length(self):
+  value=str(self.headers.get("Content-Length") or "").strip()
+  if not value:raise ValueError("Content-Length is required")
+  length=int(value)
+  if length<0 or length>64*1024*1024*1024:raise ValueError("content upload exceeds 64 GiB transfer limit")
+  return length
+ def transfer_view(item):return {k:item.get(k) for k in ("transfer_id","instance_id","direction","purpose","filename","status","size_bytes","transferred_bytes","sha256","last_error","expires_at")}
  def error(self,exc):
   if isinstance(exc,PermissionError):return send(self,403,{"error":"forbidden","message":str(exc)})
   if isinstance(exc,KeyError):return send(self,404,{"error":"not_found","message":"Conteúdo não encontrado."})
@@ -38,6 +50,11 @@ def install_customer_content_http(legacy,authenticate):
   except Exception:pass
  def get(self):
   parsed=urlparse(self.path)
+  if parsed.path==UPLOAD_STATUS:
+   user=require_user(self)
+   if user is None:return
+   try:return send(self,200,{"transfer":transfer_view(CustomerContentUploadService(backend(),legacy.DSM_ROOT).status(user,one(parsed,"transfer_id")))})
+   except Exception as exc:return error(self,exc)
   if parsed.path!=PATH:return previous_get(self)
   user=require_user(self)
   if user is None:return
@@ -45,6 +62,18 @@ def install_customer_content_http(legacy,authenticate):
   except Exception as exc:error(self,exc)
  def post(self):
   parsed=urlparse(self.path)
+  if parsed.path==UPLOAD:
+   user=require_user(self)
+   if user is None:return
+   try:
+    body=self.read_json_body();instance_id=iid(parsed,body);item=CustomerContentUploadService(backend(),legacy.DSM_ROOT).create(user,instance_id,body.get("filename"));return send(self,201,{"transfer":transfer_view(item)})
+   except Exception as exc:return error(self,exc)
+  if parsed.path==UPLOAD_FINALIZE:
+   user=require_user(self)
+   if user is None:return
+   try:
+    body=self.read_json_body();api=CustomerContentUploadService(backend(),legacy.DSM_ROOT);result=api.finalize(user,str(body.get("transfer_id") or ""),body);assignment=result.get("assignment") or {};record(user,str(assignment.get("instance_id") or body.get("instance_id") or ""),"upload",str(assignment.get("content_id") or body.get("content_id") or ""),result);return send(self,202,result)
+   except Exception as exc:return error(self,exc)
   if parsed.path!=PATH:return previous_post(self)
   user=require_user(self)
   if user is None:return
@@ -57,6 +86,16 @@ def install_customer_content_http(legacy,authenticate):
     result=api.mutate(user,instance_id,content_id,action,body)
    record(user,instance_id,action,str((result.get("assignment") or {}).get("content_id") or body.get("content_id") or ""),result);send(self,202,result)
   except Exception as exc:error(self,exc)
- legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post
+ def put(self):
+  parsed=urlparse(self.path)
+  if parsed.path!=UPLOAD:
+   if previous_put is not None:return previous_put(self)
+   return send(self,404,{"error":"not_found"})
+  user=require_user(self)
+  if user is None:return
+  try:
+   item=CustomerContentUploadService(backend(),legacy.DSM_ROOT).stage(user,one(parsed,"transfer_id"),self.rfile,content_length(self));return send(self,201,{"transfer":transfer_view(item)})
+  except Exception as exc:return error(self,exc)
+ legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post;legacy.DashboardHandler.do_PUT=put
 
-__all__=["PATH","install_customer_content_http"]
+__all__=["PATH","UPLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","install_customer_content_http"]

@@ -7,10 +7,10 @@
     "dayz.stable": {
       "label": "DayZ Stable",
       "family": "default",
-      "mods": false,
+      "mods": true,
       "plugins": false,
       "workshop": true,
-      "external_upload": false,
+      "external_upload": true,
       "custom_runtime": false
     }
   }

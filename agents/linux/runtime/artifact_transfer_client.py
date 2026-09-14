@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib,http.client,json,os,ssl
 from pathlib import Path
 from urllib.parse import urlencode,urlparse
+from content_upload_quarantine import quarantine_destination,quarantine_relative_path,validate_quarantine_archive
 STATE=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));RESULT=STATE/"artifact-results";BACKUPS=Path(os.environ.get("CAPIVARA_BACKUP_ROOT",str(STATE/"backups"))).resolve()
 def _safe(v):
  s=str(v or "").strip()
@@ -57,11 +58,21 @@ def handle_command(config,command):
  if isinstance(old,dict) and old.get("status") in {"completed","failed"}:return old
  try:
   direction=str(command.get("direction") or "");purpose=str(command.get("purpose") or "");iid=_safe(command.get("instance_id"));source=str(command.get("source_ref") or "");destination=str(command.get("destination_ref") or "")
+  destination_ref=None;extra={}
   if direction=="agent_to_controller" and purpose in {"backup_export","deleted_backup_export"}:transferred=_put(config,tid,_backup_artifact(iid,source))
   elif direction=="controller_to_agent" and purpose in {"backup_import","backup_clone"}:
    backup_id=_safe(destination or source or tid);suffix=".tar.gz" if str(command.get("filename") or "").endswith(".gz") else ".tar";dest=(BACKUPS/iid/f"{backup_id}{suffix}").resolve();dest.relative_to(BACKUPS);transferred=_get(config,tid,dest,command.get("size_bytes"),command.get("sha256"))
+  elif direction=="controller_to_agent" and purpose=="content_upload":
+   dest=quarantine_destination(iid,tid,str(command.get("filename") or ""))
+   try:
+    transferred=_get(config,tid,dest,command.get("size_bytes"),command.get("sha256"));inspection=validate_quarantine_archive(dest);destination_ref=quarantine_relative_path(dest);extra={"destination_ref":destination_ref,"archive_type":inspection["archive_type"],"archive_entries":inspection["entries"],"sha256":str(command.get("sha256") or "")}
+   except Exception:
+    try:dest.unlink(missing_ok=True);dest.parent.rmdir()
+    except OSError:pass
+    raise
   else:raise ValueError("unsupported artifact transfer purpose")
-  result={"transfer_id":tid,"instance_id":iid,"status":"completed","transferred_bytes":transferred}
+  result={"transfer_id":tid,"instance_id":iid,"status":"completed","transferred_bytes":transferred,**extra}
+  if destination_ref and "destination_ref" not in result:result["destination_ref"]=destination_ref
  except Exception as exc:result={"transfer_id":tid,"instance_id":command.get("instance_id"),"status":"failed","error":str(exc)[:2000]}
  _write(path,result);return result
 def read_result():

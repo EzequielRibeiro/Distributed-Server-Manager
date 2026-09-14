@@ -117,7 +117,7 @@ def install_artifact_transfer_http(legacy,authenticate):
   try:
    tid=one(parsed,"transfer_id");item=customer_transfer(user,tid,"backup.restore")
    if item.get("direction")!="controller_to_agent" or item.get("purpose")!="backup_import":raise ValueError("invalid upload transfer direction")
-   if str(item.get("status") or "") not in {"queued"}:raise ValueError("artifact upload is not pending")
+   if str(item.get("status") or "") not in {"staging"}:raise ValueError("artifact upload is not pending")
    saved=repo().stage_from_controller(tid,self.rfile,content_length(self));return send(self,201,transfer_view(saved))
   except PermissionError:return send(self,403,{"error":"forbidden"})
   except (KeyError,ValueError) as exc:return send(self,400,{"error":"invalid_transfer","message":str(exc)})

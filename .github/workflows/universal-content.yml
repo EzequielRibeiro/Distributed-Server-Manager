@@ -19,6 +19,7 @@ on:
       - 'dashboard/agent_heartbeat_api.py'
       - 'dashboard/dashboard.sh'
       - 'systemd/dsm-dashboard.service'
+      - 'agents/linux/runtime/artifact_transfer_client.py'
       - 'agents/linux/runtime/content_*.py'
       - 'agents/linux/runtime/runtime_materialization.py'
       - 'agents/linux/runtime/game_runtime.py'
@@ -28,6 +29,7 @@ on:
       - 'agents/linux/runtime/capabilities.py'
       - 'agents/linux/runtime/runtime_metrics.py'
       - 'agents/linux/runtime/agent.py'
+      - 'agents/windows/runtime/artifact_transfer_client.py'
       - 'agents/windows/runtime/content_*.py'
       - 'agents/windows/runtime/runtime_materialization.py'
       - 'agents/windows/runtime/game_runtime.py'
@@ -50,9 +52,9 @@ jobs:
       - name: Validate syntax
         run: |
           bash -n bin/cap release/build_agent_package.sh dashboard/dashboard.sh
-          python3 -m py_compile core/content_platform.py core/content_provider_contract.py core/steam_workshop_resolver.py database/content_contract_v2_schema.py database/content_repository.py database/content_cli.py database/schema_baseline.py dashboard/content_api.py dashboard/content_http.py dashboard/customer_content_workspace.py dashboard/customer_content_http.py dashboard/customer_instance_workspace_service.py dashboard/customer_instance_workspace_http.py dashboard/catalog_provisioning_resolver.py dashboard/runtime_workspace_catalog.py dashboard/server_part13.py dashboard/server_part17.py dashboard/agent_heartbeat_api.py agents/linux/runtime/content_client.py agents/linux/runtime/content_activation_projection.py agents/linux/runtime/content_activation_runtime.py agents/linux/runtime/content_activation_minecraft.py agents/linux/runtime/content_activation_apply.py agents/linux/runtime/runtime_materialization.py agents/linux/runtime/game_runtime.py agents/linux/runtime/profiles/minecraft_java.py agents/linux/runtime/content_provider.py agents/linux/runtime/content_provider_steam_workshop.py agents/linux/runtime/content_update_provider.py agents/linux/runtime/content_update_inventory.py agents/linux/runtime/capabilities.py agents/linux/runtime/runtime_metrics.py agents/linux/runtime/agent.py agents/windows/runtime/content_client.py agents/windows/runtime/content_activation_projection.py agents/windows/runtime/content_activation_runtime.py agents/windows/runtime/content_activation_minecraft.py agents/windows/runtime/content_activation_apply.py agents/windows/runtime/runtime_materialization.py agents/windows/runtime/game_runtime.py agents/windows/runtime/profiles/minecraft_java.py agents/windows/runtime/content_provider.py agents/windows/runtime/content_provider_steam_workshop.py agents/windows/runtime/content_update_provider.py agents/windows/runtime/content_update_inventory.py agents/windows/runtime/capabilities.py agents/windows/runtime/runtime_metrics.py
+          python3 -m py_compile core/content_platform.py core/content_provider_contract.py core/steam_workshop_resolver.py database/content_contract_v2_schema.py database/content_repository.py database/content_cli.py database/schema_baseline.py dashboard/content_api.py dashboard/content_http.py dashboard/customer_content_workspace.py dashboard/customer_content_upload_service.py dashboard/customer_content_http.py dashboard/customer_instance_workspace_service.py dashboard/customer_instance_workspace_http.py dashboard/catalog_provisioning_resolver.py dashboard/runtime_workspace_catalog.py dashboard/server_part13.py dashboard/server_part17.py dashboard/agent_heartbeat_api.py agents/linux/runtime/content_client.py agents/linux/runtime/content_activation_projection.py agents/linux/runtime/content_activation_runtime.py agents/linux/runtime/content_activation_minecraft.py agents/linux/runtime/content_activation_apply.py agents/linux/runtime/content_upload_quarantine.py agents/linux/runtime/artifact_transfer_client.py agents/linux/runtime/runtime_materialization.py agents/linux/runtime/game_runtime.py agents/linux/runtime/profiles/minecraft_java.py agents/linux/runtime/content_provider.py agents/linux/runtime/content_provider_steam_workshop.py agents/linux/runtime/content_update_provider.py agents/linux/runtime/content_update_inventory.py agents/linux/runtime/capabilities.py agents/linux/runtime/runtime_metrics.py agents/linux/runtime/agent.py agents/windows/runtime/content_client.py agents/windows/runtime/content_activation_projection.py agents/windows/runtime/content_activation_runtime.py agents/windows/runtime/content_activation_minecraft.py agents/windows/runtime/content_activation_apply.py agents/windows/runtime/content_upload_quarantine.py agents/windows/runtime/artifact_transfer_client.py agents/windows/runtime/runtime_materialization.py agents/windows/runtime/game_runtime.py agents/windows/runtime/profiles/minecraft_java.py agents/windows/runtime/content_provider.py agents/windows/runtime/content_provider_steam_workshop.py agents/windows/runtime/content_update_provider.py agents/windows/runtime/content_update_inventory.py agents/windows/runtime/capabilities.py agents/windows/runtime/runtime_metrics.py
       - name: Test Universal Content
-        run: python3 -m unittest tests/universal_content_platform_test.py tests/universal_content_contract_v2_test.py tests/universal_content_customer_workspace_test.py tests/universal_content_customer_workshop_test.py tests/universal_content_steam_workshop_test.py tests/universal_content_activation_projection_test.py tests/universal_content_activation_runtime_test.py tests/universal_content_minecraft_activation_test.py tests/universal_content_http_test.py tests/content_provider_contract_test.py tests/content_provider_capability_test.py tests/content_provider_capabilities_advertisement_test.py tests/content_provider_steam_workshop_test.py tests/content_provider_preflight_test.py
+        run: python3 -m unittest tests/universal_content_platform_test.py tests/universal_content_contract_v2_test.py tests/universal_content_customer_workspace_test.py tests/universal_content_customer_workshop_test.py tests/universal_content_steam_workshop_test.py tests/universal_content_activation_projection_test.py tests/universal_content_activation_runtime_test.py tests/universal_content_minecraft_activation_test.py tests/universal_content_external_upload_test.py tests/universal_content_external_upload_agent_test.py tests/universal_content_http_test.py tests/content_provider_contract_test.py tests/content_provider_capability_test.py tests/content_provider_capabilities_advertisement_test.py tests/content_provider_steam_workshop_test.py tests/content_provider_preflight_test.py
       - name: Verify composition and Agent package contracts
         run: |
           grep -Fq 'CONTENT_PATH' dashboard/server_part13.py
@@ -60,10 +62,14 @@ jobs:
           grep -Fq 'import server_part16 as integration' dashboard/server_part17.py
           grep -Fq 'server_part17.py' systemd/dsm-dashboard.service
           test -f dashboard/customer_content_workspace.py
+          test -f dashboard/customer_content_upload_service.py
           test -f dashboard/customer_content_http.py
           test -f core/steam_workshop_resolver.py
           grep -Fq '"app_id": "221100"' catalog/v2/games/dayz/runtimes/stable.json
           grep -Fq '"app_id": "108600"' catalog/v2/games/projectzomboid/runtimes/stable.json
+          test -f agents/linux/runtime/content_upload_quarantine.py
+          test -f agents/linux/runtime/artifact_transfer_client.py
+          grep -Fq 'purpose=="content_upload"' agents/linux/runtime/artifact_transfer_client.py
           test -f agents/linux/runtime/content_client.py
           test -f agents/linux/runtime/content_activation_projection.py
           test -f agents/linux/runtime/content_activation_runtime.py
@@ -73,6 +79,9 @@ jobs:
           test -f agents/linux/runtime/content_provider_steam_workshop.py
           test -f agents/linux/runtime/content_update_provider.py
           test -f agents/linux/runtime/content_update_inventory.py
+          test -f agents/windows/runtime/content_upload_quarantine.py
+          test -f agents/windows/runtime/artifact_transfer_client.py
+          grep -Fq 'purpose=="content_upload"' agents/windows/runtime/artifact_transfer_client.py
           test -f agents/windows/runtime/content_client.py
           test -f agents/windows/runtime/content_activation_projection.py
           test -f agents/windows/runtime/content_activation_runtime.py
