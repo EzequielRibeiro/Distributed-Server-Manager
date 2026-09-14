@@ -36,7 +36,7 @@ def _snapshot(**overrides):
         "node_id": "node-remote",
         "health_status": "online",
         "network": {
-            "source": "ss",
+            "source": "linux-iproute2",
             "tcp_listen": [8080, 25565],
             "udp_listen": [2302, 2304, 27016],
             "tcp_complete": True,

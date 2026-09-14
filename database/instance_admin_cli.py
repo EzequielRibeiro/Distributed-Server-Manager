@@ -22,6 +22,7 @@ from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from agent_runtime_repository import AgentRuntimeRepository
 from core.catalog_runtime_paths import runtime_definition_files
 from dashboard_repository import DashboardRepository
+from instance_network import occupied_ports_provider_for_backend
 from placement_errors import PlacementUnavailable
 from placement_service import choose_agent_for_instance
 from core.placement_requirements import requirements_for_instance
@@ -77,23 +78,6 @@ def _runtime_definition(game_id: str, runtime_id: str | None) -> dict[str, Any]:
         available = ", ".join(str(item[1].get("id")) for item in candidates)
         raise ValueError(f"multiple runtimes are available; use --runtime ({available})")
     return candidates[0][1]
-
-
-def _remote_occupied_ports(snapshot: dict[str, Any]):
-    network = snapshot.get("network") if isinstance(snapshot.get("network"), dict) else {}
-    values = {
-        "tcp": {int(value) for value in network.get("tcp_listen", []) if isinstance(value, int)},
-        "udp": {int(value) for value in network.get("udp_listen", []) if isinstance(value, int)},
-    }
-
-    def provider(agent_id: str, node_id: str, protocol: str, start_port: int, end_port: int) -> set[int]:
-        del agent_id, node_id
-        return {
-            port for port in values.get(str(protocol).lower(), set())
-            if int(start_port) <= port <= int(end_port)
-        }
-
-    return provider
 
 
 def _content_selection(definition: dict[str, Any]) -> dict[str, Any]:
@@ -174,10 +158,6 @@ def create_instance(args, *, backend=None) -> dict[str, Any]:
     snapshot = runtime_repository.snapshot(selected_agent_id)
     if str(snapshot.get("health_status") or "").lower() != "online":
         raise ValueError("selected Agent is not online")
-    network = snapshot.get("network") if isinstance(snapshot.get("network"), dict) else {}
-    if network.get("source") != "ss":
-        raise ValueError("selected Agent has no current OS port inventory")
-
     version = definition.get("version") if isinstance(definition.get("version"), dict) else {}
     owner = _owner(dashboard, customer_id, args.owner)
     instances_root = Path(os.environ.get("DSM_INSTANCES_ROOT", str(ROOT / "instances")))
@@ -195,7 +175,7 @@ def create_instance(args, *, backend=None) -> dict[str, Any]:
         selected_agent_id=str(placement["agent_id"]),
         instances_root=instances_root,
         network_profile=(definition.get("network") if isinstance(definition.get("network"), dict) else None),
-        occupied_ports_provider=_remote_occupied_ports(snapshot),
+        occupied_ports_provider=occupied_ports_provider_for_backend(backend),
     )
 
     if args.name:
