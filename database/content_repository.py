@@ -171,6 +171,36 @@ class ContentRepository:
    s=AlertSession(self.backend,c)
    try:return [self._row(r) for r in s.execute(f"SELECT * FROM content_assignments{where} ORDER BY instance_id,activation_order,content_id LIMIT {self.ph}",tuple(params)).fetchall()]
    finally:s.close()
+ def agent_state_for_instance(self,instance_id):
+  with self.backend.connect() as c:
+   s=AlertSession(self.backend,c)
+   try:
+    rows=s.execute(f"SELECT * FROM agent_content_state WHERE instance_id={self.ph}",(instance_id,)).fetchall()
+    return {str(row["content_id"]):dict(row) for row in rows}
+   finally:s.close()
+ def customer_view(self,instance_id,limit=2000):
+  items=self.list(instance_id=instance_id,limit=limit);states=self.agent_state_for_instance(instance_id);children={}
+  def decorate(item):
+   value=dict(item);state=states.get(str(value.get("content_id") or ""));aligned=bool(state and int(state.get("desired_revision") or 0)==int(value.get("revision") or 0) and str(state.get("desired_checksum") or "")==str(value.get("checksum") or ""))
+   effective_security=str(state.get("security_state") or "unscanned") if aligned else str(value.get("security_state") or "unscanned")
+   value["effective_security_state"]=effective_security
+   value["reconciliation"]={"status":str(state.get("status") or "pending") if aligned else "pending","aligned":aligned,"desired_revision":int(value.get("revision") or 0),"applied_revision":int(state.get("applied_revision") or 0) if state else None,"installed_version":state.get("installed_version") if state else None,"security_state":effective_security,"last_error":state.get("last_error") if state else None,"reported_at":state.get("reported_at") if state else None}
+   return value
+  visible=[]
+  for item in items:
+   marker=(item.get("metadata") or {}).get("bundle") if isinstance(item.get("metadata"),dict) else None;parent=str(marker.get("parent_content_id") or "") if isinstance(marker,dict) else ""
+   if parent and str(item.get("content_type") or "")!="modpack":children.setdefault(parent,[]).append(decorate(item));continue
+   visible.append(decorate(item))
+  severity={"clean":0,"unscanned":1,"scan_failed":2,"suspicious":3,"blocked":4}
+  for item in visible:
+   if str(item.get("content_type") or "")!="modpack":continue
+   members=children.get(str(item.get("content_id") or ""),[]);security_counts={};status_counts={}
+   for child in members:
+    sec=str(child.get("effective_security_state") or "unscanned");security_counts[sec]=security_counts.get(sec,0)+1;status=str((child.get("reconciliation") or {}).get("status") or "pending");status_counts[status]=status_counts.get(status,0)+1
+   if members:
+    worst=max([str(item.get("effective_security_state") or "unscanned"),*[str(child.get("effective_security_state") or "unscanned") for child in members]],key=lambda value:severity.get(value,2));item["effective_security_state"]=worst;item["reconciliation"]["security_state"]=worst
+   item["bundle_summary"]={"child_count":len(members),"security_states":security_counts,"reconciliation_statuses":status_counts}
+  return visible
  def history(self,assignment_id):
   with self.backend.connect() as c:
    s=AlertSession(self.backend,c)

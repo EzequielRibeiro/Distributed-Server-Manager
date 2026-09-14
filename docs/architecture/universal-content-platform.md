@@ -86,7 +86,7 @@ U5 foi concluída no PR #466 e permanece a camada genérica de ativação:
 
 Os primeiros adapters reais cobrem DayZ e Project Zomboid. Isso não limita o escopo universal.
 
-### U5-M — Minecraft Activation Adapters — pendente
+### U5-M — Minecraft Activation Adapters — concluída
 
 U5-M estende a U5 já concluída para os runtimes Minecraft modificáveis, sem duplicar o mecanismo central.
 
@@ -119,13 +119,13 @@ Requisitos U5-M:
 
 Tracker: #489.
 
-### U6 — External Upload — em andamento
+### U6 — External Upload — concluída
 
 U6 continua genérica e reutiliza o Artifact Transfer Plane. Upload não escreve diretamente em `mods/`, `plugins/` ou qualquer diretório arbitrário fornecido pelo Customer.
 
 Minecraft `.jar`, ZIPs e outros artifacts permitidos entram por staging/confinement, checksum, validação e então originam um `ContentAssignment` canônico. O File Manager não é uma rota alternativa de instalação de conteúdo gerenciado.
 
-### U6-M — Minecraft Providers / Modpacks — pendente
+### U6-M — Minecraft Providers / Modpacks — concluída
 
 Minecraft recebe providers de primeira classe no mesmo UCP:
 
@@ -155,7 +155,7 @@ Um modpack não é tratado como um arquivo solto nem como uma lista plana de JAR
 
 Esse contrato é a base para atualização transacional e rollback da U9.
 
-## U7 — Security / Malware Scan
+## U7 — Security / Malware Scan — concluída
 
 U7 é obrigatória para conteúdo Minecraft, Steam/Workshop e uploads externos. O fluxo converge para estados comuns: `unscanned`, `clean`, `suspicious`, `blocked` e `scan_failed`; provider ou jogo não podem alterar essa semântica.
 
@@ -179,7 +179,7 @@ O Agent anuncia `content_security_contract=1` e o estado factual de `content_sec
 
 Para rollout seguro, estados `applied` criados antes da U7 e sem `security_policy_version` são temporariamente grandfathered; não são desativados cegamente no upgrade. Ao serem reconciliados/revisados, passam pela policy v1 e só voltam/continuam ativáveis após verdict `clean`. Isso evita indisponibilidade em massa sem criar bypass para conteúdo novo.
 
-## U8 — Dashboard
+## U8 — Dashboard — em andamento
 
 O Dashboard deve apresentar uma superfície universal orientada por capacidades:
 
@@ -197,6 +197,10 @@ O Dashboard deve apresentar uma superfície universal orientada por capacidades:
 - update/rollback quando disponíveis.
 
 O Dashboard expressa desired state; ele não materializa regras específicas de Paper, NeoForge, DayZ ou outros runtimes.
+
+U8 usa `/api/customer/instance/workspace/content` como superfície Customer canônica. A descoberta de provider é filtrada pelo `RuntimeDefinition`: tipos gerenciados declaram providers pesquisáveis e bundles declaram providers de modpack. A UI mostra o último `agent_content_state` alinhado à revisão desejada, incluindo verdict efetivo de segurança, estado de reconciliação e versão instalada. Children internos de modpack permanecem ocultos como ações independentes; o pai agrega o estado do bundle. External Upload entra pela mesma lista após Artifact Transfer/quarantine e nunca escreve diretamente em diretórios nativos de mods/plugins.
+
+Tracker: #505.
 
 ## U9 — Updates / Rollback
 

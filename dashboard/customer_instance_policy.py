@@ -13,12 +13,12 @@ PERMISSION_PRESETS={
  "manager":INSTANCE_PERMISSIONS,
 }
 FILE_ACTION_PERMISSION={"list":"files.read","read":"files.read","download":"files.download","upload":"files.upload","edit":"files.edit","delete":"files.delete","move":"files.move","rename":"files.move","mkdir":"files.upload","extract":"files.extract"}
-CONTENT_FEATURES=frozenset({"mods","plugins","workshop","external_upload","custom_runtime"})
+CONTENT_FEATURES=frozenset({"mods","plugins","modpacks","datapacks","workshop","external_upload","custom_runtime"})
 
 @dataclass(frozen=True)
 class EffectiveContentPolicy:
- modifications_allowed:bool;mods_allowed:bool;plugins_allowed:bool;workshop_allowed:bool;external_upload_allowed:bool;custom_runtime_allowed:bool
- def as_dict(self):return {"modifications_allowed":self.modifications_allowed,"mods_allowed":self.mods_allowed,"plugins_allowed":self.plugins_allowed,"workshop_allowed":self.workshop_allowed,"external_upload_allowed":self.external_upload_allowed,"custom_runtime_allowed":self.custom_runtime_allowed}
+ modifications_allowed:bool;mods_allowed:bool;plugins_allowed:bool;modpacks_allowed:bool;datapacks_allowed:bool;workshop_allowed:bool;external_upload_allowed:bool;custom_runtime_allowed:bool
+ def as_dict(self):return {"modifications_allowed":self.modifications_allowed,"mods_allowed":self.mods_allowed,"plugins_allowed":self.plugins_allowed,"modpacks_allowed":self.modpacks_allowed,"datapacks_allowed":self.datapacks_allowed,"workshop_allowed":self.workshop_allowed,"external_upload_allowed":self.external_upload_allowed,"custom_runtime_allowed":self.custom_runtime_allowed}
 
 def permissions_for_profile(profile):
  name=str(profile or "viewer").strip().lower()
@@ -36,9 +36,9 @@ def require_permission(permissions:Iterable[str],permission:str):
 def effective_content_policy(contract_entitlements,runtime_capabilities):
  entitlement=contract_entitlements or {};capability=runtime_capabilities or {}
  def enabled(feature,default=False):return bool(entitlement.get(feature,default)) and bool(capability.get(feature,False))
- mods=enabled("mods");plugins=enabled("plugins");workshop=enabled("workshop");external=enabled("external_upload",True);custom=enabled("custom_runtime")
- return EffectiveContentPolicy(bool(mods or plugins or workshop),mods,plugins,workshop,external,custom)
-def content_ui_sections(policy):return [name for name,ok in (("mods",policy.mods_allowed),("plugins",policy.plugins_allowed),("workshop",policy.workshop_allowed)) if ok]
+ mods=enabled("mods");plugins=enabled("plugins");modpacks=enabled("modpacks",bool(entitlement.get("mods",False)));datapacks=enabled("datapacks",bool(entitlement.get("mods",False)));workshop=enabled("workshop");external=enabled("external_upload",True);custom=enabled("custom_runtime")
+ return EffectiveContentPolicy(bool(mods or plugins or modpacks or datapacks or workshop),mods,plugins,modpacks,datapacks,workshop,external,custom)
+def content_ui_sections(policy):return [name for name,ok in (("mods",policy.mods_allowed),("plugins",policy.plugins_allowed),("modpacks",policy.modpacks_allowed),("datapacks",policy.datapacks_allowed),("workshop",policy.workshop_allowed)) if ok]
 def validate_startup_values(values,declaration):
  supplied=values if isinstance(values,dict) else {};declared=declaration if isinstance(declaration,dict) else {};normalized={}
  for key,value in supplied.items():

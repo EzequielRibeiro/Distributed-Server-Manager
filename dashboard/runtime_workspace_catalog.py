@@ -77,11 +77,27 @@ def runtime_workspace_capabilities(root: Path, game_id: str, runtime_id: str) ->
     mods = "mod" in managed_types if authoritative else bool(item.get("mods"))
     plugins = "plugin" in managed_types if authoritative else bool(item.get("plugins"))
     datapacks = "datapack" in managed_types if authoritative else False
+    bundles = content.get("bundles") if isinstance(content, dict) else {}
+    modpack = bundles.get("modpack") if isinstance(bundles, dict) else None
+    modpacks = isinstance(modpack, dict) and bool(modpack.get("providers"))
+    providers: dict[str, list[str]] = {}
+    if authoritative:
+        for content_type, declaration in managed_types.items():
+            if not isinstance(declaration, dict):
+                continue
+            declared = declaration.get("providers")
+            if isinstance(declared, list):
+                providers[str(content_type)] = sorted({str(value).strip().lower() for value in declared if str(value).strip()})
+    if modpacks:
+        providers["modpack"] = sorted({str(value).strip().lower() for value in modpack.get("providers") or [] if str(value).strip()})
+    if bool(item.get("workshop")):
+        providers["workshop"] = ["steam-workshop"]
     return {
         "mods": mods,
         "plugins": plugins,
         "datapacks": datapacks,
-        "modpacks": False,
+        "modpacks": modpacks,
+        "providers": providers,
         "workshop": bool(item.get("workshop")),
         "external_upload": bool(item.get("external_upload", True)),
         "custom_runtime": bool(item.get("custom_runtime", False)),
@@ -98,9 +114,12 @@ def contract_entitlements(contract_metadata: dict[str, Any] | None) -> dict[str,
     raw = metadata.get("entitlements") if isinstance(metadata.get("entitlements"), dict) else {}
     mode = str(metadata.get("content_mode") or metadata.get("product_variant") or "standard").lower()
     modified = mode in {"modified", "modded", "community", "workshop"}
+    mods = bool(raw.get("mods", modified))
     return {
-        "mods": bool(raw.get("mods", modified)),
+        "mods": mods,
         "plugins": bool(raw.get("plugins", modified)),
+        "modpacks": bool(raw.get("modpacks", mods)),
+        "datapacks": bool(raw.get("datapacks", mods)),
         "workshop": bool(raw.get("workshop", modified)),
         "external_upload": bool(raw.get("external_upload", True)),
         "custom_runtime": bool(raw.get("custom_runtime", False)),
@@ -120,7 +139,7 @@ def runtime_allowed_by_contract(root: Path, game_id: str, runtime_id: str, contr
             return runtime in {str(value).lower() for value in allowed}
     capabilities = runtime_workspace_capabilities(root, game_id, runtime)
     effective = effective_content_policy(contract_entitlements(metadata), capabilities)
-    if any((capabilities["mods"], capabilities["plugins"], capabilities["workshop"])) and not effective.modifications_allowed:
+    if any((capabilities["mods"], capabilities["plugins"], capabilities["modpacks"], capabilities["datapacks"], capabilities["workshop"])) and not effective.modifications_allowed:
         return False
     return True
 

@@ -9,6 +9,7 @@ from instance_activity_repository import InstanceActivityRepository
 from json_serialization import to_json_compatible
 
 PATH="/api/customer/instance/workspace/content"
+SEARCH=PATH+"/search"
 UPLOAD=PATH+"/upload"
 UPLOAD_STATUS=UPLOAD+"/status"
 UPLOAD_FINALIZE=UPLOAD+"/finalize"
@@ -55,6 +56,12 @@ def install_customer_content_http(legacy,authenticate):
    if user is None:return
    try:return send(self,200,{"transfer":transfer_view(CustomerContentUploadService(backend(),legacy.DSM_ROOT).status(user,one(parsed,"transfer_id")))})
    except Exception as exc:return error(self,exc)
+  if parsed.path==SEARCH:
+   user=require_user(self)
+   if user is None:return
+   try:
+    api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT);results=api.search(user,iid(parsed),one(parsed,"provider"),one(parsed,"content_type"),one(parsed,"q"),one(parsed,"limit","20"));return send(self,200,{"results":results,"count":len(results)})
+   except Exception as exc:return error(self,exc)
   if parsed.path!=PATH:return previous_get(self)
   user=require_user(self)
   if user is None:return
@@ -98,4 +105,4 @@ def install_customer_content_http(legacy,authenticate):
   except Exception as exc:return error(self,exc)
  legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post;legacy.DashboardHandler.do_PUT=put
 
-__all__=["PATH","UPLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","install_customer_content_http"]
+__all__=["PATH","SEARCH","UPLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","install_customer_content_http"]

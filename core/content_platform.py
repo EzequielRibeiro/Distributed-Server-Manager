@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib,json,re
 from typing import Any,Mapping
 _TOKEN=re.compile(r"^[A-Za-z0-9._:-]{1,191}$")
-_TYPES={"mod","plugin","modpack","map","asset","workshop","other"};_STATES={"installed","absent"};_ACTIVATION_STATES={"enabled","disabled"};_PROVIDERS={"steam","steam-workshop","http","http-archive","github","modrinth","curseforge","local","custom","source-build"}
+_TYPES={"mod","plugin","modpack","datapack","map","asset","workshop","other"};_STATES={"installed","absent"};_ACTIVATION_STATES={"enabled","disabled"};_PROVIDERS={"steam","steam-workshop","http","http-archive","github","modrinth","curseforge","local","custom","source-build"}
 _FORBIDDEN_ARTIFACT_KEYS={"command","shell","exec","script","password","passwd","token","secret","api_key","apikey","authorization","credential","credentials","steam_password","steam_guard"}
 _MAX_STRUCTURED_BYTES=65536
 class ContentValidationError(ValueError):pass
@@ -59,7 +59,7 @@ def normalize_assignment(raw:Mapping[str,Any],*,expected_agent_id:str|None=None)
  requested_security_state=str(raw.get("security_state") or "unscanned").strip().lower()
  if requested_security_state!="unscanned":raise ContentValidationError("security_state is Controller/Agent managed")
  security_state="unscanned"
- base={"mod":"mods","plugin":"plugins","modpack":"modpacks","map":"maps","workshop":"workshop"}.get(ctype,"assets");target=_target(raw.get("target") or f"{base}/{content}")
+ base={"mod":"mods","plugin":"plugins","modpack":"modpacks","datapack":"datapacks","map":"maps","workshop":"workshop"}.get(ctype,"assets");target=_target(raw.get("target") or f"{base}/{content}")
  deps=[_token(v,"dependency") for v in (raw.get("dependencies") or [])][:200];conflicts=[_token(v,"conflict") for v in (raw.get("conflicts") or [])][:200]
  identity={"agent_id":agent,"instance_id":instance,"content_id":content,"game_id":game,"content_type":ctype,"desired_state":state,"activation_state":activation_state,"activation_order":activation_order,"version":version,"provider":provider,"target":target,"artifact":artifact,"provenance":provenance,"metadata":metadata,"security_state":security_state,"dependencies":deps,"conflicts":conflicts};checksum=hashlib.sha256(_j(identity).encode()).hexdigest()
  return {"schema_version":2,"kind":"CapivaraContentAssignment",**identity,"checksum":checksum}
