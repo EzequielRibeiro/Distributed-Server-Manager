@@ -48,10 +48,37 @@ class CustomerRuntimeConsoleLiveTest(unittest.TestCase):
         self.assertTrue(result["read_only"])
         self.assertEqual(["live one", "live two"], [item["line"] for item in result["lines"]])
 
-    def test_customer_console_falls_back_to_command_history_when_journal_is_unavailable(self):
+    def test_customer_console_uses_agent_heartbeat_when_local_journal_is_unavailable(self):
         class Api:
             def console_output(self, user, instance_id, limit):
                 return [{"line": "stored command result"}]
+
+            def agent_console_output(self, user, instance_id, limit):
+                return {
+                    "lines": ["remote one", "remote two"],
+                    "transport": "exec",
+                    "agent_health": "online",
+                    "last_seen": "2026-09-14T23:30:00Z",
+                }
+
+        with patch(
+            "customer_instance_workspace_http.instance_journal_logs",
+            return_value={"logs": [], "error": "journal_reader_unavailable"},
+        ):
+            result = _console_payload(Api(), {"username": "aurora"}, "external-instance", 300)
+
+        self.assertEqual("agent-heartbeat", result["source"])
+        self.assertTrue(result["read_only"])
+        self.assertEqual(["remote one", "remote two"], [item["line"] for item in result["lines"]])
+        self.assertEqual("online", result["agent_health"])
+
+    def test_customer_console_falls_back_to_command_history_when_live_sources_are_empty(self):
+        class Api:
+            def console_output(self, user, instance_id, limit):
+                return [{"line": "stored command result"}]
+
+            def agent_console_output(self, user, instance_id, limit):
+                return {"lines": [], "agent_health": "offline", "last_seen": "2026-09-14T22:00:00Z"}
 
         with patch(
             "customer_instance_workspace_http.instance_journal_logs",
@@ -61,10 +88,13 @@ class CustomerRuntimeConsoleLiveTest(unittest.TestCase):
 
         self.assertEqual("command-history", result["source"])
         self.assertEqual("stored command result", result["lines"][0]["line"])
+        self.assertEqual("offline", result["agent_health"])
 
     def test_customer_runtime_live_script_applies_stateful_controls_and_console_polling(self):
         script = (ROOT / "dashboard" / "web" / "customer-instance-runtime-live.js").read_text(encoding="utf-8")
         html = (ROOT / "dashboard" / "web" / "customer-instance.html").read_text(encoding="utf-8")
+        controller_html = (ROOT / "dashboard" / "web" / "controller-instance.html").read_text(encoding="utf-8")
+        css = (ROOT / "dashboard" / "web" / "customer-instance-v2.css").read_text(encoding="utf-8")
         self.assertIn('["running","online"]', script)
         self.assertIn('start.disabled=', script)
         self.assertIn('restart.disabled=', script)
@@ -72,6 +102,11 @@ class CustomerRuntimeConsoleLiveTest(unittest.TestCase):
         self.assertIn('overview?.console?.supported', script)
         self.assertIn('/console?instance_id=', script)
         self.assertIn('setInterval(refreshConsole,3000)', script)
+        self.assertIn('source==="agent-heartbeat"', script)
+        self.assertIn('Atualização automática · 3 s', script)
+        self.assertIn('id="console-live-status"', html)
+        self.assertIn('id="console-live-status"', controller_html)
+        self.assertIn('#console-live-status.warn', css)
         self.assertIn('/customer-instance-runtime-live.js', html)
 
 

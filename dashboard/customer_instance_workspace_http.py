@@ -37,8 +37,9 @@ _FILE_ACTIVITY = {
 
 
 def _console_payload(api, user, instance_id: str, limit: int) -> dict[str, object]:
-    # Authorize first and retain command-result history as a fallback for external
-    # Agents or hosts where the local journal reader has no matching unit.
+    # Authorize first. Prefer the local journal for Hybrid instances, then the
+    # Agent heartbeat console snapshot for remote/unavailable journal readers,
+    # and retain command-result history as the final compatibility fallback.
     stored = api.console_output(user, instance_id, limit)
     journal = instance_journal_logs(instance_id, limit)
     logs = journal.get("logs")
@@ -51,11 +52,34 @@ def _console_payload(api, user, instance_id: str, limit: int) -> dict[str, objec
             "source": "systemd-journal",
             "read_only": True,
         }
+    heartbeat = {}
+    reader = getattr(api, "agent_console_output", None)
+    if callable(reader):
+        try:
+            heartbeat = reader(user, instance_id, limit) or {}
+        except Exception:
+            heartbeat = {}
+    heartbeat_lines = heartbeat.get("lines") if isinstance(heartbeat, dict) else None
+    if isinstance(heartbeat_lines, list) and heartbeat_lines:
+        return {
+            "lines": [
+                {"line": str(line), "source": "agent-heartbeat"}
+                for line in heartbeat_lines[-max(1, min(int(limit), 2000)):]
+            ],
+            "source": "agent-heartbeat",
+            "read_only": True,
+            "transport": heartbeat.get("transport"),
+            "agent_health": heartbeat.get("agent_health"),
+            "last_seen": heartbeat.get("last_seen"),
+            "journal_error": journal.get("error"),
+        }
     return {
         "lines": stored,
         "source": "command-history",
         "read_only": False,
         "journal_error": journal.get("error"),
+        "agent_health": heartbeat.get("agent_health") if isinstance(heartbeat, dict) else None,
+        "last_seen": heartbeat.get("last_seen") if isinstance(heartbeat, dict) else None,
     }
 
 

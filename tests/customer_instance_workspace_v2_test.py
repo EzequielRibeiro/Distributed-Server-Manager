@@ -95,6 +95,25 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   self.assertIn("instance.provision.retry",PERMISSION_PRESETS["manager"])
   self.assertNotIn("instance.provision.retry",PERMISSION_PRESETS["viewer"])
 
+ def test_agent_console_output_reads_heartbeat_snapshot_for_instance(self):
+  service=CustomerInstanceWorkspaceService.__new__(CustomerInstanceWorkspaceService)
+  service.require=lambda user,instance_id,permission:{"id":instance_id,"agent_id":"agent-remote"}
+  service._location=lambda agent_id:{"agent_metadata":{"instance_console_state":[
+   {"instance_id":"other","supported":True,"transport":"exec","output":["ignore"]},
+   {"instance_id":"instance-1","supported":True,"transport":"tmux","output":["one","two","three"]},
+  ]}}
+  service.agent_runtime=type("Agent",(),{
+   "snapshot":lambda self,agent_id,refresh_health=False:{"health_status":"online","last_seen":"2026-09-14T23:30:00Z"}
+  })()
+
+  result=service.agent_console_output({"role":"customer"},"instance-1",2)
+
+  self.assertEqual(["two","three"],result["lines"])
+  self.assertEqual("tmux",result["transport"])
+  self.assertTrue(result["supported"])
+  self.assertEqual("online",result["agent_health"])
+  self.assertEqual("2026-09-14T23:30:00Z",result["last_seen"])
+
  def test_overview_uses_agent_runtime_state_instead_of_stale_persisted_status(self):
   service=CustomerInstanceWorkspaceService.__new__(CustomerInstanceWorkspaceService)
   service.permissions=lambda user,instance_id:{"instance.view","instance.start","instance.stop","instance.restart"}
