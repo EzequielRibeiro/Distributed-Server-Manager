@@ -7,6 +7,7 @@
     let currentRole = "";
     let currentAdmin = null;
     let collapsed = false;
+    let doctorReportOpen = false;
 
     async function request(path, options = {}) {
         const headers = {
@@ -267,27 +268,242 @@
         return box;
     }
 
+    function doctorStatusLabel(status) {
+        const labels = {
+            healthy: "Saudável",
+            degraded: "Atenção",
+            critical: "Crítico"
+        };
+        return labels[String(status || "").toLowerCase()] || value(status, "Desconhecido");
+    }
+
+    function doctorSeverityLabel(severity) {
+        const labels = {critical: "Crítico", warning: "Aviso", info: "Informação"};
+        return labels[String(severity || "").toLowerCase()] || value(severity, "Informação");
+    }
+
+    function doctorFindingMessage(item) {
+        const code = String(item?.code || "").toLowerCase();
+        const messages = {
+            identity_incomplete: "A identidade do Agent está incompleta.",
+            not_enrolled: "O Agent não possui credencial permanente de enrollment.",
+            service_inactive: "O serviço do Capivara Agent não está ativo.",
+            controller_unreachable: "O endpoint /ping do Controller não está acessível.",
+            port_ranges_not_cached: "As faixas de portas gerenciadas ainda não estão armazenadas na configuração local do Agent.",
+            managed_port_conflict: "Sockets observados entram em conflito com uma ou mais faixas de portas gerenciadas.",
+            low_disk_space: "O sistema de arquivos raiz possui menos de 5 GiB livres.",
+            recent_game_data_failures: "Um ou mais jobs recentes de game-data falharam.",
+            steamcmd_32bit_runtime_missing: "O SteamCMD requer o runtime Linux de 32 bits.",
+            steamcmd_not_functional: "O SteamCMD está instalado, mas falhou na validação funcional.",
+            recent_update_failure: "A atualização mais recente do Agent falhou.",
+            advertise_address_missing: "O endereço anunciado (advertise_address) do Agent não está configurado."
+        };
+        return messages[code] || value(item?.message);
+    }
+
+    function doctorSeverityCounts(findings) {
+        const counts = {critical: 0, warning: 0, info: 0};
+        (findings || []).forEach(item => {
+            const severity = String(item?.severity || "info").toLowerCase();
+            counts[severity in counts ? severity : "info"] += 1;
+        });
+        return counts;
+    }
+
+    function doctorCount(value, singular, plural) {
+        return `${value} ${value === 1 ? singular : plural}`;
+    }
+
+    function doctorBytes(raw) {
+        const bytes = Number(raw);
+        if (!Number.isFinite(bytes) || bytes < 0) return "—";
+        const gib = bytes / 1024 / 1024 / 1024;
+        return `${gib.toFixed(gib >= 10 ? 1 : 2)} GiB`;
+    }
+
+    function doctorBool(raw, yes = "sim", no = "não") {
+        return raw === true ? yes : raw === false ? no : "—";
+    }
+
+    function doctorList(raw) {
+        return Array.isArray(raw) && raw.length ? raw.map(item => String(item)).join(", ") : "—";
+    }
+
+    function doctorSection(title, facts) {
+        const section = document.createElement("section");
+        section.className = "cap-doctor-section";
+        const heading = document.createElement("h3");
+        heading.textContent = title;
+        const list = document.createElement("dl");
+        list.className = "cap-detail-list";
+        facts.forEach(([term, description]) => list.append(doctorFact(term, description)));
+        section.append(heading, list);
+        return section;
+    }
+
+    function doctorPortRanges(ports) {
+        const ranges = Array.isArray(ports?.ranges) ? ports.ranges : [];
+        if (!ranges.length) return "não sincronizadas";
+        return ranges.map(item => `${String(item.protocol || "?").toUpperCase()} ${value(item.start_port, "?")}-${value(item.end_port, "?")}`).join(", ");
+    }
+
+    function doctorUpdateSummary(updates) {
+        if (!updates || typeof updates !== "object") {
+            return {pending: "não informado", lastStatus: "não informado", lastVersion: "—", lastError: "—"};
+        }
+        const pending = updates.pending && typeof updates.pending === "object" ? updates.pending : null;
+        const last = updates.last_result && typeof updates.last_result === "object" ? updates.last_result : null;
+        return {
+            pending: pending ? `sim${pending.desired_version ? ` · ${pending.desired_version}` : ""}` : "não",
+            lastStatus: last ? value(last.status) : "nenhum resultado registrado",
+            lastVersion: last ? value(last.desired_version || last.installed_version || last.version) : "—",
+            lastError: last?.error ? String(last.error) : "—"
+        };
+    }
+
+    function doctorPortConflicts(ports) {
+        const conflicts = Array.isArray(ports?.conflicts) ? ports.conflicts : [];
+        if (!conflicts.length) return Number(ports?.conflict_count || 0) ? "conflitos reportados sem detalhamento" : "nenhum";
+        return conflicts.map(item => {
+            const occupied = Array.isArray(item.occupied) && item.occupied.length ? ` · ocupadas: ${item.occupied.join(", ")}` : "";
+            return `${String(item.protocol || "?").toUpperCase()} ${value(item.start_port, "?")}-${value(item.end_port, "?")}${occupied}`;
+        }).join("; ");
+    }
+
+    function renderDoctorSections(report) {
+        const container = el("agent-doctor-sections");
+        if (!container) return;
+        const identity = report.identity || {};
+        const service = report.service || {};
+        const heartbeatState = report.heartbeat || {};
+        const controller = heartbeatState.controller || {};
+        const host = report.host || {};
+        const capabilities = report.capabilities || {};
+        const steamcmd = capabilities.steamcmd_status || {};
+        const java = capabilities.java_status || {};
+        const ports = report.ports || {};
+        const gameData = report.game_data || {};
+        const updates = doctorUpdateSummary(report.updates);
+        const platform = `${value(host.os, "—")} ${value(host.architecture, "")}`.trim();
+        const javaState = java.installed ? `${java.functional ? "funcional" : "com falha"}${java.version ? ` · ${java.version}` : ""}` : "não instalado";
+        const hasSteamDetail = Object.prototype.hasOwnProperty.call(steamcmd, "installed");
+        const steamState = hasSteamDetail
+            ? (steamcmd.installed ? (steamcmd.functional ? "funcional" : "com falha") : "não instalado")
+            : doctorBool(capabilities.steamcmd, "disponível", "não instalado");
+        const runtime32 = typeof steamcmd.runtime_32bit === "boolean"
+            ? (steamcmd.runtime_32bit ? "OK" : "ausente")
+            : String(host.os || "").toLowerCase() === "windows" ? "não aplicável" : "—";
+
+        container.replaceChildren(
+            doctorSection("Identidade", [
+                ["Hostname", value(host.hostname || identity.name)],
+                ["Agent ID", value(identity.agent_id)],
+                ["Node ID", value(identity.node_id)],
+                ["Controller ID", value(identity.controller_id)],
+                ["Versão", value(identity.version, "não informada pelo Doctor")],
+                ["Sistema", platform],
+                ["Enrollment", identity.enrolled ? "credencial permanente presente" : "credencial ausente"]
+            ]),
+            doctorSection("Serviço e comunicação", [
+                ["Serviço", value(service.service)],
+                ["Load state", value(service.load_state)],
+                ["Active state", value(service.active_state || service.state)],
+                ["Substate", value(service.sub_state)],
+                ["Controller", controller.reachable ? "alcançável" : "não alcançável"],
+                ["/ping", controller.status_code ? `HTTP ${controller.status_code}` : "—"],
+                ["Erro /ping", controller.error ? String(controller.error) : "—"],
+                ["Heartbeat", heartbeatState.interval_seconds != null ? `${heartbeatState.interval_seconds} s` : "—"],
+                ["Degraded após", heartbeatState.degraded_after_seconds != null ? `${heartbeatState.degraded_after_seconds} s` : "—"],
+                ["Offline após", heartbeatState.offline_after_seconds != null ? `${heartbeatState.offline_after_seconds} s` : "—"]
+            ]),
+            doctorSection("Recursos do host", [
+                ["CPU", host.cpu_logical_cores != null ? `${host.cpu_logical_cores} core(s) lógico(s)` : "—"],
+                ["RAM total", doctorBytes(host.ram_total_bytes)],
+                ["Disco total", doctorBytes(host.storage_root_total_bytes)],
+                ["Disco livre", doctorBytes(host.storage_root_free_bytes)]
+            ]),
+            doctorSection("Pré-requisitos e capacidades", [
+                ["SteamCMD", steamState],
+                ["Runtime 32-bit", runtime32],
+                ["Java", javaState],
+                ["Docker", doctorBool(capabilities.docker, "disponível", "indisponível")],
+                ["Wine", doctorBool(capabilities.wine, "disponível", "indisponível")],
+                ["Backup", doctorBool(capabilities.backup, "suportado", "indisponível")],
+                ["Runtime profiles", doctorList(capabilities.runtime_profiles)],
+                ["Content providers", doctorList(capabilities.content_providers)]
+            ]),
+            doctorSection("Portas", [
+                ["Faixas gerenciadas", doctorPortRanges(ports)],
+                ["Conflitos", `${Number(ports.conflict_count || 0)} conflito(s)`],
+                ["Detalhes de conflitos", doctorPortConflicts(ports)],
+                ["Estado", ports.configured ? "configuração local disponível" : "faixas ainda não sincronizadas"]
+            ]),
+            doctorSection("Game-data", [
+                ["Root", value(gameData.game_data_root)],
+                ["Conteúdos instalados", value(gameData.installed_count, 0)],
+                ["Jobs ativos", value(gameData.active_jobs, 0)],
+                ["Falhas recentes", value(gameData.failed_recent_jobs, 0)]
+            ]),
+            doctorSection("Atualização", [
+                ["Versão instalada", value(identity.version, "não informada pelo Doctor")],
+                ["Atualização pendente", updates.pending],
+                ["Último resultado", updates.lastStatus],
+                ["Versão do último resultado", updates.lastVersion],
+                ["Erro do último resultado", updates.lastError]
+            ])
+        );
+    }
+
+    function setDoctorReportOpen(open, {scroll = false} = {}) {
+        doctorReportOpen = Boolean(open);
+        const reportBox = el("agent-doctor-report");
+        const viewButton = el("agent-doctor-view-report");
+        if (reportBox) reportBox.hidden = !doctorReportOpen;
+        if (viewButton && !viewButton.hidden) {
+            viewButton.textContent = doctorReportOpen ? "Ocultar relatório" : "Ver relatório";
+            viewButton.setAttribute("aria-expanded", doctorReportOpen ? "true" : "false");
+        }
+        if (doctorReportOpen && scroll && reportBox) {
+            reportBox.scrollIntoView({behavior: "smooth", block: "start"});
+        }
+    }
+
     function renderDoctor(state) {
         const stateBox = el("agent-doctor-state");
-        const reportBox = el("agent-doctor-report");
+        const healthBox = el("agent-doctor-health");
+        const viewButton = el("agent-doctor-view-report");
         const findingsBox = el("agent-doctor-findings");
-        const facts = el("agent-doctor-facts");
         if (!state) {
             if (stateBox) stateBox.textContent = "Nenhum diagnóstico solicitado.";
-            if (reportBox) reportBox.hidden = true;
+            if (healthBox) healthBox.hidden = true;
+            if (viewButton) viewButton.hidden = true;
+            setDoctorReportOpen(false);
             return;
         }
         const status = String(state.status || "unknown");
         if (stateBox) stateBox.textContent = `Estado: ${status}${state.requested_at ? ` · solicitado em ${heartbeat(state.requested_at)}` : ""}${state.completed_at ? ` · concluído em ${heartbeat(state.completed_at)}` : ""}`;
         const report = state.result;
         if (!report || typeof report !== "object") {
-            if (reportBox) reportBox.hidden = true;
+            if (healthBox) healthBox.hidden = true;
+            if (viewButton) viewButton.hidden = true;
+            setDoctorReportOpen(false);
             return;
         }
-        reportBox.hidden = false;
-        text("agent-doctor-summary", `Status ${value(report.status)} · ${report.ready ? "Agent apto" : "Agent requer atenção"}`);
-        findingsBox.replaceChildren();
         const findings = Array.isArray(report.findings) ? report.findings : [];
+        const counts = doctorSeverityCounts(findings);
+        const severitySummary = [
+            doctorCount(counts.critical, "crítico", "críticos"),
+            doctorCount(counts.warning, "aviso", "avisos"),
+            doctorCount(counts.info, "informação", "informações")
+        ].join(" · ");
+        if (healthBox) {
+            healthBox.hidden = false;
+            healthBox.textContent = `Saúde: ${doctorStatusLabel(report.status)} · ${report.ready ? "Agent apto" : "Agent requer atenção"} · ${severitySummary}`;
+        }
+        if (viewButton) viewButton.hidden = false;
+        setDoctorReportOpen(doctorReportOpen);
+        text("agent-doctor-summary", `${doctorStatusLabel(report.status)} · ${report.ready ? "Agent apto" : "Agent requer atenção"} · ${severitySummary}`);
+        findingsBox.replaceChildren();
         if (!findings.length) {
             const ok = document.createElement("div");
             ok.className = "cap-doctor-finding healthy";
@@ -296,21 +512,16 @@
         }
         findings.forEach(item => {
             const node = document.createElement("div");
-            node.className = `cap-doctor-finding ${String(item.severity || "info").toLowerCase()}`;
+            const severity = String(item.severity || "info").toLowerCase();
+            node.className = `cap-doctor-finding ${severity}`;
             const strong = document.createElement("strong");
-            strong.textContent = value(item.code, "finding");
+            strong.textContent = `${doctorSeverityLabel(severity)} · ${value(item.code, "finding")}`;
             const span = document.createElement("span");
-            span.textContent = value(item.message);
+            span.textContent = doctorFindingMessage(item);
             node.append(strong, span);
             findingsBox.append(node);
         });
-        facts.replaceChildren(
-            doctorFact("Serviço", value(report.service?.active_state)),
-            doctorFact("Controller", report.heartbeat?.controller?.reachable ? "alcançável" : "não alcançável"),
-            doctorFact("Enrollment", report.identity?.enrolled ? "credencial permanente presente" : "credencial ausente"),
-            doctorFact("Portas", report.ports?.configured ? `${value(report.ports?.conflict_count, 0)} conflito(s)` : "faixas não configuradas"),
-            doctorFact("Armazenamento livre", report.host?.storage_root_free_bytes ? `${(Number(report.host.storage_root_free_bytes) / 1024 / 1024 / 1024).toFixed(1)} GiB` : "—")
-        );
+        renderDoctorSections(report);
     }
 
     function renderStorage(storage) {
@@ -516,6 +727,7 @@
         el("agent-admin-save-storage")?.addEventListener("click", () => storageAction(false));
         el("agent-admin-migrate-storage")?.addEventListener("click", () => storageAction(true));
         el("agent-run-doctor")?.addEventListener("click", runDoctor);
+        el("agent-doctor-view-report")?.addEventListener("click", () => setDoctorReportOpen(!doctorReportOpen, {scroll: !doctorReportOpen}));
         el("agent-prepare-relink")?.addEventListener("click", prepareRelink);
         el("agent-remove")?.addEventListener("click", removeAgent);
 

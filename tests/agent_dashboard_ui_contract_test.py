@@ -29,9 +29,16 @@ class AgentDashboardUiContractTest(unittest.TestCase):
   for view in ("monitoring","events","diagnostics","updates","logs"):
    self.assertIn(f'href="agent-observability.html?view={view}"',self.detail)
   self.assertIn('telemetry-widgets.js?v=4',self.detail)
-  self.assertIn('agent-details.js?v=14',self.detail)
+  self.assertIn('agent-details.js?v=16',self.detail)
   self.assertIn('telemetry-widgets.css?v=4',self.detail)
   self.assertLess(self.detail.index('id="agent-telemetry"'),self.detail.index('id="agent-admin-panel"'))
+ def test_agent_doctor_report_is_explicitly_discoverable_and_toggleable(self):
+  for marker in ('id="agent-doctor-view-report"','id="agent-doctor-health"','id="agent-doctor-sections"',">Ver relatório<"):
+   self.assertIn(marker,self.detail)
+  for marker in ("doctorStatusLabel","doctorSeverityCounts","doctorFindingMessage","renderDoctorSections","setDoctorReportOpen","Ocultar relatório","aria-expanded","scrollIntoView","Pré-requisitos e capacidades","Game-data","Atualização"):
+   self.assertIn(marker,self.detail_js)
+  self.assertIn('agent-details.js?v=16',self.detail)
+  self.assertIn('agent-details.css?v=5',self.detail)
  def test_agent_details_require_agent_context(self):
   self.assertIn('location.replace("agents.html?missing_agent=1")',self.detail_js)
   self.assertIn('if(!agentId)',self.detail_js)
@@ -51,7 +58,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
    self.assertIn(marker,self.home_js)
   self.assertIn("cap-sidebar-close", (ROOT/"dashboard/web/dashboard-home-v3.css").read_text())
   self.assertIn("dashboard-home-v3.css?v=9",self.detail)
-  self.assertIn("agent-details.js?v=14",self.detail)
+  self.assertIn("agent-details.js?v=16",self.detail)
  def test_dashboard_v3_navigation_preserves_rbac_and_add_agent(self):
   for text in ('href="servers.html"','href="agents.html"','href="add-agent.html"','admin-only','agent-manager-only','href="catalog.html"','href="game-profiles.html"','href="regions.html"','href="datacenters.html"','href="placement.html"','href="observability.html"','href="alerts.html"','href="events.html"','href="monitoring.html"','href="controller-logs.html"','href="diagnostics.html"','href="operations.html#backups"'):self.assertIn(text,self.sidebar)
   for legacy in ('infrastructure.html#regions','infrastructure.html#datacenters','infrastructure.html#placement','observability.html#alerts','observability.html#events','observability.html#monitoring','observability.html#diagnostics'):self.assertNotIn(legacy,self.sidebar)
