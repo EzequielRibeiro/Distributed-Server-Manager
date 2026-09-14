@@ -202,7 +202,7 @@ U8 usa `/api/customer/instance/workspace/content` como superfície Customer can�
 
 Tracker: #505.
 
-## U9 — Updates / Rollback — em andamento
+## U9 — Updates / Rollback — concluída
 
 U9 usa as revisões imutáveis já persistidas por UCP, sem tabela paralela de updates. Update de conteúdo estruturado é server-resolved: o Customer solicita `update`, mas URL, hash e versão continuam pertencendo ao Controller/provider resolver. Modrinth/CurseForge usam a identidade de projeto persistida na provenance; Workshop usa `PublishedFileId` canônico.
 
@@ -216,22 +216,25 @@ A camada Agent continua responsável por staging, checksum, U7 scan, ativação,
 
 Tracker: #509.
 
-## U10 — E2E Linux/Windows
+## U10 — E2E Linux/Windows — em andamento
 
-O UCP não é considerado universalmente provado sem uma matriz representativa que inclua:
+U10 usa um harness distribuído hermético que combina SQLite real no Controller, `record_agent_heartbeat()` real, reconciler Universal Content real e materialização Minecraft real em raízes efêmeras. Downloads de provider são fixtures confinadas no `game-data`; somente o engine YARA-X é substituído por verdicts determinísticos para que o gate não dependa de rede pública nem de rulesets externos.
 
-- DayZ/Project Zomboid já cobertos pela U5;
-- Paper + plugin;
-- NeoForge ou Fabric + mod;
-- modpack vindo de provider;
-- external upload;
-- enable/disable e reorder quando aplicável;
-- restart/readiness;
-- update + rollback;
-- isolamento entre instâncias;
-- paridade Linux/Windows.
+A matriz representativa prova:
 
-Tracker dos gates Minecraft: #491.
+- regressões DayZ/Project Zomboid da U5 continuam no gate;
+- Paper + plugin com instalação, enable/disable, reorder, update e rollback por readiness;
+- NeoForge + mod na projeção nativa `mods/`;
+- modpack provider-backed com overrides, diff de manifesto, update e rollback do bundle pai + children;
+- External Upload passando por Artifact Transfer, quarantine, U7 e a mesma ativação canônica;
+- revisão bloqueada ou `scan_failed` preserva a revisão limpa previamente aplicada e nunca a remove da projeção nativa;
+- heartbeat converge o Controller para a revisão restaurada pelo Agent;
+- isolamento entre instâncias durante update/rollback;
+- equivalência semântica Linux/Windows.
+
+O workflow `Universal Content E2E` executa a prova em runners nativos Ubuntu 24.04 e Windows 2025. O workflow UCP também executa a matriz Linux para feedback rápido.
+
+Tracker U10: #513. Tracker dos gates Minecraft: #491.
 
 ## U11 — Cleanup / Migration
 

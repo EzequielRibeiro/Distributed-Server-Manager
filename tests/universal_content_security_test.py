@@ -52,5 +52,15 @@ class UniversalContentSecurityTest(unittest.TestCase):
   self.assertIsNotNone(module._entry({**base,"security_policy_version":1,"security_state":"clean"}))
   for state in ("unscanned","suspicious","blocked","scan_failed"):
    with self.subTest(state=state):self.assertIsNone(module._entry({**base,"security_policy_version":1,"security_state":state}))
+ def test_rejected_candidate_preserves_prior_clean_applied_projection(self):
+  for platform in ("linux","windows"):
+   with self.subTest(platform=platform):
+    module=load(ROOT/f'agents/{platform}/runtime/content_activation_projection.py',f'u10_projection_{platform}_{id(self)}')
+    base={"desired_state":"installed","activation_state":"enabled","installed_version":"1","content_id":"mod","managed_path":"/tmp/mod","security_policy_version":1,"applied_revision":4,"applied_checksum":"a"*64,"applied_security_state":"clean"}
+    for status,desired_security in (("security_blocked","blocked"),("security_scan_failed","scan_failed")):
+     entry=module._entry({**base,"status":status,"security_state":desired_security})
+     self.assertIsNotNone(entry);self.assertEqual(entry["content_id"],"mod")
+    self.assertIsNone(module._entry({**base,"status":"security_blocked","security_state":"blocked","applied_security_state":"unscanned"}))
+    self.assertIsNone(module._entry({**base,"status":"security_blocked","security_state":"blocked","applied_revision":None,"applied_checksum":None}))
 
 if __name__=='__main__':unittest.main()

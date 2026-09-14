@@ -1,0 +1,51 @@
+name: Universal Content E2E
+
+on:
+  pull_request:
+    paths:
+      - 'core/content_*.py'
+      - 'core/minecraft_*.py'
+      - 'database/content_*.py'
+      - 'database/artifact_transfer_*.py'
+      - 'dashboard/agent_heartbeat_api.py'
+      - 'agents/linux/runtime/content_*.py'
+      - 'agents/windows/runtime/content_*.py'
+      - 'tests/universal_content_e2e_*.py'
+      - 'tests/universal_content_activation_runtime_test.py'
+      - '.github/workflows/universal-content-e2e.yml'
+      - '.github/workflows/universal-content.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-universal-content-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile U10 harness
+        run: python3 -m py_compile tests/universal_content_e2e_harness.py tests/universal_content_e2e_test.py
+      - name: Run U10 Linux matrix
+        env:
+          CAPIVARA_U10_PLATFORM: linux
+        run: python3 -m unittest -v tests/universal_content_e2e_test.py tests/universal_content_activation_runtime_test.py
+
+  windows-universal-content-e2e:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile U10 harness
+        run: python -m py_compile tests/universal_content_e2e_harness.py tests/universal_content_e2e_test.py
+      - name: Run U10 Windows matrix
+        env:
+          CAPIVARA_U10_PLATFORM: windows
+        run: python -m unittest -v tests/universal_content_e2e_test.py
