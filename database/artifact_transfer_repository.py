@@ -9,6 +9,27 @@ import uuid
 from alert_repository import AlertSession,dialect_for_backend
 
 FINAL={"completed","failed","cancelled","expired"};ACTIVE={"staging","queued","delivered","transferring"}
+_ARTIFACT_CHUNK_BYTES=1024*1024
+_MAX_ARTIFACT_BYTES=64*1024*1024*1024
+
+def _copy_artifact_stream(source,out,content_length=None):
+ expected=None if content_length is None else int(content_length)
+ if expected is not None and (expected<0 or expected>_MAX_ARTIFACT_BYTES):raise ValueError("artifact exceeds 64 GiB transfer limit")
+ h=hashlib.sha256();total=0;remaining=expected
+ while remaining is None or remaining>0:
+  read_size=_ARTIFACT_CHUNK_BYTES if remaining is None else min(_ARTIFACT_CHUNK_BYTES,remaining)
+  chunk=source.read(read_size)
+  if not chunk:
+   if remaining not in {None,0}:raise ValueError("artifact content length mismatch")
+   break
+  total+=len(chunk)
+  if total>_MAX_ARTIFACT_BYTES:raise ValueError("artifact exceeds 64 GiB transfer limit")
+  if remaining is not None:
+   if len(chunk)>remaining:raise ValueError("artifact content length mismatch")
+   remaining-=len(chunk)
+  h.update(chunk);out.write(chunk)
+ if expected is not None and total!=expected:raise ValueError("artifact content length mismatch")
+ return total,h.hexdigest()
 
 def _validated_content_upload_destination(item,report):
  destination=str(report.get("destination_ref") or "").strip().replace("\\","/")
@@ -72,41 +93,27 @@ class ArtifactTransferRepository:
   item=self.get(transfer_id)
   if item["direction"]!="agent_to_controller" or str(item["agent_id"])!=str(agent_id):raise PermissionError("artifact transfer ownership mismatch")
   if str(item["status"]) in FINAL:raise ValueError("artifact transfer is already final")
-  path=self._path(transfer_id,item["filename"]);path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_suffix(path.suffix+".part");h=hashlib.sha256();total=0
+  path=self._path(transfer_id,item["filename"]);path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_suffix(path.suffix+".part");total=0;digest=""
   try:
-   with tmp.open("wb") as out:
-    while True:
-     chunk=source.read(1024*1024)
-     if not chunk:break
-     total+=len(chunk)
-     if total>64*1024*1024*1024:raise ValueError("artifact exceeds 64 GiB transfer limit")
-     h.update(chunk);out.write(chunk)
-   if content_length is not None and total!=int(content_length):raise ValueError("artifact content length mismatch")
+   with tmp.open("wb") as out:total,digest=_copy_artifact_stream(source,out,content_length)
    os.replace(tmp,path)
   finally:
    try:tmp.unlink()
    except FileNotFoundError:pass
-  ph=self.dialect.placeholder;digest=h.hexdigest()
+  ph=self.dialect.placeholder
   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status='completed',size_bytes={ph},transferred_bytes={ph},sha256={ph},controller_path={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(total,total,digest,str(path),transfer_id))
   return self.get(transfer_id)
  def stage_from_controller(self,transfer_id,source,content_length=None):
   item=self.get(transfer_id)
   if item["direction"]!="controller_to_agent":raise ValueError("transfer direction does not accept Controller upload")
-  path=self._path(transfer_id,item["filename"]);path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_suffix(path.suffix+".part");h=hashlib.sha256();total=0
+  path=self._path(transfer_id,item["filename"]);path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_suffix(path.suffix+".part");total=0;digest=""
   try:
-   with tmp.open("wb") as out:
-    while True:
-     chunk=source.read(1024*1024)
-     if not chunk:break
-     total+=len(chunk)
-     if total>64*1024*1024*1024:raise ValueError("artifact exceeds 64 GiB transfer limit")
-     h.update(chunk);out.write(chunk)
-   if content_length is not None and total!=int(content_length):raise ValueError("artifact content length mismatch")
+   with tmp.open("wb") as out:total,digest=_copy_artifact_stream(source,out,content_length)
    os.replace(tmp,path)
   finally:
    try:tmp.unlink()
    except FileNotFoundError:pass
-  ph=self.dialect.placeholder;digest=h.hexdigest()
+  ph=self.dialect.placeholder
   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET size_bytes={ph},transferred_bytes=0,sha256={ph},controller_path={ph},status='queued',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(total,digest,str(path),transfer_id))
   return self.get(transfer_id)
  def controller_artifact(self,transfer_id):
