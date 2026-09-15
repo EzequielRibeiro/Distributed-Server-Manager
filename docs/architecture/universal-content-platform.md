@@ -236,11 +236,15 @@ O workflow `Universal Content E2E` executa a prova em runners nativos Ubuntu 24.
 
 Tracker U10: #513. Tracker dos gates Minecraft: #491.
 
-## U11 — Cleanup / Migration
+## U11 — Cleanup / Migration — em andamento
 
-U11 deve provar que não restou um sistema paralelo de mods/plugins Minecraft fora do UCP. Fluxos legados podem existir durante a migração, mas o estado final precisa ter uma única autoridade para instalação, ativação, segurança, update e rollback.
+U11 torna o UCP a única autoridade operacional para conteúdo gerenciado. As rotas legadas de mutação do catálogo (`install/remove/verify/rollback/list-installed`) foram retiradas da API; `installer/content_manager.sh` permanece somente como entrypoint fail-closed para consumidores antigos e retorna `legacy_content_path_retired`. O antigo módulo `/api/mods`/`cap mods`, que dependia de um backend `mods/` já inexistente, foi removido.
 
-Isso inclui retirar qualquer caminho em que File Manager, Dashboard ou scripts legados instalem conteúdo gerenciado diretamente em `mods/`/`plugins/` sem passar pelo contrato canônico.
+O File Manager continua disponível para configs, saves e arquivos normais, porém mutações em roots declaradas pelo runtime como `mod_paths`, `plugin_paths` ou `workshop_paths` são recusadas no Controller **e** no Agent. Isso cobre upload, escrita, mkdir, delete, rename/move e extract e impede que `mods/`, `plugins/` ou Workshop sejam usados como instalador paralelo. External Upload continua suportado exclusivamente pelo Artifact Transfer Plane/UCP.
+
+Assets frontend antigos (`catalog-v2.js` e `customer-instance.js`) também foram retirados; a área Customer usa `customer-instance-v2.js` e `/api/customer/instance/workspace/content`. Tabelas históricas como `content_installations` podem permanecer no schema por compatibilidade/migração, mas não possuem caminho operacional de mutação e não são autoridade de desired state.
+
+Tracker: #520.
 
 ## Segurança
 

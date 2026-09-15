@@ -14,7 +14,7 @@ CUSTOMER_FILES = {
     "customer-deletion-v2.js", "customer-email-change.js",
     "customer-instance-activity.js", "customer-instance-connection.js",
     "customer-instance-delete.js", "customer-instance-events.js",
-    "customer-instance-v2.js", "customer-instance.js", "customer-members.js",
+    "customer-instance-v2.js", "customer-members.js",
     "customer-navigation.js", "customer-placement-selector.js",
     "customer-profile.js", "customer-shell.js", "customer.js",
     "customer-backups.js", "customer-integrations.js", "customer-account.js",

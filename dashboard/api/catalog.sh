@@ -34,11 +34,8 @@ case "${ACTION}" in
         exec "${CATALOG}" content show "${1}" --json
         ;;
     installed)
-        [[ -n "${1:-}" ]] || {
-            printf '{"error":"missing_instance_path"}\n'
-            exit 2
-        }
-        exec "${CATALOG}" content list-installed "${1}" --json
+        printf '{"error":"legacy_content_path_retired","message":"Legacy installed-content state is retired; use the Universal Content Platform."}\n'
+        exit 3
         ;;
 esac
 

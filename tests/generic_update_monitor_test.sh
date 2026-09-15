@@ -29,6 +29,15 @@ jq -e '.kind=="UpdateProbe" and .target_kind=="runtime" and .status=="current" a
 OUT="$(MOCK_REMOTE=101 bash "${ROOT}/installer/update_monitor.sh" probe content local package "${TMP}/installed")"
 jq -e '.target_kind=="content" and .status=="update_available" and .update_available==true and .installed_version=="100" and .remote_version=="101"' <<<"${OUT}" >/dev/null
 
+touch "${TMP}/request.json"
+mkdir -p "${TMP}/instance"
+set +e
+bash "${ROOT}/installer/update_monitor.sh" apply-content "${TMP}/request.json" "${TMP}/instance" >/dev/null 2>"${TMP}/apply-content.err"
+APPLY_CONTENT_STATUS=$?
+set -e
+[[ "${APPLY_CONTENT_STATUS}" -eq 3 ]] || { echo "legacy apply-content was not retired" >&2; exit 1; }
+grep -Fq 'Universal Content Platform' "${TMP}/apply-content.err" || { echo "retired apply-content lacks UCP migration guidance" >&2; exit 1; }
+
 # The generic monitor must remain game-neutral.
 if grep -Eqi 'dayz|zomboid|arma|counter.?strike|rust|palworld' "${ROOT}/installer/update_monitor.sh"; then
     echo "update_monitor.sh contains game-specific logic" >&2

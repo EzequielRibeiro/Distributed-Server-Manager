@@ -90,11 +90,8 @@ update_apply_runtime()
 
 update_apply_content()
 {
-    local REQUEST="${1:-}" INSTANCE="${2:-}"
-    [[ -f "${REQUEST}" ]] || { update_error "Content request not found: ${REQUEST}"; return 2; }
-    [[ -n "${INSTANCE}" ]] || { update_error "Instance path is required."; return 2; }
-    # Content Manager owns planning, staging, activation adapters and rollback.
-    "${DSM_ROOT}/installer/content_manager.sh" install "${REQUEST}" "${INSTANCE}"
+    update_error "Legacy apply-content is retired; ContentRevision updates are owned by the Universal Content Platform."
+    return 3
 }
 
 case "${1:-}" in

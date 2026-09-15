@@ -10,7 +10,6 @@ CONTENT_ROOT="${CATALOG_ROOT}/content"
 RESOLVER_ROOT="${DSM_ROOT}/installer/version_resolvers"
 COMPATIBILITY_RESOLVER="${DSM_ROOT}/installer/compatibility_resolver.sh"
 CONTENT_PLANNER="${DSM_ROOT}/installer/content_planner.sh"
-CONTENT_MANAGER="${DSM_ROOT}/installer/content_manager.sh"
 FORMATTER="${DSM_ROOT}/installer/catalog_formatter.sh"
 CATALOG_PATH_RESOLVER="${DSM_ROOT}/installer/catalog_paths.sh"
 OUTPUT_FORMAT="human"
@@ -34,6 +33,17 @@ done
 set -- "${CATALOG_ARGS[@]}"
 
 catalog_error(){ echo "[DSM][CATALOG][ERROR] $*" >&2; }
+catalog_content_retired()
+{
+    local ACTION="${1:-mutation}" MESSAGE
+    MESSAGE="Legacy content ${ACTION} is retired; use the Universal Content Platform."
+    if [[ "${OUTPUT_FORMAT}" == "json" ]]; then
+        jq -nc --arg action "${ACTION}" --arg message "${MESSAGE}" '{error:"legacy_content_path_retired",action:$action,message:$message}'
+    else
+        catalog_error "${MESSAGE}"
+    fi
+    return 3
+}
 
 catalog_output()
 {
@@ -228,11 +238,7 @@ Usage:
   catalog.sh content list [GAME]
   catalog.sh content show CONTENT_ID
   catalog.sh content plan REQUEST.json INSTANCE_PATH
-  catalog.sh content install REQUEST.json INSTANCE_PATH
-  catalog.sh content remove INSTANCE_PATH CONTENT_ID
-  catalog.sh content list-installed INSTANCE_PATH
-  catalog.sh content verify INSTANCE_PATH
-  catalog.sh content rollback INSTANCE_PATH
+  # content install/remove/list-installed/verify/rollback are retired; use UCP.
   catalog.sh compatibility check REQUEST.json
   catalog.sh providers
 
@@ -260,11 +266,7 @@ case "${1:-}" in
             list) catalog_list "${CONTENT_ROOT}" "${3:-}" | catalog_output content-list ;;
             show) [[ $# -eq 3 ]] || { catalog_usage; exit 2; }; catalog_show "${CONTENT_ROOT}" "$3" | catalog_output definition ;;
             plan) [[ $# -eq 4 ]] || { catalog_usage; exit 2; }; "${CONTENT_PLANNER}" plan "$3" "$4" | catalog_output plan ;;
-            install) [[ $# -eq 4 ]] || { catalog_usage; exit 2; }; DSM_OUTPUT_FORMAT="${OUTPUT_FORMAT}" "${CONTENT_MANAGER}" install "$3" "$4" ;;
-            remove) [[ $# -eq 4 ]] || { catalog_usage; exit 2; }; DSM_OUTPUT_FORMAT="${OUTPUT_FORMAT}" "${CONTENT_MANAGER}" remove "$3" "$4" ;;
-            list-installed) [[ $# -eq 3 ]] || { catalog_usage; exit 2; }; DSM_OUTPUT_FORMAT="${OUTPUT_FORMAT}" "${CONTENT_MANAGER}" list-installed "$3" ;;
-            verify) [[ $# -eq 3 ]] || { catalog_usage; exit 2; }; DSM_OUTPUT_FORMAT="${OUTPUT_FORMAT}" "${CONTENT_MANAGER}" verify "$3" ;;
-            rollback) [[ $# -eq 3 ]] || { catalog_usage; exit 2; }; DSM_OUTPUT_FORMAT="${OUTPUT_FORMAT}" "${CONTENT_MANAGER}" rollback "$3" ;;
+            install|remove|list-installed|verify|rollback) catalog_content_retired "$2" ;;
             *) catalog_usage; exit 2 ;;
         esac
         ;;

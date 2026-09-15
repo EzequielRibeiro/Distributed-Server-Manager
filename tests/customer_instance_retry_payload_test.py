@@ -4,7 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "dashboard" / "customer_instance_creation.py"
-FRONTEND = ROOT / "dashboard" / "web" / "customer-instance.js"
+FRONTEND = ROOT / "dashboard" / "web" / "customer-instance-v2.js"
 
 
 def test_retry_endpoint_accepts_customer_workspace_instance_key() -> None:

@@ -147,17 +147,32 @@ def normalized_instance_relative_path(value: str) -> str:
     return path.as_posix()
 
 
+def _runtime_path_set(runtime_rules: dict[str, Any] | None, *names: str) -> set[str]:
+    rules = runtime_rules if isinstance(runtime_rules, dict) else {}
+    return {
+        str(item).strip("/").lower()
+        for name in names
+        for item in rules.get(name, [])
+        if str(item).strip()
+    }
+
+
+def _path_under(path: str, roots: Iterable[str]) -> bool:
+    return any(path == root or path.startswith(root.rstrip("/") + "/") for root in roots)
+
+
+def enforce_managed_content_mutation(relative_path: str, *, runtime_rules: dict[str, Any] | None = None) -> None:
+    path = normalized_instance_relative_path(relative_path).lower()
+    managed = _runtime_path_set(runtime_rules, "mod_paths", "plugin_paths", "workshop_paths")
+    if _path_under(path, managed):
+        raise PermissionError("managed content path is UCP-owned; use the Content workspace")
+
+
 def enforce_content_upload(relative_path: str, *, policy: EffectiveContentPolicy, runtime_rules: dict[str, Any] | None = None) -> None:
     path = normalized_instance_relative_path(relative_path).lower(); rules = runtime_rules if isinstance(runtime_rules, dict) else {}
-    protected = [str(item).strip("/").lower() for item in rules.get("protected_paths", []) if str(item).strip()]
-    if any(path == item or path.startswith(item + "/") for item in protected): raise PermissionError("managed runtime path cannot be modified by customer")
-    for rule_name, allowed, error in (
-        ("mod_paths", policy.mods_allowed, "mods are not allowed by this contract"),
-        ("plugin_paths", policy.plugins_allowed, "plugins are not allowed by this contract"),
-        ("workshop_paths", policy.workshop_allowed, "workshop content is not allowed by this contract"),
-    ):
-        candidates = [str(item).strip("/").lower() for item in rules.get(rule_name, []) if str(item).strip()]
-        if candidates and any(path == item or path.startswith(item + "/") for item in candidates) and not allowed: raise PermissionError(error)
+    protected = _runtime_path_set(rules, "protected_paths")
+    if _path_under(path, protected): raise PermissionError("managed runtime path cannot be modified by customer")
+    enforce_managed_content_mutation(path, runtime_rules=rules)
     if PurePosixPath(path).suffix.lower() in {str(x).lower() for x in rules.get("runtime_extensions", [])} and not policy.custom_runtime_allowed:
         raise PermissionError("custom runtime artifacts are not allowed by this contract")
     if not policy.external_upload_allowed: raise PermissionError("external file upload is not allowed by this contract")
@@ -165,6 +180,6 @@ def enforce_content_upload(relative_path: str, *, policy: EffectiveContentPolicy
 
 __all__ = [
     "CONTENT_FEATURES", "EffectiveContentPolicy", "FILE_ACTION_PERMISSION", "INSTANCE_PERMISSIONS", "PERMISSION_PRESETS",
-    "content_ui_sections", "effective_content_policy", "effective_permissions", "enforce_content_upload",
+    "content_ui_sections", "effective_content_policy", "effective_permissions", "enforce_content_upload", "enforce_managed_content_mutation",
     "normalized_instance_relative_path", "permissions_for_profile", "require_permission", "validate_startup_values",
 ]

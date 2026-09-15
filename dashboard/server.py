@@ -219,7 +219,6 @@ STATIC_FILES = {
     "/style.css": WEB_DIR / "style.css",
     "/installation-events.js": WEB_DIR / "installation-events.js",
     "/installation-events.css": WEB_DIR / "installation-events.css",
-    "/catalog-v2.js": WEB_DIR / "catalog-v2.js",
     "/js/notifications.js": WEB_DIR / "js" / "notifications.js",
     "/js/dashboard-state.js": WEB_DIR / "js" / "dashboard-state.js",
     "/js/infrastructure-explorer.js": WEB_DIR / "js" / "infrastructure-explorer.js",
@@ -249,7 +248,6 @@ STATIC_FILES = {
     "/customer.css": WEB_DIR / "customer.css",
     "/customer-delete.css": WEB_DIR / "customer-delete.css",
     "/customer-instance.html": WEB_DIR / "customer-instance.html",
-    "/customer-instance.js": WEB_DIR / "customer-instance.js",
     "/contract-demo.html": WEB_DIR / "contract-demo.html",
     "/contract-demo.js": WEB_DIR / "contract-demo.js",
     "/runtime-selector.js": WEB_DIR / "runtime-selector.js",
@@ -2340,6 +2338,21 @@ def catalog_api(action, *args, user=None):
     return success, data
 
 
+LEGACY_CATALOG_CONTENT_MUTATIONS = frozenset({"install", "remove", "verify", "rollback"})
+LEGACY_INSTANCE_FILE_MUTATIONS = frozenset({
+    "/api/instance/file/text",
+    "/api/instance/directory/create",
+    "/api/instance/file/upload",
+    "/api/instance/file/delete",
+})
+
+def legacy_catalog_content_retired_payload():
+    return {
+        "error": "legacy_content_path_retired",
+        "message": "Legacy catalog content mutations are retired; use /api/customer/instance/workspace/content.",
+    }
+
+
 POST_ROUTES = {
     "/api/server/start": "start",
     "/api/server/stop": "stop",
@@ -3179,20 +3192,6 @@ def delete_dashboard_user(username, current_username):
     return {"deleted": True, "username": username}
 
 
-def api_mods_real():
-    ok, data = run_api_script("mods.sh")
-    if ok:
-        return data
-    return {
-        "total": 0,
-        "mods": [],
-        "status": "ERROR",
-        "message": data.get(
-            "error", "Erro ao executar mods.sh | Error executing mods.sh"
-        ),
-    }
-
-
 def api_backups_real():
     ok, data = run_api_script("backups.sh")
     if ok:
@@ -3924,7 +3923,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "/style.css",
             "/installation-events.js",
             "/installation-events.css",
-            "/catalog-v2.js",
             "/catalog-v2.css",
             "/css/alerts.css",
             "/css/infrastructure-explorer.css",
@@ -3940,7 +3938,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "/customer.css",
             "/customer-delete.css",
             "/customer-instance.html",
-            "/customer-instance.js",
             "/contract-demo.html",
             "/contract-demo.js",
             "/runtime-selector.js",
@@ -4497,11 +4494,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 elif action == "providers":
                     success, data = catalog_api("providers", user=user)
                 elif action == "installed":
-                    instance = catalog_instance_path(query.get("instance", [""])[0])
-                    if not can_access_instance(user, instance):
-                        self.forbidden()
-                        return
-                    success, data = catalog_api("installed", instance, user=user)
+                    self.send_json(410, legacy_catalog_content_retired_payload())
+                    return
                 else:
                     self.send_error(404, "Not Found")
                     return
@@ -4513,7 +4507,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         endpoints = {
             "/api/whoami": lambda: {"username": user["username"], "role": user["role"]},
-            "/api/mods": api_mods_real,
             "/api/backups": api_backups_real,
             "/api/health": dashboard_health,
             "/api/notifications": lambda: api_notifications(
@@ -4758,165 +4751,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": str(exc)})
             return
 
-        if path == "/api/instance/file/text":
-            try:
-                body = self.read_json_body()
-
-                instance = instance_identity_path(
-                    body.get("server", ""),
-                    body.get("game", ""),
-                    body.get("instance", ""),
-                )
-
-                if not has_instance_permission(
-                    user,
-                    instance,
-                    "game.files.write",
-                ):
-                    self.forbidden()
-                    return
-
-                relative_path = body.get(
-                    "path",
-                    "",
-                )
-
-                result = write_instance_text_file(
-                    instance,
-                    relative_path,
-                    body.get("content", ""),
-                )
-
-                audit(
-                    user,
-                    "files.edit",
-                    "success",
-                    Path(instance).name,
-                    relative_path,
-                )
-
-                self.send_json(
-                    200,
-                    result,
-                )
-
-            except (ValueError, OSError) as exc:
-                self.send_json(
-                    400,
-                    {"error": str(exc)},
-                )
-
-            return
-
-        if path == "/api/instance/directory/create":
-            try:
-                body = self.read_json_body()
-                instance = instance_identity_path(
-                    body.get("server", ""),
-                    body.get("game", ""),
-                    body.get("instance", ""),
-                )
-
-                if not has_instance_permission(user, instance, "files.mkdir"):
-                    self.forbidden()
-                    return
-
-                result = create_instance_directory(
-                    instance,
-                    body.get("path", "."),
-                    body.get("name", ""),
-                )
-
-                audit(
-                    user,
-                    "files.directory.create",
-                    "success",
-                    Path(instance).name,
-                    result["path"],
-                )
-
-                self.send_json(
-                    201,
-                    result,
-                )
-            except (ValueError, OSError) as exc:
-                self.send_json(400, {"error": str(exc)})
-            return
-
-        if path in {"/api/instance/file/upload", "/api/instance/file/delete"}:
-            try:
-                body = self.read_json_body()
-                instance = instance_identity_path(
-                    body.get("server", ""),
-                    body.get("game", ""),
-                    body.get("instance", ""),
-                )
-                permission = (
-                    "files.upload" if path.endswith("upload") else "files.delete"
-                )
-                if not has_instance_permission(user, instance, permission):
-                    self.forbidden()
-                    return
-                if path.endswith("upload"):
-                    name = str(body.get("name", ""))
-                    if (
-                        not name
-                        or Path(name).name != name
-                        or name in PROTECTED_INSTANCE_PARTS
-                    ):
-                        raise ValueError("invalid upload name")
-                    raw = base64.b64decode(str(body.get("content", "")), validate=True)
-                    if not raw or len(raw) > MAX_INSTANCE_FILE:
-                        raise ValueError("empty or oversized upload")
-                    directory = instance_file_path(instance, body.get("path", "."))
-                    if not directory.is_dir():
-                        raise ValueError("upload destination is not a directory")
-                    destination = instance_file_path(
-                        instance,
-                        str(Path(body.get("path", ".")) / name),
-                        allow_missing=True,
-                    )
-                    if destination.exists():
-                        raise ValueError("a file with this name already exists")
-                    destination.write_bytes(raw)
-                    audit(
-                        user,
-                        "files.upload",
-                        "success",
-                        Path(instance).name,
-                        str(destination.relative_to(instance)),
-                    )
-                    self.send_json(201, {"uploaded": True, "name": name})
-                else:
-                    target = instance_file_path(
-                        instance,
-                        body.get("path", ""),
-                    )
-
-                    game_root = game_files_root(
-                        instance,
-                    ).resolve()
-
-                    if target.resolve() == game_root:
-                        raise ValueError("cannot delete the game files root")
-
-                    if target.is_dir():
-                        shutil.rmtree(target)
-                    else:
-                        target.unlink()
-                    audit(
-                        user,
-                        "files.delete",
-                        "success",
-                        Path(instance).name,
-                        body.get("path", ""),
-                    )
-                    self.send_json(
-                        200,
-                        {"deleted": True},
-                    )
-            except (ValueError, OSError, binascii.Error) as exc:
-                self.send_json(400, {"error": str(exc)})
+        if path in LEGACY_INSTANCE_FILE_MUTATIONS:
+            self.send_json(
+                410,
+                {
+                    "error": "legacy_file_mutation_retired",
+                    "message": "Legacy direct file mutations are retired; use /api/customer/instance/workspace/files.",
+                },
+            )
             return
 
         if path in {
@@ -5121,10 +4963,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/catalog/"):
             action = path.removeprefix("/api/catalog/")
+            if action in LEGACY_CATALOG_CONTENT_MUTATIONS:
+                self.send_json(410, legacy_catalog_content_retired_payload())
+                return
             temp_request = None
             try:
                 body = self.read_json_body()
-                if action in {"compatibility", "plan", "install"}:
+                if action in {"compatibility", "plan"}:
                     request = body.get("request", body)
                     if not isinstance(request, dict):
                         raise ValueError("request must be an object")
@@ -5150,7 +4995,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     success, result = catalog_api(
                         "environment-install", environment_id, selector, user=user
                     )
-                elif action in {"plan", "install"}:
+                elif action == "plan":
                     instance = catalog_instance_path(body.get("instance", ""))
                     if not can_access_instance(user, instance, write=True):
                         self.forbidden()
@@ -5158,23 +5003,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     success, result = catalog_api(
                         action, temp_request, instance, user=user
                     )
-                elif action == "remove":
-                    instance = catalog_instance_path(body.get("instance", ""))
-                    if not can_access_instance(user, instance, write=True):
-                        self.forbidden()
-                        return
-                    content_id = body.get("content_id", "")
-                    if not isinstance(content_id, str) or not content_id:
-                        raise ValueError("content_id is required")
-                    success, result = catalog_api(
-                        "remove", instance, content_id, user=user
-                    )
-                elif action in {"verify", "rollback"}:
-                    instance = catalog_instance_path(body.get("instance", ""))
-                    if not can_access_instance(user, instance, write=True):
-                        self.forbidden()
-                        return
-                    success, result = catalog_api(action, instance, user=user)
                 else:
                     self.send_error(404, "Not Found")
                     return

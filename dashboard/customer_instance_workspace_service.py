@@ -2,7 +2,7 @@
 """Service layer for Customer Instance Workspace v2."""
 from __future__ import annotations
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from alert_repository import AlertSession,dialect_for_backend
 from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
@@ -12,7 +12,7 @@ from instance_provisioning_projection import dashboard_provision_state
 from backup_repository import BackupRepository
 from catalog_resource_profiles_http import catalog_resource_profiles
 from instance_file_repository import InstanceFileRepository
-from instance_workspace_policy import INSTANCE_PERMISSIONS,content_ui_sections,effective_content_policy,require_permission,validate_startup_values
+from instance_workspace_policy import INSTANCE_PERMISSIONS,content_ui_sections,effective_content_policy,enforce_managed_content_mutation,require_permission,validate_startup_values
 from instance_workspace_repository import InstanceWorkspaceRepository
 from runtime_instance_projection import project_runtime_state
 from runtime_workspace_catalog import allowed_runtimes,contract_entitlements,runtime_workspace_capabilities
@@ -136,7 +136,16 @@ class CustomerInstanceWorkspaceService:
  def queue_file(self,user,instance_id,action,*,path=None,target_path=None,payload=None):
   action=str(action or "").strip().lower();required={"list":"files.read","usage":"files.read","read_text":"files.read","download":"files.download","write_text":"files.edit","upload":"files.upload","mkdir":"files.upload","delete":"files.delete","rename":"files.move","move":"files.move","extract":"files.extract"}.get(action)
   if required is None:raise ValueError("invalid file action")
-  context=self.require(user,instance_id,required);policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));return self.files.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action=action,requested_by=str(user.get("username") or ""),path=path,target_path=target_path,payload=payload if isinstance(payload,dict) else {},policy=self._file_command_policy(context,policy))
+  context=self.require(user,instance_id,required);policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));command_policy=self._file_command_policy(context,policy);file_policy=command_policy.get("file_policy") or {}
+  mutation_paths=[]
+  if action in {"write_text","upload","mkdir","delete"}:mutation_paths.append(path)
+  elif action in {"rename","move"}:mutation_paths.extend((path,target_path))
+  elif action=="extract":
+   if target_path:mutation_paths.append(target_path)
+   else:
+    source=PurePosixPath(str(path or "").replace("\\","/"));mutation_paths.append(source.parent.as_posix() if source.parts else ".")
+  for candidate in mutation_paths:enforce_managed_content_mutation(str(candidate or "."),runtime_rules=file_policy)
+  return self.files.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action=action,requested_by=str(user.get("username") or ""),path=path,target_path=target_path,payload=payload if isinstance(payload,dict) else {},policy=command_policy)
  def file_status(self,user,instance_id,command_id):
   self.require(user,instance_id,"files.read");state=self.files.snapshot(str(command_id or ""))
   if str(state.get("instance_id") or "")!=str(instance_id):raise PermissionError("file command belongs to another instance")

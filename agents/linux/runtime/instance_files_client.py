@@ -111,28 +111,24 @@ def _path_under(relative: Path, roots: set[str]) -> bool:
     return any(text == root or text.startswith(root.rstrip("/") + "/") for root in roots)
 
 
-def _guard_path_policy(relative: Path, policy: dict[str, Any], *, upload: bool = False) -> None:
+def _guard_path_policy(relative: Path, policy: dict[str, Any], *, mutation: bool = False, upload: bool = False) -> None:
     file_policy = policy.get("file_policy") if isinstance(policy.get("file_policy"), dict) else {}
     content = policy.get("content_policy") if isinstance(policy.get("content_policy"), dict) else {}
     protected = _parts_set(file_policy.get("protected_paths")) | {".dsm", "runtime"}
     if relative.parts and str(relative.parts[0]).lower() in protected:
         raise PermissionError("protected instance path")
+    mod_paths = _parts_set(file_policy.get("mod_paths"))
+    plugin_paths = _parts_set(file_policy.get("plugin_paths"))
+    workshop_paths = _parts_set(file_policy.get("workshop_paths"))
+    managed_paths = mod_paths | plugin_paths | workshop_paths
+    if mutation and _path_under(relative, managed_paths):
+        raise PermissionError("managed content path is UCP-owned; use the Content workspace")
     if not upload:
         return
     if not bool(content.get("external_upload_allowed", True)):
         raise PermissionError("external uploads are not allowed by this contract")
-    mod_paths = _parts_set(file_policy.get("mod_paths"))
-    plugin_paths = _parts_set(file_policy.get("plugin_paths"))
-    workshop_paths = _parts_set(file_policy.get("workshop_paths"))
-    if _path_under(relative, mod_paths) and not bool(content.get("mods_allowed")):
-        raise PermissionError("mods are not allowed by this contract")
-    if _path_under(relative, plugin_paths) and not bool(content.get("plugins_allowed")):
-        raise PermissionError("plugins are not allowed by this contract")
-    if _path_under(relative, workshop_paths) and not bool(content.get("workshop_allowed")):
-        raise PermissionError("Workshop content is not allowed by this contract")
     runtime_extensions = {str(x).lower() for x in (file_policy.get("runtime_extensions") or [])}
-    in_content_path = _path_under(relative, mod_paths | plugin_paths | workshop_paths)
-    if relative.suffix.lower() in runtime_extensions and not in_content_path and not bool(content.get("custom_runtime_allowed")):
+    if relative.suffix.lower() in runtime_extensions and not _path_under(relative, managed_paths) and not bool(content.get("custom_runtime_allowed")):
         raise PermissionError("custom runtime artifacts are not allowed by this contract")
 
 
@@ -202,7 +198,7 @@ def _read_text(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str,
 
 
 def _write_text(root: Path, path_value: Any, payload: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
-    path = _resolve(root, path_value, missing=True); rel = path.relative_to(root); _guard_path_policy(rel, policy, upload=True)
+    path = _resolve(root, path_value, missing=True); rel = path.relative_to(root); _guard_path_policy(rel, policy, mutation=True, upload=True)
     content = payload.get("content")
     if not isinstance(content, str): raise ValueError("content must be text")
     encoded = content.encode("utf-8")
@@ -224,7 +220,7 @@ def _decode_upload(payload: dict[str, Any]) -> bytes:
 
 
 def _upload(root: Path, path_value: Any, payload: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
-    path = _resolve(root, path_value, missing=True); rel = path.relative_to(root); _guard_path_policy(rel, policy, upload=True)
+    path = _resolve(root, path_value, missing=True); rel = path.relative_to(root); _guard_path_policy(rel, policy, mutation=True, upload=True)
     if not path.parent.is_dir(): raise ValueError("destination directory does not exist")
     data = _decode_upload(payload); _ensure_quota(root, policy, len(data), replacing=path)
     temp = path.with_name(f".{path.name}.{os.getpid()}.upload"); temp.write_bytes(data); os.replace(temp, path)
@@ -240,7 +236,7 @@ def _download(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, 
 
 
 def _mkdir(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, Any]:
-    path = _resolve(root, path_value, missing=True); rel = path.relative_to(root); _guard_path_policy(rel, policy, upload=True)
+    path = _resolve(root, path_value, missing=True); rel = path.relative_to(root); _guard_path_policy(rel, policy, mutation=True, upload=True)
     if path.exists(): raise FileExistsError(rel.as_posix())
     if not path.parent.is_dir(): raise ValueError("parent directory does not exist")
     path.mkdir(mode=0o750)
@@ -248,7 +244,7 @@ def _mkdir(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, Any
 
 
 def _delete(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, Any]:
-    path = _resolve(root, path_value); rel = path.relative_to(root); _guard_path_policy(rel, policy)
+    path = _resolve(root, path_value); rel = path.relative_to(root); _guard_path_policy(rel, policy, mutation=True)
     if path == root: raise PermissionError("instance files root cannot be deleted")
     if path.is_dir(): shutil.rmtree(path)
     else: path.unlink()
@@ -258,7 +254,7 @@ def _delete(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, An
 def _move(root: Path, source_value: Any, target_value: Any, policy: dict[str, Any]) -> dict[str, Any]:
     source = _resolve(root, source_value); target = _resolve(root, target_value, missing=True)
     source_rel = source.relative_to(root); target_rel = target.relative_to(root)
-    _guard_path_policy(source_rel, policy); _guard_path_policy(target_rel, policy, upload=True)
+    _guard_path_policy(source_rel, policy, mutation=True); _guard_path_policy(target_rel, policy, mutation=True, upload=True)
     if source == root or target == root: raise PermissionError("invalid move target")
     if target.exists(): raise FileExistsError(target_rel.as_posix())
     if not target.parent.is_dir(): raise ValueError("target parent does not exist")
@@ -294,6 +290,7 @@ def _archive_members(data: bytes, name: str):
 def _extract(root: Path, archive_value: Any, target_value: Any, policy: dict[str, Any]) -> dict[str, Any]:
     archive_path = _resolve(root, archive_value); archive_rel = archive_path.relative_to(root); _guard_path_policy(archive_rel, policy)
     target = _resolve(root, target_value or archive_path.parent.relative_to(root), missing=True)
+    _guard_path_policy(target.relative_to(root), policy, mutation=True, upload=True)
     if not target.exists(): target.mkdir(parents=False)
     if not target.is_dir(): raise ValueError("extract target is not a directory")
     data = archive_path.read_bytes()
@@ -305,7 +302,7 @@ def _extract(root: Path, archive_value: Any, target_value: Any, policy: dict[str
         for raw_name, size, directory, opener in members:
             rel_member = _relative(raw_name)
             destination = (target / rel_member).resolve(strict=False); destination.relative_to(root)
-            rel = destination.relative_to(root); _guard_path_policy(rel, policy, upload=True)
+            rel = destination.relative_to(root); _guard_path_policy(rel, policy, mutation=True, upload=True)
             total += max(0, int(size or 0))
             planned.append((destination, directory, opener))
         _ensure_quota(root, policy, total)

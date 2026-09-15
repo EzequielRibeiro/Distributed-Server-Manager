@@ -44,17 +44,16 @@ def _resolve(root,value,missing=False):
 def _sets(raw):return {str(x).strip().strip("/\\").lower() for x in raw if str(x).strip()} if isinstance(raw,list) else set()
 def _under(rel,roots):
  text=rel.as_posix().lower();return any(text==r or text.startswith(r.rstrip("/")+"/") for r in roots)
-def _guard(rel,policy,upload=False):
+def _guard(rel,policy,mutation=False,upload=False):
  fp=policy.get("file_policy") if isinstance(policy.get("file_policy"),dict) else {};cp=policy.get("content_policy") if isinstance(policy.get("content_policy"),dict) else {};protected=_sets(fp.get("protected_paths"))|{".dsm","runtime"}
  if rel.parts and str(rel.parts[0]).lower() in protected:raise PermissionError("protected instance path")
+ mods=_sets(fp.get("mod_paths"));plugins=_sets(fp.get("plugin_paths"));workshop=_sets(fp.get("workshop_paths"));managed=mods|plugins|workshop
+ if mutation and _under(rel,managed):raise PermissionError("managed content path is UCP-owned; use the Content workspace")
  if not upload:return
  if not bool(cp.get("external_upload_allowed",True)):raise PermissionError("external uploads are not allowed by this contract")
- mods=_sets(fp.get("mod_paths"));plugins=_sets(fp.get("plugin_paths"));workshop=_sets(fp.get("workshop_paths"))
- if _under(rel,mods) and not bool(cp.get("mods_allowed")):raise PermissionError("mods are not allowed by this contract")
- if _under(rel,plugins) and not bool(cp.get("plugins_allowed")):raise PermissionError("plugins are not allowed by this contract")
- if _under(rel,workshop) and not bool(cp.get("workshop_allowed")):raise PermissionError("Workshop content is not allowed by this contract")
  extensions={str(x).lower() for x in fp.get("runtime_extensions") or []}
- if rel.suffix.lower() in extensions and not _under(rel,mods|plugins|workshop) and not bool(cp.get("custom_runtime_allowed")):raise PermissionError("custom runtime artifacts are not allowed by this contract")
+ if rel.suffix.lower() in extensions and not _under(rel,managed) and not bool(cp.get("custom_runtime_allowed")):raise PermissionError("custom runtime artifacts are not allowed by this contract")
+
 def _usage(root):
  total=0
  for base,dirs,files in os.walk(root,followlinks=False):
@@ -92,7 +91,7 @@ def _read_text(root,path,policy):
  if p.stat().st_size>2*1024*1024:raise ValueError("editable file is too large")
  return {"path":rel.as_posix(),"content":p.read_text(encoding="utf-8"),"size":p.stat().st_size}
 def _write_text(root,path,payload,policy):
- p=_resolve(root,path,True);rel=p.relative_to(root);_guard(rel,policy,True);content=payload.get("content")
+ p=_resolve(root,path,True);rel=p.relative_to(root);_guard(rel,policy,True,True);content=payload.get("content")
  if not isinstance(content,str):raise ValueError("content must be text")
  data=content.encode("utf-8")
  if len(data)>2*1024*1024 or p.suffix.lower() not in EDITABLE_SUFFIXES:raise ValueError("file is not editable text")
@@ -106,7 +105,7 @@ def _decode(payload):
  if len(data)>MAX_TRANSFER_BYTES:raise ValueError("uploaded file exceeds transfer limit")
  return data
 def _upload(root,path,payload,policy):
- p=_resolve(root,path,True);rel=p.relative_to(root);_guard(rel,policy,True)
+ p=_resolve(root,path,True);rel=p.relative_to(root);_guard(rel,policy,True,True)
  if not p.parent.is_dir():raise ValueError("destination directory does not exist")
  data=_decode(payload);_quota(root,policy,len(data),p);tmp=p.with_name(f".{p.name}.{os.getpid()}.upload");tmp.write_bytes(data);os.replace(tmp,p);return {"path":rel.as_posix(),"size":len(data),"uploaded":True}
 def _download(root,path,policy):
@@ -116,16 +115,16 @@ def _download(root,path,policy):
  if len(data)>MAX_TRANSFER_BYTES:raise ValueError("file exceeds transfer limit")
  return {"path":rel.as_posix(),"name":p.name,"size":len(data),"content_base64":base64.b64encode(data).decode("ascii")}
 def _mkdir(root,path,policy):
- p=_resolve(root,path,True);rel=p.relative_to(root);_guard(rel,policy,True)
+ p=_resolve(root,path,True);rel=p.relative_to(root);_guard(rel,policy,True,True)
  if p.exists():raise FileExistsError(rel.as_posix())
  if not p.parent.is_dir():raise ValueError("parent directory does not exist")
  p.mkdir();return {"path":rel.as_posix(),"created":True}
 def _delete(root,path,policy):
- p=_resolve(root,path);rel=p.relative_to(root);_guard(rel,policy)
+ p=_resolve(root,path);rel=p.relative_to(root);_guard(rel,policy,True)
  if p==root:raise PermissionError("instance files root cannot be deleted")
  shutil.rmtree(p) if p.is_dir() else p.unlink();return {"path":rel.as_posix(),"deleted":True}
 def _move(root,source,target,policy):
- s=_resolve(root,source);t=_resolve(root,target,True);sr=s.relative_to(root);tr=t.relative_to(root);_guard(sr,policy);_guard(tr,policy,True)
+ s=_resolve(root,source);t=_resolve(root,target,True);sr=s.relative_to(root);tr=t.relative_to(root);_guard(sr,policy,True);_guard(tr,policy,True,True)
  if s==root or t==root or t.exists():raise ValueError("invalid move target")
  if not t.parent.is_dir():raise ValueError("target parent does not exist")
  shutil.move(str(s),str(t));return {"from":sr.as_posix(),"to":tr.as_posix(),"moved":True}
@@ -149,7 +148,7 @@ def _archive(data,name):
   return a,it()
  raise ValueError("unsupported archive type")
 def _extract(root,archive_value,target_value,policy):
- ap=_resolve(root,archive_value);ar=ap.relative_to(root);_guard(ar,policy);target=_resolve(root,target_value or ap.parent.relative_to(root),True)
+ ap=_resolve(root,archive_value);ar=ap.relative_to(root);_guard(ar,policy);target=_resolve(root,target_value or ap.parent.relative_to(root),True);_guard(target.relative_to(root),policy,True,True)
  if not target.exists():target.mkdir()
  if not target.is_dir():raise ValueError("extract target is not a directory")
  data=ap.read_bytes()
@@ -157,7 +156,7 @@ def _extract(root,archive_value,target_value,policy):
  archive,members=_archive(data,ap.name);planned=[];total=0
  try:
   for raw,size,directory,opener in members:
-   relm=_relative(raw);dest=(target/relm).resolve(strict=False);dest.relative_to(root);rel=dest.relative_to(root);_guard(rel,policy,True);total+=max(0,int(size or 0));planned.append((dest,directory,opener))
+   relm=_relative(raw);dest=(target/relm).resolve(strict=False);dest.relative_to(root);rel=dest.relative_to(root);_guard(rel,policy,True,True);total+=max(0,int(size or 0));planned.append((dest,directory,opener))
   _quota(root,policy,total)
   for dest,directory,opener in planned:
    if directory:dest.mkdir(parents=True,exist_ok=True);continue

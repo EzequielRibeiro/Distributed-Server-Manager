@@ -86,10 +86,6 @@ jq '.artifact.package_id="tests/fixtures/example-mod.jar"' \
   "${ROOT}/catalog/v2/content/minecraft/example-mod.json" >"${TMP_DIR}/catalog/content/minecraft/example-mod.json"
 jq '.id="minecraft.example.addon"|.name="Example Addon"|.artifact.package_id="tests/fixtures/example-mod.jar"|.dependencies=[{id:"minecraft.example.mod",version:">=1.0.0",required:true}]' \
   "${ROOT}/catalog/v2/content/minecraft/example-mod.json" >"${TMP_DIR}/catalog/content/minecraft/example-addon.json"
-INSTALLED_EMPTY="$("${ROOT}/installer/content_manager.sh" list-installed "${TMP_DIR}/instance")"
-jq -e --arg instance "${TMP_DIR}/instance" '
-  .instance == $instance and .entries == [] and .content == [] and .installed == [] and .total == 0
-' <<<"${INSTALLED_EMPTY}" >/dev/null || fail "empty content list-installed response expected for instance without content-lock"
 export DSM_CATALOG_ROOT="${TMP_DIR}/catalog"
 install_operation_progress_safe(){ :; }
 export -f install_operation_progress_safe
@@ -97,25 +93,30 @@ export -f install_operation_progress_safe
 PLAN="$("${ROOT}/installer/content_planner.sh" plan "${ROOT}/catalog/v2/examples/compatibility-allowed.json" "${TMP_DIR}/instance")"
 jq -e '.kind=="InstallationPlan" and (.operations|length)==1' <<<"${PLAN}" >/dev/null || fail "installation plan invalid"
 
-"${ROOT}/installer/content_manager.sh" install "${ROOT}/catalog/v2/examples/compatibility-allowed.json" "${TMP_DIR}/instance" >/dev/null
-"${ROOT}/installer/content_manager.sh" verify "${TMP_DIR}/instance" >/dev/null
-jq -e '.entries|length==1' "${TMP_DIR}/instance/content/.dsm/content-lock.json" >/dev/null || fail "content lock invalid"
-jq -e '.content==["minecraft.example.mod"]' "${TMP_DIR}/instance/.dsm/instance-manifest.json" >/dev/null || fail "instance manifest invalid"
+set +e
+"${ROOT}/installer/content_manager.sh" install "${ROOT}/catalog/v2/examples/compatibility-allowed.json" "${TMP_DIR}/instance" >/dev/null 2>&1
+RETIRED_STATUS=$?
+set -e
+[[ "${RETIRED_STATUS}" -eq 3 ]] || fail "legacy content_manager mutation was not retired"
+[[ ! -e "${TMP_DIR}/instance/content" ]] || fail "retired content manager mutated the instance"
 
-"${ROOT}/installer/content_manager.sh" remove "${TMP_DIR}/instance" minecraft.example.mod >/dev/null
-jq -e '.entries|length==0' "${TMP_DIR}/instance/content/.dsm/content-lock.json" >/dev/null || fail "content removal failed"
-jq -e '.content|length==0' "${TMP_DIR}/instance/.dsm/instance-manifest.json" >/dev/null || fail "manifest removal state invalid"
-"${ROOT}/installer/content_manager.sh" rollback "${TMP_DIR}/instance" >/dev/null
-"${ROOT}/installer/content_manager.sh" verify "${TMP_DIR}/instance" >/dev/null
-jq -e '.entries|length==1' "${TMP_DIR}/instance/content/.dsm/content-lock.json" >/dev/null || fail "content rollback failed"
-jq -e '.content==["minecraft.example.mod"]' "${TMP_DIR}/instance/.dsm/instance-manifest.json" >/dev/null || fail "rollback manifest invalid"
+set +e
+RETIRED_JSON="$("${ROOT}/installer/catalog.sh" content install "${ROOT}/catalog/v2/examples/compatibility-allowed.json" "${TMP_DIR}/instance" --json 2>/dev/null)"
+RETIRED_STATUS=$?
+set -e
+[[ "${RETIRED_STATUS}" -eq 3 ]] || fail "catalog content install was not retired"
+jq -e '.error=="legacy_content_path_retired"' <<<"${RETIRED_JSON}" >/dev/null || fail "retired catalog mutation lacks migration error"
+
+set +e
+API_RETIRED="$(bash "${ROOT}/dashboard/api/catalog.sh" installed "${TMP_DIR}/instance" 2>/dev/null)"
+API_RETIRED_STATUS=$?
+set -e
+[[ "${API_RETIRED_STATUS}" -eq 3 ]] || fail "legacy installed-content API was not retired"
+jq -e '.error=="legacy_content_path_retired"' <<<"${API_RETIRED}" >/dev/null || fail "legacy installed-content API lacks retired error"
 
 jq '.content=["minecraft.example.addon"]' "${ROOT}/catalog/v2/examples/compatibility-allowed.json" >"${TMP_DIR}/addon-request.json"
 ADDON_PLAN="$("${ROOT}/installer/content_planner.sh" plan "${TMP_DIR}/addon-request.json" "${TMP_DIR}/instance")"
 jq -e '.operations|map(.content_id)==["minecraft.example.mod","minecraft.example.addon"]' <<<"${ADDON_PLAN}" >/dev/null || fail "transitive dependency order invalid"
-"${ROOT}/installer/content_manager.sh" install "${TMP_DIR}/addon-request.json" "${TMP_DIR}/instance" >/dev/null
-jq -e '.entries|length==2' "${TMP_DIR}/instance/content/.dsm/content-lock.json" >/dev/null || fail "incremental lock merge failed"
-if "${ROOT}/installer/content_manager.sh" remove "${TMP_DIR}/instance" minecraft.example.mod >/dev/null 2>&1; then fail "required dependency removal allowed"; fi
 
 jq '.dependencies[0].version=">=2.0.0"' "${TMP_DIR}/catalog/content/minecraft/example-addon.json" >"${TMP_DIR}/addon-v2.json"
 mv -- "${TMP_DIR}/addon-v2.json" "${TMP_DIR}/catalog/content/minecraft/example-addon.json"
