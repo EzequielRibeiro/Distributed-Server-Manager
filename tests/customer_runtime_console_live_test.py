@@ -90,7 +90,7 @@ class CustomerRuntimeConsoleLiveTest(unittest.TestCase):
         self.assertEqual("stored command result", result["lines"][0]["line"])
         self.assertEqual("offline", result["agent_health"])
 
-    def test_customer_runtime_live_script_applies_stateful_controls_and_console_polling(self):
+    def test_customer_runtime_live_script_prefers_sse_with_safe_colored_fallback(self):
         script = (ROOT / "dashboard" / "web" / "customer-instance-runtime-live.js").read_text(encoding="utf-8")
         html = (ROOT / "dashboard" / "web" / "customer-instance.html").read_text(encoding="utf-8")
         controller_html = (ROOT / "dashboard" / "web" / "controller-instance.html").read_text(encoding="utf-8")
@@ -101,9 +101,15 @@ class CustomerRuntimeConsoleLiveTest(unittest.TestCase):
         self.assertIn('stop.disabled=', script)
         self.assertIn('overview?.console?.supported', script)
         self.assertIn('/console?instance_id=', script)
-        self.assertIn('setInterval(refreshConsole,3000)', script)
+        self.assertIn('new EventSource(url)', script)
+        self.assertIn('/console/stream?instance_id=', script)
+        self.assertIn('setInterval(refreshConsole,3000)', script)  # fallback only
         self.assertIn('source==="agent-heartbeat"', script)
-        self.assertIn('Atualização automática · 3 s', script)
+        self.assertIn('Tempo real · SSE', script)
+        self.assertIn('Fallback · 3 s', script)
+        self.assertIn('document.createTextNode', script)
+        self.assertIn('ansi-fg-31', css)
+        self.assertIn('level-error', css)
         self.assertIn('id="console-live-status"', html)
         self.assertIn('id="console-live-status"', controller_html)
         self.assertIn('#console-live-status.warn', css)
