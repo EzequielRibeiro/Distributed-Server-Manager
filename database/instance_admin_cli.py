@@ -113,7 +113,7 @@ def _owner(repository: DashboardRepository, customer_id: Any, requested: str | N
     with repository.session() as session:
         row = session.execute(
             "SELECT username FROM dashboard_users "
-            f"WHERE role='customer' AND scope_id={ph} AND active "
+            f"WHERE role='customer' AND customer_id={ph} AND active "
             "ORDER BY username LIMIT 1",
             (customer_id,),
         ).fetchone()
