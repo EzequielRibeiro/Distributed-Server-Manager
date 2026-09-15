@@ -60,3 +60,4 @@ def test_agent_service_requires_runtime_identity_before_reconciliation_can_start
     unit = (ROOT / "agents/linux/services/capivara-agent.service").read_text(encoding="utf-8")
     assert "Requires=capivara-agent-runtime-identity.service" in unit
     assert "After=network-online.target capivara-agent-runtime-identity.service" in unit
+    assert "ReadWritePaths=/etc/capivara-agent /var/lib/capivara-agent /var/lib/capivara-instances" in unit
