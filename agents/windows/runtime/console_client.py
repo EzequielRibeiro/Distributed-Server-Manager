@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import json, os
+import json, os, re
 from pathlib import Path
 import subprocess
 from typing import Any
@@ -12,7 +12,7 @@ import instance_runtime
 
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"))
 STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"))
-RESULT_DIR=STATE_DIR/"console-results";HISTORY_DIR=STATE_DIR/"console-history"
+RESULT_DIR=STATE_DIR/"console-results";HISTORY_DIR=STATE_DIR/"console-history";PROCESS_LOG_DIR=STATE_DIR/"runtime-processes"/"logs";_INSTANCE_RE=re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 
 def _now():return datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
 def _path(root,command_id):
@@ -30,6 +30,16 @@ def _tail(path_value,limit=120):
  if not path.is_file():return []
  try:return path.read_text(encoding="utf-8",errors="replace").splitlines()[-limit:]
  except OSError:return []
+def _snapshot_output(record,console):
+ instance_id=str(record.get("instance_id") or "").strip();adapter=str(record.get("adapter") or "").strip().lower()
+ if adapter=="windows-process" and _INSTANCE_RE.fullmatch(instance_id):return "windows-process-log",_tail(PROCESS_LOG_DIR/f"{instance_id}.log",200)
+ raw=str(console.get("output_file") or "").strip()
+ if raw:
+  try:
+   root=STATE_DIR.resolve(strict=False);candidate=Path(raw).resolve(strict=False);candidate.relative_to(root)
+  except (OSError,ValueError):candidate=None
+  if candidate is not None:return str(console.get("transport") or "configured-output"),_tail(candidate,200)
+ return None,[]
 def execute(config:dict[str,Any],instance_id:str,command:str)->list[str]:
  record=instance_runtime.get_instance(instance_id)
  if not isinstance(record,dict):raise LookupError("instance not found")
@@ -72,7 +82,7 @@ def clear_result(command_id):
 def console_state(config):
  result=[]
  for item in instance_runtime.list_instances(config):
-  record=instance_runtime.get_instance(str(item.get("instance_id") or "")) or {};console=record.get("console") if isinstance(record.get("console"),dict) else {}
-  if bool(console.get("supported")):result.append({"instance_id":record.get("instance_id"),"supported":True,"transport":console.get("transport"),"output":_tail(console.get("output_file"),200)})
+  record=instance_runtime.get_instance(str(item.get("instance_id") or "")) or {};console=record.get("console") if isinstance(record.get("console"),dict) else {};transport,output=_snapshot_output(record,console)
+  if transport is not None or bool(console.get("supported")):result.append({"instance_id":record.get("instance_id"),"supported":bool(console.get("supported")),"transport":transport or console.get("transport"),"output":output})
  return result
 __all__=["clear_result","console_state","execute","handle_command","read_result"]
