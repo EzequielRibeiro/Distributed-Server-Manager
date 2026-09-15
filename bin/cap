@@ -116,8 +116,6 @@ Agent local / Hybrid:
   cap server start|stop|restart|status|validate|publish ...
   cap start|stop|restart|status ...
   cap monitor
-  cap mods install|update|verify|rollback|keys|state|status|health|report ...
-  cap mods backup|cleanup|sync|export|import|api|log ...
   cap backup create|restore|snapshot ...
   cap runtime publish|get|get-resource|status|list|health|dashboard ...
   cap steam auth
@@ -181,12 +179,6 @@ monitor_command(){
     # shellcheck source=/dev/null
     source "${module}"
     diagnose_run "$@"
-}
-
-mods_command(){
-    local module="${DSM_ROOT}/mods/mods.sh"
-    [[ -f "${module}" ]] || { echo "Dispatcher de Mods não encontrado: ${module}" >&2; return 1; }
-    exec bash "${module}" "$@"
 }
 
 backup_command(){
@@ -337,7 +329,6 @@ case "${1:-}" in
     start|stop|restart|status) require_role "cap ${1}" agent hybrid; server_command "$@" ;;
     server) require_role "cap server" agent hybrid; shift; server_command "$@" ;;
     monitor) require_role "cap monitor" agent hybrid; shift; monitor_command "$@" ;;
-    mods) require_role "cap mods" agent hybrid; shift; mods_command "$@" ;;
     backup) require_role "cap backup" agent hybrid; shift; backup_command "$@" ;;
     runtime) require_role "cap runtime" agent hybrid; shift; exec "${DSM_ROOT}/bin/dsm-runtime" "$@" ;;
     steam) require_role "cap steam" agent hybrid; shift; steam_command "$@" ;;

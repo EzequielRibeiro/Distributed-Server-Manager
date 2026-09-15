@@ -63,12 +63,12 @@ class CustomerPortalTest(unittest.TestCase):
         result = SERVER.create_instance_directory(
             self.instance,
             ".",
-            "plugins",
+            "configs",
         )
         self.assertEqual(result["created"], True)
-        self.assertEqual(result["name"], "plugins")
-        self.assertEqual(result["path"], "plugins")
-        self.assertTrue((self.instance / "serverfiles" / "plugins").is_dir())
+        self.assertEqual(result["name"], "configs")
+        self.assertEqual(result["path"], "configs")
+        self.assertTrue((self.instance / "serverfiles" / "configs").is_dir())
 
     def test_invalid_instance_directory_name(self):
         with self.assertRaisesRegex(ValueError, "invalid directory name"):
@@ -92,23 +92,24 @@ class CustomerPortalTest(unittest.TestCase):
 
     def test_customer_pages_include_demo_and_critical_controls(self):
         instance_page = (ROOT / "dashboard" / "web" / "customer-instance.html").read_text(encoding="utf-8")
-        instance_script = (ROOT / "dashboard" / "web" / "customer-instance.js").read_text(encoding="utf-8")
+        instance_script = (ROOT / "dashboard" / "web" / "customer-instance-v2.js").read_text(encoding="utf-8")
+        deletion_script = (ROOT / "dashboard" / "web" / "customer-instance-delete.js").read_text(encoding="utf-8")
         demo_page = (ROOT / "dashboard" / "web" / "contract-demo.html").read_text(encoding="utf-8")
-        self.assertIn("Log em tempo real", instance_page)
-        self.assertIn("Excluir permanentemente", instance_page)
-        self.assertIn('id="delete-progress"', instance_page)
-        self.assertIn("setDeleteProgress", instance_script)
-        self.assertIn("Criando backup final antes da exclusão", instance_script)
-        self.assertIn("contratação e cobrança ainda não disponíveis", demo_page)
+        self.assertIn('data-view="console"', instance_page)
+        self.assertIn("Zona de perigo", instance_page)
+        self.assertIn("/api/customer/instance/delete", deletion_script)
+        self.assertIn("Criando backup final no Agent", deletion_script)
+        self.assertIn("content.install", instance_script)
+        self.assertIn("Catálogo do jogo", demo_page); self.assertIn("PERFIS DISPONÍVEIS", demo_page)
 
     def test_provisioning_status_is_visible_and_blocks_server_controls(self):
         instance_page = (ROOT / "dashboard" / "web" / "customer-instance.html").read_text(encoding="utf-8")
-        instance_script = (ROOT / "dashboard" / "web" / "customer-instance.js").read_text(encoding="utf-8")
+        instance_script = (ROOT / "dashboard" / "web" / "customer-instance-v2.js").read_text(encoding="utf-8")
         customer_script = (ROOT / "dashboard" / "web" / "customer.js").read_text(encoding="utf-8")
-        self.assertIn('id="provision-progress"', instance_page)
-        self.assertIn("renderProvision", instance_script)
+        self.assertIn('id="provision-bar"', instance_page)
+        self.assertIn("async function retryProvision()", instance_script)
         self.assertIn("pending_steam_auth", instance_script)
-        self.assertIn('failed || status === "pending_steam_auth"', instance_script)
+        self.assertIn('instance.provision.retry', instance_script)
         self.assertIn("Tentar instalação novamente", instance_page)
         self.assertIn("item.provision", customer_script)
 

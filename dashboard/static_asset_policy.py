@@ -142,7 +142,6 @@ CUSTOMER_STATIC_PATHS = frozenset({
     "/runtime-selector.js",
     "/create-server-wizard.css",
     "/create-server-wizard.js",
-    "/customer-instance.js",
     "/customer-instance-v2.css",
     "/customer-instance-v2.js",
     "/customer-instance-v2-wrapper.js",
