@@ -75,18 +75,32 @@
     }
 
     async function request(path, options = {}) {
+        const timeoutMs = Number(options.timeoutMs || 0);
+        const controller = timeoutMs > 0 && !options.signal ? new AbortController() : null;
+        const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
         const headers = {
             "X-Capivara-Auth-Area": "customer",
             Accept: "application/json",
             ...(options.headers || {}),
         };
         if (options.body) headers["Content-Type"] = "application/json";
-        const response = await fetch(path, {
-            ...options,
-            headers,
-            credentials: "same-origin",
-            cache: options.cache || "no-store",
-        });
+        const fetchOptions = {...options};
+        delete fetchOptions.timeoutMs;
+        let response;
+        try {
+            response = await fetch(path, {
+                ...fetchOptions,
+                signal: controller?.signal || options.signal,
+                headers,
+                credentials: "same-origin",
+                cache: options.cache || "no-store",
+            });
+        } catch (error) {
+            if (controller?.signal.aborted) throw new Error("A consulta ao catálogo excedeu o tempo limite.");
+            throw error;
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
         if (response.status === 401) {
             window.location.href = "/customer-login.html";
             throw new Error("Sessão encerrada.");
@@ -358,7 +372,7 @@
         el.version.replaceChildren(new Option("Carregando versões…", ""));
         let versions = [];
         if (runtime.version?.strategy === "dynamic") {
-            const data = await request(`/api/catalog/versions?runtime=${encodeURIComponent(runtime.id)}`);
+            const data = await request(`/api/catalog/versions?runtime=${encodeURIComponent(runtime.id)}`, {timeoutMs: 15000});
             versions = Array.isArray(data) ? data : (data.versions || []);
         } else {
             versions = extractVersions(runtime);
@@ -372,13 +386,15 @@
             raw: entry,
         });
         runtime.versions = versions;
-        el.version.replaceChildren(new Option("Selecione…", ""));
+        const versionOptions = document.createDocumentFragment();
+        versionOptions.append(new Option("Selecione…", ""));
         for (const version of versions) {
-            el.version.append(new Option(
+            versionOptions.append(new Option(
                 version.label + ((version.recommended || version.current) ? " — recomendada" : ""),
                 version.value
             ));
         }
+        el.version.replaceChildren(versionOptions);
         el.version.disabled = false;
         const selected = versions.find((item) => item.recommended || item.current) || (versions.length === 1 ? versions[0] : null);
         if (selected) {
@@ -435,7 +451,7 @@
                 const data = await request(`/api/catalog/builds?${new URLSearchParams({
                     runtime: runtimeId,
                     version: versionValue,
-                })}`);
+                })}`, {timeoutMs: 15000});
                 if (!isCurrentRequest()) return;
                 builds = Array.isArray(data) ? data : (data.builds || []);
             } else {
@@ -455,13 +471,15 @@
                 ? state.version.raw
                 : {value: state.version.value};
             state.version.raw.builds = builds;
-            el.build.replaceChildren(new Option("Selecione…", ""));
+            const buildOptions = document.createDocumentFragment();
+            buildOptions.append(new Option("Selecione…", ""));
             for (const build of builds) {
-                el.build.append(new Option(
+                buildOptions.append(new Option(
                     build.label + ((build.recommended || build.current) ? " — recomendada" : ""),
                     build.value
                 ));
             }
+            el.build.replaceChildren(buildOptions);
             el.build.disabled = false;
             const selected = builds.find((item) => item.recommended || item.current)
                 || (builds.length === 1 ? builds[0] : null);
