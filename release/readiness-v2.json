@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "release_line": "2.0",
-  "release_version": "2.0.59",
-  "tag_name": "v2.0.59",
+  "release_version": "2.0.60",
+  "tag_name": "v2.0.60",
   "status": "release-approved",
   "publish_release": false,
   "release_authorized": true,
