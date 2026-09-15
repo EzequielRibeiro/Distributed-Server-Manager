@@ -1,5 +1,61 @@
 <!doctype html>
 <html lang="pt-BR">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Datacenters | Capivara DSM</title><link rel="stylesheet" href="/dashboard-home-v3.css"><link rel="stylesheet" href="/infrastructure-v3.css?v=2"></head>
-<body class="cap-home cap-infra-shell"><div id="sidebar-component"></div><main class="cap-home-main cap-infra-page"><header class="cap-home-topbar"><div class="cap-home-title"><button id="infra-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1>Datacenters</h1><p>Datacenters vinculados às Regions da infraestrutura distribuída.</p></div></div><div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="infra-user-name">—</strong><span id="infra-user-role">—</span></div></div></header><div class="cap-home-content cap-infra-content"><div id="infra-error" class="cap-infra-error" hidden></div><section class="cap-infra-summary" aria-label="Resumo de Datacenters"><article><span>Datacenters</span><strong id="infra-dc-count">0</strong></article></section><section class="cap-infra-panel"><div class="cap-infra-heading"><div><h2>Datacenters cadastrados</h2><p>Localizações disponíveis para vincular Agents e organizar o Placement.</p></div><button id="infra-refresh" class="cap-btn cap-btn-secondary" type="button">Atualizar</button></div><div id="infra-datacenters" class="cap-infra-grid"></div></section></div><footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer></main><script src="/infrastructure-v3.js?v=3"></script></body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Datacenters | Capivara DSM</title>
+  <link rel="stylesheet" href="/dashboard-home-v3.css">
+  <link rel="stylesheet" href="/infrastructure-v3.css?v=3">
+</head>
+<body class="cap-home cap-infra-shell">
+<div id="sidebar-component"></div>
+<main class="cap-home-main cap-infra-page">
+  <header class="cap-home-topbar">
+    <div class="cap-home-title">
+      <button id="infra-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button>
+      <div><h1>Datacenters</h1><p>Datacenters vinculados às Regions da infraestrutura distribuída.</p></div>
+    </div>
+    <div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="infra-user-name">—</strong><span id="infra-user-role">—</span></div></div>
+  </header>
+  <div class="cap-home-content cap-infra-content">
+    <div id="infra-error" class="cap-infra-error" hidden></div>
+    <section class="cap-infra-summary" aria-label="Resumo de Datacenters"><article><span>Datacenters</span><strong id="infra-dc-count">0</strong></article></section>
+    <section class="cap-infra-panel">
+      <div class="cap-infra-heading">
+        <div><h2>Datacenters cadastrados</h2><p>Localizações disponíveis para vincular Agents e organizar o Placement.</p></div>
+        <div class="cap-infra-heading-actions">
+          <button id="infra-datacenter-new" class="cap-btn cap-btn-primary admin-only" type="button" data-location-admin hidden>Novo Datacenter</button>
+          <button id="infra-refresh" class="cap-btn cap-btn-secondary" type="button">Atualizar</button>
+        </div>
+      </div>
+      <div id="infra-datacenters" class="cap-infra-grid"></div>
+    </section>
+    <section id="infra-datacenter-editor" class="cap-infra-panel cap-infra-editor" data-location-admin hidden>
+      <div class="cap-infra-heading"><div><h2 id="infra-datacenter-editor-title">Novo Datacenter</h2><p>Esses dados geográficos são publicados ao cliente quando o Placement selecionar este Datacenter.</p></div></div>
+      <form id="infra-datacenter-form" class="cap-infra-form">
+        <label>ID<input id="infra-datacenter-id" required maxlength="191" autocomplete="off"></label>
+        <label>Region<select id="infra-datacenter-region-id" required><option value="">Selecione uma Region</option></select></label>
+        <label>Nome<input id="infra-datacenter-name" required maxlength="191"></label>
+        <label>Provider<input id="infra-datacenter-provider" maxlength="191"></label>
+        <label>Código do país<input id="infra-datacenter-country-code" maxlength="2" placeholder="BR"></label>
+        <label>Nome do país<input id="infra-datacenter-country-name" maxlength="191" placeholder="Brasil"></label>
+        <label>Código do estado/província<input id="infra-datacenter-state-code" maxlength="32" placeholder="SP"></label>
+        <label>Estado/província<input id="infra-datacenter-state-name" maxlength="191" placeholder="São Paulo"></label>
+        <label>Cidade<input id="infra-datacenter-city" maxlength="191" placeholder="São Paulo"></label>
+        <label>Latitude<input id="infra-datacenter-latitude" type="number" step="any" min="-90" max="90"></label>
+        <label>Longitude<input id="infra-datacenter-longitude" type="number" step="any" min="-180" max="180"></label>
+        <label>Status<select id="infra-datacenter-status"><option value="active">Ativo</option><option value="disabled">Desabilitado</option></select></label>
+        <div class="cap-infra-form-actions">
+          <button class="cap-btn cap-btn-primary" type="submit">Salvar Datacenter</button>
+          <button id="infra-datacenter-cancel" class="cap-btn cap-btn-secondary" type="button">Cancelar</button>
+          <span id="infra-datacenter-feedback" class="cap-infra-form-feedback" role="status"></span>
+        </div>
+      </form>
+    </section>
+  </div>
+  <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
+</main>
+<script src="/infrastructure-location-admin.js?v=1"></script>
+<script src="/infrastructure-v3.js?v=4"></script>
+</body>
 </html>
