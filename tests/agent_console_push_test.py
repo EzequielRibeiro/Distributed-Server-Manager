@@ -21,6 +21,7 @@ class AgentConsolePushTest(unittest.TestCase):
         with PUSH._LOCK:
             PUSH._BUFFERS.clear()
             PUSH._AGENT_SEEN.clear()
+            PUSH._OWNERSHIP_CACHE.clear()
 
     def test_ingest_deduplicates_cursor_and_preserves_ansi(self) -> None:
         event = {"instance_id": "instance-1", "cursor": "c1", "line": "\x1b[31mERROR\x1b[0m"}
@@ -32,6 +33,24 @@ class AgentConsolePushTest(unittest.TestCase):
         snapshot = PUSH.console_push_snapshot("instance-1")
         self.assertEqual("agent-push", snapshot["source"])
         self.assertEqual("\x1b[31mERROR\x1b[0m", snapshot["lines"][0]["line"])
+
+    def test_ownership_lookup_is_short_lived_cached(self) -> None:
+        class Repo:
+            calls = 0
+            def __init__(self, backend):
+                pass
+            def initialize(self):
+                pass
+            def instance_context(self, instance_id):
+                Repo.calls += 1
+                return {"agent_id": "agent-1"}
+
+        with patch.object(PUSH, "InstanceWorkspaceRepository", Repo), \
+             patch.object(PUSH.time, "monotonic", side_effect=[100.0, 100.1, 103.0]):
+            self.assertEqual({"instance-1"}, PUSH._owned_instances("agent-1", {"instance-1"}, object()))
+            self.assertEqual({"instance-1"}, PUSH._owned_instances("agent-1", {"instance-1"}, object()))
+            self.assertEqual({"instance-1"}, PUSH._owned_instances("agent-1", {"instance-1"}, object()))
+        self.assertEqual(2, Repo.calls)
 
     def test_chunked_stream_accepts_microbatch(self) -> None:
         payload = json.dumps({

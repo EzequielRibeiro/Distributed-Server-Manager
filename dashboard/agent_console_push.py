@@ -25,11 +25,15 @@ MAX_FRAME_BYTES = 256 * 1024
 MAX_CONNECTION_BYTES = 8 * 1024 * 1024
 MAX_EVENTS_PER_FRAME = 128
 RING_LINES = 2000
-SEEN_CURSORS = 4096
+SEEN_CURSORS = 8192
 FRESH_SECONDS = 20.0
+OWNERSHIP_ALLOW_TTL_SECONDS = 2.0
+OWNERSHIP_DENY_TTL_SECONDS = 1.0
+OWNERSHIP_CACHE_MAX = 4096
 _LOCK = threading.RLock()
 _BUFFERS: dict[str, dict[str, Any]] = {}
 _AGENT_SEEN: dict[str, float] = {}
+_OWNERSHIP_CACHE: dict[tuple[str, str], tuple[bool, float]] = {}
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -66,16 +70,58 @@ def touch_agent(agent_id: str) -> None:
         _AGENT_SEEN[str(agent_id)] = time.monotonic()
 
 
+def _ownership_cache_get(agent_id: str, instance_id: str, now: float) -> bool | None:
+    key = (agent_id, instance_id)
+    with _LOCK:
+        cached = _OWNERSHIP_CACHE.get(key)
+        if cached is None:
+            return None
+        allowed, expires_at = cached
+        if expires_at <= now:
+            _OWNERSHIP_CACHE.pop(key, None)
+            return None
+        return allowed
+
+
+def _ownership_cache_put(agent_id: str, instance_id: str, allowed: bool, now: float) -> None:
+    ttl = OWNERSHIP_ALLOW_TTL_SECONDS if allowed else OWNERSHIP_DENY_TTL_SECONDS
+    key = (agent_id, instance_id)
+    with _LOCK:
+        if len(_OWNERSHIP_CACHE) >= OWNERSHIP_CACHE_MAX and key not in _OWNERSHIP_CACHE:
+            expired = [candidate for candidate, (_, expiry) in _OWNERSHIP_CACHE.items() if expiry <= now]
+            for candidate in expired:
+                _OWNERSHIP_CACHE.pop(candidate, None)
+            if len(_OWNERSHIP_CACHE) >= OWNERSHIP_CACHE_MAX:
+                oldest = min(_OWNERSHIP_CACHE, key=lambda candidate: _OWNERSHIP_CACHE[candidate][1])
+                _OWNERSHIP_CACHE.pop(oldest, None)
+        _OWNERSHIP_CACHE[key] = (allowed, now + ttl)
+
+
 def _owned_instances(agent_id: str, instance_ids: set[str], backend) -> set[str]:
+    if not instance_ids:
+        return set()
+    now = time.monotonic()
+    allowed: set[str] = set()
+    misses: list[str] = []
+    for instance_id in instance_ids:
+        cached = _ownership_cache_get(agent_id, instance_id, now)
+        if cached is True:
+            allowed.add(instance_id)
+        elif cached is None:
+            misses.append(instance_id)
+    if not misses:
+        return allowed
     repo = InstanceWorkspaceRepository(backend)
     repo.initialize()
-    allowed: set[str] = set()
-    for instance_id in instance_ids:
+    for instance_id in misses:
+        owns = False
         try:
             context = repo.instance_context(instance_id)
+            owns = str(context.get("agent_id") or "") == agent_id
         except (KeyError, ValueError, LookupError):
-            continue
-        if str(context.get("agent_id") or "") == agent_id:
+            owns = False
+        _ownership_cache_put(agent_id, instance_id, owns, now)
+        if owns:
             allowed.add(instance_id)
     return allowed
 
