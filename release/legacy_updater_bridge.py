@@ -77,9 +77,10 @@ def patch_update(path: Path) -> None:
         "        \"${INSTALL_DIR}/config/dsm.conf\"\n"
         "    )\n"
     )
-    if old_final not in text:
+    if old_final in text:
+        text = text.replace(old_final, new_final, 1)
+    elif new_final not in text:
         fail("cap-only final validation anchor not found in update.sh")
-    text = text.replace(old_final, new_final, 1)
 
     old_tail = '    echo\n    echo "Arquivos principais OK."\n    echo "Main files OK."\n}\n'
     new_tail = (
