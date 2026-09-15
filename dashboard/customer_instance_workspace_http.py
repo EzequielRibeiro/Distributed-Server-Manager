@@ -7,8 +7,8 @@ import json
 import time
 from urllib.parse import parse_qs, urlparse
 
-from agent_console_push import console_push_snapshot
-from controller_log_journal_http import instance_journal_logs
+from agent_console_push import console_push_snapshot, wait_for_console_push
+from controller_log_journal_http import follow_instance_journal, instance_journal_logs
 from controller_session import session_user_from_headers
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from instance_activity_repository import InstanceActivityRepository
@@ -90,6 +90,7 @@ def _console_payload(api, user, instance_id: str, limit: int) -> dict[str, objec
             "lines": _merge_console_output(logs, stored, limit, "systemd-journal"),
             "source": "systemd-journal",
             "read_only": True,
+            "journal_cursor": journal.get("cursor"),
         }
     heartbeat = {}
     reader = getattr(api, "agent_console_output", None)
@@ -141,7 +142,7 @@ def _sse_frame(event: str, payload: dict[str, object], *, event_id: str | None =
 
 
 def _serve_console_stream(handler, api, user, instance_id: str, limit: int, *, timeout: int = 25) -> None:
-    # Authorize and fetch once before committing the SSE response headers.
+    # Authorize and fetch the initial bounded snapshot before committing SSE headers.
     first = _console_payload(api, user, instance_id, limit)
     handler.send_response(200)
     handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -151,28 +152,103 @@ def _serve_console_stream(handler, api, user, instance_id: str, limit: int, *, t
     handler.send_header("X-Content-Type-Options", "nosniff")
     handler.end_headers()
     deadline = time.monotonic() + max(5, min(int(timeout), 30))
-    last_signature = ""
-    last_ping = 0.0
-    payload = first
-    try:
-        handler.wfile.write(_sse_frame("ready", {"kind": "CapivaraConsoleStream", "version": 1, "retry_ms": 1500}))
+
+    def send(event: str, payload: dict[str, object], *, event_id: str | None = None) -> None:
+        handler.wfile.write(_sse_frame(event, payload, event_id=event_id))
         handler.wfile.flush()
+
+    def keepalive() -> None:
+        handler.wfile.write(b": keepalive\n\n")
+        handler.wfile.flush()
+
+    try:
+        send("ready", {"kind": "CapivaraConsoleStream", "version": 2, "retry_ms": 1500})
+        initial = dict(first)
+        initial.pop("journal_cursor", None)
+        signature = _console_stream_signature(initial)
+        initial["cursor"] = signature[:24]
+        send("console-snapshot", initial, event_id=signature[:24])
+
+        source = str(first.get("source") or "")
+        if source == "systemd-journal":
+            cursor = str(first.get("journal_cursor") or "").strip() or None
+            remaining = max(5, int(deadline - time.monotonic()))
+            for event in follow_instance_journal(instance_id, timeout=remaining, after_cursor=cursor):
+                kind = str(event.get("kind") or "")
+                if kind == "line":
+                    line = str(event.get("line") or "")
+                    if line:
+                        send("console-line", {"line": line, "source": "systemd-journal"})
+                elif kind == "keepalive":
+                    keepalive()
+                elif kind == "error":
+                    break
+            return
+
+        if source == "agent-push":
+            snapshot = console_push_snapshot(instance_id, limit=limit) or {}
+            generation = int(snapshot.get("generation") or 0)
+            last_cursor = ""
+            pushed_lines = snapshot.get("lines") if isinstance(snapshot, dict) else None
+            if isinstance(pushed_lines, list) and pushed_lines:
+                last_cursor = str((pushed_lines[-1] or {}).get("cursor") or "") if isinstance(pushed_lines[-1], dict) else ""
+            while time.monotonic() < deadline:
+                remaining = max(0.05, min(10.0, deadline - time.monotonic()))
+                update = wait_for_console_push(instance_id, generation, timeout=remaining, limit=limit)
+                if not update:
+                    keepalive()
+                    continue
+                generation = int(update.get("generation") or generation)
+                lines = update.get("lines") if isinstance(update, dict) else None
+                if not isinstance(lines, list):
+                    continue
+                start_at = 0
+                if last_cursor:
+                    for index, item in enumerate(lines):
+                        if isinstance(item, dict) and str(item.get("cursor") or "") == last_cursor:
+                            start_at = index + 1
+                            break
+                    else:
+                        refreshed = _console_payload(api, user, instance_id, limit)
+                        refreshed.pop("journal_cursor", None)
+                        sig = _console_stream_signature(refreshed)
+                        refreshed["cursor"] = sig[:24]
+                        send("console-snapshot", refreshed, event_id=sig[:24])
+                        if lines and isinstance(lines[-1], dict):
+                            last_cursor = str(lines[-1].get("cursor") or "")
+                        continue
+                for item in lines[start_at:]:
+                    if not isinstance(item, dict):
+                        continue
+                    line = str(item.get("line") or "")
+                    if not line:
+                        continue
+                    payload = {"line": line, "source": "agent-push"}
+                    for key in ("cursor", "priority", "timestamp"):
+                        if item.get(key) is not None:
+                            payload[key] = item.get(key)
+                    send("console-line", payload, event_id=str(item.get("cursor") or "") or None)
+                    last_cursor = str(item.get("cursor") or last_cursor)
+            return
+
+        # Compatibility path for heartbeat/history-only sources. This is not the
+        # live log transport; it only keeps older Agents usable until updated.
+        last_signature = signature
+        last_ping = time.monotonic()
         while time.monotonic() < deadline:
-            signature = _console_stream_signature(payload)
-            if signature != last_signature:
-                event_payload = dict(payload)
-                event_payload["cursor"] = signature[:24]
-                handler.wfile.write(_sse_frame("console-snapshot", event_payload, event_id=signature[:24]))
-                handler.wfile.flush()
-                last_signature = signature
-                last_ping = time.monotonic()
-            now = time.monotonic()
-            if now - last_ping >= 10:
-                handler.wfile.write(b": keepalive\n\n")
-                handler.wfile.flush()
-                last_ping = now
-            time.sleep(0.75)
+            time.sleep(1.5)
             payload = _console_payload(api, user, instance_id, limit)
+            current = _console_stream_signature(payload)
+            if current != last_signature:
+                event_payload = dict(payload)
+                event_payload.pop("journal_cursor", None)
+                event_payload["cursor"] = current[:24]
+                send("console-snapshot", event_payload, event_id=current[:24])
+                last_signature = current
+                last_ping = time.monotonic()
+            elif time.monotonic() - last_ping >= 10:
+                keepalive()
+                last_ping = time.monotonic()
     except (BrokenPipeError, ConnectionResetError, OSError):
         return
 

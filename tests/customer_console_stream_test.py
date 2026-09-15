@@ -69,6 +69,42 @@ class CustomerConsoleStreamTest(unittest.TestCase):
         self.assertIn("event: console-snapshot", body)
         self.assertIn("\\u001b[32mready", body)
 
+    def test_hybrid_stream_forwards_journal_lines_without_repolling_snapshot(self) -> None:
+        class Handler:
+            def __init__(self):
+                self.wfile = io.BytesIO()
+                self.status = None
+                self.sent_headers = {}
+
+            def send_response(self, status):
+                self.status = status
+
+            def send_header(self, name, value):
+                self.sent_headers[name] = value
+
+            def end_headers(self):
+                pass
+
+        initial = {
+            "lines": [{"line": "initial", "source": "systemd-journal"}],
+            "source": "systemd-journal",
+            "read_only": True,
+            "journal_cursor": "s=cursor;i=1",
+        }
+        handler = Handler()
+        with patch("customer_instance_workspace_http._console_payload", return_value=initial) as payload, \
+             patch("customer_instance_workspace_http.follow_instance_journal", return_value=iter([
+                 {"kind": "line", "line": "player joined"},
+                 {"kind": "keepalive"},
+             ])) as follow:
+            _serve_console_stream(handler, object(), {"username": "aurora"}, "demo", 100, timeout=5)
+        body = handler.wfile.getvalue().decode("utf-8")
+        self.assertEqual(1, payload.call_count)
+        follow.assert_called_once_with("demo", timeout=5, after_cursor="s=cursor;i=1")
+        self.assertIn("event: console-line", body)
+        self.assertIn("player joined", body)
+        self.assertIn(": keepalive", body)
+
     def test_sse_frame_is_json_and_never_html(self) -> None:
         frame = _sse_frame(
             "console-snapshot",
