@@ -182,7 +182,7 @@ def _attach_instance_state(result, body, *, agent_id, backend):
         commands.initialize()
         reported = body.get("instance_result") if isinstance(body.get("instance_result"), dict) else None
         reported_state = commands.apply_result(agent_id, reported) if reported else None
-        command = commands.command_for_agent(agent_id)
+        command = None if body.get("result_flush") else commands.command_for_agent(agent_id)
         command_state = None
         if command:
             command_state = commands.mark_delivered(str(command["command_id"]))
@@ -198,7 +198,7 @@ def _attach_doctor_state(result, body, *, agent_id, backend):
         admin = AgentAdminRepository(backend)
         reported = body.get("doctor_result") if isinstance(body.get("doctor_result"), dict) else None
         reported_state = admin.apply_doctor_result(agent_id, reported) if reported else None
-        command = admin.doctor_command_for_agent(agent_id)
+        command = None if body.get("result_flush") else admin.doctor_command_for_agent(agent_id)
         if command:
             result["doctor_command"] = command
         result["doctor_state"] = reported_state or admin.latest_doctor(agent_id) or {"status": "idle"}
@@ -223,7 +223,7 @@ def _doctor_link_recovery_ready(state: dict[str, Any] | None) -> bool:
     return True
 
 
-def _reconcile_link_incident(result, *, agent_id, backend):
+def _reconcile_link_incident(result, body, *, agent_id, backend):
     """Require a valid heartbeat plus Doctor confirmation before auto-resolve."""
     try:
         incidents = AgentLinkIncidentRepository(backend)
@@ -243,7 +243,7 @@ def _reconcile_link_incident(result, *, agent_id, backend):
             return
 
         queued = admin.request_doctor(agent_id, requested_by="system:link-recovery")
-        command = admin.doctor_command_for_agent(agent_id)
+        command = None if body.get("result_flush") else admin.doctor_command_for_agent(agent_id)
         if command:
             result["doctor_command"] = command
         result["doctor_state"] = admin.latest_doctor(agent_id) or queued
@@ -404,7 +404,7 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
             _attach_game_data_state(result, body, agent_id=agent_id, backend=backend)
         _attach_instance_state(result, body, agent_id=agent_id, backend=backend)
         _attach_doctor_state(result, body, agent_id=agent_id, backend=backend)
-        _reconcile_link_incident(result, agent_id=agent_id, backend=backend)
+        _reconcile_link_incident(result, body, agent_id=agent_id, backend=backend)
         _attach_backup_clone_state(result, agent_id=agent_id, backend=backend)
     except AgentHostIdentityCollision as exc:
         try:

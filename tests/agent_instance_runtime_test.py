@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -224,6 +225,21 @@ class ControllerInstanceRuntimeQueueTest(unittest.TestCase):
             "agent_id": "agent-instance",
             "instance_result": {"command_id": created["command_id"], "instance_id": "instance-one", "action": "restart", "status": "completed", "result": {"observed_state": "running"}},
         }, headers=self.headers, backend=self.backend)
+        self.assertEqual(status, 200)
+        self.assertEqual(completed["instance_state"]["status"], "completed")
+        self.assertNotIn("instance_command", completed)
+
+    def test_result_flush_acknowledges_without_delivering_next_command(self):
+        created = self.commands.enqueue(agent_id="agent-instance", instance_id="instance-one", action="restart")
+        status, delivered = dispatch_heartbeat({"agent_id": "agent-instance"}, headers=self.headers, backend=self.backend)
+        self.assertEqual(status, 200)
+        self.assertEqual(delivered["instance_command"]["command_id"], created["command_id"])
+        with patch.object(AgentInstanceRuntimeRepository, "command_for_agent", side_effect=AssertionError("result flush must not deliver commands")):
+            status, completed = dispatch_heartbeat({
+                "agent_id": "agent-instance",
+                "result_flush": True,
+                "instance_result": {"command_id": created["command_id"], "instance_id": "instance-one", "action": "restart", "status": "completed", "result": {"observed_state": "running"}},
+            }, headers=self.headers, backend=self.backend)
         self.assertEqual(status, 200)
         self.assertEqual(completed["instance_state"]["status"], "completed")
         self.assertNotIn("instance_command", completed)

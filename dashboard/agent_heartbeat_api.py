@@ -164,24 +164,24 @@ def _store_instance_telemetry(agent_id,body,*,backend):
    repo.record_telemetry(iid,sample);accepted+=1
   except (KeyError,ValueError,PermissionError):continue
  return accepted
-def _console_exchange(agent_id,body,*,backend):
+def _console_exchange(agent_id,body,*,backend,deliver_commands=True):
  repo=InstanceWorkspaceRepository(backend);repo.initialize();state=None;reported=body.get("console_result")
  if isinstance(reported,dict):state=repo.apply_console_result(agent_id,reported)
- cmd=repo.command_for_agent(agent_id)
+ cmd=repo.command_for_agent(agent_id) if deliver_commands else None
  if cmd is not None:repo.mark_console_delivered(str(cmd["command_id"]))
  return cmd,state
-def _file_exchange(agent_id,body,*,backend):
+def _file_exchange(agent_id,body,*,backend,deliver_commands=True):
  repo=InstanceFileRepository(backend);repo.initialize();state=None;reported=body.get("file_result")
  if isinstance(reported,dict):state=repo.apply_result(agent_id,reported)
- return repo.command_for_agent(agent_id),state
-def _resource_exchange(agent_id,body,*,backend):
+ return (repo.command_for_agent(agent_id) if deliver_commands else None),state
+def _resource_exchange(agent_id,body,*,backend,deliver_commands=True):
  repo=InstanceResourceRepository(backend);repo.initialize();state=None;reported=body.get("resource_result")
  if isinstance(reported,dict):state=repo.apply_result(agent_id,reported)
- return repo.command_for_agent(agent_id),state
-def _artifact_exchange(agent_id,body,*,backend,root=None):
+ return (repo.command_for_agent(agent_id) if deliver_commands else None),state
+def _artifact_exchange(agent_id,body,*,backend,root=None,deliver_commands=True):
  repo=ArtifactTransferRepository(backend,Path(root or "."));repo.initialize();state=None;reported=body.get("artifact_result")
  if isinstance(reported,dict):state=repo.apply_agent_result(agent_id,reported)
- return repo.command_for_agent(agent_id),state
+ return (repo.command_for_agent(agent_id) if deliver_commands else None),state
 def _storage_pool_migration_exchange(agent_id,body,*,backend):
  repo=InstanceStoragePoolMigrationRepository(backend);repo.initialize();state=None;reported=body.get("storage_pool_migration_result")
  if isinstance(reported,dict):state=repo.apply_result(agent_id,reported)
@@ -216,5 +216,5 @@ def record_agent_heartbeat(authenticated_agent_id,payload,*,backend,root=None):
  if isinstance(reported_broadcasts,list):automations.record_broadcast_state(agent_id,reported_broadcasts)
  broadcast_commands=automations.desired_for_agent(agent_id)
  for command in broadcast_commands:command["agent_id"]=agent_id
- console_command,console_state=_console_exchange(agent_id,body,backend=backend);file_command,file_state=_file_exchange(agent_id,body,backend=backend);resource_command,resource_state=_resource_exchange(agent_id,body,backend=backend);artifact_command,artifact_state=_artifact_exchange(agent_id,body,backend=backend,root=root);storage_pool_migration_command,storage_pool_migration_state=_storage_pool_migration_exchange(agent_id,body,backend=backend);uninstall_command,uninstall_state=_uninstall_exchange(agent_id,body,backend=backend);last_seen=repository.heartbeat(agent_id)
+ deliver_commands=not bool(body.get("result_flush"));console_command,console_state=_console_exchange(agent_id,body,backend=backend,deliver_commands=deliver_commands);file_command,file_state=_file_exchange(agent_id,body,backend=backend,deliver_commands=deliver_commands);resource_command,resource_state=_resource_exchange(agent_id,body,backend=backend,deliver_commands=deliver_commands);artifact_command,artifact_state=_artifact_exchange(agent_id,body,backend=backend,root=root,deliver_commands=deliver_commands);storage_pool_migration_command,storage_pool_migration_state=_storage_pool_migration_exchange(agent_id,body,backend=backend);uninstall_command,uninstall_state=_uninstall_exchange(agent_id,body,backend=backend);last_seen=repository.heartbeat(agent_id)
  return {"agent_id":agent_id,"health_status":"online","last_seen":last_seen,"accepted_event_ids":event_result["accepted_event_ids"],"events_accepted":event_result["accepted"],"events_created":event_result["created"],"events_rejected":event_result["rejected"],"metrics_accepted":metric_result["accepted"],"metrics_created":metric_result["created"],"metrics_rejected":metric_result["rejected"],"instance_telemetry_accepted":telemetry_count,"configuration_commands":desired_configuration,"configuration_count":len(desired_configuration),"content_commands":desired_content,"content_count":len(desired_content),"backup_commands":backup_commands,"backup_count":len(backup_commands),"broadcast_commands":broadcast_commands,"broadcast_count":len(broadcast_commands),"console_command":console_command,"console_state":console_state,"file_command":file_command,"file_state":file_state,"resource_command":resource_command,"resource_state":resource_state,"artifact_command":artifact_command,"artifact_state":artifact_state,"storage_pool_migration_command":storage_pool_migration_command,"storage_pool_migration_state":storage_pool_migration_state,"uninstall_command":uninstall_command,"uninstall_state":uninstall_state}

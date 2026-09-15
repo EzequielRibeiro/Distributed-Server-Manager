@@ -582,7 +582,7 @@ def main() -> int:
         assert str(queued.get("status") or "").lower() == "queued"
         nat_rule(True)
         delivery = json.loads(agent_probe("heartbeat", config_path, state_dir, cert).stdout.strip().splitlines()[-1])
-        assert delivery["doctor_command"] or str((delivery.get("doctor_state") or {}).get("status") or "").lower() in {"queued", "running"}
+        assert delivery.get("doctor_command") or str((delivery.get("doctor_state") or {}).get("status") or "").lower() in {"queued", "running", "completed"}
         final = json.loads(agent_probe("heartbeat", config_path, state_dir, cert).stdout.strip().splitlines()[-1])
         latest = admin.latest_doctor(AGENT_ID)
         assert str((latest or {}).get("status") or "").lower() == "completed"
