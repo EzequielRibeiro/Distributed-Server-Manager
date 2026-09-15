@@ -114,6 +114,9 @@ jobs:
       - name: Validate Dashboard JavaScript
         run: find dashboard/web -type f -name '*.js' -print0 | xargs -0 -n1 node --check
 
+      - name: Test live console lifecycle watchdog
+        run: python3 -m unittest tests/controller_instance_console_watchdog_test.py
+
       - name: Test installer
         run: bash tests/install_manager_test.sh
 
