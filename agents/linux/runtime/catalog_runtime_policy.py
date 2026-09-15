@@ -225,6 +225,30 @@ def _command_line(key: str, value: str) -> tuple[re.Pattern[str], str]:
     return pattern, f'{key} "{value}"'
 
 
+def _comment_parts(line: str) -> tuple[str, str]:
+    quoted = False; escaped = False
+    for index, ch in enumerate(line):
+        if quoted:
+            if escaped: escaped = False
+            elif ch == "\\": escaped = True
+            elif ch == '"': quoted = False
+            continue
+        if ch == '"': quoted = True; continue
+        if ch == '#': return line[:index], line[index:]
+        if ch == '/' and index + 1 < len(line) and line[index + 1] == '/': return line[:index], line[index:]
+    return line, ""
+
+def _property_line(existing: str, key: str, value: str, syntax: str) -> str:
+    body, comment = _comment_parts(existing)
+    suffix = (" " if comment and body and not body.endswith((" ", "\t")) else "") + comment
+    if syntax == "semicolon":
+        match = re.match(rf'^(\s*{re.escape(key)}\s*=\s*)(.*?)(\s*;\s*)$', body)
+        if match: return match.group(1) + value + match.group(3) + suffix
+    else:
+        match = re.match(rf'^(\s*{re.escape(key)}\s*=\s*)(.*?)\s*$', body)
+        if match: return match.group(1) + value + (" " if comment else "") + comment
+    return f"{key} = {value};" if syntax == "semicolon" else f"{key}={value}"
+
 def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
     properties = spec.get("catalog_network_properties") if isinstance(spec.get("catalog_network_properties"), list) else []
     root = _configuration_root(spec)
@@ -257,7 +281,7 @@ def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
             for existing in lines:
                 if property_pattern.match(existing):
                     if not found:
-                        updated.append(line); found = True
+                        updated.append(_property_line(existing, key, value, syntax)); found = True
                     continue
                 updated.append(existing)
             if found:
@@ -267,7 +291,7 @@ def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
         written.append(relative.as_posix())
-    return written
+    return sorted(set(written))
 
 
 __all__ = ["apply_policy", "materialize_network_properties", "materialize_templates", "render"]

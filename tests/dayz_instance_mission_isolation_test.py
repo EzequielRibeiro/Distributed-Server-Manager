@@ -41,9 +41,9 @@ class DayZInstanceMissionIsolationTest(unittest.TestCase):
             expected_agent_id="agent-test",
         )
 
-    def test_profile_v8_keeps_shared_game_base_and_private_mission(self) -> None:
+    def test_profile_v9_keeps_shared_game_base_and_private_mission(self) -> None:
         spec = self.build("instance-a")
-        self.assertEqual(8, spec["profile_version"])
+        self.assertEqual(9, spec["profile_version"])
         self.assertEqual(self.install_path, spec["working_directory"])
         self.assertEqual(
             f"{self.install_path}/mpmissions/dayzOffline.chernarusplus",

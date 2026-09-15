@@ -99,8 +99,32 @@ def _command_line(key: str, value: str) -> tuple[re.Pattern[str], str]:
     pattern = re.compile(rf'(?m)^\s*{re.escape(key)}\s+(?:"(?:\\.|[^"])*"|[^\r\n#]+)\s*$')
     return pattern, f'{key} "{value}"'
 
+def _comment_parts(line: str) -> tuple[str, str]:
+    quoted = False; escaped = False
+    for index, ch in enumerate(line):
+        if quoted:
+            if escaped: escaped = False
+            elif ch == "\\": escaped = True
+            elif ch == '"': quoted = False
+            continue
+        if ch == '"': quoted = True; continue
+        if ch == '#': return line[:index], line[index:]
+        if ch == '/' and index + 1 < len(line) and line[index + 1] == '/': return line[:index], line[index:]
+    return line, ""
+
+def _property_line(existing: str, key: str, value: str, syntax: str) -> str:
+    body, comment = _comment_parts(existing)
+    suffix = (" " if comment and body and not body.endswith((" ", "\t")) else "") + comment
+    if syntax == "semicolon":
+        match = re.match(rf'^(\s*{re.escape(key)}\s*=\s*)(.*?)(\s*;\s*)$', body)
+        if match: return match.group(1) + value + match.group(3) + suffix
+    else:
+        match = re.match(rf'^(\s*{re.escape(key)}\s*=\s*)(.*?)\s*$', body)
+        if match: return match.group(1) + value + (" " if comment else "") + comment
+    return f"{key} = {value};" if syntax == "semicolon" else f"{key}={value}"
+
 def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
-    root=Path(str(spec.get("working_directory") or spec.get("path") or "")).resolve();values=dict(spec.get("catalog_variables") or {});written=[]
+    root_value=str(spec.get("configuration_root") or "").strip() or (str(Path(str(spec.get("config_path"))).parent) if spec.get("config_path") else str(spec.get("working_directory") or spec.get("path") or ""));root=Path(root_value).resolve();values=dict(spec.get("catalog_variables") or {});written=[]
     for item in spec.get("catalog_network_properties") or []:
         if not isinstance(item,dict):continue
         relative=Path(str(item.get("path") or ""))
@@ -118,11 +142,11 @@ def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
             lines=text.splitlines();updated=[];found=False
             for existing in lines:
                 if property_pattern.match(existing):
-                    if not found:updated.append(line);found=True
+                    if not found:updated.append(_property_line(existing,key,value,syntax));found=True
                     continue
                 updated.append(existing)
             text=("\n".join(updated)+("\n" if text.endswith(("\n","\r")) else "")) if found else text.rstrip("\n")+("\n" if text else "")+line+"\n"
         target.parent.mkdir(parents=True,exist_ok=True);target.write_text(text,encoding="utf-8");written.append(relative.as_posix())
-    return written
+    return sorted(set(written))
 
 __all__ = ["apply_policy", "materialize_network_properties", "render"]

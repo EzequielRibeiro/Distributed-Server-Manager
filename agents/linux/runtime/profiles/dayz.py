@@ -22,7 +22,7 @@ _STEAM_QUERY_OFFSET = 3
 
 class DayZRuntimeProfile(GameRuntimeProfile):
     game_ids = ("dayz", "dayz.stable")
-    profile_version = 8
+    profile_version = 9
 
     def migration_context(self, record: dict[str, Any]) -> dict[str, Any]:
         """Reconstruct a modern context from a pre-private-state DayZ RuntimeSpec."""
@@ -36,14 +36,14 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             if any(text.lower().startswith(prefix) for prefix in _PROFILE_OWNED_ARGUMENTS):
                 continue
             arguments.append(text)
-        network_properties = record.get("catalog_network_properties")
-        if not isinstance(network_properties, list) or not network_properties:
-            network_properties = [{
-                "path": "serverDZ.cfg",
-                "key": "steamQueryPort",
-                "value": "{{PORT_STEAM_QUERY}}",
-                "syntax": "semicolon",
-            }]
+        network_properties = [dict(item) for item in (record.get("catalog_network_properties") or []) if isinstance(item, dict)]
+        required_network_properties = (
+            {"path": "serverDZ.cfg", "key": "clientPort", "value": "{{PORT_GAME_AUX}}", "syntax": "semicolon"},
+            {"path": "serverDZ.cfg", "key": "steamQueryPort", "value": "{{PORT_STEAM_QUERY}}", "syntax": "semicolon"},
+        )
+        for required in required_network_properties:
+            network_properties = [item for item in network_properties if (item.get("path"), item.get("key")) != (required["path"], required["key"])]
+            network_properties.append(required)
         return {
             "install_path": install_path,
             "content_root": install_path,
@@ -71,6 +71,16 @@ class DayZRuntimeProfile(GameRuntimeProfile):
     ) -> dict[str, Any]:
         """Repair legacy DayZ port roles while preserving instance-owned state inputs."""
         upgraded = dict(context)
+        policy = dict(upgraded.get("catalog_runtime_policy") or {})
+        properties = [dict(item) for item in (policy.get("network_properties") or []) if isinstance(item, dict)]
+        for required in (
+            {"path": "serverDZ.cfg", "key": "clientPort", "value": "{{PORT_GAME_AUX}}", "syntax": "semicolon"},
+            {"path": "serverDZ.cfg", "key": "steamQueryPort", "value": "{{PORT_STEAM_QUERY}}", "syntax": "semicolon"},
+        ):
+            properties = [item for item in properties if (item.get("path"), item.get("key")) != (required["path"], required["key"])]
+            properties.append(required)
+        policy["network_properties"] = properties
+        upgraded["catalog_runtime_policy"] = policy
         ports = dict(upgraded.get("ports") or {})
         normalized = port_bindings({"ports": ports})
         game = normalized.get("game")

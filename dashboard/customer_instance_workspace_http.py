@@ -23,6 +23,8 @@ ROUTES = {
     PREFIX + "/console/stream",
     PREFIX + "/startup",
     PREFIX + "/server-settings",
+    PREFIX + "/server-settings/status",
+    PREFIX + "/server-settings/refresh",
     PREFIX + "/files/status",
     PREFIX + "/backup-policy",
     PREFIX + "/backups",
@@ -400,6 +402,8 @@ def install_customer_instance_workspace(legacy, authenticate):
                 data = api.startup(user, instance_id)
             elif path == PREFIX + "/server-settings":
                 data = api.server_settings(user, instance_id)
+            elif path == PREFIX + "/server-settings/status":
+                data = api.server_settings_surface_status(user, instance_id, one(parsed, "command_id", ""))
             elif path == PREFIX + "/files/status":
                 data = api.file_status(user, instance_id, one(parsed, "command_id", ""))
             elif path == PREFIX + "/backup-policy":
@@ -421,7 +425,7 @@ def install_customer_instance_workspace(legacy, authenticate):
     def post(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        if path not in {PREFIX + "/console", PREFIX + "/upgrade", PREFIX + "/files", PREFIX + "/backups"}:
+        if path not in {PREFIX + "/console", PREFIX + "/upgrade", PREFIX + "/files", PREFIX + "/backups", PREFIX + "/server-settings/refresh"}:
             return previous_post(self)
         user = require_user(self)
         if user is None:
@@ -430,7 +434,10 @@ def install_customer_instance_workspace(legacy, authenticate):
             body = self.read_json_body()
             instance_id = iid(parsed, body)
             api = service()
-            if path == PREFIX + "/console":
+            if path == PREFIX + "/server-settings/refresh":
+                data = api.queue_server_settings_surface(user, instance_id)
+                code = 202
+            elif path == PREFIX + "/console":
                 data = api.send_console(user, instance_id, body.get("command"))
                 code = 202
                 record(
@@ -522,7 +529,7 @@ def install_customer_instance_workspace(legacy, authenticate):
                     result="success",
                 )
             elif path.endswith("server-settings"):
-                data = api.save_server_settings(user, instance_id, body.get("values"))
+                data = api.save_server_settings(user, instance_id, body.get("values"), body.get("surface_command_id"))
                 record(
                     api,
                     user,

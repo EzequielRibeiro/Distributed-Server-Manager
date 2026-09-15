@@ -135,11 +135,80 @@ class CustomerInstanceWorkspaceService:
  def _server_settings_value(self,stored):
   raw=dict((stored or {}).get("value") or {})
   nested=raw.get("settings")
-  return dict(nested) if isinstance(nested,dict) else {str(k):v for k,v in raw.items() if k not in {"declaration","runtime_id"}}
+  return dict(nested) if isinstance(nested,dict) else {str(k):v for k,v in raw.items() if k not in {"declaration","runtime_id","dynamic_values","player_limit"}}
+ def _server_settings_dynamic_value(self,stored):
+  raw=dict((stored or {}).get("value") or {});nested=raw.get("dynamic_values")
+  return dict(nested) if isinstance(nested,dict) else {}
  def server_settings(self,user,instance_id):
   context=self.require(user,instance_id,"settings.read");policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));declaration=dict(caps.get("server_settings") or {});repo=ConfigurationRepository(self.backend);repo.initialize();stored=repo.get(scope_type="instance",scope_id=instance_id,namespace="capivara.instance.server-settings");values=self._server_settings_value(stored);return {"values":values,"declaration":declaration,"revision":(stored or {}).get("revision"),"checksum":(stored or {}).get("checksum"),"restart_required":bool(declaration.get("restart_required",True)),"resource_limits":{"player_limit":policy.get("player_limit")}}
- def save_server_settings(self,user,instance_id,values):
-  context=self.require(user,instance_id,"settings.write");policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));declaration=dict(caps.get("server_settings") or {});partial=validate_server_settings(values,declaration,player_limit=policy.get("player_limit"));repo=ConfigurationRepository(self.backend);repo.initialize();current=repo.get(scope_type="instance",scope_id=instance_id,namespace="capivara.instance.server-settings");merged={**self._server_settings_value(current),**partial};merged=validate_server_settings(merged,declaration,player_limit=policy.get("player_limit"));actor=str((user or {}).get("username") or (user or {}).get("id") or "customer");runtime_id=str(context.get("runtime_id") or "").strip();payload={"runtime_id":runtime_id,"settings":merged,"declaration":declaration};stored=repo.put({"scope_type":"instance","scope_id":instance_id,"namespace":"capivara.instance.server-settings","value":payload},updated_by=actor);row=stored.get("configuration") or {};return {"values":merged,"declaration":declaration,"revision":row.get("revision"),"checksum":row.get("checksum"),"changed":bool(stored.get("changed")),"restart_required":bool(declaration.get("restart_required",True))}
+ def queue_server_settings_surface(self,user,instance_id):
+  context=self.require(user,instance_id,"settings.read");actor=str((user or {}).get("username") or (user or {}).get("id") or "settings-reader");caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));declaration=dict(caps.get("server_settings") or {})
+  return self.files.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="settings_surface",requested_by=actor,payload={"declaration":declaration},policy={})
+ def server_settings_surface_status(self,user,instance_id,command_id):
+  self.require(user,instance_id,"settings.read");state=self.files.snapshot(str(command_id or ""))
+  if str(state.get("instance_id") or "")!=str(instance_id):raise PermissionError("server settings read belongs to another instance")
+  if str(state.get("action") or "")!="settings_surface":raise PermissionError("invalid server settings read command")
+  return state
+ def _surface_value(self,field,raw,player_limit=None):
+  kind=str((field or {}).get("type") or "string").lower()
+  if kind=="string_list":
+   if not isinstance(raw,list):raise ValueError("server setting must be a string list")
+   maximum_items=int((field or {}).get("max_items") or 128);maximum_length=int((field or {}).get("max_length") or 8192)
+   if len(raw)>maximum_items:raise ValueError("too many server setting list items")
+   value=[]
+   for item in raw:
+    text=str(item)
+    if any(ch in text for ch in ("\x00","\r","\n")) or len(text)>maximum_length:raise ValueError("invalid server setting list item")
+    value.append(text)
+  elif kind=="boolean":
+   if not isinstance(raw,bool):raise ValueError("server setting must be boolean")
+   value=raw
+  elif kind=="integer":
+   if isinstance(raw,bool):raise ValueError("server setting must be integer")
+   value=int(raw)
+  elif kind=="number":
+   if isinstance(raw,bool):raise ValueError("server setting must be numeric")
+   value=float(raw)
+  else:
+   value=str(raw)
+   if any(ch in value for ch in ("\x00","\r","\n")):raise ValueError("invalid server setting text")
+   if len(value)>int((field or {}).get("max_length") or 8192):raise ValueError("server setting is too long")
+  if (field or {}).get("min") is not None and isinstance(value,(int,float)) and float(value)<float(field["min"]):raise ValueError("server setting below minimum")
+  maximum=(field or {}).get("max")
+  if str((field or {}).get("logical_id") or "")=="max_players" and player_limit is not None:maximum=min(float(maximum),float(player_limit)) if maximum is not None else float(player_limit)
+  if maximum is not None and isinstance(value,(int,float)) and float(value)>float(maximum):raise ValueError("server setting above maximum")
+  allowed=(field or {}).get("allowed")
+  if isinstance(allowed,list) and allowed and value not in allowed:raise ValueError("invalid server setting value")
+  if bool((field or {}).get("safe_relative_path")):
+   candidate=PurePosixPath(str(value).replace("\\","/"))
+   if candidate.is_absolute() or ".." in candidate.parts:raise ValueError("server setting path must stay relative")
+  return value
+ def _validate_server_setting_relationships(self,fields,dynamic):
+  by_key={}
+  for field_id,value in (dynamic or {}).items():
+   field=(fields or {}).get(str(field_id))
+   if isinstance(field,dict):by_key[str(field.get("key") or "").lower()]=value
+  warning=by_key.get("pingwarning");critical=by_key.get("pingcritical");maximum=by_key.get("maxping")
+  if warning is not None and critical is not None and float(warning)>float(critical):raise ValueError("pingWarning must be less than or equal to pingCritical")
+  if critical is not None and maximum is not None and float(critical)>float(maximum):raise ValueError("pingCritical must be less than or equal to MaxPing")
+ def save_server_settings(self,user,instance_id,values,surface_command_id=None):
+  context=self.require(user,instance_id,"settings.write");policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));declaration=dict(caps.get("server_settings") or {});repo=ConfigurationRepository(self.backend);repo.initialize();current=repo.get(scope_type="instance",scope_id=instance_id,namespace="capivara.instance.server-settings");player_limit=policy.get("player_limit");dynamic_patch={};fields={}
+  if surface_command_id:
+   state=self.server_settings_surface_status(user,instance_id,surface_command_id)
+   if str(state.get("status") or "")!="completed":raise RuntimeError("server settings surface is not ready")
+   surface=state.get("result") if isinstance(state.get("result"),dict) else {};fields={str(item.get("id") or ""):item for item in surface.get("fields") or [] if isinstance(item,dict) and item.get("id")};logical={}
+   for field_id,raw in (values or {}).items():
+    field=fields.get(str(field_id))
+    if not field:raise PermissionError("unknown server setting")
+    if not bool(field.get("editable")):raise PermissionError("server setting is managed by Capivara")
+    if bool(field.get("secret")) and raw in {None,""}:continue
+    value=self._surface_value(field,raw,player_limit)
+    logical_id=str(field.get("logical_id") or "").strip()
+    if logical_id:logical[logical_id]=value
+    else:dynamic_patch[str(field_id)]=value
+   partial=validate_server_settings(logical,declaration,player_limit=player_limit)
+  else:partial=validate_server_settings(values,declaration,player_limit=player_limit)
+  merged={**self._server_settings_value(current),**partial};merged=validate_server_settings(merged,declaration,player_limit=player_limit);dynamic={**self._server_settings_dynamic_value(current),**dynamic_patch};self._validate_server_setting_relationships(fields,dynamic);actor=str((user or {}).get("username") or (user or {}).get("id") or "customer");runtime_id=str(context.get("runtime_id") or "").strip();payload={"runtime_id":runtime_id,"settings":merged,"dynamic_values":dynamic,"player_limit":player_limit,"declaration":declaration};stored=repo.put({"scope_type":"instance","scope_id":instance_id,"namespace":"capivara.instance.server-settings","value":payload},updated_by=actor);row=stored.get("configuration") or {};return {"values":merged,"dynamic_values":dynamic,"declaration":declaration,"revision":row.get("revision"),"checksum":row.get("checksum"),"changed":bool(stored.get("changed")),"restart_required":bool(declaration.get("restart_required",True))}
  def _file_command_policy(self,context,policy):
   caps,content=self._contract_policy(context,policy);return {"storage_limit_bytes":policy.get("storage_limit_bytes"),"content_policy":content.as_dict(),"file_policy":dict(caps.get("file_policy") or {})}
  def queue_file(self,user,instance_id,action,*,path=None,target_path=None,payload=None):

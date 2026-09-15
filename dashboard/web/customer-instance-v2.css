@@ -15,3 +15,5 @@
 .terminal .ansi-fg-34{color:#6f9cff}.terminal .ansi-fg-35{color:#c792ea}.terminal .ansi-fg-36{color:#56d4dd}.terminal .ansi-fg-37{color:#d7deea}
 .terminal .ansi-fg-90{color:#7f8da3}.terminal .ansi-fg-91{color:#ff8f8f}.terminal .ansi-fg-92{color:#75ddb3}.terminal .ansi-fg-93{color:#ffd477}
 .terminal .ansi-fg-94{color:#8eb7ff}.terminal .ansi-fg-95{color:#d7a8ff}.terminal .ansi-fg-96{color:#80e7ef}.terminal .ansi-fg-97{color:#ffffff}
+
+.settings-source-heading{grid-column:1/-1;padding:12px 0 2px}.settings-source-heading strong,.settings-source-heading small{display:block}.settings-source-heading small{margin-top:4px}

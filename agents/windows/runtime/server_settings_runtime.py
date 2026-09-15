@@ -107,6 +107,29 @@ def _ue_bounds(text:str)->tuple[int,int]:
             if depth==0:return start,index
     raise ValueError("Unreal OptionSettings entry is malformed")
 
+def _comment_parts(line:str)->tuple[str,str]:
+    quoted=False;escaped=False
+    for index,ch in enumerate(line):
+        if quoted:
+            if escaped:escaped=False
+            elif ch=="\\":escaped=True
+            elif ch=='"':quoted=False
+            continue
+        if ch=='"':quoted=True;continue
+        if ch=='#':return line[:index],line[index:]
+        if ch=='/' and index+1<len(line) and line[index+1]=='/':return line[:index],line[index:]
+    return line,""
+
+def _property_line(existing:str,key:str,value:str,syntax:str)->str:
+    body,comment=_comment_parts(existing);comment_suffix=(" " if comment and body and not body.endswith((" ","\t")) else "")+comment
+    if syntax=="semicolon":
+        match=re.match(rf'^(\s*{re.escape(key)}\s*=\s*)(.*?)(\s*;\s*)$',body)
+        if match:return match.group(1)+value+match.group(3)+comment_suffix
+    elif syntax=="equals":
+        match=re.match(rf'^(\s*{re.escape(key)}\s*=\s*)(.*?)\s*$',body)
+        if match:return match.group(1)+value+(" " if comment else "")+comment
+    return f"{key} = {value};" if syntax=="semicolon" else f"{key}={value}"
+
 def _set_property(text:str,key:str,value:str,syntax:str)->str:
     if syntax=="ue_option_settings":
         start,end=_ue_bounds(text);body=text[start:end]
@@ -124,7 +147,7 @@ def _set_property(text:str,key:str,value:str,syntax:str)->str:
     for existing in lines:
         if property_pattern.match(existing):
             if not found:
-                updated.append(line);found=True
+                updated.append(_property_line(existing,key,value,syntax));found=True
             continue
         updated.append(existing)
     if found:

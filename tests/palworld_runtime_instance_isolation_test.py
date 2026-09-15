@@ -56,7 +56,7 @@ class PalworldRuntimeIsolationTest(unittest.TestCase):
     {"path":"PalWorldSettings.ini","key":"RESTAPIPort","value":"{{PORT_REST_API}}","syntax":"ue_option_settings","seed_from":"DefaultPalWorldSettings.ini"},
    ]}
    written=materialize_network_properties(spec);text=(config/"PalWorldSettings.ini").read_text(encoding="utf-8")
-   self.assertEqual(["PalWorldSettings.ini","PalWorldSettings.ini","PalWorldSettings.ini"],written)
+   self.assertEqual(["PalWorldSettings.ini"],written)
    self.assertIn("RCONPort=24011",text);self.assertIn("RESTAPIPort=24012",text)
    self.assertIn("RCONEnabled=False",text);self.assertIn("RESTAPIEnabled=True",text)
    self.assertIn("CrossplayPlatforms=(Steam,Xbox)",text);self.assertIn('ServerName="A (test)"',text)
