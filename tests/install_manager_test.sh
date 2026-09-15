@@ -4,6 +4,8 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORE_INSTALLER="${ROOT}/install-core.sh"
 LEGACY_TEST="${ROOT}/tests/install_manager_legacy_test.sh"
+HYBRID_SUBSTRATE="${ROOT}/installer/install_hybrid_runtime_substrate.sh"
+UPDATER="${ROOT}/update.sh"
 fail(){ echo "FAIL: $*" >&2; exit 1; }
 
 # Run the historical regression coverage through the canonical public wrapper.
@@ -13,6 +15,27 @@ fail(){ echo "FAIL: $*" >&2; exit 1; }
 bash "${LEGACY_TEST}"
 
 bash -n "${CORE_INSTALLER}"
+bash -n "${HYBRID_SUBSTRATE}"
+
+# Hybrid privileged materialization deliberately separates three identities:
+# capivara (dashboard/worker), capivara-agent (control state), and
+# capivara-instance (game runtime). The control account must be provisioned
+# explicitly against the pre-existing control group so useradd never attempts
+# to create an implicit same-name group.
+grep -Fq 'getent group capivara-agent >/dev/null 2>&1 || groupadd --system capivara-agent' "${HYBRID_SUBSTRATE}" \
+    || fail "Hybrid substrate does not ensure the capivara-agent control group"
+grep -Fq 'id capivara-agent >/dev/null 2>&1 || useradd --system --gid capivara-agent --home /nonexistent --shell /usr/sbin/nologin capivara-agent' "${HYBRID_SUBSTRATE}" \
+    || fail "Hybrid substrate does not ensure the capivara-agent control user"
+grep -Fq 'id capivara-instance >/dev/null 2>&1 || useradd --system --gid capivara-agent --home /nonexistent --shell /usr/sbin/nologin capivara-instance' "${HYBRID_SUBSTRATE}" \
+    || fail "Hybrid substrate no longer pins the runtime user to the control group"
+
+CONTROL_LINE="$(grep -nF 'id capivara-agent >/dev/null 2>&1 || useradd --system --gid capivara-agent --home /nonexistent --shell /usr/sbin/nologin capivara-agent' "${HYBRID_SUBSTRATE}" | cut -d: -f1)"
+RUNTIME_LINE="$(grep -nF 'id capivara-instance >/dev/null 2>&1 || useradd --system --gid capivara-agent --home /nonexistent --shell /usr/sbin/nologin capivara-instance' "${HYBRID_SUBSTRATE}" | cut -d: -f1)"
+[[ -n "${CONTROL_LINE}" && -n "${RUNTIME_LINE}" && "${CONTROL_LINE}" -lt "${RUNTIME_LINE}" ]] \
+    || fail "Hybrid control user must be reconciled before the runtime user"
+
+grep -Fq 'reconcile_hybrid_runtime_substrate' "${UPDATER}" \
+    || fail "Updater no longer reconciles Hybrid runtime substrate on upgrades"
 
 # A role already selected by install.sh must not be shown a second time.
 PROFILE_OUTPUT="$({

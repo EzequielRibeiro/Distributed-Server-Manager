@@ -11,7 +11,11 @@ DSM_GROUP="$(sed -n 's/^DSM_GROUP="\([^"]*\)"$/\1/p' "${CONFIG}" | tail -n1)"
 DSM_USER="${DSM_USER:-capivara}"
 DSM_GROUP="${DSM_GROUP:-capivara}"
 
+# Keep the privileged-control identity distinct from both the dashboard worker
+# and the game-runtime identity. The materializer owns .dsm control state as
+# capivara-agent, while capivara-instance owns mutable instance data.
 getent group capivara-agent >/dev/null 2>&1 || groupadd --system capivara-agent
+id capivara-agent >/dev/null 2>&1 || useradd --system --gid capivara-agent --home /nonexistent --shell /usr/sbin/nologin capivara-agent
 id capivara-instance >/dev/null 2>&1 || useradd --system --gid capivara-agent --home /nonexistent --shell /usr/sbin/nologin capivara-instance
 usermod -a -G capivara-agent capivara-instance >/dev/null 2>&1 || true
 usermod -a -G capivara-agent "${DSM_USER}" >/dev/null 2>&1 || true
