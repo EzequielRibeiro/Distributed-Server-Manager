@@ -26,6 +26,7 @@ CREATE TABLE content_assignments(id TEXT PRIMARY KEY);
 CREATE TABLE content_assignment_revisions(id TEXT PRIMARY KEY);
 CREATE TABLE agent_content_state(id TEXT PRIMARY KEY);
 CREATE TABLE backup_jobs(command_id TEXT PRIMARY KEY,backup_id TEXT,action TEXT,status TEXT);
+CREATE TABLE datacenters(id TEXT PRIMARY KEY,region_id TEXT,name TEXT,provider TEXT,city TEXT,country_code TEXT,latitude REAL,longitude REAL,status TEXT);
 CREATE UNIQUE INDEX idx_backup_jobs_backup_id ON backup_jobs(backup_id) WHERE backup_id IS NOT NULL;
 CREATE TABLE baseline_upgrades(version INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE,applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 INSERT INTO content_assignments(id) VALUES ('assignment-1');
@@ -41,7 +42,7 @@ INSERT INTO agent_content_state(id) VALUES ('state-1');
         connection=self.old_connection()
         try:
             completed=apply_pending_upgrades(SQLiteBackend(),connection,installed_checksum="historical-v7-checksum")
-            self.assertEqual(completed,[8,9,10])
+            self.assertEqual(completed,[upgrade.version for upgrade in UPGRADES if upgrade.version >= 8])
             self.assertEqual(upgrade_status(SQLiteBackend(),connection)["current_version"],latest_upgrade_version())
             row=connection.execute("SELECT activation_state,activation_order,provenance_json,metadata_json,security_state FROM content_assignments").fetchone()
             self.assertEqual(tuple(row),("enabled",0,"{}","{}","unscanned"))
@@ -60,7 +61,7 @@ INSERT INTO agent_content_state(id) VALUES ('state-1');
         finally:
             connection.close()
 
-    def test_checksum_mismatch_with_v7_ledger_reconciles_through_v10(self):
+    def test_checksum_mismatch_with_v7_ledger_reconciles_through_latest(self):
         manager=ROOT/"database"/"manager.py"
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/"dsm"
@@ -81,7 +82,7 @@ INSERT INTO agent_content_state(id) VALUES ('state-1');
             payload=json.loads(before.stdout)
             self.assertEqual(payload["upgrade_version"],7)
             self.assertEqual(payload["upgrade_latest"],latest_upgrade_version())
-            self.assertEqual(payload["pending_upgrades"],[{"version":8,"name":"universal_content_contract_v2"},{"version":9,"name":"backup_job_retry_identity_repair"},{"version":10,"name":"universal_content_bundles"}])
+            self.assertEqual(payload["pending_upgrades"],[{"version":upgrade.version,"name":upgrade.name} for upgrade in UPGRADES if upgrade.version >= 8])
             migrated=run("migrate")
             self.assertEqual(migrated.returncode,0,migrated.stderr)
             payload=json.loads(migrated.stdout)
