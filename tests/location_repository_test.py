@@ -52,6 +52,9 @@ CREATE TABLE datacenters (
     provider TEXT,
     city TEXT,
     country_code TEXT,
+    country_name TEXT,
+    state_code TEXT,
+    state_name TEXT,
     latitude REAL,
     longitude REAL,
     status TEXT NOT NULL,
@@ -222,6 +225,9 @@ class LocationRepositoryTest(unittest.TestCase):
             provider="local",
             city="Sao Paulo",
             country_code="BR",
+            country_name="Brasil",
+            state_code="SP",
+            state_name="São Paulo",
             latitude=-23.5,
             longitude=-46.6,
         )
@@ -248,6 +254,9 @@ class LocationRepositoryTest(unittest.TestCase):
             provider="capivara",
             city="Sao Paulo",
             country_code="BR",
+            country_name="Brasil",
+            state_code="SP",
+            state_name="São Paulo",
             latitude=-23.55,
             longitude=-46.63,
         )
@@ -270,6 +279,9 @@ class LocationRepositoryTest(unittest.TestCase):
             datacenters[0]["provider"],
             "capivara",
         )
+        self.assertEqual(datacenters[0]["country_name"], "Brasil")
+        self.assertEqual(datacenters[0]["state_code"], "SP")
+        self.assertEqual(datacenters[0]["state_name"], "São Paulo")
 
     def test_upsert_agent_location_creates_and_updates(self):
         self.repository.upsert_region(

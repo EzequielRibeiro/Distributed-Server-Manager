@@ -48,24 +48,64 @@
     return coordinatesPromise;
   }
 
+  function countryFlag(countryCode) {
+    const code = String(countryCode || "").trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(code)) return "";
+    return [...code].map(letter => String.fromCodePoint(127397 + letter.charCodeAt(0))).join("");
+  }
+
+  function localizedCountryName(countryCode) {
+    const code = String(countryCode || "").trim().toUpperCase();
+    if (!code) return "";
+    try {
+      return new Intl.DisplayNames(["pt-BR"], {type: "region"}).of(code) || code;
+    } catch (_error) {
+      return code;
+    }
+  }
+
   function recommendationLabel(item) {
-    if (item.recommended) return "★ Servidor recomendado";
+    if (item.recommended === true) return "★ Servidor recomendado";
     if (item.recommendation === "higher_latency") return "Latência maior";
     if (item.recommendation === "unavailable") return "Indisponível";
     return "Boa opção";
   }
 
+  function locationLabel(item) {
+    const latency = item.latency?.value_ms ?? item.latency_ms;
+    const country = String(item.country_name || "").trim() || localizedCountryName(item.country_code);
+    const flag = countryFlag(item.country_code);
+    const countryText = [flag, country].filter(Boolean).join(" ");
+    const city = String(item.city || "").trim();
+    const stateCode = String(item.state_code || "").trim().toUpperCase();
+    const stateName = String(item.state_name || "").trim();
+    const locality = city
+      ? [city, stateCode].filter(Boolean).join(" - ")
+      : (stateName || stateCode);
+    const latencyText = Number.isFinite(Number(latency))
+      ? `~${Math.round(Number(latency))} ms`
+      : "Latência indisponível";
+    return [countryText, locality, latencyText, recommendationLabel(item)]
+      .filter(Boolean)
+      .join(" · ");
+  }
+
   function publicRegion(item) {
     const latency = item.latency?.value_ms;
-    const latencyText = Number.isFinite(latency) ? ` · ~${latency} ms` : "";
     return {
       id: item.region_id,
-      name: `${item.name}${latencyText} · ${recommendationLabel(item)}`,
+      name: item.name || item.region_id || "Região",
       country_code: item.country_code || "",
+      country_name: item.country_name || "",
+      state_code: item.state_code || "",
+      state_name: item.state_name || "",
+      city: item.city || "",
       availability: item.availability,
       recommended: item.recommended === true,
+      recommendation: item.recommendation || "",
       latency_ms: Number.isFinite(latency) ? latency : null,
       latency_kind: "estimated",
+      display_label: locationLabel(item),
     };
   }
 
@@ -202,7 +242,7 @@
     const regions = available.map(publicRegion);
     setPlacementStatus(
       "available",
-      `${regions.length} localização${regions.length === 1 ? "" : "ões"} disponível${regions.length === 1 ? "" : "is"}.`
+      regions.map(region => region.display_label).filter(Boolean).join(" | ")
     );
 
     return {regions};

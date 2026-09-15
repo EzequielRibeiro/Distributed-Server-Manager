@@ -118,6 +118,9 @@ select_initial_topology(){
     DSM_DATACENTER_PROVIDER="${DSM_DATACENTER_PROVIDER:-}"
     DSM_DATACENTER_CITY="${DSM_DATACENTER_CITY:-}"
     DSM_DATACENTER_COUNTRY_CODE="${DSM_DATACENTER_COUNTRY_CODE:-}"
+    DSM_DATACENTER_COUNTRY_NAME="${DSM_DATACENTER_COUNTRY_NAME:-}"
+    DSM_DATACENTER_STATE_CODE="${DSM_DATACENTER_STATE_CODE:-}"
+    DSM_DATACENTER_STATE_NAME="${DSM_DATACENTER_STATE_NAME:-}"
 
     local value confirmation
     while true; do
@@ -143,6 +146,12 @@ select_initial_topology(){
         DSM_DATACENTER_COUNTRY_CODE="${DSM_DATACENTER_COUNTRY_CODE:-${DSM_REGION_COUNTRY_CODE}}"
         read -r -p "Código do país [${DSM_DATACENTER_COUNTRY_CODE}]: " value
         DSM_DATACENTER_COUNTRY_CODE="${value:-${DSM_DATACENTER_COUNTRY_CODE}}"
+        read -r -p "Nome do país [${DSM_DATACENTER_COUNTRY_NAME:-não informado}]: " value
+        DSM_DATACENTER_COUNTRY_NAME="${value:-${DSM_DATACENTER_COUNTRY_NAME}}"
+        read -r -p "Código do estado/província [${DSM_DATACENTER_STATE_CODE:-não informado}]: " value
+        DSM_DATACENTER_STATE_CODE="${value:-${DSM_DATACENTER_STATE_CODE}}"
+        read -r -p "Nome do estado/província [${DSM_DATACENTER_STATE_NAME:-não informado}]: " value
+        DSM_DATACENTER_STATE_NAME="${value:-${DSM_DATACENTER_STATE_NAME}}"
 
         printf '\n==============================================================\n Revisão da topologia inicial\n==============================================================\n'
         printf 'Region ID          : %s\n' "${DSM_REGION_ID}"
@@ -152,7 +161,8 @@ select_initial_topology(){
         printf 'Datacenter nome    : %s\n' "${DSM_DATACENTER_NAME}"
         printf 'Provider           : %s\n' "${DSM_DATACENTER_PROVIDER:-não informado}"
         printf 'Cidade             : %s\n' "${DSM_DATACENTER_CITY:-não informada}"
-        printf 'Datacenter país    : %s\n' "${DSM_DATACENTER_COUNTRY_CODE}"
+        printf 'Datacenter país    : %s (%s)\n' "${DSM_DATACENTER_COUNTRY_NAME:-não informado}" "${DSM_DATACENTER_COUNTRY_CODE}"
+        printf 'Estado/província   : %s (%s)\n' "${DSM_DATACENTER_STATE_NAME:-não informado}" "${DSM_DATACENTER_STATE_CODE:-não informado}"
         read -r -p 'Os dados estão corretos? [S/n]: ' confirmation
         case "${confirmation:-s}" in
             s|S|sim|SIM|y|Y|yes|YES) break ;;
@@ -162,7 +172,8 @@ select_initial_topology(){
 
     export DSM_REGION_ID DSM_REGION_NAME DSM_REGION_COUNTRY_CODE
     export DSM_DATACENTER_ID DSM_DATACENTER_NAME DSM_DATACENTER_PROVIDER
-    export DSM_DATACENTER_CITY DSM_DATACENTER_COUNTRY_CODE
+    export DSM_DATACENTER_CITY DSM_DATACENTER_COUNTRY_CODE DSM_DATACENTER_COUNTRY_NAME
+    export DSM_DATACENTER_STATE_CODE DSM_DATACENTER_STATE_NAME
 }
 
 bootstrap_initial_topology(){
@@ -184,7 +195,10 @@ bootstrap_initial_topology(){
         --datacenter-name "${DSM_DATACENTER_NAME:-${DSM_DATACENTER_ID}}" \
         --datacenter-provider "${DSM_DATACENTER_PROVIDER:-}" \
         --datacenter-city "${DSM_DATACENTER_CITY:-}" \
-        --datacenter-country-code "${DSM_DATACENTER_COUNTRY_CODE:-${DSM_REGION_COUNTRY_CODE:-}}"
+        --datacenter-country-code "${DSM_DATACENTER_COUNTRY_CODE:-${DSM_REGION_COUNTRY_CODE:-}}" \
+        --datacenter-country-name "${DSM_DATACENTER_COUNTRY_NAME:-}" \
+        --datacenter-state-code "${DSM_DATACENTER_STATE_CODE:-}" \
+        --datacenter-state-name "${DSM_DATACENTER_STATE_NAME:-}"
 }
 
 retire_obsolete_systemd_units(){

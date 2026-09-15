@@ -1,5 +1,56 @@
 <!doctype html>
 <html lang="pt-BR">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Regions | Capivara DSM</title><link rel="stylesheet" href="/dashboard-home-v3.css"><link rel="stylesheet" href="/infrastructure-v3.css?v=2"></head>
-<body class="cap-home cap-infra-shell"><div id="sidebar-component"></div><main class="cap-home-main cap-infra-page"><header class="cap-home-topbar"><div class="cap-home-title"><button id="infra-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button><div><h1>Regions</h1><p>Organização geográfica de alto nível da infraestrutura distribuída.</p></div></div><div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="infra-user-name">—</strong><span id="infra-user-role">—</span></div></div></header><div class="cap-home-content cap-infra-content"><div id="infra-error" class="cap-infra-error" hidden></div><section class="cap-infra-summary" aria-label="Resumo de Regions"><article><span>Regions</span><strong id="infra-region-count">0</strong></article></section><section class="cap-infra-panel"><div class="cap-infra-heading"><div><h2>Regions cadastradas</h2><p>Regions disponíveis para organização de Datacenters e Placement.</p></div><button id="infra-refresh" class="cap-btn cap-btn-secondary" type="button">Atualizar</button></div><div id="infra-regions" class="cap-infra-grid"></div></section></div><footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer></main><script src="/infrastructure-v3.js?v=3"></script></body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Regions | Capivara DSM</title>
+  <link rel="stylesheet" href="/dashboard-home-v3.css">
+  <link rel="stylesheet" href="/infrastructure-v3.css?v=3">
+</head>
+<body class="cap-home cap-infra-shell">
+<div id="sidebar-component"></div>
+<main class="cap-home-main cap-infra-page">
+  <header class="cap-home-topbar">
+    <div class="cap-home-title">
+      <button id="infra-menu-toggle" type="button" aria-label="Abrir ou recolher menu">☰</button>
+      <div><h1>Regions</h1><p>Organização geográfica de alto nível da infraestrutura distribuída.</p></div>
+    </div>
+    <div class="cap-top-status"><div class="cap-controller-state"><i></i><span>Controller Online</span></div><div class="cap-user"><strong id="infra-user-name">—</strong><span id="infra-user-role">—</span></div></div>
+  </header>
+  <div class="cap-home-content cap-infra-content">
+    <div id="infra-error" class="cap-infra-error" hidden></div>
+    <section class="cap-infra-summary" aria-label="Resumo de Regions"><article><span>Regions</span><strong id="infra-region-count">0</strong></article></section>
+    <section class="cap-infra-panel">
+      <div class="cap-infra-heading">
+        <div><h2>Regions cadastradas</h2><p>Regions disponíveis para organização de Datacenters e Placement.</p></div>
+        <div class="cap-infra-heading-actions">
+          <button id="infra-region-new" class="cap-btn cap-btn-primary admin-only" type="button" data-location-admin hidden>Nova Region</button>
+          <button id="infra-refresh" class="cap-btn cap-btn-secondary" type="button">Atualizar</button>
+        </div>
+      </div>
+      <div id="infra-regions" class="cap-infra-grid"></div>
+    </section>
+    <section id="infra-region-editor" class="cap-infra-panel cap-infra-editor" data-location-admin hidden>
+      <div class="cap-infra-heading"><div><h2 id="infra-region-editor-title">Nova Region</h2><p>Cadastre ou ajuste os metadados usados pela topologia e pelo Placement.</p></div></div>
+      <form id="infra-region-form" class="cap-infra-form">
+        <label>ID<input id="infra-region-id" required maxlength="191" autocomplete="off"></label>
+        <label>Nome<input id="infra-region-name" required maxlength="191"></label>
+        <label>Código do país<input id="infra-region-country-code" maxlength="2" placeholder="BR"></label>
+        <label>Continente<input id="infra-region-continent-code" maxlength="8" placeholder="SA"></label>
+        <label>Latitude<input id="infra-region-latitude" type="number" step="any" min="-90" max="90"></label>
+        <label>Longitude<input id="infra-region-longitude" type="number" step="any" min="-180" max="180"></label>
+        <label>Status<select id="infra-region-status"><option value="active">Ativa</option><option value="disabled">Desabilitada</option></select></label>
+        <div class="cap-infra-form-actions">
+          <button class="cap-btn cap-btn-primary" type="submit">Salvar Region</button>
+          <button id="infra-region-cancel" class="cap-btn cap-btn-secondary" type="button">Cancelar</button>
+          <span id="infra-region-feedback" class="cap-infra-form-feedback" role="status"></span>
+        </div>
+      </form>
+    </section>
+  </div>
+  <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
+</main>
+<script src="/infrastructure-location-admin.js?v=1"></script>
+<script src="/infrastructure-v3.js?v=4"></script>
+</body>
 </html>

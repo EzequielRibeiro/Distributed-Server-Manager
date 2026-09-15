@@ -140,10 +140,45 @@ PY
 bash -n "${PACKAGE_ROOT}/update-manager/process-guard.sh" || fail "packaged process-guard.sh failed syntax validation"
 grep -q 'fully reconciled ledger is already compatible' "${PACKAGE_ROOT}/update-manager/process-guard.sh" || fail "Baseline v2 preflight hotfix missing from package"
 
-PAYLOAD='{"schema_version":2,"kind":"DatabaseCheck","driver":"postgresql","connected":true,"initialized":true,"health":"error","baseline":"capivara-baseline-v2","baseline_checksum":"4e80e02a984d13199d7c9372b4828d1f2b0c1d35a77c33a2e35a531c7340c6ec","expected_baseline":"capivara-baseline-v2","expected_checksum":"2a15ab4f0ef5cef9c99eb65af3083a8f3cc82970a90455942466a9275d081bd4","checksum_matches":false,"missing_tables":[],"upgrade_ledger":true,"upgrade_version":6,"upgrade_latest":10,"pending_upgrades":[{"version":7,"name":"backup_job_retry_identity"},{"version":8,"name":"universal_content_contract_v2"},{"version":9,"name":"backup_job_retry_identity_repair"},{"version":10,"name":"universal_content_bundles"}],"upgrade_error":null,"valid":false}'
+PAYLOAD="$(PYTHONDONTWRITEBYTECODE=1 "${PYTHON_BIN}" - "${PACKAGE_ROOT}" <<'PAYLOADPY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / "database"))
+from baseline_upgrade_engine import UPGRADES, latest_upgrade_version
+
+current_version = 6
+print(json.dumps({
+    "schema_version": 2,
+    "kind": "DatabaseCheck",
+    "driver": "postgresql",
+    "connected": True,
+    "initialized": True,
+    "health": "error",
+    "baseline": "capivara-baseline-v2",
+    "baseline_checksum": "historical-ledger-checksum",
+    "expected_baseline": "capivara-baseline-v2",
+    "expected_checksum": "target-release-checksum",
+    "checksum_matches": False,
+    "missing_tables": [],
+    "upgrade_ledger": True,
+    "upgrade_version": current_version,
+    "upgrade_latest": latest_upgrade_version(),
+    "pending_upgrades": [
+        {"version": upgrade.version, "name": upgrade.name}
+        for upgrade in UPGRADES
+        if upgrade.version > current_version
+    ],
+    "upgrade_error": None,
+    "valid": False,
+}, separators=(",", ":")))
+PAYLOADPY
+)"
 if ! PYTHONDONTWRITEBYTECODE=1 PAYLOAD="${PAYLOAD}" TARGET_ROOT="${PACKAGE_ROOT}" bash -c 'source "$TARGET_ROOT/update-manager/process-guard.sh"; process_guard_database_check_is_upgradeable "$PAYLOAD" "$TARGET_ROOT"'
 then
-    fail "Baseline v2 pending-v7-v9 regression payload was rejected"
+    fail "Baseline v2 pending-upgrades regression payload was rejected"
 fi
 
 for relative_path in \

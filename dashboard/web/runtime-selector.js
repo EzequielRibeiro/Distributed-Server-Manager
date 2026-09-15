@@ -487,7 +487,7 @@
 
     function regionLabel(region) {
         if (!region) return "";
-        return [region.name, region.country_code].filter(Boolean).join(" - ") || region.id || "Região";
+        return region.display_label || [region.name, region.country_code].filter(Boolean).join(" - ") || region.id || "Região";
     }
 
     function renderRegions() {

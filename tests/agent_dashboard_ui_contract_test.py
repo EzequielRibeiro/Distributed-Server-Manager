@@ -73,7 +73,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
   web=ROOT/"dashboard/web"
   pages={"regions.html":"infra-regions","datacenters.html":"infra-datacenters","placement.html":"infra-placement"}
   for filename,target in pages.items():
-   content=(web/filename).read_text();self.assertIn(f'id="{target}"',content);self.assertIn('infrastructure-v3.js?v=3',content);self.assertIn(f'/{filename}',self.composition)
+   content=(web/filename).read_text();self.assertIn(f'id="{target}"',content);self.assertIn('infrastructure-v3.js?v=4',content);self.assertIn(f'/{filename}',self.composition)
   self.assertIn('const current=location.pathname.split("/").pop()',self.infrastructure_js)
  def test_agent_v3_routes_are_registered_in_composition_layer(self):
   for route in ("/agents.html","/agents-v3.js","/agents-v3.css","/agent-steam-status.css","/add-agent.html","/add-agent-v3.css","/agent-details.html","/agent-details.js","/agent-details.css","/agent-observability.html","/agent-observability.js","/agent-observability.css","/catalog-installation.css"):self.assertIn(route,self.composition)
@@ -88,7 +88,7 @@ class AgentDashboardUiContractTest(unittest.TestCase):
   self.assertIn("servers.html",(ROOT/"dashboard/web/servers-v2.html").read_text());self.assertNotIn('id="log-agent"',controller_logs);self.assertIn("Logs do Controller",controller_logs);self.assertIn('metadata["recent_logs"]',(ROOT/"dashboard/agent_heartbeat_api.py").read_text())
  def test_infrastructure_can_assign_agent_datacenter(self):
   for text in ("Datacenter do Agent","Vincular datacenter","Alterar localização","Region derivada:",'/agent/location','datacenter_id:select.value','status:\"active\"'):self.assertIn(text,self.infrastructure_js)
-  self.assertIn('infrastructure-v3.js?v=3',self.infrastructure_html);self.assertIn('infrastructure-v3.css?v=2',self.infrastructure_html)
+  self.assertIn('infrastructure-v3.js?v=4',self.infrastructure_html);self.assertIn('infrastructure-v3.css?v=3',self.infrastructure_html)
   for text in ("cap-agent-location-form","cap-agent-location-region","cap-agent-location-feedback"):self.assertIn(text,self.infrastructure_css)
  def test_agents_support_decommissioned_lifecycle_view(self):
   self.assertIn('data-lifecycle="operational"',self.html)

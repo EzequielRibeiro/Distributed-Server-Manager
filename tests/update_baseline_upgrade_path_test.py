@@ -114,6 +114,43 @@ class BaselineUpdatePathTest(unittest.TestCase):
                 [(upgrade.version, upgrade.name) for upgrade in UPGRADES],
             )
 
+    def test_migrate_advances_v10_datacenter_geography_to_v11(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "dsm"
+            database = root / "data" / "capivara.db"
+            database.parent.mkdir(parents=True)
+
+            initialized = self.manager(root, database, "init")
+            self.assertEqual(initialized.returncode, 0, initialized.stderr)
+
+            with sqlite3.connect(database) as connection:
+                connection.execute("DELETE FROM baseline_upgrades WHERE version=11")
+                for column in ("state_name", "state_code", "country_name"):
+                    connection.execute(f"ALTER TABLE datacenters DROP COLUMN {column}")
+                connection.execute(
+                    "UPDATE schema_baseline SET checksum=? WHERE singleton=1",
+                    ("v10-checksum-simulation",),
+                )
+                connection.commit()
+
+            migrated = self.manager(root, database, "migrate")
+            self.assertEqual(migrated.returncode, 0, migrated.stderr)
+            payload = json.loads(migrated.stdout)
+            self.assertEqual(payload["upgrade_version"], 11)
+            self.assertEqual(payload["upgrade_latest"], 11)
+            self.assertTrue(payload["valid"])
+
+            with sqlite3.connect(database) as connection:
+                columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info('datacenters')")
+                }
+                ledger = connection.execute(
+                    "SELECT version,name FROM baseline_upgrades WHERE version=11"
+                ).fetchone()
+
+            self.assertTrue({"country_name", "state_code", "state_name"} <= columns)
+            self.assertEqual(ledger, (11, "datacenter_geography_metadata"))
+
     def guard_classifier(self, payload: dict[str, object]) -> subprocess.CompletedProcess[str]:
         script = f'''\
 source "{PROCESS_GUARD}"

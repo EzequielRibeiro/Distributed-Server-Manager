@@ -585,6 +585,34 @@ def _upgrade_content_bundle_schema(backend: Any, connection: Any) -> None:
         )
 
 
+def _upgrade_datacenter_geography(backend: Any, connection: Any) -> None:
+    """Add descriptive geographic metadata without inferring operator data."""
+    if "datacenters" not in _table_names(backend, connection):
+        raise DatabaseMigrationError("datacenters table is missing")
+
+    required = {
+        "country_name": "VARCHAR(191)" if backend.name == "mysql" else "TEXT",
+        "state_code": "VARCHAR(32)" if backend.name == "mysql" else "TEXT",
+        "state_name": "VARCHAR(191)" if backend.name == "mysql" else "TEXT",
+    }
+    existing = _column_names(backend, connection, "datacenters")
+    for column, sql_type in required.items():
+        if column in existing:
+            continue
+        _execute_script(
+            backend,
+            connection,
+            f"ALTER TABLE datacenters ADD COLUMN {column} {sql_type};",
+        )
+
+    missing = sorted(set(required) - _column_names(backend, connection, "datacenters"))
+    if missing:
+        raise DatabaseMigrationError(
+            "datacenter geography baseline upgrade incomplete; missing columns: "
+            + ", ".join(missing)
+        )
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -596,6 +624,7 @@ UPGRADES = (
     BaselineUpgrade(8, "universal_content_contract_v2", _upgrade_content_contract_v2),
     BaselineUpgrade(9, "backup_job_retry_identity_repair", _upgrade_backup_job_retry_identity),
     BaselineUpgrade(10, "universal_content_bundles", _upgrade_content_bundle_schema),
+    BaselineUpgrade(11, "datacenter_geography_metadata", _upgrade_datacenter_geography),
 )
 
 

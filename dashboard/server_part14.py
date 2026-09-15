@@ -36,6 +36,7 @@ DASHBOARD_V3_FILES = {
     "/placement.html": legacy.WEB_DIR / "placement.html",
     "/infrastructure-v3.css": legacy.WEB_DIR / "infrastructure-v3.css",
     "/infrastructure-v3.js": legacy.WEB_DIR / "infrastructure-v3.js",
+    "/infrastructure-location-admin.js": legacy.WEB_DIR / "infrastructure-location-admin.js",
     "/agents.html": legacy.WEB_DIR / "agents.html",
     "/agents-v3.js": legacy.WEB_DIR / "agents-v3.js",
     "/agents-v3.css": legacy.WEB_DIR / "agents-v3.css",

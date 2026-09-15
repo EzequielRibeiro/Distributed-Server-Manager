@@ -55,10 +55,10 @@ class ContentBundleRepositoryTest(unittest.TestCase):
   removed=self.repo.set_bundle_state("inst","pack",desired_state="absent",activation_state="disabled",requested_by="test");self.assertEqual(removed["assignment"]["desired_state"],"absent");self.assertTrue(all(row["desired_state"]=="absent" for row in removed["children"]))
  def test_upgrade_10_creates_bundle_tables_for_existing_ledger(self):
   with self.backend.transaction() as c:
-   c.execute("DROP TABLE content_bundle_revisions");c.execute("DROP TABLE content_bundles");c.execute("DELETE FROM baseline_upgrades WHERE version=10")
+   c.execute("DROP TABLE content_bundle_revisions");c.execute("DROP TABLE content_bundles");c.execute("DELETE FROM baseline_upgrades WHERE version>=10")
   with self.backend.transaction() as c:
    completed=apply_pending_upgrades(self.backend,c,installed_checksum="ledger-already-exists")
-  self.assertEqual(completed,[10])
+  self.assertEqual(completed,[10,11])
   with self.backend.connect() as c:
    tables={row[0] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
   self.assertTrue({"content_bundles","content_bundle_revisions"}.issubset(tables))

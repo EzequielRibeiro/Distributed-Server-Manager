@@ -1477,6 +1477,9 @@ CREATE TABLE datacenters (
     provider TEXT,
     city TEXT,
     country_code TEXT,
+    country_name TEXT,
+    state_code TEXT,
+    state_name TEXT,
     latitude DOUBLE PRECISION,
     longitude DOUBLE PRECISION,
     status TEXT NOT NULL DEFAULT 'active'

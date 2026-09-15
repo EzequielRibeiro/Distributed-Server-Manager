@@ -38,6 +38,9 @@ class InitialTopologyBootstrapTest(unittest.TestCase):
                 "--datacenter-name", "Limeira DC 01",
                 "--datacenter-city", "Limeira",
                 "--datacenter-country-code", "BR",
+                "--datacenter-country-name", "Brasil",
+                "--datacenter-state-code", "SP",
+                "--datacenter-state-name", "São Paulo",
             ]
             subprocess.run(command, env=env, check=True, stdout=subprocess.DEVNULL)
             subprocess.run(command, env=env, check=True, stdout=subprocess.DEVNULL)
@@ -47,11 +50,15 @@ class InitialTopologyBootstrapTest(unittest.TestCase):
                     "SELECT name,country_code FROM regions WHERE id=?", ("br-sudeste",)
                 ).fetchone()
                 datacenter = connection.execute(
-                    "SELECT region_id,name,city FROM datacenters WHERE id=?", ("limeira-dc01",)
+                    "SELECT region_id,name,city,country_code,country_name,state_code,state_name "
+                    "FROM datacenters WHERE id=?", ("limeira-dc01",)
                 ).fetchone()
 
             self.assertEqual(region, ("Brasil Sudeste", "BR"))
-            self.assertEqual(datacenter, ("br-sudeste", "Limeira DC 01", "Limeira"))
+            self.assertEqual(
+                datacenter,
+                ("br-sudeste", "Limeira DC 01", "Limeira", "BR", "Brasil", "SP", "São Paulo"),
+            )
 
 
 if __name__ == "__main__":
