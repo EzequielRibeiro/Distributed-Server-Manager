@@ -115,7 +115,7 @@ async function testAvailableRegionsArePublicAndRecommended() {
       locations: [{
         region_id: "br-sp",
         name: "Brasil Sudeste",
-        city: "São Paulo",
+        city: "Limeira",
         country_code: "BR",
         country_name: "Brasil",
         state_code: "SP",
@@ -135,7 +135,7 @@ async function testAvailableRegionsArePublicAndRecommended() {
   assert.equal(result.regions[0].id, "br-sp");
   assert.equal(result.regions[0].recommended, true);
   assert.equal(result.regions[0].latency_ms, 18);
-  assert.equal(result.regions[0].city, "São Paulo");
+  assert.equal(result.regions[0].city, "Limeira");
   assert.equal(result.regions[0].country_name, "Brasil");
   assert.equal(result.regions[0].state_code, "SP");
   assert.equal(result.regions[0].state_name, "São Paulo");
