@@ -251,10 +251,19 @@ def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
             pattern, line = _command_line(key, value)
             text = pattern.sub(line, text, count=1) if pattern.search(text) else text.rstrip("\n") + ("\n" if text else "") + line + "\n"
         else:
-            separator = r"\s*=\s*"
-            pattern = re.compile(rf"(?m)^\s*{re.escape(key)}{separator}[^\r\n;]*(?:;)?\s*$")
             line = f"{key} = {value};" if syntax == "semicolon" else f"{key}={value}"
-            text = pattern.sub(line, text, count=1) if pattern.search(text) else text.rstrip("\n") + ("\n" if text else "") + line + "\n"
+            property_pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
+            lines = text.splitlines(); updated = []; found = False
+            for existing in lines:
+                if property_pattern.match(existing):
+                    if not found:
+                        updated.append(line); found = True
+                    continue
+                updated.append(existing)
+            if found:
+                text = "\n".join(updated) + ("\n" if text.endswith(("\n", "\r")) else "")
+            else:
+                text = text.rstrip("\n") + ("\n" if text else "") + line + "\n"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
         written.append(relative.as_posix())

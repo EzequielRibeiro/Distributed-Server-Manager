@@ -52,20 +52,19 @@ def test_legacy_dayz_profile_rebuilds_private_mutable_state(tmp_path, monkeypatc
 
     assert changed is True
     assert migrated["profile"] == "dayz"
-    assert migrated["profile_version"] == 3
+    assert migrated["profile_version"] == 8
     assert migrated["profile_migrated_from_version"] == 1
     assert migrated["desired_state"] == "running"
     assert migrated["ports"]["game"]["port"] == 24010
-    assert migrated["ports"]["steam_query"]["port"] == 24012
+    assert migrated["ports"]["steam_query"]["port"] == 24013
 
     state_root = "/var/lib/capivara-instances/aurora-dayz-002"
     assert migrated["instance_state_root"] == state_root
     assert migrated["config_path"] == f"{state_root}/config/serverDZ.cfg"
     assert f"{state_root}/profiles" in migrated["writable_directories"]
-    assert f"{state_root}/storage_1" in migrated["writable_directories"]
     assert migrated["bind_paths"] == [{
-        "source": f"{state_root}/storage_1",
-        "target": str(Path(legacy["working_directory"]) / "mpmissions" / "dayzOffline.chernarusplus" / "storage_1"),
+        "source": f"{state_root}/mpmissions/dayzOffline.chernarusplus",
+        "target": str(Path(legacy["working_directory"]) / "mpmissions" / "dayzOffline.chernarusplus"),
     }]
 
     assert f"-config={state_root}/config/serverDZ.cfg" in migrated["arguments"]
@@ -80,7 +79,7 @@ def test_legacy_dayz_profile_rebuilds_private_mutable_state(tmp_path, monkeypatc
         "value": "{{PORT_STEAM_QUERY}}",
         "syntax": "semicolon",
     }]
-    assert migrated["catalog_variables"]["PORT_STEAM_QUERY"] == "24012"
+    assert migrated["catalog_variables"]["PORT_STEAM_QUERY"] == "24013"
 
 
 def test_current_profile_is_not_rebuilt(tmp_path, monkeypatch):

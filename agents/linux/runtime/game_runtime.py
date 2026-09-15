@@ -209,6 +209,10 @@ def migrate_runtime_spec(config: dict[str, Any], record: dict[str, Any]) -> tupl
     instance = dict(hydrated_record)
     instance["desired_state"] = str(record.get("desired_state") or "stopped")
     rebuilt = build_runtime_spec(config, instance, context)
+    server_settings_values = record.get("server_settings_values")
+    if isinstance(server_settings_values, dict) and server_settings_values:
+        from server_settings_runtime import prepare_spec
+        rebuilt = prepare_spec(rebuilt, dict(server_settings_values))
     rebuilt_version = int(rebuilt.get("profile_version") or 1)
     if rebuilt_version <= stored_version:
         raise RuntimeError(

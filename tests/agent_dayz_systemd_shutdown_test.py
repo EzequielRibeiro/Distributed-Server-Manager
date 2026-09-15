@@ -43,14 +43,14 @@ class DayZSystemdShutdownTest(unittest.TestCase):
             install.mkdir()
             spec = self._build_dayz_spec(install)
 
-        self.assertEqual(spec["profile_version"], 7)
+        self.assertEqual(spec["profile_version"], 8)
         self.assertEqual(spec["success_exit_statuses"], [255])
         unit = render_unit(spec)
         self.assertIn("\nSuccessExitStatus=255\n", unit)
         self.assertIn("\nRestart=no\n", unit)
         self.assertIn("\nKillSignal=SIGTERM\n", unit)
 
-    def test_dayz_v6_runtime_is_migrated_to_v7_with_success_exit_status(self):
+    def test_dayz_v6_runtime_is_migrated_to_v8_with_success_exit_status(self):
         with tempfile.TemporaryDirectory() as temp:
             install = Path(temp) / "serverfiles"
             install.mkdir()
@@ -64,7 +64,7 @@ class DayZSystemdShutdownTest(unittest.TestCase):
             )
 
         self.assertTrue(changed)
-        self.assertEqual(migrated["profile_version"], 7)
+        self.assertEqual(migrated["profile_version"], 8)
         self.assertEqual(migrated["profile_migrated_from_version"], 6)
         self.assertEqual(migrated["success_exit_statuses"], [255])
         self.assertIn("\nSuccessExitStatus=255\n", render_unit(migrated))
