@@ -6,6 +6,7 @@ from profiles.theisle import TheIsleRuntimeProfile
 from runtime_spec import RuntimeSpecError,validate_runtime_spec
 from runtime_secret_store import put_secret
 from materializers.systemd import render_unit
+from theisle_prepare import _copy_game_ini
 
 def build(install:Path,instance_id:str):
  instance={"instance_id":instance_id,"agent_id":"agent-1","game_id":"theisle","environment_id":"theisle.stable"}
@@ -17,7 +18,7 @@ def main():
   os.environ["CAPIVARA_RUNTIME_SECRET_ROOT"]=str(Path(td)/"secrets")
   install=Path(td)/"server";(install/"TheIsle/Binaries/Linux").mkdir(parents=True);(install/"TheIsle/Saved/Config/LinuxServer").mkdir(parents=True);(install/"TheIsle/Binaries/Linux/TheIsleServer-Linux-Shipping").write_text("")
   spec=build(install,"isle-1")
-  assert spec["profile_version"]==2
+  assert spec["profile_version"]==3
   assert [x["name"] for x in spec["secret_refs"]]==["EOS_CLIENT_ID","EOS_CLIENT_SECRET"]
   assert spec["runtime_bind_paths"]==[{"source":"/run/capivara-theisle-isle-1","target":str(install/"TheIsle/Saved/Config/LinuxServer")}]
   private=Path("/var/lib/capivara-instances/isle-1/TheIsle/Saved")
@@ -25,12 +26,15 @@ def main():
    {"source":str(private/"PlayerData"),"target":str(install/"TheIsle/Saved/PlayerData")},
    {"source":str(private/"Logs"),"target":str(install/"TheIsle/Saved/Logs")},
   ]
-  assert set(spec["writable_directories"])=={str(private/"PlayerData"),str(private/"Logs")}
+  assert spec["configuration_root"]==str(private/"Config/LinuxServer")
+  assert set(spec["writable_directories"])=={str(private/"Config/LinuxServer"),str(private/"PlayerData"),str(private/"Logs")}
+  assert spec["pre_start"][0]["arguments"][-2:]==["--persistent-config-root",str(private/"Config/LinuxServer")]
   put_secret("instance/isle-1/EOS_CLIENT_ID","client-id",expected_instance_id="isle-1");put_secret("instance/isle-1/EOS_CLIENT_SECRET","super-secret",expected_instance_id="isle-1")
   unit=render_unit(spec);assert "LoadCredential=EOS_CLIENT_ID:" in unit and "LoadCredential=EOS_CLIENT_SECRET:" in unit;assert "super-secret" not in unit and "client-id" not in unit;assert "ClientSecret" not in " ".join(spec["arguments"]);assert "RuntimeDirectory=capivara-theisle-isle-1" in unit
   assert f"BindPaths=/run/capivara-theisle-isle-1:{install}/TheIsle/Saved/Config/LinuxServer" in unit
   assert f"BindPaths={private}/PlayerData:{install}/TheIsle/Saved/PlayerData" in unit
   assert f"BindPaths={private}/Logs:{install}/TheIsle/Saved/Logs" in unit
+  persistent=Path(td)/"persistent";runtime=Path(td)/"runtime";persistent.mkdir();runtime.mkdir();(persistent/"Game.ini").write_text("[Game]\nServerName=Capivara\n",encoding="utf-8");_copy_game_ini(persistent,runtime);assert (runtime/"Game.ini").read_text(encoding="utf-8")=="[Game]\nServerName=Capivara\n"
   second=build(install,"isle-2")
   assert {x["source"] for x in spec["bind_paths"]}.isdisjoint({x["source"] for x in second["bind_paths"]})
   assert {x["target"] for x in spec["bind_paths"]}=={x["target"] for x in second["bind_paths"]}

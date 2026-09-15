@@ -7,21 +7,92 @@
   "edition": "default",
   "variant": "stable",
   "loader": null,
-  "version": {"strategy": "static", "value": "current", "build": "steam-current"},
-  "process": {"engine": "native", "executable": "PalServer.sh", "artifact_mode": "executable"},
-  "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
-  "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "2394010"},
-  "installation": {"directory": "/opt/dsm/game-data/palworld/serverfiles"},
+  "version": {
+    "strategy": "static",
+    "value": "current",
+    "build": "steam-current"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "PalServer.sh",
+    "artifact_mode": "executable"
+  },
+  "requirements": {
+    "os": [
+      "linux"
+    ],
+    "architectures": [
+      "x86_64"
+    ],
+    "java": null
+  },
+  "artifact": {
+    "provider": "steam",
+    "auth": "anonymous",
+    "package_id": "2394010"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/palworld/serverfiles"
+  },
   "network": {
     "allocation": "block",
     "block_size": 10,
     "ports": [
-      {"name": "game", "protocol": "udp", "offset": 0, "exposure": "public"},
-      {"name": "rcon", "protocol": "tcp", "offset": 1, "exposure": "none"},
-      {"name": "rest_api", "protocol": "tcp", "offset": 2, "exposure": "none"}
+      {
+        "name": "game",
+        "protocol": "udp",
+        "offset": 0,
+        "exposure": "public"
+      },
+      {
+        "name": "rcon",
+        "protocol": "tcp",
+        "offset": 1,
+        "exposure": "none"
+      },
+      {
+        "name": "rest_api",
+        "protocol": "tcp",
+        "offset": 2,
+        "exposure": "none"
+      }
     ],
     "apply": [
-      {"kind": "argument", "template": "-port={game}"}
+      {
+        "kind": "argument",
+        "template": "-port={game}"
+      }
     ]
+  },
+  "server_settings": {
+    "restart_required": true,
+    "fields": {
+      "server_name": {
+        "label": "Nome do servidor",
+        "type": "string",
+        "customer_editable": true,
+        "max_length": 128,
+        "binding": {
+          "kind": "property",
+          "path": "PalWorldSettings.ini",
+          "key": "ServerName",
+          "syntax": "ue_option_settings",
+          "quote": "double"
+        }
+      },
+      "max_players": {
+        "label": "Máximo de jogadores",
+        "type": "integer",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "PalWorldSettings.ini",
+          "key": "ServerPlayerMaxNum",
+          "syntax": "ue_option_settings"
+        },
+        "min": 1,
+        "max": 128
+      }
+    }
   }
 }

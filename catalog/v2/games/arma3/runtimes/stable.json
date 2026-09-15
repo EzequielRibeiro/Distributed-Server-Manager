@@ -7,20 +7,115 @@
   "edition": "default",
   "variant": "stable",
   "loader": null,
-  "version": {"strategy": "static", "value": "current", "build": "steam-current"},
-  "process": {"engine": "native", "executable": "arma3server", "artifact_mode": "executable"},
-  "requirements": {"os": ["linux", "windows"], "architectures": ["x86_64"], "java": null},
-  "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "233780"},
-  "installation": {"directory": "/opt/dsm/game-data/arma3/serverfiles"},
-  "network": {
-    "allocation": "block", "block_size": 100,
-    "ports": [
-      {"name":"game","protocol":"udp","offset":0,"exposure":"public"},
-      {"name":"steam_query","protocol":"udp","offset":1,"exposure":"public"},
-      {"name":"steam_master","protocol":"udp","offset":2,"exposure":"public"},
-      {"name":"von_reserved","protocol":"udp","offset":3,"exposure":"public"},
-      {"name":"battleye","protocol":"udp","offset":4,"exposure":"public"}
+  "version": {
+    "strategy": "static",
+    "value": "current",
+    "build": "steam-current"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "arma3server",
+    "artifact_mode": "executable"
+  },
+  "requirements": {
+    "os": [
+      "linux",
+      "windows"
     ],
-    "apply": [{"kind":"argument","template":"-port={game}"}]
+    "architectures": [
+      "x86_64"
+    ],
+    "java": null
+  },
+  "artifact": {
+    "provider": "steam",
+    "auth": "anonymous",
+    "package_id": "233780"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/arma3/serverfiles"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 100,
+    "ports": [
+      {
+        "name": "game",
+        "protocol": "udp",
+        "offset": 0,
+        "exposure": "public"
+      },
+      {
+        "name": "steam_query",
+        "protocol": "udp",
+        "offset": 1,
+        "exposure": "public"
+      },
+      {
+        "name": "steam_master",
+        "protocol": "udp",
+        "offset": 2,
+        "exposure": "public"
+      },
+      {
+        "name": "von_reserved",
+        "protocol": "udp",
+        "offset": 3,
+        "exposure": "public"
+      },
+      {
+        "name": "battleye",
+        "protocol": "udp",
+        "offset": 4,
+        "exposure": "public"
+      }
+    ],
+    "apply": [
+      {
+        "kind": "argument",
+        "template": "-port={game}"
+      }
+    ]
+  },
+  "server_settings": {
+    "restart_required": true,
+    "fields": {
+      "server_name": {
+        "label": "Nome do servidor",
+        "description": "Nome público exibido no navegador de servidores.",
+        "type": "string",
+        "customer_editable": true,
+        "max_length": 128,
+        "binding": {
+          "kind": "property",
+          "path": "server.cfg",
+          "key": "hostname",
+          "syntax": "semicolon",
+          "quote": "double",
+          "activate_argument": {
+            "flag": "-config",
+            "style": "equals"
+          }
+        }
+      },
+      "max_players": {
+        "label": "Máximo de jogadores",
+        "description": "Também limitado pelo plano contratado.",
+        "type": "integer",
+        "customer_editable": true,
+        "min": 1,
+        "max": 200,
+        "binding": {
+          "kind": "property",
+          "path": "server.cfg",
+          "key": "maxPlayers",
+          "syntax": "semicolon",
+          "activate_argument": {
+            "flag": "-config",
+            "style": "equals"
+          }
+        }
+      }
+    }
   }
 }

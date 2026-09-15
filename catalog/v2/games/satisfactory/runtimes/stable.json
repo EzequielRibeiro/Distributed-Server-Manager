@@ -7,10 +7,101 @@
   "edition": "default",
   "variant": "stable",
   "loader": null,
-  "version": {"strategy": "static", "value": "current", "build": "steam-current"},
-  "process": {"engine": "native", "executable": "FactoryServer.sh", "artifact_mode": "executable"},
-  "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
-  "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "1690800"},
-  "installation": {"directory": "/opt/dsm/game-data/satisfactory/serverfiles"},
-  "network": {"allocation": "block", "block_size": 2, "ports": [{"name": "game_udp", "protocol": "udp", "offset": 0, "exposure": "public"}, {"name": "game_tcp", "protocol": "tcp", "offset": 0, "exposure": "public"}, {"name": "reliable_tcp", "protocol": "tcp", "offset": 1, "exposure": "public"}], "apply": [{"kind": "argument", "template": "-Port={game_udp}"}, {"kind": "argument", "template": "-ReliablePort={reliable_tcp}"}, {"kind": "argument", "template": "-ExternalReliablePort={reliable_tcp}"}]}
+  "version": {
+    "strategy": "static",
+    "value": "current",
+    "build": "steam-current"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "FactoryServer.sh",
+    "artifact_mode": "executable"
+  },
+  "requirements": {
+    "os": [
+      "linux"
+    ],
+    "architectures": [
+      "x86_64"
+    ],
+    "java": null
+  },
+  "artifact": {
+    "provider": "steam",
+    "auth": "anonymous",
+    "package_id": "1690800"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/satisfactory/serverfiles"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 2,
+    "ports": [
+      {
+        "name": "game_udp",
+        "protocol": "udp",
+        "offset": 0,
+        "exposure": "public"
+      },
+      {
+        "name": "game_tcp",
+        "protocol": "tcp",
+        "offset": 0,
+        "exposure": "public"
+      },
+      {
+        "name": "reliable_tcp",
+        "protocol": "tcp",
+        "offset": 1,
+        "exposure": "public"
+      }
+    ],
+    "apply": [
+      {
+        "kind": "argument",
+        "template": "-Port={game_udp}"
+      },
+      {
+        "kind": "argument",
+        "template": "-ReliablePort={reliable_tcp}"
+      },
+      {
+        "kind": "argument",
+        "template": "-ExternalReliablePort={reliable_tcp}"
+      }
+    ]
+  },
+  "server_settings": {
+    "restart_required": true,
+    "fields": {
+      "max_players": {
+        "label": "Máximo de jogadores",
+        "description": "Também limitado pelo plano contratado.",
+        "type": "integer",
+        "customer_editable": true,
+        "min": 1,
+        "max": 127,
+        "binding": {
+          "kind": "ini",
+          "path": "Game.ini",
+          "section": "/Script/Engine.GameSession",
+          "key": "MaxPlayers"
+        }
+      },
+      "rotating_autosaves": {
+        "label": "Quantidade de autosaves rotativos",
+        "type": "integer",
+        "customer_editable": true,
+        "min": 1,
+        "max": 50,
+        "binding": {
+          "kind": "ini",
+          "path": "Game.ini",
+          "section": "/Script/FactoryGame.FGSaveSession",
+          "key": "mNumRotatingAutosaves"
+        }
+      }
+    }
+  }
 }

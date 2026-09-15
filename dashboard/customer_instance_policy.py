@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Iterable
 
-INSTANCE_PERMISSIONS=frozenset({"instance.view","instance.start","instance.stop","instance.restart","instance.delete","instance.provision.retry","console.read","console.execute","files.read","files.download","files.upload","files.edit","files.delete","files.move","files.extract","backup.read","backup.create","backup.download","backup.restore","backup.delete","startup.read","startup.write","content.read","content.install","content.remove","team.read","team.manage","contract.read","contract.upgrade"})
+INSTANCE_PERMISSIONS=frozenset({"instance.view","instance.start","instance.stop","instance.restart","instance.delete","instance.provision.retry","console.read","console.execute","files.read","files.download","files.upload","files.edit","files.delete","files.move","files.extract","backup.read","backup.create","backup.download","backup.restore","backup.delete","startup.read","startup.write","settings.read","settings.write","content.read","content.install","content.remove","team.read","team.manage","contract.read","contract.upgrade","activity.read"})
 PERMISSION_PRESETS={
  "none":frozenset(),"custom":frozenset(),
- "viewer":frozenset({"instance.view","console.read","files.read","files.download","backup.read","startup.read","content.read","team.read","contract.read"}),
- "operator":frozenset({"instance.view","instance.start","instance.stop","instance.restart","console.read","files.read","files.download","files.upload","files.edit","backup.read","backup.create","backup.download","startup.read","content.read","content.install","content.remove","team.read","contract.read"}),
+ "viewer":frozenset({"instance.view","console.read","files.read","files.download","backup.read","startup.read","settings.read","content.read","team.read","contract.read","activity.read"}),
+ "operator":frozenset({"instance.view","instance.start","instance.stop","instance.restart","console.read","files.read","files.download","files.upload","files.edit","backup.read","backup.create","backup.download","startup.read","settings.read","settings.write","content.read","content.install","content.remove","team.read","contract.read","activity.read"}),
  "manager":INSTANCE_PERMISSIONS,
 }
 FILE_ACTION_PERMISSION={"list":"files.read","read":"files.read","download":"files.download","upload":"files.upload","edit":"files.edit","delete":"files.delete","move":"files.move","rename":"files.move","mkdir":"files.upload","extract":"files.extract"}
@@ -60,6 +60,33 @@ def validate_startup_values(values,declaration):
   else:raise ValueError(f"unsupported startup parameter type: {kind}")
   normalized[str(key)]=value
  return normalized
+def validate_server_settings(values,declaration,*,player_limit=None):
+ supplied=values if isinstance(values,dict) else {};raw=declaration if isinstance(declaration,dict) else {};declared=raw.get("fields") if isinstance(raw.get("fields"),dict) else {};normalized={}
+ unknown=set(supplied)-set(declared)
+ if unknown:raise PermissionError("server setting is not customer editable: "+", ".join(sorted(unknown)))
+ for key,value in supplied.items():
+  spec=declared.get(key)
+  if not isinstance(spec,dict) or not bool(spec.get("customer_editable",True)):raise PermissionError(f"server setting is not customer editable: {key}")
+  kind=str(spec.get("type") or "string").lower()
+  if kind=="select":
+   if value not in list(spec.get("allowed") or []):raise ValueError(f"invalid value for server setting: {key}")
+  elif kind=="integer":
+   try:value=int(value)
+   except (TypeError,ValueError) as exc:raise ValueError(f"server setting must be an integer: {key}") from exc
+   if spec.get("min") is not None and value<int(spec["min"]):raise ValueError(f"server setting below minimum: {key}")
+   maximum=spec.get("max")
+   if key=="max_players" and player_limit is not None:maximum=min(int(maximum),int(player_limit)) if maximum is not None else int(player_limit)
+   if maximum is not None and value>int(maximum):raise ValueError(f"server setting above maximum: {key}")
+  elif kind=="boolean":
+   if not isinstance(value,bool):raise ValueError(f"server setting must be boolean: {key}")
+  elif kind=="string":
+   value=str(value)
+   if any(ch in value for ch in ("\x00","\n","\r")):raise ValueError(f"server setting contains forbidden control characters: {key}")
+   if len(value)>int(spec.get("max_length") or 256):raise ValueError(f"server setting too long: {key}")
+   if spec.get("min_length") is not None and len(value)<int(spec["min_length"]):raise ValueError(f"server setting too short: {key}")
+  else:raise ValueError(f"unsupported server setting type: {kind}")
+  normalized[str(key)]=value
+ return normalized
 def normalized_instance_relative_path(value):
  path=PurePosixPath(str(value or "").replace("\\","/").strip() or ".")
  if path.is_absolute() or ".." in path.parts:raise ValueError("path must stay inside the instance")
@@ -78,4 +105,4 @@ def enforce_content_upload(relative_path,*,policy,runtime_rules=None):
  if PurePosixPath(path).suffix.lower() in {str(x).lower() for x in rules.get("runtime_extensions",[])} and not policy.custom_runtime_allowed:raise PermissionError("custom runtime artifacts are not allowed by this contract")
  if not policy.external_upload_allowed:raise PermissionError("external file upload is not allowed by this contract")
 
-__all__=["CONTENT_FEATURES","EffectiveContentPolicy","FILE_ACTION_PERMISSION","INSTANCE_PERMISSIONS","PERMISSION_PRESETS","content_ui_sections","effective_content_policy","effective_permissions","enforce_content_upload","enforce_managed_content_mutation","normalized_instance_relative_path","permissions_for_profile","require_permission","validate_startup_values"]
+__all__=["CONTENT_FEATURES","EffectiveContentPolicy","FILE_ACTION_PERMISSION","INSTANCE_PERMISSIONS","PERMISSION_PRESETS","content_ui_sections","effective_content_policy","effective_permissions","enforce_content_upload","enforce_managed_content_mutation","normalized_instance_relative_path","permissions_for_profile","require_permission","validate_server_settings","validate_startup_values"]

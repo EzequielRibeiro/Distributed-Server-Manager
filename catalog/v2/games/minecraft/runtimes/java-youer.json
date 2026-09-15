@@ -7,12 +7,204 @@
   "edition": "java",
   "variant": "youer",
   "loader": "youer",
-  "version": {"strategy": "dynamic", "resolver": "youer_api", "config": {"supported_versions": ["1.21.1"], "api_base": "https://api.mohistmc.com/project/youer"}},
-  "process": {"engine": "java", "executable": "server.jar", "artifact_mode": "file", "args": ["nogui"]},
-  "requirements": {"os": ["linux", "windows"], "architectures": ["x86_64", "aarch64"], "java": {"min": 21, "max": 21}},
-  "artifact": {"provider": "http", "auth": "anonymous"},
-  "content": {"managed":{"adapter":"minecraft-java","types":{"mod":{"directory":"mods","extensions":[".jar"],"providers":["modrinth","curseforge"]},"plugin":{"directory":"plugins","extensions":[".jar"],"providers":["modrinth"]}}},"bundles":{"modpack":{"providers":["modrinth","curseforge"]}}},
-  "installation": {"directory": "/opt/dsm/game-data/minecraft/youer"},
-  "network": {"allocation":"block","block_size":1,"ports":[{"name":"game","protocol":"tcp","offset":0,"exposure":"public"}],"apply":[{"kind":"property","file":"server.properties","key":"server-port","value":"{game}"}]},
-  "compatibility": {"content_ecosystems": ["neoforge-mod", "bukkit-plugin", "spigot-plugin"], "compatibility_note": "Youer combines NeoForge mod support with Bukkit/Spigot plugin APIs. Individual mod/plugin compatibility can vary; Paper/Purpur compatibility must not be assumed universal."}
+  "version": {
+    "strategy": "dynamic",
+    "resolver": "youer_api",
+    "config": {
+      "supported_versions": [
+        "1.21.1"
+      ],
+      "api_base": "https://api.mohistmc.com/project/youer"
+    }
+  },
+  "process": {
+    "engine": "java",
+    "executable": "server.jar",
+    "artifact_mode": "file",
+    "args": [
+      "nogui"
+    ]
+  },
+  "requirements": {
+    "os": [
+      "linux",
+      "windows"
+    ],
+    "architectures": [
+      "x86_64",
+      "aarch64"
+    ],
+    "java": {
+      "min": 21,
+      "max": 21
+    }
+  },
+  "artifact": {
+    "provider": "http",
+    "auth": "anonymous"
+  },
+  "content": {
+    "managed": {
+      "adapter": "minecraft-java",
+      "types": {
+        "mod": {
+          "directory": "mods",
+          "extensions": [
+            ".jar"
+          ],
+          "providers": [
+            "modrinth",
+            "curseforge"
+          ]
+        },
+        "plugin": {
+          "directory": "plugins",
+          "extensions": [
+            ".jar"
+          ],
+          "providers": [
+            "modrinth"
+          ]
+        }
+      }
+    },
+    "bundles": {
+      "modpack": {
+        "providers": [
+          "modrinth",
+          "curseforge"
+        ]
+      }
+    }
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/minecraft/youer"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 1,
+    "ports": [
+      {
+        "name": "game",
+        "protocol": "tcp",
+        "offset": 0,
+        "exposure": "public"
+      }
+    ],
+    "apply": [
+      {
+        "kind": "property",
+        "file": "server.properties",
+        "key": "server-port",
+        "value": "{game}"
+      }
+    ]
+  },
+  "compatibility": {
+    "content_ecosystems": [
+      "neoforge-mod",
+      "bukkit-plugin",
+      "spigot-plugin"
+    ],
+    "compatibility_note": "Youer combines NeoForge mod support with Bukkit/Spigot plugin APIs. Individual mod/plugin compatibility can vary; Paper/Purpur compatibility must not be assumed universal."
+  },
+  "server_settings": {
+    "restart_required": true,
+    "fields": {
+      "server_name": {
+        "label": "MOTD / nome do servidor",
+        "type": "string",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "server.properties",
+          "key": "motd",
+          "syntax": "equals"
+        },
+        "max_length": 256
+      },
+      "max_players": {
+        "label": "Máximo de jogadores",
+        "type": "integer",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "server.properties",
+          "key": "max-players",
+          "syntax": "equals"
+        },
+        "min": 1,
+        "max": 1000
+      },
+      "online_mode": {
+        "label": "Online mode",
+        "type": "boolean",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "server.properties",
+          "key": "online-mode",
+          "syntax": "equals"
+        }
+      },
+      "difficulty": {
+        "label": "Dificuldade",
+        "type": "select",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "server.properties",
+          "key": "difficulty",
+          "syntax": "equals"
+        },
+        "allowed": [
+          "peaceful",
+          "easy",
+          "normal",
+          "hard"
+        ]
+      },
+      "gamemode": {
+        "label": "Modo de jogo",
+        "type": "select",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "server.properties",
+          "key": "gamemode",
+          "syntax": "equals"
+        },
+        "allowed": [
+          "survival",
+          "creative",
+          "adventure",
+          "spectator"
+        ]
+      },
+      "pvp": {
+        "label": "PvP",
+        "type": "boolean",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "server.properties",
+          "key": "pvp",
+          "syntax": "equals"
+        }
+      },
+      "view_distance": {
+        "label": "Distância de visão",
+        "type": "integer",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "server.properties",
+          "key": "view-distance",
+          "syntax": "equals"
+        },
+        "min": 3,
+        "max": 32
+      }
+    }
+  }
 }

@@ -103,6 +103,7 @@ def runtime_workspace_capabilities(root: Path, game_id: str, runtime_id: str) ->
         "custom_runtime": bool(item.get("custom_runtime", False)),
         "console": dict(item.get("console") or {}),
         "startup_parameters": dict(item.get("startup_parameters") or {}),
+        "server_settings": dict(definition.get("server_settings") or item.get("server_settings") or {}),
         "file_policy": dict(item.get("file_policy") or {}),
         "label": str(item.get("label") or definition.get("name") or runtime),
         "family": str(item.get("family") or definition.get("edition") or ""),

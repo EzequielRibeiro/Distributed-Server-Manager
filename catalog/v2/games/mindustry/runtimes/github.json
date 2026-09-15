@@ -7,10 +7,107 @@
   "edition": "default",
   "variant": "dedicated-server",
   "loader": null,
-  "version": {"strategy": "dynamic", "resolver": "github_releases", "config": {"repository": "Anuken/Mindustry", "asset_pattern": "server-release.jar", "discovery_limit": 20}},
-  "process": {"engine": "java", "executable": "@java", "artifact_mode": "file"},
-  "requirements": {"os": ["linux", "windows"], "architectures": ["x86_64", "aarch64"], "java": {"min": 17, "max": 25}},
-  "artifact": {"provider": "github", "auth": "anonymous", "repository": "Anuken/Mindustry", "asset": "server-release.jar"},
-  "installation": {"directory": "/opt/dsm/game-data/mindustry/serverfiles"},
-  "network": {"allocation": "block", "block_size": 1, "ports": [{"name": "game_tcp", "protocol": "tcp", "offset": 0, "exposure": "public"}, {"name": "game_udp", "protocol": "udp", "offset": 0, "exposure": "public"}]}
+  "version": {
+    "strategy": "dynamic",
+    "resolver": "github_releases",
+    "config": {
+      "repository": "Anuken/Mindustry",
+      "asset_pattern": "server-release.jar",
+      "discovery_limit": 20
+    }
+  },
+  "process": {
+    "engine": "java",
+    "executable": "@java",
+    "artifact_mode": "file"
+  },
+  "requirements": {
+    "os": [
+      "linux",
+      "windows"
+    ],
+    "architectures": [
+      "x86_64",
+      "aarch64"
+    ],
+    "java": {
+      "min": 17,
+      "max": 25
+    }
+  },
+  "artifact": {
+    "provider": "github",
+    "auth": "anonymous",
+    "repository": "Anuken/Mindustry",
+    "asset": "server-release.jar"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/mindustry/serverfiles"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 1,
+    "ports": [
+      {
+        "name": "game_tcp",
+        "protocol": "tcp",
+        "offset": 0,
+        "exposure": "public"
+      },
+      {
+        "name": "game_udp",
+        "protocol": "udp",
+        "offset": 0,
+        "exposure": "public"
+      }
+    ]
+  },
+  "server_settings": {
+    "restart_required": true,
+    "fields": {
+      "server_name": {
+        "label": "Nome do servidor",
+        "type": "string",
+        "customer_editable": true,
+        "max_length": 128,
+        "binding": {
+          "kind": "command_batch",
+          "command": "config name",
+          "argument_index": 2,
+          "separator": ",",
+          "before": "host",
+          "quote": "double"
+        }
+      },
+      "description": {
+        "label": "Descrição",
+        "type": "string",
+        "customer_editable": true,
+        "max_length": 256,
+        "binding": {
+          "kind": "command_batch",
+          "command": "config desc",
+          "argument_index": 2,
+          "separator": ",",
+          "before": "host",
+          "quote": "double"
+        }
+      },
+      "max_players": {
+        "label": "Máximo de jogadores",
+        "description": "Também limitado pelo plano contratado.",
+        "type": "integer",
+        "customer_editable": true,
+        "min": 1,
+        "max": 1000,
+        "binding": {
+          "kind": "command_batch",
+          "command": "playerlimit",
+          "argument_index": 2,
+          "separator": ",",
+          "before": "host"
+        }
+      }
+    }
+  }
 }
