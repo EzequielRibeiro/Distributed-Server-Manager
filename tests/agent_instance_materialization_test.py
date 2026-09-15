@@ -174,6 +174,47 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
             instance_runtime.resolve_adapter = original
         self.assertEqual(inventory[0]["observed_state"], "stopped")
 
+    def test_private_seed_directory_allows_agent_content_root_and_rejects_escape(self):
+        state = self.root / "agent-state"
+        content = state / "game-data" / "minecraft" / "bedrock"
+        content.mkdir(parents=True)
+        (content / "bedrock_server").write_text("binary", encoding="utf-8")
+        storage_root = self.root / "instances"
+        instance_root = storage_root / "instance-seed"
+        working = instance_root / "runtime"
+        spec = {
+            "instance_id": "instance-seed",
+            "instance_state_root": str(instance_root),
+            "working_directory": str(working),
+            "profile_context": {"content_root": str(content)},
+            "seed_files": [],
+            "seed_directories": [{"source": str(content), "target": str(working)}],
+            "bind_paths": [],
+            "writable_directories": [str(working)],
+        }
+        account = type("Account", (), {"pw_uid": os.getuid(), "pw_gid": os.getgid()})()
+        original_state = materialize_instance.STATE_DIR
+        materialize_instance.STATE_DIR = state
+        try:
+            with mock.patch.object(materialize_instance.os, "chown", return_value=None):
+                materialize_instance._prepare_private_state(spec, account, storage_root)
+            self.assertTrue((working / "bedrock_server").is_file())
+            preserved = working / "operator-data.txt"
+            preserved.write_text("keep", encoding="utf-8")
+            (content / "provider-new.txt").write_text("new", encoding="utf-8")
+            with mock.patch.object(materialize_instance.os, "chown", return_value=None):
+                materialize_instance._prepare_private_state(spec, account, storage_root)
+            self.assertEqual(preserved.read_text(encoding="utf-8"), "keep")
+            self.assertFalse((working / "provider-new.txt").exists())
+            outside = self.root / "outside-seed"
+            outside.mkdir()
+            escaped = {**spec, "seed_directories": [{"source": str(outside), "target": str(working)}]}
+            with self.assertRaisesRegex(RuntimeError, "seed directory source escapes its allowed root"):
+                with mock.patch.object(materialize_instance.os, "chown", return_value=None):
+                    materialize_instance._prepare_private_state(escaped, account, storage_root)
+        finally:
+            materialize_instance.STATE_DIR = original_state
+
     def test_hybrid_runtime_boundary_is_repaired_for_runtime_group(self):
         state = self.root / "hybrid-agent-state"
         game_data = state / "game-data"
