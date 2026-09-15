@@ -7,10 +7,81 @@
   "edition": "default",
   "variant": "stable",
   "loader": null,
-  "version": {"strategy": "static", "value": "current", "build": "steam-current"},
-  "process": {"engine": "native", "executable": "valheim_server.x86_64", "artifact_mode": "executable", "args": []},
-  "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
-  "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "896660"},
-  "installation": {"directory": "/opt/dsm/game-data/valheim/serverfiles"},
-  "network": {"allocation": "block", "block_size": 2, "ports": [{"name": "game", "protocol": "udp", "offset": 0, "exposure": "public"}, {"name": "game_aux", "protocol": "udp", "offset": 1, "exposure": "public"}], "apply": []}
+  "version": {
+    "strategy": "static",
+    "value": "current",
+    "build": "steam-current"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "valheim_server.x86_64",
+    "artifact_mode": "executable",
+    "args": []
+  },
+  "requirements": {
+    "os": [
+      "linux"
+    ],
+    "architectures": [
+      "x86_64"
+    ],
+    "java": null
+  },
+  "artifact": {
+    "provider": "steam",
+    "auth": "anonymous",
+    "package_id": "896660"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/valheim/serverfiles"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 2,
+    "ports": [
+      {
+        "name": "game",
+        "protocol": "udp",
+        "offset": 0,
+        "exposure": "public"
+      },
+      {
+        "name": "game_aux",
+        "protocol": "udp",
+        "offset": 1,
+        "exposure": "public"
+      }
+    ],
+    "apply": []
+  },
+  "server_settings": {
+    "restart_required": true,
+    "fields": {
+      "server_name": {
+        "label": "Nome do servidor",
+        "type": "string",
+        "customer_editable": true,
+        "binding": {
+          "kind": "argument",
+          "flag": "-name",
+          "style": "pair"
+        },
+        "max_length": 64
+      },
+      "public": {
+        "label": "Servidor público",
+        "type": "boolean",
+        "customer_editable": true,
+        "binding": {
+          "kind": "argument",
+          "flag": "-public",
+          "style": "pair",
+          "boolean_values": {
+            "true": "1",
+            "false": "0"
+          }
+        }
+      }
+    }
+  }
 }

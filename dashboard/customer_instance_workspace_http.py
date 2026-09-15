@@ -22,6 +22,7 @@ ROUTES = {
     PREFIX + "/console/status",
     PREFIX + "/console/stream",
     PREFIX + "/startup",
+    PREFIX + "/server-settings",
     PREFIX + "/files/status",
     PREFIX + "/backup-policy",
     PREFIX + "/backups",
@@ -397,6 +398,8 @@ def install_customer_instance_workspace(legacy, authenticate):
                 data = api.console_command_status(user, instance_id, one(parsed, "command_id", ""))
             elif path == PREFIX + "/startup":
                 data = api.startup(user, instance_id)
+            elif path == PREFIX + "/server-settings":
+                data = api.server_settings(user, instance_id)
             elif path == PREFIX + "/files/status":
                 data = api.file_status(user, instance_id, one(parsed, "command_id", ""))
             elif path == PREFIX + "/backup-policy":
@@ -495,7 +498,7 @@ def install_customer_instance_workspace(legacy, authenticate):
     def patch(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        if path not in {PREFIX + "/startup", PREFIX + "/backup-policy"}:
+        if path not in {PREFIX + "/startup", PREFIX + "/server-settings", PREFIX + "/backup-policy"}:
             if previous_patch is not None:
                 return previous_patch(self)
             send(self, 404, {"error": "not_found"})
@@ -517,6 +520,17 @@ def install_customer_instance_workspace(legacy, authenticate):
                     "configuration",
                     details={"fields": sorted((body.get("values") or {}).keys())},
                     result="success",
+                )
+            elif path.endswith("server-settings"):
+                data = api.save_server_settings(user, instance_id, body.get("values"))
+                record(
+                    api,
+                    user,
+                    instance_id,
+                    "SERVER_CONFIGURATION_CHANGED",
+                    "configuration",
+                    details={"fields": sorted((body.get("values") or {}).keys()), "revision": data.get("revision")},
+                    result="accepted",
                 )
             else:
                 data = api.save_backup_policy(user, instance_id, body)

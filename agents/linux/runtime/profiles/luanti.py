@@ -10,7 +10,7 @@ from .base import GameRuntimeProfile, ProfileError, require_absolute, require_po
 
 class LuantiRuntimeProfile(GameRuntimeProfile):
     game_ids = ("luanti", "luanti.stable")
-    profile_version = 1
+    profile_version = 2
 
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         instance_id = require_text(instance.get("instance_id") or instance.get("id"), "instance_id")
@@ -42,6 +42,7 @@ class LuantiRuntimeProfile(GameRuntimeProfile):
             "instance_state_root",
         )
         world_path = str(Path(state_root) / "world")
+        config_path = str(Path(state_root) / "config" / "minetest.conf")
         game_port = require_port(context, "game", protocol="udp")
 
         raw_extra = context.get("arguments") or []
@@ -63,7 +64,7 @@ class LuantiRuntimeProfile(GameRuntimeProfile):
             "adapter": "systemd",
             "working_directory": working_directory,
             "executable": executable,
-            "arguments": ["--world", world_path, "--port", str(game_port), *extra],
+            "arguments": ["--world", world_path, "--config", config_path, "--port", str(game_port), *extra],
             "environment": {
                 "CAPIVARA_INSTANCE_ID": instance_id,
                 "CAPIVARA_GAME_ID": "luanti",

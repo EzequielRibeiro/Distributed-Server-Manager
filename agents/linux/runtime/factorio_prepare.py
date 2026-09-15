@@ -18,33 +18,35 @@ def _absolute(value: str, label: str) -> Path:
 
 
 def _write_settings(path: Path, name: str) -> None:
-    if path.exists():
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "name": name[:128],
-        "description": "Managed by Capivara DSM",
-        "tags": ["capivara"],
-        "max_players": 0,
-        "visibility": {"public": True, "lan": True},
-        "username": "",
-        "password": "",
-        "token": "",
-        "game_password": "",
-        "require_user_verification": False,
-        "max_upload_in_kilobytes_per_second": 0,
-        "max_upload_slots": 5,
-        "minimum_latency_in_ticks": 0,
-        "ignore_player_limit_for_returning_players": False,
-        "allow_commands": "admins-only",
-        "autosave_interval": 10,
-        "autosave_slots": 5,
-        "afk_autokick_interval": 0,
-        "auto_pause": True,
-        "only_admins_can_pause_the_game": True,
-        "autosave_only_on_server": True,
-        "non_blocking_saving": False
+    defaults = {
+        "name": name[:128], "description": "Managed by Capivara DSM", "tags": ["capivara"],
+        "max_players": 0, "visibility": {"public": True, "lan": True}, "username": "",
+        "password": "", "token": "", "game_password": "", "require_user_verification": False,
+        "max_upload_in_kilobytes_per_second": 0, "max_upload_slots": 5, "minimum_latency_in_ticks": 0,
+        "ignore_player_limit_for_returning_players": False, "allow_commands": "admins-only",
+        "autosave_interval": 10, "autosave_slots": 5, "afk_autokick_interval": 0, "auto_pause": True,
+        "only_admins_can_pause_the_game": True, "autosave_only_on_server": True, "non_blocking_saving": False,
     }
+    payload: dict = {}
+    if path.exists():
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("Factorio server settings path is not a regular file")
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError("Factorio server settings are invalid") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("Factorio server settings must be an object")
+    for key, value in defaults.items():
+        if key == "visibility":
+            current = payload.setdefault("visibility", {})
+            if not isinstance(current, dict):
+                raise ValueError("Factorio visibility settings must be an object")
+            for nested_key, nested_value in value.items():
+                current.setdefault(nested_key, nested_value)
+        else:
+            payload.setdefault(key, value)
+    path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=".server-settings.", suffix=".json", dir=str(path.parent))
     os.close(fd)
     temp = Path(temporary)

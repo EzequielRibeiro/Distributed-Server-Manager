@@ -22,7 +22,7 @@ def build_runtime_spec(config:dict[str,Any],instance:dict[str,Any],context:dict[
  if str(instance.get("agent_id") or "").strip()!=agent_id:raise PermissionError("instance belongs to another Agent")
  instance_id=str(instance.get("instance_id") or instance.get("id") or "").strip();requested_pool=str(context.get("storage_pool_id") or instance.get("storage_pool_id") or "").strip() or None;pool=resolve_storage_pool(config,requested_pool);effective=dict(context);effective["storage_pool_id"]=pool["id"];effective.setdefault("instance_state_root",str(instance_state_root(config,instance_id,pool["id"])))
  raw=resolve_profile(instance).build_runtime_spec(dict(instance),effective);raw=apply_policy(raw,instance,effective);normalized=validate_runtime_spec(raw,expected_agent_id=agent_id);normalized["game_id"]=str(raw.get("game_id") or instance.get("game_id") or "").strip().lower();normalized["environment_id"]=str(raw.get("environment_id") or instance.get("environment_id") or "").strip();normalized["profile"]=str(raw.get("profile") or normalized["game_id"]);normalized["profile_version"]=int(raw.get("profile_version") or 1);normalized["storage_pool_id"]=pool["id"];normalized["instance_state_root"]=effective["instance_state_root"]
- for key in ("ports","config_path","catalog_runtime_policy","catalog_templates","catalog_network_properties","catalog_variables"):
+ for key in ("ports","config_path","catalog_runtime_policy","catalog_templates","catalog_network_properties","catalog_variables", "catalog_server_settings"):
   if key in raw:normalized[key]=raw[key]
  return normalized
 __all__=["build_runtime_spec","instance_state_root"]

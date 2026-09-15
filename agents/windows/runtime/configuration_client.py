@@ -4,7 +4,7 @@ import json,os,tempfile
 from datetime import datetime,timezone
 from pathlib import Path
 from storage_pools import default_storage_pool_id,storage_pools
-PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));ROOT=STATE_ROOT/"managed-configuration";CONFIG_PATH=Path(os.environ.get("CAPIVARA_AGENT_CONFIG",PROGRAM_DATA/"CapivaraAgent"/"agent.json"));_STORAGE_NAMESPACE="capivara.agent.storage"
+PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));ROOT=STATE_ROOT/"managed-configuration";CONFIG_PATH=Path(os.environ.get("CAPIVARA_AGENT_CONFIG",PROGRAM_DATA/"CapivaraAgent"/"agent.json"));_STORAGE_NAMESPACE="capivara.agent.storage";_SERVER_SETTINGS_NAMESPACE="capivara.instance.server-settings"
 def _now():return datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
 def _safe(v):return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in str(v))
 def _path(c):return ROOT/_safe(c.get("target_type") or "agent")/_safe(c.get("target_id") or "unknown")/f"{_safe(c.get('namespace') or 'default')}.json"
@@ -30,6 +30,16 @@ def _apply_storage(value,target_id):
  config["storage_pools"]=[{k:p[k] for k in ("id","name","root_path","storage_class","enabled","priority","reserve_bytes")} for p in normalized];config["default_storage_pool_id"]=default_id
  if value.get("instance_storage_root"):config["instance_storage_root"]=str(value["instance_storage_root"]).strip()
  _write(CONFIG_PATH,config);return {"storage_pools":config["storage_pools"],"default_storage_pool_id":default_id,"instance_storage_root":config.get("instance_storage_root")}
+def _apply_server_settings(value,target_id):
+ import instance_runtime,runtime_materialization
+ from server_settings_runtime import prepare_spec
+ record=instance_runtime.get_instance(target_id)
+ if not isinstance(record,dict):raise LookupError(f"instance not found: {target_id}")
+ settings=value.get("settings") if isinstance(value.get("settings"),dict) else value
+ declaration=value.get("declaration") if isinstance(value.get("declaration"),dict) else None
+ runtime_id=str(value.get("runtime_id") or "").strip();current_runtime=str(record.get("environment_id") or "").strip()
+ if runtime_id and current_runtime and runtime_id!=current_runtime:raise ValueError("server settings runtime does not match instance")
+ config=_local_config(str(record.get("agent_id") or "").strip());updated=prepare_spec(record,settings,declaration=declaration);runtime_materialization.materialize(config,updated);return {"runtime_id":current_runtime,"settings":dict(updated.get("server_settings_values") or {}),"declaration":dict(updated.get("catalog_server_settings") or {})}
 def configuration_state():
  try:v=json.loads((ROOT/"state.json").read_text(encoding="utf-8"))
  except (OSError,json.JSONDecodeError):return []
@@ -40,8 +50,13 @@ def apply_configuration(command):
  if not isinstance(value,dict):raise ValueError("configuration value must be an object")
  if target_type not in {"agent","instance"} or not target_id:raise ValueError("configuration target is invalid")
  if not namespace or not checksum or not revision:raise ValueError("configuration namespace/revision/checksum required")
- applied=_apply_storage(value,target_id) if namespace==_STORAGE_NAMESPACE and target_type=="agent" else value
- if namespace==_STORAGE_NAMESPACE and target_type!="agent":raise ValueError("Agent storage configuration requires agent target")
+ applied=value
+ if namespace==_STORAGE_NAMESPACE:
+  if target_type!="agent":raise ValueError("Agent storage configuration requires agent target")
+  applied=_apply_storage(value,target_id)
+ elif namespace==_SERVER_SETTINGS_NAMESPACE:
+  if target_type!="instance":raise ValueError("server settings require instance target")
+  applied=_apply_server_settings(value,target_id)
  doc={"schema_version":1,"kind":"CapivaraAppliedConfiguration","namespace":namespace,"target_type":target_type,"target_id":target_id,"revision":revision,"checksum":checksum,"value":applied,"applied_at":_now(),"configuration_refs":list(command.get("configuration_refs") or [])};_write(_path(command),doc)
  return {"target_type":target_type,"target_id":target_id,"namespace":namespace,"desired_revision":revision,"applied_revision":revision,"desired_checksum":checksum,"applied_checksum":checksum,"status":"applied","last_error":None,"reported_at":doc["applied_at"],"configuration_refs":doc["configuration_refs"]}
 def apply_configuration_commands(commands):

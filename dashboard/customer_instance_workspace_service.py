@@ -12,7 +12,8 @@ from instance_provisioning_projection import dashboard_provision_state
 from backup_repository import BackupRepository
 from catalog_resource_profiles_http import catalog_resource_profiles
 from instance_file_repository import InstanceFileRepository
-from instance_workspace_policy import INSTANCE_PERMISSIONS,content_ui_sections,effective_content_policy,enforce_managed_content_mutation,require_permission,validate_startup_values
+from configuration_repository import ConfigurationRepository
+from instance_workspace_policy import INSTANCE_PERMISSIONS,content_ui_sections,effective_content_policy,enforce_managed_content_mutation,require_permission,validate_server_settings,validate_startup_values
 from instance_workspace_repository import InstanceWorkspaceRepository
 from runtime_instance_projection import project_runtime_state
 from runtime_workspace_catalog import allowed_runtimes,contract_entitlements,runtime_workspace_capabilities
@@ -131,6 +132,14 @@ class CustomerInstanceWorkspaceService:
   context=self.require(user,instance_id,"startup.read");policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));return {"values":policy.get("startup") or {},"declaration":caps.get("startup_parameters") or {},"resource_limits":{k:policy.get(k) for k in ("cpu_limit_cores","memory_limit_bytes","storage_limit_bytes","player_limit")}}
  def save_startup(self,user,instance_id,values):
   context=self.require(user,instance_id,"startup.write");policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));policy["startup"]=validate_startup_values(values,caps.get("startup_parameters") or {});return self.repo.save_workspace_policy(instance_id,policy)
+ def _server_settings_value(self,stored):
+  raw=dict((stored or {}).get("value") or {})
+  nested=raw.get("settings")
+  return dict(nested) if isinstance(nested,dict) else {str(k):v for k,v in raw.items() if k not in {"declaration","runtime_id"}}
+ def server_settings(self,user,instance_id):
+  context=self.require(user,instance_id,"settings.read");policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));declaration=dict(caps.get("server_settings") or {});repo=ConfigurationRepository(self.backend);repo.initialize();stored=repo.get(scope_type="instance",scope_id=instance_id,namespace="capivara.instance.server-settings");values=self._server_settings_value(stored);return {"values":values,"declaration":declaration,"revision":(stored or {}).get("revision"),"checksum":(stored or {}).get("checksum"),"restart_required":bool(declaration.get("restart_required",True)),"resource_limits":{"player_limit":policy.get("player_limit")}}
+ def save_server_settings(self,user,instance_id,values):
+  context=self.require(user,instance_id,"settings.write");policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));declaration=dict(caps.get("server_settings") or {});partial=validate_server_settings(values,declaration,player_limit=policy.get("player_limit"));repo=ConfigurationRepository(self.backend);repo.initialize();current=repo.get(scope_type="instance",scope_id=instance_id,namespace="capivara.instance.server-settings");merged={**self._server_settings_value(current),**partial};merged=validate_server_settings(merged,declaration,player_limit=policy.get("player_limit"));actor=str((user or {}).get("username") or (user or {}).get("id") or "customer");runtime_id=str(context.get("runtime_id") or "").strip();payload={"runtime_id":runtime_id,"settings":merged,"declaration":declaration};stored=repo.put({"scope_type":"instance","scope_id":instance_id,"namespace":"capivara.instance.server-settings","value":payload},updated_by=actor);row=stored.get("configuration") or {};return {"values":merged,"declaration":declaration,"revision":row.get("revision"),"checksum":row.get("checksum"),"changed":bool(stored.get("changed")),"restart_required":bool(declaration.get("restart_required",True))}
  def _file_command_policy(self,context,policy):
   caps,content=self._contract_policy(context,policy);return {"storage_limit_bytes":policy.get("storage_limit_bytes"),"content_policy":content.as_dict(),"file_policy":dict(caps.get("file_policy") or {})}
  def queue_file(self,user,instance_id,action,*,path=None,target_path=None,payload=None):

@@ -7,11 +7,114 @@
   "edition": "default",
   "variant": "stable",
   "loader": null,
-  "version": {"strategy": "static", "value": "current", "build": "steam-current"},
-  "process": {"engine": "native", "executable": "start-server.sh", "artifact_mode": "executable", "args": ["-servername", "servertest"]},
-  "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
-  "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "380870"},
-  "content": {"steam_workshop": {"app_id": "108600"}},
-  "installation": {"directory": "/opt/dsm/game-data/projectzomboid/serverfiles"},
-  "network": {"allocation": "block", "block_size": 10, "ports": [{"name": "game", "protocol": "udp", "offset": 0, "exposure": "public"}], "apply": [{"kind": "argument", "template": "-port {game}"}]}
+  "version": {
+    "strategy": "static",
+    "value": "current",
+    "build": "steam-current"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "start-server.sh",
+    "artifact_mode": "executable",
+    "args": [
+      "-servername",
+      "servertest"
+    ]
+  },
+  "requirements": {
+    "os": [
+      "linux"
+    ],
+    "architectures": [
+      "x86_64"
+    ],
+    "java": null
+  },
+  "artifact": {
+    "provider": "steam",
+    "auth": "anonymous",
+    "package_id": "380870"
+  },
+  "content": {
+    "steam_workshop": {
+      "app_id": "108600"
+    }
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/projectzomboid/serverfiles"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 10,
+    "ports": [
+      {
+        "name": "game",
+        "protocol": "udp",
+        "offset": 0,
+        "exposure": "public"
+      }
+    ],
+    "apply": [
+      {
+        "kind": "argument",
+        "template": "-port {game}"
+      }
+    ]
+  },
+  "server_settings": {
+    "restart_required": true,
+    "fields": {
+      "server_name": {
+        "label": "Nome público do servidor",
+        "type": "string",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "servertest.ini",
+          "key": "PublicName",
+          "syntax": "equals"
+        },
+        "max_length": 64
+      },
+      "max_players": {
+        "label": "Máximo de jogadores",
+        "type": "integer",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "servertest.ini",
+          "key": "MaxPlayers",
+          "syntax": "equals"
+        },
+        "min": 1,
+        "max": 100
+      },
+      "pvp": {
+        "label": "PvP",
+        "type": "boolean",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "servertest.ini",
+          "key": "PVP",
+          "syntax": "equals",
+          "boolean_values": {
+            "true": "true",
+            "false": "false"
+          }
+        }
+      },
+      "pause_empty": {
+        "label": "Pausar quando vazio",
+        "type": "boolean",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "servertest.ini",
+          "key": "PauseEmpty",
+          "syntax": "equals"
+        }
+      }
+    }
+  }
 }

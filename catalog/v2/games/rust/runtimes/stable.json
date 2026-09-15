@@ -7,10 +7,101 @@
   "edition": "default",
   "variant": "stable",
   "loader": null,
-  "version": {"strategy": "static", "value": "current", "build": "steam-current"},
-  "process": {"engine": "native", "executable": "RustDedicated", "artifact_mode": "executable"},
-  "requirements": {"os": ["linux", "windows"], "architectures": ["x86_64"], "java": null},
-  "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "258550"},
-  "installation": {"directory": "/opt/dsm/game-data/rust/serverfiles"},
-  "network": {"allocation": "block", "block_size": 10, "ports": [{"name":"game","protocol":"udp","offset":0,"exposure":"public"}, {"name":"rcon","protocol":"tcp","offset":1,"exposure":"none"}, {"name":"query","protocol":"udp","offset":2,"exposure":"public"}], "apply": []}
+  "version": {
+    "strategy": "static",
+    "value": "current",
+    "build": "steam-current"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "RustDedicated",
+    "artifact_mode": "executable"
+  },
+  "requirements": {
+    "os": [
+      "linux",
+      "windows"
+    ],
+    "architectures": [
+      "x86_64"
+    ],
+    "java": null
+  },
+  "artifact": {
+    "provider": "steam",
+    "auth": "anonymous",
+    "package_id": "258550"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/rust/serverfiles"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 10,
+    "ports": [
+      {
+        "name": "game",
+        "protocol": "udp",
+        "offset": 0,
+        "exposure": "public"
+      },
+      {
+        "name": "rcon",
+        "protocol": "tcp",
+        "offset": 1,
+        "exposure": "none"
+      },
+      {
+        "name": "query",
+        "protocol": "udp",
+        "offset": 2,
+        "exposure": "public"
+      }
+    ],
+    "apply": []
+  },
+  "server_settings": {
+    "restart_required": true,
+    "fields": {
+      "server_name": {
+        "label": "Nome do servidor",
+        "type": "string",
+        "customer_editable": true,
+        "max_length": 128,
+        "binding": {
+          "kind": "property",
+          "path": "server.cfg",
+          "key": "server.hostname",
+          "syntax": "command",
+          "quote": "double"
+        }
+      },
+      "max_players": {
+        "label": "Máximo de jogadores",
+        "type": "integer",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "server.cfg",
+          "key": "server.maxplayers",
+          "syntax": "command"
+        },
+        "min": 1,
+        "max": 1000
+      },
+      "description": {
+        "label": "Descrição",
+        "type": "string",
+        "customer_editable": true,
+        "max_length": 512,
+        "binding": {
+          "kind": "property",
+          "path": "server.cfg",
+          "key": "server.description",
+          "syntax": "command",
+          "quote": "double"
+        }
+      }
+    }
+  }
 }

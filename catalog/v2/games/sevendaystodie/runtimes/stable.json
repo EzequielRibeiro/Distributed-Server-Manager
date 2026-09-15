@@ -7,10 +7,118 @@
   "edition": "default",
   "variant": "stable",
   "loader": null,
-  "version": {"strategy": "static", "value": "current", "build": "steam-current"},
-  "process": {"engine": "native", "executable": "7DaysToDieServer.x86_64", "artifact_mode": "executable"},
-  "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
-  "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "294420"},
-  "installation": {"directory": "/opt/dsm/game-data/sevendaystodie/serverfiles"},
-  "network": {"allocation": "block", "block_size": 4, "ports": [{"name": "game", "protocol": "udp", "offset": 0, "exposure": "public"}, {"name": "game_tcp", "protocol": "tcp", "offset": 0, "exposure": "public"}, {"name": "game_aux_1", "protocol": "udp", "offset": 1, "exposure": "public"}, {"name": "game_aux_2", "protocol": "udp", "offset": 2, "exposure": "public"}, {"name": "game_aux_3", "protocol": "udp", "offset": 3, "exposure": "public"}]}
+  "version": {
+    "strategy": "static",
+    "value": "current",
+    "build": "steam-current"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "7DaysToDieServer.x86_64",
+    "artifact_mode": "executable"
+  },
+  "requirements": {
+    "os": [
+      "linux"
+    ],
+    "architectures": [
+      "x86_64"
+    ],
+    "java": null
+  },
+  "artifact": {
+    "provider": "steam",
+    "auth": "anonymous",
+    "package_id": "294420"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/sevendaystodie/serverfiles"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 4,
+    "ports": [
+      {
+        "name": "game",
+        "protocol": "udp",
+        "offset": 0,
+        "exposure": "public"
+      },
+      {
+        "name": "game_tcp",
+        "protocol": "tcp",
+        "offset": 0,
+        "exposure": "public"
+      },
+      {
+        "name": "game_aux_1",
+        "protocol": "udp",
+        "offset": 1,
+        "exposure": "public"
+      },
+      {
+        "name": "game_aux_2",
+        "protocol": "udp",
+        "offset": 2,
+        "exposure": "public"
+      },
+      {
+        "name": "game_aux_3",
+        "protocol": "udp",
+        "offset": 3,
+        "exposure": "public"
+      }
+    ]
+  },
+  "server_settings": {
+    "restart_required": true,
+    "fields": {
+      "server_name": {
+        "label": "Nome do servidor",
+        "type": "string",
+        "customer_editable": true,
+        "binding": {
+          "kind": "xml_property",
+          "path": "serverconfig.xml",
+          "key": "ServerName"
+        },
+        "max_length": 128
+      },
+      "description": {
+        "label": "Descrição",
+        "type": "string",
+        "customer_editable": true,
+        "binding": {
+          "kind": "xml_property",
+          "path": "serverconfig.xml",
+          "key": "ServerDescription"
+        },
+        "max_length": 512
+      },
+      "max_players": {
+        "label": "Máximo de jogadores",
+        "type": "integer",
+        "customer_editable": true,
+        "binding": {
+          "kind": "xml_property",
+          "path": "serverconfig.xml",
+          "key": "ServerMaxPlayerCount"
+        },
+        "min": 1,
+        "max": 64
+      },
+      "difficulty": {
+        "label": "Dificuldade",
+        "type": "integer",
+        "customer_editable": true,
+        "binding": {
+          "kind": "xml_property",
+          "path": "serverconfig.xml",
+          "key": "GameDifficulty"
+        },
+        "min": 0,
+        "max": 5
+      }
+    }
+  }
 }

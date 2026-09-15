@@ -7,18 +7,78 @@
   "edition": "default",
   "variant": "stable",
   "loader": null,
-  "version": {"strategy": "static", "value": "current", "build": "steam-current"},
-  "process": {"engine": "native", "executable": "ShooterGame/Binaries/Win64/ArkAscendedServer.exe", "artifact_mode": "executable"},
-  "requirements": {"os": ["windows"], "architectures": ["x86_64"], "java": null},
-  "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "2430930"},
-  "installation": {"directory": "/opt/dsm/game-data/arksurvivalascended/serverfiles"},
+  "version": {
+    "strategy": "static",
+    "value": "current",
+    "build": "steam-current"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "ShooterGame/Binaries/Win64/ArkAscendedServer.exe",
+    "artifact_mode": "executable"
+  },
+  "requirements": {
+    "os": [
+      "windows"
+    ],
+    "architectures": [
+      "x86_64"
+    ],
+    "java": null
+  },
+  "artifact": {
+    "provider": "steam",
+    "auth": "anonymous",
+    "package_id": "2430930"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/arksurvivalascended/serverfiles"
+  },
   "network": {
     "allocation": "block",
     "block_size": 10,
     "ports": [
-      {"name": "game", "protocol": "udp", "offset": 0, "exposure": "public"},
-      {"name": "query", "protocol": "udp", "offset": 1, "exposure": "public"}
+      {
+        "name": "game",
+        "protocol": "udp",
+        "offset": 0,
+        "exposure": "public"
+      },
+      {
+        "name": "query",
+        "protocol": "udp",
+        "offset": 1,
+        "exposure": "public"
+      }
     ],
     "apply": []
+  },
+  "server_settings": {
+    "restart_required": true,
+    "fields": {
+      "server_name": {
+        "label": "Nome do servidor",
+        "type": "string",
+        "customer_editable": true,
+        "binding": {
+          "kind": "launch_option",
+          "key": "SessionName",
+          "argument_index": 0
+        },
+        "max_length": 128
+      },
+      "max_players": {
+        "label": "Máximo de jogadores",
+        "type": "integer",
+        "customer_editable": true,
+        "binding": {
+          "kind": "launch_option",
+          "key": "MaxPlayers",
+          "argument_index": 0
+        },
+        "min": 1,
+        "max": 200
+      }
+    }
   }
 }

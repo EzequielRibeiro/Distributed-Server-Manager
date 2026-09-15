@@ -43,6 +43,9 @@ class NextGamesCatalogTest(unittest.TestCase):
    def fake(argv,**kwargs):save.parent.mkdir(parents=True,exist_ok=True);save.write_bytes(b"save");return type("C",(),{"returncode":0})()
    with patch.object(m.subprocess,"run",side_effect=fake) as run:m.prepare(str(binary),str(save),str(settings),"Capivara Factorio");m.prepare(str(binary),str(save),str(settings),"Capivara Factorio")
    self.assertEqual(run.call_count,1)
+   settings.write_text(json.dumps({"name":"Customer Factorio","max_players":12,"visibility":{"public":False}}),encoding="utf-8")
+   m._write_settings(settings,"Default Name");merged=load(settings)
+   self.assertEqual(merged["name"],"Customer Factorio");self.assertEqual(merged["max_players"],12);self.assertFalse(merged["visibility"]["public"]);self.assertTrue(merged["visibility"]["lan"]);self.assertIn("autosave_interval",merged)
  def test_catalog_files_contain_no_real_credentials(self):
   paths=[p for p in (ROOT/"catalog/v2/games").rglob("*.json") if "/runtimes/" in p.as_posix() or "/deferred/" in p.as_posix()]
   combined="\n".join(p.read_text(encoding="utf-8") for p in paths).lower();self.assertNotIn("sv_licensekey ",combined);self.assertNotIn("dedicatedserverclientsecret=",combined);theisle=load(ROOT/"catalog/v2/games/theisle/runtimes/stable.json");self.assertEqual(theisle["artifact"]["branch"],"evrima")

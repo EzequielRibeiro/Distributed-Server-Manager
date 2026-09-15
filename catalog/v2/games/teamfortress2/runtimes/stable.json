@@ -7,10 +7,85 @@
   "edition": "default",
   "variant": "stable",
   "loader": null,
-  "version": {"strategy": "static", "value": "current", "build": "steam-current"},
-  "process": {"engine": "native", "executable": "srcds_run", "artifact_mode": "executable", "args": ["-game", "tf", "+map", "cp_dustbowl"]},
-  "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
-  "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "232250"},
-  "installation": {"directory": "/opt/dsm/game-data/teamfortress2/serverfiles"},
-  "network": {"allocation": "block", "block_size": 10, "ports": [{"name": "game", "protocol": "udp", "offset": 0, "exposure": "public"}], "apply": [{"kind": "argument", "template": "-port {game}"}]}
+  "version": {
+    "strategy": "static",
+    "value": "current",
+    "build": "steam-current"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "srcds_run",
+    "artifact_mode": "executable",
+    "args": [
+      "-game",
+      "tf",
+      "+map",
+      "cp_dustbowl"
+    ]
+  },
+  "requirements": {
+    "os": [
+      "linux"
+    ],
+    "architectures": [
+      "x86_64"
+    ],
+    "java": null
+  },
+  "artifact": {
+    "provider": "steam",
+    "auth": "anonymous",
+    "package_id": "232250"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/teamfortress2/serverfiles"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 10,
+    "ports": [
+      {
+        "name": "game",
+        "protocol": "udp",
+        "offset": 0,
+        "exposure": "public"
+      }
+    ],
+    "apply": [
+      {
+        "kind": "argument",
+        "template": "-port {game}"
+      }
+    ]
+  },
+  "server_settings": {
+    "restart_required": true,
+    "fields": {
+      "server_name": {
+        "label": "Nome do servidor",
+        "type": "string",
+        "customer_editable": true,
+        "max_length": 128,
+        "binding": {
+          "kind": "property",
+          "path": "server.cfg",
+          "key": "hostname",
+          "syntax": "command",
+          "quote": "double"
+        }
+      },
+      "max_players": {
+        "label": "Máximo de jogadores",
+        "type": "integer",
+        "customer_editable": true,
+        "binding": {
+          "kind": "argument",
+          "flag": "+maxplayers",
+          "style": "pair"
+        },
+        "min": 1,
+        "max": 128
+      }
+    }
+  }
 }

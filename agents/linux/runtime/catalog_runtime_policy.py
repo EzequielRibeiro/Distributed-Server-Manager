@@ -114,6 +114,7 @@ def apply_policy(spec: dict[str, Any], instance: dict[str, Any], context: dict[s
         ],
     }
     result["catalog_templates"] = list(policy.get("templates") or [])
+    result["catalog_server_settings"] = dict(policy.get("server_settings") or {})
     policy_properties = list(policy.get("network_properties") or [])
     profile_properties = list(result.get("catalog_network_properties") or [])
     result["catalog_network_properties"] = [*profile_properties, *policy_properties]

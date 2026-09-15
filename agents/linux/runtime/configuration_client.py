@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from runtime_secret_store import put_secret,revoke_secret
 from storage_pools import default_storage_pool_id,storage_pools
-_AGENT_STORAGE_NAMESPACE="capivara.agent.storage";_RUNTIME_SECRET_NAMESPACE="capivara.runtime.secret";_DEFAULT_INSTANCE_STORAGE_ROOT="/var/lib/capivara-instances"
+_AGENT_STORAGE_NAMESPACE="capivara.agent.storage";_RUNTIME_SECRET_NAMESPACE="capivara.runtime.secret";_SERVER_SETTINGS_NAMESPACE="capivara.instance.server-settings";_DEFAULT_INSTANCE_STORAGE_ROOT="/var/lib/capivara-instances"
 def _now():return datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
 def _root():return Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"))/"managed-configuration"
 def _config_path():return Path(os.environ.get("CAPIVARA_AGENT_CONFIG","/etc/capivara-agent/agent.json"))
@@ -77,6 +77,17 @@ def _apply_runtime_secret(value,target_id):
  elif action=="revoke":result=revoke_secret(ref,expected_instance_id=target_id)
  else:raise ValueError("runtime secret action must be put or revoke")
  return {"ref":result["ref"],"name":result["name"],"present":bool(result.get("present")),"operation":action}
+def _apply_server_settings(value,target_id):
+ import instance_runtime,privileged_materialization
+ from server_settings_runtime import prepare_spec
+ record=instance_runtime.get_instance(target_id)
+ if not isinstance(record,dict):raise LookupError(f"instance not found: {target_id}")
+ settings=value.get("settings") if isinstance(value.get("settings"),dict) else value
+ declaration=value.get("declaration") if isinstance(value.get("declaration"),dict) else None
+ runtime_id=str(value.get("runtime_id") or "").strip()
+ current_runtime=str(record.get("environment_id") or "").strip()
+ if runtime_id and current_runtime and runtime_id!=current_runtime:raise ValueError("server settings runtime does not match instance")
+ agent_id=str(record.get("agent_id") or "").strip();config=_load_local_config(agent_id);updated=prepare_spec(record,settings,declaration=declaration);privileged_materialization.materialize(config,updated);return {"runtime_id":current_runtime,"settings":dict(updated.get("server_settings_values") or {}),"declaration":dict(updated.get("catalog_server_settings") or {})}
 def configuration_state():
  path=_root()/"state.json"
  try:payload=json.loads(path.read_text(encoding="utf-8"))
@@ -96,6 +107,9 @@ def apply_configuration(command):
  if namespace==_AGENT_STORAGE_NAMESPACE:
   if target_type!="agent":raise ValueError("Agent storage configuration requires agent target")
   applied_value=_apply_agent_storage(value,target_id,revision)
+ elif namespace==_SERVER_SETTINGS_NAMESPACE:
+  if target_type!="instance":raise ValueError("server settings require instance target")
+  applied_value=_apply_server_settings(value,target_id)
  else:applied_value=value
  document={"schema_version":1,"kind":"CapivaraAppliedConfiguration","namespace":namespace,"target_type":target_type,"target_id":target_id,"revision":revision,"checksum":checksum,"value":applied_value,"applied_at":_now(),"configuration_refs":list(command.get("configuration_refs") or [])};_atomic_json(_path(command),document)
  return {"target_type":target_type,"target_id":target_id,"namespace":namespace,"desired_revision":revision,"applied_revision":revision,"desired_checksum":checksum,"applied_checksum":checksum,"status":"applied","last_error":None,"reported_at":document["applied_at"],"configuration_refs":document["configuration_refs"]}

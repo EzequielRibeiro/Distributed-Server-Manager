@@ -16,6 +16,109 @@ _VAR_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 _PORT_NAME = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _MAX_TEMPLATE_BYTES = 1024 * 1024
 
+_SERVER_SETTING_KEY = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_SERVER_SETTING_BINDING_KINDS = {"property", "json", "xml_property", "ini", "argument", "launch_option", "command_batch"}
+
+def _normalize_server_settings(raw: Any) -> dict[str, Any]:
+    if raw in (None, {}):
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("server_settings must be an object")
+    raw_fields = raw.get("fields", {})
+    if not isinstance(raw_fields, dict) or len(raw_fields) > 128:
+        raise ValueError("invalid server_settings fields")
+    fields: dict[str, dict[str, Any]] = {}
+    for field_id, item in raw_fields.items():
+        field_id = str(field_id).strip().lower()
+        if not _SERVER_SETTING_KEY.fullmatch(field_id) or not isinstance(item, dict):
+            raise ValueError("invalid server setting field")
+        kind = str(item.get("type") or "string").strip().lower()
+        if kind not in {"string", "integer", "boolean", "select"}:
+            raise ValueError(f"invalid server setting type: {field_id}")
+        binding = item.get("binding")
+        if not isinstance(binding, dict):
+            raise ValueError(f"server setting binding is required: {field_id}")
+        binding_kind = str(binding.get("kind") or "property").strip().lower()
+        if binding_kind not in _SERVER_SETTING_BINDING_KINDS:
+            raise ValueError(f"invalid server setting binding: {field_id}")
+        normalized_binding = {"kind": binding_kind}
+        if binding_kind in {"property", "json", "xml_property", "ini"}:
+            relative = str(binding.get("path") or "").strip().replace("\\", "/")
+            candidate = Path(relative)
+            if not relative or candidate.is_absolute() or ".." in candidate.parts:
+                raise ValueError(f"server setting path must stay inside configuration root: {field_id}")
+            normalized_binding["path"] = relative
+        if binding_kind == "property":
+            key = str(binding.get("key") or "").strip()
+            syntax = str(binding.get("syntax") or "equals").strip().lower()
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]{0,127}", key) or syntax not in {"equals", "semicolon", "command", "ue_option_settings"}:
+                raise ValueError(f"invalid property binding: {field_id}")
+            normalized_binding.update({"key": key, "syntax": syntax, "quote": str(binding.get("quote") or "none").lower()})
+            activation = binding.get("activate_argument")
+            if activation is not None:
+                if not isinstance(activation, dict): raise ValueError(f"invalid activation argument: {field_id}")
+                flag = str(activation.get("flag") or "").strip(); style = str(activation.get("style") or "equals").strip().lower()
+                if not flag or style not in {"pair", "equals"} or any(ch in flag for ch in "\x00\r\n"):
+                    raise ValueError(f"invalid activation argument: {field_id}")
+                normalized_binding["activate_argument"] = {"flag": flag, "style": style}
+        elif binding_kind == "json":
+            keys = binding.get("keys")
+            if isinstance(keys, str): keys = [part for part in keys.split(".") if part]
+            if not isinstance(keys, list) or not keys or len(keys) > 16 or any(not str(part).strip() for part in keys):
+                raise ValueError(f"invalid JSON binding: {field_id}")
+            normalized_binding["keys"] = [str(part) for part in keys]
+        elif binding_kind == "xml_property":
+            key = str(binding.get("key") or "").strip()
+            if not key or len(key) > 128: raise ValueError(f"invalid XML property binding: {field_id}")
+            normalized_binding["key"] = key
+        elif binding_kind == "ini":
+            section, key = str(binding.get("section") or "").strip(), str(binding.get("key") or "").strip()
+            if not section or not key or any(ch in section + key for ch in "\r\n[]="):
+                raise ValueError(f"invalid INI binding: {field_id}")
+            normalized_binding.update({"section": section, "key": key})
+        elif binding_kind == "argument":
+            flag = str(binding.get("flag") or "").strip()
+            style = str(binding.get("style") or "pair").strip().lower()
+            if not flag or any(ch in flag for ch in "\x00\r\n") or style not in {"pair", "equals"}:
+                raise ValueError(f"invalid argument binding: {field_id}")
+            normalized_binding.update({"flag": flag, "style": style})
+        elif binding_kind == "launch_option":
+            key = str(binding.get("key") or "").strip()
+            try: index = int(binding.get("argument_index", 0))
+            except (TypeError, ValueError) as exc: raise ValueError(f"invalid launch option binding: {field_id}") from exc
+            if not key or index < 0 or index > 16: raise ValueError(f"invalid launch option binding: {field_id}")
+            normalized_binding.update({"key": key, "argument_index": index})
+        elif binding_kind == "command_batch":
+            command = str(binding.get("command") or "").strip(); separator = str(binding.get("separator") or ","); before = str(binding.get("before") or "host").strip()
+            try: index = int(binding.get("argument_index", 2))
+            except (TypeError, ValueError) as exc: raise ValueError(f"invalid command batch binding: {field_id}") from exc
+            if not command or index < 0 or index > 16 or separator != "," or any(ch in command + before for ch in "\x00\r\n,"):
+                raise ValueError(f"invalid command batch binding: {field_id}")
+            normalized_binding.update({"command": command, "argument_index": index, "separator": separator, "before": before})
+        boolean_values = binding.get("boolean_values")
+        if boolean_values is not None:
+            if not isinstance(boolean_values, dict) or "true" not in boolean_values or "false" not in boolean_values:
+                raise ValueError(f"invalid boolean_values: {field_id}")
+            normalized_binding["boolean_values"] = {"true": str(boolean_values["true"]), "false": str(boolean_values["false"])}
+        field = {
+            "label": str(item.get("label") or field_id)[:128],
+            "description": str(item.get("description") or "")[:500],
+            "type": kind,
+            "customer_editable": bool(item.get("customer_editable", True)),
+            "binding": normalized_binding,
+        }
+        for name in ("default", "min", "max", "min_length", "max_length", "allowed"):
+            if name in item: field[name] = item[name]
+        if kind == "select" and (not isinstance(field.get("allowed"), list) or not field["allowed"]):
+            raise ValueError(f"select server setting requires allowed values: {field_id}")
+        fields[field_id] = field
+    return {"restart_required": bool(raw.get("restart_required", True)), "fields": fields}
+
+def _enforce_server_settings(runtime: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+    result = dict(policy)
+    result["server_settings"] = _normalize_server_settings(runtime.get("server_settings") or {})
+    return result
+
 
 def _network_variable_template(value: object) -> str:
     """Translate Catalog ``{role}`` placeholders to Agent runtime variables."""
@@ -89,7 +192,7 @@ def default_policy(runtime: dict[str, Any]) -> dict[str, Any]:
     process = runtime.get("process") if isinstance(runtime.get("process"), dict) else {}
     executable = str(process.get("executable") or "").strip()
     arguments = normalize_arguments(process.get("args"))
-    return _enforce_network_policy(runtime, {
+    return _enforce_server_settings(runtime, _enforce_network_policy(runtime, {
         "schema_version": 1,
         "kind": "CatalogRuntimePolicy",
         "runtime_id": str(runtime.get("id") or ""),
@@ -104,7 +207,8 @@ def default_policy(runtime: dict[str, Any]) -> dict[str, Any]:
         "templates": [],
         "network_properties": [],
         "network_exposure": [],
-    })
+        "server_settings": {},
+    }))
 
 
 def validate_policy(payload: dict[str, Any], *, runtime_id: str) -> dict[str, Any]:
@@ -220,6 +324,7 @@ def validate_policy(payload: dict[str, Any], *, runtime_id: str) -> dict[str, An
         normalized_exposure.append({"name": name, "protocol": protocol, "exposure": scope})
         seen_exposure.add(name)
     result["network_exposure"] = normalized_exposure
+    result["server_settings"] = _normalize_server_settings(result.get("server_settings") or {})
     return result
 
 
@@ -231,7 +336,7 @@ def load_policy(root: Path, runtime: dict[str, Any]) -> dict[str, Any]:
         stored = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(stored, dict):
             policy.update(stored)
-    policy = _enforce_network_policy(runtime, policy)
+    policy = _enforce_server_settings(runtime, _enforce_network_policy(runtime, policy))
     return validate_policy(policy, runtime_id=runtime_id)
 
 
