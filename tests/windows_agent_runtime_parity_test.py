@@ -29,6 +29,16 @@ from runtime_operations import read_operation
 assert read_operation("srv-one")["status"]=="completed"
 instance_runtime.clear_result("cmd-start");assert instance_runtime.read_result() is None
 ''',state_dir=state);self.assertEqual(r.returncode,0,r.stderr)
+ def test_remove_is_idempotent_when_local_runtime_is_already_absent(self):
+  with tempfile.TemporaryDirectory() as state:
+   r=self._run('''
+import instance_runtime
+config={"agent_id":"win-agent-one"}
+result=instance_runtime.handle_command(config,{"command_id":"cmd-remove-absent","instance_id":"already-gone","action":"remove"})
+assert result["status"]=="completed",result
+assert result["result"]["already_absent"] is True
+assert result["result"]["operation"]=={"action":"remove","changed":False,"idempotent":True}
+''',state_dir=state);self.assertEqual(r.returncode,0,r.stderr)
  def test_configuration_backup_broadcast_events_and_reconciliation(self):
   with tempfile.TemporaryDirectory() as state:
    r=self._run('''

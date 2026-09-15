@@ -82,6 +82,11 @@ def _safe_relative_directory(value: Any) -> str:
     return path.as_posix()
 
 
+def _minecraft_managed_contract(spec: dict[str, Any]) -> bool:
+    environment_id = str(spec.get("environment_id") or "").strip().lower()
+    return "content_projection" in spec or environment_id in _LEGACY_MINECRAFT_TYPES
+
+
 def _minecraft_policy(spec: dict[str, Any]) -> dict[str, dict[str, Any]] | None:
     if "content_projection" in spec:
         raw = spec.get("content_projection")
@@ -261,6 +266,8 @@ def _safe_runtime_target(root: Path, relative: Path) -> Path:
 
 
 def materialize_minecraft_files(spec: dict[str, Any]) -> list[str]:
+    if not _minecraft_managed_contract(spec):
+        return []
     raw = spec.get("content_file_projections")
     items = raw if isinstance(raw, list) else []
     game = str(spec.get("game_id") or "").strip().lower()
@@ -472,6 +479,8 @@ def _bundle_source(runtime_root: Path, item: dict[str, Any]) -> Path:
 
 
 def materialize_minecraft_overrides(spec: dict[str, Any]) -> list[str]:
+    if not _minecraft_managed_contract(spec):
+        return []
     raw = spec.get("content_bundle_overrides")
     items = raw if isinstance(raw, list) else []
     if len(items) > 1:

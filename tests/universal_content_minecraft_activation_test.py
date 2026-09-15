@@ -195,6 +195,29 @@ class MinecraftActivationTest(unittest.TestCase):
             with self.assertRaises(module.ContentRuntimeActivationError):module.materialize_content_activation(module.project_runtime_spec(spec,{"checksum":"bad","entries":[entry]}))
             self.assertFalse((runtime/"mods"/"evil.jar").exists())
 
+    def test_bedrock_does_not_consume_java_projection_manifests(self):
+        for platform in ("linux", "windows"):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as tmp:
+                module = self._runtime_module(platform)
+                root = Path(tmp); runtime = root / "runtime"; state = root / "state"
+                runtime.mkdir(); (state / ".dsm").mkdir(parents=True)
+                file_manifest = state / ".dsm" / "content-activation-files.json"
+                override_manifest = state / ".dsm" / "content-activation-overrides.json"
+                file_manifest.write_text(json.dumps({"schema_version": 1, "kind": "UnrelatedControlState", "targets": []}), encoding="utf-8")
+                override_manifest.write_text(json.dumps({"schema_version": 1, "kind": "UnrelatedControlState", "targets": []}), encoding="utf-8")
+                spec = {
+                    "instance_id": "bedrock-one", "game_id": "minecraft",
+                    "environment_id": "minecraft.bedrock.vanilla",
+                    "working_directory": str(runtime), "instance_state_root": str(state),
+                    "arguments": [],
+                }
+                projected = module.project_runtime_spec(spec, {"checksum": "empty", "entries": []})
+                self.assertEqual(projected["content_file_projections"], [])
+                self.assertEqual(projected["content_bundle_overrides"], [])
+                self.assertEqual(module.materialize_content_activation(projected), [])
+                self.assertEqual(json.loads(file_manifest.read_text())["kind"], "UnrelatedControlState")
+                self.assertEqual(json.loads(override_manifest.read_text())["kind"], "UnrelatedControlState")
+
     def test_no_bundle_without_instance_state_root_is_noop(self):
         for platform in ("linux", "windows"):
             with self.subTest(platform=platform):
