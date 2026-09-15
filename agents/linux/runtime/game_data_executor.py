@@ -85,6 +85,17 @@ def _extract_tar(archive:Path,target:Path)->None:
    _safe_member(member.name)
    if not (member.isfile() or member.isdir()):raise RuntimeError("unsupported archive member")
   package.extractall(target,members=members)
+def _ensure_declared_executable(selection:dict[str,Any],target:Path)->None:
+ mode=str(selection.get("artifact_mode") or "executable").strip().lower()
+ if mode not in {"executable","native"}:return
+ executable=str(selection.get("executable") or "").strip()
+ if not executable:return
+ candidate=(target/executable).resolve()
+ try:candidate.relative_to(target.resolve())
+ except ValueError as exc:raise ValueError("declared executable escapes game-data target") from exc
+ if not candidate.is_file():raise RuntimeError("declared executable is missing after install")
+ candidate.chmod(candidate.stat().st_mode|0o100)
+
 def _run_http(selection:dict[str,Any],target:Path)->None:
  install=selection.get("install") if isinstance(selection.get("install"),dict) else {};asset=selection.get("asset") if isinstance(selection.get("asset"),dict) else {};url=str(asset.get("url") or install.get("url") or "").strip()
  if not url.startswith(("https://","http://")):raise ValueError("HTTP artifact URL is missing or invalid")
@@ -102,7 +113,7 @@ def _run_http(selection:dict[str,Any],target:Path)->None:
     shutil.move(str(entry),str(destination))
   else:
    raw_name=asset.get("name") or install.get("asset") or selection.get("executable") or "artifact";filename=_safe_name(Path(str(raw_name)).name,"artifact filename");destination=target/filename;shutil.copy2(artifact,destination)
-   if str(selection.get("executable") or "")==filename:destination.chmod(destination.stat().st_mode|0o111)
+  _ensure_declared_executable(selection,target)
 def _install(selection:dict[str,Any],target:Path,provider:str)->None:
  if provider=="steam":_run_steam(selection,target)
  elif provider in {"http","http-archive","github"}:_run_http(selection,target)
