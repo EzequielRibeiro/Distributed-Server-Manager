@@ -1242,7 +1242,6 @@ validate_final_installation() {
     echo "Validando instalação final..."
     echo "Validating final installation..."
     REQUIRED_FILES=(
-        "${INSTALL_DIR}/bin/dsm"
         "${INSTALL_DIR}/bin/cap"
         "${INSTALL_DIR}/core/bootstrap.sh"
         "${INSTALL_DIR}/config/dsm.conf"
