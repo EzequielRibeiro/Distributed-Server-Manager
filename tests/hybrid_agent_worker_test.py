@@ -16,7 +16,11 @@ for item in (ROOT, ROOT / "database", ROOT / "dashboard" / "workers"):
 
 from backend import DatabaseConfig
 from backend_factory import create_backend
-from hybrid_agent_worker import heartbeat_cycle, process_hybrid_backup_cycle
+from hybrid_agent_worker import (
+    heartbeat_cycle,
+    process_hybrid_backup_cycle,
+    process_hybrid_configuration_cycle,
+)
 from infrastructure_role_cli import promote_local_controller
 from registry import installation_profile_identity
 from registry_repository import RegistryRepository
@@ -117,6 +121,80 @@ class HybridAgentWorkerTest(unittest.TestCase):
         self.assertEqual(result["accepted"], 1)
         self.assertEqual(result["completed"], 1)
         self.assertEqual(result["failed"], 0)
+
+
+    def test_hybrid_configuration_cycle_round_trips_state_and_commands(self):
+        agent_id = "hybrid-configuration-agent"
+        config = {"agent_id": agent_id}
+        previous = [{
+            "target_type": "instance",
+            "target_id": "instance-1",
+            "namespace": "capivara.instance.server-settings",
+            "desired_revision": "1",
+            "applied_revision": "1",
+            "desired_checksum": "old",
+            "applied_checksum": "old",
+            "status": "applied",
+        }]
+        commands = [{
+            "target_type": "instance",
+            "target_id": "instance-1",
+            "namespace": "capivara.instance.server-settings",
+            "revision": "2",
+            "checksum": "new",
+            "value": {"settings": {"server_name": "Hybrid DayZ"}},
+        }]
+        reports = [{
+            "target_type": "instance",
+            "target_id": "instance-1",
+            "namespace": "capivara.instance.server-settings",
+            "desired_revision": "2",
+            "applied_revision": "2",
+            "desired_checksum": "new",
+            "applied_checksum": "new",
+            "status": "applied",
+        }]
+
+        client = Mock()
+        client.configuration_state.return_value = previous
+        client.apply_configuration_commands.return_value = reports
+        repository = Mock()
+        repository.record_agent_state.side_effect = [1, 1]
+        repository.desired_for_agent.return_value = commands
+
+        with (
+            patch("hybrid_agent_worker._hybrid_agent_config", return_value=config),
+            patch("hybrid_agent_worker._configuration_client_module", return_value=client),
+            patch("hybrid_agent_worker.ConfigurationRepository", return_value=repository),
+        ):
+            result = process_hybrid_configuration_cycle(
+                self.backend, self.root, agent_id
+            )
+
+        repository.initialize.assert_called_once_with()
+        repository.record_agent_state.assert_any_call(agent_id, previous)
+        repository.desired_for_agent.assert_called_once_with(agent_id)
+        client.apply_configuration_commands.assert_called_once_with(commands)
+        repository.record_agent_state.assert_any_call(agent_id, reports)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["reported"], 1)
+        self.assertEqual(result["commands"], 1)
+        self.assertEqual(result["accepted"], 1)
+        self.assertEqual(result["applied"], 1)
+        self.assertEqual(result["failed"], 0)
+
+    def test_hybrid_configuration_precedes_runtime_commands_and_uses_hybrid_materializer(self):
+        import inspect
+        from hybrid_agent_worker import _instance_runtime_module, heartbeat_cycle
+
+        heartbeat_source = inspect.getsource(heartbeat_cycle)
+        self.assertLess(
+            heartbeat_source.index("process_hybrid_configuration_cycle"),
+            heartbeat_source.index("process_hybrid_instance_runtime_cycle"),
+        )
+        loader_source = inspect.getsource(_instance_runtime_module)
+        self.assertIn("CAPIVARA_MATERIALIZER_UNIT_TEMPLATE", loader_source)
+        self.assertIn("dsm-hybrid-agent-materialize@{instance_id}.service", loader_source)
 
     def test_promoted_hybrid_renews_runtime_heartbeat(self):
         transition = promote_local_controller(
