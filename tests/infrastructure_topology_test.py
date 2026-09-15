@@ -42,6 +42,9 @@ CREATE TABLE datacenters (
     provider TEXT,
     city TEXT,
     country_code TEXT,
+    country_name TEXT,
+    state_code TEXT,
+    state_name TEXT,
     latitude REAL,
     longitude REAL,
     status TEXT NOT NULL
@@ -86,8 +89,11 @@ class InfrastructureTopologyTest(unittest.TestCase):
             ("br-se", "Brasil Sudeste", "BR", "SA", -23.5, -46.6, "active"),
         )
         connection.execute(
-            "INSERT INTO datacenters VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            ("dc-sp", "br-se", "Sao Paulo", "demo", "Sao Paulo", "BR", -23.5, -46.6, "active"),
+            "INSERT INTO datacenters VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "dc-sp", "br-se", "Sao Paulo", "demo", "Sao Paulo", "BR",
+                "Brasil", "SP", "São Paulo", -23.5, -46.6, "active",
+            ),
         )
         connection.executemany(
             "INSERT INTO agents VALUES (?, ?, ?, ?, ?)",
@@ -144,6 +150,11 @@ class InfrastructureTopologyTest(unittest.TestCase):
         self.assertEqual(region["id"], "br-se")
         self.assertEqual(datacenter["id"], "dc-sp")
         self.assertEqual(datacenter["region_id"], region["id"])
+        self.assertEqual(datacenter["country_code"], "BR")
+        self.assertEqual(datacenter["country_name"], "Brasil")
+        self.assertEqual(datacenter["state_code"], "SP")
+        self.assertEqual(datacenter["state_name"], "São Paulo")
+        self.assertEqual(datacenter["city"], "Sao Paulo")
         self.assertEqual(agent["id"], "agent-a")
         self.assertEqual(agent["children_count"], 2)
         self.assertEqual(agent["topology_state"], "ready")
