@@ -7,7 +7,7 @@ from .base import GameRuntimeProfile, ProfileError, port_bindings, require_absol
 
 class PalworldRuntimeProfile(GameRuntimeProfile):
     game_ids = ("palworld", "palworld.stable")
-    profile_version = 4
+    profile_version = 5
 
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         instance_id=require_text(instance.get("instance_id") or instance.get("id"),"instance_id")
@@ -39,6 +39,7 @@ class PalworldRuntimeProfile(GameRuntimeProfile):
         environment={str(k):str(v) for k,v in raw_env.items()};environment.update({"CAPIVARA_INSTANCE_ID":instance_id,"CAPIVARA_GAME_ID":"palworld"})
         network_properties=[
             {"path":"PalWorldSettings.ini","key":"RCONPort","value":"{{PORT_RCON}}","syntax":"ue_option_settings","seed_from":"DefaultPalWorldSettings.ini"},
+            {"path":"PalWorldSettings.ini","key":"RESTAPIEnabled","value":"True","syntax":"ue_option_settings","seed_from":"DefaultPalWorldSettings.ini"},
             {"path":"PalWorldSettings.ini","key":"RESTAPIPort","value":"{{PORT_REST_API}}","syntax":"ue_option_settings","seed_from":"DefaultPalWorldSettings.ini"},
         ]
         return {
@@ -51,6 +52,7 @@ class PalworldRuntimeProfile(GameRuntimeProfile):
             "seed_directories":[{"source":str(shared_saved),"target":str(private_saved),"optional":True}],
             "working_file_copies":[{"source":str(steamclient_source),"target":str(steamclient_target)}],
             "bind_paths":[{"source":str(private_saved),"target":str(shared_saved)}],
+            "console":{"supported":True,"transport":"palworld-rest"},
             "catalog_network_properties":network_properties,
         }
 

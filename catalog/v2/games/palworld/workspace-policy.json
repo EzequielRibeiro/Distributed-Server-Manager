@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "kind": "GameWorkspacePolicy",
+  "game": "palworld",
+  "products": {},
+  "runtimes": {
+    "palworld.stable": {
+      "label": "Palworld Stable",
+      "family": "default",
+      "mods": false,
+      "plugins": false,
+      "workshop": false,
+      "external_upload": true,
+      "custom_runtime": false,
+      "console": {"supported": true}
+    }
+  }
+}

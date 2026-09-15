@@ -15,6 +15,7 @@ ROUTES = {
     PREFIX,
     PREFIX + "/telemetry",
     PREFIX + "/console",
+    PREFIX + "/console/status",
     PREFIX + "/startup",
     PREFIX + "/files/status",
     PREFIX + "/backup-policy",
@@ -36,6 +37,21 @@ _FILE_ACTIVITY = {
 }
 
 
+def _merge_console_output(live_lines, stored, limit: int, live_source: str) -> list[dict[str, str]]:
+    cap = max(1, min(int(limit), 2000))
+    live = [{"line": str(line), "source": live_source} for line in (live_lines or [])]
+    commands = []
+    for item in stored or []:
+        if isinstance(item, dict) and str(item.get("line") or ""):
+            commands.append({"line": str(item.get("line")), "source": "command-history"})
+    if not commands:
+        return live[-cap:]
+    command_cap = min(len(commands), max(1, min(80, cap // 4)))
+    command_tail = commands[-command_cap:]
+    live_cap = max(0, cap - command_cap - 1)
+    return (live[-live_cap:] if live_cap else []) + [{"line": "── Respostas de comandos ──", "source": "command-history"}] + command_tail
+
+
 def _console_payload(api, user, instance_id: str, limit: int) -> dict[str, object]:
     # Authorize first. Prefer the local journal for Hybrid instances, then the
     # Agent heartbeat console snapshot for remote/unavailable journal readers,
@@ -45,10 +61,7 @@ def _console_payload(api, user, instance_id: str, limit: int) -> dict[str, objec
     logs = journal.get("logs")
     if not journal.get("error") and isinstance(logs, list) and logs:
         return {
-            "lines": [
-                {"line": str(line), "source": "systemd-journal"}
-                for line in logs[-max(1, min(int(limit), 2000)):]
-            ],
+            "lines": _merge_console_output(logs, stored, limit, "systemd-journal"),
             "source": "systemd-journal",
             "read_only": True,
         }
@@ -62,10 +75,7 @@ def _console_payload(api, user, instance_id: str, limit: int) -> dict[str, objec
     heartbeat_lines = heartbeat.get("lines") if isinstance(heartbeat, dict) else None
     if isinstance(heartbeat_lines, list) and heartbeat_lines:
         return {
-            "lines": [
-                {"line": str(line), "source": "agent-heartbeat"}
-                for line in heartbeat_lines[-max(1, min(int(limit), 2000)):]
-            ],
+            "lines": _merge_console_output(heartbeat_lines, stored, limit, "agent-heartbeat"),
             "source": "agent-heartbeat",
             "read_only": True,
             "transport": heartbeat.get("transport"),
@@ -205,6 +215,8 @@ def install_customer_instance_workspace(legacy, authenticate):
                 data = {"samples": api.telemetry(user, instance_id, int(one(parsed, "limit", 240) or 240))}
             elif path == PREFIX + "/console":
                 data = _console_payload(api, user, instance_id, int(one(parsed, "limit", 300) or 300))
+            elif path == PREFIX + "/console/status":
+                data = api.console_command_status(user, instance_id, one(parsed, "command_id", ""))
             elif path == PREFIX + "/startup":
                 data = api.startup(user, instance_id)
             elif path == PREFIX + "/files/status":

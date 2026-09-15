@@ -107,6 +107,11 @@ class CustomerInstanceWorkspaceService:
   return {"instance":instance,"runtime":runtime,"permissions":sorted(permissions),"policy":policy,"content_policy":content.as_dict(),"content_sections":content_ui_sections(content),"runtime_capabilities":capabilities,"ports":self._ports(instance_id),"location":{k:location.get(k) for k in ("public_host","datacenter_id","datacenter_name","city","country_code","region_id","region_name","region_country_code","agent_name")},"telemetry":telemetry,"storage":{"used_bytes":used,"limit_bytes":storage_limit,"percent":storage_pct},"provision":provision,"console":{"read":"console.read" in permissions,"execute":"console.execute" in permissions,"supported":bool((capabilities.get("console") or {}).get("supported"))},"upgrade":{"allowed":"contract.upgrade" in permissions,"current_profile_id":policy.get("resource_profile_id")}}
  def telemetry(self,user,instance_id,limit=240):self.require(user,instance_id,"instance.view");return self.repo.telemetry(instance_id,limit)
  def console_output(self,user,instance_id,limit=300):self.require(user,instance_id,"console.read");return self.repo.console_output(instance_id,limit)
+ def console_command_status(self,user,instance_id,command_id):
+  self.require(user,instance_id,"console.read");item=self.repo.console_command(str(command_id or "").strip())
+  if str(item.get("instance_id") or "")!=str(instance_id):raise PermissionError("console command belongs to another instance")
+  result=item.get("result") if isinstance(item.get("result"),dict) else {}
+  return {"command_id":item.get("command_id"),"instance_id":item.get("instance_id"),"status":item.get("status"),"last_error":item.get("last_error"),"completed_at":item.get("completed_at"),"result":result}
  def agent_console_output(self,user,instance_id,limit=300):
   context=self.require(user,instance_id,"console.read");agent_id=str(context.get("agent_id") or "").strip();limit=max(1,min(int(limit),1000));location=self._location(agent_id) if agent_id else {};metadata=location.get("agent_metadata") if isinstance(location.get("agent_metadata"),dict) else {};state={}
   for item in metadata.get("instance_console_state") or []:
@@ -119,7 +124,9 @@ class CustomerInstanceWorkspaceService:
  def send_console(self,user,instance_id,command):
   context=self.require(user,instance_id,"console.execute");caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""))
   if not bool((caps.get("console") or {}).get("supported")):raise PermissionError("runtime game console is not available")
-  return self.repo.enqueue_console(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,command_text=command,requested_by=str(user.get("username") or ""))
+  text=str(command or "").strip();token=text.lstrip("/").split(None,1)[0].lower() if text else ""
+  if str(context.get("game_id") or "").lower()=="palworld" and token=="adminpassword":raise PermissionError("/AdminPassword não pode ser enviado pelo Console do Capivara porque credenciais não podem entrar no histórico de comandos.")
+  return self.repo.enqueue_console(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,command_text=text,requested_by=str(user.get("username") or ""))
  def startup(self,user,instance_id):
   context=self.require(user,instance_id,"startup.read");policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));return {"values":policy.get("startup") or {},"declaration":caps.get("startup_parameters") or {},"resource_limits":{k:policy.get(k) for k in ("cpu_limit_cores","memory_limit_bytes","storage_limit_bytes","player_limit")}}
  def save_startup(self,user,instance_id,values):

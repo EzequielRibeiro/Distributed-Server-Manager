@@ -46,7 +46,7 @@ class CustomerRuntimeConsoleLiveTest(unittest.TestCase):
         self.assertEqual(1, len(api.calls))
         self.assertEqual("systemd-journal", result["source"])
         self.assertTrue(result["read_only"])
-        self.assertEqual(["live one", "live two"], [item["line"] for item in result["lines"]])
+        self.assertEqual(["live one", "live two", "── Respostas de comandos ──", "stored"], [item["line"] for item in result["lines"]])
 
     def test_customer_console_uses_agent_heartbeat_when_local_journal_is_unavailable(self):
         class Api:
@@ -69,7 +69,7 @@ class CustomerRuntimeConsoleLiveTest(unittest.TestCase):
 
         self.assertEqual("agent-heartbeat", result["source"])
         self.assertTrue(result["read_only"])
-        self.assertEqual(["remote one", "remote two"], [item["line"] for item in result["lines"]])
+        self.assertEqual(["remote one", "remote two", "── Respostas de comandos ──", "stored command result"], [item["line"] for item in result["lines"]])
         self.assertEqual("online", result["agent_health"])
 
     def test_customer_console_falls_back_to_command_history_when_live_sources_are_empty(self):
@@ -108,6 +108,10 @@ class CustomerRuntimeConsoleLiveTest(unittest.TestCase):
         self.assertIn('id="console-live-status"', controller_html)
         self.assertIn('#console-live-status.warn', css)
         self.assertIn('/customer-instance-runtime-live.js', html)
+        core = (ROOT / "dashboard" / "web" / "customer-instance-v2.js").read_text(encoding="utf-8")
+        self.assertIn('/console/status?instance_id=', core)
+        self.assertIn('Falha no comando:', core)
+        self.assertIn('aguardando execução', core)
 
 
 if __name__ == "__main__":
