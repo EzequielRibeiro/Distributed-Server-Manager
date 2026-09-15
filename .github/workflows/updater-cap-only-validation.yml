@@ -1,0 +1,29 @@
+name: Updater Cap-only Validation
+
+on:
+  pull_request:
+    paths:
+      - 'update.sh'
+      - 'tests/updater_cap_only_validation_test.sh'
+      - '.github/workflows/updater-cap-only-validation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'update.sh'
+      - 'tests/updater_cap_only_validation_test.sh'
+      - '.github/workflows/updater-cap-only-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Bash syntax
+        run: |
+          bash -n update.sh
+          bash -n tests/updater_cap_only_validation_test.sh
+      - name: Test cap-only final validation
+        run: bash tests/updater_cap_only_validation_test.sh
