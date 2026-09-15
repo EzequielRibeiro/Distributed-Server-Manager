@@ -7,6 +7,7 @@ import json
 import time
 from urllib.parse import parse_qs, urlparse
 
+from agent_console_push import console_push_snapshot
 from controller_log_journal_http import instance_journal_logs
 from controller_session import session_user_from_headers
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
@@ -43,7 +44,19 @@ _FILE_ACTIVITY = {
 
 def _merge_console_output(live_lines, stored, limit: int, live_source: str) -> list[dict[str, str]]:
     cap = max(1, min(int(limit), 2000))
-    live = [{"line": str(line), "source": live_source} for line in (live_lines or [])]
+    live = []
+    for item in live_lines or []:
+        if isinstance(item, dict):
+            line = str(item.get("line") or "")
+            if not line:
+                continue
+            value = {"line": line, "source": live_source}
+            for key in ("cursor", "priority", "timestamp"):
+                if item.get(key) is not None:
+                    value[key] = str(item.get(key))
+            live.append(value)
+        else:
+            live.append({"line": str(item), "source": live_source})
     commands = []
     for item in stored or []:
         if isinstance(item, dict) and str(item.get("line") or ""):
@@ -57,10 +70,19 @@ def _merge_console_output(live_lines, stored, limit: int, live_source: str) -> l
 
 
 def _console_payload(api, user, instance_id: str, limit: int) -> dict[str, object]:
-    # Authorize first. Prefer the local journal for Hybrid instances, then the
-    # Agent heartbeat console snapshot for remote/unavailable journal readers,
-    # and retain command-result history as the final compatibility fallback.
+    # Authorize first. Remote Agent push is the lowest-latency source; Hybrid
+    # instances fall through to the local journal, then heartbeat snapshots.
     stored = api.console_output(user, instance_id, limit)
+    pushed = console_push_snapshot(instance_id, limit=limit)
+    if isinstance(pushed, dict) and pushed.get("lines"):
+        return {
+            "lines": _merge_console_output(pushed.get("lines"), stored, limit, "agent-push"),
+            "source": "agent-push",
+            "read_only": True,
+            "transport": pushed.get("transport"),
+            "agent_health": "online",
+            "last_seen": pushed.get("last_seen"),
+        }
     journal = instance_journal_logs(instance_id, limit)
     logs = journal.get("logs")
     if not journal.get("error") and isinstance(logs, list) and logs:

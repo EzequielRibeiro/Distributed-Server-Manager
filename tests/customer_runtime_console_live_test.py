@@ -48,6 +48,25 @@ class CustomerRuntimeConsoleLiveTest(unittest.TestCase):
         self.assertTrue(result["read_only"])
         self.assertEqual(["live one", "live two", "── Respostas de comandos ──", "stored"], [item["line"] for item in result["lines"]])
 
+    def test_customer_console_prefers_fresh_agent_push_before_local_journal_probe(self):
+        class Api:
+            def console_output(self, user, instance_id, limit):
+                return []
+
+        pushed = {
+            "lines": [{"line": "remote live", "cursor": "c1"}],
+            "source": "agent-push",
+            "transport": "persistent-http-chunked",
+            "last_seen": "2026-09-15T01:00:00Z",
+        }
+        with patch("customer_instance_workspace_http.console_push_snapshot", return_value=pushed), \
+             patch("customer_instance_workspace_http.instance_journal_logs") as journal:
+            result = _console_payload(Api(), {"username": "aurora"}, "remote-instance", 300)
+        journal.assert_not_called()
+        self.assertEqual("agent-push", result["source"])
+        self.assertEqual("remote live", result["lines"][0]["line"])
+        self.assertEqual("c1", result["lines"][0]["cursor"])
+
     def test_customer_console_uses_agent_heartbeat_when_local_journal_is_unavailable(self):
         class Api:
             def console_output(self, user, instance_id, limit):

@@ -25,6 +25,7 @@ from capabilities import detect_capabilities
 from configuration_client import apply_configuration_commands, configuration_state
 from console_client import clear_result as clear_console_result
 from console_client import console_state, handle_command as handle_console_command, read_result as read_console_result
+from console_stream_client import start_console_stream
 from content_client import apply_content_commands, content_state
 from doctor_client import clear_result as clear_doctor_result, handle_command as handle_doctor_command, read_result as read_doctor_result
 from game_data_client import clear_game_data_result, read_game_data_result, stage_game_data_command
@@ -198,6 +199,7 @@ def run_forever():
     if not config.get("credential_id") or not config.get("credential_secret"):config=enroll(config)
     interrupted=recover_interrupted_operations(config)
     if interrupted:increment("operations_interrupted",len(interrupted))
+    start_console_stream(config)
     heartbeat_interval=max(10,int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)));reconcile_interval=max(5,int(config.get("reconcile_interval_seconds",DEFAULT_RECONCILE_SECONDS)));next_heartbeat=next_reconcile=0.0
     while True:
         now=time.monotonic()

@@ -1,8 +1,8 @@
 [Unit]
 Description=Capivara DSM Linux Agent
 Requires=capivara-agent-runtime-identity.service
-After=network-online.target capivara-agent-runtime-identity.service
-Wants=network-online.target
+After=network-online.target capivara-agent-runtime-identity.service capivara-agent-console-reader.service
+Wants=network-online.target capivara-agent-console-reader.service
 
 [Service]
 Type=simple

@@ -10,7 +10,7 @@ fail(){ printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 bash -n "${BUILDER}"
 bash -n "${ROOT}/agents/linux/installer/bootstrap-release.sh"
 bash -n "${ROOT}/agents/linux/installer/install-agent.sh"
-python3 -m py_compile "${ROOT}"/agents/linux/runtime/*.py "${ROOT}"/agents/linux/runtime/adapters/*.py "${ROOT}"/agents/linux/runtime/materializers/*.py "${ROOT}"/agents/linux/runtime/profiles/*.py "${ROOT}/agents/linux/privileged/materialize_instance.py" "${ROOT}/agents/linux/privileged/reconcile_runtime_identity.py" "${ROOT}/agents/linux/privileged/uninstall_agent.py" "${ROOT}/agents/linux/updater/updater.py"
+python3 -m py_compile "${ROOT}"/agents/linux/runtime/*.py "${ROOT}"/agents/linux/runtime/adapters/*.py "${ROOT}"/agents/linux/runtime/materializers/*.py "${ROOT}"/agents/linux/runtime/profiles/*.py "${ROOT}/agents/linux/privileged/materialize_instance.py" "${ROOT}/agents/linux/privileged/reconcile_runtime_identity.py" "${ROOT}/agents/linux/privileged/uninstall_agent.py" "${ROOT}/agents/linux/privileged/console_journal_reader.py" "${ROOT}/agents/linux/updater/updater.py"
 
 bash "${BUILDER}" HEAD "${TMP}/one" >/dev/null
 bash "${BUILDER}" HEAD "${TMP}/two" >/dev/null
@@ -18,7 +18,7 @@ VERSION=$(tr -d '\r\n' <"${ROOT}/version"); ARCHIVE="capivara-agent-linux-${VERS
 cmp -s "${TMP}/one/${ARCHIVE}" "${TMP}/two/${ARCHIVE}" || fail "Agent package is not reproducible"
 (cd "${TMP}/one" && sha256sum -c "${ARCHIVE}.sha256" >/dev/null)
 mkdir "${TMP}/extract"; tar -xzf "${TMP}/one/${ARCHIVE}" -C "${TMP}/extract"; PACKAGE="${TMP}/extract/capivara-agent-linux-${VERSION}"
-for path in install-agent.sh manifest.json VERSION agent/common/identity.py agent/privileged/materialize_instance.py agent/privileged/reconcile_runtime_identity.py agent/privileged/uninstall_agent.py agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path services/capivara-agent-materialize@.service services/capivara-agent-runtime-identity.service services/capivara-agent-uninstall.service services/capivara-agent-uninstall.path config/README.md; do [[ -f "${PACKAGE}/${path}" ]] || fail "missing Agent package file: ${path}"; done
+for path in install-agent.sh manifest.json VERSION agent/common/identity.py agent/privileged/materialize_instance.py agent/privileged/reconcile_runtime_identity.py agent/privileged/uninstall_agent.py agent/privileged/console_journal_reader.py agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py services/capivara-agent.service services/capivara-agent-console-reader.service services/capivara-agent-update.service services/capivara-agent-update.path services/capivara-agent-materialize@.service services/capivara-agent-runtime-identity.service services/capivara-agent-uninstall.service services/capivara-agent-uninstall.path config/README.md; do [[ -f "${PACKAGE}/${path}" ]] || fail "missing Agent package file: ${path}"; done
 for file in agent.py capabilities.py network_inventory.py update_client.py update_state.py local_cli.py cap_dispatch.py game_data_client.py game_data_executor.py game_data_state.py instance_runtime.py runtime_spec.py runtime_events.py runtime_materialization.py runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py observability_client.py configuration_client.py content_client.py backup_client.py broadcast_client.py game_runtime.py provisioning_contract.py provisioning_state.py provisioning_client.py provisioning_executor.py privileged_materialization.py storage_migration_client.py uninstall_client.py; do [[ -f "${PACKAGE}/agent/runtime/${file}" ]] || fail "missing Agent package runtime file: ${file}"; done
 
 python3 - "${PACKAGE}" "${ROOT}" <<'PY'
@@ -33,6 +33,8 @@ for source in (root/'agents/linux/runtime').rglob('*.py'):
 for rel in (
  'agent/runtime/uninstall_client.py',
  'agent/privileged/uninstall_agent.py',
+ 'agent/privileged/console_journal_reader.py',
+ 'services/capivara-agent-console-reader.service',
  'services/capivara-agent-uninstall.service',
  'services/capivara-agent-uninstall.path',
 ):
@@ -61,6 +63,8 @@ grep -Fq 'instance-locks' "${INSTALLER}" || fail "installer does not create inst
 grep -Fq 'instance-operations' "${INSTALLER}" || fail "installer does not create operation journal state"
 grep -Fq '/usr/local/bin/cap' "${INSTALLER}" || fail "installer does not expose cap command"
 grep -Fq 'agent/privileged/uninstall_agent.py' "${INSTALLER}" || fail "installer does not require privileged uninstall helper"
+grep -Fq 'agent/privileged/console_journal_reader.py' "${INSTALLER}" || fail "installer does not require restricted console reader"
+grep -Fq 'systemctl enable --now capivara-agent-console-reader.service' "${INSTALLER}" || fail "installer does not activate restricted console reader"
 grep -Fq 'capivara-agent-uninstall.path' "${INSTALLER}" || fail "installer does not install uninstall path unit"
 grep -Fq 'systemctl enable --now capivara-agent-uninstall.path' "${INSTALLER}" || fail "installer does not activate uninstall path unit"
 

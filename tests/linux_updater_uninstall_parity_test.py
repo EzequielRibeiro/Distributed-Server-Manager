@@ -47,9 +47,15 @@ class LinuxUpdaterUninstallParityTest(unittest.TestCase):
             "agent/privileged/materialize_instance.py": "# materialize\n",
             "agent/privileged/reconcile_runtime_identity.py": "# identity reconcile\n",
             "agent/privileged/uninstall_agent.py": "# uninstall executor\n",
+            "agent/privileged/console_journal_reader.py": "# console reader\n",
             "agent/policy/49-capivara-agent-instance-units.rules": "// policy\n",
             "agent/updater/updater.py": "# updater\n",
+            "services/capivara-agent.service": "[Service]\n",
+            "services/capivara-agent-console-reader.service": "[Service]\n",
+            "services/capivara-agent-update.service": "[Service]\n",
+            "services/capivara-agent-update.path": "[Path]\n",
             "services/capivara-agent-materialize@.service": "[Service]\n",
+            "services/capivara-agent-firewall@.service": "[Service]\n",
             "services/capivara-agent-runtime-identity.service": "[Service]\n",
             "services/capivara-agent-uninstall.path": "[Path]\n",
             "services/capivara-agent-uninstall.service": "[Service]\n",
@@ -80,6 +86,8 @@ class LinuxUpdaterUninstallParityTest(unittest.TestCase):
 
         expected = {
             "agent/privileged/uninstall_agent.py": self.install / "privileged" / "uninstall_agent.py",
+            "agent/privileged/console_journal_reader.py": self.install / "privileged" / "console_journal_reader.py",
+            "services/capivara-agent-console-reader.service": self.systemd / "capivara-agent-console-reader.service",
             "services/capivara-agent-uninstall.path": self.systemd / "capivara-agent-uninstall.path",
             "services/capivara-agent-uninstall.service": self.systemd / "capivara-agent-uninstall.service",
         }
@@ -88,6 +96,8 @@ class LinuxUpdaterUninstallParityTest(unittest.TestCase):
             self.assertEqual(destination, by_relative[relative][1])
 
         self.assertEqual(0o755, by_relative["agent/privileged/uninstall_agent.py"][2])
+        self.assertEqual(0o755, by_relative["agent/privileged/console_journal_reader.py"][2])
+        self.assertEqual(0o644, by_relative["services/capivara-agent-console-reader.service"][2])
         self.assertEqual(0o644, by_relative["services/capivara-agent-uninstall.path"][2])
         self.assertEqual(0o644, by_relative["services/capivara-agent-uninstall.service"][2])
 
@@ -115,6 +125,15 @@ class LinuxUpdaterUninstallParityTest(unittest.TestCase):
             text=True,
             check=False,
             timeout=30,
+        )
+
+    def test_set_console_reader_uses_systemd_enable_now(self):
+        completed = mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch.object(updater.subprocess, "run", return_value=completed) as run:
+            updater._set_console_reader(True)
+        run.assert_called_once_with(
+            ["systemctl", "enable", "--now", "capivara-agent-console-reader.service"],
+            capture_output=True, text=True, check=False, timeout=30,
         )
 
 

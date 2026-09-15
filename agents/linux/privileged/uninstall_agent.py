@@ -103,6 +103,7 @@ def _run(*args: str, check: bool = True) -> subprocess.CompletedProcess:
 def _stop_runtime() -> None:
     _run("systemctl", "stop", "capivara-agent.service", check=False)
     for unit in (
+        "capivara-agent-console-reader.service",
         "capivara-agent-update.path",
         "capivara-agent-update.service",
         "capivara-agent-runtime-identity.service",
@@ -163,6 +164,7 @@ def _remove_payload(request: dict) -> dict:
 def _schedule_finalizer() -> None:
     units = [
         "capivara-agent.service",
+        "capivara-agent-console-reader.service",
         "capivara-agent-update.path",
         "capivara-agent-update.service",
         "capivara-agent-runtime-identity.service",

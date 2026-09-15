@@ -27,6 +27,7 @@ HISTORY_DIR = STATE_DIR / "update-history"
 AGENT_LOG = STATE_DIR / "agent-runtime.log"
 UNINSTALL_STATE_DIR = STATE_DIR / "uninstall"
 UNINSTALL_PATH_UNIT = "capivara-agent-uninstall.path"
+CONSOLE_READER_UNIT = "capivara-agent-console-reader.service"
 REPOSITORY = os.environ.get("CAPIVARA_AGENT_GITHUB_REPOSITORY", "EzequielRibeiro/Distributed-Server-Manager")
 
 
@@ -279,6 +280,12 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
             "agent/privileged/uninstall_agent.py",
         ),
         (
+            package_root / "agent/privileged/console_journal_reader.py",
+            INSTALL_ROOT / "privileged/console_journal_reader.py",
+            0o755,
+            "agent/privileged/console_journal_reader.py",
+        ),
+        (
             package_root / "agent/policy/49-capivara-agent-instance-units.rules",
             POLKIT_RULES_DIR / "49-capivara-agent-instance-units.rules",
             0o644,
@@ -289,6 +296,12 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
             SYSTEMD_DIR / "capivara-agent.service",
             0o644,
             "services/capivara-agent.service",
+        ),
+        (
+            package_root / "services/capivara-agent-console-reader.service",
+            SYSTEMD_DIR / "capivara-agent-console-reader.service",
+            0o644,
+            "services/capivara-agent-console-reader.service",
         ),
         (
             package_root / "services/capivara-agent-update.service",
@@ -454,6 +467,19 @@ def _unit_enabled(unit: str) -> bool:
         ).returncode == 0
     except OSError:
         return False
+
+
+def _set_console_reader(enabled: bool) -> None:
+    action = "enable" if enabled else "disable"
+    completed = subprocess.run(
+        ["systemctl", action, "--now", CONSOLE_READER_UNIT],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or completed.stdout or f"systemctl {action} console reader failed")[:2000])
 
 
 def _set_uninstall_watch(enabled: bool) -> None:
@@ -630,6 +656,7 @@ def apply_request() -> int:
         cli_existed, old_cli_target = _validate_cli_target()
         snapshots = _snapshot_files(mapping, work / "rollback")
         uninstall_watch_was_enabled = _unit_enabled(UNINSTALL_PATH_UNIT)
+        console_reader_was_enabled = _unit_enabled(CONSOLE_READER_UNIT)
 
         try:
             _apply_files(mapping)
@@ -638,6 +665,7 @@ def apply_request() -> int:
             _ensure_state_directory(UNINSTALL_STATE_DIR)
             _daemon_reload()
             _set_uninstall_watch(True)
+            _set_console_reader(True)
             _reconcile_runtime_identity()
             _reconcile_cli()
             _validate_installed(plain, manifest, mapping)
@@ -653,6 +681,7 @@ def apply_request() -> int:
                     rollback_errors.append(f"{label}: {rollback_error}")
 
             rollback_step("disable uninstall watch", lambda: _set_uninstall_watch(False))
+            rollback_step("disable console reader", lambda: _set_console_reader(False))
             rollback_step("managed files", lambda: _restore_files(snapshots))
             rollback_step(
                 "persistent Agent config",
@@ -662,6 +691,8 @@ def apply_request() -> int:
             rollback_step("systemd daemon-reload", _daemon_reload)
             if uninstall_watch_was_enabled:
                 rollback_step("restore uninstall watch", lambda: _set_uninstall_watch(True))
+            if console_reader_was_enabled:
+                rollback_step("restore console reader", lambda: _set_console_reader(True))
             try:
                 subprocess.run(
                     ["systemctl", "restart", "capivara-agent.service"],
