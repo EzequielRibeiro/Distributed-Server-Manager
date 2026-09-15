@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -81,28 +82,54 @@ def _runtime_definition(game_id: str, runtime_id: str | None) -> dict[str, Any]:
     return candidates[0][1]
 
 
-def _content_selection(definition: dict[str, Any]) -> dict[str, Any]:
-    artifact = definition.get("artifact") if isinstance(definition.get("artifact"), dict) else {}
-    provider = str(artifact.get("provider") or "").strip().lower()
-    if not provider:
-        raise ValueError("runtime artifact provider is missing")
+def _runtime_selector(definition: dict[str, Any]) -> str:
     version = definition.get("version") if isinstance(definition.get("version"), dict) else {}
-    installation = definition.get("installation") if isinstance(definition.get("installation"), dict) else {}
-    selection: dict[str, Any] = {
-        "game": str(definition.get("game") or ""),
-        "provider": provider,
-        "version": version.get("value") or definition.get("variant"),
-        "auth": artifact.get("auth") or "anonymous",
-    }
-    directory = str(installation.get("directory") or "").strip()
-    if directory:
-        selection["install_dir"] = Path(directory).name
-    install = {
-        key: value for key, value in artifact.items()
-        if key not in {"provider", "auth"} and value is not None
-    }
-    if install:
-        selection["install"] = install
+    for key in ("value", "build"):
+        value = str(version.get(key) or "").strip()
+        if value:
+            return value
+    if str(version.get("strategy") or "").strip().lower() == "dynamic":
+        return "latest"
+    return str(definition.get("variant") or definition.get("edition") or "stable").strip()
+
+
+def _content_selection(definition: dict[str, Any], selector: str) -> dict[str, Any]:
+    runtime_id = str(definition.get("id") or "").strip()
+    if not runtime_id:
+        raise ValueError("runtime definition has no id")
+    catalog_cli = ROOT / "installer" / "catalog.sh"
+    if not catalog_cli.is_file():
+        raise RuntimeError("catalog runtime resolver is unavailable")
+    completed = subprocess.run(
+        [str(catalog_cli), "--json", "runtime", "prepare", runtime_id, selector],
+        cwd=str(ROOT),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "runtime resolution failed").strip()
+        raise RuntimeError(detail[:2000])
+    try:
+        selection = json.loads(completed.stdout)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("catalog runtime resolver returned invalid JSON") from exc
+    if not isinstance(selection, dict) or selection.get("kind") != "RuntimeSelection":
+        raise RuntimeError("catalog runtime resolver returned an invalid selection")
+    if str(selection.get("runtime_definition") or "") != runtime_id:
+        raise RuntimeError("catalog runtime resolver returned a mismatched runtime")
+    provider = str(selection.get("provider") or "").strip().lower()
+    if not provider:
+        raise RuntimeError("resolved runtime selection has no provider")
+    if provider in {"http", "http-archive", "github"}:
+        install = selection.get("install") if isinstance(selection.get("install"), dict) else {}
+        asset = selection.get("asset") if isinstance(selection.get("asset"), dict) else {}
+        url = str(asset.get("url") or install.get("url") or "").strip()
+        if not url.startswith(("https://", "http://")):
+            raise RuntimeError("resolved HTTP runtime selection has no artifact URL")
     return selection
 
 
@@ -143,6 +170,8 @@ def create_instance(args, *, backend=None) -> dict[str, Any]:
     runtime_id = str(definition.get("id") or "").strip()
     if not runtime_id:
         raise ValueError("runtime definition has no id")
+    selector = _runtime_selector(definition)
+    selection = _content_selection(definition, selector)
 
     controller_id = admin.customer_controller(customer_id)
     selected = admin.resolve_agent(controller_id, args.agent)
@@ -160,7 +189,6 @@ def create_instance(args, *, backend=None) -> dict[str, Any]:
     snapshot = runtime_repository.snapshot(selected_agent_id)
     if str(snapshot.get("health_status") or "").lower() != "online":
         raise ValueError("selected Agent is not online")
-    version = definition.get("version") if isinstance(definition.get("version"), dict) else {}
     owner = _owner(dashboard, customer_id, args.owner)
     instances_root = Path(os.environ.get("DSM_INSTANCES_ROOT", str(ROOT / "instances")))
 
@@ -171,8 +199,8 @@ def create_instance(args, *, backend=None) -> dict[str, Any]:
         runtime_id=runtime_id,
         edition=str(definition.get("edition") or "default"),
         variant=(None if definition.get("variant") is None else str(definition.get("variant"))),
-        version=str(version.get("value") or definition.get("variant") or "current"),
-        build=str(version.get("build") or ""),
+        version=str(selection.get("version") or definition.get("variant") or "current"),
+        build=str(selection.get("build") or ""),
         contract_id=str(args.contract).strip(),
         selected_agent_id=str(placement["agent_id"]),
         instances_root=instances_root,
@@ -196,8 +224,8 @@ def create_instance(args, *, backend=None) -> dict[str, Any]:
             agent_id=str(created["agent_id"]),
             instance_id=str(created["instance_id"]),
             environment_id=runtime_id,
-            selector=str(definition.get("variant") or definition.get("edition") or "stable"),
-            selection=_content_selection(definition),
+            selector=selector,
+            selection=selection,
             configuration=_configuration(definition),
             desired_state=str(args.desired_state),
             requested_by="cap-cli",
@@ -214,6 +242,8 @@ def create_instance(args, *, backend=None) -> dict[str, Any]:
         "contract_id": created["contract_id"],
         "game_id": game_id,
         "runtime_id": runtime_id,
+        "runtime_version": selection.get("version"),
+        "runtime_build": selection.get("build"),
         "agent_id": created["agent_id"],
         "agent_address": snapshot.get("address"),
         "node_id": created["node_id"],
