@@ -87,6 +87,9 @@ def execute(config: dict[str, Any], instance_id: str, command: str) -> list[str]
     transport = str(console.get("transport") or "").lower()
     if transport == "exec": return _exec_transport(console, command)
     if transport == "tmux": return _tmux_transport(console, command)
+    if transport == "palworld-rest":
+        from palworld_rest_console import execute as execute_palworld_rest
+        return execute_palworld_rest(record, command)
     raise RuntimeError(f"unsupported game console transport: {transport or 'none'}")
 
 

@@ -71,10 +71,11 @@ class PalworldOptionalSeedTest(unittest.TestCase):
             {"instance_id": "palworld-test", "agent_id": "agent-test", "environment_id": "palworld.stable"},
             {"install_path": "/srv/palworld", "instance_state_root": "/var/lib/capivara-instances/palworld-test", "catalog_runtime_policy": {"runtime_id": "palworld.stable", "executable": "PalServer.sh"}, "ports": {"game": {"port": 8211, "protocol": "udp"}, "rcon": {"port": 8212, "protocol": "tcp"}, "rest_api": {"port": 8213, "protocol": "tcp"}}},
         )
-        self.assertEqual(runtime["profile_version"], 4)
+        self.assertEqual(runtime["profile_version"], 5)
         self.assertEqual(runtime["seed_directories"], [{"source": "/srv/palworld/Pal/Saved", "target": "/var/lib/capivara-instances/palworld-test/Pal/Saved", "optional": True}])
         self.assertEqual(runtime["working_file_copies"], [{"source": "/srv/palworld/linux64/steamclient.so", "target": "/srv/palworld/Pal/Binaries/Linux/steamclient.so"}])
-        self.assertEqual(["RCONPort", "RESTAPIPort"], [item["key"] for item in runtime["catalog_network_properties"]])
+        self.assertEqual(["RCONPort", "RESTAPIEnabled", "RESTAPIPort"], [item["key"] for item in runtime["catalog_network_properties"]])
+        self.assertEqual({"supported": True, "transport": "palworld-rest"}, runtime["console"])
 
     def test_missing_optional_directory_seed_is_a_noop(self) -> None:
         module = _load_materializer_module();account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
@@ -110,10 +111,10 @@ class PalworldOptionalSeedTest(unittest.TestCase):
             working.mkdir(parents=True);config_root.mkdir(parents=True)
             (working / "DefaultPalWorldSettings.ini").write_text(default, encoding="utf-8")
             target = config_root / "PalWorldSettings.ini";target.write_text("\n", encoding="utf-8")
-            spec = {"working_directory": str(working), "configuration_root": str(config_root), "catalog_variables": {"PORT_RCON": 24011, "PORT_REST_API": 24012}, "catalog_network_properties": [{"path": "PalWorldSettings.ini", "key": "RCONPort", "value": "{{PORT_RCON}}", "syntax": "ue_option_settings", "seed_from": "DefaultPalWorldSettings.ini"}, {"path": "PalWorldSettings.ini", "key": "RESTAPIPort", "value": "{{PORT_REST_API}}", "syntax": "ue_option_settings", "seed_from": "DefaultPalWorldSettings.ini"}]}
+            spec = {"working_directory": str(working), "configuration_root": str(config_root), "catalog_variables": {"PORT_RCON": 24011, "PORT_REST_API": 24012}, "catalog_network_properties": [{"path": "PalWorldSettings.ini", "key": "RCONPort", "value": "{{PORT_RCON}}", "syntax": "ue_option_settings", "seed_from": "DefaultPalWorldSettings.ini"}, {"path": "PalWorldSettings.ini", "key": "RESTAPIEnabled", "value": "True", "syntax": "ue_option_settings", "seed_from": "DefaultPalWorldSettings.ini"}, {"path": "PalWorldSettings.ini", "key": "RESTAPIPort", "value": "{{PORT_REST_API}}", "syntax": "ue_option_settings", "seed_from": "DefaultPalWorldSettings.ini"}]}
             materialize_network_properties(spec)
             text = target.read_text(encoding="utf-8")
-            self.assertIn("RCONPort=24011", text);self.assertIn("RESTAPIPort=24012", text);self.assertIn("RCONEnabled=False", text);self.assertIn("RESTAPIEnabled=False", text)
+            self.assertIn("RCONPort=24011", text);self.assertIn("RESTAPIPort=24012", text);self.assertIn("RCONEnabled=False", text);self.assertIn("RESTAPIEnabled=True", text)
 
     def test_nonempty_palworld_config_is_preserved_while_ports_change(self) -> None:
         custom = "[/Script/Pal.PalGameWorldSettings]\nOptionSettings=(ServerName=\"Customer\",RCONEnabled=False,RCONPort=25575,RESTAPIEnabled=False,RESTAPIPort=8212)\n"
@@ -123,7 +124,7 @@ class PalworldOptionalSeedTest(unittest.TestCase):
             working.mkdir(parents=True);config_root.mkdir(parents=True)
             (working / "DefaultPalWorldSettings.ini").write_text(default, encoding="utf-8")
             target = config_root / "PalWorldSettings.ini";target.write_text(custom, encoding="utf-8")
-            spec = {"working_directory": str(working), "configuration_root": str(config_root), "catalog_variables": {"PORT_RCON": 24011, "PORT_REST_API": 24012}, "catalog_network_properties": [{"path": "PalWorldSettings.ini", "key": "RCONPort", "value": "{{PORT_RCON}}", "syntax": "ue_option_settings", "seed_from": "DefaultPalWorldSettings.ini"}, {"path": "PalWorldSettings.ini", "key": "RESTAPIPort", "value": "{{PORT_REST_API}}", "syntax": "ue_option_settings", "seed_from": "DefaultPalWorldSettings.ini"}]}
+            spec = {"working_directory": str(working), "configuration_root": str(config_root), "catalog_variables": {"PORT_RCON": 24011, "PORT_REST_API": 24012}, "catalog_network_properties": [{"path": "PalWorldSettings.ini", "key": "RCONPort", "value": "{{PORT_RCON}}", "syntax": "ue_option_settings", "seed_from": "DefaultPalWorldSettings.ini"}, {"path": "PalWorldSettings.ini", "key": "RESTAPIEnabled", "value": "True", "syntax": "ue_option_settings", "seed_from": "DefaultPalWorldSettings.ini"}, {"path": "PalWorldSettings.ini", "key": "RESTAPIPort", "value": "{{PORT_REST_API}}", "syntax": "ue_option_settings", "seed_from": "DefaultPalWorldSettings.ini"}]}
             materialize_network_properties(spec)
             text = target.read_text(encoding="utf-8")
             self.assertIn('ServerName="Customer"', text);self.assertNotIn('ServerName="Default"', text);self.assertIn("RCONPort=24011", text);self.assertIn("RESTAPIPort=24012", text)

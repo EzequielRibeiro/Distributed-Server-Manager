@@ -204,4 +204,24 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   self.assertEqual(99,result["provision"]["progress"])
   self.assertEqual("prov-2",result["provision"]["provisioning_id"])
 
+ def test_palworld_console_blocks_admin_password_before_queueing(self):
+  service=CustomerInstanceWorkspaceService.__new__(CustomerInstanceWorkspaceService);service.root=ROOT
+  service.require=lambda user,instance_id,permission:{"id":instance_id,"game_id":"palworld","runtime_id":"palworld.stable","agent_id":"agent-1"}
+  class Repo:
+   def enqueue_console(self,**kwargs):raise AssertionError("credential command must not be queued")
+  service.repo=Repo()
+  with self.assertRaisesRegex(PermissionError,"AdminPassword"):
+   service.send_console({"username":"owner"},"instance-1","/AdminPassword secret-value")
+
+ def test_console_command_status_is_instance_scoped_and_secret_free(self):
+  service=CustomerInstanceWorkspaceService.__new__(CustomerInstanceWorkspaceService)
+  service.require=lambda user,instance_id,permission:{}
+  class Repo:
+   def console_command(self,command_id):
+    return {"command_id":command_id,"instance_id":"instance-1","status":"failed","command_text":"/AdminPassword must-not-return","last_error":"boom","result":{"error":"boom"},"completed_at":"now"}
+  service.repo=Repo()
+  result=service.console_command_status({"username":"owner"},"instance-1","cmd-1")
+  self.assertEqual("failed",result["status"]);self.assertNotIn("command_text",result)
+  with self.assertRaises(PermissionError):service.console_command_status({"username":"owner"},"instance-2","cmd-1")
+
 if __name__=="__main__":unittest.main()
