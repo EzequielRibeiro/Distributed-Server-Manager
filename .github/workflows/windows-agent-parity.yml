@@ -14,6 +14,8 @@ on:
       - 'tests/windows_agent_storage_parity_test.py'
       - 'tests/windows_agent_gui_test.py'
       - 'tests/phase19_windows_agent_test.py'
+      - 'tests/windows_console_stream_test.py'
+      - 'tests/windows_console_state_test.py'
       - '.github/workflows/windows-agent-parity.yml'
   push:
     branches: [main]
@@ -29,6 +31,8 @@ on:
       - 'tests/windows_agent_storage_parity_test.py'
       - 'tests/windows_agent_gui_test.py'
       - 'tests/phase19_windows_agent_test.py'
+      - 'tests/windows_console_stream_test.py'
+      - 'tests/windows_console_state_test.py'
       - '.github/workflows/windows-agent-parity.yml'
 
 permissions:
@@ -47,7 +51,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Compile complete Windows runtime
-        run: python3 -m compileall -q agents/windows/runtime release/build_windows_agent_package.py tests/windows_agent_runtime_parity_test.py tests/windows_managed_firewall_contract_test.py tests/windows_instance_runtime_firewall_lifecycle_test.py tests/windows_agent_storage_parity_test.py tests/windows_agent_gui_test.py tests/phase19_windows_agent_test.py
+        run: python3 -m compileall -q agents/windows/runtime release/build_windows_agent_package.py tests/windows_agent_runtime_parity_test.py tests/windows_managed_firewall_contract_test.py tests/windows_instance_runtime_firewall_lifecycle_test.py tests/windows_agent_storage_parity_test.py tests/windows_agent_gui_test.py tests/phase19_windows_agent_test.py tests/windows_console_stream_test.py tests/windows_console_state_test.py
       - name: Install firewall contract test runner
         run: python3 -m pip install --disable-pip-version-check pytest
       - name: Validate Windows runtime parity contracts
@@ -56,6 +60,8 @@ jobs:
           python3 -m pytest tests/windows_managed_firewall_contract_test.py tests/windows_instance_runtime_firewall_lifecycle_test.py -q
           python3 -m unittest tests/windows_agent_storage_parity_test.py
           python3 -m unittest tests/windows_agent_gui_test.py
+          python3 -m unittest tests/windows_console_stream_test.py
+          python3 -m unittest tests/windows_console_state_test.py
       - name: Validate Windows package and protocol
         run: python3 -m unittest tests/phase19_windows_agent_test.py
       - name: Check distributed Storage Pool and GUI boundary
@@ -110,7 +116,7 @@ jobs:
           if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error; exit 1 }
       - name: Compile complete Windows runtime
         shell: pwsh
-        run: python -m compileall -q agents/windows/runtime release/build_windows_agent_package.py tests/windows_agent_runtime_parity_test.py tests/windows_managed_firewall_contract_test.py tests/windows_instance_runtime_firewall_lifecycle_test.py tests/windows_agent_storage_parity_test.py tests/windows_agent_gui_test.py tests/phase19_windows_agent_test.py
+        run: python -m compileall -q agents/windows/runtime release/build_windows_agent_package.py tests/windows_agent_runtime_parity_test.py tests/windows_managed_firewall_contract_test.py tests/windows_instance_runtime_firewall_lifecycle_test.py tests/windows_agent_storage_parity_test.py tests/windows_agent_gui_test.py tests/phase19_windows_agent_test.py tests/windows_console_stream_test.py tests/windows_console_state_test.py
       - name: Validate Windows runtime and GUI contracts natively
         shell: pwsh
         run: |
@@ -118,6 +124,8 @@ jobs:
           python -m pytest tests/windows_managed_firewall_contract_test.py tests/windows_instance_runtime_firewall_lifecycle_test.py -q
           python -m unittest tests/windows_agent_storage_parity_test.py
           python -m unittest tests/windows_agent_gui_test.py
+          python -m unittest tests/windows_console_stream_test.py
+          python -m unittest tests/windows_console_state_test.py
       - name: Validate Windows package and protocol natively
         shell: pwsh
         run: python -m unittest tests/phase19_windows_agent_test.py
