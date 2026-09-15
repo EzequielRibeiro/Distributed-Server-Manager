@@ -61,6 +61,20 @@ class InstanceConsoleWatchdogTest(unittest.TestCase):
                 self.assertTrue(stop.startswith("stopConsoleLifecycleWatchdog();"))
                 self.assertIn('window.addEventListener("beforeunload",stopConsoleStream,{once:true})', source)
 
+    def test_multiline_copy_preserves_console_line_breaks(self):
+        for surface, source in self.sources.items():
+            with self.subTest(surface=surface):
+                copy_body = self.function_body(source, "copyConsoleSelection")
+                self.assertIn('querySelectorAll(".console-line")', copy_body)
+                self.assertIn('lines.length<2', copy_body)
+                self.assertIn('lines.map(node=>node.textContent).join("\\n")', copy_body)
+                self.assertIn('event.clipboardData.setData("text/plain"', copy_body)
+                self.assertIn('event.preventDefault()', copy_body)
+                self.assertIn(
+                    '$("console-output")?.addEventListener("copy",copyConsoleSelection)',
+                    source,
+                )
+
     def test_successful_lifecycle_request_arms_watchdog_on_both_surfaces(self):
         for surface, source in self.sources.items():
             with self.subTest(surface=surface):
