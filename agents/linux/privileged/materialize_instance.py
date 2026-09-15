@@ -155,6 +155,24 @@ def _within(root: Path, value: str, label: str) -> Path:
     return path
 
 
+def _seed_source(spec: dict[str, Any], working_root: Path, value: Any, label: str) -> Path:
+    raw = Path(str(value))
+    path = (working_root / raw).resolve() if not raw.is_absolute() else raw.resolve()
+    allowed_roots = [working_root.resolve()]
+    profile_context = spec.get("profile_context") if isinstance(spec.get("profile_context"), dict) else {}
+    content_value = str(profile_context.get("content_root") or "").strip()
+    if content_value:
+        content_root = _within((STATE_DIR / "game-data").resolve(), content_value, "content root")
+        allowed_roots.append(content_root)
+    for root in allowed_roots:
+        try:
+            path.relative_to(root)
+            return path
+        except ValueError:
+            continue
+    raise RuntimeError(f"{label} escapes its allowed root")
+
+
 def _reject_symlinks(root: Path, *, label: str = "storage migration") -> None:
     if root.is_symlink():
         raise RuntimeError(f"{label} source root cannot be a symlink")
@@ -181,7 +199,9 @@ def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, o
     if target.exists():
         if not target.is_dir() or target.is_symlink():
             raise RuntimeError(f"seed directory target is not a private directory: {target}")
-        return
+        if any(target.iterdir()):
+            return
+        target.rmdir()
     target.parent.mkdir(parents=True, exist_ok=True)
     os.chown(target.parent, account.pw_uid, account.pw_gid)
     os.chmod(target.parent, 0o700)
@@ -226,7 +246,7 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
         os.chown(path, account.pw_uid, account.pw_gid)
         os.chmod(path, 0o700)
     for item in spec.get("seed_files", []):
-        source = _within(working_root, str(item["source"]), "seed source")
+        source = _seed_source(spec, working_root, item["source"], "seed source")
         target = _within(state_root, str(item["target"]), "seed target")
         if not source.is_file():
             raise RuntimeError(f"seed source is unavailable: {source}")
@@ -238,7 +258,7 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
         os.chown(target, account.pw_uid, account.pw_gid)
         os.chmod(target, 0o600)
     for item in spec.get("seed_directories", []):
-        source = _within(working_root, str(item["source"]), "seed directory source")
+        source = _seed_source(spec, working_root, item["source"], "seed directory source")
         target = _within(state_root, str(item["target"]), "seed directory target")
         _seed_directory(source, target, account, optional=bool(item.get("optional", False)))
     for item in spec.get("bind_paths", []):
