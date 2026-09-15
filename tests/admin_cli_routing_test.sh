@@ -18,6 +18,9 @@ grep -F "role='customer' AND customer_id=" "${ROOT}/database/instance_admin_cli.
 grep -F '"--json", "runtime", "prepare"' "${ROOT}/database/instance_admin_cli.py" >/dev/null
 grep -F 'return "latest"' "${ROOT}/database/instance_admin_cli.py" >/dev/null
 grep -F 'resolved HTTP runtime selection has no artifact URL' "${ROOT}/database/instance_admin_cli.py" >/dev/null
+grep -F 'from catalog_provisioning_resolver import resolve_catalog_provisioning' "${ROOT}/database/instance_admin_cli.py" >/dev/null
+grep -F 'selection, configuration = resolve_catalog_provisioning(' "${ROOT}/database/instance_admin_cli.py" >/dev/null
+grep -F 'configuration=configuration' "${ROOT}/database/instance_admin_cli.py" >/dev/null
 ! grep -F "role='customer' AND scope_id=" "${ROOT}/database/instance_admin_cli.py" >/dev/null
 ! grep -F 'network.get("source") != "ss"' "${ROOT}/database/instance_admin_cli.py" >/dev/null
 
@@ -71,6 +74,18 @@ with patch.object(module.subprocess, "run", return_value=Completed()) as run:
     selection = module._content_selection(definition, "latest")
     assert selection["asset"]["url"].startswith("https://")
     assert run.call_args.args[0][-2:] == ["minecraft.bedrock.vanilla", "latest"]
+
+selection, configuration = module.resolve_catalog_provisioning(
+    environment_id="minecraft.bedrock.vanilla",
+    selector="latest",
+    selection=resolved,
+    configuration=module._configuration(definition),
+    root=root,
+)
+assert configuration["catalog_runtime_policy"]["runtime_id"] == "minecraft.bedrock.vanilla"
+assert configuration["catalog_runtime_policy"]["network_exposure"]
+assert configuration["catalog_runtime_id"] == "minecraft.bedrock.vanilla"
+assert configuration["catalog_game_id"] == "minecraft"
 PY
 
 echo "admin_cli_routing_test: ok"
