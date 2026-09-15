@@ -76,6 +76,10 @@ def main() -> None:
         require(a["seed_directories"][0]["target"] != b["seed_directories"][0]["target"], "provider seed targets must be private")
         require(a["environment"]["LD_LIBRARY_PATH"] == a["working_directory"], "Bedrock libraries must resolve from private runtime")
         require(b["environment"]["LD_LIBRARY_PATH"] == b["working_directory"], "Bedrock libraries must resolve from private runtime")
+        require(a["executable"] == str(Path(a["working_directory"]) / "bedrock_server"), "instance A executable must use private runtime")
+        require(b["executable"] == str(Path(b["working_directory"]) / "bedrock_server"), "instance B executable must use private runtime")
+        require(not Path(a["executable"]).is_relative_to(install), "instance A executable must not use shared provider content")
+        require(not Path(b["executable"]).is_relative_to(install), "instance B executable must not use shared provider content")
         require(a["ports"]["game_ipv4"]["port"] == 22000 and a["ports"]["game_ipv6"]["port"] == 22001, "instance A port block is wrong")
         require(b["ports"]["game_ipv4"]["port"] == 23000 and b["ports"]["game_ipv6"]["port"] == 23001, "instance B port block is wrong")
 

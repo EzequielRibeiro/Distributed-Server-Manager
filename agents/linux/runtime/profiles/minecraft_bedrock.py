@@ -51,9 +51,9 @@ class MinecraftBedrockRuntimeProfile(GameRuntimeProfile):
             "runtime_id": str(instance.get("runtime_id") or instance_id),
             "adapter": "systemd",
             "working_directory": runtime_root,
-            # Catalog policy resolves the provider-managed executable from install_path.
-            # All relative reads/writes remain inside the private seeded working tree.
-            "executable": str(Path(install_path) / "bedrock_server"),
+            # Execute the instance-private seeded copy. The shared provider content root
+            # is a source artifact only and is intentionally inaccessible to the runtime user.
+            "executable": str(Path(runtime_root) / "bedrock_server"),
             "arguments": [],
             "environment": {
                 **{str(k): str(v) for k, v in environment.items()},
