@@ -236,8 +236,24 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
     storage_root.mkdir(parents=True, exist_ok=True)
     os.chmod(storage_root, 0o711)
     state_root.mkdir(parents=True, exist_ok=True)
-    os.chown(state_root, account.pw_uid, account.pw_gid)
-    os.chmod(state_root, 0o700)
+    try:
+        agent_account = pwd.getpwnam("capivara-agent")
+        agent_group = grp.getgrnam(_AGENT_GROUP)
+    except KeyError as exc:
+        raise RuntimeError("capivara-agent control identity is unavailable") from exc
+    os.chown(state_root, account.pw_uid, agent_group.gr_gid)
+    os.chmod(state_root, 0o710)
+
+    control_root = state_root / ".dsm"
+    if control_root.exists():
+        if not control_root.is_dir() or control_root.is_symlink():
+            raise RuntimeError("Agent control state is not a private directory")
+        _reject_symlinks(control_root, label="Agent control state")
+    else:
+        control_root.mkdir()
+    for current in [control_root, *control_root.rglob("*")]:
+        os.chown(current, agent_account.pw_uid, agent_group.gr_gid)
+        os.chmod(current, 0o700 if current.is_dir() else 0o600)
 
     working_root = Path(str(spec["working_directory"])).resolve()
     for item in spec.get("writable_directories", []):

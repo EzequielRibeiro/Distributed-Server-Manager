@@ -193,16 +193,22 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
             "writable_directories": [str(working)],
         }
         account = type("Account", (), {"pw_uid": os.getuid(), "pw_gid": os.getgid()})()
+        agent_account = type("Account", (), {"pw_uid": os.getuid(), "pw_gid": os.getgid()})()
+        agent_group = type("Group", (), {"gr_gid": os.getgid()})()
         original_state = materialize_instance.STATE_DIR
         materialize_instance.STATE_DIR = state
         try:
-            with mock.patch.object(materialize_instance.os, "chown", return_value=None):
+            with mock.patch.object(materialize_instance.os, "chown", return_value=None), \
+                 mock.patch.object(materialize_instance.pwd, "getpwnam", return_value=agent_account), \
+                 mock.patch.object(materialize_instance.grp, "getgrnam", return_value=agent_group):
                 materialize_instance._prepare_private_state(spec, account, storage_root)
             self.assertTrue((working / "bedrock_server").is_file())
             preserved = working / "operator-data.txt"
             preserved.write_text("keep", encoding="utf-8")
             (content / "provider-new.txt").write_text("new", encoding="utf-8")
-            with mock.patch.object(materialize_instance.os, "chown", return_value=None):
+            with mock.patch.object(materialize_instance.os, "chown", return_value=None), \
+                 mock.patch.object(materialize_instance.pwd, "getpwnam", return_value=agent_account), \
+                 mock.patch.object(materialize_instance.grp, "getgrnam", return_value=agent_group):
                 materialize_instance._prepare_private_state(spec, account, storage_root)
             self.assertEqual(preserved.read_text(encoding="utf-8"), "keep")
             self.assertFalse((working / "provider-new.txt").exists())
@@ -210,10 +216,42 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
             outside.mkdir()
             escaped = {**spec, "seed_directories": [{"source": str(outside), "target": str(working)}]}
             with self.assertRaisesRegex(RuntimeError, "seed directory source escapes its allowed root"):
-                with mock.patch.object(materialize_instance.os, "chown", return_value=None):
+                with mock.patch.object(materialize_instance.os, "chown", return_value=None), \
+                     mock.patch.object(materialize_instance.pwd, "getpwnam", return_value=agent_account), \
+                     mock.patch.object(materialize_instance.grp, "getgrnam", return_value=agent_group):
                     materialize_instance._prepare_private_state(escaped, account, storage_root)
         finally:
             materialize_instance.STATE_DIR = original_state
+
+    def test_agent_control_state_is_private_but_traversable_from_instance_root(self):
+        storage_root = self.root / "instances-control"
+        instance_root = storage_root / "instance-control"
+        control_root = instance_root / ".dsm"
+        control_root.mkdir(parents=True)
+        manifest = control_root / "content-activation-files.json"
+        manifest.write_text('{"kind":"CapivaraContentFileProjection","targets":[]}\n', encoding="utf-8")
+        os.chmod(instance_root, 0o700)
+        os.chmod(control_root, 0o755)
+        os.chmod(manifest, 0o644)
+        spec = {
+            "instance_id": "instance-control",
+            "instance_state_root": str(instance_root),
+            "working_directory": str(instance_root / "runtime"),
+            "seed_files": [], "seed_directories": [], "bind_paths": [], "writable_directories": [],
+        }
+        runtime_account = type("Account", (), {"pw_uid": 1111, "pw_gid": 2222})()
+        agent_account = type("Account", (), {"pw_uid": 3333, "pw_gid": 4444})()
+        agent_group = type("Group", (), {"gr_gid": 4444})()
+        with mock.patch.object(materialize_instance.os, "chown") as chown, \
+             mock.patch.object(materialize_instance.pwd, "getpwnam", return_value=agent_account), \
+             mock.patch.object(materialize_instance.grp, "getgrnam", return_value=agent_group):
+            materialize_instance._prepare_private_state(spec, runtime_account, storage_root)
+        self.assertEqual(stat.S_IMODE(instance_root.stat().st_mode), 0o710)
+        self.assertEqual(stat.S_IMODE(control_root.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(manifest.stat().st_mode), 0o600)
+        chown.assert_any_call(instance_root, runtime_account.pw_uid, agent_group.gr_gid)
+        chown.assert_any_call(control_root, agent_account.pw_uid, agent_group.gr_gid)
+        chown.assert_any_call(manifest, agent_account.pw_uid, agent_group.gr_gid)
 
     def test_hybrid_runtime_boundary_is_repaired_for_runtime_group(self):
         state = self.root / "hybrid-agent-state"
