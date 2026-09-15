@@ -291,7 +291,7 @@ def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
         written.append(relative.as_posix())
-    return written
+    return sorted(set(written))
 
 
 __all__ = ["apply_policy", "materialize_network_properties", "materialize_templates", "render"]

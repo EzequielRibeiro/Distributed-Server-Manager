@@ -147,6 +147,6 @@ def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
                 updated.append(existing)
             text=("\n".join(updated)+("\n" if text.endswith(("\n","\r")) else "")) if found else text.rstrip("\n")+("\n" if text else "")+line+"\n"
         target.parent.mkdir(parents=True,exist_ok=True);target.write_text(text,encoding="utf-8");written.append(relative.as_posix())
-    return written
+    return sorted(set(written))
 
 __all__ = ["apply_policy", "materialize_network_properties", "render"]
