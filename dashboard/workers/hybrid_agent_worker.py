@@ -23,6 +23,7 @@ for path in (ROOT, DATABASE, DASHBOARD):
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
 from backup_repository import BackupRepository
+from configuration_repository import ConfigurationRepository
 from hybrid_game_data_client import process_hybrid_game_data_cycle
 from hybrid_instance_provisioning_client import process_hybrid_instance_provisioning_cycle
 from hybrid_local_reconciliation import reconcile_local_hybrid_runtime
@@ -98,6 +99,10 @@ def _instance_runtime_module(root: Path):
     os.environ.setdefault("CAPIVARA_AGENT_ROOT", str(root / "agents" / "linux"))
     os.environ.setdefault("CAPIVARA_AGENT_STATE_DIR", str(state))
     os.environ.setdefault("CAPIVARA_AGENT_CONFIG", str(state / "agent.json"))
+    os.environ.setdefault(
+        "CAPIVARA_MATERIALIZER_UNIT_TEMPLATE",
+        "dsm-hybrid-agent-materialize@{instance_id}.service",
+    )
     runtime = root / "agents" / "linux" / "runtime"
     if str(runtime) not in sys.path:
         sys.path.insert(0, str(runtime))
@@ -127,6 +132,12 @@ def _backup_client_module(root: Path):
     _instance_runtime_module(root)
     import backup_client
     return backup_client
+
+
+def _configuration_client_module(root: Path):
+    _instance_runtime_module(root)
+    import configuration_client
+    return configuration_client
 
 
 def _prepare_hybrid_customer_files_access(instance_id: str) -> None:
@@ -338,6 +349,61 @@ def process_hybrid_instance_health_cycle(
     }
 
 
+def process_hybrid_configuration_cycle(
+    backend,
+    root: Path,
+    agent_id: str,
+) -> dict[str, Any]:
+    """Round-trip Controller desired configuration through the embedded Hybrid Agent."""
+    config = _hybrid_agent_config(root, agent_id, optional=True)
+    if config is None:
+        return {
+            "status": "unavailable",
+            "reason": "config_unavailable",
+            "reported": 0,
+            "commands": 0,
+            "accepted": 0,
+            "applied": 0,
+            "failed": 0,
+        }
+
+    client = _configuration_client_module(root)
+    repository = ConfigurationRepository(backend)
+    repository.initialize()
+
+    previous = client.configuration_state()
+    if not isinstance(previous, list):
+        raise RuntimeError("Hybrid configuration client returned an invalid state payload")
+    previous = [item for item in previous if isinstance(item, dict)]
+    reported = repository.record_agent_state(agent_id, previous)
+
+    commands = repository.desired_for_agent(agent_id)
+    if not isinstance(commands, list):
+        raise RuntimeError("Hybrid configuration repository returned an invalid command payload")
+    commands = [item for item in commands if isinstance(item, dict)]
+
+    reports = client.apply_configuration_commands(commands)
+    if not isinstance(reports, list):
+        raise RuntimeError("Hybrid configuration client returned an invalid result payload")
+    reports = [item for item in reports if isinstance(item, dict)]
+    accepted = repository.record_agent_state(agent_id, reports)
+
+    return {
+        "status": "completed",
+        "reported": reported,
+        "commands": len(commands),
+        "accepted": accepted,
+        "applied": sum(
+            1 for item in reports
+            if str(item.get("status") or "").lower() == "applied"
+        ),
+        "failed": sum(
+            1 for item in reports
+            if str(item.get("status") or "").lower() == "failed"
+        ),
+    }
+
+
 def process_hybrid_backup_cycle(
     backend,
     root: Path,
@@ -413,6 +479,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         hostname=socket.gethostname(),
     )
     instance_reconcile = process_hybrid_instance_reconcile_cycle(root, agent_id)
+    configuration = process_hybrid_configuration_cycle(effective_backend, root, agent_id)
     instance_runtime = process_hybrid_instance_runtime_cycle(effective_backend, root, agent_id)
     instance_telemetry = process_hybrid_instance_telemetry_cycle(effective_backend, root, agent_id)
     instance_health = process_hybrid_instance_health_cycle(effective_backend, root, agent_id)
@@ -423,6 +490,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         "active": True,
         "agent_id": agent_id,
         "instance_reconcile": instance_reconcile,
+        "configuration": configuration,
         "instance_runtime": instance_runtime,
         "instance_telemetry": instance_telemetry,
         "instance_health": instance_health,
@@ -441,6 +509,7 @@ def run_forever(root: Path = ROOT) -> None:
                 game_data = result.get("game_data") if isinstance(result.get("game_data"), dict) else {}
                 state = game_data.get("state") if isinstance(game_data.get("state"), dict) else {}
                 instance_reconcile = result.get("instance_reconcile") if isinstance(result.get("instance_reconcile"), dict) else {}
+                configuration = result.get("configuration") if isinstance(result.get("configuration"), dict) else {}
                 instance_runtime = result.get("instance_runtime") if isinstance(result.get("instance_runtime"), dict) else {}
                 instance_telemetry = result.get("instance_telemetry") if isinstance(result.get("instance_telemetry"), dict) else {}
                 instance_health = result.get("instance_health") if isinstance(result.get("instance_health"), dict) else {}
@@ -449,6 +518,7 @@ def run_forever(root: Path = ROOT) -> None:
                     f"hybrid heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} "
                     f"instance_reconcile={instance_reconcile.get('healthy', 0)}/{instance_reconcile.get('instances', 0)} "
                     f"instance_files={instance_reconcile.get('files_access_prepared', 0)} "
+                    f"configuration={configuration.get('applied', 0)}a/{configuration.get('failed', 0)}f "
                     f"instance_runtime={instance_runtime.get('status', 'idle')} "
                     f"instance_telemetry={instance_telemetry.get('accepted', 0)} "
                     f"instance_health={instance_health.get('healthy', 0)}/{instance_health.get('applied', 0)} "
