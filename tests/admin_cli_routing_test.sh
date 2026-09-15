@@ -14,6 +14,8 @@ grep -F 'database/instance_admin_cli.py' "${CAP}" >/dev/null
 grep -F 'occupied_ports_provider_for_backend' "${ROOT}/database/instance_admin_cli.py" >/dev/null
 grep -F 'resolve_customer_reference(customer_reference, public_only=True)' "${ROOT}/database/instance_admin_cli.py" >/dev/null
 grep -F 'customer_code": customer_reference.upper()' "${ROOT}/database/instance_admin_cli.py" >/dev/null
+grep -F "role='customer' AND customer_id=" "${ROOT}/database/instance_admin_cli.py" >/dev/null
+! grep -F "role='customer' AND scope_id=" "${ROOT}/database/instance_admin_cli.py" >/dev/null
 ! grep -F 'network.get("source") != "ss"' "${ROOT}/database/instance_admin_cli.py" >/dev/null
 
 bash -n "${CAP}"
