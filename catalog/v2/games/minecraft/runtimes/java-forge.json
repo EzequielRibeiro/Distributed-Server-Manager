@@ -7,11 +7,200 @@
   "edition": "java",
   "variant": "forge",
   "loader": "forge",
-  "version": {"strategy": "dynamic", "resolver": "forge_maven"},
-  "process": {"engine": "java", "executable": "@java", "artifact_mode": "directory", "args": ["@user_jvm_args.txt", "@capivara-launch.args", "nogui"]},
-  "requirements": {"os": ["linux", "windows"], "architectures": ["x86_64", "aarch64"], "java": {"min": 17, "max": 25}},
-  "artifact": {"provider": "http", "auth": "anonymous"},
-  "content": {"managed":{"adapter":"minecraft-java","types":{"mod":{"directory":"mods","extensions":[".jar"],"providers":["modrinth","curseforge"]}}},"bundles":{"modpack":{"providers":["modrinth","curseforge"]}}},
-  "installation": {"directory": "/opt/dsm/game-data/minecraft/forge", "installer": {"type": "java_jar", "args": ["--installServer"], "timeout_seconds": 1200, "launch_args": {"linux_glob": "libraries/net/minecraftforge/forge/*/unix_args.txt", "windows_glob": "libraries/net/minecraftforge/forge/*/win_args.txt", "output": "capivara-launch.args"}, "expected_outputs": ["libraries", "user_jvm_args.txt", "capivara-launch.args"]}},
-  "network": {"allocation":"block","block_size":1,"ports":[{"name":"game","protocol":"tcp","offset":0,"exposure":"public"}],"apply":[{"kind":"property","file":"server.properties","key":"server-port","value":"{game}"}]}
+  "version": {
+    "strategy": "dynamic",
+    "resolver": "forge_maven"
+  },
+  "process": {
+    "engine": "java",
+    "executable": "@java",
+    "artifact_mode": "directory",
+    "args": [
+      "@user_jvm_args.txt",
+      "@capivara-launch.args",
+      "nogui"
+    ]
+  },
+  "requirements": {
+    "os": [
+      "linux",
+      "windows"
+    ],
+    "architectures": [
+      "x86_64",
+      "aarch64"
+    ],
+    "java": {
+      "min": 17,
+      "max": 25
+    }
+  },
+  "artifact": {
+    "provider": "http",
+    "auth": "anonymous"
+  },
+  "content": {
+    "managed": {
+      "adapter": "minecraft-java",
+      "types": {
+        "mod": {
+          "directory": "mods",
+          "extensions": [
+            ".jar"
+          ],
+          "providers": [
+            "modrinth",
+            "curseforge"
+          ]
+        }
+      }
+    },
+    "bundles": {
+      "modpack": {
+        "providers": [
+          "modrinth",
+          "curseforge"
+        ]
+      }
+    }
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/minecraft/forge",
+    "installer": {
+      "type": "java_jar",
+      "args": [
+        "--installServer"
+      ],
+      "timeout_seconds": 1200,
+      "launch_args": {
+        "linux_glob": "libraries/net/minecraftforge/forge/*/unix_args.txt",
+        "windows_glob": "libraries/net/minecraftforge/forge/*/win_args.txt",
+        "output": "capivara-launch.args"
+      },
+      "expected_outputs": [
+        "libraries",
+        "user_jvm_args.txt",
+        "capivara-launch.args"
+      ]
+    }
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 1,
+    "ports": [
+      {
+        "name": "game",
+        "protocol": "tcp",
+        "offset": 0,
+        "exposure": "public"
+      }
+    ],
+    "apply": [
+      {
+        "kind": "property",
+        "file": "server.properties",
+        "key": "server-port",
+        "value": "{game}"
+      }
+    ]
+  },
+  "server_settings": {
+    "restart_required": true,
+    "fields": {
+      "server_name": {
+        "label": "MOTD / nome do servidor",
+        "type": "string",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "server.properties",
+          "key": "motd",
+          "syntax": "equals"
+        },
+        "max_length": 256
+      },
+      "max_players": {
+        "label": "Máximo de jogadores",
+        "type": "integer",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "server.properties",
+          "key": "max-players",
+          "syntax": "equals"
+        },
+        "min": 1,
+        "max": 1000
+      },
+      "online_mode": {
+        "label": "Online mode",
+        "type": "boolean",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "server.properties",
+          "key": "online-mode",
+          "syntax": "equals"
+        }
+      },
+      "difficulty": {
+        "label": "Dificuldade",
+        "type": "select",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "server.properties",
+          "key": "difficulty",
+          "syntax": "equals"
+        },
+        "allowed": [
+          "peaceful",
+          "easy",
+          "normal",
+          "hard"
+        ]
+      },
+      "gamemode": {
+        "label": "Modo de jogo",
+        "type": "select",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "server.properties",
+          "key": "gamemode",
+          "syntax": "equals"
+        },
+        "allowed": [
+          "survival",
+          "creative",
+          "adventure",
+          "spectator"
+        ]
+      },
+      "pvp": {
+        "label": "PvP",
+        "type": "boolean",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "server.properties",
+          "key": "pvp",
+          "syntax": "equals"
+        }
+      },
+      "view_distance": {
+        "label": "Distância de visão",
+        "type": "integer",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "server.properties",
+          "key": "view-distance",
+          "syntax": "equals"
+        },
+        "min": 3,
+        "max": 32
+      }
+    }
+  }
 }

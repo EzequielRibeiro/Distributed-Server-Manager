@@ -7,11 +7,117 @@
   "edition": "default",
   "variant": "dedicated-server",
   "loader": null,
-  "version": {"strategy": "static", "value": "5.17.0"},
-  "process": {"engine": "native", "executable": "luanti-5.17.0/bin/luantiserver", "artifact_mode": "directory", "args": []},
-  "requirements": {"os": ["linux"], "architectures": ["x86_64", "aarch64"]},
-  "artifact": {"provider": "http-archive", "auth": "anonymous", "url": "https://github.com/luanti-org/luanti/archive/refs/tags/5.17.0.tar.gz", "archive_type": "tar.gz"},
-  "installation": {"directory": "/opt/dsm/game-data/luanti/serverfiles", "installer": {"type": "cmake_source", "args": [], "source_dir": "luanti-5.17.0", "build_dir": ".capivara-build", "timeout_seconds": 1800, "definitions": {"BUILD_SERVER": "TRUE", "BUILD_CLIENT": "FALSE", "RUN_IN_PLACE": "TRUE", "CMAKE_BUILD_TYPE": "Release"}, "expected_outputs": ["luanti-5.17.0/bin/luantiserver"]}},
-  "network": {"allocation": "block", "block_size": 1, "ports": [{"name": "game", "protocol": "udp", "offset": 0, "bind_address": "0.0.0.0", "exposure": "public"}]},
-  "compatibility": {"compatibility_note": "Luanti engine is compiled as a bare dedicated server from the pinned upstream 5.17.0 source. World and selected game content are instance-managed; Capivara does not substitute the upstream development-test game as production content."}
+  "version": {
+    "strategy": "static",
+    "value": "5.17.0"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "luanti-5.17.0/bin/luantiserver",
+    "artifact_mode": "directory",
+    "args": []
+  },
+  "requirements": {
+    "os": [
+      "linux"
+    ],
+    "architectures": [
+      "x86_64",
+      "aarch64"
+    ]
+  },
+  "artifact": {
+    "provider": "http-archive",
+    "auth": "anonymous",
+    "url": "https://github.com/luanti-org/luanti/archive/refs/tags/5.17.0.tar.gz",
+    "archive_type": "tar.gz"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/luanti/serverfiles",
+    "installer": {
+      "type": "cmake_source",
+      "args": [],
+      "source_dir": "luanti-5.17.0",
+      "build_dir": ".capivara-build",
+      "timeout_seconds": 1800,
+      "definitions": {
+        "BUILD_SERVER": "TRUE",
+        "BUILD_CLIENT": "FALSE",
+        "RUN_IN_PLACE": "TRUE",
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "expected_outputs": [
+        "luanti-5.17.0/bin/luantiserver"
+      ]
+    }
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 1,
+    "ports": [
+      {
+        "name": "game",
+        "protocol": "udp",
+        "offset": 0,
+        "bind_address": "0.0.0.0",
+        "exposure": "public"
+      }
+    ]
+  },
+  "compatibility": {
+    "compatibility_note": "Luanti engine is compiled as a bare dedicated server from the pinned upstream 5.17.0 source. World and selected game content are instance-managed; Capivara does not substitute the upstream development-test game as production content."
+  },
+  "server_settings": {
+    "restart_required": true,
+    "fields": {
+      "server_name": {
+        "label": "Nome do servidor",
+        "type": "string",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "minetest.conf",
+          "key": "server_name",
+          "syntax": "equals"
+        },
+        "max_length": 128
+      },
+      "motd": {
+        "label": "Mensagem do dia",
+        "type": "string",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "minetest.conf",
+          "key": "motd",
+          "syntax": "equals"
+        },
+        "max_length": 256
+      },
+      "max_players": {
+        "label": "Máximo de jogadores",
+        "type": "integer",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "minetest.conf",
+          "key": "max_users",
+          "syntax": "equals"
+        },
+        "min": 1,
+        "max": 400
+      },
+      "creative_mode": {
+        "label": "Modo criativo",
+        "type": "boolean",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "minetest.conf",
+          "key": "creative_mode",
+          "syntax": "equals"
+        }
+      }
+    }
+  }
 }

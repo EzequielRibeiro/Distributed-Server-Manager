@@ -7,21 +7,96 @@
   "edition": "default",
   "variant": "stable",
   "loader": null,
-  "version": {"strategy": "static", "value": "recommended", "build": "cfx-recommended"},
-  "process": {"engine": "native", "executable": "server/run.sh", "artifact_mode": "directory", "args": []},
-  "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
-  "artifact": {"provider": "fivem", "auth": "required"},
-  "installation": {"directory": "/opt/dsm/game-data/fivem/serverfiles"},
+  "version": {
+    "strategy": "static",
+    "value": "recommended",
+    "build": "cfx-recommended"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "server/run.sh",
+    "artifact_mode": "directory",
+    "args": []
+  },
+  "requirements": {
+    "os": [
+      "linux"
+    ],
+    "architectures": [
+      "x86_64"
+    ],
+    "java": null
+  },
+  "artifact": {
+    "provider": "fivem",
+    "auth": "required"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/fivem/serverfiles"
+  },
   "network": {
     "allocation": "block",
     "block_size": 1,
     "ports": [
-      {"name": "game", "protocol": "udp", "offset": 0, "exposure": "public"},
-      {"name": "game_tcp", "protocol": "tcp", "offset": 0, "exposure": "public"}
+      {
+        "name": "game",
+        "protocol": "udp",
+        "offset": 0,
+        "exposure": "public"
+      },
+      {
+        "name": "game_tcp",
+        "protocol": "tcp",
+        "offset": 0,
+        "exposure": "public"
+      }
     ],
     "apply": [
-      {"kind": "property", "file": "server.cfg", "key": "endpoint_add_udp", "value": "0.0.0.0:{game}", "syntax": "command"},
-      {"kind": "property", "file": "server.cfg", "key": "endpoint_add_tcp", "value": "0.0.0.0:{game_tcp}", "syntax": "command"}
+      {
+        "kind": "property",
+        "file": "server.cfg",
+        "key": "endpoint_add_udp",
+        "value": "0.0.0.0:{game}",
+        "syntax": "command"
+      },
+      {
+        "kind": "property",
+        "file": "server.cfg",
+        "key": "endpoint_add_tcp",
+        "value": "0.0.0.0:{game_tcp}",
+        "syntax": "command"
+      }
     ]
+  },
+  "server_settings": {
+    "restart_required": true,
+    "fields": {
+      "server_name": {
+        "label": "Nome do servidor",
+        "type": "string",
+        "customer_editable": true,
+        "max_length": 128,
+        "binding": {
+          "kind": "property",
+          "path": "server.cfg",
+          "key": "sv_hostname",
+          "syntax": "command",
+          "quote": "double"
+        }
+      },
+      "max_players": {
+        "label": "Máximo de jogadores",
+        "type": "integer",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "server.cfg",
+          "key": "sv_maxclients",
+          "syntax": "command"
+        },
+        "min": 1,
+        "max": 2048
+      }
+    }
   }
 }

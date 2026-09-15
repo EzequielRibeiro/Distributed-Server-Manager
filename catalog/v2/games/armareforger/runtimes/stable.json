@@ -7,17 +7,110 @@
   "edition": "default",
   "variant": "stable",
   "loader": null,
-  "version": {"strategy": "static", "value": "current", "build": "steam-current"},
-  "process": {"engine": "native", "executable": "ArmaReforgerServer", "artifact_mode": "executable"},
-  "requirements": {"os": ["linux"], "architectures": ["x86_64"], "java": null},
-  "artifact": {"provider": "steam", "auth": "anonymous", "package_id": "1874900"},
-  "installation": {"directory": "/opt/dsm/game-data/armareforger/serverfiles"},
+  "version": {
+    "strategy": "static",
+    "value": "current",
+    "build": "steam-current"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "ArmaReforgerServer",
+    "artifact_mode": "executable"
+  },
+  "requirements": {
+    "os": [
+      "linux"
+    ],
+    "architectures": [
+      "x86_64"
+    ],
+    "java": null
+  },
+  "artifact": {
+    "provider": "steam",
+    "auth": "anonymous",
+    "package_id": "1874900"
+  },
+  "installation": {
+    "directory": "/opt/dsm/game-data/armareforger/serverfiles"
+  },
   "network": {
     "allocation": "block",
     "block_size": 2,
     "ports": [
-      {"name": "game", "protocol": "udp", "offset": 0, "exposure": "public"},
-      {"name": "steam_query", "protocol": "udp", "offset": 1, "exposure": "public"}
+      {
+        "name": "game",
+        "protocol": "udp",
+        "offset": 0,
+        "exposure": "public"
+      },
+      {
+        "name": "steam_query",
+        "protocol": "udp",
+        "offset": 1,
+        "exposure": "public"
+      }
     ]
+  },
+  "server_settings": {
+    "restart_required": true,
+    "fields": {
+      "server_name": {
+        "label": "Nome do servidor",
+        "type": "string",
+        "customer_editable": true,
+        "binding": {
+          "kind": "json",
+          "path": "server.json",
+          "keys": [
+            "game",
+            "name"
+          ]
+        },
+        "max_length": 128
+      },
+      "max_players": {
+        "label": "Máximo de jogadores",
+        "type": "integer",
+        "customer_editable": true,
+        "binding": {
+          "kind": "json",
+          "path": "server.json",
+          "keys": [
+            "game",
+            "maxPlayers"
+          ]
+        },
+        "min": 1,
+        "max": 128
+      },
+      "visible": {
+        "label": "Servidor visível",
+        "type": "boolean",
+        "customer_editable": true,
+        "binding": {
+          "kind": "json",
+          "path": "server.json",
+          "keys": [
+            "game",
+            "visible"
+          ]
+        }
+      },
+      "disable_third_person": {
+        "label": "Desativar terceira pessoa",
+        "type": "boolean",
+        "customer_editable": true,
+        "binding": {
+          "kind": "json",
+          "path": "server.json",
+          "keys": [
+            "game",
+            "gameProperties",
+            "disableThirdPerson"
+          ]
+        }
+      }
+    }
   }
 }

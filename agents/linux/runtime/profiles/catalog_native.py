@@ -18,7 +18,7 @@ class CatalogNativeRuntimeProfile(GameRuntimeProfile):
     game_ids = (
         "satisfactory", "satisfactory.stable",
     )
-    profile_version = 1
+    profile_version = 2
 
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         instance_id = require_text(instance.get("instance_id") or instance.get("id"), "instance_id")
@@ -74,6 +74,8 @@ class CatalogNativeRuntimeProfile(GameRuntimeProfile):
         ports = port_bindings(context)
         if not ports:
             raise ProfileError("generic native runtime requires reserved ports")
+        private_config = Path(instance_state_root) / "config"
+        shared_config = Path(install_path) / "FactoryGame" / "Saved" / "Config" / "LinuxServer"
 
         return {
             "instance_id": instance_id,
@@ -92,14 +94,19 @@ class CatalogNativeRuntimeProfile(GameRuntimeProfile):
             "profile_version": self.profile_version,
             "ports": ports,
             "instance_state_root": instance_state_root,
-            "configuration_root": str(Path(instance_state_root) / "config"),
+            "configuration_root": str(private_config),
             "writable_directories": [
-                str(Path(instance_state_root) / "config"),
+                str(private_config),
                 str(Path(instance_state_root) / "data"),
                 str(Path(instance_state_root) / "logs"),
             ],
             "seed_files": [],
-            "bind_paths": [],
+            "seed_directories": [
+                {"source": str(shared_config), "target": str(private_config), "optional": True},
+            ],
+            "bind_paths": [
+                {"source": str(private_config), "target": str(shared_config)},
+            ],
         }
 
 

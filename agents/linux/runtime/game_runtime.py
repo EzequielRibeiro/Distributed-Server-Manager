@@ -145,7 +145,7 @@ def build_runtime_spec(config: dict[str, Any], instance: dict[str, Any], context
     normalized["profile_version"] = int(raw.get("profile_version") or getattr(profile, "profile_version", 1))
     normalized["storage_pool_id"] = pool["id"]
     normalized["profile_context"] = _profile_context(effective_context)
-    for key in ("ports", "catalog_runtime_policy", "catalog_templates", "catalog_network_properties", "catalog_variables"):
+    for key in ("ports", "catalog_runtime_policy", "catalog_templates", "catalog_network_properties", "catalog_variables", "catalog_server_settings"):
         if key in raw:
             normalized[key] = raw[key]
     emit_runtime_event(

@@ -19,6 +19,7 @@ if str(RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_DIR))
 
 from catalog_runtime_policy import materialize_network_properties, materialize_templates
+from server_settings_runtime import materialize_server_settings
 from materializers import resolve_materializer
 from runtime_spec import validate_runtime_spec
 from storage_pools import resolve_storage_pool
@@ -482,6 +483,7 @@ def run(instance_id: str) -> dict[str, Any]:
         working_file_copies = _sync_working_file_copies(spec)
         templates = materialize_templates(spec)
         templates.extend(materialize_network_properties(spec))
+        server_settings = materialize_server_settings(spec)
         operation = materializer.apply(spec)
     elif action == "remove":
         operation = materializer.remove(spec)
@@ -497,6 +499,7 @@ def run(instance_id: str) -> dict[str, Any]:
         raise RuntimeError("unsupported privileged materialization action")
     result = {"status": "completed", "action": action, "instance_id": instance_id,
               "agent_id": local_agent_id, "operation": operation, "templates": templates,
+              "server_settings": server_settings if action == "apply" else [],
               "working_file_copies": working_file_copies}
     _write_result(result_path, result)
     return result
