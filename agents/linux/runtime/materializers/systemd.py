@@ -61,6 +61,9 @@ def _credential_lines(spec):
   except RuntimeSecretError as exc:raise MaterializerError(str(exc)) from exc
   lines.append(f"LoadCredential={item['name']}:{path}")
  return lines
+def _success_exit_status_lines(spec):
+ statuses=spec.get("success_exit_statuses",[])
+ return ["SuccessExitStatus="+" ".join(str(value) for value in statuses)] if statuses else []
 def render_unit(spec):
  instance_id=str(spec["instance_id"]);agent_id=str(spec["agent_id"]);runtime_id=str(spec["runtime_id"]);state_directory,default_state_path,private_state_path=_private_state(spec);argv=[str(spec["executable"]),*[str(x) for x in spec.get("arguments",[])]]
  lines=["[Unit]",f"Description=Capivara instance {instance_id}","After=network-online.target","Wants=network-online.target",f"X-Capivara-GeneratedBy={_GENERATED_BY}",f"X-Capivara-Instance={instance_id}",f"X-Capivara-Agent={agent_id}",f"X-Capivara-Runtime={runtime_id}","","[Service]","Type=simple",f"User={spec['user']}","IPAccounting=yes"]
@@ -74,7 +77,7 @@ def render_unit(spec):
  lines.extend(_credential_lines(spec));lines.extend(_resource_lines(spec))
  for item in spec.get("pre_start",[]):
   pre_argv=[str(item["executable"]),*[str(x) for x in item.get("arguments",[])]];lines.append("ExecStartPre="+" ".join(_quote(x) for x in pre_argv))
- lines.extend(["ExecStart="+" ".join(_quote(x) for x in argv),"Restart=no","KillSignal=SIGTERM","TimeoutStopSec=60"])
+ lines.append("ExecStart="+" ".join(_quote(x) for x in argv));lines.extend(_success_exit_status_lines(spec));lines.extend(["Restart=no","KillSignal=SIGTERM","TimeoutStopSec=60"])
  for key,value in sorted(dict(spec.get("environment",{})).items()):lines.append(f"Environment={_quote(f'{key}={value}')}")
  lines.extend(["","[Install]","WantedBy=multi-user.target",""]);return "\n".join(lines)
 def _owned_content(content,spec):

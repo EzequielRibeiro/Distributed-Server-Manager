@@ -157,6 +157,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             "desired_state": str(instance.get("desired_state") or context.get("desired_state") or "stopped"),
             "profile": "dayz",
             "profile_version": self.profile_version,
+            "success_exit_statuses": [255],
             "ports": {
                 "game": {"port": game_port, "protocol": "udp"},
                 "game_aux": {"port": game_aux_port, "protocol": "udp"},
