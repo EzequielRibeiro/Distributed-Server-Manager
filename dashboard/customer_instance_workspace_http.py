@@ -2,6 +2,9 @@
 """HTTP integration for Customer Instance Workspace v2."""
 from __future__ import annotations
 
+import hashlib
+import json
+import time
 from urllib.parse import parse_qs, urlparse
 
 from controller_log_journal_http import instance_journal_logs
@@ -16,6 +19,7 @@ ROUTES = {
     PREFIX + "/telemetry",
     PREFIX + "/console",
     PREFIX + "/console/status",
+    PREFIX + "/console/stream",
     PREFIX + "/startup",
     PREFIX + "/files/status",
     PREFIX + "/backup-policy",
@@ -93,6 +97,64 @@ def _console_payload(api, user, instance_id: str, limit: int) -> dict[str, objec
     }
 
 
+def _console_stream_signature(payload: dict[str, object]) -> str:
+    relevant = {
+        "lines": payload.get("lines") or [],
+        "source": payload.get("source"),
+        "agent_health": payload.get("agent_health"),
+        "last_seen": payload.get("last_seen"),
+    }
+    encoded = json.dumps(relevant, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _sse_frame(event: str, payload: dict[str, object], *, event_id: str | None = None) -> bytes:
+    data = json.dumps(to_json_compatible(payload), ensure_ascii=False, separators=(",", ":"))
+    parts = []
+    if event_id:
+        parts.append(f"id: {event_id}")
+    parts.append(f"event: {event}")
+    parts.extend(f"data: {line}" for line in data.splitlines() or [""])
+    return ("\n".join(parts) + "\n\n").encode("utf-8")
+
+
+def _serve_console_stream(handler, api, user, instance_id: str, limit: int, *, timeout: int = 25) -> None:
+    # Authorize and fetch once before committing the SSE response headers.
+    first = _console_payload(api, user, instance_id, limit)
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+    handler.send_header("Cache-Control", "no-cache, no-transform")
+    handler.send_header("Connection", "keep-alive")
+    handler.send_header("X-Accel-Buffering", "no")
+    handler.send_header("X-Content-Type-Options", "nosniff")
+    handler.end_headers()
+    deadline = time.monotonic() + max(5, min(int(timeout), 30))
+    last_signature = ""
+    last_ping = 0.0
+    payload = first
+    try:
+        handler.wfile.write(_sse_frame("ready", {"kind": "CapivaraConsoleStream", "version": 1, "retry_ms": 1500}))
+        handler.wfile.flush()
+        while time.monotonic() < deadline:
+            signature = _console_stream_signature(payload)
+            if signature != last_signature:
+                event_payload = dict(payload)
+                event_payload["cursor"] = signature[:24]
+                handler.wfile.write(_sse_frame("console-snapshot", event_payload, event_id=signature[:24]))
+                handler.wfile.flush()
+                last_signature = signature
+                last_ping = time.monotonic()
+            now = time.monotonic()
+            if now - last_ping >= 10:
+                handler.wfile.write(b": keepalive\n\n")
+                handler.wfile.flush()
+                last_ping = now
+            time.sleep(0.75)
+            payload = _console_payload(api, user, instance_id, limit)
+    except (BrokenPipeError, ConnectionResetError, OSError):
+        return
+
+
 def install_customer_instance_workspace(legacy, authenticate):
     previous_get = legacy.DashboardHandler.do_GET
     previous_post = legacy.DashboardHandler.do_POST
@@ -121,17 +183,24 @@ def install_customer_instance_workspace(legacy, authenticate):
     def send(self, status, payload):
         return self.send_json(status, to_json_compatible(payload))
 
-    def user_for(self):
-        value = session_user_from_headers(self.headers)
-        if value is not None:
-            return value
+    def user_for(self, area=None):
+        explicit_area = str(area or self.headers.get("X-Capivara-Auth-Area") or "").strip().lower()
+        if explicit_area in {"controller", "customer"}:
+            value = session_user_from_headers(self.headers, area=explicit_area)
+            if value is not None:
+                return value
+        elif not explicit_area:
+            # Compatibility fallback for legacy callers that do not identify an area.
+            value = session_user_from_headers(self.headers)
+            if value is not None:
+                return value
         try:
             return authenticate(self.headers)
         except Exception:
             return None
 
-    def require_user(self):
-        user = user_for(self)
+    def require_user(self, area=None):
+        user = user_for(self, area=area)
         if user is None:
             self.unauthorized()
             return None
@@ -203,7 +272,8 @@ def install_customer_instance_workspace(legacy, authenticate):
         path = parsed.path
         if path not in ROUTES:
             return previous_get(self)
-        user = require_user(self)
+        stream_area = one(parsed, "auth_area", "") if path == PREFIX + "/console/stream" else None
+        user = require_user(self, area=stream_area)
         if user is None:
             return
         instance_id = iid(parsed)
@@ -215,6 +285,16 @@ def install_customer_instance_workspace(legacy, authenticate):
                 data = {"samples": api.telemetry(user, instance_id, int(one(parsed, "limit", 240) or 240))}
             elif path == PREFIX + "/console":
                 data = _console_payload(api, user, instance_id, int(one(parsed, "limit", 300) or 300))
+            elif path == PREFIX + "/console/stream":
+                _serve_console_stream(
+                    self,
+                    api,
+                    user,
+                    instance_id,
+                    int(one(parsed, "limit", 400) or 400),
+                    timeout=int(one(parsed, "timeout", 25) or 25),
+                )
+                return
             elif path == PREFIX + "/console/status":
                 data = api.console_command_status(user, instance_id, one(parsed, "command_id", ""))
             elif path == PREFIX + "/startup":
