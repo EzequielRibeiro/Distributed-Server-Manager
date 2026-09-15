@@ -125,6 +125,20 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
    self.assertTrue(changed);self.assertEqual(9,migrated['profile_version']);self.assertEqual({'server_name':'Migrated DayZ','max_players':32},migrated['server_settings_values']);self.assertEqual({'server_name','max_players'},set(migrated['catalog_server_settings']['fields']))
    cfg=Path(migrated['configuration_root'])/'serverDZ.cfg';cfg.parent.mkdir(parents=True,exist_ok=True);cfg.write_text('hostname = "Old"; // comment\nhostname = "Duplicate";\nmaxPlayers = 60; // comment\nmaxPlayers = 20;\n',encoding='utf-8');materialize_server_settings(migrated);text=cfg.read_text();self.assertEqual(1,text.count('hostname ='));self.assertEqual(1,text.count('maxPlayers ='));self.assertIn('hostname = "Migrated DayZ";',text);self.assertIn('maxPlayers = 32;',text)
 
+ def test_dayz_profile_migration_preserves_settings_when_profile_context_predates_settings(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);install=root/'dayz';install.mkdir();state=root/'instances/dayz-1';config={'agent_id':'agent-1','instance_storage_root':str(root/'instances')}
+   dayz_runtime=runtime('dayz.stable');policy=default_policy(dayz_runtime)
+   context={'install_path':str(install),'content_root':str(install),'instance_state_root':str(state),'ports':{'game':{'port':24000,'protocol':'udp'},'game_aux':{'port':24002,'protocol':'udp'},'steam_query':{'port':24003,'protocol':'udp'}},'catalog_runtime_policy':policy}
+   instance={'instance_id':'dayz-1','agent_id':'agent-1','game_id':'dayz','environment_id':'dayz.stable','runtime_id':'dayz.stable','desired_state':'stopped'}
+   with patch.object(instance_runtime,'STATE_DIR',root/'agent-state'):
+    current=game_runtime.build_runtime_spec(config,instance,context)
+    old=dict(current);old['profile_version']=8;old['server_settings_values']={'server_name':'Migrated DayZ','max_players':32}
+    old['catalog_server_settings']=declaration('dayz.stable')
+    legacy_context=dict(old.get('profile_context') or {});legacy_policy=dict(legacy_context.get('catalog_runtime_policy') or {});legacy_policy.pop('server_settings',None);legacy_context['catalog_runtime_policy']=legacy_policy;old['profile_context']=legacy_context
+    migrated,changed=game_runtime.migrate_runtime_spec(config,old)
+   self.assertTrue(changed);self.assertEqual(9,migrated['profile_version']);self.assertEqual(declaration('dayz.stable'),migrated['catalog_server_settings']);self.assertEqual({'server_name':'Migrated DayZ','max_players':32},migrated['server_settings_values'])
+
  def test_observed_dayz_surface_reads_real_parameters_and_protects_platform_fields(self):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);cfg=root/'serverDZ.cfg'

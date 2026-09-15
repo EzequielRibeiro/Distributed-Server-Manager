@@ -209,6 +209,16 @@ def migrate_runtime_spec(config: dict[str, Any], record: dict[str, Any]) -> tupl
     instance = dict(hydrated_record)
     instance["desired_state"] = str(record.get("desired_state") or "stopped")
     rebuilt = build_runtime_spec(config, instance, context)
+    persisted_server_settings = record.get("catalog_server_settings")
+    if (
+        isinstance(persisted_server_settings, dict)
+        and persisted_server_settings
+        and not rebuilt.get("catalog_server_settings")
+    ):
+        # Configuration desired state can be newer than the profile_context that
+        # originally built this RuntimeSpec. Preserve the Agent-owned canonical
+        # declaration so profile migration can safely replay persisted values.
+        rebuilt["catalog_server_settings"] = dict(persisted_server_settings)
     server_settings_values = record.get("server_settings_values")
     if isinstance(server_settings_values, dict) and server_settings_values:
         from server_settings_runtime import prepare_spec
