@@ -285,14 +285,21 @@ catalog_builds()
                 ((.version // "" | tostring) == $version) or
                 (((.minecraft_versions // []) | map(tostring) | index($version)) != null)
             ) |
-            (.build // .full // .tag // empty) |
-            select(. != null and tostring != "") |
-            tostring] |
-        reduce .[] as $value ([]; if index($value) then . else . + [$value] end) |
-        map({value:.,label:("Build " + .),recommended:false})
+            {
+                value:(.build // .full // .tag // empty | tostring),
+                recommended:(.recommended == true or .current == true)
+            } |
+            select(.value != "")] |
+        reduce .[] as $item ([];
+            ($item.value) as $value |
+            (map(.value) | index($value)) as $index |
+            if $index == null then . + [$item]
+            else .[$index].recommended = (.[$index].recommended or $item.recommended)
+            end) |
+        map(. + {label:("Build " + .value)})
     ' <<<"${RESPONSE}")"
 
-    local BUILD_COUNT
+    local BUILD_COUNT SOURCE_RECOMMENDED_COUNT
     BUILD_COUNT="$(jq 'length' <<<"${BUILDS}")"
     if [[ "${BUILD_COUNT}" -eq 1 ]]
     then
@@ -302,6 +309,13 @@ catalog_builds()
 
     if [[ "${BUILD_COUNT}" -gt 1 ]]
     then
+        SOURCE_RECOMMENDED_COUNT="$(jq '[.[] | select(.recommended == true)] | length' <<<"${BUILDS}")"
+        if [[ "${SOURCE_RECOMMENDED_COUNT}" -eq 1 ]]
+        then
+            printf '%s\n' "${BUILDS}"
+            return
+        fi
+
         if RESOLVED="$(canonical_resolver_call "${FILE}" "${RESOLVER}" resolve "${VERSION}" 2>/dev/null)" && \
            ! jq -e '.error?' >/dev/null 2>&1 <<<"${RESOLVED}"
         then

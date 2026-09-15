@@ -108,6 +108,43 @@ version_resolver_execute() {{
                 "build discovery must not call resolve when the canonical list already has one compatible tag",
             )
 
+    def test_source_recommended_build_skips_second_resolve(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            marker = self.make_root(root)
+            resolver = root / "installer" / "version_resolvers" / "fake_multiversion.sh"
+            resolver.write_text(
+                f'''#!/usr/bin/env bash
+version_resolver_execute() {{
+  case "$1" in
+    list)
+      printf '%s\\n' '{{"versions":[{{"version":"1.21.1","build":"21.1.249","minecraft_versions":["1.21.1"]}},{{"version":"1.21.1","build":"21.1.250","minecraft_versions":["1.21.1"],"recommended":true}}]}}'
+      ;;
+    resolve)
+      printf '%s\\n' called >> "{marker!s}"
+      printf '%s\\n' '{{"build":"21.1.250"}}'
+      ;;
+    *) return 2 ;;
+  esac
+}}
+''',
+                encoding="utf-8",
+            )
+            result = self.run_catalog(
+                root, "builds", "minecraft.fake.multiversion", "1.21.1"
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                [False, True],
+                [item["recommended"] for item in payload],
+            )
+            self.assertEqual("21.1.250", payload[-1]["value"])
+            self.assertFalse(
+                marker.exists(),
+                "a unique source recommendation must avoid a second remote resolve",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
