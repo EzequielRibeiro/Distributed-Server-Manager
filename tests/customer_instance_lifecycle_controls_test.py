@@ -21,8 +21,13 @@ class CustomerInstanceLifecycleControlsTest(unittest.TestCase):
 
     def test_lifecycle_fetch_is_detected_before_request_is_sent(self):
         self.assertIn('/^\\/api\\/instance\\/(start|restart|stop)$/', self.source)
-        self.assertIn('setLifecyclePending(action);applyControls();', self.source)
-        self.assertIn('return await nativeFetch(input,options)', self.source)
+        pending = self.source.index('setLifecyclePending(action);applyControls();')
+        request = self.source.index('const response=await nativeFetch(input,options)')
+        watchdog = self.source.index('if(response.ok)armConsoleLifecycleWatchdog(action)')
+        returned = self.source.index('return response', request)
+        self.assertLess(pending, request)
+        self.assertLess(request, watchdog)
+        self.assertLess(watchdog, returned)
 
     def test_authoritative_overview_is_refreshed_before_unlock(self):
         self.assertIn('await refreshOverview()', self.source)
