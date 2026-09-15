@@ -58,8 +58,8 @@ class _Repository:
 
     def candidates(self, _controller_id, region_id=None):
         rows = [
-            {"agent_id": "secret-agent-sp", "node_id": "secret-node-sp", "region_id": "br-sudeste", "public_host": "10.0.0.10", "fingerprint": "secret-fingerprint"},
-            {"agent_id": "secret-agent-us", "node_id": "secret-node-us", "region_id": "us-east", "public_host": "10.0.0.20", "fingerprint": "other-secret"},
+            {"agent_id": "secret-agent-sp", "node_id": "secret-node-sp", "region_id": "br-sudeste", "city": "São Paulo", "country_code": "BR", "public_host": "10.0.0.10", "fingerprint": "secret-fingerprint"},
+            {"agent_id": "secret-agent-us", "node_id": "secret-node-us", "region_id": "us-east", "city": "Miami", "country_code": "US", "public_host": "10.0.0.20", "fingerprint": "other-secret"},
         ]
         return [row for row in rows if region_id is None or row["region_id"] == region_id]
 
@@ -79,6 +79,8 @@ class CustomerGeographicPlacementTest(unittest.TestCase):
         self.assertEqual(len(payload["locations"]), 2)
         self.assertTrue(payload["locations"][0]["recommended"])
         self.assertEqual(payload["locations"][0]["region_id"], "br-sudeste")
+        self.assertEqual(payload["locations"][0]["city"], "São Paulo")
+        self.assertEqual(payload["locations"][0]["country_code"], "BR")
         self.assertEqual(payload["locations"][0]["latency"]["kind"], "estimated")
         self.assertIsInstance(payload["locations"][0]["latency"]["value_ms"], int)
         self.assertEqual(requirements.call_args.kwargs["resources"]["cpu_cores"], 4)

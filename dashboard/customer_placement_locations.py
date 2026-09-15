@@ -100,7 +100,8 @@ def customer_placement_locations(
     )
 
     regions = {str(item["id"]): dict(item) for item in repository.regions()}
-    visible_region_ids = sorted({str(row["region_id"]) for row in repository.candidates(controller_id)})
+    all_candidates = repository.candidates(controller_id)
+    visible_region_ids = sorted({str(row["region_id"]) for row in all_candidates})
     locations: list[dict[str, Any]] = []
 
     for region_id in visible_region_ids:
@@ -120,15 +121,21 @@ def customer_placement_locations(
             )
             available = True
             score = float(decision.get("score") or 0.0)
+            selected_candidate = next(
+                (row for row in all_candidates if str(row.get("agent_id") or "") == str(decision.get("agent_id") or "")),
+                {},
+            )
         except PlacementUnavailable:
             available = False
             score = -1.0
+            selected_candidate = {}
 
         locations.append({
             "location_id": "region:" + region_id,
             "region_id": region_id,
             "name": str(region.get("name") or region_id),
-            "country_code": str(region.get("country_code") or "").upper() or None,
+            "city": str(selected_candidate.get("city") or region.get("name") or region_id),
+            "country_code": str(selected_candidate.get("country_code") or region.get("country_code") or "").upper() or None,
             "availability": "available" if available else "unavailable",
             "capacity": "available" if available else "unavailable",
             "latency": {"kind": "estimated", "value_ms": latency},

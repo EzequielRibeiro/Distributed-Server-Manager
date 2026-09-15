@@ -48,24 +48,45 @@
     return coordinatesPromise;
   }
 
-  function recommendationLabel(item) {
-    if (item.recommended) return "★ Servidor recomendado";
-    if (item.recommendation === "higher_latency") return "Latência maior";
-    if (item.recommendation === "unavailable") return "Indisponível";
-    return "Boa opção";
+  function countryFlag(countryCode) {
+    const code = String(countryCode || "").trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(code)) return "";
+    return [...code].map(letter => String.fromCodePoint(127397 + letter.charCodeAt(0))).join("");
+  }
+
+  function countryName(countryCode) {
+    const code = String(countryCode || "").trim().toUpperCase();
+    if (!code) return "";
+    try {
+      return new Intl.DisplayNames(["pt-BR"], {type: "region"}).of(code) || code;
+    } catch (_error) {
+      return code;
+    }
+  }
+
+  function locationLabel(item) {
+    const latency = item.latency?.value_ms ?? item.latency_ms;
+    const country = countryName(item.country_code);
+    const flag = countryFlag(item.country_code);
+    const countryText = [flag, country].filter(Boolean).join(" ");
+    const city = String(item.city || item.name || "").trim();
+    const latencyText = Number.isFinite(Number(latency)) ? `${Math.round(Number(latency))} ms` : "Latência indisponível";
+    return [countryText, city, latencyText].filter(Boolean).join(" - ");
   }
 
   function publicRegion(item) {
     const latency = item.latency?.value_ms;
-    const latencyText = Number.isFinite(latency) ? ` · ~${latency} ms` : "";
     return {
       id: item.region_id,
-      name: `${item.name}${latencyText} · ${recommendationLabel(item)}`,
+      name: item.name || item.region_id || "Região",
+      city: item.city || item.name || "",
       country_code: item.country_code || "",
       availability: item.availability,
       recommended: item.recommended === true,
+      recommendation: item.recommendation || "",
       latency_ms: Number.isFinite(latency) ? latency : null,
       latency_kind: "estimated",
+      display_label: locationLabel(item),
     };
   }
 
@@ -202,7 +223,7 @@
     const regions = available.map(publicRegion);
     setPlacementStatus(
       "available",
-      `${regions.length} localização${regions.length === 1 ? "" : "ões"} disponível${regions.length === 1 ? "" : "is"}.`
+      regions.map(region => region.display_label).filter(Boolean).join(" | ")
     );
 
     return {regions};

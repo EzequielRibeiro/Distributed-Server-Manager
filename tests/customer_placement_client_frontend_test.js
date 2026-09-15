@@ -114,7 +114,8 @@ async function testAvailableRegionsArePublicAndRecommended() {
     return new Response(JSON.stringify({
       locations: [{
         region_id: "br-sp",
-        name: "São Paulo",
+        name: "Brasil Sudeste",
+        city: "São Paulo",
         country_code: "BR",
         availability: "available",
         recommended: true,
@@ -131,8 +132,10 @@ async function testAvailableRegionsArePublicAndRecommended() {
   assert.equal(result.regions[0].id, "br-sp");
   assert.equal(result.regions[0].recommended, true);
   assert.equal(result.regions[0].latency_ms, 18);
-  assert.match(result.regions[0].name, /Servidor recomendado/);
+  assert.equal(result.regions[0].city, "São Paulo");
+  assert.equal(result.regions[0].display_label, "🇧🇷 Brasil - São Paulo - 18 ms");
   assert.equal(statusNode.dataset.state, "available");
+  assert.equal(statusNode.strong.textContent, "🇧🇷 Brasil - São Paulo - 18 ms");
   cleanupHarness();
 }
 
