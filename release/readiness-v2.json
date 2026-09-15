@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "release_line": "2.0",
-  "release_version": "2.0.55",
-  "tag_name": "v2.0.55",
+  "release_version": "2.0.56",
+  "tag_name": "v2.0.56",
   "status": "release-approved",
   "publish_release": false,
   "release_authorized": true,
@@ -27,6 +27,7 @@
     "Universal Configuration Platform",
     "Universal Observability Platform",
     "Universal Content Platform",
+    "Universal Content E2E",
     "Universal Smart Backup",
     "Automation and Universal Broadcast",
     "Real-Time API Platform",
