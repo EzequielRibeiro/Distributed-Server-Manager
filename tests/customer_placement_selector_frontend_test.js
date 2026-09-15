@@ -56,7 +56,7 @@ assert.match(
   "customer page must load the explicit placement client"
 );
 const placementClientIndex = html.indexOf("/customer-placement-client.js?v=1");
-const runtimeSelectorIndex = html.indexOf("/runtime-selector.js?v=4");
+const runtimeSelectorIndex = html.indexOf("/runtime-selector.js?v=5");
 assert.ok(
   placementClientIndex >= 0 && runtimeSelectorIndex > placementClientIndex,
   "customer page must load the canonical selector after the placement client"
