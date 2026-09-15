@@ -22,6 +22,7 @@ from agent_instance_provisioning_repository import AgentInstanceProvisioningRepo
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from agent_runtime_repository import AgentRuntimeRepository
 from core.catalog_runtime_paths import runtime_definition_files
+from catalog_provisioning_resolver import resolve_catalog_provisioning
 from customer_reference import resolve_customer_reference
 from dashboard_repository import DashboardRepository
 from instance_network import occupied_ports_provider_for_backend
@@ -172,6 +173,14 @@ def create_instance(args, *, backend=None) -> dict[str, Any]:
         raise ValueError("runtime definition has no id")
     selector = _runtime_selector(definition)
     selection = _content_selection(definition, selector)
+    configuration = _configuration(definition)
+    selection, configuration = resolve_catalog_provisioning(
+        environment_id=runtime_id,
+        selector=selector,
+        selection=selection,
+        configuration=configuration,
+        root=ROOT,
+    )
 
     controller_id = admin.customer_controller(customer_id)
     selected = admin.resolve_agent(controller_id, args.agent)
@@ -226,7 +235,7 @@ def create_instance(args, *, backend=None) -> dict[str, Any]:
             environment_id=runtime_id,
             selector=selector,
             selection=selection,
-            configuration=_configuration(definition),
+            configuration=configuration,
             desired_state=str(args.desired_state),
             requested_by="cap-cli",
         )
