@@ -191,6 +191,19 @@ def _chown_private_tree(root: Path, account: pwd.struct_passwd) -> None:
             os.chmod(current, 0o700 if source_mode & 0o111 else 0o600)
 
 
+
+def _repair_private_seed_modes(source: Path, target: Path, account: pwd.struct_passwd) -> None:
+    for current in [target, *target.rglob("*")]:
+        os.chown(current, account.pw_uid, account.pw_gid)
+        if current.is_dir():
+            os.chmod(current, 0o700)
+            continue
+        if not current.is_file():
+            raise RuntimeError(f"seed target contains unsupported entry: {current}")
+        source_peer = source / current.relative_to(target)
+        executable = source_peer.is_file() and bool(source_peer.stat().st_mode & 0o111)
+        os.chmod(current, 0o700 if executable else 0o600)
+
 def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, optional: bool = False) -> None:
     if not source.is_dir():
         if optional:
@@ -201,6 +214,8 @@ def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, o
         if not target.is_dir() or target.is_symlink():
             raise RuntimeError(f"seed directory target is not a private directory: {target}")
         if any(target.iterdir()):
+            _reject_symlinks(target, label="directory seed target")
+            _repair_private_seed_modes(source, target, account)
             return
         target.rmdir()
     target.parent.mkdir(parents=True, exist_ok=True)

@@ -179,6 +179,7 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
         content = state / "game-data" / "minecraft" / "bedrock"
         content.mkdir(parents=True)
         (content / "bedrock_server").write_text("binary", encoding="utf-8")
+        (content / "bedrock_server").chmod(0o755)
         storage_root = self.root / "instances"
         instance_root = storage_root / "instance-seed"
         working = instance_root / "runtime"
@@ -203,6 +204,8 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
                  mock.patch.object(materialize_instance.grp, "getgrnam", return_value=agent_group):
                 materialize_instance._prepare_private_state(spec, account, storage_root)
             self.assertTrue((working / "bedrock_server").is_file())
+            self.assertEqual(stat.S_IMODE((working / "bedrock_server").stat().st_mode), 0o700)
+            (working / "bedrock_server").chmod(0o600)
             preserved = working / "operator-data.txt"
             preserved.write_text("keep", encoding="utf-8")
             (content / "provider-new.txt").write_text("new", encoding="utf-8")
@@ -211,6 +214,8 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
                  mock.patch.object(materialize_instance.grp, "getgrnam", return_value=agent_group):
                 materialize_instance._prepare_private_state(spec, account, storage_root)
             self.assertEqual(preserved.read_text(encoding="utf-8"), "keep")
+            self.assertEqual(stat.S_IMODE((working / "bedrock_server").stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(preserved.stat().st_mode), 0o600)
             self.assertFalse((working / "provider-new.txt").exists())
             outside = self.root / "outside-seed"
             outside.mkdir()
