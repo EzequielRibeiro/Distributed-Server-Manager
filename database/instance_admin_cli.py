@@ -21,6 +21,7 @@ from agent_instance_provisioning_repository import AgentInstanceProvisioningRepo
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from agent_runtime_repository import AgentRuntimeRepository
 from core.catalog_runtime_paths import runtime_definition_files
+from customer_reference import resolve_customer_reference
 from dashboard_repository import DashboardRepository
 from instance_network import occupied_ports_provider_for_backend
 from placement_errors import PlacementUnavailable
@@ -105,7 +106,7 @@ def _content_selection(definition: dict[str, Any]) -> dict[str, Any]:
     return selection
 
 
-def _owner(repository: DashboardRepository, customer_id: str, requested: str | None) -> str:
+def _owner(repository: DashboardRepository, customer_id: Any, requested: str | None) -> str:
     if requested:
         return str(requested).strip()
     ph = repository.dialect.placeholder
@@ -116,7 +117,7 @@ def _owner(repository: DashboardRepository, customer_id: str, requested: str | N
             "ORDER BY username LIMIT 1",
             (customer_id,),
         ).fetchone()
-    return str(row["username"]) if row is not None else customer_id.lower()
+    return str(row["username"]) if row is not None else str(customer_id).lower()
 
 
 def _configuration(definition: dict[str, Any]) -> dict[str, Any]:
@@ -135,7 +136,8 @@ def create_instance(args, *, backend=None) -> dict[str, Any]:
     dashboard = DashboardRepository(backend)
     dashboard.initialize()
 
-    customer_id = str(args.customer).strip()
+    customer_reference = str(args.customer).strip()
+    customer_id = resolve_customer_reference(customer_reference, public_only=True)
     game_id = str(args.game).strip().lower()
     definition = _runtime_definition(game_id, args.runtime)
     runtime_id = str(definition.get("id") or "").strip()
@@ -208,6 +210,7 @@ def create_instance(args, *, backend=None) -> dict[str, Any]:
         "instance_id": created["instance_id"],
         "name": created["name"],
         "customer_id": customer_id,
+        "customer_code": customer_reference.upper(),
         "contract_id": created["contract_id"],
         "game_id": game_id,
         "runtime_id": runtime_id,
