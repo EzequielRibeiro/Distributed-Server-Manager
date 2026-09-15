@@ -1,0 +1,26 @@
+[Unit]
+Description=Capivara Agent restricted instance console journal reader
+After=systemd-journald.service
+Before=capivara-agent.service
+
+[Service]
+Type=simple
+User=root
+Group=capivara-agent
+ExecStart=/usr/bin/python3 /opt/capivara-agent/privileged/console_journal_reader.py
+Restart=always
+RestartSec=2
+RuntimeDirectory=capivara-agent-console
+RuntimeDirectoryMode=0750
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

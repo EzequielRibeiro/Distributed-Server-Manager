@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import server_part10 as integration
+from agent_console_push import CONSOLE_PUSH_PATH, serve_agent_console_stream
 from agent_remote_http import (
     ENROLL_PATH,
     HEARTBEAT_PATH,
@@ -43,6 +44,10 @@ def integrated_get(self):
 
 def integrated_post(self):
     path = urlparse(self.path).path
+    if path == CONSOLE_PUSH_PATH:
+        backend = legacy.dashboard_repository(legacy.DATABASE_FILE).backend
+        serve_agent_console_stream(self, headers=self.headers, backend=backend)
+        return
     if path not in {
         ENROLL_PATH,
         HEARTBEAT_PATH,

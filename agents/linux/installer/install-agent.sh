@@ -190,7 +190,7 @@ mapfile -t PROFILE_FILES < <(
 )
 ((${#RUNTIME_FILES[@]} > 0)) || fail "nenhum módulo Python encontrado em agent/runtime"
 ((${#PROFILE_FILES[@]} > 0)) || fail "nenhum profile Python encontrado em agent/runtime/profiles"
-for required in manifest.json VERSION agent/common/identity.py agent/privileged/materialize_instance.py agent/privileged/reconcile_firewall.py agent/privileged/reconcile_runtime_identity.py agent/privileged/uninstall_agent.py agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py services/capivara-agent.service services/capivara-agent-update.service services/capivara-agent-update.path services/capivara-agent-materialize@.service services/capivara-agent-firewall@.service services/capivara-agent-runtime-identity.service services/capivara-agent-uninstall.service services/capivara-agent-uninstall.path; do [[ -f "${PACKAGE_DIR}/${required}" ]] || fail "arquivo obrigatório ausente: ${required}"; done
+for required in manifest.json VERSION agent/common/identity.py agent/privileged/materialize_instance.py agent/privileged/reconcile_firewall.py agent/privileged/reconcile_runtime_identity.py agent/privileged/uninstall_agent.py agent/privileged/console_journal_reader.py agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py services/capivara-agent.service services/capivara-agent-console-reader.service services/capivara-agent-update.service services/capivara-agent-update.path services/capivara-agent-materialize@.service services/capivara-agent-firewall@.service services/capivara-agent-runtime-identity.service services/capivara-agent-uninstall.service services/capivara-agent-uninstall.path; do [[ -f "${PACKAGE_DIR}/${required}" ]] || fail "arquivo obrigatório ausente: ${required}"; done
 for file in "${RUNTIME_FILES[@]}"; do [[ -f "${PACKAGE_DIR}/agent/runtime/${file}" ]] || fail "arquivo obrigatório ausente: agent/runtime/${file}"; done
 for sub in adapters materializers; do for file in __init__.py base.py registry.py systemd.py; do [[ -f "${PACKAGE_DIR}/agent/runtime/${sub}/${file}" ]] || fail "arquivo obrigatório ausente: agent/runtime/${sub}/${file}"; done; done
 for file in "${PROFILE_FILES[@]}"; do [[ -f "${PACKAGE_DIR}/agent/runtime/profiles/${file}" ]] || fail "arquivo obrigatório ausente: agent/runtime/profiles/${file}"; done
@@ -217,6 +217,7 @@ install -m 0755 "${PACKAGE_DIR}/agent/privileged/materialize_instance.py" "${INS
 install -m 0755 "${PACKAGE_DIR}/agent/privileged/reconcile_firewall.py" "${INSTALL_ROOT}/privileged/reconcile_firewall.py"
 install -m 0755 "${PACKAGE_DIR}/agent/privileged/reconcile_runtime_identity.py" "${INSTALL_ROOT}/privileged/reconcile_runtime_identity.py"
 install -m 0755 "${PACKAGE_DIR}/agent/privileged/uninstall_agent.py" "${INSTALL_ROOT}/privileged/uninstall_agent.py"
+install -m 0755 "${PACKAGE_DIR}/agent/privileged/console_journal_reader.py" "${INSTALL_ROOT}/privileged/console_journal_reader.py"
 install -m 0755 "${PACKAGE_DIR}/agent/updater/updater.py" "${INSTALL_ROOT}/updater/updater.py"
 install -m 0644 "${PACKAGE_DIR}/agent/common/identity.py" "${INSTALL_ROOT}/common/identity.py"; install -m 0644 "${PACKAGE_DIR}/manifest.json" "${INSTALL_ROOT}/manifest.json"; printf '%s\n' "${VERSION}" >"${INSTALL_ROOT}/VERSION"
 install -d -m 0755 "${POLKIT_RULES_DIR}"; install -m 0644 "${PACKAGE_DIR}/agent/policy/49-capivara-agent-instance-units.rules" "${POLKIT_RULES_DIR}/49-capivara-agent-instance-units.rules"
@@ -233,11 +234,12 @@ if ! CAPIVARA_AGENT_CONFIG="${CONFIG_DIR}/agent.json" python3 "${INSTALL_ROOT}/r
   fail "Controller não está alcançável em ${CONTROLLER_URL}. Verifique DNS/IP, porta pública/NAT, firewall e protocolo TLS/HTTP."
 fi
 
-for file in capivara-agent.service capivara-agent-update.service capivara-agent-update.path capivara-agent-materialize@.service capivara-agent-firewall@.service capivara-agent-runtime-identity.service capivara-agent-uninstall.service capivara-agent-uninstall.path; do install -m 0644 "${PACKAGE_DIR}/services/${file}" "${SYSTEMD_DIR}/${file}"; done
+for file in capivara-agent.service capivara-agent-console-reader.service capivara-agent-update.service capivara-agent-update.path capivara-agent-materialize@.service capivara-agent-firewall@.service capivara-agent-runtime-identity.service capivara-agent-uninstall.service capivara-agent-uninstall.path; do install -m 0644 "${PACKAGE_DIR}/services/${file}" "${SYSTEMD_DIR}/${file}"; done
 systemctl daemon-reload
 systemctl start capivara-agent-runtime-identity.service
 systemctl enable --now capivara-agent-update.path
 systemctl enable --now capivara-agent-uninstall.path
+systemctl enable --now capivara-agent-console-reader.service
 systemctl enable --now capivara-agent.service
 log "Agent ${VERSION} instalado com runtime serializado, crash-consistent e observável."
 log "Controller: ${CONTROLLER_URL}"
