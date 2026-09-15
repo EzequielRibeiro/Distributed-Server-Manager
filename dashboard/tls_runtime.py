@@ -151,7 +151,7 @@ def install_transport_security_headers(legacy, *, scheme: str) -> None:
         previous_send_header(
             self,
             "Permissions-Policy",
-            "camera=(), microphone=(), geolocation=()",
+            "camera=(), microphone=(), geolocation=(self)",
         )
         if scheme == "https":
             previous_send_header(

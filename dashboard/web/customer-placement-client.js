@@ -76,16 +76,14 @@
     const country = String(item.country_name || "").trim() || localizedCountryName(item.country_code);
     const flag = countryFlag(item.country_code);
     const countryText = [flag, country].filter(Boolean).join(" ");
-    const city = String(item.city || "").trim();
     const stateCode = String(item.state_code || "").trim().toUpperCase();
     const stateName = String(item.state_name || "").trim();
-    const locality = city
-      ? [city, stateCode].filter(Boolean).join(" - ")
-      : (stateName || stateCode);
+    const stateText = stateName || stateCode;
+    const geographyText = [countryText, stateText].filter(Boolean).join(" - ");
     const latencyText = Number.isFinite(Number(latency))
       ? `~${Math.round(Number(latency))} ms`
       : "Latência indisponível";
-    return [countryText, locality, latencyText, recommendationLabel(item)]
+    return [geographyText, latencyText, recommendationLabel(item)]
       .filter(Boolean)
       .join(" · ");
   }
