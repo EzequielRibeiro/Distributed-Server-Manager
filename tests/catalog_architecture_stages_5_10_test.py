@@ -55,7 +55,7 @@ class CatalogArchitectureStages5To10Test(unittest.TestCase):
   module=load("linux_integrity",ROOT/"agents/linux/runtime/game_data_integrity.py")
   with tempfile.TemporaryDirectory() as td:
    path=Path(td)/"game";self.assertEqual(module.inspect_game_data(path)["health"],"missing");path.mkdir();(path/"server.bin").write_bytes(b"x")
-   result=module.inspect_game_data(path,{"executable":"server.bin"});self.assertEqual(result["health"],"ok");self.assertEqual(result["files"],1);self.assertTrue(result["tree_digest"])
+   (path/"server.bin").chmod(0o700);result=module.inspect_game_data(path,{"executable":"server.bin","artifact_mode":"executable"});self.assertEqual(result["health"],"ok");self.assertEqual(result["files"],1);self.assertTrue(result["tree_digest"])
  def test_stage8_provisioning_uses_ensure_and_catalog_resolver(self):
   repository=(ROOT/"database/agent_instance_provisioning_repository.py").read_text();contract=(ROOT/"agents/linux/runtime/provisioning_contract.py").read_text();resolver=(ROOT/"dashboard/catalog_provisioning_resolver.py").read_text()
   compact="".join(repository.split())
