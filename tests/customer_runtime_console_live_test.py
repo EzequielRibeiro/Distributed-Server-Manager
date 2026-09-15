@@ -121,6 +121,8 @@ class CustomerRuntimeConsoleLiveTest(unittest.TestCase):
         self.assertIn('overview?.console?.supported', script)
         self.assertIn('/console?instance_id=', script)
         self.assertIn('new EventSource(url)', script)
+        self.assertIn('addEventListener("console-line"', script)
+        self.assertIn('appendConsoleLine', script)
         self.assertIn('/console/stream?instance_id=', script)
         self.assertIn('setInterval(refreshConsole,3000)', script)  # fallback only
         self.assertIn('source==="agent-heartbeat"', script)

@@ -42,6 +42,29 @@ class ControllerJournalReaderTest(unittest.TestCase):
         run.assert_called_once()
         self.assertFalse(run.call_args.kwargs.get("shell", False))
 
+    def test_instance_follow_command_is_cursor_bounded_and_shell_free(self):
+        cursor = "s=abc;i=123"
+        command = reader.instance_follow_command("cli-000001-dayz-001", cursor)
+        self.assertEqual(reader.JOURNALCTL, command[0])
+        self.assertIn("--follow", command)
+        self.assertIn("--after-cursor", command)
+        self.assertIn(cursor, command)
+        self.assertIn("capivara-instance-cli-000001-dayz-001.service", command)
+        self.assertNotIn("sh", command)
+        self.assertNotIn("bash", command)
+
+    @mock.patch("dashboard.controller_journal_reader.subprocess.run")
+    def test_instance_snapshot_extracts_journal_cursor(self, run):
+        run.return_value = mock.Mock(
+            returncode=0,
+            stdout="line one\n-- cursor: s=abc;i=123\n",
+            stderr="",
+        )
+        result = reader.read_instance_logs("cli-000001-dayz-001", 50)
+        self.assertEqual(["line one"], result["logs"])
+        self.assertEqual("s=abc;i=123", result["cursor"])
+        self.assertIn("--show-cursor", run.call_args.args[0])
+
     def test_http_limit_matches_reader_contract(self):
         self.assertEqual(http._limit(1), 20)
         self.assertEqual(http._limit(2001), 2000)

@@ -34,6 +34,15 @@ class AgentConsolePushTest(unittest.TestCase):
         self.assertEqual("agent-push", snapshot["source"])
         self.assertEqual("\x1b[31mERROR\x1b[0m", snapshot["lines"][0]["line"])
 
+    def test_waiter_observes_new_generation_without_polling(self) -> None:
+        event = {"instance_id": "instance-1", "cursor": "c1", "line": "ready"}
+        with patch.object(PUSH, "_owned_instances", return_value={"instance-1"}):
+            PUSH.ingest_console_events("agent-1", [event], backend=object())
+        snapshot = PUSH.wait_for_console_push("instance-1", 0, timeout=0.05)
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(1, snapshot["generation"])
+        self.assertEqual("c1", snapshot["lines"][-1]["cursor"])
+
     def test_ownership_lookup_is_short_lived_cached(self) -> None:
         class Repo:
             calls = 0

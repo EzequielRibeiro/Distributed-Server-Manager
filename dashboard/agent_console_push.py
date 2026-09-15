@@ -31,6 +31,7 @@ OWNERSHIP_ALLOW_TTL_SECONDS = 2.0
 OWNERSHIP_DENY_TTL_SECONDS = 1.0
 OWNERSHIP_CACHE_MAX = 4096
 _LOCK = threading.RLock()
+_CONDITION = threading.Condition(_LOCK)
 _BUFFERS: dict[str, dict[str, Any]] = {}
 _AGENT_SEEN: dict[str, float] = {}
 _OWNERSHIP_CACHE: dict[tuple[str, str], tuple[bool, float]] = {}
@@ -48,6 +49,7 @@ def _buffer(instance_id: str, agent_id: str) -> dict[str, Any]:
             "seen_order": deque(maxlen=SEEN_CURSORS),
             "seen": set(),
             "updated_at": None,
+            "generation": 0,
         }
         _BUFFERS[instance_id] = current
     return current
@@ -155,7 +157,8 @@ def ingest_console_events(agent_id: str, events: list[dict[str, Any]], *, backen
     allowed = _owned_instances(agent_id, instance_ids, backend) if instance_ids else set()
     accepted = duplicates = 0
     now = _now_iso()
-    with _LOCK:
+    changed = False
+    with _CONDITION:
         _AGENT_SEEN[agent_id] = time.monotonic()
         for event in candidates:
             if event["instance_id"] not in allowed:
@@ -175,7 +178,11 @@ def ingest_console_events(agent_id: str, events: list[dict[str, Any]], *, backen
                 }
             )
             state["updated_at"] = now
+            state["generation"] = int(state.get("generation") or 0) + 1
             accepted += 1
+            changed = True
+        if changed:
+            _CONDITION.notify_all()
     return {"accepted": accepted, "duplicates": duplicates, "rejected": rejected}
 
 
@@ -198,7 +205,24 @@ def console_push_snapshot(instance_id: str, *, limit: int = 400) -> dict[str, An
             "transport": "persistent-http-chunked",
             "agent_id": agent_id,
             "last_seen": state.get("updated_at"),
+            "generation": int(state.get("generation") or 0),
         }
+
+
+def wait_for_console_push(instance_id: str, generation: int, *, timeout: float = 10.0, limit: int = 400) -> dict[str, Any] | None:
+    instance_id = str(instance_id or "").strip()
+    expected = int(generation or 0)
+    deadline = time.monotonic() + max(0.05, min(float(timeout), 30.0))
+    with _CONDITION:
+        while True:
+            state = _BUFFERS.get(instance_id)
+            if state is not None and int(state.get("generation") or 0) != expected:
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            _CONDITION.wait(timeout=remaining)
+    return console_push_snapshot(instance_id, limit=limit)
 
 def _authenticate(headers, backend) -> dict[str, Any]:
     return AgentPairingRepository(backend).authenticate(
@@ -312,4 +336,5 @@ __all__ = [
     "ingest_console_events",
     "serve_agent_console_stream",
     "touch_agent",
+    "wait_for_console_push",
 ]
