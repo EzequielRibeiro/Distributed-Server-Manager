@@ -64,6 +64,7 @@ class StaticAssetAuthPolicyTest(unittest.TestCase):
             "/customer-instance.html",
             "/customer-instance-v2.css",
             "/customer-instance-v2.js",
+            "/customer-instance-runtime-live.js",
             "/customer-instance-core.js",
             "/customer-navigation.js",
             "/create-server-wizard.js",
