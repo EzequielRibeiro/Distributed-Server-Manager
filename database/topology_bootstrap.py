@@ -33,6 +33,9 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--datacenter-provider", default="")
     p.add_argument("--datacenter-city", default="")
     p.add_argument("--datacenter-country-code", default="")
+    p.add_argument("--datacenter-country-name", default="")
+    p.add_argument("--datacenter-state-code", default="")
+    p.add_argument("--datacenter-state-name", default="")
     return p
 
 
@@ -80,8 +83,9 @@ def bootstrap(backend, args: argparse.Namespace) -> None:
             if datacenter is None:
                 session.execute(
                     "INSERT INTO datacenters "
-                    "(id,region_id,name,provider,city,country_code,status) "
-                    f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph})",
+                    "(id,region_id,name,provider,city,country_code,country_name,"
+                    "state_code,state_name,status) "
+                    f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})",
                     (
                         args.datacenter_id,
                         args.region_id,
@@ -89,6 +93,9 @@ def bootstrap(backend, args: argparse.Namespace) -> None:
                         args.datacenter_provider or None,
                         args.datacenter_city or None,
                         args.datacenter_country_code or None,
+                        args.datacenter_country_name or None,
+                        args.datacenter_state_code.upper() or None,
+                        args.datacenter_state_name or None,
                         "active",
                     ),
                 )

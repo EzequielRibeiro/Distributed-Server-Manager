@@ -88,11 +88,20 @@ class LocationAdminApiTest(unittest.TestCase):
                 "id": "limeira-horizon",
                 "region_id": "br-se",
                 "name": "Limeira / Horizon",
+                "city": "Limeira",
+                "country_code": "BR",
+                "country_name": "Brasil",
+                "state_code": "sp",
+                "state_name": "São Paulo",
                 "status": "active",
             },
         )
         self.assertEqual(datacenter["region_id"], "br-se")
         self.assertEqual(datacenter["name"], "Limeira / Horizon")
+        self.assertEqual(datacenter["country_name"], "Brasil")
+        self.assertEqual(datacenter["state_code"], "SP")
+        self.assertEqual(datacenter["state_name"], "São Paulo")
+        self.assertEqual(datacenter["city"], "Limeira")
         self.assertIsNone(datacenter["latitude"])
         self.assertIsNone(datacenter["longitude"])
 

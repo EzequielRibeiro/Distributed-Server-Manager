@@ -117,6 +117,9 @@ async function testAvailableRegionsArePublicAndRecommended() {
         name: "Brasil Sudeste",
         city: "São Paulo",
         country_code: "BR",
+        country_name: "Brasil",
+        state_code: "SP",
+        state_name: "São Paulo",
         availability: "available",
         recommended: true,
         latency: {value_ms: 18},
@@ -133,9 +136,12 @@ async function testAvailableRegionsArePublicAndRecommended() {
   assert.equal(result.regions[0].recommended, true);
   assert.equal(result.regions[0].latency_ms, 18);
   assert.equal(result.regions[0].city, "São Paulo");
-  assert.equal(result.regions[0].display_label, "🇧🇷 Brasil - São Paulo - 18 ms");
+  assert.equal(result.regions[0].country_name, "Brasil");
+  assert.equal(result.regions[0].state_code, "SP");
+  assert.equal(result.regions[0].state_name, "São Paulo");
+  assert.equal(result.regions[0].display_label, "🇧🇷 Brasil · São Paulo - SP · ~18 ms · ★ Servidor recomendado");
   assert.equal(statusNode.dataset.state, "available");
-  assert.equal(statusNode.strong.textContent, "🇧🇷 Brasil - São Paulo - 18 ms");
+  assert.equal(statusNode.strong.textContent, "🇧🇷 Brasil · São Paulo - SP · ~18 ms · ★ Servidor recomendado");
   cleanupHarness();
 }
 

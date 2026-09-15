@@ -125,6 +125,9 @@ class LocationRepository:
         provider: str | None = None,
         city: str | None = None,
         country_code: str | None = None,
+        country_name: str | None = None,
+        state_code: str | None = None,
+        state_name: str | None = None,
         latitude: float | None = None,
         longitude: float | None = None,
         status: str = "active",
@@ -142,6 +145,9 @@ class LocationRepository:
                     "provider": provider,
                     "city": city,
                     "country_code": country_code,
+                    "country_name": country_name,
+                    "state_code": state_code,
+                    "state_name": state_name,
                     "latitude": latitude,
                     "longitude": longitude,
                     "status": status,
@@ -194,8 +200,8 @@ class LocationRepository:
 
         sql = (
             "SELECT d.id,d.region_id,d.name,d.provider,"
-            "d.city,d.country_code,d.latitude,d.longitude,"
-            "d.status,r.name AS region_name "
+            "d.city,d.country_code,d.country_name,d.state_code,d.state_name,"
+            "d.latitude,d.longitude,d.status,r.name AS region_name "
             "FROM datacenters d "
             "JOIN regions r ON r.id=d.region_id "
             "WHERE d.status='active' "
@@ -236,6 +242,9 @@ class LocationRepository:
             "d.name AS datacenter_name,"
             "d.city,"
             "d.country_code,"
+            "d.country_name,"
+            "d.state_code,"
+            "d.state_name,"
             "r.id AS region_id,"
             "r.name AS region_name,"
             "COUNT(i.id) AS instance_count "
@@ -264,7 +273,7 @@ class LocationRepository:
             "a.id,a.node_id,a.name,a.status,"
             "al.datacenter_id,al.latitude,al.longitude,"
             "al.public_host,d.latitude,d.longitude,"
-            "d.name,d.city,d.country_code,"
+            "d.name,d.city,d.country_code,d.country_name,d.state_code,d.state_name,"
             "r.id,r.name,r.latitude,r.longitude "
             "ORDER BY instance_count,a.name,a.id"
         )

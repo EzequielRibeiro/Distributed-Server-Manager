@@ -54,7 +54,7 @@
     return [...code].map(letter => String.fromCodePoint(127397 + letter.charCodeAt(0))).join("");
   }
 
-  function countryName(countryCode) {
+  function localizedCountryName(countryCode) {
     const code = String(countryCode || "").trim().toUpperCase();
     if (!code) return "";
     try {
@@ -64,14 +64,30 @@
     }
   }
 
+  function recommendationLabel(item) {
+    if (item.recommended === true) return "★ Servidor recomendado";
+    if (item.recommendation === "higher_latency") return "Latência maior";
+    if (item.recommendation === "unavailable") return "Indisponível";
+    return "Boa opção";
+  }
+
   function locationLabel(item) {
     const latency = item.latency?.value_ms ?? item.latency_ms;
-    const country = countryName(item.country_code);
+    const country = String(item.country_name || "").trim() || localizedCountryName(item.country_code);
     const flag = countryFlag(item.country_code);
     const countryText = [flag, country].filter(Boolean).join(" ");
-    const city = String(item.city || item.name || "").trim();
-    const latencyText = Number.isFinite(Number(latency)) ? `${Math.round(Number(latency))} ms` : "Latência indisponível";
-    return [countryText, city, latencyText].filter(Boolean).join(" - ");
+    const city = String(item.city || "").trim();
+    const stateCode = String(item.state_code || "").trim().toUpperCase();
+    const stateName = String(item.state_name || "").trim();
+    const locality = city
+      ? [city, stateCode].filter(Boolean).join(" - ")
+      : (stateName || stateCode);
+    const latencyText = Number.isFinite(Number(latency))
+      ? `~${Math.round(Number(latency))} ms`
+      : "Latência indisponível";
+    return [countryText, locality, latencyText, recommendationLabel(item)]
+      .filter(Boolean)
+      .join(" · ");
   }
 
   function publicRegion(item) {
@@ -79,8 +95,11 @@
     return {
       id: item.region_id,
       name: item.name || item.region_id || "Região",
-      city: item.city || item.name || "",
       country_code: item.country_code || "",
+      country_name: item.country_name || "",
+      state_code: item.state_code || "",
+      state_name: item.state_name || "",
+      city: item.city || "",
       availability: item.availability,
       recommended: item.recommended === true,
       recommendation: item.recommendation || "",

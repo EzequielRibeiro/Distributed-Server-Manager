@@ -65,6 +65,16 @@ def _country_code(payload: dict[str, Any]) -> str | None:
     return value
 
 
+def _state_code(payload: dict[str, Any]) -> str | None:
+    value = _optional_text(payload, "state_code")
+    if value is None:
+        return None
+    value = value.upper()
+    if len(value) > 32:
+        raise ValueError("state_code must contain at most 32 characters")
+    return value
+
+
 def _optional_float(payload: dict[str, Any], name: str) -> float | None:
     value = payload.get(name)
     if value is None or value == "":
@@ -179,6 +189,9 @@ def upsert_datacenter_for_user(
     provider = _optional_text(payload, "provider")
     city = _optional_text(payload, "city")
     country_code = _country_code(payload)
+    country_name = _optional_text(payload, "country_name")
+    state_code = _state_code(payload)
+    state_name = _optional_text(payload, "state_name")
     latitude, longitude = _coordinates(payload)
 
     regions = InfrastructureRepository(backend).regions()
@@ -194,6 +207,9 @@ def upsert_datacenter_for_user(
         provider=provider,
         city=city,
         country_code=country_code,
+        country_name=country_name,
+        state_code=state_code,
+        state_name=state_name,
         latitude=latitude,
         longitude=longitude,
         status=status,

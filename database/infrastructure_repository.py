@@ -83,7 +83,8 @@ class InfrastructureRepository:
             clauses.append("status='active'")
 
         sql = (
-            "SELECT id,region_id,name,provider,city,country_code,latitude,longitude,status "
+            "SELECT id,region_id,name,provider,city,country_code,country_name,"
+            "state_code,state_name,latitude,longitude,status "
             "FROM datacenters"
         )
         if clauses:
