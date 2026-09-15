@@ -116,10 +116,21 @@ def _set_property(text:str,key:str,value:str,syntax:str)->str:
         return text[:start]+body+text[end:]
     if syntax=="command":
         pattern=re.compile(rf"(?m)^\s*{re.escape(key)}\s+.*$");line=f"{key} {value}"
-    else:
-        pattern=re.compile(rf"(?m)^\s*{re.escape(key)}\s*=\s*[^\r\n;]*(?:;)?\s*$")
-        line=f"{key} = {value};" if syntax=="semicolon" else f"{key}={value}"
-    if pattern.search(text):return pattern.sub(line,text,count=1)
+        if pattern.search(text):return pattern.sub(line,text,count=1)
+        return text.rstrip("\n")+("\n" if text else "")+line+"\n"
+    line=f"{key} = {value};" if syntax=="semicolon" else f"{key}={value}"
+    property_pattern=re.compile(rf"^\s*{re.escape(key)}\s*=")
+    lines=text.splitlines();updated=[];found=False
+    for existing in lines:
+        if property_pattern.match(existing):
+            if not found:
+                updated.append(line);found=True
+            continue
+        updated.append(existing)
+    if found:
+        result="\n".join(updated)
+        if text.endswith(("\n","\r")):result+="\n"
+        return result
     return text.rstrip("\n")+("\n" if text else "")+line+"\n"
 
 def _apply_property(target:Path,binding:dict[str,Any],value:Any)->None:

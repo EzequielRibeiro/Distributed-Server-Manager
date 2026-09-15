@@ -9,6 +9,7 @@ for path in (ROOT/'agents/linux/runtime',ROOT/'dashboard',ROOT/'database',ROOT/'
 from instance_workspace_policy import INSTANCE_PERMISSIONS,PERMISSION_PRESETS,validate_server_settings
 from catalog_controller_runtime_policy import default_policy,load_policy
 from server_settings_runtime import materialize_server_settings,prepare_spec
+from catalog_runtime_policy import materialize_network_properties
 import customer_instance_workspace_service as workspace_service
 import game_runtime,instance_runtime
 
@@ -56,9 +57,13 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td)
    cases=[]
-   dayz=root/'dayz';dayz.mkdir();spec={'configuration_root':str(dayz),'arguments':[],'catalog_server_settings':declaration('dayz.stable')}
+   dayz=root/'dayz';dayz.mkdir();dayz_cfg=dayz/'serverDZ.cfg'
+   dayz_cfg.write_text('hostname = "Original";  // Server name\nmaxPlayers = 60; // Maximum players\nsteamQueryPort = 27016; // query\nhostname = "Duplicate";\nmaxPlayers = 32;\nsteamQueryPort = 24003;\n',encoding='utf-8')
+   spec={'configuration_root':str(dayz),'arguments':[],'catalog_server_settings':declaration('dayz.stable')}
    prepared=prepare_spec(spec,{'server_name':'Capivara Test','max_players':24});self.assertEqual(['serverDZ.cfg'],materialize_server_settings(prepared))
-   text=(dayz/'serverDZ.cfg').read_text();self.assertIn('hostname = "Capivara Test";',text);self.assertIn('maxPlayers = 24;',text)
+   text=dayz_cfg.read_text();self.assertIn('hostname = "Capivara Test";',text);self.assertIn('maxPlayers = 24;',text);self.assertEqual(1,text.count('hostname ='));self.assertEqual(1,text.count('maxPlayers ='))
+   prepared['catalog_network_properties']=[{'path':'serverDZ.cfg','key':'steamQueryPort','value':'24003','syntax':'semicolon'}];prepared['catalog_variables']={}
+   self.assertEqual(['serverDZ.cfg'],materialize_network_properties(prepared));text=dayz_cfg.read_text();self.assertEqual(1,text.count('steamQueryPort ='));self.assertIn('steamQueryPort = 24003;',text)
 
    minecraft=root/'minecraft';minecraft.mkdir();spec={'configuration_root':str(minecraft),'arguments':[],'catalog_server_settings':declaration('minecraft.java.vanilla')}
    prepared=prepare_spec(spec,{'server_name':'Hello','max_players':10,'online_mode':False,'difficulty':'hard'});materialize_server_settings(prepared)
@@ -102,9 +107,22 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
   module_path=ROOT/'agents/windows/runtime/server_settings_runtime.py'
   spec=importlib.util.spec_from_file_location('windows_server_settings_runtime_tested',module_path);module=importlib.util.module_from_spec(spec);assert spec and spec.loader;spec.loader.exec_module(module)
   with tempfile.TemporaryDirectory() as td:
-   root=Path(td);base={'configuration_root':str(root),'arguments':[],'catalog_server_settings':declaration('dayz.stable')}
+   root=Path(td);cfg=root/'serverDZ.cfg';cfg.write_text('hostname = "Old"; // comment\nhostname = "Duplicate";\nmaxPlayers = 60; // comment\nmaxPlayers = 32;\n',encoding='utf-8');base={'configuration_root':str(root),'arguments':[],'catalog_server_settings':declaration('dayz.stable')}
    prepared=module.prepare_spec(base,{'server_name':'Windows DayZ','max_players':14});self.assertEqual(['serverDZ.cfg'],module.materialize_server_settings(prepared))
-   text=(root/'serverDZ.cfg').read_text();self.assertIn('hostname = "Windows DayZ";',text);self.assertIn('maxPlayers = 14;',text)
+   text=cfg.read_text();self.assertIn('hostname = "Windows DayZ";',text);self.assertIn('maxPlayers = 14;',text);self.assertEqual(1,text.count('hostname ='));self.assertEqual(1,text.count('maxPlayers ='))
+
+ def test_dayz_profile_migration_preserves_server_settings_values(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);install=root/'dayz';install.mkdir();state=root/'instances/dayz-1';config={'agent_id':'agent-1','instance_storage_root':str(root/'instances')}
+   dayz_runtime=runtime('dayz.stable');policy=default_policy(dayz_runtime)
+   context={'install_path':str(install),'content_root':str(install),'instance_state_root':str(state),'ports':{'game':{'port':24000,'protocol':'udp'},'game_aux':{'port':24002,'protocol':'udp'},'steam_query':{'port':24003,'protocol':'udp'}},'catalog_runtime_policy':policy}
+   instance={'instance_id':'dayz-1','agent_id':'agent-1','game_id':'dayz','environment_id':'dayz.stable','runtime_id':'dayz.stable','desired_state':'stopped'}
+   with patch.object(instance_runtime,'STATE_DIR',root/'agent-state'):
+    current=game_runtime.build_runtime_spec(config,instance,context);self.assertEqual(8,current['profile_version'])
+    old=dict(current);old['profile_version']=7;old['server_settings_values']={'server_name':'Migrated DayZ','max_players':32}
+    migrated,changed=game_runtime.migrate_runtime_spec(config,old)
+   self.assertTrue(changed);self.assertEqual(8,migrated['profile_version']);self.assertEqual({'server_name':'Migrated DayZ','max_players':32},migrated['server_settings_values']);self.assertEqual({'server_name','max_players'},set(migrated['catalog_server_settings']['fields']))
+   cfg=Path(migrated['configuration_root'])/'serverDZ.cfg';cfg.parent.mkdir(parents=True,exist_ok=True);cfg.write_text('hostname = "Old"; // comment\nhostname = "Duplicate";\nmaxPlayers = 60; // comment\nmaxPlayers = 20;\n',encoding='utf-8');materialize_server_settings(migrated);text=cfg.read_text();self.assertEqual(1,text.count('hostname ='));self.assertEqual(1,text.count('maxPlayers ='));self.assertIn('hostname = "Migrated DayZ";',text);self.assertIn('maxPlayers = 32;',text)
 
  def test_workspace_persists_canonical_declaration_and_merges_partial_values(self):
   dayz=declaration('dayz.stable');captured={}
