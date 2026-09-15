@@ -135,6 +135,8 @@ class ControllerTlsTransportTest(unittest.TestCase):
         self.assertIn("CERTBOT_DOMAIN", config)
         self.assertIn("CERTBOT_VALIDATION", config)
         self.assertIn("Strict-Transport-Security", runtime)
+        self.assertIn("geolocation=(self)", runtime)
+        self.assertNotIn("geolocation=()", runtime)
         self.assertIn("; Secure", runtime)
         self.assertIn("SameSite=Lax", runtime)
         self.assertIn("renewal-hooks/deploy/capivara-dashboard", helper)
