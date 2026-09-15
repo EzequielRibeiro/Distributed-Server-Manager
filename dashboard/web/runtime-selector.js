@@ -25,6 +25,7 @@
         runtime: null,
         version: null,
         build: null,
+        buildRequestGeneration: 0,
         regions: [],
         region: null,
         allowCrossRegion: false,
@@ -221,6 +222,7 @@
         state.runtime = null;
         state.version = null;
         state.build = null;
+        state.buildRequestGeneration += 1;
         state.region = null;
         state.allowCrossRegion = false;
 
@@ -278,6 +280,7 @@
     }
 
     function selectEdition(edition) {
+        state.buildRequestGeneration += 1;
         state.edition = edition;
         state.distribution = null;
         state.runtime = null;
@@ -320,6 +323,7 @@
     }
 
     function selectDistribution(distribution, runtime) {
+        state.buildRequestGeneration += 1;
         state.distribution = distribution.id;
         state.runtime = runtime;
         state.version = null;
@@ -398,49 +402,80 @@
     }
 
     async function selectVersion(value) {
+        state.buildRequestGeneration += 1;
         state.version = extractVersions(state.runtime).find((entry) => entry.value === value)
             || state.runtime.versions?.find((entry) => entry.value === value) || null;
         state.build = null;
-        if (state.version) await renderBuilds();
+        if (!state.version) {
+            elements().buildStep.hidden = true;
+            updateSummary();
+            return;
+        }
+        await renderBuilds();
     }
 
     async function renderBuilds() {
         const el = elements();
+        const runtimeId = state.runtime?.id;
+        const versionValue = state.version?.value;
+        const generation = ++state.buildRequestGeneration;
+        const isCurrentRequest = () => (
+            generation === state.buildRequestGeneration
+            && state.runtime?.id === runtimeId
+            && state.version?.value === versionValue
+        );
+
         el.buildStep.hidden = false;
         el.build.disabled = true;
         el.build.replaceChildren(new Option("Carregando builds…", ""));
         let builds = [];
-        if (state.runtime.version?.strategy === "dynamic") {
-            const data = await request(`/api/catalog/builds?${new URLSearchParams({
-                runtime: state.runtime.id,
-                version: state.version.value,
-            })}`);
-            builds = Array.isArray(data) ? data : (data.builds || []);
-        } else {
-            builds = extractBuilds(state.runtime, state.version);
-        }
-        if (!builds.length) builds = [{value: "current", label: "Build atual / recomendada", recommended: true}];
-        builds = builds.map((entry) => typeof entry === "object" && entry.value !== undefined ? entry : {
-            value: String(entry.value || entry.build || entry.id),
-            label: String(entry.label || entry.name || entry.build || entry.value || entry.id),
-            recommended: entry.recommended === true,
-            current: entry.current === true,
-            raw: entry,
-        });
-        state.version.raw = (state.version.raw && typeof state.version.raw === "object") ? state.version.raw : {value: state.version.value};
-        state.version.raw.builds = builds;
-        el.build.replaceChildren(new Option("Selecione…", ""));
-        for (const build of builds) {
-            el.build.append(new Option(
-                build.label + ((build.recommended || build.current) ? " — recomendada" : ""),
-                build.value
-            ));
-        }
-        el.build.disabled = false;
-        const selected = builds.find((item) => item.recommended || item.current) || (builds.length === 1 ? builds[0] : null);
-        if (selected) {
-            el.build.value = selected.value;
-            selectBuild(selected.value);
+
+        try {
+            if (state.runtime.version?.strategy === "dynamic") {
+                const data = await request(`/api/catalog/builds?${new URLSearchParams({
+                    runtime: runtimeId,
+                    version: versionValue,
+                })}`);
+                if (!isCurrentRequest()) return;
+                builds = Array.isArray(data) ? data : (data.builds || []);
+            } else {
+                builds = extractBuilds(state.runtime, state.version);
+            }
+
+            if (!isCurrentRequest()) return;
+            if (!builds.length) builds = [{value: "current", label: "Build atual / recomendada", recommended: true}];
+            builds = builds.map((entry) => typeof entry === "object" && entry.value !== undefined ? entry : {
+                value: String(entry.value || entry.build || entry.id),
+                label: String(entry.label || entry.name || entry.build || entry.value || entry.id),
+                recommended: entry.recommended === true,
+                current: entry.current === true,
+                raw: entry,
+            });
+            state.version.raw = (state.version.raw && typeof state.version.raw === "object")
+                ? state.version.raw
+                : {value: state.version.value};
+            state.version.raw.builds = builds;
+            el.build.replaceChildren(new Option("Selecione…", ""));
+            for (const build of builds) {
+                el.build.append(new Option(
+                    build.label + ((build.recommended || build.current) ? " — recomendada" : ""),
+                    build.value
+                ));
+            }
+            el.build.disabled = false;
+            const selected = builds.find((item) => item.recommended || item.current)
+                || (builds.length === 1 ? builds[0] : null);
+            if (selected) {
+                el.build.value = selected.value;
+                selectBuild(selected.value);
+            }
+        } catch (error) {
+            if (!isCurrentRequest()) return;
+            state.build = null;
+            el.build.replaceChildren(new Option("Não foi possível carregar builds — escolha outra versão", ""));
+            el.build.disabled = true;
+            updateSummary();
+            showMessage(`Não foi possível carregar as builds: ${error.message}`);
         }
     }
 
@@ -535,6 +570,7 @@
     }
 
     function closeSelector() {
+        state.buildRequestGeneration += 1;
         elements().panel.hidden = true;
         state.contract = null;
         state.game = null;

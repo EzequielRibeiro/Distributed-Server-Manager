@@ -214,7 +214,7 @@ catalog_versions()
     local VERSIONS RECOMMENDED_VERSION="" CANDIDATE RESOLVED
     VERSIONS="$(jq -c '
         [.versions[]? |
-            (.version // .minecraft_versions[0] // empty) |
+            (([.version?] + (.minecraft_versions? // []))[]) |
             select(. != null and tostring != "") |
             tostring] |
         reduce .[] as $value ([]; if index($value) then . else . + [$value] end) |
@@ -281,15 +281,26 @@ catalog_builds()
 
     BUILDS="$(jq -c --arg version "${VERSION}" '
         [.versions[]? |
-            select((.version // "" | tostring) == $version) |
-            (.build // .full // empty) |
+            select(
+                ((.version // "" | tostring) == $version) or
+                (((.minecraft_versions // []) | map(tostring) | index($version)) != null)
+            ) |
+            (.build // .full // .tag // empty) |
             select(. != null and tostring != "") |
             tostring] |
         reduce .[] as $value ([]; if index($value) then . else . + [$value] end) |
         map({value:.,label:("Build " + .),recommended:false})
     ' <<<"${RESPONSE}")"
 
-    if [[ "$(jq 'length' <<<"${BUILDS}")" -gt 0 ]]
+    local BUILD_COUNT
+    BUILD_COUNT="$(jq 'length' <<<"${BUILDS}")"
+    if [[ "${BUILD_COUNT}" -eq 1 ]]
+    then
+        jq -c 'map(.recommended = true)' <<<"${BUILDS}"
+        return
+    fi
+
+    if [[ "${BUILD_COUNT}" -gt 1 ]]
     then
         if RESOLVED="$(canonical_resolver_call "${FILE}" "${RESOLVER}" resolve "${VERSION}" 2>/dev/null)" && \
            ! jq -e '.error?' >/dev/null 2>&1 <<<"${RESOLVED}"
