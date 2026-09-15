@@ -187,7 +187,8 @@ def _chown_private_tree(root: Path, account: pwd.struct_passwd) -> None:
         if current.is_dir():
             os.chmod(current, 0o700)
         elif current.is_file():
-            os.chmod(current, 0o600)
+            source_mode = current.stat().st_mode
+            os.chmod(current, 0o700 if source_mode & 0o111 else 0o600)
 
 
 def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, optional: bool = False) -> None:
@@ -271,8 +272,9 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
         os.chmod(target.parent, 0o700)
         if not target.exists():
             shutil.copy2(source, target)
+        executable = bool(source.stat().st_mode & 0o111)
         os.chown(target, account.pw_uid, account.pw_gid)
-        os.chmod(target, 0o600)
+        os.chmod(target, 0o700 if executable else 0o600)
     for item in spec.get("seed_directories", []):
         source = _seed_source(spec, working_root, item["source"], "seed directory source")
         target = _within(state_root, str(item["target"]), "seed directory target")

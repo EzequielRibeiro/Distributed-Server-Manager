@@ -223,6 +223,25 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
         finally:
             materialize_instance.STATE_DIR = original_state
 
+    def test_private_seed_preserves_only_executable_semantics(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            source.mkdir()
+            executable = source / "server"
+            regular = source / "config.txt"
+            executable.write_text("binary", encoding="utf-8")
+            regular.write_text("config", encoding="utf-8")
+            executable.chmod(0o755)
+            regular.chmod(0o644)
+            account = type("Account", (), {"pw_uid": os.getuid(), "pw_gid": os.getgid()})()
+            target = root / "target"
+            materialize_instance._seed_directory(source, target, account)
+            self.assertEqual(target.stat().st_mode & 0o777, 0o700)
+            self.assertEqual((target / "server").stat().st_mode & 0o777, 0o700)
+            self.assertEqual((target / "config.txt").stat().st_mode & 0o777, 0o600)
+
+
     def test_agent_control_state_is_private_but_traversable_from_instance_root(self):
         storage_root = self.root / "instances-control"
         instance_root = storage_root / "instance-control"
