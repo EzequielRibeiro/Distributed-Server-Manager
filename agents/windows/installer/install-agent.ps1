@@ -54,7 +54,7 @@ Install-ControllerCa $ControllerCaFile
 $PackageDir = (Resolve-Path $PackageDir).Path
 $required = @(
     "manifest.json", "VERSION", "agent\common\identity.py",
-    "agent\runtime\agent.py", "agent\runtime\agent_entrypoint.py", "agent\runtime\uninstall_client.py", "agent\runtime\capabilities.py", "agent\runtime\network_inventory.py", "agent\runtime\update_client.py", "agent\runtime\admin_gui_backend.py",
+    "agent\runtime\agent.py", "agent\runtime\agent_entrypoint.py", "agent\runtime\console_stream_client.py", "agent\runtime\uninstall_client.py", "agent\runtime\capabilities.py", "agent\runtime\network_inventory.py", "agent\runtime\update_client.py", "agent\runtime\admin_gui_backend.py",
     "agent\runtime\adapters\__init__.py", "agent\runtime\adapters\base.py", "agent\runtime\adapters\registry.py", "agent\runtime\adapters\windows_process.py", "agent\runtime\adapters\windows_service.py",
     "agent\updater\updater.py", "service\register-task.ps1", "service\run-agent.ps1", "service\uninstall-agent.ps1", "gui\CapivaraAgentGui.ps1"
 )
