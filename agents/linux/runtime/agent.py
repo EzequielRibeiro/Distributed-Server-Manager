@@ -147,6 +147,44 @@ def enroll(config):
     config.update({"controller_id":result["controller_id"],"credential_id":result["credential_id"],"credential_secret":result["credential_secret"],"credential_type":result.get("credential_type","opaque-v1")});config.pop("pairing_token",None);_write_config(config);return config
 
 
+
+def _flush_command_results(config):
+    result_contracts = (
+        ("instance_result", read_instance_result, "instance_state", clear_instance_result, "command_id"),
+        ("console_result", read_console_result, "console_state", clear_console_result, "command_id"),
+        ("file_result", read_file_result, "file_state", clear_file_result, "command_id"),
+        ("resource_result", read_resource_result, "resource_state", clear_resource_result, "command_id"),
+        ("artifact_result", read_artifact_result, "artifact_state", clear_artifact_result, "transfer_id"),
+        ("doctor_result", read_doctor_result, "doctor_state", clear_doctor_result, "request_id"),
+    )
+    payload = {
+        "agent_id": config["agent_id"],
+        "host_identity": _host_identity(),
+        "heartbeat_interval_seconds": int(config.get("heartbeat_interval_seconds", DEFAULT_HEARTBEAT_SECONDS)),
+        "degraded_after_seconds": int(config.get("degraded_after_seconds", 60)),
+        "offline_after_seconds": int(config.get("offline_after_seconds", 120)),
+        "result_flush": True,
+    }
+    pending = False
+    for result_key, reader, _state_key, _clear, _id_key in result_contracts:
+        value = reader()
+        if isinstance(value, dict) and str(value.get("status") or "").lower() in {"completed", "failed"}:
+            payload[result_key] = value
+            pending = True
+    if not pending:
+        return None
+    base = str(config["controller_url"]).rstrip("/")
+    response = _post(base + "/api/agent/heartbeat", payload, headers={
+        "X-Capivara-Agent-Credential": str(config["credential_id"]),
+        "X-Capivara-Agent-Secret": str(config["credential_secret"]),
+        "X-Capivara-Agent-Fingerprint": str(config["fingerprint"]),
+    })
+    for _result_key, _reader, state_key, clear, id_key in result_contracts:
+        state = response.get(state_key) if isinstance(response.get(state_key), dict) else {}
+        if str(state.get("status") or "").lower() in {"completed", "failed"} and state.get(id_key):
+            clear(str(state[id_key]))
+    return response
+
 def heartbeat(config):
     base=str(config["controller_url"]).rstrip("/")
     result=_post(base+"/api/agent/heartbeat",_inventory(config),headers={"X-Capivara-Agent-Credential":str(config["credential_id"]),"X-Capivara-Agent-Secret":str(config["credential_secret"]),"X-Capivara-Agent-Fingerprint":str(config["fingerprint"])})
@@ -160,9 +198,10 @@ def heartbeat(config):
     if isinstance(commands,list):apply_backup_commands(config,[item for item in commands if isinstance(item,dict)])
     commands=result.get("broadcast_commands")
     if isinstance(commands,list):apply_broadcast_commands(config,[item for item in commands if isinstance(item,dict)])
+    synchronous_result_ready=False
     doctor_command=result.get("doctor_command")
     if isinstance(doctor_command,dict):
-        doctor_report=handle_doctor_command(config,doctor_command);_log(f"doctor request={doctor_report.get('request_id')} status={doctor_report.get('status')}")
+        doctor_report=handle_doctor_command(config,doctor_command);synchronous_result_ready=True;_log(f"doctor request={doctor_report.get('request_id')} status={doctor_report.get('status')}")
     doctor_state=result.get("doctor_state") if isinstance(result.get("doctor_state"),dict) else {}
     if str(doctor_state.get("status") or "").lower() in {"completed","failed"} and doctor_state.get("request_id"):clear_doctor_result(str(doctor_state["request_id"]))
     if result.get("update") and stage_update_request(dict(result["update"])):print(f"update staged version={result['update'].get('desired_version')} rollout={result['update'].get('rollout_id')}",flush=True)
@@ -183,7 +222,7 @@ def heartbeat(config):
     for command_key,state_key,handler,clear,id_key,label in command_contracts:
         command=result.get(command_key)
         if isinstance(command,dict):
-            report=handler(config,command);print(f"{label} command instance={report.get('instance_id')} status={report.get('status')}",flush=True)
+            report=handler(config,command);synchronous_result_ready=True;print(f"{label} command instance={report.get('instance_id')} status={report.get('status')}",flush=True)
         state=result.get(state_key) if isinstance(result.get(state_key),dict) else {}
         if str(state.get("status") or "").lower() in {"completed","failed"} and state.get(id_key):clear(str(state[id_key]))
     uninstall_command=result.get("uninstall_command")
@@ -191,6 +230,30 @@ def heartbeat(config):
         report=handle_uninstall_command(config,uninstall_command,host_identity=_host_identity());_log(f"uninstall request={report.get('request_id')} phase={uninstall_command.get('phase')} status={report.get('status')}")
     uninstall_state=result.get("uninstall_state") if isinstance(result.get("uninstall_state"),dict) else {}
     if str(uninstall_state.get("status") or "").lower() in {"completed","failed","cancelled"} and uninstall_state.get("request_id"):clear_uninstall_result(str(uninstall_state["request_id"]))
+    if synchronous_result_ready:
+        flushed = _flush_command_results(config)
+        if isinstance(flushed, dict):
+            flushed_contracts = (
+                ("instance_state", "instance_command", "command_id"),
+                ("console_state", "console_command", "command_id"),
+                ("file_state", "file_command", "command_id"),
+                ("resource_state", "resource_command", "command_id"),
+                ("artifact_state", "artifact_command", "transfer_id"),
+                ("doctor_state", "doctor_command", "request_id"),
+            )
+            for state_key, command_key, id_key in flushed_contracts:
+                state = flushed.get(state_key)
+                if not isinstance(state, dict):
+                    continue
+                result[state_key] = state
+                command = result.get(command_key)
+                if (
+                    isinstance(command, dict)
+                    and state.get(id_key)
+                    and str(command.get(id_key) or "") == str(state.get(id_key))
+                    and str(state.get("status") or "").lower() in {"completed", "failed"}
+                ):
+                    result.pop(command_key, None)
     return result
 
 
