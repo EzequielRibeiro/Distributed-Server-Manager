@@ -216,13 +216,26 @@ def lifecycle(config: dict[str, Any], instance_id: str, action: str) -> dict[str
 
 def remove(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     """Stop and remove the materialized runtime while preserving shared game data."""
-    from privileged_materialization import remove as remove_materialized_runtime
     from runtime_limits import runtime_limits
     from runtime_metrics import increment
     from runtime_operations import runtime_operation
 
+    instance_id = _token(instance_id, "instance_id")
     limits = runtime_limits(config)
     with runtime_operation(config, instance_id, "remove", lock_timeout_seconds=limits.lock_timeout_seconds):
+        if get_instance(instance_id) is None:
+            increment("lifecycle_remove")
+            return {
+                "schema_version": 1,
+                "kind": "CapivaraInstanceRemoval",
+                "scope": "instance-local",
+                "instance_id": instance_id,
+                "agent_id": str(config.get("agent_id") or ""),
+                "shared_game_data_preserved": True,
+                "already_absent": True,
+                "operation": {"action": "remove", "changed": False, "idempotent": True},
+            }
+        from privileged_materialization import remove as remove_materialized_runtime
         result = remove_materialized_runtime(config, instance_id)
         increment("lifecycle_remove")
         return {
@@ -232,6 +245,7 @@ def remove(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
             "instance_id": instance_id,
             "agent_id": str(config.get("agent_id") or ""),
             "shared_game_data_preserved": True,
+            "already_absent": False,
             "operation": result,
         }
 

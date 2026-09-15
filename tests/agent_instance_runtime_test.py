@@ -93,6 +93,15 @@ class AgentLocalInstanceRuntimeTest(unittest.TestCase):
         self.assertIsNone(instance_runtime.read_result())
         self.assertTrue((instance_runtime.HISTORY_DIR / "cmd-one.json").is_file())
 
+    def test_remove_is_idempotent_when_local_runtime_is_already_absent(self):
+        result = instance_runtime.handle_command(self.config, {
+            "command_id": "cmd-remove-absent", "instance_id": "already-gone", "action": "remove",
+        })
+        self.assertEqual(result["status"], "completed")
+        self.assertTrue(result["result"]["already_absent"])
+        self.assertFalse(result["result"]["operation"]["changed"])
+        self.assertTrue(result["result"]["operation"]["idempotent"])
+
     def test_lifecycle_is_adapter_owned_and_idempotent_by_command_id(self):
         instance_runtime.resolve_adapter = lambda record: FakeAdapter()
         instance_runtime.register_instance({
@@ -218,6 +227,17 @@ class ControllerInstanceRuntimeQueueTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(completed["instance_state"]["status"], "completed")
         self.assertNotIn("instance_command", completed)
+
+    def test_completed_remove_after_agent_compensation_deletes_controller_record(self):
+        created = self.commands.enqueue(agent_id="agent-instance", instance_id="instance-one", action="remove")
+        completed = self.commands.apply_result("agent-instance", {
+            "command_id": created["command_id"], "instance_id": "instance-one", "action": "remove",
+            "status": "completed", "result": {"already_absent": True, "operation": {"changed": False, "idempotent": True}},
+        })
+        self.assertEqual(completed["status"], "completed")
+        with self.backend.connect() as conn:
+            row = conn.execute("SELECT id FROM instances WHERE id=?", ("instance-one",)).fetchone()
+        self.assertIsNone(row)
 
     def test_controller_rejects_wrong_agent_ownership_and_unsafe_action(self):
         with self.assertRaises(ValueError):

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from adapters import AdapterError,resolve_adapter
 import managed_firewall
-PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));INSTANCE_DIR=STATE_DIR/"instances";RESULT_DIR=STATE_DIR/"instance-results";HISTORY_DIR=STATE_DIR/"instance-command-history";_TOKEN=re.compile(r"^[A-Za-z0-9._-]{1,191}$");VALID_ACTIONS={"status","doctor","start","stop","restart"};LIFECYCLE_ACTIONS={"start","stop","restart"}
+PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));INSTANCE_DIR=STATE_DIR/"instances";RESULT_DIR=STATE_DIR/"instance-results";HISTORY_DIR=STATE_DIR/"instance-command-history";_TOKEN=re.compile(r"^[A-Za-z0-9._-]{1,191}$");VALID_ACTIONS={"status","doctor","start","stop","restart","remove"};LIFECYCLE_ACTIONS={"start","stop","restart"}
 def _now():return datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
 def _token(value:Any,label:str)->str:
  value=str(value or "").strip()
@@ -76,6 +76,14 @@ def lifecycle(config,instance_id,action):
   increment(f"lifecycle_{action}");payload={"schema_version":1,"kind":"CapivaraInstanceLifecycle","scope":"instance-local","instance_id":record["instance_id"],"agent_id":record["agent_id"],"adapter":adapter.name,"action":action,"observed_state":observed_state,"operation":result}
   if firewall is not None:payload["firewall"]=firewall
   return payload
+def remove(config,instance_id):
+ _token(instance_id,"instance_id")
+ from runtime_metrics import increment
+ record=get_instance(instance_id)
+ if record is None:
+  increment("lifecycle_remove");return {"schema_version":1,"kind":"CapivaraInstanceRemoval","scope":"instance-local","instance_id":instance_id,"agent_id":str(config.get("agent_id") or ""),"shared_game_data_preserved":True,"already_absent":True,"operation":{"action":"remove","changed":False,"idempotent":True}}
+ from runtime_materialization import remove as remove_materialized_runtime
+ result=remove_materialized_runtime(config,instance_id);increment("lifecycle_remove");return {"schema_version":1,"kind":"CapivaraInstanceRemoval","scope":"instance-local","instance_id":instance_id,"agent_id":str(config.get("agent_id") or ""),"shared_game_data_preserved":True,"already_absent":False,"operation":result}
 def inventory(config):return list_instances(config)
 def _history(command_id):return HISTORY_DIR/f"{_token(command_id,'command_id')}.json"
 def _result(command_id):return RESULT_DIR/f"{_token(command_id,'command_id')}.json"
@@ -86,7 +94,7 @@ def handle_command(config,command):
  try:
   _token(instance_id,"instance_id")
   if action not in VALID_ACTIONS:raise ValueError("unsupported instance action")
-  payload=status(config,instance_id) if action=="status" else doctor(config,instance_id) if action=="doctor" else lifecycle(config,instance_id,action);result={"command_id":command_id,"instance_id":instance_id,"action":action,"status":"completed","result":payload,"generated_at":_now()}
+  payload=status(config,instance_id) if action=="status" else doctor(config,instance_id) if action=="doctor" else remove(config,instance_id) if action=="remove" else lifecycle(config,instance_id,action);result={"command_id":command_id,"instance_id":instance_id,"action":action,"status":"completed","result":payload,"generated_at":_now()}
  except Exception as exc:result={"command_id":command_id,"instance_id":instance_id or None,"action":action or None,"status":"failed","error":str(exc)[:2000],"generated_at":_now()}
  _write(_history(command_id),result);_write(_result(command_id),result);return result
 def read_result():
@@ -99,4 +107,4 @@ def read_result():
 def clear_result(command_id):
  try:_result(command_id).unlink()
  except FileNotFoundError:pass
-__all__=["LIFECYCLE_ACTIONS","VALID_ACTIONS","clear_result","doctor","get_instance","handle_command","inventory","lifecycle","list_instances","read_result","register_instance","status"]
+__all__=["LIFECYCLE_ACTIONS","VALID_ACTIONS","clear_result","doctor","get_instance","handle_command","inventory","lifecycle","list_instances","read_result","register_instance","remove","status"]
