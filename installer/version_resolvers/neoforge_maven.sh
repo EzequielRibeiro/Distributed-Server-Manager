@@ -46,6 +46,7 @@ neoforge_list()
     neoforge_versions | python3 -c '
 import json,sys
 versions=[]
+latest_by_mc={}
 for line in sys.stdin:
     value=line.strip()
     if not value: continue
@@ -56,6 +57,9 @@ for line in sys.stdin:
     else:
         mc=".".join(parts[:-1])
     versions.append({"version":mc,"build":value,"minecraft_versions":[mc],"stable":True})
+    latest_by_mc[mc]=value
+for item in versions:
+    item["recommended"] = latest_by_mc.get(item["version"]) == item["build"]
 print(json.dumps({"game":"minecraft","variant":"neoforge","source":"neoforge-maven","versions":versions}))
 '
 }
