@@ -24,6 +24,7 @@ UNIT_RE = re.compile(r"^capivara-instance-([A-Za-z0-9._-]{1,191})\.service$")
 MAX_REQUEST_BYTES = 4096
 MAX_MESSAGE_BYTES = 8192
 
+
 def _peer_uid(connection: socket.socket) -> int | None:
     if not hasattr(socket, "SO_PEERCRED"):
         return None
@@ -56,9 +57,21 @@ def _cursor(unit: str, payload: dict, message: str) -> str:
     return "sha256:" + hashlib.sha256(material).hexdigest()
 
 
+def _instance_unit(payload: dict) -> tuple[str, re.Match[str] | None]:
+    # Application stdout/stderr normally identifies the owning unit through
+    # _SYSTEMD_UNIT. Messages emitted by systemd itself during stop/start use
+    # UNIT or OBJECT_SYSTEMD_UNIT while _SYSTEMD_UNIT points at the manager.
+    # Accept only values that still pass the strict Capivara instance allowlist.
+    for key in ("OBJECT_SYSTEMD_UNIT", "UNIT", "_SYSTEMD_UNIT"):
+        unit = str(payload.get(key) or "").strip()
+        match = UNIT_RE.fullmatch(unit)
+        if match is not None:
+            return unit, match
+    return "", None
+
+
 def _event(payload: dict) -> dict | None:
-    unit = str(payload.get("_SYSTEMD_UNIT") or "")
-    match = UNIT_RE.fullmatch(unit)
+    unit, match = _instance_unit(payload)
     if match is None:
         return None
     message = str(payload.get("MESSAGE") or "").replace("\x00", "")[:MAX_MESSAGE_BYTES]
@@ -71,6 +84,7 @@ def _event(payload: dict) -> dict | None:
         "priority": str(payload.get("PRIORITY") or "")[:16] or None,
         "timestamp": str(payload.get("__REALTIME_TIMESTAMP") or "")[:64] or None,
     }
+
 
 def _follow(connection: socket.socket) -> None:
     command = [
@@ -126,6 +140,7 @@ def _handle(connection: socket.socket, allowed_uid: int) -> None:
         if str(request.get("operation") or "").strip().lower() != "follow":
             return
         _follow(connection)
+
 
 def serve_forever() -> None:
     account = pwd.getpwnam("capivara-agent")
