@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""HTTP dispatchers for Region and Datacenter administration."""
+"""HTTP dispatchers and composition for Region/Datacenter administration."""
 
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from location_admin_api import (
     list_datacenters_for_user,
@@ -73,3 +74,74 @@ def dispatch_location_admin_post(
         return None
     except Exception as exc:
         return _error(exc)
+
+
+def _backend(legacy):
+    return legacy.dashboard_repository(legacy.DATABASE_FILE).backend
+
+
+def install_location_administration(legacy, authenticate) -> None:
+    """Install topology administration on the active dashboard handler."""
+    previous_get = legacy.DashboardHandler.do_GET
+    previous_post = legacy.DashboardHandler.do_POST
+
+    def do_get(self):
+        parsed = urlparse(self.path)
+        if parsed.path not in {REGIONS_PATH, DATACENTERS_PATH}:
+            return previous_get(self)
+        user = authenticate(self.headers)
+        if user is None:
+            self.unauthorized()
+            return
+        query = parse_qs(parsed.query)
+        active_value = str((query.get("active_only") or [""])[0]).strip().lower()
+        result = dispatch_location_admin_get(
+            parsed.path,
+            user=user,
+            backend=_backend(legacy),
+            region_id=str((query.get("region_id") or [""])[0]).strip() or None,
+            active_only=active_value in {"1", "true", "yes", "on"},
+        )
+        if result is None:
+            return previous_get(self)
+        status, body = result
+        self.send_json(status, body)
+
+    def do_post(self):
+        parsed = urlparse(self.path)
+        if parsed.path not in {REGIONS_PATH, DATACENTERS_PATH}:
+            return previous_post(self)
+        user = authenticate(self.headers)
+        if user is None:
+            self.unauthorized()
+            return
+        try:
+            payload = self.read_json_body()
+        except ValueError:
+            self.send_json(
+                400,
+                {"error": "invalid_request", "message": "Requisição inválida."},
+            )
+            return
+        result = dispatch_location_admin_post(
+            parsed.path,
+            payload,
+            user=user,
+            backend=_backend(legacy),
+        )
+        if result is None:
+            return previous_post(self)
+        status, body = result
+        self.send_json(status, body)
+
+    legacy.DashboardHandler.do_GET = do_get
+    legacy.DashboardHandler.do_POST = do_post
+
+
+__all__ = [
+    "REGIONS_PATH",
+    "DATACENTERS_PATH",
+    "dispatch_location_admin_get",
+    "dispatch_location_admin_post",
+    "install_location_administration",
+]
