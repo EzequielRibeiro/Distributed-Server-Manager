@@ -5,6 +5,7 @@ from datetime import datetime,timezone
 from pathlib import Path
 from typing import Any
 import instance_runtime
+from server_settings_surface import observed_surface
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));RESULT_DIR=STATE_DIR/"file-results";HISTORY_DIR=STATE_DIR/"file-history"
 MAX_TRANSFER_BYTES=16*1024*1024;MAX_ARCHIVE_MEMBERS=10000
 EDITABLE_SUFFIXES={".txt",".cfg",".conf",".config",".ini",".json",".properties",".toml",".xml",".yaml",".yml",".log",".md",".csv"}
@@ -167,6 +168,10 @@ def _extract(root,archive_value,target_value,policy):
  return {"archive":ar.as_posix(),"target":target.relative_to(root).as_posix(),"entries":len(planned),"expanded_bytes":total,"extracted":True}
 def execute(config,command):
  record=_owned(config,str(command.get("instance_id") or ""));root=_root(record);policy=command.get("policy") if isinstance(command.get("policy"),dict) else {};action=str(command.get("action") or "").lower();path=command.get("path");target=command.get("target_path");payload=command.get("payload") if isinstance(command.get("payload"),dict) else {}
+ if action=="settings_surface":
+  declaration=record.get("catalog_server_settings") if isinstance(record.get("catalog_server_settings"),dict) else {};supplied=payload.get("declaration") if isinstance(payload.get("declaration"),dict) else {};surface_spec=dict(record)
+  if not isinstance(declaration.get("fields"),dict) or not declaration.get("fields"):surface_spec["catalog_server_settings"]=supplied
+  return observed_surface(surface_spec)
  if action=="list":return _list(root,path,policy)
  if action=="usage":return {"usage_bytes":_usage(root),"limit_bytes":_limit(policy)}
  if action=="read_text":return _read_text(root,path,policy)

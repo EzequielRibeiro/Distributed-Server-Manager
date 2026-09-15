@@ -213,6 +213,9 @@ def migrate_runtime_spec(config: dict[str, Any], record: dict[str, Any]) -> tupl
     if isinstance(server_settings_values, dict) and server_settings_values:
         from server_settings_runtime import prepare_spec
         rebuilt = prepare_spec(rebuilt, dict(server_settings_values))
+    dynamic_values = record.get("server_settings_dynamic_values")
+    if isinstance(dynamic_values, dict) and dynamic_values:
+        rebuilt["server_settings_dynamic_values"] = dict(dynamic_values)
     rebuilt_version = int(rebuilt.get("profile_version") or 1)
     if rebuilt_version <= stored_version:
         raise RuntimeError(

@@ -19,6 +19,7 @@ from typing import Any
 import zipfile
 
 import instance_runtime
+from server_settings_surface import observed_surface
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 RESULT_DIR = STATE_DIR / "file-results"
@@ -321,6 +322,12 @@ def _extract(root: Path, archive_value: Any, target_value: Any, policy: dict[str
 def execute(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
     record = _owned(config, str(command.get("instance_id") or "")); root = _files_root(record); policy = _policy(command)
     action = str(command.get("action") or "").strip().lower(); path = command.get("path"); target = command.get("target_path"); payload = command.get("payload") if isinstance(command.get("payload"), dict) else {}
+    if action == "settings_surface":
+        declaration=record.get("catalog_server_settings") if isinstance(record.get("catalog_server_settings"),dict) else {}
+        supplied=payload.get("declaration") if isinstance(payload.get("declaration"),dict) else {}
+        surface_spec=dict(record)
+        if not isinstance(declaration.get("fields"),dict) or not declaration.get("fields"):surface_spec["catalog_server_settings"]=supplied
+        return observed_surface(surface_spec)
     if action == "list": return _list(root, path, policy)
     if action == "usage": return {"usage_bytes": _usage(root), "limit_bytes": _quota(policy)}
     if action == "read_text": return _read_text(root, path, policy)

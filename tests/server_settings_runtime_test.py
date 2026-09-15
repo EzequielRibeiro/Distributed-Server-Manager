@@ -9,6 +9,7 @@ for path in (ROOT/'agents/linux/runtime',ROOT/'dashboard',ROOT/'database',ROOT/'
 from instance_workspace_policy import INSTANCE_PERMISSIONS,PERMISSION_PRESETS,validate_server_settings
 from catalog_controller_runtime_policy import default_policy,load_policy
 from server_settings_runtime import materialize_server_settings,prepare_spec
+from server_settings_surface import apply_runtime_dependencies,materialize_dynamic_values,normalize_dynamic_values,observed_surface
 from catalog_runtime_policy import materialize_network_properties
 import customer_instance_workspace_service as workspace_service
 import game_runtime,instance_runtime
@@ -118,11 +119,110 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
    context={'install_path':str(install),'content_root':str(install),'instance_state_root':str(state),'ports':{'game':{'port':24000,'protocol':'udp'},'game_aux':{'port':24002,'protocol':'udp'},'steam_query':{'port':24003,'protocol':'udp'}},'catalog_runtime_policy':policy}
    instance={'instance_id':'dayz-1','agent_id':'agent-1','game_id':'dayz','environment_id':'dayz.stable','runtime_id':'dayz.stable','desired_state':'stopped'}
    with patch.object(instance_runtime,'STATE_DIR',root/'agent-state'):
-    current=game_runtime.build_runtime_spec(config,instance,context);self.assertEqual(8,current['profile_version'])
-    old=dict(current);old['profile_version']=7;old['server_settings_values']={'server_name':'Migrated DayZ','max_players':32}
+    current=game_runtime.build_runtime_spec(config,instance,context);self.assertEqual(9,current['profile_version'])
+    old=dict(current);old['profile_version']=8;old['server_settings_values']={'server_name':'Migrated DayZ','max_players':32}
     migrated,changed=game_runtime.migrate_runtime_spec(config,old)
-   self.assertTrue(changed);self.assertEqual(8,migrated['profile_version']);self.assertEqual({'server_name':'Migrated DayZ','max_players':32},migrated['server_settings_values']);self.assertEqual({'server_name','max_players'},set(migrated['catalog_server_settings']['fields']))
+   self.assertTrue(changed);self.assertEqual(9,migrated['profile_version']);self.assertEqual({'server_name':'Migrated DayZ','max_players':32},migrated['server_settings_values']);self.assertEqual({'server_name','max_players'},set(migrated['catalog_server_settings']['fields']))
    cfg=Path(migrated['configuration_root'])/'serverDZ.cfg';cfg.parent.mkdir(parents=True,exist_ok=True);cfg.write_text('hostname = "Old"; // comment\nhostname = "Duplicate";\nmaxPlayers = 60; // comment\nmaxPlayers = 20;\n',encoding='utf-8');materialize_server_settings(migrated);text=cfg.read_text();self.assertEqual(1,text.count('hostname ='));self.assertEqual(1,text.count('maxPlayers ='));self.assertIn('hostname = "Migrated DayZ";',text);self.assertIn('maxPlayers = 32;',text)
+
+ def test_observed_dayz_surface_reads_real_parameters_and_protects_platform_fields(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);cfg=root/'serverDZ.cfg'
+   cfg.write_text('hostname = "First"; // Server name\npassword = "join-secret";\npasswordAdmin = "admin-secret";\ndescription = "A server";\nenableWhitelist = 0;\nmaxPlayers = 60;\nverifySignatures = 2;\ndisable3rdPerson = 0;\nserverTimeAcceleration = 12;\nsteamQueryPort = 27016;\nhostname = "Effective";\nmaxPlayers = 32;\n',encoding='utf-8')
+   spec={'configuration_root':str(root),'arguments':[],'environment_id':'dayz.stable','catalog_server_settings':declaration('dayz.stable'),'catalog_network_properties':[{'path':'serverDZ.cfg','key':'steamQueryPort','syntax':'semicolon'}]}
+   surface=observed_surface(spec);fields=surface['fields'];by_key={item['key']:item for item in fields}
+   self.assertEqual('Effective',by_key['hostname']['value']);self.assertEqual(32,by_key['maxPlayers']['value'])
+   self.assertEqual(1,sum(item.get('logical_id')=='server_name' for item in fields));self.assertEqual(1,sum(item.get('logical_id')=='max_players' for item in fields))
+   self.assertTrue(by_key['password']['secret']);self.assertIsNone(by_key['password']['value']);self.assertFalse(by_key['password']['editable']);self.assertTrue(by_key['password']['has_value'])
+   self.assertTrue(by_key['passwordAdmin']['secret']);self.assertFalse(by_key['passwordAdmin']['editable'])
+   self.assertFalse(by_key['steamQueryPort']['editable']);self.assertTrue(by_key['steamQueryPort']['managed'])
+   self.assertEqual(2,by_key['verifySignatures']['value']);self.assertTrue(by_key['verifySignatures']['editable'])
+   dynamic=normalize_dynamic_values(spec,{by_key['verifySignatures']['id']:1,by_key['disable3rdPerson']['id']:1})
+   updated=dict(spec);updated['server_settings_dynamic_values']=dynamic
+   self.assertEqual(['serverDZ.cfg'],materialize_dynamic_values(updated));text=cfg.read_text()
+   self.assertIn('verifySignatures = 1;',text);self.assertIn('disable3rdPerson = 1;',text)
+   with self.assertRaises(PermissionError):normalize_dynamic_values(spec,{by_key['steamQueryPort']['id']:24003})
+   with self.assertRaises(PermissionError):normalize_dynamic_values(spec,{'cfg-forged':1})
+
+ def test_dayz_extended_semantics_arrays_dependencies_and_comment_preservation(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);cfg=root/'serverDZ.cfg'
+   cfg.write_text('respawnTime = 5; // respawn delay\nmotd[] = { "line1","line2" }; // message of the day\nmotdInterval = 1; // seconds\nlogMemory = 1; // requires doLogs\nadminLogPlacement = 0; // admin log\nspeedhackDetection = 1; // 1-10 float\nnetworkObjectBatchBandwidthLimit = 0.8; // bandwidth\npingWarning = 200; // yellow\npingCritical = 250; // red\nMaxPing = 300; // kick\nserverFpsWarning = 15; // fps\nclientPort = 2304; // capivara\nsteamQueryPort = 2305; // capivara\n',encoding='utf-8')
+   spec={'configuration_root':str(root),'arguments':['-config=serverDZ.cfg'],'environment_id':'dayz.stable','catalog_server_settings':declaration('dayz.stable'),'catalog_network_properties':[{'path':'serverDZ.cfg','key':'clientPort','value':'24002','syntax':'semicolon'},{'path':'serverDZ.cfg','key':'steamQueryPort','value':'24003','syntax':'semicolon'}],'catalog_variables':{}}
+   fields={f['key']:f for f in observed_surface(spec)['fields']}
+   self.assertEqual(['line1','line2'],fields['motd[]']['value']);self.assertEqual('string_list',fields['motd[]']['type'])
+   self.assertEqual('number',fields['speedhackDetection']['type']);self.assertEqual(1,fields['speedhackDetection']['min']);self.assertEqual(10,fields['speedhackDetection']['max'])
+   self.assertEqual('number',fields['networkObjectBatchBandwidthLimit']['type']);self.assertFalse(fields['clientPort']['editable']);self.assertFalse(fields['steamQueryPort']['editable'])
+   self.assertEqual('-doLogs',fields['logMemory']['requires_argument']);self.assertEqual('-adminLog',fields['adminLogPlacement']['requires_argument'])
+   patch={fields['motd[]']['id']:['Welcome','No griefing'],fields['logMemory']['id']:2,fields['adminLogPlacement']['id']:True,fields['speedhackDetection']['id']:1.5,fields['networkObjectBatchBandwidthLimit']['id']:0.75,fields['pingWarning']['id']:180,fields['pingCritical']['id']:240,fields['MaxPing']['id']:300}
+   dynamic=normalize_dynamic_values(spec,patch);updated=dict(spec);updated['server_settings_dynamic_values']=dynamic;updated=apply_runtime_dependencies(updated)
+   self.assertIn('-doLogs',updated['arguments']);self.assertIn('-adminLog',updated['arguments']);materialize_dynamic_values(updated)
+   text=cfg.read_text();self.assertIn('motd[] = { "Welcome", "No griefing" }; // message of the day',text);self.assertIn('logMemory = 2; // requires doLogs',text);self.assertIn('adminLogPlacement = 1; // admin log',text);self.assertIn('speedhackDetection = 1.5; // 1-10 float',text);self.assertIn('networkObjectBatchBandwidthLimit = 0.75; // bandwidth',text)
+   materialize_network_properties(updated);text=cfg.read_text();self.assertIn('clientPort = 24002; // capivara',text);self.assertIn('steamQueryPort = 24003; // capivara',text)
+   with self.assertRaises(ValueError):normalize_dynamic_values(spec,{fields['pingWarning']['id']:260,fields['pingCritical']['id']:250,fields['MaxPing']['id']:300})
+   log_file_line='logFile = "server_console.log"; // log path\n';cfg.write_text(cfg.read_text()+log_file_line,encoding='utf-8');fields={f['key']:f for f in observed_surface(spec)['fields']}
+   with self.assertRaises(ValueError):normalize_dynamic_values(spec,{fields['logFile']['id']:'../escape.log'})
+   disabled=dict(updated);disabled['server_settings_dynamic_values']={fields['logMemory']['id']:0,fields['adminLogPlacement']['id']:False};disabled['server_settings_dependency_arguments']=['-doLogs','-adminLog'];disabled=apply_runtime_dependencies(disabled);self.assertNotIn('-doLogs',disabled['arguments']);self.assertNotIn('-adminLog',disabled['arguments'])
+
+ def test_observed_json_ini_xml_and_unreal_surfaces_round_trip_extra_fields(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td)
+   factorio=root/'factorio';factorio.mkdir();(factorio/'server-settings.json').write_text(json.dumps({'name':'Factory','max_players':10,'visibility':{'public':True},'autosave_interval':7}),encoding='utf-8')
+   spec={'configuration_root':str(factorio),'arguments':[],'environment_id':'factorio.stable','catalog_server_settings':declaration('factorio.stable')};surface=observed_surface(spec);extra=next(f for f in surface['fields'] if f['key']=='autosave_interval');updated=dict(spec);updated['server_settings_dynamic_values']=normalize_dynamic_values(spec,{extra['id']:11});materialize_dynamic_values(updated);self.assertEqual(11,json.loads((factorio/'server-settings.json').read_text())['autosave_interval'])
+
+   sat=root/'sat';sat.mkdir();(sat/'Game.ini').write_text('[/Script/Engine.GameSession]\nMaxPlayers=8\nExtraSetting=42\n[/Script/FactoryGame.FGSaveSession]\nmNumRotatingAutosaves=3\n',encoding='utf-8')
+   spec={'configuration_root':str(sat),'arguments':[],'environment_id':'satisfactory.stable','catalog_server_settings':declaration('satisfactory.stable')};surface=observed_surface(spec);extra=next(f for f in surface['fields'] if f['key']=='ExtraSetting');updated=dict(spec);updated['server_settings_dynamic_values']=normalize_dynamic_values(spec,{extra['id']:55});materialize_dynamic_values(updated);self.assertIn('ExtraSetting=55',(sat/'Game.ini').read_text())
+
+   seven=root/'seven';seven.mkdir();(seven/'serverconfig.xml').write_text('<ServerSettings><property name="ServerName" value="Seven"/><property name="ServerMaxPlayerCount" value="8"/><property name="DayNightLength" value="60"/></ServerSettings>',encoding='utf-8')
+   spec={'configuration_root':str(seven),'arguments':[],'environment_id':'sevendaystodie.stable','catalog_server_settings':declaration('sevendaystodie.stable')};surface=observed_surface(spec);extra=next(f for f in surface['fields'] if f['key']=='DayNightLength');updated=dict(spec);updated['server_settings_dynamic_values']=normalize_dynamic_values(spec,{extra['id']:90});materialize_dynamic_values(updated);self.assertIn('name="DayNightLength" value="90"',(seven/'serverconfig.xml').read_text())
+
+   pal=root/'pal';pal.mkdir();(pal/'PalWorldSettings.ini').write_text('[/Script/Pal.PalGameWorldSettings]\nOptionSettings=(ServerName="Pal",ServerPlayerMaxNum=12,RCONEnabled=True,DayTimeSpeedRate=1.000000)\n',encoding='utf-8')
+   spec={'configuration_root':str(pal),'arguments':[],'environment_id':'palworld.stable','catalog_server_settings':declaration('palworld.stable')};surface=observed_surface(spec);extra=next(f for f in surface['fields'] if f['key']=='DayTimeSpeedRate');updated=dict(spec);updated['server_settings_dynamic_values']=normalize_dynamic_values(spec,{extra['id']:2.5});materialize_dynamic_values(updated);self.assertIn('DayTimeSpeedRate=2.5',(pal/'PalWorldSettings.ini').read_text())
+
+ def test_observed_launcher_surface_uses_declared_types(self):
+  valheim={'configuration_root':'/tmp','arguments':['-name','Viking','-public','1'],'environment_id':'valheim.stable','catalog_server_settings':declaration('valheim.stable')}
+  fields={item['logical_id']:item for item in observed_surface(valheim)['fields']}
+  self.assertEqual('Viking',fields['server_name']['value']);self.assertIs(True,fields['public']['value']);self.assertEqual('boolean',fields['public']['type'])
+  ark={'configuration_root':'/tmp','arguments':['TheIsland_WP?Port=7777?QueryPort=27015?SessionName=ARK?MaxPlayers=24'],'environment_id':'arksurvivalascended.stable','catalog_server_settings':declaration('arksurvivalascended.stable')}
+  fields={item['logical_id']:item for item in observed_surface(ark)['fields']};self.assertEqual('ARK',fields['server_name']['value']);self.assertEqual(24,fields['max_players']['value'])
+
+ def test_windows_observed_surface_matches_linux_security_contract(self):
+  module_path=ROOT/'agents/windows/runtime/server_settings_surface.py';specmod=importlib.util.spec_from_file_location('windows_server_settings_surface_tested',module_path);module=importlib.util.module_from_spec(specmod);assert specmod and specmod.loader;specmod.loader.exec_module(module)
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);(root/'serverDZ.cfg').write_text('hostname="Win";\npassword="secret";\nmaxPlayers=20;\nsteamQueryPort=2305;\nverifySignatures=2;\n',encoding='utf-8')
+   spec={'configuration_root':str(root),'arguments':[],'environment_id':'dayz.stable','catalog_server_settings':declaration('dayz.stable'),'catalog_network_properties':[{'path':'serverDZ.cfg','key':'steamQueryPort','syntax':'semicolon'}]};surface=module.observed_surface(spec);by_key={f['key']:f for f in surface['fields']}
+   self.assertFalse(by_key['password']['editable']);self.assertIsNone(by_key['password']['value']);self.assertFalse(by_key['steamQueryPort']['editable'])
+   updated=dict(spec);updated['server_settings_dynamic_values']=module.normalize_dynamic_values(spec,{by_key['verifySignatures']['id']:1});module.materialize_dynamic_values(updated);self.assertRegex((root/'serverDZ.cfg').read_text(),r'verifySignatures\s*=\s*1;')
+
+ def test_observed_surface_masks_credentials_and_runtime_owned_network_values(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);ref=root/'reforger';ref.mkdir();(ref/'server.json').write_text(json.dumps({'bindPort':2001,'publicPort':2001,'game':{'name':'Ref','maxPlayers':16,'visible':True,'gameProperties':{'disableThirdPerson':False}},'extraGameplay':3}),encoding='utf-8')
+   spec={'configuration_root':str(ref),'arguments':[],'environment_id':'armareforger.stable','catalog_server_settings':declaration('armareforger.stable')};fields={f['key']:f for f in observed_surface(spec)['fields']};self.assertFalse(fields['bindPort']['editable']);self.assertFalse(fields['publicPort']['editable']);self.assertTrue(fields['extraGameplay']['editable'])
+   five=root/'five';five.mkdir();(five/'server.cfg').write_text('sv_hostname "Five"\nsv_licenseKey super-secret\nendpoint_add_udp "0.0.0.0:30120"\n',encoding='utf-8')
+   spec={'configuration_root':str(five),'arguments':[],'environment_id':'fivem.stable','catalog_server_settings':declaration('fivem.stable'),'catalog_network_properties':[{'path':'server.cfg','key':'endpoint_add_udp','syntax':'command'}]};fields={f['key']:f for f in observed_surface(spec)['fields']};self.assertTrue(fields['sv_licenseKey']['secret']);self.assertIsNone(fields['sv_licenseKey']['value']);self.assertFalse(fields['sv_licenseKey']['editable']);self.assertFalse(fields['endpoint_add_udp']['editable'])
+
+ def test_workspace_surface_maps_observed_ids_to_known_and_dynamic_desired_state(self):
+  dayz=declaration('dayz.stable');captured={};surface={'fields':[{'id':'known-name','logical_id':'server_name','type':'string','editable':True,'secret':False},{'id':'known-players','logical_id':'max_players','type':'integer','editable':True,'secret':False,'min':1,'max':200},{'id':'extra-signatures','logical_id':None,'type':'integer','editable':True,'secret':False},{'id':'managed-port','logical_id':None,'type':'integer','editable':False,'managed':True,'secret':False}]}
+  class ConfigRepo:
+   def __init__(self,backend):pass
+   def initialize(self):pass
+   def get(self,**kwargs):return {'value':{'runtime_id':'dayz.stable','settings':{},'dynamic_values':{},'declaration':dayz},'revision':1,'checksum':'old'}
+   def put(self,raw,updated_by=None):captured['value']=raw['value'];return {'configuration':{'revision':2,'checksum':'new'},'changed':True}
+  service=workspace_service.CustomerInstanceWorkspaceService.__new__(workspace_service.CustomerInstanceWorkspaceService);service.root=ROOT;service.backend=object();service.require=lambda user,iid,perm:{'game_id':'dayz','runtime_id':'dayz.stable'};service.repo=type('Repo',(),{'workspace_policy':lambda self,iid:{}})();service._resolved_resource_policy=lambda context,policy:{'player_limit':32};service.files=type('Files',(),{'snapshot':lambda self,cid:{'command_id':cid,'instance_id':'instance-1','action':'settings_surface','status':'completed','result':surface}})()
+  with patch.object(workspace_service,'runtime_workspace_capabilities',return_value={'server_settings':dayz}),patch.object(workspace_service,'ConfigurationRepository',ConfigRepo):
+   result=service.save_server_settings({'username':'owner'},'instance-1',{'known-name':'Observed DayZ','known-players':24,'extra-signatures':1},'surface-1')
+  self.assertEqual({'server_name':'Observed DayZ','max_players':24},captured['value']['settings']);self.assertEqual({'extra-signatures':1},captured['value']['dynamic_values']);self.assertEqual(32,captured['value']['player_limit']);self.assertTrue(result['changed'])
+  with patch.object(workspace_service,'runtime_workspace_capabilities',return_value={'server_settings':dayz}),patch.object(workspace_service,'ConfigurationRepository',ConfigRepo):
+   with self.assertRaises(ValueError):service.save_server_settings({'username':'owner'},'instance-1',{'known-players':33},'surface-1')
+   with self.assertRaises(PermissionError):service.save_server_settings({'username':'owner'},'instance-1',{'managed-port':24003},'surface-1')
+
+ def test_settings_surface_is_internal_and_does_not_require_file_manager_permission(self):
+  service=workspace_service.CustomerInstanceWorkspaceService.__new__(workspace_service.CustomerInstanceWorkspaceService);service.root=ROOT;service.require=lambda user,iid,perm:{'agent_id':'agent-1','game_id':'dayz','runtime_id':'dayz.stable'}
+  calls={}
+  class Files:
+   def enqueue(self,**kwargs):calls.update(kwargs);return {'command_id':'surface-1','status':'queued'}
+  service.files=Files();result=service.queue_server_settings_surface({'username':'owner'},'instance-1');self.assertEqual('surface-1',result['command_id']);self.assertEqual('settings_surface',calls['action']);self.assertIsNone(calls.get('path'));self.assertIn('server_name',calls['payload']['declaration']['fields'])
+  with self.assertRaises(ValueError):service.queue_file({'username':'owner'},'instance-1','settings_surface')
 
  def test_workspace_persists_canonical_declaration_and_merges_partial_values(self):
   dayz=declaration('dayz.stable');captured={}

@@ -79,6 +79,13 @@
       {
         "kind": "property",
         "file": "serverDZ.cfg",
+        "key": "clientPort",
+        "value": "{game_aux}",
+        "syntax": "semicolon"
+      },
+      {
+        "kind": "property",
+        "file": "serverDZ.cfg",
         "key": "steamQueryPort",
         "value": "{steam_query}",
         "syntax": "semicolon"

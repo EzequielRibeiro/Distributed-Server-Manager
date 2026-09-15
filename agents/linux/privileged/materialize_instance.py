@@ -20,6 +20,7 @@ if str(RUNTIME_DIR) not in sys.path:
 
 from catalog_runtime_policy import materialize_network_properties, materialize_templates
 from server_settings_runtime import materialize_server_settings
+from server_settings_surface import materialize_dynamic_values
 from materializers import resolve_materializer
 from runtime_spec import validate_runtime_spec
 from storage_pools import resolve_storage_pool
@@ -484,6 +485,7 @@ def run(instance_id: str) -> dict[str, Any]:
         templates = materialize_templates(spec)
         templates.extend(materialize_network_properties(spec))
         server_settings = materialize_server_settings(spec)
+        server_settings.extend(materialize_dynamic_values(spec))
         operation = materializer.apply(spec)
     elif action == "remove":
         operation = materializer.remove(spec)

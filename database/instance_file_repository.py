@@ -11,7 +11,7 @@ from alert_repository import AlertSession, dialect_for_backend
 
 VALID_ACTIONS = {
     "list", "usage", "read_text", "write_text", "download", "upload",
-    "mkdir", "delete", "rename", "move", "extract",
+    "mkdir", "delete", "rename", "move", "extract", "settings_surface",
 }
 FINAL_STATES = {"completed", "failed"}
 

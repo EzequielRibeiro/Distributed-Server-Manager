@@ -80,6 +80,7 @@ def _apply_runtime_secret(value,target_id):
 def _apply_server_settings(value,target_id):
  import instance_runtime,privileged_materialization
  from server_settings_runtime import prepare_spec
+ from server_settings_surface import apply_runtime_dependencies, normalize_dynamic_values
  record=instance_runtime.get_instance(target_id)
  if not isinstance(record,dict):raise LookupError(f"instance not found: {target_id}")
  settings=value.get("settings") if isinstance(value.get("settings"),dict) else value
@@ -87,7 +88,11 @@ def _apply_server_settings(value,target_id):
  runtime_id=str(value.get("runtime_id") or "").strip()
  current_runtime=str(record.get("environment_id") or "").strip()
  if runtime_id and current_runtime and runtime_id!=current_runtime:raise ValueError("server settings runtime does not match instance")
- agent_id=str(record.get("agent_id") or "").strip();config=_load_local_config(agent_id);updated=prepare_spec(record,settings,declaration=declaration);privileged_materialization.materialize(config,updated);return {"runtime_id":current_runtime,"settings":dict(updated.get("server_settings_values") or {}),"declaration":dict(updated.get("catalog_server_settings") or {})}
+ agent_id=str(record.get("agent_id") or "").strip();config=_load_local_config(agent_id);updated=prepare_spec(record,settings,declaration=declaration)
+ dynamic=value.get("dynamic_values") if isinstance(value.get("dynamic_values"),dict) else {}
+ updated["server_settings_dynamic_values"]=normalize_dynamic_values(updated,dynamic,player_limit=value.get("player_limit")) if dynamic else {};updated=apply_runtime_dependencies(updated)
+ privileged_materialization.materialize(config,updated)
+ return {"runtime_id":current_runtime,"settings":dict(updated.get("server_settings_values") or {}),"dynamic_values":dict(updated.get("server_settings_dynamic_values") or {}),"declaration":dict(updated.get("catalog_server_settings") or {})}
 def configuration_state():
  path=_root()/"state.json"
  try:payload=json.loads(path.read_text(encoding="utf-8"))
