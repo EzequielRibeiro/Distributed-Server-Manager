@@ -41,7 +41,9 @@ CREATE TABLE content_update_state (
  agent_id {text} NOT NULL, instance_id {text} NOT NULL, content_id {text} NOT NULL,
  provider VARCHAR(64) NOT NULL, content_type VARCHAR(64) NOT NULL, package_id {text}, installed_version {text}, available_version {text},
  state VARCHAR(32) NOT NULL DEFAULT 'unknown', detector_supported INTEGER NOT NULL DEFAULT 0, rollback_supported INTEGER NOT NULL DEFAULT 0,
- last_checked_at {ts}, last_error_code VARCHAR(128), last_error TEXT, dispatched_available_version {text}, dispatched_assignment_revision INTEGER,
+ last_checked_at {ts}, last_error_code VARCHAR(128), last_error TEXT,
+ dispatched_available_version {text}, dispatched_assignment_revision INTEGER,
+ dispatch_attempted_at {ts}, dispatch_attempted_version {text}, dispatch_attempted_assignment_revision INTEGER, dispatch_error TEXT,
  updated_at {ts} NOT NULL, PRIMARY KEY(agent_id,instance_id,content_id)
 ){engine};
 CREATE INDEX idx_content_update_state_instance ON content_update_state(instance_id,state);
