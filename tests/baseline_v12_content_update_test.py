@@ -1,40 +1,4 @@
 #!/usr/bin/env python3
-from pathlib import Path
-
-
-def replace_once(path: str, old: str, new: str) -> None:
-    target = Path(path)
-    text = target.read_text(encoding="utf-8")
-    if text.count(old) != 1:
-        raise SystemExit(f"expected exactly one anchor in {path}: {old[:80]!r}")
-    target.write_text(text.replace(old, new, 1), encoding="utf-8", newline="\n")
-
-
-engine = "database/baseline_upgrade_engine.py"
-replace_once(engine, "from server_update_schema import server_update_ddl\n", "from server_update_schema import content_update_ddl, server_update_ddl\n")
-replace_once(
-    engine,
-    '''SERVER_UPDATE_TABLES = {\n    "instance_update_policy",\n    "instance_update_state",\n    "instance_update_runs",\n}\n\n''',
-    '''SERVER_UPDATE_TABLES = {\n    "instance_update_policy",\n    "instance_update_state",\n    "instance_update_runs",\n}\n\nCONTENT_UPDATE_TABLES = {\n    "content_update_policy",\n    "content_update_state",\n}\n\n''',
-)
-replace_once(
-    engine,
-    '''    _execute_script(backend, connection, server_update_ddl(backend.name))\n\n\ndef _upgrade_backup_job_retry_identity''',
-    '''    _execute_script(backend, connection, server_update_ddl(backend.name))\n\n\ndef _upgrade_content_update_schema(backend: Any, connection: Any) -> None:\n    tables = _table_names(backend, connection)\n    present = CONTENT_UPDATE_TABLES & tables\n    if present == CONTENT_UPDATE_TABLES:\n        return\n    if present:\n        missing = sorted(CONTENT_UPDATE_TABLES - present)\n        raise DatabaseMigrationError(\n            "partial universal content update baseline upgrade; missing tables: "\n            + ", ".join(missing)\n        )\n    _execute_script(backend, connection, content_update_ddl(backend.name))\n    missing = sorted(CONTENT_UPDATE_TABLES - _table_names(backend, connection))\n    if missing:\n        raise DatabaseMigrationError(\n            "universal content update baseline upgrade incomplete; missing tables: "\n            + ", ".join(missing)\n        )\n\n\ndef _upgrade_backup_job_retry_identity''',
-)
-replace_once(
-    engine,
-    '''    BaselineUpgrade(11, "datacenter_geography_metadata", _upgrade_datacenter_geography),\n)''',
-    '''    BaselineUpgrade(11, "datacenter_geography_metadata", _upgrade_datacenter_geography),\n    BaselineUpgrade(12, "universal_content_update", _upgrade_content_update_schema),\n)''',
-)
-
-build = Path("release/build_release.sh")
-text = build.read_text(encoding="utf-8")
-start = text.index('"${PYTHON_BIN}" - "${PACKAGE_ROOT}/update-manager/process-guard.sh" <<\'PY\'\n')
-end = text.index('for relative_path in \\\n', start)
-build.write_text(text[:start] + text[end:], encoding="utf-8", newline="\n")
-
-Path("tests/baseline_v12_content_update_test.py").write_text(r'''#!/usr/bin/env python3
 from __future__ import annotations
 import json
 import sqlite3
@@ -117,15 +81,3 @@ class BaselineV12ContentUpdateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-''', encoding="utf-8", newline="\n")
-
-replace_once(
-    "tests/update_baseline_upgrade_path_test.py",
-    '                connection.execute("DELETE FROM baseline_upgrades WHERE version=11")\n',
-    '                connection.execute("DELETE FROM baseline_upgrades WHERE version>=11")\n',
-)
-replace_once(
-    "tests/update_baseline_upgrade_path_test.py",
-    '            self.assertEqual(payload["upgrade_version"], 11)\n            self.assertEqual(payload["upgrade_latest"], 11)\n',
-    '            self.assertEqual(payload["upgrade_version"], 12)\n            self.assertEqual(payload["upgrade_latest"], 12)\n',
-)
