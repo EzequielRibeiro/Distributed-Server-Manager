@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Controller API for universal game-server update policy and operations."""
+"""Controller API for universal server/content update policy and operations."""
 from __future__ import annotations
 from pathlib import Path
 from typing import Any
@@ -31,6 +31,11 @@ def configure_server_update(user,payload,*,backend,root:Path)->dict[str,Any]:
  repo=ServerUpdateRepository(backend);repo.initialize();snapshot=repo.set_policy(instance_id=str(instance['id']),agent_id=str(instance['agent_id']),selection=selection,policy=body.get('policy') if isinstance(body.get('policy'),dict) else {},requested_by=actor);job=repo.queue_check(str(instance['id']),requested_by=actor)
  return {'update':snapshot,'check_job_id':job['job_id']}
 
+def configure_content_update_policy(user,payload,*,backend)->dict[str,Any]:
+ actor=_require_admin(user);body=payload if isinstance(payload,dict) else {};instance=_instance(backend,body.get('instance_id'));cid=str(body.get('content_id') or '').strip()
+ if not cid or len(cid)>191:raise ValueError('valid content_id is required')
+ repo=ServerUpdateRepository(backend);repo.initialize();return {'content_update_policy':repo.set_content_policy(instance_id=str(instance['id']),content_id=cid,mode=body.get('mode'),requested_by=actor)}
+
 def server_update_status(user,instance_id,*,backend)->dict[str,Any]:
  _require_admin(user);_instance(backend,instance_id);repo=ServerUpdateRepository(backend);repo.initialize();return repo.snapshot(str(instance_id))
 
@@ -40,4 +45,4 @@ def server_update_operation(user,payload,*,backend)->dict[str,Any]:
  if action=='update':return repo.queue_update(str(instance['id']),requested_by=actor,trigger_type='manual')
  raise ValueError('action must be check or update')
 
-__all__=['configure_server_update','server_update_operation','server_update_status']
+__all__=['configure_content_update_policy','configure_server_update','server_update_operation','server_update_status']
