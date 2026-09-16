@@ -35,12 +35,16 @@ class InstanceRuntimeAdapter(ABC):
         raise NotImplementedError
 
     def broadcast(self, instance: dict[str, Any], message: str, *, priority: str = "normal") -> dict[str, Any]:
-        """Deliver a player-visible message or fail closed when unsupported.
-
-        Game-specific adapters may override this method. The Controller never sends
-        shell commands or RCON credentials through the universal broadcast contract.
-        """
+        """Deliver a player-visible message or fail closed when unsupported."""
         raise AdapterError(f"runtime adapter {self.name} does not support broadcast")
+
+    def save(self, instance: dict[str, Any]) -> dict[str, Any]:
+        """Persist live game state without accepting arbitrary console commands.
+
+        Game-specific adapters opt in by overriding this typed operation. M5 never
+        converts customer input into shell, RCON or console text.
+        """
+        raise AdapterError(f"runtime adapter {self.name} does not support save")
 
 
 __all__ = ["AdapterError", "InstanceRuntimeAdapter"]

@@ -79,9 +79,9 @@ class UniversalContentUpdatePolicyTest(unittest.TestCase):
    ddl=content_update_ddl(backend).lower()
    for field in ('dispatched_available_version','dispatched_assignment_revision','dispatch_attempted_at','dispatch_attempted_version','dispatch_attempted_assignment_revision','dispatch_error'):self.assertIn(field,ddl)
  def test_dispatcher_revalidates_canonical_assignment_identity(self):
-  text=(ROOT/'database/content_update_dispatch_repository.py').read_text(encoding='utf-8');worker=(ROOT/'dashboard/workers/content_update_worker.py').read_text(encoding='utf-8');supervisor=(ROOT/'dashboard/workers/worker.sh').read_text(encoding='utf-8')
+  text=(ROOT/'database/content_update_dispatch_repository.py').read_text(encoding='utf-8');worker=(ROOT/'dashboard/workers/content_update_worker.py').read_text(encoding='utf-8');validation=(ROOT/'dashboard/content_update_validation.py').read_text(encoding='utf-8');supervisor=(ROOT/'dashboard/workers/worker.sh').read_text(encoding='utf-8')
   self.assertIn('a.agent_id=u.agent_id',text);self.assertIn('a.provider=u.provider',text);self.assertIn("current['agent_id']",text);self.assertIn("current['provider']",text);self.assertIn("current['revision']",text);self.assertIn("state='update_available'",text)
-  self.assertIn("self.service.mutate(ACTOR,iid,cid,'update',{})",worker);self.assertIn('content update did not create a new canonical revision',worker);self.assertNotIn('self.service.content.put(',worker);self.assertIn('content_update_worker.py',supervisor)
+  self.assertIn("self.service.mutate(ACTOR,iid,cid,'update',{})",worker);self.assertIn('verify_content_update_revision',worker);self.assertIn('content update did not create a new canonical revision',validation);self.assertNotIn('self.service.content.put(',worker);self.assertIn('content_update_worker.py',supervisor)
 
 
 if __name__=='__main__':unittest.main()

@@ -76,7 +76,7 @@ def main()->int:
             assert repo.refresh_health(now=last_seen+timedelta(seconds=5))["agent-p4-windows"]=="offline"
             admin=AgentAdminRepository(backend);queued=admin.request_doctor("agent-p4-windows",requested_by="p4:windows-e2e");assert str(queued.get("status") or "").lower()=="queued"
             server=start_server(port,backend,cert,key);started=time.perf_counter();delivery=win_agent.heartbeat(enrolled);reconnect_rtt=round((time.perf_counter()-started)*1000,3);assert delivery.get("doctor_command") or str((delivery.get("doctor_state") or {}).get("status") or "").lower() in {"queued","running"}
-            win_agent.heartbeat(enrolled);latest=admin.latest_doctor("agent-p4-windows");assert str((latest or {}).get("status") or "").lower()=="completed";assert repo.snapshot("agent-p4-windows")["health_status"]=="online"
+            win_agent.heartbeat(enrolled);latest=admin.latest_doctor("agent-p4-windows");assert str((latest or {}).get("status") or "").lower()=="completed";win_agent.heartbeat(enrolled);assert repo.snapshot("agent-p4-windows")["health_status"]=="online"
             print(json.dumps({"status":"passed","platform":"windows","transport":"https","hostname_validation":"localhost","enroll_rtt_ms":enroll_rtt,"heartbeat_rtt_ms":first_rtt,"reconnect_rtt_ms":reconnect_rtt,"health_transition":["online","degraded","offline","online"],"queued_while_offline":True,"doctor_completed_after_reconnect":True},indent=2));return 0
         finally:
             if server is not None: server.shutdown();server.server_close()
