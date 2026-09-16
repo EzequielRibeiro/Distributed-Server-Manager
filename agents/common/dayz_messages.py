@@ -7,6 +7,8 @@ supplies only maintenance timing; it never supplies a path or raw XML.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import math
 import os
 from pathlib import Path
 import re
@@ -62,6 +64,38 @@ class DayZNativeRestartPlan:
             "deadline_minutes": self.message.deadline_minutes,
             "xml": self.xml,
         }
+
+
+def _utc(value: Any, label: str) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+        except (TypeError, ValueError) as exc:
+            raise DayZMessagesError(f"invalid {label}") from exc
+    if parsed.tzinfo is None:
+        raise DayZMessagesError(f"{label} must be timezone-aware")
+    return parsed.astimezone(timezone.utc)
+
+
+def deadline_minutes_for_due(due_at: Any, *, now: Any | None = None) -> int:
+    """Return DayZ countdown minutes for a stopped instance about to start.
+
+    ``messages.xml`` is treated as startup configuration.  The caller must
+    materialize it while the instance is stopped and start the server immediately
+    afterwards.  Rounding up prevents an early shutdown caused by sub-minute
+    Controller/Agent transport or lifecycle delay.
+    """
+    due = _utc(due_at, "due_at")
+    current = _utc(now if now is not None else datetime.now(timezone.utc), "now")
+    remaining = (due - current).total_seconds()
+    if remaining <= 0:
+        raise DayZMessagesError("DayZ native restart due_at must be in the future")
+    minutes = max(1, int(math.ceil(remaining / 60.0)))
+    if minutes > 10080:
+        raise DayZMessagesError("DayZ native restart due_at exceeds the 7 day countdown limit")
+    return minutes
 
 
 def _runtime_root(record: dict[str, Any]) -> Path:
@@ -150,7 +184,6 @@ def render_shutdown_messages_xml(message: DayZShutdownMessage, *, existing_xml: 
             raise DayZMessagesError("existing messages.xml root must be <messages>")
     else:
         root = ET.Element("messages")
-    # Only replace the Capivara-owned entry; community messages remain intact.
     for node in list(root.findall("message")):
         if str(node.findtext("text") or "").strip() == MANAGED_TEXT:
             root.remove(node)
@@ -178,11 +211,6 @@ def native_restart_plan(record: dict[str, Any], deadline_minutes: int, *, existi
 
 
 def materialize_shutdown_messages_xml(path: Path, message: DayZShutdownMessage, *, existing_xml: str | None = None) -> Path:
-    """Atomically materialize a prevalidated local target.
-
-    The M6 command path must call ``native_restart_plan`` first and must not take
-    this path from Controller/browser input.
-    """
     target = Path(path)
     if target.name.lower() != "messages.xml":
         raise DayZMessagesError("target must be messages.xml")
@@ -224,6 +252,7 @@ __all__ = [
     "DayZNativeRestartPlan",
     "DayZShutdownMessage",
     "MANAGED_TEXT",
+    "deadline_minutes_for_due",
     "materialize_shutdown_messages_xml",
     "native_restart_plan",
     "render_shutdown_messages_xml",
