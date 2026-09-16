@@ -1,0 +1,47 @@
+name: DayZ Native Restart
+
+on:
+  pull_request:
+    paths:
+      - 'agents/common/dayz_messages.py'
+      - 'tests/dayz_native_messages_test.py'
+      - '.github/workflows/dayz-native-restart.yml'
+      - 'catalog/v2/games/dayz/**'
+      - 'catalog/v2/schemas/runtime-definition.schema.json'
+      - 'dashboard/workers/maintenance_worker.py'
+      - 'agents/linux/runtime/**'
+      - 'agents/windows/runtime/**'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/common/dayz_messages.py'
+      - 'tests/dayz_native_messages_test.py'
+      - '.github/workflows/dayz-native-restart.yml'
+      - 'catalog/v2/games/dayz/**'
+      - 'catalog/v2/schemas/runtime-definition.schema.json'
+      - 'dashboard/workers/maintenance_worker.py'
+      - 'agents/linux/runtime/**'
+      - 'agents/windows/runtime/**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax
+        run: python3 -m py_compile agents/common/dayz_messages.py tests/dayz_native_messages_test.py
+      - name: Run DayZ native messages tests
+        run: python3 -m unittest tests/dayz_native_messages_test.py
+      - name: Enforce native shutdown contract
+        run: |
+          grep -q 'deadline_minutes' agents/common/dayz_messages.py
+          grep -q 'shutdown' agents/common/dayz_messages.py
+          grep -q '#tmin' tests/dayz_native_messages_test.py
+          if grep -RInE '(shell=True|os\.system\(|subprocess\..*shell *= *True)' agents/common/dayz_messages.py; then
+            echo 'Arbitrary shell execution is forbidden in M6 native restart materialization.' >&2
+            exit 1
+          fi
