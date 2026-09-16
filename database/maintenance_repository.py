@@ -99,6 +99,13 @@ class MaintenanceRepository:
   ph=self.dialect.placeholder;stamp=utc_timestamp();payload=json.dumps(event,separators=(',',':'),sort_keys=True)
   with self.session(transaction=True) as session:session.execute(f"UPDATE instance_maintenance_runs SET event_json={ph},stage=CASE WHEN stage='planning' THEN 'warning' ELSE stage END,updated_at={ph} WHERE run_id={ph} AND (event_json='{{}}' OR event_json IS NULL)",(payload,stamp,run_id))
   return self.run(run_id)
+ def update_event(self,run_id:str,event:dict[str,Any],*,stage:str|None=None)->dict[str,Any]:
+  if not isinstance(event,dict) or event.get('kind')!='CapivaraMaintenanceEvent':raise ValueError('valid maintenance event is required')
+  ph=self.dialect.placeholder;stamp=utc_timestamp();payload=json.dumps(event,separators=(',',':'),sort_keys=True)
+  with self.session(transaction=True) as session:
+   if stage is None:session.execute(f'UPDATE instance_maintenance_runs SET event_json={ph},updated_at={ph} WHERE run_id={ph} AND status IN (\'pending\',\'running\')',(payload,stamp,run_id))
+   else:session.execute(f'UPDATE instance_maintenance_runs SET event_json={ph},stage={ph},updated_at={ph} WHERE run_id={ph} AND status IN (\'pending\',\'running\')',(payload,str(stage)[:32],stamp,run_id))
+  return self.run(run_id)
  def record_warning(self,run_id:str,offset:int,broadcast_id:str)->dict[str,Any]:
   run=self.run(run_id);sent={int(v) for v in run['warnings_sent']};sent.add(int(offset));broadcasts=dict(run['broadcast_ids']);broadcasts[str(int(offset))]=str(broadcast_id);ph=self.dialect.placeholder;stamp=utc_timestamp()
   with self.session(transaction=True) as session:session.execute(f'UPDATE instance_maintenance_runs SET warnings_sent_json={ph},broadcast_ids_json={ph},updated_at={ph} WHERE run_id={ph}',(json.dumps(sorted(sent,reverse=True),separators=(',',':')),json.dumps(broadcasts,separators=(',',':'),sort_keys=True),stamp,run_id))
