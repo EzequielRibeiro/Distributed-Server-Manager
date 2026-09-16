@@ -61,6 +61,7 @@ class SystemdAdapter(InstanceRuntimeAdapter):
                 "--property=LoadState",
                 "--property=ActiveState",
                 "--property=SubState",
+                "--property=ActiveEnterTimestamp",
                 "--no-pager",
             ],
             10,
@@ -80,6 +81,7 @@ class SystemdAdapter(InstanceRuntimeAdapter):
             "load_state": load_state,
             "active_state": active_state,
             "sub_state": sub_state,
+            "active_enter_timestamp": values.get("ActiveEnterTimestamp") or None,
             "running": active_state == "active",
             "error": stderr[:2000] or None,
         }
