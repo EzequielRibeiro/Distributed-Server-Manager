@@ -10,7 +10,10 @@ from instance_creation_http import (
     INSTANCE_CREATE_PATH,
     dispatch_instance_create_post,
 )
-from instance_creation_feedback import record_instance_creation_failure
+from instance_creation_feedback import (
+    record_instance_creation_failure,
+    record_instance_creation_success,
+)
 
 
 legacy = integration.legacy
@@ -65,6 +68,12 @@ def integrated_post(self):
         contract_resolver=_contract_for_request,
         failure_reporter=lambda failure: record_instance_creation_failure(
             failure,
+            root=legacy.DSM_ROOT,
+            backend=legacy.dashboard_repository(legacy.DATABASE_FILE).backend,
+            notify=legacy.notify,
+        ),
+        success_reporter=lambda success: record_instance_creation_success(
+            success,
             root=legacy.DSM_ROOT,
             backend=legacy.dashboard_repository(legacy.DATABASE_FILE).backend,
             notify=legacy.notify,

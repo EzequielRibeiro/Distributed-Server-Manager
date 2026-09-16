@@ -82,6 +82,7 @@ def dispatch_instance_create_post(
     contract_resolver: Callable[[dict[str, Any] | None, str], str | None] | None = None,
     log: Callable[[str], None] | None = None,
     failure_reporter: Callable[[dict[str, Any]], None] | None = None,
+    success_reporter: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[int, dict[str, Any]] | None:
     """Handle ``POST /api/instance/create`` without leaking domain failures."""
 
@@ -93,6 +94,7 @@ def dispatch_instance_create_post(
 
     try:
         result = create_instance(user, payload)
+        _report_success(success_reporter, user, payload, result)
         return 201, result
 
     except PlacementUnavailable as exc:
@@ -103,7 +105,14 @@ def dispatch_instance_create_post(
             contract_resolver=contract_resolver,
             log=log,
         )
-        _report_failure(failure_reporter, user, payload, "placement_unavailable", str(exc))
+        _report_failure(
+            failure_reporter,
+            user,
+            payload,
+            "placement_unavailable",
+            str(exc),
+            placement_error=exc,
+        )
         return 409, {
             "error": "placement_unavailable",
             "message": PLACEMENT_UNAVAILABLE_MESSAGE,
@@ -132,21 +141,57 @@ def dispatch_instance_create_post(
         }
 
 
-def _report_failure(reporter, user, payload, code: str, reason: str) -> None:
+def _report_failure(
+    reporter, user, payload, code: str, reason: str,
+    *, placement_error: PlacementUnavailable | None = None,
+) -> None:
     if reporter is None:
         return
+    runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
+    placement = payload.get("placement") if isinstance(payload.get("placement"), dict) else {}
+    failure = {
+        "code": code,
+        "reason": reason,
+        "username": None if not user else user.get("username"),
+        "customer_id": None if not user else user.get("scope_id"),
+        "contract_id": str(payload.get("contract_id") or "").strip() or None,
+        "game": str(payload.get("game") or "").strip().lower() or None,
+        "runtime_id": str(payload.get("runtime_id") or runtime.get("id") or "").strip() or None,
+        "placement": placement,
+    }
+    if placement_error is not None:
+        failure.update({
+            "placement_reason": placement_error.reason,
+            "region_id": placement_error.requested_region_id or _requested_region(payload),
+            "agents_evaluated": int(placement_error.agents_evaluated),
+            "technical_rejections": dict(placement_error.technical_rejections or {}),
+        })
+    try:
+        reporter(failure)
+    except Exception:
+        _LOGGER.exception("could not persist instance creation failure")
+
+
+def _report_success(reporter, user, payload, result) -> None:
+    if reporter is None:
+        return
+    runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
+    placement = payload.get("placement") if isinstance(payload.get("placement"), dict) else {}
     try:
         reporter({
-            "code": code,
-            "reason": reason,
             "username": None if not user else user.get("username"),
             "customer_id": None if not user else user.get("scope_id"),
             "contract_id": str(payload.get("contract_id") or "").strip() or None,
             "game": str(payload.get("game") or "").strip().lower() or None,
-            "placement": payload.get("placement") if isinstance(payload.get("placement"), dict) else {},
+            "runtime_id": str(payload.get("runtime_id") or runtime.get("id") or "").strip() or None,
+            "placement": placement,
+            "instance_id": (
+                str((result or {}).get("instance_id") or "").strip() or None
+                if isinstance(result, dict) else None
+            ),
         })
     except Exception:
-        _LOGGER.exception("could not persist instance creation failure")
+        _LOGGER.exception("could not persist instance creation recovery")
 
 
 __all__ = [

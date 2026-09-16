@@ -18,6 +18,7 @@ from customer_health_service import CustomerHealthService
 class _Alerts:
     rows = []
     current = None
+    history_events = []
 
     def __init__(self, _backend):
         pass
@@ -33,10 +34,23 @@ class _Alerts:
             "instance_id": kwargs.get("instance_id"), "rule_id": kwargs["rule_id"], "level": kwargs["level"],
             "state": "OPEN", "message": kwargs["message"], "action": "OPEN",
         }
+        self.history_events.append({
+            "action": "OPEN",
+            "message": kwargs["message"],
+            "created_at": "2026-09-15T20:50:00Z",
+        })
         return dict(self.current)
 
     def alert_history(self, _alert_id):
-        return [{"action": "OPEN"}]
+        return [dict(item) for item in self.history_events]
+
+    def note_alert(self, _alert_id, note):
+        self.history_events.append({
+            "action": "NOTE",
+            "message": note,
+            "created_at": f"2026-09-15T20:5{len(self.history_events)}:00Z",
+        })
+        return dict(self.current)
 
     def acknowledge_alert(self, alert_id):
         value = dict(self.current); value["id"] = alert_id; value["state"] = "ACKNOWLEDGED"; return value
@@ -63,6 +77,7 @@ class CustomerHealthAlertingTest(unittest.TestCase):
     def setUp(self):
         _Alerts.current = None
         _Alerts.rows = []
+        _Alerts.history_events = []
         _Events.published = []
         self.backend = object()
 
@@ -106,6 +121,44 @@ class CustomerHealthAlertingTest(unittest.TestCase):
         self.assertEqual(event["correlation_id"], "corr-1")
         self.assertEqual(event["data"]["customer_id"], "42")
         self.assertNotIn("dedupe_key", event["data"])
+
+    def test_admin_details_are_persistent_deduped_and_not_in_public_alert_message(self):
+        with patch("customer_health_repository.AlertRepository", _Alerts), \
+             patch("customer_health_service.UniversalEventRepository", _Events):
+            service = CustomerHealthService(self.backend)
+            kwargs = dict(
+                customer_id="42",
+                controller_id="controller-a",
+                dedupe_key="instance-placement:42:contract-1:minecraft.java.neoforge:br-sp",
+                event_type="CUSTOMER_INSTANCE_PLACEMENT_BLOCKED",
+                severity="WARNING",
+                safe_code="instance_placement_blocked",
+                message="Provisionamento bloqueado para NeoForge em br-sp.",
+                contract_id="contract-1",
+            )
+            first = service.failure(**kwargs, admin_details={
+                "runtime_id": "minecraft.java.neoforge",
+                "region_id": "br-sp",
+                "agents_evaluated": 2,
+                "technical_rejections": [{
+                    "agent_id": "agent-1",
+                    "reasons": ["unsupported_runtime_profile"],
+                }],
+            })
+            second = service.failure(**kwargs, admin_details={
+                "runtime_id": "minecraft.java.neoforge",
+                "region_id": "br-sp",
+                "agents_evaluated": 2,
+                "technical_rejections": [{
+                    "agent_id": "agent-1",
+                    "reasons": ["unsupported_runtime_profile"],
+                }],
+            })
+        self.assertEqual(first["id"], second["id"])
+        self.assertEqual(second["admin_details"]["occurrence_count"], 2)
+        self.assertEqual(second["admin_details"]["runtime_id"], "minecraft.java.neoforge")
+        self.assertNotIn("unsupported_runtime_profile", second["message"])
+        self.assertEqual(_Events.published[-1]["event_type"], "CUSTOMER_INSTANCE_PLACEMENT_BLOCKED")
 
     def test_dashboard_composition_installs_customer_health_without_baseline_change(self):
         server = (ROOT / "dashboard" / "server_part17.py").read_text(encoding="utf-8")

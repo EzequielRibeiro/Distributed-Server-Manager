@@ -80,6 +80,37 @@ class InstanceCreationHttpTest(unittest.TestCase):
         self.assertNotIn("agent-internal-1", json.dumps(result[1]))
         self.assertNotIn("unsupported_runtime_profile", json.dumps(result[1]))
 
+    def test_placement_failure_reporter_receives_internal_diagnostics(self):
+        failures = []
+
+        def create_instance(user, payload):
+            raise PlacementUnavailable(
+                reason="requested_region_unavailable",
+                agents_evaluated=2,
+                requested_region_id="br-se",
+                technical_rejections={"agent-1": ["unsupported_runtime_profile"]},
+            )
+
+        status, body = dispatch_instance_create_post(
+            "/api/instance/create",
+            self.payload,
+            user=self.user,
+            create_instance=create_instance,
+            failure_reporter=failures.append,
+        )
+
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"], "placement_unavailable")
+        self.assertEqual(failures[0]["runtime_id"], "dayz.stable")
+        self.assertEqual(failures[0]["placement_reason"], "requested_region_unavailable")
+        self.assertEqual(failures[0]["region_id"], "br-se")
+        self.assertEqual(failures[0]["agents_evaluated"], 2)
+        self.assertEqual(
+            failures[0]["technical_rejections"],
+            {"agent-1": ["unsupported_runtime_profile"]},
+        )
+        self.assertNotIn("technical_rejections", body)
+
     def test_unexpected_runtime_error_never_escapes_http_boundary(self):
         def create_instance(user, payload):
             raise RuntimeError("internal placement detail")
@@ -104,6 +135,22 @@ class InstanceCreationHttpTest(unittest.TestCase):
         )
         self.assertEqual(status, 201)
         self.assertEqual(body["instance_id"], "srv-001")
+
+    def test_success_reporter_receives_recovery_identity(self):
+        successes = []
+        status, body = dispatch_instance_create_post(
+            "/api/instance/create",
+            self.payload,
+            user=self.user,
+            create_instance=lambda user, payload: {"instance_id": "srv-001"},
+            success_reporter=successes.append,
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(body["instance_id"], "srv-001")
+        self.assertEqual(successes[0]["customer_id"], "customer-001")
+        self.assertEqual(successes[0]["runtime_id"], "dayz.stable")
+        self.assertEqual(successes[0]["placement"], {"region_id": "br-se"})
+        self.assertEqual(successes[0]["instance_id"], "srv-001")
 
     def test_permission_error_is_controlled(self):
         failures = []

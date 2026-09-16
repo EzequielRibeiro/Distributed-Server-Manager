@@ -66,9 +66,17 @@ def choose_agent_for_instance(
         rows = [row for row in rows if str(row["agent_id"]) == required_agent_id]
 
     health = AgentRuntimeRepository(backend).refresh_health(controller_id=controller_id)
-    rows = [row for row in rows if health.get(str(row["agent_id"]), "online") == "online"]
-
     technical_rejections: dict[str, list[str]] = {}
+    online_rows: list[dict[str, Any]] = []
+    for row in rows:
+        agent_id = str(row["agent_id"])
+        health_status = str(health.get(agent_id, "online") or "online").strip().lower()
+        if health_status == "online":
+            online_rows.append(row)
+        else:
+            technical_rejections[agent_id] = [f"agent_not_online:{health_status}"]
+    rows = online_rows
+
     eligible_rows: list[dict[str, Any]] = []
     for row in rows:
         result = evaluate_agent_for_placement(

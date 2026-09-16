@@ -13,6 +13,7 @@ _ALLOWED_EVENT_TYPES = {
     "CUSTOMER_SERVICE_DEGRADED",
     "CUSTOMER_INSTANCE_ACTION_FAILED",
     "CUSTOMER_PLACEMENT_FAILED",
+    "CUSTOMER_INSTANCE_PLACEMENT_BLOCKED",
     "CUSTOMER_ERROR_RESOLVED",
 }
 _ALLOWED_SEVERITIES = {"INFO", "WARNING", "ERROR", "CRITICAL"}
@@ -56,6 +57,7 @@ class CustomerHealthService:
         correlation_id: str | None = None,
         root_type: str | None = None,
         root_id: str | None = None,
+        admin_details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         event_type = str(event_type).upper()
         severity = str(severity).upper()
@@ -74,6 +76,14 @@ class CustomerHealthService:
             message=safe_message,
             instance_id=instance_id,
         )
+        if isinstance(admin_details, dict) and admin_details:
+            try:
+                incident["admin_details"] = self.incidents.record_admin_detail(
+                    str(incident.get("id") or incident_id_for(dedupe_key)),
+                    admin_details,
+                )
+            except Exception:
+                pass
         data = _event_data(
             customer_id=customer_id,
             incident_id=incident.get("id") or incident.get("alert_id") or incident_id_for(dedupe_key),
@@ -127,7 +137,10 @@ class CustomerHealthService:
                 "correlation_id": correlation_id,
                 "actor_type": actor_role or "system",
                 "actor_id": actor_id,
-                "data": _event_data(customer_id=customer_id, incident_id=incident.get("id") or incident_id_for(dedupe_key)),
+                "data": _event_data(
+                    customer_id=customer_id,
+                    incident_id=incident.get("id") or incident_id_for(dedupe_key),
+                ),
             })
         except Exception:
             pass
