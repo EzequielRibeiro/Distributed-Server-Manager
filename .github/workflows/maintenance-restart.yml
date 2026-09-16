@@ -11,9 +11,16 @@ on:
       - 'dashboard/runtime_workspace_catalog.py'
       - 'dashboard/content_update_validation.py'
       - 'dashboard/maintenance_content_coordinator.py'
+      - 'dashboard/customer_maintenance_workspace.py'
+      - 'dashboard/customer_maintenance_http.py'
+      - 'dashboard/server_part20.py'
+      - 'dashboard/static_asset_policy.py'
+      - 'dashboard/web/customer-maintenance.js'
+      - 'dashboard/web/customer-content-update-policy.js'
       - 'dashboard/workers/content_update_worker.py'
       - 'dashboard/workers/maintenance_worker.py'
       - 'dashboard/workers/worker.sh'
+      - 'systemd/dsm-dashboard.service'
       - 'agents/linux/runtime/content_client.py'
       - 'agents/linux/runtime/content_activation_apply.py'
       - 'agents/linux/runtime/instance_runtime.py'
@@ -22,6 +29,7 @@ on:
       - 'agents/windows/runtime/adapters/base.py'
       - 'tests/maintenance_restart_framework_test.py'
       - 'tests/maintenance_content_coalescing_test.py'
+      - 'tests/customer_maintenance_policy_surface_test.py'
       - '.github/workflows/maintenance-restart.yml'
   push:
     branches: [main]
@@ -35,15 +43,23 @@ on:
       - 'dashboard/runtime_workspace_catalog.py'
       - 'dashboard/content_update_validation.py'
       - 'dashboard/maintenance_content_coordinator.py'
+      - 'dashboard/customer_maintenance_workspace.py'
+      - 'dashboard/customer_maintenance_http.py'
+      - 'dashboard/server_part20.py'
+      - 'dashboard/static_asset_policy.py'
+      - 'dashboard/web/customer-maintenance.js'
+      - 'dashboard/web/customer-content-update-policy.js'
       - 'dashboard/workers/content_update_worker.py'
       - 'dashboard/workers/maintenance_worker.py'
       - 'dashboard/workers/worker.sh'
+      - 'systemd/dsm-dashboard.service'
       - 'agents/linux/runtime/instance_runtime.py'
       - 'agents/linux/runtime/adapters/base.py'
       - 'agents/windows/runtime/instance_runtime.py'
       - 'agents/windows/runtime/adapters/base.py'
       - 'tests/maintenance_restart_framework_test.py'
       - 'tests/maintenance_content_coalescing_test.py'
+      - 'tests/customer_maintenance_policy_surface_test.py'
 permissions:
   contents: read
 jobs:
@@ -54,12 +70,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate syntax
         run: |
-          python3 -m py_compile core/maintenance_platform.py database/maintenance_schema.py database/maintenance_repository.py database/content_update_dispatch_repository.py database/agent_instance_runtime_repository.py database/schema_baseline.py dashboard/runtime_workspace_catalog.py dashboard/content_update_validation.py dashboard/maintenance_content_coordinator.py dashboard/workers/content_update_worker.py dashboard/workers/maintenance_worker.py agents/linux/runtime/instance_runtime.py agents/linux/runtime/adapters/base.py agents/windows/runtime/instance_runtime.py agents/windows/runtime/adapters/base.py tests/maintenance_restart_framework_test.py tests/maintenance_content_coalescing_test.py
+          python3 -m py_compile core/maintenance_platform.py database/maintenance_schema.py database/maintenance_repository.py database/content_update_dispatch_repository.py database/agent_instance_runtime_repository.py database/schema_baseline.py dashboard/runtime_workspace_catalog.py dashboard/content_update_validation.py dashboard/maintenance_content_coordinator.py dashboard/customer_maintenance_workspace.py dashboard/customer_maintenance_http.py dashboard/server_part20.py dashboard/workers/content_update_worker.py dashboard/workers/maintenance_worker.py agents/linux/runtime/instance_runtime.py agents/linux/runtime/adapters/base.py agents/windows/runtime/instance_runtime.py agents/windows/runtime/adapters/base.py tests/maintenance_restart_framework_test.py tests/maintenance_content_coalescing_test.py tests/customer_maintenance_policy_surface_test.py
+          node --check dashboard/web/customer-maintenance.js
+          node --check dashboard/web/customer-content-update-policy.js
           bash -n dashboard/workers/worker.sh
       - name: Run M5 framework tests
         run: |
           python3 -m unittest tests/maintenance_restart_framework_test.py
           python3 -m unittest tests/maintenance_content_coalescing_test.py
+          python3 -m unittest tests/customer_maintenance_policy_surface_test.py
       - name: Validate integration wiring
         run: |
           grep -F 'start_python_worker maintenance_worker.py' dashboard/workers/worker.sh
@@ -76,8 +95,14 @@ jobs:
           grep -F 'due_for_maintenance' database/content_update_dispatch_repository.py
           grep -F 'MaintenanceContentCoordinator' dashboard/workers/maintenance_worker.py
           grep -F 'verify_content_update_revision' dashboard/workers/content_update_worker.py
+          grep -F 'install_customer_maintenance_http' dashboard/server_part20.py
+          grep -F 'server_part20.py' systemd/dsm-dashboard.service
+          grep -F '/api/customer/instance/workspace/maintenance' dashboard/web/customer-maintenance.js
       - name: Enforce typed maintenance security contract
         run: |
-          ! grep -R -E 'shell=True|os\.system\(' core/maintenance_platform.py dashboard/maintenance_content_coordinator.py dashboard/workers/maintenance_worker.py agents/linux/runtime/instance_runtime.py agents/windows/runtime/instance_runtime.py
+          ! grep -R -E 'shell=True|os\.system\(' core/maintenance_platform.py dashboard/maintenance_content_coordinator.py dashboard/customer_maintenance_workspace.py dashboard/customer_maintenance_http.py dashboard/workers/maintenance_worker.py agents/linux/runtime/instance_runtime.py agents/windows/runtime/instance_runtime.py
           grep -F 'def save(' agents/linux/runtime/adapters/base.py
           grep -F 'def save(' agents/windows/runtime/adapters/base.py
+          grep -F 'self.workspace.require(user,instance_id,"instance.restart")' dashboard/customer_maintenance_workspace.py
+          grep -F 'self.workspace.require(user,instance_id,"settings.write")' dashboard/customer_maintenance_workspace.py
+          ! grep -F 'innerHTML' dashboard/web/customer-maintenance.js
