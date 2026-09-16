@@ -72,6 +72,8 @@ class ContentUpdateDispatchRepository:
   result=[]
   for row in self._rows(limit=max(limit,500),instance_id=str(instance_id)):
    if not self._undispatched(row):continue
+   override=normalize_content_update_mode(row.get('override_mode') or 'inherit')
+   if override=='maintenance' and not row.get('instance_mode'):continue
    try:_,mode=self._policy(row)
    except Exception:continue
    if not self._coalesced(row,mode):continue
