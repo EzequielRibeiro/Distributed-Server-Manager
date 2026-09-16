@@ -7,11 +7,12 @@ from typing import Any,Mapping
 from content_repository import ContentRepository
 from instance_workspace_repository import InstanceWorkspaceRepository
 from minecraft_content_resolver import resolve_minecraft_content
+from minecraft_modpack_update_resolver import resolve_minecraft_modpack_update
 from runtime_workspace_catalog import runtime_definition
 from server_update_repository import ServerUpdateRepository
 
 _STRUCTURED_PROVIDERS=frozenset({'modrinth','curseforge'})
-_SUPPORTED_TYPES=frozenset({'mod','plugin'})
+_SUPPORTED_TYPES=frozenset({'mod','plugin','modpack'})
 
 
 def _artifact_revision(artifact:Mapping[str,Any]|None)->str:
@@ -22,7 +23,13 @@ def _artifact_revision(artifact:Mapping[str,Any]|None)->str:
 
 
 def _project_reference(item:Mapping[str,Any])->str:
- provenance=item.get('provenance') if isinstance(item.get('provenance'),Mapping) else {};marker=provenance.get('minecraft_provider') if isinstance(provenance.get('minecraft_provider'),Mapping) else {};value=str(marker.get('project_id') or '').strip()
+ ctype=str(item.get('content_type') or '').strip().lower();metadata=item.get('metadata') if isinstance(item.get('metadata'),Mapping) else {};provenance=item.get('provenance') if isinstance(item.get('provenance'),Mapping) else {}
+ if ctype=='modpack':
+  marker=metadata.get('minecraft_modpack') if isinstance(metadata.get('minecraft_modpack'),Mapping) else {};value=str(marker.get('provider_project_id') or '').strip()
+  if not value:
+   marker=provenance.get('minecraft_modpack') if isinstance(provenance.get('minecraft_modpack'),Mapping) else {};value=str(marker.get('project_id') or '').strip()
+ else:
+  marker=provenance.get('minecraft_provider') if isinstance(provenance.get('minecraft_provider'),Mapping) else {};value=str(marker.get('project_id') or '').strip()
  if value:return value
  package=str((item.get('artifact') or {}).get('package_id') or '').strip()
  return package.split(':',1)[0] if ':' in package else package
@@ -34,8 +41,8 @@ def _bundle_child(item:Mapping[str,Any])->bool:
 
 
 class ControllerContentUpdateDetector:
- def __init__(self,backend,root:Path,*,content=None,instances=None,state=None,resolver=None,interval_seconds:int=900):
-  self.backend=backend;self.root=Path(root);self.content=content or ContentRepository(backend);self.instances=instances or InstanceWorkspaceRepository(backend);self.state=state or ServerUpdateRepository(backend);self.resolver=resolver or resolve_minecraft_content;self.interval_seconds=max(60,min(int(interval_seconds),86400));self._last_scan_monotonic=0.0
+ def __init__(self,backend,root:Path,*,content=None,instances=None,state=None,resolver=None,modpack_resolver=None,interval_seconds:int=900):
+  self.backend=backend;self.root=Path(root);self.content=content or ContentRepository(backend);self.instances=instances or InstanceWorkspaceRepository(backend);self.state=state or ServerUpdateRepository(backend);self.resolver=resolver or resolve_minecraft_content;self.modpack_resolver=modpack_resolver or resolve_minecraft_modpack_update;self.interval_seconds=max(60,min(int(interval_seconds),86400));self._last_scan_monotonic=0.0
   self.content.initialize();self.instances.initialize();self.state.initialize()
  def scan(self,*,limit:int=500,force:bool=False)->dict[str,int]:
   now=time.monotonic()
@@ -55,10 +62,13 @@ class ControllerContentUpdateDetector:
     if not definition:raise ValueError('runtime definition is unavailable')
     project=_project_reference(item)
     if not project:raise ValueError('provider project identity is unavailable')
-    resolved=self.resolver(provider,project,game_version,definition,ctype);candidate=resolved.get('artifact') if isinstance(resolved,Mapping) else None
-    installed_revision=_artifact_revision(item.get('artifact') if isinstance(item.get('artifact'),Mapping) else {});candidate_revision=_artifact_revision(candidate if isinstance(candidate,Mapping) else {})
+    if ctype=='modpack':
+     identity=self.modpack_resolver(provider,project,game_version,definition);candidate={'provider':provider,'package_id':str(identity.get('package_id') or '')}
+    else:
+     resolved=self.resolver(provider,project,game_version,definition,ctype);candidate=resolved.get('artifact') if isinstance(resolved,Mapping) else None
+    installed_artifact=item.get('artifact') if isinstance(item.get('artifact'),Mapping) else {};installed_revision=_artifact_revision(installed_artifact);candidate_revision=_artifact_revision(candidate if isinstance(candidate,Mapping) else {})
     if not installed_revision or not candidate_revision:raise ValueError('provider revision identity is unavailable')
-    status='up_to_date' if str((item.get('artifact') or {}).get('package_id') or '')==str((candidate or {}).get('package_id') or '') else 'update_available'
+    status='up_to_date' if str(installed_artifact.get('package_id') or '')==str((candidate or {}).get('package_id') or '') else 'update_available'
     if status=='update_available':available+=1
     else:current+=1
     grouped.setdefault(aid,[]).append({**base,'state':status,'installed_revision':installed_revision,'available_revision':candidate_revision})
