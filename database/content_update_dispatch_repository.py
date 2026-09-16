@@ -33,7 +33,7 @@ class ContentUpdateDispatchRepository:
   return policy,effective_content_update_mode(policy,override)
  def _eligible(self,row:dict[str,Any],now:datetime)->tuple[bool,str]:
   override=normalize_content_update_mode(row.get('override_mode') or 'inherit')
-  if override=='maintenance' and not row.get('instance_mode'):return False,'maintenance'
+  if override=='maintenance' and not row.get('instance_mode'):return False,'maintenance_without_instance_policy'
   try:policy,effective=self._policy(row)
   except Exception:return False,'invalid'
   return should_apply_content(policy,'update_available',override=override,now=now),effective
