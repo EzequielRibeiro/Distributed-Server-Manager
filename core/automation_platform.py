@@ -3,6 +3,7 @@
 from __future__ import annotations
 import hashlib,json,re
 from typing import Any,Mapping
+from zoneinfo import ZoneInfo,ZoneInfoNotFoundError
 _TOKEN=re.compile(r"^[A-Za-z0-9._:-]{1,191}$")
 _TRIGGER_TYPES={"event","schedule","manual","metric"};_ACTION_TYPES={"broadcast","backup","instance","content","configuration"};_BROADCAST_SCOPES={"instance","agent","game","customer","region","datacenter","global"}
 class AutomationValidationError(ValueError):pass
@@ -11,6 +12,12 @@ def _token(v,label):
  s=str(v or "").strip()
  if not _TOKEN.fullmatch(s):raise AutomationValidationError(f"invalid {label}")
  return s
+def _timezone(v):
+ value=str(v or "UTC").strip() or "UTC"
+ if len(value)>191:raise AutomationValidationError("invalid schedule timezone")
+ try:ZoneInfo(value)
+ except (ZoneInfoNotFoundError,ValueError) as exc:raise AutomationValidationError("invalid schedule timezone") from exc
+ return value
 def normalize_broadcast(raw:Mapping[str,Any])->dict[str,Any]:
  if not isinstance(raw,Mapping):raise AutomationValidationError("broadcast must be an object")
  scope=str(raw.get("scope") or "instance").strip().lower()
@@ -30,7 +37,7 @@ def normalize_rule(raw:Mapping[str,Any])->dict[str,Any]:
  elif tt=="schedule":
   expr=str(trigger.get("expression") or "").strip()
   if not expr or len(expr)>191:raise AutomationValidationError("invalid schedule expression")
-  trigger["expression"]=expr
+  trigger["expression"]=expr;trigger["timezone"]=_timezone(trigger.get("timezone"))
  elif tt=="metric":
   trigger["metric_name"]=_token(trigger.get("metric_name"),"metric_name");trigger["operator"]=str(trigger.get("operator") or ">=")
   if trigger["operator"] not in {">",">=","<","<=","==","!="}:raise AutomationValidationError("invalid metric operator")
