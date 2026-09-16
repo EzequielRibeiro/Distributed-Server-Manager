@@ -26,7 +26,10 @@ def refresh(config:dict[str,Any],*,force:bool=False)->dict[str,Any]:
  for state in content_client.content_state():
   if str(state.get('status') or '')!='applied' or not state.get('installed_version'):continue
   base={'instance_id':state.get('instance_id'),'content_id':state.get('content_id'),'checked_at':_now()}
-  try:items.append({**base,**detect_content_update(state,STATE_ROOT)})
+  try:
+   detail=detect_content_update(state,STATE_ROOT)
+   if not detail.get('detector_supported'):continue
+   items.append({**base,**detail})
   except Exception as exc:items.append({**base,'provider':state.get('provider'),'content_type':state.get('content_type'),'package_id':state.get('package_id'),'detector_supported':True,'state':'probe_failed','rollback_supported':True,'error':str(exc)[:2000]})
  payload={'schema_version':1,'kind':'ContentUpdateInventory','checked_at':_now(),'interval_seconds':_interval(config),'content':items};_write(payload);_LAST_REFRESH_MONOTONIC=now;return payload
 def inventory()->dict[str,Any]:return _read()
