@@ -45,11 +45,17 @@ class _Game:
  def __init__(self):self.prepared=0;self.finalized=0;self.rolled_back=0
  def discover(self,iid):return []
  def prepare(self,iid,item):
-  self.prepared+=1;value=dict(item);value.update(status='activated',job_id='job-prepare',transaction_id='game-update-abc');return value,True
+  value=dict(item)
+  if value.get('status') in {'activated','aligned','committed'}:return value,True
+  self.prepared+=1;value.update(status='activated',job_id='job-prepare',transaction_id='game-update-abc');return value,True
  def finalize(self,iid,item):
-  self.finalized+=1;value=dict(item);value.update(status='committed',finalize_job_id='job-finalize');return value,True
+  value=dict(item)
+  if value.get('status') in {'aligned','committed'}:return value,True
+  self.finalized+=1;value.update(status='committed',finalize_job_id='job-finalize');return value,True
  def rollback(self,iid,item):
-  self.rolled_back+=1;value=dict(item);value.update(status='rolled_back',rollback_job_id='job-rollback');return value,True
+  value=dict(item)
+  if value.get('status')=='rolled_back':return value,True
+  self.rolled_back+=1;value.update(status='rolled_back',rollback_job_id='job-rollback');return value,True
 
 def _worker():
  repo=_Repo();life=_Lifecycle();game=_Game();worker=MaintenanceWorker(None,repository=repo,automation=_Automation(),lifecycle=life,capability_resolver=lambda _: {},content_coordinator=None,game_coordinator=game);return worker,repo,life,game
