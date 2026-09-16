@@ -4,6 +4,7 @@ from __future__ import annotations
 import json,os,re,sys,time
 from datetime import datetime,timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo,ZoneInfoNotFoundError
 ROOT=Path(os.environ.get("DSM_ROOT",Path(__file__).resolve().parents[2])).resolve()
 for path in (ROOT,ROOT/"core",ROOT/"database"):
  if str(path) not in sys.path:sys.path.insert(0,str(path))
@@ -58,6 +59,10 @@ def cron_matches(expression,when):
  if len(fields)!=5:return False
  minute,hour,day,month,weekday=fields;cron_weekday=(when.weekday()+1)%7
  return _field_matches(minute,when.minute) and _field_matches(hour,when.hour) and _field_matches(day,when.day) and _field_matches(month,when.month) and _field_matches(weekday,cron_weekday)
+def _utc_instant(when=None):
+ value=when or datetime.now(timezone.utc)
+ if value.tzinfo is None:return value.replace(tzinfo=timezone.utc)
+ return value.astimezone(timezone.utc)
 class AutomationWorker:
  def __init__(self,backend):
   self.backend=backend;self.repo=AutomationRepository(backend);self.repo.initialize();self.engine=AutomationEngine(backend);self.state=AutomationExecutionRepository(backend);self.ph="?" if backend.name=="sqlite" else "%s"
@@ -94,11 +99,16 @@ class AutomationWorker:
     runs=self.engine.fire("metric",context,trigger_ref=str(row.get("sample_id")),requested_by="automation-worker");count+=sum(1 for r in runs if r.get("status") not in {"duplicate","cooldown"})
   return count
  def process_schedules(self,when=None):
-  now=when or datetime.now(timezone.utc);minute_ref=now.strftime("%Y-%m-%dT%H:%MZ");count=0
+  now_utc=_utc_instant(when);minute_ref=now_utc.strftime("%Y-%m-%dT%H:%MZ");count=0
   for rule in self.repo.list_rules(limit=2000):
    trigger=rule.get("trigger") or {}
-   if not rule.get("enabled") or trigger.get("type")!="schedule" or not cron_matches(trigger.get("expression"),now):continue
-   result=self.engine.execute_rule(rule,trigger_type="schedule",trigger_ref=minute_ref,context={"scheduled_at":minute_ref},requested_by="automation-worker")
+   if not rule.get("enabled") or trigger.get("type")!="schedule":continue
+   timezone_name=str(trigger.get("timezone") or "UTC").strip() or "UTC"
+   try:local_now=now_utc.astimezone(ZoneInfo(timezone_name))
+   except (ZoneInfoNotFoundError,ValueError):continue
+   if not cron_matches(trigger.get("expression"),local_now):continue
+   context={"scheduled_at":minute_ref,"scheduled_local_at":local_now.isoformat(timespec="minutes"),"schedule_timezone":timezone_name}
+   result=self.engine.execute_rule(rule,trigger_type="schedule",trigger_ref=minute_ref,context=context,requested_by="automation-worker")
    if result.get("status") not in {"duplicate","cooldown"}:count+=1
   return count
  def tick(self):return {"events":self.process_events(),"metrics":self.process_metrics(),"schedules":self.process_schedules()}
