@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from agents.common.dayz_messages import (
     DayZMessagesError,
     DayZShutdownMessage,
     MANAGED_TEXT,
+    deadline_minutes_for_due,
     materialize_shutdown_messages_xml,
     native_restart_plan,
     render_shutdown_messages_xml,
@@ -38,6 +40,21 @@ class DayZNativeMessagesTest(unittest.TestCase):
         self.assertEqual(message.findtext('onConnect'), '0')
         self.assertEqual(message.findtext('shutdown'), '1')
         self.assertIn('#tmin', message.findtext('text') or '')
+
+    def test_due_at_is_converted_to_startup_countdown_without_early_shutdown(self) -> None:
+        now = datetime(2026, 9, 16, 20, 0, 0, tzinfo=timezone.utc)
+        self.assertEqual(deadline_minutes_for_due(now + timedelta(minutes=90), now=now), 90)
+        self.assertEqual(deadline_minutes_for_due(now + timedelta(seconds=61), now=now), 2)
+        self.assertEqual(deadline_minutes_for_due(now + timedelta(seconds=1), now=now), 1)
+
+    def test_due_at_rejects_expired_naive_and_excessive_windows(self) -> None:
+        now = datetime(2026, 9, 16, 20, 0, 0, tzinfo=timezone.utc)
+        with self.assertRaisesRegex(DayZMessagesError, 'future'):
+            deadline_minutes_for_due(now, now=now)
+        with self.assertRaisesRegex(DayZMessagesError, 'timezone-aware'):
+            deadline_minutes_for_due(datetime(2026, 9, 17, 20, 0, 0), now=now)
+        with self.assertRaisesRegex(DayZMessagesError, '7 day'):
+            deadline_minutes_for_due(now + timedelta(days=8), now=now)
 
     def test_escapes_text_as_xml_and_enforces_dayz_limit(self) -> None:
         payload = render_shutdown_messages_xml(DayZShutdownMessage(15, 'Restart & update <soon> #tmin'))
