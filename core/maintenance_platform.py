@@ -10,6 +10,7 @@ DEFAULT_WARNING_OFFSETS=(3600,1800,900,600,300,60)
 DEFAULT_WARNING_TEMPLATE="Servidor será reiniciado em {remaining}."
 _TIME=re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 _PLACEHOLDER=re.compile(r"\{([^{}]+)\}")
+_SAFE_TOKEN=re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 class MaintenanceValidationError(ValueError):pass
 def _utc(value:datetime)->datetime:
  if value.tzinfo is None:raise MaintenanceValidationError("maintenance timestamps must be timezone-aware")
@@ -54,8 +55,13 @@ def _supported(value:Any)->bool:
 def normalize_capabilities(raw:Mapping[str,Any]|None)->dict[str,bool]:
  value=dict(raw or {});save=value.get("save",value.get("graceful_save",False))
  return {"scheduled_restart":bool(value.get("scheduled_restart",True)),"broadcast":_supported(value.get("broadcast",False)),"save":_supported(save),"graceful_shutdown":_supported(value.get("graceful_shutdown",False)),"native_countdown":_supported(value.get("native_countdown",False))}
+def _safe_optional_token(value:Any)->str|None:
+ text=str(value or "").strip()
+ return text if _SAFE_TOKEN.fullmatch(text) else None
 def normalize_pending_work(raw_items:list[Mapping[str,Any]]|None)->list[dict[str,Any]]:
  pending=[];seen=set()
+ statuses={"pending","dispatched","activated","aligned","committed","failed","skipped","rolling_back","rolled_back"}
+ token_fields=("job_id","transaction_id","finalize_job_id","rollback_job_id")
  for raw in raw_items or []:
   if not isinstance(raw,Mapping):continue
   kind=str(raw.get("kind") or "").strip().lower();ref=str(raw.get("ref") or "").strip()[:191]
@@ -69,9 +75,13 @@ def normalize_pending_work(raw_items:list[Mapping[str,Any]]|None)->list[dict[str
   except (TypeError,ValueError):revision=None
   if revision is not None and revision>0:item["desired_revision"]=revision
   status=str(raw.get("status") or "").strip().lower()
-  if status in {"pending","dispatched","aligned","failed","skipped"}:item["status"]=status
+  if status in statuses:item["status"]=status
   error=str(raw.get("error") or "").replace("\x00","").strip()[:500]
   if error:item["error"]=error
+  if kind=="game-update":
+   for field in token_fields:
+    token=_safe_optional_token(raw.get(field))
+    if token:item[field]=token
   pending.append(item)
  return pending
 def maintenance_event(policy:Mapping[str,Any],capabilities:Mapping[str,Any]|None,*,pending_work:list[Mapping[str,Any]]|None=None)->dict[str,Any]:
