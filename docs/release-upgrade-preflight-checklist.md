@@ -1,0 +1,1 @@
+Release preflight must confirm that a v2.0.62 ledger ending at 11 exposes Baseline upgrades 12 and 13 as pending, while any checksum mismatch with no registered pending upgrade is rejected before service shutdown or file replacement.
