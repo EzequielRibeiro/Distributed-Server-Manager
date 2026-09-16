@@ -1,0 +1,1 @@
+Fresh or partially deployed v2.0.63 databases with content-update tables already present and an upgrade ledger ending at 11 must reconcile idempotently by recording Baseline v12 and applying Baseline v13 maintenance tables.
