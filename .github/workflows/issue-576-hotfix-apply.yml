@@ -1,0 +1,41 @@
+name: Issue 576 Hotfix Apply
+
+on:
+  push:
+    branches:
+      - fix/baseline-v12-update-hotfix
+    paths:
+      - tools/apply_issue_576_hotfix.py
+      - .github/workflows/issue-576-hotfix-apply.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/baseline-v12-update-hotfix
+          fetch-depth: 0
+      - name: Apply deterministic hotfix
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/apply_issue_576_hotfix.py
+          python3 tools/apply_issue_576_hotfix.py
+          python3 -m py_compile database/baseline_upgrade_engine.py tests/baseline_v12_content_update_test.py
+          bash -n release/build_release.sh update-manager/process-guard.sh
+          python3 -m unittest tests/update_baseline_upgrade_path_test.py
+          python3 -m unittest tests/baseline_v12_content_update_test.py
+      - name: Commit hotfix and remove bootstrap files
+        run: |
+          set -euo pipefail
+          git rm tools/apply_issue_576_hotfix.py .github/workflows/issue-576-hotfix-apply.yml
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add database/baseline_upgrade_engine.py release/build_release.sh tests/baseline_v12_content_update_test.py .github/workflows/baseline-update-reconciliation.yml .github/workflows/release.yml
+          git commit -m 'fix(update): register Baseline v12 content schema'
+          git push origin HEAD:fix/baseline-v12-update-hotfix
