@@ -39,6 +39,16 @@ def _activation_order(raw:Any)->int:
  if isinstance(raw,float) and raw!=value:raise ContentValidationError("invalid activation_order")
  if value<0 or value>1000000:raise ContentValidationError("invalid activation_order")
  return value
+def _workshop_version(provider:str,metadata:Mapping[str,Any],fallback:Any)->str:
+ version=str(fallback or "latest").strip()[:191] or "latest"
+ if provider!="steam-workshop":return version
+ marker=metadata.get("steam_workshop") if isinstance(metadata,Mapping) else None
+ if not isinstance(marker,Mapping):return version
+ raw=marker.get("time_updated")
+ if isinstance(raw,bool):return version
+ try:revision=int(raw)
+ except (TypeError,ValueError):return version
+ return str(revision) if revision>0 else version
 def normalize_assignment(raw:Mapping[str,Any],*,expected_agent_id:str|None=None)->dict[str,Any]:
  if not isinstance(raw,Mapping):raise ContentValidationError("content assignment must be an object")
  agent=_token(raw.get("agent_id") or expected_agent_id,"agent_id")
@@ -51,11 +61,10 @@ def normalize_assignment(raw:Mapping[str,Any],*,expected_agent_id:str|None=None)
  if activation_state not in _ACTIVATION_STATES:raise ContentValidationError("invalid activation_state")
  if state=="absent" and activation_state!="disabled":raise ContentValidationError("absent content cannot be enabled")
  activation_order=_activation_order(raw.get("activation_order"))
- artifact=_structured(raw.get("artifact"),"artifact")
- version=str(raw.get("version") or "latest").strip()[:191] or "latest";provider=str(raw.get("provider") or artifact.get("provider") or "").strip().lower()
+ artifact=_structured(raw.get("artifact"),"artifact");provider=str(raw.get("provider") or artifact.get("provider") or "").strip().lower()
  if provider not in _PROVIDERS:raise ContentValidationError("invalid provider")
  artifact["provider"]=provider
- provenance=_structured(raw.get("provenance") or raw.get("source"),"provenance");metadata=_structured(raw.get("metadata"),"metadata")
+ provenance=_structured(raw.get("provenance") or raw.get("source"),"provenance");metadata=_structured(raw.get("metadata"),"metadata");version=_workshop_version(provider,metadata,raw.get("version"))
  requested_security_state=str(raw.get("security_state") or "unscanned").strip().lower()
  if requested_security_state!="unscanned":raise ContentValidationError("security_state is Controller/Agent managed")
  security_state="unscanned"
