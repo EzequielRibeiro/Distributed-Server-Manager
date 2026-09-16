@@ -106,41 +106,13 @@ PY
 grep -q 'Rollback left DSM placeholders in systemd units' "${PACKAGE_ROOT}/update.sh" || fail "rollback systemd rendering hotfix missing from packaged update.sh"
 bash -n "${PACKAGE_ROOT}/update.sh" || fail "packaged update.sh failed syntax validation after rollback hotfix"
 
-"${PYTHON_BIN}" - "${PACKAGE_ROOT}/update-manager/process-guard.sh" <<'PY'
-from pathlib import Path
-import sys
-path = Path(sys.argv[1])
-text = path.read_text(encoding="utf-8")
-old = '''# Once a valid ledger exists, a checksum change is advanced only through the
-# target release's registered additive upgrades.
-if ledger_present:
-    raise SystemExit(0 if pending else 1)
-'''
-new = '''# Once a valid ledger exists, compatibility is governed by the versioned
-# upgrade ledger rather than historical consolidated-baseline checksums.
-# A fully reconciled ledger is already compatible; otherwise every pending
-# upgrade was validated above against this target release's registry.
-if ledger_present:
-    current_version = payload.get("upgrade_version")
-    latest_version = payload.get("upgrade_latest")
-    if not isinstance(current_version, int) or not isinstance(latest_version, int):
-        raise SystemExit(1)
-    if current_version < 0 or current_version > latest_version:
-        raise SystemExit(1)
-    if not pending and current_version == latest_version:
-        raise SystemExit(0)
-    raise SystemExit(0 if pending else 1)
-'''
-if old not in text:
-    raise SystemExit("Baseline v2 preflight hotfix anchor not found")
-text = text.replace(old, new, 1)
-path.write_text(text, encoding="utf-8", newline="\n")
-PY
-
 bash -n "${PACKAGE_ROOT}/update-manager/process-guard.sh" || fail "packaged process-guard.sh failed syntax validation"
-grep -q 'fully reconciled ledger is already compatible' "${PACKAGE_ROOT}/update-manager/process-guard.sh" || fail "Baseline v2 preflight hotfix missing from package"
+if grep -q 'fully reconciled ledger is already compatible' "${PACKAGE_ROOT}/update-manager/process-guard.sh"
+then
+    fail "packaged process-guard.sh contains unsafe checksum-mismatch bypass"
+fi
 
-PAYLOAD="$(PYTHONDONTWRITEBYTECODE=1 "${PYTHON_BIN}" - "${PACKAGE_ROOT}" <<'PAYLOADPY'
+readarray -t BASELINE_GUARD_PAYLOADS < <(PYTHONDONTWRITEBYTECODE=1 "${PYTHON_BIN}" - "${PACKAGE_ROOT}" <<'PAYLOADPY'
 import json
 import sys
 from pathlib import Path
@@ -149,36 +121,54 @@ root = Path(sys.argv[1])
 sys.path.insert(0, str(root / "database"))
 from baseline_upgrade_engine import UPGRADES, latest_upgrade_version
 
-current_version = 6
-print(json.dumps({
-    "schema_version": 2,
-    "kind": "DatabaseCheck",
-    "driver": "postgresql",
-    "connected": True,
-    "initialized": True,
-    "health": "error",
-    "baseline": "capivara-baseline-v2",
-    "baseline_checksum": "historical-ledger-checksum",
-    "expected_baseline": "capivara-baseline-v2",
-    "expected_checksum": "target-release-checksum",
-    "checksum_matches": False,
-    "missing_tables": [],
-    "upgrade_ledger": True,
-    "upgrade_version": current_version,
-    "upgrade_latest": latest_upgrade_version(),
-    "pending_upgrades": [
-        {"version": upgrade.version, "name": upgrade.name}
-        for upgrade in UPGRADES
-        if upgrade.version > current_version
-    ],
-    "upgrade_error": None,
-    "valid": False,
-}, separators=(",", ":")))
+latest = latest_upgrade_version()
+if latest < 13:
+    raise SystemExit("release baseline upgrade ledger must include versions 12 and 13")
+
+def payload(current_version, pending, checksum_matches=False):
+    return json.dumps({
+        "schema_version": 2,
+        "kind": "DatabaseCheck",
+        "driver": "postgresql",
+        "connected": True,
+        "initialized": True,
+        "health": "error",
+        "baseline": "capivara-baseline-v2",
+        "baseline_checksum": "historical-ledger-checksum",
+        "expected_baseline": "capivara-baseline-v2",
+        "expected_checksum": "target-release-checksum",
+        "checksum_matches": checksum_matches,
+        "missing_tables": [],
+        "upgrade_ledger": True,
+        "upgrade_version": current_version,
+        "upgrade_latest": latest,
+        "pending_upgrades": pending,
+        "upgrade_error": None,
+        "valid": False,
+    }, separators=(",", ":"))
+
+pending = [
+    {"version": upgrade.version, "name": upgrade.name}
+    for upgrade in UPGRADES
+    if upgrade.version > 11
+]
+print(payload(11, pending))
+print(payload(latest, []))
 PAYLOADPY
-)"
-if ! PYTHONDONTWRITEBYTECODE=1 PAYLOAD="${PAYLOAD}" TARGET_ROOT="${PACKAGE_ROOT}" bash -c 'source "$TARGET_ROOT/update-manager/process-guard.sh"; process_guard_database_check_is_upgradeable "$PAYLOAD" "$TARGET_ROOT"'
+)
+
+(( ${#BASELINE_GUARD_PAYLOADS[@]} == 2 )) || fail "failed to build packaged Baseline v2 guard payloads"
+PENDING_PAYLOAD="${BASELINE_GUARD_PAYLOADS[0]}"
+STALE_PAYLOAD="${BASELINE_GUARD_PAYLOADS[1]}"
+
+if ! PYTHONDONTWRITEBYTECODE=1 PAYLOAD="${PENDING_PAYLOAD}" TARGET_ROOT="${PACKAGE_ROOT}" bash -c 'source "$TARGET_ROOT/update-manager/process-guard.sh"; process_guard_database_check_is_upgradeable "$PAYLOAD" "$TARGET_ROOT"'
 then
-    fail "Baseline v2 pending-upgrades regression payload was rejected"
+    fail "packaged Baseline v2 guard rejected registered v12/v13 pending upgrades"
+fi
+
+if PYTHONDONTWRITEBYTECODE=1 PAYLOAD="${STALE_PAYLOAD}" TARGET_ROOT="${PACKAGE_ROOT}" bash -c 'source "$TARGET_ROOT/update-manager/process-guard.sh"; process_guard_database_check_is_upgradeable "$PAYLOAD" "$TARGET_ROOT"'
+then
+    fail "packaged Baseline v2 guard accepted checksum mismatch without pending upgrade"
 fi
 
 for relative_path in \
