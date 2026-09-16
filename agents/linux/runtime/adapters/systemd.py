@@ -61,8 +61,6 @@ class SystemdAdapter(InstanceRuntimeAdapter):
                 "--property=LoadState",
                 "--property=ActiveState",
                 "--property=SubState",
-                "--property=ActiveEnterTimestamp",
-                "--property=ActiveEnterTimestampMonotonic",
                 "--no-pager",
             ],
             10,
@@ -75,11 +73,6 @@ class SystemdAdapter(InstanceRuntimeAdapter):
         load_state = values.get("LoadState", "unknown")
         active_state = values.get("ActiveState", "unknown")
         sub_state = values.get("SubState", "unknown")
-        monotonic_raw = values.get("ActiveEnterTimestampMonotonic", "")
-        try:
-            active_enter_monotonic_usec = int(monotonic_raw) if monotonic_raw else None
-        except ValueError:
-            active_enter_monotonic_usec = None
         return {
             "adapter": self.name,
             "unit": unit,
@@ -87,8 +80,6 @@ class SystemdAdapter(InstanceRuntimeAdapter):
             "load_state": load_state,
             "active_state": active_state,
             "sub_state": sub_state,
-            "active_enter_timestamp": values.get("ActiveEnterTimestamp") or None,
-            "active_enter_monotonic_usec": active_enter_monotonic_usec,
             "running": active_state == "active",
             "error": stderr[:2000] or None,
         }
@@ -149,7 +140,7 @@ class SystemdAdapter(InstanceRuntimeAdapter):
             raise AdapterError(f"instance did not reach expected state after {action}")
         if action == "stop" and after.get("active_state") == "failed":
             raise AdapterError("instance remained failed after stop normalization")
-        return {"action": action, "changed": True, "idempotent": False, "state": after}
+        return {"action": action,"changed": True,"idempotent": False,"state": after}
 
     def start(self, instance: dict[str, Any]) -> dict[str, Any]:
         return self._lifecycle("start", instance)
@@ -164,26 +155,11 @@ class SystemdAdapter(InstanceRuntimeAdapter):
         state = self._show(instance)
         findings: list[dict[str, str]] = []
         if not state["available"]:
-            findings.append({
-                "code": "systemd_unit_unavailable",
-                "severity": "critical",
-                "message": "The instance systemd unit is not available.",
-            })
+            findings.append({"code":"systemd_unit_unavailable","severity":"critical","message":"The instance systemd unit is not available."})
         elif state["active_state"] == "failed":
-            findings.append({
-                "code": "systemd_unit_failed",
-                "severity": "critical",
-                "message": "The instance systemd unit is in failed state.",
-            })
-        severities = {item["severity"] for item in findings}
-        status = "critical" if "critical" in severities else "healthy"
-        return {
-            "adapter": self.name,
-            "status": status,
-            "ready": status != "critical",
-            "state": state,
-            "findings": findings,
-        }
+            findings.append({"code":"systemd_unit_failed","severity":"critical","message":"The instance systemd unit is in failed state."})
+        severities={item["severity"] for item in findings};status="critical" if "critical" in severities else "healthy"
+        return {"adapter":self.name,"status":status,"ready":status!="critical","state":state,"findings":findings}
 
 
 __all__ = ["SystemdAdapter", "unit_for_instance"]
