@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pure DayZ native-maintenance planner used by Linux and Windows Agents.
 
-The Controller never supplies filesystem paths or XML.  The Agent derives the
+The Controller never supplies filesystem paths or XML. The Agent derives the
 mission from its already materialized RuntimeSpec and produces a bounded plan
 that a privileged writer can apply atomically.
 """
@@ -70,7 +70,7 @@ def _argument(record: dict[str, Any], pattern: re.Pattern[str]) -> str | None:
     for raw in values:
         match = pattern.match(str(raw or "").strip())
         if match:
-            value = match.group(1).strip().strip('"\'')
+            value = match.group(1).strip().strip("\"'")
             return value or None
     return None
 
