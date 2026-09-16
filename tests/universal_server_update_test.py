@@ -54,6 +54,14 @@ class UniversalServerUpdateTest(unittest.TestCase):
    for table in ('instance_update_policy','instance_update_state','instance_update_runs'):self.assertIn('create table '+table,ddl)
    for table in ('content_update_policy','content_update_state'):self.assertIn('create table '+table,content)
    legacy='CREATE TABLE instance_update_policy (instance_id TEXT PRIMARY KEY);';compiled=ensure_server_update_schema(legacy,backend);self.assertIn('CREATE TABLE content_update_policy',compiled);self.assertEqual(compiled.count('CREATE TABLE content_update_policy'),1);self.assertEqual(ensure_server_update_schema(compiled,backend).count('CREATE TABLE content_update_policy'),1)
+ def test_content_update_inventory_is_nonblocking_heartbeat_contract(self):
+  linux=(ROOT/'agents/linux/runtime/agent.py').read_text();windows=(ROOT/'agents/windows/runtime/agent.py').read_text();heartbeat=(ROOT/'dashboard/agent_heartbeat_api.py').read_text();linux_inventory=(ROOT/'agents/linux/runtime/content_update_inventory.py').read_text();windows_inventory=(ROOT/'agents/windows/runtime/content_update_inventory.py').read_text()
+  for agent in (linux,windows):
+   self.assertIn('content_update_inventory()',agent);self.assertIn('start_content_update_inventory',agent)
+   self.assertNotIn('refresh(config,force=True)',agent.replace(' ',''))
+  for inventory in (linux_inventory,windows_inventory):
+   self.assertIn('threading.Thread',inventory);self.assertIn('daemon=True',inventory);self.assertIn('def start_background',inventory)
+  self.assertIn('record_content_update_inventory',heartbeat);self.assertIn('content_updates_accepted',heartbeat);self.assertIn('content_updates_rejected',heartbeat)
  def test_security_and_composition_contracts(self):
   api=(ROOT/'dashboard/server_update_api.py').read_text();http=(ROOT/'dashboard/server_update_http.py').read_text();repo=(ROOT/'database/server_update_repository.py').read_text();ui=(ROOT/'dashboard/web/server-updates.js').read_text();agent=(ROOT/'agents/linux/runtime/server_update_agent.py').read_text();provider=(ROOT/'agents/linux/runtime/server_update_provider.py').read_text();executor=(ROOT/'agents/linux/runtime/game_data_executor.py').read_text();transaction=(ROOT/'agents/linux/runtime/server_update_transaction.py').read_text();service=(ROOT/'systemd/dsm-dashboard.service').read_text()
   self.assertIn("str(user.get('role') or '').lower()!='admin'",api);self.assertIn('SELECT id,agent_id,runtime_id,game_id,status FROM instances',api);self.assertIn('prepare_runtime_selection',api);self.assertIn('configure_content_update_policy',api);self.assertIn('/api/server-updates/content-policy',http)
