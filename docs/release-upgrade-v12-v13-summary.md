@@ -1,0 +1,1 @@
+The next Capivara DSM patch release must include Database Baseline v2 upgrades 12 and 13, preserve the canonical fail-closed process guard in the packaged artifact, and support direct upgrade from v2.0.62 without requiring v2.0.63 first.
