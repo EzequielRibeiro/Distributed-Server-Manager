@@ -52,26 +52,46 @@ def _supported(value:Any)->bool:
  if isinstance(value,Mapping):return bool(value.get("supported",False))
  return bool(value)
 def normalize_capabilities(raw:Mapping[str,Any]|None)->dict[str,bool]:
- value=dict(raw or {})
- save=value.get("save",value.get("graceful_save",False))
+ value=dict(raw or {});save=value.get("save",value.get("graceful_save",False))
  return {"scheduled_restart":bool(value.get("scheduled_restart",True)),"broadcast":_supported(value.get("broadcast",False)),"save":_supported(save),"graceful_shutdown":_supported(value.get("graceful_shutdown",False)),"native_countdown":_supported(value.get("native_countdown",False))}
+def normalize_pending_work(raw_items:list[Mapping[str,Any]]|None)->list[dict[str,Any]]:
+ pending=[];seen=set()
+ for raw in raw_items or []:
+  if not isinstance(raw,Mapping):continue
+  kind=str(raw.get("kind") or "").strip().lower();ref=str(raw.get("ref") or "").strip()[:191]
+  if kind not in {"game-update","content-update","configuration"} or not ref:continue
+  key=(kind,ref)
+  if key in seen:continue
+  seen.add(key);item={"kind":kind,"ref":ref}
+  version=str(raw.get("available_version") or "").strip()[:191]
+  if version:item["available_version"]=version
+  try:revision=int(raw.get("desired_revision")) if raw.get("desired_revision") is not None else None
+  except (TypeError,ValueError):revision=None
+  if revision is not None and revision>0:item["desired_revision"]=revision
+  status=str(raw.get("status") or "").strip().lower()
+  if status in {"pending","dispatched","aligned","failed","skipped"}:item["status"]=status
+  error=str(raw.get("error") or "").replace("\x00","").strip()[:500]
+  if error:item["error"]=error
+  pending.append(item)
+ return pending
 def maintenance_event(policy:Mapping[str,Any],capabilities:Mapping[str,Any]|None,*,pending_work:list[Mapping[str,Any]]|None=None)->dict[str,Any]:
  p=normalize_policy(policy);caps=normalize_capabilities(capabilities)
  if not caps["scheduled_restart"]:raise MaintenanceValidationError("runtime does not support scheduled restart")
- pending=[]
- for raw in pending_work or []:
-  if not isinstance(raw,Mapping):continue
-  kind=str(raw.get("kind") or "").strip().lower()
-  if kind not in {"game-update","content-update","configuration"}:continue
-  pending.append({"kind":kind,"ref":str(raw.get("ref") or "")[:191] or None})
- warnings=bool(p["broadcast_enabled"] and caps["broadcast"] and not caps["native_countdown"])
- steps=["warning"] if warnings else []
- steps.append("preflight")
+ pending=normalize_pending_work(pending_work);warnings=bool(p["broadcast_enabled"] and caps["broadcast"] and not caps["native_countdown"])
+ steps=["warning"] if warnings else [];steps.append("preflight")
  if caps["save"]:steps.append("save")
  steps.append("stop")
  if p["coalesce_updates"] and pending:steps.append("apply-updates")
  steps.extend(["start","readiness"])
  return {"schema_version":1,"kind":"CapivaraMaintenanceEvent","capabilities":caps,"warnings_enabled":warnings,"coalesce_updates":p["coalesce_updates"],"pending_work":pending,"steps":steps}
+def update_maintenance_event(event:Mapping[str,Any],*,pending_work:list[Mapping[str,Any]]|None=None,work_error:Any=None)->dict[str,Any]:
+ value=dict(event or {})
+ if value.get("kind")!="CapivaraMaintenanceEvent":raise MaintenanceValidationError("invalid maintenance event")
+ if pending_work is not None:value["pending_work"]=normalize_pending_work(pending_work)
+ if work_error is not None:
+  error=str(work_error or "").replace("\x00","").strip()[:1000]
+  value["work_error"]=error or None
+ return value
 def _valid_local_wall(zone:ZoneInfo,day:date,hh:int,mm:int)->datetime:
  naive=datetime.combine(day,time(hh,mm))
  for minute in range(181):
@@ -110,4 +130,4 @@ def format_remaining(seconds:int)->str:
   minutes=value//60;return f"{minutes} minuto" if minutes==1 else f"{minutes} minutos"
  return f"{value} segundos"
 def render_warning(policy:Mapping[str,Any],offset_seconds:int)->str:return normalize_policy(policy)["warning_template"].replace("{remaining}",format_remaining(offset_seconds))
-__all__=["DEFAULT_WARNING_OFFSETS","DEFAULT_WARNING_TEMPLATE","MaintenanceValidationError","SCHEDULE_MODES","due_warning_offsets","format_remaining","maintenance_event","next_due_at","normalize_capabilities","normalize_policy","render_warning","warning_plan"]
+__all__=["DEFAULT_WARNING_OFFSETS","DEFAULT_WARNING_TEMPLATE","MaintenanceValidationError","SCHEDULE_MODES","due_warning_offsets","format_remaining","maintenance_event","next_due_at","normalize_capabilities","normalize_pending_work","normalize_policy","render_warning","update_maintenance_event","warning_plan"]
