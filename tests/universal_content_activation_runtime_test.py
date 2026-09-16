@@ -14,7 +14,7 @@ class ContentActivationRuntimeTest(unittest.TestCase):
   return {"instance_id":"i1","arguments":["-config=server.cfg"],"working_directory":str(root/"server"),"instance_state_root":str(root/"state")}
  def test_dayz_projection_uses_managed_paths_and_preserves_base_arguments(self):
   with tempfile.TemporaryDirectory() as tmp:
-   root=Path(tmp);(root/"server").mkdir();mod_a=root/"content"/"a";mod_b=root/"content"/"b";mod_a.mkdir(parents=True);mod_b.mkdir(parents=True)
+   root=Path(tmp);(root/"server").mkdir();mod_a=root/"state"/"content"/"a";mod_b=root/"state"/"content"/"b";mod_a.mkdir(parents=True);mod_b.mkdir(parents=True)
    snapshot={"checksum":"abc","entries":[
     {"content_id":"a","game_id":"dayz","managed_path":str(mod_a),"activation":{"mode":"mod"}},
     {"content_id":"b","game_id":"dayz","managed_path":str(mod_b),"activation":{"mode":"server-mod"}},

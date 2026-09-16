@@ -6,19 +6,30 @@ command-free and generic: process arguments plus confined configuration
 properties. Controller/Dashboard never render game-specific activation.
 """
 from __future__ import annotations
-import os,re
+import re
 from pathlib import Path
 from typing import Any
+
+try:
+ from content_activation_dayz import DayZContentActivationError,materialize_dayz_keyring,project_dayz_activation
+except ModuleNotFoundError as exc:
+ if exc.name != "content_activation_dayz":raise
+ import importlib.util
+ _dayz_path=Path(__file__).with_name("content_activation_dayz.py")
+ _dayz_spec=importlib.util.spec_from_file_location(f"{__name__}_dayz",_dayz_path)
+ if _dayz_spec is None or _dayz_spec.loader is None:raise
+ _dayz_module=importlib.util.module_from_spec(_dayz_spec);_dayz_spec.loader.exec_module(_dayz_module)
+ DayZContentActivationError=_dayz_module.DayZContentActivationError
+ materialize_dayz_keyring=_dayz_module.materialize_dayz_keyring
+ project_dayz_activation=_dayz_module.project_dayz_activation
 try:
  from content_activation_minecraft import MinecraftContentActivationError,materialize_minecraft_files,materialize_minecraft_overrides,project_minecraft_bundle_overrides,project_minecraft_files
 except ModuleNotFoundError as exc:
- if exc.name != "content_activation_minecraft":
-  raise
+ if exc.name != "content_activation_minecraft":raise
  import importlib.util
  _minecraft_path=Path(__file__).with_name("content_activation_minecraft.py")
  _minecraft_spec=importlib.util.spec_from_file_location(f"{__name__}_minecraft",_minecraft_path)
- if _minecraft_spec is None or _minecraft_spec.loader is None:
-  raise
+ if _minecraft_spec is None or _minecraft_spec.loader is None:raise
  _minecraft_module=importlib.util.module_from_spec(_minecraft_spec);_minecraft_spec.loader.exec_module(_minecraft_module)
  MinecraftContentActivationError=_minecraft_module.MinecraftContentActivationError
  materialize_minecraft_files=_minecraft_module.materialize_minecraft_files
@@ -42,24 +53,6 @@ def _adapter(entry:dict[str,Any])->str:
  if declared and canonical and declared!=canonical:raise ContentRuntimeActivationError("content activation adapter does not match game")
  return canonical or declared
 
-def _managed_path(entry:dict[str,Any])->str:
- value=str(entry.get("managed_path") or "").strip()
- if not value or not os.path.isabs(value) or any(c in value for c in ("\x00","\r","\n",";")):raise ContentRuntimeActivationError("invalid managed content path")
- return str(Path(value))
-
-def _dayz(entries:list[dict[str,Any]])->tuple[list[str],list[dict[str,str]]]:
- mods=[];server=[]
- for entry in entries:
-  if _adapter(entry)!="dayz":continue
-  mode=str((entry.get("activation") or {}).get("mode") or "mod").strip().lower();path=_managed_path(entry)
-  if mode=="mod":mods.append(path)
-  elif mode=="server-mod":server.append(path)
-  else:raise ContentRuntimeActivationError("unsupported DayZ content activation mode")
- args=[]
- if mods:args.append("-mod="+";".join(mods))
- if server:args.append("-serverMod="+";".join(server))
- return args,[]
-
 def _project_zomboid(entries:list[dict[str,Any]])->tuple[list[str],list[dict[str,str]]]:
  workshop=[];mods=[]
  for entry in entries:
@@ -75,15 +68,40 @@ def _project_zomboid(entries:list[dict[str,Any]])->tuple[list[str],list[dict[str
  if mods:props.append({"path":"Zomboid/Server/servertest.ini","key":"Mods","value":";".join(mods),"syntax":"equals"})
  return [],props
 
+def _base_bind_paths(result:dict[str,Any])->list[dict[str,str]]:
+ raw=result.get("content_base_bind_paths") if isinstance(result.get("content_base_bind_paths"),list) else result.get("bind_paths") or []
+ if not isinstance(raw,list):raise ContentRuntimeActivationError("invalid runtime bind paths")
+ values=[]
+ for item in raw:
+  if not isinstance(item,dict):raise ContentRuntimeActivationError("invalid runtime bind path")
+  values.append({"source":str(item.get("source") or ""),"target":str(item.get("target") or "")})
+ return values
+
 def project_runtime_spec(spec:dict[str,Any],snapshot:dict[str,Any])->dict[str,Any]:
  result=dict(spec);entries=_entries(snapshot);games={str(e.get("game_id") or "").strip().lower() for e in entries if e.get("game_id")}
  if len(games)>1:raise ContentRuntimeActivationError("activation snapshot mixes games")
  base=list(result.get("content_base_arguments") if isinstance(result.get("content_base_arguments"),list) else result.get("arguments") or [])
- content_args=[];properties=[]
- for renderer in (_dayz,_project_zomboid):
-  args,props=renderer(entries);content_args.extend(args);properties.extend(props)
+ base_binds=_base_bind_paths(result);content_args=[];properties=[];dayz_keys=[]
+ dayz_entries=[entry for entry in entries if _adapter(entry)=="dayz"]
+ if dayz_entries:
+  try:
+   dayz=project_dayz_activation(result,dayz_entries);content_args.extend(dayz["arguments"]);dayz_keys=list(dayz["key_sources"])
+  except DayZContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc
+ args,props=_project_zomboid(entries);content_args.extend(args);properties.extend(props)
  result["content_base_arguments"]=[str(v) for v in base]
  result["arguments"]=[*result["content_base_arguments"],*content_args]
+ result["content_base_bind_paths"]=[dict(value) for value in base_binds]
+ result["bind_paths"]=[dict(value) for value in base_binds]
+ if dayz_keys:
+  state_root=Path(str(result.get("instance_state_root") or "")).resolve(strict=False);working_root=Path(str(result.get("working_directory") or "")).resolve(strict=False)
+  if not str(result.get("instance_state_root") or "").strip() or not str(result.get("working_directory") or "").strip():raise ContentRuntimeActivationError("DayZ key isolation requires runtime roots")
+  keyring=str(state_root/".dsm"/"dayz-keys");target=str(working_root/"keys")
+  for binding in result["bind_paths"]:
+   if str(binding.get("target") or "")==target and str(binding.get("source") or "")!=keyring:raise ContentRuntimeActivationError("DayZ keys target is already bound by another runtime source")
+  result["bind_paths"].append({"source":keyring,"target":target})
+  result["content_dayz_key_sources"]=dayz_keys;result["content_dayz_keyring"]=keyring;result["content_dayz_base_keys_root"]=target
+ else:
+  result.pop("content_dayz_key_sources",None);result.pop("content_dayz_keyring",None);result.pop("content_dayz_base_keys_root",None)
  result["content_configuration_properties"]=properties
  try:
   result["content_file_projections"]=project_minecraft_files(result,entries);result["content_bundle_overrides"]=project_minecraft_bundle_overrides(result,entries)
@@ -114,8 +132,8 @@ def materialize_content_activation(spec:dict[str,Any])->list[str]:
   text=pattern.sub(line,text,count=1) if pattern.search(text) else text.rstrip("\n")+("\n" if text else "")+line+"\n"
   target.parent.mkdir(parents=True,exist_ok=True);target.write_text(text,encoding="utf-8");written.append(relative.as_posix())
  try:
-  written.extend(materialize_minecraft_files(spec));written.extend(materialize_minecraft_overrides(spec))
- except MinecraftContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc
+  written.extend(materialize_dayz_keyring(spec));written.extend(materialize_minecraft_files(spec));written.extend(materialize_minecraft_overrides(spec))
+ except (DayZContentActivationError,MinecraftContentActivationError) as exc:raise ContentRuntimeActivationError(str(exc)) from exc
  return written
 
 __all__=["ContentRuntimeActivationError","materialize_content_activation","project_runtime_spec"]

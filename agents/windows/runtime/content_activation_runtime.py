@@ -6,19 +6,29 @@ command-free and generic: process arguments plus confined configuration
 properties. Controller/Dashboard never render game-specific activation.
 """
 from __future__ import annotations
-import os,re
+import re
 from pathlib import Path
 from typing import Any
+
+try:
+ from content_activation_dayz import DayZContentActivationError,project_dayz_activation
+except ModuleNotFoundError as exc:
+ if exc.name != "content_activation_dayz":raise
+ import importlib.util
+ _dayz_path=Path(__file__).with_name("content_activation_dayz.py")
+ _dayz_spec=importlib.util.spec_from_file_location(f"{__name__}_dayz",_dayz_path)
+ if _dayz_spec is None or _dayz_spec.loader is None:raise
+ _dayz_module=importlib.util.module_from_spec(_dayz_spec);_dayz_spec.loader.exec_module(_dayz_module)
+ DayZContentActivationError=_dayz_module.DayZContentActivationError
+ project_dayz_activation=_dayz_module.project_dayz_activation
 try:
  from content_activation_minecraft import MinecraftContentActivationError,materialize_minecraft_files,materialize_minecraft_overrides,project_minecraft_bundle_overrides,project_minecraft_files
 except ModuleNotFoundError as exc:
- if exc.name != "content_activation_minecraft":
-  raise
+ if exc.name != "content_activation_minecraft":raise
  import importlib.util
  _minecraft_path=Path(__file__).with_name("content_activation_minecraft.py")
  _minecraft_spec=importlib.util.spec_from_file_location(f"{__name__}_minecraft",_minecraft_path)
- if _minecraft_spec is None or _minecraft_spec.loader is None:
-  raise
+ if _minecraft_spec is None or _minecraft_spec.loader is None:raise
  _minecraft_module=importlib.util.module_from_spec(_minecraft_spec);_minecraft_spec.loader.exec_module(_minecraft_module)
  MinecraftContentActivationError=_minecraft_module.MinecraftContentActivationError
  materialize_minecraft_files=_minecraft_module.materialize_minecraft_files
@@ -42,24 +52,6 @@ def _adapter(entry:dict[str,Any])->str:
  if declared and canonical and declared!=canonical:raise ContentRuntimeActivationError("content activation adapter does not match game")
  return canonical or declared
 
-def _managed_path(entry:dict[str,Any])->str:
- value=str(entry.get("managed_path") or "").strip()
- if not value or not os.path.isabs(value) or any(c in value for c in ("\x00","\r","\n",";")):raise ContentRuntimeActivationError("invalid managed content path")
- return str(Path(value))
-
-def _dayz(entries:list[dict[str,Any]])->tuple[list[str],list[dict[str,str]]]:
- mods=[];server=[]
- for entry in entries:
-  if _adapter(entry)!="dayz":continue
-  mode=str((entry.get("activation") or {}).get("mode") or "mod").strip().lower();path=_managed_path(entry)
-  if mode=="mod":mods.append(path)
-  elif mode=="server-mod":server.append(path)
-  else:raise ContentRuntimeActivationError("unsupported DayZ content activation mode")
- args=[]
- if mods:args.append("-mod="+";".join(mods))
- if server:args.append("-serverMod="+";".join(server))
- return args,[]
-
 def _project_zomboid(entries:list[dict[str,Any]])->tuple[list[str],list[dict[str,str]]]:
  workshop=[];mods=[]
  for entry in entries:
@@ -80,8 +72,14 @@ def project_runtime_spec(spec:dict[str,Any],snapshot:dict[str,Any])->dict[str,An
  if len(games)>1:raise ContentRuntimeActivationError("activation snapshot mixes games")
  base=list(result.get("content_base_arguments") if isinstance(result.get("content_base_arguments"),list) else result.get("arguments") or [])
  content_args=[];properties=[]
- for renderer in (_dayz,_project_zomboid):
-  args,props=renderer(entries);content_args.extend(args);properties.extend(props)
+ dayz_entries=[entry for entry in entries if _adapter(entry)=="dayz"]
+ if dayz_entries:
+  try:dayz=project_dayz_activation(result,dayz_entries)
+  except DayZContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc
+  if dayz["key_sources"]:
+   raise ContentRuntimeActivationError("DayZ Workshop signature keys cannot be isolated safely by the Windows Agent")
+  content_args.extend(dayz["arguments"])
+ args,props=_project_zomboid(entries);content_args.extend(args);properties.extend(props)
  result["content_base_arguments"]=[str(v) for v in base]
  result["arguments"]=[*result["content_base_arguments"],*content_args]
  result["content_configuration_properties"]=properties

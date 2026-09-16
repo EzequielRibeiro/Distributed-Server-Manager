@@ -32,9 +32,13 @@ def _owned(config,cmd):
  iid=str(cmd.get("instance_id") or "").strip();rec=instance_runtime.get_instance(iid)
  if not rec:raise LookupError("instance not found")
  if str(rec.get("agent_id") or "")!=str(config.get("agent_id") or ""):raise PermissionError("instance belongs to another Agent")
- path=Path(str(rec.get("path") or "")).resolve()
+ game_id=str(cmd.get("game_id") or rec.get("game_id") or "").strip().lower();preferred=rec.get("instance_state_root") if game_id=="dayz" else rec.get("path");path=Path(str(preferred or rec.get("path") or "")).resolve()
  if not path.is_dir():raise FileNotFoundError("instance path missing")
  return rec,path
+def _managed_path_current(config,cmd,value):
+ try:
+  _,instance=_owned(config,cmd);base=(instance/"content").resolve();path=Path(str(value or "")).resolve();path.relative_to(base);return path.exists()
+ except (LookupError,PermissionError,FileNotFoundError,ValueError,OSError):return False
 def _verify_artifact(path,artifact):
  if path.is_dir():return
  expected_size=artifact.get("size_bytes")
@@ -143,18 +147,18 @@ def _remove(config,cmd):
 def _source_metadata(cmd:dict[str,Any])->dict[str,Any]:
  artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {};package=str(artifact.get("package_id") or cmd.get("package_id") or "").strip()
  return {"provider":str(cmd.get("provider") or artifact.get("provider") or "").strip().lower(),"content_type":str(cmd.get("content_type") or "other").strip().lower(),"package_id":package or None,"game_id":str(cmd.get("game_id") or "").strip().lower() or None,"target":str(cmd.get("target") or "").strip() or None}
-def _reuse_installed(previous,cmd,source_meta):
+def _reuse_installed(config,previous,cmd,source_meta):
  if previous.get("status") not in {"applied","rolled_back"} or not previous.get("installed_version"):return False
  if str(cmd.get("desired_state") or "installed")!="installed":return False
  if str(previous.get("installed_version"))!=str(cmd.get("version") or "latest"):return False
  for key in ("provider","package_id","target","game_id"):
   if str(previous.get(key) or "")!=str(source_meta.get(key) or ""):return False
- path=str(previous.get("managed_path") or "");return bool(path and Path(path).exists())
+ path=str(previous.get("managed_path") or "");return bool(path and _managed_path_current(config,cmd,path))
 def _apply(config,cmd):
  iid=str(cmd.get("instance_id") or "");cid=str(cmd.get("content_id") or "");revision=int(cmd.get("revision") or 0);checksum=str(cmd.get("checksum") or "");state=_state_path(iid,cid);source_meta=_source_metadata(cmd)
  try:previous=json.loads(state.read_text()) if state.exists() else {}
  except Exception:previous={}
- if previous.get("status")=="applied" and previous.get("applied_revision")==revision and previous.get("applied_checksum")==checksum and previous.get("security_state")=="clean" and int(previous.get("security_policy_version") or 0)>=1:
+ if previous.get("status")=="applied" and previous.get("applied_revision")==revision and previous.get("applied_checksum")==checksum and previous.get("security_state")=="clean" and int(previous.get("security_policy_version") or 0)>=1 and _managed_path_current(config,cmd,previous.get("managed_path")):
   merged={**previous,**{k:v for k,v in source_meta.items() if v is not None}};_write(state,merged);return merged
  if previous.get("status")=="security_scan_failed" and int(previous.get("desired_revision") or 0)==revision and str(previous.get("desired_checksum") or "")==checksum:
   try:retry_after=float(previous.get("security_retry_after_epoch") or 0)
@@ -163,7 +167,7 @@ def _apply(config,cmd):
  try:
   desired=str(cmd.get("desired_state") or "installed");security={"security_state":"clean","engine":"none","policy_version":1,"reason":None,"matches":[]}
   if desired=="absent":path=_remove(config,cmd)
-  elif _reuse_installed(previous,cmd,source_meta):path=str(previous.get("managed_path"));security=require_clean(Path(path))
+  elif _reuse_installed(config,previous,cmd,source_meta):path=str(previous.get("managed_path"));security=require_clean(Path(path))
   else:path,security=_install(config,cmd)
   report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":revision,"desired_checksum":checksum,"applied_checksum":checksum,"status":"applied","installed_version":None if desired=="absent" else str(cmd.get("version") or "latest"),"managed_path":path,"last_error":None,"readiness":"healthy","security_state":str(security.get("security_state") or "clean"),"applied_security_state":str(security.get("security_state") or "clean"),"security_policy_version":1,"security":{"engine":security.get("engine"),"matches":security.get("matches") or []},**source_meta}
  except ContentSecurityRejected as exc:
