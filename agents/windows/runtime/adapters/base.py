@@ -36,5 +36,9 @@ class InstanceRuntimeAdapter(ABC):
     def broadcast(self, instance: dict[str, Any], message: str, *, priority: str = "normal") -> dict[str, Any]:
         raise AdapterError(f"runtime adapter {self.name} does not support broadcast")
 
+    def save(self, instance: dict[str, Any]) -> dict[str, Any]:
+        """Persist live game state through a typed game adapter operation."""
+        raise AdapterError(f"runtime adapter {self.name} does not support save")
+
 
 __all__ = ["AdapterError", "InstanceRuntimeAdapter"]
