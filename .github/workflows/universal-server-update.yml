@@ -20,16 +20,21 @@ on:
       - 'dashboard/agent_heartbeat_api.py'
       - 'dashboard/content_update_detector.py'
       - 'dashboard/server_update_*'
+      - 'dashboard/customer_content_http.py'
+      - 'dashboard/static_asset_policy.py'
       - 'dashboard/workers/content_update_worker.py'
       - 'dashboard/workers/worker.sh'
       - 'dashboard/server_part18.py'
       - 'dashboard/web/server-updates.*'
+      - 'dashboard/web/customer-content-update-policy.js'
+      - 'dashboard/web/customer-instance.html'
       - 'systemd/dsm-dashboard.service'
       - 'release/build_agent_package.sh'
       - 'tests/universal_server_update_test.py'
       - 'tests/universal_content_update_policy_test.py'
       - 'tests/controller_content_update_detector_test.py'
       - 'tests/minecraft_modpack_update_resolver_test.py'
+      - 'tests/customer_content_update_policy_surface_test.py'
       - '.github/workflows/universal-server-update.yml'
   push:
     branches: [main]
@@ -49,13 +54,18 @@ on:
       - 'dashboard/agent_heartbeat_api.py'
       - 'dashboard/content_update_detector.py'
       - 'dashboard/server_update_*'
+      - 'dashboard/customer_content_http.py'
+      - 'dashboard/static_asset_policy.py'
       - 'dashboard/workers/content_update_worker.py'
       - 'dashboard/workers/worker.sh'
       - 'dashboard/server_part18.py'
+      - 'dashboard/web/customer-content-update-policy.js'
+      - 'dashboard/web/customer-instance.html'
       - 'tests/universal_server_update_test.py'
       - 'tests/universal_content_update_policy_test.py'
       - 'tests/controller_content_update_detector_test.py'
       - 'tests/minecraft_modpack_update_resolver_test.py'
+      - 'tests/customer_content_update_policy_surface_test.py'
 permissions:
   contents: read
 jobs:
@@ -66,9 +76,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate syntax
         run: |
-          python3 -m py_compile core/content_platform.py core/minecraft_modpack_update_resolver.py core/server_update_platform.py database/server_update_schema.py database/server_update_repository.py database/content_update_dispatch_repository.py database/agent_game_data_repository.py agents/linux/runtime/server_update_provider.py agents/linux/runtime/server_update_transaction.py agents/linux/runtime/server_update_agent.py agents/linux/runtime/content_update_provider.py agents/linux/runtime/content_update_inventory.py agents/linux/runtime/content_client.py agents/linux/runtime/agent.py agents/windows/runtime/content_update_provider.py agents/windows/runtime/content_update_inventory.py agents/windows/runtime/content_client.py agents/windows/runtime/agent.py agents/linux/runtime/game_data_executor.py dashboard/agent_heartbeat_api.py dashboard/content_update_detector.py dashboard/server_update_api.py dashboard/server_update_http.py dashboard/server_update_install.py dashboard/server_part18.py dashboard/workers/content_update_worker.py tests/universal_server_update_test.py tests/universal_content_update_policy_test.py tests/controller_content_update_detector_test.py tests/minecraft_modpack_update_resolver_test.py
+          python3 -m py_compile core/content_platform.py core/minecraft_modpack_update_resolver.py core/server_update_platform.py database/server_update_schema.py database/server_update_repository.py database/content_update_dispatch_repository.py database/agent_game_data_repository.py agents/linux/runtime/server_update_provider.py agents/linux/runtime/server_update_transaction.py agents/linux/runtime/server_update_agent.py agents/linux/runtime/content_update_provider.py agents/linux/runtime/content_update_inventory.py agents/linux/runtime/content_client.py agents/linux/runtime/agent.py agents/windows/runtime/content_update_provider.py agents/windows/runtime/content_update_inventory.py agents/windows/runtime/content_client.py agents/windows/runtime/agent.py agents/linux/runtime/game_data_executor.py dashboard/agent_heartbeat_api.py dashboard/content_update_detector.py dashboard/server_update_api.py dashboard/server_update_http.py dashboard/server_update_install.py dashboard/customer_content_http.py dashboard/static_asset_policy.py dashboard/server_part18.py dashboard/workers/content_update_worker.py tests/universal_server_update_test.py tests/universal_content_update_policy_test.py tests/controller_content_update_detector_test.py tests/minecraft_modpack_update_resolver_test.py tests/customer_content_update_policy_surface_test.py
+          node --check dashboard/web/customer-content-update-policy.js
       - name: Run Universal Server Update tests
-        run: python3 -m unittest tests/universal_server_update_test.py tests/universal_content_update_policy_test.py tests/controller_content_update_detector_test.py tests/minecraft_modpack_update_resolver_test.py
+        run: python3 -m unittest tests/universal_server_update_test.py tests/universal_content_update_policy_test.py tests/controller_content_update_detector_test.py tests/minecraft_modpack_update_resolver_test.py tests/customer_content_update_policy_surface_test.py
       - name: Validate dashboard worker supervision
         run: |
           bash -n dashboard/workers/worker.sh
@@ -101,4 +112,7 @@ jobs:
           grep -F 'downloaded and validated by minecraft_modpack_resolver' core/minecraft_modpack_update_resolver.py
           grep -F 'JOIN instances i ON i.id=a.instance_id' database/server_update_repository.py
           grep -F "package=_short(artifact.get('package_id'))" database/server_update_repository.py
+          grep -F 'policy_api(user,instance_id,"content.install")' dashboard/customer_content_http.py
+          grep -F 'api.workspace.require(user,instance_id,"settings.write")' dashboard/customer_content_http.py
+          ! grep -F 'innerHTML' dashboard/web/customer-content-update-policy.js
           grep -F 'server_part18.py' systemd/dsm-dashboard.service
