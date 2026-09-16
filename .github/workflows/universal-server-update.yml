@@ -2,6 +2,7 @@ name: Universal Server Update
 on:
   pull_request:
     paths:
+      - 'core/content_platform.py'
       - 'core/server_update_platform.py'
       - 'database/server_update_*'
       - 'database/content_update_dispatch_repository.py'
@@ -9,8 +10,10 @@ on:
       - 'database/schema_baseline.py'
       - 'agents/linux/runtime/server_update_*'
       - 'agents/linux/runtime/content_update_*'
+      - 'agents/linux/runtime/content_client.py'
       - 'agents/linux/runtime/agent.py'
       - 'agents/windows/runtime/content_update_*'
+      - 'agents/windows/runtime/content_client.py'
       - 'agents/windows/runtime/agent.py'
       - 'agents/linux/runtime/game_data_executor.py'
       - 'dashboard/agent_heartbeat_api.py'
@@ -27,13 +30,16 @@ on:
   push:
     branches: [main]
     paths:
+      - 'core/content_platform.py'
       - 'core/server_update_platform.py'
       - 'database/server_update_*'
       - 'database/content_update_dispatch_repository.py'
       - 'agents/linux/runtime/server_update_*'
       - 'agents/linux/runtime/content_update_*'
+      - 'agents/linux/runtime/content_client.py'
       - 'agents/linux/runtime/agent.py'
       - 'agents/windows/runtime/content_update_*'
+      - 'agents/windows/runtime/content_client.py'
       - 'agents/windows/runtime/agent.py'
       - 'dashboard/agent_heartbeat_api.py'
       - 'dashboard/server_update_*'
@@ -52,7 +58,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate syntax
         run: |
-          python3 -m py_compile core/server_update_platform.py database/server_update_schema.py database/server_update_repository.py database/content_update_dispatch_repository.py database/agent_game_data_repository.py agents/linux/runtime/server_update_provider.py agents/linux/runtime/server_update_transaction.py agents/linux/runtime/server_update_agent.py agents/linux/runtime/content_update_provider.py agents/linux/runtime/content_update_inventory.py agents/linux/runtime/agent.py agents/windows/runtime/content_update_provider.py agents/windows/runtime/content_update_inventory.py agents/windows/runtime/agent.py agents/linux/runtime/game_data_executor.py dashboard/agent_heartbeat_api.py dashboard/server_update_api.py dashboard/server_update_http.py dashboard/server_update_install.py dashboard/server_part18.py dashboard/workers/content_update_worker.py tests/universal_server_update_test.py tests/universal_content_update_policy_test.py
+          python3 -m py_compile core/content_platform.py core/server_update_platform.py database/server_update_schema.py database/server_update_repository.py database/content_update_dispatch_repository.py database/agent_game_data_repository.py agents/linux/runtime/server_update_provider.py agents/linux/runtime/server_update_transaction.py agents/linux/runtime/server_update_agent.py agents/linux/runtime/content_update_provider.py agents/linux/runtime/content_update_inventory.py agents/linux/runtime/content_client.py agents/linux/runtime/agent.py agents/windows/runtime/content_update_provider.py agents/windows/runtime/content_update_inventory.py agents/windows/runtime/content_client.py agents/windows/runtime/agent.py agents/linux/runtime/game_data_executor.py dashboard/agent_heartbeat_api.py dashboard/server_update_api.py dashboard/server_update_http.py dashboard/server_update_install.py dashboard/server_part18.py dashboard/workers/content_update_worker.py tests/universal_server_update_test.py tests/universal_content_update_policy_test.py
       - name: Run Universal Server Update tests
         run: python3 -m unittest tests/universal_server_update_test.py tests/universal_content_update_policy_test.py
       - name: Validate dashboard worker supervision
@@ -66,15 +72,18 @@ jobs:
           grep -F 'find ' release/build_agent_package.sh
       - name: Enforce update security contract
         run: |
-          ! grep -R -E 'shell=True|os\.system\(' core/server_update_platform.py database/server_update_repository.py database/content_update_dispatch_repository.py agents/linux/runtime/server_update_*.py agents/linux/runtime/content_update_*.py agents/windows/runtime/content_update_*.py dashboard/server_update_*.py dashboard/workers/content_update_worker.py
+          ! grep -R -E 'shell=True|os\.system\(' core/content_platform.py core/server_update_platform.py database/server_update_repository.py database/content_update_dispatch_repository.py agents/linux/runtime/server_update_*.py agents/linux/runtime/content_update_*.py agents/windows/runtime/content_update_*.py dashboard/server_update_*.py dashboard/workers/content_update_worker.py
           grep -F 'content_update_inventory":content_update_inventory()' agents/linux/runtime/agent.py
           grep -F 'content_update_inventory":content_update_inventory()' agents/windows/runtime/agent.py
           grep -F 'start_content_update_inventory' agents/linux/runtime/agent.py
           grep -F 'start_content_update_inventory' agents/windows/runtime/agent.py
           grep -F 'record_content_update_inventory' dashboard/agent_heartbeat_api.py
           grep -F 'a.agent_id=u.agent_id' database/content_update_dispatch_repository.py
+          grep -F 'a.provider=u.provider' database/content_update_dispatch_repository.py
           grep -F "self.service.mutate(ACTOR,iid,cid,'update',{})" dashboard/workers/content_update_worker.py
+          grep -F 'Steam Workshop canonical revision does not match detected upstream revision' dashboard/workers/content_update_worker.py
           ! grep -F 'self.service.content.put(' dashboard/workers/content_update_worker.py
+          grep -F 'def _workshop_version' core/content_platform.py
           grep -F 'JOIN instances i ON i.id=a.instance_id' database/server_update_repository.py
           grep -F "package=_short(artifact.get('package_id'))" database/server_update_repository.py
           grep -F 'server_part18.py' systemd/dsm-dashboard.service
