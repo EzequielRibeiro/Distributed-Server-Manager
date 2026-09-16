@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persistence, scheduling and game-data reconciliation for server updates."""
+"""Persistence, scheduling and reconciliation for universal server/content updates."""
 from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime,timezone
@@ -7,12 +7,16 @@ import json,uuid
 from typing import Any,Iterator
 from alert_repository import AlertSession,dialect_for_backend
 from core.agent_health import utc_timestamp
-from core.server_update_platform import normalize_policy,should_apply
+from core.server_update_platform import CONTENT_STATES,effective_content_update_mode,normalize_content_update_mode,normalize_policy,should_apply
 from agent_game_data_repository import AgentGameDataRepository
 
 def _parse(value:Any)->datetime|None:
  try:return datetime.fromisoformat(str(value).replace('Z','+00:00'))
  except Exception:return None
+
+def _short(value:Any,limit:int=191)->str|None:
+ text=str(value or '').replace('\x00','').replace('\r','').replace('\n','').strip()
+ return text[:limit] if text else None
 
 class ServerUpdateRepository:
  def __init__(self,backend):self.backend=backend;self.dialect=dialect_for_backend(backend)
@@ -33,18 +37,61 @@ class ServerUpdateRepository:
    old=s.execute(f'SELECT revision FROM instance_update_policy WHERE instance_id={ph}',(iid,)).fetchone();rev=int(old['revision'] or 0)+1 if old else 1
    if old:s.execute(f'DELETE FROM instance_update_policy WHERE instance_id={ph}',(iid,))
    s.execute('INSERT INTO instance_update_policy(instance_id,mode,timezone,weekdays_json,start_time,duration_minutes,check_interval_seconds,backup_before_update,selection_json,revision,requested_by,created_at,updated_at) '+f'VALUES ({self.dialect.parameters(13)})',(iid,p['mode'],p['timezone'],days,p['start_time'],p['duration_minutes'],p['check_interval_seconds'],1 if p['backup_before_update'] else 0,sel,rev,str(requested_by or '') or None,now,now))
-   state=s.execute(f'SELECT instance_id FROM instance_update_state WHERE instance_id={ph}',(iid,)).fetchone()
-   provider=str(selection.get('provider') or 'unknown');target=str((selection.get('install') or {}).get('package_id') or selection.get('version') or '')
+   state=s.execute(f'SELECT instance_id FROM instance_update_state WHERE instance_id={ph}',(iid,)).fetchone();provider=str(selection.get('provider') or 'unknown');target=str((selection.get('install') or {}).get('package_id') or selection.get('version') or '')
    if state:s.execute(f'UPDATE instance_update_state SET agent_id={ph},provider={ph},target_key={ph},updated_at={ph} WHERE instance_id={ph}',(aid,provider,target,now,iid))
    else:s.execute('INSERT INTO instance_update_state(instance_id,agent_id,provider,target_key,state,rollback_supported,updated_at) '+f'VALUES ({self.dialect.parameters(7)})',(iid,aid,provider,target,'unknown',0,now))
   return self.snapshot(iid)
+ def set_content_policy(self,*,instance_id:str,content_id:str,mode:Any,requested_by:str|None=None)->dict[str,Any]:
+  iid=str(instance_id or '').strip();cid=str(content_id or '').strip();normalized=normalize_content_update_mode(mode);ph=self.dialect.placeholder;now=utc_timestamp()
+  if not iid or not cid or len(iid)>191 or len(cid)>191:raise ValueError('valid instance_id and content_id are required')
+  with self.session(transaction=True) as s:
+   assignment=s.execute(f'SELECT revision FROM content_assignments WHERE instance_id={ph} AND content_id={ph}',(iid,cid)).fetchone()
+   if not assignment:raise KeyError(cid)
+   old=s.execute(f'SELECT revision,created_at FROM content_update_policy WHERE instance_id={ph} AND content_id={ph}',(iid,cid)).fetchone();rev=int(old['revision'] or 0)+1 if old else 1;created=old['created_at'] if old else now
+   if old:s.execute(f'DELETE FROM content_update_policy WHERE instance_id={ph} AND content_id={ph}',(iid,cid))
+   s.execute('INSERT INTO content_update_policy(instance_id,content_id,mode,revision,requested_by,created_at,updated_at) '+f'VALUES ({self.dialect.parameters(7)})',(iid,cid,normalized,rev,str(requested_by or '') or None,created,now))
+  return {'instance_id':iid,'content_id':cid,'mode':normalized,'revision':rev,'effective_mode':self._effective_content_mode(iid,normalized)}
+ def _effective_content_mode(self,instance_id:str,override:Any)->str:
+  ph=self.dialect.placeholder
+  with self.session() as s:row=s.execute(f'SELECT mode,timezone,weekdays_json,start_time,duration_minutes,check_interval_seconds,backup_before_update FROM instance_update_policy WHERE instance_id={ph}',(instance_id,)).fetchone()
+  if not row:return 'manual' if normalize_content_update_mode(override)=='inherit' else normalize_content_update_mode(override)
+  policy=dict(row);policy['weekdays']=json.loads(policy.pop('weekdays_json'));return effective_content_update_mode(policy,override)
+ def record_content_update_inventory(self,agent_id:str,payload:dict[str,Any]|None)->dict[str,int]:
+  aid=str(agent_id or '').strip();body=payload if isinstance(payload,dict) else {};items=body.get('content');ph=self.dialect.placeholder
+  if not aid:raise ValueError('agent_id is required')
+  if body.get('kind')!='ContentUpdateInventory' or not isinstance(items,list):return {'accepted':0,'rejected':0}
+  accepted=rejected=0;now=utc_timestamp()
+  for raw in items[:1000]:
+   if not isinstance(raw,dict):rejected+=1;continue
+   iid=str(raw.get('instance_id') or '').strip();cid=str(raw.get('content_id') or '').strip();state=str(raw.get('state') or 'unknown').strip().lower()
+   if not iid or not cid or len(iid)>191 or len(cid)>191 or state not in CONTENT_STATES:rejected+=1;continue
+   with self.session() as s:
+    row=s.execute(f'SELECT a.provider,a.content_type,a.artifact_json,a.revision FROM content_assignments a JOIN instances i ON i.id=a.instance_id WHERE a.instance_id={ph} AND a.content_id={ph} AND i.agent_id={ph}',(iid,cid,aid)).fetchone()
+   if not row:rejected+=1;continue
+   try:artifact=json.loads(row['artifact_json']) if not isinstance(row['artifact_json'],dict) else dict(row['artifact_json'])
+   except Exception:artifact={}
+   provider=_short(row['provider'],64) or 'unknown';ctype=_short(row['content_type'],64) or 'unknown';package=_short(artifact.get('package_id'));installed=_short(raw.get('installed_revision') or raw.get('installed_version'));available=_short(raw.get('available_revision') or raw.get('available_version'));error=_short(raw.get('error'),2000) if state=='probe_failed' else None;code='probe_failed' if state=='probe_failed' else None
+   with self.session(transaction=True) as s:
+    old=s.execute(f'SELECT dispatched_available_version,dispatched_assignment_revision FROM content_update_state WHERE agent_id={ph} AND instance_id={ph} AND content_id={ph}',(aid,iid,cid)).fetchone()
+    if old:s.execute(f'DELETE FROM content_update_state WHERE agent_id={ph} AND instance_id={ph} AND content_id={ph}',(aid,iid,cid))
+    dispatched_version=old['dispatched_available_version'] if old else None;dispatched_revision=old['dispatched_assignment_revision'] if old else None
+    s.execute('INSERT INTO content_update_state(agent_id,instance_id,content_id,provider,content_type,package_id,installed_version,available_version,state,detector_supported,rollback_supported,last_checked_at,last_error_code,last_error,dispatched_available_version,dispatched_assignment_revision,updated_at) '+f'VALUES ({self.dialect.parameters(17)})',(aid,iid,cid,provider,ctype,package,installed,available,state,1 if raw.get('detector_supported') else 0,1 if raw.get('rollback_supported') else 0,now,code,error,dispatched_version,dispatched_revision,now))
+   accepted+=1
+  return {'accepted':accepted,'rejected':rejected}
+ def _content_snapshot(self,instance_id:str)->list[dict[str,Any]]:
+  ph=self.dialect.placeholder
+  with self.session() as s:rows=s.execute(f'SELECT a.content_id,a.provider,a.content_type,a.revision,p.mode AS policy_mode,p.revision AS policy_revision,u.installed_version,u.available_version,u.state,u.detector_supported,u.rollback_supported,u.last_checked_at,u.last_error_code FROM content_assignments a LEFT JOIN content_update_policy p ON p.instance_id=a.instance_id AND p.content_id=a.content_id LEFT JOIN content_update_state u ON u.instance_id=a.instance_id AND u.content_id=a.content_id WHERE a.instance_id={ph} ORDER BY a.content_id',(instance_id,)).fetchall()
+  values=[]
+  for row in rows:
+   item=dict(row);override=str(item.pop('policy_mode') or 'inherit');item['update_mode']=override;item['effective_update_mode']=self._effective_content_mode(instance_id,override);values.append(item)
+  return values
  def snapshot(self,instance_id:str)->dict[str,Any]:
   ph=self.dialect.placeholder;iid=str(instance_id)
   with self.session() as s:
    p=s.execute(f'SELECT * FROM instance_update_policy WHERE instance_id={ph}',(iid,)).fetchone();st=s.execute(f'SELECT * FROM instance_update_state WHERE instance_id={ph}',(iid,)).fetchone();runs=s.execute(f'SELECT * FROM instance_update_runs WHERE instance_id={ph} ORDER BY created_at DESC LIMIT 25',(iid,)).fetchall()
   if not p:raise KeyError(iid)
   policy=dict(p);policy['weekdays']=json.loads(policy.pop('weekdays_json'));policy.pop('selection_json',None);state=dict(st) if st else None
-  return {'instance_id':iid,'policy':policy,'state':state,'runs':[dict(x) for x in runs]}
+  return {'instance_id':iid,'policy':policy,'state':state,'content':self._content_snapshot(iid),'runs':[dict(x) for x in runs]}
  def _row(self,instance_id:str):
   ph=self.dialect.placeholder
   with self.session() as s:return s.execute(f'SELECT p.*,s.agent_id,s.state,s.last_checked_at,s.active_job_id,s.available_version,s.installed_version FROM instance_update_policy p JOIN instance_update_state s ON s.instance_id=p.instance_id WHERE p.instance_id={ph}',(instance_id,)).fetchone()
@@ -58,8 +105,7 @@ class ServerUpdateRepository:
   row=self._row(instance_id)
   if not row:raise KeyError(instance_id)
   run='server-update-'+uuid.uuid4().hex;now=utc_timestamp();job=AgentGameDataRepository(self.backend).enqueue(agent_id=str(row['agent_id']),action='update',environment_id=str(json.loads(row['selection_json']).get('environment_id') or row['instance_id']),selector='current',selection=self._selection(row,'update'),requested_by=requested_by);ph=self.dialect.placeholder
-  with self.session(transaction=True) as s:
-   s.execute('INSERT INTO instance_update_runs(run_id,instance_id,agent_id,game_data_job_id,trigger_type,installed_before,target_version,status,rollback_supported,created_at,updated_at) '+f'VALUES ({self.dialect.parameters(11)})',(run,str(row['instance_id']),str(row['agent_id']),job['job_id'],trigger_type,row['installed_version'],row['available_version'],'queued',0,now,now))
+  with self.session(transaction=True) as s:s.execute('INSERT INTO instance_update_runs(run_id,instance_id,agent_id,game_data_job_id,trigger_type,installed_before,target_version,status,rollback_supported,created_at,updated_at) '+f'VALUES ({self.dialect.parameters(11)})',(run,str(row['instance_id']),str(row['agent_id']),job['job_id'],trigger_type,row['installed_version'],row['available_version'],'queued',0,now,now))
   self._activate(instance_id,job['job_id'],'updating');return {'run_id':run,'job':job}
  def _activate(self,iid,job,state):
   ph=self.dialect.placeholder

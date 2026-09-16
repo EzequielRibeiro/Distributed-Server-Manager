@@ -145,6 +145,7 @@ CUSTOMER_STATIC_PATHS = frozenset({
     "/customer-instance-v2.css",
     "/customer-instance-v2.js",
     "/customer-instance-runtime-live.js",
+    "/customer-content-update-policy.js",
     "/customer-instance-v2-wrapper.js",
     "/customer-instance-core.js",
     "/customer-instance-events.css",

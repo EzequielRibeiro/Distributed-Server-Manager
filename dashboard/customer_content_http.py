@@ -7,12 +7,16 @@ from customer_content_workspace import CustomerContentWorkspaceService
 from customer_content_upload_service import CustomerContentUploadService
 from instance_activity_repository import InstanceActivityRepository
 from json_serialization import to_json_compatible
+from server_update_api import instance_update_policy_view,set_instance_update_policy
+from server_update_repository import ServerUpdateRepository
 
 PATH="/api/customer/instance/workspace/content"
 SEARCH=PATH+"/search"
 UPLOAD=PATH+"/upload"
 UPLOAD_STATUS=UPLOAD+"/status"
 UPLOAD_FINALIZE=UPLOAD+"/finalize"
+UPDATE_POLICY=PATH+"/update-policy"
+UPDATE_POLICY_ITEM=UPDATE_POLICY+"/item"
 
 def install_customer_content_http(legacy,authenticate):
  previous_get=legacy.DashboardHandler.do_GET;previous_post=legacy.DashboardHandler.do_POST;previous_put=getattr(legacy.DashboardHandler,"do_PUT",None)
@@ -49,6 +53,13 @@ def install_customer_content_http(legacy,authenticate):
    api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT);context=api.workspace.repo.instance_context(instance_id)
    InstanceActivityRepository(backend()).record(instance_id=instance_id,customer_id=context.get("customer_id"),username=str(user.get("username") or ""),role=str(user.get("role") or ""),activity=f"CONTENT_{action.upper()}_REQUESTED",category="content",result="accepted",target_type="content",target_name=content_id,details={"changed":bool(result.get("changed")),"revision":(result.get("assignment") or {}).get("revision")})
   except Exception:pass
+ def record_policy(user,instance_id,activity,target,details):
+  try:
+   api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT);context=api.workspace.repo.instance_context(instance_id)
+   InstanceActivityRepository(backend()).record(instance_id=instance_id,customer_id=context.get("customer_id"),username=str(user.get("username") or ""),role=str(user.get("role") or ""),activity=activity,category="content",result="accepted",target_type="content_update_policy",target_name=target,details=details)
+  except Exception:pass
+ def policy_api(user,instance_id,permission="content.read"):
+  api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT);api.workspace.require(user,instance_id,permission);return api
  def get(self):
   parsed=urlparse(self.path)
   if parsed.path==UPLOAD_STATUS:
@@ -61,6 +72,12 @@ def install_customer_content_http(legacy,authenticate):
    if user is None:return
    try:
     api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT);results=api.search(user,iid(parsed),one(parsed,"provider"),one(parsed,"content_type"),one(parsed,"q"),one(parsed,"limit","20"));return send(self,200,{"results":results,"count":len(results)})
+   except Exception as exc:return error(self,exc)
+  if parsed.path==UPDATE_POLICY:
+   user=require_user(self)
+   if user is None:return
+   try:
+    instance_id=iid(parsed);policy_api(user,instance_id);return send(self,200,instance_update_policy_view(instance_id,backend=backend()))
    except Exception as exc:return error(self,exc)
   if parsed.path!=PATH:return previous_get(self)
   user=require_user(self)
@@ -80,6 +97,22 @@ def install_customer_content_http(legacy,authenticate):
    if user is None:return
    try:
     body=self.read_json_body();api=CustomerContentUploadService(backend(),legacy.DSM_ROOT);result=api.finalize(user,str(body.get("transfer_id") or ""),body);assignment=result.get("assignment") or {};record(user,str(assignment.get("instance_id") or body.get("instance_id") or ""),"upload",str(assignment.get("content_id") or body.get("content_id") or ""),result);return send(self,202,result)
+   except Exception as exc:return error(self,exc)
+  if parsed.path==UPDATE_POLICY:
+   user=require_user(self)
+   if user is None:return
+   try:
+    body=self.read_json_body();instance_id=iid(parsed,body);api=policy_api(user,instance_id,"content.install");api.workspace.require(user,instance_id,"settings.write");policy=body.get("policy")
+    if not isinstance(policy,dict):raise ValueError("policy must be an object")
+    actor=str(user.get("username") or user.get("id") or "customer");set_instance_update_policy({"instance_id":instance_id,"policy":policy},backend=backend(),root=legacy.DSM_ROOT,requested_by=actor);view=instance_update_policy_view(instance_id,backend=backend());record_policy(user,instance_id,"CONTENT_UPDATE_POLICY_CHANGED",instance_id,{"mode":view["policy"]["mode"],"timezone":view["policy"]["timezone"]});return send(self,200,view)
+   except Exception as exc:return error(self,exc)
+  if parsed.path==UPDATE_POLICY_ITEM:
+   user=require_user(self)
+   if user is None:return
+   try:
+    body=self.read_json_body();instance_id=iid(parsed,body);policy_api(user,instance_id,"content.install");content_id=str(body.get("content_id") or "").strip()
+    if not content_id:raise ValueError("content_id is required")
+    actor=str(user.get("username") or user.get("id") or "customer");repo=ServerUpdateRepository(backend());repo.initialize();item=repo.set_content_policy(instance_id=instance_id,content_id=content_id,mode=body.get("mode"),requested_by=actor);record_policy(user,instance_id,"CONTENT_UPDATE_OVERRIDE_CHANGED",content_id,{"mode":item["mode"],"effective_mode":item["effective_mode"]});return send(self,200,{"content_update_policy":item,"view":instance_update_policy_view(instance_id,backend=backend())})
    except Exception as exc:return error(self,exc)
   if parsed.path!=PATH:return previous_post(self)
   user=require_user(self)
@@ -105,4 +138,4 @@ def install_customer_content_http(legacy,authenticate):
   except Exception as exc:return error(self,exc)
  legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post;legacy.DashboardHandler.do_PUT=put
 
-__all__=["PATH","SEARCH","UPLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","install_customer_content_http"]
+__all__=["PATH","SEARCH","UPLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","UPDATE_POLICY","UPDATE_POLICY_ITEM","install_customer_content_http"]
