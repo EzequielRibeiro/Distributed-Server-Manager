@@ -37,6 +37,14 @@ jobs_validate_schedule()
     esac
 }
 
+jobs_validate_timezone()
+{
+    local timezone="${1:-UTC}"
+    [[ -n "${timezone}" ]] || return 1
+    [[ "${timezone}" =~ ^[A-Za-z0-9._+-]+(/[A-Za-z0-9._+-]+)*$ ]] || return 1
+    [[ "${timezone}" == "UTC" || "${timezone}" == "Etc/UTC" || -f "/usr/share/zoneinfo/${timezone}" ]]
+}
+
 jobs_exists()
 {
     local name="$1"
@@ -47,34 +55,35 @@ jobs_exists()
 jobs_list()
 {
     jobs_init || return 1
-    jq -r '.jobs[] | [.name,.schedule,.command,(.enabled|tostring),(.last_run_at // ""),(.last_status // "never")] | @tsv' "${JOBS_DB}" | tr '\t' '|'
+    jq -r '.jobs[] | [.name,.schedule,(.timezone // "UTC"),.command,(.enabled|tostring),(.last_run_at // ""),(.last_status // "never")] | @tsv' "${JOBS_DB}" | tr '\t' '|'
 }
 
 jobs_list_json()
 {
     jobs_init || return 1
-    jq '{jobs:.jobs}' "${JOBS_DB}"
+    jq '{jobs:(.jobs | map(. + {timezone:(.timezone // "UTC")}))}' "${JOBS_DB}"
 }
 
 jobs_show()
 {
     local name="$1"
     jobs_init || return 1
-    jq --arg name "${name}" '.jobs[] | select(.name==$name)' "${JOBS_DB}"
+    jq --arg name "${name}" '.jobs[] | select(.name==$name) | . + {timezone:(.timezone // "UTC")}' "${JOBS_DB}"
 }
 
 jobs_add()
 {
-    local name="$1" schedule="$2" command="$3" enabled="${4:-1}" file="${5:-}"
+    local name="$1" schedule="$2" command="$3" enabled="${4:-1}" file="${5:-}" timezone="${6:-UTC}"
     jobs_init || return 1
     jobs_validate_schedule "${schedule}" || { echo "Erro: schedule inválido: ${schedule}" >&2; return 2; }
+    jobs_validate_timezone "${timezone}" || { echo "Erro: timezone IANA inválido: ${timezone}" >&2; return 2; }
     [[ "${enabled}" =~ ^[01]$ ]] || { echo "Erro: enabled deve ser 0 ou 1" >&2; return 2; }
     [[ -n "${name}" && -n "${command}" ]] || { echo "Erro: nome e comando são obrigatórios" >&2; return 2; }
     jobs_lock || return 1
     if jobs_exists "${name}"; then jobs_unlock; echo "Erro: job já existe: ${name}" >&2; return 2; fi
     local tmp; tmp="$(mktemp)"
-    jq --arg name "${name}" --arg schedule "${schedule}" --arg command "${command}" --arg file "${file}" --argjson enabled "${enabled}" '
-      .jobs += [{name:$name,schedule:$schedule,command:$command,enabled:$enabled,file:$file,created_at:(now|todate),updated_at:(now|todate),last_run_at:null,last_status:"never"}]' "${JOBS_DB}" >"${tmp}"
+    jq --arg name "${name}" --arg schedule "${schedule}" --arg timezone "${timezone}" --arg command "${command}" --arg file "${file}" --argjson enabled "${enabled}" '
+      .jobs += [{name:$name,schedule:$schedule,timezone:$timezone,command:$command,enabled:$enabled,file:$file,created_at:(now|todate),updated_at:(now|todate),last_run_at:null,last_status:"never"}]' "${JOBS_DB}" >"${tmp}"
     mv "${tmp}" "${JOBS_DB}"
     jobs_unlock
 }
@@ -86,6 +95,7 @@ jobs_update()
     jobs_exists "${name}" || { echo "Erro: job inexistente: ${name}" >&2; return 2; }
     case "${field}" in
         schedule) jobs_validate_schedule "${value}" || { echo "Erro: schedule inválido" >&2; return 2; } ;;
+        timezone) jobs_validate_timezone "${value}" || { echo "Erro: timezone IANA inválido" >&2; return 2; } ;;
         enabled) [[ "${value}" =~ ^[01]$ ]] || { echo "Erro: enabled inválido" >&2; return 2; } ;;
         command|file) ;;
         *) echo "Erro: campo inválido: ${field}" >&2; return 2 ;;
@@ -134,11 +144,11 @@ jobs_import_tasks()
     local task
     for task in "${TASKS_DIR}"/*.task; do
         [[ -f "${task}" ]] || continue
-        unset NAME SCHEDULE COMMAND ENABLED
+        unset NAME SCHEDULE COMMAND ENABLED TIMEZONE
         # shellcheck source=/dev/null
         source "${task}"
         [[ -n "${NAME:-}" ]] || continue
-        jobs_exists "${NAME}" || jobs_add "${NAME}" "${SCHEDULE}" "${COMMAND}" "${ENABLED:-1}" "${task}"
+        jobs_exists "${NAME}" || jobs_add "${NAME}" "${SCHEDULE}" "${COMMAND}" "${ENABLED:-1}" "${task}" "${TIMEZONE:-UTC}"
     done
 }
 
@@ -148,7 +158,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
         list-json) jobs_list_json ;;
         show) jobs_show "${2:?job obrigatório}" ;;
         import) jobs_import_tasks ;;
-        add) jobs_add "${2:?nome}" "${3:?schedule}" "${4:?comando}" "${5:-1}" "${6:-}" ;;
+        add) jobs_add "${2:?nome}" "${3:?schedule}" "${4:?comando}" "${5:-1}" "${6:-}" "${7:-UTC}" ;;
         update) jobs_update "${2:?job}" "${3:?campo}" "${4:?valor}" ;;
         remove) jobs_remove "${2:?job}" ;;
         enable) jobs_enable "${2:?job}" ;;
