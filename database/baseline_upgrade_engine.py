@@ -19,7 +19,8 @@ from backend import DatabaseMigrationError
 from discord_integration_schema import discord_integration_ddl
 from content_contract_v2_schema import content_contract_v2_ddl
 from content_bundle_schema import content_bundle_ddl
-from server_update_schema import server_update_ddl
+from maintenance_schema import maintenance_ddl
+from server_update_schema import content_update_ddl, server_update_ddl
 
 
 UpgradeApply = Callable[[Any, Any], None]
@@ -43,6 +44,17 @@ SERVER_UPDATE_TABLES = {
     "instance_update_policy",
     "instance_update_state",
     "instance_update_runs",
+}
+
+CONTENT_UPDATE_TABLES = {
+    "content_update_policy",
+    "content_update_state",
+}
+
+MAINTENANCE_TABLES = {
+    "instance_maintenance_policy",
+    "instance_maintenance_state",
+    "instance_maintenance_runs",
 }
 
 CONTENT_CONTRACT_V2_COLUMNS = {
@@ -367,6 +379,46 @@ def _upgrade_server_update_schema(backend: Any, connection: Any) -> None:
     _execute_script(backend, connection, server_update_ddl(backend.name))
 
 
+def _upgrade_content_update_schema(backend: Any, connection: Any) -> None:
+    tables = _table_names(backend, connection)
+    present = CONTENT_UPDATE_TABLES & tables
+    if present == CONTENT_UPDATE_TABLES:
+        return
+    if present:
+        missing = sorted(CONTENT_UPDATE_TABLES - present)
+        raise DatabaseMigrationError(
+            "partial universal content update baseline upgrade; missing tables: "
+            + ", ".join(missing)
+        )
+    _execute_script(backend, connection, content_update_ddl(backend.name))
+    missing = sorted(CONTENT_UPDATE_TABLES - _table_names(backend, connection))
+    if missing:
+        raise DatabaseMigrationError(
+            "universal content update baseline upgrade incomplete; missing tables: "
+            + ", ".join(missing)
+        )
+
+
+def _upgrade_maintenance_schema(backend: Any, connection: Any) -> None:
+    tables = _table_names(backend, connection)
+    present = MAINTENANCE_TABLES & tables
+    if present == MAINTENANCE_TABLES:
+        return
+    if present:
+        missing = sorted(MAINTENANCE_TABLES - present)
+        raise DatabaseMigrationError(
+            "partial maintenance baseline upgrade; missing tables: "
+            + ", ".join(missing)
+        )
+    _execute_script(backend, connection, maintenance_ddl(backend.name))
+    missing = sorted(MAINTENANCE_TABLES - _table_names(backend, connection))
+    if missing:
+        raise DatabaseMigrationError(
+            "maintenance baseline upgrade incomplete; missing tables: "
+            + ", ".join(missing)
+        )
+
+
 def _upgrade_backup_job_retry_identity(backend: Any, connection: Any) -> None:
     """Make backup_id an artifact reference, not a unique job identity.
 
@@ -625,6 +677,8 @@ UPGRADES = (
     BaselineUpgrade(9, "backup_job_retry_identity_repair", _upgrade_backup_job_retry_identity),
     BaselineUpgrade(10, "universal_content_bundles", _upgrade_content_bundle_schema),
     BaselineUpgrade(11, "datacenter_geography_metadata", _upgrade_datacenter_geography),
+    BaselineUpgrade(12, "universal_content_update", _upgrade_content_update_schema),
+    BaselineUpgrade(13, "maintenance_restart_framework", _upgrade_maintenance_schema),
 )
 
 
