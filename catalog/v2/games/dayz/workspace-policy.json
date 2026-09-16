@@ -11,7 +11,14 @@
       "plugins": false,
       "workshop": true,
       "external_upload": true,
-      "custom_runtime": false
+      "custom_runtime": false,
+      "maintenance": {
+        "scheduled_restart": true,
+        "broadcast": false,
+        "save": false,
+        "graceful_shutdown": true,
+        "native_countdown": true
+      }
     }
   }
 }
