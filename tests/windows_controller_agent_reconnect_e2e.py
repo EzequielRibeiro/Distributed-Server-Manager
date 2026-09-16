@@ -32,7 +32,7 @@ class Handler(BaseHTTPRequestHandler):
     backend=None
     def log_message(self,*args): return
     def _reply(self,status,payload):
-        body=json.dumps(payload,default=str).encode();self.send_response(status,payload and None);self.send_header("Content-Type","application/json");self.send_header("Content-Length",str(len(body)));self.end_headers();self.wfile.write(body)
+        body=json.dumps(payload,default=str).encode();self.send_response(status);self.send_header("Content-Type","application/json");self.send_header("Content-Length",str(len(body)));self.end_headers();self.wfile.write(body)
     def do_GET(self): self._reply(200,{"status":"ok"}) if self.path=="/ping" else self._reply(404,{"error":"not_found"})
     def do_POST(self):
         length=int(self.headers.get("Content-Length") or 0);payload=json.loads(self.rfile.read(length).decode() if length else "{}")
