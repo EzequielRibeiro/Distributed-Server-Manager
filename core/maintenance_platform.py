@@ -48,6 +48,30 @@ def normalize_policy(raw:Mapping[str,Any]|None)->dict[str,Any]:
  stripped=_PLACEHOLDER.sub("",template)
  if "{" in stripped or "}" in stripped:raise MaintenanceValidationError("invalid maintenance warning_template braces")
  return {"enabled":enabled,"schedule_mode":mode,"timezone":zone_name,"weekdays":weekdays,"start_time":start_time,"interval_seconds":interval_seconds,"warning_offsets_seconds":offsets,"warning_template":template,"broadcast_enabled":bool(value.get("broadcast_enabled",True)),"coalesce_updates":bool(value.get("coalesce_updates",True))}
+def _supported(value:Any)->bool:
+ if isinstance(value,Mapping):return bool(value.get("supported",False))
+ return bool(value)
+def normalize_capabilities(raw:Mapping[str,Any]|None)->dict[str,bool]:
+ value=dict(raw or {})
+ save=value.get("save",value.get("graceful_save",False))
+ return {"scheduled_restart":bool(value.get("scheduled_restart",True)),"broadcast":_supported(value.get("broadcast",False)),"save":_supported(save),"graceful_shutdown":_supported(value.get("graceful_shutdown",False)),"native_countdown":_supported(value.get("native_countdown",False))}
+def maintenance_event(policy:Mapping[str,Any],capabilities:Mapping[str,Any]|None,*,pending_work:list[Mapping[str,Any]]|None=None)->dict[str,Any]:
+ p=normalize_policy(policy);caps=normalize_capabilities(capabilities)
+ if not caps["scheduled_restart"]:raise MaintenanceValidationError("runtime does not support scheduled restart")
+ pending=[]
+ for raw in pending_work or []:
+  if not isinstance(raw,Mapping):continue
+  kind=str(raw.get("kind") or "").strip().lower()
+  if kind not in {"game-update","content-update","configuration"}:continue
+  pending.append({"kind":kind,"ref":str(raw.get("ref") or "")[:191] or None})
+ warnings=bool(p["broadcast_enabled"] and caps["broadcast"] and not caps["native_countdown"])
+ steps=["warning"] if warnings else []
+ steps.append("preflight")
+ if caps["save"]:steps.append("save")
+ steps.append("stop")
+ if p["coalesce_updates"] and pending:steps.append("apply-updates")
+ steps.extend(["start","readiness"])
+ return {"schema_version":1,"kind":"CapivaraMaintenanceEvent","capabilities":caps,"warnings_enabled":warnings,"coalesce_updates":p["coalesce_updates"],"pending_work":pending,"steps":steps}
 def _valid_local_wall(zone:ZoneInfo,day:date,hh:int,mm:int)->datetime:
  naive=datetime.combine(day,time(hh,mm))
  for minute in range(181):
@@ -86,4 +110,4 @@ def format_remaining(seconds:int)->str:
   minutes=value//60;return f"{minutes} minuto" if minutes==1 else f"{minutes} minutos"
  return f"{value} segundos"
 def render_warning(policy:Mapping[str,Any],offset_seconds:int)->str:return normalize_policy(policy)["warning_template"].replace("{remaining}",format_remaining(offset_seconds))
-__all__=["DEFAULT_WARNING_OFFSETS","DEFAULT_WARNING_TEMPLATE","MaintenanceValidationError","SCHEDULE_MODES","due_warning_offsets","format_remaining","next_due_at","normalize_policy","render_warning","warning_plan"]
+__all__=["DEFAULT_WARNING_OFFSETS","DEFAULT_WARNING_TEMPLATE","MaintenanceValidationError","SCHEDULE_MODES","due_warning_offsets","format_remaining","maintenance_event","next_due_at","normalize_capabilities","normalize_policy","render_warning","warning_plan"]
