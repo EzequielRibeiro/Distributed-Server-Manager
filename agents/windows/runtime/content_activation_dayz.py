@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Safe DayZ Universal Content activation primitives.
 
-Only Agent-observed managed paths are accepted. Workshop keys are discovered from
-managed content so Windows can fail closed when no per-instance key isolation exists.
+Only instance-scoped Agent-managed paths are accepted. Workshop keys are
+discovered from managed content so Windows can fail closed when no safe
+per-instance key isolation is available.
 """
 from __future__ import annotations
 
@@ -34,19 +35,39 @@ def _within(root: Path, value: Path, label: str) -> Path:
     try:
         path.relative_to(root)
     except ValueError as exc:
-        raise DayZContentActivationError(f"{label} escapes managed instance content") from exc
+        raise DayZContentActivationError(f"{label} escapes its allowed root") from exc
     return path
 
 
-def _managed_path(spec: dict[str, Any], entry: dict[str, Any]) -> Path:
+def _managed_roots(spec: dict[str, Any]) -> list[Path]:
+    roots: list[Path] = []
     state = str(spec.get("instance_state_root") or "").strip()
+    if state and os.path.isabs(state):
+        roots.append((Path(state).resolve(strict=False) / "content").resolve(strict=False))
+    iid = str(spec.get("instance_id") or "").strip()
+    working = str(spec.get("working_directory") or spec.get("path") or "").strip()
+    if iid and working and os.path.isabs(working):
+        roots.append((Path(working).resolve(strict=False) / "content" / "instances" / iid).resolve(strict=False))
+    if not roots:
+        raise DayZContentActivationError("DayZ content requires instance-scoped runtime roots")
+    return roots
+
+
+def _managed_path(spec: dict[str, Any], entry: dict[str, Any]) -> Path:
     value = str(entry.get("managed_path") or "").strip()
-    if not state or not value or not os.path.isabs(value):
-        raise DayZContentActivationError("DayZ content requires an absolute Agent-managed path")
-    if any(ch in value for ch in ("\x00", "\r", "\n", ";")):
+    if not value or not os.path.isabs(value) or any(ch in value for ch in ("\x00", "\r", "\n", ";")):
         raise DayZContentActivationError("invalid DayZ managed content path")
-    root = Path(state).resolve(strict=False) / "content"
-    path = _within(root, Path(value), "DayZ managed path")
+    path = Path(value).resolve(strict=False)
+    accepted = False
+    for root in _managed_roots(spec):
+        try:
+            path.relative_to(root)
+            accepted = True
+            break
+        except ValueError:
+            continue
+    if not accepted:
+        raise DayZContentActivationError("DayZ managed path is not instance-scoped")
     if _is_link(path) or not path.is_dir():
         raise DayZContentActivationError("DayZ managed content is unavailable or linked")
     return path
