@@ -101,7 +101,7 @@ class MaintenanceContentCoalescingTest(unittest.TestCase):
   client=(ROOT/'agents/linux/runtime/content_client.py').read_text();activation=(ROOT/'agents/linux/runtime/content_activation_apply.py').read_text()
   self.assertIn('was_running=instance_runtime.status(config,iid).get("observed_state")=="running"',client)
   self.assertIn('was_running=instance_runtime.status(config,iid).get("observed_state")=="running"',activation)
-  self.assertIn('if was_running:instance_runtime.lifecycle(config,iid,"start")',client)
+  self.assertRegex(client,r'if was_running:\s*\n\s*instance_runtime\.lifecycle\(config,iid,"start"\)')
   self.assertIn('if was_running:',activation)
 
 if __name__=='__main__':unittest.main()
