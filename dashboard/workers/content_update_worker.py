@@ -34,23 +34,29 @@ def _database_environment(root:Path=ROOT,environment:dict[str,str]|None=None)->d
  effective.setdefault('DSM_ROOT',str(root));return effective
 
 
+def _verify_applied_revision(item:dict[str,Any],current:dict[str,Any]|None)->int:
+ value=current if isinstance(current,dict) else {};before=int(item.get('assignment_revision') or 0);after=int(value.get('revision') or 0)
+ if after<=before:raise RuntimeError('content update did not create a new canonical revision')
+ provider=str(item.get('provider') or '').strip().lower()
+ if provider in {'steam','steam-workshop'}:
+  available=str(item.get('available_version') or '').strip();resolved=str(value.get('version') or '').strip()
+  if not available or resolved!=available:raise RuntimeError('Steam Workshop canonical revision does not match detected upstream revision')
+ return after
+
+
 class ContentUpdateWorker:
  def __init__(self,backend,root:Path=ROOT,*,repository=None,service=None):
   self.backend=backend;self.root=Path(root);self.repository=repository or ContentUpdateDispatchRepository(backend);self.repository.initialize();self.service=service or CustomerContentWorkspaceService(backend,self.root)
  def tick(self,limit:int=200)->dict[str,Any]:
-  due=self.repository.due(limit=limit);result={'due':len(due),'claimed':0,'updated':0,'unchanged':0,'failed':0,'instances':{}}
+  due=self.repository.due(limit=limit);result={'due':len(due),'claimed':0,'updated':0,'failed':0,'instances':{}}
   for item in due:
    iid=str(item.get('instance_id') or '');cid=str(item.get('content_id') or '')
    if not self.repository.claim(item):continue
    result['claimed']+=1;result['instances'][iid]=result['instances'].get(iid,0)+1
    try:
-    mutation=self.service.mutate(ACTOR,iid,cid,'update',{})
-    current=self.service.content.get(iid,cid)
-    revision=int((current or {}).get('revision') or 0)
-    if revision<1:raise RuntimeError('updated content assignment is unavailable')
-    self.repository.complete(item,revision)
-    changed=bool(mutation.get('changed',True)) if isinstance(mutation,dict) else True
-    result['updated' if changed else 'unchanged']+=1
+    self.service.mutate(ACTOR,iid,cid,'update',{})
+    revision=_verify_applied_revision(item,self.service.content.get(iid,cid))
+    self.repository.complete(item,revision);result['updated']+=1
    except Exception as exc:
     self.repository.fail(item,exc);result['failed']+=1
   return result
@@ -61,7 +67,7 @@ def run_forever(root:Path=ROOT,interval:int=INTERVAL_SECONDS)->None:
  while True:
   try:
    report=worker.tick()
-   if report['due'] or report['failed']:print(f"content update worker due={report['due']} claimed={report['claimed']} updated={report['updated']} unchanged={report['unchanged']} failed={report['failed']} instances={len(report['instances'])}",flush=True)
+   if report['due'] or report['failed']:print(f"content update worker due={report['due']} claimed={report['claimed']} updated={report['updated']} failed={report['failed']} instances={len(report['instances'])}",flush=True)
   except Exception as exc:print(f'content update worker failed: {exc}',file=sys.stderr,flush=True)
   time.sleep(max(10,int(interval)))
 
