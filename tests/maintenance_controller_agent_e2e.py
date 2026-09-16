@@ -24,6 +24,7 @@ from backend import DatabaseConfig
 from backend_factory import create_backend
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from agent_pairing_repository import AgentPairingRepository
+from agent_runtime_repository import AgentRuntimeRepository
 from maintenance_repository import MaintenanceRepository
 from maintenance_worker import MaintenanceWorker
 from external_controller_agent_network_e2e import ControllerHandler, _catalog_policy
@@ -176,6 +177,16 @@ def main() -> int:
             enrolled = linux_agent.enroll(linux_agent._load_config())
             if not enrolled.get("credential_id") or enrolled.get("pairing_token"):
                 raise AssertionError("Agent enrollment did not exchange pairing token for credential")
+
+            # Enrollment establishes identity/credentials; lifecycle dispatch is allowed only
+            # after the Controller has observed the Agent as active through a real heartbeat.
+            linux_agent.heartbeat(enrolled)
+            agent_runtime = AgentRuntimeRepository(backend)
+            agent_runtime.initialize()
+            agent_state = agent_runtime.snapshot(AGENT_ID, refresh_health=False)
+            if str(agent_state.get("status") or "").lower() != "active" or str(agent_state.get("health_status") or "").lower() != "online":
+                raise AssertionError(f"Agent did not become active/online after heartbeat: {agent_state}")
+
             _seed_instance(database)
 
             harness = _RuntimeContractHarness(enrolled, INSTANCE_ID, "unused-instance")
