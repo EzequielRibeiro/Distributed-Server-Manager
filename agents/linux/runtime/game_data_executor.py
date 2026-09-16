@@ -10,6 +10,7 @@ from game_data_integrity import inspect_game_data
 from game_data_installer import execute_installer
 from game_data_state import GAME_DATA_ROOT,record_game_data,write_json
 FILE_ACTIONS={"file-list","file-read","file-write","file-create","file-mkdir","file-rename","file-delete","file-upload"}
+MAINTENANCE_ACTIONS={"maintenance-update","maintenance-commit","maintenance-rollback"}
 def _safe_name(value:Any,label:str)->str:
  text=str(value or "").strip();allowed="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
  if not text or any(ch not in allowed for ch in text):raise ValueError(f"invalid {label}")
@@ -21,8 +22,7 @@ def _minecraft_java_runtime(selection:dict[str,Any])->bool:
  return runtime_id.startswith("minecraft.java.")
 def _materialize_minecraft_eula(selection:dict[str,Any],target:Path)->None:
  if not _minecraft_java_runtime(selection):return
- target.mkdir(parents=True,exist_ok=True)
- eula=target/"eula.txt"
+ target.mkdir(parents=True,exist_ok=True);eula=target/"eula.txt"
  if eula.exists() and (not eula.is_file() or eula.is_symlink()):raise RuntimeError("Minecraft EULA seed path is unsafe")
  eula.write_text("eula=true\n",encoding="utf-8")
 def _steamcmd()->str:
@@ -95,7 +95,6 @@ def _ensure_declared_executable(selection:dict[str,Any],target:Path)->None:
  except ValueError as exc:raise ValueError("declared executable escapes game-data target") from exc
  if not candidate.is_file():raise RuntimeError("declared executable is missing after install")
  candidate.chmod(candidate.stat().st_mode|0o100)
-
 def _run_http(selection:dict[str,Any],target:Path)->None:
  install=selection.get("install") if isinstance(selection.get("install"),dict) else {};asset=selection.get("asset") if isinstance(selection.get("asset"),dict) else {};url=str(asset.get("url") or install.get("url") or "").strip()
  if not url.startswith(("https://","http://")):raise ValueError("HTTP artifact URL is missing or invalid")
@@ -119,13 +118,24 @@ def _install(selection:dict[str,Any],target:Path,provider:str)->None:
  elif provider in {"http","http-archive","github"}:_run_http(selection,target)
  elif provider=="fivem":install_fivem(target)
  else:raise RuntimeError(f"provider not supported by standalone Linux Agent: {provider}")
- execute_installer(selection,target)
- _materialize_minecraft_eula(selection,target)
+ execute_installer(selection,target);_materialize_minecraft_eula(selection,target)
+def _maintenance_transaction(action:str,selection:dict[str,Any],target:Path,provider:str)->dict[str,Any]:
+ from maintenance_game_update import finalize,prepare,rollback_transaction
+ meta=selection.get("_server_update") if isinstance(selection.get("_server_update"),dict) else {}
+ if action=="maintenance-update":
+  return prepare(selection,target,lambda destination:_install(selection,Path(destination),provider),_steamcmd() if provider=="steam" else None)
+ transaction_id=str(meta.get("transaction_id") or "").strip()
+ if not transaction_id:raise ValueError("maintenance game update transaction_id is required")
+ if action=="maintenance-commit":return finalize(selection,transaction_id)
+ if action=="maintenance-rollback":return rollback_transaction(selection,transaction_id)
+ raise ValueError("unsupported maintenance game update action")
 def _execute(command:dict[str,Any])->dict[str,Any]:
  action=str(command.get("action") or "install").lower();selection=command.get("selection")
  if action=="install-steamcmd":return _install_steamcmd()
  if not isinstance(selection,dict):raise ValueError("runtime selection is missing")
  target=_target_for(selection);provider=str(selection.get("provider") or "").strip().lower();reused=False;update_meta=selection.get("_server_update") if isinstance(selection.get("_server_update"),dict) else None
+ if action in MAINTENANCE_ACTIONS:
+  detail=_maintenance_transaction(action,selection,target,provider);return {"provider":provider,"game":selection.get("game"),"version":selection.get("version"),"maintenance_update":detail}
  if action=="verify" and update_meta and str(update_meta.get("operation") or "check")=="check":
   from server_update_provider import detect_update
   return {"provider":provider,"game":selection.get("game"),"version":selection.get("version"),"target_path":str(target),"update_status":detect_update(selection,target,_steamcmd() if provider=="steam" else None)}
@@ -155,7 +165,7 @@ def main()->int:
  try:detail=_execute(command)
  except Exception as exc:write_json(result_path,{"job_id":job_id,"status":"failed","progress":100,"error":str(exc)[:2000]});print("game-data job failed",file=sys.stderr,flush=True);return 1
  completed={"job_id":job_id,"status":"completed","progress":100,**detail};write_json(result_path,completed)
- if action in {"ensure","install","update","verify","repair"}:
+ if action in {"ensure","install","update","verify","repair",*MAINTENANCE_ACTIONS}:
   try:record_game_data(job_id=job_id,action=action,selection=selection,result=completed)
   except Exception:print("game-data inventory warning",file=sys.stderr,flush=True)
  print(f"game-data job completed: {job_id}",flush=True);return 0
