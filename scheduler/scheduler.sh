@@ -28,7 +28,7 @@ scheduler_last_run_epoch()
 
 scheduler_due_job()
 {
-    local schedule="$1" last_run_at="${2:-}"
+    local schedule="$1" last_run_at="${2:-}" timezone_name="${3:-UTC}"
     local now last; now="$(date +%s)"; last="$(scheduler_last_run_epoch "${last_run_at}")"
     case "${schedule}" in
         @every:*)
@@ -36,8 +36,8 @@ scheduler_due_job()
             (( now - last >= interval ))
             ;;
         *)
-            cron_match "${schedule}" || return 1
-            # Avoid a second execution inside the same scheduler minute.
+            cron_match "${schedule}" "${timezone_name}" || return 1
+            # Avoid a second execution inside the same absolute scheduler minute.
             (( now - last >= 60 ))
             ;;
     esac
@@ -70,14 +70,15 @@ scheduler_execute_job()
 scheduler_check()
 {
     jobs_init || return 1
-    local job name schedule enabled last_run
+    local job name schedule timezone_name enabled last_run
     while IFS= read -r job; do
         name="$(jq -r '.name' <<<"${job}")"
         schedule="$(jq -r '.schedule' <<<"${job}")"
+        timezone_name="$(jq -r '.timezone // "UTC"' <<<"${job}")"
         enabled="$(jq -r '.enabled' <<<"${job}")"
         last_run="$(jq -r '.last_run_at // ""' <<<"${job}")"
         [[ "${enabled}" == "1" ]] || continue
-        if scheduler_due_job "${schedule}" "${last_run}"; then
+        if scheduler_due_job "${schedule}" "${last_run}" "${timezone_name}"; then
             scheduler_execute_job "${name}" || true
         fi
     done < <(jq -c '.jobs[]' "${JOBS_DB}")
