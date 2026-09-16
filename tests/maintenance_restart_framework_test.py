@@ -16,6 +16,7 @@ class _Repo:
  def candidates(self,now=None):return []
  def ensure_run(self,iid,now=None):return None
  def active_runs(self):return [self.current] if self.current and self.current.get('status') in {'pending','running'} else []
+ def run(self,rid):return self.current
  def policy(self,iid):return self.p
  def set_event(self,rid,event):self.current['event']=event;self.current['stage']='warning';return self.current
  def record_warning(self,rid,offset,bid):self.warnings.append((offset,bid));self.current['warnings_sent']=sorted(set(self.current.get('warnings_sent',[])+[offset]),reverse=True);return self.current
