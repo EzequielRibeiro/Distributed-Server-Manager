@@ -92,13 +92,6 @@
       }
     ]
   },
-  "maintenance": {
-    "scheduled_restart": true,
-    "broadcast": false,
-    "save": false,
-    "graceful_shutdown": true,
-    "native_countdown": true
-  },
   "server_settings": {
     "restart_required": true,
     "fields": {
