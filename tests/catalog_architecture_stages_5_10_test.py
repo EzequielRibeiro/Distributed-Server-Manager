@@ -70,7 +70,7 @@ class CatalogArchitectureStages5To10Test(unittest.TestCase):
   html=(ROOT/"dashboard/web/catalog.html").read_text(encoding="utf-8");js=(ROOT/"dashboard/web/catalog-page.js").read_text(encoding="utf-8");service=(ROOT/"systemd/dsm-dashboard.service").read_text(encoding="utf-8");build=(ROOT/"release/build_agent_package.sh").read_text(encoding="utf-8")
   for text in ("Parâmetros de execução","Templates de configuração","Reparar","Linux + Windows"):self.assertIn(text,html)
   for text in ("/api/catalog/runtime-policy","gameData('repair')","saveRuntimePolicy"):self.assertIn(text,js)
-  self.assertIn("dashboard/server_part17.py",service)
+  self.assertIn("/opt/dsm/dashboard/server_part20.py",service)
   for token in ('git -C "${ROOT}" ls-tree -r --name-only "${REF}" -- agents/linux/runtime','RUNTIME_SOURCES','copy "${source}" "agent/runtime/${relative}"'):
    self.assertIn(token,build)
   for name in ("catalog_runtime_policy.py","game_data_integrity.py","game_data_reconcile.py"):
