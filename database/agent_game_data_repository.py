@@ -11,13 +11,14 @@ from core.agent_health import utc_timestamp
 
 FINAL_STATES = {"completed", "failed"}
 FILE_ACTIONS = {"file-list", "file-read", "file-write", "file-create", "file-mkdir", "file-rename", "file-delete", "file-upload"}
-VALID_ACTIONS = {"install", "update", "verify", "repair", "install-steamcmd", *FILE_ACTIONS}
+MAINTENANCE_ACTIONS = {"maintenance-update", "maintenance-commit", "maintenance-rollback"}
+VALID_ACTIONS = {"install", "update", "verify", "repair", "install-steamcmd", *FILE_ACTIONS, *MAINTENANCE_ACTIONS}
 VALID_STATES = {"queued", "delivered", "running", *FINAL_STATES}
 
 def _logical_action(selection: Any, stored_action: str) -> str:
     if isinstance(selection, dict):
         value = str(selection.get("_job_action") or "").strip().lower()
-        if value in {*FILE_ACTIONS, "repair", "install-steamcmd"}: return value
+        if value in {*FILE_ACTIONS, "repair", "install-steamcmd", *MAINTENANCE_ACTIONS}: return value
     return stored_action
 
 def _redacted_selection(selection: Any) -> Any:
@@ -48,7 +49,7 @@ class AgentGameDataRepository:
         if not isinstance(selection,dict) or not selection: raise ValueError("runtime selection is required")
         stored_selection=dict(selection);stored_action=action
         if action in FILE_ACTIONS: stored_action="verify";stored_selection["_job_action"]=action
-        elif action in {"repair","install-steamcmd"}: stored_action="update";stored_selection["_job_action"]=action
+        elif action in {"repair","install-steamcmd",*MAINTENANCE_ACTIONS}: stored_action="update";stored_selection["_job_action"]=action
         job_id="game-data-"+uuid.uuid4().hex;now=utc_timestamp();payload=json.dumps(stored_selection,separators=(",",":"),sort_keys=True)
         with self.session(transaction=True) as session:
             status=self._agent_status(session,agent_id)
@@ -73,7 +74,6 @@ class AgentGameDataRepository:
         with self.session() as s: rows=s.execute("SELECT job_id FROM agent_game_data_jobs "+f"WHERE agent_id={ph} ORDER BY created_at DESC LIMIT {limit}",(agent_id,)).fetchall()
         return [self.snapshot(str(row["job_id"])) for row in rows]
     def command_for_agent(self,agent_id):
-        # Update discovery is scheduled through this already authenticated transport.
         try:
             from server_update_repository import ServerUpdateRepository
             ServerUpdateRepository(self.backend).schedule_due_for_agent(str(agent_id))
@@ -113,4 +113,4 @@ class AgentGameDataRepository:
             pass
         return updated
 
-__all__=["AgentGameDataRepository","FILE_ACTIONS","FINAL_STATES","VALID_ACTIONS","VALID_STATES"]
+__all__=["AgentGameDataRepository","FILE_ACTIONS","FINAL_STATES","MAINTENANCE_ACTIONS","VALID_ACTIONS","VALID_STATES"]
