@@ -1,0 +1,4 @@
+name: Maintenance Restart Framework
+on: [pull_request]
+permissions:
+  contents: read
