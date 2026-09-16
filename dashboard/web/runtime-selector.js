@@ -26,6 +26,10 @@
         version: null,
         build: null,
         buildRequestGeneration: 0,
+        placementRequestGeneration: 0,
+        placementAbortController: null,
+        placementLoading: false,
+        placementReady: false,
         regions: [],
         region: null,
         allowCrossRegion: false,
@@ -202,8 +206,55 @@
 
     async function loadRegions() {
         const contractId = String(state.contract?.id || state.contract?.contract_id || "").trim();
-        const data = await placementClient().loadRegions({game: state.game, contract: contractId});
-        state.regions = Array.isArray(data?.regions) ? data.regions : [];
+        const runtimeId = String(state.runtime?.id || "").trim();
+        if (!runtimeId) return;
+
+        state.placementAbortController?.abort();
+        const controller = new AbortController();
+        state.placementAbortController = controller;
+        const generation = ++state.placementRequestGeneration;
+        const previousRegionId = state.region?.id || null;
+        const isCurrentRequest = () => (
+            generation === state.placementRequestGeneration
+            && String(state.runtime?.id || "").trim() === runtimeId
+        );
+
+        state.placementLoading = true;
+        state.placementReady = false;
+        state.regions = [];
+        state.region = null;
+        renderRegions();
+        updateSummary();
+
+        try {
+            const data = await placementClient().loadRegions({
+                game: state.game,
+                contract: contractId,
+                runtime: runtimeId,
+            }, {signal: controller.signal});
+            if (!isCurrentRequest()) return;
+            state.regions = Array.isArray(data?.regions) ? data.regions : [];
+            state.region = previousRegionId
+                ? state.regions.find((region) => region.id === previousRegionId) || null
+                : null;
+            state.placementLoading = false;
+            state.placementReady = state.regions.length > 0;
+            renderRegions();
+            updateSummary();
+        } catch (error) {
+            if (!isCurrentRequest()) return;
+            state.placementLoading = false;
+            state.placementReady = false;
+            state.regions = [];
+            state.region = null;
+            renderRegions();
+            updateSummary();
+            throw error;
+        } finally {
+            if (state.placementAbortController === controller) {
+                state.placementAbortController = null;
+            }
+        }
     }
 
     function resetSelectionUI() {
@@ -237,6 +288,12 @@
         state.version = null;
         state.build = null;
         state.buildRequestGeneration += 1;
+        state.placementRequestGeneration += 1;
+        state.placementAbortController?.abort();
+        state.placementAbortController = null;
+        state.placementLoading = false;
+        state.placementReady = false;
+        state.regions = [];
         state.region = null;
         state.allowCrossRegion = false;
 
@@ -247,7 +304,7 @@
         resetSelectionUI();
         showMessage("Carregando catálogo e ambientes disponíveis…");
 
-        const [catalog] = await Promise.all([loadCatalog(game), loadRegions()]);
+        const catalog = await loadCatalog(game);
         state.catalogGame = catalog.catalogGame;
         state.runtimeById = catalog.runtimeById;
         el.title.textContent = `Criar servidor ${gameLabel()}`;
@@ -300,6 +357,14 @@
         state.runtime = null;
         state.version = null;
         state.build = null;
+        state.placementRequestGeneration += 1;
+        state.placementAbortController?.abort();
+        state.placementAbortController = null;
+        state.placementLoading = false;
+        state.placementReady = false;
+        state.regions = [];
+        state.region = null;
+        renderRegions();
         renderEditions();
         renderDistributions();
     }
@@ -342,7 +407,16 @@
         state.runtime = runtime;
         state.version = null;
         state.build = null;
+        state.placementRequestGeneration += 1;
+        state.placementAbortController?.abort();
+        state.placementAbortController = null;
+        state.placementLoading = false;
+        state.placementReady = false;
+        state.regions = [];
+        state.region = null;
+        renderRegions();
         renderDistributions();
+        loadRegions().catch((error) => showMessage(`Não foi possível verificar os servidores disponíveis: ${error.message}`));
         renderVersions().catch((error) => showMessage(`Não foi possível carregar as versões: ${error.message}`));
     }
 
@@ -510,12 +584,18 @@
 
     function renderRegions() {
         const el = elements();
-        el.region.replaceChildren(new Option("Selecione…", ""));
+        const placeholder = state.placementLoading ? "Verificando disponibilidade…" : "Selecione…";
+        el.region.replaceChildren(new Option(placeholder, ""));
         for (const region of state.regions) el.region.append(new Option(regionLabel(region), region.id));
-        el.region.disabled = state.regions.length === 0;
-        el.regionHelp.textContent = state.regions.length
-            ? "A recomendação considera disponibilidade e latência estimada. O Controller selecionará o Agent adequado."
-            : "Nenhum servidor elegível está disponível para esta instância.";
+        el.region.disabled = state.placementLoading || state.regions.length === 0;
+        el.regionHelp.textContent = state.placementLoading
+            ? "Verificando a compatibilidade do runtime com os servidores disponíveis."
+            : state.regions.length
+                ? "A recomendação considera disponibilidade, compatibilidade do runtime e latência estimada. O Controller selecionará o Agent adequado."
+                : "Nenhum servidor elegível está disponível para este runtime.";
+        if (state.region && state.regions.some((region) => region.id === state.region.id)) {
+            el.region.value = state.region.id;
+        }
     }
 
     function updateSummary() {
@@ -535,7 +615,7 @@
         el.summaryRegion.textContent = state.region ? regionLabel(state.region) : "Automática";
         el.summaryRegionFallback.textContent = state.allowCrossRegion ? "Sim" : "Não";
         el.minecraftNotice.hidden = state.game !== "minecraft";
-        el.submit.disabled = false;
+        el.submit.disabled = !state.placementReady;
     }
 
     function createPayload() {
@@ -599,6 +679,11 @@
         state.runtime = null;
         state.version = null;
         state.build = null;
+        state.placementRequestGeneration += 1;
+        state.placementAbortController?.abort();
+        state.placementAbortController = null;
+        state.placementLoading = false;
+        state.placementReady = false;
         state.regions = [];
         state.region = null;
         state.allowCrossRegion = false;

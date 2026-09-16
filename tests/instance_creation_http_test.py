@@ -23,6 +23,7 @@ class InstanceCreationHttpTest(unittest.TestCase):
         }
         self.payload = {
             "game": "dayz",
+            "runtime_id": "dayz.stable",
             "placement": {"region_id": "br-se"},
         }
 
@@ -34,6 +35,10 @@ class InstanceCreationHttpTest(unittest.TestCase):
                 reason="agent_pending",
                 agents_evaluated=2,
                 requested_region_id="br-se",
+                technical_rejections={
+                    "agent-internal-1": ["unsupported_runtime_profile"],
+                    "agent-internal-2": ["insufficient_udp_ports"],
+                },
             )
 
         result = dispatch_instance_create_post(
@@ -61,9 +66,19 @@ class InstanceCreationHttpTest(unittest.TestCase):
         self.assertEqual(record["customer"], "customer-001")
         self.assertEqual(record["contract"], "contract-dayz-001")
         self.assertEqual(record["game"], "dayz")
+        self.assertEqual(record["runtime"], "dayz.stable")
         self.assertEqual(record["region"], "br-se")
         self.assertEqual(record["reason"], "agent_pending")
         self.assertEqual(record["agents_evaluated"], 2)
+        self.assertEqual(
+            record["technical_rejections"],
+            {
+                "agent-internal-1": ["unsupported_runtime_profile"],
+                "agent-internal-2": ["insufficient_udp_ports"],
+            },
+        )
+        self.assertNotIn("agent-internal-1", json.dumps(result[1]))
+        self.assertNotIn("unsupported_runtime_profile", json.dumps(result[1]))
 
     def test_unexpected_runtime_error_never_escapes_http_boundary(self):
         def create_instance(user, payload):

@@ -54,14 +54,17 @@ def _log_rejection(
     contract_resolver: Callable[[dict[str, Any] | None, str], str | None] | None,
     log: Callable[[str], None] | None,
 ) -> None:
+    runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
     record = {
         "event": "instance_create_rejected",
         "customer": None if not user else user.get("scope_id"),
         "contract": _contract_id(user, payload, contract_resolver),
         "game": str(payload.get("game", "")).strip().lower() or None,
+        "runtime": str(payload.get("runtime_id") or runtime.get("id") or "").strip() or None,
         "region": exc.requested_region_id or _requested_region(payload),
         "reason": exc.reason,
         "agents_evaluated": int(exc.agents_evaluated),
+        "technical_rejections": exc.technical_rejections or None,
     }
     message = json.dumps(record, ensure_ascii=False, sort_keys=True)
     if log is not None:

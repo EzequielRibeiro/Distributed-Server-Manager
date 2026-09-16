@@ -92,6 +92,7 @@ def choose_agent_for_instance(
             reason=reason,
             agents_evaluated=agents_evaluated,
             requested_region_id=preferred_region_id,
+            technical_rejections=technical_rejections,
         )
 
     candidates = [
