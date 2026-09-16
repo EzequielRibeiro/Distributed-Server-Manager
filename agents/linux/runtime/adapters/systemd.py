@@ -140,7 +140,7 @@ class SystemdAdapter(InstanceRuntimeAdapter):
             raise AdapterError(f"instance did not reach expected state after {action}")
         if action == "stop" and after.get("active_state") == "failed":
             raise AdapterError("instance remained failed after stop normalization")
-        return {"action": action,"changed": True,"idempotent": False,"state": after}
+        return {"action": action, "changed": True, "idempotent": False, "state": after}
 
     def start(self, instance: dict[str, Any]) -> dict[str, Any]:
         return self._lifecycle("start", instance)
@@ -155,11 +155,26 @@ class SystemdAdapter(InstanceRuntimeAdapter):
         state = self._show(instance)
         findings: list[dict[str, str]] = []
         if not state["available"]:
-            findings.append({"code":"systemd_unit_unavailable","severity":"critical","message":"The instance systemd unit is not available."})
+            findings.append({
+                "code": "systemd_unit_unavailable",
+                "severity": "critical",
+                "message": "The instance systemd unit is not available.",
+            })
         elif state["active_state"] == "failed":
-            findings.append({"code":"systemd_unit_failed","severity":"critical","message":"The instance systemd unit is in failed state."})
-        severities={item["severity"] for item in findings};status="critical" if "critical" in severities else "healthy"
-        return {"adapter":self.name,"status":status,"ready":status!="critical","state":state,"findings":findings}
+            findings.append({
+                "code": "systemd_unit_failed",
+                "severity": "critical",
+                "message": "The instance systemd unit is in failed state.",
+            })
+        severities = {item["severity"] for item in findings}
+        status = "critical" if "critical" in severities else "healthy"
+        return {
+            "adapter": self.name,
+            "status": status,
+            "ready": status != "critical",
+            "state": state,
+            "findings": findings,
+        }
 
 
 __all__ = ["SystemdAdapter", "unit_for_instance"]
