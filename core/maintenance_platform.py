@@ -1,2 +1,89 @@
 #!/usr/bin/env python3
-"""M5 maintenance scheduling domain contract."""
+"""Pure contracts for scheduled instance maintenance and restart planning."""
+from __future__ import annotations
+from datetime import date,datetime,time,timedelta,timezone
+import re
+from typing import Any,Mapping
+from zoneinfo import ZoneInfo,ZoneInfoNotFoundError
+SCHEDULE_MODES=frozenset({"fixed","interval"})
+DEFAULT_WARNING_OFFSETS=(3600,1800,900,600,300,60)
+DEFAULT_WARNING_TEMPLATE="Servidor será reiniciado em {remaining}."
+_TIME=re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+_PLACEHOLDER=re.compile(r"\{([^{}]+)\}")
+class MaintenanceValidationError(ValueError):pass
+def _utc(value:datetime)->datetime:
+ if value.tzinfo is None:raise MaintenanceValidationError("maintenance timestamps must be timezone-aware")
+ return value.astimezone(timezone.utc)
+def _parse_datetime(value:Any)->datetime|None:
+ if value in {None,""}:return None
+ if isinstance(value,datetime):return _utc(value)
+ try:return _utc(datetime.fromisoformat(str(value).replace("Z","+00:00")))
+ except (TypeError,ValueError) as exc:raise MaintenanceValidationError("invalid maintenance timestamp") from exc
+def normalize_policy(raw:Mapping[str,Any]|None)->dict[str,Any]:
+ value=dict(raw or {});enabled=bool(value.get("enabled",False));mode=str(value.get("schedule_mode") or "fixed").strip().lower()
+ if mode not in SCHEDULE_MODES:raise MaintenanceValidationError("invalid maintenance schedule_mode")
+ zone_name=str(value.get("timezone") or "UTC").strip()
+ try:ZoneInfo(zone_name)
+ except (ZoneInfoNotFoundError,ValueError) as exc:raise MaintenanceValidationError("invalid maintenance timezone") from exc
+ start_time=str(value.get("start_time") or "04:00").strip()
+ if not _TIME.fullmatch(start_time):raise MaintenanceValidationError("invalid maintenance start_time")
+ raw_days=value.get("weekdays",list(range(7)))
+ if not isinstance(raw_days,list) or not raw_days:raise MaintenanceValidationError("maintenance weekdays must be a non-empty list")
+ try:weekdays=sorted(set(int(day) for day in raw_days))
+ except (TypeError,ValueError) as exc:raise MaintenanceValidationError("invalid maintenance weekdays") from exc
+ if any(day<0 or day>6 for day in weekdays):raise MaintenanceValidationError("maintenance weekdays must be between 0 and 6")
+ try:interval_seconds=int(value.get("interval_seconds") or 86400)
+ except (TypeError,ValueError) as exc:raise MaintenanceValidationError("invalid maintenance interval_seconds") from exc
+ if not 3600<=interval_seconds<=604800:raise MaintenanceValidationError("maintenance interval_seconds must be between 3600 and 604800")
+ raw_offsets=value.get("warning_offsets_seconds",list(DEFAULT_WARNING_OFFSETS))
+ if not isinstance(raw_offsets,list):raise MaintenanceValidationError("warning_offsets_seconds must be a list")
+ try:offsets=sorted(set(int(offset) for offset in raw_offsets),reverse=True)
+ except (TypeError,ValueError) as exc:raise MaintenanceValidationError("invalid warning_offsets_seconds") from exc
+ if any(offset<=0 or offset>86400 for offset in offsets):raise MaintenanceValidationError("warning offsets must be between 1 and 86400 seconds")
+ if mode=="interval" and offsets and max(offsets)>=interval_seconds:raise MaintenanceValidationError("warning offsets must be shorter than the maintenance interval")
+ template=str(value.get("warning_template") or DEFAULT_WARNING_TEMPLATE).strip()
+ if not template or len(template)>1024:raise MaintenanceValidationError("invalid maintenance warning_template")
+ placeholders=set(_PLACEHOLDER.findall(template))
+ if placeholders-{"remaining"}:raise MaintenanceValidationError("unsupported maintenance warning placeholder")
+ stripped=_PLACEHOLDER.sub("",template)
+ if "{" in stripped or "}" in stripped:raise MaintenanceValidationError("invalid maintenance warning_template braces")
+ return {"enabled":enabled,"schedule_mode":mode,"timezone":zone_name,"weekdays":weekdays,"start_time":start_time,"interval_seconds":interval_seconds,"warning_offsets_seconds":offsets,"warning_template":template,"broadcast_enabled":bool(value.get("broadcast_enabled",True)),"coalesce_updates":bool(value.get("coalesce_updates",True))}
+def _valid_local_wall(zone:ZoneInfo,day:date,hh:int,mm:int)->datetime:
+ naive=datetime.combine(day,time(hh,mm))
+ for minute in range(181):
+  candidate_naive=naive+timedelta(minutes=minute);candidate=candidate_naive.replace(tzinfo=zone,fold=0);roundtrip=candidate.astimezone(timezone.utc).astimezone(zone)
+  if roundtrip.replace(tzinfo=None)==candidate_naive:return candidate
+ raise MaintenanceValidationError("maintenance wall time cannot be resolved")
+def next_due_at(policy:Mapping[str,Any],*,now:datetime|None=None,anchor:datetime|str|None=None)->datetime|None:
+ normalized=normalize_policy(policy)
+ if not normalized["enabled"]:return None
+ current=_utc(now or datetime.now(timezone.utc))
+ if normalized["schedule_mode"]=="interval":
+  base=_parse_datetime(anchor) or current;interval=normalized["interval_seconds"];due=base+timedelta(seconds=interval)
+  if due<=current:
+   elapsed=(current-base).total_seconds();steps=int(elapsed//interval)+1;due=base+timedelta(seconds=steps*interval)
+  return due
+ zone=ZoneInfo(normalized["timezone"]);local_now=current.astimezone(zone);hh,mm=(int(part) for part in normalized["start_time"].split(":"))
+ for delta_days in range(8):
+  day=local_now.date()+timedelta(days=delta_days)
+  if day.weekday() not in normalized["weekdays"]:continue
+  candidate=_valid_local_wall(zone,day,hh,mm)
+  if candidate>local_now:return candidate.astimezone(timezone.utc)
+ raise MaintenanceValidationError("no maintenance occurrence found in the configured week")
+def warning_plan(policy:Mapping[str,Any],due_at:datetime|str)->list[dict[str,Any]]:
+ normalized=normalize_policy(policy);due=_parse_datetime(due_at)
+ if due is None or not normalized["broadcast_enabled"]:return []
+ return [{"offset_seconds":offset,"scheduled_at":due-timedelta(seconds=offset)} for offset in normalized["warning_offsets_seconds"]]
+def due_warning_offsets(policy:Mapping[str,Any],due_at:datetime|str,*,now:datetime|None=None,sent_offsets:set[int]|None=None)->list[int]:
+ current=_utc(now or datetime.now(timezone.utc));sent=set(sent_offsets or set());due=_parse_datetime(due_at)
+ if due is None:return []
+ return [int(item["offset_seconds"]) for item in warning_plan(policy,due) if int(item["offset_seconds"]) not in sent and current>=item["scheduled_at"] and current<due]
+def format_remaining(seconds:int)->str:
+ value=max(0,int(seconds))
+ if value%3600==0:
+  hours=value//3600;return f"{hours} hora" if hours==1 else f"{hours} horas"
+ if value%60==0:
+  minutes=value//60;return f"{minutes} minuto" if minutes==1 else f"{minutes} minutos"
+ return f"{value} segundos"
+def render_warning(policy:Mapping[str,Any],offset_seconds:int)->str:return normalize_policy(policy)["warning_template"].replace("{remaining}",format_remaining(offset_seconds))
+__all__=["DEFAULT_WARNING_OFFSETS","DEFAULT_WARNING_TEMPLATE","MaintenanceValidationError","SCHEDULE_MODES","due_warning_offsets","format_remaining","next_due_at","normalize_policy","render_warning","warning_plan"]
