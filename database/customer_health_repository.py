@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any
 
 from alert_repository import AlertRepository
 
 CUSTOMER_SCOPE_PREFIX = "customer:"
+ADMIN_DETAIL_PREFIX = "CAPIVARA_CUSTOMER_HEALTH_ADMIN:"
 
 
 def incident_id_for(dedupe_key: str) -> str:
@@ -69,6 +71,50 @@ class CustomerHealthRepository:
             return []
         return self.alerts.alert_history(str(incident_id))
 
+    def record_admin_detail(self, incident_id: str, details: dict[str, Any]) -> dict[str, Any]:
+        current = self.get(incident_id)
+        if current is None:
+            raise ValueError("Customer health incident not found")
+        payload = json.dumps(
+            details if isinstance(details, dict) else {},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        message = ADMIN_DETAIL_PREFIX + payload
+        if len(message) > 3900:
+            raise ValueError("Customer health administrative detail is too large")
+        self.alerts.note_alert(str(incident_id), message)
+        return self.admin_detail(str(incident_id)) or {}
+
+    def admin_detail(self, incident_id: str) -> dict[str, Any] | None:
+        history = self.history(str(incident_id))
+        detail_events: list[dict[str, Any]] = []
+        for event in history:
+            message = str(event.get("message") or "")
+            if str(event.get("action") or "").upper() != "NOTE" or not message.startswith(ADMIN_DETAIL_PREFIX):
+                continue
+            try:
+                payload = json.loads(message[len(ADMIN_DETAIL_PREFIX):])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict):
+                detail_events.append({"payload": payload, "created_at": event.get("created_at")})
+        if not detail_events:
+            return None
+        latest = dict(detail_events[-1]["payload"])
+        latest["occurrence_count"] = len(detail_events)
+        latest["first_attempt_at"] = detail_events[0].get("created_at")
+        latest["last_attempt_at"] = detail_events[-1].get("created_at")
+        return latest
+
+    def enrich_admin(self, incident: dict[str, Any]) -> dict[str, Any]:
+        result = dict(incident)
+        detail = self.admin_detail(str(result.get("id") or ""))
+        if detail is not None:
+            result["admin_details"] = detail
+        return result
+
     def acknowledge(self, incident_id: str) -> dict[str, Any] | None:
         current = self.get(incident_id)
         if current is None:
@@ -114,4 +160,10 @@ class CustomerHealthRepository:
         return result
 
 
-__all__ = ["CUSTOMER_SCOPE_PREFIX", "CustomerHealthRepository", "customer_id_from_scope", "incident_id_for"]
+__all__ = [
+    "ADMIN_DETAIL_PREFIX",
+    "CUSTOMER_SCOPE_PREFIX",
+    "CustomerHealthRepository",
+    "customer_id_from_scope",
+    "incident_id_for",
+]

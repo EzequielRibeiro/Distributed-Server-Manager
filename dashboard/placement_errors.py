@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -16,6 +16,7 @@ class PlacementUnavailable(RuntimeError):
     reason: str = "no_eligible_agents"
     agents_evaluated: int = 0
     requested_region_id: str | None = None
+    technical_rejections: dict[str, list[str]] = field(default_factory=dict)
 
     def __str__(self) -> str:
         return "no eligible Agent is available for placement"

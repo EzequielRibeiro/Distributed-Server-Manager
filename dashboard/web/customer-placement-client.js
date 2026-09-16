@@ -195,9 +195,11 @@
     const params = new URLSearchParams();
     const game = String(context.game || "").trim().toLowerCase();
     const contract = String(context.contract || context.contract_id || "").trim();
+    const runtime = String(context.runtime || context.runtime_id || "").trim();
 
     if (game) params.set("game", game);
     if (contract) params.set("contract", contract);
+    if (runtime) params.set("runtime", runtime);
     if (coords) {
       params.set("latitude", String(coords.latitude));
       params.set("longitude", String(coords.longitude));
@@ -215,6 +217,7 @@
         "A verificação dos servidores excedeu o tempo limite. Tente novamente."
       );
     } catch (error) {
+      if (error?.name === "AbortError" && options.signal?.aborted) throw error;
       if (error?.code === "placement_timeout") {
         setPlacementStatus(
           "error",

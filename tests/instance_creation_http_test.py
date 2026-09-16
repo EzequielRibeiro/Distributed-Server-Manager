@@ -23,6 +23,7 @@ class InstanceCreationHttpTest(unittest.TestCase):
         }
         self.payload = {
             "game": "dayz",
+            "runtime_id": "dayz.stable",
             "placement": {"region_id": "br-se"},
         }
 
@@ -34,6 +35,10 @@ class InstanceCreationHttpTest(unittest.TestCase):
                 reason="agent_pending",
                 agents_evaluated=2,
                 requested_region_id="br-se",
+                technical_rejections={
+                    "agent-internal-1": ["unsupported_runtime_profile"],
+                    "agent-internal-2": ["insufficient_udp_ports"],
+                },
             )
 
         result = dispatch_instance_create_post(
@@ -61,9 +66,50 @@ class InstanceCreationHttpTest(unittest.TestCase):
         self.assertEqual(record["customer"], "customer-001")
         self.assertEqual(record["contract"], "contract-dayz-001")
         self.assertEqual(record["game"], "dayz")
+        self.assertEqual(record["runtime"], "dayz.stable")
         self.assertEqual(record["region"], "br-se")
         self.assertEqual(record["reason"], "agent_pending")
         self.assertEqual(record["agents_evaluated"], 2)
+        self.assertEqual(
+            record["technical_rejections"],
+            {
+                "agent-internal-1": ["unsupported_runtime_profile"],
+                "agent-internal-2": ["insufficient_udp_ports"],
+            },
+        )
+        self.assertNotIn("agent-internal-1", json.dumps(result[1]))
+        self.assertNotIn("unsupported_runtime_profile", json.dumps(result[1]))
+
+    def test_placement_failure_reporter_receives_internal_diagnostics(self):
+        failures = []
+
+        def create_instance(user, payload):
+            raise PlacementUnavailable(
+                reason="requested_region_unavailable",
+                agents_evaluated=2,
+                requested_region_id="br-se",
+                technical_rejections={"agent-1": ["unsupported_runtime_profile"]},
+            )
+
+        status, body = dispatch_instance_create_post(
+            "/api/instance/create",
+            self.payload,
+            user=self.user,
+            create_instance=create_instance,
+            failure_reporter=failures.append,
+        )
+
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"], "placement_unavailable")
+        self.assertEqual(failures[0]["runtime_id"], "dayz.stable")
+        self.assertEqual(failures[0]["placement_reason"], "requested_region_unavailable")
+        self.assertEqual(failures[0]["region_id"], "br-se")
+        self.assertEqual(failures[0]["agents_evaluated"], 2)
+        self.assertEqual(
+            failures[0]["technical_rejections"],
+            {"agent-1": ["unsupported_runtime_profile"]},
+        )
+        self.assertNotIn("technical_rejections", body)
 
     def test_unexpected_runtime_error_never_escapes_http_boundary(self):
         def create_instance(user, payload):
@@ -89,6 +135,22 @@ class InstanceCreationHttpTest(unittest.TestCase):
         )
         self.assertEqual(status, 201)
         self.assertEqual(body["instance_id"], "srv-001")
+
+    def test_success_reporter_receives_recovery_identity(self):
+        successes = []
+        status, body = dispatch_instance_create_post(
+            "/api/instance/create",
+            self.payload,
+            user=self.user,
+            create_instance=lambda user, payload: {"instance_id": "srv-001"},
+            success_reporter=successes.append,
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(body["instance_id"], "srv-001")
+        self.assertEqual(successes[0]["customer_id"], "customer-001")
+        self.assertEqual(successes[0]["runtime_id"], "dayz.stable")
+        self.assertEqual(successes[0]["placement"], {"region_id": "br-se"})
+        self.assertEqual(successes[0]["instance_id"], "srv-001")
 
     def test_permission_error_is_controlled(self):
         failures = []

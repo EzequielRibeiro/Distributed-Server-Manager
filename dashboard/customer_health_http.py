@@ -96,6 +96,7 @@ def install_customer_health_http(legacy, authenticate) -> None:
             active_only=active,
             limit=limit,
         )
+        incidents = [repo.enrich_admin(item) for item in incidents]
         customers = len({str(item.get("customer_id")) for item in incidents})
         self.send_json(200, {
             "health": _health(incidents),
