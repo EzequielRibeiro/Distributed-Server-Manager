@@ -19,7 +19,7 @@ def _absolute_list(value:Any,label:str)->list[str]:
  if value is None:return []
  if not isinstance(value,list) or len(value)>128:raise RuntimeSpecError(f"invalid {label}")
  return [_absolute(x,label) for x in value]
-def _path_pairs(value:Any,label:str,*,allow_optional:bool=False)->list[dict[str,Any]]:
+def _path_pairs(value:Any,label:str,*,allow_optional:bool=False,allow_agent_managed:bool=False)->list[dict[str,Any]]:
  if value is None:return []
  if not isinstance(value,list) or len(value)>128:raise RuntimeSpecError(f"invalid {label}")
  out=[]
@@ -29,6 +29,9 @@ def _path_pairs(value:Any,label:str,*,allow_optional:bool=False)->list[dict[str,
   if "optional" in item:
    if not allow_optional or not isinstance(item.get("optional"),bool):raise RuntimeSpecError(f"invalid {label} optional")
    normalized["optional"]=item["optional"]
+  if "agent_managed" in item:
+   if not allow_agent_managed or not isinstance(item.get("agent_managed"),bool):raise RuntimeSpecError(f"invalid {label} agent_managed")
+   normalized["agent_managed"]=item["agent_managed"]
   out.append(normalized)
  return out
 def _arguments(value:Any,label:str)->list[str]:
@@ -100,7 +103,7 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  result["seed_files"]=_path_pairs(result.get("seed_files"),"seed_files")
  result["seed_directories"]=_path_pairs(result.get("seed_directories"),"seed_directories",allow_optional=True)
  result["working_file_copies"]=_path_pairs(result.get("working_file_copies"),"working_file_copies")
- result["bind_paths"]=_path_pairs(result.get("bind_paths"),"bind_paths")
+ result["bind_paths"]=_path_pairs(result.get("bind_paths"),"bind_paths",allow_agent_managed=True)
  result["runtime_bind_paths"]=_runtime_bind_paths(result.get("runtime_bind_paths"),runtime_directory)
  result["path"]=result["working_directory"];return result
 __all__=["RuntimeSpecError","VALID_DESIRED_STATES","validate_runtime_spec"]
