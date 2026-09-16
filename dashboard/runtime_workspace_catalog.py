@@ -9,9 +9,14 @@ yet declare ``content.managed``. Missing declarations fail closed.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
+ROOT=Path(__file__).resolve().parents[1]
+CORE=ROOT/"core"
+if str(CORE) not in sys.path:sys.path.insert(0,str(CORE))
+from maintenance_platform import normalize_capabilities as normalize_maintenance_capabilities
 from instance_workspace_policy import effective_content_policy
 
 
@@ -92,6 +97,7 @@ def runtime_workspace_capabilities(root: Path, game_id: str, runtime_id: str) ->
         providers["modpack"] = sorted({str(value).strip().lower() for value in modpack.get("providers") or [] if str(value).strip()})
     if bool(item.get("workshop")):
         providers["workshop"] = ["steam-workshop"]
+    maintenance_raw=definition.get("maintenance") if isinstance(definition,dict) and isinstance(definition.get("maintenance"),dict) else {}
     return {
         "mods": mods,
         "plugins": plugins,
@@ -104,6 +110,7 @@ def runtime_workspace_capabilities(root: Path, game_id: str, runtime_id: str) ->
         "console": dict(item.get("console") or {}),
         "startup_parameters": dict(item.get("startup_parameters") or {}),
         "server_settings": dict(definition.get("server_settings") or item.get("server_settings") or {}),
+        "maintenance": normalize_maintenance_capabilities(maintenance_raw),
         "file_policy": dict(item.get("file_policy") or {}),
         "label": str(item.get("label") or definition.get("name") or runtime),
         "family": str(item.get("family") or definition.get("edition") or ""),
