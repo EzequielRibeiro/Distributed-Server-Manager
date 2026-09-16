@@ -6,7 +6,7 @@ from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1]
 for path in (ROOT,ROOT/'core',ROOT/'database',ROOT/'dashboard'):
  if str(path) not in sys.path:sys.path.insert(0,str(path))
-from content_update_detector import ControllerContentUpdateDetector,_artifact_revision
+from content_update_detector import ControllerContentUpdateDetector,_artifact_revision,_project_reference
 
 
 class _Content:
@@ -33,8 +33,8 @@ def _item(package='project:old',**extra):
 
 
 class ControllerContentUpdateDetectorTest(unittest.TestCase):
- def detector(self,items,resolver):
-  contexts={'instance-1':{'id':'instance-1','agent_id':'agent-1','game_id':'minecraft','runtime_id':'fabric','game_version':'1.21.1'}};state=_State();detector=ControllerContentUpdateDetector(None,ROOT,content=_Content(items),instances=_Instances(contexts),state=state,resolver=resolver,interval_seconds=900);return detector,state
+ def detector(self,items,resolver,modpack_resolver=None):
+  contexts={'instance-1':{'id':'instance-1','agent_id':'agent-1','game_id':'minecraft','runtime_id':'fabric','game_version':'1.21.1'}};state=_State();detector=ControllerContentUpdateDetector(None,ROOT,content=_Content(items),instances=_Instances(contexts),state=state,resolver=resolver,modpack_resolver=modpack_resolver or (lambda *args,**kwargs:{'package_id':'unused:unused'}),interval_seconds=900);return detector,state
  def test_artifact_revision_uses_immutable_provider_id(self):
   self.assertEqual(_artifact_revision({'package_id':'project:version-id'}),'version-id');self.assertEqual(_artifact_revision({'package_id':'bad'}),'')
  def test_modrinth_new_package_revision_becomes_update_available(self):
@@ -47,6 +47,12 @@ class ControllerContentUpdateDetectorTest(unittest.TestCase):
   resolver=lambda *args,**kwargs:{'version':'v','artifact':{'provider':'modrinth','package_id':'project:old'}};detector,state=self.detector([_item()],resolver)
   with patch('content_update_detector.runtime_definition',return_value={'loader':'fabric'}):result=detector.scan(force=True)
   self.assertEqual(result['current'],1);self.assertEqual(state.calls[0][1]['content'][0]['state'],'up_to_date')
+ def test_modpack_uses_lightweight_identity_resolver_and_parent_project(self):
+  pack=_item(content_id='pack-a',content_type='modpack',artifact={'provider':'modrinth','package_id':'pack-project:old-pack'},provenance={'minecraft_modpack':{'project_id':'pack-project'}},metadata={'minecraft_modpack':{'provider_project_id':'pack-project'}});calls=[]
+  def modpack_resolver(provider,project,game_version,runtime):calls.append((provider,project,game_version));return {'provider':provider,'package_id':'pack-project:new-pack','revision':'new-pack'}
+  detector,state=self.detector([pack],lambda *args,**kwargs:(_ for _ in ()).throw(AssertionError('individual resolver must not run')),modpack_resolver)
+  with patch('content_update_detector.runtime_definition',return_value={'loader':'fabric'}):result=detector.scan(force=True)
+  self.assertEqual(result['available'],1);self.assertEqual(calls,[('modrinth','pack-project','1.21.1')]);report=state.calls[0][1]['content'][0];self.assertEqual(report['content_type'],'modpack');self.assertEqual(report['available_revision'],'new-pack');self.assertEqual(_project_reference(pack),'pack-project')
  def test_bundle_child_is_not_updated_independently(self):
   child=_item(metadata={'bundle':{'parent_content_id':'pack-a'}});called=[]
   def resolver(*args,**kwargs):called.append(True);return {}
