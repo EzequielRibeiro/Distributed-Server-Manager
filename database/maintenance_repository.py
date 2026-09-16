@@ -50,15 +50,20 @@ class MaintenanceRepository:
    policy=session.execute(f'SELECT * FROM instance_maintenance_policy WHERE instance_id={ph}',(iid,)).fetchone();state=session.execute(f'SELECT * FROM instance_maintenance_state WHERE instance_id={ph}',(iid,)).fetchone();runs=session.execute(f'SELECT run_id FROM instance_maintenance_runs WHERE instance_id={ph} ORDER BY created_at DESC LIMIT 25',(iid,)).fetchall()
   if not policy:raise KeyError(iid)
   return {'instance_id':iid,'policy':self._decode_policy(dict(policy)),'state':dict(state) if state else None,'runs':[self.run(str(row['run_id'])) for row in runs]}
+ def instance_context(self,instance_id:str)->dict[str,Any]:
+  ph=self.dialect.placeholder
+  with self.session() as session:row=session.execute(f'SELECT id,agent_id,game_id,runtime_id,status FROM instances WHERE id={ph}',(str(instance_id),)).fetchone()
+  if not row:raise KeyError(instance_id)
+  return dict(row)
  def run(self,run_id:str)->dict[str,Any]:
   ph=self.dialect.placeholder
   with self.session() as session:row=session.execute(f'SELECT * FROM instance_maintenance_runs WHERE run_id={ph}',(str(run_id),)).fetchone()
   if not row:raise KeyError(run_id)
   value=dict(row)
-  for source,target in (('warnings_sent_json','warnings_sent'),('broadcast_ids_json','broadcast_ids')):
+  for source,target,default in (('event_json','event',{}),('warnings_sent_json','warnings_sent',[]),('broadcast_ids_json','broadcast_ids',{})):
    raw=value.pop(source,None)
-   try:value[target]=json.loads(raw) if raw else ([] if target=='warnings_sent' else {})
-   except (TypeError,ValueError):value[target]=[] if target=='warnings_sent' else {}
+   try:value[target]=json.loads(raw) if raw else default
+   except (TypeError,ValueError):value[target]=default
   return value
  def _policy_state_rows(self)->list[dict[str,Any]]:
   with self.session() as session:rows=session.execute('SELECT p.*,s.next_due_at,s.active_run_id,i.agent_id FROM instance_maintenance_policy p JOIN instance_maintenance_state s ON s.instance_id=p.instance_id JOIN instances i ON i.id=p.instance_id WHERE p.enabled=1 ORDER BY s.next_due_at,p.instance_id').fetchall()
@@ -83,25 +88,35 @@ class MaintenanceRepository:
     due=_parse(state['next_due_at']);policy=self._decode_policy(dict(policy_row));horizon=max(policy['warning_offsets_seconds'],default=0) if policy['broadcast_enabled'] else 0
     if due is None or current<due-timedelta(seconds=horizon):return None
     selected='maintenance-'+uuid.uuid4().hex;stamp=_stamp(current)
-    session.execute('INSERT INTO instance_maintenance_runs(run_id,instance_id,agent_id,trigger_type,due_at,status,stage,warnings_sent_json,broadcast_ids_json,lifecycle_command_id,readiness_command_id,error_code,error_detail,created_at,started_at,completed_at,updated_at) '+f'VALUES ({self.dialect.parameters(17)})',(selected,iid,str(instance['agent_id']),'scheduled',_stamp(due),'pending','warning','[]','{}',None,None,None,None,stamp,None,None,stamp));session.execute(f'UPDATE instance_maintenance_state SET active_run_id={ph},last_error=NULL,updated_at={ph} WHERE instance_id={ph}',(selected,stamp,iid))
+    session.execute('INSERT INTO instance_maintenance_runs(run_id,instance_id,agent_id,trigger_type,due_at,status,stage,event_json,warnings_sent_json,broadcast_ids_json,preflight_command_id,save_command_id,stop_command_id,start_command_id,lifecycle_command_id,readiness_command_id,error_code,error_detail,created_at,started_at,completed_at,updated_at) '+f'VALUES ({self.dialect.parameters(22)})',(selected,iid,str(instance['agent_id']),'scheduled',_stamp(due),'pending','planning','{}','[]','{}',None,None,None,None,None,None,None,None,stamp,None,None,stamp));session.execute(f'UPDATE instance_maintenance_state SET active_run_id={ph},last_error=NULL,updated_at={ph} WHERE instance_id={ph}',(selected,stamp,iid))
   return self.run(selected) if selected else None
  def active_runs(self,limit:int=500)->list[dict[str,Any]]:
   with self.session() as session:rows=session.execute(f"SELECT run_id FROM instance_maintenance_runs WHERE status IN ('pending','running') ORDER BY due_at,created_at LIMIT {max(1,min(int(limit),1000))}").fetchall()
   return [self.run(str(row['run_id'])) for row in rows]
  def policy(self,instance_id:str)->dict[str,Any]:return self.snapshot(instance_id)['policy']
+ def set_event(self,run_id:str,event:dict[str,Any])->dict[str,Any]:
+  if not isinstance(event,dict) or event.get('kind')!='CapivaraMaintenanceEvent':raise ValueError('valid maintenance event is required')
+  ph=self.dialect.placeholder;stamp=utc_timestamp();payload=json.dumps(event,separators=(',',':'),sort_keys=True)
+  with self.session(transaction=True) as session:session.execute(f"UPDATE instance_maintenance_runs SET event_json={ph},stage=CASE WHEN stage='planning' THEN 'warning' ELSE stage END,updated_at={ph} WHERE run_id={ph} AND (event_json='{{}}' OR event_json IS NULL)",(payload,stamp,run_id))
+  return self.run(run_id)
  def record_warning(self,run_id:str,offset:int,broadcast_id:str)->dict[str,Any]:
   run=self.run(run_id);sent={int(v) for v in run['warnings_sent']};sent.add(int(offset));broadcasts=dict(run['broadcast_ids']);broadcasts[str(int(offset))]=str(broadcast_id);ph=self.dialect.placeholder;stamp=utc_timestamp()
   with self.session(transaction=True) as session:session.execute(f'UPDATE instance_maintenance_runs SET warnings_sent_json={ph},broadcast_ids_json={ph},updated_at={ph} WHERE run_id={ph}',(json.dumps(sorted(sent,reverse=True),separators=(',',':')),json.dumps(broadcasts,separators=(',',':'),sort_keys=True),stamp,run_id))
   return self.run(run_id)
- def mark_restart(self,run_id:str,command_id:str)->dict[str,Any]:
-  run=self.run(run_id);ph=self.dialect.placeholder;stamp=utc_timestamp()
-  with self.session(transaction=True) as session:
-   session.execute(f"UPDATE instance_maintenance_runs SET lifecycle_command_id={ph},status='running',stage='restarting',started_at=COALESCE(started_at,{ph}),updated_at={ph} WHERE run_id={ph} AND lifecycle_command_id IS NULL",(command_id,stamp,stamp,run_id));session.execute(f'UPDATE instance_maintenance_state SET last_started_at={ph},updated_at={ph} WHERE instance_id={ph}',(stamp,stamp,run['instance_id']))
+ def _mark_command(self,run_id:str,column:str,command_id:str,stage:str,*,started:bool=False)->dict[str,Any]:
+  allowed={'preflight_command_id','save_command_id','stop_command_id','start_command_id','readiness_command_id','lifecycle_command_id'}
+  if column not in allowed:raise ValueError('invalid maintenance command column')
+  ph=self.dialect.placeholder;stamp=utc_timestamp();started_sql=f",started_at=COALESCE(started_at,{ph})" if started else '';params=[command_id,stage]
+  if started:params.append(stamp)
+  params.extend([stamp,run_id]);sql=f"UPDATE instance_maintenance_runs SET {column}={ph},status='running',stage={ph}{started_sql},updated_at={ph} WHERE run_id={ph} AND {column} IS NULL"
+  with self.session(transaction=True) as session:session.execute(sql,tuple(params))
   return self.run(run_id)
- def mark_readiness(self,run_id:str,command_id:str)->dict[str,Any]:
-  ph=self.dialect.placeholder;stamp=utc_timestamp()
-  with self.session(transaction=True) as session:session.execute(f"UPDATE instance_maintenance_runs SET readiness_command_id={ph},stage='validating',updated_at={ph} WHERE run_id={ph} AND readiness_command_id IS NULL",(command_id,stamp,run_id))
-  return self.run(run_id)
+ def mark_preflight(self,run_id:str,command_id:str)->dict[str,Any]:return self._mark_command(run_id,'preflight_command_id',command_id,'preflight')
+ def mark_save(self,run_id:str,command_id:str)->dict[str,Any]:return self._mark_command(run_id,'save_command_id',command_id,'saving',started=True)
+ def mark_stop(self,run_id:str,command_id:str)->dict[str,Any]:return self._mark_command(run_id,'stop_command_id',command_id,'stopping',started=True)
+ def mark_start(self,run_id:str,command_id:str)->dict[str,Any]:return self._mark_command(run_id,'start_command_id',command_id,'starting',started=True)
+ def mark_restart(self,run_id:str,command_id:str)->dict[str,Any]:return self._mark_command(run_id,'lifecycle_command_id',command_id,'restarting',started=True)
+ def mark_readiness(self,run_id:str,command_id:str)->dict[str,Any]:return self._mark_command(run_id,'readiness_command_id',command_id,'validating')
  def finish(self,run_id:str,*,success:bool,error_code:str|None=None,error_detail:str|None=None,now:datetime|None=None)->dict[str,Any]:
   run=self.run(run_id);policy=self.policy(str(run['instance_id']));current=(now or datetime.now(timezone.utc)).astimezone(timezone.utc);due=next_due_at(policy,now=current,anchor=current);stamp=_stamp(current);status='completed' if success else 'failed';stage='completed' if success else 'failed';detail=str(error_detail or '')[:2000] or None;code=str(error_code or '')[:128] or None;ph=self.dialect.placeholder
   with self.session(transaction=True) as session:
