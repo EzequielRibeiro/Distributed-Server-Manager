@@ -17,7 +17,8 @@ CREATE TABLE instance_maintenance_state (
 ){engine};
 CREATE TABLE instance_maintenance_runs (
  run_id {text} PRIMARY KEY, instance_id {text} NOT NULL, agent_id {text} NOT NULL, trigger_type VARCHAR(32) NOT NULL DEFAULT 'scheduled', due_at {ts} NOT NULL,
- status VARCHAR(32) NOT NULL, stage VARCHAR(32) NOT NULL, warnings_sent_json TEXT NOT NULL, broadcast_ids_json TEXT NOT NULL, lifecycle_command_id {text}, readiness_command_id {text},
+ status VARCHAR(32) NOT NULL, stage VARCHAR(32) NOT NULL, event_json TEXT NOT NULL, warnings_sent_json TEXT NOT NULL, broadcast_ids_json TEXT NOT NULL,
+ preflight_command_id {text}, save_command_id {text}, stop_command_id {text}, start_command_id {text}, lifecycle_command_id {text}, readiness_command_id {text},
  error_code VARCHAR(128), error_detail TEXT, created_at {ts} NOT NULL, started_at {ts}, completed_at {ts}, updated_at {ts} NOT NULL
 ){engine};
 CREATE INDEX idx_instance_maintenance_state_due ON instance_maintenance_state(next_due_at,active_run_id);
