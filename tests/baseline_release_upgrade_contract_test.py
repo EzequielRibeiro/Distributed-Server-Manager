@@ -12,7 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 class BaselineReleaseUpgradeContractTest(unittest.TestCase):
     def test_release_builder_preserves_canonical_process_guard(self) -> None:
         text = (ROOT / "release" / "build_release.sh").read_text(encoding="utf-8")
-        self.assertNotIn("fully reconciled ledger is already compatible", text)
+        self.assertNotIn("Baseline v2 preflight hotfix anchor", text)
+        self.assertNotIn("A fully reconciled ledger is already compatible", text)
+        self.assertIn("contains unsafe checksum-mismatch bypass", text)
         self.assertIn("accepted checksum mismatch without pending upgrade", text)
         self.assertIn("rejected registered v12/v13 pending upgrades", text)
 
