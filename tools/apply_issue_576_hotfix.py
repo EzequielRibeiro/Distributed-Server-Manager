@@ -129,6 +129,16 @@ if __name__ == "__main__":
 ''', encoding="utf-8", newline="\n")
 
 replace_once(
+    "tests/update_baseline_upgrade_path_test.py",
+    '                connection.execute("DELETE FROM baseline_upgrades WHERE version=11")\n',
+    '                connection.execute("DELETE FROM baseline_upgrades WHERE version>=11")\n',
+)
+replace_once(
+    "tests/update_baseline_upgrade_path_test.py",
+    '            self.assertEqual(payload["upgrade_version"], 11)\n            self.assertEqual(payload["upgrade_latest"], 11)\n',
+    '            self.assertEqual(payload["upgrade_version"], 12)\n            self.assertEqual(payload["upgrade_latest"], 12)\n',
+)
+replace_once(
     ".github/workflows/baseline-update-reconciliation.yml",
     "          python3 -m unittest tests/update_baseline_upgrade_path_test.py\n",
     "          python3 -m unittest tests/update_baseline_upgrade_path_test.py\n          python3 -m unittest tests/baseline_v12_content_update_test.py\n",
