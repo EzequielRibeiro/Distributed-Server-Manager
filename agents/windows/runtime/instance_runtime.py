@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from adapters import AdapterError,resolve_adapter
 import managed_firewall
-PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));INSTANCE_DIR=STATE_DIR/"instances";RESULT_DIR=STATE_DIR/"instance-results";HISTORY_DIR=STATE_DIR/"instance-command-history";_TOKEN=re.compile(r"^[A-Za-z0-9._-]{1,191}$");VALID_ACTIONS={"status","doctor","start","stop","restart","remove"};LIFECYCLE_ACTIONS={"start","stop","restart"}
+PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));INSTANCE_DIR=STATE_DIR/"instances";RESULT_DIR=STATE_DIR/"instance-results";HISTORY_DIR=STATE_DIR/"instance-command-history";_TOKEN=re.compile(r"^[A-Za-z0-9._-]{1,191}$");VALID_ACTIONS={"status","doctor","save","start","stop","restart","remove"};LIFECYCLE_ACTIONS={"start","stop","restart"}
 def _now():return datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
 def _token(value:Any,label:str)->str:
  value=str(value or "").strip()
@@ -63,6 +63,11 @@ def doctor(config,instance_id):
  if not view.get("runtime_id"):findings.append({"code":"runtime_unconfigured","severity":"warning","message":"Instance runtime identity is not configured."})
  if view.get("path") and not view.get("path_exists"):findings.append({"code":"instance_path_missing","severity":"critical","message":"Configured instance path does not exist."})
  severities={item["severity"] for item in findings};state="critical" if "critical" in severities else "degraded" if "warning" in severities else "healthy";return {"schema_version":2,"kind":"CapivaraInstanceDoctor","scope":"instance-local","status":state,"ready":state!="critical","instance":view,"adapter_doctor":adapter_doctor,"findings":findings}
+def save(config,instance_id):
+ from runtime_metrics import increment
+ from runtime_operations import runtime_operation
+ with runtime_operation(config,instance_id,"maintenance:save",lock_timeout_seconds=float(config.get("runtime_lock_timeout_seconds",5))):
+  record=_owned(config,instance_id);adapter=resolve_adapter(record);result=adapter.save(record);increment("maintenance_save");return {"schema_version":1,"kind":"CapivaraInstanceSave","scope":"instance-local","instance_id":record["instance_id"],"agent_id":record["agent_id"],"adapter":adapter.name,"operation":result}
 def lifecycle(config,instance_id,action):
  action=str(action or "").strip().lower()
  if action not in LIFECYCLE_ACTIONS:raise ValueError("unsupported instance lifecycle action")
@@ -94,7 +99,7 @@ def handle_command(config,command):
  try:
   _token(instance_id,"instance_id")
   if action not in VALID_ACTIONS:raise ValueError("unsupported instance action")
-  payload=status(config,instance_id) if action=="status" else doctor(config,instance_id) if action=="doctor" else remove(config,instance_id) if action=="remove" else lifecycle(config,instance_id,action);result={"command_id":command_id,"instance_id":instance_id,"action":action,"status":"completed","result":payload,"generated_at":_now()}
+  payload=status(config,instance_id) if action=="status" else doctor(config,instance_id) if action=="doctor" else save(config,instance_id) if action=="save" else remove(config,instance_id) if action=="remove" else lifecycle(config,instance_id,action);result={"command_id":command_id,"instance_id":instance_id,"action":action,"status":"completed","result":payload,"generated_at":_now()}
  except Exception as exc:result={"command_id":command_id,"instance_id":instance_id or None,"action":action or None,"status":"failed","error":str(exc)[:2000],"generated_at":_now()}
  _write(_history(command_id),result);_write(_result(command_id),result);return result
 def read_result():
@@ -107,4 +112,4 @@ def read_result():
 def clear_result(command_id):
  try:_result(command_id).unlink()
  except FileNotFoundError:pass
-__all__=["LIFECYCLE_ACTIONS","VALID_ACTIONS","clear_result","doctor","get_instance","handle_command","inventory","lifecycle","list_instances","read_result","register_instance","remove","status"]
+__all__=["LIFECYCLE_ACTIONS","VALID_ACTIONS","clear_result","doctor","get_instance","handle_command","inventory","lifecycle","list_instances","read_result","register_instance","remove","save","status"]
