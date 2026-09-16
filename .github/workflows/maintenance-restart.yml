@@ -7,10 +7,12 @@ on:
       - 'database/maintenance_repository.py'
       - 'database/content_update_dispatch_repository.py'
       - 'database/agent_instance_runtime_repository.py'
+      - 'database/agent_game_data_repository.py'
       - 'database/schema_baseline.py'
       - 'dashboard/runtime_workspace_catalog.py'
       - 'dashboard/content_update_validation.py'
       - 'dashboard/maintenance_content_coordinator.py'
+      - 'dashboard/maintenance_game_update_coordinator.py'
       - 'dashboard/customer_maintenance_workspace.py'
       - 'dashboard/customer_maintenance_http.py'
       - 'dashboard/server_part20.py'
@@ -25,10 +27,13 @@ on:
       - 'agents/linux/runtime/content_activation_apply.py'
       - 'agents/linux/runtime/instance_runtime.py'
       - 'agents/linux/runtime/adapters/base.py'
+      - 'agents/linux/runtime/game_data_executor.py'
+      - 'agents/linux/runtime/maintenance_game_update.py'
       - 'agents/windows/runtime/instance_runtime.py'
       - 'agents/windows/runtime/adapters/base.py'
       - 'tests/maintenance_restart_framework_test.py'
       - 'tests/maintenance_content_coalescing_test.py'
+      - 'tests/maintenance_game_update_coalescing_test.py'
       - 'tests/customer_maintenance_policy_surface_test.py'
       - '.github/workflows/maintenance-restart.yml'
   push:
@@ -39,10 +44,12 @@ on:
       - 'database/maintenance_repository.py'
       - 'database/content_update_dispatch_repository.py'
       - 'database/agent_instance_runtime_repository.py'
+      - 'database/agent_game_data_repository.py'
       - 'database/schema_baseline.py'
       - 'dashboard/runtime_workspace_catalog.py'
       - 'dashboard/content_update_validation.py'
       - 'dashboard/maintenance_content_coordinator.py'
+      - 'dashboard/maintenance_game_update_coordinator.py'
       - 'dashboard/customer_maintenance_workspace.py'
       - 'dashboard/customer_maintenance_http.py'
       - 'dashboard/server_part20.py'
@@ -53,24 +60,27 @@ on:
       - 'dashboard/workers/maintenance_worker.py'
       - 'dashboard/workers/worker.sh'
       - 'systemd/dsm-dashboard.service'
+      - 'agents/linux/runtime/game_data_executor.py'
+      - 'agents/linux/runtime/maintenance_game_update.py'
       - 'agents/linux/runtime/instance_runtime.py'
       - 'agents/linux/runtime/adapters/base.py'
       - 'agents/windows/runtime/instance_runtime.py'
       - 'agents/windows/runtime/adapters/base.py'
       - 'tests/maintenance_restart_framework_test.py'
       - 'tests/maintenance_content_coalescing_test.py'
+      - 'tests/maintenance_game_update_coalescing_test.py'
       - 'tests/customer_maintenance_policy_surface_test.py'
 permissions:
   contents: read
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Validate syntax
         run: |
-          python3 -m py_compile core/maintenance_platform.py database/maintenance_schema.py database/maintenance_repository.py database/content_update_dispatch_repository.py database/agent_instance_runtime_repository.py database/schema_baseline.py dashboard/runtime_workspace_catalog.py dashboard/content_update_validation.py dashboard/maintenance_content_coordinator.py dashboard/customer_maintenance_workspace.py dashboard/customer_maintenance_http.py dashboard/server_part20.py dashboard/workers/content_update_worker.py dashboard/workers/maintenance_worker.py agents/linux/runtime/instance_runtime.py agents/linux/runtime/adapters/base.py agents/windows/runtime/instance_runtime.py agents/windows/runtime/adapters/base.py tests/maintenance_restart_framework_test.py tests/maintenance_content_coalescing_test.py tests/customer_maintenance_policy_surface_test.py
+          python3 -m py_compile core/maintenance_platform.py database/maintenance_schema.py database/maintenance_repository.py database/content_update_dispatch_repository.py database/agent_instance_runtime_repository.py database/agent_game_data_repository.py database/schema_baseline.py dashboard/runtime_workspace_catalog.py dashboard/content_update_validation.py dashboard/maintenance_content_coordinator.py dashboard/maintenance_game_update_coordinator.py dashboard/customer_maintenance_workspace.py dashboard/customer_maintenance_http.py dashboard/server_part20.py dashboard/workers/content_update_worker.py dashboard/workers/maintenance_worker.py agents/linux/runtime/instance_runtime.py agents/linux/runtime/adapters/base.py agents/linux/runtime/game_data_executor.py agents/linux/runtime/maintenance_game_update.py agents/windows/runtime/instance_runtime.py agents/windows/runtime/adapters/base.py tests/maintenance_restart_framework_test.py tests/maintenance_content_coalescing_test.py tests/maintenance_game_update_coalescing_test.py tests/customer_maintenance_policy_surface_test.py
           node --check dashboard/web/customer-maintenance.js
           node --check dashboard/web/customer-content-update-policy.js
           bash -n dashboard/workers/worker.sh
@@ -78,6 +88,7 @@ jobs:
         run: |
           python3 -m unittest tests/maintenance_restart_framework_test.py
           python3 -m unittest tests/maintenance_content_coalescing_test.py
+          python3 -m unittest tests/maintenance_game_update_coalescing_test.py
           python3 -m unittest tests/customer_maintenance_policy_surface_test.py
       - name: Validate integration wiring
         run: |
@@ -89,6 +100,12 @@ jobs:
           grep -F "'start'" dashboard/workers/maintenance_worker.py
           grep -F "'doctor'" dashboard/workers/maintenance_worker.py
           ! grep -F "_enqueue(run,'restart'" dashboard/workers/maintenance_worker.py
+          grep -F 'MaintenanceGameUpdateCoordinator' dashboard/workers/maintenance_worker.py
+          grep -F "'maintenance-update'" dashboard/maintenance_game_update_coordinator.py
+          grep -F "'maintenance-commit'" dashboard/maintenance_game_update_coordinator.py
+          grep -F "'maintenance-rollback'" dashboard/maintenance_game_update_coordinator.py
+          grep -F 'shared game-data maintenance requires every affected instance stopped' agents/linux/runtime/maintenance_game_update.py
+          grep -F 'MAINTENANCE_ACTIONS' database/agent_game_data_repository.py
           grep -F 'maintenance:save' agents/linux/runtime/instance_runtime.py
           grep -F 'maintenance:save' agents/windows/runtime/instance_runtime.py
           grep -F '"maintenance": normalize_maintenance_capabilities' dashboard/runtime_workspace_catalog.py
@@ -100,7 +117,7 @@ jobs:
           grep -F '/api/customer/instance/workspace/maintenance' dashboard/web/customer-maintenance.js
       - name: Enforce typed maintenance security contract
         run: |
-          ! grep -R -E 'shell=True|os\.system\(' core/maintenance_platform.py dashboard/maintenance_content_coordinator.py dashboard/customer_maintenance_workspace.py dashboard/customer_maintenance_http.py dashboard/workers/maintenance_worker.py agents/linux/runtime/instance_runtime.py agents/windows/runtime/instance_runtime.py
+          ! grep -R -E 'shell=True|os\.system\(' core/maintenance_platform.py dashboard/maintenance_content_coordinator.py dashboard/maintenance_game_update_coordinator.py dashboard/customer_maintenance_workspace.py dashboard/customer_maintenance_http.py dashboard/workers/maintenance_worker.py agents/linux/runtime/maintenance_game_update.py agents/linux/runtime/instance_runtime.py agents/windows/runtime/instance_runtime.py
           grep -F 'def save(' agents/linux/runtime/adapters/base.py
           grep -F 'def save(' agents/windows/runtime/adapters/base.py
           grep -F 'self.workspace.require(user,instance_id,"instance.restart")' dashboard/customer_maintenance_workspace.py
