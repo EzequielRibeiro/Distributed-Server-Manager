@@ -62,6 +62,7 @@ class SystemdAdapter(InstanceRuntimeAdapter):
                 "--property=ActiveState",
                 "--property=SubState",
                 "--property=ActiveEnterTimestamp",
+                "--property=ActiveEnterTimestampMonotonic",
                 "--no-pager",
             ],
             10,
@@ -74,6 +75,11 @@ class SystemdAdapter(InstanceRuntimeAdapter):
         load_state = values.get("LoadState", "unknown")
         active_state = values.get("ActiveState", "unknown")
         sub_state = values.get("SubState", "unknown")
+        monotonic_raw = values.get("ActiveEnterTimestampMonotonic", "")
+        try:
+            active_enter_monotonic_usec = int(monotonic_raw) if monotonic_raw else None
+        except ValueError:
+            active_enter_monotonic_usec = None
         return {
             "adapter": self.name,
             "unit": unit,
@@ -82,6 +88,7 @@ class SystemdAdapter(InstanceRuntimeAdapter):
             "active_state": active_state,
             "sub_state": sub_state,
             "active_enter_timestamp": values.get("ActiveEnterTimestamp") or None,
+            "active_enter_monotonic_usec": active_enter_monotonic_usec,
             "running": active_state == "active",
             "error": stderr[:2000] or None,
         }
