@@ -68,13 +68,17 @@ def _project_zomboid(entries:list[dict[str,Any]])->tuple[list[str],list[dict[str
  if mods:props.append({"path":"Zomboid/Server/servertest.ini","key":"Mods","value":";".join(mods),"syntax":"equals"})
  return [],props
 
-def _base_bind_paths(result:dict[str,Any])->list[dict[str,str]]:
+def _base_bind_paths(result:dict[str,Any])->list[dict[str,Any]]:
  raw=result.get("content_base_bind_paths") if isinstance(result.get("content_base_bind_paths"),list) else result.get("bind_paths") or []
  if not isinstance(raw,list):raise ContentRuntimeActivationError("invalid runtime bind paths")
  values=[]
  for item in raw:
   if not isinstance(item,dict):raise ContentRuntimeActivationError("invalid runtime bind path")
-  values.append({"source":str(item.get("source") or ""),"target":str(item.get("target") or "")})
+  normalized={"source":str(item.get("source") or ""),"target":str(item.get("target") or "")}
+  if "agent_managed" in item:
+   if not isinstance(item.get("agent_managed"),bool):raise ContentRuntimeActivationError("invalid Agent-managed bind path")
+   normalized["agent_managed"]=item["agent_managed"]
+  values.append(normalized)
  return values
 
 def project_runtime_spec(spec:dict[str,Any],snapshot:dict[str,Any])->dict[str,Any]:
@@ -98,7 +102,7 @@ def project_runtime_spec(spec:dict[str,Any],snapshot:dict[str,Any])->dict[str,An
   keyring=str(state_root/".dsm"/"dayz-keys");target=str(working_root/"keys")
   for binding in result["bind_paths"]:
    if str(binding.get("target") or "")==target and str(binding.get("source") or "")!=keyring:raise ContentRuntimeActivationError("DayZ keys target is already bound by another runtime source")
-  result["bind_paths"].append({"source":keyring,"target":target})
+  result["bind_paths"].append({"source":keyring,"target":target,"agent_managed":True})
   result["content_dayz_key_sources"]=dayz_keys;result["content_dayz_keyring"]=keyring;result["content_dayz_base_keys_root"]=target
  else:
   result.pop("content_dayz_key_sources",None);result.pop("content_dayz_keyring",None);result.pop("content_dayz_base_keys_root",None)
