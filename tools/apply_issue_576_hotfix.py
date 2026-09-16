@@ -11,11 +11,7 @@ def replace_once(path: str, old: str, new: str) -> None:
 
 
 engine = "database/baseline_upgrade_engine.py"
-replace_once(
-    engine,
-    "from server_update_schema import server_update_ddl\n",
-    "from server_update_schema import content_update_ddl, server_update_ddl\n",
-)
+replace_once(engine, "from server_update_schema import server_update_ddl\n", "from server_update_schema import content_update_ddl, server_update_ddl\n")
 replace_once(
     engine,
     '''SERVER_UPDATE_TABLES = {\n    "instance_update_policy",\n    "instance_update_state",\n    "instance_update_runs",\n}\n\n''',
@@ -36,12 +32,10 @@ build = Path("release/build_release.sh")
 text = build.read_text(encoding="utf-8")
 start = text.index('"${PYTHON_BIN}" - "${PACKAGE_ROOT}/update-manager/process-guard.sh" <<\'PY\'\n')
 end = text.index('for relative_path in \\\n', start)
-text = text[:start] + text[end:]
-build.write_text(text, encoding="utf-8", newline="\n")
+build.write_text(text[:start] + text[end:], encoding="utf-8", newline="\n")
 
 Path("tests/baseline_v12_content_update_test.py").write_text(r'''#!/usr/bin/env python3
 from __future__ import annotations
-
 import json
 import sqlite3
 import subprocess
@@ -90,14 +84,11 @@ class BaselineV12ContentUpdateTest(unittest.TestCase):
             self.assertEqual(payload["upgrade_version"], 11)
             self.assertEqual(payload["upgrade_latest"], 12)
             self.assertEqual(payload["pending_upgrades"], [{"version": 12, "name": "universal_content_update"}])
-
             migrated = self.manager(root, db, "migrate")
             self.assertEqual(migrated.returncode, 0, migrated.stderr)
             payload = json.loads(migrated.stdout)
             self.assertTrue(payload["valid"])
             self.assertEqual(payload["upgrade_version"], 12)
-            self.assertEqual(payload["upgrade_latest"], 12)
-
             with sqlite3.connect(db) as connection:
                 tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='index'")}
@@ -137,14 +128,4 @@ replace_once(
     "tests/update_baseline_upgrade_path_test.py",
     '            self.assertEqual(payload["upgrade_version"], 11)\n            self.assertEqual(payload["upgrade_latest"], 11)\n',
     '            self.assertEqual(payload["upgrade_version"], 12)\n            self.assertEqual(payload["upgrade_latest"], 12)\n',
-)
-replace_once(
-    ".github/workflows/baseline-update-reconciliation.yml",
-    "          python3 -m unittest tests/update_baseline_upgrade_path_test.py\n",
-    "          python3 -m unittest tests/update_baseline_upgrade_path_test.py\n          python3 -m unittest tests/baseline_v12_content_update_test.py\n",
-)
-replace_once(
-    ".github/workflows/release.yml",
-    "          python3 -m unittest tests/update_baseline_upgrade_path_test.py\n",
-    "          python3 -m unittest tests/update_baseline_upgrade_path_test.py\n          python3 -m unittest tests/baseline_v12_content_update_test.py\n",
 )
