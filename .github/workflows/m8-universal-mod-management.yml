@@ -63,23 +63,17 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
       - name: Validate canonical provider matrix and syntax
         run: |
           python3 -m json.tool catalog/v2/content-provider-capabilities.json >/dev/null
-          python3 -m py_compile \
-            dashboard/content_provider_capabilities.py \
-            dashboard/customer_content_workspace.py \
-            tests/m8_content_provider_capabilities_test.py \
-            tests/m8_customer_content_workspace_contract_test.py
-
-      - name: Run M8 provider capability contract
+          python3 -m py_compile dashboard/content_provider_capabilities.py dashboard/customer_content_workspace.py tests/m8_*.py
+      - name: Run M8 provider capability contracts
         env:
           PYTHONPATH: .
         run: |
           python3 tests/m8_content_provider_capabilities_test.py
           python3 tests/m8_customer_content_workspace_contract_test.py
-
+          python3 tests/m8_provider_matrix_catalog_consistency_test.py
       - name: Run inherited Universal Content regressions
         env:
           PYTHONPATH: .
@@ -93,12 +87,10 @@ jobs:
           python3 -m unittest tests/content_provider_contract_test.py
           python3 -m unittest tests/content_provider_capability_test.py
           python3 -m unittest tests/content_provider_capabilities_advertisement_test.py
-
       - name: Run inherited maintenance coalescing regression
         env:
           PYTHONPATH: .
         run: python3 -m unittest tests/maintenance_content_coalescing_test.py
-
       - name: Enforce M8 authority boundaries
         run: |
           grep -Fq 'provider_supports(provider,"customer_managed",self.workspace.root)' dashboard/customer_content_workspace.py
@@ -109,7 +101,6 @@ jobs:
           ! grep -Fq '_CUSTOMER_PROVIDERS=' dashboard/customer_content_workspace.py
           ! grep -Fq '_UPDATE_PROVIDERS=' dashboard/customer_content_workspace.py
           ! grep -RInE '(shell=True|os\.system\()' dashboard/content_provider_capabilities.py dashboard/customer_content_workspace.py
-
       - name: Verify GitHub HTTP fail-closed update policy
         run: |
           python3 - <<'PY'
