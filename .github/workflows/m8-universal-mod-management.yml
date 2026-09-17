@@ -72,7 +72,9 @@ jobs:
           PYTHONPATH: .
         run: |
           python3 tests/m8_content_provider_capabilities_test.py
+          python3 tests/m8_content_action_capabilities_test.py
           python3 tests/m8_customer_content_workspace_contract_test.py
+          python3 tests/m8_customer_content_ui_contract_test.py
           python3 tests/m8_provider_matrix_catalog_consistency_test.py
       - name: Run inherited Universal Content regressions
         env:
@@ -98,6 +100,7 @@ jobs:
           grep -Fq 'provider_supports(provider,"install",self.workspace.root)' dashboard/customer_content_workspace.py
           grep -Fq 'provider_supports(provider,"update",self.workspace.root)' dashboard/customer_content_workspace.py
           grep -Fq 'item["provider_capabilities"]=provider_capabilities(provider,self.workspace.root)' dashboard/customer_content_workspace.py
+          grep -Fq 'allowed=item.actions&&typeof item.actions==="object"?item.actions:{}' dashboard/web/customer-instance-v2.js
           ! grep -Fq '_CUSTOMER_PROVIDERS=' dashboard/customer_content_workspace.py
           ! grep -Fq '_UPDATE_PROVIDERS=' dashboard/customer_content_workspace.py
           ! grep -RInE '(shell=True|os\.system\()' dashboard/content_provider_capabilities.py dashboard/customer_content_workspace.py
