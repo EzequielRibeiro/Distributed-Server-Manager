@@ -9,6 +9,7 @@ on:
       - 'database/agent_instance_runtime_repository.py'
       - 'database/agent_game_data_repository.py'
       - 'database/schema_baseline.py'
+      - 'catalog/v2/maintenance-capabilities.json'
       - 'dashboard/runtime_workspace_catalog.py'
       - 'dashboard/content_update_validation.py'
       - 'dashboard/maintenance_configuration_coordinator.py'
@@ -50,6 +51,7 @@ on:
       - 'database/agent_instance_runtime_repository.py'
       - 'database/agent_game_data_repository.py'
       - 'database/schema_baseline.py'
+      - 'catalog/v2/maintenance-capabilities.json'
       - 'dashboard/runtime_workspace_catalog.py'
       - 'dashboard/content_update_validation.py'
       - 'dashboard/maintenance_configuration_coordinator.py'
@@ -78,6 +80,7 @@ on:
       - 'tests/maintenance_game_update_coalescing_test.py'
       - 'tests/maintenance_controller_agent_e2e.py'
       - 'tests/customer_maintenance_policy_surface_test.py'
+      - '.github/workflows/maintenance-restart.yml'
 permissions:
   contents: read
 jobs:
@@ -120,7 +123,9 @@ jobs:
           grep -F 'startswith("maintenance-")' agents/linux/runtime/game_data_state.py
           grep -F 'maintenance:save' agents/linux/runtime/instance_runtime.py
           grep -F 'maintenance:save' agents/windows/runtime/instance_runtime.py
-          grep -F '"maintenance": normalize_maintenance_capabilities' dashboard/runtime_workspace_catalog.py
+          grep -F 'def runtime_maintenance_capabilities(' dashboard/runtime_workspace_catalog.py
+          grep -F 'catalog" / "v2" / "maintenance-capabilities.json"' dashboard/runtime_workspace_catalog.py
+          grep -F '"maintenance": maintenance' dashboard/runtime_workspace_catalog.py
           grep -F 'due_for_maintenance' database/content_update_dispatch_repository.py
           grep -F 'MaintenanceContentCoordinator' dashboard/workers/maintenance_worker.py
           grep -F 'MaintenanceConfigurationCoordinator' dashboard/maintenance_content_coordinator.py
