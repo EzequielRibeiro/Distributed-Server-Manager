@@ -17,8 +17,8 @@
       },
       "maintenance": {
         "scheduled_restart": true,
-        "broadcast": false,
-        "save": false,
+        "broadcast": true,
+        "save": true,
         "graceful_shutdown": false,
         "native_countdown": false
       }

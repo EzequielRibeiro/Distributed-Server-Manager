@@ -19,6 +19,7 @@ if str(RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_DIR))
 
 from catalog_runtime_policy import materialize_network_properties, materialize_templates
+from palworld_admin_secret import materialize_admin_password
 from server_settings_runtime import materialize_server_settings
 from server_settings_surface import materialize_dynamic_values
 from materializers import resolve_materializer
@@ -484,6 +485,8 @@ def run(instance_id: str) -> dict[str, Any]:
         working_file_copies = _sync_working_file_copies(spec)
         templates = materialize_templates(spec)
         templates.extend(materialize_network_properties(spec))
+        if str(spec.get("game_id") or "").lower() == "palworld":
+            materialize_admin_password(spec)
         server_settings = materialize_server_settings(spec)
         server_settings.extend(materialize_dynamic_values(spec))
         operation = materializer.apply(spec)

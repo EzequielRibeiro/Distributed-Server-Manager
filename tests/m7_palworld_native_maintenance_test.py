@@ -36,8 +36,8 @@ class PalworldNativeMaintenanceTest(unittest.TestCase):
         )["maintenance"]
 
         self.assertTrue(m["scheduled_restart"])
-        self.assertFalse(m["broadcast"])
-        self.assertFalse(m["save"])
+        self.assertTrue(m["broadcast"])
+        self.assertTrue(m["save"])
         self.assertFalse(m["graceful_shutdown"])
         self.assertFalse(m["native_countdown"])
 
