@@ -1,0 +1,62 @@
+name: M9 Minecraft Modpacks
+
+on:
+  pull_request:
+    paths:
+      - 'dashboard/customer_content_workspace.py'
+      - 'dashboard/customer_content_http.py'
+      - 'dashboard/web/customer-instance-v2.js'
+      - 'database/content_repository.py'
+      - 'core/minecraft_modpack_resolver.py'
+      - 'tests/m9_*.py'
+      - 'tests/universal_content_update_rollback_test.py'
+      - 'tests/universal_content_customer_workspace_test.py'
+      - 'tests/universal_content_e2e_test.py'
+      - '.github/workflows/m9-minecraft-modpacks.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/customer_content_workspace.py'
+      - 'dashboard/customer_content_http.py'
+      - 'dashboard/web/customer-instance-v2.js'
+      - 'database/content_repository.py'
+      - 'core/minecraft_modpack_resolver.py'
+      - 'tests/m9_*.py'
+      - 'tests/universal_content_update_rollback_test.py'
+      - 'tests/universal_content_customer_workspace_test.py'
+      - 'tests/universal_content_e2e_test.py'
+      - '.github/workflows/m9-minecraft-modpacks.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: M9 Minecraft Modpacks Gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate syntax
+        run: |
+          python3 -m py_compile dashboard/customer_content_workspace.py dashboard/customer_content_http.py tests/m9_*.py
+      - name: Run M9 bundle contracts
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 tests/m9_modpack_bundle_read_model_test.py
+      - name: Run inherited U9 modpack update rollback regressions
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 -m unittest tests/universal_content_update_rollback_test.py
+      - name: Run inherited workspace regressions
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 -m unittest tests/universal_content_customer_workspace_test.py
+      - name: Enforce customer-safe read model
+        run: |
+          grep -Fq 'bundle_state' dashboard/customer_content_workspace.py
+          grep -Fq 'diff_from_previous' dashboard/customer_content_workspace.py
+          grep -Fq 'BUNDLE=PATH+"/bundle"' dashboard/customer_content_http.py
