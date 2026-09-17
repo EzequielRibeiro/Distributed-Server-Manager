@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Customer-scoped facade for Universal Content desired state."""
 from __future__ import annotations
+import json
 from typing import Mapping
 from content_repository import ContentRepository
 from content_provider_capabilities import provider_capabilities,provider_supports
@@ -143,6 +144,42 @@ class CustomerContentWorkspaceService:
     previous=self.content.previous_revision(instance_id,str(item.get("content_id") or ""));rollback_revision=int(previous["revision"]) if previous else None
    item["provider_capabilities"]=provider_capabilities(provider,self.workspace.root);item["update"]={"supported":provider_supports(provider,"update",self.workspace.root),"rollback_available":rollback_revision is not None,"rollback_revision":rollback_revision}
   return items
+ def bundle_details(self,user,instance_id,content_id):
+  self._context_policy(user,instance_id,"content.read");parent=self._existing(instance_id,content_id)
+  if str(parent.get("content_type") or "").strip().lower()!="modpack":raise ValueError("content is not a modpack bundle")
+  history=self.content.bundle_history(instance_id,content_id)
+  if not history:raise KeyError("content bundle not found")
+  def manifest(row):
+   try:value=json.loads(row.get("manifest_json") or "{}")
+   except (TypeError,json.JSONDecodeError):raise ValueError("stored content bundle manifest is invalid")
+   if not isinstance(value,dict) or not isinstance(value.get("members"),list):raise ValueError("stored content bundle manifest is invalid")
+   return value
+  current_row=history[0];current_manifest=manifest(current_row);members={str(item.get("content_id") or ""):item for item in current_manifest.get("members") or [] if isinstance(item,Mapping) and str(item.get("content_id") or "").strip()}
+  assignments={str(item.get("content_id") or ""):item for item in self.content.list(instance_id=instance_id,limit=2000)}
+  reasons=[];visible=[]
+  for cid in sorted(members):
+   declared=members[cid];item=assignments.get(cid)
+   if not item:
+    reasons.append({"content_id":cid,"reason":"missing_member"});visible.append({"content_id":cid,"state":"missing"});continue
+   marker=(item.get("metadata") or {}).get("bundle") if isinstance(item.get("metadata"),Mapping) else None
+   owned=isinstance(marker,Mapping) and str(marker.get("parent_content_id") or "")==content_id
+   artifact_matches=(item.get("artifact") or {})==(declared.get("artifact") or {})
+   active=str(item.get("desired_state") or "installed")!="absent"
+   if not owned:reasons.append({"content_id":cid,"reason":"ownership_drift"})
+   elif not artifact_matches:reasons.append({"content_id":cid,"reason":"artifact_drift"})
+   elif not active:reasons.append({"content_id":cid,"reason":"member_absent"})
+   visible.append({"content_id":cid,"content_type":str(item.get("content_type") or "mod"),"provider":str(item.get("provider") or ""),"version":str(item.get("version") or ""),"desired_state":str(item.get("desired_state") or "installed"),"activation_state":str(item.get("activation_state") or "enabled"),"security_state":str(item.get("security_state") or "unscanned"),"state":"managed" if owned and artifact_matches and active else "customized"})
+  extras=[]
+  for cid,item in assignments.items():
+   if cid in members or str(item.get("desired_state") or "installed")=="absent":continue
+   marker=(item.get("metadata") or {}).get("bundle") if isinstance(item.get("metadata"),Mapping) else None
+   if isinstance(marker,Mapping) and str(marker.get("parent_content_id") or "")==content_id:
+    extras.append(cid);reasons.append({"content_id":cid,"reason":"extra_member"})
+  diff={"added":[],"removed":[],"updated":[],"unchanged":[]}
+  if len(history)>1:
+   previous=manifest(history[1]);old={str(item.get("content_id") or ""):item for item in previous.get("members") or [] if isinstance(item,Mapping) and str(item.get("content_id") or "").strip()}
+   diff["added"]=sorted(set(members)-set(old));diff["removed"]=sorted(set(old)-set(members));diff["updated"]=sorted(cid for cid in set(old)&set(members) if (old[cid].get("artifact") or {})!=(members[cid].get("artifact") or {}));diff["unchanged"]=sorted((set(old)&set(members))-set(diff["updated"]))
+  return {"content_id":content_id,"content_type":"modpack","provider":str(parent.get("provider") or ""),"version":str(parent.get("version") or ""),"bundle_state":"customized" if reasons else "managed","customization_reasons":reasons,"current_revision":int(current_row.get("revision") or 0),"previous_revision":int(history[1].get("revision") or 0) if len(history)>1 else None,"minecraft_version":str(current_row.get("minecraft_version") or ""),"loader_id":str(current_row.get("loader_id") or ""),"loader_version":str(current_row.get("loader_version") or ""),"manifest_kind":str(current_row.get("manifest_kind") or ""),"members":visible,"extra_members":sorted(extras),"diff_from_previous":diff,"revisions":[{"revision":int(row.get("revision") or 0),"provider_version_id":str(row.get("provider_version_id") or ""),"created_at":row.get("created_at")} for row in history[:20]]}
  def search(self,user,instance_id,provider,content_type,query,limit=20):
   context,capabilities,policy=self._context_policy_details(user,instance_id,"content.read");provider=str(provider or "").strip().lower();ctype=str(content_type or "").strip().lower();text=str(query or "").strip()
   if not text:raise ValueError("search query is required")
