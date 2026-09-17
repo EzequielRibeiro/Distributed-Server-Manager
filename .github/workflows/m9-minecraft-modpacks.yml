@@ -45,6 +45,7 @@ jobs:
           PYTHONPATH: .
         run: |
           python3 tests/m9_modpack_bundle_read_model_test.py
+          python3 tests/m9_modpack_ui_contract_test.py
       - name: Run inherited U9 modpack update rollback regressions
         env:
           PYTHONPATH: .
