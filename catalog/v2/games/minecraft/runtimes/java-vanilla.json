@@ -42,13 +42,19 @@
   },
   "network": {
     "allocation": "block",
-    "block_size": 1,
+    "block_size": 2,
     "ports": [
       {
         "name": "game",
         "protocol": "tcp",
         "offset": 0,
         "exposure": "public"
+      },
+      {
+        "name": "rcon",
+        "protocol": "tcp",
+        "offset": 1,
+        "exposure": "none"
       }
     ],
     "apply": [

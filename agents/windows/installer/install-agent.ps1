@@ -78,7 +78,7 @@ $guiEnabled = if ($GuiMode -eq 'on') { if (-not $guiAvailable) { Fail 'GuiMode=o
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 New-Item -ItemType Directory -Force -Path "$InstallRoot\runtime", "$InstallRoot\common", "$InstallRoot\updater", "$InstallRoot\service", "$InstallRoot\gui", "$DataRoot\state", "$DataRoot\state\gui", "$DataRoot\security", "$DataRoot\security\yara-rules", "$DataRoot\logs" | Out-Null
 Copy-Item (Join-Path $PackageDir "agent\runtime\*") "$InstallRoot\runtime" -Recurse -Force
-Copy-Item (Join-Path $PackageDir "agent\common\identity.py") "$InstallRoot\common\identity.py" -Force
+Copy-Item (Join-Path $PackageDir "agent\common\*.py") "$InstallRoot\common" -Force
 Copy-Item (Join-Path $PackageDir "agent\updater\updater.py") "$InstallRoot\updater\updater.py" -Force
 Copy-Item (Join-Path $PackageDir "service\*.ps1") "$InstallRoot\service" -Force
 Copy-Item (Join-Path $PackageDir "gui\*.ps1") "$InstallRoot\gui" -Force

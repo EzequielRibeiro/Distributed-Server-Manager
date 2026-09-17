@@ -126,6 +126,54 @@ class M7MaintenanceCapabilityInventoryTest(unittest.TestCase):
                 self.assertFalse(maintenance["graceful_shutdown"])
                 self.assertFalse(maintenance["native_countdown"])
 
+    def test_minecraft_java_native_contract_is_enabled(self):
+        java_runtimes = (
+            "minecraft.java.vanilla",
+            "minecraft.java.paper",
+            "minecraft.java.fabric",
+            "minecraft.java.purpur",
+            "minecraft.java.folia",
+            "minecraft.java.forge",
+            "minecraft.java.neoforge",
+            "minecraft.java.quilt",
+            "minecraft.java.spongevanilla",
+            "minecraft.java.youer",
+            "minecraft.java.arclight",
+        )
+
+        expected = {
+            "scheduled_restart": True,
+            "broadcast": True,
+            "save": True,
+            "graceful_shutdown": False,
+            "native_countdown": False,
+        }
+
+        for runtime_id in java_runtimes:
+            maintenance = runtime_workspace_capabilities(
+                ROOT,
+                "minecraft",
+                runtime_id,
+            )["maintenance"]
+
+            self.assertEqual(
+                maintenance,
+                expected,
+                runtime_id,
+            )
+
+        bedrock = runtime_workspace_capabilities(
+            ROOT,
+            "minecraft",
+            "minecraft.bedrock.vanilla",
+        )["maintenance"]
+
+        self.assertTrue(bedrock["scheduled_restart"])
+        self.assertFalse(bedrock["broadcast"])
+        self.assertFalse(bedrock["save"])
+        self.assertFalse(bedrock["graceful_shutdown"])
+        self.assertFalse(bedrock["native_countdown"])
+
     def test_dayz_native_contract_remains_enabled(self):
         maintenance = runtime_workspace_capabilities(
             ROOT,
