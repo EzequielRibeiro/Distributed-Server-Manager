@@ -12,6 +12,7 @@ on:
       - 'agents/linux/runtime/minecraft_rcon_secret.py'
       - 'agents/linux/runtime/runtime_secret_store.py'
       - 'agents/linux/runtime/profiles/minecraft_java.py'
+      - 'agents/linux/runtime/maintenance_game_update.py'
       - 'agents/windows/runtime/adapters/windows_process.py'
       - 'agents/windows/runtime/native_maintenance.py'
       - 'agents/windows/runtime/minecraft_rcon_secret.py'
@@ -19,10 +20,19 @@ on:
       - 'agents/windows/runtime/profiles/minecraft_java.py'
       - 'catalog/v2/games/**/workspace-policy.json'
       - 'catalog/v2/games/**/runtimes/*.json'
+      - 'core/maintenance_platform.py'
       - 'dashboard/runtime_workspace_catalog.py'
+      - 'dashboard/maintenance_configuration_coordinator.py'
+      - 'dashboard/maintenance_content_coordinator.py'
+      - 'dashboard/maintenance_game_update_coordinator.py'
+      - 'dashboard/workers/maintenance_worker.py'
       - 'release/build_agent_package.sh'
       - 'release/build_windows_agent_package.py'
       - 'tests/m7_*.py'
+      - 'tests/maintenance_restart_framework_test.py'
+      - 'tests/maintenance_configuration_coalescing_test.py'
+      - 'tests/maintenance_content_coalescing_test.py'
+      - 'tests/maintenance_game_update_coalescing_test.py'
       - 'tests/palworld_console_rest_test.py'
       - '.github/workflows/m7-native-maintenance.yml'
 
@@ -38,6 +48,7 @@ on:
       - 'agents/linux/runtime/minecraft_rcon_secret.py'
       - 'agents/linux/runtime/runtime_secret_store.py'
       - 'agents/linux/runtime/profiles/minecraft_java.py'
+      - 'agents/linux/runtime/maintenance_game_update.py'
       - 'agents/windows/runtime/adapters/windows_process.py'
       - 'agents/windows/runtime/native_maintenance.py'
       - 'agents/windows/runtime/minecraft_rcon_secret.py'
@@ -45,10 +56,19 @@ on:
       - 'agents/windows/runtime/profiles/minecraft_java.py'
       - 'catalog/v2/games/**/workspace-policy.json'
       - 'catalog/v2/games/**/runtimes/*.json'
+      - 'core/maintenance_platform.py'
       - 'dashboard/runtime_workspace_catalog.py'
+      - 'dashboard/maintenance_configuration_coordinator.py'
+      - 'dashboard/maintenance_content_coordinator.py'
+      - 'dashboard/maintenance_game_update_coordinator.py'
+      - 'dashboard/workers/maintenance_worker.py'
       - 'release/build_agent_package.sh'
       - 'release/build_windows_agent_package.py'
       - 'tests/m7_*.py'
+      - 'tests/maintenance_restart_framework_test.py'
+      - 'tests/maintenance_configuration_coalescing_test.py'
+      - 'tests/maintenance_content_coalescing_test.py'
+      - 'tests/maintenance_game_update_coalescing_test.py'
       - 'tests/palworld_console_rest_test.py'
       - '.github/workflows/m7-native-maintenance.yml'
 
@@ -80,6 +100,7 @@ jobs:
             agents/windows/runtime/profiles/minecraft_java.py \
             tests/m7_common_packaging_contract_test.py \
             tests/m7_maintenance_capability_inventory_test.py \
+            tests/m7_maintenance_framework_regression_test.py \
             tests/m7_minecraft_java_native_maintenance_test.py \
             tests/m7_minecraft_java_rcon_foundation_test.py \
             tests/m7_minecraft_java_windows_maintenance_test.py \
@@ -87,6 +108,10 @@ jobs:
             tests/m7_palworld_native_maintenance_test.py \
             tests/m7_source_rcon_protocol_test.py \
             tests/m7_windows_runtime_secret_store_test.py \
+            tests/maintenance_restart_framework_test.py \
+            tests/maintenance_configuration_coalescing_test.py \
+            tests/maintenance_content_coalescing_test.py \
+            tests/maintenance_game_update_coalescing_test.py \
             tests/palworld_console_rest_test.py
 
       - name: Run M7 maintenance tests in isolated processes
@@ -95,6 +120,7 @@ jobs:
         run: |
           python3 tests/m7_common_packaging_contract_test.py
           python3 tests/m7_maintenance_capability_inventory_test.py
+          python3 tests/m7_maintenance_framework_regression_test.py
           python3 tests/m7_minecraft_java_native_maintenance_test.py
           python3 tests/m7_minecraft_java_rcon_foundation_test.py
           python3 tests/m7_minecraft_java_windows_maintenance_test.py
@@ -103,6 +129,15 @@ jobs:
           python3 tests/m7_source_rcon_protocol_test.py
           python3 tests/m7_windows_runtime_secret_store_test.py
           python3 tests/palworld_console_rest_test.py
+
+      - name: Run inherited M5 maintenance regressions
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 tests/maintenance_restart_framework_test.py
+          python3 tests/maintenance_configuration_coalescing_test.py
+          python3 tests/maintenance_content_coalescing_test.py
+          python3 tests/maintenance_game_update_coalescing_test.py
 
       - name: Enforce typed maintenance safety
         run: |
