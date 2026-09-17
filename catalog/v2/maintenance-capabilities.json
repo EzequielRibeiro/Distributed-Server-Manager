@@ -19,7 +19,7 @@
     "garrysmod/garrysmod.stable": {"scheduled_restart": true, "broadcast": false, "save": false, "graceful_shutdown": false, "native_countdown": false},
     "left4dead2/left4dead2.stable": {"scheduled_restart": true, "broadcast": false, "save": false, "graceful_shutdown": false, "native_countdown": false},
     "luanti/luanti.stable": {"scheduled_restart": true, "broadcast": false, "save": false, "graceful_shutdown": false, "native_countdown": false},
-    "mindustry/mindustry.stable": {"scheduled_restart": true, "broadcast": false, "save": false, "graceful_shutdown": false, "native_countdown": false},
+    "mindustry/mindustry.github": {"scheduled_restart": true, "broadcast": false, "save": false, "graceful_shutdown": false, "native_countdown": false},
     "minecraft/minecraft.bedrock.vanilla": {"scheduled_restart": true, "broadcast": false, "save": false, "graceful_shutdown": false, "native_countdown": false},
     "minecraft/minecraft.java.arclight": {"scheduled_restart": true, "broadcast": true, "save": true, "graceful_shutdown": false, "native_countdown": false},
     "minecraft/minecraft.java.fabric": {"scheduled_restart": true, "broadcast": true, "save": true, "graceful_shutdown": false, "native_countdown": false},
