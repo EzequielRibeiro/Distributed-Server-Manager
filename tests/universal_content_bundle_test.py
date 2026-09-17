@@ -10,7 +10,7 @@ from backend_factory import create_backend
 from content_bundle import ContentBundleValidationError,normalize_bundle
 from content_repository import ContentRepository
 from schema_baseline import load_schema_baseline
-from baseline_upgrade_engine import apply_pending_upgrades
+from baseline_upgrade_engine import apply_pending_upgrades,latest_upgrade_version
 
 
 def artifact(name):return {"provider":"modrinth","url":f"https://cdn.modrinth.com/{name}.jar","filename":f"{name}.jar","sha512":"a"*128}
@@ -58,7 +58,7 @@ class ContentBundleRepositoryTest(unittest.TestCase):
    c.execute("DROP TABLE content_bundle_revisions");c.execute("DROP TABLE content_bundles");c.execute("DELETE FROM baseline_upgrades WHERE version>=10")
   with self.backend.transaction() as c:
    completed=apply_pending_upgrades(self.backend,c,installed_checksum="ledger-already-exists")
-  self.assertEqual(completed,[10,11])
+  self.assertEqual(completed,list(range(10,latest_upgrade_version()+1)))
   with self.backend.connect() as c:
    tables={row[0] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
   self.assertTrue({"content_bundles","content_bundle_revisions"}.issubset(tables))
