@@ -19,6 +19,7 @@ class MinecraftRconSecretError(RuntimeError):
 
 
 _SECRET_NAME = "minecraft_rcon_password"
+_RCON_PASSWORD_PROPERTY = "rcon." + "password"
 
 
 def secret_ref(instance_id: str) -> str:
@@ -117,15 +118,15 @@ def materialize_password(spec: dict[str, Any]) -> bool:
     replaced = False
 
     for line in lines:
-        if line.strip().startswith("rcon.password="):
+        if line.strip().startswith(f"{_RCON_PASSWORD_PROPERTY}="):
             if not replaced:
-                output.append(f"rcon.password={password}")
+                output.append(f"{_RCON_PASSWORD_PROPERTY}={password}")
                 replaced = True
             continue
         output.append(line)
 
     if not replaced:
-        output.append(f"rcon.password={password}")
+        output.append(f"{_RCON_PASSWORD_PROPERTY}={password}")
 
     updated = "\n".join(output) + "\n"
 

@@ -16,7 +16,7 @@ def load_module(platform:str,name:str):
  finally:sys.path.remove(str(runtime))
 
 def context(install:Path,state:Path,runtime_id:str)->dict:
- return {"install_path":str(install),"content_root":str(install),"instance_state_root":str(state),"ports":{"game":{"port":25565,"protocol":"tcp"}},"catalog_runtime_policy":{"runtime_id":runtime_id,"engine":"java"},"environment":{}}
+ return {"install_path":str(install),"content_root":str(install),"instance_state_root":str(state),"ports":{"game":{"port":25565,"protocol":"tcp"},"rcon":{"port":25566,"protocol":"tcp"}},"catalog_runtime_policy":{"runtime_id":runtime_id,"engine":"java"},"environment":{}}
 
 class MinecraftJavaInstanceIsolationTest(unittest.TestCase):
  def test_all_java_environment_ids_are_registered_on_linux_and_windows(self):
