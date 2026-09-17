@@ -89,6 +89,28 @@ class M9ModpackBundleReadModelTest(unittest.TestCase):
         self.assertEqual(view["bundle_state"],"customized")
         self.assertIn({"content_id":"a","reason":"artifact_drift"},view["customization_reasons"])
 
+    def test_customer_cannot_mutate_bundle_child_directly(self):
+        self.install()
+        for action in ("remove","disable","enable","reorder","update","rollback"):
+            with self.subTest(action=action):
+                with self.assertRaisesRegex(PermissionError,"bundle child content must be changed through its parent modpack"):
+                    self.service.mutate({"username":"customer"},"inst","a",action,{})
+
+    def test_full_bundle_rollback_restores_managed_classification(self):
+        self.install("v1",[member("a"),member("b")])
+        self.install("v2",[member("b","c"),member("c")])
+        child=self.repo.get("inst","b")
+        raw={key:child.get(key) for key in ("instance_id","content_id","content_type","desired_state","activation_state","activation_order","version","provider","target","provenance","metadata","dependencies","conflicts")}
+        raw["version"]="custom";raw["artifact"]=artifact("b-custom","f")
+        self.repo.put(raw,requested_by="test")
+        self.assertEqual(self.service.bundle_details({"username":"customer"},"inst","pack")["bundle_state"],"customized")
+        self.repo.rollback_bundle("inst","pack",1,requested_by="test",reason="m9-regression")
+        view=self.service.bundle_details({"username":"customer"},"inst","pack")
+        self.assertEqual(view["bundle_state"],"managed")
+        self.assertEqual(view["version"],"v1")
+        self.assertEqual(sorted(m["content_id"] for m in view["members"]),["a","b"])
+
+
 
 if __name__=="__main__":
     unittest.main()
