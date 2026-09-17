@@ -4,11 +4,10 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
-DASHBOARD=ROOT/"dashboard"
-if str(DASHBOARD) not in sys.path:sys.path.insert(0,str(DASHBOARD))
+for path in (ROOT/"core",ROOT/"database",ROOT/"dashboard"):
+ if str(path) not in sys.path:sys.path.insert(0,str(path))
 
 from customer_content_workspace import CustomerContentWorkspaceService
 
@@ -52,9 +51,8 @@ class M8CustomerContentWorkspaceContractTest(unittest.TestCase):
    self.service(item).mutate({"username":"customer"},"i1","p1","update",{})
 
  def test_unknown_provider_install_is_fail_closed(self):
-  service=self.service()
   with self.assertRaisesRegex(PermissionError,"content provider install is unavailable"):
-   service.install({"username":"customer"},"i1",{"content_id":"x","content_type":"plugin","provider":"unknown","artifact":{"provider":"unknown","package_id":"x"}})
+   self.service().install({"username":"customer"},"i1",{"content_id":"x","content_type":"plugin","provider":"unknown","artifact":{"provider":"unknown","package_id":"x"}})
 
  def test_non_discoverable_provider_search_is_fail_closed(self):
   with self.assertRaisesRegex(PermissionError,"content provider discovery is unavailable"):
