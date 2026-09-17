@@ -249,7 +249,10 @@ class MinecraftActivationTest(unittest.TestCase):
                 "catalog_runtime_policy": {"runtime_id": "minecraft.java.paper", "engine": "java"},
                 "catalog_content_policy": config["catalog_content_policy"],
                 "install_path": str(install), "instance_state_root": str(state),
-                "ports": {"game": {"port": 25565, "protocol": "tcp"}},
+                "ports": {
+                    "game": {"port": 25565, "protocol": "tcp"},
+                    "rcon": {"port": 25575, "protocol": "tcp"},
+                },
             }
             instance = {"instance_id": "mc1", "agent_id": "agent-1", "environment_id": "minecraft.java.paper", "desired_state": "stopped"}
             from agents.linux.runtime.profiles.minecraft_java import MinecraftJavaRuntimeProfile as LinuxProfile
