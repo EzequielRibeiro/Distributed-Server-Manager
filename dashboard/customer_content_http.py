@@ -3,6 +3,7 @@
 from __future__ import annotations
 from urllib.parse import parse_qs,urlparse
 from controller_session import session_user_from_headers
+from content_action_capabilities import project_content_actions
 from customer_content_workspace import CustomerContentWorkspaceService
 from customer_content_upload_service import CustomerContentUploadService
 from instance_activity_repository import InstanceActivityRepository
@@ -82,7 +83,8 @@ def install_customer_content_http(legacy,authenticate):
   if parsed.path!=PATH:return previous_get(self)
   user=require_user(self)
   if user is None:return
-  try:send(self,200,{"content":CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT).list(user,iid(parsed))})
+  try:
+   instance_id=iid(parsed);api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT);items=api.list(user,instance_id);send(self,200,{"content":project_content_actions(api,user,instance_id,items)})
   except Exception as exc:error(self,exc)
  def post(self):
   parsed=urlparse(self.path)
