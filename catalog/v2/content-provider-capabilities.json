@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "kind": "ContentProviderCapabilityMatrix",
+  "actions": [
+    "customer_managed",
+    "discover",
+    "install",
+    "update",
+    "external_upload"
+  ],
+  "aliases": {
+    "steam": "steam-workshop"
+  },
+  "providers": {
+    "steam-workshop": {
+      "customer_managed": true,
+      "discover": true,
+      "install": true,
+      "update": true,
+      "external_upload": false,
+      "update_mode": "server-authoritative"
+    },
+    "modrinth": {
+      "customer_managed": true,
+      "discover": true,
+      "install": true,
+      "update": true,
+      "external_upload": false,
+      "update_mode": "server-authoritative"
+    },
+    "curseforge": {
+      "customer_managed": true,
+      "discover": true,
+      "install": true,
+      "update": true,
+      "external_upload": false,
+      "update_mode": "server-authoritative"
+    },
+    "github": {
+      "customer_managed": true,
+      "discover": false,
+      "install": true,
+      "update": false,
+      "external_upload": false,
+      "update_mode": "unsupported"
+    },
+    "http": {
+      "customer_managed": true,
+      "discover": false,
+      "install": true,
+      "update": false,
+      "external_upload": false,
+      "update_mode": "unsupported"
+    },
+    "http-archive": {
+      "customer_managed": true,
+      "discover": false,
+      "install": true,
+      "update": false,
+      "external_upload": false,
+      "update_mode": "unsupported"
+    },
+    "external-upload": {
+      "customer_managed": false,
+      "discover": false,
+      "install": false,
+      "update": false,
+      "external_upload": true,
+      "update_mode": "unsupported"
+    }
+  }
+}

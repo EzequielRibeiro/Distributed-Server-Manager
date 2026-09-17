@@ -1,0 +1,119 @@
+name: M8 Universal Mod Management
+
+on:
+  pull_request:
+    paths:
+      - 'catalog/v2/content-provider-capabilities.json'
+      - 'catalog/v2/games/**/runtimes/*.json'
+      - 'dashboard/content_provider_capabilities.py'
+      - 'dashboard/customer_content_workspace.py'
+      - 'dashboard/runtime_workspace_catalog.py'
+      - 'dashboard/web/customer-instance-v2.js'
+      - 'core/content_provider_contract.py'
+      - 'core/minecraft_content_resolver.py'
+      - 'core/minecraft_modpack_resolver.py'
+      - 'core/steam_workshop_resolver.py'
+      - 'database/content_repository.py'
+      - 'agents/linux/runtime/content_*.py'
+      - 'agents/windows/runtime/content_*.py'
+      - 'tests/m8_*.py'
+      - 'tests/universal_content_customer_workspace_test.py'
+      - 'tests/universal_content_customer_workshop_test.py'
+      - 'tests/universal_content_minecraft_activation_test.py'
+      - 'tests/universal_content_external_upload_test.py'
+      - 'tests/universal_content_update_rollback_test.py'
+      - 'tests/universal_content_dashboard_test.py'
+      - 'tests/content_provider_*.py'
+      - 'tests/maintenance_content_coalescing_test.py'
+      - '.github/workflows/m8-universal-mod-management.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'catalog/v2/content-provider-capabilities.json'
+      - 'catalog/v2/games/**/runtimes/*.json'
+      - 'dashboard/content_provider_capabilities.py'
+      - 'dashboard/customer_content_workspace.py'
+      - 'dashboard/runtime_workspace_catalog.py'
+      - 'dashboard/web/customer-instance-v2.js'
+      - 'core/content_provider_contract.py'
+      - 'core/minecraft_content_resolver.py'
+      - 'core/minecraft_modpack_resolver.py'
+      - 'core/steam_workshop_resolver.py'
+      - 'database/content_repository.py'
+      - 'agents/linux/runtime/content_*.py'
+      - 'agents/windows/runtime/content_*.py'
+      - 'tests/m8_*.py'
+      - 'tests/universal_content_customer_workspace_test.py'
+      - 'tests/universal_content_customer_workshop_test.py'
+      - 'tests/universal_content_minecraft_activation_test.py'
+      - 'tests/universal_content_external_upload_test.py'
+      - 'tests/universal_content_update_rollback_test.py'
+      - 'tests/universal_content_dashboard_test.py'
+      - 'tests/content_provider_*.py'
+      - 'tests/maintenance_content_coalescing_test.py'
+      - '.github/workflows/m8-universal-mod-management.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: M8 Universal Mod Management Gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate canonical provider matrix and syntax
+        run: |
+          python3 -m json.tool catalog/v2/content-provider-capabilities.json >/dev/null
+          python3 -m py_compile dashboard/content_provider_capabilities.py dashboard/customer_content_workspace.py tests/m8_*.py
+      - name: Run M8 provider capability contracts
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 tests/m8_content_provider_capabilities_test.py
+          python3 tests/m8_content_action_capabilities_test.py
+          python3 tests/m8_customer_content_workspace_contract_test.py
+          python3 tests/m8_customer_content_ui_contract_test.py
+          python3 tests/m8_provider_matrix_catalog_consistency_test.py
+      - name: Run inherited Universal Content regressions
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 -m unittest tests/universal_content_customer_workspace_test.py
+          python3 -m unittest tests/universal_content_customer_workshop_test.py
+          python3 -m unittest tests/universal_content_minecraft_activation_test.py
+          python3 -m unittest tests/universal_content_external_upload_test.py
+          python3 -m unittest tests/universal_content_update_rollback_test.py
+          python3 -m unittest tests/universal_content_dashboard_test.py
+          python3 -m unittest tests/content_provider_contract_test.py
+          python3 -m unittest tests/content_provider_capability_test.py
+          python3 -m unittest tests/content_provider_capabilities_advertisement_test.py
+      - name: Run inherited maintenance coalescing regression
+        env:
+          PYTHONPATH: .
+        run: python3 -m unittest tests/maintenance_content_coalescing_test.py
+      - name: Enforce M8 authority boundaries
+        run: |
+          grep -Fq 'provider_supports(provider,"customer_managed",self.workspace.root)' dashboard/customer_content_workspace.py
+          grep -Fq 'provider_supports(provider,"discover",self.workspace.root)' dashboard/customer_content_workspace.py
+          grep -Fq 'provider_supports(provider,"install",self.workspace.root)' dashboard/customer_content_workspace.py
+          grep -Fq 'provider_supports(provider,"update",self.workspace.root)' dashboard/customer_content_workspace.py
+          grep -Fq 'item["provider_capabilities"]=provider_capabilities(provider,self.workspace.root)' dashboard/customer_content_workspace.py
+          grep -Fq 'allowed=item.actions&&typeof item.actions==="object"?item.actions:{}' dashboard/web/customer-instance-v2.js
+          ! grep -Fq '_CUSTOMER_PROVIDERS=' dashboard/customer_content_workspace.py
+          ! grep -Fq '_UPDATE_PROVIDERS=' dashboard/customer_content_workspace.py
+          ! grep -RInE '(shell=True|os\.system\()' dashboard/content_provider_capabilities.py dashboard/customer_content_workspace.py
+      - name: Verify GitHub HTTP fail-closed update policy
+        run: |
+          python3 - <<'PY'
+          import json
+          data=json.load(open('catalog/v2/content-provider-capabilities.json',encoding='utf-8'))
+          for provider in ('github','http','http-archive'):
+              entry=data['providers'][provider]
+              assert entry['install'] is True
+              assert entry['update'] is False
+              assert entry['update_mode']=='unsupported'
+          assert data['providers']['external-upload']['external_upload'] is True
+          assert data['providers']['external-upload']['customer_managed'] is False
+          PY

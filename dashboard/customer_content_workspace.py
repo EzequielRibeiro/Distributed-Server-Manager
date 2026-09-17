@@ -3,13 +3,13 @@
 from __future__ import annotations
 from typing import Mapping
 from content_repository import ContentRepository
+from content_provider_capabilities import provider_capabilities,provider_supports
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from runtime_workspace_catalog import runtime_definition
 from steam_workshop_resolver import resolve_workshop_item
 from minecraft_content_resolver import discover_minecraft_content,resolve_minecraft_content
 from minecraft_modpack_resolver import resolve_minecraft_modpack
 
-_CUSTOMER_PROVIDERS=frozenset({"steam","steam-workshop","http","http-archive","github","modrinth","curseforge"})
 _SERVER_OWNED=frozenset({"agent_id","game_id","security_state","assignment_id","revision","checksum","requested_by","created_at","updated_at"})
 _INSTALL_FIELDS=frozenset({"content_id","content_type","desired_state","activation_state","activation_order","version","provider","target","artifact","provenance","source","metadata","dependencies","conflicts"})
 _UPDATE_FIELDS=frozenset({"activation_state","activation_order","version","provider","target","artifact","provenance","source","metadata","dependencies","conflicts"})
@@ -36,7 +36,7 @@ class CustomerContentWorkspaceService:
   return value
  def _enforce_policy(self,item,policy):
   provider=str(item.get("provider") or (item.get("artifact") or {}).get("provider") or "").strip().lower();ctype=str(item.get("content_type") or "other").strip().lower()
-  if provider not in _CUSTOMER_PROVIDERS:raise PermissionError("content provider is not customer-managed")
+  if not provider_supports(provider,"customer_managed",self.workspace.root):raise PermissionError("content provider is not customer-managed")
   if provider in {"steam","steam-workshop"} or ctype=="workshop":
    if not policy.workshop_allowed:raise PermissionError("workshop content is not allowed by this contract")
   elif ctype=="plugin":
@@ -141,11 +141,12 @@ class CustomerContentWorkspaceService:
     history=self.content.bundle_history(instance_id,str(item.get("content_id") or ""));rollback_revision=int(history[1]["revision"]) if len(history)>1 else None
    else:
     previous=self.content.previous_revision(instance_id,str(item.get("content_id") or ""));rollback_revision=int(previous["revision"]) if previous else None
-   item["update"]={"supported":provider in {"modrinth","curseforge","steam","steam-workshop"},"rollback_available":rollback_revision is not None,"rollback_revision":rollback_revision}
+   item["provider_capabilities"]=provider_capabilities(provider,self.workspace.root);item["update"]={"supported":provider_supports(provider,"update",self.workspace.root),"rollback_available":rollback_revision is not None,"rollback_revision":rollback_revision}
   return items
  def search(self,user,instance_id,provider,content_type,query,limit=20):
   context,capabilities,policy=self._context_policy_details(user,instance_id,"content.read");provider=str(provider or "").strip().lower();ctype=str(content_type or "").strip().lower();text=str(query or "").strip()
   if not text:raise ValueError("search query is required")
+  if not provider_supports(provider,"discover",self.workspace.root):raise PermissionError("content provider discovery is unavailable")
   self._enforce_policy({"provider":provider,"content_type":ctype},policy)
   allowed={str(value).strip().lower() for value in ((capabilities.get("providers") or {}).get(ctype) or []) if str(value).strip()}
   if provider not in allowed:raise PermissionError("content provider is not available for this runtime/content type")
@@ -160,7 +161,9 @@ class CustomerContentWorkspaceService:
   except (TypeError,ValueError):count=20
   return getattr(self,"minecraft_discovery",discover_minecraft_content)(provider,text,game_version,definition,ctype,limit=count)
  def install(self,user,instance_id,body):
-  context,policy=self._context_policy(user,instance_id,"content.install");payload=self._customer_payload(body);payload["instance_id"]=instance_id;payload["desired_state"]="installed";self._enforce_policy(payload,policy);self._enforce_structured_provider(context,payload)
+  context,policy=self._context_policy(user,instance_id,"content.install");payload=self._customer_payload(body);payload["instance_id"]=instance_id;payload["desired_state"]="installed";provider=str(payload.get("provider") or (payload.get("artifact") or {}).get("provider") or "").strip().lower()
+  if not provider_supports(provider,"install",self.workspace.root):raise PermissionError("content provider install is unavailable")
+  self._enforce_policy(payload,policy);self._enforce_structured_provider(context,payload)
   modpack=self._resolve_minecraft_modpack(context,payload)
   if modpack is not None:
    parent,bundle,children=modpack;return self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"))
@@ -176,6 +179,7 @@ class CustomerContentWorkspaceService:
     revision=(body or {}).get("revision");return self.content.rollback_bundle(instance_id,content_id,revision,requested_by=actor,reason="customer")
    if action=="update":
     self._validate_update_request(body)
+    if not provider_supports(provider,"update",self.workspace.root):raise ValueError("automatic modpack update is unavailable for this provider")
     if provider not in {"modrinth","curseforge"}:raise ValueError("automatic modpack update is unavailable for this provider")
     project=self._provider_project_reference(current)
     if not project:raise ValueError("modpack provider project identity is unavailable")
@@ -192,6 +196,7 @@ class CustomerContentWorkspaceService:
    revision=(body or {}).get("revision");return self.content.rollback(instance_id,content_id,revision,requested_by=actor,reason="customer")
   elif action=="update":
    self._validate_update_request(body)
+   if not provider_supports(provider,"update",self.workspace.root):raise ValueError("automatic content update is unavailable for this provider")
    payload["desired_state"]="installed"
    if provider in {"modrinth","curseforge"}:
     project=self._provider_project_reference(current)

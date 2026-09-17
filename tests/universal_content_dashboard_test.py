@@ -52,6 +52,7 @@ class UniversalContentDashboardTest(unittest.TestCase):
   self.assertEqual(rows[0]['content_id'],'steam-workshop:123');self.assertEqual(rows[0]['name'],'Workshop Item')
  def test_v2_ui_uses_canonical_content_workspace(self):
   js=(ROOT/'dashboard/web/customer-instance-v2.js').read_text(encoding='utf-8');html=(ROOT/'dashboard/web/customer-instance.html').read_text(encoding='utf-8')
-  for token in ('/content/search','/content/upload','effective_security_state','bundle_summary','content.install','content.remove','rollback_available','rollback_revision','Atualizar','Reverter'):self.assertIn(token,js)
+  for token in ('/content/search','/content/upload','effective_security_state','bundle_summary','content.install','content.remove','allowed.update','allowed.rollback','rollback_revision','Atualizar','Reverter'):self.assertIn(token,js)
+  self.assertIn('allowed=item.actions&&typeof item.actions==="object"?item.actions:{}',js)
   self.assertNotIn('/api/catalog/install',js);self.assertNotIn('/api/catalog/remove',js);self.assertIn('class="content-layout"',html)
 if __name__=='__main__':unittest.main()
