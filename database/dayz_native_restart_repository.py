@@ -120,6 +120,27 @@ class DayZNativeRestartRepository:
             result["result"] = None
         return result
 
+    def for_instance_due(
+        self,
+        instance_id: str,
+        due_at: Any,
+    ) -> dict[str, Any] | None:
+        instance_id = str(instance_id or "").strip()
+        if not instance_id:
+            raise ValueError("instance_id is required")
+        due = _stamp(due_at)
+        ph = self.dialect.placeholder
+        with self.session() as session:
+            row = session.execute(
+                "SELECT command_id FROM dayz_native_restart_commands "
+                f"WHERE instance_id={ph} AND due_at={ph} "
+                "ORDER BY created_at DESC LIMIT 1",
+                (instance_id, due),
+            ).fetchone()
+        if row is None:
+            return None
+        return self.snapshot(str(row["command_id"]))
+
     def command_for_agent(self, agent_id: str) -> dict[str, Any] | None:
         ph = self.dialect.placeholder
         with self.session() as session:
