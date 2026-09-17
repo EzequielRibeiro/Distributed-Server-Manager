@@ -97,7 +97,12 @@ def runtime_workspace_capabilities(root: Path, game_id: str, runtime_id: str) ->
         providers["modpack"] = sorted({str(value).strip().lower() for value in modpack.get("providers") or [] if str(value).strip()})
     if bool(item.get("workshop")):
         providers["workshop"] = ["steam-workshop"]
-    maintenance_raw=definition.get("maintenance") if isinstance(definition,dict) and isinstance(definition.get("maintenance"),dict) else {}
+    if isinstance(definition,dict) and isinstance(definition.get("maintenance"),dict):
+        maintenance_raw=definition.get("maintenance")
+    elif isinstance(item.get("maintenance"),dict):
+        maintenance_raw=item.get("maintenance")
+    else:
+        maintenance_raw={}
     return {
         "mods": mods,
         "plugins": plugins,

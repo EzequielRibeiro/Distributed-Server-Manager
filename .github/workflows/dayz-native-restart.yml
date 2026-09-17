@@ -1,0 +1,115 @@
+name: DayZ Native Restart
+
+on:
+  pull_request:
+    paths:
+      - 'agents/common/dayz_messages.py'
+      - 'agents/linux/runtime/**'
+      - 'agents/windows/runtime/**'
+      - 'database/dayz_native_restart_repository.py'
+      - 'database/dayz_native_restart_schema.py'
+      - 'database/maintenance_repository.py'
+      - 'database/schema_baseline.py'
+      - 'dashboard/agent_heartbeat_api.py'
+      - 'dashboard/workers/maintenance_worker.py'
+      - 'tests/dayz_native_messages_test.py'
+      - 'tests/dayz_native_restart_transport_test.py'
+      - 'tests/dayz_native_restart_agent_parity_test.py'
+      - 'tests/dayz_native_maintenance_worker_test.py'
+      - 'catalog/v2/games/dayz/**'
+      - 'catalog/v2/schemas/runtime-definition.schema.json'
+      - '.github/workflows/dayz-native-restart.yml'
+
+  push:
+    branches: [main]
+    paths:
+      - 'agents/common/dayz_messages.py'
+      - 'agents/linux/runtime/**'
+      - 'agents/windows/runtime/**'
+      - 'database/dayz_native_restart_repository.py'
+      - 'database/dayz_native_restart_schema.py'
+      - 'database/maintenance_repository.py'
+      - 'database/schema_baseline.py'
+      - 'dashboard/agent_heartbeat_api.py'
+      - 'dashboard/workers/maintenance_worker.py'
+      - 'tests/dayz_native_messages_test.py'
+      - 'tests/dayz_native_restart_transport_test.py'
+      - 'tests/dayz_native_restart_agent_parity_test.py'
+      - 'tests/dayz_native_maintenance_worker_test.py'
+      - 'catalog/v2/games/dayz/**'
+      - 'catalog/v2/schemas/runtime-definition.schema.json'
+      - '.github/workflows/dayz-native-restart.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate syntax
+        run: |
+          python3 -m py_compile \
+            agents/common/dayz_messages.py \
+            agents/linux/runtime/dayz_native_restart_client.py \
+            agents/linux/runtime/agent.py \
+            agents/windows/runtime/dayz_native_restart_client.py \
+            agents/windows/runtime/agent.py \
+            database/dayz_native_restart_repository.py \
+            database/maintenance_repository.py \
+            dashboard/agent_heartbeat_api.py \
+            dashboard/workers/maintenance_worker.py \
+            tests/dayz_native_messages_test.py \
+            tests/dayz_native_restart_transport_test.py \
+            tests/dayz_native_restart_agent_parity_test.py \
+            tests/dayz_native_maintenance_worker_test.py
+
+      - name: Run DayZ native restart tests
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 tests/dayz_native_messages_test.py
+          python3 tests/dayz_native_restart_transport_test.py
+          python3 tests/dayz_native_restart_agent_parity_test.py
+          python3 tests/dayz_native_maintenance_worker_test.py
+
+      - name: Enforce native shutdown contract
+        run: |
+          grep -q 'deadline_minutes' agents/common/dayz_messages.py
+          grep -q 'shutdown' agents/common/dayz_messages.py
+          grep -q '#tmin' tests/dayz_native_messages_test.py
+
+          grep -q 'dayz_native_restart_command' \
+            agents/linux/runtime/agent.py
+
+          grep -q 'dayz_native_restart_command' \
+            agents/windows/runtime/agent.py
+
+          grep -q 'native_shutdown_timeout' \
+            dashboard/workers/maintenance_worker.py
+
+          if grep -RInE \
+            '(shell=True|os\.system\(|subprocess\..*shell *= *True)' \
+            agents/common/dayz_messages.py \
+            agents/linux/runtime/dayz_native_restart_client.py \
+            agents/windows/runtime/dayz_native_restart_client.py \
+            dashboard/agent_heartbeat_api.py \
+            dashboard/workers/maintenance_worker.py; then
+            echo \
+              'Arbitrary shell execution is forbidden in M6 native restart materialization.' \
+              >&2
+            exit 1
+          fi
+
+          if grep -nE \
+            '"messages_path"|"xml"' \
+            database/dayz_native_restart_repository.py; then
+            echo \
+              'Controller-side M6 command must not transport filesystem paths or XML.' \
+              >&2
+            exit 1
+          fi

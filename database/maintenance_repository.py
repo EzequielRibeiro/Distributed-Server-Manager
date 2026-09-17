@@ -124,6 +124,9 @@ class MaintenanceRepository:
  def mark_start(self,run_id:str,command_id:str)->dict[str,Any]:return self._mark_command(run_id,'start_command_id',command_id,'starting',started=True)
  def mark_restart(self,run_id:str,command_id:str)->dict[str,Any]:return self._mark_command(run_id,'lifecycle_command_id',command_id,'restarting',started=True)
  def mark_readiness(self,run_id:str,command_id:str)->dict[str,Any]:return self._mark_command(run_id,'readiness_command_id',command_id,'validating')
+ def next_due_for_run(self,run_id:str,*,now:datetime|None=None)->datetime|None:
+  run=self.run(run_id);policy=self.policy(str(run['instance_id']));current=(now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+  return next_due_at(policy,now=current,anchor=current)
  def finish(self,run_id:str,*,success:bool,error_code:str|None=None,error_detail:str|None=None,now:datetime|None=None)->dict[str,Any]:
   run=self.run(run_id);policy=self.policy(str(run['instance_id']));current=(now or datetime.now(timezone.utc)).astimezone(timezone.utc);due=next_due_at(policy,now=current,anchor=current);stamp=_stamp(current);status='completed' if success else 'failed';stage='completed' if success else 'failed';detail=str(error_detail or '')[:2000] or None;code=str(error_code or '')[:128] or None;ph=self.dialect.placeholder
   with self.session(transaction=True) as session:

@@ -8,6 +8,7 @@ ROOT=Path(os.environ.get('DSM_ROOT',Path(__file__).resolve().parents[2])).resolv
 for path in (ROOT,ROOT/'core',ROOT/'database',ROOT/'dashboard'):
  if str(path) not in sys.path:sys.path.insert(0,str(path))
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository,InstanceLifecycleCommandConflict
+from dayz_native_restart_repository import DayZNativeRestartRepository,DayZNativeRestartCommandConflict
 from automation_repository import AutomationRepository
 from maintenance_content_coordinator import MaintenanceContentCoordinator
 from maintenance_game_update_coordinator import MaintenanceGameUpdateCoordinator
@@ -16,6 +17,7 @@ from maintenance_repository import MaintenanceRepository
 from runtime_backend import backend_from_environment
 from runtime_workspace_catalog import runtime_workspace_capabilities
 INTERVAL_SECONDS=max(1,min(int(os.environ.get('DSM_MAINTENANCE_WORKER_SECONDS','5')),60))
+NATIVE_SHUTDOWN_TIMEOUT_SECONDS=max(30,min(int(os.environ.get('DSM_DAYZ_NATIVE_SHUTDOWN_TIMEOUT_SECONDS','180')),900))
 _ALLOWED_DB_KEYS={'DSM_DATABASE_DRIVER','DSM_DATABASE','DSM_DATABASE_HOST','DSM_DATABASE_PORT','DSM_DATABASE_NAME','DSM_DATABASE_USER','DSM_DATABASE_PASSWORD_FILE','DSM_DATABASE_TLS'}
 
 def _read_shell_values(path:Path)->dict[str,str]:
@@ -43,7 +45,7 @@ def _work_key(item:dict)->tuple[str,str]:return str(item.get('kind') or ''),str(
 
 class MaintenanceWorker:
  def __init__(self,backend,root:Path=ROOT,*,repository=None,automation=None,lifecycle=None,capability_resolver=None,content_coordinator=None,game_coordinator=None):
-  self.backend=backend;self.root=Path(root);self.repository=repository or MaintenanceRepository(backend);self.repository.initialize();self.automation=automation or AutomationRepository(backend);self.automation.initialize();self.lifecycle=lifecycle or AgentInstanceRuntimeRepository(backend);self.lifecycle.initialize();self.capability_resolver=capability_resolver;self.content=content_coordinator if content_coordinator is not None else (MaintenanceContentCoordinator(backend,self.root) if backend is not None else None);self.game=game_coordinator if game_coordinator is not None else (MaintenanceGameUpdateCoordinator(backend) if backend is not None else None)
+  self.backend=backend;self.root=Path(root);self.repository=repository or MaintenanceRepository(backend);self.repository.initialize();self.automation=automation or AutomationRepository(backend);self.automation.initialize();self.lifecycle=lifecycle or AgentInstanceRuntimeRepository(backend);self.lifecycle.initialize();self.native_restart=DayZNativeRestartRepository(backend) if backend is not None else None;self.native_restart.initialize() if self.native_restart is not None else None;self.capability_resolver=capability_resolver;self.content=content_coordinator if content_coordinator is not None else (MaintenanceContentCoordinator(backend,self.root) if backend is not None else None);self.game=game_coordinator if game_coordinator is not None else (MaintenanceGameUpdateCoordinator(backend) if backend is not None else None)
  def _capabilities(self,instance_id:str)->dict:
   if self.capability_resolver is not None:return dict(self.capability_resolver(instance_id) or {})
   context=self.repository.instance_context(instance_id);game=str(context.get('game_id') or '').strip();runtime=str(context.get('runtime_id') or '').strip()
@@ -118,6 +120,98 @@ class MaintenanceWorker:
   self.repository.update_event(str(run['run_id']),event,stage='applying-updates' if not aligned.get('ready') else 'updates-applied')
   if not aligned.get('ready'):result['content_waiting']+=len(aligned.get('pending') or []);return event,False
   result['content_aligned']+=len(aligned.get('aligned') or []);return event,True
+ def _native_command_for_current_due(self,run:dict,event:dict)->dict|None:
+  capabilities=event.get('capabilities') if isinstance(event.get('capabilities'),dict) else {}
+  if not capabilities.get('native_countdown') or self.native_restart is None:return None
+  try:return self.native_restart.for_instance_due(str(run['instance_id']),run['due_at'])
+  except Exception:return None
+
+ def _wait_native_shutdown(self,run:dict,event:dict,now:datetime,result:dict)->tuple[dict,bool]:
+  rid=str(run['run_id']);state=dict(event.get('native_shutdown') or {})
+  started=str(state.get('started_at') or '')
+  if not started:
+   started=now.astimezone(timezone.utc).isoformat().replace('+00:00','Z')
+   state['started_at']=started
+  try:started_at=_dt(started)
+  except Exception:started_at=now
+  if (now-started_at).total_seconds()>=NATIVE_SHUTDOWN_TIMEOUT_SECONDS:
+   event=dict(event);event['native_shutdown']={**state,'status':'timeout'}
+   self.repository.update_event(rid,event,stage='native-shutdown-timeout')
+   self.repository.finish(
+    rid,
+    success=False,
+    error_code='native_shutdown_timeout',
+    error_detail=f'DayZ did not complete native shutdown within {NATIVE_SHUTDOWN_TIMEOUT_SECONDS} seconds',
+    now=now,
+   )
+   result['native_shutdown_timeouts']+=1;result['failed']+=1
+   return event,False
+  command_id=str(state.get('command_id') or '')
+  if not command_id:
+   try:command=self._raw_lifecycle(run,'status')
+   except InstanceLifecycleCommandConflict:return event,False
+   state['command_id']=str(command['command_id']);state['status']='checking'
+   event=dict(event);event['native_shutdown']=state
+   self.repository.update_event(rid,event,stage='awaiting-native-shutdown')
+   result['native_shutdown_checks']+=1
+   return event,False
+  command=self._command(command_id);status=str((command or {}).get('status') or '').lower()
+  if status in {'queued','delivered'}:return event,False
+  if status!='completed':
+   self.repository.finish(
+    rid,
+    success=False,
+    error_code='native_shutdown_status_failed',
+    error_detail=str((command or {}).get('last_error') or 'native shutdown status check failed'),
+    now=now,
+   )
+   result['failed']+=1
+   return event,False
+  observed=_observed_state(command or {})
+  if observed=='stopped':
+   event=dict(event);event['native_shutdown']={**state,'status':'completed','command_id':command_id}
+   self.repository.update_event(rid,event,stage='native-shutdown-completed')
+   result['native_shutdowns']+=1
+   return event,True
+  state['command_id']=None;state['status']='waiting';state['observed_state']=observed
+  event=dict(event);event['native_shutdown']=state
+  self.repository.update_event(rid,event,stage='awaiting-native-shutdown')
+  return event,False
+
+ def _prepare_next_native_restart(self,run:dict,event:dict,now:datetime,result:dict)->tuple[dict,bool]:
+  capabilities=event.get('capabilities') if isinstance(event.get('capabilities'),dict) else {}
+  if not capabilities.get('native_countdown'):return event,True
+  if self.native_restart is None:return event,False
+  state=dict(event.get('native_restart') or {})
+  command_id=str(state.get('command_id') or '')
+  if not command_id:
+   due=self.repository.next_due_for_run(str(run['run_id']),now=now)
+   if due is None:return event,True
+   try:
+    command=self.native_restart.enqueue(agent_id=str(run['agent_id']),instance_id=str(run['instance_id']),due_at=due,requested_by='maintenance-worker')
+   except DayZNativeRestartCommandConflict:
+    return event,False
+   state={'command_id':str(command['command_id']),'due_at':due.isoformat().replace('+00:00','Z'),'status':str(command.get('status') or 'queued')}
+   event=dict(event);event['native_restart']=state
+   self.repository.update_event(str(run['run_id']),event,stage='preparing-native-restart')
+   result['native_restart_prepared']+=1
+   return event,False
+  try:command=self.native_restart.snapshot(command_id)
+  except Exception as exc:
+   event=dict(event);event['native_restart']={**state,'status':'failed','error':str(exc)[:500]}
+   self.repository.update_event(str(run['run_id']),event,stage='native-restart-failed')
+   return event,True
+  status=str(command.get('status') or '').lower()
+  state={**state,'status':status}
+  event=dict(event);event['native_restart']=state
+  self.repository.update_event(str(run['run_id']),event,stage='preparing-native-restart' if status in {'queued','delivered'} else 'native-restart-prepared')
+  if status in {'queued','delivered'}:return event,False
+  if status!='completed':
+   event['work_error']=str(command.get('last_error') or 'native restart preparation failed')[:1000]
+   self.repository.update_event(str(run['run_id']),event,stage='native-restart-failed')
+   return event,True
+  return event,True
+
  def _finalize_game_work(self,run:dict,event:dict,result:dict)->tuple[dict,bool]:
   if self.game is None:return event,True
   works=[dict(item) for item in event.get('pending_work') or [] if isinstance(item,dict)];indices=[i for i,item in enumerate(works) if item.get('kind')=='game-update' and item.get('transaction_id')]
@@ -192,8 +286,21 @@ class MaintenanceWorker:
   if status in {'queued','delivered'}:return
   if status!='completed':self._failed(run,'preflight_failed',preflight or {},now,result);return
   observed=_observed_state(preflight or {})
-  if observed!='running':self.repository.finish(rid,success=True,now=now);result['completed']+=1;result['skipped']+=1;return
   capabilities=event.get('capabilities') if isinstance(event.get('capabilities'),dict) else {}
+  native_current=self._native_command_for_current_due(run,event)
+  native_status=str((native_current or {}).get('status') or '').lower()
+  if native_status=='failed':
+   self.repository.finish(
+    rid,
+    success=False,
+    error_code='native_restart_prepare_failed',
+    error_detail=str((native_current or {}).get('last_error') or 'DayZ native restart preparation failed'),
+    now=now,
+   );result['failed']+=1;return
+  native_armed=bool(native_status=='completed' and capabilities.get('native_countdown'))
+  if observed!='running':
+   if not (native_armed and observed=='stopped'):
+    self.repository.finish(rid,success=True,now=now);result['completed']+=1;result['skipped']+=1;return
   if capabilities.get('save'):
    if not run.get('save_command_id'):
     try:self._enqueue(run,'save',self.repository.mark_save);result['saves']+=1
@@ -203,20 +310,30 @@ class MaintenanceWorker:
    save=self._command(run.get('save_command_id'));save_status=str((save or {}).get('status') or '')
    if save_status in {'queued','delivered'}:return
    if save_status!='completed':self._failed(run,'save_failed',save or {},now,result);return
-  if not run.get('stop_command_id'):
-   try:self._enqueue(run,'stop',self.repository.mark_stop);result['stops']+=1
-   except InstanceLifecycleCommandConflict:return
-   except Exception as exc:self.repository.finish(rid,success=False,error_code='stop_enqueue_failed',error_detail=str(exc),now=now);result['failed']+=1
-   return
-  stop=self._command(run.get('stop_command_id'));stop_status=str((stop or {}).get('status') or '')
-  if stop_status in {'queued','delivered'}:return
-  if stop_status!='completed':self._failed(run,'stop_failed',stop or {},now,result);return
+  if native_armed:
+   if observed=='running':
+    event,native_stopped=self._wait_native_shutdown(run,event,now,result)
+    if not native_stopped:return
+  else:
+   if not run.get('stop_command_id'):
+    try:self._enqueue(run,'stop',self.repository.mark_stop);result['stops']+=1
+    except InstanceLifecycleCommandConflict:return
+    except Exception as exc:self.repository.finish(rid,success=False,error_code='stop_enqueue_failed',error_detail=str(exc),now=now);result['failed']+=1
+    return
+   stop=self._command(run.get('stop_command_id'));stop_status=str((stop or {}).get('status') or '')
+   if stop_status in {'queued','delivered'}:return
+   if stop_status!='completed':self._failed(run,'stop_failed',stop or {},now,result);return
   event=dict(self.repository.run(rid).get('event') or event)
   if event.get('coalesce_updates'):
    event,ready=self._apply_game_work(run,event,result)
    if not ready:return
    event,ready=self._apply_content_work(run,event,result)
    if not ready:return
+  if capabilities.get('native_countdown'):
+   event,native_ready=self._prepare_next_native_restart(run,event,now,result)
+   if not native_ready:return
+   if event.get('work_error'):
+    self.repository.finish(rid,success=False,error_code='native_restart_prepare_failed',error_detail=str(event.get('work_error')),now=now);result['failed']+=1;return
   if not run.get('start_command_id'):
    try:self._enqueue(run,'start',self.repository.mark_start);result['starts']+=1
    except InstanceLifecycleCommandConflict:return
@@ -243,7 +360,7 @@ class MaintenanceWorker:
    if self._has_rollbackable_game(event):event['recovery']={'phase':'stop','reason':str(reason)};self.repository.update_event(rid,event,stage='rollback-stopping');return
    self.repository.finish(rid,success=False,error_code='readiness_failed',error_detail=reason,now=now);result['failed']+=1
  def tick(self,*,now:datetime|None=None)->dict:
-  current=(now or datetime.now(timezone.utc)).astimezone(timezone.utc);result={'planned':0,'active':0,'warnings':0,'preflights':0,'saves':0,'stops':0,'starts':0,'game_activated':0,'game_waiting':0,'game_committed':0,'game_rolled_back':0,'game_failed':0,'content_dispatched':0,'content_aligned':0,'content_waiting':0,'content_failed':0,'completed':0,'skipped':0,'failed':0,'warning_failures':[]}
+  current=(now or datetime.now(timezone.utc)).astimezone(timezone.utc);result={'planned':0,'active':0,'warnings':0,'preflights':0,'saves':0,'stops':0,'starts':0,'native_restart_prepared':0,'native_shutdown_checks':0,'native_shutdowns':0,'native_shutdown_timeouts':0,'game_activated':0,'game_waiting':0,'game_committed':0,'game_rolled_back':0,'game_failed':0,'content_dispatched':0,'content_aligned':0,'content_waiting':0,'content_failed':0,'completed':0,'skipped':0,'failed':0,'warning_failures':[]}
   for iid in self.repository.candidates(now=current):
    try:
     if self.repository.ensure_run(iid,now=current):result['planned']+=1
