@@ -29,12 +29,27 @@ CAPABILITIES = (
 
 
 def runtime_ids(game: str) -> list[str]:
-    policy = game_workspace_catalog(ROOT, game)
-    return sorted(
+    """Return every runtime known by either UX policy or canonical catalog.
+
+    M7 must not accidentally skip games that have a RuntimeDefinition but no
+    workspace-policy.json.  Workspace policy is a presentation/entitlement
+    surface; the canonical runtime inventory lives under catalog/v2/games/*/runtimes.
+    """
+    identifiers = {
         str(value)
-        for value in (policy.get("runtimes") or {})
+        for value in (game_workspace_catalog(ROOT, game).get("runtimes") or {})
         if str(value)
-    )
+    }
+
+    runtime_root = ROOT / "catalog" / "v2" / "games" / game / "runtimes"
+    if runtime_root.is_dir():
+        for path in sorted(runtime_root.glob("*.json")):
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            runtime_id = str(payload.get("id") or "").strip()
+            if runtime_id:
+                identifiers.add(runtime_id)
+
+    return sorted(identifiers)
 
 
 class M7MaintenanceCapabilityInventoryTest(unittest.TestCase):
