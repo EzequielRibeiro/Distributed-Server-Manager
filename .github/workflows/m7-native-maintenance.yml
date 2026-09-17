@@ -18,7 +18,7 @@ on:
       - 'agents/windows/runtime/runtime_secret_store.py'
       - 'agents/windows/runtime/profiles/minecraft_java.py'
       - 'catalog/v2/games/**/workspace-policy.json'
-      - 'catalog/v2/games/minecraft/runtimes/*.json'
+      - 'catalog/v2/games/**/runtimes/*.json'
       - 'dashboard/runtime_workspace_catalog.py'
       - 'release/build_agent_package.sh'
       - 'release/build_windows_agent_package.py'
@@ -44,7 +44,7 @@ on:
       - 'agents/windows/runtime/runtime_secret_store.py'
       - 'agents/windows/runtime/profiles/minecraft_java.py'
       - 'catalog/v2/games/**/workspace-policy.json'
-      - 'catalog/v2/games/minecraft/runtimes/*.json'
+      - 'catalog/v2/games/**/runtimes/*.json'
       - 'dashboard/runtime_workspace_catalog.py'
       - 'release/build_agent_package.sh'
       - 'release/build_windows_agent_package.py'
@@ -89,21 +89,20 @@ jobs:
             tests/m7_windows_runtime_secret_store_test.py \
             tests/palworld_console_rest_test.py
 
-      - name: Run M7 maintenance tests
+      - name: Run M7 maintenance tests in isolated processes
         env:
           PYTHONPATH: .
         run: |
-          python3 -m unittest \
-            tests/m7_common_packaging_contract_test.py \
-            tests/m7_maintenance_capability_inventory_test.py \
-            tests/m7_minecraft_java_native_maintenance_test.py \
-            tests/m7_minecraft_java_rcon_foundation_test.py \
-            tests/m7_minecraft_java_windows_maintenance_test.py \
-            tests/m7_palworld_agent_secret_test.py \
-            tests/m7_palworld_native_maintenance_test.py \
-            tests/m7_source_rcon_protocol_test.py \
-            tests/m7_windows_runtime_secret_store_test.py \
-            tests/palworld_console_rest_test.py
+          python3 tests/m7_common_packaging_contract_test.py
+          python3 tests/m7_maintenance_capability_inventory_test.py
+          python3 tests/m7_minecraft_java_native_maintenance_test.py
+          python3 tests/m7_minecraft_java_rcon_foundation_test.py
+          python3 tests/m7_minecraft_java_windows_maintenance_test.py
+          python3 tests/m7_palworld_agent_secret_test.py
+          python3 tests/m7_palworld_native_maintenance_test.py
+          python3 tests/m7_source_rcon_protocol_test.py
+          python3 tests/m7_windows_runtime_secret_store_test.py
+          python3 tests/palworld_console_rest_test.py
 
       - name: Enforce typed maintenance safety
         run: |
