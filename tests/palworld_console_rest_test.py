@@ -9,9 +9,18 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNTIME = ROOT / "agents" / "linux" / "runtime"
-if str(RUNTIME) not in sys.path:
-    sys.path.insert(0, str(RUNTIME))
+PATHS = (
+    ROOT,
+    ROOT / "core",
+    ROOT / "database",
+    ROOT / "dashboard",
+    ROOT / "agents" / "common",
+    ROOT / "agents" / "linux" / "runtime",
+)
+for value in PATHS:
+    item = str(value)
+    if item not in sys.path:
+        sys.path.insert(0, item)
 
 import console_client
 import palworld_rest_console as console

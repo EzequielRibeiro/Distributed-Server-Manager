@@ -8,6 +8,7 @@ import subprocess
 from typing import Any, Callable
 
 from .base import AdapterError, InstanceRuntimeAdapter
+from native_maintenance import NativeMaintenanceError, broadcast as native_broadcast, save as native_save
 
 _INSTANCE_ID = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 Runner = Callable[[list[str], int], tuple[int, str, str]]
@@ -150,6 +151,28 @@ class SystemdAdapter(InstanceRuntimeAdapter):
 
     def restart(self, instance: dict[str, Any]) -> dict[str, Any]:
         return self._lifecycle("restart", instance)
+
+    def broadcast(
+        self,
+        instance: dict[str, Any],
+        message: str,
+        *,
+        priority: str = "normal",
+    ) -> dict[str, Any]:
+        try:
+            return native_broadcast(
+                instance,
+                message,
+                priority=priority,
+            )
+        except NativeMaintenanceError as exc:
+            raise AdapterError(str(exc)) from exc
+
+    def save(self, instance: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return native_save(instance)
+        except NativeMaintenanceError as exc:
+            raise AdapterError(str(exc)) from exc
 
     def doctor(self, instance: dict[str, Any]) -> dict[str, Any]:
         state = self._show(instance)
