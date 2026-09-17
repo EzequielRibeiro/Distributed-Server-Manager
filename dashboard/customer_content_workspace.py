@@ -207,6 +207,9 @@ class CustomerContentWorkspaceService:
   self._resolve_workshop(context,payload);self._resolve_minecraft_provider(context,payload);return self.content.put(payload,requested_by=str(user.get("username") or "customer"))
  def mutate(self,user,instance_id,content_id,action,body=None):
   action=str(action or "").strip().lower();required="content.remove" if action=="remove" else "content.install";context,policy=self._context_policy(user,instance_id,required);current=self._existing(instance_id,content_id);actor=str(user.get("username") or "customer");ctype=str(current.get("content_type") or "").lower();provider=str(current.get("provider") or "").strip().lower()
+  marker=(current.get("metadata") or {}).get("bundle") if isinstance(current.get("metadata"),Mapping) else None
+  parent_content_id=str(marker.get("parent_content_id") or "").strip() if isinstance(marker,Mapping) else ""
+  if parent_content_id and ctype!="modpack":raise PermissionError("bundle child content must be changed through its parent modpack")
   if ctype=="modpack":
    self._enforce_policy(current,policy)
    if action=="remove":return self.content.set_bundle_state(instance_id,content_id,desired_state="absent",activation_state="disabled",requested_by=actor)
