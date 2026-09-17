@@ -172,6 +172,16 @@ install_controller_ca
 for cmd in python3 install systemctl getent groupadd useradd id; do command -v "$cmd" >/dev/null || fail "comando necessário ausente: $cmd"; done
 [[ -n "${PACKAGE_DIR}" ]] || PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; PACKAGE_DIR="$(cd "${PACKAGE_DIR}" && pwd)"
 
+mapfile -t COMMON_FILES < <(
+  find "${PACKAGE_DIR}/agent/common" \
+    -maxdepth 1 \
+    -type f \
+    -name '*.py' \
+    -printf '%f\n' \
+    | LC_ALL=C sort
+)
+((${#COMMON_FILES[@]} > 0)) || fail "nenhum módulo Python encontrado em agent/common"
+
 mapfile -t RUNTIME_FILES < <(
   find "${PACKAGE_DIR}/agent/runtime" \
     -maxdepth 1 \
@@ -219,7 +229,10 @@ install -m 0755 "${PACKAGE_DIR}/agent/privileged/reconcile_runtime_identity.py" 
 install -m 0755 "${PACKAGE_DIR}/agent/privileged/uninstall_agent.py" "${INSTALL_ROOT}/privileged/uninstall_agent.py"
 install -m 0755 "${PACKAGE_DIR}/agent/privileged/console_journal_reader.py" "${INSTALL_ROOT}/privileged/console_journal_reader.py"
 install -m 0755 "${PACKAGE_DIR}/agent/updater/updater.py" "${INSTALL_ROOT}/updater/updater.py"
-install -m 0644 "${PACKAGE_DIR}/agent/common/identity.py" "${INSTALL_ROOT}/common/identity.py"; install -m 0644 "${PACKAGE_DIR}/manifest.json" "${INSTALL_ROOT}/manifest.json"; printf '%s\n' "${VERSION}" >"${INSTALL_ROOT}/VERSION"
+for file in "${COMMON_FILES[@]}"; do
+  install -m 0644 "${PACKAGE_DIR}/agent/common/${file}" "${INSTALL_ROOT}/common/${file}"
+done
+install -m 0644 "${PACKAGE_DIR}/manifest.json" "${INSTALL_ROOT}/manifest.json"; printf '%s\n' "${VERSION}" >"${INSTALL_ROOT}/VERSION"
 install -d -m 0755 "${POLKIT_RULES_DIR}"; install -m 0644 "${PACKAGE_DIR}/agent/policy/49-capivara-agent-instance-units.rules" "${POLKIT_RULES_DIR}/49-capivara-agent-instance-units.rules"
 install -d -m 0755 "$(dirname "${CLI_PATH}")"; ln -sfn "${INSTALL_ROOT}/runtime/cap_dispatch.py" "${CLI_PATH}"
 python3 - "${PACKAGE_DIR}" "${CONFIG_DIR}/agent.json" "${CONTROLLER_URL}" "${PAIRING_TOKEN}" "${VERSION}" "${INSTANCE_STORAGE_ROOT}" <<'PY'

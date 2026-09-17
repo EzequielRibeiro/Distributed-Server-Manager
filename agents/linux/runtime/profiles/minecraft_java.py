@@ -59,8 +59,21 @@ class MinecraftJavaRuntimeProfile(GameRuntimeProfile):
         state_root = require_absolute(context.get("instance_state_root"), "instance_state_root")
         runtime_root = str(Path(state_root) / "runtime")
         ports = port_bindings(context)
-        if not ports:
-            raise ProfileError("Minecraft Java runtime requires reserved ports")
+        game_binding = ports.get("game")
+        if (
+            not isinstance(game_binding, dict)
+            or str(game_binding.get("protocol") or "").lower() != "tcp"
+            or not game_binding.get("port")
+        ):
+            raise ProfileError("Minecraft Java requires a TCP game reservation")
+
+        rcon_binding = ports.get("rcon")
+        if (
+            not isinstance(rcon_binding, dict)
+            or str(rcon_binding.get("protocol") or "").lower() != "tcp"
+            or not rcon_binding.get("port")
+        ):
+            raise ProfileError("Minecraft Java requires a TCP RCON reservation")
 
         environment = context.get("environment") or {}
         if not isinstance(environment, dict):
@@ -95,6 +108,26 @@ class MinecraftJavaRuntimeProfile(GameRuntimeProfile):
             "seed_files": [],
             "seed_directories": [{"source": install_path, "target": runtime_root}],
             "bind_paths": [],
+            "catalog_network_properties": [
+                {
+                    "path": "server.properties",
+                    "key": "enable-rcon",
+                    "value": "true",
+                    "syntax": "equals",
+                },
+                {
+                    "path": "server.properties",
+                    "key": "rcon.port",
+                    "value": "{{PORT_RCON}}",
+                    "syntax": "equals",
+                },
+                {
+                    "path": "server.properties",
+                    "key": "broadcast-rcon-to-ops",
+                    "value": "false",
+                    "syntax": "equals",
+                },
+            ],
         }
 
 

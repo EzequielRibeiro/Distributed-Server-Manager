@@ -19,6 +19,8 @@ if str(RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_DIR))
 
 from catalog_runtime_policy import materialize_network_properties, materialize_templates
+from minecraft_rcon_secret import materialize_password as materialize_minecraft_rcon_password
+from palworld_admin_secret import materialize_admin_password
 from server_settings_runtime import materialize_server_settings
 from server_settings_surface import materialize_dynamic_values
 from materializers import resolve_materializer
@@ -484,6 +486,12 @@ def run(instance_id: str) -> dict[str, Any]:
         working_file_copies = _sync_working_file_copies(spec)
         templates = materialize_templates(spec)
         templates.extend(materialize_network_properties(spec))
+        game_id = str(spec.get("game_id") or "").lower()
+        environment_id = str(spec.get("environment_id") or "").lower()
+        if game_id == "palworld":
+            materialize_admin_password(spec)
+        elif game_id == "minecraft" and environment_id.startswith("minecraft.java."):
+            materialize_minecraft_rcon_password(spec)
         server_settings = materialize_server_settings(spec)
         server_settings.extend(materialize_dynamic_values(spec))
         operation = materializer.apply(spec)

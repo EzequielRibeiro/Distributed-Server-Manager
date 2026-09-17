@@ -12,7 +12,16 @@
       "workshop": false,
       "external_upload": true,
       "custom_runtime": false,
-      "console": {"supported": true}
+      "console": {
+        "supported": true
+      },
+      "maintenance": {
+        "scheduled_restart": true,
+        "broadcast": true,
+        "save": true,
+        "graceful_shutdown": false,
+        "native_countdown": false
+      }
     }
   }
 }

@@ -1,0 +1,169 @@
+name: M7 Native Maintenance
+
+on:
+  pull_request:
+    paths:
+      - 'agents/common/palworld_rest_console.py'
+      - 'agents/common/source_rcon.py'
+      - 'agents/linux/privileged/materialize_instance.py'
+      - 'agents/linux/runtime/adapters/systemd.py'
+      - 'agents/linux/runtime/native_maintenance.py'
+      - 'agents/linux/runtime/palworld_admin_secret.py'
+      - 'agents/linux/runtime/minecraft_rcon_secret.py'
+      - 'agents/linux/runtime/runtime_secret_store.py'
+      - 'agents/linux/runtime/profiles/minecraft_java.py'
+      - 'agents/linux/runtime/maintenance_game_update.py'
+      - 'agents/windows/runtime/adapters/windows_process.py'
+      - 'agents/windows/runtime/native_maintenance.py'
+      - 'agents/windows/runtime/minecraft_rcon_secret.py'
+      - 'agents/windows/runtime/runtime_secret_store.py'
+      - 'agents/windows/runtime/profiles/minecraft_java.py'
+      - 'catalog/v2/maintenance-capabilities.json'
+      - 'catalog/v2/games/**/workspace-policy.json'
+      - 'catalog/v2/games/**/runtimes/*.json'
+      - 'core/maintenance_platform.py'
+      - 'dashboard/runtime_workspace_catalog.py'
+      - 'dashboard/maintenance_configuration_coordinator.py'
+      - 'dashboard/maintenance_content_coordinator.py'
+      - 'dashboard/maintenance_game_update_coordinator.py'
+      - 'dashboard/workers/maintenance_worker.py'
+      - 'release/build_agent_package.sh'
+      - 'release/build_windows_agent_package.py'
+      - 'tests/m7_*.py'
+      - 'tests/maintenance_restart_framework_test.py'
+      - 'tests/maintenance_configuration_coalescing_test.py'
+      - 'tests/maintenance_content_coalescing_test.py'
+      - 'tests/maintenance_game_update_coalescing_test.py'
+      - 'tests/palworld_console_rest_test.py'
+      - '.github/workflows/m7-native-maintenance.yml'
+
+  push:
+    branches: [main]
+    paths:
+      - 'agents/common/palworld_rest_console.py'
+      - 'agents/common/source_rcon.py'
+      - 'agents/linux/privileged/materialize_instance.py'
+      - 'agents/linux/runtime/adapters/systemd.py'
+      - 'agents/linux/runtime/native_maintenance.py'
+      - 'agents/linux/runtime/palworld_admin_secret.py'
+      - 'agents/linux/runtime/minecraft_rcon_secret.py'
+      - 'agents/linux/runtime/runtime_secret_store.py'
+      - 'agents/linux/runtime/profiles/minecraft_java.py'
+      - 'agents/linux/runtime/maintenance_game_update.py'
+      - 'agents/windows/runtime/adapters/windows_process.py'
+      - 'agents/windows/runtime/native_maintenance.py'
+      - 'agents/windows/runtime/minecraft_rcon_secret.py'
+      - 'agents/windows/runtime/runtime_secret_store.py'
+      - 'agents/windows/runtime/profiles/minecraft_java.py'
+      - 'catalog/v2/maintenance-capabilities.json'
+      - 'catalog/v2/games/**/workspace-policy.json'
+      - 'catalog/v2/games/**/runtimes/*.json'
+      - 'core/maintenance_platform.py'
+      - 'dashboard/runtime_workspace_catalog.py'
+      - 'dashboard/maintenance_configuration_coordinator.py'
+      - 'dashboard/maintenance_content_coordinator.py'
+      - 'dashboard/maintenance_game_update_coordinator.py'
+      - 'dashboard/workers/maintenance_worker.py'
+      - 'release/build_agent_package.sh'
+      - 'release/build_windows_agent_package.py'
+      - 'tests/m7_*.py'
+      - 'tests/maintenance_restart_framework_test.py'
+      - 'tests/maintenance_configuration_coalescing_test.py'
+      - 'tests/maintenance_content_coalescing_test.py'
+      - 'tests/maintenance_game_update_coalescing_test.py'
+      - 'tests/palworld_console_rest_test.py'
+      - '.github/workflows/m7-native-maintenance.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: M7 Native Maintenance Gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate syntax
+        run: |
+          python3 -m py_compile \
+            agents/common/palworld_rest_console.py \
+            agents/common/source_rcon.py \
+            agents/linux/runtime/native_maintenance.py \
+            agents/linux/runtime/palworld_admin_secret.py \
+            agents/linux/runtime/minecraft_rcon_secret.py \
+            agents/linux/runtime/runtime_secret_store.py \
+            agents/linux/runtime/profiles/minecraft_java.py \
+            agents/windows/runtime/native_maintenance.py \
+            agents/windows/runtime/minecraft_rcon_secret.py \
+            agents/windows/runtime/runtime_secret_store.py \
+            agents/windows/runtime/profiles/minecraft_java.py \
+            dashboard/runtime_workspace_catalog.py \
+            tests/m7_common_packaging_contract_test.py \
+            tests/m7_maintenance_capability_inventory_test.py \
+            tests/m7_maintenance_framework_regression_test.py \
+            tests/m7_minecraft_java_native_maintenance_test.py \
+            tests/m7_minecraft_java_rcon_foundation_test.py \
+            tests/m7_minecraft_java_windows_maintenance_test.py \
+            tests/m7_palworld_agent_secret_test.py \
+            tests/m7_palworld_native_maintenance_test.py \
+            tests/m7_source_rcon_protocol_test.py \
+            tests/m7_windows_runtime_secret_store_test.py \
+            tests/maintenance_restart_framework_test.py \
+            tests/maintenance_configuration_coalescing_test.py \
+            tests/maintenance_content_coalescing_test.py \
+            tests/maintenance_game_update_coalescing_test.py \
+            tests/palworld_console_rest_test.py
+
+      - name: Run M7 maintenance tests in isolated processes
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 tests/m7_common_packaging_contract_test.py
+          python3 tests/m7_maintenance_capability_inventory_test.py
+          python3 tests/m7_maintenance_framework_regression_test.py
+          python3 tests/m7_minecraft_java_native_maintenance_test.py
+          python3 tests/m7_minecraft_java_rcon_foundation_test.py
+          python3 tests/m7_minecraft_java_windows_maintenance_test.py
+          python3 tests/m7_palworld_agent_secret_test.py
+          python3 tests/m7_palworld_native_maintenance_test.py
+          python3 tests/m7_source_rcon_protocol_test.py
+          python3 tests/m7_windows_runtime_secret_store_test.py
+          python3 tests/palworld_console_rest_test.py
+
+      - name: Run inherited M5 maintenance regressions
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 tests/maintenance_restart_framework_test.py
+          python3 tests/maintenance_configuration_coalescing_test.py
+          python3 tests/maintenance_content_coalescing_test.py
+          python3 tests/maintenance_game_update_coalescing_test.py
+
+      - name: Enforce typed maintenance safety
+        run: |
+          if grep -RInE \
+            '(shell=True|os\.system\(|subprocess\..*shell *= *True)' \
+            agents/common/palworld_rest_console.py \
+            agents/common/source_rcon.py \
+            agents/linux/runtime/native_maintenance.py \
+            agents/windows/runtime/native_maintenance.py; then
+            echo 'Arbitrary shell execution is forbidden in M7 native maintenance paths.' >&2
+            exit 1
+          fi
+
+          if grep -RInE \
+            '(command_from_(browser|controller)|raw_rcon|shell_command)' \
+            agents/linux/runtime/native_maintenance.py \
+            agents/windows/runtime/native_maintenance.py; then
+            echo 'Browser/Controller-controlled raw maintenance commands are forbidden.' >&2
+            exit 1
+          fi
+
+      - name: Build Linux and Windows Agent packages
+        run: |
+          mkdir -p /tmp/m7-linux /tmp/m7-windows
+          bash release/build_agent_package.sh HEAD /tmp/m7-linux
+          python3 release/build_windows_agent_package.py HEAD /tmp/m7-windows

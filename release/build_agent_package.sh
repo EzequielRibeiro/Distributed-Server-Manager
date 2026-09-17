@@ -18,7 +18,18 @@ mkdir -p "${PACKAGE_ROOT}/agent/common" "${PACKAGE_ROOT}/agent/runtime" "${PACKA
 copy(){ mkdir -p "$(dirname "${PACKAGE_ROOT}/$2")"; git -C "${ROOT}" show "${REF}:$1" >"${PACKAGE_ROOT}/$2"; }
 
 copy agents/linux/installer/install-agent.sh install-agent.sh
-copy agents/common/identity.py agent/common/identity.py
+
+# Package every shared Python module below agents/common.
+mapfile -t COMMON_SOURCES < <(
+  git -C "${ROOT}" ls-tree -r --name-only "${REF}" -- agents/common |
+    awk '/\.py$/ {print}' |
+    LC_ALL=C sort
+)
+((${#COMMON_SOURCES[@]} > 0)) || fail "no shared Agent Python modules found"
+for source in "${COMMON_SOURCES[@]}"; do
+  relative="${source#agents/common/}"
+  copy "${source}" "agent/common/${relative}"
+done
 
 # Package every Python module below agents/linux/runtime. The Agent installer and
 # updater also discover these modules dynamically, keeping source/package/install

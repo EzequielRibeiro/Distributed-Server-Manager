@@ -5,6 +5,11 @@
 RuntimeDefinition owns executable managed-content capabilities. During migration,
 legacy workspace booleans remain a fallback only when a RuntimeDefinition does not
 yet declare ``content.managed``. Missing declarations fail closed.
+
+M7 maintenance capabilities are different: they are security-sensitive execution
+contracts and therefore come from the canonical 1:1 inventory at
+``catalog/v2/maintenance-capabilities.json``. Runtime/workspace declarations may
+remain during migration, but they must agree with that inventory exactly.
 """
 from __future__ import annotations
 
@@ -18,6 +23,15 @@ CORE=ROOT/"core"
 if str(CORE) not in sys.path:sys.path.insert(0,str(CORE))
 from maintenance_platform import normalize_capabilities as normalize_maintenance_capabilities
 from instance_workspace_policy import effective_content_policy
+
+
+MAINTENANCE_CAPABILITIES = (
+    "scheduled_restart",
+    "broadcast",
+    "save",
+    "graceful_shutdown",
+    "native_countdown",
+)
 
 
 def _safe_game(game_id: str) -> str:
@@ -68,6 +82,74 @@ def runtime_definition(root: Path, game_id: str, runtime_id: str) -> dict[str, A
     return {}
 
 
+def maintenance_capability_inventory(root: Path) -> dict[str, dict[str, bool]]:
+    """Return the canonical M7 per-runtime maintenance capability inventory.
+
+    A missing inventory is fail-closed at runtime so partial/test installations do
+    not accidentally gain native capabilities. The M7 CI gate separately requires
+    a complete 1:1 inventory for every RuntimeDefinition shipped by the catalog.
+    """
+    path = Path(root) / "catalog" / "v2" / "maintenance-capabilities.json"
+    payload = _read_json(path)
+    if not payload:
+        return {}
+    if payload.get("kind") != "MaintenanceCapabilityInventory":
+        raise RuntimeError("invalid maintenance capability inventory")
+    declared = payload.get("capabilities")
+    if not isinstance(declared, list) or tuple(declared) != MAINTENANCE_CAPABILITIES:
+        raise RuntimeError("invalid maintenance capability inventory schema")
+    runtimes = payload.get("runtimes")
+    if not isinstance(runtimes, dict):
+        raise RuntimeError("invalid maintenance capability inventory runtimes")
+
+    result: dict[str, dict[str, bool]] = {}
+    for raw_key, raw_value in runtimes.items():
+        key = str(raw_key or "").strip().lower()
+        if not key or not isinstance(raw_value, dict):
+            raise RuntimeError("invalid maintenance capability inventory entry")
+        if set(raw_value) != set(MAINTENANCE_CAPABILITIES):
+            raise RuntimeError(f"incomplete maintenance capability inventory entry: {key}")
+        if not all(isinstance(raw_value[name], bool) for name in MAINTENANCE_CAPABILITIES):
+            raise RuntimeError(f"invalid maintenance capability types: {key}")
+        result[key] = {name: raw_value[name] for name in MAINTENANCE_CAPABILITIES}
+    return result
+
+
+def runtime_maintenance_capabilities(
+    root: Path,
+    game_id: str,
+    runtime_id: str,
+    *,
+    definition: dict[str, Any] | None = None,
+    workspace: dict[str, Any] | None = None,
+) -> dict[str, bool]:
+    """Resolve maintenance capabilities from the canonical M7 inventory.
+
+    Legacy declarations are accepted only when they agree with the canonical
+    inventory. Missing entries deliberately fall back to the generic safe contract
+    (scheduled restart only, no game-native operation); CI prevents shipping such a
+    gap in the repository catalog.
+    """
+    game = _safe_game(game_id)
+    runtime = _safe_runtime(runtime_id)
+    key = f"{game}/{runtime}"
+    raw = maintenance_capability_inventory(root).get(key)
+    canonical = normalize_maintenance_capabilities(raw or {})
+
+    for source_name, source in (("runtime", definition), ("workspace", workspace)):
+        if not isinstance(source, dict):
+            continue
+        legacy = source.get("maintenance")
+        if not isinstance(legacy, dict):
+            continue
+        normalized = normalize_maintenance_capabilities(legacy)
+        if normalized != canonical:
+            raise RuntimeError(
+                f"maintenance capability drift for {key}: {source_name} declaration disagrees with canonical inventory"
+            )
+    return canonical
+
+
 def runtime_workspace_capabilities(root: Path, game_id: str, runtime_id: str) -> dict[str, Any]:
     policy = game_workspace_catalog(root, game_id)
     runtime = _safe_runtime(runtime_id)
@@ -97,12 +179,13 @@ def runtime_workspace_capabilities(root: Path, game_id: str, runtime_id: str) ->
         providers["modpack"] = sorted({str(value).strip().lower() for value in modpack.get("providers") or [] if str(value).strip()})
     if bool(item.get("workshop")):
         providers["workshop"] = ["steam-workshop"]
-    if isinstance(definition,dict) and isinstance(definition.get("maintenance"),dict):
-        maintenance_raw=definition.get("maintenance")
-    elif isinstance(item.get("maintenance"),dict):
-        maintenance_raw=item.get("maintenance")
-    else:
-        maintenance_raw={}
+    maintenance = runtime_maintenance_capabilities(
+        root,
+        game_id,
+        runtime,
+        definition=definition,
+        workspace=item,
+    )
     return {
         "mods": mods,
         "plugins": plugins,
@@ -115,7 +198,7 @@ def runtime_workspace_capabilities(root: Path, game_id: str, runtime_id: str) ->
         "console": dict(item.get("console") or {}),
         "startup_parameters": dict(item.get("startup_parameters") or {}),
         "server_settings": dict(definition.get("server_settings") or item.get("server_settings") or {}),
-        "maintenance": normalize_maintenance_capabilities(maintenance_raw),
+        "maintenance": maintenance,
         "file_policy": dict(item.get("file_policy") or {}),
         "label": str(item.get("label") or definition.get("name") or runtime),
         "family": str(item.get("family") or definition.get("edition") or ""),
@@ -174,5 +257,7 @@ def allowed_runtimes(root: Path, game_id: str, contract_metadata: dict[str, Any]
 
 __all__ = [
     "allowed_runtimes", "contract_entitlements", "game_workspace_catalog",
-    "runtime_allowed_by_contract", "runtime_definition", "runtime_workspace_capabilities",
+    "maintenance_capability_inventory", "runtime_allowed_by_contract",
+    "runtime_definition", "runtime_maintenance_capabilities",
+    "runtime_workspace_capabilities",
 ]

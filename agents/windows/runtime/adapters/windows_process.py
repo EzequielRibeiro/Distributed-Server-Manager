@@ -4,6 +4,7 @@ import json,os,signal,subprocess,time
 from datetime import datetime,timezone
 from pathlib import Path
 from .base import AdapterError,InstanceRuntimeAdapter
+from native_maintenance import NativeMaintenanceError, broadcast as native_broadcast, save as native_save
 from windows_job_limits import apply_process_limits,release_process
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"))/"runtime-processes"
 def _now():return datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
@@ -79,6 +80,12 @@ class WindowsProcessAdapter(InstanceRuntimeAdapter):
   if _alive(pid):raise AdapterError("runtime process did not stop")
   release_process(pid);return {"action":"stop","changed":True,"idempotent":False,"state":self.status(instance)}
  def restart(self,instance):self.stop(instance);out=self.start(instance);return {"action":"restart","changed":True,"state":out["state"]}
+ def broadcast(self,instance,message,*,priority="normal"):
+  try:return native_broadcast(instance,message,priority=priority)
+  except NativeMaintenanceError as exc:raise AdapterError(str(exc)) from exc
+ def save(self,instance):
+  try:return native_save(instance)
+  except NativeMaintenanceError as exc:raise AdapterError(str(exc)) from exc
  def doctor(self,instance):
   findings=[]
   try:_argv(instance)
