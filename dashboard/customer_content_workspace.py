@@ -171,7 +171,7 @@ class CustomerContentWorkspaceService:
    visible.append({"content_id":cid,"content_type":str(item.get("content_type") or "mod"),"provider":str(item.get("provider") or ""),"version":str(item.get("version") or ""),"desired_state":str(item.get("desired_state") or "installed"),"activation_state":str(item.get("activation_state") or "enabled"),"security_state":str(item.get("security_state") or "unscanned"),"state":"managed" if owned and artifact_matches and active else "customized"})
   extras=[]
   for cid,item in assignments.items():
-   if cid in members or str(item.get("desired_state") or "installed")=="absent":continue
+   if cid==content_id or cid in members or str(item.get("desired_state") or "installed")=="absent":continue
    marker=(item.get("metadata") or {}).get("bundle") if isinstance(item.get("metadata"),Mapping) else None
    if isinstance(marker,Mapping) and str(marker.get("parent_content_id") or "")==content_id:
     extras.append(cid);reasons.append({"content_id":cid,"reason":"extra_member"})
