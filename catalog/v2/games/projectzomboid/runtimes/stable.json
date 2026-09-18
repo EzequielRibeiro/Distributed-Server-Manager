@@ -37,7 +37,8 @@
   },
   "content": {
     "steam_workshop": {
-      "app_id": "108600"
+      "app_id": "108600",
+      "auth": "anonymous"
     },
     "activation": {
       "adapter": "project-zomboid",
