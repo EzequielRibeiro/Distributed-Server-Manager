@@ -228,20 +228,15 @@ game_command(){
 }
 
 steam_command(){
-    local action="${1:-}" provider="${DSM_ROOT}/installer/providers/steam.sh" conf="${DSM_ROOT}/config/providers/steam.conf"
+    local action="${1:-}"
+    local helper="${DSM_ROOT}/core/steam_auth.sh"
     case "${action}" in
         auth)
-            [[ -f "${provider}" ]] || { echo "Provider Steam não encontrado: ${provider}" >&2; return 1; }
-            if [[ -f "${conf}" ]]; then
-                unset DSM_STEAM_USER STEAM_USER 2>/dev/null || true
-                # shellcheck source=/dev/null
-                source "${conf}"
-            fi
-            local user="${DSM_STEAM_USER:-${STEAM_USER:-}}"
-            [[ -n "${user}" ]] || { echo "Usuário Steam não configurado em ${conf}." >&2; return 1; }
+            require_role "cap steam auth" agent hybrid
+            [[ -f "${helper}" ]] || { echo "Helper de autenticação Steam não encontrado: ${helper}" >&2; return 1; }
             # shellcheck source=/dev/null
-            source "${provider}"
-            steam_provider_authenticate "${user}"
+            source "${helper}"
+            steam_auth_run "${DSM_ROOT}" "$(local_role)"
             ;;
         *) echo "Uso: cap steam auth" >&2; return 2 ;;
     esac
