@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import server_part20 as integration
 from yarax_security_http import install_yarax_security_http
+from yarax_admin_operation_http import install_yarax_admin_operations_http
 
 legacy = integration.legacy
 _controller_authenticate = integration.integration.integration._controller_authenticate
 install_yarax_security_http(legacy, _controller_authenticate)
+install_yarax_admin_operations_http(legacy, _controller_authenticate)
 
 
 def run():
