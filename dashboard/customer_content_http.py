@@ -13,6 +13,7 @@ from server_update_repository import ServerUpdateRepository
 
 PATH="/api/customer/instance/workspace/content"
 SEARCH=PATH+"/search"
+BUNDLE=PATH+"/bundle"
 UPLOAD=PATH+"/upload"
 UPLOAD_STATUS=UPLOAD+"/status"
 UPLOAD_FINALIZE=UPLOAD+"/finalize"
@@ -73,6 +74,14 @@ def install_customer_content_http(legacy,authenticate):
    if user is None:return
    try:
     api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT);results=api.search(user,iid(parsed),one(parsed,"provider"),one(parsed,"content_type"),one(parsed,"q"),one(parsed,"limit","20"));return send(self,200,{"results":results,"count":len(results)})
+   except Exception as exc:return error(self,exc)
+  if parsed.path==BUNDLE:
+   user=require_user(self)
+   if user is None:return
+   try:
+    instance_id=iid(parsed);content_id=str(one(parsed,"content_id") or "").strip()
+    if not content_id:raise ValueError("content_id is required")
+    api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT);return send(self,200,{"bundle":api.bundle_details(user,instance_id,content_id)})
    except Exception as exc:return error(self,exc)
   if parsed.path==UPDATE_POLICY:
    user=require_user(self)
@@ -140,4 +149,4 @@ def install_customer_content_http(legacy,authenticate):
   except Exception as exc:return error(self,exc)
  legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post;legacy.DashboardHandler.do_PUT=put
 
-__all__=["PATH","SEARCH","UPLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","UPDATE_POLICY","UPDATE_POLICY_ITEM","install_customer_content_http"]
+__all__=["PATH","SEARCH","BUNDLE","UPLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","UPDATE_POLICY","UPDATE_POLICY_ITEM","install_customer_content_http"]
