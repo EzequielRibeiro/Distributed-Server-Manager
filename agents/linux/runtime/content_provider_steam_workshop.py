@@ -20,6 +20,41 @@ from game_data_executor import _steamcmd
 _PACKAGE = re.compile(r"^(?P<app>[0-9]+):(?P<item>[0-9]+)$")
 _REVISION = re.compile(r"^[0-9]{1,20}$")
 _TIMEOUT_SECONDS = 7200
+_DEFAULT_RETENTION = 3
+
+
+def _retention_limit() -> int:
+    raw = str(os.environ.get("CAPIVARA_WORKSHOP_CACHE_REVISIONS", _DEFAULT_RETENTION)).strip()
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = _DEFAULT_RETENTION
+    return max(2, min(value, 20))
+
+
+def _prune_revision_cache(revisions_root: Path, *, keep_revision: str) -> list[str]:
+    if not revisions_root.is_dir():
+        return []
+    candidates = [
+        path
+        for path in revisions_root.iterdir()
+        if path.is_dir() and _REVISION.fullmatch(path.name)
+    ]
+    candidates.sort(key=lambda path: int(path.name), reverse=True)
+
+    keep = {keep_revision}
+    for path in candidates:
+        if len(keep) >= _retention_limit():
+            break
+        keep.add(path.name)
+
+    removed: list[str] = []
+    for path in candidates:
+        if path.name in keep:
+            continue
+        shutil.rmtree(path)
+        removed.append(path.name)
+    return removed
 
 
 def _identity(artifact: dict[str, Any]) -> tuple[str, str]:
@@ -98,6 +133,7 @@ def _snapshot_revision(
             shutil.rmtree(temporary, ignore_errors=True)
     if not destination.is_dir():
         raise RuntimeError("Steam Workshop revision cache materialization failed")
+    _prune_revision_cache(destination.parent, keep_revision=revision)
     return destination
 
 
