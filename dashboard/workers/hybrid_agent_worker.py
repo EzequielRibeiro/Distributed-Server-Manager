@@ -31,6 +31,7 @@ from hybrid_local_reconciliation import reconcile_local_hybrid_runtime
 from instance_workspace_repository import InstanceWorkspaceRepository
 from observability_repository import ObservabilityRepository
 from registry_repository import RegistryRepository
+from yarax_admin_operation_repository import YaraXAdminOperationRepository
 from runtime_backend import backend_from_environment
 
 INTERVAL_SECONDS = max(10, int(os.environ.get("DSM_HYBRID_HEARTBEAT_SECONDS", "30")))
@@ -517,6 +518,24 @@ def process_hybrid_content_cycle(
     }
 
 
+def process_hybrid_yarax_admin_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
+    _instance_runtime_module(root)
+    import yarax_admin_client
+    repo = YaraXAdminOperationRepository(backend)
+    repo.initialize()
+    previous = yarax_admin_client.read_result()
+    if isinstance(previous, dict):
+        repo.apply_result(agent_id, previous)
+        if str(previous.get("status") or "").lower() in {"completed", "failed"}:
+            yarax_admin_client.clear_result(str(previous.get("operation_id") or ""))
+    command = repo.command_for_agent(agent_id)
+    if not isinstance(command, dict):
+        return {"status": "idle"}
+    report = yarax_admin_client.handle_command(command)
+    repo.apply_result(agent_id, report)
+    return {"status": report.get("status"), "operation_id": report.get("operation_id"), "action": report.get("action")}
+
+
 def process_hybrid_backup_cycle(
     backend,
     root: Path,
@@ -594,6 +613,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     instance_reconcile = process_hybrid_instance_reconcile_cycle(root, agent_id)
     configuration = process_hybrid_configuration_cycle(effective_backend, root, agent_id)
     content = process_hybrid_content_cycle(effective_backend, root, agent_id)
+    yarax_admin = process_hybrid_yarax_admin_cycle(effective_backend, root, agent_id)
     instance_runtime = process_hybrid_instance_runtime_cycle(effective_backend, root, agent_id)
     instance_telemetry = process_hybrid_instance_telemetry_cycle(effective_backend, root, agent_id)
     instance_health = process_hybrid_instance_health_cycle(effective_backend, root, agent_id)
@@ -606,6 +626,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         "instance_reconcile": instance_reconcile,
         "configuration": configuration,
         "content": content,
+        "yarax_admin": yarax_admin,
         "instance_runtime": instance_runtime,
         "instance_telemetry": instance_telemetry,
         "instance_health": instance_health,
@@ -621,6 +642,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         f"instance_files={instance_reconcile.get('files_access_prepared', 0)} "
         f"configuration={configuration.get('applied', 0)}a/{configuration.get('failed', 0)}f "
         f"content={content.get('applied', 0)}a/{content.get('failed', 0)}f "
+        f"yarax={yarax_admin.get('status', 'idle')} "
         f"instance_runtime={instance_runtime.get('status', 'idle')} "
         f"instance_telemetry={instance_telemetry.get('accepted', 0)} "
         f"instance_health={instance_health.get('healthy', 0)}/{instance_health.get('applied', 0)} "
