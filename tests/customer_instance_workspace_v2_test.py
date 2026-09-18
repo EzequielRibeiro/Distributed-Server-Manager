@@ -8,6 +8,7 @@ for path in (ROOT/"dashboard",ROOT/"database",ROOT/"core"):
  if str(path) not in sys.path:sys.path.insert(0,str(path))
 from customer_instance_policy import PERMISSION_PRESETS,effective_permissions,enforce_content_upload,effective_content_policy
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
+from customer_content_workspace import CustomerContentWorkspaceService
 from instance_team_repository import InstanceTeamRepository
 from runtime_workspace_catalog import allowed_runtimes,runtime_allowed_by_contract
 from schema_baseline import load_schema_baseline
@@ -209,6 +210,50 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   self.assertIn("runtimeContentSupported",script)
   self.assertIn('!can("content.read")||(!(overview.content_sections||[]).length&&!runtimeContentSupported)',script)
   self.assertIn('Este runtime/contrato não permite conteúdo gerenciado.',script)
+
+ def test_dayz_customer_can_choose_mod_or_server_mod_without_raw_arguments(self):
+  service=CustomerContentWorkspaceService.__new__(CustomerContentWorkspaceService)
+  current={
+   "instance_id":"dayz-1","content_id":"steam-workshop:1828439124","game_id":"dayz",
+   "content_type":"workshop","desired_state":"installed","activation_state":"enabled",
+   "activation_order":10,"version":"100","provider":"steam-workshop",
+   "target":"workshop/steam-workshop:1828439124",
+   "artifact":{"provider":"steam-workshop","package_id":"221100:1828439124"},
+   "provenance":{},"metadata":{},"dependencies":[],"conflicts":[],
+  }
+  context={"id":"dayz-1","game_id":"dayz","runtime_id":"dayz.stable"}
+  config=service._activation_configuration(context,current)
+  self.assertEqual("mod",config["mode"])
+  self.assertEqual({"mod","server-mod"},{item["value"] for item in config["modes"]})
+
+  payload=service._configure_activation(context,current,{"mode":"server-mod"})
+  self.assertEqual(
+   {"adapter":"dayz","mode":"server-mod","identifier":"steam-workshop:1828439124"},
+   payload["metadata"]["activation"],
+  )
+  self.assertNotIn("arguments",payload)
+  with self.assertRaisesRegex(ValueError,"unsupported activation fields"):
+   service._configure_activation(context,current,{"mode":"mod","adapter":"custom"})
+  with self.assertRaisesRegex(ValueError,"unsupported DayZ"):
+   service._configure_activation(context,current,{"mode":"anything"})
+
+ def test_customer_dayz_content_ui_exposes_activation_mode_selector(self):
+  script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
+  for marker in ("configure-activation","content-activation-mode","Salvar modo","runtime ${item.activation_config.mode}"):
+   self.assertIn(marker.replace("\\$","$"),script)
+  service=CustomerContentWorkspaceService.__new__(CustomerContentWorkspaceService)
+  config=service._activation_configuration(
+   {"game_id":"dayz","runtime_id":"dayz.stable"},
+   {"game_id":"dayz","content_type":"workshop","metadata":{}},
+  )
+  self.assertEqual(
+   [("mod","Mod cliente + servidor"),("server-mod","Mod somente servidor")],
+   [(item["value"],item["label"]) for item in config["modes"]],
+  )
+  dayz=(ROOT/"agents"/"linux"/"runtime"/"content_activation_dayz.py").read_text(encoding="utf-8")
+  self.assertIn('mode not in {"mod", "server-mod"}',dayz)
+  self.assertIn('arguments.append("-mod="',dayz)
+  self.assertIn('arguments.append("-serverMod="',dayz)
 
  def test_palworld_console_blocks_admin_password_before_queueing(self):
   service=CustomerInstanceWorkspaceService.__new__(CustomerInstanceWorkspaceService);service.root=ROOT

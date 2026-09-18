@@ -139,8 +139,34 @@ class CustomerContentWorkspaceService:
   return item
  def _desired(self,item):
   return {key:item.get(key) for key in _INSTALL_FIELDS if key in item and key not in {"source"}}
+ def _activation_configuration(self,context,item):
+  game_id=str(context.get("game_id") or item.get("game_id") or "").strip().lower()
+  ctype=str(item.get("content_type") or "").strip().lower()
+  if game_id!="dayz" or ctype not in {"mod","workshop"}:return None
+  metadata=item.get("metadata") if isinstance(item.get("metadata"),Mapping) else {}
+  activation=metadata.get("activation") if isinstance(metadata.get("activation"),Mapping) else {}
+  mode=str(activation.get("mode") or "mod").strip().lower()
+  if mode not in {"mod","server-mod"}:mode="mod"
+  return {"adapter":"dayz","mode":mode,"modes":[{"value":"mod","label":"Mod cliente + servidor"},{"value":"server-mod","label":"Mod somente servidor"}]}
+
+ def _configure_activation(self,context,current,body):
+  if not isinstance(body,Mapping):raise ValueError("content activation payload must be an object")
+  allowed={"instance_id","content_id","action","mode"}
+  unknown=sorted(set(body)-allowed)
+  if unknown:raise ValueError("unsupported activation fields: "+", ".join(unknown))
+  config=self._activation_configuration(context,current)
+  if config is None:raise PermissionError("content activation mode is unavailable for this runtime/content type")
+  mode=str(body.get("mode") or "").strip().lower()
+  valid={str(item.get("value") or "") for item in config.get("modes") or []}
+  if mode not in valid:raise ValueError("unsupported DayZ content activation mode")
+  payload=self._desired(current);payload["instance_id"]=str(current.get("instance_id") or context.get("id") or "")
+  metadata=dict(payload.get("metadata") or {});activation=metadata.get("activation") if isinstance(metadata.get("activation"),Mapping) else {}
+  identifier=str(activation.get("identifier") or current.get("content_id") or "").strip()[:191]
+  metadata["activation"]={"adapter":"dayz","mode":mode,"identifier":identifier}
+  payload["metadata"]=metadata
+  return payload
  def list(self,user,instance_id):
-  self._context_policy(user,instance_id,"content.read");items=self.content.customer_view(instance_id,limit=2000)
+  context,_,_=self._context_policy_details(user,instance_id,"content.read");items=self.content.customer_view(instance_id,limit=2000)
   for item in items:
    provider=str(item.get("provider") or "").strip().lower();ctype=str(item.get("content_type") or "").strip().lower();rollback_revision=None
    if ctype=="modpack":
@@ -148,6 +174,8 @@ class CustomerContentWorkspaceService:
    else:
     previous=self.content.previous_revision(instance_id,str(item.get("content_id") or ""));rollback_revision=int(previous["revision"]) if previous else None
    item["provider_capabilities"]=provider_capabilities(provider,self.workspace.root);item["update"]={"supported":provider_supports(provider,"update",self.workspace.root),"rollback_available":rollback_revision is not None,"rollback_revision":rollback_revision}
+   activation_config=self._activation_configuration(context,item)
+   if activation_config is not None:item["activation_config"]=activation_config
   return items
  def bundle_details(self,user,instance_id,content_id):
   self._context_policy(user,instance_id,"content.read");parent=self._existing(instance_id,content_id)
@@ -237,6 +265,7 @@ class CustomerContentWorkspaceService:
   elif action=="enable":payload["desired_state"]="installed";payload["activation_state"]="enabled"
   elif action=="disable":payload["desired_state"]="installed";payload["activation_state"]="disabled"
   elif action=="reorder":payload["activation_order"]=(body or {}).get("activation_order")
+  elif action=="configure-activation":payload=self._configure_activation(context,current,body or {})
   elif action=="rollback":
    revision=(body or {}).get("revision");return self.content.rollback(instance_id,content_id,revision,requested_by=actor,reason="customer")
   elif action=="update":
