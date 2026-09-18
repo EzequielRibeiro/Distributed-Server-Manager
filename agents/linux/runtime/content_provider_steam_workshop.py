@@ -229,22 +229,36 @@ def _validate_revision_source(source: Path, app_id: str, item_id: str, revision:
 
 def _cache_candidates(executable: str, game_data_root: Path, app_id: str, item_id: str) -> list[Path]:
     state_root = Path(game_data_root).resolve().parent
-    home = Path(os.environ.get("HOME") or str(state_root)).resolve()
-    suffix = Path("steamapps") / "workshop" / "content" / app_id / item_id
+    agent_state_root = Path(
+        os.environ.get("CAPIVARA_AGENT_STATE_DIR") or str(state_root)
+    ).resolve()
+    home = Path(os.environ.get("HOME") or str(agent_state_root)).resolve()
+    dsm_root = Path(os.environ.get("DSM_ROOT") or "/opt/dsm").resolve()
     executable_dir = Path(executable).resolve().parent
-    candidates = [
-        executable_dir / suffix,
-        executable_dir.parent / suffix,
-        state_root / "tools" / "steamcmd" / suffix,
-        home / ".steam" / "steam" / suffix,
-        home / ".local" / "share" / "Steam" / suffix,
-        home / "Steam" / suffix,
+    suffix = Path("steamapps") / "workshop" / "content" / app_id / item_id
+
+    # SteamCMD has several Linux layouts depending on whether it comes from the
+    # Capivara-managed bootstrap, a distro package, or an existing user Steam
+    # installation. Keep discovery bounded to explicit trusted roots instead of
+    # scanning the host filesystem.
+    roots = [
+        executable_dir,
+        executable_dir.parent,
+        agent_state_root / "tools" / "steamcmd",
+        state_root / "tools" / "steamcmd",
+        dsm_root / "tools" / "steamcmd",
+        home / ".steam" / "steamcmd",
+        home / ".steam" / "steam",
+        home / ".local" / "share" / "Steam" / "steamcmd",
+        home / ".local" / "share" / "Steam",
+        home / "Steam" / "steamcmd",
+        home / "Steam",
     ]
     out: list[Path] = []
-    for candidate in candidates:
-        resolved = candidate.resolve()
-        if resolved not in out:
-            out.append(resolved)
+    for root in roots:
+        candidate = (root / suffix).resolve()
+        if candidate not in out:
+            out.append(candidate)
     return out
 
 
@@ -274,19 +288,30 @@ def _download_and_resolve(
         if "password" in output or "steam guard" in output or "two-factor" in output:
             raise RuntimeError("Steam authentication is required or expired on this Agent")
         raise RuntimeError(f"Steam Workshop download failed with exit code {completed.returncode}")
+    revision_errors: list[str] = []
     for candidate in _cache_candidates(executable, game_data_root, app_id, item_id):
-        if candidate.is_dir():
-            if revision:
+        if not candidate.is_dir():
+            continue
+        if revision:
+            try:
                 _validate_revision_source(candidate, app_id, item_id, revision)
-                return _snapshot_revision(
-                    candidate,
-                    game_data_root,
-                    app_id,
-                    item_id,
-                    revision,
-                    protected_revisions,
-                )
-            return candidate
+            except RuntimeError as exc:
+                revision_errors.append(str(exc))
+                continue
+            return _snapshot_revision(
+                candidate,
+                game_data_root,
+                app_id,
+                item_id,
+                revision,
+                protected_revisions,
+            )
+        return candidate
+    if revision_errors:
+        raise RuntimeError(
+            "SteamCMD completed but no managed Workshop cache matched the requested revision: "
+            + "; ".join(revision_errors[:3])
+        )
     raise RuntimeError("SteamCMD completed but the Workshop item was not found in a managed Steam cache")
 
 
