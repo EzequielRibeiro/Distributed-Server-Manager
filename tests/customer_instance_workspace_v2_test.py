@@ -204,6 +204,12 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   self.assertEqual(99,result["provision"]["progress"])
   self.assertEqual("prov-2",result["provision"]["provisioning_id"])
 
+ def test_content_tab_remains_visible_when_runtime_supports_managed_content(self):
+  script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
+  self.assertIn("runtimeContentSupported",script)
+  self.assertIn('!can("content.read")||(!(overview.content_sections||[]).length&&!runtimeContentSupported)',script)
+  self.assertIn('Este runtime/contrato não permite conteúdo gerenciado.',script)
+
  def test_palworld_console_blocks_admin_password_before_queueing(self):
   service=CustomerInstanceWorkspaceService.__new__(CustomerInstanceWorkspaceService);service.root=ROOT
   service.require=lambda user,instance_id,permission:{"id":instance_id,"game_id":"palworld","runtime_id":"palworld.stable","agent_id":"agent-1"}
