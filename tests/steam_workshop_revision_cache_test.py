@@ -22,11 +22,25 @@ for path in (
         sys.path.insert(0, str(path))
 
 import content_provider_steam_workshop as workshop_provider
+import content_cache_inventory
 import customer_content_workspace as workspace_module
 from content_repository import ContentRepository
 
 
 class SteamWorkshopRevisionCacheTest(unittest.TestCase):
+    def setUp(self):
+        self._state_tmp = tempfile.TemporaryDirectory()
+        self._state_env = patch.dict(
+            "os.environ",
+            {"CAPIVARA_AGENT_STATE_DIR": self._state_tmp.name},
+            clear=False,
+        )
+        self._state_env.start()
+
+    def tearDown(self):
+        self._state_env.stop()
+        self._state_tmp.cleanup()
+
     def test_controller_persists_canonical_workshop_revision(self):
         service = workspace_module.CustomerContentWorkspaceService.__new__(
             workspace_module.CustomerContentWorkspaceService
@@ -366,6 +380,36 @@ class SteamWorkshopRevisionCacheTest(unittest.TestCase):
             self.assertEqual(results[0], results[1])
             self.assertEqual(call_count, 1)
             self.assertTrue(results[0].is_dir())
+
+    def test_cache_inventory_reports_events_revisions_and_bytes(self):
+        state_root = Path(self._state_tmp.name)
+        revision = (
+            state_root
+            / "provider-cache"
+            / "steam-workshop"
+            / "221100"
+            / "1828439124"
+            / "revisions"
+            / "1785000000"
+        )
+        revision.mkdir(parents=True)
+        payload = b"capivara-cache"
+        (revision / "mod.cpp").write_bytes(payload)
+
+        content_cache_inventory.record_cache_event("miss")
+        content_cache_inventory.record_cache_event("download")
+        content_cache_inventory.record_cache_event("hit")
+        snapshot = content_cache_inventory.snapshot()
+
+        self.assertEqual(snapshot["kind"], "ContentCacheInventory")
+        self.assertEqual(snapshot["provider"], "steam-workshop")
+        self.assertEqual(snapshot["hits"], 1)
+        self.assertEqual(snapshot["misses"], 1)
+        self.assertEqual(snapshot["downloads"], 1)
+        self.assertEqual(snapshot["avoided_downloads"], 1)
+        self.assertEqual(snapshot["items"], 1)
+        self.assertEqual(snapshot["revisions"], 1)
+        self.assertEqual(snapshot["bytes"], len(payload))
 
     def test_invalid_revision_is_rejected_before_provider_execution(self):
         artifact = {
