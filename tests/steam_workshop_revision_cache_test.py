@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -295,6 +297,75 @@ class SteamWorkshopRevisionCacheTest(unittest.TestCase):
             workshop_provider._protected_revisions(
                 {"protected_revisions": ["100", "../bad"]}
             )
+
+    def test_concurrent_same_revision_runs_steamcmd_once(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            state_root = root / "state"
+            game_data_root = state_root / "game-data"
+            source = (
+                root
+                / "home"
+                / ".local"
+                / "share"
+                / "Steam"
+                / "steamapps"
+                / "workshop"
+                / "content"
+                / "221100"
+                / "1828439124"
+            )
+            source.mkdir(parents=True)
+            (source / "mod.cpp").write_text("name=VPP;\n", encoding="utf-8")
+            executable = root / "steamcmd" / "steamcmd.sh"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            artifact = {
+                "provider": "steam-workshop",
+                "package_id": "221100:1828439124",
+                "revision": "1785000000",
+            }
+            call_count = 0
+            count_lock = threading.Lock()
+
+            def fake_run(*args, **kwargs):
+                nonlocal call_count
+                with count_lock:
+                    call_count += 1
+                time.sleep(0.15)
+                return SimpleNamespace(returncode=0, stdout="Success")
+
+            results = []
+            errors = []
+
+            def worker():
+                try:
+                    results.append(
+                        workshop_provider.resolve_steam_workshop(
+                            artifact,
+                            root / "stage",
+                            game_data_root,
+                        )
+                    )
+                except Exception as exc:
+                    errors.append(exc)
+
+            with (
+                patch.dict("os.environ", {"HOME": str(root / "home")}, clear=False),
+                patch.object(workshop_provider, "_steamcmd", return_value=str(executable)),
+                patch.object(workshop_provider.subprocess, "run", side_effect=fake_run),
+            ):
+                threads = [threading.Thread(target=worker) for _ in range(2)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=5)
+
+            self.assertFalse(errors)
+            self.assertEqual(len(results), 2)
+            self.assertEqual(results[0], results[1])
+            self.assertEqual(call_count, 1)
+            self.assertTrue(results[0].is_dir())
 
     def test_invalid_revision_is_rejected_before_provider_execution(self):
         artifact = {
