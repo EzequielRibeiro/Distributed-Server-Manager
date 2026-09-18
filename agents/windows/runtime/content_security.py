@@ -4,6 +4,10 @@ from __future__ import annotations
 import json,os,shutil,stat,subprocess
 from pathlib import Path
 from typing import Any
+try:
+ from security_yarax import managed_binary as _managed_yarax_binary
+except ModuleNotFoundError:
+ _managed_yarax_binary=lambda:None
 
 STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",Path(os.environ.get("PROGRAMDATA",r"C:\\ProgramData"))/"CapivaraAgent"/"state"))
 RULES_PATH=Path(os.environ.get("CAPIVARA_YARAX_RULES_PATH",Path(os.environ.get("PROGRAMDATA",r"C:\\ProgramData"))/"CapivaraAgent"/"security"/"yara-rules"))
@@ -20,6 +24,8 @@ def _binary()->str|None:
  if configured:
   path=Path(configured)
   return str(path) if path.is_file() else None
+ managed=_managed_yarax_binary()
+ if managed:return managed
  return shutil.which("yr")
 
 def _rule_files()->list[Path]:
