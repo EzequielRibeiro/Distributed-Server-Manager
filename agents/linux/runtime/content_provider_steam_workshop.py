@@ -21,6 +21,7 @@ from content_update_provider import parse_workshop_manifest
 from game_data_executor import _steamcmd
 
 _PACKAGE = re.compile(r"^(?P<app>[0-9]+):(?P<item>[0-9]+)$")
+_DOWNLOAD_FAILURE = re.compile(r"ERROR!\\s*Download item\\s+[0-9]+\\s+failed\\s*\\(([^)\\r\\n]{1,120})\\)", re.IGNORECASE)
 _REVISION = re.compile(r"^[0-9]{1,20}$")
 _TIMEOUT_SECONDS = 7200
 _DEFAULT_RETENTION = 0
@@ -283,11 +284,16 @@ def _download_and_resolve(
         check=False,
         env=env,
     )
+    output_text = completed.stdout or ""
+    output = output_text.lower()
     if completed.returncode != 0:
-        output = (completed.stdout or "").lower()
         if "password" in output or "steam guard" in output or "two-factor" in output:
             raise RuntimeError("Steam authentication is required or expired on this Agent")
         raise RuntimeError(f"Steam Workshop download failed with exit code {completed.returncode}")
+    failure = _DOWNLOAD_FAILURE.search(output_text)
+    if failure:
+        reason = failure.group(1).strip()
+        raise RuntimeError(f"Steam Workshop download failed: {reason}")
     revision_errors: list[str] = []
     for candidate in _cache_candidates(executable, game_data_root, app_id, item_id):
         if not candidate.is_dir():
