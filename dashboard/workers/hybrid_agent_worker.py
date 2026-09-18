@@ -24,6 +24,7 @@ from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
 from backup_repository import BackupRepository
 from configuration_repository import ConfigurationRepository
+from content_repository import ContentRepository
 from hybrid_game_data_client import process_hybrid_game_data_cycle
 from hybrid_instance_provisioning_client import process_hybrid_instance_provisioning_cycle
 from hybrid_local_reconciliation import reconcile_local_hybrid_runtime
@@ -180,6 +181,12 @@ def _configuration_client_module(root: Path):
     _instance_runtime_module(root)
     import configuration_client
     return configuration_client
+
+
+def _content_client_module(root: Path):
+    _instance_runtime_module(root)
+    import content_client
+    return content_client
 
 
 def _prepare_hybrid_customer_files_access(instance_id: str) -> None:
@@ -446,6 +453,62 @@ def process_hybrid_configuration_cycle(
     }
 
 
+def process_hybrid_content_cycle(
+    backend,
+    root: Path,
+    agent_id: str,
+) -> dict[str, Any]:
+    """Round-trip Universal Content desired state through the embedded Hybrid Agent."""
+    config = _hybrid_agent_config(root, agent_id, optional=True)
+    if config is None:
+        return {
+            "status": "unavailable",
+            "reason": "config_unavailable",
+            "reported": 0,
+            "commands": 0,
+            "accepted": 0,
+            "applied": 0,
+            "failed": 0,
+        }
+
+    client = _content_client_module(root)
+    repository = ContentRepository(backend)
+    repository.initialize()
+
+    previous = client.content_state()
+    if not isinstance(previous, list):
+        raise RuntimeError("Hybrid content client returned an invalid state payload")
+    previous = [item for item in previous if isinstance(item, dict)]
+    reported = repository.record_agent_state(agent_id, previous)
+
+    commands = repository.desired_for_agent(agent_id)
+    if not isinstance(commands, list):
+        raise RuntimeError("Hybrid content repository returned an invalid command payload")
+    commands = [item for item in commands if isinstance(item, dict)]
+
+    reports = client.apply_content_commands(config, commands)
+    if not isinstance(reports, list):
+        raise RuntimeError("Hybrid content client returned an invalid result payload")
+    reports = [item for item in reports if isinstance(item, dict)]
+    accepted = repository.record_agent_state(agent_id, reports)
+
+    return {
+        "status": "completed",
+        "reported": reported,
+        "commands": len(commands),
+        "accepted": accepted,
+        "applied": sum(
+            1 for item in reports
+            if str(item.get("status") or "").lower() == "applied"
+        ),
+        "failed": sum(
+            1 for item in reports
+            if str(item.get("status") or "").lower()
+            in {"failed", "security_scan_failed", "security_blocked", "rollback_failed"}
+        ),
+    }
+
+
 def process_hybrid_backup_cycle(
     backend,
     root: Path,
@@ -522,6 +585,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     )
     instance_reconcile = process_hybrid_instance_reconcile_cycle(root, agent_id)
     configuration = process_hybrid_configuration_cycle(effective_backend, root, agent_id)
+    content = process_hybrid_content_cycle(effective_backend, root, agent_id)
     instance_runtime = process_hybrid_instance_runtime_cycle(effective_backend, root, agent_id)
     instance_telemetry = process_hybrid_instance_telemetry_cycle(effective_backend, root, agent_id)
     instance_health = process_hybrid_instance_health_cycle(effective_backend, root, agent_id)
@@ -533,6 +597,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         "agent_id": agent_id,
         "instance_reconcile": instance_reconcile,
         "configuration": configuration,
+        "content": content,
         "instance_runtime": instance_runtime,
         "instance_telemetry": instance_telemetry,
         "instance_health": instance_health,
@@ -547,6 +612,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         f"instance_reconcile={instance_reconcile.get('healthy', 0)}/{instance_reconcile.get('instances', 0)} "
         f"instance_files={instance_reconcile.get('files_access_prepared', 0)} "
         f"configuration={configuration.get('applied', 0)}a/{configuration.get('failed', 0)}f "
+        f"content={content.get('applied', 0)}a/{content.get('failed', 0)}f "
         f"instance_runtime={instance_runtime.get('status', 'idle')} "
         f"instance_telemetry={instance_telemetry.get('accepted', 0)} "
         f"instance_health={instance_health.get('healthy', 0)}/{instance_health.get('applied', 0)} "
