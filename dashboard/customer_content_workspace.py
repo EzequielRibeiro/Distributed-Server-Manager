@@ -69,9 +69,12 @@ class CustomerContentWorkspaceService:
   reference=str(artifact.get("package_id") or artifact.get("url") or artifact.get("published_file_id") or "").strip()
   if not reference:raise ValueError("Steam Workshop PublishedFileId or URL is required")
   resolved=getattr(self,"workshop_resolver",resolve_workshop_item)(reference,expected_app_id=app_id)
-  clean_artifact={key:value for key,value in dict(artifact).items() if key not in {"url","download_url","published_file_id","consumer_app_id","package_id","provider","revision"}}
+  clean_artifact={key:value for key,value in dict(artifact).items() if key not in {"url","download_url","published_file_id","consumer_app_id","package_id","provider","revision","auth"}}
+  runtime_artifact=definition.get("artifact") if isinstance(definition,Mapping) and isinstance(definition.get("artifact"),Mapping) else {}
+  workshop_auth=str(workshop.get("auth") or runtime_artifact.get("auth") or "anonymous").strip().lower()
+  if workshop_auth not in {"anonymous","required"}:raise ValueError("Steam Workshop auth policy is invalid")
   revision=str((resolved.get("metadata") or {}).get("time_updated") or "").strip()
-  clean_artifact.update({"provider":"steam-workshop","package_id":resolved["package_id"]})
+  clean_artifact.update({"provider":"steam-workshop","package_id":resolved["package_id"],"auth":workshop_auth})
   if revision.isdigit():
    clean_artifact["revision"]=revision
    payload["version"]=revision
