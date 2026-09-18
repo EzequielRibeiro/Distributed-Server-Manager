@@ -195,7 +195,18 @@ def runtime_content_activation_capabilities(root: Path, game_id: str, runtime_id
         default_mode = str(raw_declaration.get("default_mode") or modes[0]["value"]).strip().lower()
         if default_mode not in seen:
             raise RuntimeError("runtime content activation default mode is not declared")
-        types[content_type] = {"default_mode": default_mode, "modes": modes}
+        identifier_required = raw_declaration.get("identifier_required", False)
+        if not isinstance(identifier_required, bool):
+            raise RuntimeError("invalid runtime content activation identifier requirement")
+        identifier_label = str(raw_declaration.get("identifier_label") or "Identificador").strip()
+        if not identifier_label or len(identifier_label) > 120 or any(c in identifier_label for c in ("\x00", "\r", "\n")):
+            raise RuntimeError("invalid runtime content activation identifier label")
+        types[content_type] = {
+            "default_mode": default_mode,
+            "modes": modes,
+            "identifier_required": identifier_required,
+            "identifier_label": identifier_label,
+        }
     return {"adapter": adapter, "types": types}
 
 
