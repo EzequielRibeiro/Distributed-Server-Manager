@@ -41,6 +41,10 @@ jobs:
         run: python3 -m unittest -v tests/universal_content_e2e_test.py
       - name: Run Controller-Agent maintenance E2E
         run: python3 tests/maintenance_controller_agent_e2e.py
+      - name: Prove content rehydration after Agent restart
+        env:
+          PYTHONPATH: .
+        run: python3 tests/m10_content_persistence_after_restart_test.py
       - name: Run DayZ native restart integration
         env:
           PYTHONPATH: .
