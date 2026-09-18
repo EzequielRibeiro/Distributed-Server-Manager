@@ -289,7 +289,7 @@ case "${1:-}" in
                     *) usage "$(local_role)" 0; exit 2 ;;
                 esac
                 ;;
-            status|info|health|heartbeat|capabilities|network|game-data|jobs|update|logs|doctor)
+            status|info|health|heartbeat|capabilities|network|game-data|jobs|update|logs|doctor|security)
                 require_role "cap agent ${1}" agent hybrid
                 agent_local_exec "$@"
                 ;;
