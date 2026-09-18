@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from content_provider import register_provider
 from game_data_executor import _steamcmd
 
 _PACKAGE = re.compile(r"^(?P<app>[0-9]+):(?P<item>[0-9]+)$")
+_REVISION = re.compile(r"^[0-9]{1,20}$")
 _TIMEOUT_SECONDS = 7200
 
 
@@ -36,6 +38,67 @@ def _login(artifact: dict[str, Any]) -> str:
     if not user:
         raise RuntimeError("Steam authentication is required on this Agent")
     return user
+
+
+def _revision(artifact: dict[str, Any]) -> str | None:
+    value = str(artifact.get("revision") or "").strip()
+    if not value:
+        return None
+    if not _REVISION.fullmatch(value):
+        raise ValueError("Steam Workshop revision must be numeric")
+    return value
+
+
+def _revision_cache_path(
+    game_data_root: Path,
+    app_id: str,
+    item_id: str,
+    revision: str,
+) -> Path:
+    state_root = Path(game_data_root).resolve().parent
+    return (
+        state_root
+        / "provider-cache"
+        / "steam-workshop"
+        / app_id
+        / item_id
+        / "revisions"
+        / revision
+    ).resolve()
+
+
+def _snapshot_revision(
+    source: Path,
+    game_data_root: Path,
+    app_id: str,
+    item_id: str,
+    revision: str,
+) -> Path:
+    destination = _revision_cache_path(
+        game_data_root,
+        app_id,
+        item_id,
+        revision,
+    )
+    if destination.is_dir():
+        return destination
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.parent / f".{revision}.{os.getpid()}.tmp"
+    if temporary.exists():
+        shutil.rmtree(temporary, ignore_errors=True)
+    try:
+        shutil.copytree(source, temporary)
+        if destination.exists():
+            shutil.rmtree(temporary, ignore_errors=True)
+        else:
+            os.replace(temporary, destination)
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary, ignore_errors=True)
+    if not destination.is_dir():
+        raise RuntimeError("Steam Workshop revision cache materialization failed")
+    return destination
 
 
 def _cache_candidates(executable: str, game_data_root: Path, app_id: str, item_id: str) -> list[Path]:
@@ -62,6 +125,12 @@ def _cache_candidates(executable: str, game_data_root: Path, app_id: str, item_i
 def resolve_steam_workshop(artifact: dict[str, Any], stage: Path, game_data_root: Path) -> Path:
     del stage
     app_id, item_id = _identity(artifact)
+    revision = _revision(artifact)
+    if revision:
+        cached = _revision_cache_path(game_data_root, app_id, item_id, revision)
+        if cached.is_dir():
+            return cached
+
     executable = _steamcmd()
     login = _login(artifact)
     env = {**os.environ, "HOME": os.environ.get("HOME", str(Path(game_data_root).resolve().parent))}
@@ -82,6 +151,14 @@ def resolve_steam_workshop(artifact: dict[str, Any], stage: Path, game_data_root
         raise RuntimeError(f"Steam Workshop download failed with exit code {completed.returncode}")
     for candidate in _cache_candidates(executable, game_data_root, app_id, item_id):
         if candidate.is_dir():
+            if revision:
+                return _snapshot_revision(
+                    candidate,
+                    game_data_root,
+                    app_id,
+                    item_id,
+                    revision,
+                )
             return candidate
     raise RuntimeError("SteamCMD completed but the Workshop item was not found in a managed Steam cache")
 

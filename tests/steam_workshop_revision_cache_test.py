@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+ROOT = Path(__file__).resolve().parents[1]
+for path in (
+    ROOT,
+    ROOT / "core",
+    ROOT / "database",
+    ROOT / "dashboard",
+    ROOT / "agents" / "linux" / "runtime",
+):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+import content_provider_steam_workshop as workshop_provider
+import customer_content_workspace as workspace_module
+
+
+class SteamWorkshopRevisionCacheTest(unittest.TestCase):
+    def test_controller_persists_canonical_workshop_revision(self):
+        service = workspace_module.CustomerContentWorkspaceService.__new__(
+            workspace_module.CustomerContentWorkspaceService
+        )
+        service.workspace = SimpleNamespace(root=ROOT)
+        service.workshop_resolver = lambda reference, expected_app_id: {
+            "provider": "steam-workshop",
+            "package_id": "221100:1828439124",
+            "published_file_id": "1828439124",
+            "consumer_app_id": "221100",
+            "metadata": {
+                "published_file_id": "1828439124",
+                "consumer_app_id": "221100",
+                "time_updated": 1785000000,
+                "title": "VPPAdminTools",
+            },
+        }
+        payload = {
+            "content_type": "workshop",
+            "provider": "steam-workshop",
+            "artifact": {
+                "provider": "steam-workshop",
+                "package_id": "1828439124",
+            },
+            "metadata": {},
+            "provenance": {},
+        }
+        with patch.object(
+            workspace_module,
+            "runtime_definition",
+            return_value={
+                "content": {
+                    "steam_workshop": {
+                        "app_id": "221100",
+                    }
+                }
+            },
+        ):
+            result = service._resolve_workshop(
+                {
+                    "runtime_id": "dayz.stable",
+                    "game_id": "dayz",
+                },
+                payload,
+            )
+
+        self.assertIs(result, payload)
+        self.assertEqual(payload["version"], "1785000000")
+        self.assertEqual(payload["artifact"]["revision"], "1785000000")
+        self.assertEqual(
+            payload["artifact"]["package_id"],
+            "221100:1828439124",
+        )
+
+    def test_second_instance_reuses_revision_cache_without_steamcmd(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            state_root = root / "state"
+            game_data_root = state_root / "game-data"
+            source = (
+                root
+                / "home"
+                / ".local"
+                / "share"
+                / "Steam"
+                / "steamapps"
+                / "workshop"
+                / "content"
+                / "221100"
+                / "1828439124"
+            )
+            source.mkdir(parents=True)
+            (source / "mod.cpp").write_text("name=VPP;\n", encoding="utf-8")
+            executable = root / "steamcmd" / "steamcmd.sh"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            artifact = {
+                "provider": "steam-workshop",
+                "package_id": "221100:1828439124",
+                "revision": "1785000000",
+            }
+            completed = SimpleNamespace(returncode=0, stdout="Success")
+
+            with (
+                patch.dict("os.environ", {"HOME": str(root / "home")}, clear=False),
+                patch.object(workshop_provider, "_steamcmd", return_value=str(executable)),
+                patch.object(workshop_provider.subprocess, "run", return_value=completed) as run,
+            ):
+                first = workshop_provider.resolve_steam_workshop(
+                    artifact,
+                    root / "stage-a",
+                    game_data_root,
+                )
+                second = workshop_provider.resolve_steam_workshop(
+                    artifact,
+                    root / "stage-b",
+                    game_data_root,
+                )
+
+            expected = (
+                state_root
+                / "provider-cache"
+                / "steam-workshop"
+                / "221100"
+                / "1828439124"
+                / "revisions"
+                / "1785000000"
+            ).resolve()
+            self.assertEqual(first, expected)
+            self.assertEqual(second, expected)
+            self.assertTrue((expected / "mod.cpp").is_file())
+            self.assertEqual(run.call_count, 1)
+
+    def test_invalid_revision_is_rejected_before_provider_execution(self):
+        artifact = {
+            "provider": "steam-workshop",
+            "package_id": "221100:1828439124",
+            "revision": "../bad",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaisesRegex(ValueError, "revision must be numeric"):
+                workshop_provider.resolve_steam_workshop(
+                    artifact,
+                    Path(td) / "stage",
+                    Path(td) / "state" / "game-data",
+                )
+
+
+if __name__ == "__main__":
+    unittest.main()
