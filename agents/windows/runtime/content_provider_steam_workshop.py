@@ -11,7 +11,7 @@ from content_provider import register_provider
 from game_data_executor import _steamcmd
 
 _PACKAGE = re.compile(r"^(?P<app>[0-9]+):(?P<item>[0-9]+)$")
-_DOWNLOAD_FAILURE = re.compile(r"ERROR!\\s*Download item\\s+[0-9]+\\s+failed\\s*\\(([^)\\r\\n]{1,120})\\)", re.IGNORECASE)
+_DOWNLOAD_FAILURE = re.compile(r"ERROR!\s*Download item\s+[0-9]+\s+failed\s*\(([^)\r\n]{1,120})\)", re.IGNORECASE)
 _TIMEOUT_SECONDS = 7200
 
 
