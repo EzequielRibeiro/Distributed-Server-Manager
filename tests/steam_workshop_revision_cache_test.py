@@ -28,6 +28,20 @@ from content_repository import ContentRepository
 
 
 class SteamWorkshopRevisionCacheTest(unittest.TestCase):
+    def _write_manifest(self, source: Path, app_id: str, item_id: str, revision: str) -> Path:
+        manifest = source.parent.parent.parent / f"appworkshop_{app_id}.acf"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(
+            '"AppWorkshop"\n{\n'
+            f'  "AppID" "{app_id}"\n'
+            '  "WorkshopItemsInstalled"\n  {\n'
+            f'    "{item_id}"\n    {{\n'
+            f'      "timeupdated" "{revision}"\n'
+            '    }\n  }\n}\n',
+            encoding="utf-8",
+        )
+        return manifest
+
     def setUp(self):
         self._state_tmp = tempfile.TemporaryDirectory()
         self._state_env = patch.dict(
@@ -114,6 +128,7 @@ class SteamWorkshopRevisionCacheTest(unittest.TestCase):
             )
             source.mkdir(parents=True)
             (source / "mod.cpp").write_text("name=VPP;\n", encoding="utf-8")
+            self._write_manifest(source, "221100", "1828439124", "1785000000")
             executable = root / "steamcmd" / "steamcmd.sh"
             executable.parent.mkdir(parents=True)
             executable.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -331,6 +346,7 @@ class SteamWorkshopRevisionCacheTest(unittest.TestCase):
             )
             source.mkdir(parents=True)
             (source / "mod.cpp").write_text("name=VPP;\n", encoding="utf-8")
+            self._write_manifest(source, "221100", "1828439124", "1785000000")
             executable = root / "steamcmd" / "steamcmd.sh"
             executable.parent.mkdir(parents=True)
             executable.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -380,6 +396,119 @@ class SteamWorkshopRevisionCacheTest(unittest.TestCase):
             self.assertEqual(results[0], results[1])
             self.assertEqual(call_count, 1)
             self.assertTrue(results[0].is_dir())
+
+    def test_revision_snapshot_fails_closed_when_manifest_revision_mismatches(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            state_root = root / "state"
+            game_data_root = state_root / "game-data"
+            source = (
+                root / "home" / ".local" / "share" / "Steam"
+                / "steamapps" / "workshop" / "content" / "221100" / "1828439124"
+            )
+            source.mkdir(parents=True)
+            (source / "mod.cpp").write_text("name=VPP;\n", encoding="utf-8")
+            self._write_manifest(source, "221100", "1828439124", "1784000000")
+            executable = root / "steamcmd" / "steamcmd.sh"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            artifact = {
+                "provider": "steam-workshop",
+                "package_id": "221100:1828439124",
+                "revision": "1785000000",
+            }
+            with (
+                patch.dict("os.environ", {"HOME": str(root / "home")}, clear=False),
+                patch.object(workshop_provider, "_steamcmd", return_value=str(executable)),
+                patch.object(
+                    workshop_provider.subprocess,
+                    "run",
+                    return_value=SimpleNamespace(returncode=0, stdout="Success"),
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "revision mismatch"):
+                    workshop_provider.resolve_steam_workshop(
+                        artifact,
+                        root / "stage",
+                        game_data_root,
+                    )
+            expected = (
+                state_root / "provider-cache" / "steam-workshop" / "221100"
+                / "1828439124" / "revisions" / "1785000000"
+            )
+            self.assertFalse(expected.exists())
+
+    def test_revision_snapshot_fails_closed_when_manifest_is_missing(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = (
+                root / "home" / ".local" / "share" / "Steam"
+                / "steamapps" / "workshop" / "content" / "221100" / "1828439124"
+            )
+            source.mkdir(parents=True)
+            (source / "mod.cpp").write_text("name=VPP;\n", encoding="utf-8")
+            executable = root / "steamcmd" / "steamcmd.sh"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            artifact = {
+                "provider": "steam-workshop",
+                "package_id": "221100:1828439124",
+                "revision": "1785000000",
+            }
+            with (
+                patch.dict("os.environ", {"HOME": str(root / "home")}, clear=False),
+                patch.object(workshop_provider, "_steamcmd", return_value=str(executable)),
+                patch.object(
+                    workshop_provider.subprocess,
+                    "run",
+                    return_value=SimpleNamespace(returncode=0, stdout="Success"),
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "manifest is unavailable"):
+                    workshop_provider.resolve_steam_workshop(
+                        artifact,
+                        root / "stage",
+                        root / "state" / "game-data",
+                    )
+
+    def test_revision_snapshot_fails_closed_when_manifest_metadata_is_malformed(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = (
+                root / "home" / ".local" / "share" / "Steam"
+                / "steamapps" / "workshop" / "content" / "221100" / "1828439124"
+            )
+            source.mkdir(parents=True)
+            (source / "mod.cpp").write_text("name=VPP;\n", encoding="utf-8")
+            manifest = source.parent.parent.parent / "appworkshop_221100.acf"
+            manifest.write_text(
+                '"AppWorkshop"\n{\n  "WorkshopItemsInstalled"\n  {\n'
+                '    "1828439124"\n    {\n      "size" "123"\n    }\n  }\n}\n',
+                encoding="utf-8",
+            )
+            executable = root / "steamcmd" / "steamcmd.sh"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            artifact = {
+                "provider": "steam-workshop",
+                "package_id": "221100:1828439124",
+                "revision": "1785000000",
+            }
+            with (
+                patch.dict("os.environ", {"HOME": str(root / "home")}, clear=False),
+                patch.object(workshop_provider, "_steamcmd", return_value=str(executable)),
+                patch.object(
+                    workshop_provider.subprocess,
+                    "run",
+                    return_value=SimpleNamespace(returncode=0, stdout="Success"),
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "revision metadata is unavailable"):
+                    workshop_provider.resolve_steam_workshop(
+                        artifact,
+                        root / "stage",
+                        root / "state" / "game-data",
+                    )
 
     def test_cache_inventory_reports_events_revisions_and_bytes(self):
         state_root = Path(self._state_tmp.name)
