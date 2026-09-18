@@ -238,6 +238,19 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   with self.assertRaisesRegex(ValueError,"unsupported runtime content activation mode"):
    service._configure_activation(context,current,{"mode":"anything"})
 
+ def test_customer_content_ui_exposes_desired_applied_and_reconciliation_error(self):
+  script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
+  for marker in (
+   "content-reconciliation-details",
+   "reconciliation.last_error",
+   "Desejado:",
+   "Aplicado:",
+   "Erro:",
+   "versão desejada",
+   "versão aplicada",
+  ):
+   self.assertIn(marker,script)
+
  def test_customer_dayz_content_ui_exposes_activation_mode_selector(self):
   script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
   for marker in ("configure-activation","content-activation-mode","Salvar modo","runtime ${item.activation_config.mode}"):
