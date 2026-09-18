@@ -33,6 +33,8 @@ from registry_repository import RegistryRepository
 from runtime_backend import backend_from_environment
 
 INTERVAL_SECONDS = max(10, int(os.environ.get("DSM_HYBRID_HEARTBEAT_SECONDS", "30")))
+HYBRID_AGENT_LOG_MAX_BYTES = 262144
+HYBRID_AGENT_LOG_MAX_LINES = 200
 _ALLOWED_DB_KEYS = {
     "DSM_DATABASE_DRIVER",
     "DSM_DATABASE",
@@ -44,6 +46,46 @@ _ALLOWED_DB_KEYS = {
     "DSM_DATABASE_TLS",
 }
 _SAFE_INSTANCE_ID = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
+
+
+def _hybrid_agent_log_path(root: Path) -> Path:
+    return root / "runtime" / "hybrid-agent-state" / "agent-runtime.log"
+
+
+def _append_hybrid_agent_log(root: Path, message: str, *, error: bool = False) -> str:
+    line = (
+        f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} "
+        f"{'ERROR' if error else 'INFO'} {message}"
+    )
+    path = _hybrid_agent_log_path(root)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.stat().st_size > HYBRID_AGENT_LOG_MAX_BYTES:
+            path.replace(path.with_suffix(".log.1"))
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+    except OSError:
+        pass
+    return line
+
+
+def _recent_hybrid_agent_logs(root: Path, limit: int = HYBRID_AGENT_LOG_MAX_LINES) -> list[str]:
+    try:
+        return _hybrid_agent_log_path(root).read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines()[-limit:]
+    except OSError:
+        return []
+
+
+def _publish_hybrid_agent_logs(backend, root: Path, agent_id: str) -> int:
+    from agent_heartbeat_api import _store_agent_metadata
+
+    logs = _recent_hybrid_agent_logs(root)
+    if not logs:
+        return 0
+    _store_agent_metadata(agent_id, {"agent_logs": logs}, backend=backend)
+    return len(logs)
 
 
 def _read_shell_values(path: Path) -> dict[str, str]:
@@ -486,7 +528,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     backup = process_hybrid_backup_cycle(effective_backend, root, agent_id)
     provisioning = process_hybrid_instance_provisioning_cycle(effective_backend, root, agent_id)
     game_data = process_hybrid_game_data_cycle(effective_backend, root, agent_id)
-    return {
+    response = {
         "active": True,
         "agent_id": agent_id,
         "instance_reconcile": instance_reconcile,
@@ -499,6 +541,27 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         "game_data": game_data,
         **result,
     }
+    game_state = game_data.get("state") if isinstance(game_data.get("state"), dict) else {}
+    message = (
+        f"hybrid heartbeat ok agent={agent_id} health={response.get('health_status')} "
+        f"instance_reconcile={instance_reconcile.get('healthy', 0)}/{instance_reconcile.get('instances', 0)} "
+        f"instance_files={instance_reconcile.get('files_access_prepared', 0)} "
+        f"configuration={configuration.get('applied', 0)}a/{configuration.get('failed', 0)}f "
+        f"instance_runtime={instance_runtime.get('status', 'idle')} "
+        f"instance_telemetry={instance_telemetry.get('accepted', 0)} "
+        f"instance_health={instance_health.get('healthy', 0)}/{instance_health.get('applied', 0)} "
+        f"backup={backup.get('completed', 0)}c/{backup.get('failed', 0)}f "
+        f"game_data={game_state.get('status', 'idle')}"
+    )
+    _append_hybrid_agent_log(root, message)
+    try:
+        response["published_log_lines"] = _publish_hybrid_agent_logs(
+            effective_backend, root, agent_id
+        )
+    except Exception:
+        response["published_log_lines"] = 0
+    response["log_message"] = message
+    return response
 
 
 def run_forever(root: Path = ROOT) -> None:
@@ -506,28 +569,11 @@ def run_forever(root: Path = ROOT) -> None:
         try:
             result = heartbeat_cycle(root)
             if result.get("active"):
-                game_data = result.get("game_data") if isinstance(result.get("game_data"), dict) else {}
-                state = game_data.get("state") if isinstance(game_data.get("state"), dict) else {}
-                instance_reconcile = result.get("instance_reconcile") if isinstance(result.get("instance_reconcile"), dict) else {}
-                configuration = result.get("configuration") if isinstance(result.get("configuration"), dict) else {}
-                instance_runtime = result.get("instance_runtime") if isinstance(result.get("instance_runtime"), dict) else {}
-                instance_telemetry = result.get("instance_telemetry") if isinstance(result.get("instance_telemetry"), dict) else {}
-                instance_health = result.get("instance_health") if isinstance(result.get("instance_health"), dict) else {}
-                backup = result.get("backup") if isinstance(result.get("backup"), dict) else {}
-                print(
-                    f"hybrid heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} "
-                    f"instance_reconcile={instance_reconcile.get('healthy', 0)}/{instance_reconcile.get('instances', 0)} "
-                    f"instance_files={instance_reconcile.get('files_access_prepared', 0)} "
-                    f"configuration={configuration.get('applied', 0)}a/{configuration.get('failed', 0)}f "
-                    f"instance_runtime={instance_runtime.get('status', 'idle')} "
-                    f"instance_telemetry={instance_telemetry.get('accepted', 0)} "
-                    f"instance_health={instance_health.get('healthy', 0)}/{instance_health.get('applied', 0)} "
-                    f"backup={backup.get('completed', 0)}c/{backup.get('failed', 0)}f "
-                    f"game_data={state.get('status', 'idle')}",
-                    flush=True,
-                )
+                print(result.get("log_message") or "hybrid heartbeat ok", flush=True)
         except Exception as exc:
-            print(f"hybrid heartbeat failed: {exc}", file=sys.stderr, flush=True)
+            message = f"hybrid heartbeat failed: {exc}"
+            _append_hybrid_agent_log(root, message, error=True)
+            print(message, file=sys.stderr, flush=True)
         time.sleep(INTERVAL_SECONDS)
 
 
