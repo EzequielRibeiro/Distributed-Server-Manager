@@ -4,6 +4,7 @@ set -Eeuo pipefail
 DSM_ROOT="${DSM_ROOT:-/opt/dsm}"
 WORKERS_DIR="${DSM_ROOT}/dashboard/workers"
 LOG="${DSM_ROOT}/logs/dashboard_worker.log"
+STEAM_ENV="${WORKERS_DIR}/steam_env.sh"
 PIDS=()
 WORKER_NAMES=()
 STOP_REQUESTED=0
@@ -84,6 +85,14 @@ supervise_workers(){
 
 main(){
     mkdir -p "$(dirname "$LOG")"
+
+    if [[ -f "${STEAM_ENV}" ]]; then
+        # shellcheck source=/dev/null
+        source "${STEAM_ENV}"
+        if ! load_worker_steam_user "${DSM_ROOT}"; then
+            log "Configuração DSM_STEAM_USER inválida; Steam autenticado indisponível aos workers"
+        fi
+    fi
     trap stop_children EXIT
     trap request_stop INT TERM
 
