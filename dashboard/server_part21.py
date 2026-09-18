@@ -6,7 +6,7 @@ import server_part20 as integration
 from yarax_security_http import install_yarax_security_http
 
 legacy = integration.legacy
-_controller_authenticate = integration.integration.integration.integration._controller_authenticate
+_controller_authenticate = integration.integration.integration._controller_authenticate
 install_yarax_security_http(legacy, _controller_authenticate)
 
 
