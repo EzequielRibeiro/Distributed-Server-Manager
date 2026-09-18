@@ -292,6 +292,21 @@ class ContentRepository:
      desired=str(v.get("desired_state") or "installed");v["activation_state"]=str(v.get("activation_state") or ("enabled" if desired=="installed" else "disabled"));v["activation_order"]=int(v.get("activation_order") or 0);v["security_state"]=str(v.get("security_state") or "unscanned");v["schema_version"]=2;out.append(v)
     return out
    finally:s.close()
+ def _protected_workshop_revisions(self,assignment):
+  provider=str(assignment.get("provider") or "").strip().lower()
+  artifact=assignment.get("artifact") if isinstance(assignment.get("artifact"),dict) else {}
+  package=str(artifact.get("package_id") or "").strip()
+  if provider not in {"steam","steam-workshop"} or ":" not in package:return []
+  revisions=set()
+  for item in self.history(str(assignment.get("assignment_id") or "")):
+   hist_artifact=item.get("artifact") if isinstance(item.get("artifact"),dict) else {}
+   if str(hist_artifact.get("package_id") or "").strip()!=package:continue
+   value=str(hist_artifact.get("revision") or item.get("version") or "").strip()
+   if value.isdigit():revisions.add(value)
+  current=str(artifact.get("revision") or assignment.get("version") or "").strip()
+  if current.isdigit():revisions.add(current)
+  return sorted(revisions,key=int)
+
  def _applied(self,agent_id):
   with self.backend.connect() as c:
    s=AlertSession(self.backend,c)
@@ -304,6 +319,11 @@ class ContentRepository:
    if state and state[0]==int(a["revision"]) and state[1]==str(a["checksum"]):
     if state[2]=="applied" and state[3] in {"clean","unscanned"}:continue
     if state[2]=="security_blocked" and state[3] in {"suspicious","blocked"}:continue
+   if str(a.get("provider") or "").strip().lower() in {"steam","steam-workshop"}:
+    artifact=dict(a.get("artifact") or {})
+    protected=self._protected_workshop_revisions(a)
+    if protected:artifact["protected_revisions"]=protected
+    a={**a,"artifact":artifact}
    out.append(a)
   return out
  def record_agent_state(self,agent_id,reports:list[Mapping[str,Any]]):

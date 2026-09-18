@@ -21,6 +21,7 @@ for path in (
 
 import content_provider_steam_workshop as workshop_provider
 import customer_content_workspace as workspace_module
+from content_repository import ContentRepository
 
 
 class SteamWorkshopRevisionCacheTest(unittest.TestCase):
@@ -207,6 +208,93 @@ class SteamWorkshopRevisionCacheTest(unittest.TestCase):
             clear=False,
         ):
             self.assertEqual(workshop_provider._retention_limit(), 7)
+
+    def test_controller_derives_protected_revisions_from_u9_history(self):
+        repository = ContentRepository.__new__(ContentRepository)
+        repository.history = lambda assignment_id: [
+            {
+                "version": "1785000000",
+                "artifact": {
+                    "provider": "steam-workshop",
+                    "package_id": "221100:1828439124",
+                    "revision": "1785000000",
+                },
+            },
+            {
+                "version": "1784000000",
+                "artifact": {
+                    "provider": "steam-workshop",
+                    "package_id": "221100:1828439124",
+                    "revision": "1784000000",
+                },
+            },
+            {
+                "version": "999",
+                "artifact": {
+                    "provider": "steam-workshop",
+                    "package_id": "221100:9999999999",
+                    "revision": "999",
+                },
+            },
+        ]
+        assignment = {
+            "assignment_id": "assignment-1",
+            "provider": "steam-workshop",
+            "version": "1785000000",
+            "artifact": {
+                "provider": "steam-workshop",
+                "package_id": "221100:1828439124",
+                "revision": "1785000000",
+            },
+        }
+
+        self.assertEqual(
+            repository._protected_workshop_revisions(assignment),
+            ["1784000000", "1785000000"],
+        )
+
+    def test_prune_never_removes_controller_protected_revisions(self):
+        with tempfile.TemporaryDirectory() as td:
+            revisions = Path(td) / "revisions"
+            revisions.mkdir()
+            for revision in ("100", "200", "300", "400", "500", "600"):
+                path = revisions / revision
+                path.mkdir()
+                (path / "marker").write_text(revision, encoding="utf-8")
+
+            with patch.dict(
+                "os.environ",
+                {"CAPIVARA_WORKSHOP_CACHE_REVISIONS": "2"},
+                clear=False,
+            ):
+                removed = workshop_provider._prune_revision_cache(
+                    revisions,
+                    keep_revision="600",
+                    protected_revisions={"100", "300"},
+                )
+
+            remaining = {
+                path.name
+                for path in revisions.iterdir()
+                if path.is_dir()
+            }
+            self.assertIn("100", remaining)
+            self.assertIn("300", remaining)
+            self.assertIn("600", remaining)
+            self.assertEqual(remaining, {"100", "300", "500", "600"})
+            self.assertEqual(set(removed), {"200", "400"})
+
+    def test_protected_revision_payload_is_fail_closed(self):
+        self.assertEqual(
+            workshop_provider._protected_revisions(
+                {"protected_revisions": ["100", "200", "100"]}
+            ),
+            {"100", "200"},
+        )
+        with self.assertRaisesRegex(ValueError, "protected revision must be numeric"):
+            workshop_provider._protected_revisions(
+                {"protected_revisions": ["100", "../bad"]}
+            )
 
     def test_invalid_revision_is_rejected_before_provider_execution(self):
         artifact = {
