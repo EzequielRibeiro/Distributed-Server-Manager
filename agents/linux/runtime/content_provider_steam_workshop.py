@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from content_provider import register_provider
+from content_cache_inventory import record_cache_event
 from game_data_executor import _steamcmd
 
 _PACKAGE = re.compile(r"^(?P<app>[0-9]+):(?P<item>[0-9]+)$")
@@ -289,13 +290,16 @@ def resolve_steam_workshop(artifact: dict[str, Any], stage: Path, game_data_root
 
     cached = _revision_cache_path(game_data_root, app_id, item_id, revision)
     if cached.is_dir():
+        record_cache_event("hit")
         return cached
 
     lock_path = _revision_lock_path(game_data_root, app_id, item_id, revision)
     with _RevisionLock(lock_path):
         if cached.is_dir():
+            record_cache_event("hit")
             return cached
-        return _download_and_resolve(
+        record_cache_event("miss")
+        result = _download_and_resolve(
             artifact,
             game_data_root,
             app_id,
@@ -303,6 +307,8 @@ def resolve_steam_workshop(artifact: dict[str, Any], stage: Path, game_data_root
             revision,
             protected_revisions,
         )
+        record_cache_event("download")
+        return result
 
 
 # `steam-workshop` is canonical. `steam` remains accepted for previously stored

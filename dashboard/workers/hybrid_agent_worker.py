@@ -189,6 +189,12 @@ def _content_client_module(root: Path):
     return content_client
 
 
+def _content_cache_inventory_module(root: Path):
+    _instance_runtime_module(root)
+    import content_cache_inventory
+    return content_cache_inventory
+
+
 def _prepare_hybrid_customer_files_access(instance_id: str) -> None:
     if not _SAFE_INSTANCE_ID.fullmatch(instance_id):
         raise ValueError("invalid instance_id for Hybrid files access helper")
@@ -437,11 +443,13 @@ def process_hybrid_configuration_cycle(
     reports = [item for item in reports if isinstance(item, dict)]
     accepted = repository.record_agent_state(agent_id, reports)
 
+    cache_inventory = _content_cache_inventory_module(root).snapshot()
     return {
         "status": "completed",
         "reported": reported,
         "commands": len(commands),
         "accepted": accepted,
+        "cache": cache_inventory,
         "applied": sum(
             1 for item in reports
             if str(item.get("status") or "").lower() == "applied"
