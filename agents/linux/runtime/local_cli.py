@@ -307,6 +307,19 @@ def _doctor(config: dict[str, Any]) -> dict[str, Any]:
         add("low_disk_space", "warning", "Root filesystem has less than 5 GiB free.")
     if int(game_data.get("failed_recent_jobs", 0)):
         add("recent_game_data_failures", "warning", "One or more recent local game-data jobs failed.")
+    content_security = capabilities.get("content_security") if isinstance(capabilities.get("content_security"), dict) else {}
+    security_state = str(content_security.get("state") or "")
+    engine_state = str(content_security.get("engine_state") or "")
+    rules_state = str(content_security.get("rules_state") or "")
+    if security_state == "missing_engine":
+        add("yarax_engine_missing", "warning", "YARA-X engine is unavailable; Universal Content security scans are fail-closed.")
+    elif engine_state == "error":
+        add("yarax_engine_error", "warning", str(content_security.get("engine_error") or content_security.get("last_error") or "YARA-X engine validation failed.")[:1000])
+    elif security_state == "missing_rules" or rules_state == "missing":
+        add("yarax_rules_missing", "warning", "YARA-X ruleset is unavailable; Universal Content security scans are fail-closed.")
+    elif rules_state == "error" or content_security.get("ruleset_checksum_valid") is False:
+        add("yarax_rules_invalid", "warning", str(content_security.get("last_error") or "YARA-X ruleset validation/checksum failed.")[:1000])
+
     steamcmd = capabilities.get("steamcmd_status") if isinstance(capabilities.get("steamcmd_status"), dict) else {}
     if steamcmd.get("installed") and not steamcmd.get("runtime_32bit", True):
         add("steamcmd_32bit_runtime_missing", "warning", "SteamCMD requires the Linux 32-bit compatibility runtime.")
@@ -332,6 +345,7 @@ def _doctor(config: dict[str, Any]) -> dict[str, Any]:
         "ports": ports,
         "game_data": game_data,
         "updates": updates,
+        "security": {"content": content_security},
         "findings": findings,
     }
 
