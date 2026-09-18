@@ -1226,6 +1226,15 @@
           "items": {
             "$ref": "#/$defs/content_activation_mode"
           }
+        },
+        "identifier_required": {
+          "type": "boolean"
+        },
+        "identifier_label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "pattern": "^[^\\u0000\\r\\n]+$"
         }
       }
     },
