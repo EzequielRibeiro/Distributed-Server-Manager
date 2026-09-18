@@ -69,7 +69,12 @@ class CustomerContentWorkspaceService:
   reference=str(artifact.get("package_id") or artifact.get("url") or artifact.get("published_file_id") or "").strip()
   if not reference:raise ValueError("Steam Workshop PublishedFileId or URL is required")
   resolved=getattr(self,"workshop_resolver",resolve_workshop_item)(reference,expected_app_id=app_id)
-  clean_artifact={key:value for key,value in dict(artifact).items() if key not in {"url","download_url","published_file_id","consumer_app_id","package_id","provider"}};clean_artifact.update({"provider":"steam-workshop","package_id":resolved["package_id"]})
+  clean_artifact={key:value for key,value in dict(artifact).items() if key not in {"url","download_url","published_file_id","consumer_app_id","package_id","provider","revision"}}
+  revision=str((resolved.get("metadata") or {}).get("time_updated") or "").strip()
+  clean_artifact.update({"provider":"steam-workshop","package_id":resolved["package_id"]})
+  if revision.isdigit():
+   clean_artifact["revision"]=revision
+   payload["version"]=revision
   metadata=dict(payload.get("metadata") or {});metadata["steam_workshop"]=dict(resolved["metadata"])
   provenance=dict(payload.get("provenance") or {});provenance["steam_workshop"]={"published_file_id":resolved["published_file_id"],"consumer_app_id":resolved["consumer_app_id"]}
   payload["provider"]="steam-workshop";payload["artifact"]=clean_artifact;payload["metadata"]=metadata;payload["provenance"]=provenance
