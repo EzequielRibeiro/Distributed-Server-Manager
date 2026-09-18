@@ -86,7 +86,7 @@ class CustomerWorkshopIntegrationTest(unittest.TestCase):
         payload, requested_by = service.content.puts[-1]
         self.assertEqual(seen, [("https://steamcommunity.com/sharedfiles/filedetails/?id=987654321", "221100")])
         self.assertEqual(payload["provider"], "steam-workshop")
-        self.assertEqual(payload["artifact"], {"provider": "steam-workshop", "package_id": "221100:987654321"})
+        self.assertEqual(payload["artifact"], {"provider": "steam-workshop", "package_id": "221100:987654321", "auth": "required"})
         self.assertEqual(payload["provenance"]["steam_workshop"]["consumer_app_id"], "221100")
         self.assertEqual(payload["metadata"]["steam_workshop"]["title"], "Safe Mod")
         self.assertNotIn("url", payload["artifact"])
@@ -105,11 +105,26 @@ class CustomerWorkshopIntegrationTest(unittest.TestCase):
         self.assertEqual(seen, ["108600"])
         payload = service.content.puts[-1][0]
         self.assertEqual(payload["artifact"]["package_id"], "108600:123")
+        self.assertEqual(payload["artifact"]["auth"], "anonymous")
         self.assertEqual(payload["activation_state"], "disabled")
         self.assertEqual(
             payload["metadata"]["activation"],
             {"adapter": "project-zomboid", "mode": "mod"},
         )
+
+    def test_customer_cannot_downgrade_runtime_owned_workshop_auth(self):
+        service = _service()
+        service.install({"username": "u"}, "i1", {
+            "content_id": "mod-auth",
+            "content_type": "workshop",
+            "provider": "steam-workshop",
+            "artifact": {
+                "package_id": "987654321",
+                "auth": "anonymous",
+            },
+        })
+        payload = service.content.puts[-1][0]
+        self.assertEqual(payload["artifact"]["auth"], "required")
 
     def test_runtime_without_workshop_identity_fails_closed(self):
         service = _service(game_id="minecraft", runtime_id="minecraft.vanilla.stable")
