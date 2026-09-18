@@ -5,9 +5,10 @@ import json,os,shutil,stat,subprocess
 from pathlib import Path
 from typing import Any
 try:
- from security_yarax import managed_binary as _managed_yarax_binary
+ from security_yarax import managed_binary as _managed_yarax_binary, status as _managed_engine_status
 except ModuleNotFoundError:
  _managed_yarax_binary=lambda:None
+ _managed_engine_status=lambda:{}
 try:
  from security_yarax_rules import managed_rules_path as _managed_yarax_rules_path, status as _managed_rules_status
 except ModuleNotFoundError:
@@ -31,6 +32,8 @@ def _binary()->str|None:
   return str(path) if path.is_file() else None
  managed=_managed_yarax_binary()
  if managed:return managed
+ managed_status=_managed_engine_status()
+ if str(managed_status.get("state") or "")=="error":return None
  return shutil.which("yr")
 
 def _rules_path()->Path:
@@ -38,6 +41,9 @@ def _rules_path()->Path:
  if configured:return Path(configured)
  managed=_managed_yarax_rules_path()
  if managed:return Path(managed)
+ managed_status=_managed_rules_status()
+ if str(managed_status.get("state") or "")=="error":
+  return STATE_ROOT/"security"/"yara-x"/"rulesets"/".invalid-managed-ruleset"
  return LEGACY_RULES_PATH
 
 def _rule_files(path:Path|None=None)->list[Path]:
@@ -48,9 +54,37 @@ def _rule_files(path:Path|None=None)->list[Path]:
  return sorted(p for p in path.rglob("*") if p.is_file() and not p.is_symlink() and p.suffix.lower() in {".yar",".yara"})[:10000]
 
 def scanner_status()->dict[str,Any]:
+ engine_override=str(os.environ.get("CAPIVARA_YARAX_BIN") or "").strip()
+ rules_override=str(os.environ.get("CAPIVARA_YARAX_RULES_PATH") or "").strip()
+ engine_candidate_status=_managed_engine_status() if not engine_override else {}
+ rules_candidate_status=_managed_rules_status() if not rules_override else {}
+ managed_binary=_managed_yarax_binary() if not engine_override else None
+ managed_rules=_managed_yarax_rules_path() if not rules_override else None
  binary=_binary();rules_path=_rules_path();rules=_rule_files(rules_path);ready=bool(binary and rules)
- managed_status=_managed_rules_status() if str(os.environ.get("CAPIVARA_YARAX_RULES_PATH") or "").strip()=="" else {}
- return {"engine":"yara-x","enforced":True,"ready":ready,"state":"ready" if ready else "missing_rules" if binary else "missing_engine","rules_count":len(rules),"rules_path":str(rules_path),"ruleset_version":managed_status.get("ruleset_version"),"ruleset_sha256":managed_status.get("sha256"),"ruleset_checksum_valid":managed_status.get("checksum_valid")}
+ engine_managed=bool(not engine_override and (managed_binary or str(engine_candidate_status.get("state") or "")=="error"))
+ rules_managed=bool(not rules_override and (managed_rules or str(rules_candidate_status.get("state") or "")=="error"))
+ engine_status=engine_candidate_status if engine_managed else {}
+ rules_status=rules_candidate_status if rules_managed else {}
+ engine_state=str(engine_status.get("state") or ("ready" if binary else "missing"))
+ rules_state=str(rules_status.get("state") or ("ready" if rules else "missing"))
+ state="ready" if ready else "missing_rules" if binary else "missing_engine"
+ if engine_state=="error":state="engine_error"
+ elif rules_state=="error":state="rules_error"
+ last_error=None
+ if engine_state=="error":last_error=str(engine_status.get("error") or "YARA-X engine validation failed")[:1000]
+ elif rules_state=="error":last_error=str(rules_status.get("error") or "YARA-X ruleset validation failed")[:1000]
+ elif not binary:last_error="YARA-X engine is unavailable"
+ elif not rules:last_error="YARA-X rules are unavailable"
+ return {
+  "engine":"yara-x","enforced":True,"ready":ready,"state":state,
+  "engine_state":engine_state,"engine_version":engine_status.get("installed_version") or engine_status.get("observed_version"),
+  "engine_pinned_version":engine_status.get("pinned_version"),"engine_path":str(binary) if binary else None,
+  "engine_managed":engine_managed,"engine_error":engine_status.get("error"),
+  "rules_state":rules_state,"rules_count":len(rules),"rules_path":str(rules_path),
+  "ruleset_version":rules_status.get("ruleset_version"),"ruleset_pinned_version":rules_status.get("pinned_ruleset_version"),
+  "ruleset_sha256":rules_status.get("sha256"),"ruleset_expected_sha256":rules_status.get("expected_sha256"),
+  "ruleset_checksum_valid":rules_status.get("checksum_valid"),"rules_managed":rules_managed,"last_error":last_error,
+ }
 
 def _verdict(state:str,*,reason:str|None=None,matches:list[dict[str,Any]]|None=None)->dict[str,Any]:
  return {"security_state":state,"engine":"yara-x","policy_version":1,"reason":reason,"matches":list(matches or [])[:200]}

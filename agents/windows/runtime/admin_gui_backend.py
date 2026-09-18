@@ -41,6 +41,32 @@ def _config() -> dict[str, Any]:
 def _safe_config(config: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in config.items() if key not in SENSITIVE_KEYS}
 
+def _security_health() -> dict[str, Any]:
+    capabilities = detect_capabilities()
+    content = capabilities.get("content_security") if isinstance(capabilities.get("content_security"), dict) else {}
+    findings: list[dict[str, str]] = []
+
+    def add(code: str, message: str) -> None:
+        findings.append({"code": code, "severity": "warning", "message": message})
+
+    state = str(content.get("state") or "")
+    engine_state = str(content.get("engine_state") or "")
+    rules_state = str(content.get("rules_state") or "")
+    if state == "missing_engine":
+        add("yarax_engine_missing", "YARA-X engine is unavailable; Universal Content security scans are fail-closed.")
+    elif engine_state == "error":
+        add("yarax_engine_error", str(content.get("engine_error") or content.get("last_error") or "YARA-X engine validation failed.")[:1000])
+    elif state == "missing_rules" or rules_state == "missing":
+        add("yarax_rules_missing", "YARA-X ruleset is unavailable; Universal Content security scans are fail-closed.")
+    elif rules_state == "error" or content.get("ruleset_checksum_valid") is False:
+        add("yarax_rules_invalid", str(content.get("last_error") or "YARA-X ruleset validation/checksum failed.")[:1000])
+
+    return {
+        "status": "ready" if content.get("ready") else "degraded",
+        "content_security": content,
+        "findings": findings,
+    }
+
 def _task_state() -> dict[str, Any]:
     if os.name != "nt":
         return {"state": "portable-test", "task_name": TASK_NAME}
@@ -107,6 +133,7 @@ def snapshot() -> dict[str, Any]:
     health = health_inventory(config)
     task = _task_state()
     public_network = _agent_public_network()
+    security_health = _security_health()
     bad = [item for item in health if str(item.get("status") or item.get("health") or "").lower() in {"critical","failed","unhealthy"}]
     overall = "healthy" if task.get("state") in {"running","ready","portable-test"} and not bad else "degraded"
     return {
@@ -120,7 +147,13 @@ def snapshot() -> dict[str, Any]:
         "instances": instance_runtime.inventory(config), "instance_health": health,
         "reconciliation": reconciliation_inventory(config), "metrics": metrics, "storage_pools": pools,
         "configuration_state": configuration_state(), "content_state": content_state(), "backup_state": backup_state(),
-        "broadcast_state": broadcast_state(), "game_data": game_data_summary(), "security": {"yara_x": yarax_status(), "yara_x_rules": yarax_rules_status()},
+        "broadcast_state": broadcast_state(), "game_data": game_data_summary(),
+        "security": {
+            "yara_x": yarax_status(),
+            "yara_x_rules": yarax_rules_status(),
+            "content": security_health["content_security"],
+            "findings": security_health["findings"],
+        },
     }
 
 def _instance_action(action: str, args: list[str]) -> Any:
@@ -168,7 +201,16 @@ def execute(tokens: list[str]) -> Any:
     if parts[:2] == ["agent","public-network"]: return _agent_public_network()
     if parts[:3] == ["agent","controller","test"]: return _controller_test()
     if parts[:2] == ["agent","logs"]: return _tail(int(parts[2]) if len(parts) > 2 else 200)
-    if parts[:2] == ["agent","doctor"]: return {"task": _task_state(), "controller": _controller_test(), "public_network": _agent_public_network(), "health": health_inventory(config), "queues": metrics_snapshot().get("queue_health",{})}
+    if parts[:2] == ["agent","doctor"]:
+        security = _security_health()
+        return {
+            "task": _task_state(),
+            "controller": _controller_test(),
+            "public_network": _agent_public_network(),
+            "health": health_inventory(config),
+            "queues": metrics_snapshot().get("queue_health",{}),
+            "security": security,
+        }
     if parts[:2] == ["agent","reconcile"]: return reconcile_all(config, force=True)
     if parts[:3] == ["agent","storage","pools"]: return pool_inventory(config)
     if parts[:2] == ["agent","queues"]: return metrics_snapshot().get("queue_health",{})

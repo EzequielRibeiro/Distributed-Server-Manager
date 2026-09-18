@@ -146,6 +146,8 @@ def status() -> dict[str, Any]:
             functional = True
         except Exception as exc:
             error = str(exc)[:1000]
+    elif current:
+        error = "Managed YARA-X engine metadata exists but the active binary is unavailable"
     return {
         "engine": "yara-x",
         "managed": True,
@@ -156,7 +158,7 @@ def status() -> dict[str, Any]:
         "path": binary,
         "installed": bool(binary),
         "functional": functional,
-        "state": "ready" if functional else "error" if binary else "missing",
+        "state": "ready" if functional else "error" if current else "missing",
         "observed_version": observed,
         "error": error,
     }
