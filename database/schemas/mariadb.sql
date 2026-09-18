@@ -2748,3 +2748,25 @@ CREATE INDEX idx_agent_instance_commands_agent_status
 CREATE INDEX idx_agent_instance_commands_instance
     ON agent_instance_commands(instance_id,created_at);
 
+-- source: 042_yarax_admin_operations.sql
+-- Capivara DSM - Migration 042 - YARA-X administrative operations.
+CREATE TABLE IF NOT EXISTS yarax_admin_operations (
+    operation_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    instance_id TEXT,
+    content_id TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    requested_by TEXT,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    result_json TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    delivered_at TEXT,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_yarax_admin_operations_agent_status
+    ON yarax_admin_operations(agent_id,status,created_at);
+CREATE INDEX IF NOT EXISTS idx_yarax_admin_operations_created
+    ON yarax_admin_operations(created_at);
