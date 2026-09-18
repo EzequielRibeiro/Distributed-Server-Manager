@@ -10,7 +10,7 @@ from customer_instance_policy import PERMISSION_PRESETS,effective_permissions,en
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from customer_content_workspace import CustomerContentWorkspaceService
 from instance_team_repository import InstanceTeamRepository
-from runtime_workspace_catalog import allowed_runtimes,runtime_allowed_by_contract
+from runtime_workspace_catalog import allowed_runtimes,runtime_allowed_by_contract,runtime_content_activation_capabilities
 from schema_baseline import load_schema_baseline
 
 class CustomerWorkspaceV2Test(unittest.TestCase):
@@ -213,6 +213,7 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
 
  def test_dayz_customer_can_choose_mod_or_server_mod_without_raw_arguments(self):
   service=CustomerContentWorkspaceService.__new__(CustomerContentWorkspaceService)
+  service.workspace=type("Workspace",(),{"root":ROOT})()
   current={
    "instance_id":"dayz-1","content_id":"steam-workshop:1828439124","game_id":"dayz",
    "content_type":"workshop","desired_state":"installed","activation_state":"enabled",
@@ -228,13 +229,13 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
 
   payload=service._configure_activation(context,current,{"mode":"server-mod"})
   self.assertEqual(
-   {"adapter":"dayz","mode":"server-mod","identifier":"steam-workshop:1828439124"},
+   {"adapter":"dayz","mode":"server-mod"},
    payload["metadata"]["activation"],
   )
   self.assertNotIn("arguments",payload)
   with self.assertRaisesRegex(ValueError,"unsupported activation fields"):
    service._configure_activation(context,current,{"mode":"mod","adapter":"custom"})
-  with self.assertRaisesRegex(ValueError,"unsupported DayZ"):
+  with self.assertRaisesRegex(ValueError,"unsupported runtime content activation mode"):
    service._configure_activation(context,current,{"mode":"anything"})
 
  def test_customer_dayz_content_ui_exposes_activation_mode_selector(self):
@@ -242,6 +243,7 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   for marker in ("configure-activation","content-activation-mode","Salvar modo","runtime ${item.activation_config.mode}"):
    self.assertIn(marker.replace("\\$","$"),script)
   service=CustomerContentWorkspaceService.__new__(CustomerContentWorkspaceService)
+  service.workspace=type("Workspace",(),{"root":ROOT})()
   config=service._activation_configuration(
    {"game_id":"dayz","runtime_id":"dayz.stable"},
    {"game_id":"dayz","content_type":"workshop","metadata":{}},
@@ -254,6 +256,25 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   self.assertIn('mode not in {"mod", "server-mod"}',dayz)
   self.assertIn('arguments.append("-mod="',dayz)
   self.assertIn('arguments.append("-serverMod="',dayz)
+
+ def test_runtime_catalog_owns_content_activation_modes(self):
+  dayz=runtime_content_activation_capabilities(ROOT,"dayz","dayz.stable")
+  self.assertEqual("dayz",dayz["adapter"])
+  self.assertEqual("mod",dayz["types"]["workshop"]["default_mode"])
+  self.assertEqual(
+   ["mod","server-mod"],
+   [item["value"] for item in dayz["types"]["workshop"]["modes"]],
+  )
+  self.assertEqual({},runtime_content_activation_capabilities(ROOT,"minecraft","minecraft.java.paper"))
+
+  service=CustomerContentWorkspaceService.__new__(CustomerContentWorkspaceService)
+  service.workspace=type("Workspace",(),{"root":ROOT})()
+  self.assertIsNone(
+   service._activation_configuration(
+    {"game_id":"minecraft","runtime_id":"minecraft.java.paper"},
+    {"game_id":"minecraft","content_type":"plugin","metadata":{}},
+   )
+  )
 
  def test_palworld_console_blocks_admin_password_before_queueing(self):
   service=CustomerInstanceWorkspaceService.__new__(CustomerInstanceWorkspaceService);service.root=ROOT

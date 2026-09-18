@@ -6,7 +6,7 @@ from typing import Mapping
 from content_repository import ContentRepository
 from content_provider_capabilities import provider_capabilities,provider_supports
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
-from runtime_workspace_catalog import runtime_definition
+from runtime_workspace_catalog import runtime_content_activation_capabilities,runtime_definition
 from steam_workshop_resolver import resolve_workshop_item
 from minecraft_content_resolver import discover_minecraft_content,resolve_minecraft_content
 from minecraft_modpack_resolver import resolve_minecraft_modpack
@@ -141,13 +141,23 @@ class CustomerContentWorkspaceService:
   return {key:item.get(key) for key in _INSTALL_FIELDS if key in item and key not in {"source"}}
  def _activation_configuration(self,context,item):
   game_id=str(context.get("game_id") or item.get("game_id") or "").strip().lower()
+  runtime_id=str(context.get("runtime_id") or "").strip().lower()
   ctype=str(item.get("content_type") or "").strip().lower()
-  if game_id!="dayz" or ctype not in {"mod","workshop"}:return None
+  if not game_id or not runtime_id or not ctype:return None
+  capabilities=runtime_content_activation_capabilities(self.workspace.root,game_id,runtime_id)
+  declaration=(capabilities.get("types") or {}).get(ctype) if isinstance(capabilities,Mapping) else None
+  if not isinstance(declaration,Mapping):return None
+  modes=[dict(value) for value in declaration.get("modes") or [] if isinstance(value,Mapping)]
+  valid={str(value.get("value") or "").strip().lower() for value in modes}
+  if not valid:return None
   metadata=item.get("metadata") if isinstance(item.get("metadata"),Mapping) else {}
   activation=metadata.get("activation") if isinstance(metadata.get("activation"),Mapping) else {}
-  mode=str(activation.get("mode") or "mod").strip().lower()
-  if mode not in {"mod","server-mod"}:mode="mod"
-  return {"adapter":"dayz","mode":mode,"modes":[{"value":"mod","label":"Mod cliente + servidor"},{"value":"server-mod","label":"Mod somente servidor"}]}
+  current_adapter=str(activation.get("adapter") or "").strip().lower()
+  adapter=str(capabilities.get("adapter") or "").strip().lower()
+  mode=str(activation.get("mode") or declaration.get("default_mode") or "").strip().lower()
+  if current_adapter and current_adapter!=adapter:mode=str(declaration.get("default_mode") or "").strip().lower()
+  if mode not in valid:mode=str(declaration.get("default_mode") or "").strip().lower()
+  return {"adapter":adapter,"mode":mode,"modes":modes}
 
  def _configure_activation(self,context,current,body):
   if not isinstance(body,Mapping):raise ValueError("content activation payload must be an object")
@@ -157,12 +167,14 @@ class CustomerContentWorkspaceService:
   config=self._activation_configuration(context,current)
   if config is None:raise PermissionError("content activation mode is unavailable for this runtime/content type")
   mode=str(body.get("mode") or "").strip().lower()
-  valid={str(item.get("value") or "") for item in config.get("modes") or []}
-  if mode not in valid:raise ValueError("unsupported DayZ content activation mode")
+  valid={str(item.get("value") or "").strip().lower() for item in config.get("modes") or []}
+  if mode not in valid:raise ValueError("unsupported runtime content activation mode")
   payload=self._desired(current);payload["instance_id"]=str(current.get("instance_id") or context.get("id") or "")
   metadata=dict(payload.get("metadata") or {});activation=metadata.get("activation") if isinstance(metadata.get("activation"),Mapping) else {}
-  identifier=str(activation.get("identifier") or current.get("content_id") or "").strip()[:191]
-  metadata["activation"]={"adapter":"dayz","mode":mode,"identifier":identifier}
+  next_activation={"adapter":str(config.get("adapter") or ""),"mode":mode}
+  identifier=str(activation.get("identifier") or "").strip()
+  if identifier:next_activation["identifier"]=identifier[:191]
+  metadata["activation"]=next_activation
   payload["metadata"]=metadata
   return payload
  def list(self,user,instance_id):

@@ -38,6 +38,37 @@
   "content": {
     "steam_workshop": {
       "app_id": "221100"
+    },
+    "activation": {
+      "adapter": "dayz",
+      "types": {
+        "mod": {
+          "default_mode": "mod",
+          "modes": [
+            {
+              "id": "mod",
+              "label": "Mod cliente + servidor"
+            },
+            {
+              "id": "server-mod",
+              "label": "Mod somente servidor"
+            }
+          ]
+        },
+        "workshop": {
+          "default_mode": "mod",
+          "modes": [
+            {
+              "id": "mod",
+              "label": "Mod cliente + servidor"
+            },
+            {
+              "id": "server-mod",
+              "label": "Mod somente servidor"
+            }
+          ]
+        }
+      }
     }
   },
   "installation": {
