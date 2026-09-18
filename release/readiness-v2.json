@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "release_line": "2.0",
-  "release_version": "2.0.63",
-  "tag_name": "v2.0.63",
+  "release_version": "2.0.64",
+  "tag_name": "v2.0.64",
   "status": "release-approved",
   "publish_release": false,
   "release_authorized": true,
@@ -37,7 +37,15 @@
     "PostgreSQL Baseline v2 Isolated Deployment",
     "Legacy Audit",
     "Capivara 2.0 Release Readiness",
-    "Provisioning Failure Alert"
+    "Provisioning Failure Alert",
+    "Maintenance Restart Framework",
+    "DayZ Native Restart",
+    "M7 Native Maintenance",
+    "M8 Universal Mod Management",
+    "M9 Minecraft Modpacks",
+    "M10 Final E2E Release Validation",
+    "Baseline Update Reconciliation",
+    "Universal Server Update"
   ],
   "mandatory_capabilities": [
     "multi-game-runtime",
