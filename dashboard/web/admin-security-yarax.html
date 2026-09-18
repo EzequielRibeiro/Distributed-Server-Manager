@@ -43,10 +43,22 @@
         <table>
           <thead>
             <tr>
-              <th>Agent</th><th>Saúde</th><th>Scanner</th><th>Engine</th><th>Ruleset</th><th>Regras</th><th>Checksum</th><th>Último erro</th>
+              <th>Agent</th><th>Saúde</th><th>Scanner</th><th>Engine</th><th>Ruleset</th><th>Regras</th><th>Checksum</th><th>Último erro</th><th>Operações</th>
             </tr>
           </thead>
           <tbody id="agents"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title">
+        <div><h2>Operações administrativas</h2><p>Comandos allowlisted entregues pelo heartbeat. Alterações de política são exclusivas de administradores.</p></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Data</th><th>Agent</th><th>Ação</th><th>Status</th><th>Alvo</th><th>Erro</th></tr></thead>
+          <tbody id="operations"></tbody>
         </table>
       </div>
     </section>
