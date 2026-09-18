@@ -397,6 +397,57 @@ class SteamWorkshopRevisionCacheTest(unittest.TestCase):
             self.assertEqual(call_count, 1)
             self.assertTrue(results[0].is_dir())
 
+    def test_revision_lookup_skips_stale_cache_and_uses_later_matching_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            game_data_root = root / "state" / "game-data"
+            executable = root / "steamcmd" / "steamcmd.sh"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+
+            stale = (
+                executable.parent
+                / "steamapps" / "workshop" / "content" / "221100" / "1828439124"
+            )
+            stale.mkdir(parents=True)
+            (stale / "mod.cpp").write_text("stale\n", encoding="utf-8")
+            self._write_manifest(stale, "221100", "1828439124", "1784000000")
+
+            home = root / "home"
+            valid = (
+                home / ".steam" / "steamcmd"
+                / "steamapps" / "workshop" / "content" / "221100" / "1828439124"
+            )
+            valid.mkdir(parents=True)
+            (valid / "mod.cpp").write_text("current\n", encoding="utf-8")
+            self._write_manifest(valid, "221100", "1828439124", "1785000000")
+
+            artifact = {
+                "provider": "steam-workshop",
+                "package_id": "221100:1828439124",
+                "revision": "1785000000",
+            }
+            with (
+                patch.dict("os.environ", {"HOME": str(home)}, clear=False),
+                patch.object(workshop_provider, "_steamcmd", return_value=str(executable)),
+                patch.object(
+                    workshop_provider.subprocess,
+                    "run",
+                    return_value=SimpleNamespace(returncode=0, stdout="Success"),
+                ),
+            ):
+                result = workshop_provider.resolve_steam_workshop(
+                    artifact,
+                    root / "stage",
+                    game_data_root,
+                )
+
+            self.assertTrue(result.is_dir())
+            self.assertEqual(
+                (result / "mod.cpp").read_text(encoding="utf-8"),
+                "current\n",
+            )
+
     def test_revision_snapshot_fails_closed_when_manifest_revision_mismatches(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
