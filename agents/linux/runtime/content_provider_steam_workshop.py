@@ -7,6 +7,7 @@ shell. Activation remains owned by content_client.
 """
 from __future__ import annotations
 
+import fcntl
 import os
 import re
 import shutil
@@ -113,6 +114,44 @@ def _revision(artifact: dict[str, Any]) -> str | None:
     return value
 
 
+def _revision_lock_path(
+    game_data_root: Path,
+    app_id: str,
+    item_id: str,
+    revision: str,
+) -> Path:
+    state_root = Path(game_data_root).resolve().parent
+    return (
+        state_root
+        / "provider-cache"
+        / "steam-workshop"
+        / app_id
+        / item_id
+        / "locks"
+        / f"{revision}.lock"
+    ).resolve()
+
+
+class _RevisionLock:
+    def __init__(self, path: Path):
+        self.path = path
+        self.handle = None
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = self.path.open("a+")
+        fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.handle is not None:
+            try:
+                fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+            finally:
+                self.handle.close()
+        return False
+
+
 def _revision_cache_path(
     game_data_root: Path,
     app_id: str,
@@ -192,16 +231,14 @@ def _cache_candidates(executable: str, game_data_root: Path, app_id: str, item_i
     return out
 
 
-def resolve_steam_workshop(artifact: dict[str, Any], stage: Path, game_data_root: Path) -> Path:
-    del stage
-    app_id, item_id = _identity(artifact)
-    revision = _revision(artifact)
-    protected_revisions = _protected_revisions(artifact)
-    if revision:
-        cached = _revision_cache_path(game_data_root, app_id, item_id, revision)
-        if cached.is_dir():
-            return cached
-
+def _download_and_resolve(
+    artifact: dict[str, Any],
+    game_data_root: Path,
+    app_id: str,
+    item_id: str,
+    revision: str | None,
+    protected_revisions: set[str],
+) -> Path:
     executable = _steamcmd()
     login = _login(artifact)
     env = {**os.environ, "HOME": os.environ.get("HOME", str(Path(game_data_root).resolve().parent))}
@@ -233,6 +270,39 @@ def resolve_steam_workshop(artifact: dict[str, Any], stage: Path, game_data_root
                 )
             return candidate
     raise RuntimeError("SteamCMD completed but the Workshop item was not found in a managed Steam cache")
+
+
+def resolve_steam_workshop(artifact: dict[str, Any], stage: Path, game_data_root: Path) -> Path:
+    del stage
+    app_id, item_id = _identity(artifact)
+    revision = _revision(artifact)
+    protected_revisions = _protected_revisions(artifact)
+    if not revision:
+        return _download_and_resolve(
+            artifact,
+            game_data_root,
+            app_id,
+            item_id,
+            None,
+            protected_revisions,
+        )
+
+    cached = _revision_cache_path(game_data_root, app_id, item_id, revision)
+    if cached.is_dir():
+        return cached
+
+    lock_path = _revision_lock_path(game_data_root, app_id, item_id, revision)
+    with _RevisionLock(lock_path):
+        if cached.is_dir():
+            return cached
+        return _download_and_resolve(
+            artifact,
+            game_data_root,
+            app_id,
+            item_id,
+            revision,
+            protected_revisions,
+        )
 
 
 # `steam-workshop` is canonical. `steam` remains accepted for previously stored
