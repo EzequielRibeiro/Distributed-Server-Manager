@@ -157,11 +157,34 @@ class CustomerContentWorkspaceService:
   mode=str(activation.get("mode") or declaration.get("default_mode") or "").strip().lower()
   if current_adapter and current_adapter!=adapter:mode=str(declaration.get("default_mode") or "").strip().lower()
   if mode not in valid:mode=str(declaration.get("default_mode") or "").strip().lower()
-  return {"adapter":adapter,"mode":mode,"modes":modes}
+  identifier=str(activation.get("identifier") or "").strip()
+  return {
+   "adapter":adapter,
+   "mode":mode,
+   "modes":modes,
+   "identifier":identifier,
+   "identifier_required":bool(declaration.get("identifier_required",False)),
+   "identifier_label":str(declaration.get("identifier_label") or "Identificador"),
+  }
+
+ def _safe_activation_identifier(self,value):
+  identifier=str(value or "").strip()
+  if not identifier or len(identifier)>191 or any(c in identifier for c in ("\x00","\r","\n",";")):
+   raise ValueError("invalid runtime content activation identifier")
+  return identifier
+
+ def _prepare_activation_defaults(self,context,payload):
+  config=self._activation_configuration(context,payload)
+  if config is None:return payload
+  metadata=dict(payload.get("metadata") or {})
+  metadata["activation"]={"adapter":str(config.get("adapter") or ""),"mode":str(config.get("mode") or "")}
+  payload["metadata"]=metadata
+  if config.get("identifier_required"):payload["activation_state"]="disabled"
+  return payload
 
  def _configure_activation(self,context,current,body):
   if not isinstance(body,Mapping):raise ValueError("content activation payload must be an object")
-  allowed={"instance_id","content_id","action","mode"}
+  allowed={"instance_id","content_id","action","mode","identifier"}
   unknown=sorted(set(body)-allowed)
   if unknown:raise ValueError("unsupported activation fields: "+", ".join(unknown))
   config=self._activation_configuration(context,current)
@@ -169,13 +192,17 @@ class CustomerContentWorkspaceService:
   mode=str(body.get("mode") or "").strip().lower()
   valid={str(item.get("value") or "").strip().lower() for item in config.get("modes") or []}
   if mode not in valid:raise ValueError("unsupported runtime content activation mode")
+  required=bool(config.get("identifier_required"))
+  identifier=str(body.get("identifier") if "identifier" in body else config.get("identifier") or "").strip()
+  if required:identifier=self._safe_activation_identifier(identifier)
+  elif identifier:identifier=self._safe_activation_identifier(identifier)
   payload=self._desired(current);payload["instance_id"]=str(current.get("instance_id") or context.get("id") or "")
-  metadata=dict(payload.get("metadata") or {});activation=metadata.get("activation") if isinstance(metadata.get("activation"),Mapping) else {}
+  metadata=dict(payload.get("metadata") or {})
   next_activation={"adapter":str(config.get("adapter") or ""),"mode":mode}
-  identifier=str(activation.get("identifier") or "").strip()
-  if identifier:next_activation["identifier"]=identifier[:191]
+  if identifier:next_activation["identifier"]=identifier
   metadata["activation"]=next_activation
   payload["metadata"]=metadata
+  if required:payload["activation_state"]="enabled"
   return payload
  def list(self,user,instance_id):
   context,_,_=self._context_policy_details(user,instance_id,"content.read");items=self.content.customer_view(instance_id,limit=2000)
@@ -249,7 +276,7 @@ class CustomerContentWorkspaceService:
   modpack=self._resolve_minecraft_modpack(context,payload)
   if modpack is not None:
    parent,bundle,children=modpack;return self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"))
-  self._resolve_workshop(context,payload);self._resolve_minecraft_provider(context,payload);return self.content.put(payload,requested_by=str(user.get("username") or "customer"))
+  self._resolve_workshop(context,payload);self._resolve_minecraft_provider(context,payload);self._prepare_activation_defaults(context,payload);return self.content.put(payload,requested_by=str(user.get("username") or "customer"))
  def mutate(self,user,instance_id,content_id,action,body=None):
   action=str(action or "").strip().lower();required="content.remove" if action=="remove" else "content.install";context,policy=self._context_policy(user,instance_id,required);current=self._existing(instance_id,content_id);actor=str(user.get("username") or "customer");ctype=str(current.get("content_type") or "").lower();provider=str(current.get("provider") or "").strip().lower()
   marker=(current.get("metadata") or {}).get("bundle") if isinstance(current.get("metadata"),Mapping) else None
