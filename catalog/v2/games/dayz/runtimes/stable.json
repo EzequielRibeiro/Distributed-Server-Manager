@@ -37,7 +37,8 @@
   },
   "content": {
     "steam_workshop": {
-      "app_id": "221100"
+      "app_id": "221100",
+      "auth": "required"
     },
     "activation": {
       "adapter": "dayz",
