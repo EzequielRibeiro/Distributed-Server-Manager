@@ -21,6 +21,7 @@ from runtime_health import health_inventory
 from runtime_metrics import snapshot as metrics_snapshot
 from runtime_reconciler import reconcile_all, reconciliation_inventory
 from storage_pools import pool_inventory
+from security_yarax import install as yarax_install, status as yarax_status
 
 PROGRAM_DATA = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", PROGRAM_DATA / "CapivaraAgent" / "state"))
@@ -118,7 +119,7 @@ def snapshot() -> dict[str, Any]:
         "instances": instance_runtime.inventory(config), "instance_health": health,
         "reconciliation": reconciliation_inventory(config), "metrics": metrics, "storage_pools": pools,
         "configuration_state": configuration_state(), "content_state": content_state(), "backup_state": backup_state(),
-        "broadcast_state": broadcast_state(), "game_data": game_data_summary(),
+        "broadcast_state": broadcast_state(), "game_data": game_data_summary(), "security": {"yara_x": yarax_status()},
     }
 
 def _instance_action(action: str, args: list[str]) -> Any:
@@ -143,6 +144,8 @@ def command_catalog() -> list[dict[str, Any]]:
         {"id":"agent.reconcile","group":"Diagnóstico","label":"Reconciliar instâncias","command":"agent reconcile"},
         {"id":"agent.storage","group":"Storage","label":"Storage Pools","command":"agent storage pools"},
         {"id":"agent.queues","group":"Diagnóstico","label":"Filas","command":"agent queues"},
+        {"id":"agent.security.yara.status","group":"Segurança","label":"YARA-X status","command":"agent security yara status"},
+        {"id":"agent.security.yara.install","group":"Segurança","label":"Instalar/atualizar YARA-X","command":"agent security yara install","mutating":True},
         {"id":"instance.list","group":"Instâncias","label":"Listar instâncias","command":"instance list"},
         {"id":"instance.status","group":"Instâncias","label":"Status da instância","command":"instance status <id>","requires_instance":True},
         {"id":"instance.doctor","group":"Instâncias","label":"Doctor da instância","command":"instance doctor <id>","requires_instance":True},
@@ -166,6 +169,8 @@ def execute(tokens: list[str]) -> Any:
     if parts[:2] == ["agent","reconcile"]: return reconcile_all(config, force=True)
     if parts[:3] == ["agent","storage","pools"]: return pool_inventory(config)
     if parts[:2] == ["agent","queues"]: return metrics_snapshot().get("queue_health",{})
+    if parts[:4] == ["agent","security","yara","status"]: return yarax_status()
+    if parts[:4] == ["agent","security","yara","install"]: return yarax_install()
     if parts[:2] == ["instance","list"]: return instance_runtime.inventory(config)
     if len(parts) >= 3 and parts[0] == "instance" and parts[1] in {"status","doctor","start","stop","restart"}:
         return _instance_action(parts[1], parts[2:])
