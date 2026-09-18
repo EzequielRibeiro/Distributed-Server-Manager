@@ -49,11 +49,15 @@ def _rule_files(path:Path|None=None)->list[Path]:
  return sorted(p for p in path.rglob("*") if p.is_file() and not p.is_symlink() and p.suffix.lower() in {".yar",".yara"})[:10000]
 
 def scanner_status()->dict[str,Any]:
- binary=_binary();rules_path=_rules_path();rules=_rule_files(rules_path);ready=bool(binary and rules)
  engine_override=str(os.environ.get("CAPIVARA_YARAX_BIN") or "").strip()
  rules_override=str(os.environ.get("CAPIVARA_YARAX_RULES_PATH") or "").strip()
- engine_status=_managed_engine_status() if not engine_override else {}
- rules_status=_managed_rules_status() if not rules_override else {}
+ managed_binary=_managed_yarax_binary() if not engine_override else None
+ managed_rules=_managed_yarax_rules_path() if not rules_override else None
+ binary=_binary();rules_path=_rules_path();rules=_rule_files(rules_path);ready=bool(binary and rules)
+ engine_managed=bool(managed_binary and binary and Path(binary)==Path(managed_binary))
+ rules_managed=bool(managed_rules and Path(rules_path)==Path(managed_rules))
+ engine_status=_managed_engine_status() if engine_managed else {}
+ rules_status=_managed_rules_status() if rules_managed else {}
  engine_state=str(engine_status.get("state") or ("ready" if binary else "missing"))
  rules_state=str(rules_status.get("state") or ("ready" if rules else "missing"))
  state="ready" if ready else "missing_rules" if binary else "missing_engine"
@@ -66,12 +70,11 @@ def scanner_status()->dict[str,Any]:
   "engine":"yara-x","enforced":True,"ready":ready,"state":state,
   "engine_state":engine_state,"engine_version":engine_status.get("installed_version") or engine_status.get("observed_version"),
   "engine_pinned_version":engine_status.get("pinned_version"),"engine_path":str(binary) if binary else None,
-  "engine_managed":bool(engine_status.get("managed")) if not engine_override else False,
-  "engine_error":engine_status.get("error"),"rules_state":rules_state,"rules_count":len(rules),
-  "rules_path":str(rules_path),"ruleset_version":rules_status.get("ruleset_version"),
-  "ruleset_pinned_version":rules_status.get("pinned_ruleset_version"),"ruleset_sha256":rules_status.get("sha256"),
-  "ruleset_expected_sha256":rules_status.get("expected_sha256"),"ruleset_checksum_valid":rules_status.get("checksum_valid"),
-  "rules_managed":bool(rules_status.get("managed")) if not rules_override else False,"last_error":last_error,
+  "engine_managed":engine_managed,"engine_error":engine_status.get("error"),
+  "rules_state":rules_state,"rules_count":len(rules),"rules_path":str(rules_path),
+  "ruleset_version":rules_status.get("ruleset_version"),"ruleset_pinned_version":rules_status.get("pinned_ruleset_version"),
+  "ruleset_sha256":rules_status.get("sha256"),"ruleset_expected_sha256":rules_status.get("expected_sha256"),
+  "ruleset_checksum_valid":rules_status.get("checksum_valid"),"rules_managed":rules_managed,"last_error":last_error,
  }
 
 def _verdict(state:str,*,reason:str|None=None,matches:list[dict[str,Any]]|None=None)->dict[str,Any]:
