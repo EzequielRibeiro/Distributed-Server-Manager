@@ -56,6 +56,10 @@ def managed_rules_path() -> str | None:
     current = _read_current()
     if not current:
         return None
+    if str(current.get("version") or "") != RULESET_VERSION:
+        return None
+    if str(current.get("sha256") or "").lower() != RULESET_SHA256:
+        return None
     raw = str(current.get("rules_path") or "").strip()
     if not raw:
         return None
@@ -64,7 +68,13 @@ def managed_rules_path() -> str | None:
         path.resolve().relative_to(RULESET_ROOT.resolve())
     except (OSError, ValueError):
         return None
-    return str(path) if path.is_file() and not path.is_symlink() else None
+    if not path.is_file() or path.is_symlink():
+        return None
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+    return str(path) if digest == RULESET_SHA256 else None
 
 
 def _validate_rules(binary: Path, rules: Path) -> None:
@@ -108,7 +118,7 @@ def status() -> dict[str, Any]:
     if path:
         try:
             checksum = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-            valid_checksum = checksum == str(current.get("sha256") or "")
+            valid_checksum = checksum == RULESET_SHA256 and str(current.get("sha256") or "").lower() == RULESET_SHA256
         except OSError:
             pass
     return {
