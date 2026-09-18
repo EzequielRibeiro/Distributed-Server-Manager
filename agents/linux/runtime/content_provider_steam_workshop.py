@@ -34,7 +34,12 @@ def _retention_limit() -> int | None:
     return max(2, min(value, 20))
 
 
-def _prune_revision_cache(revisions_root: Path, *, keep_revision: str) -> list[str]:
+def _prune_revision_cache(
+    revisions_root: Path,
+    *,
+    keep_revision: str,
+    protected_revisions: set[str] | None = None,
+) -> list[str]:
     if not revisions_root.is_dir():
         return []
     candidates = [
@@ -47,9 +52,13 @@ def _prune_revision_cache(revisions_root: Path, *, keep_revision: str) -> list[s
     if limit is None:
         return []
 
-    keep = {keep_revision}
+    protected = set(protected_revisions or ())
+    protected.add(keep_revision)
+    keep = set(protected)
     for path in candidates:
-        if len(keep) >= limit:
+        if path.name in keep:
+            continue
+        if len(keep - protected) >= limit:
             break
         keep.add(path.name)
 
@@ -60,6 +69,21 @@ def _prune_revision_cache(revisions_root: Path, *, keep_revision: str) -> list[s
         shutil.rmtree(path)
         removed.append(path.name)
     return removed
+
+
+def _protected_revisions(artifact: dict[str, Any]) -> set[str]:
+    raw = artifact.get("protected_revisions")
+    if raw is None:
+        return set()
+    if not isinstance(raw, list):
+        raise ValueError("Steam Workshop protected_revisions must be a list")
+    protected: set[str] = set()
+    for value in raw[:500]:
+        revision = str(value or "").strip()
+        if not _REVISION.fullmatch(revision):
+            raise ValueError("Steam Workshop protected revision must be numeric")
+        protected.add(revision)
+    return protected
 
 
 def _identity(artifact: dict[str, Any]) -> tuple[str, str]:
@@ -113,6 +137,7 @@ def _snapshot_revision(
     app_id: str,
     item_id: str,
     revision: str,
+    protected_revisions: set[str] | None = None,
 ) -> Path:
     destination = _revision_cache_path(
         game_data_root,
@@ -138,7 +163,11 @@ def _snapshot_revision(
             shutil.rmtree(temporary, ignore_errors=True)
     if not destination.is_dir():
         raise RuntimeError("Steam Workshop revision cache materialization failed")
-    _prune_revision_cache(destination.parent, keep_revision=revision)
+    _prune_revision_cache(
+        destination.parent,
+        keep_revision=revision,
+        protected_revisions=protected_revisions,
+    )
     return destination
 
 
@@ -167,6 +196,7 @@ def resolve_steam_workshop(artifact: dict[str, Any], stage: Path, game_data_root
     del stage
     app_id, item_id = _identity(artifact)
     revision = _revision(artifact)
+    protected_revisions = _protected_revisions(artifact)
     if revision:
         cached = _revision_cache_path(game_data_root, app_id, item_id, revision)
         if cached.is_dir():
@@ -199,6 +229,7 @@ def resolve_steam_workshop(artifact: dict[str, Any], stage: Path, game_data_root
                     app_id,
                     item_id,
                     revision,
+                    protected_revisions,
                 )
             return candidate
     raise RuntimeError("SteamCMD completed but the Workshop item was not found in a managed Steam cache")
