@@ -32,6 +32,8 @@ def _binary()->str|None:
   return str(path) if path.is_file() else None
  managed=_managed_yarax_binary()
  if managed:return managed
+ managed_status=_managed_engine_status()
+ if str(managed_status.get("state") or "")=="error":return None
  return shutil.which("yr")
 
 def _rules_path()->Path:
@@ -39,6 +41,9 @@ def _rules_path()->Path:
  if configured:return Path(configured)
  managed=_managed_yarax_rules_path()
  if managed:return Path(managed)
+ managed_status=_managed_rules_status()
+ if str(managed_status.get("state") or "")=="error":
+  return STATE_ROOT/"security"/"yara-x"/"rulesets"/".invalid-managed-ruleset"
  return LEGACY_RULES_PATH
 
 def _rule_files(path:Path|None=None)->list[Path]:
@@ -51,16 +56,20 @@ def _rule_files(path:Path|None=None)->list[Path]:
 def scanner_status()->dict[str,Any]:
  engine_override=str(os.environ.get("CAPIVARA_YARAX_BIN") or "").strip()
  rules_override=str(os.environ.get("CAPIVARA_YARAX_RULES_PATH") or "").strip()
+ engine_candidate_status=_managed_engine_status() if not engine_override else {}
+ rules_candidate_status=_managed_rules_status() if not rules_override else {}
  managed_binary=_managed_yarax_binary() if not engine_override else None
  managed_rules=_managed_yarax_rules_path() if not rules_override else None
  binary=_binary();rules_path=_rules_path();rules=_rule_files(rules_path);ready=bool(binary and rules)
- engine_managed=bool(managed_binary and binary and Path(binary)==Path(managed_binary))
- rules_managed=bool(managed_rules and Path(rules_path)==Path(managed_rules))
- engine_status=_managed_engine_status() if engine_managed else {}
- rules_status=_managed_rules_status() if rules_managed else {}
+ engine_managed=bool(not engine_override and (managed_binary or str(engine_candidate_status.get("state") or "")=="error"))
+ rules_managed=bool(not rules_override and (managed_rules or str(rules_candidate_status.get("state") or "")=="error"))
+ engine_status=engine_candidate_status if engine_managed else {}
+ rules_status=rules_candidate_status if rules_managed else {}
  engine_state=str(engine_status.get("state") or ("ready" if binary else "missing"))
  rules_state=str(rules_status.get("state") or ("ready" if rules else "missing"))
  state="ready" if ready else "missing_rules" if binary else "missing_engine"
+ if engine_state=="error":state="engine_error"
+ elif rules_state=="error":state="rules_error"
  last_error=None
  if engine_state=="error":last_error=str(engine_status.get("error") or "YARA-X engine validation failed")[:1000]
  elif rules_state=="error":last_error=str(rules_status.get("error") or "YARA-X ruleset validation failed")[:1000]
