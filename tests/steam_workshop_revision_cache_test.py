@@ -146,6 +146,29 @@ class SteamWorkshopRevisionCacheTest(unittest.TestCase):
                 path.mkdir()
                 (path / "marker").write_text(revision, encoding="utf-8")
 
+            with patch.dict(
+                "os.environ",
+                {"CAPIVARA_WORKSHOP_CACHE_REVISIONS": "3"},
+                clear=False,
+            ):
+                removed = workshop_provider._prune_revision_cache(
+                    revisions,
+                    keep_revision="500",
+                )
+
+            self.assertEqual(set(removed), {"100", "200"})
+            self.assertEqual(
+                {path.name for path in revisions.iterdir() if path.is_dir()},
+                {"300", "400", "500"},
+            )
+
+    def test_retention_is_lossless_by_default(self):
+        with tempfile.TemporaryDirectory() as td:
+            revisions = Path(td) / "revisions"
+            revisions.mkdir()
+            for revision in ("100", "200", "300", "400"):
+                (revisions / revision).mkdir()
+
             with patch.dict("os.environ", {}, clear=False):
                 previous = __import__("os").environ.pop(
                     "CAPIVARA_WORKSHOP_CACHE_REVISIONS",
@@ -154,21 +177,23 @@ class SteamWorkshopRevisionCacheTest(unittest.TestCase):
                 try:
                     removed = workshop_provider._prune_revision_cache(
                         revisions,
-                        keep_revision="500",
+                        keep_revision="400",
                     )
+                    limit = workshop_provider._retention_limit()
                 finally:
                     if previous is not None:
                         __import__("os").environ[
                             "CAPIVARA_WORKSHOP_CACHE_REVISIONS"
                         ] = previous
 
-            self.assertEqual(set(removed), {"100", "200"})
+            self.assertIsNone(limit)
+            self.assertEqual(removed, [])
             self.assertEqual(
                 {path.name for path in revisions.iterdir() if path.is_dir()},
-                {"300", "400", "500"},
+                {"100", "200", "300", "400"},
             )
 
-    def test_retention_limit_never_drops_below_two(self):
+    def test_retention_limit_never_drops_below_two_when_enabled(self):
         with patch.dict(
             "os.environ",
             {"CAPIVARA_WORKSHOP_CACHE_REVISIONS": "1"},
