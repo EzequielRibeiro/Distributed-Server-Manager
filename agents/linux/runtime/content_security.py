@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Provider/game-neutral YARA-X gate for Universal Content."""
 from __future__ import annotations
-import json,os,shutil,stat,subprocess
+import json,os,shutil,stat,subprocess,time
 from pathlib import Path
 from typing import Any
+try:
+ from runtime_events import emit_runtime_event
+except ModuleNotFoundError:
+ emit_runtime_event=None
 try:
  from security_yarax import managed_binary as _managed_yarax_binary, status as _managed_engine_status
 except ModuleNotFoundError:
@@ -89,6 +93,34 @@ def scanner_status()->dict[str,Any]:
 def _verdict(state:str,*,reason:str|None=None,matches:list[dict[str,Any]]|None=None)->dict[str,Any]:
  return {"security_state":state,"engine":"yara-x","policy_version":1,"reason":reason,"matches":list(matches or [])[:200]}
 
+def _safe_context(context:dict[str,Any]|None)->dict[str,Any]:
+ value=context if isinstance(context,dict) else {}
+ return {
+  "agent_id":str(value.get("agent_id") or "").strip(),
+  "instance_id":str(value.get("instance_id") or "").strip(),
+  "content_id":str(value.get("content_id") or "").strip()[:191],
+  "provider":str(value.get("provider") or "").strip().lower()[:64],
+  "game_id":str(value.get("game_id") or "").strip().lower()[:64],
+ }
+
+def _emit_scan(context:dict[str,Any]|None,event_type:str,*,result:str|None=None,duration_ms:int|None=None,matches:list[dict[str,Any]]|None=None,error:str|None=None,target_kind:str|None=None)->None:
+ if emit_runtime_event is None:return
+ ctx=_safe_context(context)
+ if not ctx["agent_id"]:return
+ status=scanner_status()
+ data={
+  "content_id":ctx["content_id"] or None,"provider":ctx["provider"] or None,"game_id":ctx["game_id"] or None,
+  "result":result,"duration_ms":duration_ms,"target_kind":target_kind,
+  "engine_version":status.get("engine_version"),"ruleset_version":status.get("ruleset_version"),
+  "rules_count":status.get("rules_count"),"matches":list(matches or [])[:50],"error":str(error or "")[:1000] or None,
+ }
+ severity="critical" if result=="blocked" else "warning" if result in {"suspicious","scan_failed"} else "info"
+ try:
+  emit_runtime_event(STATE_ROOT,event_type,instance_id=ctx["instance_id"],agent_id=ctx["agent_id"],data=data,severity=severity)
+ except Exception:
+  pass
+
+
 def _validate_target_tree(target:Path)->str|None:
  if target.is_symlink():return "content scan target is a symbolic link"
  if target.is_file():return None
@@ -108,37 +140,45 @@ def _validate_target_tree(target:Path)->str|None:
    if count>100000 or total>128*1024*1024*1024:return "content scan tree exceeds safety limits"
  return None
 
-def scan_content(path:Path|str)->dict[str,Any]:
- original=Path(path)
- if original.is_symlink():return _verdict("blocked",reason="content scan target is a symbolic link")
+def scan_content(path:Path|str,context:dict[str,Any]|None=None)->dict[str,Any]:
+ started=time.monotonic();original=Path(path);target_kind="directory" if original.is_dir() else "file"
+ _emit_scan(context,"YARAX_SCAN_STARTED",target_kind=target_kind)
+ def finish(verdict:dict[str,Any])->dict[str,Any]:
+  elapsed=max(0,int((time.monotonic()-started)*1000));state=str(verdict.get("security_state") or "scan_failed")
+  event_type="YARAX_SCAN_FAILED" if state=="scan_failed" else "YARAX_SCAN_COMPLETED"
+  _emit_scan(context,event_type,result=state,duration_ms=elapsed,matches=verdict.get("matches") or [],error=verdict.get("reason"),target_kind=target_kind)
+  verdict["duration_ms"]=elapsed
+  status=scanner_status();verdict["engine_version"]=status.get("engine_version");verdict["ruleset_version"]=status.get("ruleset_version")
+  return verdict
+ if original.is_symlink():return finish(_verdict("blocked",reason="content scan target is a symbolic link"))
  target=original.resolve();binary=_binary();rules_path=_rules_path();rules=_rule_files(rules_path)
- if not target.exists():return _verdict("scan_failed",reason="content scan target is unavailable")
+ if not target.exists():return finish(_verdict("scan_failed",reason="content scan target is unavailable"))
  unsafe=_validate_target_tree(target)
- if unsafe:return _verdict("blocked",reason=unsafe)
- if not binary:return _verdict("scan_failed",reason="YARA-X engine is unavailable")
- if not rules:return _verdict("scan_failed",reason="YARA-X rules are unavailable")
+ if unsafe:return finish(_verdict("blocked",reason=unsafe))
+ if not binary:return finish(_verdict("scan_failed",reason="YARA-X engine is unavailable"))
+ if not rules:return finish(_verdict("scan_failed",reason="YARA-X rules are unavailable"))
  args=[binary,"scan","--output-format=ndjson","-m","-g","--timeout",str(SCAN_TIMEOUT)]
  if target.is_dir():args.append("--recursive")
  args.extend((str(rules_path),str(target)))
  try:
   completed=subprocess.run(args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=SCAN_TIMEOUT+5,check=False)
- except (OSError,subprocess.TimeoutExpired) as exc:return _verdict("scan_failed",reason=f"YARA-X scan failed: {exc}")
- if completed.returncode!=0:return _verdict("scan_failed",reason=(completed.stderr or completed.stdout or f"YARA-X exited with {completed.returncode}")[-1000:])
+ except (OSError,subprocess.TimeoutExpired) as exc:return finish(_verdict("scan_failed",reason=f"YARA-X scan failed: {exc}"))
+ if completed.returncode!=0:return finish(_verdict("scan_failed",reason=(completed.stderr or completed.stdout or f"YARA-X exited with {completed.returncode}")[-1000:]))
  matches=[];blocked=False
  for line in (completed.stdout or "").splitlines():
   if not line.strip():continue
   try:item=json.loads(line)
-  except json.JSONDecodeError:return _verdict("scan_failed",reason="YARA-X returned invalid NDJSON")
+  except json.JSONDecodeError:return finish(_verdict("scan_failed",reason="YARA-X returned invalid NDJSON"))
   if not isinstance(item,dict):continue
   for rule in item.get("rules") or []:
    if not isinstance(rule,dict):continue
    tags=[str(v).strip().lower() for v in rule.get("tags") or [] if str(v).strip()]
    blocked=blocked or bool(_BLOCK_TAGS.intersection(tags));matches.append({"rule":str(rule.get("identifier") or "unknown")[:191],"tags":tags[:20]})
- if matches:return _verdict("blocked" if blocked else "suspicious",reason="YARA-X matched content",matches=matches)
- return _verdict("clean")
+ if matches:return finish(_verdict("blocked" if blocked else "suspicious",reason="YARA-X matched content",matches=matches))
+ return finish(_verdict("clean"))
 
-def require_clean(path:Path|str)->dict[str,Any]:
- result=scan_content(path)
+def require_clean(path:Path|str,context:dict[str,Any]|None=None)->dict[str,Any]:
+ result=scan_content(path,context=context)
  if result["security_state"]!="clean":raise ContentSecurityRejected(result)
  return result
 

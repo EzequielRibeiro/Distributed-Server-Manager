@@ -80,7 +80,7 @@ state_root=Path(record["instance_state_root"]);assert (state_root/"config"/"serv
 from pathlib import Path
 import instance_runtime,content_client
 from content_client import apply_content_commands,content_state
-content_client.require_clean=lambda path:{"security_state":"clean","engine":"yara-x","policy_version":1,"matches":[]}
+content_client.require_clean=lambda path,context=None:{"security_state":"clean","engine":"yara-x","policy_version":1,"matches":[]}
 config={"agent_id":"win-agent-one"};root=Path(instance_runtime.STATE_DIR)/"instance-workspaces"/"srv-content";root.mkdir(parents=True);source=Path(instance_runtime.STATE_DIR)/"game-data"/"package";source.mkdir(parents=True);(source/"mod.txt").write_text("ok")
 instance_runtime.register_instance({"instance_id":"srv-content","agent_id":"win-agent-one","path":str(root)})
 cmd={"instance_id":"srv-content","content_id":"mod-one","revision":1,"checksum":"abc","desired_state":"installed","version":"1","provider":"local","target":"mods/mod-one","artifact":{"resolved_path":str(source)}}

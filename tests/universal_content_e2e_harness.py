@@ -57,7 +57,7 @@ def fixture_resolver(artifact,stage,game_data_root):
  return candidate
 content_provider.register_provider('modrinth',fixture_resolver,replace=True)
 
-def scan(path):
+def scan(path,context=None):
  name=Path(path).name
  if name in BLOCKED_NAMES:
   raise content_client.ContentSecurityRejected({'security_state':'blocked','engine':'yara-x','policy_version':1,'reason':'U10 blocked fixture','matches':[{'rule':'u10_block','tags':['malware','block']}]})

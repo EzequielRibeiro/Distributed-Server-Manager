@@ -132,11 +132,21 @@ def _activate_target(config:dict[str,Any],iid:str,target:Path,payload:Path|None)
     if not _runtime_ready(config,iid):raise ContentRollbackError("content rollback failed readiness validation")
   except Exception as rollback_exc:raise ContentRollbackError(f"content activation failed and rollback failed: {rollback_exc}") from exc
   raise
+def _security_context(config,cmd):
+ artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {}
+ return {
+  "agent_id":str(config.get("agent_id") or ""),
+  "instance_id":str(cmd.get("instance_id") or ""),
+  "content_id":str(cmd.get("content_id") or ""),
+  "provider":str(cmd.get("provider") or artifact.get("provider") or ""),
+  "game_id":str(cmd.get("game_id") or ""),
+ }
+
 def _install(config,cmd):
- _validate_relations(cmd);_,instance=_owned(config,cmd);iid=str(cmd.get("instance_id") or "");target=_safe_target(instance,str(cmd.get("target") or "assets"));artifact=dict(cmd.get("artifact") or {});provider=str(cmd.get("provider") or artifact.get("provider") or "");parent=target.parent;parent.mkdir(parents=True,exist_ok=True);stage=Path(tempfile.mkdtemp(prefix=f".{target.name}.c4-",dir=str(parent)))
+ _validate_relations(cmd);_,instance=_owned(config,cmd);iid=str(cmd.get("instance_id") or "");target=_safe_target(instance,str(cmd.get("target") or "assets"));artifact=dict(cmd.get("artifact") or {});provider=str(cmd.get("provider") or artifact.get("provider") or "");parent=target.parent;parent.mkdir(parents=True,exist_ok=True);stage=Path(tempfile.mkdtemp(prefix=f".{target.name}.c4-",dir=str(parent)));security_context=_security_context(config,cmd)
  try:
-  source=_source(provider,artifact,stage);_verify_artifact(source,artifact);source_scan=require_clean(source);payload=stage/"payload";payload.mkdir();archive=provider=="http-archive" or bool(artifact.get("archive"));expanded_scan=None
-  if archive:_extract(source,payload);expanded_scan=require_clean(payload)
+  source=_source(provider,artifact,stage);_verify_artifact(source,artifact);source_scan=require_clean(source,context=security_context);payload=stage/"payload";payload.mkdir();archive=provider=="http-archive" or bool(artifact.get("archive"));expanded_scan=None
+  if archive:_extract(source,payload);expanded_scan=require_clean(payload,context=security_context)
   elif source.is_dir():shutil.copytree(source,payload,dirs_exist_ok=True)
   else:shutil.copy2(source,payload/(str(artifact.get("filename") or source.name or "content.bin")))
   _activate_target(config,iid,target,payload)
@@ -167,7 +177,7 @@ def _apply(config,cmd):
  try:
   desired=str(cmd.get("desired_state") or "installed");security={"security_state":"clean","engine":"none","policy_version":1,"reason":None,"matches":[]}
   if desired=="absent":path=_remove(config,cmd)
-  elif _reuse_installed(config,previous,cmd,source_meta):path=str(previous.get("managed_path"));security=require_clean(Path(path))
+  elif _reuse_installed(config,previous,cmd,source_meta):path=str(previous.get("managed_path"));security=require_clean(Path(path),context=_security_context(config,cmd))
   else:path,security=_install(config,cmd)
   report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":revision,"desired_checksum":checksum,"applied_checksum":checksum,"status":"applied","installed_version":None if desired=="absent" else str(cmd.get("version") or "latest"),"managed_path":path,"last_error":None,"readiness":"healthy","security_state":str(security.get("security_state") or "clean"),"applied_security_state":str(security.get("security_state") or "clean"),"security_policy_version":1,"security":{"engine":security.get("engine"),"matches":security.get("matches") or []},**source_meta}
  except ContentSecurityRejected as exc:

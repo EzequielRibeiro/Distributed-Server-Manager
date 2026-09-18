@@ -31,6 +31,24 @@ def list_events(*, user, backend, filters: dict[str, Any] | None = None) -> dict
     return {"schema_version": 1, "kind": "CapivaraUniversalEventList", "events": events, "count": len(events)}
 
 
+def list_yarax_scans(*, user, backend, filters: dict[str, Any] | None = None) -> dict[str, Any]:
+    _require_admin(user)
+    values = filters if isinstance(filters, dict) else {}
+    repo = UniversalEventRepository(backend)
+    repo.initialize()
+    events = repo.list_yarax_scans(
+        limit=int(values.get("limit") or 100),
+        agent_id=values.get("agent_id"),
+        instance_id=values.get("instance_id"),
+    )
+    return {
+        "schema_version": 1,
+        "kind": "CapivaraYaraXScanEventList",
+        "events": events,
+        "count": len(events),
+    }
+
+
 def get_event(event_id: str, *, user, backend) -> dict[str, Any]:
     _require_admin(user)
     event_id = str(event_id or "").strip()
@@ -54,4 +72,4 @@ def publish_event(payload: dict[str, Any] | None, *, user, backend) -> dict[str,
     return repo.publish(body)
 
 
-__all__ = ["get_event", "list_events", "publish_event"]
+__all__ = ["get_event", "list_events", "list_yarax_scans", "publish_event"]
