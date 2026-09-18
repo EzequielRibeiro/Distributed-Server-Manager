@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -234,8 +235,24 @@ class HybridAgentWorkerTest(unittest.TestCase):
                 "SELECT health_status,last_seen FROM agent_runtime_inventory WHERE agent_id=?",
                 (transition["agent_id"],),
             ).fetchone()
+            agent_row = session.execute(
+                "SELECT metadata_json FROM agents WHERE id=?",
+                (transition["agent_id"],),
+            ).fetchone()
         self.assertEqual(row["health_status"], "online")
         self.assertTrue(row["last_seen"])
+
+        log_path = self.root / "runtime" / "hybrid-agent-state" / "agent-runtime.log"
+        self.assertTrue(log_path.is_file())
+        local_lines = log_path.read_text(encoding="utf-8").splitlines()
+        self.assertTrue(any("hybrid heartbeat ok" in line for line in local_lines))
+        self.assertTrue(any(transition["agent_id"] in line for line in local_lines))
+
+        metadata = json.loads(agent_row["metadata_json"] or "{}")
+        recent_logs = metadata.get("recent_logs") or []
+        self.assertTrue(any("hybrid heartbeat ok" in line for line in recent_logs))
+        self.assertTrue(any(transition["agent_id"] in line for line in recent_logs))
+        self.assertEqual(second["published_log_lines"], len(recent_logs))
 
     def test_dashboard_worker_starts_persistent_worker(self):
         shell = (ROOT / "dashboard" / "workers" / "worker.sh").read_text(encoding="utf-8")
