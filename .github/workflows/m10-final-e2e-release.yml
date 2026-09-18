@@ -1,0 +1,99 @@
+name: M10 Final E2E Release Validation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/m10-final-e2e-release.yml'
+      - 'tests/m10_*.py'
+      - 'tests/universal_content_e2e_*.py'
+      - 'tests/maintenance_controller_agent_e2e.py'
+      - 'tests/dayz_native_*.py'
+      - 'tests/m7_*.py'
+      - 'tests/m9_*.py'
+      - 'tests/baseline_release_upgrade_contract_test.py'
+      - 'tests/baseline_v12_v13_registry_test.py'
+      - 'tests/update_baseline_upgrade_path_test.py'
+      - 'release/**'
+      - 'database/schema_baseline.py'
+      - 'dashboard/**'
+      - 'agents/linux/**'
+      - 'agents/windows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-final-e2e:
+    name: Linux final E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate M10 contract
+        run: python3 tests/m10_final_e2e_contract_test.py
+      - name: Run Universal Content representative matrix
+        env:
+          CAPIVARA_U10_PLATFORM: linux
+        run: python3 -m unittest -v tests/universal_content_e2e_test.py
+      - name: Run Controller-Agent maintenance E2E
+        run: python3 tests/maintenance_controller_agent_e2e.py
+      - name: Run DayZ native restart integration
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 tests/dayz_native_restart_transport_test.py
+          python3 tests/dayz_native_restart_agent_parity_test.py
+          python3 tests/dayz_native_maintenance_worker_test.py
+      - name: Run M7 maintenance regressions
+        env:
+          PYTHONPATH: .
+        run: python3 tests/m7_maintenance_framework_regression_test.py
+      - name: Run M9 modpack regressions
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 tests/m9_modpack_bundle_read_model_test.py
+          python3 tests/m9_modpack_ui_contract_test.py
+      - name: Validate baseline upgrade and release contracts
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 tests/baseline_release_upgrade_contract_test.py
+          python3 tests/baseline_v12_v13_registry_test.py
+          python3 tests/update_baseline_upgrade_path_test.py
+          python3 tests/release_readiness_test.py
+
+  windows-final-e2e:
+    name: Windows final E2E
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate M10 contract
+        run: python tests/m10_final_e2e_contract_test.py
+      - name: Run Universal Content representative matrix
+        env:
+          CAPIVARA_U10_PLATFORM: windows
+        run: python -m unittest -v tests/universal_content_e2e_test.py
+      - name: Run DayZ Linux-Windows parity contract
+        env:
+          PYTHONPATH: .
+        run: python tests/dayz_native_restart_agent_parity_test.py
+      - name: Run Minecraft Windows maintenance parity
+        env:
+          PYTHONPATH: .
+        run: python tests/m7_minecraft_java_windows_maintenance_test.py
+
+  final-gate:
+    name: M10 Final Gate
+    runs-on: ubuntu-24.04
+    needs: [linux-final-e2e, windows-final-e2e]
+    steps:
+      - run: echo "M10 final E2E/parity/release validation passed"
