@@ -53,6 +53,14 @@ def main():
         "PostgreSQL Baseline v2 Isolated Deployment",
         "Legacy Audit",
         "Capivara 2.0 Release Readiness",
+        "Maintenance Restart Framework",
+        "DayZ Native Restart",
+        "M7 Native Maintenance",
+        "M8 Universal Mod Management",
+        "M9 Minecraft Modpacks",
+        "M10 Final E2E Release Validation",
+        "Baseline Update Reconciliation",
+        "Universal Server Update",
     }
     assert required <= gates
 
