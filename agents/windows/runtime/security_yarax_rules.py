@@ -115,12 +115,15 @@ def status() -> dict[str, Any]:
     path = managed_rules_path()
     checksum = None
     valid_checksum = False
+    error = None
     if path:
         try:
             checksum = hashlib.sha256(Path(path).read_bytes()).hexdigest()
             valid_checksum = checksum == RULESET_SHA256 and str(current.get("sha256") or "").lower() == RULESET_SHA256
-        except OSError:
-            pass
+        except OSError as exc:
+            error = str(exc)[:1000]
+    elif current:
+        error = "Managed YARA-X ruleset metadata or checksum is invalid"
     return {
         "engine": "yara-x",
         "managed": True,
@@ -133,7 +136,8 @@ def status() -> dict[str, Any]:
         "expected_sha256": current.get("sha256"),
         "checksum_valid": bool(path and valid_checksum),
         "rules_count": 1 if path else 0,
-        "state": "ready" if path and valid_checksum else "error" if path else "missing",
+        "state": "ready" if path and valid_checksum else "error" if current else "missing",
+        "error": error,
     }
 
 
