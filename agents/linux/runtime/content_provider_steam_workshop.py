@@ -42,10 +42,13 @@ def _cache_candidates(executable: str, game_data_root: Path, app_id: str, item_i
     state_root = Path(game_data_root).resolve().parent
     home = Path(os.environ.get("HOME") or str(state_root)).resolve()
     suffix = Path("steamapps") / "workshop" / "content" / app_id / item_id
+    executable_dir = Path(executable).resolve().parent
     candidates = [
-        Path(executable).resolve().parent / suffix,
+        executable_dir / suffix,
+        executable_dir.parent / suffix,
         state_root / "tools" / "steamcmd" / suffix,
         home / ".steam" / "steam" / suffix,
+        home / ".local" / "share" / "Steam" / suffix,
         home / "Steam" / suffix,
     ]
     out: list[Path] = []
