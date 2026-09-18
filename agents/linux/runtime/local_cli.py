@@ -28,6 +28,7 @@ from instance_runtime import list_instances as local_instances
 from instance_runtime import status as instance_status
 from network_inventory import collect_network_inventory
 from update_state import history as update_history, status as update_status
+from security_yarax import install as yarax_install, status as yarax_status
 
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
 INSTALL_ROOT = Path(os.environ.get("CAPIVARA_AGENT_ROOT", "/opt/capivara-agent"))
@@ -466,6 +467,14 @@ def _parser() -> argparse.ArgumentParser:
     update_check_parser.add_argument("--channel", choices=("stable", "beta"), default="stable")
     update_check_parser.add_argument("--json", action="store_true", dest="as_json")
 
+    security = sub.add_parser("security")
+    security_sub = security.add_subparsers(dest="security_action", required=True)
+    yara = security_sub.add_parser("yara")
+    yara_sub = yara.add_subparsers(dest="yara_action", required=True)
+    for name in ("status", "install"):
+        item = yara_sub.add_parser(name)
+        item.add_argument("--json", action="store_true", dest="as_json")
+
     logs = sub.add_parser("logs")
     logs.add_argument("--lines", type=int, default=200)
     logs.add_argument("--json", action="store_true", dest="as_json")
@@ -533,6 +542,10 @@ def main(argv: list[str] | None = None) -> int:
                 payload = {"updates": update_history(limit=args.limit)}
             else:
                 payload = _update_check(config, args.channel)
+        elif args.command == "security":
+            if args.security_action != "yara":
+                raise RuntimeError("unsupported security command")
+            payload = yarax_status() if args.yara_action == "status" else yarax_install()
         elif args.command == "logs":
             payload = _logs(args.lines)
         elif args.command == "doctor":
