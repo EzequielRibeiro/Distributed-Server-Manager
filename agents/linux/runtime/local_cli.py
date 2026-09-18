@@ -29,6 +29,7 @@ from instance_runtime import status as instance_status
 from network_inventory import collect_network_inventory
 from update_state import history as update_history, status as update_status
 from security_yarax import install as yarax_install, status as yarax_status
+from security_yarax_rules import install as yarax_rules_install, status as yarax_rules_status
 
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
 INSTALL_ROOT = Path(os.environ.get("CAPIVARA_AGENT_ROOT", "/opt/capivara-agent"))
@@ -474,6 +475,11 @@ def _parser() -> argparse.ArgumentParser:
     for name in ("status", "install"):
         item = yara_sub.add_parser(name)
         item.add_argument("--json", action="store_true", dest="as_json")
+    rules = yara_sub.add_parser("rules")
+    rules_sub = rules.add_subparsers(dest="yara_rules_action", required=True)
+    for name in ("status", "install"):
+        item = rules_sub.add_parser(name)
+        item.add_argument("--json", action="store_true", dest="as_json")
 
     logs = sub.add_parser("logs")
     logs.add_argument("--lines", type=int, default=200)
@@ -545,7 +551,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "security":
             if args.security_action != "yara":
                 raise RuntimeError("unsupported security command")
-            payload = yarax_status() if args.yara_action == "status" else yarax_install()
+            if args.yara_action == "rules":
+                payload = yarax_rules_status() if args.yara_rules_action == "status" else yarax_rules_install()
+            else:
+                payload = yarax_status() if args.yara_action == "status" else yarax_install()
         elif args.command == "logs":
             payload = _logs(args.lines)
         elif args.command == "doctor":

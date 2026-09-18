@@ -107,6 +107,8 @@ Agent local / Hybrid:
   cap agent update status|history|check ...
   cap agent logs [--lines N] [--json]
   cap agent doctor [--json]
+  cap agent security yara status|install [--json]
+  cap agent security yara rules status|install [--json]
   cap instance list [--json]
   cap instance status <instance> [--json]
   cap instance doctor <instance> [--json]

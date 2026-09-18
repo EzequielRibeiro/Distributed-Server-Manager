@@ -8,9 +8,14 @@ try:
  from security_yarax import managed_binary as _managed_yarax_binary
 except ModuleNotFoundError:
  _managed_yarax_binary=lambda:None
+try:
+ from security_yarax_rules import managed_rules_path as _managed_yarax_rules_path, status as _managed_rules_status
+except ModuleNotFoundError:
+ _managed_yarax_rules_path=lambda:None
+ _managed_rules_status=lambda:{}
 
 STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",Path("/var/lib/capivara-agent")))
-RULES_PATH=Path(os.environ.get("CAPIVARA_YARAX_RULES_PATH","/etc/capivara-agent-security/yara-rules"))
+LEGACY_RULES_PATH=Path("/etc/capivara-agent-security/yara-rules")
 try:SCAN_TIMEOUT=max(5,min(int(os.environ.get("CAPIVARA_YARAX_TIMEOUT_SECONDS","120")),900))
 except (TypeError,ValueError):SCAN_TIMEOUT=120
 _BLOCK_TAGS={"block","blocked","malware","critical","deny"}
@@ -28,16 +33,24 @@ def _binary()->str|None:
  if managed:return managed
  return shutil.which("yr")
 
-def _rule_files()->list[Path]:
- path=RULES_PATH
+def _rules_path()->Path:
+ configured=str(os.environ.get("CAPIVARA_YARAX_RULES_PATH") or "").strip()
+ if configured:return Path(configured)
+ managed=_managed_yarax_rules_path()
+ if managed:return Path(managed)
+ return LEGACY_RULES_PATH
+
+def _rule_files(path:Path|None=None)->list[Path]:
+ path=path or _rules_path()
  if path.is_symlink():return []
- if path.is_file():return [path]
+ if path.is_file():return [path] if path.suffix.lower() in {".yar",".yara"} else []
  if not path.is_dir():return []
  return sorted(p for p in path.rglob("*") if p.is_file() and not p.is_symlink() and p.suffix.lower() in {".yar",".yara"})[:10000]
 
 def scanner_status()->dict[str,Any]:
- binary=_binary();rules=_rule_files();ready=bool(binary and rules)
- return {"engine":"yara-x","enforced":True,"ready":ready,"state":"ready" if ready else "missing_rules" if binary else "missing_engine","rules_count":len(rules)}
+ binary=_binary();rules_path=_rules_path();rules=_rule_files(rules_path);ready=bool(binary and rules)
+ managed_status=_managed_rules_status() if str(os.environ.get("CAPIVARA_YARAX_RULES_PATH") or "").strip()=="" else {}
+ return {"engine":"yara-x","enforced":True,"ready":ready,"state":"ready" if ready else "missing_rules" if binary else "missing_engine","rules_count":len(rules),"rules_path":str(rules_path),"ruleset_version":managed_status.get("ruleset_version"),"ruleset_sha256":managed_status.get("sha256"),"ruleset_checksum_valid":managed_status.get("checksum_valid")}
 
 def _verdict(state:str,*,reason:str|None=None,matches:list[dict[str,Any]]|None=None)->dict[str,Any]:
  return {"security_state":state,"engine":"yara-x","policy_version":1,"reason":reason,"matches":list(matches or [])[:200]}
@@ -64,7 +77,7 @@ def _validate_target_tree(target:Path)->str|None:
 def scan_content(path:Path|str)->dict[str,Any]:
  original=Path(path)
  if original.is_symlink():return _verdict("blocked",reason="content scan target is a symbolic link")
- target=original.resolve();binary=_binary();rules=_rule_files()
+ target=original.resolve();binary=_binary();rules_path=_rules_path();rules=_rule_files(rules_path)
  if not target.exists():return _verdict("scan_failed",reason="content scan target is unavailable")
  unsafe=_validate_target_tree(target)
  if unsafe:return _verdict("blocked",reason=unsafe)
@@ -72,7 +85,7 @@ def scan_content(path:Path|str)->dict[str,Any]:
  if not rules:return _verdict("scan_failed",reason="YARA-X rules are unavailable")
  args=[binary,"scan","--output-format=ndjson","-m","-g","--timeout",str(SCAN_TIMEOUT)]
  if target.is_dir():args.append("--recursive")
- args.extend((str(RULES_PATH),str(target)))
+ args.extend((str(rules_path),str(target)))
  try:
   completed=subprocess.run(args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=SCAN_TIMEOUT+5,check=False)
  except (OSError,subprocess.TimeoutExpired) as exc:return _verdict("scan_failed",reason=f"YARA-X scan failed: {exc}")
