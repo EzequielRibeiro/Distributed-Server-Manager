@@ -137,6 +137,36 @@ class UniversalEventRepository:
             "rejected": rejected,
         }
 
+    def list_yarax_scans(
+        self,
+        *,
+        limit: int = 100,
+        agent_id: str | None = None,
+        instance_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        ph = self._ph
+        clauses = [f"event_type IN ({ph},{ph},{ph})"]
+        params: list[Any] = ["YARAX_SCAN_STARTED", "YARAX_SCAN_COMPLETED", "YARAX_SCAN_FAILED"]
+        if agent_id:
+            clauses.append(f"agent_id={ph}")
+            params.append(agent_id)
+        if instance_id:
+            clauses.append(f"instance_id={ph}")
+            params.append(instance_id)
+        bounded = max(1, min(int(limit), 1000))
+        params.append(bounded)
+        with self.backend.connect() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                rows = session.execute(
+                    f"SELECT * FROM universal_events WHERE {' AND '.join(clauses)} "
+                    f"ORDER BY occurred_at DESC,event_id DESC LIMIT {ph}",
+                    tuple(params),
+                ).fetchall()
+                return [self._row_to_event(row) for row in rows]
+            finally:
+                session.close()
+
     def list_events(
         self,
         *,
