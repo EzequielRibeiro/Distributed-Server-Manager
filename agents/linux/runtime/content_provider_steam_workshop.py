@@ -17,6 +17,7 @@ from typing import Any
 
 from content_provider import register_provider
 from content_cache_inventory import record_cache_event
+from content_update_provider import parse_workshop_manifest
 from game_data_executor import _steamcmd
 
 _PACKAGE = re.compile(r"^(?P<app>[0-9]+):(?P<item>[0-9]+)$")
@@ -211,6 +212,21 @@ def _snapshot_revision(
     return destination
 
 
+def _validate_revision_source(source: Path, app_id: str, item_id: str, revision: str) -> None:
+    manifest = source.parent.parent.parent / f"appworkshop_{app_id}.acf"
+    try:
+        text = manifest.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise RuntimeError("Steam Workshop revision manifest is unavailable") from exc
+    installed = parse_workshop_manifest(text, item_id)
+    if not installed:
+        raise RuntimeError("Steam Workshop revision metadata is unavailable")
+    if installed != revision:
+        raise RuntimeError(
+            f"Steam Workshop revision mismatch: requested {revision}, installed {installed}"
+        )
+
+
 def _cache_candidates(executable: str, game_data_root: Path, app_id: str, item_id: str) -> list[Path]:
     state_root = Path(game_data_root).resolve().parent
     home = Path(os.environ.get("HOME") or str(state_root)).resolve()
@@ -261,6 +277,7 @@ def _download_and_resolve(
     for candidate in _cache_candidates(executable, game_data_root, app_id, item_id):
         if candidate.is_dir():
             if revision:
+                _validate_revision_source(candidate, app_id, item_id, revision)
                 return _snapshot_revision(
                     candidate,
                     game_data_root,
