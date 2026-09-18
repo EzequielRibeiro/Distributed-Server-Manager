@@ -79,6 +79,39 @@ class SteamWorkshopCapabilityTest(unittest.TestCase):
             "windows_content_provider_steam_workshop_test",
         )
 
+    def _assert_zero_exit_download_failure_is_rejected(self, relative_path: str, module_name: str):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            executable = root / ("steamcmd.exe" if "windows" in relative_path else "steamcmd.sh")
+            executable.write_text("stub", encoding="utf-8")
+            module, _registered = load_workshop(relative_path, module_name, executable)
+            completed = types.SimpleNamespace(
+                returncode=0,
+                stdout=(
+                    "Downloading item 1828439124 ...\n"
+                    "ERROR! Download item 1828439124 failed (Failure)."
+                ),
+            )
+            with patch.object(module.subprocess, "run", return_value=completed):
+                with self.assertRaisesRegex(RuntimeError, "Steam Workshop download failed: Failure"):
+                    module.resolve_steam_workshop(
+                        {"package_id": "221100:1828439124"},
+                        root / "stage",
+                        root / "game-data",
+                    )
+
+    def test_linux_zero_exit_workshop_failure_is_rejected(self):
+        self._assert_zero_exit_download_failure_is_rejected(
+            "agents/linux/runtime/content_provider_steam_workshop.py",
+            "linux_content_provider_steam_workshop_failure_test",
+        )
+
+    def test_windows_zero_exit_workshop_failure_is_rejected(self):
+        self._assert_zero_exit_download_failure_is_rejected(
+            "agents/windows/runtime/content_provider_steam_workshop.py",
+            "windows_content_provider_steam_workshop_failure_test",
+        )
+
     def test_capability_contract_is_command_free_and_game_neutral(self):
         for relative in (
             "agents/linux/runtime/content_provider_steam_workshop.py",
