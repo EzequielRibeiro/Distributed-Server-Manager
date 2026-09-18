@@ -239,8 +239,17 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
 
  def test_customer_dayz_content_ui_exposes_activation_mode_selector(self):
   script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
-  for marker in ("configure-activation","content-activation-mode","Salvar modo","Mod somente servidor","runtime ${item.activation_config.mode}"):
+  for marker in ("configure-activation","content-activation-mode","Salvar modo","runtime ${item.activation_config.mode}"):
    self.assertIn(marker.replace("\\$","$"),script)
+  service=CustomerContentWorkspaceService.__new__(CustomerContentWorkspaceService)
+  config=service._activation_configuration(
+   {"game_id":"dayz","runtime_id":"dayz.stable"},
+   {"game_id":"dayz","content_type":"workshop","metadata":{}},
+  )
+  self.assertEqual(
+   [("mod","Mod cliente + servidor"),("server-mod","Mod somente servidor")],
+   [(item["value"],item["label"]) for item in config["modes"]],
+  )
   dayz=(ROOT/"agents"/"linux"/"runtime"/"content_activation_dayz.py").read_text(encoding="utf-8")
   self.assertIn('mode not in {"mod", "server-mod"}',dayz)
   self.assertIn('arguments.append("-mod="',dayz)
