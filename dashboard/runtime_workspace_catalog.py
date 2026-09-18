@@ -150,6 +150,55 @@ def runtime_maintenance_capabilities(
     return canonical
 
 
+def runtime_content_activation_capabilities(root: Path, game_id: str, runtime_id: str) -> dict[str, Any]:
+    definition = runtime_definition(root, game_id, runtime_id)
+    content = definition.get("content") if isinstance(definition, dict) else {}
+    activation = content.get("activation") if isinstance(content, dict) else None
+    if activation is None:
+        return {}
+    if not isinstance(activation, dict):
+        raise RuntimeError("invalid runtime content activation declaration")
+    adapter = str(activation.get("adapter") or "").strip().lower()
+    if not adapter or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789._-" for c in adapter):
+        raise RuntimeError("invalid runtime content activation adapter")
+    raw_types = activation.get("types")
+    if not isinstance(raw_types, dict):
+        raise RuntimeError("invalid runtime content activation types")
+    types: dict[str, dict[str, Any]] = {}
+    for raw_type, raw_declaration in raw_types.items():
+        content_type = str(raw_type or "").strip().lower()
+        if not content_type or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789._-" for c in content_type):
+            raise RuntimeError("invalid runtime content activation type")
+        if not isinstance(raw_declaration, dict):
+            raise RuntimeError("invalid runtime content activation type declaration")
+        raw_modes = raw_declaration.get("modes")
+        if not isinstance(raw_modes, list) or not raw_modes or len(raw_modes) > 32:
+            raise RuntimeError("invalid runtime content activation modes")
+        modes: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for raw_mode in raw_modes:
+            if not isinstance(raw_mode, dict):
+                raise RuntimeError("invalid runtime content activation mode")
+            mode_id = str(raw_mode.get("id") or "").strip().lower()
+            label = str(raw_mode.get("label") or "").strip()
+            if (
+                not mode_id
+                or len(mode_id) > 64
+                or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789._-" for c in mode_id)
+                or mode_id in seen
+            ):
+                raise RuntimeError("invalid runtime content activation mode id")
+            if not label or len(label) > 120 or any(c in label for c in ("\x00", "\r", "\n")):
+                raise RuntimeError("invalid runtime content activation mode label")
+            seen.add(mode_id)
+            modes.append({"value": mode_id, "label": label})
+        default_mode = str(raw_declaration.get("default_mode") or modes[0]["value"]).strip().lower()
+        if default_mode not in seen:
+            raise RuntimeError("runtime content activation default mode is not declared")
+        types[content_type] = {"default_mode": default_mode, "modes": modes}
+    return {"adapter": adapter, "types": types}
+
+
 def runtime_workspace_capabilities(root: Path, game_id: str, runtime_id: str) -> dict[str, Any]:
     policy = game_workspace_catalog(root, game_id)
     runtime = _safe_runtime(runtime_id)
@@ -198,6 +247,7 @@ def runtime_workspace_capabilities(root: Path, game_id: str, runtime_id: str) ->
         "console": dict(item.get("console") or {}),
         "startup_parameters": dict(item.get("startup_parameters") or {}),
         "server_settings": dict(definition.get("server_settings") or item.get("server_settings") or {}),
+        "content_activation": runtime_content_activation_capabilities(root, game_id, runtime),
         "maintenance": maintenance,
         "file_policy": dict(item.get("file_policy") or {}),
         "label": str(item.get("label") or definition.get("name") or runtime),
@@ -258,6 +308,6 @@ def allowed_runtimes(root: Path, game_id: str, contract_metadata: dict[str, Any]
 __all__ = [
     "allowed_runtimes", "contract_entitlements", "game_workspace_catalog",
     "maintenance_capability_inventory", "runtime_allowed_by_contract",
-    "runtime_definition", "runtime_maintenance_capabilities",
-    "runtime_workspace_capabilities",
+    "runtime_content_activation_capabilities", "runtime_definition",
+    "runtime_maintenance_capabilities", "runtime_workspace_capabilities",
 ]
