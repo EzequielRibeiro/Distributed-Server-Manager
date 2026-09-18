@@ -38,6 +38,10 @@ rule Capivara_EICAR_Test_File : block malware test
 STATE_ROOT = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", Path(os.environ.get("PROGRAMDATA", r"C:\\ProgramData")) / "CapivaraAgent" / "state"))
 RULESET_ROOT = STATE_ROOT / "security" / "yara-x" / "rulesets"
 CURRENT = RULESET_ROOT / "current.json"
+PREVIOUS = RULESET_ROOT / "previous.json"
+TRUSTED_RULESETS = {
+    RULESET_VERSION: {"sha256": RULESET_SHA256, "filename": "baseline.yar"},
+}
 
 
 def _digest_bytes(value: bytes) -> str:
@@ -185,6 +189,18 @@ def install() -> dict[str, Any]:
     return _activate(final_rules)
 
 
+def _write_pointer(path: Path, payload: dict[str, Any]) -> None:
+    RULESET_ROOT.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=".pointer-", suffix=".json", dir=str(RULESET_ROOT))
+    os.close(fd)
+    temp = Path(temp_name)
+    try:
+        temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
 def _activate(rules: Path) -> dict[str, Any]:
     rules = rules.resolve()
     rules.relative_to(RULESET_ROOT.resolve())
@@ -203,15 +219,44 @@ def _activate(rules: Path) -> dict[str, Any]:
         "sha256": RULESET_SHA256,
         "rules_count": 1,
     }
-    RULESET_ROOT.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix=".current-", suffix=".json", dir=str(RULESET_ROOT))
-    os.close(fd)
-    temp = Path(temp_name)
+    previous = _read_current()
+    if previous and str(previous.get("version") or "") != str(payload["version"]):
+        _write_pointer(PREVIOUS, previous)
+    _write_pointer(CURRENT, payload)
+    return status()
+
+
+def rollback() -> dict[str, Any]:
     try:
-        temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        os.replace(temp, CURRENT)
-    finally:
-        temp.unlink(missing_ok=True)
+        previous = json.loads(PREVIOUS.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError("no previous trusted YARA-X ruleset is available") from exc
+    if not isinstance(previous, dict):
+        raise RuntimeError("previous YARA-X ruleset metadata is invalid")
+    version = str(previous.get("version") or "").strip()
+    trusted = TRUSTED_RULESETS.get(version)
+    if not trusted:
+        raise RuntimeError("previous YARA-X ruleset version is not trusted by this Agent")
+    if str(previous.get("sha256") or "").lower() != str(trusted["sha256"]).lower():
+        raise RuntimeError("previous YARA-X ruleset checksum metadata is invalid")
+    rules = Path(str(previous.get("rules_path") or "")).resolve()
+    try:
+        rules.relative_to(RULESET_ROOT.resolve())
+    except ValueError as exc:
+        raise RuntimeError("previous YARA-X ruleset path escapes managed storage") from exc
+    if not rules.is_file() or rules.is_symlink():
+        raise RuntimeError("previous YARA-X ruleset file is unavailable")
+    digest = hashlib.sha256(rules.read_bytes()).hexdigest()
+    if digest != str(trusted["sha256"]).lower():
+        raise RuntimeError("previous YARA-X ruleset file checksum is invalid")
+    binary_raw = managed_binary()
+    if not binary_raw:
+        raise RuntimeError("YARA-X engine is unavailable; install engine first")
+    _validate_rules(Path(binary_raw), rules)
+    current = _read_current()
+    if current:
+        _write_pointer(PREVIOUS, current)
+    _write_pointer(CURRENT, previous)
     return status()
 
 
@@ -221,4 +266,5 @@ __all__ = [
     "install",
     "managed_rules_path",
     "status",
+    "rollback",
 ]
