@@ -239,7 +239,7 @@ def _cache_candidates(executable: str, game_data_root: Path, app_id: str, item_i
 
     # SteamCMD has several Linux layouts depending on whether it comes from the
     # Capivara-managed bootstrap, a distro package, or an existing user Steam
-    # installation. Keep discovery bounded to explicit trusted roots instead of
+    # installation. Keep discovery bounded to explicit approved roots instead of
     # scanning the host filesystem.
     roots = [
         executable_dir,
