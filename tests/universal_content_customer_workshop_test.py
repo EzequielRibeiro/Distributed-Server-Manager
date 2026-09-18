@@ -103,7 +103,13 @@ class CustomerWorkshopIntegrationTest(unittest.TestCase):
         ))
         service.install({"username": "u"}, "i1", {"content_id": "mod-b", "content_type": "workshop", "provider": "steam", "artifact": {"package_id": "123"}})
         self.assertEqual(seen, ["108600"])
-        self.assertEqual(service.content.puts[-1][0]["artifact"]["package_id"], "108600:123")
+        payload = service.content.puts[-1][0]
+        self.assertEqual(payload["artifact"]["package_id"], "108600:123")
+        self.assertEqual(payload["activation_state"], "disabled")
+        self.assertEqual(
+            payload["metadata"]["activation"],
+            {"adapter": "project-zomboid", "mode": "mod"},
+        )
 
     def test_runtime_without_workshop_identity_fails_closed(self):
         service = _service(game_id="minecraft", runtime_id="minecraft.vanilla.stable")

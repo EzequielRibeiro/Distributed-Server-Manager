@@ -38,6 +38,22 @@
   "content": {
     "steam_workshop": {
       "app_id": "108600"
+    },
+    "activation": {
+      "adapter": "project-zomboid",
+      "types": {
+        "workshop": {
+          "default_mode": "mod",
+          "identifier_required": true,
+          "identifier_label": "Mod ID",
+          "modes": [
+            {
+              "id": "mod",
+              "label": "Workshop + Mod ID"
+            }
+          ]
+        }
+      }
     }
   },
   "installation": {

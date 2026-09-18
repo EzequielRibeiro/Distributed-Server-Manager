@@ -276,6 +276,51 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
    )
   )
 
+ def test_project_zomboid_runtime_requires_mod_identifier(self):
+  pz=runtime_content_activation_capabilities(ROOT,"projectzomboid","projectzomboid.stable")
+  self.assertEqual("project-zomboid",pz["adapter"])
+  declaration=pz["types"]["workshop"]
+  self.assertTrue(declaration["identifier_required"])
+  self.assertEqual("Mod ID",declaration["identifier_label"])
+  self.assertEqual(["mod"],[item["value"] for item in declaration["modes"]])
+
+  service=CustomerContentWorkspaceService.__new__(CustomerContentWorkspaceService)
+  service.workspace=type("Workspace",(),{"root":ROOT})()
+  current={
+   "instance_id":"pz-1","content_id":"steam-workshop:123","game_id":"projectzomboid",
+   "content_type":"workshop","desired_state":"installed","activation_state":"disabled",
+   "activation_order":0,"version":"1","provider":"steam-workshop",
+   "artifact":{"provider":"steam-workshop","package_id":"108600:123"},
+   "metadata":{"activation":{"adapter":"project-zomboid","mode":"mod"}},
+  }
+  config=service._activation_configuration(
+   {"id":"pz-1","game_id":"projectzomboid","runtime_id":"projectzomboid.stable"},
+   current,
+  )
+  self.assertTrue(config["identifier_required"])
+  self.assertEqual("",config["identifier"])
+  payload=service._configure_activation(
+   {"id":"pz-1","game_id":"projectzomboid","runtime_id":"projectzomboid.stable"},
+   current,
+   {"mode":"mod","identifier":"Brita_2"},
+  )
+  self.assertEqual(
+   {"adapter":"project-zomboid","mode":"mod","identifier":"Brita_2"},
+   payload["metadata"]["activation"],
+  )
+  self.assertEqual("enabled",payload["activation_state"])
+  with self.assertRaisesRegex(ValueError,"invalid runtime content activation identifier"):
+   service._configure_activation(
+    {"id":"pz-1","game_id":"projectzomboid","runtime_id":"projectzomboid.stable"},
+    current,
+    {"mode":"mod","identifier":"bad;other"},
+   )
+
+ def test_customer_content_ui_supports_required_activation_identifier(self):
+  script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
+  for marker in ("identifier_required","content-activation-identifier","identifier_label","Salvar ativação"):
+   self.assertIn(marker,script)
+
  def test_palworld_console_blocks_admin_password_before_queueing(self):
   service=CustomerInstanceWorkspaceService.__new__(CustomerInstanceWorkspaceService);service.root=ROOT
   service.require=lambda user,instance_id,permission:{"id":instance_id,"game_id":"palworld","runtime_id":"palworld.stable","agent_id":"agent-1"}
