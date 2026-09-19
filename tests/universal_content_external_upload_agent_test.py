@@ -40,6 +40,54 @@ class ExternalUploadAgentTest(unittest.TestCase):
    module=self._module("linux",tmp)
    for iid,transfer,filename in (("../i1","t1","mods.zip"),("i1","../t","mods.zip"),("i1","t1","../mods.zip"),("i1","t1","mods.exe")):
     with self.subTest(iid=iid,transfer=transfer,filename=filename),self.assertRaises(ValueError):module.quarantine_destination(iid,transfer,filename)
+ def test_external_payload_semantics_fail_closed_on_both_agents(self):
+  for platform in ("linux","windows"):
+   with self.subTest(platform=platform),tempfile.TemporaryDirectory() as tmp:
+    module=_load(ROOT/f"agents/{platform}/runtime/content_semantic_validation.py",f"semantic_{platform}_{id(self)}")
+    root=Path(tmp)
+
+    random_zip=root/"random";random_zip.mkdir()
+    (random_zip/"readme.txt").write_text("not a mod",encoding="utf-8")
+    with self.assertRaisesRegex(ValueError,"valid DayZ mod"):
+     module.validate_external_content_payload(random_zip,{
+      "game_id":"dayz","content_type":"mod","provider":"local",
+      "artifact":{"provider":"local","ephemeral_upload":True},
+     })
+
+    dayz=root/"dayz";(dayz/"Addons").mkdir(parents=True)
+    (dayz/"Addons"/"example.pbo").write_bytes(b"pbo")
+    result=module.validate_external_content_payload(dayz,{
+     "game_id":"dayz","content_type":"mod","provider":"local",
+     "artifact":{"provider":"local","ephemeral_upload":True},
+    })
+    self.assertEqual(result["validator"],"dayz-mod-v1")
+
+    plugin=root/"plugin";plugin.mkdir()
+    jar=plugin/"plugin.jar"
+    with zipfile.ZipFile(jar,"w") as archive:archive.writestr("plugin.yml","name: Example\nmain: example.Main\n")
+    result=module.validate_external_content_payload(plugin,{
+     "game_id":"minecraft","content_type":"plugin","provider":"local",
+     "artifact":{"provider":"local","ephemeral_upload":True},
+    })
+    self.assertEqual(result["validator"],"minecraft-plugin-v1")
+
+    bogus=root/"bogus";bogus.mkdir()
+    badjar=bogus/"random.jar"
+    with zipfile.ZipFile(badjar,"w") as archive:archive.writestr("hello.txt","not a plugin")
+    with self.assertRaisesRegex(ValueError,"recognized Minecraft plugin"):
+     module.validate_external_content_payload(bogus,{
+      "game_id":"minecraft","content_type":"plugin","provider":"local",
+      "artifact":{"provider":"local","ephemeral_upload":True},
+     })
+
+ def test_content_clients_enforce_semantic_validation_before_activation(self):
+  for platform in ("linux","windows"):
+   source=(ROOT/f"agents/{platform}/runtime/content_client.py").read_text(encoding="utf-8")
+   self.assertIn("from content_semantic_validation import validate_external_content_payload",source)
+   validation=source.index("validate_external_content_payload(payload,cmd)")
+   activation=source.index("_activate_target(config,iid,target,payload)",validation)
+   self.assertLess(validation,activation)
+
  def test_repository_persists_only_validated_agent_quarantine_ack(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);backend=create_backend(DatabaseConfig(driver="sqlite",database=str(root/"capivara.db")));backend.initialize()

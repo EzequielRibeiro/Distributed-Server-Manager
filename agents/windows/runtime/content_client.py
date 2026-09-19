@@ -9,6 +9,7 @@ import content_provider_steam_workshop  # noqa: F401
 from content_activation_projection import synchronize_activation_state
 from content_activation_apply import ContentActivationApplyError,ContentActivationRollbackError,apply_activation_snapshots
 from content_security import ContentSecurityRejected,require_clean
+from content_semantic_validation import validate_external_content_payload
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));CONTENT_STATE=STATE_ROOT/"managed-content";GAME_DATA_ROOT=Path(os.environ.get("CAPIVARA_AGENT_GAME_DATA_ROOT",STATE_ROOT/"game-data")).resolve()
 try:SECURITY_RETRY_SECONDS=max(30,min(int(os.environ.get("CAPIVARA_CONTENT_SECURITY_RETRY_SECONDS","300")),3600))
 except (TypeError,ValueError):SECURITY_RETRY_SECONDS=300
@@ -149,6 +150,7 @@ def _install(config,cmd):
   if archive:_extract(source,payload);expanded_scan=require_clean(payload,context=security_context)
   elif source.is_dir():shutil.copytree(source,payload,dirs_exist_ok=True)
   else:shutil.copy2(source,payload/(str(artifact.get("filename") or source.name or "content.bin")))
+  validate_external_content_payload(payload,cmd)
   _activate_target(config,iid,target,payload)
  finally:shutil.rmtree(stage,ignore_errors=True)
  return str(target),expanded_scan or source_scan
