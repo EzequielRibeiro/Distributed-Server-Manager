@@ -102,7 +102,8 @@ main(){
     start_python_worker maintenance_worker.py
     start_python_worker_with_env hybrid_agent_worker.py \
         "CAPIVARA_AGENT_MODE=hybrid" \
-        "CAPIVARA_DSM_ROOT=${DSM_ROOT}"
+        "CAPIVARA_DSM_ROOT=${DSM_ROOT}" \
+        "CAPIVARA_STEAM_HOME=${DSM_ROOT}"
     start_python_worker hybrid_customer_workspace_worker.py
 
     supervise_workers
