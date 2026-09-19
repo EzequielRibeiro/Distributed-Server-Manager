@@ -81,7 +81,7 @@ def read_runtime_events(state_dir: Path, *, limit: int = 200) -> list[dict[str, 
     path = _event_path(Path(state_dir))
     if not path.exists():
         return []
-    bounded = max(1, min(int(limit), 1000))
+    bounded = max(1, min(int(limit), 5000))
     result: list[dict[str, Any]] = []
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
