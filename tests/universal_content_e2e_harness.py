@@ -45,11 +45,13 @@ def fake_doctor(config,instance_id):
 instance_runtime.status=fake_status;instance_runtime.lifecycle=fake_lifecycle;instance_runtime.doctor=fake_doctor
 
 if ARGS.platform=='linux':
+ import privileged_materialization
  class FakeMaterializer:
   def inspect(self,spec):return {'exists':True,'owned':True,'matches':True}
   def apply(self,spec):return {'action':'materialize','changed':True}
   def remove(self,spec):return {'action':'remove','changed':True}
  runtime_materialization.resolve_materializer=lambda spec:FakeMaterializer()
+ privileged_materialization.materialize=lambda config,spec:{'spec':spec,'operation':{'action':'materialize','changed':True}}
 
 def fixture_resolver(artifact,stage,game_data_root):
  candidate=(Path(game_data_root)/str(artifact.get('package_id') or '')).resolve();candidate.relative_to(Path(game_data_root).resolve())
