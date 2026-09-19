@@ -241,36 +241,56 @@ def process_hybrid_runtime_event_cycle(
     batch_size: int = 1000,
     max_batches: int = 5,
 ) -> dict[str, Any]:
-    """Persist and acknowledge embedded Hybrid runtime events into the UEP."""
+    """Persist and acknowledge embedded Hybrid runtime events into the UEP.
+
+    Read a bounded backlog window once, ingest it in repository-sized chunks,
+    then compact the local queue once. This avoids rewriting a very large
+    JSONL queue once per 1000-event batch.
+    """
     runtime_events = _runtime_events_module(root)
     repository = UniversalEventRepository(backend)
     repository.initialize()
 
-    accepted = created = rejected = acknowledged = batches = 0
-    for _ in range(max(1, int(max_batches))):
-        events = runtime_events.read_runtime_events(
-            root / "runtime" / "hybrid-agent-state",
-            limit=max(1, min(int(batch_size), 1000)),
-        )
-        if not events:
-            break
+    bounded_batch = max(1, min(int(batch_size), 1000))
+    bounded_batches = max(1, int(max_batches))
+    window_limit = bounded_batch * bounded_batches
+    events = runtime_events.read_runtime_events(
+        root / "runtime" / "hybrid-agent-state",
+        limit=window_limit,
+    )
+    if not events:
+        return {
+            "status": "idle",
+            "batches": 0,
+            "accepted": 0,
+            "created": 0,
+            "rejected": 0,
+            "acknowledged": 0,
+            "remaining_sample": 0,
+        }
+
+    accepted = created = rejected = batches = 0
+    accepted_ids: list[str] = []
+    for offset in range(0, len(events), bounded_batch):
+        chunk = events[offset:offset + bounded_batch]
         result = repository.ingest_agent_events(
             agent_id,
-            events,
-            max_events=max(1, min(int(batch_size), 1000)),
+            chunk,
+            max_events=bounded_batch,
         )
-        ids = result.get("accepted_event_ids") or []
-        removed = runtime_events.acknowledge_runtime_events(
-            root / "runtime" / "hybrid-agent-state",
-            ids,
-        )
+        ids = [str(value) for value in (result.get("accepted_event_ids") or []) if str(value)]
+        accepted_ids.extend(ids)
         accepted += int(result.get("accepted") or 0)
         created += int(result.get("created") or 0)
         rejected += int(result.get("rejected") or 0)
-        acknowledged += int(removed or 0)
         batches += 1
-        if not ids or removed == 0:
+        if not ids and int(result.get("rejected") or 0):
             break
+
+    acknowledged = runtime_events.acknowledge_runtime_events(
+        root / "runtime" / "hybrid-agent-state",
+        accepted_ids,
+    ) if accepted_ids else 0
 
     remaining = len(
         runtime_events.read_runtime_events(
@@ -279,12 +299,12 @@ def process_hybrid_runtime_event_cycle(
         )
     )
     return {
-        "status": "completed" if batches else "idle",
+        "status": "completed",
         "batches": batches,
         "accepted": accepted,
         "created": created,
         "rejected": rejected,
-        "acknowledged": acknowledged,
+        "acknowledged": int(acknowledged or 0),
         "remaining_sample": remaining,
     }
 
