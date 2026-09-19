@@ -121,6 +121,57 @@ def _emit_scan(context:dict[str,Any]|None,event_type:str,*,result:str|None=None,
   pass
 
 
+def _metadata_object(value:Any)->dict[str,Any]:
+ if isinstance(value,dict):return {str(k):v for k,v in value.items()}
+ result={}
+ if isinstance(value,list):
+  for item in value:
+   if isinstance(item,dict):
+    key=str(item.get("identifier") or item.get("name") or "").strip()
+    if key:result[key]=item.get("value")
+   elif isinstance(item,(list,tuple)) and len(item)==2:
+    result[str(item[0])]=item[1]
+ return result
+
+def _safe_metadata_text(value:Any,limit:int=191)->str|None:
+ text=str(value or "").replace("\x00"," ").replace("\r"," ").replace("\n"," ").strip()
+ return text[:limit] or None
+
+def _relative_match_path(raw:Any,target:Path)->str:
+ candidate=Path(str(raw or target))
+ try:resolved=candidate.resolve()
+ except OSError:resolved=candidate
+ if target.is_dir():
+  try:relative=resolved.relative_to(target)
+  except (OSError,ValueError):relative=Path(candidate.name or "unknown")
+ else:relative=Path(target.name)
+ text=relative.as_posix().lstrip("/")
+ if not text or text=="." or text==".." or text.startswith("../"):text=Path(candidate.name or target.name or "unknown").name
+ return text[:1024]
+
+def _safe_rule_match(item:dict[str,Any],rule:dict[str,Any],target:Path)->dict[str,Any]:
+ tags=[str(v).strip().lower()[:64] for v in rule.get("tags") or [] if str(v).strip()][:20]
+ metadata=_metadata_object(rule.get("metadata"))
+ rule_id=_safe_metadata_text(rule.get("identifier")) or "unknown"
+ description=_safe_metadata_text(metadata.get("description"),500)
+ threat_name=_safe_metadata_text(metadata.get("threat_name") or metadata.get("malware_name") or metadata.get("threat"),191)
+ malware_family=_safe_metadata_text(metadata.get("malware_family") or metadata.get("family"),191)
+ category=_safe_metadata_text(metadata.get("threat_category") or metadata.get("category") or metadata.get("type"),128)
+ if not category:
+  category=next((tag for tag in tags if tag not in _BLOCK_TAGS),None)
+ relative_path=_relative_match_path(item.get("path"),target)
+ return {
+  "rule":rule_id,
+  "tags":tags,
+  "file_name":Path(relative_path).name[:255],
+  "relative_path":relative_path,
+  "detection_name":threat_name or description or rule_id,
+  "threat_name":threat_name,
+  "malware_family":malware_family,
+  "category":category,
+  "description":description,
+ }
+
 def _validate_target_tree(target:Path)->str|None:
  if target.is_symlink():return "content scan target is a symbolic link"
  if target.is_file():return None
@@ -172,8 +223,8 @@ def scan_content(path:Path|str,context:dict[str,Any]|None=None)->dict[str,Any]:
   if not isinstance(item,dict):continue
   for rule in item.get("rules") or []:
    if not isinstance(rule,dict):continue
-   tags=[str(v).strip().lower() for v in rule.get("tags") or [] if str(v).strip()]
-   blocked=blocked or bool(_BLOCK_TAGS.intersection(tags));matches.append({"rule":str(rule.get("identifier") or "unknown")[:191],"tags":tags[:20]})
+   match=_safe_rule_match(item,rule,target);tags=match["tags"]
+   blocked=blocked or bool(_BLOCK_TAGS.intersection(tags));matches.append(match)
  if matches:return finish(_verdict("blocked" if blocked else "suspicious",reason="YARA-X matched content",matches=matches))
  return finish(_verdict("clean"))
 
