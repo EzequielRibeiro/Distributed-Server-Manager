@@ -58,17 +58,16 @@ jobs:
       - name: Diagnose compiled customer foreign-key DDL
         run: |
           PYTHONPATH=database python3 - <<'PY'
-          import re
           from schema_baseline import load_schema_baseline
           sql = load_schema_baseline("mysql").sql
           for name in ("dashboard_users", "customer_account_members", "customer_password_recovery"):
-              match = re.search(
-                  rf"CREATE TABLE(?: IF NOT EXISTS)? {name}\\s*\\((.*?)\\n\\)(?: ENGINE=.*?)?;",
-                  sql,
-                  re.IGNORECASE | re.DOTALL,
-              )
-              print(f"===== {name} =====")
-              print(match.group(0) if match else "NOT FOUND")
+              marker = f"CREATE TABLE {name}"
+              pos = sql.find(marker)
+              if pos < 0:
+                  marker = f"CREATE TABLE IF NOT EXISTS {name}"
+                  pos = sql.find(marker)
+              print(f"===== {name} @ {pos} =====")
+              print(sql[pos:pos+3500] if pos >= 0 else "NOT FOUND")
           PY
       - name: Run destructive isolated Baseline v2 bootstrap and upgrade replay
         id: baseline
