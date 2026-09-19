@@ -81,6 +81,24 @@ def test_hybrid_context_uses_dashboard_worker_and_dsm_home():
         ]
 
 
+def test_services_pin_persistent_steam_session_home():
+    hybrid = (ROOT / "systemd" / "dsm-dashboard-worker.service").read_text(encoding="utf-8")
+    agent = (ROOT / "agents" / "linux" / "services" / "capivara-agent.service").read_text(encoding="utf-8")
+    worker = (ROOT / "dashboard" / "workers" / "worker.sh").read_text(encoding="utf-8")
+    assert "Environment=HOME=/opt/dsm" in hybrid
+    assert "Environment=CAPIVARA_STEAM_HOME=/opt/dsm" in hybrid
+    assert "Environment=HOME=/var/lib/capivara-agent" in agent
+    assert "Environment=CAPIVARA_STEAM_HOME=/var/lib/capivara-agent" in agent
+    assert '"CAPIVARA_STEAM_HOME=${DSM_ROOT}"' in worker
+
+
+def test_auth_uses_same_persistent_home_and_probes_noninteractive_reuse():
+    text = HELPER.read_text(encoding="utf-8")
+    assert 'CAPIVARA_STEAM_HOME="${RUNTIME_HOME}"' in text
+    assert '</dev/null >/dev/null 2>&1 || PROBE_STATUS=$?' in text
+    assert "Sessão não interativa validada" in text
+
+
 def test_runtime_steamcmd_is_resolved_through_agent_runtime():
     text = HELPER.read_text(encoding="utf-8")
     assert "from game_data_executor import _steamcmd; print(_steamcmd())" in text
