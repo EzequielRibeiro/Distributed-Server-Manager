@@ -61,7 +61,7 @@
     }
   },
   "installation": {
-    "directory": "C:\\ProgramData\\CapivaraAgent\\game-data\\palworld\\serverfiles"
+    "directory": "/opt/dsm/game-data/palworld/serverfiles"
   },
   "network": {
     "allocation": "block",
