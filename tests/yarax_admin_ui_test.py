@@ -190,14 +190,20 @@ class YaraXAdminUiTest(unittest.TestCase):
         self.assertIn("tbody tr{display:block", css)
         self.assertIn("grid-template-columns:minmax(92px,34%)", css)
 
-    def test_yarax_activity_refreshes_automatically(self):
+    def test_yarax_activity_uses_sse_push_with_polling_fallback(self):
         script = (DASHBOARD / "web" / "admin-security-yarax.js").read_text(encoding="utf-8")
-        self.assertIn("const LIVE_REFRESH_MS = 10000", script)
-        self.assertIn("setInterval(liveRefresh, LIVE_REFRESH_MS)", script)
+        http = (DASHBOARD / "yarax_security_http.py").read_text(encoding="utf-8")
+        self.assertIn("new EventSource", script)
+        self.assertIn("/api/admin/security/yara-x/stream?", script)
+        self.assertIn("yarax-state", script)
+        self.assertIn("FALLBACK_REFRESH_MS = 30000", script)
+        self.assertIn("scheduleYaraXFallback", script)
+        self.assertNotIn("setInterval(liveRefresh", script)
         self.assertIn("document.hidden", script)
         self.assertIn("visibilitychange", script)
-        self.assertIn("if (loadInFlight) return", script)
-        self.assertIn("finally {", script)
+        self.assertIn("YARAX_SECURITY_STREAM_PATH", http)
+        self.assertIn('"text/event-stream; charset=utf-8"', http)
+        self.assertIn('"yarax-state"', http)
 
     def test_yarax_page_uses_canonical_admin_shell(self):
         page = (DASHBOARD / "web" / "admin-security-yarax.html").read_text(encoding="utf-8")

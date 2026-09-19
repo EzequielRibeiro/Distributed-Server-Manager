@@ -238,14 +238,19 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   with self.assertRaisesRegex(ValueError,"unsupported runtime content activation mode"):
    service._configure_activation(context,current,{"mode":"anything"})
 
- def test_customer_content_ui_refreshes_status_without_full_reload(self):
+ def test_customer_content_ui_pushes_status_over_sse_with_polling_fallback(self):
   script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
+  http=(ROOT/"dashboard"/"customer_content_http.py").read_text(encoding="utf-8")
+  self.assertIn("new EventSource",script)
+  self.assertIn("/content/stream?instance_id=",script)
+  self.assertIn('addEventListener("content-state"',script)
+  self.assertIn("contentStreamHealthy",script)
+  self.assertIn("scheduleContentFallback(15000)",script)
   self.assertIn("refreshInstalledContent",script)
-  self.assertIn("contentViewActive",script)
-  self.assertIn("renderInstalledContent()",script)
-  self.assertIn("scheduleContentRefresh(1000)",script)
-  self.assertIn("scheduleContentRefresh(3000)",script)
-  self.assertIn('&_ts=${Date.now()}',script)
+  self.assertNotIn("scheduleContentRefresh(3000)",script)
+  self.assertIn('STREAM=PATH+"/stream"',http)
+  self.assertIn('"text/event-stream; charset=utf-8"',http)
+  self.assertIn('"content-state"',http)
   self.assertIn('document.addEventListener("visibilitychange"',script)
 
  def test_customer_content_ui_exposes_desired_applied_and_reconciliation_error(self):

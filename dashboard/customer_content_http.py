@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Customer Workspace HTTP surface for Universal Content."""
 from __future__ import annotations
+import hashlib
+import json
+import time
 from urllib.parse import parse_qs,urlparse
 from controller_session import session_user_from_headers
 from content_action_capabilities import project_content_actions
@@ -19,6 +22,7 @@ UPLOAD_STATUS=UPLOAD+"/status"
 UPLOAD_FINALIZE=UPLOAD+"/finalize"
 UPDATE_POLICY=PATH+"/update-policy"
 UPDATE_POLICY_ITEM=UPDATE_POLICY+"/item"
+STREAM=PATH+"/stream"
 
 def install_customer_content_http(legacy,authenticate):
  previous_get=legacy.DashboardHandler.do_GET;previous_post=legacy.DashboardHandler.do_POST;previous_put=getattr(legacy.DashboardHandler,"do_PUT",None)
@@ -43,6 +47,34 @@ def install_customer_content_http(legacy,authenticate):
   if length<0 or length>64*1024*1024*1024:raise ValueError("content upload exceeds 64 GiB transfer limit")
   return length
  def transfer_view(item):return {k:item.get(k) for k in ("transfer_id","instance_id","direction","purpose","filename","status","size_bytes","transferred_bytes","sha256","last_error","expires_at")}
+ def content_view(user,instance_id):
+  api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT);items=api.list(user,instance_id)
+  return {"content":project_content_actions(api,user,instance_id,items)}
+ def sse_frame(event,payload,event_id=None):
+  data=json.dumps(to_json_compatible(payload),ensure_ascii=False,separators=(",",":"))
+  lines=[]
+  if event_id:lines.append(f"id: {event_id}")
+  lines.append(f"event: {event}")
+  lines.extend(f"data: {line}" for line in data.splitlines() or [""])
+  return ("\n".join(lines)+"\n\n").encode("utf-8")
+ def serve_content_stream(self,user,instance_id,timeout=25):
+  first=content_view(user,instance_id)
+  self.send_response(200);self.send_header("Content-Type","text/event-stream; charset=utf-8");self.send_header("Cache-Control","no-cache, no-transform");self.send_header("Connection","keep-alive");self.send_header("X-Accel-Buffering","no");self.send_header("X-Content-Type-Options","nosniff");self.end_headers()
+  deadline=time.monotonic()+max(5,min(int(timeout),30));last_ping=0.0;last_signature=""
+  try:
+   self.wfile.write(sse_frame("ready",{"kind":"CapivaraCustomerContentStream","version":1,"retry_ms":1500}));self.wfile.flush()
+   while time.monotonic()<deadline:
+    payload=first if not last_signature else content_view(user,instance_id)
+    encoded=json.dumps(to_json_compatible(payload),ensure_ascii=False,sort_keys=True,separators=(",",":")).encode("utf-8")
+    signature=hashlib.sha256(encoded).hexdigest()
+    if signature!=last_signature:
+     self.wfile.write(sse_frame("content-state",payload,signature[:24]));self.wfile.flush();last_signature=signature;last_ping=time.monotonic()
+    elif time.monotonic()-last_ping>=10:
+     self.wfile.write(b": keepalive\n\n");self.wfile.flush();last_ping=time.monotonic()
+    if not last_signature:first=None
+    time.sleep(.75)
+  except (BrokenPipeError,ConnectionResetError,OSError):
+   return
  def error(self,exc):
   if isinstance(exc,PermissionError):return send(self,403,{"error":"forbidden","message":str(exc)})
   if isinstance(exc,KeyError):return send(self,404,{"error":"not_found","message":"Conteúdo não encontrado."})
@@ -64,6 +96,14 @@ def install_customer_content_http(legacy,authenticate):
   api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT);api.workspace.require(user,instance_id,permission);return api
  def get(self):
   parsed=urlparse(self.path)
+  if parsed.path==STREAM:
+   user=require_user(self)
+   if user is None:return
+   try:
+    instance_id=iid(parsed)
+    if not instance_id:raise ValueError("instance_id is required")
+    return serve_content_stream(self,user,instance_id)
+   except Exception as exc:return error(self,exc)
   if parsed.path==UPLOAD_STATUS:
    user=require_user(self)
    if user is None:return
@@ -93,7 +133,7 @@ def install_customer_content_http(legacy,authenticate):
   user=require_user(self)
   if user is None:return
   try:
-   instance_id=iid(parsed);api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT);items=api.list(user,instance_id);send(self,200,{"content":project_content_actions(api,user,instance_id,items)})
+   instance_id=iid(parsed);send(self,200,content_view(user,instance_id))
   except Exception as exc:error(self,exc)
  def post(self):
   parsed=urlparse(self.path)
@@ -149,4 +189,4 @@ def install_customer_content_http(legacy,authenticate):
   except Exception as exc:return error(self,exc)
  legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post;legacy.DashboardHandler.do_PUT=put
 
-__all__=["PATH","SEARCH","BUNDLE","UPLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","UPDATE_POLICY","UPDATE_POLICY_ITEM","install_customer_content_http"]
+__all__=["PATH","SEARCH","BUNDLE","UPLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","UPDATE_POLICY","UPDATE_POLICY_ITEM","STREAM","install_customer_content_http"]
