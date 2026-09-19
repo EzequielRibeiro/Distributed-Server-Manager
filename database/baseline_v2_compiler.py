@@ -64,7 +64,7 @@ def _customer_ddl(backend: str) -> str:
     return """CREATE TABLE customers (
     id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     customer_code VARCHAR(32) GENERATED ALWAYS AS (CONCAT('CLI-', CASE WHEN CHAR_LENGTH(CAST(id AS CHAR)) >= 6 THEN CAST(id AS CHAR) ELSE LPAD(CAST(id AS CHAR), 6, '0') END)) STORED UNIQUE,
-    controller_id VARCHAR(128) NOT NULL,
+    controller_id VARCHAR(191) NOT NULL,
     name VARCHAR(255) NOT NULL,
     legal_name VARCHAR(255),
     email VARCHAR(320),
@@ -100,7 +100,7 @@ def _password_state_ddl(backend: str) -> str:
         flag, timestamp = "INTEGER NOT NULL DEFAULT 0 CHECK (must_change_password IN (0, 1))", "TEXT"
     else:
         flag, timestamp = "TINYINT NOT NULL DEFAULT 0 CHECK (must_change_password IN (0, 1))", "TIMESTAMP"
-    username_type = "TEXT" if backend in {"postgresql", "sqlite"} else "VARCHAR(128)"
+    username_type = "TEXT" if backend in {"postgresql", "sqlite"} else "VARCHAR(191)"
     return f"""CREATE TABLE customer_password_state (
     username {username_type} PRIMARY KEY,
     must_change_password {flag},
