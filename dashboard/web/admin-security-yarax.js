@@ -83,19 +83,45 @@
     </tr>`).join('') : '<tr><td colspan="8" class="empty">Nenhum Agent encontrado.</td></tr>';
   }
 
+  function detectionDetails(row) {
+    const matches = Array.isArray(row.matches) ? row.matches : [];
+    if (!matches.length) return '<span class="muted">—</span>';
+    const summary = matches[0]?.detection_name || matches[0]?.threat_name || matches[0]?.rule || `${matches.length} match(es)`;
+    const items = matches.map((match) => {
+      const labels = [];
+      if (match.threat_name) labels.push(`Ameaça: ${escapeHtml(match.threat_name)}`);
+      if (match.malware_family) labels.push(`Família: ${escapeHtml(match.malware_family)}`);
+      if (match.category) labels.push(`Categoria: ${escapeHtml(match.category)}`);
+      labels.push(`Regra: ${escapeHtml(match.rule || 'unknown')}`);
+      if (Array.isArray(match.tags) && match.tags.length) labels.push(`Tags: ${match.tags.map(escapeHtml).join(' · ')}`);
+      if (match.description && match.description !== match.detection_name) labels.push(`Descrição: ${escapeHtml(match.description)}`);
+      if (match.relative_path) labels.push(`Arquivo: ${escapeHtml(match.relative_path)}`);
+      return `<li><strong>${escapeHtml(match.detection_name || match.rule || 'Detecção')}</strong><small>${labels.join('<br>')}</small></li>`;
+    }).join('');
+    return `<details class="detection-details"><summary>${escapeHtml(summary)}${matches.length > 1 ? ` (+${matches.length - 1})` : ''}</summary><ul>${items}</ul></details>`;
+  }
+
+  function matchedFile(row) {
+    const files = Array.isArray(row.matched_files) ? row.matched_files.filter(Boolean) : [];
+    if (!files.length) return '—';
+    if (files.length === 1) return escapeHtml(files[0]);
+    return `<details class="matched-files"><summary>${escapeHtml(files[0])} (+${files.length - 1})</summary><ul>${files.map((file) => `<li>${escapeHtml(file)}</li>`).join('')}</ul></details>`;
+  }
+
   function renderEvents(rows) {
     $('events').innerHTML = rows.length ? rows.map((row) => `<tr>
       <td>${escapeHtml(row.occurred_at)}</td>
       <td>${escapeHtml(row.agent_id)}</td>
       <td>${escapeHtml(row.instance_id)}</td>
       <td><strong>${escapeHtml(row.content_id)}</strong><small>${escapeHtml(row.provider || row.game_id)}</small></td>
+      <td class="file-cell">${matchedFile(row)}</td>
       <td>${badge(row.result || row.event_type)}</td>
+      <td class="detection-cell">${detectionDetails(row)}</td>
       <td>${row.duration_ms === null || row.duration_ms === undefined ? '—' : escapeHtml(row.duration_ms + ' ms')}</td>
-      <td>${escapeHtml(row.match_count || 0)}</td>
       <td class="error-cell">${escapeHtml(row.error)}
         ${row.agent_id && row.instance_id && row.content_id ? `<button type="button" class="rescan" data-yarax-action="rescan_content" data-agent-id="${escapeHtml(row.agent_id)}" data-instance-id="${escapeHtml(row.instance_id)}" data-content-id="${escapeHtml(row.content_id)}">Re-scan</button>` : ''}
       </td>
-    </tr>`).join('') : '<tr><td colspan="8" class="empty">Nenhum evento YARA-X encontrado.</td></tr>';
+    </tr>`).join('') : '<tr><td colspan="9" class="empty">Nenhum evento YARA-X encontrado.</td></tr>';
   }
 
   async function runOperation(button) {
