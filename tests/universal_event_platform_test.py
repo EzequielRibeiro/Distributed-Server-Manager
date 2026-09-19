@@ -154,6 +154,19 @@ class UniversalEventRepositoryTest(unittest.TestCase):
         self.assertEqual(result2["accepted_event_ids"], ["event-c1"])
         self.assertEqual(len(self.repo.list_events(agent_id="agent-c1")), 1)
 
+    def test_agent_ingestion_checks_instance_ownership_once_per_batch_instance(self):
+        calls = []
+        original = self.repo._instance_owned_by
+        def counted(agent_id, instance_id):
+            calls.append((agent_id, instance_id))
+            return original(agent_id, instance_id)
+        self.repo._instance_owned_by = counted
+        events = [self.runtime_event(f"batch-{index}") for index in range(100)]
+        result = self.repo.ingest_agent_events("agent-c1", events, max_events=100)
+        self.assertEqual(result["accepted"], 100)
+        self.assertEqual(result["created"], 100)
+        self.assertEqual(calls, [("agent-c1", "instance-c1")])
+
     def test_agent_ingestion_rejects_identity_and_ownership_spoofing(self):
         wrong_agent = self.runtime_event("spoof-agent", agent_id="agent-other")
         wrong_instance = self.runtime_event("spoof-instance", instance_id="missing-instance")
