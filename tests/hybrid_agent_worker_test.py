@@ -225,6 +225,7 @@ class HybridAgentWorkerTest(unittest.TestCase):
             "rejected": 0,
         }
         runtime_events = Mock()
+        runtime_events.read_runtime_events_matching.return_value = [payload]
         runtime_events.read_runtime_events.side_effect = [[payload], []]
         runtime_events.acknowledge_runtime_events.return_value = 1
 
@@ -266,6 +267,7 @@ class HybridAgentWorkerTest(unittest.TestCase):
             {"accepted_event_ids":[f"event-{index}" for index in range(2000,2500)],"accepted":500,"created":500,"rejected":0},
         ]
         runtime_events = Mock()
+        runtime_events.read_runtime_events_matching.return_value = []
         runtime_events.read_runtime_events.side_effect = [events, []]
         runtime_events.acknowledge_runtime_events.return_value = 2500
 
@@ -288,6 +290,44 @@ class HybridAgentWorkerTest(unittest.TestCase):
         self.assertEqual(result["accepted"], 2500)
         self.assertEqual(result["created"], 500)
         self.assertEqual(result["acknowledged"], 2500)
+
+    def test_hybrid_runtime_events_prioritize_yarax_over_fifo_backlog(self):
+        agent_id = "hybrid-priority-agent"
+        state = self.root / "runtime" / "hybrid-agent-state"
+        yara = {"event_id":"yara-1","event_type":"YARAX_SCAN_COMPLETED","instance_id":"instance-yara"}
+        fifo = [{"event_id":f"fifo-{index}","event_type":"INSTANCE_RECOVERED","instance_id":"instance-yara"} for index in range(3)]
+        repository = Mock()
+        repository.ingest_agent_events.return_value = {
+            "accepted_event_ids": ["yara-1","fifo-0","fifo-1","fifo-2"],
+            "accepted": 4,
+            "created": 4,
+            "rejected": 0,
+        }
+        runtime_events = Mock()
+        runtime_events.read_runtime_events_matching.return_value = [yara]
+        runtime_events.read_runtime_events.side_effect = [fifo, []]
+        runtime_events.acknowledge_runtime_events.return_value = 4
+
+        with (
+            patch("hybrid_agent_worker.UniversalEventRepository", return_value=repository),
+            patch("hybrid_agent_worker._runtime_events_module", return_value=runtime_events),
+        ):
+            result = process_hybrid_runtime_event_cycle(
+                self.backend,
+                self.root,
+                agent_id,
+                batch_size=1000,
+                max_batches=5,
+            )
+
+        submitted = repository.ingest_agent_events.call_args.args[1]
+        self.assertEqual([item["event_id"] for item in submitted], ["yara-1","fifo-0","fifo-1","fifo-2"])
+        runtime_events.read_runtime_events_matching.assert_called_once_with(
+            state,
+            event_types=("YARAX_SCAN_STARTED","YARAX_SCAN_COMPLETED","YARAX_SCAN_FAILED"),
+            limit=200,
+        )
+        self.assertEqual(result["accepted"], 4)
 
     def test_hybrid_content_events_are_ingested_before_yarax_admin_exchange(self):
         import inspect
