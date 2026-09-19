@@ -1,0 +1,79 @@
+name: YARA-X Security Management
+
+on:
+  pull_request:
+    paths:
+      - 'agents/linux/runtime/content_security.py'
+      - 'agents/linux/runtime/security_yarax.py'
+      - 'agents/linux/runtime/security_yarax_rules.py'
+      - 'agents/linux/runtime/yarax_admin_client.py'
+      - 'agents/windows/runtime/content_security.py'
+      - 'agents/windows/runtime/security_yarax.py'
+      - 'agents/windows/runtime/security_yarax_rules.py'
+      - 'agents/windows/runtime/yarax_admin_client.py'
+      - 'dashboard/yarax_**'
+      - 'dashboard/web/admin-security-yarax.*'
+      - 'database/yarax_**'
+      - 'monitor/alert_engine.py'
+      - 'tests/yarax_**'
+      - '.github/workflows/yarax-security-management.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/linux/runtime/content_security.py'
+      - 'agents/linux/runtime/security_yarax.py'
+      - 'agents/linux/runtime/security_yarax_rules.py'
+      - 'agents/linux/runtime/yarax_admin_client.py'
+      - 'agents/windows/runtime/content_security.py'
+      - 'agents/windows/runtime/security_yarax.py'
+      - 'agents/windows/runtime/security_yarax_rules.py'
+      - 'agents/windows/runtime/yarax_admin_client.py'
+      - 'dashboard/yarax_**'
+      - 'dashboard/web/admin-security-yarax.*'
+      - 'database/yarax_**'
+      - 'monitor/alert_engine.py'
+      - 'tests/yarax_**'
+      - '.github/workflows/yarax-security-management.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yarax-security-management-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security-management:
+    name: YARA-X Security Management Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compile YARA-X security surfaces
+        run: |
+          python3 -m py_compile             agents/linux/runtime/content_security.py             agents/linux/runtime/security_yarax.py             agents/linux/runtime/security_yarax_rules.py             agents/linux/runtime/yarax_admin_client.py             agents/windows/runtime/content_security.py             agents/windows/runtime/security_yarax.py             agents/windows/runtime/security_yarax_rules.py             agents/windows/runtime/yarax_admin_client.py             dashboard/yarax_security_api.py             dashboard/yarax_security_http.py             dashboard/yarax_admin_operation_api.py             dashboard/yarax_admin_operation_http.py             database/yarax_admin_operation_repository.py             monitor/alert_engine.py
+
+      - name: Validate Y1-Y7 security management contracts
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests/yarax_managed_engine_test.py
+          python3 -m unittest tests/yarax_managed_ruleset_test.py
+          python3 -m unittest tests/yarax_health_doctor_test.py
+          python3 -m unittest tests/yarax_scan_telemetry_test.py
+          python3 -m unittest tests/yarax_admin_ui_test.py
+          python3 -m unittest tests/yarax_admin_operations_test.py
+          python3 -m unittest tests/yarax_alert_e2e_test.py
+
+      - name: Validate fail-closed invariants
+        run: |
+          set -euo pipefail
+          grep -F 'YARAX_CONTENT_BLOCKED' monitor/alert_engine.py
+          grep -F 'YARAX_RULESET_UNAVAILABLE' monitor/alert_engine.py
+          grep -F 'YARAX_ENGINE_OUTDATED' monitor/alert_engine.py
+          grep -F 'YARAX_RULESET_OUTDATED' monitor/alert_engine.py
+          grep -F 'ruleset_checksum_valid' agents/linux/runtime/content_security.py
+          grep -F 'ruleset_checksum_valid' agents/windows/runtime/content_security.py
+          ! grep -R --line-number -E 'shell=True|eval\(|os\.system\('             agents/linux/runtime/yarax_admin_client.py             agents/windows/runtime/yarax_admin_client.py             dashboard/yarax_admin_operation_api.py
