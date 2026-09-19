@@ -106,6 +106,7 @@ steam_auth_exec_as_runtime()
     then
         env \
             HOME="${RUNTIME_HOME}" \
+            CAPIVARA_STEAM_HOME="${RUNTIME_HOME}" \
             CAPIVARA_AGENT_STATE_DIR="${STATE_DIR}" \
             "$@"
         return $?
@@ -124,6 +125,7 @@ steam_auth_exec_as_runtime()
 
     sudo -u "${RUNTIME_USER}" env \
         HOME="${RUNTIME_HOME}" \
+        CAPIVARA_STEAM_HOME="${RUNTIME_HOME}" \
         CAPIVARA_AGENT_STATE_DIR="${STATE_DIR}" \
         "$@"
 }
@@ -214,6 +216,7 @@ steam_auth_run()
         return "${STATUS}"
     fi
 
-    echo "[DSM][STEAM] Autenticação Steam concluída no contexto do Agent."
+    echo "[DSM][STEAM] Autenticação Steam concluída no contexto persistente do Agent."
+    echo "[DSM][STEAM] A sessão será reutilizada automaticamente por instalações Steam/Workshop enquanto permanecer válida na Steam."
     return 0
 }
