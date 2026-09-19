@@ -131,6 +131,13 @@ class HybridManagedContentParityTest(unittest.TestCase):
         self.assertLess(state_setup, reconciliation_import)
         self.assertIn('runtime" / "hybrid-agent-state"', source)
 
+    def test_hybrid_heartbeat_refreshes_public_ipv4(self):
+        source=(ROOT/"dashboard"/"workers"/"hybrid_agent_worker.py").read_text(encoding="utf-8")
+        self.assertIn("process_hybrid_public_network_cycle",source)
+        self.assertIn("observe_public_ipv4()",source)
+        self.assertIn("sync_observed_ipv4(",source)
+        self.assertIn('"public_network": public_network',source)
+
     def test_hybrid_heartbeat_includes_managed_content_cycle(self):
         source = (
             ROOT / "dashboard" / "workers" / "hybrid_agent_worker.py"

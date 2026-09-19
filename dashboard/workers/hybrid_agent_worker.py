@@ -33,6 +33,7 @@ os.environ.setdefault("CAPIVARA_AGENT_CONFIG", str(_HYBRID_STATE / "agent.json")
 os.environ.setdefault("CAPIVARA_AGENT_SERVICE", "dsm-dashboard-worker.service")
 
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
+from agent_public_network import AgentPublicNetworkRepository
 from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
 from backup_repository import BackupRepository
 from configuration_repository import ConfigurationRepository
@@ -165,6 +166,22 @@ def _instance_runtime_module(root: Path):
         sys.path.insert(0, str(runtime))
     import instance_runtime
     return instance_runtime
+
+
+def _public_ipv4_observer_module(root: Path):
+    _instance_runtime_module(root)
+    import public_ip
+    return public_ip
+
+
+def process_hybrid_public_network_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
+    observation=_public_ipv4_observer_module(root).observe_public_ipv4()
+    if str(observation.get("status") or "")!="observed" or not observation.get("public_ipv4"):
+        return {"status":"unavailable","public_ipv4":None,"error":observation.get("error")}
+    network=AgentPublicNetworkRepository(backend).sync_observed_ipv4(
+        agent_id,observation.get("public_ipv4"),source=observation.get("source")
+    )
+    return {"status":"completed","public_ipv4":network.get("public_ipv4"),"mode":network.get("public_ipv4_mode")}
 
 
 def _runtime_reconciler_module(root: Path):
@@ -719,6 +736,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         agent_id=agent_id,
         hostname=socket.gethostname(),
     )
+    public_network = process_hybrid_public_network_cycle(effective_backend, root, agent_id)
     instance_reconcile = process_hybrid_instance_reconcile_cycle(root, agent_id)
     configuration = process_hybrid_configuration_cycle(effective_backend, root, agent_id)
     content = process_hybrid_content_cycle(effective_backend, root, agent_id)
@@ -733,6 +751,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     response = {
         "active": True,
         "agent_id": agent_id,
+        "public_network": public_network,
         "instance_reconcile": instance_reconcile,
         "configuration": configuration,
         "content": content,
@@ -749,6 +768,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     game_state = game_data.get("state") if isinstance(game_data.get("state"), dict) else {}
     message = (
         f"hybrid heartbeat ok agent={agent_id} health={response.get('health_status')} "
+        f"public_ipv4={public_network.get('public_ipv4') or 'unavailable'} "
         f"instance_reconcile={instance_reconcile.get('healthy', 0)}/{instance_reconcile.get('instances', 0)} "
         f"instance_files={instance_reconcile.get('files_access_prepared', 0)} "
         f"configuration={configuration.get('applied', 0)}a/{configuration.get('failed', 0)}f "

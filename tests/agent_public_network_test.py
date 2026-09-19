@@ -21,6 +21,12 @@ from agent_public_network_schema import ensure_agent_public_network_schema
 
 
 class AgentPublicNetworkContractTest(unittest.TestCase):
+    def test_public_ipv4_mode_defaults_to_auto_and_accepts_manual(self):
+        self.assertEqual(normalize_public_network({"public_ipv4":"201.28.25.63"})["public_ipv4_mode"],"auto")
+        self.assertEqual(normalize_public_network({"public_ipv4":"201.28.25.63","public_ipv4_mode":"manual"})["public_ipv4_mode"],"manual")
+        with self.assertRaises(ValueError):
+            normalize_public_network({"public_ipv4_mode":"invalid"})
+
     def test_hostname_has_priority_over_ipv4(self):
         endpoint = player_endpoint(
             {"public_hostname": "BR-SP01.Capivara.Games.", "public_ipv4": "201.28.25.63"},
