@@ -27,7 +27,6 @@ from content_repository import ContentRepository
 from artifact_transfer_repository import ArtifactTransferRepository
 from agent_heartbeat_api import record_agent_heartbeat
 import content_client,content_provider,content_upload_quarantine,instance_runtime,runtime_materialization
-import privileged_materialization
 
 AGENT='agent-u10'
 CONFIG={'agent_id':AGENT}
@@ -46,6 +45,7 @@ def fake_doctor(config,instance_id):
 instance_runtime.status=fake_status;instance_runtime.lifecycle=fake_lifecycle;instance_runtime.doctor=fake_doctor
 
 if ARGS.platform=='linux':
+ import privileged_materialization
  class FakeMaterializer:
   def inspect(self,spec):return {'exists':True,'owned':True,'matches':True}
   def apply(self,spec):return {'action':'materialize','changed':True}
