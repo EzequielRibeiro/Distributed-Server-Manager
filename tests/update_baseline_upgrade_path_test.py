@@ -254,6 +254,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                 [
                     (12, "universal_content_update"),
                     (13, "maintenance_restart_framework"),
+                    (14, "yarax_admin_operations"),
                 ],
             )
 
@@ -296,6 +297,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                 [
                     (12, "universal_content_update"),
                     (13, "maintenance_restart_framework"),
+                    (14, "yarax_admin_operations"),
                 ],
             )
 
