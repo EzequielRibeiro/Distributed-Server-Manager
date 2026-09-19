@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -153,6 +154,29 @@ class UniversalEventRepositoryTest(unittest.TestCase):
         self.assertEqual(result2["created"], 0)
         self.assertEqual(result2["accepted_event_ids"], ["event-c1"])
         self.assertEqual(len(self.repo.list_events(agent_id="agent-c1")), 1)
+
+    def test_agent_ingestion_uses_one_transaction_for_large_batch(self):
+        transaction_calls = []
+        original_transaction = self.backend.transaction
+
+        @contextmanager
+        def counted_transaction():
+            transaction_calls.append(True)
+            with original_transaction() as connection:
+                yield connection
+
+        self.backend.transaction = counted_transaction
+        events = [self.runtime_event(f"bulk-{index}") for index in range(1000)]
+        result = self.repo.ingest_agent_events("agent-c1", events, max_events=1000)
+        self.assertEqual(result["accepted"], 1000)
+        self.assertEqual(result["created"], 1000)
+        self.assertEqual(result["rejected"], 0)
+        self.assertEqual(len(transaction_calls), 1)
+
+        duplicate = self.repo.ingest_agent_events("agent-c1", events, max_events=1000)
+        self.assertEqual(duplicate["accepted"], 1000)
+        self.assertEqual(duplicate["created"], 0)
+        self.assertEqual(len(transaction_calls), 2)
 
     def test_agent_ingestion_checks_instance_ownership_once_per_batch_instance(self):
         calls = []
