@@ -101,6 +101,69 @@ class ManagedYaraXRulesetTest(unittest.TestCase):
             module.CURRENT.write_text(json.dumps(current), encoding="utf-8")
             self.assertIsNone(module.managed_rules_path())
 
+    def test_trusted_previous_ruleset_remains_valid_after_rollback(self):
+        historical_version = "2026.09.18.1"
+        historical_sha256 = "954bcffb0528bc21d1422b269b77cdf3e2f6d105c6de7321ff2962de8f926616"
+        for platform_name in ("linux", "windows"):
+            with self.subTest(platform=platform_name):
+                module = load_runtime(platform_name, "security_yarax_rules.py", f"y6_rules_rollback_{platform_name}")
+                self.assertEqual(
+                    module.TRUSTED_RULESETS[historical_version]["sha256"],
+                    historical_sha256,
+                )
+                with tempfile.TemporaryDirectory() as td:
+                    root = Path(td)
+                    module.STATE_ROOT = root
+                    module.RULESET_ROOT = root / "security" / "yara-x" / "rulesets"
+                    module.CURRENT = module.RULESET_ROOT / "current.json"
+                    module.PREVIOUS = module.RULESET_ROOT / "previous.json"
+                    payload = b"trusted previous ruleset\n"
+                    digest = hashlib.sha256(payload).hexdigest()
+                    version = "test.previous"
+                    module.TRUSTED_RULESETS = {
+                        module.RULESET_VERSION: module.TRUSTED_RULESETS[module.RULESET_VERSION],
+                        version: {"sha256": digest, "filename": "baseline.yar"},
+                    }
+                    rules = module.RULESET_ROOT / "versions" / version / "baseline.yar"
+                    rules.parent.mkdir(parents=True)
+                    rules.write_bytes(payload)
+                    previous = {
+                        "schema_version": 1,
+                        "engine": "yara-x",
+                        "version": version,
+                        "rules_path": str(rules.resolve()),
+                        "sha256": digest,
+                        "rules_count": 1,
+                    }
+                    module.PREVIOUS.write_text(json.dumps(previous), encoding="utf-8")
+                    current_rules = module.RULESET_ROOT / "versions" / module.RULESET_VERSION / "baseline.yar"
+                    current_rules.parent.mkdir(parents=True)
+                    current_rules.write_text(module.RULESET_CONTENT, encoding="utf-8")
+                    module.CURRENT.write_text(
+                        json.dumps(
+                            {
+                                "schema_version": 1,
+                                "engine": "yara-x",
+                                "version": module.RULESET_VERSION,
+                                "rules_path": str(current_rules.resolve()),
+                                "sha256": module.RULESET_SHA256,
+                                "rules_count": 1,
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                    fake_engine = root / ("yr.exe" if platform_name == "windows" else "yr")
+                    fake_engine.write_bytes(b"test")
+                    with patch.object(module, "managed_binary", return_value=str(fake_engine)), patch.object(
+                        module, "_validate_rules", return_value=None
+                    ):
+                        result = module.rollback()
+                    self.assertEqual(result["state"], "ready")
+                    self.assertEqual(result["ruleset_version"], version)
+                    self.assertTrue(result["checksum_valid"])
+                    self.assertEqual(module.managed_rules_path(), str(rules.resolve()))
+                    self.assertEqual(result["pinned_ruleset_version"], module.RULESET_VERSION)
+
     def test_failed_staging_preserves_existing_current_pointer(self):
         module = load_runtime("linux", "security_yarax_rules.py", "y2_linux_preserve")
         with tempfile.TemporaryDirectory() as td:
