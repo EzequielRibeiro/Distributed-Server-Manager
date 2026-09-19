@@ -168,6 +168,16 @@ class YaraXAdminUiTest(unittest.TestCase):
         self.assertIn("credentials:'same-origin'", script)
         self.assertIn("cache:'no-store'", script)
 
+    def test_yarax_page_uses_canonical_admin_shell(self):
+        page = (DASHBOARD / "web" / "admin-security-yarax.html").read_text(encoding="utf-8")
+        script = (DASHBOARD / "web" / "admin-security-yarax.js").read_text(encoding="utf-8")
+        self.assertIn('/dashboard-home-v3.css', page)
+        self.assertIn('id="sidebar-component"', page)
+        self.assertIn('class="cap-home cap-yarax-admin"', page)
+        self.assertIn('id="yarax-menu-toggle"', page)
+        self.assertIn("loadShell()", script)
+        self.assertIn("'/components/sidebar-v3.html'", script)
+
     def test_api_does_not_expose_file_contents_or_credentials(self):
         source = (DASHBOARD / "yarax_security_api.py").read_text(encoding="utf-8")
         for forbidden in ("credential_secret", "pairing_token", "file_content", "artifact_bytes"):
