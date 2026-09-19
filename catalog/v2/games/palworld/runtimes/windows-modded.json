@@ -32,15 +32,6 @@
     "package_id": "2394010"
   },
   "content": {
-    "managed": {
-      "types": {
-        "workshop": {
-          "providers": [
-            "steam-workshop"
-          ]
-        }
-      }
-    },
     "steam_workshop": {
       "app_id": "1623730",
       "auth": "required"
