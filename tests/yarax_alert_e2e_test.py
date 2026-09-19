@@ -56,13 +56,14 @@ class YaraXAlertE2ETest(unittest.TestCase):
                 "INSERT INTO agents(id,controller_id,node_id,name,status) VALUES (?,?,?,?,?)",
                 ("agent-a", "controller-a", "agent-node", "Agent A", "active"),
             )
-            connection.execute(
-                "INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)",
-                ("customer-a", "controller-a", "Customer A", "active"),
+            customer = connection.execute(
+                "INSERT INTO customers(controller_id,name,status) VALUES (?,?,?)",
+                ("controller-a", "Customer A", "active"),
             )
+            customer_id = int(customer.lastrowid)
             connection.execute(
                 "INSERT INTO instances(id,controller_id,agent_id,customer_id,node_id,game_id,name,status) VALUES (?,?,?,?,?,?,?,?)",
-                ("instance-a", "controller-a", "agent-a", "customer-a", "agent-node", "dayz", "Instance A", "active"),
+                ("instance-a", "controller-a", "agent-a", customer_id, "agent-node", "dayz", "Instance A", "active"),
             )
 
     def _publish_scan(self, result: str, *, severity: str):
