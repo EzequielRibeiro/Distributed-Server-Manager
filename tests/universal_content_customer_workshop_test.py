@@ -49,6 +49,12 @@ class _Content:
         self.puts.append((dict(payload), requested_by))
         return {"changed": True, "assignment": dict(payload)}
 
+    def put_many(self, payloads, requested_by=None):
+        items = [dict(payload) for payload in payloads]
+        for payload in items:
+            self.puts.append((dict(payload), requested_by))
+        return {"changed": True, "assignments": items}
+
 
 def _service(*, game_id="dayz", runtime_id="dayz.stable", workshop_allowed=True, resolver=None):
     service = CustomerContentWorkspaceService.__new__(CustomerContentWorkspaceService)
@@ -91,6 +97,39 @@ class CustomerWorkshopIntegrationTest(unittest.TestCase):
         self.assertEqual(payload["metadata"]["steam_workshop"]["title"], "Safe Mod")
         self.assertNotIn("url", payload["artifact"])
         self.assertEqual(requested_by, "u")
+
+    def test_dayz_vpp_installs_cf_dependency_server_owned(self):
+        seen = []
+        def resolver(reference, *, expected_app_id):
+            published = str(reference).split(":")[-1]
+            seen.append((published, expected_app_id))
+            title = "VPPAdminTools" if published == "1828439124" else "CF"
+            return {
+                "provider": "steam-workshop",
+                "package_id": f"{expected_app_id}:{published}",
+                "published_file_id": published,
+                "consumer_app_id": expected_app_id,
+                "metadata": {
+                    "published_file_id": published,
+                    "consumer_app_id": expected_app_id,
+                    "title": title,
+                    "time_updated": 1784106916 if published == "1828439124" else 1784000000,
+                },
+            }
+        service = _service(resolver=resolver)
+        result = service.install({"username": "u"}, "i1", {
+            "content_id": "steam-workshop:1828439124",
+            "content_type": "workshop",
+            "provider": "steam-workshop",
+            "artifact": {"package_id": "1828439124"},
+        })
+        self.assertEqual(seen, [("1828439124", "221100"), ("1559212036", "221100")])
+        self.assertEqual(result["assignment"]["dependencies"], ["steam-workshop:1559212036"])
+        self.assertEqual([item["content_id"] for item in result["dependencies"]], ["steam-workshop:1559212036"])
+        cf = result["dependencies"][0]
+        self.assertEqual(cf["artifact"]["package_id"], "221100:1559212036")
+        self.assertTrue(cf["metadata"]["dependency"]["auto_managed"])
+        self.assertEqual(cf["metadata"]["dependency"]["required_by"], "1828439124")
 
     def test_project_zomboid_uses_its_consumer_app_id(self):
         seen = []
