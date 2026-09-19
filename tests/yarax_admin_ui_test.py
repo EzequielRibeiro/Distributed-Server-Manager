@@ -153,6 +153,21 @@ class YaraXAdminUiTest(unittest.TestCase):
             self.assertIn('href="admin-security-yarax.html"', sidebar)
             self.assertIn("<span>YARA-X</span>", sidebar)
 
+
+    def test_yarax_static_assets_are_served_without_browser_auth_gate(self):
+        source = (DASHBOARD / "yarax_security_http.py").read_text(encoding="utf-8")
+        self.assertIn('YARAX_SECURITY_ASSETS = {"/admin-security-yarax.js", "/admin-security-yarax.css"}', source)
+        asset_index = source.index("if parsed.path in YARAX_SECURITY_ASSETS:")
+        auth_index = source.index("user = authenticate(self.headers)", asset_index)
+        self.assertLess(asset_index, auth_index)
+        self.assertIn("self.send_file(legacy.STATIC_FILES[parsed.path])", source)
+
+    def test_yarax_browser_api_uses_controller_session_boundary(self):
+        script = (DASHBOARD / "web" / "admin-security-yarax.js").read_text(encoding="utf-8")
+        self.assertIn("'X-Capivara-Auth-Area':'controller'", script)
+        self.assertIn("credentials:'same-origin'", script)
+        self.assertIn("cache:'no-store'", script)
+
     def test_api_does_not_expose_file_contents_or_credentials(self):
         source = (DASHBOARD / "yarax_security_api.py").read_text(encoding="utf-8")
         for forbidden in ("credential_secret", "pairing_token", "file_content", "artifact_bytes"):
