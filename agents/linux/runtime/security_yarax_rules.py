@@ -159,7 +159,7 @@ def install() -> dict[str, Any]:
     final_rules = version_root / "baseline.yar"
     if final_rules.is_file():
         final_rules.chmod(0o644)
-    if hashlib.sha256(final_rules.read_bytes()).hexdigest() != RULESET_SHA256:
+        if hashlib.sha256(final_rules.read_bytes()).hexdigest() != RULESET_SHA256:
             raise RuntimeError("Installed YARA-X ruleset checksum mismatch")
         _validate_rules(binary, final_rules)
         return _activate(final_rules)
