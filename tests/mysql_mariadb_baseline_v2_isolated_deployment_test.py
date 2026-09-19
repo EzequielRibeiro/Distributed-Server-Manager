@@ -36,6 +36,17 @@ def rows(cursor, sql, params=None):
     return cursor.fetchall()
 
 
+def row_value(row, key):
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        expected = key.lower()
+        for candidate in row.keys():
+            if str(candidate).lower() == expected:
+                return row[candidate]
+    raise KeyError(key)
+
+
 def main() -> int:
     expected_flavor = require_isolated_target()
     assert_customer_schema_parity(ROOT / "database")
@@ -71,7 +82,7 @@ def main() -> int:
                 )
 
             tables = {
-                str(r["table_name"])
+                str(row_value(r, "table_name"))
                 for r in rows(
                     cursor,
                     "SELECT table_name FROM information_schema.tables "
@@ -98,7 +109,7 @@ def main() -> int:
                 raise AssertionError("Baseline v2 missing tables: " + ", ".join(missing))
 
             columns = {
-                str(r["column_name"])
+                str(row_value(r, "column_name"))
                 for r in rows(
                     cursor,
                     "SELECT column_name FROM information_schema.columns "
@@ -121,8 +132,8 @@ def main() -> int:
                 )
                 nonstandard = []
                 for fk in fk_rows:
-                    parent = str(fk["parent_table"])
-                    parent_columns = str(fk["parent_columns"])
+                    parent = str(row_value(fk, "parent_table"))
+                    parent_columns = str(row_value(fk, "parent_columns"))
                     unique_indexes = rows(
                         cursor,
                         "SELECT INDEX_NAME AS index_name, "
@@ -132,9 +143,9 @@ def main() -> int:
                         "GROUP BY INDEX_NAME",
                         (parent,),
                     )
-                    if not any(str(idx["columns_csv"]) == parent_columns for idx in unique_indexes):
+                    if not any(str(row_value(idx, "columns_csv")) == parent_columns for idx in unique_indexes):
                         nonstandard.append(
-                            f"{fk['child_table']}.{fk['constraint_name']} -> "
+                            f"{row_value(fk, 'child_table')}.{row_value(fk, 'constraint_name')} -> "
                             f"{parent}({parent_columns})"
                         )
                 if nonstandard:
@@ -152,12 +163,12 @@ def main() -> int:
             )
             backup_id_indexes = [
                 r for r in indexes
-                if str(r.get("columns_csv") or "") == "backup_id"
+                if str(row_value(r, "columns_csv") or "") == "backup_id"
             ]
-            if any(int(r.get("non_unique") or 0) == 0 for r in backup_id_indexes):
+            if any(int(row_value(r, "non_unique") or 0) == 0 for r in backup_id_indexes):
                 raise AssertionError("backup_jobs.backup_id remains unique")
             if not any(
-                str(r.get("index_name") or "") == "idx_backup_jobs_backup_id"
+                str(row_value(r, "index_name") or "") == "idx_backup_jobs_backup_id"
                 and int(r.get("non_unique") or 0) == 1
                 for r in backup_id_indexes
             ):
@@ -186,7 +197,7 @@ def main() -> int:
                 "SELECT COUNT(*) AS total FROM information_schema.tables "
                 "WHERE table_schema=DATABASE() AND table_name='yarax_admin_operations'",
             )[0]
-            if int(restored["total"]) != 1:
+            if int(row_value(restored, "total")) != 1:
                 raise AssertionError("YARA-X admin operations upgrade did not restore its table")
 
             restored_ledger = rows(
