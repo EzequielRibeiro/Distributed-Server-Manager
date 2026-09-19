@@ -159,6 +159,14 @@ def test_mysql_family_foreign_key_column_widths_match_referenced_keys():
         ), backend
 
 
+def test_mysql_family_owner_key_matches_numeric_customer_id():
+    for backend in ("mysql", "mariadb"):
+        normalized = re.sub(r"\s+", " ", _sql(backend).lower())
+        assert re.search(r"customer_id\s+bigint\b", normalized), backend
+        assert re.search(r"owner_customer_id\s+bigint\b", normalized), backend
+        assert "owner_customer_id varchar" not in normalized, backend
+
+
 def test_mysql_family_yarax_operation_queue_uses_indexable_types():
     for backend in ("mysql", "mariadb"):
         normalized = re.sub(r"\s+", " ", _sql(backend).lower())
