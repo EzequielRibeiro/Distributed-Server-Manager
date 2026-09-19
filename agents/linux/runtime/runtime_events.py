@@ -100,6 +100,44 @@ def read_runtime_events(state_dir: Path, *, limit: int = 200) -> list[dict[str, 
     return result
 
 
+def read_runtime_events_matching(
+    state_dir: Path,
+    *,
+    event_types: Iterable[str],
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """Read matching events across the queue without waiting for FIFO backlog drain."""
+    wanted = {str(value).strip().upper() for value in event_types if str(value).strip()}
+    if not wanted:
+        return []
+    path = _event_path(Path(state_dir))
+    if not path.exists():
+        return []
+    bounded = max(1, min(int(limit), 1000))
+    result: list[dict[str, Any]] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(value, dict):
+            continue
+        event_type = str(value.get("event_type") or value.get("type") or "").strip().upper()
+        if event_type not in wanted:
+            continue
+        value = dict(value)
+        value["event_id"] = _event_id(value)
+        value["event_type"] = event_type
+        result.append(value)
+        if len(result) >= bounded:
+            break
+    return result
+
+
 def acknowledge_runtime_events(state_dir: Path, event_ids: Iterable[str]) -> int:
     """Atomically remove only Controller-acknowledged events from the local queue."""
     accepted = {str(value).strip() for value in event_ids if str(value).strip()}
@@ -148,4 +186,4 @@ def acknowledge_runtime_events(state_dir: Path, event_ids: Iterable[str]) -> int
     return removed
 
 
-__all__ = ["emit_runtime_event", "read_runtime_events", "acknowledge_runtime_events"]
+__all__ = ["emit_runtime_event", "read_runtime_events", "read_runtime_events_matching", "acknowledge_runtime_events"]
