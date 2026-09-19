@@ -43,6 +43,10 @@ CURRENT = RULESET_ROOT / "current.json"
 PREVIOUS = RULESET_ROOT / "previous.json"
 TRUSTED_RULESETS = {
     RULESET_VERSION: {"sha256": RULESET_SHA256, "filename": "baseline.yar"},
+    "2026.09.18.1": {
+        "sha256": "954bcffb0528bc21d1422b269b77cdf3e2f6d105c6de7321ff2962de8f926616",
+        "filename": "baseline.yar",
+    },
 }
 
 
@@ -62,9 +66,12 @@ def managed_rules_path() -> str | None:
     current = _read_current()
     if not current:
         return None
-    if str(current.get("version") or "") != RULESET_VERSION:
+    version = str(current.get("version") or "").strip()
+    trusted = TRUSTED_RULESETS.get(version)
+    if not trusted:
         return None
-    if str(current.get("sha256") or "").lower() != RULESET_SHA256:
+    expected = str(trusted.get("sha256") or "").lower()
+    if not expected or str(current.get("sha256") or "").lower() != expected:
         return None
     raw = str(current.get("rules_path") or "").strip()
     if not raw:
@@ -80,7 +87,7 @@ def managed_rules_path() -> str | None:
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
         return None
-    return str(path) if digest == RULESET_SHA256 else None
+    return str(path) if digest == expected else None
 
 
 def _validate_rules(binary: Path, rules: Path) -> None:
@@ -125,7 +132,10 @@ def status() -> dict[str, Any]:
     if path:
         try:
             checksum = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-            valid_checksum = checksum == RULESET_SHA256 and str(current.get("sha256") or "").lower() == RULESET_SHA256
+            version = str(current.get("version") or "").strip()
+            trusted = TRUSTED_RULESETS.get(version) or {}
+            expected = str(trusted.get("sha256") or "").lower()
+            valid_checksum = bool(expected and checksum == expected and str(current.get("sha256") or "").lower() == expected)
         except OSError as exc:
             error = str(exc)[:1000]
     elif current:
