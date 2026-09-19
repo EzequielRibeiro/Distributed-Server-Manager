@@ -174,28 +174,30 @@
   async function load({silent=false} = {}) {
     if (loadInFlight) return;
     loadInFlight = true;
-    if (!silent) $('status-text').textContent = 'Atualizando segurança YARA-X…';
-    const response = await fetch(`/api/admin/security/yara-x?${query()}`, requestOptions({headers:controllerHeaders()}));
-    if (!response.ok) {
-      $('status-text').textContent = `Falha ao carregar YARA-X (${response.status}).`;
+    try {
+      if (!silent) $('status-text').textContent = 'Atualizando segurança YARA-X…';
+      const response = await fetch(`/api/admin/security/yara-x?${query()}`, requestOptions({headers:controllerHeaders()}));
+      if (!response.ok) {
+        $('status-text').textContent = `Falha ao carregar YARA-X (${response.status}).`;
+        return;
+      }
+      const data = await response.json();
+      const summary = data.summary || {};
+      $('status-text').textContent = `${summary.agents_ready || 0} de ${summary.agents_total || 0} Agents com scanner pronto · atualização automática 10s`;
+      $('summary').innerHTML = [
+        card('Agents', summary.agents_total || 0, `${summary.agents_ready || 0} ready · ${summary.agents_not_ready || 0} not ready`),
+        card('Scans recentes', summary.recent_scans || 0, 'Universal Event Platform'),
+        card('Clean', summary.results?.clean || 0),
+        card('Suspicious', summary.results?.suspicious || 0),
+        card('Blocked', summary.results?.blocked || 0),
+        card('Scan failed', summary.results?.scan_failed || 0),
+      ].join('');
+      renderAgents(data.agents || []);
+      renderEvents(data.events || []);
+      await loadOperations();
+    } finally {
       loadInFlight = false;
-      return;
     }
-    const data = await response.json();
-    const summary = data.summary || {};
-    $('status-text').textContent = `${summary.agents_ready || 0} de ${summary.agents_total || 0} Agents com scanner pronto`;
-    $('summary').innerHTML = [
-      card('Agents', summary.agents_total || 0, `${summary.agents_ready || 0} ready · ${summary.agents_not_ready || 0} not ready`),
-      card('Scans recentes', summary.recent_scans || 0, 'Universal Event Platform'),
-      card('Clean', summary.results?.clean || 0),
-      card('Suspicious', summary.results?.suspicious || 0),
-      card('Blocked', summary.results?.blocked || 0),
-      card('Scan failed', summary.results?.scan_failed || 0),
-    ].join('');
-    renderAgents(data.agents || []);
-    renderEvents(data.events || []);
-    await loadOperations();
-    loadInFlight = false;
   }
 
   async function liveRefresh() {
