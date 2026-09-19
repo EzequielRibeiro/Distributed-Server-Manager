@@ -52,47 +52,8 @@ jobs:
           chmod 600 /tmp/capivara-mysql-test-password
       - name: Enable trusted trigger creation in isolated MySQL
         run: |
-          docker exec "${{ job.services.mysql.id }}" sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "SET GLOBAL log_bin_trust_function_creators=1; SET GLOBAL restrict_fk_on_non_standard_key=OFF;"'
+          docker exec "${{ job.services.mysql.id }}" sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "SET GLOBAL log_bin_trust_function_creators=1;"'
       - name: Compile isolated deployment test
         run: python3 -m py_compile tests/mysql_mariadb_baseline_v2_isolated_deployment_test.py
-      - name: Diagnose compiled customer foreign-key DDL
-        run: |
-          PYTHONPATH=database python3 - <<'PY'
-          from schema_baseline import load_schema_baseline
-          sql = load_schema_baseline("mysql").sql
-          for name in ("dashboard_users", "customer_account_members", "customer_password_recovery"):
-              marker = f"CREATE TABLE {name}"
-              pos = sql.find(marker)
-              if pos < 0:
-                  marker = f"CREATE TABLE IF NOT EXISTS {name}"
-                  pos = sql.find(marker)
-              print(f"===== {name} @ {pos} =====")
-              print(sql[pos:pos+3500] if pos >= 0 else "NOT FOUND")
-          PY
-      - name: Diagnose compiled Baseline with MySQL client
-        run: |
-          PYTHONPATH=database python3 - <<'PY'
-          from pathlib import Path
-          from schema_baseline import load_schema_baseline
-          Path("/tmp/capivara-mysql-baseline.sql").write_text(
-              load_schema_baseline("mysql").sql,
-              encoding="utf-8",
-          )
-          PY
-          docker exec "${{ job.services.mysql.id }}" sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "DROP DATABASE IF EXISTS capivara_mysql_diag; CREATE DATABASE capivara_mysql_diag;"'
-          set +e
-          docker exec -i "${{ job.services.mysql.id }}" sh -c 'mysql --force -uroot -p"$MYSQL_ROOT_PASSWORD" capivara_mysql_diag' < /tmp/capivara-mysql-baseline.sql 2>&1 | tee /tmp/capivara-mysql-cli.log
-          set -e
-          grep -n -E 'ERROR|foreign key|Foreign key|constraint' /tmp/capivara-mysql-cli.log || true
-          nl -ba /tmp/capivara-mysql-baseline.sql | sed -n '1825,1865p'
       - name: Run destructive isolated Baseline v2 bootstrap and upgrade replay
-        id: baseline
-        continue-on-error: true
         run: python3 tests/mysql_mariadb_baseline_v2_isolated_deployment_test.py
-      - name: Show InnoDB foreign-key diagnostics
-        if: steps.baseline.outcome == 'failure'
-        run: |
-          docker exec "${{ job.services.mysql.id }}" sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "SHOW ENGINE INNODB STATUS\\G"' | sed -n '/LATEST FOREIGN KEY ERROR/,+80p'
-      - name: Enforce isolated Baseline result
-        if: steps.baseline.outcome == 'failure'
-        run: exit 1
