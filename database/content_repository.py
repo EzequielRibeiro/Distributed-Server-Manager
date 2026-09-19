@@ -78,6 +78,31 @@ class ContentRepository:
    try:stored,changed=self._write_assignment_session(s,item,self._existing_session(s,item["instance_id"],item["content_id"]),requested_by,now)
    finally:s.close()
   return {"assignment":self.get(item["instance_id"],item["content_id"]),"changed":changed}
+ def put_many(self,raws:list[Mapping[str,Any]],*,requested_by:str|None=None):
+  bodies=[dict(raw or {}) for raw in (raws or [])]
+  if not bodies:raise ContentValidationError("content assignments are required")
+  instance_ids={str(body.get("instance_id") or "").strip() for body in bodies}
+  if len(instance_ids)!=1 or not next(iter(instance_ids)):raise ContentValidationError("content assignments must target one instance")
+  instance_id=next(iter(instance_ids));inst=self._instance(instance_id)
+  if inst is None:raise ContentValidationError("instance does not exist")
+  items=[self._prepare_assignment(body,inst) for body in bodies]
+  content_ids=[item["content_id"] for item in items]
+  if len(set(content_ids))!=len(content_ids):raise ContentValidationError("duplicate content_id in content transaction")
+  known=set(content_ids)
+  for item in items:
+   for dep in item.get("dependencies") or []:
+    if dep in known:continue
+    existing=self.get(instance_id,dep)
+    if existing is None or str(existing.get("desired_state") or "installed")!="installed":raise ContentValidationError(f"content dependency is not installed: {dep}")
+  now=utc_now();changed_any=False
+  with self.backend.transaction() as c:
+   s=AlertSession(self.backend,c)
+   try:
+    for item in items:
+     _,changed=self._write_assignment_session(s,item,self._existing_session(s,item["instance_id"],item["content_id"]),requested_by,now);changed_any|=changed
+   finally:s.close()
+  stored=[self.get(instance_id,item["content_id"]) for item in items]
+  return {"assignments":stored,"changed":changed_any}
  def put_bundle(self,parent_raw:Mapping[str,Any],bundle_raw:Mapping[str,Any],children_raw:list[Mapping[str,Any]],*,requested_by:str|None=None):
   parent_body=dict(parent_raw or {});instance_id=str(parent_body.get("instance_id") or "").strip();inst=self._instance(instance_id)
   if inst is None:raise ContentValidationError("instance does not exist")
