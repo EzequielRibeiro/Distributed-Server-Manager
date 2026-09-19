@@ -26,7 +26,24 @@ def read_runtime_events(state_dir:Path,*,limit:int=200)->list[dict[str,Any]]:
   except json.JSONDecodeError:continue
   if isinstance(v,dict):v=dict(v);v["event_id"]=_event_id(v);v["event_type"]=v.get("event_type") or v.get("type");result.append(v)
  return result
-def read_runtime_events_matching(state_dir:Path,*,event_types:Iterable[str],limit:int=200)->list[dict[str,Any]]:\n wanted={str(v).strip().upper() for v in event_types if str(v).strip()};bounded=max(1,min(int(limit),1000));result=[]\n if not wanted:return result\n path=_event_path(Path(state_dir))\n try:lines=path.read_text(encoding="utf-8").splitlines()\n except OSError:return result\n for line in lines:\n  try:v=json.loads(line)\n  except json.JSONDecodeError:continue\n  if not isinstance(v,dict):continue\n  event_type=str(v.get("event_type") or v.get("type") or "").strip().upper()\n  if event_type not in wanted:continue\n  v=dict(v);v["event_id"]=_event_id(v);v["event_type"]=event_type;result.append(v)\n  if len(result)>=bounded:break\n return result\ndef acknowledge_runtime_events(state_dir:Path,event_ids:Iterable[str])->int:
+def read_runtime_events_matching(state_dir:Path,*,event_types:Iterable[str],limit:int=200)->list[dict[str,Any]]:
+ wanted={str(v).strip().upper() for v in event_types if str(v).strip()}
+ bounded=max(1,min(int(limit),1000))
+ result=[]
+ if not wanted:return result
+ path=_event_path(Path(state_dir))
+ try:lines=path.read_text(encoding="utf-8").splitlines()
+ except OSError:return result
+ for line in lines:
+  try:v=json.loads(line)
+  except json.JSONDecodeError:continue
+  if not isinstance(v,dict):continue
+  event_type=str(v.get("event_type") or v.get("type") or "").strip().upper()
+  if event_type not in wanted:continue
+  v=dict(v);v["event_id"]=_event_id(v);v["event_type"]=event_type;result.append(v)
+  if len(result)>=bounded:break
+ return result
+def acknowledge_runtime_events(state_dir:Path,event_ids:Iterable[str])->int:
  accepted={str(v).strip() for v in event_ids if str(v).strip()}
  if not accepted:return 0
  path=_event_path(Path(state_dir));kept=[];removed=0
