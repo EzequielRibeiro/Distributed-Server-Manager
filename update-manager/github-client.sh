@@ -26,9 +26,12 @@ source "$DSM_ROOT/update-manager/config.conf"
 
 github_latest_release()
 {
-    if [ -z "$GITHUB_API" ]
+    local response
+    local release
+
+    if [ -z "${GITHUB_RELEASES_API:-}" ]
     then
-        log_error "GITHUB_API não configurado" >&2
+        log_error "GITHUB_RELEASES_API não configurado" >&2
         return 1
     fi
 
@@ -37,7 +40,7 @@ github_latest_release()
         --show-error \
         --fail \
         --connect-timeout "$GITHUB_TIMEOUT" \
-        "$GITHUB_API"
+        "$GITHUB_RELEASES_API"
     )
 
     if [ $? -ne 0 ]
@@ -46,7 +49,47 @@ github_latest_release()
         return 1
     fi
 
-    printf '%s\n' "$response"
+    # GitHub /releases/latest can temporarily point to standalone Agent
+    # releases because they are published independently. Select only a
+    # canonical DSM tag that also carries the matching DSM package/checksum.
+    release=$(printf '%s\n' "$response" | jq -c \
+        --arg channel "$UPDATE_CHANNEL" '
+            [
+                .[]?
+                | select(.draft != true)
+                | select(
+                    ($channel != "stable")
+                    or (.prerelease != true)
+                )
+                | select(
+                    (.tag_name // "")
+                    | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")
+                )
+                | . as $release
+                | (($release.tag_name // "") | sub("^v"; "")) as $version
+                | select(
+                    any(
+                        $release.assets[]?;
+                        .name == ("capivara-dsm-" + $version + ".tar.gz")
+                    )
+                )
+                | select(
+                    any(
+                        $release.assets[]?;
+                        .name == ("capivara-dsm-" + $version + ".tar.gz.sha256")
+                    )
+                )
+            ][0] // empty
+        '
+    )
+
+    if [ -z "$release" ]
+    then
+        log_error "Nenhuma release DSM canônica encontrada no canal $UPDATE_CHANNEL" >&2
+        return 1
+    fi
+
+    printf '%s\n' "$release"
 }
 
 # =============================================================
