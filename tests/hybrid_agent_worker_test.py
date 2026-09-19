@@ -225,7 +225,7 @@ class HybridAgentWorkerTest(unittest.TestCase):
             "rejected": 0,
         }
         runtime_events = Mock()
-        runtime_events.read_runtime_events.side_effect = [[payload], []]
+        runtime_events.read_runtime_events.side_effect = [[payload], [], []]
         runtime_events.acknowledge_runtime_events.return_value = 1
 
         with (
