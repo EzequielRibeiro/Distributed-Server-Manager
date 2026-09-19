@@ -2,20 +2,7 @@
   "schema_version": 1,
   "kind": "GameWorkspacePolicy",
   "game": "palworld",
-  "products": {
-    "standard": {
-      "label": "Palworld Padrão",
-      "allowed_runtimes": [
-        "palworld.stable"
-      ]
-    },
-    "modded": {
-      "label": "Palworld com Mods",
-      "allowed_runtimes": [
-        "palworld.windows-modded"
-      ]
-    }
-  },
+  "products": {},
   "runtimes": {
     "palworld.stable": {
       "label": "Palworld Padrão",
