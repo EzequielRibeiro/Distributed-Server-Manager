@@ -42,5 +42,16 @@ class P8AdministrativeObservabilityContractTest(unittest.TestCase):
         self.assertIn("cache:'no-store'", script)
 
 
+    def test_page_uses_canonical_admin_shell(self):
+        page = (DASHBOARD / "web" / "admin-observability.html").read_text(encoding="utf-8")
+        script = (DASHBOARD / "web" / "admin-observability.js").read_text(encoding="utf-8")
+        self.assertIn('/dashboard-home-v3.css', page)
+        self.assertIn('id="sidebar-component"', page)
+        self.assertIn('class="cap-home cap-admin-observability"', page)
+        self.assertIn('id="admin-observability-menu-toggle"', page)
+        self.assertIn("loadShell()", script)
+        self.assertIn("'/components/sidebar-v3.html'", script)
+
+
 if __name__ == "__main__":
     unittest.main()
