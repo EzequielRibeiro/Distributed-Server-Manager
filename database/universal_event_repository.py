@@ -16,6 +16,12 @@ if str(CORE) not in sys.path:
 from event_platform import EventValidationError, normalize_event, runtime_event_to_universal, utc_now
 from alert_repository import AlertSession
 
+ROUTINE_RECONCILE_EVENT_TYPES = (
+    "INSTANCE_RECONCILE_STARTED",
+    "INSTANCE_RUNTIME_IN_SYNC",
+    "INSTANCE_RECONCILE_COMPLETED",
+)
+
 
 class UniversalEventRepository:
     def __init__(self, backend):
@@ -142,6 +148,82 @@ class UniversalEventRepository:
             "accepted": len(accepted_ids),
             "created": created,
             "rejected": rejected,
+        }
+
+    def count_event_types_before(
+        self,
+        event_types: Iterable[str],
+        *,
+        before: str,
+    ) -> int:
+        normalized = tuple(
+            dict.fromkeys(
+                str(value or "").strip().upper()
+                for value in event_types
+                if str(value or "").strip()
+            )
+        )
+        cutoff = str(before or "").strip()
+        if not normalized:
+            return 0
+        if not cutoff:
+            raise ValueError("before is required")
+        ph = self._ph
+        placeholders = ",".join([ph] * len(normalized))
+        params = (*normalized, cutoff)
+        with self.backend.connect() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                row = session.execute(
+                    f"SELECT COUNT(*) AS total FROM universal_events "
+                    f"WHERE event_type IN ({placeholders}) AND occurred_at < {ph}",
+                    params,
+                ).fetchone()
+                if row is None:
+                    return 0
+                value = dict(row)
+                return int(value.get("total") or 0)
+            finally:
+                session.close()
+
+    def prune_event_types_before(
+        self,
+        event_types: Iterable[str],
+        *,
+        before: str,
+        apply: bool = False,
+    ) -> dict[str, Any]:
+        normalized = tuple(
+            dict.fromkeys(
+                str(value or "").strip().upper()
+                for value in event_types
+                if str(value or "").strip()
+            )
+        )
+        cutoff = str(before or "").strip()
+        matched = self.count_event_types_before(normalized, before=cutoff)
+        deleted = 0
+        if apply and matched:
+            ph = self._ph
+            placeholders = ",".join([ph] * len(normalized))
+            params = (*normalized, cutoff)
+            with self.backend.transaction() as connection:
+                session = AlertSession(self.backend, connection)
+                try:
+                    session.execute(
+                        f"DELETE FROM universal_events "
+                        f"WHERE event_type IN ({placeholders}) AND occurred_at < {ph}",
+                        params,
+                    )
+                    deleted = matched
+                finally:
+                    session.close()
+        return {
+            "event_types": list(normalized),
+            "before": cutoff,
+            "matched": matched,
+            "deleted": deleted,
+            "applied": bool(apply),
         }
 
     def list_yarax_scans(

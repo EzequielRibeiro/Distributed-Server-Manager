@@ -52,6 +52,21 @@ A tabela `universal_events` é append-oriented. Atualizações destrutivas de ev
 
 A tabela histórica `events` criada na fundação do banco é considerada legado. Novos produtores devem publicar pela `UniversalEventRepository`; ela é a fonte canônica para as fases seguintes.
 
+## Política de ruído e retenção
+
+O UEP registra fatos discretos e mudanças materiais. Ciclos periódicos que apenas confirmam o mesmo estado não devem ser persistidos como eventos canônicos. Em particular, reconcile saudável sem alteração não publica `INSTANCE_RECONCILE_STARTED`, `INSTANCE_RUNTIME_IN_SYNC` ou `INSTANCE_RECONCILE_COMPLETED`.
+
+Eventos de drift, falha, degradação, recovery, segurança, auditoria e alterações reais continuam sendo persistidos.
+
+Para instalações que já acumularam os eventos rotineiros antigos, a limpeza é explícita e segura por padrão:
+
+```text
+cap events prune-routine --before-days 7
+cap events prune-routine --before-days 7 --apply
+```
+
+Sem `--apply`, o comando é somente dry-run. A limpeza atinge exclusivamente os três tipos rotineiros acima, anteriores ao cutoff; eventos de segurança/auditoria não são removidos por essa operação.
+
 ## Agent → Controller
 
 Eventos locais do runtime continuam sendo gravados de forma durável no Agent em:
@@ -102,6 +117,7 @@ A API administrativa `/api/events` exige role `admin` ou `controller`. A exposi�
 cap events list [--type TYPE] [--agent ID] [--instance ID] [--severity LEVEL] [--limit N] [--json]
 cap events show <event-id> [--json]
 cap events publish <TYPE> --source SOURCE [--severity LEVEL] [--data-json JSON] [--json]
+cap events prune-routine [--before-days N] [--apply] [--json]
 ```
 
 ### HTTP
