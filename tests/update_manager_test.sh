@@ -336,6 +336,40 @@ UPDATE_MANAGER="${ROOT}/update-manager/update-manager.sh"
 
 (
     DSM_ROOT="${ROOT}"
+    source "${ROOT}/update-manager/github-client.sh"
+    UPDATE_CHANNEL=stable
+    GITHUB_RELEASES_API="https://example.invalid/releases"
+    log_error(){ :; }
+    curl(){
+        cat <<'JSON'
+[
+  {
+    "tag_name":"agent-windows-v2.0.72",
+    "draft":false,
+    "prerelease":false,
+    "assets":[{"name":"capivara-agent-windows-2.0.72.zip"}]
+  },
+  {
+    "tag_name":"v2.0.72",
+    "draft":false,
+    "prerelease":false,
+    "assets":[
+      {"name":"capivara-dsm-2.0.72.tar.gz","browser_download_url":"https://example.invalid/dsm.tar.gz"},
+      {"name":"capivara-dsm-2.0.72.tar.gz.sha256","browser_download_url":"https://example.invalid/dsm.tar.gz.sha256"}
+    ]
+  }
+]
+JSON
+    }
+    SELECTED="$(github_latest_release)"
+    [[ "$(github_release_version "${SELECTED}")" == "v2.0.72" ]] \
+        || fail "standalone Agent release was selected as canonical DSM release"
+    [[ "$(github_release_download "${SELECTED}")" == "https://example.invalid/dsm.tar.gz" ]] \
+        || fail "canonical DSM release asset was not selected"
+)
+
+(
+    DSM_ROOT="${ROOT}"
     source "${UPDATE_MANAGER}"
     TEST_INSTALL_DIR="$(mktemp -d)"; INSTALL_DIR="${TEST_INSTALL_DIR}"
     trap 'rm -rf -- "${TEST_INSTALL_DIR}"' EXIT
