@@ -179,6 +179,15 @@ class YaraXAdminUiTest(unittest.TestCase):
         self.assertIn("credentials:'same-origin'", script)
         self.assertIn("cache:'no-store'", script)
 
+    def test_yarax_activity_refreshes_automatically(self):
+        script = (DASHBOARD / "web" / "admin-security-yarax.js").read_text(encoding="utf-8")
+        self.assertIn("const LIVE_REFRESH_MS = 10000", script)
+        self.assertIn("setInterval(liveRefresh, LIVE_REFRESH_MS)", script)
+        self.assertIn("document.hidden", script)
+        self.assertIn("visibilitychange", script)
+        self.assertIn("if (loadInFlight) return", script)
+        self.assertIn("finally {", script)
+
     def test_yarax_page_uses_canonical_admin_shell(self):
         page = (DASHBOARD / "web" / "admin-security-yarax.html").read_text(encoding="utf-8")
         script = (DASHBOARD / "web" / "admin-security-yarax.js").read_text(encoding="utf-8")
