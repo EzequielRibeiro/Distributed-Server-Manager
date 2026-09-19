@@ -21,6 +21,7 @@ from hybrid_agent_worker import (
     heartbeat_cycle,
     process_hybrid_backup_cycle,
     process_hybrid_configuration_cycle,
+    process_hybrid_runtime_event_cycle,
 )
 from infrastructure_role_cli import promote_local_controller
 from registry import installation_profile_identity
@@ -183,6 +184,90 @@ class HybridAgentWorkerTest(unittest.TestCase):
         self.assertEqual(result["accepted"], 1)
         self.assertEqual(result["applied"], 1)
         self.assertEqual(result["failed"], 0)
+
+
+    def test_hybrid_runtime_events_are_persisted_and_acknowledged(self):
+        agent_id = "hybrid-events-agent"
+        state = self.root / "runtime" / "hybrid-agent-state"
+        events_dir = state / "events"
+        events_dir.mkdir(parents=True, exist_ok=True)
+        event_path = events_dir / "instance-runtime.jsonl"
+        payload = {
+            "schema_version": 1,
+            "kind": "CapivaraRuntimeEvent",
+            "event_id": "event-yarax-1",
+            "event_type": "YARAX_SCAN_COMPLETED",
+            "type": "YARAX_SCAN_COMPLETED",
+            "producer": "instance-runtime",
+            "source": "agent.runtime",
+            "instance_id": "instance-yarax-1",
+            "agent_id": agent_id,
+            "severity": "critical",
+            "occurred_at": "2026-09-19T14:43:16Z",
+            "data": {
+                "content_id": "eicar",
+                "provider": "local",
+                "game_id": "dayz",
+                "result": "blocked",
+                "duration_ms": 18,
+                "engine_version": "1.20.0",
+                "ruleset_version": "2026.09.18.1",
+                "matches": [{"rule": "Capivara_EICAR_Test_File", "tags": ["block","malware","test"]}],
+            },
+        }
+        event_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+        repository = Mock()
+        repository.ingest_agent_events.return_value = {
+            "accepted_event_ids": ["event-yarax-1"],
+            "accepted": 1,
+            "created": 1,
+            "rejected": 0,
+        }
+        runtime_events = Mock()
+        runtime_events.read_runtime_events.side_effect = [[payload], [], []]
+        runtime_events.acknowledge_runtime_events.return_value = 1
+
+        with (
+            patch("hybrid_agent_worker.UniversalEventRepository", return_value=repository),
+            patch("hybrid_agent_worker._runtime_events_module", return_value=runtime_events),
+        ):
+            result = process_hybrid_runtime_event_cycle(
+                self.backend,
+                self.root,
+                agent_id,
+                batch_size=1000,
+                max_batches=5,
+            )
+
+        repository.initialize.assert_called_once_with()
+        repository.ingest_agent_events.assert_called_once_with(
+            agent_id,
+            [payload],
+            max_events=1000,
+        )
+        runtime_events.acknowledge_runtime_events.assert_called_once_with(
+            state,
+            ["event-yarax-1"],
+        )
+        self.assertEqual(result["accepted"], 1)
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(result["rejected"], 0)
+        self.assertEqual(result["acknowledged"], 1)
+
+    def test_hybrid_content_events_are_ingested_before_yarax_admin_exchange(self):
+        import inspect
+        from hybrid_agent_worker import heartbeat_cycle
+
+        source = inspect.getsource(heartbeat_cycle)
+        self.assertLess(
+            source.index("process_hybrid_content_cycle"),
+            source.index("process_hybrid_runtime_event_cycle"),
+        )
+        self.assertLess(
+            source.index("process_hybrid_runtime_event_cycle"),
+            source.index("process_hybrid_yarax_admin_cycle"),
+        )
 
     def test_hybrid_configuration_precedes_runtime_commands_and_uses_hybrid_materializer(self):
         import inspect
