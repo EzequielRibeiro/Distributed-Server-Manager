@@ -195,7 +195,7 @@ def install() -> dict[str, Any]:
         staged_version.mkdir()
         staged_binary = staged_version / "yr"
         shutil.copy2(binary, staged_binary)
-        staged_binary.chmod(staged_binary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
+        staged_binary.chmod(0o755)
         _probe(staged_binary)
 
         version_root.parent.mkdir(parents=True, exist_ok=True)
@@ -203,6 +203,7 @@ def install() -> dict[str, Any]:
             os.replace(staged_version, version_root)
 
     final_binary = version_root / "yr"
+    final_binary.chmod(0o755)
     _probe(final_binary)
     result = _activate(final_binary.relative_to(TOOL_ROOT), spec)
     result["observed_version"] = observed
@@ -228,6 +229,7 @@ def _activate(relative_binary: Path, spec: dict[str, str]) -> dict[str, Any]:
     temp = Path(temp_name)
     try:
         temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        temp.chmod(0o644)
         os.replace(temp, CURRENT)
     finally:
         temp.unlink(missing_ok=True)
