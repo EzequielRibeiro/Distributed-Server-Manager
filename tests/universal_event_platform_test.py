@@ -209,6 +209,20 @@ class AgentRuntimeEventQueueTest(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_read_runtime_events_supports_5000_event_backlog_window(self):
+        for index in range(1200):
+            emit_runtime_event(
+                self.state,
+                "INSTANCE_RECOVERED",
+                instance_id="instance-one",
+                agent_id="agent-one",
+                data={"index": index},
+            )
+        queued = read_runtime_events(self.state, limit=5000)
+        self.assertEqual(len(queued), 1200)
+        self.assertEqual(queued[0]["data"]["index"], 0)
+        self.assertEqual(queued[-1]["data"]["index"], 1199)
+
     def test_emit_read_and_ack_is_delivery_buffer_contract(self):
         one = emit_runtime_event(
             self.state,
