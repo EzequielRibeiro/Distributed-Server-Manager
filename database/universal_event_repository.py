@@ -107,6 +107,57 @@ class UniversalEventRepository:
             finally:
                 session.close()
 
+    def _insert_events_idempotent(self, events: Iterable[Mapping[str, Any]]) -> int:
+        values = list(events)
+        if not values:
+            return 0
+
+        ph = self._ph
+        columns = (
+            "event_id", "schema_version", "event_type", "occurred_at", "received_at",
+            "source", "source_id", "severity", "agent_id", "instance_id",
+            "correlation_id", "causation_id", "actor_type", "actor_id", "data_json",
+        )
+        placeholders = ",".join([ph] * len(columns))
+        if self.backend.name == "sqlite":
+            insert_prefix = "INSERT OR IGNORE"
+            insert_suffix = ""
+        elif self.backend.name == "postgresql":
+            insert_prefix = "INSERT"
+            insert_suffix = " ON CONFLICT(event_id) DO NOTHING"
+        elif self.backend.name == "mysql":
+            insert_prefix = "INSERT IGNORE"
+            insert_suffix = ""
+        else:
+            raise RuntimeError(f"unsupported database backend: {self.backend.name}")
+
+        sql = (
+            f"{insert_prefix} INTO universal_events ({','.join(columns)}) "
+            f"VALUES ({placeholders}){insert_suffix}"
+        )
+        received_at = utc_now()
+        created = 0
+        with self.backend.transaction() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                for event in values:
+                    cursor = session.execute(sql, (
+                        event["event_id"], event["schema_version"], event["event_type"],
+                        event["occurred_at"], received_at, event["source"], event["source_id"],
+                        event["severity"], event["agent_id"], event["instance_id"],
+                        event["correlation_id"], event["causation_id"], event["actor_type"],
+                        event["actor_id"],
+                        json.dumps(event["data"], sort_keys=True, separators=(",", ":")),
+                    ))
+                    rowcount = getattr(cursor, "rowcount", None)
+                    if rowcount is None or int(rowcount) < 0:
+                        created += 1
+                    else:
+                        created += int(rowcount)
+            finally:
+                session.close()
+        return created
+
     def ingest_agent_events(
         self,
         authenticated_agent_id: str,
@@ -119,9 +170,9 @@ class UniversalEventRepository:
             raise PermissionError("authenticated Agent identity required")
 
         accepted_ids: list[str] = []
-        created = 0
         rejected = 0
         ownership_cache: dict[str, bool] = {}
+        accepted_events: list[dict[str, Any]] = []
         for index, raw in enumerate(raw_events):
             if index >= max(1, min(int(max_events), 1000)):
                 break
@@ -136,13 +187,12 @@ class UniversalEventRepository:
                         ownership_cache[instance_key] = owned
                     if not owned:
                         raise EventValidationError("runtime event instance ownership mismatch")
-                result = self.publish(event)
+                accepted_events.append(event)
                 accepted_ids.append(str(event["event_id"]))
-                if result["created"]:
-                    created += 1
             except (EventValidationError, TypeError, ValueError):
                 rejected += 1
 
+        created = self._insert_events_idempotent(accepted_events)
         return {
             "accepted_event_ids": accepted_ids,
             "accepted": len(accepted_ids),
