@@ -173,6 +173,110 @@ class HybridCustomerWorkspaceWorkerTest(unittest.TestCase):
         self.assertEqual(call.kwargs["content_length"], len(b"capivara-backup"))
         self.assertEqual(result["status"], "completed")
 
+    def test_content_upload_uses_quarantine_path_not_backup_id(self):
+        repository = Mock()
+        repository.command_for_agent.return_value = {
+            "transfer_id": "transfer-content-1",
+            "direction": "controller_to_agent",
+            "purpose": "content_upload",
+            "instance_id": "instance-1",
+            "filename": "eicar-test.zip",
+            "destination_ref": None,
+        }
+        repository.apply_agent_result.return_value = {
+            "status": "completed",
+        }
+        detail = {
+            "size_bytes": 236,
+            "sha256": "a" * 64,
+            "destination_ref": (
+                "quarantine/instance-1/transfer-content-1/eicar-test.zip"
+            ),
+            "archive_type": "zip",
+            "archive_entries": 1,
+        }
+        with (
+            patch(
+                "hybrid_customer_workspace_worker._hybrid_agent_config",
+                return_value={"agent_id": "hybrid-1"},
+            ),
+            patch(
+                "hybrid_customer_workspace_worker.ArtifactTransferRepository",
+                return_value=repository,
+            ),
+            patch(
+                "hybrid_customer_workspace_worker._install_content_upload_artifact",
+                return_value=detail,
+            ) as install_upload,
+            patch(
+                "hybrid_customer_workspace_worker._install_controller_artifact"
+            ) as install_backup,
+        ):
+            result = process_hybrid_artifact_cycle(
+                self.backend,
+                self.root,
+                "hybrid-1",
+            )
+
+        install_upload.assert_called_once()
+        install_backup.assert_not_called()
+        repository.apply_agent_result.assert_called_once_with(
+            "hybrid-1",
+            {
+                "transfer_id": "transfer-content-1",
+                "status": "completed",
+                "transferred_bytes": 236,
+                "destination_ref": (
+                    "quarantine/instance-1/transfer-content-1/eicar-test.zip"
+                ),
+                "archive_type": "zip",
+                "archive_entries": 1,
+                "sha256": "a" * 64,
+            },
+        )
+        self.assertEqual(result["status"], "completed")
+
+    def test_unknown_controller_to_agent_purpose_fails_closed(self):
+        repository = Mock()
+        repository.command_for_agent.return_value = {
+            "transfer_id": "transfer-unknown-1",
+            "direction": "controller_to_agent",
+            "purpose": "unexpected",
+            "instance_id": "instance-1",
+        }
+        repository.apply_agent_result.return_value = {"status": "failed"}
+        with (
+            patch(
+                "hybrid_customer_workspace_worker._hybrid_agent_config",
+                return_value={"agent_id": "hybrid-1"},
+            ),
+            patch(
+                "hybrid_customer_workspace_worker.ArtifactTransferRepository",
+                return_value=repository,
+            ),
+            patch(
+                "hybrid_customer_workspace_worker._install_content_upload_artifact"
+            ) as install_upload,
+            patch(
+                "hybrid_customer_workspace_worker._install_controller_artifact"
+            ) as install_backup,
+        ):
+            result = process_hybrid_artifact_cycle(
+                self.backend,
+                self.root,
+                "hybrid-1",
+            )
+
+        install_upload.assert_not_called()
+        install_backup.assert_not_called()
+        report = repository.apply_agent_result.call_args.args[1]
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(
+            report["error"],
+            "unsupported controller-to-agent artifact purpose",
+        )
+        self.assertEqual(result["status"], "failed")
+
     def test_import_archive_suffix_is_normalized_for_backup_client(self):
         self.assertEqual(_import_suffix("backup.tar"), ".tar")
         self.assertEqual(_import_suffix("backup.tar.gz"), ".tar.gz")
