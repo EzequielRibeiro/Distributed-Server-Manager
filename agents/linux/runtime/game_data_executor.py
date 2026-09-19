@@ -53,7 +53,8 @@ def _run_steam(selection:dict[str,Any],target:Path)->None:
  argv=[_steamcmd(),"+force_install_dir",str(target),"+login",login,"+app_update",app_id]
  if branch!="public":argv.extend(["-beta",branch])
  argv.extend(["validate","+quit"]);target.mkdir(parents=True,exist_ok=True)
- cp=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=7200,check=False,env={**os.environ,"HOME":os.environ.get("HOME","/var/lib/capivara-agent")});output=cp.stdout or ""
+ session_home=str(Path(os.environ.get("CAPIVARA_STEAM_HOME") or os.environ.get("HOME") or "/var/lib/capivara-agent").resolve())
+ cp=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=7200,check=False,env={**os.environ,"HOME":session_home,"CAPIVARA_STEAM_HOME":session_home});output=cp.stdout or ""
  if cp.returncode!=0:
   lowered=output.lower()
   if "password" in lowered or "steam guard" in lowered or "two-factor" in lowered:raise RuntimeError("Steam authentication is required or expired on this Agent")
