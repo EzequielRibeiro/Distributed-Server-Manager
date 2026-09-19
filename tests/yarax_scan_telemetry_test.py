@@ -47,7 +47,7 @@ target=sys.argv[-1]
 if "scan-fail" in target:
  print("failure", file=sys.stderr); raise SystemExit(2)
 if "blocked" in target:
- print(json.dumps({"rules":[{"identifier":"blocked_rule","tags":["malware","block"]}]}))
+ print(json.dumps({"path":target,"rules":[{"identifier":"blocked_rule","tags":["malware","block","infostealer"],"metadata":{"threat_name":"Example Stealer","malware_family":"ExampleFamily","category":"infostealer","description":"Example credential stealer"}}]}))
 """,
             encoding="utf-8",
         )
@@ -95,6 +95,15 @@ if "blocked" in target:
                 self.assertEqual(final[1]["data"]["game_id"], "dayz")
                 self.assertLessEqual(len(final[1]["data"]["matches"]), 50)
                 self.assertIsInstance(final[1]["data"]["duration_ms"], int)
+                match = final[1]["data"]["matches"][0]
+                self.assertEqual(match["rule"], "blocked_rule")
+                self.assertEqual(match["file_name"], "blocked.bin")
+                self.assertEqual(match["relative_path"], "blocked.bin")
+                self.assertEqual(match["detection_name"], "Example Stealer")
+                self.assertEqual(match["threat_name"], "Example Stealer")
+                self.assertEqual(match["malware_family"], "ExampleFamily")
+                self.assertEqual(match["category"], "infostealer")
+                self.assertNotIn(str(root), match["relative_path"])
 
     def test_content_client_passes_identity_context_to_scans(self):
         for platform_name in ("linux", "windows"):
