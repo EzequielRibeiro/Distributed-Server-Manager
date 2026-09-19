@@ -41,7 +41,7 @@ jobs:
       DSM_DATABASE_NAME: capivara_mysql_test
       DSM_DATABASE_USER: capivara_test
       DSM_DATABASE_PASSWORD_FILE: /tmp/capivara-mysql-test-password
-      DSM_DATABASE_TLS: disable
+      DSM_DATABASE_TLS: preferred
     steps:
       - uses: actions/checkout@v4
       - name: Install MySQL Python driver
