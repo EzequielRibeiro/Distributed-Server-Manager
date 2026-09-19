@@ -72,7 +72,8 @@ class PalworldStandardModdedRuntimeTest(unittest.TestCase):
         content=self.modded["content"]
         self.assertEqual(content["steam_workshop"]["app_id"],"1623730")
         self.assertEqual(content["steam_workshop"]["auth"],"required")
-        self.assertEqual(content["managed"]["types"]["workshop"]["providers"],["steam-workshop"])
+        policy=json.loads((ROOT/"catalog"/"v2"/"games"/"palworld"/"workspace-policy.json").read_text(encoding="utf-8"))
+        self.assertTrue(policy["runtimes"]["palworld.windows-modded"]["workshop"])
         self.assertEqual(content["activation"]["adapter"],"palworld")
         self.assertEqual(self.modded["requirements"]["os"],["windows"])
 
