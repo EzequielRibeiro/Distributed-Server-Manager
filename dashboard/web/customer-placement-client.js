@@ -23,27 +23,23 @@
     return error;
   }
 
-  function coordinatesIfAlreadyAllowed() {
+  function requestCoordinates() {
     if (coordinatesPromise) return coordinatesPromise;
-    coordinatesPromise = Promise.resolve(null);
-    if (!navigator.geolocation || !navigator.permissions?.query) return coordinatesPromise;
+    if (!navigator.geolocation) {
+      coordinatesPromise = Promise.resolve(null);
+      return coordinatesPromise;
+    }
 
-    coordinatesPromise = navigator.permissions
-      .query({name: "geolocation"})
-      .then(permission => {
-        if (permission.state !== "granted") return null;
-        return new Promise(resolve => {
-          navigator.geolocation.getCurrentPosition(
-            position => resolve({
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-            }),
-            () => resolve(null),
-            {maximumAge: 300000, timeout: 2500, enableHighAccuracy: false}
-          );
-        });
-      })
-      .catch(() => null);
+    coordinatesPromise = new Promise(resolve => {
+      navigator.geolocation.getCurrentPosition(
+        position => resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        }),
+        () => resolve(null),
+        {maximumAge: 300000, timeout: 5000, enableHighAccuracy: false}
+      );
+    });
 
     return coordinatesPromise;
   }
@@ -191,7 +187,7 @@
   async function loadRegions(context = {}, options = {}) {
     setPlacementStatus("checking", "Verificando servidores disponíveis...");
 
-    const coords = await coordinatesIfAlreadyAllowed();
+    const coords = await requestCoordinates();
     const params = new URLSearchParams();
     const game = String(context.game || "").trim().toLowerCase();
     const contract = String(context.contract || context.contract_id || "").trim();
