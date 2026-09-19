@@ -3,8 +3,12 @@
 from __future__ import annotations
 from typing import Any
 import instance_runtime
-import runtime_materialization
-from content_activation_runtime import project_runtime_spec
+import privileged_materialization
+from content_activation_runtime import materialize_content_activation,project_runtime_spec
+
+def _materialize(config:dict[str,Any],spec:dict[str,Any])->None:
+ materialize_content_activation(spec)
+ privileged_materialization.materialize(config,spec)
 
 class ContentActivationApplyError(RuntimeError):pass
 class ContentActivationRollbackError(ContentActivationApplyError):pass
@@ -29,7 +33,7 @@ def apply_activation_snapshots(config:dict[str,Any],snapshots:list[dict[str,Any]
   was_running=instance_runtime.status(config,iid).get("observed_state")=="running"
   try:
    if was_running:instance_runtime.lifecycle(config,iid,"stop")
-   instance_runtime.register_instance(projected);runtime_materialization.materialize(config,projected)
+   instance_runtime.register_instance(projected);_materialize(config,projected)
    if was_running:
     instance_runtime.lifecycle(config,iid,"start")
     if not _ready(config,iid):raise ContentActivationApplyError("content activation failed readiness validation")
@@ -39,7 +43,7 @@ def apply_activation_snapshots(config:dict[str,Any],snapshots:list[dict[str,Any]
     if was_running:
      try:instance_runtime.lifecycle(config,iid,"stop")
      except Exception:pass
-    instance_runtime.register_instance(previous);runtime_materialization.materialize(config,previous)
+    instance_runtime.register_instance(previous);_materialize(config,previous)
     if was_running:
      instance_runtime.lifecycle(config,iid,"start")
      if not _ready(config,iid):raise ContentActivationApplyError("content activation rollback failed readiness validation")
