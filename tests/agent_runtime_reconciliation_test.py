@@ -81,12 +81,14 @@ class RuntimeReconcilerTest(unittest.TestCase):
         self.old_adapter = runtime_reconciler.resolve_adapter
         self.old_privileged = runtime_reconciler.privileged_materialization.materialize
         self.old_reconcile = runtime_reconciler.runtime_materialization.reconcile
+        self.old_event = runtime_reconciler._event
 
     def tearDown(self):
         runtime_reconciler.resolve_materializer = self.old_materializer
         runtime_reconciler.resolve_adapter = self.old_adapter
         runtime_reconciler.privileged_materialization.materialize = self.old_privileged
         runtime_reconciler.runtime_materialization.reconcile = self.old_reconcile
+        runtime_reconciler._event = self.old_event
         instance_runtime.STATE_DIR = self.old_state
         instance_runtime.INSTANCE_DIR = self.old_instance
         instance_runtime.RESULT_DIR = self.old_result
@@ -133,6 +135,30 @@ class RuntimeReconcilerTest(unittest.TestCase):
         skipped = runtime_reconciler.reconcile_instance(self.config, "instance-one")
         self.assertEqual(failed["status"], "retry_wait")
         self.assertTrue(skipped["skipped"])
+
+    def test_healthy_noop_reconcile_does_not_emit_routine_uep_noise(self):
+        runtime_reconciler.resolve_materializer = lambda spec: FakeMaterializer({"exists": True, "owned": True, "matches": True})
+        runtime_reconciler.resolve_adapter = lambda spec: FakeAdapter(True)
+        runtime_reconciler.runtime_materialization.reconcile = lambda config, instance_id: {"observed_state": "running"}
+        events = []
+        runtime_reconciler._event = lambda event_type, record, data=None: events.append(event_type)
+        result = runtime_reconciler.reconcile_instance(self.config, "instance-one")
+        self.assertEqual(result["status"], "healthy")
+        self.assertFalse(result["recovered"])
+        self.assertEqual(events, [])
+
+    def test_recovery_still_emits_material_event(self):
+        runtime_reconciler.resolve_materializer = lambda spec: FakeMaterializer({"exists": True, "owned": True, "matches": True})
+        runtime_reconciler.resolve_adapter = lambda spec: FakeAdapter(False)
+        runtime_reconciler.runtime_materialization.reconcile = lambda config, instance_id: {"observed_state": "running"}
+        events = []
+        runtime_reconciler._event = lambda event_type, record, data=None: events.append(event_type)
+        result = runtime_reconciler.reconcile_instance(self.config, "instance-one")
+        self.assertTrue(result["recovered"])
+        self.assertIn("INSTANCE_DRIFT_DETECTED", events)
+        self.assertIn("INSTANCE_RECOVERED", events)
+        self.assertNotIn("INSTANCE_RECONCILE_STARTED", events)
+        self.assertNotIn("INSTANCE_RECONCILE_COMPLETED", events)
 
     def test_reconciliation_inventory_exposes_controller_projection_fields(self):
         runtime_reconciler.resolve_materializer = lambda spec: FakeMaterializer({"exists": True, "owned": True, "matches": True})
