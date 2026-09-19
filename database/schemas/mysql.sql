@@ -1916,7 +1916,7 @@ CREATE INDEX idx_customer_password_recovery_user ON customer_password_recovery(u
 -- generated nullable owner key provides the same one-owner-per-Customer rule.
 -- =============================================================
 ALTER TABLE customer_account_members
-    ADD COLUMN owner_customer_id VARCHAR(191)
+    ADD COLUMN owner_customer_id BIGINT
         GENERATED ALWAYS AS (
             CASE
                 WHEN account_role = 'owner' THEN customer_id
