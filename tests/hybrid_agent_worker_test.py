@@ -225,7 +225,7 @@ class HybridAgentWorkerTest(unittest.TestCase):
             "rejected": 0,
         }
         runtime_events = Mock()
-        runtime_events.read_runtime_events.side_effect = [[payload], [], []]
+        runtime_events.read_runtime_events.side_effect = [[payload], []]
         runtime_events.acknowledge_runtime_events.return_value = 1
 
         with (
@@ -254,6 +254,40 @@ class HybridAgentWorkerTest(unittest.TestCase):
         self.assertEqual(result["created"], 1)
         self.assertEqual(result["rejected"], 0)
         self.assertEqual(result["acknowledged"], 1)
+
+    def test_hybrid_runtime_event_backlog_is_compacted_once_per_window(self):
+        agent_id = "hybrid-backlog-agent"
+        state = self.root / "runtime" / "hybrid-agent-state"
+        events = [{"event_id": f"event-{index}"} for index in range(2500)]
+        repository = Mock()
+        repository.ingest_agent_events.side_effect = [
+            {"accepted_event_ids":[f"event-{index}" for index in range(0,1000)],"accepted":1000,"created":0,"rejected":0},
+            {"accepted_event_ids":[f"event-{index}" for index in range(1000,2000)],"accepted":1000,"created":0,"rejected":0},
+            {"accepted_event_ids":[f"event-{index}" for index in range(2000,2500)],"accepted":500,"created":500,"rejected":0},
+        ]
+        runtime_events = Mock()
+        runtime_events.read_runtime_events.side_effect = [events, []]
+        runtime_events.acknowledge_runtime_events.return_value = 2500
+
+        with (
+            patch("hybrid_agent_worker.UniversalEventRepository", return_value=repository),
+            patch("hybrid_agent_worker._runtime_events_module", return_value=runtime_events),
+        ):
+            result = process_hybrid_runtime_event_cycle(
+                self.backend,
+                self.root,
+                agent_id,
+                batch_size=1000,
+                max_batches=5,
+            )
+
+        self.assertEqual(repository.ingest_agent_events.call_count, 3)
+        runtime_events.acknowledge_runtime_events.assert_called_once()
+        acknowledged_ids = runtime_events.acknowledge_runtime_events.call_args.args[1]
+        self.assertEqual(len(acknowledged_ids), 2500)
+        self.assertEqual(result["accepted"], 2500)
+        self.assertEqual(result["created"], 500)
+        self.assertEqual(result["acknowledged"], 2500)
 
     def test_hybrid_content_events_are_ingested_before_yarax_admin_exchange(self):
         import inspect
