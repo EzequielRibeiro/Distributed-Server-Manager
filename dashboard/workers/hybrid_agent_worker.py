@@ -45,6 +45,7 @@ from observability_repository import ObservabilityRepository
 from registry_repository import RegistryRepository
 from yarax_admin_operation_repository import YaraXAdminOperationRepository
 from runtime_backend import backend_from_environment
+from universal_event_repository import UniversalEventRepository
 
 INTERVAL_SECONDS = max(10, int(os.environ.get("DSM_HYBRID_HEARTBEAT_SECONDS", "30")))
 HYBRID_AGENT_LOG_MAX_BYTES = 262144
@@ -224,6 +225,68 @@ def _prepare_hybrid_customer_files_access(instance_id: str) -> None:
         text=True,
     )
 
+
+
+def _runtime_events_module(root: Path):
+    _instance_runtime_module(root)
+    import runtime_events
+    return runtime_events
+
+
+def process_hybrid_runtime_event_cycle(
+    backend,
+    root: Path,
+    agent_id: str,
+    *,
+    batch_size: int = 1000,
+    max_batches: int = 5,
+) -> dict[str, Any]:
+    """Persist and acknowledge embedded Hybrid runtime events into the UEP."""
+    runtime_events = _runtime_events_module(root)
+    repository = UniversalEventRepository(backend)
+    repository.initialize()
+
+    accepted = created = rejected = acknowledged = batches = 0
+    for _ in range(max(1, int(max_batches))):
+        events = runtime_events.read_runtime_events(
+            root / "runtime" / "hybrid-agent-state",
+            limit=max(1, min(int(batch_size), 1000)),
+        )
+        if not events:
+            break
+        result = repository.ingest_agent_events(
+            agent_id,
+            events,
+            max_events=max(1, min(int(batch_size), 1000)),
+        )
+        ids = result.get("accepted_event_ids") or []
+        removed = runtime_events.acknowledge_runtime_events(
+            root / "runtime" / "hybrid-agent-state",
+            ids,
+        )
+        accepted += int(result.get("accepted") or 0)
+        created += int(result.get("created") or 0)
+        rejected += int(result.get("rejected") or 0)
+        acknowledged += int(removed or 0)
+        batches += 1
+        if not ids or removed == 0:
+            break
+
+    remaining = len(
+        runtime_events.read_runtime_events(
+            root / "runtime" / "hybrid-agent-state",
+            limit=1000,
+        )
+    )
+    return {
+        "status": "completed" if batches else "idle",
+        "batches": batches,
+        "accepted": accepted,
+        "created": created,
+        "rejected": rejected,
+        "acknowledged": acknowledged,
+        "remaining_sample": remaining,
+    }
 
 def process_hybrid_instance_reconcile_cycle(root: Path, agent_id: str) -> dict[str, Any]:
     """Reconcile embedded Hybrid runtimes and repair customer-manageable file access."""
@@ -625,6 +688,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     instance_reconcile = process_hybrid_instance_reconcile_cycle(root, agent_id)
     configuration = process_hybrid_configuration_cycle(effective_backend, root, agent_id)
     content = process_hybrid_content_cycle(effective_backend, root, agent_id)
+    runtime_events = process_hybrid_runtime_event_cycle(effective_backend, root, agent_id)
     yarax_admin = process_hybrid_yarax_admin_cycle(effective_backend, root, agent_id)
     instance_runtime = process_hybrid_instance_runtime_cycle(effective_backend, root, agent_id)
     instance_telemetry = process_hybrid_instance_telemetry_cycle(effective_backend, root, agent_id)
@@ -638,6 +702,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         "instance_reconcile": instance_reconcile,
         "configuration": configuration,
         "content": content,
+        "runtime_events": runtime_events,
         "yarax_admin": yarax_admin,
         "instance_runtime": instance_runtime,
         "instance_telemetry": instance_telemetry,
@@ -654,6 +719,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         f"instance_files={instance_reconcile.get('files_access_prepared', 0)} "
         f"configuration={configuration.get('applied', 0)}a/{configuration.get('failed', 0)}f "
         f"content={content.get('applied', 0)}a/{content.get('failed', 0)}f "
+        f"events={runtime_events.get('accepted', 0)}a/{runtime_events.get('rejected', 0)}r "
         f"yarax={yarax_admin.get('status', 'idle')} "
         f"instance_runtime={instance_runtime.get('status', 'idle')} "
         f"instance_telemetry={instance_telemetry.get('accepted', 0)} "
