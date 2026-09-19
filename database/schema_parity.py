@@ -22,7 +22,7 @@ def validate_customer_schema_parity(database_root:Path)->list[str]:
         if "customer_invitations" not in combined or "customer_invitation_access" not in combined: errors.append(f"{backend}: invitation model missing")
         if "customer_email_verification" not in combined: errors.append(f"{backend}: verification model missing")
         if backend in {"mysql","mariadb"}:
-            if "uq_customer_account_owner" not in combined or "owner_customer_id" not in combined: errors.append("mysql: single-owner invariant missing")
+            if "customer_account_owner_insert_guard" not in combined or "customer_account_owner_update_guard" not in combined: errors.append(f"{backend}: single-owner trigger invariant missing")
         elif "idx_customer_account_owner" not in combined: errors.append(f"{backend}: single-owner invariant missing")
     return errors
 def assert_customer_schema_parity(database_root:Path)->None:
