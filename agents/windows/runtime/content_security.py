@@ -151,7 +151,7 @@ def _relative_match_path(raw:Any,target:Path)->str:
 
 def _safe_rule_match(item:dict[str,Any],rule:dict[str,Any],target:Path)->dict[str,Any]:
  tags=[str(v).strip().lower()[:64] for v in rule.get("tags") or [] if str(v).strip()][:20]
- metadata=_metadata_object(rule.get("metadata"))
+ metadata=_metadata_object(rule.get("meta") if rule.get("meta") is not None else rule.get("metadata"))
  rule_id=_safe_metadata_text(rule.get("identifier")) or "unknown"
  description=_safe_metadata_text(metadata.get("description"),500)
  threat_name=_safe_metadata_text(metadata.get("threat_name") or metadata.get("malware_name") or metadata.get("threat"),191)
