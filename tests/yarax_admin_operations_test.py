@@ -80,6 +80,7 @@ class YaraXAdminOperationsTest(unittest.TestCase):
 
     def test_controller_operation_api_records_semantic_audit(self):
         class Backend:
+            name="sqlite"
             def connect(self):
                 class C:
                     def __enter__(self):
