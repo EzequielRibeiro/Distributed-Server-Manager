@@ -18,6 +18,16 @@ from backend import (
 )
 
 
+def _subprocess_failure_detail(exc: Exception) -> str:
+    """Return useful subprocess diagnostics without exposing command arguments."""
+    if isinstance(exc, subprocess.CalledProcessError):
+        stderr = str(exc.stderr or "").strip()
+        if stderr:
+            return stderr[:4000]
+        return f"exit status {exc.returncode}"
+    return str(exc)
+
+
 class PostgreSQLBackend(DatabaseBackend):
     """PostgreSQL implementation of the Capivara database contract."""
 
@@ -201,7 +211,9 @@ class PostgreSQLBackend(DatabaseBackend):
                 raise DatabaseError("pg_dump did not create the backup")
         except (FileNotFoundError, subprocess.CalledProcessError, OSError) as exc:
             target.unlink(missing_ok=True)
-            raise DatabaseError(f"PostgreSQL backup failed: {exc}") from exc
+            raise DatabaseError(
+                f"PostgreSQL backup failed: {_subprocess_failure_detail(exc)}"
+            ) from exc
         finally:
             environment.pop("PGPASSWORD", None)
         return {
@@ -236,7 +248,9 @@ class PostgreSQLBackend(DatabaseBackend):
                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
             )
         except (FileNotFoundError, subprocess.CalledProcessError, OSError) as exc:
-            raise DatabaseError(f"PostgreSQL restore failed: {exc}") from exc
+            raise DatabaseError(
+                f"PostgreSQL restore failed: {_subprocess_failure_detail(exc)}"
+            ) from exc
         finally:
             environment.pop("PGPASSWORD", None)
         return {
