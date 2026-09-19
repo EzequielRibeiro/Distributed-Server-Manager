@@ -158,6 +158,22 @@ def test_mysql_family_foreign_key_column_widths_match_referenced_keys():
             password_state.group(1),
         ), backend
 
+
+def test_mysql_family_yarax_operation_queue_uses_indexable_types():
+    for backend in ("mysql", "mariadb"):
+        normalized = re.sub(r"\s+", " ", _sql(backend).lower())
+        table = re.search(
+            r"create table(?: if not exists)? yarax_admin_operations\s*\((.*?)\)\s*(?:engine|;)",
+            normalized,
+            re.IGNORECASE | re.DOTALL,
+        )
+        assert table is not None, backend
+        body = table.group(1)
+        assert re.search(r"operation_id\s+varchar\(191\)\s+primary key", body), backend
+        assert re.search(r"agent_id\s+varchar\(191\)\s+not null", body), backend
+        assert "operation_id text" not in body, backend
+        assert "agent_id text" not in body, backend
+
 def test_billing_identity_has_composite_uniqueness_and_atomic_pair_check():
     for backend in BACKENDS:
         normalized = re.sub(r"\s+", " ", _sql(backend).lower())
