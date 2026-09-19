@@ -13,12 +13,13 @@ if str(DATABASE) not in sys.path:
 from baseline_upgrade_engine import UPGRADES, latest_upgrade_version
 
 
-class BaselineV12V13RegistryTest(unittest.TestCase):
-    def test_registry_is_contiguous_through_v13(self) -> None:
-        self.assertEqual([upgrade.version for upgrade in UPGRADES], list(range(1, 14)))
-        self.assertEqual(latest_upgrade_version(), 13)
-        self.assertEqual(UPGRADES[-2].name, "universal_content_update")
-        self.assertEqual(UPGRADES[-1].name, "maintenance_restart_framework")
+class BaselineV12V14RegistryTest(unittest.TestCase):
+    def test_registry_is_contiguous_through_v14(self) -> None:
+        self.assertEqual([upgrade.version for upgrade in UPGRADES], list(range(1, 15)))
+        self.assertEqual(latest_upgrade_version(), 14)
+        self.assertEqual(UPGRADES[-3].name, "universal_content_update")
+        self.assertEqual(UPGRADES[-2].name, "maintenance_restart_framework")
+        self.assertEqual(UPGRADES[-1].name, "yarax_admin_operations")
 
 
 if __name__ == "__main__":
