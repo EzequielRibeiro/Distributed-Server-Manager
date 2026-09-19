@@ -132,7 +132,7 @@ def _html_with_scripts(source:Path,scripts:list[str]):
     all_scripts=["/browser-session-bridge.js?v=1",*scripts]
     tags="".join(f'<script src="{item}"></script>' for item in all_scripts)
     return (text.replace("</body>",tags+"</body>") if "</body>" in text else text+tags).encode("utf-8")
-def _send_html(self,body):self.send_response(200);self.send_header("Content-Type","text/html; charset=utf-8");self.send_header("Content-Length",str(len(body)));self.end_headers();self.wfile.write(body)
+def _send_html(self,body):self.send_response(200);self.send_header("Content-Type","text/html; charset=utf-8");self.send_header("Cache-Control","no-store");self.send_header("Pragma","no-cache");self.send_header("Expires","0");self.send_header("Content-Length",str(len(body)));self.end_headers();self.wfile.write(body)
 def _serve_instance_page(self):_send_html(self,_html_with_scripts(legacy.WEB_DIR/"customer-instance.html",["/customer-deletion-v2.js","/customer-overview-v2.js"]))
 def _serve_customer_page(self):_send_html(self,_html_with_scripts(legacy.WEB_DIR/"customer.html",["/customer-deleted-backups.js"]))
 def _serve_controller_page(self):_send_html(self,_html_with_scripts(legacy.WEB_DIR/"index.html",["/instance-lifecycle-v2.js"]))
