@@ -62,13 +62,17 @@ def _fetchone(backend: Any, result: Any):
 
 
 def _row_value_ci(row: Mapping[str, Any], key: str) -> Any:
-    """Read a mapping key case-insensitively across DB-API drivers."""
-    if key in row:
+    """Read a row key case-insensitively across DB-API drivers."""
+    try:
         return row[key]
+    except (KeyError, IndexError, TypeError):
+        pass
     expected = key.lower()
-    for candidate, value in row.items():
-        if str(candidate).lower() == expected:
-            return value
+    keys = getattr(row, "keys", None)
+    if callable(keys):
+        for candidate in keys():
+            if str(candidate).lower() == expected:
+                return row[candidate]
     raise KeyError(key)
 
 
