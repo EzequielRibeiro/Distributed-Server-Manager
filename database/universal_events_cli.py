@@ -6,10 +6,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from runtime_backend import backend_from_environment
-from universal_event_repository import UniversalEventRepository
+from universal_event_repository import ROUTINE_RECONCILE_EVENT_TYPES, UniversalEventRepository
 
 
 def _print_event(event: dict[str, Any]) -> None:
@@ -66,6 +67,11 @@ def main(argv: list[str] | None = None) -> int:
     legacy.add_argument("--limit", type=int, default=10000)
     legacy.add_argument("--json", action="store_true")
 
+    retention = sub.add_parser("prune-routine")
+    retention.add_argument("--before-days", type=int, default=7)
+    retention.add_argument("--apply", action="store_true")
+    retention.add_argument("--json", action="store_true")
+
     args = parser.parse_args(argv)
     repo = _repository()
 
@@ -95,6 +101,28 @@ def main(argv: list[str] | None = None) -> int:
         else:
             _print_event(event)
             print(json.dumps(event.get("data") or {}, indent=2, sort_keys=True))
+        return 0
+
+    if args.command == "prune-routine":
+        days = max(1, int(args.before_days))
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+        result = repo.prune_event_types_before(
+            ROUTINE_RECONCILE_EVENT_TYPES,
+            before=cutoff,
+            apply=bool(args.apply),
+        )
+        result["before_days"] = days
+        if args.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            mode = "APPLY" if args.apply else "DRY-RUN"
+            print(
+                f"Routine event retention [{mode}]: "
+                f"matched={result['matched']} deleted={result['deleted']} "
+                f"before={result['before']}"
+            )
+            if not args.apply and result["matched"]:
+                print("Use --apply to delete only these routine reconcile events.")
         return 0
 
     if args.command == "import-legacy":
