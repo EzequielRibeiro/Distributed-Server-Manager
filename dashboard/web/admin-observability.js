@@ -1,5 +1,7 @@
 (() => {
   const $ = (id) => document.getElementById(id);
+  const controllerHeaders = () => ({'Accept':'application/json','X-Capivara-Auth-Area':'controller'});
+  const requestOptions = () => ({headers:controllerHeaders(),credentials:'same-origin',cache:'no-store'});
   const text = (value) => value === null || value === undefined || value === '' ? '—' : String(value);
   const escapeHtml = (value) => text(value).replace(/[&<>'"]/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 
@@ -61,7 +63,7 @@
     const params = new URLSearchParams({active: 'true', limit: '200'});
     const customer = $('customer-filter').value.trim();
     if (customer) params.set('customer_id', customer);
-    const response = await fetch(`/api/admin/customer-health?${params}`, {headers:{'Accept':'application/json'}});
+    const response = await fetch(`/api/admin/customer-health?${params}`, requestOptions());
     if (!response.ok) throw new Error(`customer health ${response.status}`);
     const data = await response.json();
     renderCustomerProblems(data.incidents || []);
@@ -72,7 +74,7 @@
     $('health-text').textContent = 'Atualizando visão consolidada…';
     const suffix = query();
     const [response, customerHealth] = await Promise.all([
-      fetch(`/api/admin/observability${suffix ? `?${suffix}` : ''}`, {headers:{'Accept':'application/json'}}),
+      fetch(`/api/admin/observability${suffix ? `?${suffix}` : ''}`, requestOptions()),
       loadCustomerProblems().catch((error) => {
         $('customer-problems').innerHTML = `<tr><td colspan="8" class="empty">Falha ao carregar incidentes: ${escapeHtml(error.message)}</td></tr>`;
         return null;
