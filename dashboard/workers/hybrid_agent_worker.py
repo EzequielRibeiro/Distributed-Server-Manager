@@ -254,10 +254,24 @@ def process_hybrid_runtime_event_cycle(
     bounded_batch = max(1, min(int(batch_size), 1000))
     bounded_batches = max(1, int(max_batches))
     window_limit = bounded_batch * bounded_batches
-    events = runtime_events.read_runtime_events(
-        root / "runtime" / "hybrid-agent-state",
+    state_dir = root / "runtime" / "hybrid-agent-state"
+    priority_events = runtime_events.read_runtime_events_matching(
+        state_dir,
+        event_types=("YARAX_SCAN_STARTED", "YARAX_SCAN_COMPLETED", "YARAX_SCAN_FAILED"),
+        limit=200,
+    )
+    fifo_events = runtime_events.read_runtime_events(
+        state_dir,
         limit=window_limit,
     )
+    seen_ids: set[str] = set()
+    events: list[dict[str, Any]] = []
+    for event in [*priority_events, *fifo_events]:
+        event_id = str(event.get("event_id") or "").strip()
+        if not event_id or event_id in seen_ids:
+            continue
+        seen_ids.add(event_id)
+        events.append(event)
     if not events:
         return {
             "status": "idle",
@@ -288,13 +302,13 @@ def process_hybrid_runtime_event_cycle(
             break
 
     acknowledged = runtime_events.acknowledge_runtime_events(
-        root / "runtime" / "hybrid-agent-state",
+        state_dir,
         accepted_ids,
     ) if accepted_ids else 0
 
     remaining = len(
         runtime_events.read_runtime_events(
-            root / "runtime" / "hybrid-agent-state",
+            state_dir,
             limit=1000,
         )
     )
