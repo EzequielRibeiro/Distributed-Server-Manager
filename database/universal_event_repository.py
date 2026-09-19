@@ -115,14 +115,21 @@ class UniversalEventRepository:
         accepted_ids: list[str] = []
         created = 0
         rejected = 0
+        ownership_cache: dict[str, bool] = {}
         for index, raw in enumerate(raw_events):
             if index >= max(1, min(int(max_events), 1000)):
                 break
             try:
                 event = runtime_event_to_universal(raw, authenticated_agent_id=agent_id)
                 instance_id = event.get("instance_id")
-                if instance_id and not self._instance_owned_by(agent_id, str(instance_id)):
-                    raise EventValidationError("runtime event instance ownership mismatch")
+                if instance_id:
+                    instance_key = str(instance_id)
+                    owned = ownership_cache.get(instance_key)
+                    if owned is None:
+                        owned = self._instance_owned_by(agent_id, instance_key)
+                        ownership_cache[instance_key] = owned
+                    if not owned:
+                        raise EventValidationError("runtime event instance ownership mismatch")
                 result = self.publish(event)
                 accepted_ids.append(str(event["event_id"]))
                 if result["created"]:
