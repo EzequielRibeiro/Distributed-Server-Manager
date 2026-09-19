@@ -109,6 +109,39 @@ def main() -> int:
                 if column not in columns:
                     raise AssertionError(f"datacenters.{column} is missing")
 
+            if expected_flavor == "mysql":
+                fk_rows = rows(
+                    cursor,
+                    "SELECT TABLE_NAME AS child_table, CONSTRAINT_NAME AS constraint_name, "
+                    "REFERENCED_TABLE_NAME AS parent_table, "
+                    "GROUP_CONCAT(REFERENCED_COLUMN_NAME ORDER BY ORDINAL_POSITION SEPARATOR ',') AS parent_columns "
+                    "FROM information_schema.KEY_COLUMN_USAGE "
+                    "WHERE CONSTRAINT_SCHEMA=DATABASE() AND REFERENCED_TABLE_NAME IS NOT NULL "
+                    "GROUP BY TABLE_NAME,CONSTRAINT_NAME,REFERENCED_TABLE_NAME",
+                )
+                nonstandard = []
+                for fk in fk_rows:
+                    parent = str(fk["parent_table"])
+                    parent_columns = str(fk["parent_columns"])
+                    unique_indexes = rows(
+                        cursor,
+                        "SELECT INDEX_NAME AS index_name, "
+                        "GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',') AS columns_csv "
+                        "FROM information_schema.STATISTICS "
+                        "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND NON_UNIQUE=0 "
+                        "GROUP BY INDEX_NAME",
+                        (parent,),
+                    )
+                    if not any(str(idx["columns_csv"]) == parent_columns for idx in unique_indexes):
+                        nonstandard.append(
+                            f"{fk['child_table']}.{fk['constraint_name']} -> "
+                            f"{parent}({parent_columns})"
+                        )
+                if nonstandard:
+                    raise AssertionError(
+                        "MySQL nonstandard foreign keys: " + "; ".join(nonstandard)
+                    )
+
             indexes = rows(
                 cursor,
                 "SELECT INDEX_NAME AS index_name, NON_UNIQUE AS non_unique, "
