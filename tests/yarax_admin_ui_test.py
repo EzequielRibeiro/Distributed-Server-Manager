@@ -143,6 +143,16 @@ class YaraXAdminUiTest(unittest.TestCase):
         )
         self.assertIn("server_part21.py", service)
 
+
+    def test_admin_sidebar_exposes_yarax_security_navigation(self):
+        for name in ("sidebar-v3.html", "sidebar.html"):
+            sidebar = (
+                DASHBOARD / "web" / "components" / name
+            ).read_text(encoding="utf-8")
+            self.assertIn('<div class="cap-nav-group-title">Segurança</div>', sidebar)
+            self.assertIn('href="admin-security-yarax.html"', sidebar)
+            self.assertIn("<span>YARA-X</span>", sidebar)
+
     def test_api_does_not_expose_file_contents_or_credentials(self):
         source = (DASHBOARD / "yarax_security_api.py").read_text(encoding="utf-8")
         for forbidden in ("credential_secret", "pairing_token", "file_content", "artifact_bytes"):
