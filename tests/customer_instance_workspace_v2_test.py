@@ -243,7 +243,10 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   self.assertIn("refreshInstalledContent",script)
   self.assertIn("contentViewActive",script)
   self.assertIn("renderInstalledContent()",script)
-  self.assertIn("setInterval(()=>refreshInstalledContent().catch(()=>{}),3000)",script)
+  self.assertIn("scheduleContentRefresh(1000)",script)
+  self.assertIn("scheduleContentRefresh(3000)",script)
+  self.assertIn('&_ts=${Date.now()}',script)
+  self.assertIn('document.addEventListener("visibilitychange"',script)
 
  def test_customer_content_ui_exposes_desired_applied_and_reconciliation_error(self):
   script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
