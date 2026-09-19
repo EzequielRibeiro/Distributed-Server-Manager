@@ -27,6 +27,7 @@ from content_repository import ContentRepository
 from artifact_transfer_repository import ArtifactTransferRepository
 from agent_heartbeat_api import record_agent_heartbeat
 import content_client,content_provider,content_upload_quarantine,instance_runtime,runtime_materialization
+import privileged_materialization
 
 AGENT='agent-u10'
 CONFIG={'agent_id':AGENT}
@@ -50,6 +51,7 @@ if ARGS.platform=='linux':
   def apply(self,spec):return {'action':'materialize','changed':True}
   def remove(self,spec):return {'action':'remove','changed':True}
  runtime_materialization.resolve_materializer=lambda spec:FakeMaterializer()
+ privileged_materialization.materialize=lambda config,spec:{'spec':spec,'operation':{'action':'materialize','changed':True}}
 
 def fixture_resolver(artifact,stage,game_data_root):
  candidate=(Path(game_data_root)/str(artifact.get('package_id') or '')).resolve();candidate.relative_to(Path(game_data_root).resolve())
