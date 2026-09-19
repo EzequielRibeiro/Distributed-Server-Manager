@@ -196,5 +196,23 @@ class YaraXHealthDoctorTest(unittest.TestCase):
             self.assertIn(f'"{key}"', source)
 
 
+class HybridYaraXStateOwnershipTest(unittest.TestCase):
+    def test_dashboard_worker_repairs_bounded_yarax_state_before_start(self):
+        unit = (ROOT / "systemd" / "dsm-dashboard-worker.service").read_text(encoding="utf-8")
+        install_line = (
+            "ExecStartPre=+/usr/bin/install -d -m 0750 -o {{DSM_USER}} -g {{DSM_GROUP}} "
+            "/opt/dsm/runtime/hybrid-agent-state/security/yara-x"
+        )
+        chown_line = (
+            "ExecStartPre=+/bin/chown -R {{DSM_USER}}:{{DSM_GROUP}} "
+            "/opt/dsm/runtime/hybrid-agent-state/security/yara-x"
+        )
+        self.assertIn(install_line, unit)
+        self.assertIn(chown_line, unit)
+        self.assertLess(unit.index(install_line), unit.index("ExecStart=/bin/bash"))
+        self.assertLess(unit.index(chown_line), unit.index("ExecStart=/bin/bash"))
+        self.assertNotIn("chown -R {{DSM_USER}}:{{DSM_GROUP}} /opt/dsm/runtime\n", unit)
+
+
 if __name__ == "__main__":
     unittest.main()
