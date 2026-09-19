@@ -28,6 +28,7 @@ os.environ.setdefault("CAPIVARA_AGENT_MODE", "hybrid")
 os.environ.setdefault("CAPIVARA_DSM_ROOT", str(ROOT))
 os.environ.setdefault("CAPIVARA_AGENT_ROOT", str(ROOT / "agents" / "linux"))
 os.environ.setdefault("CAPIVARA_AGENT_STATE_DIR", str(_HYBRID_STATE))
+os.environ.setdefault("CAPIVARA_GAME_DATA_ROOT", str(_HYBRID_STATE / "game-data"))
 os.environ.setdefault("CAPIVARA_AGENT_CONFIG", str(_HYBRID_STATE / "agent.json"))
 os.environ.setdefault("CAPIVARA_AGENT_SERVICE", "dsm-dashboard-worker.service")
 
