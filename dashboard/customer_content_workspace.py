@@ -35,9 +35,8 @@ class CustomerContentWorkspaceService:
    if "provenance" in value:raise ValueError("use provenance or source, not both")
    value["provenance"]=value.pop("source")
   return value
- def _enforce_policy(self,item,policy):
+ def _enforce_type_policy(self,item,policy):
   provider=str(item.get("provider") or (item.get("artifact") or {}).get("provider") or "").strip().lower();ctype=str(item.get("content_type") or "other").strip().lower()
-  if not provider_supports(provider,"customer_managed",self.workspace.root):raise PermissionError("content provider is not customer-managed")
   if provider in {"steam","steam-workshop"} or ctype=="workshop":
    if not policy.workshop_allowed:raise PermissionError("workshop content is not allowed by this contract")
   elif ctype=="plugin":
@@ -49,6 +48,10 @@ class CustomerContentWorkspaceService:
   elif ctype in {"mod","map"}:
    if not policy.mods_allowed:raise PermissionError("mods are not allowed by this contract")
   elif not policy.modifications_allowed:raise PermissionError("managed content is not allowed by this contract")
+ def _enforce_policy(self,item,policy):
+  provider=str(item.get("provider") or (item.get("artifact") or {}).get("provider") or "").strip().lower()
+  if not provider_supports(provider,"customer_managed",self.workspace.root):raise PermissionError("content provider is not customer-managed")
+  self._enforce_type_policy(item,policy)
  def _enforce_structured_provider(self,context,payload):
   artifact=payload.get("artifact") if isinstance(payload.get("artifact"),Mapping) else {};provider=str(payload.get("provider") or artifact.get("provider") or "").strip().lower();ctype=str(payload.get("content_type") or "other").strip().lower()
   if provider not in {"modrinth","curseforge"}:return
@@ -325,7 +328,7 @@ class CustomerContentWorkspaceService:
   parent_content_id=str(marker.get("parent_content_id") or "").strip() if isinstance(marker,Mapping) else ""
   if parent_content_id and ctype!="modpack":raise PermissionError("bundle child content must be changed through its parent modpack")
   if ctype=="modpack":
-   self._enforce_policy(current,policy)
+   (self._enforce_type_policy if action=="remove" else self._enforce_policy)(current,policy)
    if action=="remove":return self.content.set_bundle_state(instance_id,content_id,desired_state="absent",activation_state="disabled",requested_by=actor)
    if action=="disable":return self.content.set_bundle_state(instance_id,content_id,desired_state="installed",activation_state="disabled",requested_by=actor)
    if action=="enable":return self.content.set_bundle_state(instance_id,content_id,desired_state="installed",activation_state="enabled",requested_by=actor)
@@ -361,7 +364,7 @@ class CustomerContentWorkspaceService:
    else:raise ValueError("automatic content update is unavailable for this provider")
    self._mark_update_checkpoint(current,payload)
   else:raise ValueError("invalid content action")
-  self._enforce_policy(payload,policy)
+  (self._enforce_type_policy if action=="remove" else self._enforce_policy)(payload,policy)
   if action=="update" and provider in {"steam","steam-workshop"}:
    dependencies=self._resolve_workshop_dependencies(context,payload)
    if dependencies:

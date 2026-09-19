@@ -68,6 +68,23 @@ class CustomerContentWorkspaceTest(unittest.TestCase):
  def test_contract_runtime_policy_is_enforced(self):
   with self.assertRaises(PermissionError):_service(_policy(mods_allowed=False)).install({"username":"u"},"i1",{"content_id":"x","content_type":"mod","provider":"http"})
   with self.assertRaises(PermissionError):_service(_policy(workshop_allowed=False)).install({"username":"u"},"i1",{"content_id":"x","content_type":"workshop","provider":"steam-workshop"})
+ def test_customer_can_remove_local_external_upload_but_cannot_install_local_provider(self):
+  current={**_current(),"content_id":"eicar","provider":"local","artifact":{"provider":"local","package_id":"quarantine/i1/t1/eicar.zip","ephemeral_upload":True},"target":"external/eicar"}
+  service=_service(_policy(),current)
+  with self.assertRaises(PermissionError):service.install({"username":"u"},"i1",{"content_id":"x","content_type":"mod","provider":"local"})
+  result=service.mutate({"username":"u"},"i1","eicar","remove",{})
+  payload,_=service.content.puts[-1]
+  self.assertTrue(result["changed"])
+  self.assertEqual(service.workspace.calls[-1],("i1","content.remove"))
+  self.assertEqual(payload["provider"],"local")
+  self.assertEqual(payload["desired_state"],"absent")
+  self.assertEqual(payload["activation_state"],"disabled")
+
+ def test_local_external_upload_removal_still_honors_contract_type_policy(self):
+  current={**_current(),"content_id":"eicar","provider":"local","artifact":{"provider":"local","package_id":"quarantine/i1/t1/eicar.zip","ephemeral_upload":True},"target":"external/eicar"}
+  with self.assertRaises(PermissionError):
+   _service(_policy(mods_allowed=False),current).mutate({"username":"u"},"i1","eicar","remove",{})
+
  def test_remove_preserves_assignment_as_absent_and_disabled(self):
   service=_service(_policy(),_current());service.mutate({"username":"u"},"i1","cf","remove",{});payload,_=service.content.puts[-1];self.assertEqual(service.workspace.calls[-1],('i1','content.remove'));self.assertEqual(payload["desired_state"],"absent");self.assertEqual(payload["activation_state"],"disabled")
  def test_enable_disable_and_reorder_use_install_permission(self):
