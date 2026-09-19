@@ -105,14 +105,52 @@ def _entry(state: dict[str, Any]) -> dict[str, Any] | None:
         "target": str(state.get("target") or "").strip() or None,
         "managed_path": str(state.get("managed_path") or "").strip() or None,
         "activation_order": _order(state.get("activation_order")),
+        "dependencies": [str(value).strip() for value in (state.get("dependencies") or []) if str(value).strip()],
         "activation": activation,
     }
+
+
+def _ordered_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    active = {str(item["content_id"]): item for item in entries}
+    while True:
+        blocked = [
+            content_id
+            for content_id, item in active.items()
+            if any(str(dep) not in active for dep in item.get("dependencies") or [])
+        ]
+        if not blocked:
+            break
+        for content_id in blocked:
+            active.pop(content_id, None)
+
+    ordered: list[dict[str, Any]] = []
+    permanent: set[str] = set()
+    visiting: set[str] = set()
+
+    def visit(content_id: str) -> None:
+        if content_id in permanent:
+            return
+        if content_id in visiting:
+            raise ValueError("content activation dependency cycle")
+        visiting.add(content_id)
+        item = active[content_id]
+        deps = [str(dep) for dep in item.get("dependencies") or [] if str(dep) in active]
+        deps.sort(key=lambda dep: (int(active[dep]["activation_order"]), dep))
+        for dep in deps:
+            visit(dep)
+        visiting.remove(content_id)
+        permanent.add(content_id)
+        ordered.append(item)
+
+    for item in sorted(active.values(), key=lambda value: (int(value["activation_order"]), str(value["content_id"]))):
+        visit(str(item["content_id"]))
+    return ordered
 
 
 def build_activation_snapshot(instance_id: str) -> dict[str, Any]:
     iid = _safe_component(instance_id)
     entries = [entry for state in _load_instance_states(iid) if (entry := _entry(state)) is not None]
-    entries.sort(key=lambda item: (int(item["activation_order"]), str(item["content_id"])))
+    entries = _ordered_entries(entries)
     identity = {
         "schema_version": 1,
         "kind": "CapivaraContentActivationSnapshot",
@@ -166,6 +204,7 @@ def synchronize_activation_state(commands: list[dict[str, Any]], reports: list[d
         state["desired_state"] = desired_state
         state["activation_state"] = str(command.get("activation_state") or default_activation).strip().lower()
         state["activation_order"] = _order(command.get("activation_order"))
+        state["dependencies"] = [str(value).strip() for value in (command.get("dependencies") or []) if str(value).strip()]
         state["activation"] = _activation(command)
         _write(path, state)
         changed_instances.add(iid)
