@@ -84,6 +84,7 @@ class CustomerContentWorkspaceService:
   metadata=dict(payload.get("metadata") or {});metadata["steam_workshop"]=dict(resolved["metadata"])
   provenance=dict(payload.get("provenance") or {});provenance["steam_workshop"]={"published_file_id":resolved["published_file_id"],"consumer_app_id":resolved["consumer_app_id"]}
   payload["provider"]="steam-workshop";payload["artifact"]=clean_artifact;payload["metadata"]=metadata;payload["provenance"]=provenance
+  if game_id=="palworld":payload["target"]=f"workshop/{resolved[\'published_file_id\']}"
   return payload
  def _resolve_workshop_dependencies(self,context,payload):
   metadata=payload.get("metadata") if isinstance(payload.get("metadata"),Mapping) else {};marker=metadata.get("steam_workshop") if isinstance(metadata.get("steam_workshop"),Mapping) else {};root_id=str(marker.get("published_file_id") or "").strip()
