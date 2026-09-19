@@ -22,6 +22,18 @@ except ModuleNotFoundError as exc:
  DayZContentActivationError=_dayz_module.DayZContentActivationError
  project_dayz_activation=_dayz_module.project_dayz_activation
 try:
+ from content_activation_palworld import PalworldContentActivationError,materialize_palworld_settings,project_palworld_activation
+except ModuleNotFoundError as exc:
+ if exc.name != "content_activation_palworld":raise
+ import importlib.util
+ _palworld_path=Path(__file__).with_name("content_activation_palworld.py")
+ _palworld_spec=importlib.util.spec_from_file_location(f"{__name__}_palworld",_palworld_path)
+ if _palworld_spec is None or _palworld_spec.loader is None:raise
+ _palworld_module=importlib.util.module_from_spec(_palworld_spec);_palworld_spec.loader.exec_module(_palworld_module)
+ PalworldContentActivationError=_palworld_module.PalworldContentActivationError
+ materialize_palworld_settings=_palworld_module.materialize_palworld_settings
+ project_palworld_activation=_palworld_module.project_palworld_activation
+try:
  from content_activation_minecraft import MinecraftContentActivationError,materialize_minecraft_files,materialize_minecraft_overrides,project_minecraft_bundle_overrides,project_minecraft_files
 except ModuleNotFoundError as exc:
  if exc.name != "content_activation_minecraft":raise
@@ -80,6 +92,14 @@ def project_runtime_spec(spec:dict[str,Any],snapshot:dict[str,Any])->dict[str,An
    raise ContentRuntimeActivationError("DayZ Workshop signature keys cannot be isolated safely by the Windows Agent")
   content_args.extend(dayz["arguments"])
  args,props=_project_zomboid(entries);content_args.extend(args);properties.extend(props)
+ palworld_entries=[entry for entry in entries if _adapter(entry)=="palworld"]
+ if str(result.get("game_id") or "").strip().lower()=="palworld":
+  try:
+   palworld=project_palworld_activation(result,palworld_entries)
+  except PalworldContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc
+  content_args.extend(palworld["arguments"])
+  result["content_palworld_packages"]=list(palworld["packages"])
+  result["content_palworld_workshop_root"]=palworld["workshop_root"]
  result["content_base_arguments"]=[str(v) for v in base]
  result["arguments"]=[*result["content_base_arguments"],*content_args]
  result["content_configuration_properties"]=properties
@@ -112,8 +132,8 @@ def materialize_content_activation(spec:dict[str,Any])->list[str]:
   text=pattern.sub(line,text,count=1) if pattern.search(text) else text.rstrip("\n")+("\n" if text else "")+line+"\n"
   target.parent.mkdir(parents=True,exist_ok=True);target.write_text(text,encoding="utf-8");written.append(relative.as_posix())
  try:
-  written.extend(materialize_minecraft_files(spec));written.extend(materialize_minecraft_overrides(spec))
- except MinecraftContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc
+  written.extend(materialize_palworld_settings(spec));written.extend(materialize_minecraft_files(spec));written.extend(materialize_minecraft_overrides(spec))
+ except (PalworldContentActivationError,MinecraftContentActivationError) as exc:raise ContentRuntimeActivationError(str(exc)) from exc
  return written
 
 __all__=["ContentRuntimeActivationError","materialize_content_activation","project_runtime_spec"]
