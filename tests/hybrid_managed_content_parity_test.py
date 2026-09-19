@@ -120,6 +120,17 @@ class HybridManagedContentParityTest(unittest.TestCase):
         self.assertEqual(result["reason"], "config_unavailable")
         self.assertEqual(result["commands"], 0)
 
+    def test_hybrid_worker_configures_security_state_before_transitive_imports(self):
+        source = (
+            ROOT / "dashboard" / "workers" / "hybrid_agent_worker.py"
+        ).read_text(encoding="utf-8")
+        state_setup = source.index('os.environ.setdefault("CAPIVARA_AGENT_STATE_DIR"')
+        reconciliation_import = source.index(
+            "from hybrid_local_reconciliation import reconcile_local_hybrid_runtime"
+        )
+        self.assertLess(state_setup, reconciliation_import)
+        self.assertIn('runtime" / "hybrid-agent-state"', source)
+
     def test_hybrid_heartbeat_includes_managed_content_cycle(self):
         source = (
             ROOT / "dashboard" / "workers" / "hybrid_agent_worker.py"

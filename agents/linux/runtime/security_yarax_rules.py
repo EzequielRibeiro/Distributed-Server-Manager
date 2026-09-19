@@ -158,6 +158,7 @@ def install() -> dict[str, Any]:
     version_root = RULESET_ROOT / "versions" / RULESET_VERSION
     final_rules = version_root / "baseline.yar"
     if final_rules.is_file():
+        final_rules.chmod(0o644)
         if hashlib.sha256(final_rules.read_bytes()).hexdigest() != RULESET_SHA256:
             raise RuntimeError("Installed YARA-X ruleset checksum mismatch")
         _validate_rules(binary, final_rules)
@@ -176,6 +177,7 @@ def install() -> dict[str, Any]:
         staged_version.mkdir()
         staged_rules = staged_version / "baseline.yar"
         staged_rules.write_bytes(candidate.read_bytes())
+        staged_rules.chmod(0o644)
         _validate_rules(binary, staged_rules)
 
         version_root.parent.mkdir(parents=True, exist_ok=True)
@@ -195,6 +197,7 @@ def _write_pointer(path: Path, payload: dict[str, Any]) -> None:
     temp = Path(temp_name)
     try:
         temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        temp.chmod(0o644)
         os.replace(temp, path)
     finally:
         temp.unlink(missing_ok=True)

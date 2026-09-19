@@ -77,6 +77,8 @@ class ManagedYaraXEngineTest(unittest.TestCase):
             current = json.loads(module.CURRENT.read_text(encoding="utf-8"))
             self.assertEqual(current["version"], "1.20.0")
             self.assertTrue(Path(current["binary"]).is_file())
+            self.assertEqual(module.CURRENT.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(Path(current["binary"]).stat().st_mode & 0o777, 0o755)
 
     def test_checksum_failure_preserves_last_known_good_pointer(self):
         module = load(ROOT / "agents/linux/runtime/security_yarax.py", "yarax_linux_rollback")

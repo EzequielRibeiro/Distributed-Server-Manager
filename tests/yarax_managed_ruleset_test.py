@@ -61,6 +61,8 @@ class ManagedYaraXRulesetTest(unittest.TestCase):
             current = json.loads(module.CURRENT.read_text(encoding="utf-8"))
             self.assertEqual(current["sha256"], module.RULESET_SHA256)
             self.assertTrue(Path(current["rules_path"]).is_file())
+            self.assertEqual(module.CURRENT.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(Path(current["rules_path"]).stat().st_mode & 0o777, 0o644)
 
     def test_tampered_rule_file_or_pointer_is_rejected_fail_closed(self):
         module = load_runtime("linux", "security_yarax_rules.py", "y2_linux_tamper")
