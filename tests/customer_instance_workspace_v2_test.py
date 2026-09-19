@@ -238,6 +238,13 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   with self.assertRaisesRegex(ValueError,"unsupported runtime content activation mode"):
    service._configure_activation(context,current,{"mode":"anything"})
 
+ def test_customer_content_ui_refreshes_status_without_full_reload(self):
+  script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
+  self.assertIn("refreshInstalledContent",script)
+  self.assertIn("contentViewActive",script)
+  self.assertIn("renderInstalledContent()",script)
+  self.assertIn("setInterval(()=>refreshInstalledContent().catch(()=>{}),3000)",script)
+
  def test_customer_content_ui_exposes_desired_applied_and_reconciliation_error(self):
   script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
   for marker in (
