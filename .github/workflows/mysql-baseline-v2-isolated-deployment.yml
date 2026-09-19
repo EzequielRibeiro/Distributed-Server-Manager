@@ -55,6 +55,21 @@ jobs:
           docker exec "${{ job.services.mysql.id }}" sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "SET GLOBAL log_bin_trust_function_creators=1; SET GLOBAL restrict_fk_on_non_standard_key=OFF;"'
       - name: Compile isolated deployment test
         run: python3 -m py_compile tests/mysql_mariadb_baseline_v2_isolated_deployment_test.py
+      - name: Diagnose compiled customer foreign-key DDL
+        run: |
+          PYTHONPATH=database python3 - <<'PY'
+          import re
+          from schema_baseline import load_schema_baseline
+          sql = load_schema_baseline("mysql").sql
+          for name in ("dashboard_users", "customer_account_members", "customer_password_recovery"):
+              match = re.search(
+                  rf"CREATE TABLE(?: IF NOT EXISTS)? {name}\\s*\\((.*?)\\n\\)(?: ENGINE=.*?)?;",
+                  sql,
+                  re.IGNORECASE | re.DOTALL,
+              )
+              print(f"===== {name} =====")
+              print(match.group(0) if match else "NOT FOUND")
+          PY
       - name: Run destructive isolated Baseline v2 bootstrap and upgrade replay
         id: baseline
         continue-on-error: true
