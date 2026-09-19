@@ -15,6 +15,8 @@ WorkingDirectory=/opt/dsm
 Environment=DSM_ROOT=/opt/dsm
 Environment=HOME=/opt/dsm
 Environment=CAPIVARA_STEAM_HOME=/opt/dsm
+# Repair the bounded Hybrid YARA-X state subtree before dropping privileges.
+ExecStartPre=+/usr/bin/python3 /opt/dsm/dashboard/workers/prepare_hybrid_yarax_state.py --root /opt/dsm --user {{DSM_USER}} --group {{DSM_GROUP}}
 ExecStart=/bin/bash /opt/dsm/dashboard/workers/worker.sh
 Restart=always
 RestartSec=10
