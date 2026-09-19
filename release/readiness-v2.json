@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "release_line": "2.0",
-  "release_version": "2.0.70",
-  "tag_name": "v2.0.70",
+  "release_version": "2.0.71",
+  "tag_name": "v2.0.71",
   "status": "release-approved",
   "publish_release": false,
   "release_authorized": true,
@@ -45,7 +45,8 @@
     "M9 Minecraft Modpacks",
     "M10 Final E2E Release Validation",
     "Baseline Update Reconciliation",
-    "Universal Server Update"
+    "Universal Server Update",
+    "YARA-X Security Management"
   ],
   "mandatory_capabilities": [
     "multi-game-runtime",
