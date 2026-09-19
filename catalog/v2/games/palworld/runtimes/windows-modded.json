@@ -1,0 +1,127 @@
+{
+  "schema_version": 2,
+  "kind": "RuntimeDefinition",
+  "id": "palworld.windows-modded",
+  "name": "Palworld com Mods (Windows)",
+  "game": "palworld",
+  "edition": "default",
+  "variant": "modded",
+  "loader": null,
+  "version": {
+    "strategy": "static",
+    "value": "current",
+    "build": "steam-current"
+  },
+  "process": {
+    "engine": "native",
+    "executable": "PalServer.exe",
+    "artifact_mode": "executable"
+  },
+  "requirements": {
+    "os": [
+      "windows"
+    ],
+    "architectures": [
+      "x86_64"
+    ],
+    "java": null
+  },
+  "artifact": {
+    "provider": "steam",
+    "auth": "anonymous",
+    "package_id": "2394010"
+  },
+  "content": {
+    "managed": {
+      "types": {
+        "workshop": {
+          "providers": [
+            "steam-workshop"
+          ]
+        }
+      }
+    },
+    "steam_workshop": {
+      "app_id": "1623730",
+      "auth": "required"
+    },
+    "activation": {
+      "adapter": "palworld",
+      "types": {
+        "workshop": {
+          "default_mode": "server-mod",
+          "modes": [
+            {
+              "id": "server-mod",
+              "label": "Mod do servidor"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "installation": {
+    "directory": "C:\\ProgramData\\CapivaraAgent\\game-data\\palworld\\serverfiles"
+  },
+  "network": {
+    "allocation": "block",
+    "block_size": 10,
+    "ports": [
+      {
+        "name": "game",
+        "protocol": "udp",
+        "offset": 0,
+        "exposure": "public"
+      },
+      {
+        "name": "rcon",
+        "protocol": "tcp",
+        "offset": 1,
+        "exposure": "none"
+      },
+      {
+        "name": "rest_api",
+        "protocol": "tcp",
+        "offset": 2,
+        "exposure": "none"
+      }
+    ],
+    "apply": [
+      {
+        "kind": "argument",
+        "template": "-port={game}"
+      }
+    ]
+  },
+  "server_settings": {
+    "restart_required": true,
+    "fields": {
+      "server_name": {
+        "label": "Nome do servidor",
+        "type": "string",
+        "customer_editable": true,
+        "max_length": 128,
+        "binding": {
+          "kind": "property",
+          "path": "PalWorldSettings.ini",
+          "key": "ServerName",
+          "syntax": "ue_option_settings",
+          "quote": "double"
+        }
+      },
+      "max_players": {
+        "label": "Máximo de jogadores",
+        "type": "integer",
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "PalWorldSettings.ini",
+          "key": "ServerPlayerMaxNum",
+          "syntax": "ue_option_settings"
+        },
+        "min": 1,
+        "max": 128
+      }
+    }
+  }
+}
