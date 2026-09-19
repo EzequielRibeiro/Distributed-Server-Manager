@@ -17,7 +17,7 @@ from backend import DatabaseConfig
 from backend_factory import create_backend
 from event_platform import EventValidationError, normalize_event, runtime_event_to_universal
 from runtime_events import acknowledge_runtime_events, emit_runtime_event, read_runtime_events
-from universal_event_repository import UniversalEventRepository
+from universal_event_repository import ROUTINE_RECONCILE_EVENT_TYPES, UniversalEventRepository
 
 
 class UniversalEventContractTest(unittest.TestCase):
@@ -186,6 +186,43 @@ class UniversalEventRepositoryTest(unittest.TestCase):
         self.assertEqual(result["accepted_event_ids"], ["heartbeat-event"])
         stored = self.repo.get("heartbeat-event")
         self.assertEqual(stored["source"], "agent.runtime")
+
+    def test_routine_event_retention_is_dry_run_by_default_and_selective(self):
+        for event_id, event_type, occurred_at in (
+            ("routine-old-start", "INSTANCE_RECONCILE_STARTED", "2026-09-01T00:00:00Z"),
+            ("routine-old-sync", "INSTANCE_RUNTIME_IN_SYNC", "2026-09-01T00:00:01Z"),
+            ("routine-new", "INSTANCE_RECONCILE_COMPLETED", "2026-09-18T00:00:00Z"),
+            ("security-old", "YARAX_SCAN_COMPLETED", "2026-09-01T00:00:02Z"),
+        ):
+            self.repo.publish({
+                "event_id": event_id,
+                "event_type": event_type,
+                "occurred_at": occurred_at,
+                "source": "test.retention",
+                "instance_id": "instance-c1",
+                "data": {},
+            })
+
+        preview = self.repo.prune_event_types_before(
+            ROUTINE_RECONCILE_EVENT_TYPES,
+            before="2026-09-10T00:00:00Z",
+        )
+        self.assertEqual(preview["matched"], 2)
+        self.assertEqual(preview["deleted"], 0)
+        self.assertFalse(preview["applied"])
+        self.assertIsNotNone(self.repo.get("routine-old-start"))
+
+        applied = self.repo.prune_event_types_before(
+            ROUTINE_RECONCILE_EVENT_TYPES,
+            before="2026-09-10T00:00:00Z",
+            apply=True,
+        )
+        self.assertEqual(applied["matched"], 2)
+        self.assertEqual(applied["deleted"], 2)
+        self.assertIsNone(self.repo.get("routine-old-start"))
+        self.assertIsNone(self.repo.get("routine-old-sync"))
+        self.assertIsNotNone(self.repo.get("routine-new"))
+        self.assertIsNotNone(self.repo.get("security-old"))
 
     def test_event_subject_survives_instance_deletion(self):
         self.repo.publish({
