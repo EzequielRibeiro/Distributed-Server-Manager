@@ -656,7 +656,8 @@ def _execute_script(
 
     try:
         cursor.execute(
-            sql
+            sql,
+            map_results=True,
         )
 
         _consume_result_sets(
