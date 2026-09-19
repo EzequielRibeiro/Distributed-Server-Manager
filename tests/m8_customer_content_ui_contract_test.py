@@ -33,5 +33,11 @@ class M8CustomerContentUiContractTest(unittest.TestCase):
         self.assertNotIn('allowed=item.actions||',text)
 
 
+    def test_security_notice_is_presented_without_rule_internals(self):
+        text=self.text
+        self.assertIn('securityNotice=item.security_notice&&typeof item.security_notice==="object"?item.security_notice:null',text)
+        self.assertIn('Segurança: ${String(securityNotice.message).slice(0,500)}',text)
+
+
 if __name__=="__main__":
     unittest.main()
