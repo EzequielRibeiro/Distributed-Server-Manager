@@ -7,8 +7,9 @@ from .base import GameRuntimeProfile,ProfileError
 from .dayz import DayZRuntimeProfile
 from .minecraft_java import MinecraftJavaRuntimeProfile
 from .mindustry import MindustryRuntimeProfile
+from .palworld import PalworldRuntimeProfile
 from .rust import RustRuntimeProfile
-_PROFILES=(DayZRuntimeProfile,MinecraftJavaRuntimeProfile,MindustryRuntimeProfile,Arma3RuntimeProfile,RustRuntimeProfile,ArkSurvivalAscendedRuntimeProfile)
+_PROFILES=(DayZRuntimeProfile,MinecraftJavaRuntimeProfile,MindustryRuntimeProfile,PalworldRuntimeProfile,Arma3RuntimeProfile,RustRuntimeProfile,ArkSurvivalAscendedRuntimeProfile)
 def resolve_profile(instance:dict[str,Any])->GameRuntimeProfile:
  keys={str(instance.get("game_id") or "").strip().lower(),str(instance.get("environment_id") or "").strip().lower()}
  for cls in _PROFILES:
