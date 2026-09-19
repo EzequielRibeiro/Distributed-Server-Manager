@@ -10,6 +10,7 @@ from agent_runtime_repository import AgentRuntimeRepository
 from agent_uninstall_repository import AgentUninstallRepository
 from yarax_admin_operation_repository import YaraXAdminOperationRepository
 from artifact_transfer_repository import ArtifactTransferRepository
+from agent_public_network import AgentPublicNetworkRepository
 from automation_repository import AutomationRepository
 from backup_repository import BackupRepository
 from configuration_repository import ConfigurationRepository
@@ -213,7 +214,12 @@ def record_agent_heartbeat(authenticated_agent_id,payload,*,backend,root=None):
  body=payload if isinstance(payload,dict) else {};claimed=str(body.get("agent_id") or agent_id).strip()
  if claimed!=agent_id:raise PermissionError("Agent identity mismatch")
  _validate_host_identity(agent_id,body,backend=backend)
- _store_agent_metadata(agent_id,body,backend=backend);repository=AgentRuntimeRepository(backend);repository.initialize();inventory_fields={"hostname":body.get("hostname"),"os_name":body.get("os") or body.get("os_name"),"architecture":body.get("architecture"),"capivara_version":body.get("capivara_version"),"address":body.get("address"),"fingerprint":body.get("fingerprint"),"capabilities":body.get("capabilities"),"cpu":body.get("cpu"),"ram_total_bytes":body.get("ram_total_bytes"),"storage":body.get("storage"),"network":body.get("network"),"heartbeat_interval_seconds":int(body.get("heartbeat_interval_seconds",30)),"degraded_after_seconds":int(body.get("degraded_after_seconds",60)),"offline_after_seconds":int(body.get("offline_after_seconds",120))}
+ _store_agent_metadata(agent_id,body,backend=backend)
+ network=body.get("network") if isinstance(body.get("network"),dict) else {}
+ observation=network.get("public_ipv4_observation") if isinstance(network.get("public_ipv4_observation"),dict) else {}
+ if str(observation.get("status") or "")=="observed" and observation.get("public_ipv4"):
+  AgentPublicNetworkRepository(backend).sync_observed_ipv4(agent_id,observation.get("public_ipv4"),source=observation.get("source"))
+ repository=AgentRuntimeRepository(backend);repository.initialize();inventory_fields={"hostname":body.get("hostname"),"os_name":body.get("os") or body.get("os_name"),"architecture":body.get("architecture"),"capivara_version":body.get("capivara_version"),"address":body.get("address"),"fingerprint":body.get("fingerprint"),"capabilities":body.get("capabilities"),"cpu":body.get("cpu"),"ram_total_bytes":body.get("ram_total_bytes"),"storage":body.get("storage"),"network":body.get("network"),"heartbeat_interval_seconds":int(body.get("heartbeat_interval_seconds",30)),"degraded_after_seconds":int(body.get("degraded_after_seconds",60)),"offline_after_seconds":int(body.get("offline_after_seconds",120))}
  if any(inventory_fields[n] is not None for n in ("hostname","os_name","architecture","capivara_version","address","fingerprint","capabilities","cpu","ram_total_bytes","storage","network")):repository.upsert_inventory(agent_id=agent_id,**inventory_fields)
  reconciliation=body.get("instance_reconciliation")
  if isinstance(reconciliation,list):repo=AgentInstanceReconciliationRepository(backend);repo.initialize();repo.apply_inventory(agent_id,reconciliation)
