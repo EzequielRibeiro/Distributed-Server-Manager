@@ -179,6 +179,17 @@ class YaraXAdminUiTest(unittest.TestCase):
         self.assertIn("credentials:'same-origin'", script)
         self.assertIn("cache:'no-store'", script)
 
+    def test_yarax_mobile_tables_use_labeled_card_layout(self):
+        script = (DASHBOARD / "web" / "admin-security-yarax.js").read_text(encoding="utf-8")
+        css = (DASHBOARD / "web" / "admin-security-yarax.css").read_text(encoding="utf-8")
+        for label in ("Agent", "Saúde", "Scanner", "Engine", "Ruleset", "Data", "Status", "Resultado", "Detecção"):
+            self.assertIn(f'data-label="{label}"', script)
+        self.assertIn("@media(max-width:720px)", css)
+        self.assertIn("content:attr(data-label)", css)
+        self.assertIn("thead{display:none}", css)
+        self.assertIn("tbody tr{display:block", css)
+        self.assertIn("grid-template-columns:minmax(92px,34%)", css)
+
     def test_yarax_activity_refreshes_automatically(self):
         script = (DASHBOARD / "web" / "admin-security-yarax.js").read_text(encoding="utf-8")
         self.assertIn("const LIVE_REFRESH_MS = 10000", script)
