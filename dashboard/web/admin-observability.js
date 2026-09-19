@@ -1,6 +1,46 @@
 (() => {
   const $ = (id) => document.getElementById(id);
+  const controllerHeaders = () => ({'Accept':'application/json','X-Capivara-Auth-Area':'controller'});
+  const requestOptions = () => ({headers:controllerHeaders(),credentials:'same-origin',cache:'no-store'});
   const text = (value) => value === null || value === undefined || value === '' ? '—' : String(value);
+  async function loadShell() {
+    const sidebar = $('sidebar-component');
+    const response = await fetch('/components/sidebar-v3.html', requestOptions({headers:controllerHeaders()}));
+    if (response.status === 401) { window.location.replace('/login.html'); throw new Error('Sessão encerrada'); }
+    if (!response.ok) throw new Error(`sidebar HTTP ${response.status}`);
+    sidebar.innerHTML = await response.text();
+    sidebar.querySelectorAll('nav a').forEach((link) => link.classList.toggle('active', link.getAttribute('href') === 'observability.html'));
+
+    const who = await fetch('/api/whoami', requestOptions({headers:controllerHeaders()}));
+    if (who.status === 401) { window.location.replace('/login.html'); throw new Error('Sessão encerrada'); }
+    const user = await who.json();
+    const role = String(user.role || '').toLowerCase();
+    $('admin-observability-user-name').textContent = user.username || '—';
+    $('admin-observability-user-role').textContent = user.role || '—';
+    document.querySelectorAll('.admin-only').forEach((element) => { element.style.display = role === 'admin' ? '' : 'none'; });
+    document.querySelectorAll('.agent-manager-only').forEach((element) => { element.style.display = ['admin','controller'].includes(role) ? '' : 'none'; });
+    document.querySelectorAll('.instance-manager-only').forEach((element) => { element.style.display = ['admin','controller','client','customer'].includes(role) ? '' : 'none'; });
+
+    const logout = $('btn-logout');
+    if (logout) logout.onclick = async () => {
+      try { await fetch('/api/auth/logout', {method:'POST',headers:controllerHeaders(),credentials:'same-origin',cache:'no-store'}); }
+      finally { window.location.replace('/login.html'); }
+    };
+
+    const toggle = $('admin-observability-menu-toggle');
+    const setOpen = (open) => {
+      const mobile = window.innerWidth <= 760;
+      document.body.classList.toggle('sidebar-open', Boolean(open) && mobile);
+      if (!mobile) document.body.classList.toggle('cap-sidebar-collapsed', Boolean(open));
+    };
+    if (toggle) toggle.addEventListener('click', () => {
+      if (window.innerWidth <= 760) document.body.classList.toggle('sidebar-open');
+      else document.body.classList.toggle('cap-sidebar-collapsed');
+    });
+    sidebar.querySelector('.cap-sidebar-close')?.addEventListener('click', () => document.body.classList.remove('sidebar-open'));
+    sidebar.querySelectorAll('a').forEach((link) => link.addEventListener('click', () => document.body.classList.remove('sidebar-open')));
+  }
+
   const escapeHtml = (value) => text(value).replace(/[&<>'"]/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 
   function query() {
@@ -61,7 +101,7 @@
     const params = new URLSearchParams({active: 'true', limit: '200'});
     const customer = $('customer-filter').value.trim();
     if (customer) params.set('customer_id', customer);
-    const response = await fetch(`/api/admin/customer-health?${params}`, {headers:{'Accept':'application/json'}});
+    const response = await fetch(`/api/admin/customer-health?${params}`, requestOptions());
     if (!response.ok) throw new Error(`customer health ${response.status}`);
     const data = await response.json();
     renderCustomerProblems(data.incidents || []);
@@ -72,7 +112,7 @@
     $('health-text').textContent = 'Atualizando visão consolidada…';
     const suffix = query();
     const [response, customerHealth] = await Promise.all([
-      fetch(`/api/admin/observability${suffix ? `?${suffix}` : ''}`, {headers:{'Accept':'application/json'}}),
+      fetch(`/api/admin/observability${suffix ? `?${suffix}` : ''}`, requestOptions()),
       loadCustomerProblems().catch((error) => {
         $('customer-problems').innerHTML = `<tr><td colspan="8" class="empty">Falha ao carregar incidentes: ${escapeHtml(error.message)}</td></tr>`;
         return null;
@@ -103,6 +143,8 @@
 
   $('refresh').addEventListener('click', load);
   $('apply').addEventListener('click', load);
-  load().catch((error) => { $('health-text').textContent = `Falha: ${error.message}`; });
+  loadShell()
+    .then(load)
+    .catch((error) => { $('health-text').textContent = `Falha: ${error.message}`; });
   setInterval(() => load().catch(() => {}), 30000);
 })();

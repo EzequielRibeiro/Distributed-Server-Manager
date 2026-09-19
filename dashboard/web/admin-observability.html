@@ -4,48 +4,38 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Capivara — Observabilidade administrativa</title>
+  <link rel="stylesheet" href="/dashboard-home-v3.css">
   <link rel="stylesheet" href="/admin-observability.css">
 </head>
-<body>
-  <main class="p8-shell">
-    <header class="p8-header">
-      <div>
-        <p class="eyebrow">P8 · Operações</p>
-        <h1>Observabilidade administrativa</h1>
-        <p id="health-text">Carregando saúde consolidada…</p>
+<body class="cap-home cap-admin-observability">
+  <div id="sidebar-component"></div>
+  <main class="cap-home-main">
+    <header class="cap-home-topbar">
+      <div class="cap-home-title">
+        <button id="admin-observability-menu-toggle" type="button" aria-label="Abrir menu">☰</button>
+        <div><h1>Observabilidade administrativa</h1><p id="health-text">Carregando saúde consolidada…</p></div>
       </div>
-      <div><a href="/admin-security-yarax.html">Segurança YARA-X</a> <button id="refresh" type="button">Atualizar</button></div>
+      <div class="cap-top-status"><div class="cap-user"><strong id="admin-observability-user-name">—</strong><span id="admin-observability-user-role">—</span></div></div>
     </header>
 
-    <section class="filters" aria-label="Filtros">
-      <input id="agent-filter" placeholder="Agent ID">
-      <input id="customer-filter" placeholder="Customer ID">
-      <input id="instance-filter" placeholder="Instance ID">
-      <input id="region-filter" placeholder="Region ID">
-      <button id="apply" type="button">Aplicar filtros</button>
-    </section>
+    <div class="cap-home-content p8-shell">
+      <header class="p8-header"><p class="eyebrow">P8 · Operações</p><div><a href="/admin-security-yarax.html">Segurança YARA-X</a> <button id="refresh" type="button">Atualizar</button></div></header>
 
-    <section id="summary" class="summary-grid" aria-live="polite"></section>
+      <section class="filters" aria-label="Filtros">
+        <input id="agent-filter" placeholder="Agent ID">
+        <input id="customer-filter" placeholder="Customer ID">
+        <input id="instance-filter" placeholder="Instance ID">
+        <input id="region-filter" placeholder="Region ID">
+        <button id="apply" type="button">Aplicar filtros</button>
+      </section>
 
-    <section class="panel">
-      <div class="panel-title"><h2>Operações recentes</h2><span>correlation_id para rastreio ponta a ponta</span></div>
-      <div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Status</th><th>Agent</th><th>Instância</th><th>Correlação</th></tr></thead><tbody id="operations"></tbody></table></div>
-    </section>
-
-    <section class="panel customer-problems-panel">
-      <div class="panel-title"><h2>Clientes impedidos de provisionar</h2><span>diagnóstico de placement · detalhes exclusivos do Controller</span></div>
-      <div class="table-wrap"><table><thead><tr><th>Severidade</th><th>Cliente</th><th>Contrato</th><th>Jogo / Runtime</th><th>Região</th><th>Diagnóstico</th><th>Tentativas</th><th>Última ocorrência</th></tr></thead><tbody id="customer-problems"></tbody></table></div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-title"><h2>Alertas ativos</h2><span>warning / critical / impacto Customer</span></div>
-      <div class="table-wrap"><table><thead><tr><th>Severidade</th><th>Código</th><th>Escopo</th><th>Status</th><th>Correlação</th></tr></thead><tbody id="alerts"></tbody></table></div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-title"><h2>Atividade administrativa</h2><span>ações recentes no Controller</span></div>
-      <div class="table-wrap"><table><thead><tr><th>Ator</th><th>Papel</th><th>Ação</th><th>Alvo</th><th>Correlação</th></tr></thead><tbody id="activity"></tbody></table></div>
-    </section>
+      <section id="summary" class="summary-grid" aria-live="polite"></section>
+      <section class="panel"><div class="panel-title"><h2>Operações recentes</h2><span>correlation_id para rastreio ponta a ponta</span></div><div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Status</th><th>Agent</th><th>Instância</th><th>Correlação</th></tr></thead><tbody id="operations"></tbody></table></div></section>
+      <section class="panel customer-problems-panel"><div class="panel-title"><h2>Clientes impedidos de provisionar</h2><span>diagnóstico de placement · detalhes exclusivos do Controller</span></div><div class="table-wrap"><table><thead><tr><th>Severidade</th><th>Cliente</th><th>Contrato</th><th>Jogo / Runtime</th><th>Região</th><th>Diagnóstico</th><th>Tentativas</th><th>Última ocorrência</th></tr></thead><tbody id="customer-problems"></tbody></table></div></section>
+      <section class="panel"><div class="panel-title"><h2>Alertas ativos</h2><span>warning / critical / impacto Customer</span></div><div class="table-wrap"><table><thead><tr><th>Severidade</th><th>Código</th><th>Escopo</th><th>Status</th><th>Correlação</th></tr></thead><tbody id="alerts"></tbody></table></div></section>
+      <section class="panel"><div class="panel-title"><h2>Atividade administrativa</h2><span>ações recentes no Controller</span></div><div class="table-wrap"><table><thead><tr><th>Ator</th><th>Papel</th><th>Ação</th><th>Alvo</th><th>Correlação</th></tr></thead><tbody id="activity"></tbody></table></div></section>
+    </div>
+    <footer class="cap-home-footer">Capivara Distributed Server Manager · Administrative Observability</footer>
   </main>
   <script src="/admin-observability.js"></script>
 </body>

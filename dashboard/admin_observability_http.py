@@ -9,6 +9,7 @@ from admin_observability_api import consolidated_observability
 
 ADMIN_OBSERVABILITY_PATH = "/api/admin/observability"
 ADMIN_OBSERVABILITY_PAGE = "/admin-observability.html"
+ADMIN_OBSERVABILITY_ASSETS = {"/admin-observability.js", "/admin-observability.css"}
 
 
 def dispatch_admin_observability_get(path: str, query: str, *, user, backend):
@@ -40,6 +41,9 @@ def install_admin_observability(legacy, authenticate) -> None:
 
     def p8_get(self):
         parsed = urlparse(self.path)
+        if parsed.path in ADMIN_OBSERVABILITY_ASSETS:
+            self.send_file(legacy.STATIC_FILES[parsed.path])
+            return
         if parsed.path == ADMIN_OBSERVABILITY_PAGE:
             user = authenticate(self.headers)
             if user is None:
@@ -68,6 +72,7 @@ def install_admin_observability(legacy, authenticate) -> None:
 
 
 __all__ = [
+    "ADMIN_OBSERVABILITY_ASSETS",
     "ADMIN_OBSERVABILITY_PATH",
     "ADMIN_OBSERVABILITY_PAGE",
     "dispatch_admin_observability_get",
