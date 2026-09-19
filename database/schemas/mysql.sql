@@ -1912,18 +1912,51 @@ CREATE INDEX idx_customer_password_recovery_user ON customer_password_recovery(u
 -- =============================================================
 -- Capivara Distributed Server Manager
 -- MySQL / MariaDB Migration 016 - customer_account integrity parity
--- MySQL has no PostgreSQL/SQLite-style partial unique index, therefore a
--- generated nullable owner key provides the same one-owner-per-Customer rule.
+-- MySQL 8.4 forbids a cascading foreign-key base column from also
+-- being the base of a stored generated column. Enforce the same
+-- one-owner-per-Customer invariant with triggers instead.
 -- =============================================================
-ALTER TABLE customer_account_members
-    ADD COLUMN owner_customer_id BIGINT
-        GENERATED ALWAYS AS (
-            CASE
-                WHEN account_role = 'owner' THEN customer_id
-                ELSE NULL
-            END
-        ) STORED,
-    ADD UNIQUE KEY uq_customer_account_owner (owner_customer_id);
+DELIMITER $$
+
+CREATE TRIGGER customer_account_owner_insert_guard
+BEFORE INSERT ON customer_account_members
+FOR EACH ROW
+BEGIN
+    IF NEW.account_role = 'owner'
+       AND EXISTS (
+           SELECT 1
+           FROM customer_account_members
+           WHERE customer_id = NEW.customer_id
+             AND account_role = 'owner'
+       )
+    THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'customer_account_owner_already_exists';
+    END IF;
+END$$
+
+CREATE TRIGGER customer_account_owner_update_guard
+BEFORE UPDATE ON customer_account_members
+FOR EACH ROW
+BEGIN
+    IF NEW.account_role = 'owner'
+       AND EXISTS (
+           SELECT 1
+           FROM customer_account_members
+           WHERE customer_id = NEW.customer_id
+             AND account_role = 'owner'
+             AND NOT (
+                 customer_id = OLD.customer_id
+                 AND username = OLD.username
+             )
+       )
+    THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'customer_account_owner_already_exists';
+    END IF;
+END$$
+
+DELIMITER ;
 
 -- source: 017_customer_user_identity_and_invitations.sql
 -- Capivara DSM MySQL migration 017 - per-login e-mail identity and invitations
