@@ -8,6 +8,8 @@ Wants=network-online.target capivara-agent-console-reader.service
 Type=simple
 User=capivara-agent
 Group=capivara-agent
+Environment=HOME=/var/lib/capivara-agent
+Environment=CAPIVARA_STEAM_HOME=/var/lib/capivara-agent
 ExecStart=/usr/bin/python3 /opt/capivara-agent/runtime/agent.py
 Restart=always
 RestartSec=10

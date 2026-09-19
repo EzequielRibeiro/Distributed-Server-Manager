@@ -112,6 +112,34 @@ class SteamWorkshopCapabilityTest(unittest.TestCase):
             "windows_content_provider_steam_workshop_failure_test",
         )
 
+    def test_linux_workshop_reuses_explicit_persistent_steam_home(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            executable = root / "steamcmd.sh"
+            executable.write_text("stub", encoding="utf-8")
+            module, _ = load_workshop(
+                "agents/linux/runtime/content_provider_steam_workshop.py",
+                "linux_content_provider_persistent_session_test",
+                executable,
+            )
+            cache = executable.parent / "steamapps" / "workshop" / "content" / "221100" / "123456"
+            cache.mkdir(parents=True)
+            session_home = root / "persistent-home"
+            session_home.mkdir()
+            completed = types.SimpleNamespace(returncode=0, stdout="Success")
+            with patch.dict(module.os.environ, {"CAPIVARA_STEAM_HOME": str(session_home), "DSM_STEAM_USER": "account"}, clear=False):
+                with patch.object(module.subprocess, "run", return_value=completed) as run:
+                    module.resolve_steam_workshop(
+                        {"package_id": "221100:123456", "auth": "account"},
+                        root / "stage",
+                        root / "game-data",
+                    )
+            env = run.call_args.kwargs["env"]
+            self.assertEqual(env["HOME"], str(session_home.resolve()))
+            self.assertEqual(env["CAPIVARA_STEAM_HOME"], str(session_home.resolve()))
+            argv = run.call_args.args[0]
+            self.assertEqual(argv[argv.index("+login") + 1], "account")
+
     def test_capability_contract_is_command_free_and_game_neutral(self):
         for relative in (
             "agents/linux/runtime/content_provider_steam_workshop.py",
