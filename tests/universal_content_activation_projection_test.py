@@ -38,7 +38,7 @@ class ActivationProjectionTest(unittest.TestCase):
 
    commands=[
     {"instance_id":"i1","content_id":"b-tie","desired_state":"installed","activation_state":"disabled","activation_order":99,"metadata":{"activation":{"adapter":"dayz","mode":"server-mod","identifier":"safe-id","command":"rm -rf /"}}},
-    {"instance_id":"i1","content_id":"z-last","desired_state":"installed","activation_state":"enabled","activation_order":1,"dependencies":["b-tie"],"metadata":{"activation":{"adapter":"dayz","mode":"mod"}}},
+    {"instance_id":"i1","content_id":"z-last","desired_state":"installed","activation_state":"enabled","activation_order":1,"dependencies":["a-first"],"metadata":{"activation":{"adapter":"dayz","mode":"mod"}}},
    ]
    reports=[
     {"instance_id":"i1","content_id":"b-tie","status":"applied"},
@@ -46,14 +46,14 @@ class ActivationProjectionTest(unittest.TestCase):
    ]
    synced=module.synchronize_activation_state(commands,reports)
    self.assertEqual(len(synced),1)
-   self.assertEqual([x["content_id"] for x in synced[0]["entries"]],["z-last","a-first"])
-   self.assertEqual(synced[0]["entries"][0]["activation"],{"adapter":"dayz","mode":"mod"})
+   self.assertEqual([x["content_id"] for x in synced[0]["entries"]],["a-first","z-last"])
+   self.assertEqual(synced[0]["entries"][1]["activation"],{"adapter":"dayz","mode":"mod"})
    stored=json.loads((root/"managed-content"/"i1"/"b-tie.json").read_text(encoding="utf-8"))
    self.assertEqual(stored["activation_state"],"disabled")
    self.assertEqual(stored["activation_order"],99)
    self.assertEqual(stored["activation"],{"adapter":"dayz","mode":"server-mod","identifier":"safe-id"})
    zstored=json.loads((root/"managed-content"/"i1"/"z-last.json").read_text(encoding="utf-8"))
-   self.assertEqual(zstored["dependencies"],["b-tie"])
+   self.assertEqual(zstored["dependencies"],["a-first"])
    self.assertNotIn("command",stored["activation"])
  def test_linux_projection(self):self._exercise(ROOT/"agents/linux/runtime/content_activation_projection.py","linux_content_activation_projection")
  def test_windows_projection(self):self._exercise(ROOT/"agents/windows/runtime/content_activation_projection.py","windows_content_activation_projection")
