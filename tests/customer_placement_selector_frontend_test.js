@@ -54,7 +54,7 @@ assert.doesNotMatch(
 );
 assert.match(
   html,
-  /customer-placement-client\.js\?v=2/,
+  /customer-placement-client\.js\?v=3/,
   "customer page must load the explicit placement client"
 );
 assert.match(
@@ -87,7 +87,7 @@ assert.match(
   /el\.submit\.disabled = !state\.placementReady/,
   "creation must remain disabled until runtime-aware placement succeeds"
 );
-const placementClientIndex = html.indexOf("/customer-placement-client.js?v=2");
+const placementClientIndex = html.indexOf("/customer-placement-client.js?v=3");
 const runtimeSelectorIndex = html.indexOf("/runtime-selector.js?v=7");
 assert.ok(
   placementClientIndex >= 0 && runtimeSelectorIndex > placementClientIndex,
