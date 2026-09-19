@@ -1912,18 +1912,51 @@ CREATE INDEX idx_customer_password_recovery_user ON customer_password_recovery(u
 -- =============================================================
 -- Capivara Distributed Server Manager
 -- MySQL / MariaDB Migration 016 - customer_account integrity parity
--- MySQL has no PostgreSQL/SQLite-style partial unique index, therefore a
--- generated nullable owner key provides the same one-owner-per-Customer rule.
+-- MySQL 8.4 forbids a cascading foreign-key base column from also
+-- being the base of a stored generated column. Enforce the same
+-- one-owner-per-Customer invariant with triggers instead.
 -- =============================================================
-ALTER TABLE customer_account_members
-    ADD COLUMN owner_customer_id VARCHAR(191)
-        GENERATED ALWAYS AS (
-            CASE
-                WHEN account_role = 'owner' THEN customer_id
-                ELSE NULL
-            END
-        ) STORED,
-    ADD UNIQUE KEY uq_customer_account_owner (owner_customer_id);
+DELIMITER $$
+
+CREATE TRIGGER customer_account_owner_insert_guard
+BEFORE INSERT ON customer_account_members
+FOR EACH ROW
+BEGIN
+    IF NEW.account_role = 'owner'
+       AND EXISTS (
+           SELECT 1
+           FROM customer_account_members
+           WHERE customer_id = NEW.customer_id
+             AND account_role = 'owner'
+       )
+    THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'customer_account_owner_already_exists';
+    END IF;
+END$$
+
+CREATE TRIGGER customer_account_owner_update_guard
+BEFORE UPDATE ON customer_account_members
+FOR EACH ROW
+BEGIN
+    IF NEW.account_role = 'owner'
+       AND EXISTS (
+           SELECT 1
+           FROM customer_account_members
+           WHERE customer_id = NEW.customer_id
+             AND account_role = 'owner'
+             AND NOT (
+                 customer_id = OLD.customer_id
+                 AND username = OLD.username
+             )
+       )
+    THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'customer_account_owner_already_exists';
+    END IF;
+END$$
+
+DELIMITER ;
 
 -- source: 017_customer_user_identity_and_invitations.sql
 -- Capivara DSM MySQL migration 017 - per-login e-mail identity and invitations
@@ -2751,22 +2784,24 @@ CREATE INDEX idx_agent_instance_commands_instance
 -- source: 042_yarax_admin_operations.sql
 -- Capivara DSM - Migration 042 - YARA-X administrative operations.
 CREATE TABLE IF NOT EXISTS yarax_admin_operations (
-    operation_id TEXT PRIMARY KEY,
-    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-    action TEXT NOT NULL,
-    instance_id TEXT,
-    content_id TEXT,
-    status TEXT NOT NULL DEFAULT 'queued',
-    requested_by TEXT,
-    payload_json TEXT NOT NULL DEFAULT '{}',
-    result_json TEXT,
-    last_error TEXT,
-    created_at TEXT NOT NULL,
-    delivered_at TEXT,
-    completed_at TEXT,
-    updated_at TEXT NOT NULL
+    operation_id VARCHAR(191) PRIMARY KEY,
+    agent_id VARCHAR(191) NOT NULL,
+    action VARCHAR(64) NOT NULL,
+    instance_id VARCHAR(191),
+    content_id VARCHAR(191),
+    status VARCHAR(32) NOT NULL DEFAULT 'queued',
+    requested_by VARCHAR(191),
+    payload_json LONGTEXT NOT NULL,
+    result_json LONGTEXT,
+    last_error LONGTEXT,
+    created_at VARCHAR(64) NOT NULL,
+    delivered_at VARCHAR(64),
+    completed_at VARCHAR(64),
+    updated_at VARCHAR(64) NOT NULL,
+    CONSTRAINT fk_yarax_admin_operations_agent
+        FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_yarax_admin_operations_agent_status
+CREATE INDEX idx_yarax_admin_operations_agent_status
     ON yarax_admin_operations(agent_id,status,created_at);
-CREATE INDEX IF NOT EXISTS idx_yarax_admin_operations_created
+CREATE INDEX idx_yarax_admin_operations_created
     ON yarax_admin_operations(created_at);

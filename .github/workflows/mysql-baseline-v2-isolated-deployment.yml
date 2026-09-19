@@ -1,0 +1,59 @@
+name: MySQL Baseline v2 Isolated Deployment
+
+on:
+  pull_request:
+    paths:
+      - 'database/**'
+      - 'dashboard/**'
+      - 'tests/mysql_mariadb_baseline_v2_isolated_deployment_test.py'
+      - '.github/workflows/mysql-baseline-v2-isolated-deployment.yml'
+      - 'release/readiness-v2.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-mysql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: capivara_root_test_password
+          MYSQL_DATABASE: capivara_mysql_test
+          MYSQL_USER: capivara_test
+          MYSQL_PASSWORD: capivara_test_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -pcapivara_root_test_password"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+    env:
+      CAPIVARA_ALLOW_ISOLATED_DB_TEST: '1'
+      CAPIVARA_EXPECTED_DB_FLAVOR: mysql
+      DSM_DATABASE_DRIVER: mysql
+      DSM_DATABASE_HOST: 127.0.0.1
+      DSM_DATABASE_PORT: '3306'
+      DSM_DATABASE_NAME: capivara_mysql_test
+      DSM_DATABASE_USER: capivara_test
+      DSM_DATABASE_PASSWORD_FILE: /tmp/capivara-mysql-test-password
+      DSM_DATABASE_TLS: preferred
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MySQL Python driver
+        run: python3 -m pip install 'mysql-connector-python>=9,<10'
+      - name: Create protected password file
+        run: |
+          printf '%s\n' 'capivara_test_password' > /tmp/capivara-mysql-test-password
+          chmod 600 /tmp/capivara-mysql-test-password
+      - name: Enable trusted trigger creation in isolated MySQL
+        run: |
+          docker exec "${{ job.services.mysql.id }}" sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "SET GLOBAL log_bin_trust_function_creators=1;"'
+      - name: Compile isolated deployment test
+        run: python3 -m py_compile tests/mysql_mariadb_baseline_v2_isolated_deployment_test.py
+      - name: Run destructive isolated Baseline v2 bootstrap and upgrade replay
+        run: python3 tests/mysql_mariadb_baseline_v2_isolated_deployment_test.py

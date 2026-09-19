@@ -131,6 +131,58 @@ def test_customer_relational_keys_are_numeric():
         )
 
 
+
+def test_mysql_family_foreign_key_column_widths_match_referenced_keys():
+    for backend in ("mysql", "mariadb"):
+        normalized = re.sub(r"\s+", " ", _sql(backend).lower())
+        customers = re.search(
+            r"create table customers\s*\((.*?)\)\s*(?:engine|;)",
+            normalized,
+            re.IGNORECASE | re.DOTALL,
+        )
+        password_state = re.search(
+            r"create table customer_password_state\s*\((.*?)\)\s*(?:engine|;)",
+            normalized,
+            re.IGNORECASE | re.DOTALL,
+        )
+        assert customers is not None, backend
+        assert password_state is not None, backend
+        assert re.search(r"controller_id\s+varchar\(191\)\b", customers.group(1)), backend
+        assert re.search(r"username\s+varchar\(191\)\b", password_state.group(1)), backend
+        assert re.search(
+            r"foreign key\s*\(controller_id\)\s*references controllers\(id\)",
+            customers.group(1),
+        ), backend
+        assert re.search(
+            r"foreign key\s*\(username\)\s*references dashboard_users\(username\)",
+            password_state.group(1),
+        ), backend
+
+
+def test_mysql_family_single_owner_invariant_uses_safe_triggers():
+    for backend in ("mysql", "mariadb"):
+        normalized = re.sub(r"\s+", " ", _sql(backend).lower())
+        assert re.search(r"customer_id\s+bigint\b", normalized), backend
+        assert "owner_customer_id" not in normalized, backend
+        assert "customer_account_owner_insert_guard" in normalized, backend
+        assert "customer_account_owner_update_guard" in normalized, backend
+
+
+def test_mysql_family_yarax_operation_queue_uses_indexable_types():
+    for backend in ("mysql", "mariadb"):
+        normalized = re.sub(r"\s+", " ", _sql(backend).lower())
+        table = re.search(
+            r"create table(?: if not exists)? yarax_admin_operations\s*\((.*?)\)\s*(?:engine|;)",
+            normalized,
+            re.IGNORECASE | re.DOTALL,
+        )
+        assert table is not None, backend
+        body = table.group(1)
+        assert re.search(r"operation_id\s+varchar\(191\)\s+primary key", body), backend
+        assert re.search(r"agent_id\s+varchar\(191\)\s+not null", body), backend
+        assert "operation_id text" not in body, backend
+        assert "agent_id text" not in body, backend
+
 def test_billing_identity_has_composite_uniqueness_and_atomic_pair_check():
     for backend in BACKENDS:
         normalized = re.sub(r"\s+", " ", _sql(backend).lower())

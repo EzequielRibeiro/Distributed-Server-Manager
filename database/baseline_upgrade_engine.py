@@ -98,6 +98,21 @@ def _execute(backend: Any, connection: Any, sql: str, params=()):
     return connection.execute(sql, params)
 
 
+def _row_value_ci(row: Mapping[str, Any], key: str) -> Any:
+    """Read a row key case-insensitively across DB-API drivers."""
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        pass
+    expected = key.lower()
+    keys = getattr(row, "keys", None)
+    if callable(keys):
+        for candidate in keys():
+            if str(candidate).lower() == expected:
+                return row[candidate]
+    raise KeyError(key)
+
+
 def _table_names(backend: Any, connection: Any) -> set[str]:
     if backend.name == "postgresql":
         rows = connection.execute(
@@ -116,7 +131,7 @@ def _table_names(backend: Any, connection: Any) -> set[str]:
         rows = connection.execute(
             "SELECT name AS table_name FROM sqlite_master WHERE type='table'"
         ).fetchall()
-    return {str(row["table_name"]) for row in rows}
+    return {str(_row_value_ci(row, "table_name")) for row in rows}
 
 
 def _column_names(backend: Any, connection: Any, table: str) -> set[str]:
@@ -141,7 +156,7 @@ def _column_names(backend: Any, connection: Any, table: str) -> set[str]:
         quoted = table.replace('"', '""')
         rows = connection.execute(f'PRAGMA table_info("{quoted}")').fetchall()
     key = "name" if backend.name == "sqlite" else "column_name"
-    return {str(row[key]) for row in rows}
+    return {str(_row_value_ci(row, key)) for row in rows}
 
 
 def _ledger_sql(backend_name: str) -> str:

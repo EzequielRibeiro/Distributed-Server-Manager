@@ -46,7 +46,9 @@
     "M10 Final E2E Release Validation",
     "Baseline Update Reconciliation",
     "Universal Server Update",
-    "YARA-X Security Management"
+    "YARA-X Security Management",
+    "MySQL Baseline v2 Isolated Deployment",
+    "MariaDB Baseline v2 Isolated Deployment"
   ],
   "mandatory_capabilities": [
     "multi-game-runtime",
