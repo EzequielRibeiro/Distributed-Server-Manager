@@ -196,5 +196,27 @@ class YaraXHealthDoctorTest(unittest.TestCase):
             self.assertIn(f'"{key}"', source)
 
 
+class HybridYaraXStateOwnershipTest(unittest.TestCase):
+    def test_dashboard_worker_uses_bounded_yarax_state_bootstrap_helper(self):
+        unit = (ROOT / "systemd" / "dsm-dashboard-worker.service").read_text(encoding="utf-8")
+        helper = ROOT / "dashboard" / "workers" / "prepare_hybrid_yarax_state.py"
+        self.assertTrue(helper.is_file())
+        exec_line = (
+            "ExecStartPre=+/usr/bin/python3 /opt/dsm/dashboard/workers/"
+            "prepare_hybrid_yarax_state.py --root /opt/dsm "
+            "--user {{DSM_USER}} --group {{DSM_GROUP}}"
+        )
+        self.assertIn(exec_line, unit)
+        self.assertLess(unit.index(exec_line), unit.index("ExecStart=/bin/bash"))
+        self.assertNotIn("chown -R", unit)
+
+    def test_yarax_state_bootstrap_helper_is_bounded(self):
+        source = (ROOT / "dashboard" / "workers" / "prepare_hybrid_yarax_state.py").read_text(encoding="utf-8")
+        self.assertIn('"runtime" / "hybrid-agent-state" / "security" / "yara-x"', source)
+        self.assertIn("target.relative_to(root)", source)
+        self.assertIn("followlinks=False", source)
+        self.assertIn("follow_symlinks=False", source)
+
+
 if __name__ == "__main__":
     unittest.main()
