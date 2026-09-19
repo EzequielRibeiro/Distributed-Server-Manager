@@ -82,6 +82,26 @@ class CustomerContentWorkspaceService:
   provenance=dict(payload.get("provenance") or {});provenance["steam_workshop"]={"published_file_id":resolved["published_file_id"],"consumer_app_id":resolved["consumer_app_id"]}
   payload["provider"]="steam-workshop";payload["artifact"]=clean_artifact;payload["metadata"]=metadata;payload["provenance"]=provenance
   return payload
+ def _resolve_workshop_dependencies(self,context,payload):
+  metadata=payload.get("metadata") if isinstance(payload.get("metadata"),Mapping) else {};marker=metadata.get("steam_workshop") if isinstance(metadata.get("steam_workshop"),Mapping) else {};root_id=str(marker.get("published_file_id") or "").strip()
+  if not root_id:return []
+  runtime_id=str(context.get("runtime_id") or "").strip();game_id=str(context.get("game_id") or "").strip().lower();definition=runtime_definition(self.workspace.root,game_id,runtime_id);workshop=((definition.get("content") or {}).get("steam_workshop") or {}) if isinstance(definition,Mapping) else {};graph=workshop.get("required_items") if isinstance(workshop.get("required_items"),Mapping) else {}
+  if not graph:return []
+  resolved_items={};visiting=set()
+  def visit(published_id):
+   published_id=str(published_id or "").strip()
+   if published_id in visiting:raise ValueError("Steam Workshop dependency cycle detected")
+   if published_id in resolved_items:return
+   visiting.add(published_id);direct=[str(value).strip() for value in (graph.get(published_id) or []) if str(value).strip()]
+   for dep in direct:visit(dep)
+   if published_id!=root_id:
+    item={"instance_id":str(payload.get("instance_id") or context.get("id") or ""),"content_id":f"steam-workshop:{published_id}","content_type":"workshop","provider":"steam-workshop","desired_state":"installed","activation_state":"enabled","activation_order":int(payload.get("activation_order") or 0),"artifact":{"provider":"steam-workshop","package_id":published_id},"dependencies":[f"steam-workshop:{dep}" for dep in direct]}
+    self._resolve_workshop(context,item);self._prepare_activation_defaults(context,item);dep_meta=dict(item.get("metadata") or {});dep_meta["dependency"]={"auto_managed":True,"required_by":root_id};item["metadata"]=dep_meta;resolved_items[published_id]=item
+   visiting.remove(published_id)
+  direct_root=[str(value).strip() for value in (graph.get(root_id) or []) if str(value).strip()]
+  for dep in direct_root:visit(dep)
+  payload["dependencies"]=[f"steam-workshop:{dep}" for dep in direct_root]
+  return [resolved_items[key] for key in resolved_items]
  def _resolve_minecraft_provider(self,context,payload):
   artifact=payload.get("artifact") if isinstance(payload.get("artifact"),Mapping) else {};provider=str(payload.get("provider") or artifact.get("provider") or "").strip().lower()
   if provider not in {"modrinth","curseforge"}:return payload
@@ -279,7 +299,10 @@ class CustomerContentWorkspaceService:
   modpack=self._resolve_minecraft_modpack(context,payload)
   if modpack is not None:
    parent,bundle,children=modpack;return self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"))
-  self._resolve_workshop(context,payload);self._resolve_minecraft_provider(context,payload);self._prepare_activation_defaults(context,payload);return self.content.put(payload,requested_by=str(user.get("username") or "customer"))
+  self._resolve_workshop(context,payload);dependencies=self._resolve_workshop_dependencies(context,payload);self._resolve_minecraft_provider(context,payload);self._prepare_activation_defaults(context,payload);actor=str(user.get("username") or "customer")
+  if dependencies:
+   result=self.content.put_many([*dependencies,payload],requested_by=actor);result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==str(payload.get("content_id") or ""));result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=str(payload.get("content_id") or "")];return result
+  return self.content.put(payload,requested_by=actor)
  def mutate(self,user,instance_id,content_id,action,body=None):
   action=str(action or "").strip().lower();required="content.remove" if action=="remove" else "content.install";context,policy=self._context_policy(user,instance_id,required);current=self._existing(instance_id,content_id);actor=str(user.get("username") or "customer");ctype=str(current.get("content_type") or "").lower();provider=str(current.get("provider") or "").strip().lower()
   marker=(current.get("metadata") or {}).get("bundle") if isinstance(current.get("metadata"),Mapping) else None
@@ -322,7 +345,12 @@ class CustomerContentWorkspaceService:
    else:raise ValueError("automatic content update is unavailable for this provider")
    self._mark_update_checkpoint(current,payload)
   else:raise ValueError("invalid content action")
-  self._enforce_policy(payload,policy);return self.content.put(payload,requested_by=actor)
+  self._enforce_policy(payload,policy)
+  if action=="update" and provider in {"steam","steam-workshop"}:
+   dependencies=self._resolve_workshop_dependencies(context,payload)
+   if dependencies:
+    result=self.content.put_many([*dependencies,payload],requested_by=actor);result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==content_id);result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=content_id];return result
+  return self.content.put(payload,requested_by=actor)
 
 
 __all__=["CustomerContentWorkspaceService"]
