@@ -13,6 +13,8 @@ User={{DSM_USER}}
 Group={{DSM_GROUP}}
 WorkingDirectory=/opt/dsm
 Environment=DSM_ROOT=/opt/dsm
+Environment=HOME=/opt/dsm
+Environment=CAPIVARA_STEAM_HOME=/opt/dsm
 ExecStart=/bin/bash /opt/dsm/dashboard/workers/worker.sh
 Restart=always
 RestartSec=10
