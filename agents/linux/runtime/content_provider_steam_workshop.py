@@ -273,7 +273,14 @@ def _download_and_resolve(
 ) -> Path:
     executable = _steamcmd()
     login = _login(artifact)
-    env = {**os.environ, "HOME": os.environ.get("HOME", str(Path(game_data_root).resolve().parent))}
+    session_home = str(
+        Path(
+            os.environ.get("CAPIVARA_STEAM_HOME")
+            or os.environ.get("HOME")
+            or str(Path(game_data_root).resolve().parent)
+        ).resolve()
+    )
+    env = {**os.environ, "HOME": session_home, "CAPIVARA_STEAM_HOME": session_home}
     completed = subprocess.run(
         [executable, "+login", login, "+workshop_download_item", app_id, item_id, "validate", "+quit"],
         stdin=subprocess.DEVNULL,
