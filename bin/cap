@@ -4,6 +4,16 @@ set -Eeuo pipefail
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
 export DSM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+case "${1:-}" in
+    --version|-V|version)
+        VERSION_FILE="${DSM_ROOT}/version"
+        [[ -r "${VERSION_FILE}" ]] || { echo "Versão não disponível: ${VERSION_FILE}" >&2; exit 1; }
+        tr -d '\r\n' <"${VERSION_FILE}"
+        printf '\n'
+        exit 0
+        ;;
+esac
+
 BOOTSTRAP="${DSM_ROOT}/core/bootstrap.sh"
 [[ -f "${BOOTSTRAP}" ]] || { echo "Bootstrap não encontrado: ${BOOTSTRAP}" >&2; exit 1; }
 # shellcheck source=/dev/null
