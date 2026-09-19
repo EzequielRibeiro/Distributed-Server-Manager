@@ -175,8 +175,8 @@ def _reconcile_locked(config: dict[str, Any], record: dict[str, Any], normalized
         if recovered:
             increment("instance_recovered")
         increment("reconcile_completed")
-        event_type = "INSTANCE_RECOVERED" if recovered else "INSTANCE_RECONCILE_COMPLETED"
-        _event(event_type, updated, {"desired_state": desired, "observed_state": observed, "action": recovery_action})
+        if recovered:
+            _event("INSTANCE_RECOVERED", updated, {"desired_state": desired, "observed_state": observed, "action": recovery_action})
         return {"instance_id": normalized["instance_id"], "status": "healthy", "desired_state": desired,
                 "observed_state": observed, "recovered": recovered, "action": recovery_action, "retry_count": 0}
     except Exception as exc:
@@ -192,7 +192,6 @@ def reconcile_instance(config: dict[str, Any], instance_id: str, *, force: bool 
         return {"instance_id": normalized["instance_id"], "status": str(record.get("reconcile_status") or "retry_wait"),
                 "retry_count": int(record.get("reconcile_retry_count") or 0), "next_retry_at": _stamp(retry_at), "skipped": True}
     started = time.monotonic()
-    _event("INSTANCE_RECONCILE_STARTED", normalized, {"desired_state": normalized["desired_state"]})
     limits = runtime_limits(config)
     try:
         with runtime_operation(config, normalized["instance_id"], "reconcile", lock_timeout_seconds=limits.lock_timeout_seconds):
