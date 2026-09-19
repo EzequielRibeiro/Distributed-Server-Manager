@@ -197,21 +197,27 @@ class YaraXHealthDoctorTest(unittest.TestCase):
 
 
 class HybridYaraXStateOwnershipTest(unittest.TestCase):
-    def test_dashboard_worker_repairs_bounded_yarax_state_before_start(self):
+    def test_dashboard_worker_uses_bounded_yarax_state_bootstrap_helper(self):
         unit = (ROOT / "systemd" / "dsm-dashboard-worker.service").read_text(encoding="utf-8")
-        install_line = (
-            "ExecStartPre=+/usr/bin/install -d -m 0750 -o {{DSM_USER}} -g {{DSM_GROUP}} "
-            "/opt/dsm/runtime/hybrid-agent-state/security/yara-x"
+        helper = ROOT / "dashboard" / "workers" / "prepare_hybrid_yarax_state.py"
+        self.assertTrue(helper.is_file())
+        exec_line = (
+            "ExecStartPre=+/usr/bin/python3 /opt/dsm/dashboard/workers/"
+            "prepare_hybrid_yarax_state.py --root /opt/dsm "
+            "--user {{DSM_USER}} --group {{DSM_GROUP}}"
         )
-        chown_line = (
-            "ExecStartPre=+/bin/chown -R {{DSM_USER}}:{{DSM_GROUP}} "
-            "/opt/dsm/runtime/hybrid-agent-state/security/yara-x"
-        )
-        self.assertIn(install_line, unit)
-        self.assertIn(chown_line, unit)
-        self.assertLess(unit.index(install_line), unit.index("ExecStart=/bin/bash"))
-        self.assertLess(unit.index(chown_line), unit.index("ExecStart=/bin/bash"))
-        self.assertNotIn("chown -R {{DSM_USER}}:{{DSM_GROUP}} /opt/dsm/runtime\n", unit)
+        self.assertIn(exec_line, unit)
+        self.assertLess(unit.index(exec_line), unit.index("ExecStart=/bin/bash"))
+        self.assertNotIn("chown -R", unit)
+
+    def test_yarax_state_bootstrap_helper_is_bounded(self):
+        source = (ROOT / "dashboard" / "workers" / "prepare_hybrid_yarax_state.py").read_text(encoding="utf-8")
+        self.assertIn('"runtime" / "hybrid-agent-state" / "security" / "yara-x"', source)
+        self.assertIn("target.relative_to(root)", source)
+        self.assertIn("followlinks=False", source)
+        self.assertIn("follow_symlinks=False", source)
+
+
 
 
 if __name__ == "__main__":
