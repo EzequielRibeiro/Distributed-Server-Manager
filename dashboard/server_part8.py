@@ -59,11 +59,18 @@ def integrated_customer_authenticate(headers):
 
 
 def integrated_authenticate(headers):
-    """Compatibility only for legacy endpoints whose area is not explicit."""
+    """Compatibility auth that honors an explicit browser auth-area boundary."""
+    explicit_area = str(headers.get("X-Capivara-Auth-Area") or "").strip().lower()
+    if explicit_area == "customer":
+        return integrated_customer_authenticate(headers)
+    if explicit_area == "controller":
+        return integrated_controller_authenticate(headers)
+
     controller = session_user_from_headers(headers, area="controller")
     customer = session_user_from_headers(headers, area="customer")
 
-    # Never guess when both browser identities coexist.
+    # Never guess when both browser identities coexist and the caller omitted
+    # the explicit area boundary.
     if controller is not None and customer is not None:
         return None
 
