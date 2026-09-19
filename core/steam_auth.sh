@@ -216,7 +216,23 @@ steam_auth_run()
         return "${STATUS}"
     fi
 
+    # Prove that Steam persisted a reusable login token in the exact runtime
+    # context used by unattended game/Workshop installs. No password or Guard
+    # code is supplied on this second invocation.
+    local PROBE_STATUS=0
+    steam_auth_exec_as_runtime \
+        "${RUNTIME_USER}" "${RUNTIME_HOME}" "${STATE_DIR}" \
+        "${STEAMCMD}" +login "${STEAM_USER}" +quit \
+        </dev/null >/dev/null 2>&1 || PROBE_STATUS=$?
+
+    if (( PROBE_STATUS != 0 ))
+    then
+        steam_auth_error "A Steam aceitou o login interativo, mas não persistiu uma sessão reutilizável."
+        steam_auth_error "Repita 'sudo cap steam auth' e confirme Steam Guard/lembrar sessão quando solicitado."
+        return "${PROBE_STATUS}"
+    fi
+
     echo "[DSM][STEAM] Autenticação Steam concluída no contexto persistente do Agent."
-    echo "[DSM][STEAM] A sessão será reutilizada automaticamente por instalações Steam/Workshop enquanto permanecer válida na Steam."
+    echo "[DSM][STEAM] Sessão não interativa validada e pronta para instalações Steam/Workshop."
     return 0
 }
