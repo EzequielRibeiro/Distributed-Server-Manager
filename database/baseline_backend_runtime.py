@@ -61,6 +61,17 @@ def _fetchone(backend: Any, result: Any):
     return row
 
 
+def _row_value_ci(row: Mapping[str, Any], key: str) -> Any:
+    """Read a mapping key case-insensitively across DB-API drivers."""
+    if key in row:
+        return row[key]
+    expected = key.lower()
+    for candidate, value in row.items():
+        if str(candidate).lower() == expected:
+            return value
+    raise KeyError(key)
+
+
 def _table_names(backend: Any, connection: Any) -> set[str]:
     if backend.name == "postgresql":
         result = connection.execute(
@@ -79,7 +90,7 @@ def _table_names(backend: Any, connection: Any) -> set[str]:
         rows = connection.execute(
             "SELECT name AS table_name FROM sqlite_master WHERE type='table'"
         ).fetchall()
-    return {str(row["table_name"]) for row in rows}
+    return {str(_row_value_ci(row, "table_name")) for row in rows}
 
 
 def _marker(backend: Any, connection: Any) -> Mapping[str, Any] | None:
