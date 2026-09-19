@@ -41,7 +41,7 @@ class PalworldNativeMaintenanceTest(unittest.TestCase):
         self.assertFalse(m["graceful_shutdown"])
         self.assertFalse(m["native_countdown"])
 
-    def test_runtime_is_linux_only(self):
+    def test_standard_runtime_supports_linux_and_windows(self):
         import json
 
         definition = json.loads(
@@ -53,7 +53,7 @@ class PalworldNativeMaintenanceTest(unittest.TestCase):
 
         self.assertEqual(
             definition["requirements"]["os"],
-            ["linux"],
+            ["linux", "windows"],
         )
 
     def test_save_is_typed(self):

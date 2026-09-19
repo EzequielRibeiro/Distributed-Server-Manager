@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
   "kind": "RuntimeDefinition",
-  "id": "palworld.stable",
-  "name": "Palworld Padrão",
+  "id": "palworld.windows-modded",
+  "name": "Palworld com Mods (Windows)",
   "game": "palworld",
   "edition": "default",
-  "variant": "stable",
+  "variant": "modded",
   "loader": null,
   "version": {
     "strategy": "static",
@@ -14,12 +14,11 @@
   },
   "process": {
     "engine": "native",
-    "executable": "PalServer.sh",
+    "executable": "PalServer.exe",
     "artifact_mode": "executable"
   },
   "requirements": {
     "os": [
-      "linux",
       "windows"
     ],
     "architectures": [
@@ -31,6 +30,26 @@
     "provider": "steam",
     "auth": "anonymous",
     "package_id": "2394010"
+  },
+  "content": {
+    "steam_workshop": {
+      "app_id": "1623730",
+      "auth": "required"
+    },
+    "activation": {
+      "adapter": "palworld",
+      "types": {
+        "workshop": {
+          "default_mode": "server-mod",
+          "modes": [
+            {
+              "id": "server-mod",
+              "label": "Mod do servidor"
+            }
+          ]
+        }
+      }
+    }
   },
   "installation": {
     "directory": "/opt/dsm/game-data/palworld/serverfiles"

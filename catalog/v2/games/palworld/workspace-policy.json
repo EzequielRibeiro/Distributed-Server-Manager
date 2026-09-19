@@ -5,12 +5,31 @@
   "products": {},
   "runtimes": {
     "palworld.stable": {
-      "label": "Palworld Stable",
-      "family": "default",
+      "label": "Palworld Padrão",
+      "family": "standard",
       "mods": false,
       "plugins": false,
       "workshop": false,
-      "external_upload": true,
+      "external_upload": false,
+      "custom_runtime": false,
+      "console": {
+        "supported": true
+      },
+      "maintenance": {
+        "scheduled_restart": true,
+        "broadcast": true,
+        "save": true,
+        "graceful_shutdown": false,
+        "native_countdown": false
+      }
+    },
+    "palworld.windows-modded": {
+      "label": "Palworld com Mods (Windows)",
+      "family": "modded",
+      "mods": true,
+      "plugins": false,
+      "workshop": true,
+      "external_upload": false,
       "custom_runtime": false,
       "console": {
         "supported": true
