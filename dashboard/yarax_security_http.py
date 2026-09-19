@@ -8,6 +8,7 @@ from yarax_security_api import yarax_security_overview
 
 YARAX_SECURITY_PATH = "/api/admin/security/yara-x"
 YARAX_SECURITY_PAGE = "/admin-security-yarax.html"
+YARAX_SECURITY_ASSETS = {"/admin-security-yarax.js", "/admin-security-yarax.css"}
 
 
 def dispatch_yarax_security_get(path: str, query: str, *, user, backend):
@@ -38,6 +39,9 @@ def install_yarax_security_http(legacy, authenticate) -> None:
 
     def yarax_get(self):
         parsed = urlparse(self.path)
+        if parsed.path in YARAX_SECURITY_ASSETS:
+            self.send_file(legacy.STATIC_FILES[parsed.path])
+            return
         if parsed.path == YARAX_SECURITY_PAGE:
             user = authenticate(self.headers)
             if user is None:
@@ -66,6 +70,7 @@ def install_yarax_security_http(legacy, authenticate) -> None:
 
 
 __all__ = [
+    "YARAX_SECURITY_ASSETS",
     "YARAX_SECURITY_PAGE",
     "YARAX_SECURITY_PATH",
     "dispatch_yarax_security_get",
