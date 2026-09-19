@@ -238,6 +238,12 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   with self.assertRaisesRegex(ValueError,"unsupported runtime content activation mode"):
    service._configure_activation(context,current,{"mode":"anything"})
 
+ def test_customer_content_sse_uses_explicit_customer_session_boundary(self):
+  http=(ROOT/"dashboard"/"customer_content_http.py").read_text(encoding="utf-8")
+  self.assertIn('user=require_user(self,area="customer")',http)
+  self.assertIn('session_user_from_headers(self.headers,area=explicit)',http)
+  self.assertIn('X-Capivara-Auth-Area',http)
+
  def test_customer_content_ui_pushes_status_over_sse_with_polling_fallback(self):
   script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
   http=(ROOT/"dashboard"/"customer_content_http.py").read_text(encoding="utf-8")

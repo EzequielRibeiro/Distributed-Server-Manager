@@ -28,13 +28,18 @@ def install_customer_content_http(legacy,authenticate):
  previous_get=legacy.DashboardHandler.do_GET;previous_post=legacy.DashboardHandler.do_POST;previous_put=getattr(legacy.DashboardHandler,"do_PUT",None)
  def backend():return legacy.dashboard_repository(legacy.DATABASE_FILE).backend
  def send(self,status,payload):return self.send_json(status,to_json_compatible(payload))
- def user_for(self):
-  value=session_user_from_headers(self.headers)
-  if value is not None:return value
+ def user_for(self,area=None):
+  explicit=str(area or self.headers.get("X-Capivara-Auth-Area") or "").strip().lower()
+  if explicit in {"customer","controller"}:
+   value=session_user_from_headers(self.headers,area=explicit)
+   if value is not None:return value
+  else:
+   value=session_user_from_headers(self.headers)
+   if value is not None:return value
   try:return authenticate(self.headers)
   except Exception:return None
- def require_user(self):
-  user=user_for(self)
+ def require_user(self,area=None):
+  user=user_for(self,area=area)
   if user is None:self.unauthorized();return None
   if str(user.get("role") or "").lower() not in {"customer","admin","controller"}:self.forbidden();return None
   return user
@@ -97,7 +102,10 @@ def install_customer_content_http(legacy,authenticate):
  def get(self):
   parsed=urlparse(self.path)
   if parsed.path==STREAM:
-   user=require_user(self)
+   # EventSource cannot send X-Capivara-Auth-Area. Bind the stream explicitly
+   # to the customer session boundary so a simultaneous Controller session
+   # cannot shadow it in the same browser.
+   user=require_user(self,area="customer")
    if user is None:return
    try:
     instance_id=iid(parsed)
