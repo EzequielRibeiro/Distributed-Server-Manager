@@ -20,6 +20,17 @@ for path in (ROOT, DATABASE, DASHBOARD):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+# Configure the embedded Agent context before importing any module that may
+# transitively import capabilities/content_security/security_yarax. Those
+# modules resolve managed security paths at import time.
+_HYBRID_STATE = ROOT / "runtime" / "hybrid-agent-state"
+os.environ.setdefault("CAPIVARA_AGENT_MODE", "hybrid")
+os.environ.setdefault("CAPIVARA_DSM_ROOT", str(ROOT))
+os.environ.setdefault("CAPIVARA_AGENT_ROOT", str(ROOT / "agents" / "linux"))
+os.environ.setdefault("CAPIVARA_AGENT_STATE_DIR", str(_HYBRID_STATE))
+os.environ.setdefault("CAPIVARA_AGENT_CONFIG", str(_HYBRID_STATE / "agent.json"))
+os.environ.setdefault("CAPIVARA_AGENT_SERVICE", "dsm-dashboard-worker.service")
+
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
 from backup_repository import BackupRepository
