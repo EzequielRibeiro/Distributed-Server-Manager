@@ -69,3 +69,14 @@ def test_supervisor_loads_steam_user_before_workers_start():
     load_index = text.index('load_worker_steam_user "${DSM_ROOT}"')
     worker_index = text.index("start_python_worker hybrid_agent_worker.py")
     assert load_index < worker_index
+
+
+def test_hybrid_runtime_sets_game_data_root_before_runtime_imports():
+    source = (
+        ROOT / "dashboard" / "workers" / "hybrid_agent_worker.py"
+    ).read_text(encoding="utf-8")
+    state_index = source.index('os.environ.setdefault("CAPIVARA_AGENT_STATE_DIR"')
+    game_data_index = source.index('os.environ.setdefault("CAPIVARA_GAME_DATA_ROOT"')
+    import_index = source.index("from agent_instance_runtime_repository import")
+    assert state_index < game_data_index < import_index
+    assert 'str(_HYBRID_STATE / "game-data")' in source
