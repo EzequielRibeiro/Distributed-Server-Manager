@@ -190,7 +190,7 @@ class YaraXHealthDoctorTest(unittest.TestCase):
     def test_capabilities_contract_includes_enriched_content_security(self):
         for platform_name in ("linux", "windows"):
             source = (ROOT / "agents" / platform_name / "runtime" / "capabilities.py").read_text(encoding="utf-8")
-            self.assertIn('"content_security": content_security', source)
+            self.assertRegex(source, r'"content_security"\s*:\s*content_security')
         source = (ROOT / "agents" / "linux" / "runtime" / "content_security.py").read_text(encoding="utf-8")
         for key in ("engine_version", "ruleset_version", "rules_count", "ruleset_checksum_valid", "last_error"):
             self.assertIn(f'"{key}"', source)
