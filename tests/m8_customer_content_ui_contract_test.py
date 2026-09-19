@@ -37,6 +37,13 @@ class M8CustomerContentUiContractTest(unittest.TestCase):
         text=self.text
         self.assertIn('catch(error){toast(error.message||"Não foi possível concluir a operação de conteúdo.");return false}',text)
 
+    def test_content_status_has_resilient_live_refresh(self):
+        text=self.text
+        self.assertIn("scheduleContentRefresh(1000)",text)
+        self.assertIn('&_ts=${Date.now()}',text)
+        self.assertIn('{cache:"no-store"}',text)
+        self.assertIn('document.addEventListener("visibilitychange"',text)
+
     def test_security_notice_is_presented_without_rule_internals(self):
         text=self.text
         self.assertIn('securityNotice=item.security_notice&&typeof item.security_notice==="object"?item.security_notice:null',text)
