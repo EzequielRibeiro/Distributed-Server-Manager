@@ -160,9 +160,13 @@ def _replace_customer_table(sql: str, backend: str) -> str:
 
 def _numeric_customer_foreign_keys(sql: str, backend: str) -> str:
     target = _customer_fk_type(backend)
-    return re.sub(
+    result = re.sub(
         r"\bcustomer_id\s+(?:TEXT\b|VARCHAR\s*\(\s*\d+\s*\)|CHAR\s*\(\s*\d+\s*\))",
         f"customer_id {target}", sql, flags=re.IGNORECASE,
+    )
+    return re.sub(
+        r"\bowner_customer_id\s+(?:TEXT\b|VARCHAR\s*\(\s*\d+\s*\)|CHAR\s*\(\s*\d+\s*\))",
+        f"owner_customer_id {target}", result, flags=re.IGNORECASE,
     )
 
 
