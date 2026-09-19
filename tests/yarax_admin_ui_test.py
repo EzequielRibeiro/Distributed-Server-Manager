@@ -137,6 +137,10 @@ class YaraXAdminUiTest(unittest.TestCase):
         self.assertIn("/api/admin/security/yara-x", script)
         self.assertIn("YARAX_SECURITY_PAGE", http)
         self.assertIn("import server_part20 as integration", part)
+        self.assertIn(
+            "integration.integration.integration.integration._controller_authenticate",
+            part.replace("\\n", " "),
+        )
         self.assertIn("server_part21.py", service)
 
     def test_api_does_not_expose_file_contents_or_credentials(self):

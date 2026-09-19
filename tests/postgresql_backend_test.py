@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -457,6 +458,24 @@ class PostgreSQLBackendTest(
             self.assertEqual(command[0], "pg_restore")
             self.assertIn("--single-transaction", command)
             self.assertEqual(result["kind"], "DatabaseRestore")
+
+    def test_restore_surfaces_pg_restore_stderr(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "backup.dump"
+            source.write_bytes(b"dump")
+            failure = subprocess.CalledProcessError(
+                1,
+                ["pg_restore"],
+                stderr="pg_restore: error: cannot drop table example",
+            )
+            with patch("subprocess.run", side_effect=failure):
+                with self.assertRaises(DatabaseError) as raised:
+                    PostgreSQLBackend(self.config()).restore(str(source))
+            self.assertIn(
+                "pg_restore: error: cannot drop table example",
+                str(raised.exception),
+            )
+            self.assertNotIn("['pg_restore']", str(raised.exception))
 
     def test_close_is_safe(self):
         backend = PostgreSQLBackend(
