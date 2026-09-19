@@ -3,6 +3,8 @@
   const controllerHeaders = (extra = {}) => ({'Accept':'application/json','X-Capivara-Auth-Area':'controller',...extra});
   const requestOptions = (extra = {}) => ({credentials:'same-origin',cache:'no-store',...extra});
   const text = (value) => value === null || value === undefined || value === '' ? '—' : String(value);
+  const LIVE_REFRESH_MS = 10000;
+  let loadInFlight = false;
   async function loadShell() {
     const sidebar = $('sidebar-component');
     const response = await fetch('/components/sidebar-v3.html', requestOptions({headers:controllerHeaders()}));
@@ -169,11 +171,14 @@
     </tr>`).join('') : '<tr><td colspan="6" class="empty">Nenhuma operação YARA-X registrada.</td></tr>';
   }
 
-  async function load() {
-    $('status-text').textContent = 'Atualizando segurança YARA-X…';
+  async function load({silent=false} = {}) {
+    if (loadInFlight) return;
+    loadInFlight = true;
+    if (!silent) $('status-text').textContent = 'Atualizando segurança YARA-X…';
     const response = await fetch(`/api/admin/security/yara-x?${query()}`, requestOptions({headers:controllerHeaders()}));
     if (!response.ok) {
       $('status-text').textContent = `Falha ao carregar YARA-X (${response.status}).`;
+      loadInFlight = false;
       return;
     }
     const data = await response.json();
@@ -190,15 +195,27 @@
     renderAgents(data.agents || []);
     renderEvents(data.events || []);
     await loadOperations();
+    loadInFlight = false;
+  }
+
+  async function liveRefresh() {
+    if (document.hidden) return;
+    try { await load({silent:true}); }
+    catch (error) {
+      loadInFlight = false;
+      $('status-text').textContent = `Falha na atualização automática: ${error.message}`;
+    }
   }
 
   document.addEventListener('click', (event) => {
     const button = event.target.closest('[data-yarax-action]');
     if (button) runOperation(button);
   });
-  $('refresh').addEventListener('click', load);
-  $('apply').addEventListener('click', load);
+  $('refresh').addEventListener('click', () => load());
+  $('apply').addEventListener('click', () => load());
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) liveRefresh(); });
+  setInterval(liveRefresh, LIVE_REFRESH_MS);
   loadShell()
-    .then(load)
+    .then(() => load())
     .catch((error) => { $('status-text').textContent = `Falha: ${error.message}`; });
 })();
