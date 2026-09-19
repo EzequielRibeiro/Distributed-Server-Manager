@@ -23,9 +23,11 @@ mkdir -p \
 
 cp "${CAP_CLI}" "${FAKE_ROOT}/bin/cap"
 chmod +x "${FAKE_ROOT}/bin/cap"
+printf '9.8.7\n' >"${FAKE_ROOT}/version"
 
-cat >"${FAKE_ROOT}/core/bootstrap.sh" <<'EOF'
+cat >"${FAKE_ROOT}/core/bootstrap.sh" <<EOF
 #!/usr/bin/env bash
+touch "${TMP_DIR}/bootstrap-loaded"
 export DSM_BOOTSTRAP_LOADED=1
 export DSM_DATABASE_DRIVER="sqlite"
 export DSM_DATABASE=""
@@ -36,6 +38,13 @@ export DSM_DATABASE_USER=""
 export DSM_DATABASE_PASSWORD_FILE=""
 export DSM_DATABASE_TLS=""
 EOF
+
+OUTPUT="$("${FAKE_ROOT}/bin/cap" --version)"
+[[ "${OUTPUT}" == "9.8.7" ]] || fail "cap --version nao retornou a versao publica"
+[[ ! -e "${TMP_DIR}/bootstrap-loaded" ]] || fail "cap --version carregou bootstrap/configuracao privada"
+OUTPUT="$("${FAKE_ROOT}/bin/cap" version)"
+[[ "${OUTPUT}" == "9.8.7" ]] || fail "cap version nao retornou a versao publica"
+[[ ! -e "${TMP_DIR}/bootstrap-loaded" ]] || fail "cap version carregou bootstrap/configuracao privada"
 
 cat >"${FAKE_ROOT}/core/role_context.py" <<'EOF'
 #!/usr/bin/env python3
