@@ -51,6 +51,7 @@ from runtime_reconciler import reconcile_all, reconciliation_inventory
 from storage_pool_migration_client import clear_storage_pool_migration_result, read_storage_pool_migration_result, stage_storage_pool_migration
 from uninstall_client import clear_result as clear_uninstall_result, handle_command as handle_uninstall_command, read_result as read_uninstall_result
 from update_client import clear_update_result, read_update_result, stage_update_request
+from yarax_admin_client import clear_result as clear_yarax_admin_result, handle_command as handle_yarax_admin_command, read_result as read_yarax_admin_result
 
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
 DEFAULT_HEARTBEAT_SECONDS = 30
@@ -135,7 +136,7 @@ def _inventory(config):
     except OSError:installed_version=str(config.get("capivara_version","unknown"))
     payload={"agent_id":config["agent_id"],"hostname":socket.gethostname(),"os":platform.system().lower(),"architecture":platform.machine(),"capivara_version":installed_version,"address":config.get("advertise_address"),"fingerprint":config["fingerprint"],"host_identity":_host_identity(),"capabilities":detect_capabilities(),"cpu":{"logical_cores":os.cpu_count(),"machine":platform.machine()},"ram_total_bytes":_memory_total_bytes(),"storage":{"root_total_bytes":disk.total,"root_free_bytes":disk.free},"network":collect_network_inventory(),"instances":instance_inventory(config),"instance_reconciliation":reconciliation_inventory(config),"instance_runtime_health":health_inventory(config),"instance_telemetry":collect_instance_telemetry(config),"instance_console_state":console_state(config),"instance_runtime_metrics":runtime_metrics_snapshot(queue_depth=_queue_depth()),"runtime_events":read_runtime_events(STATE_DIR,limit=int(config.get("event_batch_size",200))),"configuration_state":configuration_state(),"content_state":content_state(),"content_cache_inventory":content_cache_inventory(),"content_update_inventory":content_update_inventory(),"backup_state":backup_state(),"broadcast_state":broadcast_state(),"heartbeat_interval_seconds":int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)),"degraded_after_seconds":int(config.get("degraded_after_seconds",60)),"offline_after_seconds":int(config.get("offline_after_seconds",120))}
     payload["agent_logs"]=_recent_logs()
-    result_readers=(("update_result",read_update_result),("provisioning_result",read_provisioning_result),("storage_pool_migration_result",read_storage_pool_migration_result),("game_data_result",read_game_data_result),("instance_result",read_instance_result),("dayz_native_restart_result",read_dayz_native_restart_result),("console_result",read_console_result),("file_result",read_file_result),("resource_result",read_resource_result),("artifact_result",read_artifact_result),("doctor_result",read_doctor_result),("uninstall_result",read_uninstall_result))
+    result_readers=(("update_result",read_update_result),("provisioning_result",read_provisioning_result),("storage_pool_migration_result",read_storage_pool_migration_result),("game_data_result",read_game_data_result),("instance_result",read_instance_result),("dayz_native_restart_result",read_dayz_native_restart_result),("console_result",read_console_result),("file_result",read_file_result),("resource_result",read_resource_result),("artifact_result",read_artifact_result),("doctor_result",read_doctor_result),("yarax_admin_result",read_yarax_admin_result),("uninstall_result",read_uninstall_result))
     for key,reader in result_readers:
         value=reader()
         if value:payload[key]=value
@@ -160,6 +161,7 @@ def _flush_command_results(config):
         ("resource_result", read_resource_result, "resource_state", clear_resource_result, "command_id"),
         ("artifact_result", read_artifact_result, "artifact_state", clear_artifact_result, "transfer_id"),
         ("doctor_result", read_doctor_result, "doctor_state", clear_doctor_result, "request_id"),
+        ("yarax_admin_result", read_yarax_admin_result, "yarax_admin_state", clear_yarax_admin_result, "operation_id"),
     )
     payload = {
         "agent_id": config["agent_id"],
@@ -211,6 +213,11 @@ def heartbeat(config):
     dayz_native_restart_state=result.get("dayz_native_restart_state") if isinstance(result.get("dayz_native_restart_state"),dict) else {}
     if str(dayz_native_restart_state.get("status") or "").lower() in {"completed","failed"} and dayz_native_restart_state.get("command_id"):
         clear_dayz_native_restart_result(str(dayz_native_restart_state["command_id"]))
+    yarax_command=result.get("yarax_admin_command")
+    if isinstance(yarax_command,dict):
+        yarax_report=handle_yarax_admin_command(yarax_command);synchronous_result_ready=True;_log(f"yarax operation={yarax_report.get('operation_id')} action={yarax_report.get('action')} status={yarax_report.get('status')}")
+    yarax_state=result.get("yarax_admin_state") if isinstance(result.get("yarax_admin_state"),dict) else {}
+    if str(yarax_state.get("status") or "").lower() in {"completed","failed"} and yarax_state.get("operation_id"):clear_yarax_admin_result(str(yarax_state["operation_id"]))
     doctor_command=result.get("doctor_command")
     if isinstance(doctor_command,dict):
         doctor_report=handle_doctor_command(config,doctor_command);synchronous_result_ready=True;_log(f"doctor request={doctor_report.get('request_id')} status={doctor_report.get('status')}")
@@ -252,6 +259,7 @@ def heartbeat(config):
                 ("resource_state", "resource_command", "command_id"),
                 ("artifact_state", "artifact_command", "transfer_id"),
                 ("doctor_state", "doctor_command", "request_id"),
+                ("yarax_admin_state", "yarax_admin_command", "operation_id"),
             )
             for state_key, command_key, id_key in flushed_contracts:
                 state = flushed.get(state_key)

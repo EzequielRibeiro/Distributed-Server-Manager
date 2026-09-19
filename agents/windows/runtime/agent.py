@@ -39,6 +39,7 @@ from runtime_operations import recover_interrupted_operations
 from runtime_reconciler import reconcile_all,reconciliation_inventory
 from storage_pool_migration_client import clear_storage_pool_migration_result,read_storage_pool_migration_result,stage_storage_pool_migration
 from update_client import clear_update_result,read_update_result,stage_update_request
+from yarax_admin_client import clear_result as clear_yarax_admin_result,handle_command as handle_yarax_admin_command,read_result as read_yarax_admin_result
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));CONFIG_PATH=Path(os.environ.get("CAPIVARA_AGENT_CONFIG",PROGRAM_DATA/"CapivaraAgent"/"agent.json"));GUI_SNAPSHOT_PATH=STATE_DIR/"gui"/"snapshot.json";DEFAULT_HEARTBEAT_SECONDS=30;DEFAULT_RECONCILE_SECONDS=15
 def _load_config()->dict[str,Any]:return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 def _write_config(config):
@@ -75,7 +76,7 @@ def _inventory(config):
  try:version=version_path.read_text(encoding="utf-8").strip()
  except OSError:version=str(config.get("capivara_version","unknown"))
  payload={"agent_id":config["agent_id"],"hostname":socket.gethostname(),"os":"windows","architecture":platform.machine(),"capivara_version":version,"address":config.get("advertise_address"),"fingerprint":config["fingerprint"],"capabilities":detect_capabilities(),"cpu":{"logical_cores":os.cpu_count(),"machine":platform.machine()},"ram_total_bytes":_memory_total_bytes(),"storage":{"root_total_bytes":disk.total,"root_free_bytes":disk.free},"network":collect_network_inventory(),"instances":instance_inventory(config),"instance_reconciliation":reconciliation_inventory(config),"instance_runtime_health":health_inventory(config),"instance_telemetry":collect_instance_telemetry(config),"instance_console_state":console_state(config),"instance_runtime_metrics":runtime_metrics_snapshot(queue_depth=_queue_depth()),"runtime_events":read_runtime_events(STATE_DIR,limit=int(config.get("event_batch_size",200))),"configuration_state":configuration_state(),"content_state":content_state(),"content_update_inventory":content_update_inventory(),"backup_state":backup_state(),"broadcast_state":broadcast_state(),"game_data":game_data_summary(),"heartbeat_interval_seconds":int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)),"degraded_after_seconds":int(config.get("degraded_after_seconds",60)),"offline_after_seconds":int(config.get("offline_after_seconds",120))}
- for key,reader in (("update_result",read_update_result),("provisioning_result",read_provisioning_result),("storage_pool_migration_result",read_storage_pool_migration_result),("game_data_result",read_game_data_result),("instance_result",read_instance_result),("dayz_native_restart_result",read_dayz_native_restart_result),("console_result",read_console_result),("file_result",read_file_result),("resource_result",read_resource_result),("artifact_result",read_artifact_result),("doctor_result",read_doctor_result)):
+ for key,reader in (("update_result",read_update_result),("provisioning_result",read_provisioning_result),("storage_pool_migration_result",read_storage_pool_migration_result),("game_data_result",read_game_data_result),("instance_result",read_instance_result),("dayz_native_restart_result",read_dayz_native_restart_result),("console_result",read_console_result),("file_result",read_file_result),("resource_result",read_resource_result),("artifact_result",read_artifact_result),("doctor_result",read_doctor_result),("yarax_admin_result",read_yarax_admin_result)):
   value=reader()
   if value:payload[key]=value
  return payload
@@ -95,6 +96,10 @@ def heartbeat(config):
  for key,handler in (("content_commands",lambda values:apply_content_commands(config,values)),("backup_commands",lambda values:apply_backup_commands(config,values)),("broadcast_commands",lambda values:apply_broadcast_commands(config,values))):
   commands=result.get(key)
   if isinstance(commands,list):handler([x for x in commands if isinstance(x,dict)])
+ yarax_command=result.get("yarax_admin_command")
+ if isinstance(yarax_command,dict):report=handle_yarax_admin_command(yarax_command);print(f"yarax operation={report.get('operation_id')} action={report.get('action')} status={report.get('status')}",flush=True)
+ yarax_state=result.get("yarax_admin_state") if isinstance(result.get("yarax_admin_state"),dict) else {}
+ if str(yarax_state.get("status") or "").lower() in {"completed","failed"} and yarax_state.get("operation_id"):clear_yarax_admin_result(str(yarax_state["operation_id"]))
  doctor_command=result.get("doctor_command")
  if isinstance(doctor_command,dict):report=handle_doctor_command(config,doctor_command);print(f"doctor request={report.get('request_id')} status={report.get('status')}",flush=True)
  doctor_state=result.get("doctor_state") if isinstance(result.get("doctor_state"),dict) else {}
