@@ -665,6 +665,95 @@ def _upgrade_datacenter_geography(backend: Any, connection: Any) -> None:
         )
 
 
+def _upgrade_yarax_admin_operations(backend: Any, connection: Any) -> None:
+    """Add the YARA-X administrative operation queue to existing Baseline v2 databases."""
+    if "yarax_admin_operations" in _table_names(backend, connection):
+        return
+    if "agents" not in _table_names(backend, connection):
+        raise DatabaseMigrationError("agents table is missing")
+
+    if backend.name == "mysql":
+        ddl = """
+CREATE TABLE yarax_admin_operations (
+    operation_id VARCHAR(191) PRIMARY KEY,
+    agent_id VARCHAR(191) NOT NULL,
+    action VARCHAR(64) NOT NULL,
+    instance_id VARCHAR(191),
+    content_id VARCHAR(191),
+    status VARCHAR(32) NOT NULL DEFAULT 'queued',
+    requested_by VARCHAR(191),
+    payload_json LONGTEXT NOT NULL,
+    result_json LONGTEXT,
+    last_error LONGTEXT,
+    created_at VARCHAR(64) NOT NULL,
+    delivered_at VARCHAR(64),
+    completed_at VARCHAR(64),
+    updated_at VARCHAR(64) NOT NULL,
+    CONSTRAINT fk_yarax_admin_operations_agent
+        FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_yarax_admin_operations_agent_status
+    ON yarax_admin_operations(agent_id,status,created_at);
+CREATE INDEX idx_yarax_admin_operations_created
+    ON yarax_admin_operations(created_at);
+"""
+    elif backend.name == "postgresql":
+        ddl = """
+CREATE TABLE yarax_admin_operations (
+    operation_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    instance_id TEXT,
+    content_id TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    requested_by TEXT,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    result_json TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    delivered_at TEXT,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_yarax_admin_operations_agent_status
+    ON yarax_admin_operations(agent_id,status,created_at);
+CREATE INDEX idx_yarax_admin_operations_created
+    ON yarax_admin_operations(created_at);
+"""
+    elif backend.name == "sqlite":
+        ddl = """
+CREATE TABLE yarax_admin_operations (
+    operation_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    instance_id TEXT,
+    content_id TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    requested_by TEXT,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    result_json TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    delivered_at TEXT,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_yarax_admin_operations_agent_status
+    ON yarax_admin_operations(agent_id,status,created_at);
+CREATE INDEX idx_yarax_admin_operations_created
+    ON yarax_admin_operations(created_at);
+"""
+    else:
+        raise DatabaseMigrationError(f"unsupported baseline backend: {backend.name}")
+
+    _execute_script(backend, connection, ddl)
+    if "yarax_admin_operations" not in _table_names(backend, connection):
+        raise DatabaseMigrationError(
+            "YARA-X administrative operation baseline upgrade incomplete"
+        )
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -679,6 +768,7 @@ UPGRADES = (
     BaselineUpgrade(11, "datacenter_geography_metadata", _upgrade_datacenter_geography),
     BaselineUpgrade(12, "universal_content_update", _upgrade_content_update_schema),
     BaselineUpgrade(13, "maintenance_restart_framework", _upgrade_maintenance_schema),
+    BaselineUpgrade(14, "yarax_admin_operations", _upgrade_yarax_admin_operations),
 )
 
 
