@@ -68,7 +68,9 @@ def main(argv: list[str] | None = None) -> int:
     legacy.add_argument("--json", action="store_true")
 
     retention = sub.add_parser("prune-routine")
-    retention.add_argument("--before-days", type=int, default=7)
+    cutoff_group = retention.add_mutually_exclusive_group()
+    cutoff_group.add_argument("--before-days", type=int)
+    cutoff_group.add_argument("--before")
     retention.add_argument("--apply", action="store_true")
     retention.add_argument("--json", action="store_true")
 
@@ -104,8 +106,19 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "prune-routine":
-        days = max(1, int(args.before_days))
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+        if args.before:
+            try:
+                parsed = datetime.fromisoformat(str(args.before).replace("Z", "+00:00"))
+            except ValueError:
+                print("--before deve ser um timestamp ISO-8601 válido", file=sys.stderr)
+                return 2
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            cutoff = parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            days = None
+        else:
+            days = max(1, int(args.before_days if args.before_days is not None else 7))
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
         result = repo.prune_event_types_before(
             ROUTINE_RECONCILE_EVENT_TYPES,
             before=cutoff,
