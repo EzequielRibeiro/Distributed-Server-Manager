@@ -84,6 +84,7 @@ jobs:
           docker exec -i "${{ job.services.mysql.id }}" sh -c 'mysql --force -uroot -p"$MYSQL_ROOT_PASSWORD" capivara_mysql_diag' < /tmp/capivara-mysql-baseline.sql 2>&1 | tee /tmp/capivara-mysql-cli.log
           set -e
           grep -n -E 'ERROR|foreign key|Foreign key|constraint' /tmp/capivara-mysql-cli.log || true
+          nl -ba /tmp/capivara-mysql-baseline.sql | sed -n '1825,1865p'
       - name: Run destructive isolated Baseline v2 bootstrap and upgrade replay
         id: baseline
         continue-on-error: true
