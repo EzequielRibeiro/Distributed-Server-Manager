@@ -96,7 +96,7 @@ class YaraXAdminUiTest(unittest.TestCase):
                     "content_id":"vpp","provider":"steam-workshop","game_id":"dayz",
                     "result":"clean","duration_ms":42,"target_kind":"directory",
                     "engine_version":"1.20.0","ruleset_version":"2026.09.18.1",
-                    "matches":[],
+                    "matches":[{"rule":"Example_Stealer","tags":["malware","block"],"file_name":"evil.dll","relative_path":"mods/evil.dll","detection_name":"Example Stealer","threat_name":"Example Stealer","malware_family":"ExampleFamily","category":"infostealer","description":"Credential stealer"}],
                 },
             },
             {"event_id":"e2","event_type":"SOMETHING_ELSE","data":{}},
@@ -109,6 +109,11 @@ class YaraXAdminUiTest(unittest.TestCase):
         self.assertEqual(result["summary"]["agents_ready"], 1)
         self.assertEqual(result["summary"]["results"]["clean"], 1)
         self.assertEqual(len(result["events"]), 1)
+        event = result["events"][0]
+        self.assertEqual(event["matched_files"], ["mods/evil.dll"])
+        self.assertEqual(event["matches"][0]["threat_name"], "Example Stealer")
+        self.assertEqual(event["matches"][0]["malware_family"], "ExampleFamily")
+        self.assertEqual(event["matches"][0]["category"], "infostealer")
         agent = result["agents"][0]
         self.assertEqual(agent["engine_version"], "1.20.0")
         self.assertEqual(agent["ruleset_version"], "2026.09.18.1")
@@ -135,6 +140,12 @@ class YaraXAdminUiTest(unittest.TestCase):
         service = (ROOT / "systemd" / "dsm-dashboard.service").read_text(encoding="utf-8")
         self.assertIn("Segurança · Universal Content", page)
         self.assertIn("/api/admin/security/yara-x", script)
+        self.assertIn("<th>Arquivo</th>", page)
+        self.assertIn("<th>Detecção</th>", page)
+        self.assertIn("function detectionDetails(row)", script)
+        self.assertIn("Ameaça:", script)
+        self.assertIn("Família:", script)
+        self.assertIn("Regra:", script)
         self.assertIn("YARAX_SECURITY_PAGE", http)
         self.assertIn("import server_part20 as integration", part)
         self.assertIn(
