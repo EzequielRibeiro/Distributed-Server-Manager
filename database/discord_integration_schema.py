@@ -11,9 +11,10 @@ def discord_integration_ddl(backend: str) -> str:
     # treats 0/1 as booleans and this avoids PostgreSQL rejecting integer
     # parameters for BOOLEAN columns while keeping one portable API contract.
     bool_type = "SMALLINT" if backend == "postgresql" else "INTEGER" if backend == "sqlite" else "TINYINT(1)"
+    customer_type = "INTEGER" if backend == "sqlite" else "BIGINT"
     return f"""CREATE TABLE customer_discord_connections (
     id {id_type} PRIMARY KEY,
-    customer_id INTEGER NOT NULL,
+    customer_id {customer_type} NOT NULL,
     guild_id {id_type} NOT NULL,
     guild_name {id_type} NOT NULL,
     guild_icon TEXT,
@@ -28,7 +29,7 @@ def discord_integration_ddl(backend: str) -> str:
 CREATE INDEX idx_customer_discord_connections_customer ON customer_discord_connections(customer_id,status);
 
 CREATE TABLE customer_discord_instance_bindings (
-    customer_id INTEGER NOT NULL,
+    customer_id {customer_type} NOT NULL,
     instance_id {id_type} NOT NULL,
     mode VARCHAR(16) NOT NULL DEFAULT 'inherit',
     connection_id {id_type},
@@ -44,7 +45,7 @@ CREATE TABLE customer_discord_instance_bindings (
 CREATE INDEX idx_customer_discord_bindings_connection ON customer_discord_instance_bindings(connection_id);
 
 CREATE TABLE customer_discord_preferences (
-    customer_id INTEGER NOT NULL,
+    customer_id {customer_type} NOT NULL,
     instance_id {id_type} NOT NULL DEFAULT '*',
     preference_type VARCHAR(16) NOT NULL,
     preference_key {id_type} NOT NULL,
@@ -60,7 +61,7 @@ CREATE TABLE customer_discord_preferences (
 
 CREATE TABLE customer_discord_oauth_states (
     state {id_type} PRIMARY KEY,
-    customer_id INTEGER NOT NULL,
+    customer_id {customer_type} NOT NULL,
     username {id_type} NOT NULL,
     expires_at {timestamp} NOT NULL,
     created_at {timestamp} NOT NULL DEFAULT CURRENT_TIMESTAMP,
