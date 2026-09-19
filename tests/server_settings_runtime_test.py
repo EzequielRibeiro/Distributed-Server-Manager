@@ -26,7 +26,7 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
  def test_all_published_runtimes_declare_customer_settings(self):
   matrix=json.loads((ROOT/'catalog/v2/support-matrix.json').read_text(encoding='utf-8'))
   published={item['id'] for item in matrix['published_runtimes']}
-  self.assertEqual(31,len(published))
+  self.assertEqual(32,len(published))
   missing=[]
   for runtime_id in sorted(published):
    settings=runtime(runtime_id).get('server_settings') or {}
