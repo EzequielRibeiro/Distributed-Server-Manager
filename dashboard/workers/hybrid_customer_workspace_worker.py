@@ -225,6 +225,67 @@ def _install_controller_artifact(
             pass
 
 
+def _install_content_upload_artifact(
+    repository: ArtifactTransferRepository,
+    item: dict[str, Any],
+    root: Path,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    transfer_id = _safe_token(item.get("transfer_id"), "transfer_id")
+    instance_id = _safe_token(item.get("instance_id"), "instance_id")
+    _owned_instance(root, config, instance_id)
+    source, fresh = repository.controller_artifact(transfer_id)
+    quarantine = _runtime_client(root, "content_upload_quarantine")
+    destination = quarantine.quarantine_destination(
+        instance_id,
+        transfer_id,
+        str(fresh.get("filename") or ""),
+    )
+    expected_size = int(fresh.get("size_bytes") or source.stat().st_size)
+    expected_sha = str(fresh.get("sha256") or "").strip().lower()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.is_symlink():
+        raise ValueError("content upload quarantine destination cannot be a symbolic link")
+
+    temp = destination.with_name(f".{destination.name}.{os.getpid()}.part")
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        with source.open("rb") as incoming, temp.open("xb") as outgoing:
+            for chunk in iter(lambda: incoming.read(1024 * 1024), b""):
+                total += len(chunk)
+                digest.update(chunk)
+                outgoing.write(chunk)
+            outgoing.flush()
+            os.fsync(outgoing.fileno())
+        os.chmod(temp, 0o600)
+        actual_sha = digest.hexdigest()
+        if total != expected_size:
+            raise ValueError("artifact size mismatch")
+        if expected_sha and actual_sha != expected_sha:
+            raise ValueError("artifact sha256 mismatch")
+        os.replace(temp, destination)
+        inspection = quarantine.validate_quarantine_archive(destination)
+        return {
+            "size_bytes": total,
+            "sha256": actual_sha,
+            "destination_ref": quarantine.quarantine_relative_path(destination),
+            "archive_type": inspection["archive_type"],
+            "archive_entries": inspection["entries"],
+        }
+    except Exception:
+        try:
+            destination.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    finally:
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def process_hybrid_artifact_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
     """Bridge one Artifact Transfer locally without Agent HTTP credentials."""
     config = _hybrid_agent_config(root, agent_id, optional=True)
@@ -255,15 +316,32 @@ def process_hybrid_artifact_cycle(backend, root: Path, agent_id: str) -> dict[st
                     content_length=source.stat().st_size,
                 )
         elif direction == "controller_to_agent":
-            detail = _install_controller_artifact(repository, command, root, config)
-            completed = repository.apply_agent_result(
-                agent_id,
-                {
+            purpose = str(command.get("purpose") or "")
+            if purpose == "content_upload":
+                detail = _install_content_upload_artifact(
+                    repository, command, root, config
+                )
+                report = {
                     "transfer_id": transfer_id,
                     "status": "completed",
                     "transferred_bytes": detail["size_bytes"],
-                },
-            )
+                    "destination_ref": detail["destination_ref"],
+                    "archive_type": detail["archive_type"],
+                    "archive_entries": detail["archive_entries"],
+                    "sha256": detail["sha256"],
+                }
+            elif purpose in {"backup_import", "backup_clone"}:
+                detail = _install_controller_artifact(
+                    repository, command, root, config
+                )
+                report = {
+                    "transfer_id": transfer_id,
+                    "status": "completed",
+                    "transferred_bytes": detail["size_bytes"],
+                }
+            else:
+                raise ValueError("unsupported controller-to-agent artifact purpose")
+            completed = repository.apply_agent_result(agent_id, report)
         else:
             raise ValueError("unsupported artifact transfer direction")
     except Exception as exc:
