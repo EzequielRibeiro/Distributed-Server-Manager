@@ -39,6 +39,24 @@ def _current():return {"content_id":"cf","content_type":"mod","desired_state":"i
 class CustomerContentWorkspaceTest(unittest.TestCase):
  def test_list_requires_content_read(self):
   service=_service(_policy());items=service.list({"username":"customer"},"i1");self.assertEqual(items[0]["content_id"],"a");self.assertFalse(items[0]["update"]["supported"]);self.assertEqual(service.workspace.calls,[('i1','content.read')])
+ def test_customer_security_projection_hides_rule_and_file_details(self):
+  service=_service(_policy())
+  item={
+   "content_id":"blocked",
+   "effective_security_state":"blocked",
+   "reconciliation":{
+    "status":"security_blocked",
+    "last_error":"YARA-X matched Capivara_EICAR_Test_File in payload/eicar.txt",
+   },
+  }
+  projected=service._customer_security_projection(item)
+  notice=projected["security_notice"]
+  self.assertEqual(notice["state"],"blocked")
+  self.assertIn("arquivo suspeito",notice["message"])
+  self.assertIn("instalação foi cancelada",notice["message"])
+  serialized=str(projected)
+  self.assertNotIn("Capivara_EICAR_Test_File",serialized)
+  self.assertNotIn("payload/eicar.txt",serialized)
  def test_install_uses_install_permission_and_forbids_server_owned_fields(self):
   service=_service(_policy())
   with self.assertRaises(PermissionError):service.install({"username":"u"},"i1",{"content_id":"x","provider":"http","agent_id":"spoof"})

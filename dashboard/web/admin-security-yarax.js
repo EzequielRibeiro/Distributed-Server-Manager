@@ -3,6 +3,8 @@
   const controllerHeaders = (extra = {}) => ({'Accept':'application/json','X-Capivara-Auth-Area':'controller',...extra});
   const requestOptions = (extra = {}) => ({credentials:'same-origin',cache:'no-store',...extra});
   const text = (value) => value === null || value === undefined || value === '' ? '—' : String(value);
+  const LIVE_REFRESH_MS = 10000;
+  let loadInFlight = false;
   async function loadShell() {
     const sidebar = $('sidebar-component');
     const response = await fetch('/components/sidebar-v3.html', requestOptions({headers:controllerHeaders()}));
@@ -83,19 +85,45 @@
     </tr>`).join('') : '<tr><td colspan="8" class="empty">Nenhum Agent encontrado.</td></tr>';
   }
 
+  function detectionDetails(row) {
+    const matches = Array.isArray(row.matches) ? row.matches : [];
+    if (!matches.length) return '<span class="muted">—</span>';
+    const summary = matches[0]?.detection_name || matches[0]?.threat_name || matches[0]?.rule || `${matches.length} match(es)`;
+    const items = matches.map((match) => {
+      const labels = [];
+      if (match.threat_name) labels.push(`Ameaça: ${escapeHtml(match.threat_name)}`);
+      if (match.malware_family) labels.push(`Família: ${escapeHtml(match.malware_family)}`);
+      if (match.category) labels.push(`Categoria: ${escapeHtml(match.category)}`);
+      labels.push(`Regra: ${escapeHtml(match.rule || 'unknown')}`);
+      if (Array.isArray(match.tags) && match.tags.length) labels.push(`Tags: ${match.tags.map(escapeHtml).join(' · ')}`);
+      if (match.description && match.description !== match.detection_name) labels.push(`Descrição: ${escapeHtml(match.description)}`);
+      if (match.relative_path) labels.push(`Arquivo: ${escapeHtml(match.relative_path)}`);
+      return `<li><strong>${escapeHtml(match.detection_name || match.rule || 'Detecção')}</strong><small>${labels.join('<br>')}</small></li>`;
+    }).join('');
+    return `<details class="detection-details"><summary>${escapeHtml(summary)}${matches.length > 1 ? ` (+${matches.length - 1})` : ''}</summary><ul>${items}</ul></details>`;
+  }
+
+  function matchedFile(row) {
+    const files = Array.isArray(row.matched_files) ? row.matched_files.filter(Boolean) : [];
+    if (!files.length) return '—';
+    if (files.length === 1) return escapeHtml(files[0]);
+    return `<details class="matched-files"><summary>${escapeHtml(files[0])} (+${files.length - 1})</summary><ul>${files.map((file) => `<li>${escapeHtml(file)}</li>`).join('')}</ul></details>`;
+  }
+
   function renderEvents(rows) {
     $('events').innerHTML = rows.length ? rows.map((row) => `<tr>
       <td>${escapeHtml(row.occurred_at)}</td>
       <td>${escapeHtml(row.agent_id)}</td>
       <td>${escapeHtml(row.instance_id)}</td>
       <td><strong>${escapeHtml(row.content_id)}</strong><small>${escapeHtml(row.provider || row.game_id)}</small></td>
+      <td class="file-cell">${matchedFile(row)}</td>
       <td>${badge(row.result || row.event_type)}</td>
+      <td class="detection-cell">${detectionDetails(row)}</td>
       <td>${row.duration_ms === null || row.duration_ms === undefined ? '—' : escapeHtml(row.duration_ms + ' ms')}</td>
-      <td>${escapeHtml(row.match_count || 0)}</td>
       <td class="error-cell">${escapeHtml(row.error)}
         ${row.agent_id && row.instance_id && row.content_id ? `<button type="button" class="rescan" data-yarax-action="rescan_content" data-agent-id="${escapeHtml(row.agent_id)}" data-instance-id="${escapeHtml(row.instance_id)}" data-content-id="${escapeHtml(row.content_id)}">Re-scan</button>` : ''}
       </td>
-    </tr>`).join('') : '<tr><td colspan="8" class="empty">Nenhum evento YARA-X encontrado.</td></tr>';
+    </tr>`).join('') : '<tr><td colspan="9" class="empty">Nenhum evento YARA-X encontrado.</td></tr>';
   }
 
   async function runOperation(button) {
@@ -143,36 +171,53 @@
     </tr>`).join('') : '<tr><td colspan="6" class="empty">Nenhuma operação YARA-X registrada.</td></tr>';
   }
 
-  async function load() {
-    $('status-text').textContent = 'Atualizando segurança YARA-X…';
-    const response = await fetch(`/api/admin/security/yara-x?${query()}`, requestOptions({headers:controllerHeaders()}));
-    if (!response.ok) {
-      $('status-text').textContent = `Falha ao carregar YARA-X (${response.status}).`;
-      return;
+  async function load({silent=false} = {}) {
+    if (loadInFlight) return;
+    loadInFlight = true;
+    try {
+      if (!silent) $('status-text').textContent = 'Atualizando segurança YARA-X…';
+      const response = await fetch(`/api/admin/security/yara-x?${query()}`, requestOptions({headers:controllerHeaders()}));
+      if (!response.ok) {
+        $('status-text').textContent = `Falha ao carregar YARA-X (${response.status}).`;
+        return;
+      }
+      const data = await response.json();
+      const summary = data.summary || {};
+      $('status-text').textContent = `${summary.agents_ready || 0} de ${summary.agents_total || 0} Agents com scanner pronto · atualização automática 10s`;
+      $('summary').innerHTML = [
+        card('Agents', summary.agents_total || 0, `${summary.agents_ready || 0} ready · ${summary.agents_not_ready || 0} not ready`),
+        card('Scans recentes', summary.recent_scans || 0, 'Universal Event Platform'),
+        card('Clean', summary.results?.clean || 0),
+        card('Suspicious', summary.results?.suspicious || 0),
+        card('Blocked', summary.results?.blocked || 0),
+        card('Scan failed', summary.results?.scan_failed || 0),
+      ].join('');
+      renderAgents(data.agents || []);
+      renderEvents(data.events || []);
+      await loadOperations();
+    } finally {
+      loadInFlight = false;
     }
-    const data = await response.json();
-    const summary = data.summary || {};
-    $('status-text').textContent = `${summary.agents_ready || 0} de ${summary.agents_total || 0} Agents com scanner pronto`;
-    $('summary').innerHTML = [
-      card('Agents', summary.agents_total || 0, `${summary.agents_ready || 0} ready · ${summary.agents_not_ready || 0} not ready`),
-      card('Scans recentes', summary.recent_scans || 0, 'Universal Event Platform'),
-      card('Clean', summary.results?.clean || 0),
-      card('Suspicious', summary.results?.suspicious || 0),
-      card('Blocked', summary.results?.blocked || 0),
-      card('Scan failed', summary.results?.scan_failed || 0),
-    ].join('');
-    renderAgents(data.agents || []);
-    renderEvents(data.events || []);
-    await loadOperations();
+  }
+
+  async function liveRefresh() {
+    if (document.hidden) return;
+    try { await load({silent:true}); }
+    catch (error) {
+      loadInFlight = false;
+      $('status-text').textContent = `Falha na atualização automática: ${error.message}`;
+    }
   }
 
   document.addEventListener('click', (event) => {
     const button = event.target.closest('[data-yarax-action]');
     if (button) runOperation(button);
   });
-  $('refresh').addEventListener('click', load);
-  $('apply').addEventListener('click', load);
+  $('refresh').addEventListener('click', () => load());
+  $('apply').addEventListener('click', () => load());
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) liveRefresh(); });
+  setInterval(liveRefresh, LIVE_REFRESH_MS);
   loadShell()
-    .then(load)
+    .then(() => load())
     .catch((error) => { $('status-text').textContent = `Falha: ${error.message}`; });
 })();

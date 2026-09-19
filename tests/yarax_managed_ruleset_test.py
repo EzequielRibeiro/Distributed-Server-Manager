@@ -35,9 +35,11 @@ class ManagedYaraXRulesetTest(unittest.TestCase):
                 module = load_runtime(platform_name, "security_yarax_rules.py", f"y2_rules_{platform_name}")
                 digest = hashlib.sha256(module.RULESET_CONTENT.encode("utf-8")).hexdigest()
                 self.assertEqual(digest, module.RULESET_SHA256)
-                self.assertEqual(module.RULESET_VERSION, "2026.09.18.1")
+                self.assertEqual(module.RULESET_VERSION, "2026.09.19.1")
                 self.assertIn("Capivara_EICAR_Test_File", module.RULESET_CONTENT)
                 self.assertIn(": block malware test", module.RULESET_CONTENT)
+                self.assertIn('threat_name = "EICAR Anti-Malware Test File"', module.RULESET_CONTENT)
+                self.assertIn('category = "anti-malware-test"', module.RULESET_CONTENT)
 
     def test_linux_install_activates_verified_ruleset_atomically(self):
         module = load_runtime("linux", "security_yarax_rules.py", "y2_linux_install")

@@ -227,6 +227,21 @@ class CustomerContentWorkspaceService:
   payload["metadata"]=metadata
   if required:payload["activation_state"]="enabled"
   return payload
+ def _customer_security_projection(self,item):
+  state=str(item.get("effective_security_state") or item.get("security_state") or "unscanned").strip().lower()
+  reconciliation=dict(item.get("reconciliation") or {})
+  status=str(reconciliation.get("status") or "").strip().lower()
+  if state in {"blocked","suspicious"} or status=="security_blocked":
+   message="Conteúdo bloqueado por segurança: o YARA-X identificou um arquivo suspeito. A instalação foi cancelada."
+   reconciliation["last_error"]=message
+   item["security_notice"]={"state":state if state in {"blocked","suspicious"} else "blocked","message":message}
+  elif state=="scan_failed" or status=="security_scan_failed":
+   message="Não foi possível concluir a verificação de segurança do conteúdo. A instalação não foi aplicada."
+   reconciliation["last_error"]=message
+   item["security_notice"]={"state":"scan_failed","message":message}
+  item["reconciliation"]=reconciliation
+  return item
+
  def list(self,user,instance_id):
   context,_,_=self._context_policy_details(user,instance_id,"content.read");items=self.content.customer_view(instance_id,limit=2000)
   for item in items:
@@ -238,6 +253,7 @@ class CustomerContentWorkspaceService:
    item["provider_capabilities"]=provider_capabilities(provider,self.workspace.root);item["update"]={"supported":provider_supports(provider,"update",self.workspace.root),"rollback_available":rollback_revision is not None,"rollback_revision":rollback_revision}
    activation_config=self._activation_configuration(context,item)
    if activation_config is not None:item["activation_config"]=activation_config
+   self._customer_security_projection(item)
   return items
  def bundle_details(self,user,instance_id,content_id):
   self._context_policy(user,instance_id,"content.read");parent=self._existing(instance_id,content_id)

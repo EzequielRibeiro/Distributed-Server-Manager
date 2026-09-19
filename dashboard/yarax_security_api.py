@@ -33,6 +33,33 @@ def _json_object(value: Any) -> dict[str, Any]:
     return decoded if isinstance(decoded, dict) else {}
 
 
+def _safe_scan_match(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    def text(key: str, limit: int) -> str | None:
+        raw = str(value.get(key) or "").replace("\x00", " ").replace("\r", " ").replace("\n", " ").strip()
+        return raw[:limit] or None
+    tags = [
+        str(item).strip().lower()[:64]
+        for item in (value.get("tags") or [])
+        if str(item).strip()
+    ][:20]
+    relative_path = text("relative_path", 1024)
+    if relative_path and (relative_path.startswith("/") or relative_path.startswith("../") or "/../" in relative_path):
+        relative_path = None
+    return {
+        "rule": text("rule", 191) or "unknown",
+        "tags": tags,
+        "file_name": text("file_name", 255),
+        "relative_path": relative_path,
+        "detection_name": text("detection_name", 500),
+        "threat_name": text("threat_name", 191),
+        "malware_family": text("malware_family", 191),
+        "category": text("category", 128),
+        "description": text("description", 500),
+    }
+
+
 def _agent_security_rows(backend) -> list[dict[str, Any]]:
     with backend.connect() as connection:
         rows = connection.execute(
@@ -85,7 +112,13 @@ def _scan_events(backend, *, agent_id: str | None, instance_id: str | None, limi
         if event_type not in {"YARAX_SCAN_STARTED", "YARAX_SCAN_COMPLETED", "YARAX_SCAN_FAILED"}:
             continue
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
-        matches = data.get("matches") if isinstance(data.get("matches"), list) else []
+        raw_matches = data.get("matches") if isinstance(data.get("matches"), list) else []
+        matches = [match for match in (_safe_scan_match(item) for item in raw_matches[:200]) if match is not None]
+        matched_files = sorted({
+            str(match.get("relative_path") or match.get("file_name") or "").strip()
+            for match in matches
+            if str(match.get("relative_path") or match.get("file_name") or "").strip()
+        })[:50]
         safe.append(
             {
                 "event_id": event.get("event_id"),
@@ -104,6 +137,7 @@ def _scan_events(backend, *, agent_id: str | None, instance_id: str | None, limi
                 "engine_version": data.get("engine_version"),
                 "ruleset_version": data.get("ruleset_version"),
                 "match_count": min(len(matches), 200),
+                "matched_files": matched_files,
                 "matches": matches[:20],
                 "error": str(data.get("error") or "")[:1000] or None,
             }

@@ -12,10 +12,10 @@ from typing import Any
 
 from security_yarax import managed_binary
 
-RULESET_VERSION = "2026.09.18.1"
-RULESET_SHA256 = "954bcffb0528bc21d1422b269b77cdf3e2f6d105c6de7321ff2962de8f926616"
+RULESET_VERSION = "2026.09.19.1"
+RULESET_SHA256 = "f78d3c06b1be5fcee48702b96b1b1e591c75a3e8129ff343d14c1fe12862ee77"
 RULESET_CONTENT = """// Capivara DSM managed YARA-X baseline ruleset.
-// Version: 2026.09.18.1
+// Version: 2026.09.19.1
 //
 // This initial baseline contains a deterministic EICAR validation signature.
 // Curated production signatures are versioned independently and will be
@@ -25,8 +25,10 @@ rule Capivara_EICAR_Test_File : block malware test
 {
     meta:
         description = "EICAR anti-malware test file"
+        threat_name = "EICAR Anti-Malware Test File"
+        category = "anti-malware-test"
         source = "Capivara DSM baseline"
-        ruleset_version = "2026.09.18.1"
+        ruleset_version = "2026.09.19.1"
 
     strings:
         $eicar = "X5O!P%@AP[4\\\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*" ascii
