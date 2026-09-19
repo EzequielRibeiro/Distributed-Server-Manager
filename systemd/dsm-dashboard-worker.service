@@ -13,6 +13,12 @@ User={{DSM_USER}}
 Group={{DSM_GROUP}}
 WorkingDirectory=/opt/dsm
 Environment=DSM_ROOT=/opt/dsm
+# The embedded Hybrid Agent persists managed YARA-X state below /opt/dsm/runtime.
+# Repair only that bounded subtree before dropping to the service account so a
+# previous root-run maintenance command cannot leave the security manager
+# permanently unwritable.
+ExecStartPre=+/usr/bin/install -d -m 0750 -o {{DSM_USER}} -g {{DSM_GROUP}} /opt/dsm/runtime/hybrid-agent-state/security/yara-x
+ExecStartPre=+/bin/chown -R {{DSM_USER}}:{{DSM_GROUP}} /opt/dsm/runtime/hybrid-agent-state/security/yara-x
 ExecStart=/bin/bash /opt/dsm/dashboard/workers/worker.sh
 Restart=always
 RestartSec=10
