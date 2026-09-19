@@ -56,4 +56,13 @@ jobs:
       - name: Compile isolated deployment test
         run: python3 -m py_compile tests/mysql_mariadb_baseline_v2_isolated_deployment_test.py
       - name: Run destructive isolated Baseline v2 bootstrap and upgrade replay
+        id: baseline
+        continue-on-error: true
         run: python3 tests/mysql_mariadb_baseline_v2_isolated_deployment_test.py
+      - name: Show InnoDB foreign-key diagnostics
+        if: steps.baseline.outcome == 'failure'
+        run: |
+          docker exec "${{ job.services.mysql.id }}" sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "SHOW ENGINE INNODB STATUS\\G"' | sed -n '/LATEST FOREIGN KEY ERROR/,+80p'
+      - name: Enforce isolated Baseline result
+        if: steps.baseline.outcome == 'failure'
+        run: exit 1
