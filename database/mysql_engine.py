@@ -627,8 +627,19 @@ def _consume_result_sets(
     if nextset is None:
         return
 
-    while nextset():
-        pass
+    while True:
+        try:
+            has_next = nextset()
+        except Exception as exc:
+            statement = str(getattr(cursor, "statement", "") or "").strip()
+            if statement and hasattr(exc, "add_note"):
+                exc.add_note(
+                    "MySQL/MariaDB multi-statement failure near: "
+                    + statement[:1200]
+                )
+            raise
+        if not has_next:
+            break
 
 
 def _execute_script(
