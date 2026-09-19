@@ -68,15 +68,15 @@
 
   function renderAgents(rows) {
     $('agents').innerHTML = rows.length ? rows.map((row) => `<tr>
-      <td><strong>${escapeHtml(row.name || row.agent_id)}</strong><small>${escapeHtml(row.agent_id)}</small></td>
-      <td>${badge(row.health_status || 'offline')}</td>
-      <td>${badge(row.state || 'unknown')}</td>
-      <td>${escapeHtml(row.engine_version)}${row.engine_managed ? '<small>managed</small>' : ''}</td>
-      <td>${escapeHtml(row.ruleset_version)}${row.rules_managed ? '<small>managed</small>' : ''}</td>
-      <td>${escapeHtml(row.rules_count)}</td>
-      <td>${badge(row.ruleset_checksum_valid === true ? 'valid' : row.ruleset_checksum_valid === false ? 'invalid' : 'unknown')}</td>
-      <td class="error-cell">${escapeHtml(row.last_error)}</td>
-      <td class="operation-buttons">
+      <td data-label="Agent"><strong>${escapeHtml(row.name || row.agent_id)}</strong><small>${escapeHtml(row.agent_id)}</small></td>
+      <td data-label="Saúde">${badge(row.health_status || 'offline')}</td>
+      <td data-label="Scanner">${badge(row.state || 'unknown')}</td>
+      <td data-label="Engine">${escapeHtml(row.engine_version)}${row.engine_managed ? '<small>managed</small>' : ''}</td>
+      <td data-label="Ruleset">${escapeHtml(row.ruleset_version)}${row.rules_managed ? '<small>managed</small>' : ''}</td>
+      <td data-label="Regras">${escapeHtml(row.rules_count)}</td>
+      <td data-label="Checksum">${badge(row.ruleset_checksum_valid === true ? 'valid' : row.ruleset_checksum_valid === false ? 'invalid' : 'unknown')}</td>
+      <td data-label="Último erro" class="error-cell">${escapeHtml(row.last_error)}</td>
+      <td data-label="Operações" class="operation-buttons">
         <button type="button" data-yarax-action="install_engine" data-agent-id="${escapeHtml(row.agent_id)}">Engine</button>
         <button type="button" data-yarax-action="install_rules" data-agent-id="${escapeHtml(row.agent_id)}">Regras</button>
         <button type="button" data-yarax-action="test_scan" data-agent-id="${escapeHtml(row.agent_id)}">Teste</button>
@@ -112,15 +112,15 @@
 
   function renderEvents(rows) {
     $('events').innerHTML = rows.length ? rows.map((row) => `<tr>
-      <td>${escapeHtml(row.occurred_at)}</td>
-      <td>${escapeHtml(row.agent_id)}</td>
-      <td>${escapeHtml(row.instance_id)}</td>
-      <td><strong>${escapeHtml(row.content_id)}</strong><small>${escapeHtml(row.provider || row.game_id)}</small></td>
-      <td class="file-cell">${matchedFile(row)}</td>
-      <td>${badge(row.result || row.event_type)}</td>
-      <td class="detection-cell">${detectionDetails(row)}</td>
-      <td>${row.duration_ms === null || row.duration_ms === undefined ? '—' : escapeHtml(row.duration_ms + ' ms')}</td>
-      <td class="error-cell">${escapeHtml(row.error)}
+      <td data-label="Data">${escapeHtml(row.occurred_at)}</td>
+      <td data-label="Agent">${escapeHtml(row.agent_id)}</td>
+      <td data-label="Instância">${escapeHtml(row.instance_id)}</td>
+      <td data-label="Conteúdo"><strong>${escapeHtml(row.content_id)}</strong><small>${escapeHtml(row.provider || row.game_id)}</small></td>
+      <td data-label="Arquivo" class="file-cell">${matchedFile(row)}</td>
+      <td data-label="Resultado">${badge(row.result || row.event_type)}</td>
+      <td data-label="Detecção" class="detection-cell">${detectionDetails(row)}</td>
+      <td data-label="Duração">${row.duration_ms === null || row.duration_ms === undefined ? '—' : escapeHtml(row.duration_ms + ' ms')}</td>
+      <td data-label="Erro" class="error-cell">${escapeHtml(row.error)}
         ${row.agent_id && row.instance_id && row.content_id ? `<button type="button" class="rescan" data-yarax-action="rescan_content" data-agent-id="${escapeHtml(row.agent_id)}" data-instance-id="${escapeHtml(row.instance_id)}" data-content-id="${escapeHtml(row.content_id)}">Re-scan</button>` : ''}
       </td>
     </tr>`).join('') : '<tr><td colspan="9" class="empty">Nenhum evento YARA-X encontrado.</td></tr>';
@@ -162,12 +162,12 @@
     const data = await response.json();
     const rows = data.operations || [];
     $('operations').innerHTML = rows.length ? rows.map((row) => `<tr>
-      <td>${escapeHtml(row.created_at)}</td>
-      <td>${escapeHtml(row.agent_id)}</td>
-      <td>${escapeHtml(row.action)}</td>
-      <td>${badge(row.status)}</td>
-      <td>${escapeHtml([row.instance_id,row.content_id].filter(Boolean).join(' / '))}</td>
-      <td class="error-cell">${escapeHtml(row.last_error)}</td>
+      <td data-label="Data">${escapeHtml(row.created_at)}</td>
+      <td data-label="Agent">${escapeHtml(row.agent_id)}</td>
+      <td data-label="Ação">${escapeHtml(row.action)}</td>
+      <td data-label="Status">${badge(row.status)}</td>
+      <td data-label="Alvo">${escapeHtml([row.instance_id,row.content_id].filter(Boolean).join(' / '))}</td>
+      <td data-label="Erro" class="error-cell">${escapeHtml(row.last_error)}</td>
     </tr>`).join('') : '<tr><td colspan="6" class="empty">Nenhuma operação YARA-X registrada.</td></tr>';
   }
 
