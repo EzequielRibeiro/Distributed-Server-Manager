@@ -3,8 +3,11 @@
   const controllerHeaders = (extra = {}) => ({'Accept':'application/json','X-Capivara-Auth-Area':'controller',...extra});
   const requestOptions = (extra = {}) => ({credentials:'same-origin',cache:'no-store',...extra});
   const text = (value) => value === null || value === undefined || value === '' ? '—' : String(value);
-  const LIVE_REFRESH_MS = 10000;
+  const FALLBACK_REFRESH_MS = 30000;
   let loadInFlight = false;
+  let yaraxStream = null;
+  let yaraxStreamHealthy = false;
+  let yaraxFallbackTimer = null;
   async function loadShell() {
     const sidebar = $('sidebar-component');
     const response = await fetch('/components/sidebar-v3.html', requestOptions({headers:controllerHeaders()}));
@@ -153,14 +156,8 @@
     }
   }
 
-  async function loadOperations() {
-    const agent = $('agent-filter').value.trim();
-    const params = new URLSearchParams({limit:'100'});
-    if (agent) params.set('agent_id', agent);
-    const response = await fetch(`/api/admin/security/yara-x/operations?${params}`, requestOptions({headers:controllerHeaders()}));
-    if (!response.ok) return;
-    const data = await response.json();
-    const rows = data.operations || [];
+  function renderOperations(rows) {
+    rows = Array.isArray(rows) ? rows : [];
     $('operations').innerHTML = rows.length ? rows.map((row) => `<tr>
       <td data-label="Data">${escapeHtml(row.created_at)}</td>
       <td data-label="Agent">${escapeHtml(row.agent_id)}</td>
@@ -169,6 +166,31 @@
       <td data-label="Alvo">${escapeHtml([row.instance_id,row.content_id].filter(Boolean).join(' / '))}</td>
       <td data-label="Erro" class="error-cell">${escapeHtml(row.last_error)}</td>
     </tr>`).join('') : '<tr><td colspan="6" class="empty">Nenhuma operação YARA-X registrada.</td></tr>';
+  }
+
+  async function loadOperations() {
+    const agent = $('agent-filter').value.trim();
+    const params = new URLSearchParams({limit:'100'});
+    if (agent) params.set('agent_id', agent);
+    const response = await fetch(`/api/admin/security/yara-x/operations?${params}`, requestOptions({headers:controllerHeaders()}));
+    if (!response.ok) return;
+    const data = await response.json();
+    renderOperations(data.operations || []);
+  }
+
+  function applyOverview(data) {
+    const summary = data?.summary || {};
+    $('status-text').textContent = `${summary.agents_ready || 0} de ${summary.agents_total || 0} Agents com scanner pronto · tempo real`;
+    $('summary').innerHTML = [
+      card('Agents', summary.agents_total || 0, `${summary.agents_ready || 0} ready · ${summary.agents_not_ready || 0} not ready`),
+      card('Scans recentes', summary.recent_scans || 0, 'Universal Event Platform'),
+      card('Clean', summary.results?.clean || 0),
+      card('Suspicious', summary.results?.suspicious || 0),
+      card('Blocked', summary.results?.blocked || 0),
+      card('Scan failed', summary.results?.scan_failed || 0),
+    ].join('');
+    renderAgents(data?.agents || []);
+    renderEvents(data?.events || []);
   }
 
   async function load({silent=false} = {}) {
@@ -181,32 +203,71 @@
         $('status-text').textContent = `Falha ao carregar YARA-X (${response.status}).`;
         return;
       }
-      const data = await response.json();
-      const summary = data.summary || {};
-      $('status-text').textContent = `${summary.agents_ready || 0} de ${summary.agents_total || 0} Agents com scanner pronto · atualização automática 10s`;
-      $('summary').innerHTML = [
-        card('Agents', summary.agents_total || 0, `${summary.agents_ready || 0} ready · ${summary.agents_not_ready || 0} not ready`),
-        card('Scans recentes', summary.recent_scans || 0, 'Universal Event Platform'),
-        card('Clean', summary.results?.clean || 0),
-        card('Suspicious', summary.results?.suspicious || 0),
-        card('Blocked', summary.results?.blocked || 0),
-        card('Scan failed', summary.results?.scan_failed || 0),
-      ].join('');
-      renderAgents(data.agents || []);
-      renderEvents(data.events || []);
+      applyOverview(await response.json());
       await loadOperations();
     } finally {
       loadInFlight = false;
     }
   }
 
-  async function liveRefresh() {
-    if (document.hidden) return;
-    try { await load({silent:true}); }
-    catch (error) {
-      loadInFlight = false;
-      $('status-text').textContent = `Falha na atualização automática: ${error.message}`;
+  function clearYaraXFallback() {
+    if (yaraxFallbackTimer) {
+      clearTimeout(yaraxFallbackTimer);
+      yaraxFallbackTimer = null;
     }
+  }
+
+  function scheduleYaraXFallback(delay=FALLBACK_REFRESH_MS) {
+    clearYaraXFallback();
+    yaraxFallbackTimer = setTimeout(async () => {
+      if (yaraxStreamHealthy || document.hidden) return;
+      try { await load({silent:true}); }
+      catch (error) { $('status-text').textContent = `Falha na atualização de contingência: ${error.message}`; }
+      finally { if (!yaraxStreamHealthy && !document.hidden) scheduleYaraXFallback(FALLBACK_REFRESH_MS); }
+    }, Math.max(1000, delay));
+  }
+
+  function closeYaraXStream() {
+    if (yaraxStream) {
+      yaraxStream.close();
+      yaraxStream = null;
+    }
+    yaraxStreamHealthy = false;
+    clearYaraXFallback();
+  }
+
+  function connectYaraXStream() {
+    if (document.hidden || yaraxStream) return;
+    if (!('EventSource' in window)) {
+      scheduleYaraXFallback(1000);
+      return;
+    }
+    const source = new EventSource(`/api/admin/security/yara-x/stream?${query()}`, {withCredentials:true});
+    yaraxStream = source;
+    source.addEventListener('ready', () => {
+      yaraxStreamHealthy = true;
+      clearYaraXFallback();
+    });
+    source.addEventListener('yarax-state', (event) => {
+      try {
+        const payload = JSON.parse(event.data || '{}');
+        applyOverview(payload.overview || {});
+        renderOperations(payload.operations || []);
+        yaraxStreamHealthy = true;
+        clearYaraXFallback();
+      } catch (error) {
+        $('status-text').textContent = `Falha ao processar atualização YARA-X: ${error.message}`;
+      }
+    });
+    source.onerror = () => {
+      yaraxStreamHealthy = false;
+      if (!document.hidden) scheduleYaraXFallback(FALLBACK_REFRESH_MS);
+    };
+  }
+
+  function restartYaraXStream() {
+    closeYaraXStream();
+    connectYaraXStream();
   }
 
   document.addEventListener('click', (event) => {
@@ -214,10 +275,12 @@
     if (button) runOperation(button);
   });
   $('refresh').addEventListener('click', () => load());
-  $('apply').addEventListener('click', () => load());
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) liveRefresh(); });
-  setInterval(liveRefresh, LIVE_REFRESH_MS);
+  $('apply').addEventListener('click', async () => { await load(); restartYaraXStream(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) closeYaraXStream();
+    else { connectYaraXStream(); if (!yaraxStreamHealthy) scheduleYaraXFallback(1000); }
+  });
   loadShell()
-    .then(() => load())
+    .then(async () => { await load(); connectYaraXStream(); })
     .catch((error) => { $('status-text').textContent = `Falha: ${error.message}`; });
 })();
