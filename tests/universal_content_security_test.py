@@ -11,7 +11,7 @@ def load(path:Path,name:str):
 class UniversalContentSecurityTest(unittest.TestCase):
  def fake_scanner(self,root:Path)->tuple[Path,Path]:
   rules=root/'rules';rules.mkdir();(rules/'baseline.yar').write_text('rule baseline { condition: false }\n')
-  binary=root/'yr';binary.write_text('''#!/usr/bin/env python3\nimport json,sys\ntarget=sys.argv[-1]\nif "scan-fail" in target:\n print("scanner failed",file=sys.stderr);raise SystemExit(2)\nif "blocked" in target:\n print(json.dumps({"path":target,"rules":[{"identifier":"known_malware","tags":["malware"]}]}))\nelif "suspicious" in target:\n print(json.dumps({"path":target,"rules":[{"identifier":"review_me","tags":["review"]}]}))\n''');binary.chmod(binary.stat().st_mode|stat.S_IXUSR)
+  binary=root/'yr';binary.write_text('''#!/usr/bin/env python3\nimport json,sys\ntarget=sys.argv[-1]\nif "scan-fail" in target:\n print("scanner failed",file=sys.stderr);raise SystemExit(2)\nif "blocked" in target:\n print(json.dumps({"path":target,"rules":[{"identifier":"known_malware","meta":[["description","Known malware test"],["threat_name","Known Malware"],["category","malware-test"]],"tags":["malware"]}]}))\nelif "suspicious" in target:\n print(json.dumps({"path":target,"rules":[{"identifier":"review_me","tags":["review"]}]}))\n''');binary.chmod(binary.stat().st_mode|stat.S_IXUSR)
   return binary,rules
  def test_yarax_verdicts_are_platform_neutral_and_fail_closed(self):
   with tempfile.TemporaryDirectory() as td:
@@ -23,6 +23,21 @@ class UniversalContentSecurityTest(unittest.TestCase):
      self.assertTrue(module.scanner_status()['ready'])
      for name,state in (("clean.jar","clean"),("suspicious.jar","suspicious"),("blocked.jar","blocked"),("scan-fail.jar","scan_failed")):
       target=root/name;target.write_bytes(b'x');self.assertEqual(module.scan_content(target)['security_state'],state)
+ def test_yarax_ndjson_meta_is_exposed_on_linux_and_windows(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);binary,rules=self.fake_scanner(root);target=root/'blocked.jar';target.write_bytes(b'x')
+   env={"CAPIVARA_AGENT_STATE_DIR":str(root/'state'),"CAPIVARA_YARAX_BIN":str(binary),"CAPIVARA_YARAX_RULES_PATH":str(rules)}
+   with patch.dict(os.environ,env,clear=False):
+    for platform in ('linux','windows'):
+     module=load(ROOT/f'agents/{platform}/runtime/content_security.py',f'u7_meta_{platform}_{id(self)}')
+     result=module.scan_content(target)
+     self.assertEqual(result['security_state'],'blocked')
+     match=result['matches'][0]
+     self.assertEqual(match['threat_name'],'Known Malware')
+     self.assertEqual(match['category'],'malware-test')
+     self.assertEqual(match['description'],'Known malware test')
+     self.assertEqual(match['detection_name'],'Known Malware')
+
  def test_missing_engine_or_rules_is_scan_failed(self):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);target=root/'content.jar';target.write_bytes(b'x')
