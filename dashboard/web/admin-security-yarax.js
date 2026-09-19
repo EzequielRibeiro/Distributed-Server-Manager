@@ -1,5 +1,7 @@
 (() => {
   const $ = (id) => document.getElementById(id);
+  const controllerHeaders = (extra = {}) => ({'Accept':'application/json','X-Capivara-Auth-Area':'controller',...extra});
+  const requestOptions = (extra = {}) => ({credentials:'same-origin',cache:'no-store',...extra});
   const text = (value) => value === null || value === undefined || value === '' ? '—' : String(value);
   const escapeHtml = (value) => text(value).replace(/[&<>'"]/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 
@@ -69,7 +71,9 @@
     try {
       const response = await fetch('/api/admin/security/yara-x/operations', {
         method: 'POST',
-        headers: {'Content-Type':'application/json','Accept':'application/json'},
+        headers: controllerHeaders({'Content-Type':'application/json'}),
+        credentials: 'same-origin',
+        cache: 'no-store',
         body: JSON.stringify(payload),
       });
       const body = await response.json().catch(() => ({}));
@@ -87,7 +91,7 @@
     const agent = $('agent-filter').value.trim();
     const params = new URLSearchParams({limit:'100'});
     if (agent) params.set('agent_id', agent);
-    const response = await fetch(`/api/admin/security/yara-x/operations?${params}`, {headers:{'Accept':'application/json'}});
+    const response = await fetch(`/api/admin/security/yara-x/operations?${params}`, requestOptions({headers:controllerHeaders()}));
     if (!response.ok) return;
     const data = await response.json();
     const rows = data.operations || [];
@@ -103,7 +107,7 @@
 
   async function load() {
     $('status-text').textContent = 'Atualizando segurança YARA-X…';
-    const response = await fetch(`/api/admin/security/yara-x?${query()}`, {headers:{'Accept':'application/json'}});
+    const response = await fetch(`/api/admin/security/yara-x?${query()}`, requestOptions({headers:controllerHeaders()}));
     if (!response.ok) {
       $('status-text').textContent = `Falha ao carregar YARA-X (${response.status}).`;
       return;
