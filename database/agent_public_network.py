@@ -12,6 +12,7 @@ from alert_repository import AlertSession, dialect_for_backend
 
 _HOST_RE = re.compile(r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$")
 _SCOPE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_IPV4_MODES={"auto","manual"}
 
 
 def normalize_public_hostname(value: Any) -> str | None:
@@ -98,9 +99,13 @@ def normalize_port_mappings(value: Any) -> list[dict[str, Any]]:
 
 def normalize_public_network(payload: dict[str, Any] | None) -> dict[str, Any]:
     data = payload if isinstance(payload, dict) else {}
+    mode=str(data.get("public_ipv4_mode") or "auto").strip().lower()
+    if mode not in _IPV4_MODES:
+        raise ValueError("public_ipv4_mode must be auto or manual")
     return {
         "public_hostname": normalize_public_hostname(data.get("public_hostname")),
         "public_ipv4": normalize_public_ipv4(data.get("public_ipv4")),
+        "public_ipv4_mode": mode,
         "public_ipv6": normalize_public_ipv6(data.get("public_ipv6")),
         "nat_scope": normalize_nat_scope(data.get("nat_scope")),
         "port_mappings": normalize_port_mappings(data.get("port_mappings")),
@@ -256,6 +261,20 @@ class AgentPublicNetworkRepository:
                     f"public port collision in nat_scope {scope}: {protocol}/{port} already reserved by Agent {row['id']}"
                 )
 
+    def sync_observed_ipv4(self, agent_id: str, observed_ipv4: Any, *, source: str | None = None) -> dict[str, Any]:
+        """Refresh dynamic public IPv4 while preserving admin hostname/NAT settings."""
+        value=normalize_public_ipv4(observed_ipv4)
+        current=self.get(agent_id)
+        if str(current.get("public_ipv4_mode") or "auto").lower()=="manual":
+            return current
+        if current.get("public_ipv4")==value:
+            return current
+        payload=dict(current)
+        payload["public_ipv4"]=value
+        payload["public_ipv4_mode"]="auto"
+        updated=self.set(agent_id,payload,actor="agent-public-ip-observer")
+        return updated
+
     def set(self, agent_id: str, payload: dict[str, Any] | None, *, actor: str | None = None) -> dict[str, Any]:
         agent_id = str(agent_id or "").strip()
         if not agent_id:
@@ -289,6 +308,7 @@ __all__ = [
     "normalize_port_mappings",
     "normalize_public_hostname",
     "normalize_public_ipv4",
+    "AgentPublicNetworkRepository",
     "normalize_public_ipv6",
     "normalize_public_network",
     "player_endpoint",
