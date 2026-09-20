@@ -87,8 +87,8 @@ assert.match(
   /el\.submit\.disabled = !state\.placementReady/,
   "creation must remain disabled until runtime-aware placement succeeds"
 );
-const placementClientIndex = html.indexOf("/customer-placement-client.js?v=3");
-const runtimeSelectorIndex = html.indexOf("/runtime-selector.js?v=8");
+const placementClientIndex = html.search(/\/customer-placement-client\.js\?v=\d+/);
+const runtimeSelectorIndex = html.search(/\/runtime-selector\.js\?v=\d+/);
 assert.ok(
   placementClientIndex >= 0 && runtimeSelectorIndex > placementClientIndex,
   "customer page must load the canonical selector after the placement client"
