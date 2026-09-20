@@ -66,9 +66,14 @@ class DayZSystemdShutdownTest(unittest.TestCase):
             legacy["profile_version"] = 6
             legacy.pop("success_exit_statuses", None)
 
-            migrated, changed = game_runtime.migrate_runtime_spec(
-                {"agent_id": "agent-one"}, legacy
-            )
+            with patch.object(
+                game_runtime.instance_runtime,
+                "STATE_DIR",
+                install.parent / "agent-state-migrate",
+            ):
+                migrated, changed = game_runtime.migrate_runtime_spec(
+                    {"agent_id": "agent-one"}, legacy
+                )
 
         self.assertTrue(changed)
         self.assertEqual(migrated["profile_version"], 10)
