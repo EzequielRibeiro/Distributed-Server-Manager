@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "agents" / "linux" / "runtime"
@@ -18,24 +19,29 @@ from materializers.systemd import render_unit
 
 class DayZSystemdShutdownTest(unittest.TestCase):
     def _build_dayz_spec(self, install: Path) -> dict:
-        return game_runtime.build_runtime_spec(
-            {"agent_id": "agent-one"},
-            {
-                "instance_id": "dayz-one",
-                "agent_id": "agent-one",
-                "game_id": "dayz",
-                "environment_id": "dayz.stable",
-                "desired_state": "stopped",
-            },
-            {
-                "install_path": str(install),
-                "ports": {
-                    "game": {"port": 24010, "protocol": "udp"},
-                    "game_aux": {"port": 24012, "protocol": "udp"},
-                    "steam_query": {"port": 24013, "protocol": "udp"},
+        with patch.object(
+            game_runtime.instance_runtime,
+            "STATE_DIR",
+            install.parent / "agent-state",
+        ):
+            return game_runtime.build_runtime_spec(
+                {"agent_id": "agent-one"},
+                {
+                    "instance_id": "dayz-one",
+                    "agent_id": "agent-one",
+                    "game_id": "dayz",
+                    "environment_id": "dayz.stable",
+                    "desired_state": "stopped",
                 },
-            },
-        )
+                {
+                    "install_path": str(install),
+                    "ports": {
+                        "game": {"port": 24010, "protocol": "udp"},
+                        "game_aux": {"port": 24012, "protocol": "udp"},
+                        "steam_query": {"port": 24013, "protocol": "udp"},
+                    },
+                },
+            )
 
     def test_dayz_profile_declares_exit_255_as_controlled_shutdown(self):
         with tempfile.TemporaryDirectory() as temp:
