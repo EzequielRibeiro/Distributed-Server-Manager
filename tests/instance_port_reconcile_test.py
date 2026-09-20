@@ -71,6 +71,37 @@ class InstancePortReconcilePlanTest(unittest.TestCase):
                 conflicts={"tcp": {24011}, "udp": set()},
             )
 
+    def test_rejects_cross_protocol_collision_with_other_instance(self):
+        with self.assertRaisesRegex(InstancePortReconcileError, "collides"):
+            plan_instance_port_reconcile(
+                PROFILE,
+                [{"name": "game", "protocol": "udp", "port": 24010}],
+                RANGES,
+                conflicts={"tcp": set(), "udp": {24011}},
+            )
+
+    def test_rejects_persisted_anchor_owned_by_other_instance_on_other_protocol(self):
+        with self.assertRaisesRegex(InstancePortReconcileError, "collides"):
+            plan_instance_port_reconcile(
+                PROFILE,
+                [
+                    {"name": "game", "protocol": "udp", "port": 24010},
+                    {"name": "rcon", "protocol": "tcp", "port": 24011},
+                    {"name": "rest_api", "protocol": "tcp", "port": 24012},
+                ],
+                RANGES,
+                conflicts={"tcp": {24010}, "udp": set()},
+            )
+
+    def test_rejects_cross_protocol_unmanaged_socket_on_missing_port(self):
+        with self.assertRaisesRegex(InstancePortReconcileError, "unmanaged socket"):
+            plan_instance_port_reconcile(
+                PROFILE,
+                [{"name": "game", "protocol": "udp", "port": 24010}],
+                RANGES,
+                occupied={"tcp": set(), "udp": {24011}},
+            )
+
     def test_rejects_unmanaged_socket_on_missing_port(self):
         with self.assertRaisesRegex(InstancePortReconcileError, "unmanaged socket"):
             plan_instance_port_reconcile(

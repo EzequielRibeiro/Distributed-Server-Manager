@@ -76,6 +76,12 @@ class _Session:
             return _Result(many=self.existing)
         if normalized.startswith("SELECT protocol,port FROM instance_ports"):
             return _Result(many=self.others)
+        if normalized.startswith("SELECT instance_id FROM instance_ports WHERE node_id="):
+            node_id, port, instance_id = params
+            for row in self.others:
+                if int(row.get("port")) == int(port):
+                    return _Result(one={"instance_id": "other-instance"})
+            return _Result(one=None)
         if normalized.startswith("DELETE FROM instance_ports"):
             self.deleted = True
             return _Result()
@@ -198,6 +204,7 @@ class InstancePortReconcileApplyCoverageTest(unittest.TestCase):
                 {"name": "rcon", "protocol": "tcp", "port": 24001, "bind_address": "0.0.0.0"},
             ],
             others=[
+                {"protocol": "udp", "port": 24000},
                 {"protocol": "udp", "port": 24002},
                 {"protocol": "udp", "port": 24003},
             ],

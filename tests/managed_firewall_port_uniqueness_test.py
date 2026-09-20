@@ -26,23 +26,15 @@ def test_instance_port_schema_enforces_node_protocol_port_uniqueness():
         ), relative
 
 
-def test_allocator_rejects_reserved_port_per_protocol():
+def test_allocator_enforces_numeric_port_ownership_across_protocols():
     source = (
         ROOT / "core" / "network" / "port_allocator.py"
     ).read_text(encoding="utf-8")
 
-    assert (
-        "reserved.get("
-        in source
-    )
-    assert (
-        "requirement.protocol"
-        in source
-    )
-    assert (
-        "occupied.get("
-        in source
-    )
+    assert "reserved_numbers" in source
+    assert "occupied_numbers" in source
+    assert "if port in reserved_numbers" in source
+    assert "if port in occupied_numbers" in source
 
 
 def test_linux_firewall_ownership_contains_protocol_and_port():
