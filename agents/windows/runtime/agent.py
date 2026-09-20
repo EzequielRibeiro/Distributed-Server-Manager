@@ -123,8 +123,10 @@ def heartbeat(config):
  contracts=(("native_restart_command","native_restart_state",handle_native_restart_command,clear_native_restart_result,"command_id","native-restart"),("instance_command","instance_state",handle_instance_command,clear_instance_result,"command_id","instance"),("console_command","console_state",handle_console_command,clear_console_result,"command_id","console"),("file_command","file_state",handle_file_command,clear_file_result,"command_id","file"),("resource_command","resource_state",apply_resource_profile,clear_resource_result,"command_id","resource"),("artifact_command","artifact_state",handle_artifact_command,clear_artifact_result,"transfer_id","artifact"))
  for command_key,state_key,handler,clear,id_key,label in contracts:
   command=result.get(command_key)
+  if command_key=="native_restart_command" and not isinstance(command,dict):command=result.get("dayz_native_restart_command")
   if isinstance(command,dict):report=handler(config,command);print(f"{label} command instance={report.get('instance_id')} status={report.get('status')}",flush=True)
   state=result.get(state_key) if isinstance(result.get(state_key),dict) else {}
+  if state_key=="native_restart_state" and not state:state=result.get("dayz_native_restart_state") if isinstance(result.get("dayz_native_restart_state"),dict) else {}
   if str(state.get("status") or "").lower() in {"completed","failed"} and state.get(id_key):clear(str(state[id_key]))
  return result
 def run_forever():
