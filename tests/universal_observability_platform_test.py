@@ -65,7 +65,7 @@ class ObservabilityRepositoryTest(unittest.TestCase):
     def test_ingestion_is_idempotent_and_projects_latest(self):
         first = self.repo.ingest_agent_samples("agent-c3", [self.sample()])
         second = self.repo.ingest_agent_samples("agent-c3", [self.sample()])
-        newer = self.repo.ingest_agent_samples("agent-c3", [self.sample(2.0, "2026-08-21T17:01:00Z")])
+        newer = self.repo.ingest_agent_samples("agent-c3", [self.sample(2.0, "2026-08-21T17:05:00Z")])
         self.assertEqual(first["created"], 1)
         self.assertEqual(second["created"], 0)
         self.assertEqual(newer["created"], 1)
@@ -110,7 +110,7 @@ class ObservabilityRepositoryTest(unittest.TestCase):
         self.assertEqual(repo.count_before("2026-08-21T17:05:00Z"), 3)
 
     def test_history_summary_and_instance_spoof_rejection(self):
-        self.repo.ingest_agent_samples("agent-c3", [self.sample(1.0), self.sample(3.0, "2026-08-21T17:02:00Z")])
+        self.repo.ingest_agent_samples("agent-c3", [self.sample(1.0), self.sample(3.0, "2026-08-21T17:05:00Z")])
         history = self.repo.history(agent_id="agent-c3", metric_name="system.load.1")
         summary = self.repo.summary(agent_id="agent-c3", metric_name="system.load.1")
         self.assertEqual(len(history), 2)
