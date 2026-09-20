@@ -152,7 +152,7 @@ class YaraXAdminUiTest(unittest.TestCase):
             "integration.integration.integration.integration._controller_authenticate",
             part.replace("\\n", " "),
         )
-        self.assertIn("server_part21.py", service)
+        self.assertIn("server_part22.py", service)
 
 
     def test_admin_sidebar_exposes_yarax_security_navigation(self):
