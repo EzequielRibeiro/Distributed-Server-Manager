@@ -52,7 +52,7 @@ def test_legacy_dayz_profile_rebuilds_private_mutable_state(tmp_path, monkeypatc
 
     assert changed is True
     assert migrated["profile"] == "dayz"
-    assert migrated["profile_version"] == 10
+    assert migrated["profile_version"] == 11
     assert migrated["profile_migrated_from_version"] == 1
     assert migrated["desired_state"] == "running"
     assert migrated["ports"]["game"]["port"] == 24010
