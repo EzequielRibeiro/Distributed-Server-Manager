@@ -477,6 +477,103 @@ process_guard_has_active_instances()
 }
 
 
+process_guard_managed_active_instances()
+{
+    process_guard_active_instances |
+        awk -F '\t' '
+            $2 ~ /^systemd:capivara-instance-.*\.service$/ {
+                print
+            }
+        '
+}
+
+
+process_guard_unmanaged_active_instances()
+{
+    process_guard_active_instances |
+        awk -F '\t' '
+            $2 !~ /^systemd:capivara-instance-.*\.service$/ {
+                print
+            }
+        '
+}
+
+
+process_guard_report_managed_active_instances()
+{
+    local active
+
+    active="$(process_guard_managed_active_instances)"
+
+    [[ -n "${active}" ]] || return 0
+
+    echo
+    echo "Instâncias gerenciadas ativas detectadas:"
+    echo "Managed active game instances detected:"
+    echo
+
+    while IFS= read -r line
+    do
+        pid="$(printf '%s\\n' "${line}" | cut -f1)"
+        instance_ref="$(printf '%s\\n' "${line}" | cut -f2)"
+        command="$(printf '%s\\n' "${line}" | cut -f3-)"
+        [[ -n "${pid}" ]] || continue
+        echo "PID      : ${pid}"
+        echo "Instância: ${instance_ref}"
+        [[ -n "${command}" ]] && echo "Processo : ${command}"
+        echo
+    done <<<"${active}"
+
+    echo "Essas instâncias serão drenadas automaticamente pelo updater"
+    echo "imediatamente antes da janela de manutenção e restauradas depois."
+    echo "These instances will be drained automatically by the updater"
+    echo "immediately before maintenance and restored afterwards."
+    echo
+}
+
+
+process_guard_assert_no_unmanaged_instances()
+{
+    local active
+
+    active="$(process_guard_unmanaged_active_instances)"
+
+    if [[ -z "${active}" ]]
+    then
+        return 0
+    fi
+
+    echo
+    echo "============================================================="
+    echo " Atualização bloqueada: runtime de jogo não gerenciado ativo"
+    echo " Update blocked: unmanaged game runtime is active"
+    echo "============================================================="
+    echo
+    echo "O updater só pode drenar automaticamente instâncias controladas"
+    echo "por unidades capivara-instance-*.service."
+    echo
+    echo "The updater can only drain instances controlled by"
+    echo "capivara-instance-*.service units."
+    echo
+
+    while IFS= read -r line
+    do
+        pid="$(printf '%s\\n' "${line}" | cut -f1)"
+        instance_ref="$(printf '%s\\n' "${line}" | cut -f2)"
+        command="$(printf '%s\\n' "${line}" | cut -f3-)"
+        [[ -n "${pid}" ]] || continue
+        echo "PID      : ${pid}"
+        echo "Instância: ${instance_ref}"
+        [[ -n "${command}" ]] && echo "Processo : ${command}"
+        echo
+    done <<<"${active}"
+
+    echo "Pare somente esses runtimes não gerenciados antes de atualizar."
+    echo "Stop only these unmanaged runtimes before updating."
+    echo
+    return 1
+}
+
 process_guard_assert_no_active_instances()
 {
     local active
@@ -584,6 +681,18 @@ process_guard_report_legacy_workers()
 # Pre-update gate
 # =============================================================
 
+process_guard_pre_update_allow_managed()
+{
+    process_guard_assert_target_database_compatible
+
+    process_guard_report_legacy_workers
+
+    process_guard_assert_no_unmanaged_instances
+
+    process_guard_report_managed_active_instances
+}
+
+
 process_guard_pre_update()
 {
     process_guard_assert_target_database_compatible
@@ -603,9 +712,14 @@ export -f process_guard_database_check_is_upgradeable
 export -f process_guard_assert_target_database_compatible
 export -f process_guard_active_instances
 export -f process_guard_has_active_instances
+export -f process_guard_managed_active_instances
+export -f process_guard_unmanaged_active_instances
+export -f process_guard_report_managed_active_instances
+export -f process_guard_assert_no_unmanaged_instances
 export -f process_guard_assert_no_active_instances
 export -f process_guard_legacy_workers
 export -f process_guard_report_legacy_workers
+export -f process_guard_pre_update_allow_managed
 export -f process_guard_pre_update
 export -f process_guard_systemd_cgroups
 export -f process_guard_unit_from_cgroup

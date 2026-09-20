@@ -112,6 +112,8 @@ SERVICE_SUB_STATES=()
 SERVICE_UNIT_STATES=()
 SERVICE_TYPES=()
 SERVICE_RESTART_POLICIES=()
+ACTIVE_GAME_UNITS=()
+GAME_INSTANCE_TIMEOUT="${DSM_UPDATE_GAME_INSTANCE_TIMEOUT:-60}"
 READINESS_TIMEOUT="${DSM_UPDATE_READINESS_TIMEOUT:-60}"
 READINESS_INTERVAL="${DSM_UPDATE_READINESS_INTERVAL:-2}"
 OLD_VERSION=""
@@ -576,6 +578,7 @@ restore_database_backup() {
 
 run_process_guard()
 {
+    local MODE="${1:-strict}"
     local GUARD
 
     GUARD="${NEW_SRC}/update-manager/process-guard.sh"
@@ -605,7 +608,142 @@ run_process_guard()
     echo "Verificando processos antes da atualização..."
     echo "Checking processes before update..."
 
-    process_guard_pre_update
+    case "${MODE}" in
+        allow-managed)
+            if ! declare -F process_guard_pre_update_allow_managed >/dev/null
+            then
+                echo "Process Guard alvo não suporta drenagem automática de instâncias." >&2
+                echo "Target Process Guard does not support automatic instance draining." >&2
+                return 1
+            fi
+            process_guard_pre_update_allow_managed
+            ;;
+        strict)
+            process_guard_pre_update
+            ;;
+        *)
+            echo "Modo inválido do Process Guard: ${MODE}" >&2
+            return 1
+            ;;
+    esac
+}
+
+
+# =============================================================
+# Drenagem automática de instâncias gerenciadas
+# Automatic managed game-instance drain
+# =============================================================
+capture_game_instance_state()
+{
+    local UNIT
+    local ACTIVE_STATE
+
+    ACTIVE_GAME_UNITS=()
+
+    while IFS= read -r UNIT
+    do
+        [[ -n "${UNIT}" ]] || continue
+        case "${UNIT}" in
+            capivara-instance-*.service)
+                ;;
+            *)
+                continue
+                ;;
+        esac
+
+        ACTIVE_STATE="$(systemctl show "${UNIT}" --property=ActiveState --value 2>/dev/null || true)"
+        case "${ACTIVE_STATE}" in
+            active|activating)
+                ACTIVE_GAME_UNITS+=("${UNIT}")
+                ;;
+        esac
+    done < <(
+        systemctl list-units             --type=service             --all             --no-legend             --plain             'capivara-instance-*.service' 2>/dev/null |
+        awk '{print $1}'
+    )
+
+    echo
+    echo "Instâncias gerenciadas ativas | Managed active instances: ${#ACTIVE_GAME_UNITS[@]}"
+    for UNIT in "${ACTIVE_GAME_UNITS[@]}"
+    do
+        echo "  ${UNIT}"
+    done
+}
+
+
+wait_for_game_instance_inactive()
+{
+    local UNIT="${1:?unit required}"
+    local DEADLINE=$((SECONDS + GAME_INSTANCE_TIMEOUT))
+
+    while systemctl is-active --quiet "${UNIT}" 2>/dev/null
+    do
+        if (( SECONDS >= DEADLINE ))
+        then
+            echo "[ERROR] Timeout parando instância | stopping instance: ${UNIT}" >&2
+            return 1
+        fi
+        sleep 1
+    done
+}
+
+
+wait_for_game_instance_active()
+{
+    local UNIT="${1:?unit required}"
+    local DEADLINE=$((SECONDS + GAME_INSTANCE_TIMEOUT))
+
+    until systemctl is-active --quiet "${UNIT}" 2>/dev/null
+    do
+        if (( SECONDS >= DEADLINE ))
+        then
+            echo "[ERROR] Timeout restaurando instância | restoring instance: ${UNIT}" >&2
+            return 1
+        fi
+        sleep 1
+    done
+}
+
+
+stop_game_instances()
+{
+    local UNIT
+
+    [[ "${#ACTIVE_GAME_UNITS[@]}" -gt 0 ]] || return 0
+
+    echo
+    echo "Drenando instâncias de jogo gerenciadas..."
+    echo "Draining managed game instances..."
+
+    for UNIT in "${ACTIVE_GAME_UNITS[@]}"
+    do
+        echo "Parando instância | Stopping instance: ${UNIT}"
+        systemctl stop "${UNIT}"
+        wait_for_game_instance_inactive "${UNIT}"
+        echo "[OK] ${UNIT} parado | stopped."
+    done
+}
+
+
+restart_game_instances()
+{
+    local UNIT
+
+    [[ "${#ACTIVE_GAME_UNITS[@]}" -gt 0 ]] || return 0
+
+    echo
+    echo "Restaurando instâncias que estavam ativas..."
+    echo "Restoring game instances that were active..."
+
+    systemctl daemon-reload
+
+    for UNIT in "${ACTIVE_GAME_UNITS[@]}"
+    do
+        echo "Iniciando instância | Starting instance: ${UNIT}"
+        systemctl start "${UNIT}"
+        wait_for_game_instance_active "${UNIT}"
+        echo "[OK] ${UNIT} restaurado | restored."
+    done
 }
 
 
@@ -1470,12 +1608,18 @@ main() {
     read_versions
     enforce_version_policy
     confirm_update
-    # Reject active instances before any expensive backup or mutation.
-    run_process_guard
+    # Validate the target database and reject only unmanaged runtimes before
+    # opening the maintenance window. Managed instance units are drained below.
+    run_process_guard allow-managed
+    capture_game_instance_state
     # Stop writers before creating a consistent filesystem/database snapshot pair.
     capture_service_state
     UPDATE_TRANSACTION_STARTED=1
+    stop_game_instances
     stop_services
+    # With Controller/Workers stopped, no new managed instance can race the update.
+    # Any remaining process is unmanaged or failed to drain and must block mutation.
+    run_process_guard
     # Segurança | Security
     if [[ "${NO_BACKUP}" -eq 1 ]]
     then
@@ -1505,6 +1649,7 @@ main() {
     reconcile_hybrid_runtime_substrate
     # Inicialização | Startup
     restart_services
+    restart_game_instances
     # Validação | Validation
     validate_final_installation
     validate_runtime_readiness
@@ -1538,6 +1683,7 @@ update_failed() {
         echo
         if [[ "${UPDATE_TRANSACTION_STARTED}" -eq 1 && "${UPDATE_FILES_STARTED}" -eq 0 ]]; then
             restart_services || true
+            restart_game_instances || true
         fi
         echo "Rollback não executado."
         echo "Rollback not executed."
@@ -1657,6 +1803,7 @@ rollback() {
     echo "Reloading Systemd..."
     systemctl daemon-reload 2>/dev/null || true
     restart_services 2>/dev/null || true
+    restart_game_instances 2>/dev/null || true
     # Remover staging incompleto | Remove incomplete staging
     rm -rf "${STAGING_DIR}"
     echo
