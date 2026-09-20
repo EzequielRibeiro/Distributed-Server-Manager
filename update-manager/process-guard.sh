@@ -512,7 +512,64 @@ process_guard_report_managed_active_instances()
     echo "Managed active game instances detected:"
     echo
 
-    while IFS={
+    while IFS="$(printf '\\t')" read -r pid instance_ref command
+    do
+        [[ -n "${pid}" ]] || continue
+        echo "PID      : ${pid}"
+        echo "Instância: ${instance_ref}"
+        [[ -n "${command}" ]] && echo "Processo : ${command}"
+        echo
+    done <<<"${active}"
+
+    echo "Essas instâncias serão drenadas automaticamente pelo updater"
+    echo "imediatamente antes da janela de manutenção e restauradas depois."
+    echo "These instances will be drained automatically by the updater"
+    echo "immediately before maintenance and restored afterwards."
+    echo
+}
+
+
+process_guard_assert_no_unmanaged_instances()
+{
+    local active
+
+    active="$(process_guard_unmanaged_active_instances)"
+
+    if [[ -z "${active}" ]]
+    then
+        return 0
+    fi
+
+    echo
+    echo "============================================================="
+    echo " Atualização bloqueada: runtime de jogo não gerenciado ativo"
+    echo " Update blocked: unmanaged game runtime is active"
+    echo "============================================================="
+    echo
+    echo "O updater só pode drenar automaticamente instâncias controladas"
+    echo "por unidades capivara-instance-*.service."
+    echo
+    echo "The updater can only drain instances controlled by"
+    echo "capivara-instance-*.service units."
+    echo
+
+    while IFS="$(printf '\\t')" read -r pid instance_ref command
+    do
+        [[ -n "${pid}" ]] || continue
+        echo "PID      : ${pid}"
+        echo "Instância: ${instance_ref}"
+        [[ -n "${command}" ]] && echo "Processo : ${command}"
+        echo
+    done <<<"${active}"
+
+    echo "Pare somente esses runtimes não gerenciados antes de atualizar."
+    echo "Stop only these unmanaged runtimes before updating."
+    echo
+    return 1
+}
+
+process_guard_assert_no_active_instances()
+{
     local active
 
     active="$(process_guard_active_instances)"
@@ -657,331 +714,6 @@ export -f process_guard_assert_no_active_instances
 export -f process_guard_legacy_workers
 export -f process_guard_report_legacy_workers
 export -f process_guard_pre_update_allow_managed
-export -f process_guard_pre_update
-export -f process_guard_systemd_cgroups
-export -f process_guard_unit_from_cgroup
-export -f process_guard_active_systemd_instances
-export -f process_guard_active_pidfile_instances
-export -f process_guard_active_process_instances
-\t' read -r pid instance_ref command
-    do
-        [[ -n "${pid}" ]] || continue
-        echo "PID      : ${pid}"
-        echo "Instância: ${instance_ref}"
-        [[ -n "${command}" ]] && echo "Processo : ${command}"
-        echo
-    done <<<"${active}"
-
-    echo "Essas instâncias serão drenadas automaticamente pelo updater"
-    echo "imediatamente antes da janela de manutenção e restauradas depois."
-    echo "These instances will be drained automatically by the updater"
-    echo "immediately before maintenance and restored afterwards."
-    echo
-}
-
-
-process_guard_assert_no_unmanaged_instances()
-{
-    local active
-
-    active="$(process_guard_unmanaged_active_instances)"
-
-    if [[ -z "${active}" ]]
-    then
-        return 0
-    fi
-
-    echo
-    echo "============================================================="
-    echo " Atualização bloqueada: runtime de jogo não gerenciado ativo"
-    echo " Update blocked: unmanaged game runtime is active"
-    echo "============================================================="
-    echo
-    echo "O updater só pode drenar automaticamente instâncias controladas"
-    echo "por unidades capivara-instance-*.service."
-    echo
-    echo "The updater can only drain instances controlled by"
-    echo "capivara-instance-*.service units."
-    echo
-
-    while IFS={
-    local active
-
-    active="$(process_guard_active_instances)"
-
-    if [[ -z "${active}" ]]
-    then
-        return 0
-    fi
-
-    echo
-    echo "============================================================="
-    echo " Atualização bloqueada: servidor de jogo em execução"
-    echo " Update blocked: game server is running"
-    echo "============================================================="
-    echo
-    echo "O Capivara não atualizará /opt/dsm enquanto houver"
-    echo "uma instância de jogo ativa."
-    echo
-    echo "Capivara will not update /opt/dsm while a game"
-    echo "instance is still running."
-    echo
-
-    while IFS=$'\t' read -r pid instance_path command
-    do
-        [[ -n "${pid}" ]] || continue
-
-        echo "PID      : ${pid}"
-        echo "Instância: ${instance_path}"
-
-        if [[ -n "${command}" ]]
-        then
-            echo "Processo : ${command}"
-        fi
-
-        echo
-
-    done <<<"${active}"
-
-    echo "Pare as instâncias de jogo de forma controlada"
-    echo "e execute a atualização novamente."
-    echo
-
-    return 1
-}
-
-
-# =============================================================
-# Legacy dashboard workers
-# =============================================================
-
-process_guard_legacy_workers()
-{
-    local pid
-    local args
-
-    while IFS= read -r pid
-    do
-        [[ "${pid}" =~ ^[0-9]+$ ]] || continue
-
-        process_guard_pid_is_running "${pid}" || continue
-
-        args="$(process_guard_pid_command "${pid}" || true)"
-
-        [[ -n "${args}" ]] || continue
-
-        printf '%s\t%s\n' "${pid}" "${args}"
-
-    done < <(
-        pgrep -f \
-            "${DSM_ROOT}/dashboard/workers/.*_worker\.sh" \
-            2>/dev/null ||
-        true
-    )
-}
-
-
-process_guard_report_legacy_workers()
-{
-    local workers
-
-    workers="$(process_guard_legacy_workers)"
-
-    [[ -n "${workers}" ]] || return 0
-
-    echo
-    echo "Workers legados detectados:"
-    echo "Legacy Dashboard workers detected:"
-    echo
-
-    while IFS=$'\t' read -r pid args
-    do
-        [[ -n "${pid}" ]] || continue
-
-        echo "PID     : ${pid}"
-        echo "Processo: ${args}"
-        echo
-
-    done <<<"${workers}"
-}
-
-
-# =============================================================
-# Pre-update gate
-# =============================================================
-
-process_guard_pre_update()
-{
-    process_guard_assert_target_database_compatible
-
-    process_guard_report_legacy_workers
-
-    process_guard_assert_no_active_instances
-}
-
-
-export -f process_guard_instances_root
-export -f process_guard_instance_pidfiles
-export -f process_guard_pid_is_running
-export -f process_guard_pid_command
-export -f process_guard_instance_from_pidfile
-export -f process_guard_database_check_is_upgradeable
-export -f process_guard_assert_target_database_compatible
-export -f process_guard_active_instances
-export -f process_guard_has_active_instances
-export -f process_guard_assert_no_active_instances
-export -f process_guard_legacy_workers
-export -f process_guard_report_legacy_workers
-export -f process_guard_pre_update
-export -f process_guard_systemd_cgroups
-export -f process_guard_unit_from_cgroup
-export -f process_guard_active_systemd_instances
-export -f process_guard_active_pidfile_instances
-export -f process_guard_active_process_instances
-\t' read -r pid instance_ref command
-    do
-        [[ -n "${pid}" ]] || continue
-        echo "PID      : ${pid}"
-        echo "Instância: ${instance_ref}"
-        [[ -n "${command}" ]] && echo "Processo : ${command}"
-        echo
-    done <<<"${active}"
-
-    echo "Pare somente esses runtimes não gerenciados antes de atualizar."
-    echo "Stop only these unmanaged runtimes before updating."
-    echo
-    return 1
-}
-
-
-process_guard_assert_no_active_instances(){
-    local active
-
-    active="$(process_guard_active_instances)"
-
-    if [[ -z "${active}" ]]
-    then
-        return 0
-    fi
-
-    echo
-    echo "============================================================="
-    echo " Atualização bloqueada: servidor de jogo em execução"
-    echo " Update blocked: game server is running"
-    echo "============================================================="
-    echo
-    echo "O Capivara não atualizará /opt/dsm enquanto houver"
-    echo "uma instância de jogo ativa."
-    echo
-    echo "Capivara will not update /opt/dsm while a game"
-    echo "instance is still running."
-    echo
-
-    while IFS=$'\t' read -r pid instance_path command
-    do
-        [[ -n "${pid}" ]] || continue
-
-        echo "PID      : ${pid}"
-        echo "Instância: ${instance_path}"
-
-        if [[ -n "${command}" ]]
-        then
-            echo "Processo : ${command}"
-        fi
-
-        echo
-
-    done <<<"${active}"
-
-    echo "Pare as instâncias de jogo de forma controlada"
-    echo "e execute a atualização novamente."
-    echo
-
-    return 1
-}
-
-
-# =============================================================
-# Legacy dashboard workers
-# =============================================================
-
-process_guard_legacy_workers()
-{
-    local pid
-    local args
-
-    while IFS= read -r pid
-    do
-        [[ "${pid}" =~ ^[0-9]+$ ]] || continue
-
-        process_guard_pid_is_running "${pid}" || continue
-
-        args="$(process_guard_pid_command "${pid}" || true)"
-
-        [[ -n "${args}" ]] || continue
-
-        printf '%s\t%s\n' "${pid}" "${args}"
-
-    done < <(
-        pgrep -f \
-            "${DSM_ROOT}/dashboard/workers/.*_worker\.sh" \
-            2>/dev/null ||
-        true
-    )
-}
-
-
-process_guard_report_legacy_workers()
-{
-    local workers
-
-    workers="$(process_guard_legacy_workers)"
-
-    [[ -n "${workers}" ]] || return 0
-
-    echo
-    echo "Workers legados detectados:"
-    echo "Legacy Dashboard workers detected:"
-    echo
-
-    while IFS=$'\t' read -r pid args
-    do
-        [[ -n "${pid}" ]] || continue
-
-        echo "PID     : ${pid}"
-        echo "Processo: ${args}"
-        echo
-
-    done <<<"${workers}"
-}
-
-
-# =============================================================
-# Pre-update gate
-# =============================================================
-
-process_guard_pre_update()
-{
-    process_guard_assert_target_database_compatible
-
-    process_guard_report_legacy_workers
-
-    process_guard_assert_no_active_instances
-}
-
-
-export -f process_guard_instances_root
-export -f process_guard_instance_pidfiles
-export -f process_guard_pid_is_running
-export -f process_guard_pid_command
-export -f process_guard_instance_from_pidfile
-export -f process_guard_database_check_is_upgradeable
-export -f process_guard_assert_target_database_compatible
-export -f process_guard_active_instances
-export -f process_guard_has_active_instances
-export -f process_guard_assert_no_active_instances
-export -f process_guard_legacy_workers
-export -f process_guard_report_legacy_workers
 export -f process_guard_pre_update
 export -f process_guard_systemd_cgroups
 export -f process_guard_unit_from_cgroup
