@@ -199,6 +199,7 @@ class DatabaseAlertEngine:
         level: str,
         message: str,
         topology: dict[str, Any],
+        diagnostic_id: str | None = None,
     ) -> dict[str, Any]:
         return self.alerts.open_alert(
             alert_id=self._alert_id(rule_id, topology),
