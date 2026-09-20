@@ -124,7 +124,11 @@ class CustomerRuntimeConsoleLiveTest(unittest.TestCase):
         self.assertIn('addEventListener("console-line"', script)
         self.assertIn('appendConsoleLine', script)
         self.assertIn('/console/stream?instance_id=', script)
-        self.assertIn('setInterval(refreshConsole,3000)', script)  # fallback only
+        self.assertIn('setInterval(refreshConsole,3000)', script)
+        self.assertIn('CONSOLE_SAFETY_POLL_MS=3000', script)
+        self.assertIn('CONSOLE_SSE_STALE_MS=6000', script)
+        self.assertIn('startConsoleSafetyPoll()', script)
+        self.assertIn('markConsoleStreamProgress()', script)
         self.assertIn('source==="agent-heartbeat"', script)
         self.assertIn('Tempo real · SSE', script)
         self.assertIn('Fallback · 3 s', script)
