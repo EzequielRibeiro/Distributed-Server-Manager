@@ -32,7 +32,13 @@ for source in (root/'agents/linux/runtime').rglob('*.py'):
  rel='agent/runtime/'+source.relative_to(root/'agents/linux/runtime').as_posix(); assert (package/rel).read_bytes()==source.read_bytes(), rel
 for source in (root/'agents/common').glob('*.py'):
  rel='agent/common/'+source.name; assert (package/rel).read_bytes()==source.read_bytes(), rel
+for source in (root/'agents/common').glob('*.py'):
+ rel='agent/runtime/compat_common/'+source.name; assert (package/rel).read_bytes()==source.read_bytes(), rel
 for rel in (
+ 'agent/runtime/compat_common/source_rcon.py',
+ 'agent/runtime/compat_common/dayz_messages.py',
+ 'agent/runtime/compat_common/minecraft_rcon_secret.py',
+ 'agent/runtime/compat_common/palworld_rest_console.py',
  'agent/runtime/uninstall_client.py',
  'agent/privileged/uninstall_agent.py',
  'agent/privileged/console_journal_reader.py',
@@ -70,5 +76,22 @@ grep -Fq 'agent/privileged/console_journal_reader.py' "${INSTALLER}" || fail "in
 grep -Fq 'systemctl enable --now capivara-agent-console-reader.service' "${INSTALLER}" || fail "installer does not activate restricted console reader"
 grep -Fq 'capivara-agent-uninstall.path' "${INSTALLER}" || fail "installer does not install uninstall path unit"
 grep -Fq 'systemctl enable --now capivara-agent-uninstall.path' "${INSTALLER}" || fail "installer does not activate uninstall path unit"
+
+# Simulate the v2.0.59 updater contract: it copies every runtime Python
+# module but only agent/common/identity.py. The new package must still import
+# the Agent successfully before the upgraded updater can ever run.
+LEGACY_INSTALL="${TMP}/legacy-install"
+mkdir -p "${LEGACY_INSTALL}/runtime" "${LEGACY_INSTALL}/common"
+while IFS= read -r -d '' file; do
+  rel="${file#"${PACKAGE}/agent/runtime/"}"
+  mkdir -p "${LEGACY_INSTALL}/runtime/$(dirname "${rel}")"
+  cp "${file}" "${LEGACY_INSTALL}/runtime/${rel}"
+done < <(find "${PACKAGE}/agent/runtime" -type f -name '*.py' -print0)
+cp "${PACKAGE}/agent/common/identity.py" "${LEGACY_INSTALL}/common/identity.py"
+CAPIVARA_AGENT_STATE_DIR="${TMP}/legacy-state" \
+CAPIVARA_AGENT_CONFIG="${TMP}/legacy-agent.json" \
+PYTHONPATH="${LEGACY_INSTALL}/runtime" \
+python3 -c "import agent; import native_maintenance; import source_rcon" \
+  || fail "package cannot boot with v2.0.59 updater layout"
 
 echo "Agent package tests passed."
