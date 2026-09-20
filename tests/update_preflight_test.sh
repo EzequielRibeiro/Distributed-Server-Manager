@@ -58,8 +58,8 @@ do
     fi
 done
 
-grep -Fq 'process_guard_pre_update' "${TARGET_PREFLIGHT}" \
-    || fail "target preflight does not reuse the target database/process guard"
+grep -Fq 'process_guard_pre_update_allow_managed' "${TARGET_PREFLIGHT}" \
+    || fail "target preflight does not allow managed instances for automatic drain"
 grep -Fq 'UPDATE PREFLIGHT READY' "${TARGET_PREFLIGHT}" \
     || fail "target preflight success contract is missing"
 grep -Fq 'cap update preflight' "${CAP_CLI}" \
