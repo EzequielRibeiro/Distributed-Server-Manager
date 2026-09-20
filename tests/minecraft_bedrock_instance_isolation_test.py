@@ -72,6 +72,8 @@ def main() -> None:
 
         require(a["working_directory"] != b["working_directory"], "instances must use disjoint private working trees")
         require(a["configuration_root"] != b["configuration_root"], "instances must use disjoint configuration roots")
+        require(a["files_root"] == a["working_directory"], "instance A file browser must use private runtime root")
+        require(b["files_root"] == b["working_directory"], "instance B file browser must use private runtime root")
         require(a["seed_directories"][0]["source"] == b["seed_directories"][0]["source"], "instances should share the immutable provider seed")
         require(a["seed_directories"][0]["target"] != b["seed_directories"][0]["target"], "provider seed targets must be private")
         require(a["environment"]["LD_LIBRARY_PATH"] == a["working_directory"], "Bedrock libraries must resolve from private runtime")
