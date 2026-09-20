@@ -332,6 +332,23 @@ class InstanceWorkspaceRepository:
             ).fetchall()
         return [dict(row) for row in reversed(rows)]
 
+    def latest_telemetry(self, instance_ids) -> dict[str, dict[str, Any]]:
+        ids = sorted({str(value or "").strip() for value in instance_ids if str(value or "").strip()})
+        if not ids:
+            return {}
+        placeholders = self.dialect.parameters(len(ids))
+        with self.session() as session:
+            rows = session.execute(
+                "SELECT instance_id,cpu_percent,memory_bytes,storage_used_bytes,network_rx_bytes,network_tx_bytes,"
+                "players_online,players_max,latency_ms,uptime_seconds,health,sampled_at "
+                "FROM instance_telemetry_samples WHERE id IN ("
+                "SELECT MAX(id) FROM instance_telemetry_samples "
+                f"WHERE instance_id IN ({placeholders}) GROUP BY instance_id"
+                ") ORDER BY instance_id",
+                tuple(ids),
+            ).fetchall()
+        return {str(row["instance_id"]): dict(row) for row in rows}
+
     # -------------------------------------------------------------------- console
     def enqueue_console(self, *, agent_id: str, instance_id: str, command_text: str, requested_by: str) -> dict[str, Any]:
         context = self.instance_context(instance_id)
