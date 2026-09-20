@@ -102,7 +102,10 @@ def _run_http(selection:dict[str,Any],target:Path)->None:
  expected=asset.get("sha256") or install.get("sha256");archive=selection.get("archive") if isinstance(selection.get("archive"),dict) else {};archive_type=str(archive.get("type") or install.get("archive_type") or "");target.mkdir(parents=True,exist_ok=True)
  with tempfile.TemporaryDirectory(prefix="capivara-game-data-") as temporary:
   temp=Path(temporary);artifact=temp/"artifact";_download(url,artifact);_verify_sha256(artifact,expected)
-  if archive_type or zipfile.is_zipfile(artifact) or tarfile.is_tarfile(artifact):
+  installer=selection.get("installer") if isinstance(selection.get("installer"),dict) else {}
+  installer_type=str(installer.get("type") or "").strip().lower()
+  preserve_installer_artifact=installer_type in {"java_jar","quilt_server"}
+  if archive_type or (not preserve_installer_artifact and (zipfile.is_zipfile(artifact) or tarfile.is_tarfile(artifact))):
    staging=temp/"extract";staging.mkdir()
    if zipfile.is_zipfile(artifact):_extract_zip(artifact,staging)
    elif tarfile.is_tarfile(artifact):_extract_tar(artifact,staging)
