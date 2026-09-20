@@ -22,7 +22,8 @@ class BaselineV12V18RegistryTest(unittest.TestCase):
         self.assertEqual(UPGRADES[-5].name, "yarax_admin_operations")
         self.assertEqual(UPGRADES[-4].name, "dayz_native_restart_commands")
         self.assertEqual(UPGRADES[-3].name, "generic_native_restart_commands")
-        self.assertEqual(UPGRADES[-2].name, "database_intelligence")\n        self.assertEqual(UPGRADES[-1].name, "operation_diagnostics")
+        self.assertEqual(UPGRADES[-2].name, "database_intelligence")
+        self.assertEqual(UPGRADES[-1].name, "operation_diagnostics")
 
 
 if __name__ == "__main__":
