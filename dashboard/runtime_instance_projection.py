@@ -16,6 +16,7 @@ from typing import Any, Callable
 
 from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
 from agent_runtime_repository import AgentRuntimeRepository
+from instance_workspace_repository import InstanceWorkspaceRepository
 
 _LIVE_AGENT_HEALTH = {"online", "degraded"}
 _ONLINE_STATES = {"online", "running", "started", "active"}
@@ -151,6 +152,7 @@ def install_runtime_instance_projection(
     *,
     health_repository_factory: Callable[[Any], Any] | None = None,
     agent_repository_factory: Callable[[Any], Any] | None = None,
+    telemetry_repository_factory: Callable[[Any], Any] | None = None,
     cache_seconds: float = 2.0,
 ):
     """Install Agent-authoritative wrappers over legacy runtime list/detail APIs."""
@@ -158,6 +160,7 @@ def install_runtime_instance_projection(
     original_summary = legacy.api_runtime_summary
     health_factory = health_repository_factory or AgentInstanceRuntimeHealthRepository
     agent_factory = agent_repository_factory or AgentRuntimeRepository
+    telemetry_factory = telemetry_repository_factory or InstanceWorkspaceRepository
     cache_lock = threading.Lock()
     cache: dict[str, Any] = {"key": None, "expires": 0.0, "value": None}
 
@@ -170,6 +173,7 @@ def install_runtime_instance_projection(
         by_identity = {_identity(row): row for row in records if all(_identity(row))}
         runtime_by_key: dict[tuple[str, str], dict[str, Any]] = {}
         agent_health: dict[str, str] = {}
+        telemetry_by_instance: dict[str, dict[str, Any]] = {}
         agent_ids = sorted({_safe_text(row.get("agent_id")) for row in records if _safe_text(row.get("agent_id"))})
 
         if agent_ids:
@@ -179,6 +183,14 @@ def install_runtime_instance_projection(
                 agent_repository = agent_factory(backend)
                 health_repository.initialize()
                 agent_repository.initialize()
+                try:
+                    telemetry_repository = telemetry_factory(backend)
+                    telemetry_repository.initialize()
+                    telemetry_by_instance = telemetry_repository.latest_telemetry(
+                        [_safe_text(row.get("id") or row.get("instance_id")) for row in records]
+                    )
+                except Exception:
+                    telemetry_by_instance = {}
 
                 for agent_id in agent_ids:
                     try:
@@ -201,6 +213,7 @@ def install_runtime_instance_projection(
             "by_identity": by_identity,
             "runtime_by_key": runtime_by_key,
             "agent_health": agent_health,
+            "telemetry_by_instance": telemetry_by_instance,
         }
 
     def projection_snapshot(database_path):
@@ -248,6 +261,9 @@ def install_runtime_instance_projection(
         for field in ("observed_state", "desired_state", "reported_at", "reconcile_status", "operation_status"):
             if projection.get(field) is not None:
                 result[field] = projection[field]
+        telemetry = snapshot["telemetry_by_instance"].get(identity[2])
+        if projection["source"] == "agent" and isinstance(telemetry, dict):
+            result["telemetry"] = dict(telemetry)
         return result
 
     def api_runtime_list(database_path=None):
@@ -324,6 +340,9 @@ def install_runtime_instance_projection(
             if projection.get(field) is not None:
                 server_state[field] = projection[field]
         summary["server_state"] = server_state
+        telemetry = snapshot["telemetry_by_instance"].get(instance)
+        if projection["source"] == "agent" and isinstance(telemetry, dict):
+            summary["telemetry"] = dict(telemetry)
 
         metadata = summary.get("instance_metadata")
         if not isinstance(metadata, dict) or not metadata:
