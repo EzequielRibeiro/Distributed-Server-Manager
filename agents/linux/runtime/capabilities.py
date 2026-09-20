@@ -13,6 +13,13 @@ import time
 from pathlib import Path
 from profiles.registry import supported_profiles
 try:
+    from java_runtime import discover_java_runtimes
+except ModuleNotFoundError:
+    import importlib.util as _importlib_util
+    _java_spec=_importlib_util.spec_from_file_location("_capivara_java_runtime",Path(__file__).with_name("java_runtime.py"))
+    if _java_spec is None or _java_spec.loader is None:raise
+    _java_module=_importlib_util.module_from_spec(_java_spec);_java_spec.loader.exec_module(_java_module);discover_java_runtimes=_java_module.discover_java_runtimes
+try:
     from content_security import scanner_status
 except ModuleNotFoundError:
     import importlib.util as _importlib_util
@@ -148,7 +155,8 @@ def detect_capabilities() -> dict[str, object]:
     if steamcmd_ready:
         content_providers.extend(("steam", "steam-workshop"))
     java_status = _java_status()
-    java = bool(java_status["functional"])
+    java_runtimes = discover_java_runtimes()
+    java = bool(java_runtimes) or bool(java_status["functional"])
     content_security = scanner_status()
     docker = shutil.which("docker") is not None
     wine = shutil.which("wine") is not None or shutil.which("wine64") is not None
@@ -166,6 +174,7 @@ def detect_capabilities() -> dict[str, object]:
         "steamcmd_status": steamcmd_status,
         "java": java,
         "java_status": java_status,
+        "java_runtimes": java_runtimes,
         "prerequisites": {
             "steamcmd_runtime": "ready" if steamcmd_status.get("runtime_32bit") else "missing",
             "java_runtime": "ready" if java else "missing",

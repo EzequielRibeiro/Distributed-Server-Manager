@@ -75,7 +75,7 @@ class MinecraftInstanceFilesRootMigrationTest(unittest.TestCase):
         migrated, changed = game_runtime.migrate_runtime_spec(self.config, legacy)
 
         self.assertTrue(changed)
-        self.assertEqual(migrated["profile_version"], 3)
+        self.assertEqual(migrated["profile_version"], 4)
         self.assertEqual(migrated["profile_migrated_from_version"], 1)
         self.assertEqual(migrated["files_root"], migrated["working_directory"])
         self.assertEqual(

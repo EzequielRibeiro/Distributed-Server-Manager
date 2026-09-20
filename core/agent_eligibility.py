@@ -65,6 +65,23 @@ def _major(value: Any) -> int:
         return 0
 
 
+def _java_majors(capabilities: dict[str, Any], java_status: dict[str, Any]) -> tuple[int, ...]:
+    runtimes = capabilities.get("java_runtimes")
+    majors: set[int] = set()
+    if isinstance(runtimes, list):
+        for item in runtimes:
+            if not isinstance(item, dict) or item.get("functional") is False:
+                continue
+            major = _major(item.get("major"))
+            if major:
+                majors.add(major)
+    if not majors:
+        major = _major(java_status.get("major"))
+        if major:
+            majors.add(major)
+    return tuple(sorted(majors))
+
+
 def evaluate_agent_eligibility(
     *,
     runtime: dict[str, Any],
@@ -112,14 +129,22 @@ def evaluate_agent_eligibility(
             reasons.append("unsupported_platform_architecture")
 
     if requirements.java_min_major or requirements.java_max_major:
-        java_major = _major(java_status.get("major"))
-        if not java_major:
+        java_majors = _java_majors(capability_payload if isinstance(capability_payload, dict) else {}, java_status)
+        if not java_majors:
             reasons.append("java_version_missing")
         else:
-            if requirements.java_min_major and java_major < requirements.java_min_major:
-                reasons.append("java_version_too_old")
-            if requirements.java_max_major and java_major > requirements.java_max_major:
-                reasons.append("java_version_too_new")
+            compatible = [
+                major for major in java_majors
+                if (not requirements.java_min_major or major >= requirements.java_min_major)
+                and (not requirements.java_max_major or major <= requirements.java_max_major)
+            ]
+            if not compatible:
+                if requirements.java_min_major and max(java_majors) < requirements.java_min_major:
+                    reasons.append("java_version_too_old")
+                elif requirements.java_max_major and min(java_majors) > requirements.java_max_major:
+                    reasons.append("java_version_too_new")
+                else:
+                    reasons.append("java_version_incompatible")
 
     cpu = runtime.get("cpu") if isinstance(runtime.get("cpu"), dict) else {}
     threads = int(cpu.get("logical_cores") or 0)

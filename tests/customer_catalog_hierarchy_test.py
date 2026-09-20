@@ -34,7 +34,7 @@ class CustomerCatalogHierarchyTest(unittest.TestCase):
     def test_customer_ui_names_distribution_step(self):
         self.assertIn('<strong>Distribuição</strong>', self.customer_html)
         self.assertIn('Distribuição Minecraft', self.customer_html)
-        self.assertIn('/runtime-selector.js?v=9', self.customer_html)
+        self.assertIn('/runtime-selector.js?v=10', self.customer_html)
         self.assertIn('/create-server-wizard.css?v=5', self.customer_html)
 
     def test_runtime_cards_derive_capabilities_from_runtime_definition(self):

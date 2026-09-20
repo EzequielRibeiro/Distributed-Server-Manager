@@ -529,6 +529,8 @@
         state.region = null;
         renderRegions();
         renderDistributions();
+        elements().buildStep.hidden = true;
+        updateSummary();
         loadRegions().catch((error) => showMessage(`Não foi possível verificar os servidores disponíveis: ${error.message}`));
         renderVersions().catch((error) => showMessage(`Não foi possível carregar as versões: ${error.message}`));
     }

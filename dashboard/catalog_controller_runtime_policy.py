@@ -196,6 +196,7 @@ def default_policy(runtime: dict[str, Any]) -> dict[str, Any]:
         "schema_version": 1,
         "kind": "CatalogRuntimePolicy",
         "runtime_id": str(runtime.get("id") or ""),
+        "engine": str(process.get("engine") or "").strip().lower(),
         "executable": executable,
         "arguments": arguments,
         "working_directory": ".",
@@ -208,6 +209,7 @@ def default_policy(runtime: dict[str, Any]) -> dict[str, Any]:
         "network_properties": [],
         "network_exposure": [],
         "server_settings": {},
+        "requirements": dict(runtime.get("requirements") or {}),
     }))
 
 
@@ -218,6 +220,26 @@ def validate_policy(payload: dict[str, Any], *, runtime_id: str) -> dict[str, An
     result["schema_version"] = 1
     result["kind"] = "CatalogRuntimePolicy"
     result["runtime_id"] = str(runtime_id)
+    engine = str(result.get("engine") or "").strip().lower()
+    if engine not in {"", "java", "native", "docker", "container", "wine", "wine64"}:
+        raise ValueError("invalid runtime engine")
+    result["engine"] = engine
+    requirements = result.get("requirements") if isinstance(result.get("requirements"), dict) else {}
+    java_requirements = requirements.get("java") if isinstance(requirements.get("java"), dict) else {}
+    normalized_java: dict[str, int] = {}
+    for key in ("min", "max"):
+        if java_requirements.get(key) is None:
+            continue
+        try:
+            value = int(java_requirements[key])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("invalid Java runtime requirement") from exc
+        if value < 1 or value > 100:
+            raise ValueError("invalid Java runtime requirement")
+        normalized_java[key] = value
+    if normalized_java.get("min") and normalized_java.get("max") and normalized_java["min"] > normalized_java["max"]:
+        raise ValueError("invalid Java runtime range")
+    result["requirements"] = {"java": normalized_java} if normalized_java else {}
     executable = str(result.get("executable") or "").strip()
     if not executable or "\x00" in executable or "\n" in executable or "\r" in executable or len(executable) > 512:
         raise ValueError("invalid executable")
@@ -336,6 +358,11 @@ def load_policy(root: Path, runtime: dict[str, Any]) -> dict[str, Any]:
         stored = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(stored, dict):
             policy.update(stored)
+    # Runtime engine and requirements are catalog-owned facts and cannot be
+    # overridden by an administrative parameter policy.
+    process = runtime.get("process") if isinstance(runtime.get("process"), dict) else {}
+    policy["engine"] = str(process.get("engine") or "").strip().lower()
+    policy["requirements"] = dict(runtime.get("requirements") or {})
     policy = _enforce_server_settings(runtime, _enforce_network_policy(runtime, policy))
     return validate_policy(policy, runtime_id=runtime_id)
 

@@ -5,7 +5,7 @@ from typing import Any
 from .base import GameRuntimeProfile,ProfileError,port_bindings,require_absolute,require_text
 _JAVA_ENVIRONMENTS=("minecraft.java.arclight","minecraft.java.fabric","minecraft.java.folia","minecraft.java.forge","minecraft.java.neoforge","minecraft.java.paper","minecraft.java.purpur","minecraft.java.quilt","minecraft.java.spongevanilla","minecraft.java.vanilla","minecraft.java.youer")
 class MinecraftJavaRuntimeProfile(GameRuntimeProfile):
- game_ids=_JAVA_ENVIRONMENTS;profile_version=2
+ game_ids=_JAVA_ENVIRONMENTS;profile_version=3
  def build_runtime_spec(self,instance:dict[str,Any],context:dict[str,Any])->dict[str,Any]:
   instance_id=require_text(instance.get("instance_id") or instance.get("id"),"instance_id");agent_id=require_text(instance.get("agent_id"),"agent_id");environment_id=require_text(instance.get("environment_id"),"environment_id").lower()
   if environment_id not in _JAVA_ENVIRONMENTS:raise ProfileError("unsupported Minecraft Java environment")
