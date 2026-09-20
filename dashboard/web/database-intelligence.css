@@ -1,1 +1,68 @@
 .dbi-shell{display:grid;gap:18px}.dbi-header,.panel-title{display:flex;align-items:center;justify-content:space-between;gap:16px}.dbi-header h2,.panel h2{margin:0}.eyebrow{margin:0 0 4px;text-transform:uppercase;letter-spacing:.1em;font-size:.75rem;opacity:.7}.dbi-actions,.maintenance-actions{display:flex;gap:10px;flex-wrap:wrap}.dbi-actions button,.dbi-actions select,.maintenance-actions button{min-height:38px;border-radius:9px;border:1px solid var(--cap-border,#334155);background:var(--cap-panel,#111827);color:inherit;padding:0 12px}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.metric-card,.panel{background:var(--cap-panel,#111827);border:1px solid var(--cap-border,#273244);border-radius:14px;padding:16px}.metric-card span,.metric-card small,.panel-title span{display:block;opacity:.7}.metric-card strong{display:block;font-size:1.55rem;margin:6px 0}.dbi-grid.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.chart-box{min-height:250px}.chart-box svg{width:100%;height:250px;overflow:visible}.chart-grid{stroke:currentColor;opacity:.12}.chart-line{fill:none;stroke:currentColor;stroke-width:2.5}.chart-fill{fill:currentColor;opacity:.08}.chart-label{font-size:11px;fill:currentColor;opacity:.65}.forecast-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.forecast-grid div{padding:10px;border-radius:9px;background:rgba(127,127,127,.08)}.bar-list,.rank-list,.capability-list,.insight-grid{display:grid;gap:9px}.bar-row,.rank-row{display:grid;grid-template-columns:minmax(120px,1fr) 2fr auto;gap:10px;align-items:center}.bar-track{height:9px;border-radius:99px;background:rgba(127,127,127,.14);overflow:hidden}.bar-fill{height:100%;background:currentColor;opacity:.55}.rank-row{grid-template-columns:minmax(140px,1fr) 3fr auto}.insight-grid{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}.insight{border-left:4px solid currentColor;padding:12px;background:rgba(127,127,127,.07);border-radius:8px}.insight.warning{border-left-width:6px}.capability{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid rgba(127,127,127,.12)}.capability strong.ok{opacity:1}.capability strong.no{opacity:.45}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px 10px;border-bottom:1px solid rgba(127,127,127,.12);white-space:nowrap}.retention-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0}.retention-summary div{background:rgba(127,127,127,.07);border-radius:9px;padding:10px}.danger-soft{border-color:#b45309!important}.maintenance-note{opacity:.7}.action-result{max-height:220px;overflow:auto;white-space:pre-wrap;background:rgba(0,0,0,.18);padding:12px;border-radius:9px}.empty{opacity:.6;text-align:center}@media(max-width:900px){.dbi-grid.two{grid-template-columns:1fr}.dbi-header{align-items:flex-start;flex-direction:column}.bar-row,.rank-row{grid-template-columns:1fr}.forecast-grid{grid-template-columns:1fr}}
+.cap-database-intelligence .cap-home-main{min-width:0}
+.cap-database-intelligence .cap-home-content{width:100%;min-width:0}
+.dbi-shell>*{min-width:0}
+.metric-card,.panel{min-width:0;overflow:hidden}
+.metric-card strong,.metric-card small,.bar-row span,.rank-row span,.capability span,.friendly-name{overflow-wrap:anywhere;word-break:break-word}
+.friendly-name{display:block;font-weight:600;color:var(--text,#eef3fb)}
+.table-wrap{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.table-wrap table{min-width:680px}
+.dbi-actions select,.dbi-actions button,.maintenance-actions button{font:inherit}
+.cap-database-intelligence .cap-home-title>div{min-width:0}
+.cap-database-intelligence .cap-home-title p{margin:3px 0 0;color:var(--muted,#8d9aaf);overflow-wrap:anywhere}
+@media(max-width:760px){
+  .cap-database-intelligence .cap-home-topbar{height:auto;min-height:64px;padding:10px 12px;gap:8px;align-items:flex-start}
+  .cap-database-intelligence .cap-home-title{gap:9px;min-width:0;flex:1}
+  .cap-database-intelligence .cap-home-title h1{font-size:17px;line-height:1.2}
+  .cap-database-intelligence .cap-home-title p{font-size:12px;line-height:1.35}
+  .cap-database-intelligence .cap-top-status{flex:0 0 auto}
+  .cap-database-intelligence .cap-user{padding-left:8px;max-width:92px}
+  .cap-database-intelligence .cap-user strong,.cap-database-intelligence .cap-user span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dbi-shell{gap:12px}
+  .dbi-header{gap:12px}
+  .dbi-header h2{font-size:18px;line-height:1.25}
+  .dbi-actions{width:100%}
+  .dbi-actions select,.dbi-actions button{flex:1 1 140px}
+  .summary-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .metric-card,.panel{padding:12px;border-radius:10px}
+  .metric-card strong{font-size:1.28rem}
+  .metric-card span,.metric-card small{font-size:11px}
+  .panel-title{align-items:flex-start}
+  .panel-title h2{font-size:16px}
+  .panel-title span{font-size:11px;line-height:1.35}
+  .chart-box{min-height:210px}
+  .chart-box svg{height:210px}
+  .bar-row,.rank-row{grid-template-columns:minmax(0,1fr) auto;gap:6px 10px;padding:6px 0}
+  .bar-row .bar-track,.rank-row .bar-track{grid-column:1/-1;grid-row:2}
+  .bar-row strong,.rank-row strong{grid-column:2;grid-row:1}
+  .bar-row span,.rank-row span{grid-column:1;grid-row:1;min-width:0}
+  .insight-grid{grid-template-columns:1fr}
+  .retention-summary{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .maintenance-actions{display:grid;grid-template-columns:1fr 1fr}
+  .maintenance-actions button{width:100%;min-height:44px}
+  .table-wrap{overflow:visible}
+  .table-wrap table{min-width:0;width:100%}
+  .table-wrap thead{display:none}
+  .table-wrap tbody,.table-wrap tr,.table-wrap td{display:block;width:100%}
+  .table-wrap tr{padding:8px 0;border-bottom:1px solid rgba(127,127,127,.18)}
+  .table-wrap tr:last-child{border-bottom:0}
+  .table-wrap td{display:grid;grid-template-columns:minmax(92px,38%) minmax(0,1fr);gap:10px;padding:6px 0;border:0;white-space:normal;text-align:right;align-items:start}
+  .table-wrap td::before{content:attr(data-label);color:var(--muted,#8d9aaf);font-size:11px;text-align:left}
+  .table-wrap td .friendly-name{text-align:right}
+  .action-result{font-size:11px;max-height:180px}
+}
+@media(max-width:480px){
+  .cap-database-intelligence .cap-top-status{display:none}
+  .cap-database-intelligence .cap-home-content{padding:9px}
+  .summary-grid{grid-template-columns:1fr 1fr}
+  .metric-card{padding:10px}
+  .metric-card strong{font-size:1.18rem}
+  .forecast-grid{grid-template-columns:1fr}
+  .retention-summary{grid-template-columns:1fr}
+  .maintenance-actions{grid-template-columns:1fr}
+  .dbi-actions{display:grid;grid-template-columns:1fr}
+  .dbi-actions select,.dbi-actions button{width:100%}
+}
+@media(max-width:360px){
+  .summary-grid{grid-template-columns:1fr}
+}
