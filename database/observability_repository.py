@@ -92,15 +92,16 @@ class ObservabilityRepository:
     def _unchanged(latest: Mapping[str, Any] | None, sample: Mapping[str, Any], dimensions_json: str) -> bool:
         if latest is None:
             return False
+        value = dict(latest)
         try:
-            same_value = float(latest["value_double"]) == float(sample["value"])
+            same_value = float(value["value_double"]) == float(sample["value"])
         except (KeyError, TypeError, ValueError):
             return False
         return (
             same_value
-            and str(latest.get("unit") or "") == str(sample["unit"])
-            and str(latest.get("metric_type") or "") == str(sample["metric_type"])
-            and str(latest.get("dimensions_json") or "{}") == dimensions_json
+            and str(value.get("unit") or "") == str(sample["unit"])
+            and str(value.get("metric_type") or "") == str(sample["metric_type"])
+            and str(value.get("dimensions_json") or "{}") == dimensions_json
         )
 
     def ingest_agent_samples(self, agent_id: str, raw_samples: list[Mapping[str, Any]]) -> dict[str, Any]:
