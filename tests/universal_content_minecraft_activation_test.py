@@ -252,6 +252,8 @@ class MinecraftActivationTest(unittest.TestCase):
                 "ports": {
                     "game": {"port": 25565, "protocol": "tcp"},
                     "rcon": {"port": 25575, "protocol": "tcp"},
+                    "query": {"port": 25576, "protocol": "udp"},
+                    "votifier": {"port": 25577, "protocol": "tcp"},
                 },
             }
             instance = {"instance_id": "mc1", "agent_id": "agent-1", "environment_id": "minecraft.java.paper", "desired_state": "stopped"}

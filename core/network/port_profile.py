@@ -283,6 +283,12 @@ class PortProfile:
                     raise ValueError("derived network application requires valid port and from roles")
                 applications.append(NetworkApplication(kind=kind, port=port, derived_from=derived_from))
 
+            elif kind == "reserve":
+                port = str(item.get("port", "")).strip().lower()
+                if port not in names:
+                    raise ValueError("reserve network application requires a valid port role")
+                applications.append(NetworkApplication(kind=kind, port=port))
+
             else:
                 raise ValueError(
                     f"unsupported network application: {kind}"
@@ -291,7 +297,7 @@ class PortProfile:
         if "apply" in raw:
             referenced: set[str] = set()
             for application in applications:
-                if application.kind == "derived" and application.port:
+                if application.kind in {"derived", "reserve"} and application.port:
                     referenced.add(application.port)
                     continue
                 source = application.template if application.kind == "argument" else application.value

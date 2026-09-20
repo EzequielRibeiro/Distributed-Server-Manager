@@ -16,13 +16,13 @@ def load_module(platform:str,name:str):
  finally:sys.path.remove(str(runtime))
 
 def context(install:Path,state:Path,runtime_id:str)->dict:
- return {"install_path":str(install),"content_root":str(install),"instance_state_root":str(state),"ports":{"game":{"port":25565,"protocol":"tcp"},"rcon":{"port":25566,"protocol":"tcp"}},"catalog_runtime_policy":{"runtime_id":runtime_id,"engine":"java"},"environment":{}}
+ return {"install_path":str(install),"content_root":str(install),"instance_state_root":str(state),"ports":{"game":{"port":25565,"protocol":"tcp"},"rcon":{"port":25566,"protocol":"tcp"},"query":{"port":25567,"protocol":"udp"},"votifier":{"port":25568,"protocol":"tcp"}},"catalog_runtime_policy":{"runtime_id":runtime_id,"engine":"java"},"environment":{}}
 
 class MinecraftJavaInstanceIsolationTest(unittest.TestCase):
  def test_all_java_environment_ids_are_registered_on_linux_and_windows(self):
   for platform in ("linux","windows"):
    registry=load_module(platform,"registry");supported=set(registry.supported_profiles());self.assertTrue(set(JAVA_IDS).issubset(supported),(platform,supported))
-   expected_version=2 if platform=="linux" else 1
+   expected_version=3 if platform=="linux" else 2
    for runtime_id in JAVA_IDS:self.assertEqual(registry.resolve_profile({"game_id":"minecraft","environment_id":runtime_id}).profile_version,expected_version)
 
  def test_two_instances_share_provider_seed_but_not_working_state(self):

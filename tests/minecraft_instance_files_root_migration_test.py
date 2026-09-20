@@ -43,6 +43,8 @@ class MinecraftInstanceFilesRootMigrationTest(unittest.TestCase):
             "ports": {
                 "game": {"port": 25565, "protocol": "tcp"},
                 "rcon": {"port": 25566, "protocol": "tcp"},
+                "query": {"port": 25567, "protocol": "udp"},
+                "votifier": {"port": 25568, "protocol": "tcp"},
             },
             "catalog_runtime_policy": {
                 "runtime_id": runtime_id,
@@ -73,7 +75,7 @@ class MinecraftInstanceFilesRootMigrationTest(unittest.TestCase):
         migrated, changed = game_runtime.migrate_runtime_spec(self.config, legacy)
 
         self.assertTrue(changed)
-        self.assertEqual(migrated["profile_version"], 2)
+        self.assertEqual(migrated["profile_version"], 3)
         self.assertEqual(migrated["profile_migrated_from_version"], 1)
         self.assertEqual(migrated["files_root"], migrated["working_directory"])
         self.assertEqual(

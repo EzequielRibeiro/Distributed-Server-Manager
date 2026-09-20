@@ -112,6 +112,32 @@ class InstanceNetworkTest(
                 24000,
             )
 
+    def test_reserved_only_port_is_exposed_without_materializing_plugin_config(self):
+        with tempfile.TemporaryDirectory() as temp:
+            instance = Path(temp)
+            result = apply_instance_network(
+                instance,
+                {
+                    "network": {
+                        "allocation": "block",
+                        "block_size": 2,
+                        "ports": [
+                            {"name": "game", "protocol": "tcp", "offset": 0},
+                            {"name": "votifier", "protocol": "tcp", "offset": 1},
+                        ],
+                        "apply": [
+                            {"kind": "argument", "template": "--port={game}"},
+                            {"kind": "reserve", "port": "votifier"},
+                        ],
+                    }
+                },
+                {"game": 25565, "votifier": 25566},
+            )
+
+            self.assertEqual(result["arguments"], ["--port=25565"])
+            self.assertEqual(result["environment"]["PORT_VOTIFIER"], 25566)
+            self.assertFalse((instance / "plugins" / "Votifier" / "config.yml").exists())
+
     def test_properties_are_written(self):
         with tempfile.TemporaryDirectory() as temp:
             instance = Path(temp)

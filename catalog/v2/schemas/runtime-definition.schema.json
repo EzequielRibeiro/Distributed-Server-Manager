@@ -659,6 +659,23 @@
               "pattern": "^[a-z][a-z0-9_]{0,63}$"
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "port"
+          ],
+          "properties": {
+            "kind": {
+              "const": "reserve"
+            },
+            "port": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,63}$"
+            }
+          }
         }
       ]
     },

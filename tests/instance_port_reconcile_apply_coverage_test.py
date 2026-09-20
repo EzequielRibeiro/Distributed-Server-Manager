@@ -45,16 +45,26 @@ class _Result:
 
 
 class _Session:
-    def __init__(self):
+    def __init__(self, *, status="offline", existing=None, others=None):
         self.updated_metadata = None
+        self.status = status
+        self.existing = list(existing or [
+            {"name": "game", "protocol": "udp", "port": 24010, "bind_address": "0.0.0.0"},
+            {"name": "rcon", "protocol": "tcp", "port": 24011, "bind_address": "0.0.0.0"},
+            {"name": "rest_api", "protocol": "tcp", "port": 24012, "bind_address": "0.0.0.0"},
+        ])
+        self.others = list(others or [])
+        self.deleted = False
+        self.inserted = []
 
     def execute(self, sql, params=()):
         normalized = " ".join(str(sql).split())
-        if normalized.startswith("SELECT id,node_id,agent_id,metadata_json FROM instances"):
+        if normalized.startswith("SELECT id,node_id,agent_id,status,metadata_json FROM instances"):
             return _Result(one={
                 "id": "cli-000001-palworld-001",
                 "node_id": "horizon-server",
                 "agent_id": "agent-horizon-server",
+                "status": self.status,
                 "metadata_json": "{}",
             })
         if normalized.startswith("SELECT protocol,start_port,end_port FROM agent_port_ranges"):
@@ -63,13 +73,15 @@ class _Session:
                 {"protocol": "udp", "start_port": 24000, "end_port": 24999},
             ])
         if normalized.startswith("SELECT name,protocol,port,bind_address FROM instance_ports"):
-            return _Result(many=[
-                {"name": "game", "protocol": "udp", "port": 24010, "bind_address": "0.0.0.0"},
-                {"name": "rcon", "protocol": "tcp", "port": 24011, "bind_address": "0.0.0.0"},
-                {"name": "rest_api", "protocol": "tcp", "port": 24012, "bind_address": "0.0.0.0"},
-            ])
+            return _Result(many=self.existing)
         if normalized.startswith("SELECT protocol,port FROM instance_ports"):
-            return _Result(many=[])
+            return _Result(many=self.others)
+        if normalized.startswith("DELETE FROM instance_ports"):
+            self.deleted = True
+            return _Result()
+        if normalized.startswith("INSERT INTO instance_ports"):
+            self.inserted.append(tuple(params))
+            return _Result()
         if normalized.startswith("UPDATE instances SET metadata_json="):
             self.updated_metadata = params[0]
             return _Result()
@@ -100,10 +112,10 @@ class _Backend:
 
 
 class _Repository:
-    def __init__(self):
+    def __init__(self, session=None):
         self.backend = _Backend()
         self.dialect = _Dialect()
-        self.test_session = _Session()
+        self.test_session = session or _Session()
         self.initialized = False
 
     def initialize(self):
@@ -166,7 +178,76 @@ class InstancePortReconcileApplyCoverageTest(unittest.TestCase):
         )
         self.assertEqual(result["inserted"], [])
         self.assertFalse(result["changed"])
+        self.assertFalse(result["relocated"])
         self.assertIsNotNone(repository.test_session.updated_metadata)
+
+    def test_expanded_minecraft_profile_relocates_offline_legacy_block_on_collision(self):
+        network = {
+            "allocation": "block",
+            "block_size": 4,
+            "ports": [
+                {"name": "game", "protocol": "tcp", "offset": 0},
+                {"name": "rcon", "protocol": "tcp", "offset": 1},
+                {"name": "query", "protocol": "udp", "offset": 2},
+                {"name": "votifier", "protocol": "tcp", "offset": 3},
+            ],
+        }
+        session = _Session(
+            existing=[
+                {"name": "game", "protocol": "tcp", "port": 24000, "bind_address": "0.0.0.0"},
+                {"name": "rcon", "protocol": "tcp", "port": 24001, "bind_address": "0.0.0.0"},
+            ],
+            others=[
+                {"protocol": "udp", "port": 24002},
+                {"protocol": "udp", "port": 24003},
+            ],
+        )
+        repository = _Repository(session)
+
+        result = reconcile_instance_ports(
+            repository,
+            "cli-000001-minecraft-001",
+            network,
+            occupied_ports_provider=lambda *_args, **_kwargs: set(),
+        )
+
+        self.assertTrue(result["changed"])
+        self.assertTrue(result["relocated"])
+        self.assertEqual(result["previous_ports"], {"game": 24000, "rcon": 24001})
+        self.assertEqual(
+            result["ports"],
+            {"game": 24004, "rcon": 24005, "query": 24006, "votifier": 24007},
+        )
+        self.assertTrue(session.deleted)
+        self.assertEqual(len(session.inserted), 4)
+
+    def test_expanded_profile_refuses_relocation_while_instance_is_running(self):
+        network = {
+            "allocation": "block",
+            "block_size": 4,
+            "ports": [
+                {"name": "game", "protocol": "tcp", "offset": 0},
+                {"name": "rcon", "protocol": "tcp", "offset": 1},
+                {"name": "query", "protocol": "udp", "offset": 2},
+                {"name": "votifier", "protocol": "tcp", "offset": 3},
+            ],
+        }
+        repository = _Repository(_Session(
+            status="running",
+            existing=[
+                {"name": "game", "protocol": "tcp", "port": 24000, "bind_address": "0.0.0.0"},
+                {"name": "rcon", "protocol": "tcp", "port": 24001, "bind_address": "0.0.0.0"},
+            ],
+            others=[{"protocol": "udp", "port": 24002}],
+        ))
+
+        with self.assertRaisesRegex(Exception, "cannot relocate network block while instance status is running"):
+            reconcile_instance_ports(
+                repository,
+                "cli-000001-minecraft-001",
+                network,
+                occupied_ports_provider=lambda *_args, **_kwargs: set(),
+            )
 
 
 if __name__ == "__main__":

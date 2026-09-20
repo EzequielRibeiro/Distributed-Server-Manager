@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
-from core.network.port_allocator import PortRange
+from core.network.port_allocator import PortAllocationError, PortRange, allocate_port_profile
 from core.network.port_profile import PortProfile
 
 
@@ -133,7 +133,7 @@ def reconcile_instance_ports(
     with repository.session(transaction=True) as session:
         lock = " FOR UPDATE" if repository.backend.name in {"postgresql", "mysql"} else ""
         instance = session.execute(
-            "SELECT id,node_id,agent_id,metadata_json FROM instances "
+            "SELECT id,node_id,agent_id,status,metadata_json FROM instances "
             f"WHERE id={ph}{lock}",
             (str(instance_id),),
         ).fetchone()
@@ -186,33 +186,98 @@ def reconcile_instance_ports(
         # Derive the legacy block first without OS occupancy so we know exactly
         # which missing ports need inspection. Existing ports may legitimately
         # be listening for this instance and must not be treated as conflicts.
-        preliminary = plan_instance_port_reconcile(
-            profile,
-            existing_rows,
-            ranges,
-            conflicts=conflicts,
-        )
         requirements = {item.name: item for item in profile.ports}
-        occupied: dict[str, set[int]] = {"tcp": set(), "udp": set()}
-        for name in preliminary.missing:
-            requirement = requirements[name]
-            port = preliminary.ports[name]
-            observed = occupied_ports_provider(
-                instance["agent_id"],
-                instance["node_id"],
-                requirement.protocol,
-                port,
-                port,
-            )
-            occupied[requirement.protocol].update(int(value) for value in observed or set())
-
-        plan = plan_instance_port_reconcile(
-            profile,
-            existing_rows,
-            ranges,
-            conflicts=conflicts,
-            occupied=occupied,
+        relocatable_messages = (
+            "derived reservation collides with another instance",
+            "derived reservation is occupied by an unmanaged socket",
+            "derived reservation is outside active Agent ranges",
         )
+        relocation_error: InstancePortReconcileError | None = None
+        occupied: dict[str, set[int]] = {"tcp": set(), "udp": set()}
+        try:
+            preliminary = plan_instance_port_reconcile(
+                profile,
+                existing_rows,
+                ranges,
+                conflicts=conflicts,
+            )
+            for name in preliminary.missing:
+                requirement = requirements[name]
+                port = preliminary.ports[name]
+                observed = occupied_ports_provider(
+                    instance["agent_id"],
+                    instance["node_id"],
+                    requirement.protocol,
+                    port,
+                    port,
+                )
+                occupied[requirement.protocol].update(int(value) for value in observed or set())
+            try:
+                plan = plan_instance_port_reconcile(
+                    profile,
+                    existing_rows,
+                    ranges,
+                    conflicts=conflicts,
+                    occupied=occupied,
+                )
+            except InstancePortReconcileError as exc:
+                if not str(exc).startswith(relocatable_messages):
+                    raise
+                relocation_error = exc
+        except InstancePortReconcileError as exc:
+            if not str(exc).startswith(relocatable_messages):
+                raise
+            relocation_error = exc
+
+        relocated = False
+        previous_ports: dict[str, int] = {}
+        if relocation_error is not None:
+            status = str(instance.get("status") or "").strip().lower()
+            if status not in {"offline", "stopped"}:
+                raise InstancePortReconcileError(
+                    f"cannot relocate network block while instance status is {status or 'unknown'}"
+                ) from relocation_error
+
+            full_occupied: dict[str, set[int]] = {"tcp": set(), "udp": set()}
+            for item in ranges:
+                observed = occupied_ports_provider(
+                    instance["agent_id"],
+                    instance["node_id"],
+                    item.protocol,
+                    item.start_port,
+                    item.end_port,
+                )
+                full_occupied[item.protocol].update(int(value) for value in observed or set())
+
+            for row in existing_rows:
+                protocol = str(row["protocol"]).lower()
+                port = int(row["port"])
+                if port in full_occupied.get(protocol, set()):
+                    raise InstancePortReconcileError(
+                        "cannot relocate network block while an existing reserved port is listening"
+                    ) from relocation_error
+                previous_ports[str(row["name"])] = port
+
+            try:
+                allocation = allocate_port_profile(
+                    profile,
+                    ranges,
+                    reserved=conflicts,
+                    occupied=full_occupied,
+                )
+            except PortAllocationError as exc:
+                raise InstancePortReconcileError(str(exc)) from exc
+
+            session.execute(
+                "DELETE FROM instance_ports " f"WHERE instance_id={ph}",
+                (str(instance_id),),
+            )
+            plan = ReconcilePlan(
+                base_port=allocation.base_port,
+                ports=dict(allocation.ports),
+                missing=tuple(item.name for item in profile.ports),
+            )
+            relocated = True
 
         for name in plan.missing:
             requirement = requirements[name]
@@ -250,6 +315,8 @@ def reconcile_instance_ports(
         "ports": dict(plan.ports),
         "inserted": list(plan.missing),
         "changed": bool(plan.missing),
+        "relocated": relocated,
+        "previous_ports": previous_ports,
     }
 
 

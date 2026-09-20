@@ -35,7 +35,7 @@ class MinecraftJavaRconFoundationTest(unittest.TestCase):
 
             self.assertEqual(
                 network["block_size"],
-                2,
+                4,
                 data["id"],
             )
 
@@ -62,6 +62,26 @@ class MinecraftJavaRconFoundationTest(unittest.TestCase):
                     "protocol": "tcp",
                     "offset": 1,
                     "exposure": "none",
+                },
+                data["id"],
+            )
+            self.assertEqual(
+                ports["query"],
+                {
+                    "name": "query",
+                    "protocol": "udp",
+                    "offset": 2,
+                    "exposure": "public",
+                },
+                data["id"],
+            )
+            self.assertEqual(
+                ports["votifier"],
+                {
+                    "name": "votifier",
+                    "protocol": "tcp",
+                    "offset": 3,
+                    "exposure": "public",
                 },
                 data["id"],
             )
@@ -99,6 +119,14 @@ class MinecraftJavaRconFoundationTest(unittest.TestCase):
                         "port": 25566,
                         "protocol": "tcp",
                     },
+                    "query": {
+                        "port": 25567,
+                        "protocol": "udp",
+                    },
+                    "votifier": {
+                        "port": 25568,
+                        "protocol": "tcp",
+                    },
                 },
                 "catalog_runtime_policy": {
                     "runtime_id": "minecraft.java.vanilla",
@@ -117,6 +145,7 @@ class MinecraftJavaRconFoundationTest(unittest.TestCase):
             spec["catalog_variables"] = {
                 "PORT_GAME": "25565",
                 "PORT_RCON": "25566",
+                "PORT_QUERY": "25567",
             }
 
             materialize_network_properties(spec)
@@ -135,6 +164,10 @@ class MinecraftJavaRconFoundationTest(unittest.TestCase):
             )
             self.assertIn(
                 "broadcast-rcon-to-ops=false",
+                text,
+            )
+            self.assertIn(
+                "query.port=25567",
                 text,
             )
             self.assertNotIn(
