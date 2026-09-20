@@ -248,13 +248,12 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
         } else 0o644
         mapping.append((source, dest, mode, rel))
 
+    for source in sorted((package_root / "agent" / "common").glob("*.py")):
+        rel = source.relative_to(package_root).as_posix()
+        dest = INSTALL_ROOT / "common" / source.name
+        mapping.append((source, dest, 0o644, rel))
+
     fixed = [
-        (
-            package_root / "agent/common/identity.py",
-            INSTALL_ROOT / "common/identity.py",
-            0o644,
-            "agent/common/identity.py",
-        ),
         (
             package_root / "agent/privileged/materialize_instance.py",
             INSTALL_ROOT / "privileged/materialize_instance.py",
