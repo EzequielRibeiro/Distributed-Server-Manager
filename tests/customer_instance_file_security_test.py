@@ -63,6 +63,17 @@ class CustomerInstanceFileSecurityTest(unittest.TestCase):
         self.assertIn("archive_verdict=require_clean(ap,security_context)", source)
         self.assertIn("expanded_verdict=require_clean(staging,security_context)", source)
 
+    def test_customer_ui_uses_agent_usage_bytes_and_human_root_label(self):
+        source = (ROOT / "dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
+        self.assertIn("usage.usage_bytes??usage.used_bytes", source)
+        self.assertIn('filePath==="."?"/":\`/\${filePath}\`', source)
+
+    def test_customer_ui_builds_child_directory_path_and_disables_up_at_root(self):
+        source = (ROOT / "dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
+        self.assertIn('const target=filePath==="."?name:`${filePath}/${name}`', source)
+        self.assertIn('$("file-up").disabled=filePath==="."', source)
+        self.assertNotIn('fileCommand("mkdir",filePath,null,{name})', source)
+
     def test_customer_ui_exposes_extract_only_with_permission(self):
         source = (ROOT / "dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
         self.assertIn('can("files.extract")', source)
