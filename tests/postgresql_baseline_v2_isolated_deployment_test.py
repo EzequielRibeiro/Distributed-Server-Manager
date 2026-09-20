@@ -95,6 +95,7 @@ def main() -> int:
         "event_consumer_cursors", "notification_outbox",
         "instance_update_policy", "instance_update_state", "instance_update_runs",
         "content_bundles", "content_bundle_revisions",
+        "database_metrics_daily",
     }
     missing = sorted(required - tables)
     if missing:
