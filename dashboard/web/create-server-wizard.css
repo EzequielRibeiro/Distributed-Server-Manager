@@ -110,6 +110,140 @@
   border-color: var(--lime);
 }
 
+.runtime-distribution-card {
+  position: relative;
+  align-content: start;
+  gap: .8rem;
+  min-height: 188px;
+  padding: 1rem;
+  overflow: hidden;
+  transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
+}
+
+.runtime-distribution-card:hover {
+  transform: translateY(-2px);
+  border-color: #477461;
+  box-shadow: 0 12px 28px rgba(2, 11, 9, .28);
+}
+
+.runtime-distribution-card:focus-visible {
+  outline: 2px solid var(--lime);
+  outline-offset: 2px;
+}
+
+.runtime-distribution-card.selected {
+  border-color: var(--lime);
+  background: linear-gradient(145deg, rgba(24, 65, 52, .98), rgba(14, 42, 35, .98));
+  box-shadow: 0 0 0 1px rgba(184, 233, 134, .16), 0 14px 34px rgba(2, 11, 9, .34);
+}
+
+.runtime-card-header {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  min-width: 0;
+}
+
+.runtime-card-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(184, 233, 134, .2);
+  border-radius: 13px;
+  background: rgba(184, 233, 134, .08);
+  color: var(--lime);
+  font-size: 1rem;
+  font-weight: 900;
+  letter-spacing: -.04em;
+}
+
+.runtime-card-heading {
+  display: grid;
+  gap: .3rem;
+  min-width: 0;
+}
+
+.runtime-card-heading > strong {
+  overflow: hidden;
+  font-size: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-card-tag {
+  justify-self: start;
+  padding: .2rem .45rem;
+  border: 1px solid rgba(120, 208, 140, .25);
+  border-radius: 999px;
+  background: rgba(120, 208, 140, .08);
+  color: var(--green);
+  font-size: .67rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.runtime-card-summary {
+  min-height: 2.7em;
+}
+
+.runtime-capabilities {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .45rem;
+  margin-top: auto;
+}
+
+.runtime-capability {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: .38rem .48rem;
+  border: 1px solid var(--line);
+  border-radius: .5rem;
+  background: rgba(4, 17, 14, .34);
+  font-size: .72rem;
+  font-weight: 750;
+  line-height: 1.2;
+}
+
+.runtime-capability.supported {
+  border-color: rgba(120, 208, 140, .3);
+  color: #a9e5b5;
+}
+
+.runtime-capability.unsupported {
+  color: #718982;
+}
+
+.runtime-distribution-card[data-runtime="forge"] .runtime-card-mark,
+.runtime-distribution-card[data-runtime="neoforge"] .runtime-card-mark {
+  background: rgba(224, 184, 94, .1);
+  border-color: rgba(224, 184, 94, .25);
+  color: #e4c77f;
+}
+
+.runtime-distribution-card[data-runtime="paper"] .runtime-card-mark,
+.runtime-distribution-card[data-runtime="purpur"] .runtime-card-mark,
+.runtime-distribution-card[data-runtime="folia"] .runtime-card-mark {
+  background: rgba(120, 176, 208, .1);
+  border-color: rgba(120, 176, 208, .25);
+  color: #a9d4e7;
+}
+
+.runtime-distribution-card[data-runtime="arclight"] .runtime-card-mark,
+.runtime-distribution-card[data-runtime="youer"] .runtime-card-mark {
+  background: rgba(184, 233, 134, .12);
+  border-color: rgba(184, 233, 134, .35);
+}
+
+#runtime-types.runtime-selector-grid {
+  grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+  gap: .8rem;
+}
+
 .runtime-field {
   display: grid;
   grid-template-columns: minmax(90px, auto) minmax(180px, 320px);
@@ -170,6 +304,10 @@
 }
 
 @media (max-width: 680px) {
+  .runtime-distribution-card {
+    min-height: 0;
+  }
+
   .runtime-field {
     grid-template-columns: 1fr;
   }
