@@ -240,9 +240,9 @@ preflight_validate_process_and_database_guard()
 
     # shellcheck source=/dev/null
     source "${guard}"
-    process_guard_pre_update
+    process_guard_pre_update_allow_managed
 
-    printf 'PRECHECK OK: banco compatível e nenhuma instância de jogo ativa\n'
+    printf 'PRECHECK OK: banco compatível; instâncias gerenciadas ativas serão drenadas automaticamente\n'
 }
 
 main()
