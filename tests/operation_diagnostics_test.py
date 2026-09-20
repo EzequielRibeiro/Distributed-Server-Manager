@@ -27,7 +27,7 @@ class OperationDiagnosticsTest(unittest.TestCase):
         self.assertEqual(value["nested"]["safe"], "ok")
 
     def test_schema_exists_for_every_supported_database(self):
-        for backend in ("sqlite", "postgresql", "mysql"):
+        for backend in ("sqlite", "postgresql", "mysql", "mariadb"):
             ddl = operation_diagnostics_ddl(backend)
             self.assertIn("operation_diagnostics", ddl)
             self.assertIn("traceback", ddl)
