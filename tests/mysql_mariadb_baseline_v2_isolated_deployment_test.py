@@ -102,6 +102,7 @@ def main() -> int:
                 "content_bundles",
                 "instance_maintenance_policy",
                 "yarax_admin_operations",
+                "dayz_native_restart_commands",
                 "baseline_upgrades",
             }
             missing = sorted(required - tables)
@@ -174,12 +175,11 @@ def main() -> int:
             ):
                 raise AssertionError("backup_jobs backup_id lookup index is missing")
 
-            # Prove that a registered post-baseline upgrade can be replayed
-            # against the real server flavor. Version 14 is safe to reconstruct:
-            # remove its ledger entry and table, then let the generic upgrade
-            # engine restore both.
-            cursor.execute("DELETE FROM baseline_upgrades WHERE version=%s", (14,))
-            cursor.execute("DROP TABLE yarax_admin_operations")
+            # Prove that the latest registered post-baseline upgrade can be replayed
+            # against the real server flavor. Remove v15 and its table, then let
+            # the generic upgrade engine restore both without creating a ledger gap.
+            cursor.execute("DELETE FROM baseline_upgrades WHERE version=%s", (15,))
+            cursor.execute("DROP TABLE dayz_native_restart_commands")
             connection.commit()
 
             marker = rows(cursor, "SELECT checksum FROM schema_baseline LIMIT 1")[0]
@@ -189,16 +189,16 @@ def main() -> int:
                 installed_checksum=str(marker["checksum"]),
             )
             connection.commit()
-            if completed != [14]:
-                raise AssertionError(f"expected replay of upgrade 14, got {completed}")
+            if completed != [15]:
+                raise AssertionError(f"expected replay of upgrade 15, got {completed}")
 
             restored = rows(
                 cursor,
                 "SELECT COUNT(*) AS total FROM information_schema.tables "
-                "WHERE table_schema=DATABASE() AND table_name='yarax_admin_operations'",
+                "WHERE table_schema=DATABASE() AND table_name='dayz_native_restart_commands'",
             )[0]
             if int(row_value(restored, "total")) != 1:
-                raise AssertionError("YARA-X admin operations upgrade did not restore its table")
+                raise AssertionError("DayZ native restart upgrade did not restore its table")
 
             restored_ledger = rows(
                 cursor,
