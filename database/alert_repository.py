@@ -298,6 +298,7 @@ class AlertRepository:
         agent_id: str | None = None,
         node_id: str | None = None,
         instance_id: str | None = None,
+        diagnostic_id: str | None = None,
     ) -> dict[str, Any]:
         self.initialize()
         ph = self.dialect.placeholder
@@ -310,13 +311,13 @@ class AlertRepository:
             if current is None:
                 columns = (
                     "id, scope, controller_id, agent_id, node_id, "
-                    "instance_id, rule_id, level, state, message"
+                    "instance_id, rule_id, level, state, message, diagnostic_id"
                 )
                 session.execute(
                     f"INSERT INTO alerts({columns}) VALUES "
-                    f"({self.dialect.parameters(10)})",
+                    f"({self.dialect.parameters(11)})",
                     (alert_id, scope, controller_id, agent_id, node_id,
-                     instance_id, rule_id, level, "OPEN", message),
+                     instance_id, rule_id, level, "OPEN", message, diagnostic_id),
                 )
                 self._event(session, alert_id, "OPEN", level, None,
                             "OPEN", message)
@@ -327,12 +328,12 @@ class AlertRepository:
                     "UPDATE alerts SET "
                     f"scope={ph}, controller_id={ph}, agent_id={ph}, "
                     f"node_id={ph}, instance_id={ph}, rule_id={ph}, "
-                    f"level={ph}, state='OPEN', message={ph}, "
+                    f"level={ph}, state='OPEN', message={ph}, diagnostic_id={ph}, "
                     f"opened_at={now}, updated_at={now}, "
                     "acknowledged_at=NULL, resolved_at=NULL, "
                     f"suppressed_until=NULL WHERE id={ph}",
                     (scope, controller_id, agent_id, node_id, instance_id,
-                     rule_id, level, message, alert_id),
+                     rule_id, level, message, diagnostic_id, alert_id),
                 )
                 self._event(session, alert_id, "REOPEN", level, old_state,
                             "OPEN", message)
@@ -341,14 +342,19 @@ class AlertRepository:
                 old_state = current["state"]
                 session.execute(
                     "UPDATE alerts SET level='CRITICAL', state='OPEN', "
-                    f"message={ph}, updated_at={now}, "
+                    f"message={ph}, diagnostic_id={ph}, updated_at={now}, "
                     f"acknowledged_at=NULL WHERE id={ph}",
-                    (message, alert_id),
+                    (message, diagnostic_id, alert_id),
                 )
                 self._event(session, alert_id, "ESCALATE", "CRITICAL",
                             old_state, "OPEN", message)
                 action = "ESCALATE"
             else:
+                if diagnostic_id and str(current.get("diagnostic_id") or "") != str(diagnostic_id):
+                    session.execute(
+                        f"UPDATE alerts SET diagnostic_id={ph}, message={ph}, updated_at={now} WHERE id={ph}",
+                        (diagnostic_id, message, alert_id),
+                    )
                 action = "UNCHANGED"
             row = session.execute(
                 f"SELECT * FROM alerts WHERE id={ph}",
