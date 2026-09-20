@@ -295,6 +295,7 @@ class AlertRepository:
         message: str,
         scope: str,
         controller_id: str,
+        customer_id: str | int | None = None,
         agent_id: str | None = None,
         node_id: str | None = None,
         instance_id: str | None = None,
@@ -310,13 +311,13 @@ class AlertRepository:
             ).fetchone()
             if current is None:
                 columns = (
-                    "id, scope, controller_id, agent_id, node_id, "
+                    "id, scope, controller_id, customer_id, agent_id, node_id, "
                     "instance_id, rule_id, level, state, message, diagnostic_id"
                 )
                 session.execute(
                     f"INSERT INTO alerts({columns}) VALUES "
-                    f"({self.dialect.parameters(11)})",
-                    (alert_id, scope, controller_id, agent_id, node_id,
+                    f"({self.dialect.parameters(12)})",
+                    (alert_id, scope, controller_id, customer_id, agent_id, node_id,
                      instance_id, rule_id, level, "OPEN", message, diagnostic_id),
                 )
                 self._event(session, alert_id, "OPEN", level, None,
@@ -326,13 +327,13 @@ class AlertRepository:
                 old_state = current["state"]
                 session.execute(
                     "UPDATE alerts SET "
-                    f"scope={ph}, controller_id={ph}, agent_id={ph}, "
+                    f"scope={ph}, controller_id={ph}, customer_id={ph}, agent_id={ph}, "
                     f"node_id={ph}, instance_id={ph}, rule_id={ph}, "
                     f"level={ph}, state='OPEN', message={ph}, diagnostic_id={ph}, "
                     f"opened_at={now}, updated_at={now}, "
                     "acknowledged_at=NULL, resolved_at=NULL, "
                     f"suppressed_until=NULL WHERE id={ph}",
-                    (scope, controller_id, agent_id, node_id, instance_id,
+                    (scope, controller_id, customer_id, agent_id, node_id, instance_id,
                      rule_id, level, message, diagnostic_id, alert_id),
                 )
                 self._event(session, alert_id, "REOPEN", level, old_state,

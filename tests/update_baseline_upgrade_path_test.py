@@ -168,6 +168,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (16, "generic_native_restart_commands"),
                     (17, "database_intelligence"),
                     (18, "operation_diagnostics"),
+                    (19, "alert_customer_identity"),
                 ],
             )
 
@@ -212,6 +213,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     {"version": 16, "name": "generic_native_restart_commands"},
                     {"version": 17, "name": "database_intelligence"},
                     {"version": 18, "name": "operation_diagnostics"},
+                    {"version": 19, "name": "alert_customer_identity"},
                 ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
@@ -267,6 +269,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (16, "generic_native_restart_commands"),
                     (17, "database_intelligence"),
                     (18, "operation_diagnostics"),
+                    (19, "alert_customer_identity"),
                 ],
             )
 
@@ -314,6 +317,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (16, "generic_native_restart_commands"),
                     (17, "database_intelligence"),
                     (18, "operation_diagnostics"),
+                    (19, "alert_customer_identity"),
                 ],
             )
 
@@ -350,6 +354,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     {"version": 16, "name": "generic_native_restart_commands"},
                     {"version": 17, "name": "database_intelligence"},
                     {"version": 18, "name": "operation_diagnostics"},
+                    {"version": 19, "name": "alert_customer_identity"},
                 ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
@@ -389,6 +394,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (16, "generic_native_restart_commands"),
                     (17, "database_intelligence"),
                     (18, "operation_diagnostics"),
+                    (19, "alert_customer_identity"),
                 ],
             )
 
@@ -422,6 +428,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     {"version": 16, "name": "generic_native_restart_commands"},
                     {"version": 17, "name": "database_intelligence"},
                     {"version": 18, "name": "operation_diagnostics"},
+                    {"version": 19, "name": "alert_customer_identity"},
                 ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
@@ -455,6 +462,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (16, "generic_native_restart_commands"),
                     (17, "database_intelligence"),
                     (18, "operation_diagnostics"),
+                    (19, "alert_customer_identity"),
                 ],
             )
 

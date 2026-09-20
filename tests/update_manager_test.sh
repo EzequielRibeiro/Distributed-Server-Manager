@@ -174,6 +174,30 @@ tar -xzf "${TMP_DIR}/backup.tar.gz" -C "${TMP_DIR}/opt"
 
 (
     source "${UPDATE}"
+    BACKUP_DIR="${TMP_DIR}/retention-backups"
+    UPDATE_BACKUP_RETENTION=3
+    mkdir -p "${BACKUP_DIR}"
+    for stamp in 20260920-000001 20260920-000002 20260920-000003 20260920-000004 20260920-000005
+    do
+        : >"${BACKUP_DIR}/dsm-before-update-${stamp}.tar.gz"
+        : >"${BACKUP_DIR}/dsm-before-update-${stamp}.database.dump"
+    done
+    : >"${BACKUP_DIR}/manual-preserve.tar.gz"
+
+    prune_update_backups >/dev/null
+
+    [[ "$(find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'dsm-before-update-*.tar.gz' | wc -l)" -eq 3 ]] \
+        || fail "update backup retention did not keep exactly three archives"
+    [[ "$(find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'dsm-before-update-*.database.dump' | wc -l)" -eq 3 ]] \
+        || fail "update backup retention did not prune matching database dumps"
+    [[ -f "${BACKUP_DIR}/dsm-before-update-20260920-000005.tar.gz" ]] \
+        || fail "newest update backup was pruned"
+    [[ -f "${BACKUP_DIR}/manual-preserve.tar.gz" ]] \
+        || fail "backup retention pruned a non-update backup"
+)
+
+(
+    source "${UPDATE}"
     CONFIG_FILE="${TMP_DIR}/dsm.conf"
     DSM_USER="node1"
     DSM_GROUP="node1"

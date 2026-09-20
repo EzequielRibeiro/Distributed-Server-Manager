@@ -33,7 +33,17 @@ class _Session:
 
     def fetchone(self):
         if "service_contracts" in self.sql:
-            return _Row(id="contract-1", customer_id=42, status="active", metadata_json=json.dumps({"resources": {"cpu_cores": 4, "memory_bytes": 8589934592, "storage_bytes": 53687091200}}))
+            return _Row(id="contract-1", customer_id=42, game_id="dayz", status="active", metadata_json=json.dumps({"resources": {"cpu_cores": 4, "memory_bytes": 8589934592, "storage_bytes": 53687091200}}))
+        return _Row(id=42, controller_id="controller-a", status="active")
+
+
+class _ProfileSession(_Session):
+    def fetchone(self):
+        if "service_contracts" in self.sql:
+            return _Row(
+                id="contract-1", customer_id=42, game_id="minecraft", status="active",
+                metadata_json=json.dumps({"resource_profile_id": "low"}),
+            )
         return _Row(id=42, controller_id="controller-a", status="active")
 
 
@@ -64,6 +74,12 @@ class _Repository:
         return [row for row in rows if region_id is None or row["region_id"] == region_id]
 
 
+class _ProfileRepository(_Repository):
+    @contextmanager
+    def session(self):
+        yield _ProfileSession()
+
+
 def _decision(*_args, **kwargs):
     region = kwargs.get("preferred_region_id")
     if region == "us-east":
@@ -90,6 +106,20 @@ class CustomerGeographicPlacementTest(unittest.TestCase):
         serialized = json.dumps(payload)
         for secret in ("secret-agent-sp", "secret-agent-us", "secret-node-sp", "secret-node-us", "10.0.0.10", "10.0.0.20", "secret-fingerprint", "secret-dc-sp", "secret-dc-us"):
             self.assertNotIn(secret, serialized)
+
+    def test_contract_profile_is_expanded_before_placement_discovery(self):
+        with patch("customer_placement_locations.LocationRepository", _ProfileRepository), \
+             patch("customer_placement_locations.resolve_catalog_resource_profile", return_value=("low", {"id": "low", "name": "Low", "cpu_cores": 2, "memory_mb": 4096, "storage_mb": 20480}, {})), \
+             patch("customer_placement_locations.requirements_for_instance", return_value=PlacementRequirements()) as requirements, \
+             patch("customer_placement_locations.choose_agent_for_instance", side_effect=_decision):
+            customer_placement_locations(
+                {"role": "customer", "scope_id": "CLI-000042"}, object(),
+                game_id="minecraft", runtime_id="minecraft.java.neoforge", contract_id="contract-1",
+            )
+        resources = requirements.call_args.kwargs["resources"]
+        self.assertEqual(resources["cpu_threads"], 2)
+        self.assertEqual(resources["ram_bytes"], 4096 * 1024 * 1024)
+        self.assertEqual(resources["storage_bytes"], 20480 * 1024 * 1024)
 
     def test_unavailable_region_is_not_recommended(self):
         def choose(*args, **kwargs):

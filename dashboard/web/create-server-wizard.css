@@ -30,3 +30,152 @@
 .runtime-placement-status[data-state="failed"] {
   font-weight: 600;
 }
+
+.runtime-create-panel .instance-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.runtime-step {
+  display: grid;
+  gap: .8rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: .8rem;
+  background: rgba(7, 22, 19, .28);
+}
+
+.runtime-step-header {
+  display: flex;
+  align-items: flex-start;
+  gap: .75rem;
+}
+
+.runtime-step-header > div {
+  display: grid;
+  gap: .2rem;
+}
+
+.runtime-step-header strong,
+.runtime-step-header small {
+  display: block;
+}
+
+.runtime-step-header small,
+.runtime-current-selection,
+#runtime-region-help {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.runtime-step-number {
+  display: grid;
+  place-items: center;
+  flex: 0 0 1.75rem;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--lime);
+  font-weight: 800;
+}
+
+.runtime-selector-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: .65rem;
+}
+
+.runtime-selector-card {
+  display: grid;
+  gap: .25rem;
+  min-width: 0;
+  padding: .8rem .9rem;
+  border: 1px solid var(--line);
+
+  border-radius: .65rem;
+  background: var(--panel2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.runtime-selector-card small {
+  display: block;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.runtime-selector-card.selected {
+  border-color: var(--lime);
+}
+
+.runtime-field {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) minmax(180px, 320px);
+  align-items: center;
+  gap: .65rem;
+}
+
+.runtime-field select {
+  width: 100%;
+}
+
+.runtime-region-fallback {
+  display: flex;
+  align-items: flex-start;
+
+  gap: .55rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.runtime-selection-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: .7rem;
+}
+
+.runtime-selection-summary > div {
+  display: grid;
+  gap: .2rem;
+  padding: .7rem .8rem;
+  border: 1px solid var(--line);
+  border-radius: .6rem;
+}
+
+.runtime-selection-summary span {
+  color: var(--muted);
+  font-size: .78rem;
+}
+
+.runtime-notice {
+  display: grid;
+  gap: .55rem;
+  padding: .85rem;
+  border: 1px solid var(--line);
+  border-radius: .65rem;
+}
+
+.runtime-notice p,
+.runtime-notice small {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.runtime-create-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 680px) {
+  .runtime-field {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-selector-grid,
+  .runtime-selection-summary {
+    grid-template-columns: 1fr;
+  }
+}

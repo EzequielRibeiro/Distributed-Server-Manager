@@ -48,7 +48,8 @@ fi
 #############################################
 INSTALL_DIR="/opt/dsm"
 CONFIG_FILE="${INSTALL_DIR}/config/dsm.conf"
-BACKUP_DIR="/opt/dsm-backups"
+BACKUP_DIR="/opt/dsm-backup"
+UPDATE_BACKUP_RETENTION="${DSM_UPDATE_BACKUP_RETENTION:-10}"
 STAGING_DIR="/opt/dsm-update-stage"
 SYSTEMD_DIR="/etc/systemd/system"
 CAP_LINK="/usr/local/bin/cap"
@@ -547,6 +548,31 @@ create_backup() {
         echo "${BACKUP_FILE}"
     fi
 }
+
+prune_update_backups() {
+    local retention="${UPDATE_BACKUP_RETENTION:-10}"
+    local archive stem
+    local -a archives=()
+
+    if [[ ! "${retention}" =~ ^[0-9]+$ ]] || (( retention < 1 )); then
+        echo "Retenção de backups inválida; limpeza automática ignorada: ${retention}" >&2
+        return 0
+    fi
+    [[ -n "${BACKUP_DIR:-}" && "${BACKUP_DIR}" != "/" && -d "${BACKUP_DIR}" ]] || return 0
+
+    mapfile -t archives < <(
+        find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'dsm-before-update-*.tar.gz' -printf '%f\n' |
+            sort -r
+    )
+    (( ${#archives[@]} > retention )) || return 0
+
+    echo "Aplicando retenção de backups de atualização: mantendo ${retention} snapshots mais recentes."
+    for archive in "${archives[@]:retention}"; do
+        stem="${archive%.tar.gz}"
+        rm -f --             "${BACKUP_DIR}/${archive}"             "${BACKUP_DIR}/${stem}.database.dump"             "${BACKUP_DIR}/${stem}.database.sql"
+    done
+}
+
 
 create_database_backup() {
     [[ "${DSM_DATABASE_DRIVER:-sqlite}" != "sqlite" ]] || return 0
@@ -1689,6 +1715,7 @@ main() {
     validate_runtime_readiness
     check_services
     # Finalização | Finalization
+    prune_update_backups || echo "Aviso: não foi possível aplicar a retenção de backups." >&2
     cleanup_update
     update_summary
 }

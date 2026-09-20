@@ -22,8 +22,15 @@ def customer_id_from_scope(scope: str | None) -> str | None:
     return value[len(CUSTOMER_SCOPE_PREFIX):] if value.startswith(CUSTOMER_SCOPE_PREFIX) else None
 
 
+def customer_id_from_alert(alert: dict[str, Any]) -> str | None:
+    value = alert.get("customer_id")
+    if value is not None and str(value).strip():
+        return str(value)
+    return customer_id_from_scope(alert.get("scope"))
+
+
 class CustomerHealthRepository:
-    """Reuse the canonical `alerts` + `alert_events` tables without changing Baseline v2."""
+    """Reuse the canonical `alerts` + `alert_events` tables for Customer incidents."""
 
     def __init__(self, backend):
         self.backend = backend
@@ -47,8 +54,9 @@ class CustomerHealthRepository:
             rule_id=str(event_type).upper(),
             level=str(severity).upper(),
             message=str(message),
-            scope=CUSTOMER_SCOPE_PREFIX + str(customer_id),
+            scope="controller",
             controller_id=str(controller_id),
+            customer_id=str(customer_id),
             instance_id=str(instance_id) if instance_id else None,
         )
         result["customer_id"] = str(customer_id)
@@ -60,7 +68,7 @@ class CustomerHealthRepository:
         item = self.alerts.get_alert(str(incident_id))
         if item is None:
             return None
-        customer_id = customer_id_from_scope(item.get("scope"))
+        customer_id = customer_id_from_alert(item)
         if customer_id is None:
             return None
         item["customer_id"] = customer_id
@@ -146,10 +154,12 @@ class CustomerHealthRepository:
         filters: dict[str, Any] = {}
         if controller_id is not None:
             filters["controller_id"] = str(controller_id)
+        if customer_id is not None:
+            filters["customer_id"] = str(customer_id)
         rows = self.alerts.list_alerts(active_only=active_only, limit=max(1, min(int(limit), 1000)), **filters)
         result: list[dict[str, Any]] = []
         for row in rows:
-            scoped_customer = customer_id_from_scope(row.get("scope"))
+            scoped_customer = customer_id_from_alert(row)
             if scoped_customer is None:
                 continue
             if customer_id is not None and scoped_customer != str(customer_id):
@@ -164,6 +174,7 @@ __all__ = [
     "ADMIN_DETAIL_PREFIX",
     "CUSTOMER_SCOPE_PREFIX",
     "CustomerHealthRepository",
+    "customer_id_from_alert",
     "customer_id_from_scope",
     "incident_id_for",
 ]

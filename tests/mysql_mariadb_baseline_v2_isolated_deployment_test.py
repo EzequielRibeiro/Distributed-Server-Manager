@@ -177,10 +177,10 @@ def main() -> int:
                 raise AssertionError("backup_jobs backup_id lookup index is missing")
 
             # Prove that the latest registered post-baseline upgrade can be replayed
-            # against the real server flavor. Remove v18 and its diagnostics table,
-            # then let the upgrade engine restore it without a ledger gap.
-            cursor.execute("DELETE FROM baseline_upgrades WHERE version=%s", (18,))
-            cursor.execute("DROP TABLE operation_diagnostics")
+            # against the real server flavor. Remove v19 and its Customer identity
+            # column, then let the upgrade engine restore it without a ledger gap.
+            cursor.execute("DELETE FROM baseline_upgrades WHERE version=%s", (19,))
+            cursor.execute("ALTER TABLE alerts DROP COLUMN customer_id")
             connection.commit()
 
             marker = rows(cursor, "SELECT checksum FROM schema_baseline LIMIT 1")[0]
@@ -190,16 +190,17 @@ def main() -> int:
                 installed_checksum=str(marker["checksum"]),
             )
             connection.commit()
-            if completed != [18]:
-                raise AssertionError(f"expected replay of upgrade 18, got {completed}")
+            if completed != [19]:
+                raise AssertionError(f"expected replay of upgrade 19, got {completed}")
 
             restored = rows(
                 cursor,
-                "SELECT COUNT(*) AS total FROM information_schema.tables "
-                "WHERE table_schema=DATABASE() AND table_name='operation_diagnostics'",
+                "SELECT COUNT(*) AS total FROM information_schema.columns "
+                "WHERE table_schema=DATABASE() AND table_name='alerts' "
+                "AND column_name='customer_id'",
             )[0]
             if int(row_value(restored, "total")) != 1:
-                raise AssertionError("operation diagnostics upgrade did not restore its table")
+                raise AssertionError("Customer alert identity upgrade did not restore its column")
 
             restored_ledger = rows(
                 cursor,

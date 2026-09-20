@@ -892,6 +892,17 @@ def _upgrade_operation_diagnostics(backend: Any, connection: Any) -> None:
         raise DatabaseMigrationError("alerts diagnostic_id baseline upgrade incomplete")
 
 
+def _upgrade_alert_customer_identity(backend: Any, connection: Any) -> None:
+    """Attach Customer health incidents to a valid controller-scoped alert."""
+    if "alerts" not in _table_names(backend, connection):
+        raise DatabaseMigrationError("alerts table is missing")
+    if "customer_id" not in _column_names(backend, connection, "alerts"):
+        sql_type = "BIGINT" if backend.name in {"postgresql", "mysql"} else "INTEGER"
+        _execute_script(backend, connection, f"ALTER TABLE alerts ADD COLUMN customer_id {sql_type};")
+    if "customer_id" not in _column_names(backend, connection, "alerts"):
+        raise DatabaseMigrationError("alerts customer_id baseline upgrade incomplete")
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -911,6 +922,7 @@ UPGRADES = (
     BaselineUpgrade(16, "generic_native_restart_commands", _upgrade_generic_native_restart_commands),
     BaselineUpgrade(17, "database_intelligence", _upgrade_database_intelligence),
     BaselineUpgrade(18, "operation_diagnostics", _upgrade_operation_diagnostics),
+    BaselineUpgrade(19, "alert_customer_identity", _upgrade_alert_customer_identity),
 )
 
 

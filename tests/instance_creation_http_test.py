@@ -80,6 +80,30 @@ class InstanceCreationHttpTest(unittest.TestCase):
         self.assertNotIn("agent-internal-1", json.dumps(result[1]))
         self.assertNotIn("unsupported_runtime_profile", json.dumps(result[1]))
 
+    def test_storage_rejection_returns_customer_safe_capacity_message(self):
+        def create_instance(user, payload):
+            raise PlacementUnavailable(
+                reason="requested_region_unavailable",
+                agents_evaluated=2,
+                requested_region_id="br-sp",
+                technical_rejections={
+                    "agent-offline": ["agent_not_online:offline"],
+                    "agent-local": ["insufficient_storage"],
+                },
+            )
+
+        status, body = dispatch_instance_create_post(
+            "/api/instance/create",
+            self.payload,
+            user=self.user,
+            create_instance=create_instance,
+        )
+
+        self.assertEqual(status, 409)
+        self.assertIn("espaço livre suficiente", body["message"])
+        self.assertNotIn("agent-local", json.dumps(body))
+        self.assertNotIn("insufficient_storage", json.dumps(body))
+
     def test_placement_failure_reporter_receives_internal_diagnostics(self):
         failures = []
 
