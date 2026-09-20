@@ -130,7 +130,7 @@ class DatabaseIntelligenceRepository:
         maximum = max(1, _safe_int(connections.get("max_connections")))
         long_queries = _safe_int(longq.get("long_queries"))
         waiting_locks = _safe_int(locks.get("waiting_locks"))
-        utilization = round(active * 100.0 / maximum, 2)
+        utilization = 0.0 if self.name == "sqlite" else round(active * 100.0 / maximum, 2)
         health = "critical" if waiting_locks > 5 or utilization >= 95 else "degraded" if long_queries or waiting_locks or utilization >= 80 else "healthy"
         elapsed = (datetime.now(timezone.utc) - started).total_seconds() * 1000
         return {
