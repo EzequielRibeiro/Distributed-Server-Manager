@@ -51,14 +51,18 @@ with tempfile.TemporaryDirectory() as td:
     exe=work/'DayZServer';exe.write_bytes(b'x')
     spec={'instance_id':'dayz-a','agent_id':'agent-a','game_id':'dayz','runtime_id':'dayz-a','adapter':'systemd','user':'capivara-instance','working_directory':str(work),'path':str(work),'instance_state_root':str(state),'executable':str(exe),'arguments':['-config=serverDZ.cfg'],'environment':{},'desired_state':'stopped'}
     entries=[
-      {'game_id':'dayz','managed_path':str(mod_a),'activation':{'adapter':'dayz','mode':'mod'}},
-      {'game_id':'dayz','managed_path':str(mod_a),'activation':{'adapter':'dayz','mode':'mod'}},
-      {'game_id':'dayz','managed_path':str(mod_b),'activation':{'adapter':'dayz','mode':'server-mod'}},
+      {'game_id':'dayz','package_id':'221100:111','managed_path':str(mod_a),'activation':{'adapter':'dayz','mode':'mod'}},
+      {'game_id':'dayz','package_id':'221100:111','managed_path':str(mod_a),'activation':{'adapter':'dayz','mode':'mod'}},
+      {'game_id':'dayz','package_id':'221100:222','managed_path':str(mod_b),'activation':{'adapter':'dayz','mode':'server-mod'}},
     ]
     projected=project_runtime_spec(spec,{'checksum':'abc','entries':entries})
     assert projected['arguments'][0]=='-config=serverDZ.cfg'
-    assert projected['arguments'].count('-mod='+str(mod_a.resolve()))==1
-    assert projected['arguments'].count('-serverMod='+str(mod_b.resolve()))==1
+    assert projected['arguments'].count('-mod=@dsm-dayz-a-111')==1
+    assert projected['arguments'].count('-serverMod=@dsm-dayz-a-222')==1
+    assert projected['content_dayz_mod_aliases']==[
+      {'alias':'@dsm-dayz-a-111','source':str(mod_a.resolve()),'target':str(work/'@dsm-dayz-a-111')},
+      {'alias':'@dsm-dayz-a-222','source':str(mod_b.resolve()),'target':str(work/'@dsm-dayz-a-222')},
+    ]
     keyring=str((state/'.dsm/dayz-keys').resolve());target=str((work/'keys').resolve())
     assert {'source':keyring,'target':target} in projected['bind_paths']
     assert len(projected['content_dayz_key_sources'])==2
@@ -85,18 +89,20 @@ with tempfile.TemporaryDirectory() as td:
     a=state/'content'/'a';b=state/'content'/'b';(a/'keys').mkdir(parents=True);(b/'keys').mkdir(parents=True)
     (a/'keys'/'same.bikey').write_bytes(b'one');(b/'keys'/'same.bikey').write_bytes(b'two')
     spec={'instance_id':'dayz-a','instance_state_root':str(state),'working_directory':str(work)}
-    try:project_dayz_activation(spec,[{'managed_path':str(a),'activation':{'mode':'mod'}},{'managed_path':str(b),'activation':{'mode':'mod'}}])
+    ea={'package_id':'221100:111','managed_path':str(a),'activation':{'mode':'mod'}}
+    eb={'package_id':'221100:222','managed_path':str(b),'activation':{'mode':'mod'}}
+    try:project_dayz_activation(spec,[ea,eb])
     except DayZContentActivationError as exc:assert 'conflicting DayZ signature key' in str(exc)
     else:raise AssertionError('conflicting key accepted')
-    try:project_dayz_activation(spec,[{'managed_path':str(a),'activation':{'mode':'mod'}},{'managed_path':str(a),'activation':{'mode':'server-mod'}}])
+    try:project_dayz_activation(spec,[ea,{**ea,'activation':{'mode':'server-mod'}}])
     except DayZContentActivationError as exc:assert 'simultaneously' in str(exc)
     else:raise AssertionError('conflicting activation mode accepted')
     shared=work/'content'/'workshop'/'333';shared.mkdir(parents=True)
-    try:project_dayz_activation(spec,[{'managed_path':str(shared),'activation':{'mode':'mod'}}])
+    try:project_dayz_activation(spec,[{'package_id':'221100:333','managed_path':str(shared),'activation':{'mode':'mod'}}])
     except DayZContentActivationError as exc:assert 'not instance-scoped' in str(exc)
     else:raise AssertionError('shared managed path accepted')
     (b/'keys'/'same.bikey').unlink();(b/'keys'/'b.bikey').write_bytes(b'b')
-    projected=project_dayz_activation(spec,[{'managed_path':str(a),'activation':{'mode':'mod'}}])
+    projected=project_dayz_activation(spec,[ea])
     runtime={**spec,'content_dayz_key_sources':projected['key_sources'],'content_dayz_keyring':str(state/'.dsm/dayz-keys'),'content_dayz_base_keys_root':str(work/'keys')}
     (a/'keys'/'same.bikey').write_bytes(b'tampered')
     try:materialize_dayz_keyring(runtime)
@@ -129,6 +135,41 @@ with tempfile.TemporaryDirectory() as td:
     content_client.instance_runtime.get_instance=lambda iid:dict(minecraft)
     _,selected=content_client._owned({'agent_id':'agent-a'},{'instance_id':'dayz-a','game_id':'minecraft'})
     assert selected==work.resolve()
+''',
+        )
+        self.assert_ok(result)
+
+    def test_linux_privileged_materializer_manages_instance_scoped_relative_aliases(self) -> None:
+        result = _run(
+            "linux",
+            r'''
+import importlib.util
+import tempfile
+from pathlib import Path
+
+path=Path.cwd()/'agents/linux/privileged/materialize_instance.py'
+specmod=importlib.util.spec_from_file_location('dayz_privileged_materializer_test',path)
+module=importlib.util.module_from_spec(specmod);specmod.loader.exec_module(module)
+
+with tempfile.TemporaryDirectory() as td:
+    root=Path(td);state=root/'state';work=root/'serverfiles';source=state/'content'/'workshop'/'steam-workshop:111'
+    source.mkdir(parents=True);work.mkdir()
+    alias='@dsm-dayz-a-111';target=work/alias
+    spec={
+      'instance_id':'dayz-a','game_id':'dayz','instance_state_root':str(state),
+      'working_directory':str(work),
+      'content_dayz_mod_aliases':[{'alias':alias,'source':str(source),'target':str(target)}],
+    }
+    first=module._sync_dayz_mod_aliases(spec)
+    assert first[0]['changed'] is True and target.is_symlink() and target.resolve()==source.resolve()
+    second=module._sync_dayz_mod_aliases(spec)
+    assert second[0]['changed'] is False
+    other=work/'@dsm-dayz-b-111';other.symlink_to(source,target_is_directory=True)
+    stale=work/'@dsm-dayz-a-999';stale.symlink_to(source,target_is_directory=True)
+    module._sync_dayz_mod_aliases(spec)
+    assert not stale.exists() and not stale.is_symlink() and other.is_symlink()
+    removed=module._remove_dayz_mod_aliases(spec)
+    assert str(target) in removed and not target.exists() and other.is_symlink()
 ''',
         )
         self.assert_ok(result)

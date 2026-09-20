@@ -22,7 +22,7 @@ _STEAM_QUERY_OFFSET = 3
 
 class DayZRuntimeProfile(GameRuntimeProfile):
     game_ids = ("dayz", "dayz.stable")
-    profile_version = 9
+    profile_version = 10
 
     def migration_context(self, record: dict[str, Any]) -> dict[str, Any]:
         """Reconstruct a modern context from a pre-private-state DayZ RuntimeSpec."""
@@ -168,6 +168,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             "profile": "dayz",
             "profile_version": self.profile_version,
             "success_exit_statuses": [255],
+            "stop_signal": "SIGINT",
             "ports": {
                 "game": {"port": game_port, "protocol": "udp"},
                 "game_aux": {"port": game_aux_port, "protocol": "udp"},

@@ -16,15 +16,17 @@ class ContentActivationRuntimeTest(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);(root/"server").mkdir();mod_a=root/"state"/"content"/"a";mod_b=root/"state"/"content"/"b";mod_a.mkdir(parents=True);mod_b.mkdir(parents=True)
    snapshot={"checksum":"abc","entries":[
-    {"content_id":"a","game_id":"dayz","managed_path":str(mod_a),"activation":{"mode":"mod"}},
-    {"content_id":"b","game_id":"dayz","managed_path":str(mod_b),"activation":{"mode":"server-mod"}},
+    {"content_id":"a","game_id":"dayz","package_id":"221100:111","managed_path":str(mod_a),"activation":{"mode":"mod"}},
+    {"content_id":"b","game_id":"dayz","package_id":"221100:222","managed_path":str(mod_b),"activation":{"mode":"server-mod"}},
    ]}
    projected=self.module.project_runtime_spec(self._spec(root),snapshot)
    self.assertEqual(projected["content_base_arguments"],["-config=server.cfg"])
-   self.assertEqual(projected["arguments"],["-config=server.cfg",f"-mod={mod_a}",f"-serverMod={mod_b}"])
+   self.assertEqual(projected["arguments"],["-config=server.cfg","-mod=@dsm-i1-111","-serverMod=@dsm-i1-222"])
+   self.assertEqual([item["alias"] for item in projected["content_dayz_mod_aliases"]],["@dsm-i1-111","@dsm-i1-222"])
    self.assertEqual(projected["content_activation_checksum"],"abc")
    empty=self.module.project_runtime_spec(projected,{"checksum":"empty","entries":[]})
    self.assertEqual(empty["arguments"],["-config=server.cfg"])
+   self.assertNotIn("content_dayz_mod_aliases",empty)
  def test_project_zomboid_projection_and_materialization(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);(root/"server").mkdir();(root/"state").mkdir()

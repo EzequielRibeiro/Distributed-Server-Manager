@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "agents" / "linux" / "runtime"
@@ -18,24 +19,29 @@ from materializers.systemd import render_unit
 
 class DayZSystemdShutdownTest(unittest.TestCase):
     def _build_dayz_spec(self, install: Path) -> dict:
-        return game_runtime.build_runtime_spec(
-            {"agent_id": "agent-one"},
-            {
-                "instance_id": "dayz-one",
-                "agent_id": "agent-one",
-                "game_id": "dayz",
-                "environment_id": "dayz.stable",
-                "desired_state": "stopped",
-            },
-            {
-                "install_path": str(install),
-                "ports": {
-                    "game": {"port": 24010, "protocol": "udp"},
-                    "game_aux": {"port": 24012, "protocol": "udp"},
-                    "steam_query": {"port": 24013, "protocol": "udp"},
+        with patch.object(
+            game_runtime.instance_runtime,
+            "STATE_DIR",
+            install.parent / "agent-state",
+        ):
+            return game_runtime.build_runtime_spec(
+                {"agent_id": "agent-one"},
+                {
+                    "instance_id": "dayz-one",
+                    "agent_id": "agent-one",
+                    "game_id": "dayz",
+                    "environment_id": "dayz.stable",
+                    "desired_state": "stopped",
                 },
-            },
-        )
+                {
+                    "install_path": str(install),
+                    "ports": {
+                        "game": {"port": 24010, "protocol": "udp"},
+                        "game_aux": {"port": 24012, "protocol": "udp"},
+                        "steam_query": {"port": 24013, "protocol": "udp"},
+                    },
+                },
+            )
 
     def test_dayz_profile_declares_exit_255_as_controlled_shutdown(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -43,14 +49,15 @@ class DayZSystemdShutdownTest(unittest.TestCase):
             install.mkdir()
             spec = self._build_dayz_spec(install)
 
-        self.assertEqual(spec["profile_version"], 9)
+        self.assertEqual(spec["profile_version"], 10)
         self.assertEqual(spec["success_exit_statuses"], [255])
         unit = render_unit(spec)
         self.assertIn("\nSuccessExitStatus=255\n", unit)
         self.assertIn("\nRestart=no\n", unit)
-        self.assertIn("\nKillSignal=SIGTERM\n", unit)
+        self.assertEqual(spec["stop_signal"], "SIGINT")
+        self.assertIn("\nKillSignal=SIGINT\n", unit)
 
-    def test_dayz_v6_runtime_is_migrated_to_v9_with_success_exit_status(self):
+    def test_dayz_v6_runtime_is_migrated_to_v10_with_graceful_stop_signal(self):
         with tempfile.TemporaryDirectory() as temp:
             install = Path(temp) / "serverfiles"
             install.mkdir()
@@ -59,15 +66,22 @@ class DayZSystemdShutdownTest(unittest.TestCase):
             legacy["profile_version"] = 6
             legacy.pop("success_exit_statuses", None)
 
-            migrated, changed = game_runtime.migrate_runtime_spec(
-                {"agent_id": "agent-one"}, legacy
-            )
+            with patch.object(
+                game_runtime.instance_runtime,
+                "STATE_DIR",
+                install.parent / "agent-state-migrate",
+            ):
+                migrated, changed = game_runtime.migrate_runtime_spec(
+                    {"agent_id": "agent-one"}, legacy
+                )
 
         self.assertTrue(changed)
-        self.assertEqual(migrated["profile_version"], 9)
+        self.assertEqual(migrated["profile_version"], 10)
         self.assertEqual(migrated["profile_migrated_from_version"], 6)
         self.assertEqual(migrated["success_exit_statuses"], [255])
+        self.assertEqual(migrated["stop_signal"], "SIGINT")
         self.assertIn("\nSuccessExitStatus=255\n", render_unit(migrated))
+        self.assertIn("\nKillSignal=SIGINT\n", render_unit(migrated))
 
     def test_generic_runtime_without_declared_status_does_not_accept_255(self):
         spec = {
@@ -85,6 +99,7 @@ class DayZSystemdShutdownTest(unittest.TestCase):
             "pre_start": [],
         }
         self.assertNotIn("SuccessExitStatus=255", render_unit(spec))
+        self.assertIn("\nKillSignal=SIGTERM\n", render_unit(spec))
 
 
 if __name__ == "__main__":

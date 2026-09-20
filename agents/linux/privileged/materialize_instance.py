@@ -367,6 +367,82 @@ def _sync_working_file_copies(spec: dict[str, Any]) -> list[dict[str, Any]]:
     return results
 
 
+def _sync_dayz_mod_aliases(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    aliases = spec.get("content_dayz_mod_aliases") or []
+    if not isinstance(aliases, list):
+        raise RuntimeError("invalid DayZ mod alias projection")
+    if str(spec.get("game_id") or "").strip().lower() != "dayz":
+        if aliases:
+            raise RuntimeError("DayZ mod aliases cannot be applied to another game")
+        return []
+
+    working_root = Path(str(spec["working_directory"])).resolve()
+    state_root = Path(str(spec.get("instance_state_root") or "")).resolve()
+    content_root = (state_root / "content").resolve()
+    instance_id = str(spec["instance_id"])
+    prefix = f"@dsm-{instance_id}-"
+    desired: dict[str, Path] = {}
+
+    for item in aliases:
+        if not isinstance(item, dict):
+            raise RuntimeError("invalid DayZ mod alias entry")
+        alias = str(item.get("alias") or "")
+        if not alias.startswith(prefix) or not alias[len(prefix):].isdigit():
+            raise RuntimeError("invalid DayZ mod alias name")
+        source_raw = Path(str(item.get("source") or ""))
+        if not source_raw.is_absolute() or source_raw.is_symlink():
+            raise RuntimeError("invalid DayZ mod alias source")
+        source = source_raw.resolve()
+        try:
+            source.relative_to(content_root)
+        except ValueError as exc:
+            raise RuntimeError("DayZ mod alias source escapes instance content") from exc
+        if not source.is_dir():
+            raise RuntimeError("DayZ mod alias source is unavailable")
+        target = working_root / alias
+        if str(item.get("target") or "") != str(target):
+            raise RuntimeError("DayZ mod alias target mismatch")
+        desired[alias] = source
+
+    for target in working_root.glob(prefix + "*"):
+        if target.name in desired:
+            continue
+        if not target.is_symlink():
+            raise RuntimeError(f"refusing to remove non-Capivara DayZ alias: {target.name}")
+        target.unlink()
+
+    results: list[dict[str, Any]] = []
+    for alias, source in sorted(desired.items()):
+        target = working_root / alias
+        changed = False
+        if target.is_symlink():
+            current = (target.parent / os.readlink(target)).resolve()
+            if current != source:
+                target.unlink()
+                changed = True
+        elif target.exists():
+            raise RuntimeError(f"DayZ alias target is not a symlink: {alias}")
+        if not target.exists() and not target.is_symlink():
+            target.symlink_to(source, target_is_directory=True)
+            changed = True
+        results.append({"alias": alias, "source": str(source), "target": str(target), "changed": changed})
+    return results
+
+
+def _remove_dayz_mod_aliases(spec: dict[str, Any]) -> list[str]:
+    if str(spec.get("game_id") or "").strip().lower() != "dayz":
+        return []
+    working_root = Path(str(spec["working_directory"])).resolve()
+    prefix = f"@dsm-{spec['instance_id']}-"
+    removed: list[str] = []
+    for target in working_root.glob(prefix + "*"):
+        if not target.is_symlink():
+            raise RuntimeError(f"refusing to remove non-Capivara DayZ alias: {target.name}")
+        target.unlink()
+        removed.append(str(target))
+    return removed
+
+
 def _verify_tree(source: Path, target: Path) -> tuple[int, int]:
     _reject_symlinks(source)
     _reject_symlinks(target)
@@ -484,9 +560,12 @@ def run(instance_id: str) -> dict[str, Any]:
     materializer = resolve_materializer(spec)
     templates: list[Any] = []
     working_file_copies: list[dict[str, Any]] = []
+    dayz_mod_aliases: list[dict[str, Any]] = []
+    removed_dayz_mod_aliases: list[str] = []
     if action == "apply":
         _ensure_runtime_identity(spec, config)
         working_file_copies = _sync_working_file_copies(spec)
+        dayz_mod_aliases = _sync_dayz_mod_aliases(spec)
         templates = materialize_templates(spec)
         templates.extend(materialize_network_properties(spec))
         game_id = str(spec.get("game_id") or "").lower()
@@ -500,6 +579,7 @@ def run(instance_id: str) -> dict[str, Any]:
         operation = materializer.apply(spec)
     elif action == "remove":
         operation = materializer.remove(spec)
+        removed_dayz_mod_aliases = _remove_dayz_mod_aliases(spec)
     elif action == "migrate-storage-copy":
         operation = _migrate_storage_copy(
             config,
@@ -513,7 +593,9 @@ def run(instance_id: str) -> dict[str, Any]:
     result = {"status": "completed", "action": action, "instance_id": instance_id,
               "agent_id": local_agent_id, "operation": operation, "templates": templates,
               "server_settings": server_settings if action == "apply" else [],
-              "working_file_copies": working_file_copies}
+              "working_file_copies": working_file_copies,
+              "dayz_mod_aliases": dayz_mod_aliases,
+              "removed_dayz_mod_aliases": removed_dayz_mod_aliases}
     _write_result(result_path, result)
     return result
 

@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Any
 
 _MAX_KEYS = 512
 _MAX_KEY_BYTES = 2 * 1024 * 1024
+_DAYZ_WORKSHOP_PACKAGE = re.compile(r"^221100:([1-9][0-9]{0,19})$")
+_ALIAS_PREFIX = "@dsm-"
 
 
 class DayZContentActivationError(RuntimeError):
@@ -84,6 +87,24 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _workshop_alias(spec: dict[str, Any], entry: dict[str, Any], source: Path) -> tuple[str, str]:
+    package_id = str(entry.get("package_id") or "").strip()
+    match = _DAYZ_WORKSHOP_PACKAGE.fullmatch(package_id)
+    if not match:
+        raise DayZContentActivationError("DayZ Workshop content requires canonical package_id 221100:<id>")
+    working_text = str(spec.get("working_directory") or spec.get("path") or "").strip()
+    instance_id = str(spec.get("instance_id") or "").strip()
+    if not working_text or not os.path.isabs(working_text):
+        raise DayZContentActivationError("DayZ Workshop aliases require an absolute working_directory")
+    if not instance_id or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for ch in instance_id):
+        raise DayZContentActivationError("DayZ Workshop aliases require a safe instance_id")
+    alias = f"{_ALIAS_PREFIX}{instance_id}-{match.group(1)}"
+    if len(alias.encode("utf-8")) > 255:
+        raise DayZContentActivationError("DayZ Workshop alias exceeds filesystem name limit")
+    target = Path(working_text).resolve(strict=False) / alias
+    return alias, str(target)
+
+
 def _discover_bikeys(root: Path) -> list[dict[str, str]]:
     candidates: list[Path] = []
     try:
@@ -114,6 +135,7 @@ def project_dayz_activation(spec: dict[str, Any], entries: list[dict[str, Any]])
     mods: list[str] = []
     server_mods: list[str] = []
     seen_paths: dict[str, str] = {}
+    aliases: dict[str, dict[str, str]] = {}
     keys: dict[str, dict[str, str]] = {}
     for entry in entries:
         mode = str((entry.get("activation") or {}).get("mode") or "mod").strip().lower()
@@ -126,8 +148,13 @@ def project_dayz_activation(spec: dict[str, Any], entries: list[dict[str, Any]])
             raise DayZContentActivationError("the same DayZ mod cannot be client and server-only simultaneously")
         if previous:
             continue
+        alias, target = _workshop_alias(spec, entry, path)
+        current_alias = aliases.get(alias.casefold())
+        if current_alias and current_alias["source"] != str(path):
+            raise DayZContentActivationError("conflicting DayZ Workshop alias")
+        aliases[alias.casefold()] = {"alias": alias, "source": str(path), "target": target}
         seen_paths[identity] = mode
-        (mods if mode == "mod" else server_mods).append(str(path))
+        (mods if mode == "mod" else server_mods).append(alias)
         for key in _discover_bikeys(path):
             folded = key["name"].casefold()
             current = keys.get(folded)
@@ -139,7 +166,11 @@ def project_dayz_activation(spec: dict[str, Any], entries: list[dict[str, Any]])
         arguments.append("-mod=" + ";".join(mods))
     if server_mods:
         arguments.append("-serverMod=" + ";".join(server_mods))
-    return {"arguments": arguments, "key_sources": [keys[name] for name in sorted(keys)]}
+    return {
+        "arguments": arguments,
+        "aliases": [aliases[name] for name in sorted(aliases)],
+        "key_sources": [keys[name] for name in sorted(keys)],
+    }
 
 
 def _collect_base_keys(root: Path) -> list[dict[str, str]]:
