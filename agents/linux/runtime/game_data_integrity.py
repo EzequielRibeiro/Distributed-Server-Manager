@@ -30,7 +30,8 @@ def inspect_game_data(root: Path, selection: dict[str, Any] | None = None) -> di
     executable = str((selection or {}).get("executable") or "").strip()
     artifact_mode = str((selection or {}).get("artifact_mode") or "executable").strip().lower()
     executable_present = True; executable_ready = True
-    if executable:
+    virtual_executable = executable.startswith("@")
+    if executable and not virtual_executable:
         candidate = Path(executable)
         candidate = candidate if candidate.is_absolute() else root / candidate
         try:
@@ -40,7 +41,7 @@ def inspect_game_data(root: Path, selection: dict[str, Any] | None = None) -> di
         except ValueError:
             executable_present = False; executable_ready = False
     health = "ok" if files and executable_present and executable_ready and not truncated else ("degraded" if files else "empty")
-    return {"health": health, "exists": True, "files": min(files, MAX_INVENTORY_FILES), "bytes": total, "tree_digest": digest.hexdigest(), "truncated": truncated, "executable_present": executable_present, "executable_ready": executable_ready}
+    return {"health": health, "exists": True, "files": min(files, MAX_INVENTORY_FILES), "bytes": total, "tree_digest": digest.hexdigest(), "truncated": truncated, "executable_present": executable_present, "executable_ready": executable_ready, "virtual_executable": virtual_executable}
 
 
 def should_repair(integrity: dict[str, Any]) -> bool:

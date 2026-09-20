@@ -56,6 +56,18 @@ class CatalogArchitectureStages5To10Test(unittest.TestCase):
   with tempfile.TemporaryDirectory() as td:
    path=Path(td)/"game";self.assertEqual(module.inspect_game_data(path)["health"],"missing");path.mkdir();(path/"server.bin").write_bytes(b"x")
    (path/"server.bin").chmod(0o700);result=module.inspect_game_data(path,{"executable":"server.bin","artifact_mode":"executable"});self.assertEqual(result["health"],"ok");self.assertEqual(result["files"],1);self.assertTrue(result["tree_digest"])
+ def test_stage7_integrity_accepts_virtual_runtime_executable(self):
+  linux=load("linux_integrity_virtual",ROOT/"agents/linux/runtime/game_data_integrity.py")
+  windows=load("windows_integrity_virtual",ROOT/"agents/windows/runtime/game_data_integrity.py")
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);(root/"libraries").mkdir();(root/"libraries/example.jar").write_bytes(b"jar")
+   selection={"executable":"@java","artifact_mode":"directory"}
+   linux_result=linux.inspect_game_data(root,selection)
+   windows_result=windows.inspect_game_data(root,selection)
+   self.assertEqual(linux_result["health"],"ok")
+   self.assertEqual(windows_result["health"],"ok")
+   self.assertTrue(linux_result["virtual_executable"])
+   self.assertTrue(windows_result["virtual_executable"])
  def test_stage8_provisioning_uses_ensure_and_catalog_resolver(self):
   repository=(ROOT/"database/agent_instance_provisioning_repository.py").read_text();contract=(ROOT/"agents/linux/runtime/provisioning_contract.py").read_text();resolver=(ROOT/"dashboard/catalog_provisioning_resolver.py").read_text()
   compact="".join(repository.split())

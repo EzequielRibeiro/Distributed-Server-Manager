@@ -18,11 +18,11 @@ def inspect_game_data(root:Path,selection:dict[str,Any]|None=None)->dict[str,Any
   files+=1
   if files>MAX_INVENTORY_FILES:truncated=True;break
   stat=path.stat();total+=stat.st_size;digest.update(path.relative_to(root).as_posix().encode());digest.update(b"\0");digest.update(str(stat.st_size).encode());digest.update(b"\n")
- executable=str((selection or {}).get("executable") or "").strip();present=True
- if executable:
+ executable=str((selection or {}).get("executable") or "").strip();present=True;virtual_executable=executable.startswith("@")
+ if executable and not virtual_executable:
   candidate=Path(executable);candidate=candidate if candidate.is_absolute() else root/candidate
   try:candidate.resolve().relative_to(root);present=candidate.is_file()
   except ValueError:present=False
  health="ok" if files and present and not truncated else ("degraded" if files else "empty")
- return {"health":health,"exists":True,"files":min(files,MAX_INVENTORY_FILES),"bytes":total,"tree_digest":digest.hexdigest(),"truncated":truncated,"executable_present":present}
+ return {"health":health,"exists":True,"files":min(files,MAX_INVENTORY_FILES),"bytes":total,"tree_digest":digest.hexdigest(),"truncated":truncated,"executable_present":present,"virtual_executable":virtual_executable}
 __all__=["MAX_INVENTORY_FILES","inspect_game_data"]
