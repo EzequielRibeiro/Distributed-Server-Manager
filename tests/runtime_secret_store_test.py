@@ -72,6 +72,26 @@ class RuntimeSecretStoreTest(unittest.TestCase):
         revoked = revoke_secret("instance/instance-1/server_password", expected_instance_id="instance-1")
         self.assertTrue(revoked["revoked"]); self.assertFalse(path.exists())
 
+    def test_default_secret_root_follows_agent_state_directory(self):
+        old_explicit = os.environ.pop("CAPIVARA_RUNTIME_SECRET_ROOT", None)
+        old_state = os.environ.get("CAPIVARA_AGENT_STATE_DIR")
+        try:
+            hybrid_state = Path(self.temp.name) / "hybrid-agent-state"
+            os.environ["CAPIVARA_AGENT_STATE_DIR"] = str(hybrid_state)
+            from runtime_secret_store import secret_root
+            self.assertEqual(secret_root(), hybrid_state / "runtime-secrets")
+            put_secret("instance/instance-1/server_password", "hybrid-secret", expected_instance_id="instance-1")
+            self.assertTrue((hybrid_state / "runtime-secrets" / "instance-1" / "server_password").is_file())
+        finally:
+            if old_explicit is not None:
+                os.environ["CAPIVARA_RUNTIME_SECRET_ROOT"] = old_explicit
+            else:
+                os.environ.pop("CAPIVARA_RUNTIME_SECRET_ROOT", None)
+            if old_state is not None:
+                os.environ["CAPIVARA_AGENT_STATE_DIR"] = old_state
+            else:
+                os.environ.pop("CAPIVARA_AGENT_STATE_DIR", None)
+
     def test_systemd_uses_loadcredential_without_secret_value(self):
         secret = "do-not-put-this-in-unit"
         put_secret("instance/instance-1/server_password", secret, expected_instance_id="instance-1")

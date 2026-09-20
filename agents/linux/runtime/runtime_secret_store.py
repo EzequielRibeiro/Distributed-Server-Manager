@@ -23,7 +23,11 @@ class RuntimeSecretError(ValueError):
 
 
 def secret_root() -> Path:
-    return Path(os.environ.get("CAPIVARA_RUNTIME_SECRET_ROOT", "/var/lib/capivara-agent/runtime-secrets"))
+    explicit = str(os.environ.get("CAPIVARA_RUNTIME_SECRET_ROOT") or "").strip()
+    if explicit:
+        return Path(explicit)
+    state_root = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
+    return state_root / "runtime-secrets"
 
 
 def _instance(value: Any) -> str:
