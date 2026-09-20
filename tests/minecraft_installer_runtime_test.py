@@ -4,10 +4,12 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -97,6 +99,43 @@ class MinecraftInstallerRuntimeTest(unittest.TestCase):
             self.assertEqual(argv[3:], ["--installServer"])
             self.assertNotIn("shell", run.call_args.kwargs)
             self.assertEqual((target / "capivara-launch.args").read_text(encoding="utf-8"), args_file.read_text(encoding="utf-8"))
+
+    def test_http_java_installer_jar_is_preserved_in_target(self):
+        module = load("linux_game_data_executor_installer_jar", ROOT / "agents/linux/runtime/game_data_executor.py")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "neoforge-installer.jar"
+            with zipfile.ZipFile(source, "w") as jar:
+                jar.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
+                jar.writestr("net/neoforged/Installer.class", b"fake")
+            target = root / "target"
+            selection = {
+                "asset": {
+                    "name": "neoforge-installer.jar",
+                    "url": "https://example.invalid/neoforge-installer.jar",
+                },
+                "install": {
+                    "asset": "neoforge-installer.jar",
+                    "url": "https://example.invalid/neoforge-installer.jar",
+                    "archive_type": None,
+                },
+                "installer": {
+                    "type": "java_jar",
+                    "args": ["--installServer"],
+                },
+                "artifact_mode": "directory",
+            }
+
+            def fake_download(_url, destination):
+                shutil.copy2(source, destination)
+
+            with patch.object(module, "_download", side_effect=fake_download):
+                module._run_http(selection, target)
+
+            preserved = target / "neoforge-installer.jar"
+            self.assertTrue(preserved.is_file())
+            self.assertTrue(zipfile.is_zipfile(preserved))
+            self.assertFalse((target / "META-INF").exists())
 
     def test_installer_rejects_shell_like_arguments_and_path_escape(self):
         module = load("linux_game_data_installer_invalid", ROOT / "agents/linux/runtime/game_data_installer.py")
