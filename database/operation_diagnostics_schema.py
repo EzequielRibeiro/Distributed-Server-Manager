@@ -5,6 +5,8 @@ from __future__ import annotations
 
 def operation_diagnostics_ddl(backend: str) -> str:
     name = str(backend or "").strip().lower()
+    if name == "mariadb":
+        name = "mysql"
     if name == "postgresql":
         return """
 CREATE TABLE IF NOT EXISTS operation_diagnostics (
@@ -92,7 +94,8 @@ def ensure_operation_diagnostics_schema(sql: str, backend: str) -> str:
     suffix = operation_diagnostics_ddl(backend)
     if str(backend).lower() == "mysql":
         suffix = suffix.replace("CREATE INDEX idx_operation_diagnostics_correlation", "CREATE INDEX idx_operation_diagnostics_correlation").replace("CREATE INDEX idx_operation_diagnostics_instance", "CREATE INDEX idx_operation_diagnostics_instance")
-    alert_type = "VARCHAR(191)" if str(backend).lower() == "mysql" else "TEXT"
+    backend_name = str(backend or "").strip().lower()
+    alert_type = "VARCHAR(191)" if backend_name in {"mysql", "mariadb"} else "TEXT"
     return sql.rstrip() + f"\n\nALTER TABLE alerts ADD COLUMN diagnostic_id {alert_type};\n" + suffix + "\n"
 
 
