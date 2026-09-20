@@ -68,6 +68,12 @@ class CustomerInstanceFileSecurityTest(unittest.TestCase):
         self.assertIn("usage.usage_bytes??usage.used_bytes", source)
         self.assertIn('filePath==="."?"/":\`/\${filePath}\`', source)
 
+    def test_customer_ui_builds_child_directory_path_and_disables_up_at_root(self):
+        source = (ROOT / "dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
+        self.assertIn('const target=filePath==="."?name:`${filePath}/${name}`', source)
+        self.assertIn('$("file-up").disabled=filePath==="."', source)
+        self.assertNotIn('fileCommand("mkdir",filePath,null,{name})', source)
+
     def test_customer_ui_exposes_extract_only_with_permission(self):
         source = (ROOT / "dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
         self.assertIn('can("files.extract")', source)
