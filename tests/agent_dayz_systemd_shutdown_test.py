@@ -56,6 +56,7 @@ class DayZSystemdShutdownTest(unittest.TestCase):
         self.assertIn("\nRestart=no\n", unit)
         self.assertEqual(spec["stop_signal"], "SIGINT")
         self.assertIn("\nKillSignal=SIGINT\n", unit)
+        self.assertIn("\nTemporaryFileSystem=/dev/shm:rw,nosuid,nodev,mode=1777\n", unit)
 
     def test_dayz_v6_runtime_is_migrated_to_v10_with_graceful_stop_signal(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -100,6 +101,7 @@ class DayZSystemdShutdownTest(unittest.TestCase):
         }
         self.assertNotIn("SuccessExitStatus=255", render_unit(spec))
         self.assertIn("\nKillSignal=SIGTERM\n", render_unit(spec))
+        self.assertNotIn("TemporaryFileSystem=/dev/shm", render_unit(spec))
 
 
 if __name__ == "__main__":
