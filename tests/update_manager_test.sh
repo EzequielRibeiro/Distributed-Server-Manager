@@ -586,11 +586,28 @@ grep -Fq 'restart_game_instances' "${UPDATE}" || fail "update.sh does not restor
                 printf '%s loaded active running test\n' capivara-instance-dayz-a.service capivara-instance-minecraft-b.service
                 ;;
             show)
-                printf '%s\n' "${TEST_GAME_STATE[${2}]:-inactive}"
+                if [[ " $* " == *" --property=Environment "* ]]
+                then
+                    case "${2}" in
+                        capivara-instance-dayz-a.service)
+                            printf '%s\n' 'CAPIVARA_GAME_ID=dayz CAPIVARA_INSTANCE_ID=dayz-a'
+                            ;;
+                        *)
+                            printf '%s\n' 'CAPIVARA_GAME_ID=minecraft CAPIVARA_INSTANCE_ID=minecraft-b'
+                            ;;
+                    esac
+                else
+                    printf '%s\n' "${TEST_GAME_STATE[${2}]:-inactive}"
+                fi
                 ;;
             is-active)
                 local unit="${3:-${2:-}}"
                 [[ "${TEST_GAME_STATE[${unit}]:-inactive}" == "active" ]]
+                ;;
+            kill)
+                local unit="${4:-}"
+                TEST_GAME_STATE["${unit}"]="inactive"
+                printf 'kill-int %s\n' "${unit}" >>"${TEST_GAME_LOG}"
                 ;;
             stop)
                 TEST_GAME_STATE["${2}"]="inactive"
@@ -617,7 +634,9 @@ grep -Fq 'restart_game_instances' "${UPDATE}" || fail "update.sh does not restor
     restart_game_instances >/dev/null
     [[ "${TEST_GAME_STATE[capivara-instance-dayz-a.service]}" == "active" ]] || fail "DayZ unit was not restored"
     [[ "${TEST_GAME_STATE[capivara-instance-minecraft-b.service]}" == "active" ]] || fail "Minecraft unit was not restored"
-    [[ "$(grep -c "^stop " "${TEST_GAME_LOG}")" -eq 2 ]] || fail "managed drain stopped the wrong number of units"
+    [[ "$(grep -c "^kill-int capivara-instance-dayz-a.service$" "${TEST_GAME_LOG}")" -eq 1 ]] || fail "DayZ drain did not use SIGINT"
+    [[ "$(grep -c "^stop capivara-instance-minecraft-b.service$" "${TEST_GAME_LOG}")" -eq 1 ]] || fail "non-DayZ drain did not use systemctl stop"
+    [[ "$(grep -c "^stop capivara-instance-dayz-a.service$" "${TEST_GAME_LOG}")" -eq 0 ]] || fail "DayZ drain fell back to generic stop"
     [[ "$(grep -c "^start " "${TEST_GAME_LOG}")" -eq 2 ]] || fail "managed drain restored the wrong number of units"
 )
 (
