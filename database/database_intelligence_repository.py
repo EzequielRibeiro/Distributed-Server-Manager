@@ -235,14 +235,24 @@ class DatabaseIntelligenceRepository:
                     ORDER BY pg_relation_size(indexrelid) DESC LIMIT %s
                 """, (bounded,))
             elif self.name == "mysql":
-                rows = self._rows(connection, """
-                    SELECT table_name,index_name,
-                           0 AS scans,
-                           COALESCE(stat_value,0) AS size_bytes
-                    FROM mysql.innodb_index_stats
-                    WHERE database_name=DATABASE() AND stat_name='size'
-                    ORDER BY stat_value DESC LIMIT %s
-                """, (bounded,))
+                try:
+                    rows = self._rows(connection, """
+                        SELECT table_name,index_name,
+                               0 AS scans,
+                               COALESCE(stat_value,0) * @@innodb_page_size AS size_bytes
+                        FROM mysql.innodb_index_stats
+                        WHERE database_name=DATABASE() AND stat_name='size'
+                        ORDER BY stat_value DESC LIMIT %s
+                    """, (bounded,))
+                except Exception:
+                    rows = self._rows(connection, """
+                        SELECT table_name,index_name,0 AS scans,0 AS size_bytes
+                        FROM information_schema.statistics
+                        WHERE table_schema=DATABASE()
+                        GROUP BY table_name,index_name
+                        ORDER BY table_name,index_name
+                        LIMIT %s
+                    """, (bounded,))
             else:
                 rows = self._rows(connection, "SELECT tbl_name AS table_name,name AS index_name,0 AS scans,0 AS size_bytes FROM sqlite_master WHERE type='index' ORDER BY name")
         return [{
@@ -395,6 +405,8 @@ class DatabaseIntelligenceRepository:
             "index_scan_stats": self.name == "postgresql",
             "lock_wait_stats": self.name == "postgresql",
             "query_duration_stats": self.name in {"postgresql", "mysql"},
+            "precise_table_bytes": self.name in {"postgresql", "mysql"},
+            "historical_snapshots": True,
             "physical_reclaim_action": False,
         }
 
