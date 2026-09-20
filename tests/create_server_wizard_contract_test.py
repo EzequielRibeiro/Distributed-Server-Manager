@@ -13,6 +13,7 @@ class CreateServerWizardContractTest(unittest.TestCase):
  def test_opening_cta_is_hidden_while_wizard_is_open(self):self.assertIn("setOpeningCtasHidden(true)",self.script);self.assertIn("setOpeningCtasHidden(false)",self.script);self.assertIn("create-instance-submit",self.script)
  def test_fallback_summary_follows_checkbox(self):self.assertIn("runtime-region-fallback",self.script);self.assertIn('checkbox.checked ? "Sim" : "Não"',self.script)
  def test_phase7_assets_are_loaded(self):self.assertIn('/create-server-wizard.css',self.html);self.assertIn('/create-server-wizard.js',self.html);self.assertIn('id="runtime-placement-status"',self.html)
+ def test_submit_observer_is_idempotent(self):self.assertIn("const mustDisable=placementReady===false",self.script);self.assertIn("if(mustDisable&&!submit.disabled)submit.disabled=true",self.script)
  def test_service_uses_current_composed_entrypoint(self):
   self.assertIn("dashboard/server_part22.py",self.service)
   part21=(ROOT/"dashboard/server_part21.py").read_text(encoding="utf-8");self.assertIn("import server_part20 as integration",part21)
