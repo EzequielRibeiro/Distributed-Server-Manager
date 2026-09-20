@@ -92,7 +92,7 @@ class CatalogCompletionTest(unittest.TestCase):
                 self.assertEqual(expected["os"], os_values)
 
     def test_network_contract_is_deterministic(self):
-        allowed_apply = {"argument", "property", "derived"}
+        allowed_apply = {"argument", "property", "derived", "reserve"}
         for runtime_id, (_, payload) in self.by_id.items():
             network = payload.get("network")
             if not network:
@@ -116,6 +116,8 @@ class CatalogCompletionTest(unittest.TestCase):
                     if operation.get("kind") == "derived":
                         self.assertIn(operation.get("port"), names)
                         self.assertIn(operation.get("from"), names)
+                    elif operation.get("kind") == "reserve":
+                        self.assertIn(operation.get("port"), names)
 
     def test_deferred_runtime_is_not_customer_publishable(self):
         published_ids = set(self.by_id)
