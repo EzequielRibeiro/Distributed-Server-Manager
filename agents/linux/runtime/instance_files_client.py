@@ -15,11 +15,13 @@ import os
 from pathlib import Path
 import shutil
 import tarfile
+import tempfile
 from typing import Any
 import zipfile
 
 import instance_runtime
 from server_settings_surface import observed_surface
+from content_security import require_clean
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 RESULT_DIR = STATE_DIR / "file-results"
@@ -220,12 +222,31 @@ def _decode_upload(payload: dict[str, Any]) -> bytes:
     return data
 
 
-def _upload(root: Path, path_value: Any, payload: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+def _security_context(config: dict[str, Any], record: dict[str, Any], instance_id: str, *, content_id: str) -> dict[str, Any]:
+    return {
+        "agent_id": str(config.get("agent_id") or record.get("agent_id") or ""),
+        "instance_id": str(instance_id or record.get("instance_id") or record.get("id") or ""),
+        "content_id": str(content_id or "")[:191],
+        "provider": "customer-files",
+        "game_id": str(record.get("game_id") or ""),
+    }
+
+
+def _upload(root: Path, path_value: Any, payload: dict[str, Any], policy: dict[str, Any], *, security_context: dict[str, Any] | None = None) -> dict[str, Any]:
     path = _resolve(root, path_value, missing=True); rel = path.relative_to(root); _guard_path_policy(rel, policy, mutation=True, upload=True)
     if not path.parent.is_dir(): raise ValueError("destination directory does not exist")
     data = _decode_upload(payload); _ensure_quota(root, policy, len(data), replacing=path)
-    temp = path.with_name(f".{path.name}.{os.getpid()}.upload"); temp.write_bytes(data); os.replace(temp, path)
-    return {"path": rel.as_posix(), "size": len(data), "uploaded": True}
+    temp = path.with_name(f".{path.name}.{os.getpid()}.upload")
+    try:
+        temp.write_bytes(data)
+        verdict = require_clean(temp, security_context)
+        os.replace(temp, path)
+    finally:
+        try:
+            if temp.exists(): temp.unlink()
+        except OSError:
+            pass
+    return {"path": rel.as_posix(), "size": len(data), "uploaded": True, "security_state": str(verdict.get("security_state") or "clean")}
 
 
 def _download(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, Any]:
@@ -288,40 +309,59 @@ def _archive_members(data: bytes, name: str):
     raise ValueError("unsupported archive type")
 
 
-def _extract(root: Path, archive_value: Any, target_value: Any, policy: dict[str, Any]) -> dict[str, Any]:
+def _extract(root: Path, archive_value: Any, target_value: Any, policy: dict[str, Any], *, security_context: dict[str, Any] | None = None) -> dict[str, Any]:
     archive_path = _resolve(root, archive_value); archive_rel = archive_path.relative_to(root); _guard_path_policy(archive_rel, policy)
     target = _resolve(root, target_value or archive_path.parent.relative_to(root), missing=True)
     _guard_path_policy(target.relative_to(root), policy, mutation=True, upload=True)
-    if not target.exists(): target.mkdir(parents=False)
-    if not target.is_dir(): raise ValueError("extract target is not a directory")
+    if target.exists() and not target.is_dir(): raise ValueError("extract target is not a directory")
     data = archive_path.read_bytes()
     if len(data) > MAX_TRANSFER_BYTES: raise ValueError("archive exceeds transfer limit")
+    archive_verdict = require_clean(archive_path, security_context)
     archive, members = _archive_members(data, archive_path.name)
     planned = []
     total = 0
     try:
-        for raw_name, size, directory, opener in members:
-            rel_member = _relative(raw_name)
-            destination = (target / rel_member).resolve(strict=False); destination.relative_to(root)
-            rel = destination.relative_to(root); _guard_path_policy(rel, policy, mutation=True, upload=True)
-            total += max(0, int(size or 0))
-            planned.append((destination, directory, opener))
-        _ensure_quota(root, policy, total)
-        for destination, directory, opener in planned:
-            if directory:
-                destination.mkdir(parents=True, exist_ok=True); continue
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            handle = opener()
-            if handle is None: continue
-            with handle, destination.open("wb") as out: shutil.copyfileobj(handle, out, length=1024 * 1024)
+        with tempfile.TemporaryDirectory(prefix=".capivara-extract-", dir=str(target.parent)) as staging_raw:
+            staging = Path(staging_raw).resolve()
+            for raw_name, size, directory, opener in members:
+                rel_member = _relative(raw_name)
+                destination = (target / rel_member).resolve(strict=False); destination.relative_to(root)
+                rel = destination.relative_to(root); _guard_path_policy(rel, policy, mutation=True, upload=True)
+                staged = (staging / rel_member).resolve(strict=False); staged.relative_to(staging)
+                total += max(0, int(size or 0))
+                planned.append((destination, staged, directory, opener))
+            _ensure_quota(root, policy, total)
+            for _destination, staged, directory, opener in planned:
+                if directory:
+                    staged.mkdir(parents=True, exist_ok=True); continue
+                staged.parent.mkdir(parents=True, exist_ok=True)
+                handle = opener()
+                if handle is None: continue
+                with handle, staged.open("wb") as out: shutil.copyfileobj(handle, out, length=1024 * 1024)
+            expanded_verdict = require_clean(staging, security_context)
+            if not target.exists(): target.mkdir(parents=False)
+            for destination, staged, directory, _opener in planned:
+                if directory:
+                    destination.mkdir(parents=True, exist_ok=True); continue
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(staged, destination)
     finally:
         archive.close()
-    return {"archive": archive_rel.as_posix(), "target": target.relative_to(root).as_posix(), "entries": len(planned), "expanded_bytes": total, "extracted": True}
+    return {
+        "archive": archive_rel.as_posix(),
+        "target": target.relative_to(root).as_posix(),
+        "entries": len(planned),
+        "expanded_bytes": total,
+        "extracted": True,
+        "security_state": str(expanded_verdict.get("security_state") or "clean"),
+        "archive_security_state": str(archive_verdict.get("security_state") or "clean"),
+    }
 
 
 def execute(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
-    record = _owned(config, str(command.get("instance_id") or "")); root = _files_root(record); policy = _policy(command)
+    instance_id = str(command.get("instance_id") or ""); record = _owned(config, instance_id); root = _files_root(record); policy = _policy(command)
     action = str(command.get("action") or "").strip().lower(); path = command.get("path"); target = command.get("target_path"); payload = command.get("payload") if isinstance(command.get("payload"), dict) else {}
+    security_context = _security_context(config, record, instance_id, content_id=str(path or action))
     if action == "settings_surface":
         declaration=record.get("catalog_server_settings") if isinstance(record.get("catalog_server_settings"),dict) else {}
         supplied=payload.get("declaration") if isinstance(payload.get("declaration"),dict) else {}
@@ -333,11 +373,11 @@ def execute(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
     if action == "read_text": return _read_text(root, path, policy)
     if action == "write_text": return _write_text(root, path, payload, policy)
     if action == "download": return _download(root, path, policy)
-    if action == "upload": return _upload(root, path, payload, policy)
+    if action == "upload": return _upload(root, path, payload, policy, security_context=security_context)
     if action == "mkdir": return _mkdir(root, path, policy)
     if action == "delete": return _delete(root, path, policy)
     if action in {"rename", "move"}: return _move(root, path, target, policy)
-    if action == "extract": return _extract(root, path, target, policy)
+    if action == "extract": return _extract(root, path, target, policy, security_context=security_context)
     raise ValueError("unsupported instance file action")
 
 
