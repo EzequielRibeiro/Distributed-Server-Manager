@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -17,10 +19,24 @@ if str(CORE) not in sys.path:
 from alert_repository import AlertSession
 from observability_platform import ObservabilityValidationError, normalize_sample, utc_now
 
+HISTORY_INTERVAL_SECONDS = max(60, min(int(os.environ.get("DSM_OBSERVABILITY_HISTORY_INTERVAL_SECONDS", "300")), 3600))
+CHANGE_ONLY_METRICS = {
+    "memory.total_bytes",
+    "disk.root.total_bytes",
+    "capivara.host.memory.total_bytes",
+    "capivara.host.disk.total_bytes",
+    "capivara.agent.pid",
+}
+
+
+def _parse_instant(value: str) -> datetime:
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
+
 
 class ObservabilityRepository:
-    def __init__(self, backend):
+    def __init__(self, backend, *, history_interval_seconds: int = HISTORY_INTERVAL_SECONDS):
         self.backend = backend
+        self.history_interval_seconds = max(60, min(int(history_interval_seconds), 3600))
 
     def initialize(self) -> None:
         self.backend.initialize()
@@ -56,6 +72,37 @@ class ObservabilityRepository:
         row = session.execute(f"SELECT id FROM instances WHERE id={self.ph} AND agent_id={self.ph}", (instance_id, agent_id)).fetchone()
         return row is not None
 
+    def _history_sample_id(self, sample: Mapping[str, Any], dimensions_key: str) -> str:
+        instant = _parse_instant(str(sample["collected_at"]))
+        bucket_epoch = int(instant.timestamp()) // self.history_interval_seconds * self.history_interval_seconds
+        material = {
+            "agent_id": str(sample["agent_id"]),
+            "subject_key": self._subject_key(sample),
+            "metric_name": str(sample["metric_name"]),
+            "metric_type": str(sample["metric_type"]),
+            "unit": str(sample["unit"]),
+            "dimensions_key": dimensions_key,
+            "bucket_epoch": bucket_epoch,
+        }
+        return "hist-" + hashlib.sha256(
+            json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+    @staticmethod
+    def _unchanged(latest: Mapping[str, Any] | None, sample: Mapping[str, Any], dimensions_json: str) -> bool:
+        if latest is None:
+            return False
+        try:
+            same_value = float(latest["value_double"]) == float(sample["value"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        return (
+            same_value
+            and str(latest.get("unit") or "") == str(sample["unit"])
+            and str(latest.get("metric_type") or "") == str(sample["metric_type"])
+            and str(latest.get("dimensions_json") or "{}") == dimensions_json
+        )
+
     def ingest_agent_samples(self, agent_id: str, raw_samples: list[Mapping[str, Any]]) -> dict[str, Any]:
         accepted = created = rejected = 0
         accepted_ids: list[str] = []
@@ -75,20 +122,33 @@ class ObservabilityRepository:
                         continue
                     accepted += 1
                     accepted_ids.append(sample["sample_id"])
-                    exists = session.execute(f"SELECT sample_id FROM observability_samples WHERE sample_id={self.ph}", (sample["sample_id"],)).fetchone()
                     dimensions_json = self._dimensions_json(sample)
-                    if not exists:
-                        session.execute(
-                            f"INSERT INTO observability_samples(sample_id,agent_id,instance_id,scope_type,metric_name,metric_type,value_double,unit,dimensions_json,collected_at,ingested_at) VALUES ({','.join([self.ph]*11)})",
-                            (sample["sample_id"], agent_id, sample.get("instance_id"), sample["scope_type"], sample["metric_name"], sample["metric_type"], sample["value"], sample["unit"], dimensions_json, sample["collected_at"], now),
-                        )
-                        created += 1
                     subject_key = self._subject_key(sample)
                     dimensions_key = self._dimensions_key(dimensions_json)
                     latest = session.execute(
-                        f"SELECT collected_at FROM observability_latest WHERE agent_id={self.ph} AND subject_key={self.ph} AND metric_name={self.ph} AND dimensions_key={self.ph}",
+                        f"SELECT sample_id,value_double,unit,metric_type,dimensions_json,collected_at FROM observability_latest WHERE agent_id={self.ph} AND subject_key={self.ph} AND metric_name={self.ph} AND dimensions_key={self.ph}",
                         (agent_id, subject_key, sample["metric_name"], dimensions_key),
                     ).fetchone()
+
+                    change_only = str(sample["metric_name"]) in CHANGE_ONLY_METRICS
+                    persist_history = not (change_only and self._unchanged(latest, sample, dimensions_json))
+                    history_sample_id = (
+                        sample["sample_id"]
+                        if change_only
+                        else self._history_sample_id(sample, dimensions_key)
+                    )
+                    if persist_history:
+                        exists = session.execute(
+                            f"SELECT sample_id FROM observability_samples WHERE sample_id={self.ph}",
+                            (history_sample_id,),
+                        ).fetchone()
+                        if not exists:
+                            session.execute(
+                                f"INSERT INTO observability_samples(sample_id,agent_id,instance_id,scope_type,metric_name,metric_type,value_double,unit,dimensions_json,collected_at,ingested_at) VALUES ({','.join([self.ph]*11)})",
+                                (history_sample_id, agent_id, sample.get("instance_id"), sample["scope_type"], sample["metric_name"], sample["metric_type"], sample["value"], sample["unit"], dimensions_json, sample["collected_at"], now),
+                            )
+                            created += 1
+
                     values = (sample["sample_id"], sample["value"], sample["unit"], sample["metric_type"], dimensions_json, sample["collected_at"], now)
                     if latest is None:
                         session.execute(
@@ -168,11 +228,41 @@ class ObservabilityRepository:
             result.append({"agent_id": agent, "instance_id": instance, "metric_name": metric, "dimensions": json.loads(dimensions_key), "unit": units[key], "count": len(values), "min": min(values), "max": max(values), "avg": sum(values) / len(values)})
         return result
 
-    def prune_before(self, before: str) -> int:
+    def count_before(self, before: str) -> int:
+        with self.backend.connect() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                row = session.execute(
+                    f"SELECT COUNT(*) AS total FROM observability_samples WHERE collected_at<{self.ph}",
+                    (before,),
+                ).fetchone()
+                return int(dict(row).get("total") or 0) if row is not None else 0
+            finally:
+                session.close()
+
+    def prune_before(self, before: str, *, limit: int | None = None) -> int:
+        bounded = None if limit is None else max(1, min(int(limit), 50000))
         with self.backend.transaction() as connection:
             session = AlertSession(self.backend, connection)
             try:
-                cursor = session.execute(f"DELETE FROM observability_samples WHERE collected_at<{self.ph}", (before,))
+                if bounded is None:
+                    cursor = session.execute(
+                        f"DELETE FROM observability_samples WHERE collected_at<{self.ph}",
+                        (before,),
+                    )
+                    return max(0, int(getattr(cursor, "rowcount", 0) or 0))
+                rows = session.execute(
+                    f"SELECT sample_id FROM observability_samples WHERE collected_at<{self.ph} ORDER BY collected_at LIMIT {self.ph}",
+                    (before, bounded),
+                ).fetchall()
+                sample_ids = [str(dict(row)["sample_id"]) for row in rows]
+                if not sample_ids:
+                    return 0
+                placeholders = ",".join([self.ph] * len(sample_ids))
+                cursor = session.execute(
+                    f"DELETE FROM observability_samples WHERE sample_id IN ({placeholders})",
+                    tuple(sample_ids),
+                )
                 return max(0, int(getattr(cursor, "rowcount", 0) or 0))
             finally:
                 session.close()
