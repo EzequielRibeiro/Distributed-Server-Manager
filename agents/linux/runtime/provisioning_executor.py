@@ -196,9 +196,35 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
 
 
 def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) -> dict[str, Any]:
-    request = validate_provisioning_request(request, expected_agent_id=str(config.get("agent_id") or ""))
-    limits = runtime_limits(config)
     started = time.monotonic()
+    try:
+        request = validate_provisioning_request(request, expected_agent_id=str(config.get("agent_id") or ""))
+    except Exception as exc:
+        increment("provisioning_contract_failure")
+        diagnostics = _failure_diagnostics(request, exc)
+        failed = _result(
+            result_path,
+            request,
+            status="failed",
+            current_step="validate_contract",
+            progress=99,
+            compensation=["content_preserved_for_retry", "port_reservations_preserved"],
+            **diagnostics,
+        )
+        _event(
+            "INSTANCE_PROVISIONING_FAILED",
+            request,
+            step="validate_contract",
+            progress=99,
+            data={
+                "error": diagnostics["error"],
+                "exception_type": diagnostics["exception_type"],
+                "correlation_id": diagnostics["correlation_id"],
+            },
+        )
+        observe_duration("provisioning", int((time.monotonic() - started) * 1000))
+        return failed
+    limits = runtime_limits(config)
     deadline = started + limits.provisioning_timeout_seconds
     try:
         with runtime_operation(config, request["instance_id"], "provision", lock_timeout_seconds=limits.lock_timeout_seconds):
