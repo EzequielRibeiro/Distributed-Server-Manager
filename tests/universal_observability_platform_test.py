@@ -73,6 +73,42 @@ class ObservabilityRepositoryTest(unittest.TestCase):
         self.assertEqual(latest[0]["value"], 2.0)
         self.assertIsNone(latest[0]["instance_id"])
 
+    def test_history_is_downsampled_but_latest_stays_realtime(self):
+        repo = ObservabilityRepository(self.backend, history_interval_seconds=300)
+        one = repo.ingest_agent_samples("agent-c3", [self.sample(1.0, "2026-08-21T17:00:01Z")])
+        two = repo.ingest_agent_samples("agent-c3", [self.sample(2.0, "2026-08-21T17:04:59Z")])
+        three = repo.ingest_agent_samples("agent-c3", [self.sample(3.0, "2026-08-21T17:05:00Z")])
+        self.assertEqual(one["created"], 1)
+        self.assertEqual(two["created"], 0)
+        self.assertEqual(three["created"], 1)
+        history = repo.history(agent_id="agent-c3", metric_name="system.load.1", limit=10)
+        self.assertEqual(len(history), 2)
+        latest = repo.latest(agent_id="agent-c3", metric_name="system.load.1")
+        self.assertEqual(latest[0]["value"], 3.0)
+        self.assertEqual(latest[0]["collected_at"], "2026-08-21T17:05:00Z")
+
+    def test_change_only_metrics_persist_only_when_value_changes(self):
+        repo = ObservabilityRepository(self.backend, history_interval_seconds=300)
+        first = {"metric_name": "memory.total_bytes", "value": 1024, "unit": "bytes", "collected_at": "2026-08-21T17:00:00Z"}
+        same = {"metric_name": "memory.total_bytes", "value": 1024, "unit": "bytes", "collected_at": "2026-08-21T18:00:00Z"}
+        changed = {"metric_name": "memory.total_bytes", "value": 2048, "unit": "bytes", "collected_at": "2026-08-21T19:00:00Z"}
+        self.assertEqual(repo.ingest_agent_samples("agent-c3", [first])["created"], 1)
+        self.assertEqual(repo.ingest_agent_samples("agent-c3", [same])["created"], 0)
+        self.assertEqual(repo.ingest_agent_samples("agent-c3", [changed])["created"], 1)
+        history = repo.history(agent_id="agent-c3", metric_name="memory.total_bytes", limit=10)
+        self.assertEqual([row["value"] for row in history], [2048.0, 1024.0])
+
+    def test_batched_retention_prunes_oldest_rows(self):
+        repo = ObservabilityRepository(self.backend, history_interval_seconds=60)
+        for minute in range(5):
+            repo.ingest_agent_samples(
+                "agent-c3",
+                [self.sample(float(minute), f"2026-08-21T17:0{minute}:00Z")],
+            )
+        self.assertEqual(repo.count_before("2026-08-21T17:05:00Z"), 5)
+        self.assertEqual(repo.prune_before("2026-08-21T17:05:00Z", limit=2), 2)
+        self.assertEqual(repo.count_before("2026-08-21T17:05:00Z"), 3)
+
     def test_history_summary_and_instance_spoof_rejection(self):
         self.repo.ingest_agent_samples("agent-c3", [self.sample(1.0), self.sample(3.0, "2026-08-21T17:02:00Z")])
         history = self.repo.history(agent_id="agent-c3", metric_name="system.load.1")
