@@ -152,6 +152,28 @@ class AgentUpdateLifecycleTest(unittest.TestCase):
             }.issubset(read_write_paths)
         )
 
+    def test_updater_maps_every_packaged_common_module(self):
+        package = self.root / "package"
+        common = package / "agent" / "common"
+        common.mkdir(parents=True)
+        (common / "identity.py").write_text("identity = True\n", encoding="utf-8")
+        (common / "source_rcon.py").write_text("rcon = True\n", encoding="utf-8")
+        (package / "agent" / "runtime").mkdir(parents=True)
+
+        mapping = updater._mapping(package)
+        mapped = {
+            relative: destination
+            for _, destination, _, relative in mapping
+        }
+        self.assertEqual(
+            mapped["agent/common/identity.py"],
+            self.install / "common" / "identity.py",
+        )
+        self.assertEqual(
+            mapped["agent/common/source_rcon.py"],
+            self.install / "common" / "source_rcon.py",
+        )
+
     def test_updater_refreshes_core_service_units_from_release_package(self):
         package = self.root / "package"
         (package / "agent/runtime").mkdir(parents=True)
