@@ -31,7 +31,24 @@ class InstanceConsoleWatchdogTest(unittest.TestCase):
                 self.assertNotIn("markConsoleLifecycleProgress", onopen)
                 self.assertIn('stream.addEventListener("console-snapshot"', ensure)
                 self.assertIn('stream.addEventListener("console-line"', ensure)
-                self.assertGreaterEqual(ensure.count("markConsoleLifecycleProgress()"), 2)
+                self.assertGreaterEqual(ensure.count("markConsoleStreamProgress()"), 2)
+                stream_progress = self.function_body(source, "markConsoleStreamProgress")
+                self.assertIn("markConsoleLifecycleProgress()", stream_progress)
+
+    def test_open_but_silent_sse_uses_safety_poll(self):
+        for surface, source in self.sources.items():
+            with self.subTest(surface=surface):
+                self.assertIn("CONSOLE_SAFETY_POLL_MS=3000", source)
+                self.assertIn("CONSOLE_SSE_STALE_MS=6000", source)
+                safety = self.function_body(source, "startConsoleSafetyPoll")
+                self.assertIn("setInterval", safety)
+                self.assertIn("Date.now()-lastConsoleStreamDataAt>=CONSOLE_SSE_STALE_MS", safety)
+                self.assertIn("refreshConsole()", safety)
+                ensure = self.function_body(source, "ensureConsoleTransport")
+                self.assertIn("startConsoleSafetyPoll()", ensure)
+                stop = self.function_body(source, "stopConsoleStream")
+                self.assertIn("stopConsoleSafetyPoll()", stop)
+                self.assertIn("lastConsoleStreamDataAt=0", stop)
 
     def test_stale_lifecycle_stream_reconnects_and_refreshes_snapshot(self):
         for surface, source in self.sources.items():
