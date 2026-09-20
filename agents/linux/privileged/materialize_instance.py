@@ -256,11 +256,14 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
     storage_root.mkdir(parents=True, exist_ok=True)
     os.chmod(storage_root, 0o711)
     state_root.mkdir(parents=True, exist_ok=True)
+    control_user = str(
+        os.environ.get("CAPIVARA_AGENT_RESULT_USER") or "capivara-agent"
+    ).strip()
     try:
-        agent_account = pwd.getpwnam("capivara-agent")
+        agent_account = pwd.getpwnam(control_user)
         agent_group = grp.getgrnam(_AGENT_GROUP)
     except KeyError as exc:
-        raise RuntimeError("capivara-agent control identity is unavailable") from exc
+        raise RuntimeError("Agent control identity is unavailable") from exc
     os.chown(state_root, account.pw_uid, agent_group.gr_gid)
     os.chmod(state_root, 0o710)
 
