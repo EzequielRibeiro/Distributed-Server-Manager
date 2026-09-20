@@ -321,7 +321,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
             with sqlite3.connect(database) as connection:
                 connection.execute("DELETE FROM baseline_upgrades WHERE version>=14")
                 connection.execute("DROP TABLE yarax_admin_operations")
-                connection.execute("DROP TABLE dayz_native_restart_commands")
+                connection.execute("DROP TABLE IF EXISTS dayz_native_restart_commands")
                 connection.execute("DROP TABLE native_restart_commands")
                 connection.execute(
                     "UPDATE schema_baseline SET checksum=? WHERE singleton=1",
@@ -402,7 +402,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
             self.assertEqual(before.returncode, 1, before.stderr)
             before_payload = json.loads(before.stdout)
             self.assertEqual(before_payload["upgrade_version"], 14)
-            self.assertEqual(before_payload["upgrade_latest"], 15)
+            self.assertEqual(before_payload["upgrade_latest"], 16)
             self.assertEqual(
                 before_payload["pending_upgrades"],
                 [
@@ -416,8 +416,8 @@ class BaselineUpdatePathTest(unittest.TestCase):
             self.assertEqual(migrated.returncode, 0, migrated.stderr)
             migrated_payload = json.loads(migrated.stdout)
             self.assertTrue(migrated_payload["valid"])
-            self.assertEqual(migrated_payload["upgrade_version"], 15)
-            self.assertEqual(migrated_payload["upgrade_latest"], 15)
+            self.assertEqual(migrated_payload["upgrade_version"], 16)
+            self.assertEqual(migrated_payload["upgrade_latest"], 16)
 
             with sqlite3.connect(database) as connection:
                 legacy_table = connection.execute(
@@ -477,26 +477,8 @@ class BaselineUpdatePathTest(unittest.TestCase):
                       ON dayz_native_restart_commands(instance_id,status,created_at);
                     """
                 )
-                agent_id = connection.execute("SELECT id FROM agents LIMIT 1").fetchone()[0]
-                instance = connection.execute(
-                    "SELECT id,game_id,runtime_id FROM instances WHERE agent_id=? LIMIT 1",
-                    (agent_id,),
-                ).fetchone()
-                if instance is None:
-                    node_id = connection.execute("SELECT id FROM nodes LIMIT 1").fetchone()[0]
-                    connection.execute(
-                        "INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,agent_id,created_at,updated_at) "
-                        "VALUES (?,?,?,?,?,?,?,?,?)",
-                        ("dayz-v15-test", node_id, "dayz", "dayz.stable", "DayZ v15", "running", agent_id,
-                         "2026-09-20T00:00:00Z", "2026-09-20T00:00:00Z"),
-                    )
-                    instance_id = "dayz-v15-test"
-                else:
-                    instance_id = instance[0]
-                    connection.execute(
-                        "UPDATE instances SET game_id='dayz',runtime_id='dayz.stable' WHERE id=?",
-                        (instance_id,),
-                    )
+                agent_id = "agent-v15-test"
+                instance_id = "dayz-v15-test"
                 connection.execute(
                     "INSERT INTO dayz_native_restart_commands("
                     "command_id,agent_id,instance_id,due_at,status,requested_by,created_at,updated_at"
@@ -525,7 +507,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
             self.assertIsNone(legacy)
             self.assertEqual(
                 row,
-                ("dayz-maint-v15", "dayz", "dayz.stable", "dayz-shutdown-messages", "queued"),
+                ("dayz-maint-v15", "dayz", None, "dayz-shutdown-messages", "queued"),
             )
             self.assertEqual(ledger, (16, "generic_native_restart_commands"))
 
