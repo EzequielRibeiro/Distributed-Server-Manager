@@ -17,6 +17,9 @@ from pathlib import Path
 RUNTIME_DIR = Path(__file__).resolve().parent
 if str(RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_DIR))
+COMPAT_COMMON_DIR = RUNTIME_DIR / "compat_common"
+if COMPAT_COMMON_DIR.is_dir() and str(COMPAT_COMMON_DIR) not in sys.path:
+    sys.path.append(str(COMPAT_COMMON_DIR))
 
 from artifact_transfer_client import clear_result as clear_artifact_result, handle_command as handle_artifact_command, read_result as read_artifact_result
 from backup_client import apply_backup_commands, backup_state

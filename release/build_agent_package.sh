@@ -31,6 +31,16 @@ for source in "${COMMON_SOURCES[@]}"; do
   copy "${source}" "agent/common/${relative}"
 done
 
+# Compatibility bridge for Agents whose installed updater predates dynamic
+# agent/common discovery. Legacy updaters already copy every agent/runtime/*.py,
+# so mirror shared modules under runtime/compat_common as well. New Agents keep
+# using agent/common normally; the mirrored copy exists only to make old ->
+# current incremental updates bootable.
+for source in "${COMMON_SOURCES[@]}"; do
+  relative="${source#agents/common/}"
+  copy "${source}" "agent/runtime/compat_common/${relative}"
+done
+
 # Package every Python module below agents/linux/runtime. The Agent installer and
 # updater also discover these modules dynamically, keeping source/package/install
 # parity when a new game profile or typed bootstrap helper is introduced.
