@@ -149,54 +149,6 @@ def _validate_runtime_access(working_directory: str, user: str) -> None:
         raise RuntimeError("game-data is not readable/traversable by runtime group")
 
 
-def _prepare_dayz_official_content_access(spec: dict[str, Any], user: str) -> None:
-    if user != _DEFAULT_RUNTIME_USER or str(spec.get("game_id") or "").strip().lower() != "dayz":
-        return
-    working = Path(str(spec["working_directory"])).resolve()
-    if _runtime_boundary(str(working), user) is None:
-        return
-    sakhal = working / "sakhal"
-    if not sakhal.exists():
-        return
-    if sakhal.is_symlink() or not sakhal.is_dir():
-        raise RuntimeError("DayZ Sakhal official content root is invalid")
-    try:
-        runtime_group = grp.getgrnam(_AGENT_GROUP)
-    except KeyError as exc:
-        raise RuntimeError("capivara-agent group is unavailable") from exc
-    current = sakhal.stat()
-    if current.st_gid != runtime_group.gr_gid:
-        os.chown(sakhal, -1, runtime_group.gr_gid)
-        current = sakhal.stat()
-    mode = stat.S_IMODE(current.st_mode)
-    required = stat.S_ISVTX | stat.S_IRGRP | stat.S_IWGRP | stat.S_IXGRP
-    if (mode & required) != required:
-        os.chmod(sakhal, mode | required)
-
-
-def _validate_dayz_official_content_access(spec: dict[str, Any], user: str) -> None:
-    if user != _DEFAULT_RUNTIME_USER or str(spec.get("game_id") or "").strip().lower() != "dayz":
-        return
-    working = Path(str(spec["working_directory"])).resolve()
-    if _runtime_boundary(str(working), user) is None:
-        return
-    sakhal = working / "sakhal"
-    if not sakhal.exists():
-        return
-    if sakhal.is_symlink() or not sakhal.is_dir():
-        raise RuntimeError("DayZ Sakhal official content root is invalid")
-    try:
-        runtime_group = grp.getgrnam(_AGENT_GROUP)
-    except KeyError as exc:
-        raise RuntimeError("capivara-agent group is unavailable") from exc
-    current = sakhal.stat()
-    mode = stat.S_IMODE(current.st_mode)
-    if current.st_gid != runtime_group.gr_gid:
-        raise RuntimeError("DayZ Sakhal official content root is not owned by the runtime group")
-    if (mode & 0o070) != 0o070 or not (mode & stat.S_ISVTX):
-        raise RuntimeError("DayZ Sakhal official content root is not runtime-writable with sticky protection")
-
-
 def _within(root: Path, value: str, label: str) -> Path:
     root = root.resolve()
     path = Path(value).resolve()
@@ -363,8 +315,6 @@ def _ensure_runtime_identity(spec: dict[str, Any], config: dict[str, Any]) -> No
     account = _validate_runtime_user(user)
     _prepare_runtime_access(str(spec["working_directory"]), user)
     _validate_runtime_access(str(spec["working_directory"]), user)
-    _prepare_dayz_official_content_access(spec, user)
-    _validate_dayz_official_content_access(spec, user)
     _prepare_private_state(spec, account, _instance_storage_root(config, spec.get("storage_pool_id")))
 
 

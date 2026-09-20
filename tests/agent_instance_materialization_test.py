@@ -342,47 +342,5 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(game_data.stat().st_mode) & 0o007, 0)
 
 
-    def test_dayz_sakhal_root_is_runtime_writable_with_sticky_protection(self):
-        state = self.root / "hybrid-agent-state"
-        game_data = state / "game-data"
-        working = game_data / "dayz" / "serverfiles"
-        sakhal = working / "sakhal"
-        addons = sakhal / "addons"
-        addons.mkdir(parents=True)
-        os.chmod(sakhal, 0o755)
-        os.chmod(addons, 0o755)
-        original_state = materialize_instance.STATE_DIR
-        materialize_instance.STATE_DIR = state
-        runtime_group = type("Group", (), {"gr_gid": state.stat().st_gid})()
-        spec = {"game_id": "dayz", "working_directory": str(working)}
-        try:
-            with mock.patch.object(materialize_instance.grp, "getgrnam", return_value=runtime_group):
-                materialize_instance._prepare_dayz_official_content_access(spec, "capivara-instance")
-                materialize_instance._validate_dayz_official_content_access(spec, "capivara-instance")
-        finally:
-            materialize_instance.STATE_DIR = original_state
-        mode = stat.S_IMODE(sakhal.stat().st_mode)
-        self.assertEqual(mode & 0o070, 0o070)
-        self.assertTrue(mode & stat.S_ISVTX)
-        self.assertEqual(stat.S_IMODE(addons.stat().st_mode), 0o755)
-
-    def test_non_dayz_runtime_does_not_mutate_sakhal_named_directory(self):
-        state = self.root / "hybrid-agent-state"
-        working = state / "game-data" / "other" / "serverfiles"
-        sakhal = working / "sakhal"
-        sakhal.mkdir(parents=True)
-        os.chmod(sakhal, 0o755)
-        original_state = materialize_instance.STATE_DIR
-        materialize_instance.STATE_DIR = state
-        try:
-            materialize_instance._prepare_dayz_official_content_access(
-                {"game_id": "other", "working_directory": str(working)},
-                "capivara-instance",
-            )
-        finally:
-            materialize_instance.STATE_DIR = original_state
-        self.assertEqual(stat.S_IMODE(sakhal.stat().st_mode), 0o755)
-
-
 if __name__ == "__main__":
     unittest.main()
