@@ -31,18 +31,26 @@ class DayZNativeRestartAgentParityTest(unittest.TestCase):
             self.assertNotIn("shell=True", source)
             self.assertNotIn("os.system(", source)
 
-    def test_controller_payload_remains_pathless(self):
+    def test_controller_payload_is_generic_and_remains_pathless(self):
         source = (
-            ROOT / "database/dayz_native_restart_repository.py"
+            ROOT / "database/native_restart_repository.py"
         ).read_text(encoding="utf-8")
 
-        self.assertIn(
-            '("command_id", "agent_id", "instance_id", "due_at")',
-            source,
-        )
+        for field in ("game_id", "runtime_id", "strategy", "due_at", "payload"):
+            self.assertIn(f'"{field}"', source)
 
         self.assertNotIn('"messages_path"', source)
         self.assertNotIn('"xml"', source)
+
+    def test_generic_dispatchers_keep_game_specific_logic_out_of_transport(self):
+        for relative in (
+            "agents/linux/runtime/native_restart_client.py",
+            "agents/windows/runtime/native_restart_client.py",
+        ):
+            source = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertIn('("dayz", "dayz-shutdown-messages")', source)
+            self.assertIn("unsupported native restart adapter", source)
+            self.assertNotIn("messages.xml", source)
 
     def test_agents_publish_result_and_accept_command(self):
         for relative in (
@@ -51,9 +59,9 @@ class DayZNativeRestartAgentParityTest(unittest.TestCase):
         ):
             source = (ROOT / relative).read_text(encoding="utf-8")
 
-            self.assertIn("dayz_native_restart_result", source)
-            self.assertIn("dayz_native_restart_command", source)
-            self.assertIn("dayz_native_restart_state", source)
+            self.assertIn("native_restart_result", source)
+            self.assertIn("native_restart_command", source)
+            self.assertIn("native_restart_state", source)
 
 
 if __name__ == "__main__":
