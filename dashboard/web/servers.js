@@ -89,7 +89,8 @@ function normalizeStatus(source){
     return"unknown";
 }
 
-function number(v,f=0){
+function number(v,f=null){
+    if(v===null||v===undefined||v==="")return f;
     const n=Number(v);
     return Number.isFinite(n)?n:f;
 }
@@ -98,14 +99,16 @@ function normalize(resource,summary,agents){
     const id=identity(resource);
     const meta=summary?.instance_metadata||{};
     const metrics=summary?.metrics||{};
+    const telemetry=summary?.telemetry||resource?.telemetry||{};
     const serverState=summary?.server_state||{};
     const summaryStatus=normalizeStatus(summary);
     const resourceStatus=normalizeStatus(resource);
     const status=summaryStatus==="unknown"?resourceStatus:summaryStatus;
-    const players=number(serverState?.players??metrics?.players??summary?.players,0);
-    const slots=number(serverState?.max_players??serverState?.slots??summary?.max_players,0);
-    const ramMb=number(metrics?.instance?.memory_mb??metrics?.memory_mb??metrics?.ram_mb,0);
-    const cpu=number(metrics?.instance?.cpu_pct??metrics?.cpu_pct??metrics?.cpu?.pct,0);
+    const players=number(telemetry?.players_online??serverState?.players??metrics?.players??summary?.players,null);
+    const slots=number(telemetry?.players_max??serverState?.max_players??serverState?.slots??summary?.max_players,null);
+    const memoryBytes=number(telemetry?.memory_bytes,null);
+    const ramMb=number(metrics?.instance?.memory_mb??metrics?.memory_mb??metrics?.ram_mb,memoryBytes===null?null:memoryBytes/(1024*1024));
+    const cpu=number(telemetry?.cpu_percent??metrics?.instance?.cpu_pct??metrics?.cpu_pct??metrics?.cpu?.pct,null);
     const agentId=meta.agent_id||meta.agent||id.server;
     const agent=agents.find(a=>[a.id,a.agent_id,a.node_id,a.name].filter(Boolean).map(String).includes(String(agentId)));
     const location=agent?.location_name||agent?.location||agent?.datacenter_name||agent?.datacenter||meta.datacenter||"-";
@@ -146,7 +149,7 @@ async function enrich(resources,agents){
 }
 
 function fmtRam(mb){
-    return !mb?"-":mb>=1024?`${(mb/1024).toFixed(2)} GB`:`${Math.round(mb)} MB`;
+    return mb===null?"-":mb>=1024?`${(mb/1024).toFixed(2)} GB`:`${Math.round(mb)} MB`;
 }
 
 function escapeHtml(v){
@@ -165,11 +168,11 @@ function card(i){
     a.className="cap-instance-card";
     a.dataset.state=i.status;
     const label=statusLabel(i.status);
-    const players=i.slots?`${i.players} / ${i.slots}`:String(i.players);
-    const ramPct=Math.max(0,Math.min(100,i.ramMb?Math.min(100,(i.ramMb/16384)*100):0));
+    const players=i.players===null?"—":i.slots===null?String(i.players):`${i.players} / ${i.slots}`;
+    const ramPct=Math.max(0,Math.min(100,i.ramMb===null?0:Math.min(100,(i.ramMb/16384)*100)));
     const qs=new URLSearchParams({server:i.server,game:i.game,instance:i.instance});
     const manage=["admin","controller"].includes(state.role)?`<a class="cap-action-secondary" href="controller-instance.html?${qs}">Gerenciar</a>`:"";
-    a.innerHTML=`<div class="cap-instance-head"><div class="cap-instance-title"><span class="cap-game-mark">${gameIcon(i.game)}</span><div><strong>${escapeHtml(i.display)}</strong><small>${escapeHtml(i.game)} · ${escapeHtml(i.agent)}</small></div></div><span class="cap-state ${i.status}">${label}</span></div><div class="cap-instance-meta"><div><span>Jogadores</span><strong>${players}</strong></div><div><span>CPU</span><strong>${i.cpu?i.cpu.toFixed(1)+"%":"-"}</strong></div><div><span>Agent</span><strong>${escapeHtml(i.agent)}</strong></div><div><span>Localização</span><strong>${escapeHtml(i.location)}</strong></div></div><div class="cap-meter"><div class="cap-meter-row"><span>RAM</span><strong>${fmtRam(i.ramMb)}</strong></div><div class="cap-meter-track"><div class="cap-meter-fill" style="width:${ramPct}%"></div></div></div><div class="cap-instance-actions"><a class="cap-action-primary" href="console.html?${qs}">Console</a>${manage}</div>`;
+    a.innerHTML=`<div class="cap-instance-head"><div class="cap-instance-title"><span class="cap-game-mark">${gameIcon(i.game)}</span><div><strong>${escapeHtml(i.display)}</strong><small>${escapeHtml(i.game)} · ${escapeHtml(i.agent)}</small></div></div><span class="cap-state ${i.status}">${label}</span></div><div class="cap-instance-meta"><div><span>Jogadores</span><strong>${players}</strong></div><div><span>CPU</span><strong>${i.cpu===null?"-":i.cpu.toFixed(1)+"%"}</strong></div><div><span>Agent</span><strong>${escapeHtml(i.agent)}</strong></div><div><span>Localização</span><strong>${escapeHtml(i.location)}</strong></div></div><div class="cap-meter"><div class="cap-meter-row"><span>RAM</span><strong>${fmtRam(i.ramMb)}</strong></div><div class="cap-meter-track"><div class="cap-meter-fill" style="width:${ramPct}%"></div></div></div><div class="cap-instance-actions"><a class="cap-action-primary" href="console.html?${qs}">Console</a>${manage}</div>`;
     return a;
 }
 

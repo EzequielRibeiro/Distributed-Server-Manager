@@ -29,6 +29,20 @@ class InstanceRuntimeStatusUiTest(unittest.TestCase):
         ):
             self.assertIn(token, script)
 
+    def test_instance_cards_use_live_telemetry_without_inventing_zero_players(self):
+        script = (WEB / "servers.js").read_text(encoding="utf-8")
+
+        for token in (
+            "summary?.telemetry||resource?.telemetry||{}",
+            "telemetry?.players_online",
+            "telemetry?.players_max",
+            "telemetry?.cpu_percent",
+            "telemetry?.memory_bytes",
+            'const players=i.players===null?"—"',
+        ):
+            self.assertIn(token, script)
+        self.assertNotIn("summary?.players,0", script)
+
     def test_unknown_state_has_distinct_filter_and_presentation(self):
         page = (WEB / "servers.html").read_text(encoding="utf-8")
         styles = (WEB / "servers.css").read_text(encoding="utf-8")

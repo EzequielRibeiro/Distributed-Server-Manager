@@ -46,6 +46,21 @@ class FakeAgentRepository:
         return {"health_status": self.values.get(agent_id, "unknown")}
 
 
+class FakeTelemetryRepository:
+    def __init__(self, values):
+        self.values = values
+
+    def initialize(self):
+        return None
+
+    def latest_telemetry(self, instance_ids):
+        return {
+            str(instance_id): dict(self.values[str(instance_id)])
+            for instance_id in instance_ids
+            if str(instance_id) in self.values
+        }
+
+
 def record(status="offline"):
     return {
         "id": "cli-000001-dayz-001",
@@ -98,11 +113,12 @@ class RuntimeProjectionTest(unittest.TestCase):
             backend_from_environment=lambda: object(),
         )
 
-    def install(self, legacy, runtime_values, agent_values):
+    def install(self, legacy, runtime_values, agent_values, telemetry_values=None):
         return install_runtime_instance_projection(
             legacy,
             health_repository_factory=lambda _: FakeHealthRepository(runtime_values),
             agent_repository_factory=lambda _: FakeAgentRepository(agent_values),
+            telemetry_repository_factory=lambda _: FakeTelemetryRepository(telemetry_values or {}),
             cache_seconds=0,
         )
 
@@ -144,6 +160,44 @@ class RuntimeProjectionTest(unittest.TestCase):
             self.assertEqual(detail["server_state"]["source"], "agent")
             self.assertEqual(detail["instance_metadata"]["agent_id"], "agent-horizon-server")
 
+    def test_live_projection_carries_latest_telemetry_to_list_and_detail(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            records = [record("online")]
+            legacy = self.make_legacy(root, records, legacy_status="online", create_resource=True)
+            telemetry = {
+                "cli-000001-dayz-001": {
+                    "instance_id": "cli-000001-dayz-001",
+                    "players_online": 1,
+                    "players_max": 32,
+                    "cpu_percent": 14.5,
+                    "memory_bytes": 6_291_456_000,
+                    "sampled_at": "2026-09-20T17:00:00Z",
+                }
+            }
+            self.install(
+                legacy,
+                {
+                    "agent-horizon-server": [
+                        {
+                            "instance_id": "cli-000001-dayz-001",
+                            "observed_state": "running",
+                            "health": "healthy",
+                        }
+                    ]
+                },
+                {"agent-horizon-server": "online"},
+                telemetry,
+            )
+
+            listed = legacy.api_runtime_list()[0]
+            detail = legacy.api_runtime_summary("horizon-server", "dayz", "cli-000001-dayz-001")
+
+            self.assertEqual(listed["telemetry"]["players_online"], 1)
+            self.assertEqual(listed["telemetry"]["players_max"], 32)
+            self.assertEqual(detail["telemetry"]["players_online"], 1)
+            self.assertEqual(detail["telemetry"]["cpu_percent"], 14.5)
+
     def test_live_stopped_overrides_stale_controller_online(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -169,6 +223,7 @@ class RuntimeProjectionTest(unittest.TestCase):
                 legacy,
                 {"agent-horizon-server": [{"instance_id": "cli-000001-dayz-001", "observed_state": "running", "health": "healthy"}]},
                 {"agent-horizon-server": "offline"},
+                {"cli-000001-dayz-001": {"instance_id": "cli-000001-dayz-001", "players_online": 9, "players_max": 32}},
             )
 
             listed = legacy.api_runtime_list()[0]
@@ -177,6 +232,8 @@ class RuntimeProjectionTest(unittest.TestCase):
             self.assertEqual(listed["status_source"], "agent-stale")
             self.assertEqual(detail["server_state"]["status"]["state"], "unknown")
             self.assertEqual(detail["server_state"]["status"]["health"], "stale")
+            self.assertNotIn("telemetry", listed)
+            self.assertNotIn("telemetry", detail)
 
     def test_missing_agent_observation_is_unknown_not_false_offline(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -94,7 +94,7 @@ class ControllerInstanceNavigationTest(unittest.TestCase):
 
     def test_servers_asset_revision_is_bumped(self):
         page = (WEB / "servers.html").read_text(encoding="utf-8")
-        self.assertIn('<script src="servers.js?v=9"></script>', page)
+        self.assertIn('<script src="servers.js?v=10"></script>', page)
 
 
 if __name__ == "__main__":
