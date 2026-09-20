@@ -59,6 +59,21 @@ class ProvisioningContractTest(unittest.TestCase):
             with self.assertRaises(ProvisioningContractError):
                 validate_provisioning_request(request, expected_agent_id="agent-one")
 
+    def test_contract_accepts_canonical_runtime_selectors_with_build_segments(self):
+        for selector in ("1.21.1@21.1.251", "1.20.1@0.16.14@1.0.1"):
+            request = self.request()
+            request["selector"] = selector
+            validated = validate_provisioning_request(request, expected_agent_id="agent-one")
+            self.assertEqual(validated["selector"], selector)
+
+    def test_contract_rejects_unsafe_selector_characters(self):
+        for selector in ("../escape", "1.21.1;rm", "1.21.1 build", "1.21.1/21.1.251"):
+            request = self.request()
+            request["selector"] = selector
+            with self.assertRaises(ProvisioningContractError):
+                validate_provisioning_request(request, expected_agent_id="agent-one")
+
+
 
 class ProvisioningExecutorTest(unittest.TestCase):
     def setUp(self):
@@ -114,6 +129,16 @@ class ProvisioningExecutorTest(unittest.TestCase):
         self.assertEqual(result["runtime"]["profile"], "dayz")
         self.assertEqual(result["content"]["provider"], "steam")
         self.assertTrue((Path(result["workspace"]["root"])).is_dir())
+
+    def test_contract_validation_failure_is_persisted_in_result(self):
+        request = dict(self.request)
+        request["selector"] = "invalid selector"
+        result = provisioning_executor.execute(self.config, request, self.result_path)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["current_step"], "validate_contract")
+        self.assertEqual(result["progress"], 99)
+        self.assertIn("invalid selector", result["error"])
+        self.assertTrue(self.result_path.is_file())
 
     def test_failure_after_materialization_compensates_runtime_but_preserves_content_and_ports(self):
         self._wire_success()

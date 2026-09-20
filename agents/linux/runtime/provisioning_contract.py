@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from typing import Any
 _TOKEN=re.compile(r"^[A-Za-z0-9._-]{1,191}$")
+_SELECTOR=re.compile(r"^[A-Za-z0-9._@-]{1,191}$")
 VALID_DESIRED_STATES={"running","stopped"}
 VALID_CONTENT_ACTIONS={"ensure","install","update","verify"}
 class ProvisioningContractError(ValueError):pass
@@ -11,11 +12,15 @@ def _token(value:Any,label:str)->str:
  text=str(value or "").strip()
  if not _TOKEN.fullmatch(text):raise ProvisioningContractError(f"invalid {label}")
  return text
+def _selector(value:Any)->str:
+ text=str(value or "").strip()
+ if not _SELECTOR.fullmatch(text):raise ProvisioningContractError("invalid selector")
+ return text
 def validate_provisioning_request(request:dict[str,Any],*,expected_agent_id:str)->dict[str,Any]:
  if not isinstance(request,dict):raise ProvisioningContractError("provisioning request must be an object")
  result=dict(request);result["schema_version"]=1;result["kind"]="CapivaraInstanceProvisioningRequest";result["provisioning_id"]=_token(result.get("provisioning_id"),"provisioning_id");result["agent_id"]=_token(result.get("agent_id"),"agent_id");expected=_token(expected_agent_id,"expected_agent_id")
  if result["agent_id"]!=expected:raise ProvisioningContractError("provisioning request belongs to another Agent")
- result["instance_id"]=_token(result.get("instance_id"),"instance_id");result["environment_id"]=_token(result.get("environment_id"),"environment_id");result["selector"]=_token(result.get("selector"),"selector");desired=str(result.get("desired_state") or "stopped").strip().lower()
+ result["instance_id"]=_token(result.get("instance_id"),"instance_id");result["environment_id"]=_token(result.get("environment_id"),"environment_id");result["selector"]=_selector(result.get("selector"));desired=str(result.get("desired_state") or "stopped").strip().lower()
  if desired not in VALID_DESIRED_STATES:raise ProvisioningContractError("invalid desired_state")
  result["desired_state"]=desired;instance=result.get("instance")
  if not isinstance(instance,dict):raise ProvisioningContractError("instance contract is required")
