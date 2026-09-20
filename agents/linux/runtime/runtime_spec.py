@@ -5,7 +5,7 @@ import os,re
 from pathlib import Path
 from typing import Any
 _TOKEN=re.compile(r"^[A-Za-z0-9._-]{1,191}$");_SECRET_NAME=re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
-VALID_DESIRED_STATES={"running","stopped"}
+VALID_DESIRED_STATES={"running","stopped"};VALID_STOP_SIGNALS={"SIGTERM","SIGINT"}
 class RuntimeSpecError(ValueError):pass
 def _token(value:Any,label:str)->str:
  text=str(value or "").strip()
@@ -92,6 +92,9 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  result["user"]=user;desired=str(result.get("desired_state") or "stopped").strip().lower()
  if desired not in VALID_DESIRED_STATES:raise RuntimeSpecError("invalid desired_state")
  result["desired_state"]=desired
+ stop_signal=str(result.get("stop_signal") or "SIGTERM").strip().upper()
+ if stop_signal not in VALID_STOP_SIGNALS:raise RuntimeSpecError("invalid stop_signal")
+ result["stop_signal"]=stop_signal
  for key in ("instance_state_root","configuration_root","config_path","files_root"):
   if result.get(key) is not None:result[key]=_absolute(result[key],key)
  if result.get("files_root") is None:
@@ -103,4 +106,4 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  result["bind_paths"]=_path_pairs(result.get("bind_paths"),"bind_paths")
  result["runtime_bind_paths"]=_runtime_bind_paths(result.get("runtime_bind_paths"),runtime_directory)
  result["path"]=result["working_directory"];return result
-__all__=["RuntimeSpecError","VALID_DESIRED_STATES","validate_runtime_spec"]
+__all__=["RuntimeSpecError","VALID_DESIRED_STATES","VALID_STOP_SIGNALS","validate_runtime_spec"]
