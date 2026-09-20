@@ -12,6 +12,7 @@ from controller_log_journal_http import follow_instance_journal, instance_journa
 from controller_session import session_user_from_headers
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from minecraft_version_update_preflight import MinecraftVersionUpdatePreflightService
+from minecraft_version_update_service import MinecraftVersionUpdateService
 from instance_activity_repository import InstanceActivityRepository
 from json_serialization import to_json_compatible
 
@@ -33,6 +34,7 @@ ROUTES = {
     PREFIX + "/upgrade",
     PREFIX + "/runtime-options",
     PREFIX + "/minecraft-update/preflight",
+    PREFIX + "/minecraft-update",
     PREFIX + "/permissions",
 }
 _FILE_ACTIVITY = {
@@ -427,7 +429,7 @@ def install_customer_instance_workspace(legacy, authenticate):
     def post(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        if path not in {PREFIX + "/console", PREFIX + "/upgrade", PREFIX + "/files", PREFIX + "/backups", PREFIX + "/server-settings/refresh", PREFIX + "/minecraft-update/preflight"}:
+        if path not in {PREFIX + "/console", PREFIX + "/upgrade", PREFIX + "/files", PREFIX + "/backups", PREFIX + "/server-settings/refresh", PREFIX + "/minecraft-update/preflight", PREFIX + "/minecraft-update"}:
             return previous_post(self)
         user = require_user(self)
         if user is None:
@@ -458,6 +460,30 @@ def install_customer_instance_workspace(legacy, authenticate):
                         "unknown": (data.get("summary") or {}).get("unknown", 0),
                     },
                     result="success",
+                )
+            elif path == PREFIX + "/minecraft-update":
+                data = MinecraftVersionUpdateService(backend(), legacy.DSM_ROOT).request(
+                    user,
+                    instance_id,
+                    body.get("version"),
+                    body.get("build"),
+                    confirm_risk=body.get("confirm_risk") is True,
+                )
+                code = 202
+                record(
+                    api,
+                    user,
+                    instance_id,
+                    "MINECRAFT_VERSION_UPDATE_REQUESTED",
+                    "runtime",
+                    target_type="minecraft_version",
+                    target_name=(data.get("target") or {}).get("version"),
+                    details={
+                        "build": (data.get("target") or {}).get("build"),
+                        "provisioning_id": data.get("provisioning_id"),
+                        "unknown_content_count": (data.get("preflight") or {}).get("unknown_content_count", 0),
+                    },
+                    result="accepted",
                 )
             elif path == PREFIX + "/server-settings/refresh":
                 data = api.queue_server_settings_surface(user, instance_id)
