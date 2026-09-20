@@ -47,6 +47,24 @@ def test_runtime_schema_models_current_network_operations() -> None:
     assert set(port_schema["properties"]["exposure"]["enum"]) == {"public", "private", "none"}
 
 
+def test_minecraft_java_reserved_rcon_port_is_applied() -> None:
+    files = module.runtime_files()
+    for runtime_id, (_path, runtime) in sorted(files.items()):
+        if runtime.get("game") != "minecraft" or runtime.get("edition") != "java":
+            continue
+        network = runtime.get("network") or {}
+        ports = {str(item.get("name") or "") for item in network.get("ports") or []}
+        if "rcon" not in ports:
+            continue
+        applications = network.get("apply") or []
+        assert any("{rcon}" in str(item.get("value") or "") for item in applications), (
+            f"{runtime_id}: reserved rcon port is not applied"
+        )
+        properties = {str(item.get("key") or ""): str(item.get("value") or "") for item in applications if item.get("kind") == "property"}
+        assert properties.get("enable-rcon") == "true", f"{runtime_id}: RCON must be enabled explicitly"
+        assert properties.get("rcon.port") == "{rcon}", f"{runtime_id}: RCON port must use reserved role"
+
+
 def test_every_published_runtime_validates_against_canonical_schema() -> None:
     schema = json.loads((ROOT / "catalog" / "v2" / "schemas" / "runtime-definition.schema.json").read_text(encoding="utf-8"))
     validator = Draft202012Validator(schema)
