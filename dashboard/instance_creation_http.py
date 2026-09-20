@@ -19,7 +19,22 @@ INSTANCE_CREATE_PATH = "/api/instance/create"
 PLACEMENT_UNAVAILABLE_MESSAGE = (
     "Nenhum ambiente está disponível para criar este servidor."
 )
+PLACEMENT_STORAGE_MESSAGE = (
+    "Os ambientes disponíveis não possuem espaço livre suficiente para este perfil. "
+    "Libere espaço no Agent ou escolha um perfil com menor armazenamento."
+)
 _LOGGER = logging.getLogger("capivara.instance_creation")
+
+
+def _placement_unavailable_message(exc: PlacementUnavailable) -> str:
+    reasons = {
+        str(reason)
+        for values in (exc.technical_rejections or {}).values()
+        for reason in (values or [])
+    }
+    if "insufficient_storage" in reasons:
+        return PLACEMENT_STORAGE_MESSAGE
+    return PLACEMENT_UNAVAILABLE_MESSAGE
 
 
 def _requested_region(payload: dict[str, Any]) -> str | None:
@@ -115,7 +130,7 @@ def dispatch_instance_create_post(
         )
         return 409, {
             "error": "placement_unavailable",
-            "message": PLACEMENT_UNAVAILABLE_MESSAGE,
+            "message": _placement_unavailable_message(exc),
         }
 
     except PermissionError as exc:

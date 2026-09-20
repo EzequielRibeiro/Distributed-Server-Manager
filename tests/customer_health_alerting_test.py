@@ -31,7 +31,8 @@ class _Alerts:
     def open_alert(self, **kwargs):
         self.current = {
             "id": kwargs["alert_id"], "scope": kwargs["scope"], "controller_id": kwargs["controller_id"],
-            "instance_id": kwargs.get("instance_id"), "rule_id": kwargs["rule_id"], "level": kwargs["level"],
+            "customer_id": kwargs.get("customer_id"), "instance_id": kwargs.get("instance_id"),
+            "rule_id": kwargs["rule_id"], "level": kwargs["level"],
             "state": "OPEN", "message": kwargs["message"], "action": "OPEN",
         }
         self.history_events.append({
@@ -90,7 +91,7 @@ class CustomerHealthAlertingTest(unittest.TestCase):
 
     def test_repository_reuses_canonical_alert_store_and_filters_customer_scope(self):
         _Alerts.rows = [
-            {"id": "a", "scope": "customer:42", "controller_id": "controller-a", "level": "ERROR", "state": "OPEN"},
+            {"id": "a", "scope": "controller", "customer_id": "42", "controller_id": "controller-a", "level": "WARNING", "state": "OPEN"},
             {"id": "b", "scope": "agent", "controller_id": "controller-a", "level": "CRITICAL", "state": "OPEN"},
             {"id": "c", "scope": "customer:99", "controller_id": "controller-a", "level": "WARNING", "state": "OPEN"},
         ]
