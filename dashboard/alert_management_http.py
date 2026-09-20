@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlparse
 from activity_audit_repository import ActivityAuditRepository
 from activity_humanizer import actor_name
 from alert_repository import AlertRepository
+from operation_diagnostic_repository import OperationDiagnosticRepository
 from controller_session import session_user_from_headers
 
 ALERTS_API = "/api/admin/alerts"
@@ -92,12 +93,20 @@ def install_alert_management(legacy, authenticate) -> None:
                 target_id=alert_id,
                 limit=200,
             )
+            diagnostic = None
+            diagnostic_id = str(alert.get("diagnostic_id") or "").strip()
+            if diagnostic_id:
+                try:
+                    diagnostic = OperationDiagnosticRepository(current_backend).get(diagnostic_id)
+                except KeyError:
+                    diagnostic = None
             self.send_json(
                 200,
                 {
                     "alert": alert,
                     "history": repo.alert_history(alert_id),
                     "audit": audit,
+                    "diagnostic": diagnostic,
                 },
             )
             return

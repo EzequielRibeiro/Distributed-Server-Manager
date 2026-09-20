@@ -17,6 +17,7 @@ for path in (str(DATABASE), str(ROOT / "core")):
         sys.path.insert(0, path)
 
 from alert_repository import AlertRepository, AlertSession, dialect_for_backend
+from operation_diagnostic_repository import OperationDiagnosticRepository
 from runtime_backend import backend_from_environment
 
 CONSUMER_ID = "alert-engine-v2"
@@ -198,6 +199,7 @@ class DatabaseAlertEngine:
         level: str,
         message: str,
         topology: dict[str, Any],
+        diagnostic_id: str | None = None,
     ) -> dict[str, Any]:
         return self.alerts.open_alert(
             alert_id=self._alert_id(rule_id, topology),
@@ -209,6 +211,7 @@ class DatabaseAlertEngine:
             agent_id=topology.get("agent_id"),
             node_id=topology.get("node_id"),
             instance_id=topology.get("instance_id"),
+            diagnostic_id=diagnostic_id,
         )
 
     def _evaluate_yarax_event(
@@ -384,6 +387,33 @@ class DatabaseAlertEngine:
             return None
 
         data = self._data(event)
+        diagnostic_id = str(data.get("diagnostic_id") or "").strip() or None
+        if diagnostic_id is None and any(
+            data.get(key) not in (None, "", [], {})
+            for key in ("error", "traceback", "exception_type", "technical_detail", "compensation")
+        ):
+            diagnostic = OperationDiagnosticRepository(self.backend).create(
+                correlation_id=str(event.get("correlation_id") or event.get("event_id") or "").strip() or None,
+                operation=event_type.lower(),
+                source=str(event.get("source") or "controller.alert_engine"),
+                agent_id=topology.get("agent_id"),
+                instance_id=topology.get("instance_id"),
+                current_step=data.get("current_step") or data.get("step"),
+                error=data.get("error") or data.get("message"),
+                exception_type=data.get("exception_type"),
+                traceback=data.get("traceback"),
+                error_code=data.get("error_code"),
+                technical_detail=data.get("technical_detail") or data.get("root_cause"),
+                compensation=data.get("compensation"),
+                payload={
+                    "event_id": event.get("event_id"),
+                    "event_type": event_type,
+                    "data": data,
+                },
+                severity=severity,
+                occurred_at=str(event.get("occurred_at") or event.get("received_at") or ""),
+            )
+            diagnostic_id = diagnostic.get("diagnostic_id")
         message = str(
             data.get("message")
             or data.get("error")

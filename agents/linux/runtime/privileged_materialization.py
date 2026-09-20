@@ -64,7 +64,15 @@ def _invoke(action: str, spec: dict[str, Any], **extra: Any) -> dict[str, Any]:
         timeout=3600 if action == "migrate-storage-copy" else 60,
     )
     if completed.returncode != 0:
-        raise RuntimeError((completed.stderr or completed.stdout or "privileged materializer helper failed")[:2000])
+        helper_error = None
+        try:
+            failed_result = json.loads(result_path.read_text(encoding="utf-8"))
+            if isinstance(failed_result, dict):
+                helper_error = str(failed_result.get("error") or "").strip()
+        except (OSError, ValueError):
+            helper_error = None
+        detail = helper_error or completed.stderr or completed.stdout or "privileged materializer helper failed"
+        raise RuntimeError(str(detail)[:2000])
     try:
         result = json.loads(result_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:

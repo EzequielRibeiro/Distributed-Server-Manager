@@ -177,10 +177,10 @@ def main() -> int:
                 raise AssertionError("backup_jobs backup_id lookup index is missing")
 
             # Prove that the latest registered post-baseline upgrade can be replayed
-            # against the real server flavor. Remove v17 and its compact snapshot
-            # table, then let the upgrade engine restore it without a ledger gap.
-            cursor.execute("DELETE FROM baseline_upgrades WHERE version=%s", (17,))
-            cursor.execute("DROP TABLE database_metrics_daily")
+            # against the real server flavor. Remove v18 and its diagnostics table,
+            # then let the upgrade engine restore it without a ledger gap.
+            cursor.execute("DELETE FROM baseline_upgrades WHERE version=%s", (18,))
+            cursor.execute("DROP TABLE operation_diagnostics")
             connection.commit()
 
             marker = rows(cursor, "SELECT checksum FROM schema_baseline LIMIT 1")[0]
@@ -190,16 +190,16 @@ def main() -> int:
                 installed_checksum=str(marker["checksum"]),
             )
             connection.commit()
-            if completed != [17]:
-                raise AssertionError(f"expected replay of upgrade 17, got {completed}")
+            if completed != [18]:
+                raise AssertionError(f"expected replay of upgrade 18, got {completed}")
 
             restored = rows(
                 cursor,
                 "SELECT COUNT(*) AS total FROM information_schema.tables "
-                "WHERE table_schema=DATABASE() AND table_name='database_metrics_daily'",
+                "WHERE table_schema=DATABASE() AND table_name='operation_diagnostics'",
             )[0]
             if int(row_value(restored, "total")) != 1:
-                raise AssertionError("database intelligence upgrade did not restore its table")
+                raise AssertionError("operation diagnostics upgrade did not restore its table")
 
             restored_ledger = rows(
                 cursor,
