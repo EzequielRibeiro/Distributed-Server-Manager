@@ -12,7 +12,7 @@ _BEDROCK_ENVIRONMENT = "minecraft.bedrock.vanilla"
 
 class MinecraftBedrockRuntimeProfile(GameRuntimeProfile):
     game_ids = (_BEDROCK_ENVIRONMENT,)
-    profile_version = 1
+    profile_version = 2
 
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         instance_id = require_text(instance.get("instance_id") or instance.get("id"), "instance_id")
