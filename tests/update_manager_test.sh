@@ -491,22 +491,930 @@ JSON
 PROCESS_GUARD="${ROOT}/update-manager/process-guard.sh"
 [[ -f "${PROCESS_GUARD}" ]] || fail "update Process Guard module is missing"
 grep -Fq 'GUARD="${NEW_SRC}/update-manager/process-guard.sh"' "${UPDATE}" || fail "update.sh does not load the Process Guard from the release source"
-[[ "$(grep -Ec '^run_process_guard\(\)$' "${UPDATE}")" -eq 1 ]] || fail "run_process_guard function must exist exactly once"
-[[ "$(grep -Ec '^[[:space:]]+run_process_guard[[:space:]]*$' "${UPDATE}")" -eq 2 ]] || fail "run_process_guard must run before and after backup"
-grep -Fq 'process_guard_pre_update' "${UPDATE}" || fail "update.sh does not invoke the Process Guard pre-update gate"
+[[ "$(grep -Ec '^run_process_guard\(\)
+(
+    while IFS= read -r line; do
+        trimmed="$(printf '%s\n' "${line}" | sed 's/^[[:space:]]*//')"
+        case "${trimmed}" in
+            pkill|pkill\ *|killall|killall\ *) fail "Process Guard contains destructive process termination" ;;
+            kill\ *) [[ "${trimmed}" =~ ^kill[[:space:]]+-0([[:space:]]|$) ]] || fail "Process Guard contains destructive kill command" ;;
+        esac
+    done <"${PROCESS_GUARD}"
+)
 
 (
-    guard_line="$(grep -nE '^[[:space:]]+run_process_guard[[:space:]]*$' "${UPDATE}" | head -1 | cut -d: -f1)"
-    capture_line="$(grep -nE '^[[:space:]]+capture_service_state[[:space:]]*$' "${UPDATE}" | cut -d: -f1)"
-    transaction_line="$(grep -nE '^[[:space:]]+UPDATE_TRANSACTION_STARTED=1[[:space:]]*$' "${UPDATE}" | cut -d: -f1)"
-    stop_line="$(grep -nE '^[[:space:]]+stop_services[[:space:]]*$' "${UPDATE}" | cut -d: -f1)"
-    [[ "${guard_line}" =~ ^[0-9]+$ ]] || fail "Process Guard call line was not found"
-    [[ "${capture_line}" =~ ^[0-9]+$ ]] || fail "capture_service_state call line was not found"
-    [[ "${transaction_line}" =~ ^[0-9]+$ ]] || fail "update transaction marker line was not found"
-    [[ "${stop_line}" =~ ^[0-9]+$ ]] || fail "stop_services call line was not found"
-    (( guard_line < capture_line )) || fail "Process Guard runs after service state capture"
+    TEST_ROOT="$(mktemp -d)"; TEST_PID=""
+    cleanup_process_guard_test(){
+        if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then wait "${TEST_PID}" 2>/dev/null || true; fi
+        rm -rf -- "${TEST_ROOT}"
+    }
+    trap cleanup_process_guard_test EXIT
+    export DSM_ROOT="${TEST_ROOT}"; TEST_CGROUP_ROOT="${TEST_ROOT}/cgroup"; export PROCESS_GUARD_CGROUP_ROOT="${TEST_CGROUP_ROOT}"
+    source "${PROCESS_GUARD}"
+    INSTANCE_PATH="${DSM_ROOT}/instances/TestNode/dayz/test-instance"; PIDFILE="${INSTANCE_PATH}/runtime/process.pid"
+    mkdir -p "${INSTANCE_PATH}/runtime"
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard reports an active instance without a process"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${PIDFILE}"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active instance"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the PID"
+    grep -Fq "test-instance" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the instance"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an active game instance"; fi
+    if process_guard_assert_no_unmanaged_instances >/dev/null 2>&1; then fail "Process Guard allowed unmanaged PID-file runtime"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats a stale PID as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update without active instances"
+
+    ORPHAN_UNIT="capivara-instance-orphan-dayz.service"
+    ORPHAN_CGROUP="${TEST_CGROUP_ROOT}/user.slice/user-test.slice/app.slice/${ORPHAN_UNIT}"
+    mkdir -p "${ORPHAN_CGROUP}"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${ORPHAN_CGROUP}/cgroup.procs"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active transient unit"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the PID"
+    grep -Fq "${ORPHAN_UNIT}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the unit name"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "strict Process Guard allowed an active managed unit"; fi
+    process_guard_assert_no_unmanaged_instances >/dev/null || fail "managed systemd instance was incorrectly classified as unmanaged"
+    MANAGED="$(process_guard_managed_active_instances)"
+    grep -Fq "${ORPHAN_UNIT}" <<<"${MANAGED}" || fail "managed Process Guard output lacks the unit name"
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats an empty transient cgroup as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update after transient unit becomes empty"
+)
+
+(
+    source "${UPDATE}"
+    GAME_INSTANCE_TIMEOUT=1
+    declare -A TEST_GAME_STATE=(
+        ["capivara-instance-dayz-a.service"]="active"
+        ["capivara-instance-minecraft-b.service"]="active"
+    )
+    TEST_GAME_LOG="$(mktemp)"
+    trap 'rm -f -- "${TEST_GAME_LOG}"' EXIT
+
+    systemctl()
+    {
+        local action="${1:-}"
+        case "${action}" in
+            list-units)
+                printf '%s loaded active running test\n' \
+                    capivara-instance-dayz-a.service \
+                    capivara-instance-minecraft-b.service
+                ;;
+            show)
+                printf '%s\n' "${TEST_GAME_STATE[${2}]:-inactive}"
+                ;;
+            is-active)
+                local unit="${3:-${2:-}}"
+                [[ "${TEST_GAME_STATE[${unit}]:-inactive}" == "active" ]]
+                ;;
+            stop)
+                TEST_GAME_STATE["${2}"]="inactive"
+                printf 'stop %s\n' "${2}" >>"${TEST_GAME_LOG}"
+                ;;
+            start)
+                TEST_GAME_STATE["${2}"]="active"
+                printf 'start %s\n' "${2}" >>"${TEST_GAME_LOG}"
+                ;;
+            daemon-reload)
+                printf 'daemon-reload\n' >>"${TEST_GAME_LOG}"
+                ;;
+            *)
+                return 0
+                ;;
+        esac
+    }
+
+    capture_game_instance_state >/dev/null
+    [[ "${#ACTIVE_GAME_UNITS[@]}" -eq 2 ]] || fail "managed drain did not capture active game units"
+    stop_game_instances >/dev/null
+    [[ "${TEST_GAME_STATE[capivara-instance-dayz-a.service]}" == "inactive" ]] || fail "DayZ unit was not drained"
+    [[ "${TEST_GAME_STATE[capivara-instance-minecraft-b.service]}" == "inactive" ]] || fail "Minecraft unit was not drained"
+    restart_game_instances >/dev/null
+    [[ "${TEST_GAME_STATE[capivara-instance-dayz-a.service]}" == "active" ]] || fail "DayZ unit was not restored"
+    [[ "${TEST_GAME_STATE[capivara-instance-minecraft-b.service]}" == "active" ]] || fail "Minecraft unit was not restored"
+    [[ "$(grep -c '^stop ' "${TEST_GAME_LOG}")" -eq 2 ]] || fail "managed drain stopped the wrong number of units"
+    [[ "$(grep -c '^start ' "${TEST_GAME_LOG}")" -eq 2 ]] || fail "managed drain restored the wrong number of units"
+)
+
+(
+    DSM_ROOT="${ROOT}"; source "${UPDATE_MANAGER}"; unset -f notify_dispatch 2>/dev/null || true; log_info(){ :; }
+    dsm_update_notify "DSM Update" "Falha simulada"
+) || fail "missing notification backend broke update manager"
+
+(
+    source "${UPDATE}"
+    CASE_ROOT="$(mktemp -d)"; trap 'rm -rf -- "${CASE_ROOT}"' EXIT
+    INSTALL_DIR="${CASE_ROOT}/installed"; STAGING_DIR="${CASE_ROOT}/staging"; NEW_SRC="${CASE_ROOT}/release"
+    mkdir -p "${INSTALL_DIR}/config" "${NEW_SRC}/config"
+    cat >"${INSTALL_DIR}/config/dsm.conf" <<'EOF_INSTALLED'
+DSM_DATABASE_DRIVER="postgresql"
+DSM_DATABASE=""
+DSM_DATABASE_HOST="localhost"
+DSM_DATABASE_PORT="5432"
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER="capivara"
+DSM_DATABASE_PASSWORD_FILE="/etc/capivara/secrets/database-password"
+DSM_DATABASE_TLS="preferred"
+EOF_INSTALLED
+    cat >"${NEW_SRC}/config/dsm.conf" <<'EOF_RELEASE'
+DSM_DATABASE_DRIVER="sqlite"
+DSM_DATABASE="/opt/dsm/data/capivara.db"
+DSM_DATABASE_HOST=""
+DSM_DATABASE_PORT=""
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER=""
+DSM_DATABASE_PASSWORD_FILE=""
+DSM_DATABASE_TLS="preferred"
+EOF_RELEASE
+    create_staging >/dev/null; preserve_data >/dev/null
+    grep -q '^DSM_DATABASE_DRIVER="postgresql"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed PostgreSQL configuration was replaced by release defaults"
+    grep -q '^DSM_DATABASE_HOST="localhost"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed database host was not preserved"
+    if grep -q '^DSM_DATABASE_DRIVER="sqlite"$' "${STAGING_DIR}/config/dsm.conf"; then fail "release SQLite configuration leaked into operational configuration"; fi
+)
+
+[[ -x "${ROOT}/bin/cap" ]] || fail "bin/cap is not executable"
+
+echo "Update manager tests passed."
+ "${UPDATE}")" -eq 1 ]] || fail "run_process_guard function must exist exactly once"
+[[ "$(grep -Ec '^[[:space:]]+run_process_guard[[:space:]]*
+(
+    while IFS= read -r line; do
+        trimmed="$(printf '%s\n' "${line}" | sed 's/^[[:space:]]*//')"
+        case "${trimmed}" in
+            pkill|pkill\ *|killall|killall\ *) fail "Process Guard contains destructive process termination" ;;
+            kill\ *) [[ "${trimmed}" =~ ^kill[[:space:]]+-0([[:space:]]|$) ]] || fail "Process Guard contains destructive kill command" ;;
+        esac
+    done <"${PROCESS_GUARD}"
+)
+
+(
+    TEST_ROOT="$(mktemp -d)"; TEST_PID=""
+    cleanup_process_guard_test(){
+        if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then wait "${TEST_PID}" 2>/dev/null || true; fi
+        rm -rf -- "${TEST_ROOT}"
+    }
+    trap cleanup_process_guard_test EXIT
+    export DSM_ROOT="${TEST_ROOT}"; TEST_CGROUP_ROOT="${TEST_ROOT}/cgroup"; export PROCESS_GUARD_CGROUP_ROOT="${TEST_CGROUP_ROOT}"
+    source "${PROCESS_GUARD}"
+    INSTANCE_PATH="${DSM_ROOT}/instances/TestNode/dayz/test-instance"; PIDFILE="${INSTANCE_PATH}/runtime/process.pid"
+    mkdir -p "${INSTANCE_PATH}/runtime"
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard reports an active instance without a process"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${PIDFILE}"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active instance"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the PID"
+    grep -Fq "test-instance" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the instance"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an active game instance"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats a stale PID as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update without active instances"
+
+    ORPHAN_UNIT="capivara-instance-orphan-dayz.service"
+    ORPHAN_CGROUP="${TEST_CGROUP_ROOT}/user.slice/user-test.slice/app.slice/${ORPHAN_UNIT}"
+    mkdir -p "${ORPHAN_CGROUP}"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${ORPHAN_CGROUP}/cgroup.procs"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active transient unit"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the PID"
+    grep -Fq "${ORPHAN_UNIT}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the unit name"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an orphan active transient unit"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats an empty transient cgroup as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update after transient unit becomes empty"
+)
+
+(
+    DSM_ROOT="${ROOT}"; source "${UPDATE_MANAGER}"; unset -f notify_dispatch 2>/dev/null || true; log_info(){ :; }
+    dsm_update_notify "DSM Update" "Falha simulada"
+) || fail "missing notification backend broke update manager"
+
+(
+    source "${UPDATE}"
+    CASE_ROOT="$(mktemp -d)"; trap 'rm -rf -- "${CASE_ROOT}"' EXIT
+    INSTALL_DIR="${CASE_ROOT}/installed"; STAGING_DIR="${CASE_ROOT}/staging"; NEW_SRC="${CASE_ROOT}/release"
+    mkdir -p "${INSTALL_DIR}/config" "${NEW_SRC}/config"
+    cat >"${INSTALL_DIR}/config/dsm.conf" <<'EOF_INSTALLED'
+DSM_DATABASE_DRIVER="postgresql"
+DSM_DATABASE=""
+DSM_DATABASE_HOST="localhost"
+DSM_DATABASE_PORT="5432"
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER="capivara"
+DSM_DATABASE_PASSWORD_FILE="/etc/capivara/secrets/database-password"
+DSM_DATABASE_TLS="preferred"
+EOF_INSTALLED
+    cat >"${NEW_SRC}/config/dsm.conf" <<'EOF_RELEASE'
+DSM_DATABASE_DRIVER="sqlite"
+DSM_DATABASE="/opt/dsm/data/capivara.db"
+DSM_DATABASE_HOST=""
+DSM_DATABASE_PORT=""
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER=""
+DSM_DATABASE_PASSWORD_FILE=""
+DSM_DATABASE_TLS="preferred"
+EOF_RELEASE
+    create_staging >/dev/null; preserve_data >/dev/null
+    grep -q '^DSM_DATABASE_DRIVER="postgresql"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed PostgreSQL configuration was replaced by release defaults"
+    grep -q '^DSM_DATABASE_HOST="localhost"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed database host was not preserved"
+    if grep -q '^DSM_DATABASE_DRIVER="sqlite"$' "${STAGING_DIR}/config/dsm.conf"; then fail "release SQLite configuration leaked into operational configuration"; fi
+)
+
+[[ -x "${ROOT}/bin/cap" ]] || fail "bin/cap is not executable"
+
+echo "Update manager tests passed."
+ "${UPDATE}")" -eq 2 ]] || fail "strict Process Guard must run after drain and after backup"
+[[ "$(grep -Ec '^[[:space:]]+run_process_guard allow-managed[[:space:]]*
+(
+    while IFS= read -r line; do
+        trimmed="$(printf '%s\n' "${line}" | sed 's/^[[:space:]]*//')"
+        case "${trimmed}" in
+            pkill|pkill\ *|killall|killall\ *) fail "Process Guard contains destructive process termination" ;;
+            kill\ *) [[ "${trimmed}" =~ ^kill[[:space:]]+-0([[:space:]]|$) ]] || fail "Process Guard contains destructive kill command" ;;
+        esac
+    done <"${PROCESS_GUARD}"
+)
+
+(
+    TEST_ROOT="$(mktemp -d)"; TEST_PID=""
+    cleanup_process_guard_test(){
+        if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then wait "${TEST_PID}" 2>/dev/null || true; fi
+        rm -rf -- "${TEST_ROOT}"
+    }
+    trap cleanup_process_guard_test EXIT
+    export DSM_ROOT="${TEST_ROOT}"; TEST_CGROUP_ROOT="${TEST_ROOT}/cgroup"; export PROCESS_GUARD_CGROUP_ROOT="${TEST_CGROUP_ROOT}"
+    source "${PROCESS_GUARD}"
+    INSTANCE_PATH="${DSM_ROOT}/instances/TestNode/dayz/test-instance"; PIDFILE="${INSTANCE_PATH}/runtime/process.pid"
+    mkdir -p "${INSTANCE_PATH}/runtime"
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard reports an active instance without a process"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${PIDFILE}"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active instance"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the PID"
+    grep -Fq "test-instance" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the instance"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an active game instance"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats a stale PID as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update without active instances"
+
+    ORPHAN_UNIT="capivara-instance-orphan-dayz.service"
+    ORPHAN_CGROUP="${TEST_CGROUP_ROOT}/user.slice/user-test.slice/app.slice/${ORPHAN_UNIT}"
+    mkdir -p "${ORPHAN_CGROUP}"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${ORPHAN_CGROUP}/cgroup.procs"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active transient unit"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the PID"
+    grep -Fq "${ORPHAN_UNIT}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the unit name"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an orphan active transient unit"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats an empty transient cgroup as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update after transient unit becomes empty"
+)
+
+(
+    DSM_ROOT="${ROOT}"; source "${UPDATE_MANAGER}"; unset -f notify_dispatch 2>/dev/null || true; log_info(){ :; }
+    dsm_update_notify "DSM Update" "Falha simulada"
+) || fail "missing notification backend broke update manager"
+
+(
+    source "${UPDATE}"
+    CASE_ROOT="$(mktemp -d)"; trap 'rm -rf -- "${CASE_ROOT}"' EXIT
+    INSTALL_DIR="${CASE_ROOT}/installed"; STAGING_DIR="${CASE_ROOT}/staging"; NEW_SRC="${CASE_ROOT}/release"
+    mkdir -p "${INSTALL_DIR}/config" "${NEW_SRC}/config"
+    cat >"${INSTALL_DIR}/config/dsm.conf" <<'EOF_INSTALLED'
+DSM_DATABASE_DRIVER="postgresql"
+DSM_DATABASE=""
+DSM_DATABASE_HOST="localhost"
+DSM_DATABASE_PORT="5432"
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER="capivara"
+DSM_DATABASE_PASSWORD_FILE="/etc/capivara/secrets/database-password"
+DSM_DATABASE_TLS="preferred"
+EOF_INSTALLED
+    cat >"${NEW_SRC}/config/dsm.conf" <<'EOF_RELEASE'
+DSM_DATABASE_DRIVER="sqlite"
+DSM_DATABASE="/opt/dsm/data/capivara.db"
+DSM_DATABASE_HOST=""
+DSM_DATABASE_PORT=""
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER=""
+DSM_DATABASE_PASSWORD_FILE=""
+DSM_DATABASE_TLS="preferred"
+EOF_RELEASE
+    create_staging >/dev/null; preserve_data >/dev/null
+    grep -q '^DSM_DATABASE_DRIVER="postgresql"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed PostgreSQL configuration was replaced by release defaults"
+    grep -q '^DSM_DATABASE_HOST="localhost"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed database host was not preserved"
+    if grep -q '^DSM_DATABASE_DRIVER="sqlite"$' "${STAGING_DIR}/config/dsm.conf"; then fail "release SQLite configuration leaked into operational configuration"; fi
+)
+
+[[ -x "${ROOT}/bin/cap" ]] || fail "bin/cap is not executable"
+
+echo "Update manager tests passed."
+ "${UPDATE}")" -eq 1 ]] || fail "allow-managed Process Guard preflight must run exactly once"
+grep -Fq 'process_guard_pre_update_allow_managed' "${UPDATE}" || fail "update.sh does not invoke the managed-instance preflight gate"
+grep -Fq 'capture_game_instance_state' "${UPDATE}" || fail "update.sh does not capture active managed game instances"
+grep -Fq 'stop_game_instances' "${UPDATE}" || fail "update.sh does not drain managed game instances"
+grep -Fq 'restart_game_instances' "${UPDATE}" || fail "update.sh does not restore managed game instances"
+
+(
+    preflight_line="$(grep -nE '^[[:space:]]+run_process_guard allow-managed[[:space:]]*
+(
+    while IFS= read -r line; do
+        trimmed="$(printf '%s\n' "${line}" | sed 's/^[[:space:]]*//')"
+        case "${trimmed}" in
+            pkill|pkill\ *|killall|killall\ *) fail "Process Guard contains destructive process termination" ;;
+            kill\ *) [[ "${trimmed}" =~ ^kill[[:space:]]+-0([[:space:]]|$) ]] || fail "Process Guard contains destructive kill command" ;;
+        esac
+    done <"${PROCESS_GUARD}"
+)
+
+(
+    TEST_ROOT="$(mktemp -d)"; TEST_PID=""
+    cleanup_process_guard_test(){
+        if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then wait "${TEST_PID}" 2>/dev/null || true; fi
+        rm -rf -- "${TEST_ROOT}"
+    }
+    trap cleanup_process_guard_test EXIT
+    export DSM_ROOT="${TEST_ROOT}"; TEST_CGROUP_ROOT="${TEST_ROOT}/cgroup"; export PROCESS_GUARD_CGROUP_ROOT="${TEST_CGROUP_ROOT}"
+    source "${PROCESS_GUARD}"
+    INSTANCE_PATH="${DSM_ROOT}/instances/TestNode/dayz/test-instance"; PIDFILE="${INSTANCE_PATH}/runtime/process.pid"
+    mkdir -p "${INSTANCE_PATH}/runtime"
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard reports an active instance without a process"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${PIDFILE}"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active instance"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the PID"
+    grep -Fq "test-instance" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the instance"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an active game instance"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats a stale PID as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update without active instances"
+
+    ORPHAN_UNIT="capivara-instance-orphan-dayz.service"
+    ORPHAN_CGROUP="${TEST_CGROUP_ROOT}/user.slice/user-test.slice/app.slice/${ORPHAN_UNIT}"
+    mkdir -p "${ORPHAN_CGROUP}"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${ORPHAN_CGROUP}/cgroup.procs"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active transient unit"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the PID"
+    grep -Fq "${ORPHAN_UNIT}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the unit name"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an orphan active transient unit"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats an empty transient cgroup as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update after transient unit becomes empty"
+)
+
+(
+    DSM_ROOT="${ROOT}"; source "${UPDATE_MANAGER}"; unset -f notify_dispatch 2>/dev/null || true; log_info(){ :; }
+    dsm_update_notify "DSM Update" "Falha simulada"
+) || fail "missing notification backend broke update manager"
+
+(
+    source "${UPDATE}"
+    CASE_ROOT="$(mktemp -d)"; trap 'rm -rf -- "${CASE_ROOT}"' EXIT
+    INSTALL_DIR="${CASE_ROOT}/installed"; STAGING_DIR="${CASE_ROOT}/staging"; NEW_SRC="${CASE_ROOT}/release"
+    mkdir -p "${INSTALL_DIR}/config" "${NEW_SRC}/config"
+    cat >"${INSTALL_DIR}/config/dsm.conf" <<'EOF_INSTALLED'
+DSM_DATABASE_DRIVER="postgresql"
+DSM_DATABASE=""
+DSM_DATABASE_HOST="localhost"
+DSM_DATABASE_PORT="5432"
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER="capivara"
+DSM_DATABASE_PASSWORD_FILE="/etc/capivara/secrets/database-password"
+DSM_DATABASE_TLS="preferred"
+EOF_INSTALLED
+    cat >"${NEW_SRC}/config/dsm.conf" <<'EOF_RELEASE'
+DSM_DATABASE_DRIVER="sqlite"
+DSM_DATABASE="/opt/dsm/data/capivara.db"
+DSM_DATABASE_HOST=""
+DSM_DATABASE_PORT=""
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER=""
+DSM_DATABASE_PASSWORD_FILE=""
+DSM_DATABASE_TLS="preferred"
+EOF_RELEASE
+    create_staging >/dev/null; preserve_data >/dev/null
+    grep -q '^DSM_DATABASE_DRIVER="postgresql"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed PostgreSQL configuration was replaced by release defaults"
+    grep -q '^DSM_DATABASE_HOST="localhost"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed database host was not preserved"
+    if grep -q '^DSM_DATABASE_DRIVER="sqlite"$' "${STAGING_DIR}/config/dsm.conf"; then fail "release SQLite configuration leaked into operational configuration"; fi
+)
+
+[[ -x "${ROOT}/bin/cap" ]] || fail "bin/cap is not executable"
+
+echo "Update manager tests passed."
+ "${UPDATE}" | head -1 | cut -d: -f1)"
+    capture_game_line="$(grep -nE '^[[:space:]]+capture_game_instance_state[[:space:]]*
+(
+    while IFS= read -r line; do
+        trimmed="$(printf '%s\n' "${line}" | sed 's/^[[:space:]]*//')"
+        case "${trimmed}" in
+            pkill|pkill\ *|killall|killall\ *) fail "Process Guard contains destructive process termination" ;;
+            kill\ *) [[ "${trimmed}" =~ ^kill[[:space:]]+-0([[:space:]]|$) ]] || fail "Process Guard contains destructive kill command" ;;
+        esac
+    done <"${PROCESS_GUARD}"
+)
+
+(
+    TEST_ROOT="$(mktemp -d)"; TEST_PID=""
+    cleanup_process_guard_test(){
+        if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then wait "${TEST_PID}" 2>/dev/null || true; fi
+        rm -rf -- "${TEST_ROOT}"
+    }
+    trap cleanup_process_guard_test EXIT
+    export DSM_ROOT="${TEST_ROOT}"; TEST_CGROUP_ROOT="${TEST_ROOT}/cgroup"; export PROCESS_GUARD_CGROUP_ROOT="${TEST_CGROUP_ROOT}"
+    source "${PROCESS_GUARD}"
+    INSTANCE_PATH="${DSM_ROOT}/instances/TestNode/dayz/test-instance"; PIDFILE="${INSTANCE_PATH}/runtime/process.pid"
+    mkdir -p "${INSTANCE_PATH}/runtime"
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard reports an active instance without a process"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${PIDFILE}"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active instance"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the PID"
+    grep -Fq "test-instance" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the instance"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an active game instance"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats a stale PID as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update without active instances"
+
+    ORPHAN_UNIT="capivara-instance-orphan-dayz.service"
+    ORPHAN_CGROUP="${TEST_CGROUP_ROOT}/user.slice/user-test.slice/app.slice/${ORPHAN_UNIT}"
+    mkdir -p "${ORPHAN_CGROUP}"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${ORPHAN_CGROUP}/cgroup.procs"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active transient unit"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the PID"
+    grep -Fq "${ORPHAN_UNIT}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the unit name"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an orphan active transient unit"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats an empty transient cgroup as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update after transient unit becomes empty"
+)
+
+(
+    DSM_ROOT="${ROOT}"; source "${UPDATE_MANAGER}"; unset -f notify_dispatch 2>/dev/null || true; log_info(){ :; }
+    dsm_update_notify "DSM Update" "Falha simulada"
+) || fail "missing notification backend broke update manager"
+
+(
+    source "${UPDATE}"
+    CASE_ROOT="$(mktemp -d)"; trap 'rm -rf -- "${CASE_ROOT}"' EXIT
+    INSTALL_DIR="${CASE_ROOT}/installed"; STAGING_DIR="${CASE_ROOT}/staging"; NEW_SRC="${CASE_ROOT}/release"
+    mkdir -p "${INSTALL_DIR}/config" "${NEW_SRC}/config"
+    cat >"${INSTALL_DIR}/config/dsm.conf" <<'EOF_INSTALLED'
+DSM_DATABASE_DRIVER="postgresql"
+DSM_DATABASE=""
+DSM_DATABASE_HOST="localhost"
+DSM_DATABASE_PORT="5432"
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER="capivara"
+DSM_DATABASE_PASSWORD_FILE="/etc/capivara/secrets/database-password"
+DSM_DATABASE_TLS="preferred"
+EOF_INSTALLED
+    cat >"${NEW_SRC}/config/dsm.conf" <<'EOF_RELEASE'
+DSM_DATABASE_DRIVER="sqlite"
+DSM_DATABASE="/opt/dsm/data/capivara.db"
+DSM_DATABASE_HOST=""
+DSM_DATABASE_PORT=""
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER=""
+DSM_DATABASE_PASSWORD_FILE=""
+DSM_DATABASE_TLS="preferred"
+EOF_RELEASE
+    create_staging >/dev/null; preserve_data >/dev/null
+    grep -q '^DSM_DATABASE_DRIVER="postgresql"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed PostgreSQL configuration was replaced by release defaults"
+    grep -q '^DSM_DATABASE_HOST="localhost"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed database host was not preserved"
+    if grep -q '^DSM_DATABASE_DRIVER="sqlite"$' "${STAGING_DIR}/config/dsm.conf"; then fail "release SQLite configuration leaked into operational configuration"; fi
+)
+
+[[ -x "${ROOT}/bin/cap" ]] || fail "bin/cap is not executable"
+
+echo "Update manager tests passed."
+ "${UPDATE}" | head -1 | cut -d: -f1)"
+    capture_line="$(grep -nE '^[[:space:]]+capture_service_state[[:space:]]*
+(
+    while IFS= read -r line; do
+        trimmed="$(printf '%s\n' "${line}" | sed 's/^[[:space:]]*//')"
+        case "${trimmed}" in
+            pkill|pkill\ *|killall|killall\ *) fail "Process Guard contains destructive process termination" ;;
+            kill\ *) [[ "${trimmed}" =~ ^kill[[:space:]]+-0([[:space:]]|$) ]] || fail "Process Guard contains destructive kill command" ;;
+        esac
+    done <"${PROCESS_GUARD}"
+)
+
+(
+    TEST_ROOT="$(mktemp -d)"; TEST_PID=""
+    cleanup_process_guard_test(){
+        if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then wait "${TEST_PID}" 2>/dev/null || true; fi
+        rm -rf -- "${TEST_ROOT}"
+    }
+    trap cleanup_process_guard_test EXIT
+    export DSM_ROOT="${TEST_ROOT}"; TEST_CGROUP_ROOT="${TEST_ROOT}/cgroup"; export PROCESS_GUARD_CGROUP_ROOT="${TEST_CGROUP_ROOT}"
+    source "${PROCESS_GUARD}"
+    INSTANCE_PATH="${DSM_ROOT}/instances/TestNode/dayz/test-instance"; PIDFILE="${INSTANCE_PATH}/runtime/process.pid"
+    mkdir -p "${INSTANCE_PATH}/runtime"
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard reports an active instance without a process"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${PIDFILE}"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active instance"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the PID"
+    grep -Fq "test-instance" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the instance"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an active game instance"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats a stale PID as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update without active instances"
+
+    ORPHAN_UNIT="capivara-instance-orphan-dayz.service"
+    ORPHAN_CGROUP="${TEST_CGROUP_ROOT}/user.slice/user-test.slice/app.slice/${ORPHAN_UNIT}"
+    mkdir -p "${ORPHAN_CGROUP}"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${ORPHAN_CGROUP}/cgroup.procs"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active transient unit"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the PID"
+    grep -Fq "${ORPHAN_UNIT}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the unit name"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an orphan active transient unit"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats an empty transient cgroup as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update after transient unit becomes empty"
+)
+
+(
+    DSM_ROOT="${ROOT}"; source "${UPDATE_MANAGER}"; unset -f notify_dispatch 2>/dev/null || true; log_info(){ :; }
+    dsm_update_notify "DSM Update" "Falha simulada"
+) || fail "missing notification backend broke update manager"
+
+(
+    source "${UPDATE}"
+    CASE_ROOT="$(mktemp -d)"; trap 'rm -rf -- "${CASE_ROOT}"' EXIT
+    INSTALL_DIR="${CASE_ROOT}/installed"; STAGING_DIR="${CASE_ROOT}/staging"; NEW_SRC="${CASE_ROOT}/release"
+    mkdir -p "${INSTALL_DIR}/config" "${NEW_SRC}/config"
+    cat >"${INSTALL_DIR}/config/dsm.conf" <<'EOF_INSTALLED'
+DSM_DATABASE_DRIVER="postgresql"
+DSM_DATABASE=""
+DSM_DATABASE_HOST="localhost"
+DSM_DATABASE_PORT="5432"
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER="capivara"
+DSM_DATABASE_PASSWORD_FILE="/etc/capivara/secrets/database-password"
+DSM_DATABASE_TLS="preferred"
+EOF_INSTALLED
+    cat >"${NEW_SRC}/config/dsm.conf" <<'EOF_RELEASE'
+DSM_DATABASE_DRIVER="sqlite"
+DSM_DATABASE="/opt/dsm/data/capivara.db"
+DSM_DATABASE_HOST=""
+DSM_DATABASE_PORT=""
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER=""
+DSM_DATABASE_PASSWORD_FILE=""
+DSM_DATABASE_TLS="preferred"
+EOF_RELEASE
+    create_staging >/dev/null; preserve_data >/dev/null
+    grep -q '^DSM_DATABASE_DRIVER="postgresql"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed PostgreSQL configuration was replaced by release defaults"
+    grep -q '^DSM_DATABASE_HOST="localhost"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed database host was not preserved"
+    if grep -q '^DSM_DATABASE_DRIVER="sqlite"$' "${STAGING_DIR}/config/dsm.conf"; then fail "release SQLite configuration leaked into operational configuration"; fi
+)
+
+[[ -x "${ROOT}/bin/cap" ]] || fail "bin/cap is not executable"
+
+echo "Update manager tests passed."
+ "${UPDATE}" | head -1 | cut -d: -f1)"
+    transaction_line="$(grep -nE '^[[:space:]]+UPDATE_TRANSACTION_STARTED=1[[:space:]]*
+(
+    while IFS= read -r line; do
+        trimmed="$(printf '%s\n' "${line}" | sed 's/^[[:space:]]*//')"
+        case "${trimmed}" in
+            pkill|pkill\ *|killall|killall\ *) fail "Process Guard contains destructive process termination" ;;
+            kill\ *) [[ "${trimmed}" =~ ^kill[[:space:]]+-0([[:space:]]|$) ]] || fail "Process Guard contains destructive kill command" ;;
+        esac
+    done <"${PROCESS_GUARD}"
+)
+
+(
+    TEST_ROOT="$(mktemp -d)"; TEST_PID=""
+    cleanup_process_guard_test(){
+        if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then wait "${TEST_PID}" 2>/dev/null || true; fi
+        rm -rf -- "${TEST_ROOT}"
+    }
+    trap cleanup_process_guard_test EXIT
+    export DSM_ROOT="${TEST_ROOT}"; TEST_CGROUP_ROOT="${TEST_ROOT}/cgroup"; export PROCESS_GUARD_CGROUP_ROOT="${TEST_CGROUP_ROOT}"
+    source "${PROCESS_GUARD}"
+    INSTANCE_PATH="${DSM_ROOT}/instances/TestNode/dayz/test-instance"; PIDFILE="${INSTANCE_PATH}/runtime/process.pid"
+    mkdir -p "${INSTANCE_PATH}/runtime"
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard reports an active instance without a process"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${PIDFILE}"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active instance"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the PID"
+    grep -Fq "test-instance" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the instance"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an active game instance"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats a stale PID as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update without active instances"
+
+    ORPHAN_UNIT="capivara-instance-orphan-dayz.service"
+    ORPHAN_CGROUP="${TEST_CGROUP_ROOT}/user.slice/user-test.slice/app.slice/${ORPHAN_UNIT}"
+    mkdir -p "${ORPHAN_CGROUP}"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${ORPHAN_CGROUP}/cgroup.procs"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active transient unit"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the PID"
+    grep -Fq "${ORPHAN_UNIT}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the unit name"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an orphan active transient unit"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats an empty transient cgroup as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update after transient unit becomes empty"
+)
+
+(
+    DSM_ROOT="${ROOT}"; source "${UPDATE_MANAGER}"; unset -f notify_dispatch 2>/dev/null || true; log_info(){ :; }
+    dsm_update_notify "DSM Update" "Falha simulada"
+) || fail "missing notification backend broke update manager"
+
+(
+    source "${UPDATE}"
+    CASE_ROOT="$(mktemp -d)"; trap 'rm -rf -- "${CASE_ROOT}"' EXIT
+    INSTALL_DIR="${CASE_ROOT}/installed"; STAGING_DIR="${CASE_ROOT}/staging"; NEW_SRC="${CASE_ROOT}/release"
+    mkdir -p "${INSTALL_DIR}/config" "${NEW_SRC}/config"
+    cat >"${INSTALL_DIR}/config/dsm.conf" <<'EOF_INSTALLED'
+DSM_DATABASE_DRIVER="postgresql"
+DSM_DATABASE=""
+DSM_DATABASE_HOST="localhost"
+DSM_DATABASE_PORT="5432"
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER="capivara"
+DSM_DATABASE_PASSWORD_FILE="/etc/capivara/secrets/database-password"
+DSM_DATABASE_TLS="preferred"
+EOF_INSTALLED
+    cat >"${NEW_SRC}/config/dsm.conf" <<'EOF_RELEASE'
+DSM_DATABASE_DRIVER="sqlite"
+DSM_DATABASE="/opt/dsm/data/capivara.db"
+DSM_DATABASE_HOST=""
+DSM_DATABASE_PORT=""
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER=""
+DSM_DATABASE_PASSWORD_FILE=""
+DSM_DATABASE_TLS="preferred"
+EOF_RELEASE
+    create_staging >/dev/null; preserve_data >/dev/null
+    grep -q '^DSM_DATABASE_DRIVER="postgresql"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed PostgreSQL configuration was replaced by release defaults"
+    grep -q '^DSM_DATABASE_HOST="localhost"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed database host was not preserved"
+    if grep -q '^DSM_DATABASE_DRIVER="sqlite"$' "${STAGING_DIR}/config/dsm.conf"; then fail "release SQLite configuration leaked into operational configuration"; fi
+)
+
+[[ -x "${ROOT}/bin/cap" ]] || fail "bin/cap is not executable"
+
+echo "Update manager tests passed."
+ "${UPDATE}" | head -1 | cut -d: -f1)"
+    stop_game_line="$(grep -nE '^[[:space:]]+stop_game_instances[[:space:]]*
+(
+    while IFS= read -r line; do
+        trimmed="$(printf '%s\n' "${line}" | sed 's/^[[:space:]]*//')"
+        case "${trimmed}" in
+            pkill|pkill\ *|killall|killall\ *) fail "Process Guard contains destructive process termination" ;;
+            kill\ *) [[ "${trimmed}" =~ ^kill[[:space:]]+-0([[:space:]]|$) ]] || fail "Process Guard contains destructive kill command" ;;
+        esac
+    done <"${PROCESS_GUARD}"
+)
+
+(
+    TEST_ROOT="$(mktemp -d)"; TEST_PID=""
+    cleanup_process_guard_test(){
+        if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then wait "${TEST_PID}" 2>/dev/null || true; fi
+        rm -rf -- "${TEST_ROOT}"
+    }
+    trap cleanup_process_guard_test EXIT
+    export DSM_ROOT="${TEST_ROOT}"; TEST_CGROUP_ROOT="${TEST_ROOT}/cgroup"; export PROCESS_GUARD_CGROUP_ROOT="${TEST_CGROUP_ROOT}"
+    source "${PROCESS_GUARD}"
+    INSTANCE_PATH="${DSM_ROOT}/instances/TestNode/dayz/test-instance"; PIDFILE="${INSTANCE_PATH}/runtime/process.pid"
+    mkdir -p "${INSTANCE_PATH}/runtime"
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard reports an active instance without a process"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${PIDFILE}"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active instance"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the PID"
+    grep -Fq "test-instance" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the instance"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an active game instance"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats a stale PID as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update without active instances"
+
+    ORPHAN_UNIT="capivara-instance-orphan-dayz.service"
+    ORPHAN_CGROUP="${TEST_CGROUP_ROOT}/user.slice/user-test.slice/app.slice/${ORPHAN_UNIT}"
+    mkdir -p "${ORPHAN_CGROUP}"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${ORPHAN_CGROUP}/cgroup.procs"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active transient unit"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the PID"
+    grep -Fq "${ORPHAN_UNIT}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the unit name"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an orphan active transient unit"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats an empty transient cgroup as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update after transient unit becomes empty"
+)
+
+(
+    DSM_ROOT="${ROOT}"; source "${UPDATE_MANAGER}"; unset -f notify_dispatch 2>/dev/null || true; log_info(){ :; }
+    dsm_update_notify "DSM Update" "Falha simulada"
+) || fail "missing notification backend broke update manager"
+
+(
+    source "${UPDATE}"
+    CASE_ROOT="$(mktemp -d)"; trap 'rm -rf -- "${CASE_ROOT}"' EXIT
+    INSTALL_DIR="${CASE_ROOT}/installed"; STAGING_DIR="${CASE_ROOT}/staging"; NEW_SRC="${CASE_ROOT}/release"
+    mkdir -p "${INSTALL_DIR}/config" "${NEW_SRC}/config"
+    cat >"${INSTALL_DIR}/config/dsm.conf" <<'EOF_INSTALLED'
+DSM_DATABASE_DRIVER="postgresql"
+DSM_DATABASE=""
+DSM_DATABASE_HOST="localhost"
+DSM_DATABASE_PORT="5432"
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER="capivara"
+DSM_DATABASE_PASSWORD_FILE="/etc/capivara/secrets/database-password"
+DSM_DATABASE_TLS="preferred"
+EOF_INSTALLED
+    cat >"${NEW_SRC}/config/dsm.conf" <<'EOF_RELEASE'
+DSM_DATABASE_DRIVER="sqlite"
+DSM_DATABASE="/opt/dsm/data/capivara.db"
+DSM_DATABASE_HOST=""
+DSM_DATABASE_PORT=""
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER=""
+DSM_DATABASE_PASSWORD_FILE=""
+DSM_DATABASE_TLS="preferred"
+EOF_RELEASE
+    create_staging >/dev/null; preserve_data >/dev/null
+    grep -q '^DSM_DATABASE_DRIVER="postgresql"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed PostgreSQL configuration was replaced by release defaults"
+    grep -q '^DSM_DATABASE_HOST="localhost"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed database host was not preserved"
+    if grep -q '^DSM_DATABASE_DRIVER="sqlite"$' "${STAGING_DIR}/config/dsm.conf"; then fail "release SQLite configuration leaked into operational configuration"; fi
+)
+
+[[ -x "${ROOT}/bin/cap" ]] || fail "bin/cap is not executable"
+
+echo "Update manager tests passed."
+ "${UPDATE}" | head -1 | cut -d: -f1)"
+    stop_line="$(grep -nE '^[[:space:]]+stop_services[[:space:]]*
+(
+    while IFS= read -r line; do
+        trimmed="$(printf '%s\n' "${line}" | sed 's/^[[:space:]]*//')"
+        case "${trimmed}" in
+            pkill|pkill\ *|killall|killall\ *) fail "Process Guard contains destructive process termination" ;;
+            kill\ *) [[ "${trimmed}" =~ ^kill[[:space:]]+-0([[:space:]]|$) ]] || fail "Process Guard contains destructive kill command" ;;
+        esac
+    done <"${PROCESS_GUARD}"
+)
+
+(
+    TEST_ROOT="$(mktemp -d)"; TEST_PID=""
+    cleanup_process_guard_test(){
+        if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then wait "${TEST_PID}" 2>/dev/null || true; fi
+        rm -rf -- "${TEST_ROOT}"
+    }
+    trap cleanup_process_guard_test EXIT
+    export DSM_ROOT="${TEST_ROOT}"; TEST_CGROUP_ROOT="${TEST_ROOT}/cgroup"; export PROCESS_GUARD_CGROUP_ROOT="${TEST_CGROUP_ROOT}"
+    source "${PROCESS_GUARD}"
+    INSTANCE_PATH="${DSM_ROOT}/instances/TestNode/dayz/test-instance"; PIDFILE="${INSTANCE_PATH}/runtime/process.pid"
+    mkdir -p "${INSTANCE_PATH}/runtime"
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard reports an active instance without a process"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${PIDFILE}"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active instance"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the PID"
+    grep -Fq "test-instance" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the instance"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an active game instance"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats a stale PID as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update without active instances"
+
+    ORPHAN_UNIT="capivara-instance-orphan-dayz.service"
+    ORPHAN_CGROUP="${TEST_CGROUP_ROOT}/user.slice/user-test.slice/app.slice/${ORPHAN_UNIT}"
+    mkdir -p "${ORPHAN_CGROUP}"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${ORPHAN_CGROUP}/cgroup.procs"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active transient unit"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the PID"
+    grep -Fq "${ORPHAN_UNIT}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the unit name"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an orphan active transient unit"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats an empty transient cgroup as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update after transient unit becomes empty"
+)
+
+(
+    DSM_ROOT="${ROOT}"; source "${UPDATE_MANAGER}"; unset -f notify_dispatch 2>/dev/null || true; log_info(){ :; }
+    dsm_update_notify "DSM Update" "Falha simulada"
+) || fail "missing notification backend broke update manager"
+
+(
+    source "${UPDATE}"
+    CASE_ROOT="$(mktemp -d)"; trap 'rm -rf -- "${CASE_ROOT}"' EXIT
+    INSTALL_DIR="${CASE_ROOT}/installed"; STAGING_DIR="${CASE_ROOT}/staging"; NEW_SRC="${CASE_ROOT}/release"
+    mkdir -p "${INSTALL_DIR}/config" "${NEW_SRC}/config"
+    cat >"${INSTALL_DIR}/config/dsm.conf" <<'EOF_INSTALLED'
+DSM_DATABASE_DRIVER="postgresql"
+DSM_DATABASE=""
+DSM_DATABASE_HOST="localhost"
+DSM_DATABASE_PORT="5432"
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER="capivara"
+DSM_DATABASE_PASSWORD_FILE="/etc/capivara/secrets/database-password"
+DSM_DATABASE_TLS="preferred"
+EOF_INSTALLED
+    cat >"${NEW_SRC}/config/dsm.conf" <<'EOF_RELEASE'
+DSM_DATABASE_DRIVER="sqlite"
+DSM_DATABASE="/opt/dsm/data/capivara.db"
+DSM_DATABASE_HOST=""
+DSM_DATABASE_PORT=""
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER=""
+DSM_DATABASE_PASSWORD_FILE=""
+DSM_DATABASE_TLS="preferred"
+EOF_RELEASE
+    create_staging >/dev/null; preserve_data >/dev/null
+    grep -q '^DSM_DATABASE_DRIVER="postgresql"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed PostgreSQL configuration was replaced by release defaults"
+    grep -q '^DSM_DATABASE_HOST="localhost"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed database host was not preserved"
+    if grep -q '^DSM_DATABASE_DRIVER="sqlite"$' "${STAGING_DIR}/config/dsm.conf"; then fail "release SQLite configuration leaked into operational configuration"; fi
+)
+
+[[ -x "${ROOT}/bin/cap" ]] || fail "bin/cap is not executable"
+
+echo "Update manager tests passed."
+ "${UPDATE}" | head -1 | cut -d: -f1)"
+    strict_guard_line="$(grep -nE '^[[:space:]]+run_process_guard[[:space:]]*
+(
+    while IFS= read -r line; do
+        trimmed="$(printf '%s\n' "${line}" | sed 's/^[[:space:]]*//')"
+        case "${trimmed}" in
+            pkill|pkill\ *|killall|killall\ *) fail "Process Guard contains destructive process termination" ;;
+            kill\ *) [[ "${trimmed}" =~ ^kill[[:space:]]+-0([[:space:]]|$) ]] || fail "Process Guard contains destructive kill command" ;;
+        esac
+    done <"${PROCESS_GUARD}"
+)
+
+(
+    TEST_ROOT="$(mktemp -d)"; TEST_PID=""
+    cleanup_process_guard_test(){
+        if [[ -n "${TEST_PID}" ]] && kill -0 "${TEST_PID}" 2>/dev/null; then wait "${TEST_PID}" 2>/dev/null || true; fi
+        rm -rf -- "${TEST_ROOT}"
+    }
+    trap cleanup_process_guard_test EXIT
+    export DSM_ROOT="${TEST_ROOT}"; TEST_CGROUP_ROOT="${TEST_ROOT}/cgroup"; export PROCESS_GUARD_CGROUP_ROOT="${TEST_CGROUP_ROOT}"
+    source "${PROCESS_GUARD}"
+    INSTANCE_PATH="${DSM_ROOT}/instances/TestNode/dayz/test-instance"; PIDFILE="${INSTANCE_PATH}/runtime/process.pid"
+    mkdir -p "${INSTANCE_PATH}/runtime"
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard reports an active instance without a process"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${PIDFILE}"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active instance"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the PID"
+    grep -Fq "test-instance" <<<"${ACTIVE}" || fail "Process Guard active instance output lacks the instance"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an active game instance"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats a stale PID as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update without active instances"
+
+    ORPHAN_UNIT="capivara-instance-orphan-dayz.service"
+    ORPHAN_CGROUP="${TEST_CGROUP_ROOT}/user.slice/user-test.slice/app.slice/${ORPHAN_UNIT}"
+    mkdir -p "${ORPHAN_CGROUP}"
+    sleep 2 & TEST_PID=$!; printf '%s\n' "${TEST_PID}" >"${ORPHAN_CGROUP}/cgroup.procs"
+    ACTIVE="$(process_guard_active_instances)"; [[ -n "${ACTIVE}" ]] || fail "Process Guard did not detect an active transient unit"
+    grep -Fq "${TEST_PID}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the PID"
+    grep -Fq "${ORPHAN_UNIT}" <<<"${ACTIVE}" || fail "Process Guard transient unit output lacks the unit name"
+    if process_guard_assert_no_active_instances >/dev/null 2>&1; then fail "Process Guard allowed update with an orphan active transient unit"; fi
+    wait "${TEST_PID}"; TEST_PID=""
+    ACTIVE="$(process_guard_active_instances)"; [[ -z "${ACTIVE}" ]] || fail "Process Guard treats an empty transient cgroup as active"
+    process_guard_assert_no_active_instances >/dev/null || fail "Process Guard blocks update after transient unit becomes empty"
+)
+
+(
+    DSM_ROOT="${ROOT}"; source "${UPDATE_MANAGER}"; unset -f notify_dispatch 2>/dev/null || true; log_info(){ :; }
+    dsm_update_notify "DSM Update" "Falha simulada"
+) || fail "missing notification backend broke update manager"
+
+(
+    source "${UPDATE}"
+    CASE_ROOT="$(mktemp -d)"; trap 'rm -rf -- "${CASE_ROOT}"' EXIT
+    INSTALL_DIR="${CASE_ROOT}/installed"; STAGING_DIR="${CASE_ROOT}/staging"; NEW_SRC="${CASE_ROOT}/release"
+    mkdir -p "${INSTALL_DIR}/config" "${NEW_SRC}/config"
+    cat >"${INSTALL_DIR}/config/dsm.conf" <<'EOF_INSTALLED'
+DSM_DATABASE_DRIVER="postgresql"
+DSM_DATABASE=""
+DSM_DATABASE_HOST="localhost"
+DSM_DATABASE_PORT="5432"
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER="capivara"
+DSM_DATABASE_PASSWORD_FILE="/etc/capivara/secrets/database-password"
+DSM_DATABASE_TLS="preferred"
+EOF_INSTALLED
+    cat >"${NEW_SRC}/config/dsm.conf" <<'EOF_RELEASE'
+DSM_DATABASE_DRIVER="sqlite"
+DSM_DATABASE="/opt/dsm/data/capivara.db"
+DSM_DATABASE_HOST=""
+DSM_DATABASE_PORT=""
+DSM_DATABASE_NAME="capivara"
+DSM_DATABASE_USER=""
+DSM_DATABASE_PASSWORD_FILE=""
+DSM_DATABASE_TLS="preferred"
+EOF_RELEASE
+    create_staging >/dev/null; preserve_data >/dev/null
+    grep -q '^DSM_DATABASE_DRIVER="postgresql"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed PostgreSQL configuration was replaced by release defaults"
+    grep -q '^DSM_DATABASE_HOST="localhost"$' "${STAGING_DIR}/config/dsm.conf" || fail "installed database host was not preserved"
+    if grep -q '^DSM_DATABASE_DRIVER="sqlite"$' "${STAGING_DIR}/config/dsm.conf"; then fail "release SQLite configuration leaked into operational configuration"; fi
+)
+
+[[ -x "${ROOT}/bin/cap" ]] || fail "bin/cap is not executable"
+
+echo "Update manager tests passed."
+ "${UPDATE}" | head -1 | cut -d: -f1)"
+    for value in preflight_line capture_game_line capture_line transaction_line stop_game_line stop_line strict_guard_line; do
+        [[ "${!value}" =~ ^[0-9]+$ ]] || fail "update drain ordering marker missing: ${value}"
+    done
+    (( preflight_line < capture_game_line )) || fail "managed preflight runs after game-state capture"
+    (( capture_game_line < capture_line )) || fail "game-state capture runs after DSM service-state capture"
     (( capture_line < transaction_line )) || fail "update transaction starts before service state capture"
-    (( transaction_line < stop_line )) || fail "DSM services stop before update transaction starts"
+    (( transaction_line < stop_game_line )) || fail "managed game instances stop before update transaction starts"
+    (( stop_game_line < stop_line )) || fail "DSM services stop before managed game instances"
+    (( stop_line < strict_guard_line )) || fail "strict Process Guard runs before writers are stopped"
 )
 
 (
