@@ -25,17 +25,18 @@ class M10ContentPersistenceAfterRestartTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);(root/"server").mkdir();a=root/"state"/"content"/"a";b=root/"state"/"content"/"b";a.mkdir(parents=True);b.mkdir(parents=True)
             snapshot={"checksum":"dayz-persisted","entries":[
-                {"content_id":"a","game_id":"dayz","managed_path":str(a),"activation":{"mode":"mod"}},
-                {"content_id":"b","game_id":"dayz","managed_path":str(b),"activation":{"mode":"server-mod"}},
+                {"content_id":"a","game_id":"dayz","package_id":"221100:111","managed_path":str(a),"activation":{"mode":"mod"}},
+                {"content_id":"b","game_id":"dayz","package_id":"221100:222","managed_path":str(b),"activation":{"mode":"server-mod"}},
             ]}
             first=load_runtime("m10_dayz_first").project_runtime_spec(self.base_spec(root),snapshot)
             restarted=load_runtime("m10_dayz_restarted")
             second=restarted.project_runtime_spec(first,snapshot)
             self.assertEqual(second["content_activation_checksum"],"dayz-persisted")
             self.assertEqual(second["content_base_arguments"],["-config=server.cfg"])
-            self.assertEqual(second["arguments"],["-config=server.cfg",f"-mod={a}",f"-serverMod={b}"])
-            self.assertEqual(second["arguments"].count(f"-mod={a}"),1)
-            self.assertEqual(second["arguments"].count(f"-serverMod={b}"),1)
+            self.assertEqual(second["arguments"],["-config=server.cfg","-mod=@dsm-i1-111","-serverMod=@dsm-i1-222"])
+            self.assertEqual(second["arguments"].count("-mod=@dsm-i1-111"),1)
+            self.assertEqual(second["arguments"].count("-serverMod=@dsm-i1-222"),1)
+            self.assertEqual([item["alias"] for item in second["content_dayz_mod_aliases"]],["@dsm-i1-111","@dsm-i1-222"])
 
     def test_project_zomboid_snapshot_rematerializes_idempotently_after_restart(self):
         with tempfile.TemporaryDirectory() as tmp:
