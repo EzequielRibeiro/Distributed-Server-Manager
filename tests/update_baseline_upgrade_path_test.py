@@ -164,6 +164,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (12, "universal_content_update"),
                     (13, "maintenance_restart_framework"),
                     (14, "yarax_admin_operations"),
+                    (15, "dayz_native_restart_commands"),
                 ],
             )
 
@@ -204,6 +205,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     {"version": 12, "name": "universal_content_update"},
                     {"version": 13, "name": "maintenance_restart_framework"},
                     {"version": 14, "name": "yarax_admin_operations"},
+                    {"version": 15, "name": "dayz_native_restart_commands"},
                 ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
@@ -255,6 +257,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (12, "universal_content_update"),
                     (13, "maintenance_restart_framework"),
                     (14, "yarax_admin_operations"),
+                    (15, "dayz_native_restart_commands"),
                 ],
             )
 
@@ -298,6 +301,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (12, "universal_content_update"),
                     (13, "maintenance_restart_framework"),
                     (14, "yarax_admin_operations"),
+                    (15, "dayz_native_restart_commands"),
                 ],
             )
 
@@ -311,8 +315,9 @@ class BaselineUpdatePathTest(unittest.TestCase):
             self.assertEqual(initialized.returncode, 0, initialized.stderr)
 
             with sqlite3.connect(database) as connection:
-                connection.execute("DELETE FROM baseline_upgrades WHERE version=14")
+                connection.execute("DELETE FROM baseline_upgrades WHERE version>=14")
                 connection.execute("DROP TABLE yarax_admin_operations")
+                connection.execute("DROP TABLE dayz_native_restart_commands")
                 connection.execute(
                     "UPDATE schema_baseline SET checksum=? WHERE singleton=1",
                     ("v13-checksum-simulation",),
@@ -323,10 +328,13 @@ class BaselineUpdatePathTest(unittest.TestCase):
             self.assertEqual(before.returncode, 1, before.stderr)
             before_payload = json.loads(before.stdout)
             self.assertEqual(before_payload["upgrade_version"], 13)
-            self.assertEqual(before_payload["upgrade_latest"], 14)
+            self.assertEqual(before_payload["upgrade_latest"], 15)
             self.assertEqual(
                 before_payload["pending_upgrades"],
-                [{"version": 14, "name": "yarax_admin_operations"}],
+                [
+                    {"version": 14, "name": "yarax_admin_operations"},
+                    {"version": 15, "name": "dayz_native_restart_commands"},
+                ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
 
@@ -334,20 +342,79 @@ class BaselineUpdatePathTest(unittest.TestCase):
             self.assertEqual(migrated.returncode, 0, migrated.stderr)
             migrated_payload = json.loads(migrated.stdout)
             self.assertTrue(migrated_payload["valid"])
-            self.assertEqual(migrated_payload["upgrade_version"], 14)
-            self.assertEqual(migrated_payload["upgrade_latest"], 14)
+            self.assertEqual(migrated_payload["upgrade_version"], 15)
+            self.assertEqual(migrated_payload["upgrade_latest"], 15)
 
             with sqlite3.connect(database) as connection:
                 table = connection.execute(
                     "SELECT name FROM sqlite_master "
                     "WHERE type='table' AND name='yarax_admin_operations'"
                 ).fetchone()
+                dayz_table = connection.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name='dayz_native_restart_commands'"
+                ).fetchone()
                 ledger = connection.execute(
-                    "SELECT version,name FROM baseline_upgrades WHERE version=14"
+                    "SELECT version,name FROM baseline_upgrades WHERE version>=14 ORDER BY version"
                 ).fetchall()
 
             self.assertEqual(table, ("yarax_admin_operations",))
-            self.assertEqual(ledger, [(14, "yarax_admin_operations")])
+            self.assertEqual(dayz_table, ("dayz_native_restart_commands",))
+            self.assertEqual(
+                ledger,
+                [
+                    (14, "yarax_admin_operations"),
+                    (15, "dayz_native_restart_commands"),
+                ],
+            )
+
+    def test_migrate_advances_v14_database_through_dayz_native_restart_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "dsm"
+            database = root / "data" / "capivara.db"
+            database.parent.mkdir(parents=True)
+
+            initialized = self.manager(root, database, "init")
+            self.assertEqual(initialized.returncode, 0, initialized.stderr)
+
+            with sqlite3.connect(database) as connection:
+                connection.execute("DELETE FROM baseline_upgrades WHERE version=15")
+                connection.execute("DROP TABLE dayz_native_restart_commands")
+                connection.execute(
+                    "UPDATE schema_baseline SET checksum=? WHERE singleton=1",
+                    ("v14-checksum-simulation",),
+                )
+                connection.commit()
+
+            before = self.manager(root, database, "check")
+            self.assertEqual(before.returncode, 1, before.stderr)
+            before_payload = json.loads(before.stdout)
+            self.assertEqual(before_payload["upgrade_version"], 14)
+            self.assertEqual(before_payload["upgrade_latest"], 15)
+            self.assertEqual(
+                before_payload["pending_upgrades"],
+                [{"version": 15, "name": "dayz_native_restart_commands"}],
+            )
+            self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
+
+            migrated = self.manager(root, database, "migrate")
+            self.assertEqual(migrated.returncode, 0, migrated.stderr)
+            migrated_payload = json.loads(migrated.stdout)
+            self.assertTrue(migrated_payload["valid"])
+            self.assertEqual(migrated_payload["upgrade_version"], 15)
+            self.assertEqual(migrated_payload["upgrade_latest"], 15)
+
+            with sqlite3.connect(database) as connection:
+                table = connection.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name='dayz_native_restart_commands'"
+                ).fetchone()
+                ledger = connection.execute(
+                    "SELECT version,name FROM baseline_upgrades WHERE version=15"
+                ).fetchall()
+
+            self.assertEqual(table, ("dayz_native_restart_commands",))
+            self.assertEqual(ledger, [(15, "dayz_native_restart_commands")])
 
     def guard_classifier(self, payload: dict[str, object]) -> subprocess.CompletedProcess[str]:
         script = f'''\

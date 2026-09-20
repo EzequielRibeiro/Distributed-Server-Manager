@@ -30,6 +30,8 @@ for relative in manifest['required_files']:
  data=(package/relative).read_bytes(); assert hashlib.sha256(data).hexdigest()==manifest['files'][relative]['sha256']
 for source in (root/'agents/linux/runtime').rglob('*.py'):
  rel='agent/runtime/'+source.relative_to(root/'agents/linux/runtime').as_posix(); assert (package/rel).read_bytes()==source.read_bytes(), rel
+for source in (root/'agents/common').glob('*.py'):
+ rel='agent/common/'+source.name; assert (package/rel).read_bytes()==source.read_bytes(), rel
 for rel in (
  'agent/runtime/uninstall_client.py',
  'agent/privileged/uninstall_agent.py',
@@ -59,6 +61,7 @@ grep -Fq 'capivara-agent-linux-' "${BOOTSTRAP}" || fail "release bootstrap does 
 grep -Fq 'sha256sum' "${BOOTSTRAP}" || fail "release bootstrap does not validate checksum"
 ! grep -Fq '/main/' "${BOOTSTRAP}" || fail "release bootstrap follows mutable main"
 grep -Fq 'rglob("*.py")' "${ROOT}/agents/linux/updater/updater.py" || fail "updater does not dynamically manage runtime Python modules"
+grep -Fq 'agent" / "common").glob("*.py")' "${ROOT}/agents/linux/updater/updater.py" || fail "updater does not dynamically manage shared common Python modules"
 grep -Fq 'instance-locks' "${INSTALLER}" || fail "installer does not create instance lock state"
 grep -Fq 'instance-operations' "${INSTALLER}" || fail "installer does not create operation journal state"
 grep -Fq '/usr/local/bin/cap' "${INSTALLER}" || fail "installer does not expose cap command"

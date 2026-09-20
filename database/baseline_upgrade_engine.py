@@ -19,6 +19,7 @@ from backend import DatabaseMigrationError
 from discord_integration_schema import discord_integration_ddl
 from content_contract_v2_schema import content_contract_v2_ddl
 from content_bundle_schema import content_bundle_ddl
+from dayz_native_restart_schema import dayz_native_restart_ddl
 from maintenance_schema import maintenance_ddl
 from server_update_schema import content_update_ddl, server_update_ddl
 
@@ -769,6 +770,18 @@ CREATE INDEX idx_yarax_admin_operations_created
         )
 
 
+def _upgrade_dayz_native_restart_commands(backend: Any, connection: Any) -> None:
+    """Add the DayZ native restart command queue to existing Baseline v2 databases."""
+    table = "dayz_native_restart_commands"
+    if table in _table_names(backend, connection):
+        return
+    _execute_script(backend, connection, dayz_native_restart_ddl(backend.name))
+    if table not in _table_names(backend, connection):
+        raise DatabaseMigrationError(
+            "DayZ native restart command baseline upgrade incomplete"
+        )
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -784,6 +797,7 @@ UPGRADES = (
     BaselineUpgrade(12, "universal_content_update", _upgrade_content_update_schema),
     BaselineUpgrade(13, "maintenance_restart_framework", _upgrade_maintenance_schema),
     BaselineUpgrade(14, "yarax_admin_operations", _upgrade_yarax_admin_operations),
+    BaselineUpgrade(15, "dayz_native_restart_commands", _upgrade_dayz_native_restart_commands),
 )
 
 
