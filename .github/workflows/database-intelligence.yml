@@ -1,0 +1,40 @@
+name: Database Intelligence
+
+on:
+  pull_request:
+    paths:
+      - 'database/database_intelligence_*.py'
+      - 'database/baseline_upgrade_engine.py'
+      - 'dashboard/database_intelligence_*.py'
+      - 'dashboard/server_part22.py'
+      - 'dashboard/workers/database_intelligence_worker.py'
+      - 'dashboard/workers/worker.sh'
+      - 'dashboard/web/database-intelligence.*'
+      - 'dashboard/web/components/sidebar-v3.html'
+      - 'systemd/dsm-dashboard.service'
+      - 'tests/database_intelligence_test.py'
+      - '.github/workflows/database-intelligence.yml'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Python
+        run: |
+          python3 -m py_compile             database/database_intelligence_schema.py             database/database_intelligence_repository.py             dashboard/database_intelligence_api.py             dashboard/database_intelligence_http.py             dashboard/server_part22.py             dashboard/workers/database_intelligence_worker.py             tests/database_intelligence_test.py
+      - name: Validate browser JavaScript
+        run: node --check dashboard/web/database-intelligence.js
+      - name: Run DB1-DB6 contract tests
+        run: python3 -m unittest tests/database_intelligence_test.py
+      - name: Validate composition and safety boundaries
+        run: |
+          grep -F 'server_part22.py' systemd/dsm-dashboard.service
+          grep -F 'database-intelligence.html' dashboard/web/components/sidebar-v3.html
+          grep -F 'physical_reclaim_action": False' database/database_intelligence_repository.py
+          ! grep -E 'normalized == "(vacuum-full|reindex)"' dashboard/database_intelligence_api.py

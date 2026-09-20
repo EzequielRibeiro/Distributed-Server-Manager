@@ -20,6 +20,7 @@ from discord_integration_schema import discord_integration_ddl
 from content_contract_v2_schema import content_contract_v2_ddl
 from content_bundle_schema import content_bundle_ddl
 from dayz_native_restart_schema import dayz_native_restart_ddl
+from database_intelligence_schema import database_intelligence_ddl
 from native_restart_schema import native_restart_ddl
 from maintenance_schema import maintenance_ddl
 from server_update_schema import content_update_ddl, server_update_ddl
@@ -866,6 +867,14 @@ def _upgrade_generic_native_restart_commands(backend: Any, connection: Any) -> N
         raise DatabaseMigrationError("legacy DayZ native restart table was not retired")
 
 
+def _upgrade_database_intelligence(backend: Any, connection: Any) -> None:
+    """Add compact daily database intelligence snapshots for DB1-DB6."""
+    if "database_metrics_daily" not in _table_names(backend, connection):
+        _execute_script(backend, connection, database_intelligence_ddl(backend.name))
+    if "database_metrics_daily" not in _table_names(backend, connection):
+        raise DatabaseMigrationError("database intelligence baseline upgrade incomplete")
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -883,6 +892,7 @@ UPGRADES = (
     BaselineUpgrade(14, "yarax_admin_operations", _upgrade_yarax_admin_operations),
     BaselineUpgrade(15, "dayz_native_restart_commands", _upgrade_dayz_native_restart_commands),
     BaselineUpgrade(16, "generic_native_restart_commands", _upgrade_generic_native_restart_commands),
+    BaselineUpgrade(17, "database_intelligence", _upgrade_database_intelligence),
 )
 
 

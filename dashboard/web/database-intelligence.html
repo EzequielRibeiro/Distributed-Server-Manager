@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Capivara — Database Intelligence</title>
+  <link rel="stylesheet" href="/dashboard-home-v3.css">
+  <link rel="stylesheet" href="/database-intelligence.css">
+</head>
+<body class="cap-home cap-database-intelligence">
+  <div id="sidebar-component"></div>
+  <main class="cap-home-main">
+    <header class="cap-home-topbar">
+      <div class="cap-home-title">
+        <button id="dbi-menu-toggle" type="button" aria-label="Abrir menu">☰</button>
+        <div><h1>Database Intelligence</h1><p id="dbi-status">Carregando saúde e crescimento do banco…</p></div>
+      </div>
+      <div class="cap-top-status"><div class="cap-user"><strong id="dbi-user-name">—</strong><span id="dbi-user-role">—</span></div></div>
+    </header>
+
+    <div class="cap-home-content dbi-shell">
+      <header class="dbi-header">
+        <div><p class="eyebrow">DB1 → DB6 · Data Mine</p><h2>Saúde, crescimento e eficiência do banco</h2></div>
+        <div class="dbi-actions"><select id="growth-days"><option value="30">30 dias</option><option value="90" selected>90 dias</option><option value="180">180 dias</option></select><button id="refresh" type="button">Atualizar</button></div>
+      </header>
+
+      <section id="summary" class="summary-grid" aria-live="polite"></section>
+
+      <section class="dbi-grid two">
+        <article class="panel chart-panel"><div class="panel-title"><div><h2>Crescimento</h2><span>Snapshots compactos diários</span></div></div><div id="growth-chart" class="chart-box"></div><div id="forecast" class="forecast-grid"></div></article>
+        <article class="panel chart-panel"><div class="panel-title"><div><h2>Armazenamento por tabela</h2><span>Dados + índices</span></div></div><div id="storage-chart" class="bar-list"></div></article>
+      </section>
+
+      <section class="dbi-grid two">
+        <article class="panel"><div class="panel-title"><div><h2>Data Mine · Agents</h2><span>Maiores produtores de telemetria histórica</span></div></div><div id="agent-producers" class="rank-list"></div></article>
+        <article class="panel"><div class="panel-title"><div><h2>Data Mine · Métricas</h2><span>Cardinalidade por métrica</span></div></div><div id="metric-producers" class="rank-list"></div></article>
+      </section>
+
+      <section class="panel"><div class="panel-title"><div><h2>Insights automáticos</h2><span>DB5 · achados calculados pelo Controller</span></div></div><div id="insights" class="insight-grid"></div></section>
+
+      <section class="dbi-grid two">
+        <article class="panel"><div class="panel-title"><div><h2>Eficiência de índices</h2><span>Uso e tamanho quando suportados pelo backend</span></div></div><div class="table-wrap"><table><thead><tr><th>Índice</th><th>Tabela</th><th>Scans</th><th>Tamanho</th></tr></thead><tbody id="indexes"></tbody></table></div></article>
+        <article class="panel"><div class="panel-title"><div><h2>DB6 · Paridade</h2><span>Capacidades disponíveis no backend atual</span></div></div><div id="capabilities" class="capability-list"></div></article>
+      </section>
+
+      <section class="panel admin-only"><div class="panel-title"><div><h2>Retenção e otimização</h2><span>DB4 · ações seguras e auditadas</span></div></div>
+        <div id="retention-summary" class="retention-summary"></div>
+        <div class="maintenance-actions">
+          <button id="preview-retention" type="button">Pré-visualizar retenção</button>
+          <button id="run-retention" class="danger-soft" type="button">Executar 1 lote de retenção</button>
+          <button id="capture-snapshot" type="button">Capturar snapshot</button>
+          <button id="analyze-db" type="button">ANALYZE</button>
+        </div>
+        <p class="maintenance-note">Operações bloqueantes de recuperação física, como VACUUM FULL e REINDEX, não são executadas por esta tela.</p>
+        <pre id="action-result" class="action-result">Nenhuma ação executada.</pre>
+      </section>
+
+      <section class="panel"><div class="panel-title"><div><h2>Top tabelas</h2><span>DB2 · armazenamento, linhas e dead tuples</span></div></div><div class="table-wrap"><table><thead><tr><th>Tabela</th><th>Linhas</th><th>Dados</th><th>Índices</th><th>Total</th><th>Dead %</th></tr></thead><tbody id="tables"></tbody></table></div></section>
+    </div>
+    <footer class="cap-home-footer">Capivara Distributed Server Manager · Database Intelligence</footer>
+  </main>
+  <script src="/database-intelligence.js"></script>
+</body>
+</html>

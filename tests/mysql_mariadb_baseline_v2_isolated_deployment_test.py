@@ -104,6 +104,7 @@ def main() -> int:
                 "yarax_admin_operations",
                 "native_restart_commands",
                 "baseline_upgrades",
+                "database_metrics_daily",
             }
             missing = sorted(required - tables)
             if missing:
@@ -176,10 +177,10 @@ def main() -> int:
                 raise AssertionError("backup_jobs backup_id lookup index is missing")
 
             # Prove that the latest registered post-baseline upgrade can be replayed
-            # against the real server flavor. Remove v16 and the generic queue,
-            # then let the upgrade engine restore it without a ledger gap.
-            cursor.execute("DELETE FROM baseline_upgrades WHERE version=%s", (16,))
-            cursor.execute("DROP TABLE native_restart_commands")
+            # against the real server flavor. Remove v17 and its compact snapshot
+            # table, then let the upgrade engine restore it without a ledger gap.
+            cursor.execute("DELETE FROM baseline_upgrades WHERE version=%s", (17,))
+            cursor.execute("DROP TABLE database_metrics_daily")
             connection.commit()
 
             marker = rows(cursor, "SELECT checksum FROM schema_baseline LIMIT 1")[0]
@@ -189,16 +190,16 @@ def main() -> int:
                 installed_checksum=str(marker["checksum"]),
             )
             connection.commit()
-            if completed != [16]:
-                raise AssertionError(f"expected replay of upgrade 16, got {completed}")
+            if completed != [17]:
+                raise AssertionError(f"expected replay of upgrade 17, got {completed}")
 
             restored = rows(
                 cursor,
                 "SELECT COUNT(*) AS total FROM information_schema.tables "
-                "WHERE table_schema=DATABASE() AND table_name='native_restart_commands'",
+                "WHERE table_schema=DATABASE() AND table_name='database_metrics_daily'",
             )[0]
             if int(row_value(restored, "total")) != 1:
-                raise AssertionError("generic native restart upgrade did not restore its table")
+                raise AssertionError("database intelligence upgrade did not restore its table")
 
             restored_ledger = rows(
                 cursor,

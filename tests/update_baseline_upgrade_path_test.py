@@ -166,6 +166,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (14, "yarax_admin_operations"),
                     (15, "dayz_native_restart_commands"),
                     (16, "generic_native_restart_commands"),
+                    (17, "database_intelligence"),
                 ],
             )
 
@@ -208,6 +209,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     {"version": 14, "name": "yarax_admin_operations"},
                     {"version": 15, "name": "dayz_native_restart_commands"},
                     {"version": 16, "name": "generic_native_restart_commands"},
+                    {"version": 17, "name": "database_intelligence"},
                 ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
@@ -261,6 +263,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (14, "yarax_admin_operations"),
                     (15, "dayz_native_restart_commands"),
                     (16, "generic_native_restart_commands"),
+                    (17, "database_intelligence"),
                 ],
             )
 
@@ -306,6 +309,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (14, "yarax_admin_operations"),
                     (15, "dayz_native_restart_commands"),
                     (16, "generic_native_restart_commands"),
+                    (17, "database_intelligence"),
                 ],
             )
 
@@ -333,13 +337,14 @@ class BaselineUpdatePathTest(unittest.TestCase):
             self.assertEqual(before.returncode, 1, before.stderr)
             before_payload = json.loads(before.stdout)
             self.assertEqual(before_payload["upgrade_version"], 13)
-            self.assertEqual(before_payload["upgrade_latest"], 16)
+            self.assertEqual(before_payload["upgrade_latest"], latest_upgrade_version())
             self.assertEqual(
                 before_payload["pending_upgrades"],
                 [
                     {"version": 14, "name": "yarax_admin_operations"},
                     {"version": 15, "name": "dayz_native_restart_commands"},
                     {"version": 16, "name": "generic_native_restart_commands"},
+                    {"version": 17, "name": "database_intelligence"},
                 ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
@@ -348,8 +353,8 @@ class BaselineUpdatePathTest(unittest.TestCase):
             self.assertEqual(migrated.returncode, 0, migrated.stderr)
             migrated_payload = json.loads(migrated.stdout)
             self.assertTrue(migrated_payload["valid"])
-            self.assertEqual(migrated_payload["upgrade_version"], 16)
-            self.assertEqual(migrated_payload["upgrade_latest"], 16)
+            self.assertEqual(migrated_payload["upgrade_version"], latest_upgrade_version())
+            self.assertEqual(migrated_payload["upgrade_latest"], latest_upgrade_version())
 
             with sqlite3.connect(database) as connection:
                 table = connection.execute(
@@ -377,6 +382,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (14, "yarax_admin_operations"),
                     (15, "dayz_native_restart_commands"),
                     (16, "generic_native_restart_commands"),
+                    (17, "database_intelligence"),
                 ],
             )
 
@@ -402,12 +408,13 @@ class BaselineUpdatePathTest(unittest.TestCase):
             self.assertEqual(before.returncode, 1, before.stderr)
             before_payload = json.loads(before.stdout)
             self.assertEqual(before_payload["upgrade_version"], 14)
-            self.assertEqual(before_payload["upgrade_latest"], 16)
+            self.assertEqual(before_payload["upgrade_latest"], latest_upgrade_version())
             self.assertEqual(
                 before_payload["pending_upgrades"],
                 [
                     {"version": 15, "name": "dayz_native_restart_commands"},
                     {"version": 16, "name": "generic_native_restart_commands"},
+                    {"version": 17, "name": "database_intelligence"},
                 ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
@@ -416,8 +423,8 @@ class BaselineUpdatePathTest(unittest.TestCase):
             self.assertEqual(migrated.returncode, 0, migrated.stderr)
             migrated_payload = json.loads(migrated.stdout)
             self.assertTrue(migrated_payload["valid"])
-            self.assertEqual(migrated_payload["upgrade_version"], 16)
-            self.assertEqual(migrated_payload["upgrade_latest"], 16)
+            self.assertEqual(migrated_payload["upgrade_version"], latest_upgrade_version())
+            self.assertEqual(migrated_payload["upgrade_latest"], latest_upgrade_version())
 
             with sqlite3.connect(database) as connection:
                 legacy_table = connection.execute(
@@ -439,6 +446,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                 [
                     (15, "dayz_native_restart_commands"),
                     (16, "generic_native_restart_commands"),
+                    (17, "database_intelligence"),
                 ],
             )
 
@@ -453,7 +461,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
 
             with sqlite3.connect(database) as connection:
                 connection.row_factory = sqlite3.Row
-                connection.execute("DELETE FROM baseline_upgrades WHERE version=16")
+                connection.execute("DELETE FROM baseline_upgrades WHERE version>=16")
                 connection.execute("DROP TABLE native_restart_commands")
                 connection.executescript(
                     """
