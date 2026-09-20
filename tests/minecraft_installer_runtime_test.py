@@ -148,6 +148,11 @@ class MinecraftInstallerRuntimeTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     module.validate_installer({"installer": {"type": "java_jar", "artifact": "../installer.jar", "args": ["--installServer"]}}, target)
 
+    def test_windows_http_installer_path_preserves_typed_java_jars(self):
+        source = (ROOT / "agents/windows/runtime/game_data_executor.py").read_text(encoding="utf-8")
+        self.assertIn('preserve_installer_artifact=installer_type in {"java_jar","quilt_server"}', source)
+        self.assertIn("if not preserve_installer_artifact and zipfile.is_zipfile(artifact):", source)
+
     def test_windows_installer_contract_uses_win_args(self):
         module = load("windows_game_data_installer", ROOT / "agents/windows/runtime/game_data_installer.py")
         with tempfile.TemporaryDirectory() as td:
