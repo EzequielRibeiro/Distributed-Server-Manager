@@ -20,14 +20,15 @@ O comando consulta a release estável mais recente, baixa o pacote DSM e o SHA25
 - não há resíduos de uma atualização/rollback incompletos;
 - existe espaço suficiente para a transação de update;
 - o banco atual é compatível com o pacote alvo, usando o `process-guard.sh` da própria versão alvo;
-- nenhuma instância de jogo está ativa.
+- runtimes de jogo não gerenciados não estão ativos;
+- instâncias ativas controladas por `capivara-instance-*.service` são identificadas e informadas como elegíveis para drenagem automática durante `cap update run`.
 
 ## Garantia de somente leitura
 
 O preflight **não**:
 
 - para ou reinicia serviços;
-- encerra instâncias de jogo;
+- encerra instâncias de jogo; no `preflight`, as instâncias gerenciadas são apenas detectadas e reportadas;
 - executa migrações;
 - cria backup;
 - grava no cache de update dentro de `/opt/dsm`;
@@ -47,7 +48,7 @@ UPDATE PREFLIGHT VERIFIED: release=X.Y.Z instalada=A.B.C; nenhuma alteração fo
 
 Se a instalação já estiver na release estável mais recente, o comando termina com sucesso informando que o preflight não é necessário.
 
-Qualquer `PRECHECK FAIL` deve bloquear a abertura da janela de manutenção. Corrija a causa e execute novamente o preflight antes de `cap update run`.
+Qualquer `PRECHECK FAIL` deve bloquear a abertura da janela de manutenção. Uma instância gerenciada ativa não é mais falha de preflight: o `cap update run` registra quais unidades estavam ativas, para-as de forma controlada, executa o update e restaura somente essas unidades ao final. Runtimes ativos fora de `capivara-instance-*.service` continuam bloqueando o update por segurança.
 
 ## Sequência operacional recomendada
 
