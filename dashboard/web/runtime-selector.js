@@ -152,9 +152,69 @@
         const labels = {
             vanilla: "Vanilla", paper: "Paper", purpur: "Purpur", fabric: "Fabric",
             forge: "Forge", neoforge: "NeoForge", quilt: "Quilt", folia: "Folia",
-            dedicated_server: "Servidor dedicado", "dedicated-server": "Servidor dedicado",
+            spongevanilla: "SpongeVanilla", arclight: "Arclight", youer: "Youer",
+            bedrock: "Bedrock", dedicated_server: "Servidor dedicado",
+            "dedicated-server": "Servidor dedicado",
         };
-        return runtime?.name || runtime?.display_name || labels[normalize(distribution?.id)] || titleCase(distribution?.id);
+        const variant = normalize(distribution?.id || runtime?.variant || runtime?.loader);
+        return labels[variant] || runtime?.display_name || runtime?.name || titleCase(distribution?.id);
+    }
+
+    function runtimeCardVariant(distribution, runtime) {
+        return normalize(runtime?.variant || runtime?.loader || distribution?.id || "runtime");
+    }
+
+    function runtimeCardMark(distribution, runtime) {
+        const marks = {
+            vanilla: "◆",
+            paper: "P",
+            purpur: "Pu",
+            fabric: "F",
+            forge: "⚒",
+            neoforge: "N",
+            quilt: "Q",
+            folia: "Fo",
+            spongevanilla: "S",
+            arclight: "A",
+            youer: "Y",
+            bedrock: "B",
+        };
+        return marks[runtimeCardVariant(distribution, runtime)] || "◈";
+    }
+
+    function runtimeCardCapabilities(runtime) {
+        const types = runtime?.content?.managed?.types || {};
+        const bundles = runtime?.content?.bundles || {};
+        const ports = Array.isArray(runtime?.network?.ports) ? runtime.network.ports : [];
+        const mods = Boolean(types.mod);
+        const plugins = Boolean(types.plugin);
+        const modpacks = Boolean(bundles.modpack);
+        const votifier = plugins && ports.some((port) => normalize(port?.name) === "votifier");
+        return {mods, plugins, modpacks, votifier};
+    }
+
+    function runtimeCardDescription(capabilities) {
+        if (capabilities.mods && capabilities.plugins && capabilities.modpacks) {
+            return "Runtime híbrido para combinar mods, plugins e modpacks.";
+        }
+        if (capabilities.mods && capabilities.plugins) {
+            return "Runtime híbrido com suporte a mods e plugins.";
+        }
+        if (capabilities.modpacks) {
+            return "Indicado para mods e modpacks gerenciados.";
+        }
+        if (capabilities.plugins) {
+            return "Indicado para servidores baseados em plugins.";
+        }
+        return "Servidor padrão sem camada gerenciada de mods ou plugins.";
+    }
+
+    function runtimeCardTag(capabilities) {
+        if (capabilities.mods && capabilities.plugins) return "Mods + Plugins";
+        if (capabilities.modpacks) return "Modpacks";
+        if (capabilities.plugins) return "Plugins";
+        if (capabilities.mods) return "Mods";
+        return "Padrão";
     }
 
     function currentEditionNode() {
@@ -318,12 +378,66 @@
         const button = document.createElement("button");
         button.type = "button";
         button.className = "runtime-selector-card";
+        button.setAttribute("aria-pressed", selected ? "true" : "false");
         if (selected) button.classList.add("selected");
         const strong = document.createElement("strong");
         strong.textContent = title;
         const small = document.createElement("small");
         small.textContent = description;
         button.append(strong, small);
+        button.addEventListener("click", callback);
+        return button;
+    }
+
+    function createRuntimeCard(distribution, runtime, selected, callback) {
+        const capabilities = runtimeCardCapabilities(runtime);
+        const variant = runtimeCardVariant(distribution, runtime);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "runtime-selector-card runtime-distribution-card";
+        button.dataset.runtime = variant;
+        button.setAttribute("aria-pressed", selected ? "true" : "false");
+        if (selected) button.classList.add("selected");
+
+        const header = document.createElement("span");
+        header.className = "runtime-card-header";
+
+        const mark = document.createElement("span");
+        mark.className = "runtime-card-mark";
+        mark.setAttribute("aria-hidden", "true");
+        mark.textContent = runtimeCardMark(distribution, runtime);
+
+        const heading = document.createElement("span");
+        heading.className = "runtime-card-heading";
+        const name = document.createElement("strong");
+        name.textContent = distributionLabel(distribution, runtime);
+        const tag = document.createElement("span");
+        tag.className = "runtime-card-tag";
+        tag.textContent = runtimeCardTag(capabilities);
+        heading.append(name, tag);
+        header.append(mark, heading);
+
+        const description = document.createElement("small");
+        description.className = "runtime-card-summary";
+        description.textContent = runtimeCardDescription(capabilities);
+
+        const capabilityGrid = document.createElement("span");
+        capabilityGrid.className = "runtime-capabilities";
+        const entries = [
+            ["Mods", capabilities.mods],
+            ["Plugins", capabilities.plugins],
+            ["Modpacks", capabilities.modpacks],
+            ["Votifier", capabilities.votifier],
+        ];
+        for (const [label, supported] of entries) {
+            const capability = document.createElement("span");
+            capability.className = `runtime-capability ${supported ? "supported" : "unsupported"}`;
+            capability.setAttribute("aria-label", `${label}: ${supported ? "suportado" : "não suportado"}`);
+            capability.textContent = `${supported ? "✓" : "—"} ${label}`;
+            capabilityGrid.append(capability);
+        }
+
+        button.append(header, description, capabilityGrid);
         button.addEventListener("click", callback);
         return button;
     }
@@ -387,10 +501,9 @@
         for (const distribution of distributions) {
             const runtime = runtimeForDistribution(distribution);
             if (!runtime) continue;
-            const provider = runtime.artifact?.provider || runtime.provider || "";
-            el.types.append(createSelectionCard(
-                distributionLabel(distribution, runtime),
-                provider ? `Provider: ${provider}` : "Distribuição publicada",
+            el.types.append(createRuntimeCard(
+                distribution,
+                runtime,
                 state.distribution === distribution.id && state.runtime?.id === runtime.id,
                 () => selectDistribution(distribution, runtime)
             ));
