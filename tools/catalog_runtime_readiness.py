@@ -119,6 +119,10 @@ def _network_findings(runtime: dict[str, Any]) -> list[str]:
                 findings.append(f"derived network target not declared: {target}")
             if source in offsets and target in offsets and offsets[source] == offsets[target]:
                 findings.append(f"derived network target {target} does not differ from source {source}")
+        elif kind == "reserve":
+            target = str(op.get("port") or "")
+            if target not in names:
+                findings.append(f"reserved-only network port not declared: {target}")
         else:
             findings.append(f"unsupported network apply kind: {kind!r}")
     return findings

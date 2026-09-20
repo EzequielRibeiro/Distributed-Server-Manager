@@ -30,7 +30,7 @@ _JAVA_ENVIRONMENTS = (
 
 class MinecraftJavaRuntimeProfile(GameRuntimeProfile):
     game_ids = _JAVA_ENVIRONMENTS
-    profile_version = 2
+    profile_version = 3
 
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         instance_id = require_text(instance.get("instance_id") or instance.get("id"), "instance_id")
@@ -74,6 +74,22 @@ class MinecraftJavaRuntimeProfile(GameRuntimeProfile):
             or not rcon_binding.get("port")
         ):
             raise ProfileError("Minecraft Java requires a TCP RCON reservation")
+
+        query_binding = ports.get("query")
+        if (
+            not isinstance(query_binding, dict)
+            or str(query_binding.get("protocol") or "").lower() != "udp"
+            or not query_binding.get("port")
+        ):
+            raise ProfileError("Minecraft Java requires a UDP query reservation")
+
+        votifier_binding = ports.get("votifier")
+        if (
+            not isinstance(votifier_binding, dict)
+            or str(votifier_binding.get("protocol") or "").lower() != "tcp"
+            or not votifier_binding.get("port")
+        ):
+            raise ProfileError("Minecraft Java requires a TCP Votifier reservation")
 
         environment = context.get("environment") or {}
         if not isinstance(environment, dict):
@@ -126,6 +142,12 @@ class MinecraftJavaRuntimeProfile(GameRuntimeProfile):
                     "path": "server.properties",
                     "key": "broadcast-rcon-to-ops",
                     "value": "false",
+                    "syntax": "equals",
+                },
+                {
+                    "path": "server.properties",
+                    "key": "query.port",
+                    "value": "{{PORT_QUERY}}",
                     "syntax": "equals",
                 },
             ],

@@ -60,7 +60,7 @@
   },
   "network": {
     "allocation": "block",
-    "block_size": 2,
+    "block_size": 4,
     "ports": [
       {
         "name": "game",
@@ -73,6 +73,18 @@
         "protocol": "tcp",
         "offset": 1,
         "exposure": "none"
+      },
+      {
+        "name": "query",
+        "protocol": "udp",
+        "offset": 2,
+        "exposure": "public"
+      },
+      {
+        "name": "votifier",
+        "protocol": "tcp",
+        "offset": 3,
+        "exposure": "public"
       }
     ],
     "apply": [
@@ -99,6 +111,16 @@
         "file": "server.properties",
         "key": "broadcast-rcon-to-ops",
         "value": "false"
+      },
+      {
+        "kind": "property",
+        "file": "server.properties",
+        "key": "query.port",
+        "value": "{query}"
+      },
+      {
+        "kind": "reserve",
+        "port": "votifier"
       }
     ]
   },

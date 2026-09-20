@@ -39,7 +39,7 @@ def test_runtime_schema_models_current_network_operations() -> None:
     schema = json.loads((ROOT / "catalog" / "v2" / "schemas" / "runtime-definition.schema.json").read_text(encoding="utf-8"))
     operations = schema["$defs"]["network_apply"]["oneOf"]
     by_kind = {op["properties"]["kind"]["const"]: op for op in operations}
-    assert set(by_kind) == {"argument", "property", "derived"}
+    assert set(by_kind) == {"argument", "property", "derived", "reserve"}
     assert {"from", "port"}.issubset(by_kind["derived"]["properties"])
     assert by_kind["derived"]["required"] == ["kind", "from", "port"]
     assert set(by_kind["property"]["properties"]["syntax"]["enum"]) == {"equals", "semicolon", "command"}
@@ -47,22 +47,24 @@ def test_runtime_schema_models_current_network_operations() -> None:
     assert set(port_schema["properties"]["exposure"]["enum"]) == {"public", "private", "none"}
 
 
-def test_minecraft_java_reserved_rcon_port_is_applied() -> None:
+def test_minecraft_java_reserved_service_ports_are_declared_and_applied() -> None:
     files = module.runtime_files()
     for runtime_id, (_path, runtime) in sorted(files.items()):
         if runtime.get("game") != "minecraft" or runtime.get("edition") != "java":
             continue
         network = runtime.get("network") or {}
-        ports = {str(item.get("name") or "") for item in network.get("ports") or []}
-        if "rcon" not in ports:
-            continue
+        ports = {str(item.get("name") or ""): item for item in network.get("ports") or []}
+        assert set(ports) >= {"game", "rcon", "query", "votifier"}, f"{runtime_id}: missing reserved Minecraft service port"
+        assert network.get("block_size") == 4, f"{runtime_id}: Minecraft Java must reserve one four-port block"
+        assert ports["query"].get("protocol") == "udp", f"{runtime_id}: query port must be UDP"
+        assert ports["votifier"].get("protocol") == "tcp", f"{runtime_id}: Votifier port must be TCP"
         applications = network.get("apply") or []
-        assert any("{rcon}" in str(item.get("value") or "") for item in applications), (
-            f"{runtime_id}: reserved rcon port is not applied"
-        )
         properties = {str(item.get("key") or ""): str(item.get("value") or "") for item in applications if item.get("kind") == "property"}
+        reserved_only = {str(item.get("port") or "") for item in applications if item.get("kind") == "reserve"}
         assert properties.get("enable-rcon") == "true", f"{runtime_id}: RCON must be enabled explicitly"
         assert properties.get("rcon.port") == "{rcon}", f"{runtime_id}: RCON port must use reserved role"
+        assert properties.get("query.port") == "{query}", f"{runtime_id}: query port must use reserved role"
+        assert "votifier" in reserved_only, f"{runtime_id}: Votifier port must remain reserved even without a plugin config target"
 
 
 def test_every_published_runtime_validates_against_canonical_schema() -> None:
