@@ -100,6 +100,17 @@ class DatabaseIntelligenceBrowserContractTest(unittest.TestCase):
         self.assertIn("server_part22.py", service)
         self.assertIn("database-intelligence.html", sidebar)
 
+    def test_mobile_layout_and_human_labels_are_present(self):
+        script = (ROOT / "dashboard" / "web" / "database-intelligence.js").read_text(encoding="utf-8")
+        css = (ROOT / "dashboard" / "web" / "database-intelligence.css").read_text(encoding="utf-8")
+        self.assertIn("dashboard_activity_log:'Atividade do painel'", script)
+        self.assertIn("observability_samples:'Histórico de telemetria'", script)
+        self.assertIn("CAPABILITY_LABELS", script)
+        self.assertIn('data-label="Tabela"', script)
+        self.assertIn("@media(max-width:480px)", css)
+        self.assertIn(".table-wrap thead{display:none}", css)
+        self.assertIn("overflow-wrap:anywhere", css)
+
     def test_physical_reclaim_is_not_exposed_as_action(self):
         source = (ROOT / "dashboard" / "database_intelligence_api.py").read_text(encoding="utf-8")
         page = (ROOT / "dashboard" / "web" / "database-intelligence.html").read_text(encoding="utf-8")
