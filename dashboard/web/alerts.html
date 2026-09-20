@@ -37,6 +37,11 @@
     .cap-alert-history-body{padding:16px;overflow:auto;max-height:65vh}
     .cap-alert-history-row{padding:12px;border:1px solid rgba(255,255,255,.07);border-radius:10px;background:rgba(255,255,255,.025);margin-bottom:10px}
     .cap-alert-history-row strong{display:block;margin-bottom:5px}.cap-alert-history-row small{display:block;color:#8d99a8;margin-top:5px}
+    #alert-diagnostic-dialog{width:min(980px,calc(100vw - 24px));max-height:88vh;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:#111923;color:#eef4fb;padding:0;box-shadow:0 24px 70px #000b}
+    #alert-diagnostic-dialog::backdrop{background:#0009}
+    .cap-diagnostic-toolbar{display:flex;gap:8px}.cap-diagnostic-toolbar button{border:1px solid rgba(255,255,255,.1);background:#1c2632;color:#eef4fb;border-radius:8px;padding:7px 10px;cursor:pointer}
+    .cap-diagnostic-body{padding:16px;overflow:auto;max-height:72vh}
+    .cap-diagnostic-section{margin:0 0 14px;padding:13px;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:#0d1722}.cap-diagnostic-section h3{margin:0 0 8px;font-size:.92rem}.cap-diagnostic-section pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;color:#c9d5e3}.cap-diagnostic-section div{overflow-wrap:anywhere}
     @media(max-width:640px){.cap-alert-item{grid-template-columns:1fr}.cap-alert-item time{justify-self:start}.cap-alert-toolbar{align-items:stretch}.cap-alert-agent-scope{width:100%}.cap-alert-search-wrap{flex-basis:100%}.cap-alert-search-button{flex:0 0 auto}}
   </style>
 </head>
@@ -69,7 +74,11 @@
     <div class="cap-alert-dialog-head"><div><h2>Histórico do alerta</h2><p id="alert-history-title">—</p></div><button id="alert-history-close" type="button">Fechar</button></div>
     <div id="alert-history-body" class="cap-alert-history-body"><div class="cap-empty-state">Carregando...</div></div>
   </dialog>
-  <script src="/alerts-page-enhancements.js?v=6"></script>
-  <script src="/observability.js?v=6"></script>
+  <dialog id="alert-diagnostic-dialog">
+    <div class="cap-alert-dialog-head"><div><h2>Detalhes técnicos</h2><p id="alert-diagnostic-title">—</p></div><div class="cap-diagnostic-toolbar"><button id="alert-diagnostic-copy" type="button">Copiar diagnóstico</button><button id="alert-diagnostic-close" type="button">Fechar</button></div></div>
+    <div id="alert-diagnostic-body" class="cap-diagnostic-body"><div class="cap-empty-state">Carregando diagnóstico...</div></div>
+  </dialog>
+  <script src="/alerts-page-enhancements.js?v=7"></script>
+  <script src="/observability.js?v=7"></script>
 </body>
 </html>
