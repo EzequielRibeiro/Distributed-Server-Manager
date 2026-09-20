@@ -1,3 +1,51 @@
 <!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Monitoramento | Capivara DSM</title><link rel="stylesheet" href="/dashboard-home-v3.css"><link rel="stylesheet" href="/observability.css"></head>
-<body class="cap-home cap-observability-shell" data-observability-view="monitoring"><div id="sidebar-component"></div><main class="cap-home-main cap-observability-page"><header class="cap-home-topbar cap-observability-topbar"><div class="cap-home-title"><button id="observability-menu-toggle" type="button" aria-label="Recolher menu">☰</button><div><h1>Monitoramento</h1><p>Métricas atuais publicadas pela plataforma universal de observabilidade.</p></div></div><div class="cap-top-status"><div class="cap-controller-state"><i></i><span id="observability-controller-status">Controller Online</span></div><div class="cap-user"><strong id="observability-user-name">—</strong><span id="observability-user-role">—</span></div></div></header><div class="cap-home-content cap-observability-content"><section class="cap-observability-card"><div class="cap-section-heading"><div><h2>Métricas</h2><p>Estado operacional mais recente dos recursos monitorados.</p></div><button id="observability-refresh" type="button">Atualizar</button></div><div id="observability-metrics" class="cap-metric-grid"><div class="cap-empty-state">Carregando métricas...</div></div></section></div><footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer></main><script src="/observability.js?v=5"></script></body></html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Monitoramento | Capivara DSM</title>
+  <link rel="stylesheet" href="/dashboard-home-v3.css">
+  <link rel="stylesheet" href="/observability.css">
+</head>
+<body class="cap-home cap-observability-shell cap-monitoring-view" data-observability-view="monitoring">
+  <div id="sidebar-component"></div>
+  <main class="cap-home-main cap-observability-page">
+    <header class="cap-home-topbar cap-observability-topbar">
+      <div class="cap-home-title">
+        <button id="observability-menu-toggle" type="button" aria-label="Abrir menu">☰</button>
+        <div>
+          <h1>Monitoramento</h1>
+          <p>Visão atual da saúde, recursos e atividade da infraestrutura.</p>
+        </div>
+      </div>
+      <div class="cap-top-status">
+        <div class="cap-controller-state"><i></i><span id="observability-controller-status">Controller Online</span></div>
+        <div class="cap-user"><strong id="observability-user-name">—</strong><span id="observability-user-role">—</span></div>
+      </div>
+    </header>
+
+    <div class="cap-home-content cap-observability-content">
+      <section class="cap-monitoring-toolbar" aria-label="Controles do monitoramento">
+        <div>
+          <p class="cap-monitoring-kicker">Observabilidade em tempo real</p>
+          <h2>Métricas atuais</h2>
+          <p id="monitoring-summary">Carregando métricas publicadas pelos Agents e pelo Controller…</p>
+        </div>
+        <div class="cap-monitoring-actions">
+          <label class="cap-monitoring-search">
+            <span>Filtrar métricas</span>
+            <input id="observability-metric-filter" type="search" inputmode="search" placeholder="Ex.: memória, rede, disco…" autocomplete="off">
+          </label>
+          <button id="observability-refresh" type="button">Atualizar agora</button>
+        </div>
+      </section>
+
+      <section id="observability-metrics" class="cap-monitoring-groups" aria-live="polite">
+        <div class="cap-empty-state">Carregando métricas...</div>
+      </section>
+    </div>
+    <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
+  </main>
+  <script src="/observability.js?v=6"></script>
+</body>
+</html>
