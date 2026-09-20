@@ -20,6 +20,7 @@ from discord_integration_schema import discord_integration_ddl
 from content_contract_v2_schema import content_contract_v2_ddl
 from content_bundle_schema import content_bundle_ddl
 from dayz_native_restart_schema import dayz_native_restart_ddl
+from native_restart_schema import native_restart_ddl
 from maintenance_schema import maintenance_ddl
 from server_update_schema import content_update_ddl, server_update_ddl
 
@@ -771,15 +772,98 @@ CREATE INDEX idx_yarax_admin_operations_created
 
 
 def _upgrade_dayz_native_restart_commands(backend: Any, connection: Any) -> None:
-    """Add the DayZ native restart command queue to existing Baseline v2 databases."""
-    table = "dayz_native_restart_commands"
-    if table in _table_names(backend, connection):
+    """Historical v15 compatibility for databases that predate the generic queue."""
+    tables = _table_names(backend, connection)
+    if "dayz_native_restart_commands" in tables or "native_restart_commands" in tables:
         return
     _execute_script(backend, connection, dayz_native_restart_ddl(backend.name))
-    if table not in _table_names(backend, connection):
+    if "dayz_native_restart_commands" not in _table_names(backend, connection):
         raise DatabaseMigrationError(
             "DayZ native restart command baseline upgrade incomplete"
         )
+
+
+def _upgrade_generic_native_restart_commands(backend: Any, connection: Any) -> None:
+    """Move game-specific native restart state into the shared command queue."""
+    tables = _table_names(backend, connection)
+    if "native_restart_commands" not in tables:
+        _execute_script(backend, connection, native_restart_ddl(backend.name))
+    if "native_restart_commands" not in _table_names(backend, connection):
+        raise DatabaseMigrationError("generic native restart baseline upgrade incomplete")
+
+    if "dayz_native_restart_commands" not in _table_names(backend, connection):
+        return
+
+    result = _execute(
+        backend,
+        connection,
+        "SELECT legacy.*, instances.game_id AS game_id, instances.runtime_id AS runtime_id "
+        "FROM dayz_native_restart_commands legacy "
+        "LEFT JOIN instances ON instances.id=legacy.instance_id "
+        "ORDER BY legacy.created_at",
+    )
+    try:
+        rows = result.fetchall()
+    finally:
+        try:
+            result.close()
+        except Exception:
+            pass
+
+    ph = "%s" if backend.name in {"postgresql", "mysql"} else "?"
+    payload_json = '{"schema_version":1,"kind":"CapivaraDayZNativeRestart"}'
+    for row in rows:
+        command_id = str(_row_value_ci(row, "command_id"))
+        existing = _execute(
+            backend,
+            connection,
+            f"SELECT command_id FROM native_restart_commands WHERE command_id={ph}",
+            (command_id,),
+        )
+        try:
+            if existing.fetchone() is not None:
+                continue
+        finally:
+            try:
+                existing.close()
+            except Exception:
+                pass
+        values = (
+            command_id,
+            _row_value_ci(row, "agent_id"),
+            _row_value_ci(row, "instance_id"),
+            str(_row_value_ci(row, "game_id") or "dayz").strip().lower() or "dayz",
+            _row_value_ci(row, "runtime_id"),
+            "dayz-shutdown-messages",
+            _row_value_ci(row, "due_at"),
+            _row_value_ci(row, "status"),
+            _row_value_ci(row, "requested_by"),
+            payload_json,
+            _row_value_ci(row, "result_json"),
+            _row_value_ci(row, "last_error"),
+            _row_value_ci(row, "created_at"),
+            _row_value_ci(row, "delivered_at"),
+            _row_value_ci(row, "completed_at"),
+            _row_value_ci(row, "updated_at"),
+        )
+        inserted = _execute(
+            backend,
+            connection,
+            "INSERT INTO native_restart_commands("
+            "command_id,agent_id,instance_id,game_id,runtime_id,strategy,due_at,status,"
+            "requested_by,payload_json,result_json,last_error,created_at,delivered_at,"
+            "completed_at,updated_at"
+            f") VALUES ({','.join([ph] * 16)})",
+            values,
+        )
+        try:
+            inserted.close()
+        except Exception:
+            pass
+
+    _execute_script(backend, connection, "DROP TABLE dayz_native_restart_commands;")
+    if "dayz_native_restart_commands" in _table_names(backend, connection):
+        raise DatabaseMigrationError("legacy DayZ native restart table was not retired")
 
 
 UPGRADES = (
@@ -798,6 +882,7 @@ UPGRADES = (
     BaselineUpgrade(13, "maintenance_restart_framework", _upgrade_maintenance_schema),
     BaselineUpgrade(14, "yarax_admin_operations", _upgrade_yarax_admin_operations),
     BaselineUpgrade(15, "dayz_native_restart_commands", _upgrade_dayz_native_restart_commands),
+    BaselineUpgrade(16, "generic_native_restart_commands", _upgrade_generic_native_restart_commands),
 )
 
 
