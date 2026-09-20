@@ -209,6 +209,7 @@ class DatabaseAlertEngine:
             agent_id=topology.get("agent_id"),
             node_id=topology.get("node_id"),
             instance_id=topology.get("instance_id"),
+            diagnostic_id=str(data.get("diagnostic_id") or "").strip() or None,
         )
 
     def _evaluate_yarax_event(
