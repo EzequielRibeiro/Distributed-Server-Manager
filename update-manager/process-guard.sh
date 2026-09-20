@@ -512,8 +512,11 @@ process_guard_report_managed_active_instances()
     echo "Managed active game instances detected:"
     echo
 
-    while IFS="$(printf '\\t')" read -r pid instance_ref command
+    while IFS= read -r line
     do
+        pid="$(printf '%s\\n' "${line}" | cut -f1)"
+        instance_ref="$(printf '%s\\n' "${line}" | cut -f2)"
+        command="$(printf '%s\\n' "${line}" | cut -f3-)"
         [[ -n "${pid}" ]] || continue
         echo "PID      : ${pid}"
         echo "Instância: ${instance_ref}"
@@ -553,8 +556,11 @@ process_guard_assert_no_unmanaged_instances()
     echo "capivara-instance-*.service units."
     echo
 
-    while IFS="$(printf '\\t')" read -r pid instance_ref command
+    while IFS= read -r line
     do
+        pid="$(printf '%s\\n' "${line}" | cut -f1)"
+        instance_ref="$(printf '%s\\n' "${line}" | cut -f2)"
+        command="$(printf '%s\\n' "${line}" | cut -f3-)"
         [[ -n "${pid}" ]] || continue
         echo "PID      : ${pid}"
         echo "Instância: ${instance_ref}"
