@@ -39,7 +39,7 @@ class DayZCustomerFilesRootTest(unittest.TestCase):
             },
         )
 
-        self.assertEqual(profile.profile_version, 10)
+        self.assertEqual(profile.profile_version, 11)
         self.assertEqual(spec["working_directory"], install_root)
         self.assertEqual(spec["files_root"], state_root)
         self.assertEqual(spec["configuration_root"], f"{state_root}/config")

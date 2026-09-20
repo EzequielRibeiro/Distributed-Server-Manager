@@ -49,15 +49,17 @@ class DayZSystemdShutdownTest(unittest.TestCase):
             install.mkdir()
             spec = self._build_dayz_spec(install)
 
-        self.assertEqual(spec["profile_version"], 10)
+        self.assertEqual(spec["profile_version"], 11)
         self.assertEqual(spec["success_exit_statuses"], [255])
         unit = render_unit(spec)
         self.assertIn("\nSuccessExitStatus=255\n", unit)
         self.assertIn("\nRestart=no\n", unit)
         self.assertEqual(spec["stop_signal"], "SIGINT")
+        self.assertTrue(spec["private_shared_memory"])
         self.assertIn("\nKillSignal=SIGINT\n", unit)
+        self.assertIn("\nTemporaryFileSystem=/dev/shm:rw,nosuid,nodev,mode=1777\n", unit)
 
-    def test_dayz_v6_runtime_is_migrated_to_v10_with_graceful_stop_signal(self):
+    def test_dayz_v6_runtime_is_migrated_to_v11_with_graceful_stop_signal(self):
         with tempfile.TemporaryDirectory() as temp:
             install = Path(temp) / "serverfiles"
             install.mkdir()
@@ -76,7 +78,7 @@ class DayZSystemdShutdownTest(unittest.TestCase):
                 )
 
         self.assertTrue(changed)
-        self.assertEqual(migrated["profile_version"], 10)
+        self.assertEqual(migrated["profile_version"], 11)
         self.assertEqual(migrated["profile_migrated_from_version"], 6)
         self.assertEqual(migrated["success_exit_statuses"], [255])
         self.assertEqual(migrated["stop_signal"], "SIGINT")
@@ -100,6 +102,7 @@ class DayZSystemdShutdownTest(unittest.TestCase):
         }
         self.assertNotIn("SuccessExitStatus=255", render_unit(spec))
         self.assertIn("\nKillSignal=SIGTERM\n", render_unit(spec))
+        self.assertNotIn("TemporaryFileSystem=/dev/shm", render_unit(spec))
 
 
 if __name__ == "__main__":
