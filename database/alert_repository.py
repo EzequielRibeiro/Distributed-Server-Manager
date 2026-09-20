@@ -350,7 +350,7 @@ class AlertRepository:
                             old_state, "OPEN", message)
                 action = "ESCALATE"
             else:
-                if diagnostic_id and str(current.get("diagnostic_id") or "") != str(diagnostic_id):
+                if diagnostic_id and str(current["diagnostic_id"] or "") != str(diagnostic_id):
                     session.execute(
                         f"UPDATE alerts SET diagnostic_id={ph}, message={ph}, updated_at={now} WHERE id={ph}",
                         (diagnostic_id, message, alert_id),
