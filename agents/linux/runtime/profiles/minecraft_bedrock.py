@@ -70,6 +70,7 @@ class MinecraftBedrockRuntimeProfile(GameRuntimeProfile):
             "ports": ports,
             "instance_state_root": state_root,
             "configuration_root": runtime_root,
+            "files_root": runtime_root,
             "writable_directories": [runtime_root],
             "seed_files": [],
             "seed_directories": [{"source": install_path, "target": runtime_root}],
