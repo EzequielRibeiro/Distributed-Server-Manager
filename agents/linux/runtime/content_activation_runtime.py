@@ -81,17 +81,19 @@ def project_runtime_spec(spec:dict[str,Any],snapshot:dict[str,Any])->dict[str,An
  result=dict(spec);entries=_entries(snapshot);games={str(e.get("game_id") or "").strip().lower() for e in entries if e.get("game_id")}
  if len(games)>1:raise ContentRuntimeActivationError("activation snapshot mixes games")
  base=list(result.get("content_base_arguments") if isinstance(result.get("content_base_arguments"),list) else result.get("arguments") or [])
- base_binds=_base_bind_paths(result);content_args=[];properties=[];dayz_keys=[]
+ base_binds=_base_bind_paths(result);content_args=[];properties=[];dayz_keys=[];dayz_aliases=[]
  dayz_entries=[entry for entry in entries if _adapter(entry)=="dayz"]
  if dayz_entries:
   try:
-   dayz=project_dayz_activation(result,dayz_entries);content_args.extend(dayz["arguments"]);dayz_keys=list(dayz["key_sources"])
+   dayz=project_dayz_activation(result,dayz_entries);content_args.extend(dayz["arguments"]);dayz_keys=list(dayz["key_sources"]);dayz_aliases=list(dayz["aliases"])
   except DayZContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc
  args,props=_project_zomboid(entries);content_args.extend(args);properties.extend(props)
  result["content_base_arguments"]=[str(v) for v in base]
  result["arguments"]=[*result["content_base_arguments"],*content_args]
  result["content_base_bind_paths"]=[dict(value) for value in base_binds]
  result["bind_paths"]=[dict(value) for value in base_binds]
+ if dayz_aliases:result["content_dayz_mod_aliases"]=dayz_aliases
+ else:result.pop("content_dayz_mod_aliases",None)
  if dayz_keys:
   state_root=Path(str(result.get("instance_state_root") or "")).resolve(strict=False);working_root=Path(str(result.get("working_directory") or "")).resolve(strict=False)
   if not str(result.get("instance_state_root") or "").strip() or not str(result.get("working_directory") or "").strip():raise ContentRuntimeActivationError("DayZ key isolation requires runtime roots")
