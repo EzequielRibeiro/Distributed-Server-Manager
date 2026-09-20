@@ -1,11 +1,12 @@
 """Agent-owned safe file manager for Windows game-server instances."""
 from __future__ import annotations
-import base64,io,json,os,shutil,tarfile,zipfile
+import base64,io,json,os,shutil,tarfile,tempfile,zipfile
 from datetime import datetime,timezone
 from pathlib import Path
 from typing import Any
 import instance_runtime
 from server_settings_surface import observed_surface
+from content_security import require_clean
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));RESULT_DIR=STATE_DIR/"file-results";HISTORY_DIR=STATE_DIR/"file-history"
 MAX_TRANSFER_BYTES=16*1024*1024;MAX_ARCHIVE_MEMBERS=10000
 EDITABLE_SUFFIXES={".txt",".cfg",".conf",".config",".ini",".json",".properties",".toml",".xml",".yaml",".yml",".log",".md",".csv"}
@@ -105,10 +106,19 @@ def _decode(payload):
  except Exception as exc:raise ValueError("invalid base64 upload") from exc
  if len(data)>MAX_TRANSFER_BYTES:raise ValueError("uploaded file exceeds transfer limit")
  return data
-def _upload(root,path,payload,policy):
+def _security_context(config,record,instance_id,content_id):
+ return {"agent_id":str(config.get("agent_id") or record.get("agent_id") or ""),"instance_id":str(instance_id or record.get("instance_id") or record.get("id") or ""),"content_id":str(content_id or "")[:191],"provider":"customer-files","game_id":str(record.get("game_id") or "")}
+def _upload(root,path,payload,policy,security_context=None):
  p=_resolve(root,path,True);rel=p.relative_to(root);_guard(rel,policy,True,True)
  if not p.parent.is_dir():raise ValueError("destination directory does not exist")
- data=_decode(payload);_quota(root,policy,len(data),p);tmp=p.with_name(f".{p.name}.{os.getpid()}.upload");tmp.write_bytes(data);os.replace(tmp,p);return {"path":rel.as_posix(),"size":len(data),"uploaded":True}
+ data=_decode(payload);_quota(root,policy,len(data),p);tmp=p.with_name(f".{p.name}.{os.getpid()}.upload")
+ try:
+  tmp.write_bytes(data);verdict=require_clean(tmp,security_context);os.replace(tmp,p)
+ finally:
+  try:
+   if tmp.exists():tmp.unlink()
+  except OSError:pass
+ return {"path":rel.as_posix(),"size":len(data),"uploaded":True,"security_state":str(verdict.get("security_state") or "clean")}
 def _download(root,path,policy):
  p=_resolve(root,path);rel=p.relative_to(root);_guard(rel,policy)
  if not p.is_file():raise ValueError("path is not a file")
@@ -148,26 +158,32 @@ def _archive(data,name):
     yield i.name,i.size,i.isdir(),lambda x=i:a.extractfile(x)
   return a,it()
  raise ValueError("unsupported archive type")
-def _extract(root,archive_value,target_value,policy):
+def _extract(root,archive_value,target_value,policy,security_context=None):
  ap=_resolve(root,archive_value);ar=ap.relative_to(root);_guard(ar,policy);target=_resolve(root,target_value or ap.parent.relative_to(root),True);_guard(target.relative_to(root),policy,True,True)
- if not target.exists():target.mkdir()
- if not target.is_dir():raise ValueError("extract target is not a directory")
+ if target.exists() and not target.is_dir():raise ValueError("extract target is not a directory")
  data=ap.read_bytes()
  if len(data)>MAX_TRANSFER_BYTES:raise ValueError("archive exceeds transfer limit")
- archive,members=_archive(data,ap.name);planned=[];total=0
+ archive_verdict=require_clean(ap,security_context);archive,members=_archive(data,ap.name);planned=[];total=0
  try:
-  for raw,size,directory,opener in members:
-   relm=_relative(raw);dest=(target/relm).resolve(strict=False);dest.relative_to(root);rel=dest.relative_to(root);_guard(rel,policy,True,True);total+=max(0,int(size or 0));planned.append((dest,directory,opener))
-  _quota(root,policy,total)
-  for dest,directory,opener in planned:
-   if directory:dest.mkdir(parents=True,exist_ok=True);continue
-   dest.parent.mkdir(parents=True,exist_ok=True);h=opener()
-   if h is None:continue
-   with h,dest.open("wb") as out:shutil.copyfileobj(h,out,length=1024*1024)
+  with tempfile.TemporaryDirectory(prefix=".capivara-extract-",dir=str(target.parent)) as staging_raw:
+   staging=Path(staging_raw).resolve()
+   for raw,size,directory,opener in members:
+    relm=_relative(raw);dest=(target/relm).resolve(strict=False);dest.relative_to(root);rel=dest.relative_to(root);_guard(rel,policy,True,True);staged=(staging/relm).resolve(strict=False);staged.relative_to(staging);total+=max(0,int(size or 0));planned.append((dest,staged,directory,opener))
+   _quota(root,policy,total)
+   for _dest,staged,directory,opener in planned:
+    if directory:staged.mkdir(parents=True,exist_ok=True);continue
+    staged.parent.mkdir(parents=True,exist_ok=True);h=opener()
+    if h is None:continue
+    with h,staged.open("wb") as out:shutil.copyfileobj(h,out,length=1024*1024)
+   expanded_verdict=require_clean(staging,security_context)
+   if not target.exists():target.mkdir()
+   for dest,staged,directory,_opener in planned:
+    if directory:dest.mkdir(parents=True,exist_ok=True);continue
+    dest.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(staged,dest)
  finally:archive.close()
- return {"archive":ar.as_posix(),"target":target.relative_to(root).as_posix(),"entries":len(planned),"expanded_bytes":total,"extracted":True}
+ return {"archive":ar.as_posix(),"target":target.relative_to(root).as_posix(),"entries":len(planned),"expanded_bytes":total,"extracted":True,"security_state":str(expanded_verdict.get("security_state") or "clean"),"archive_security_state":str(archive_verdict.get("security_state") or "clean")}
 def execute(config,command):
- record=_owned(config,str(command.get("instance_id") or ""));root=_root(record);policy=command.get("policy") if isinstance(command.get("policy"),dict) else {};action=str(command.get("action") or "").lower();path=command.get("path");target=command.get("target_path");payload=command.get("payload") if isinstance(command.get("payload"),dict) else {}
+ instance_id=str(command.get("instance_id") or "");record=_owned(config,instance_id);root=_root(record);policy=command.get("policy") if isinstance(command.get("policy"),dict) else {};action=str(command.get("action") or "").lower();path=command.get("path");target=command.get("target_path");payload=command.get("payload") if isinstance(command.get("payload"),dict) else {};security_context=_security_context(config,record,instance_id,str(path or action))
  if action=="settings_surface":
   declaration=record.get("catalog_server_settings") if isinstance(record.get("catalog_server_settings"),dict) else {};supplied=payload.get("declaration") if isinstance(payload.get("declaration"),dict) else {};surface_spec=dict(record)
   if not isinstance(declaration.get("fields"),dict) or not declaration.get("fields"):surface_spec["catalog_server_settings"]=supplied
@@ -177,11 +193,11 @@ def execute(config,command):
  if action=="read_text":return _read_text(root,path,policy)
  if action=="write_text":return _write_text(root,path,payload,policy)
  if action=="download":return _download(root,path,policy)
- if action=="upload":return _upload(root,path,payload,policy)
+ if action=="upload":return _upload(root,path,payload,policy,security_context)
  if action=="mkdir":return _mkdir(root,path,policy)
  if action=="delete":return _delete(root,path,policy)
  if action in {"rename","move"}:return _move(root,path,target,policy)
- if action=="extract":return _extract(root,path,target,policy)
+ if action=="extract":return _extract(root,path,target,policy,security_context)
  raise ValueError("unsupported instance file action")
 def handle_command(config,command):
  cid=_safe_id(command.get("command_id"),"command_id");history=_state(HISTORY_DIR,cid);previous=_read(history)
