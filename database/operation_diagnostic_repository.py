@@ -8,7 +8,7 @@ import uuid
 from typing import Any
 
 from alert_repository import AlertSession, dialect_for_backend
-from core.agent_health import utc_timestamp
+from agent_health import utc_timestamp
 
 _SECRET_KEYS = re.compile(r"(password|passwd|secret|token|credential|authorization|cookie|api[_-]?key)", re.I)
 _MAX_ERROR = 12000
