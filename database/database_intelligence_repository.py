@@ -191,7 +191,7 @@ class DatabaseIntelligenceRepository:
             else:
                 names = self._rows(connection, "SELECT name AS table_name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
                 rows = []
-                for item in names[:bounded]:
+                for item in names[:1000]:
                     name = str(item["table_name"]).replace('"', '""')
                     try:
                         count = self._one(connection, f'SELECT COUNT(*) AS row_count FROM "{name}"')
@@ -210,6 +210,8 @@ class DatabaseIntelligenceRepository:
                         "last_autovacuum": None,
                         "last_autoanalyze": None,
                     })
+                rows.sort(key=lambda item: (item["row_count"], str(item["table_name"])), reverse=True)
+                rows = rows[:bounded]
                 path = Path(self.backend.config.database).expanduser().resolve()
                 if rows:
                     rows[0]["total_size_bytes"] = path.stat().st_size if path.exists() else 0
