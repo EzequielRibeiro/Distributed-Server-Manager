@@ -37,7 +37,6 @@ for source in (root/'agents/common').glob('*.py'):
 for rel in (
  'agent/runtime/compat_common/source_rcon.py',
  'agent/runtime/compat_common/dayz_messages.py',
- 'agent/runtime/compat_common/minecraft_rcon_secret.py',
  'agent/runtime/compat_common/palworld_rest_console.py',
  'agent/runtime/uninstall_client.py',
  'agent/privileged/uninstall_agent.py',
