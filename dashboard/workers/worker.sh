@@ -100,6 +100,7 @@ main(){
     start_python_worker automation_worker.py
     start_python_worker content_update_worker.py
     start_python_worker maintenance_worker.py
+    start_python_worker observability_retention_worker.py
     start_python_worker_with_env hybrid_agent_worker.py \
         "CAPIVARA_AGENT_MODE=hybrid" \
         "CAPIVARA_DSM_ROOT=${DSM_ROOT}" \

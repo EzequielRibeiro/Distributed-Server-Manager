@@ -18,6 +18,7 @@ jobs:
             core/observability_platform.py \
             database/observability_repository.py \
             database/observability_cli.py \
+            dashboard/workers/observability_retention_worker.py \
             agents/linux/runtime/observability_client.py \
             agents/linux/runtime/runtime_metrics.py \
             dashboard/agent_heartbeat_api.py \
@@ -25,7 +26,8 @@ jobs:
             dashboard/observability_http.py \
             dashboard/server_part13.py \
             tests/universal_observability_platform_test.py \
-            tests/universal_observability_http_test.py
+            tests/universal_observability_http_test.py \
+            tests/observability_retention_worker_test.py
       - name: Validate consolidated schema parity
         run: |
           set -euo pipefail
@@ -40,6 +42,7 @@ jobs:
         run: |
           python3 -m unittest tests/universal_observability_platform_test.py
           python3 -m unittest tests/universal_observability_http_test.py
+          python3 -m unittest tests/observability_retention_worker_test.py
       - name: Validate distribution contracts
         run: |
           test -f agents/linux/runtime/observability_client.py
