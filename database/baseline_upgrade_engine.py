@@ -23,6 +23,7 @@ from dayz_native_restart_schema import dayz_native_restart_ddl
 from database_intelligence_schema import database_intelligence_ddl
 from native_restart_schema import native_restart_ddl
 from maintenance_schema import maintenance_ddl
+from operation_diagnostics_schema import operation_diagnostics_ddl
 from server_update_schema import content_update_ddl, server_update_ddl
 
 
@@ -875,6 +876,22 @@ def _upgrade_database_intelligence(backend: Any, connection: Any) -> None:
         raise DatabaseMigrationError("database intelligence baseline upgrade incomplete")
 
 
+def _upgrade_operation_diagnostics(backend: Any, connection: Any) -> None:
+    """Persist sanitized Agent operation diagnostics and attach them to alerts."""
+    tables = _table_names(backend, connection)
+    if "operation_diagnostics" not in tables:
+        _execute_script(backend, connection, operation_diagnostics_ddl(backend.name))
+    if "operation_diagnostics" not in _table_names(backend, connection):
+        raise DatabaseMigrationError("operation diagnostics baseline upgrade incomplete")
+    if "alerts" not in _table_names(backend, connection):
+        raise DatabaseMigrationError("alerts table is missing")
+    if "diagnostic_id" not in _column_names(backend, connection, "alerts"):
+        sql_type = "VARCHAR(191)" if backend.name == "mysql" else "TEXT"
+        _execute_script(backend, connection, f"ALTER TABLE alerts ADD COLUMN diagnostic_id {sql_type};")
+    if "diagnostic_id" not in _column_names(backend, connection, "alerts"):
+        raise DatabaseMigrationError("alerts diagnostic_id baseline upgrade incomplete")
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -893,6 +910,7 @@ UPGRADES = (
     BaselineUpgrade(15, "dayz_native_restart_commands", _upgrade_dayz_native_restart_commands),
     BaselineUpgrade(16, "generic_native_restart_commands", _upgrade_generic_native_restart_commands),
     BaselineUpgrade(17, "database_intelligence", _upgrade_database_intelligence),
+    BaselineUpgrade(18, "operation_diagnostics", _upgrade_operation_diagnostics),
 )
 
 
