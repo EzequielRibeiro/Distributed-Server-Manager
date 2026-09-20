@@ -7,6 +7,7 @@ import os
 import shutil
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -101,7 +102,12 @@ class MinecraftInstallerRuntimeTest(unittest.TestCase):
             self.assertEqual((target / "capivara-launch.args").read_text(encoding="utf-8"), args_file.read_text(encoding="utf-8"))
 
     def test_http_java_installer_jar_is_preserved_in_target(self):
-        module = load("linux_game_data_executor_installer_jar", ROOT / "agents/linux/runtime/game_data_executor.py")
+        runtime_dir = ROOT / "agents/linux/runtime"
+        sys.path.insert(0, str(runtime_dir))
+        try:
+            module = load("linux_game_data_executor_installer_jar", runtime_dir / "game_data_executor.py")
+        finally:
+            sys.path.remove(str(runtime_dir))
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             source = root / "neoforge-installer.jar"
