@@ -512,7 +512,65 @@ process_guard_report_managed_active_instances()
     echo "Managed active game instances detected:"
     echo
 
-    while IFS={
+    while IFS=$'\t' read -r pid instance_ref command
+    do
+        [[ -n "${pid}" ]] || continue
+        echo "PID      : ${pid}"
+        echo "Instância: ${instance_ref}"
+        [[ -n "${command}" ]] && echo "Processo : ${command}"
+        echo
+    done <<<"${active}"
+
+    echo "Essas instâncias serão drenadas automaticamente pelo updater"
+    echo "imediatamente antes da janela de manutenção e restauradas depois."
+    echo "These instances will be drained automatically by the updater"
+    echo "immediately before maintenance and restored afterwards."
+    echo
+}
+
+
+process_guard_assert_no_unmanaged_instances()
+{
+    local active
+
+    active="$(process_guard_unmanaged_active_instances)"
+
+    if [[ -z "${active}" ]]
+    then
+        return 0
+    fi
+
+    echo
+    echo "============================================================="
+    echo " Atualização bloqueada: runtime de jogo não gerenciado ativo"
+    echo " Update blocked: unmanaged game runtime is active"
+    echo "============================================================="
+    echo
+    echo "O updater só pode drenar automaticamente instâncias controladas"
+    echo "por unidades capivara-instance-*.service."
+    echo
+    echo "The updater can only drain instances controlled by"
+    echo "capivara-instance-*.service units."
+    echo
+
+    while IFS=$'\t' read -r pid instance_ref command
+    do
+        [[ -n "${pid}" ]] || continue
+        echo "PID      : ${pid}"
+        echo "Instância: ${instance_ref}"
+        [[ -n "${command}" ]] && echo "Processo : ${command}"
+        echo
+    done <<<"${active}"
+
+    echo "Pare somente esses runtimes não gerenciados antes de atualizar."
+    echo "Stop only these unmanaged runtimes before updating."
+    echo
+    return 1
+}
+
+
+process_guard_assert_no_active_instances()
+{
     local active
 
     active="$(process_guard_active_instances)"
@@ -557,7 +615,6 @@ process_guard_report_managed_active_instances()
 
     return 1
 }
-
 
 # =============================================================
 # Legacy dashboard workers
