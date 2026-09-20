@@ -509,10 +509,13 @@
         const runtimeId = state.runtime?.id;
         const versionValue = state.version?.value;
         const generation = ++state.buildRequestGeneration;
+        const selectionStillActive = () => (
+            state.runtime?.id === runtimeId
+            && state.version?.value === versionValue
+        );
         const isCurrentRequest = () => (
             generation === state.buildRequestGeneration
-            && state.runtime?.id === runtimeId
-            && state.version?.value === versionValue
+            && selectionStillActive()
         );
 
         el.buildStep.hidden = false;
@@ -526,13 +529,16 @@
                     runtime: runtimeId,
                     version: versionValue,
                 })}`, {timeoutMs: 15000});
-                if (!isCurrentRequest()) return;
+                // A selection can invalidate the request generation without
+                // changing the active runtime/version. In that case the response
+                // is still valid and must not leave the UI stuck on "Carregando builds…".
+                if (!selectionStillActive()) return;
                 builds = Array.isArray(data) ? data : (data.builds || []);
             } else {
                 builds = extractBuilds(state.runtime, state.version);
             }
 
-            if (!isCurrentRequest()) return;
+            if (!selectionStillActive()) return;
             if (!builds.length) builds = [{value: "current", label: "Build atual / recomendada", recommended: true}];
             builds = builds.map((entry) => typeof entry === "object" && entry.value !== undefined ? entry : {
                 value: String(entry.value || entry.build || entry.id),

@@ -32,7 +32,7 @@ class CustomerCatalogHierarchyTest(unittest.TestCase):
     def test_customer_ui_names_distribution_step(self):
         self.assertIn('<strong>Distribuição</strong>', self.customer_html)
         self.assertIn('Distribuição Minecraft', self.customer_html)
-        self.assertIn('/runtime-selector.js?v=7', self.customer_html)
+        self.assertIn('/runtime-selector.js?v=8', self.customer_html)
 
 
 if __name__ == "__main__":

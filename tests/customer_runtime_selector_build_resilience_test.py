@@ -12,17 +12,23 @@ class CustomerRuntimeSelectorBuildResilienceTest(unittest.TestCase):
     def setUpClass(cls):
         cls.javascript = SELECTOR.read_text(encoding="utf-8")
 
-    def test_build_requests_are_generation_guarded(self):
+    def test_build_requests_keep_generation_guard_without_dropping_valid_success(self):
         text = self.javascript
         self.assertIn("buildRequestGeneration: 0", text)
         self.assertIn("const generation = ++state.buildRequestGeneration", text)
         self.assertIn("generation === state.buildRequestGeneration", text)
+        self.assertIn("const selectionStillActive = () => (", text)
         self.assertIn("state.runtime?.id === runtimeId", text)
         self.assertIn("state.version?.value === versionValue", text)
         self.assertGreaterEqual(
-            text.count("if (!isCurrentRequest()) return;"),
-            3,
-            "success and error paths must ignore stale build responses",
+            text.count("if (!selectionStillActive()) return;"),
+            2,
+            "successful build responses for the active selection must not be discarded only because the generation changed",
+        )
+        self.assertIn(
+            "if (!isCurrentRequest()) return;",
+            text,
+            "stale failures must remain generation-guarded",
         )
 
     def test_build_failure_leaves_recoverable_non_loading_state(self):
