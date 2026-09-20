@@ -107,6 +107,24 @@
         "file": "server.properties",
         "key": "server-port",
         "value": "{game}"
+      },
+      {
+        "kind": "property",
+        "file": "server.properties",
+        "key": "enable-rcon",
+        "value": "true"
+      },
+      {
+        "kind": "property",
+        "file": "server.properties",
+        "key": "rcon.port",
+        "value": "{rcon}"
+      },
+      {
+        "kind": "property",
+        "file": "server.properties",
+        "key": "broadcast-rcon-to-ops",
+        "value": "false"
       }
     ]
   },
