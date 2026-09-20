@@ -5,16 +5,20 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from alert_repository import AlertSession, dialect_for_backend
-from core.agent_health import utc_timestamp
 
 _SECRET_KEYS = re.compile(r"(password|passwd|secret|token|credential|authorization|cookie|api[_-]?key)", re.I)
 _MAX_ERROR = 12000
 _MAX_TRACEBACK = 64000
 _MAX_DETAIL = 24000
 _MAX_PAYLOAD = 128000
+
+
+def utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _clean_text(value: Any, limit: int) -> str | None:

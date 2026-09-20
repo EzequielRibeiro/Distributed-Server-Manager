@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -36,6 +39,24 @@ class OperationDiagnosticsTest(unittest.TestCase):
 
     def test_operation_diagnostics_is_baseline_upgrade_18(self):
         self.assertEqual(latest_upgrade_version(), 18)
+
+    def test_repository_imports_with_alert_engine_python_path(self):
+        with tempfile.TemporaryDirectory() as cwd:
+            env = dict(os.environ)
+            env["PYTHONPATH"] = os.pathsep.join([
+                str(ROOT / "database"),
+                str(ROOT / "core"),
+            ])
+            completed = subprocess.run(
+                [sys.executable, "-c", "import operation_diagnostic_repository"],
+                cwd=cwd,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=20,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_privileged_materializer_propagates_helper_error(self):
         source = (ROOT / "agents/linux/runtime/privileged_materialization.py").read_text(encoding="utf-8")
