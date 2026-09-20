@@ -705,6 +705,41 @@ wait_for_game_instance_active()
 }
 
 
+game_instance_game_id()
+{
+    local UNIT="${1:?unit required}"
+    local ENVIRONMENT
+
+    ENVIRONMENT="$(systemctl show "${UNIT}" --property=Environment --value 2>/dev/null || true)"
+    printf '%s\n' "${ENVIRONMENT}" |
+        tr ' ' '\n' |
+        awk -F= '$1 == "CAPIVARA_GAME_ID" { print tolower($2); exit }'
+}
+
+
+stop_game_instance()
+{
+    local UNIT="${1:?unit required}"
+    local GAME_ID
+
+    GAME_ID="$(game_instance_game_id "${UNIT}")"
+
+    if [[ "${GAME_ID}" == "dayz" ]]
+    then
+        echo "Encerramento gracioso DayZ | Graceful DayZ shutdown: ${UNIT}"
+        # Bohemia documents Ctrl+C/SIGINT as the Linux daemon stop path for
+        # DayZ.  Do not fall back to SIGTERM here: if the server does not
+        # complete its native save/exit within the budget, fail the update
+        # before mutating DSM files.
+        systemctl kill --kill-whom=main --signal=SIGINT "${UNIT}"
+    else
+        systemctl stop "${UNIT}"
+    fi
+
+    wait_for_game_instance_inactive "${UNIT}"
+}
+
+
 stop_game_instances()
 {
     local UNIT
@@ -718,8 +753,7 @@ stop_game_instances()
     for UNIT in "${ACTIVE_GAME_UNITS[@]}"
     do
         echo "Parando instância | Stopping instance: ${UNIT}"
-        systemctl stop "${UNIT}"
-        wait_for_game_instance_inactive "${UNIT}"
+        stop_game_instance "${UNIT}"
         echo "[OK] ${UNIT} parado | stopped."
     done
 }
