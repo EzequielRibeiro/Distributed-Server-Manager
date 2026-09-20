@@ -15,6 +15,7 @@ import traceback
 from typing import Any
 
 from game_data_executor import _execute as execute_game_data
+from backup_client import _create as create_backup
 import game_runtime
 import instance_runtime
 import privileged_materialization
@@ -105,6 +106,14 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
     workspace: dict[str, str] | None = None
     content_result: dict[str, Any] | None = None
     compensation: list[str] = []
+    configuration = dict(request.get("configuration") or {})
+    update_meta = configuration.get("minecraft_version_update") if isinstance(configuration.get("minecraft_version_update"), dict) else None
+    previous_runtime = instance_runtime.get_instance(request["instance_id"]) if update_meta else None
+    update_was_running = False
+    update_backup: dict[str, Any] | None = None
+    update_stopped = False
+    if update_meta and previous_runtime is None:
+        raise RuntimeError("Minecraft version update requires an existing instance runtime")
     _result(result_path, request, status="running", current_step=step, progress=5)
     _event("INSTANCE_PROVISIONING_STARTED", request, step=step, progress=5)
     try:
@@ -125,9 +134,37 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
         install_path = str(content_result["target_path"])
         _event("INSTANCE_PROVISIONING_STEP", request, step=step, progress=60, data={"provider": content_result.get("provider")})
 
+        if update_meta:
+            step = "backup_current_runtime"; _check_deadline(deadline, step)
+            _result(result_path, request, status="running", current_step=step, progress=64)
+            update_was_running = instance_runtime.status(config, request["instance_id"]).get("observed_state") == "running"
+            if bool(update_meta.get("backup_before_update", True)):
+                update_backup = create_backup(
+                    config,
+                    {
+                        "instance_id": request["instance_id"],
+                        "policy": {
+                            "mode": "full",
+                            "compression": "gzip",
+                            "retention_count": 7,
+                            "consistency": "stopped",
+                        },
+                    },
+                )
+            if update_was_running:
+                instance_runtime.lifecycle(config, request["instance_id"], "stop")
+                update_stopped = True
+            _event(
+                "INSTANCE_PROVISIONING_STEP",
+                request,
+                step=step,
+                progress=66,
+                data={"backup_id": (update_backup or {}).get("backup_id"), "was_running": update_was_running},
+            )
+
         step = "build_runtime_spec"; _check_deadline(deadline, step)
         _result(result_path, request, status="running", current_step=step, progress=70)
-        context = dict(request.get("configuration") or {})
+        context = dict(configuration)
         context["install_path"] = install_path; context["content_root"] = install_path; context["ports"] = ports
         instance = dict(request["instance"])
         spec = game_runtime.build_runtime_spec(config, instance, context)
@@ -158,19 +195,55 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
         reconciliation = runtime_materialization.reconcile(config, request["instance_id"])
         _check_deadline(deadline, step)
         observed_state = str(reconciliation.get("observed_state") or "unknown")
+        update_readiness = None
+        if update_meta:
+            step = "update_readiness"; _check_deadline(deadline, step)
+            _result(result_path, request, status="running", current_step=step, progress=96)
+            update_readiness = instance_runtime.doctor(config, request["instance_id"])
+            if not bool(update_readiness.get("ready")):
+                raise RuntimeError("updated Minecraft runtime failed readiness validation")
+            _event("INSTANCE_PROVISIONING_STEP", request, step=step, progress=97, data={"readiness": update_readiness.get("status")})
         final = _result(result_path, request, status="completed", current_step="completed", progress=100,
                         desired_state=request["desired_state"], observed_state=observed_state, workspace=workspace,
                         content={"provider": content_result.get("provider"), "game": content_result.get("game"),
                                  "version": content_result.get("version"), "target_path": content_result.get("target_path")},
                         runtime={"profile": spec.get("profile"), "profile_version": spec.get("profile_version"),
                                  "adapter": spec.get("adapter"), "runtime_id": spec.get("runtime_id"),
-                                 "materialized_changed": bool((materialization.get("operation") or {}).get("changed"))})
+                                 "materialized_changed": bool((materialization.get("operation") or {}).get("changed"))},
+                        minecraft_version_update={
+                            "target_version": update_meta.get("target_version"),
+                            "target_build": update_meta.get("target_build"),
+                            "backup_id": (update_backup or {}).get("backup_id"),
+                            "isolated_install_dir": update_meta.get("isolated_install_dir"),
+                            "readiness": (update_readiness or {}).get("status"),
+                        } if update_meta else None)
         increment("provisioning_completed")
         _event("INSTANCE_PROVISIONING_COMPLETED", request, step="completed", progress=100,
                data={"desired_state": request["desired_state"], "observed_state": observed_state})
         return final
     except Exception as exc:
-        if materialized:
+        if update_meta and previous_runtime is not None:
+            try:
+                if materialized:
+                    try:
+                        current = instance_runtime.status(config, request["instance_id"])
+                        if current.get("observed_state") == "running":
+                            instance_runtime.lifecycle(config, request["instance_id"], "stop")
+                    except Exception:
+                        pass
+                    restored = dict(previous_runtime)
+                    restored["desired_state"] = "running" if update_was_running else str(previous_runtime.get("desired_state") or "stopped")
+                    privileged_materialization.materialize(config, restored)
+                    if isinstance(restored.get("catalog_runtime_policy"), dict):
+                        privileged_firewall.reconcile(restored)
+                    runtime_materialization.reconcile(config, request["instance_id"])
+                    compensation.append("previous_runtime_restored")
+                elif update_stopped and update_was_running:
+                    instance_runtime.lifecycle(config, request["instance_id"], "start")
+                    compensation.append("previous_runtime_restarted")
+            except Exception:
+                compensation.append("runtime_rollback_failed")
+        elif materialized:
             try:
                 cleanup = privileged_materialization.remove(config, request["instance_id"])
                 if isinstance(cleanup, dict) and cleanup.get("firewall") is not None:

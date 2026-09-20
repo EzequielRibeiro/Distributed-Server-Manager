@@ -322,6 +322,9 @@ class AgentInstanceProvisioningRepository:
         error = str(result.get("error") or "").strip()[:2000] or None
         now = utc_timestamp()
         payload = json.dumps(result, separators=(",", ":"), sort_keys=True)
+        request = current.get("request") if isinstance(current.get("request"), dict) else {}
+        configuration = request.get("configuration") if isinstance(request.get("configuration"), dict) else {}
+        minecraft_update = configuration.get("minecraft_version_update") if isinstance(configuration.get("minecraft_version_update"), dict) else None
         ph = self.dialect.placeholder
         with self.session(transaction=True) as session:
             if status == "running":
@@ -339,6 +342,15 @@ class AgentInstanceProvisioningRepository:
                     f"completed_at={ph},updated_at={ph} WHERE provisioning_id={ph} AND status NOT IN ('completed','failed')",
                     (status, current_step, progress, payload, error, now, now, provisioning_id),
                 )
+                if status == "completed" and minecraft_update:
+                    target_version = str(minecraft_update.get("target_version") or "").strip()
+                    target_build = str(minecraft_update.get("target_build") or "").strip()
+                    if not target_version or not target_build:
+                        raise ValueError("Minecraft version update result is missing target identity")
+                    session.execute(
+                        f"UPDATE instances SET game_version={ph},build_id={ph},updated_at={ph} WHERE id={ph}",
+                        (target_version, target_build, now, str(current.get("instance_id") or "")),
+                    )
 
         state = self.snapshot(provisioning_id)
         pool_id, reserved_bytes = _request_storage_reservation(current.get("request"))
@@ -347,13 +359,33 @@ class AgentInstanceProvisioningRepository:
                 event_type="INSTANCE_PROVISION_STARTED", severity="info", provisioning=state,
                 data={"message": "O Agent iniciou o provisionamento da instância."})
         elif status == "completed":
-            self._publish_event(event_id=f"{provisioning_id}:completed", event_type="INSTANCE_PROVISION_COMPLETED",
-                severity="info", provisioning=state,
-                data={"message": "Provisionamento da instância concluído com sucesso."})
+            completed_data = {"message": "Provisionamento da instância concluído com sucesso."}
+            event_type = "INSTANCE_PROVISION_COMPLETED"
+            if minecraft_update:
+                completed_data.update({
+                    "from_version": minecraft_update.get("from_version"),
+                    "from_build": minecraft_update.get("from_build"),
+                    "target_version": minecraft_update.get("target_version"),
+                    "target_build": minecraft_update.get("target_build"),
+                    "message": "Atualização da versão do Minecraft concluída com sucesso.",
+                })
+                event_type = "MINECRAFT_VERSION_UPDATE_COMPLETED"
+            self._publish_event(event_id=f"{provisioning_id}:completed", event_type=event_type,
+                severity="info", provisioning=state, data=completed_data)
         else:
-            self._publish_event(event_id=f"{provisioning_id}:failed", event_type="INSTANCE_PROVISION_FAILED",
-                severity="critical", provisioning=state,
-                data={"message": "Falha durante o provisionamento da instância.", "error": error})
+            failed_data = {"message": "Falha durante o provisionamento da instância.", "error": error}
+            failed_type = "INSTANCE_PROVISION_FAILED"
+            if minecraft_update:
+                failed_data.update({
+                    "from_version": minecraft_update.get("from_version"),
+                    "from_build": minecraft_update.get("from_build"),
+                    "target_version": minecraft_update.get("target_version"),
+                    "target_build": minecraft_update.get("target_build"),
+                    "message": "A atualização da versão do Minecraft falhou; a seleção persistida anterior foi preservada.",
+                })
+                failed_type = "MINECRAFT_VERSION_UPDATE_FAILED"
+            self._publish_event(event_id=f"{provisioning_id}:failed", event_type=failed_type,
+                severity="critical", provisioning=state, data=failed_data)
             if self._steam_auth_required(error, result):
                 self._publish_event(event_id=f"{provisioning_id}:steam-auth-required",
                     event_type="STEAM_AUTH_REQUIRED", severity="critical", provisioning=state,
