@@ -277,6 +277,46 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
         chown.assert_any_call(control_root, agent_account.pw_uid, agent_group.gr_gid)
         chown.assert_any_call(manifest, agent_account.pw_uid, agent_group.gr_gid)
 
+    def test_hybrid_control_state_uses_configured_service_account(self):
+        storage_root = self.root / "instances-hybrid-control"
+        instance_root = storage_root / "instance-hybrid-control"
+        control_root = instance_root / ".dsm"
+        spec = {
+            "instance_id": "instance-hybrid-control",
+            "instance_state_root": str(instance_root),
+            "working_directory": str(instance_root / "runtime"),
+            "seed_files": [],
+            "seed_directories": [],
+            "bind_paths": [],
+            "writable_directories": [],
+        }
+        runtime_account = type("Account", (), {"pw_uid": 1111, "pw_gid": 2222})()
+        hybrid_control_account = type("Account", (), {"pw_uid": 5555, "pw_gid": 6666})()
+        agent_group = type("Group", (), {"gr_gid": 4444})()
+        old_control_user = os.environ.get("CAPIVARA_AGENT_RESULT_USER")
+        os.environ["CAPIVARA_AGENT_RESULT_USER"] = "capivara"
+        try:
+            with mock.patch.object(materialize_instance.os, "chown") as chown, \
+                 mock.patch.object(
+                     materialize_instance.pwd,
+                     "getpwnam",
+                     side_effect=lambda name: hybrid_control_account
+                     if name == "capivara"
+                     else (_ for _ in ()).throw(KeyError(name)),
+                 ) as getpwnam, \
+                 mock.patch.object(materialize_instance.grp, "getgrnam", return_value=agent_group):
+                materialize_instance._prepare_private_state(spec, runtime_account, storage_root)
+        finally:
+            if old_control_user is None:
+                os.environ.pop("CAPIVARA_AGENT_RESULT_USER", None)
+            else:
+                os.environ["CAPIVARA_AGENT_RESULT_USER"] = old_control_user
+
+        getpwnam.assert_called_once_with("capivara")
+        self.assertEqual(stat.S_IMODE(control_root.stat().st_mode), 0o700)
+        chown.assert_any_call(control_root, hybrid_control_account.pw_uid, agent_group.gr_gid)
+
+
     def test_hybrid_runtime_boundary_is_repaired_for_runtime_group(self):
         state = self.root / "hybrid-agent-state"
         game_data = state / "game-data"
