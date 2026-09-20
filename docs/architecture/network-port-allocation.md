@@ -17,6 +17,12 @@ The database remains the authority for Capivara reservations:
 
     instance_ports
 
+Numeric port ownership is node-scoped across instances. If one
+instance owns port 24000, another instance on the same node may not
+receive 24000 even on a different protocol. A single instance may
+still intentionally bind the same numeric port on both TCP and UDP
+when its RuntimeDefinition requires that behavior.
+
 The allowed universe is stored separately:
 
     agent_port_ranges
@@ -50,8 +56,15 @@ A runtime receives all of the ports in its profile or none.
 The instance creation transaction owns both the instance record and
 its network reservations.
 
-PostgreSQL and MySQL serialize allocation per Agent using a row lock.
-SQLite relies on its transaction locking semantics.
+PostgreSQL and MySQL serialize allocation with Agent and node row
+locks so two provisioning transactions cannot claim the same numeric
+port on one node. SQLite relies on its transaction locking semantics.
+
+Immediately before each reservation insert, the Controller performs a
+second owner check against `(node_id, port)` while allowing an existing
+row only when it belongs to the same instance. This keeps valid
+same-instance TCP+UDP pairs possible without allowing cross-instance
+number reuse.
 
 ## Agent ranges
 

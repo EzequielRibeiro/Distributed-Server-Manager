@@ -94,6 +94,22 @@ def allocate_port_profile(
     reserved = reserved or {}
     occupied = occupied or {}
 
+    # Numeric ports are owned per node, not per protocol. A reservation or
+    # unmanaged listener on 24000/UDP therefore also blocks 24000/TCP for a
+    # different instance. Runtime profiles may still intentionally bind the
+    # same numeric port on TCP and UDP inside one allocation (for example
+    # Source-style servers), because these sets contain only external usage.
+    reserved_numbers = {
+        int(port)
+        for ports in reserved.values()
+        for port in ports
+    }
+    occupied_numbers = {
+        int(port)
+        for ports in occupied.values()
+        for port in ports
+    }
+
     anchor = next(
         (
             port
@@ -144,17 +160,11 @@ def allocate_port_profile(
                     valid = False
                     break
 
-                if port in reserved.get(
-                    requirement.protocol,
-                    set(),
-                ):
+                if port in reserved_numbers:
                     valid = False
                     break
 
-                if port in occupied.get(
-                    requirement.protocol,
-                    set(),
-                ):
+                if port in occupied_numbers:
                     valid = False
                     break
 

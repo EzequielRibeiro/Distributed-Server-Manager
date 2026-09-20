@@ -130,6 +130,77 @@ class PortAllocatorTest(
             },
         )
 
+    def test_cross_protocol_reservation_blocks_numeric_port(self):
+        profile = PortProfile.from_mapping(
+            {
+                "allocation": "block",
+                "block_size": 2,
+                "ports": [
+                    {"name": "game", "protocol": "tcp", "offset": 0},
+                    {"name": "rcon", "protocol": "tcp", "offset": 1},
+                ],
+            }
+        )
+
+        allocation = allocate_port_profile(
+            profile,
+            [
+                PortRange("tcp", 24000, 24999),
+                PortRange("udp", 24000, 24999),
+            ],
+            reserved={"udp": {24000}, "tcp": set()},
+        )
+
+        self.assertEqual(allocation.ports, {"game": 24002, "rcon": 24003})
+
+    def test_cross_protocol_unmanaged_listener_blocks_numeric_port(self):
+        profile = PortProfile.from_mapping(
+            {
+                "allocation": "block",
+                "block_size": 2,
+                "ports": [
+                    {"name": "game", "protocol": "tcp", "offset": 0},
+                    {"name": "rcon", "protocol": "tcp", "offset": 1},
+                ],
+            }
+        )
+
+        allocation = allocate_port_profile(
+            profile,
+            [
+                PortRange("tcp", 24000, 24999),
+                PortRange("udp", 24000, 24999),
+            ],
+            occupied={"udp": {24000}, "tcp": set()},
+        )
+
+        self.assertEqual(allocation.ports["game"], 24002)
+
+    def test_same_instance_may_bind_same_number_on_tcp_and_udp(self):
+        profile = PortProfile.from_mapping(
+            {
+                "allocation": "block",
+                "block_size": 1,
+                "ports": [
+                    {"name": "game_udp", "protocol": "udp", "offset": 0},
+                    {"name": "game_tcp", "protocol": "tcp", "offset": 0},
+                ],
+            }
+        )
+
+        allocation = allocate_port_profile(
+            profile,
+            [
+                PortRange("tcp", 24000, 24999),
+                PortRange("udp", 24000, 24999),
+            ],
+        )
+
+        self.assertEqual(
+            allocation.ports,
+            {"game_udp": 24000, "game_tcp": 24000},
+        )
+
     def test_exhausted_range(self):
         profile = PortProfile.from_mapping(
             DAYZ

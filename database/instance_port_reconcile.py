@@ -42,6 +42,16 @@ def plan_instance_port_reconcile(
     ranges = tuple(ranges)
     conflicts = conflicts or {}
     occupied = occupied or {}
+    conflict_numbers = {
+        int(port)
+        for ports in conflicts.values()
+        for port in ports
+    }
+    occupied_numbers = {
+        int(port)
+        for ports in occupied.values()
+        for port in ports
+    }
     requirements = {item.name: item for item in profile.ports}
 
     if not rows:
@@ -95,17 +105,23 @@ def plan_instance_port_reconcile(
             )
         expected[requirement.name] = port
         persisted = normalized.get(requirement.name)
-        if persisted is not None:
-            if persisted[1] != port:
-                raise InstancePortReconcileError(
-                    f"persisted reservation does not match logical block for {requirement.name}"
-                )
-            continue
-        if port in conflicts.get(requirement.protocol, set()):
+        if persisted is not None and persisted[1] != port:
+            raise InstancePortReconcileError(
+                f"persisted reservation does not match logical block for {requirement.name}"
+            )
+
+        # Port ownership is numeric across instances. A TCP reservation in this
+        # instance must relocate if another instance owns the same number on UDP,
+        # and vice versa. This also detects legacy cross-protocol duplicates even
+        # when every role of the current profile is already persisted.
+        if port in conflict_numbers:
             raise InstancePortReconcileError(
                 f"derived reservation collides with another instance for {requirement.name}"
             )
-        if port in occupied.get(requirement.protocol, set()):
+
+        if persisted is not None:
+            continue
+        if port in occupied_numbers:
             raise InstancePortReconcileError(
                 f"derived reservation is occupied by an unmanaged socket for {requirement.name}"
             )
@@ -149,6 +165,12 @@ def reconcile_instance_ports(
             ).fetchone()
             if agent is None:
                 raise InstancePortReconcileError("bound Agent is unavailable")
+            node = session.execute(
+                "SELECT id FROM nodes " f"WHERE id={ph} FOR UPDATE",
+                (instance["node_id"],),
+            ).fetchone()
+            if node is None:
+                raise InstancePortReconcileError("bound node is unavailable")
 
         range_rows = session.execute(
             "SELECT protocol,start_port,end_port FROM agent_port_ranges "
@@ -281,6 +303,16 @@ def reconcile_instance_ports(
 
         for name in plan.missing:
             requirement = requirements[name]
+            reserved_port = plan.ports[name]
+            owner = session.execute(
+                "SELECT instance_id FROM instance_ports "
+                f"WHERE node_id={ph} AND port={ph} AND instance_id<>{ph} LIMIT 1",
+                (instance["node_id"], reserved_port, str(instance_id)),
+            ).fetchone()
+            if owner is not None:
+                raise InstancePortReconcileError(
+                    f"numeric port {reserved_port} is already owned by another instance"
+                )
             session.execute(
                 "INSERT INTO instance_ports(instance_id,node_id,name,protocol,port,bind_address) "
                 f"VALUES ({repository.dialect.parameters(6)})",

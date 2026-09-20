@@ -345,6 +345,14 @@ class DashboardRepository:
                         "SELECT id FROM agents " f"WHERE id={ph} FOR UPDATE",
                         (agent["id"],),
                     ).fetchone()
+                    # Serialize all numeric port ownership changes on the node,
+                    # even if a future topology maps more than one Agent to it.
+                    node_lock = session.execute(
+                        "SELECT id FROM nodes " f"WHERE id={ph} FOR UPDATE",
+                        (agent["node_id"],),
+                    ).fetchone()
+                    if node_lock is None:
+                        raise RuntimeError("selected agent node is unavailable")
 
                 range_rows = session.execute(
                     "SELECT protocol,start_port,end_port "
@@ -415,10 +423,10 @@ class DashboardRepository:
                         "operating-system port inspection provider is required"
                     )
 
+                # Numeric port ownership is protocol-agnostic across
+                # instances. Inspect both TCP and UDP ranges even when the
+                # requested runtime itself only binds one protocol.
                 for item in ranges:
-                    if item.protocol not in profile.protocols:
-                        continue
-
                     occupied[item.protocol].update(
                         provider(
                             agent["id"],
@@ -445,6 +453,19 @@ class DashboardRepository:
 
                 for name, reserved_port in ports.items():
                     requirement = requirements[name]
+
+                    # One numeric port may belong to only one instance on a
+                    # node. The owner may use both TCP and UDP on that number,
+                    # which is required by several dedicated-server runtimes.
+                    owner = session.execute(
+                        "SELECT instance_id FROM instance_ports "
+                        f"WHERE node_id={ph} AND port={ph} AND instance_id<>{ph} LIMIT 1",
+                        (agent["node_id"], reserved_port, instance_id),
+                    ).fetchone()
+                    if owner is not None:
+                        raise RuntimeError(
+                            f"numeric port {reserved_port} is already owned by another instance"
+                        )
 
                     session.execute(
                         "INSERT INTO instance_ports("
