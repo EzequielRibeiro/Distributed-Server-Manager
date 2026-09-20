@@ -66,7 +66,7 @@ class CustomerInstanceFileSecurityTest(unittest.TestCase):
     def test_customer_ui_uses_agent_usage_bytes_and_human_root_label(self):
         source = (ROOT / "dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
         self.assertIn("usage.usage_bytes??usage.used_bytes", source)
-        self.assertIn('filePath==="."?"/":\`/\${filePath}\`', source)
+        self.assertIn('filePath==="."?"/":`/${filePath}`', source)
 
     def test_customer_ui_builds_child_directory_path_and_disables_up_at_root(self):
         source = (ROOT / "dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
