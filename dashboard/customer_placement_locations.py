@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import math
+from pathlib import Path
 from typing import Any
 
+from core.catalog_resource_profile_policy import resolve_catalog_resource_profile
+from core.effective_resource_policy import normalize_resource_policy
 from core.placement_requirements import requirements_for_instance
 from customer_reference import resolve_customer_reference
 from location_repository import LocationRepository
@@ -65,7 +68,7 @@ def _contract_resources(repository: LocationRepository, customer_id: int, contra
     ph = repository.dialect.placeholder
     with repository.session() as session:
         row = session.execute(
-            "SELECT id,customer_id,status,metadata_json FROM service_contracts WHERE id=" + ph + " AND customer_id=" + ph,
+            "SELECT id,customer_id,game_id,status,metadata_json FROM service_contracts WHERE id=" + ph + " AND customer_id=" + ph,
             (contract_id, customer_id),
         ).fetchone()
     if row is None:
@@ -74,7 +77,19 @@ def _contract_resources(repository: LocationRepository, customer_id: int, contra
         raise ValueError("contract is not active")
     metadata = _decode_object(row["metadata_json"])
     resources = metadata.get("resources")
-    return dict(resources) if isinstance(resources, dict) else None
+    if isinstance(resources, dict) and resources:
+        return normalize_resource_policy(resources).placement_resources()
+
+    profile_id = str(metadata.get("resource_profile_id") or metadata.get("profile_id") or "").strip()
+    if not profile_id:
+        return None
+    _, profile, _ = resolve_catalog_resource_profile(
+        root=Path(__file__).resolve().parents[1],
+        game_id=str(row["game_id"] or "").strip().lower(),
+        requested_profile_id=profile_id,
+        require_catalog=True,
+    )
+    return normalize_resource_policy(profile).placement_resources()
 
 
 def customer_placement_locations(
