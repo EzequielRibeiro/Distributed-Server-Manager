@@ -25,6 +25,10 @@ Migration `034_universal_observability.sql` has equivalent SQLite, MySQL/MariaDB
 
 Duplicate delivery is idempotent. Out-of-order samples remain in history but do not replace a newer latest projection.
 
+To bound database growth, historical persistence is intentionally lower resolution than the real-time latest projection. Dynamic metrics are persisted at most once per five-minute bucket by default while `observability_latest` continues to update on every accepted heartbeat. Stable inventory-style metrics such as total memory, total disk capacity and the Agent PID are persisted only when their value changes.
+
+Historical samples have a default seven-day retention window. The Controller retention worker deletes expired samples in bounded batches so cleanup does not require one large transaction or block normal heartbeat ingestion. The defaults can be tuned with `DSM_OBSERVABILITY_HISTORY_INTERVAL_SECONDS`, `DSM_OBSERVABILITY_RETENTION_DAYS`, `DSM_OBSERVABILITY_RETENTION_BATCH_SIZE`, and `DSM_OBSERVABILITY_RETENTION_WORKER_SECONDS`.
+
 ## Query surfaces
 
 Administrative API:
