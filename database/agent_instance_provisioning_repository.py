@@ -10,6 +10,7 @@ import uuid
 from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
 from core.agent_health import utc_timestamp
+from operation_diagnostic_repository import OperationDiagnosticRepository
 from storage_pool_placement import select_storage_pool
 from universal_event_repository import UniversalEventRepository
 
@@ -353,6 +354,31 @@ class AgentInstanceProvisioningRepository:
                     )
 
         state = self.snapshot(provisioning_id)
+        diagnostic = None
+        if status == "failed":
+            technical_detail = result.get("technical_detail") or result.get("root_cause") or result.get("error")
+            diagnostic = OperationDiagnosticRepository(self.backend).create(
+                correlation_id=provisioning_id,
+                operation="instance_provisioning",
+                source=result.get("source") or "agent.provisioning_executor",
+                agent_id=str(current.get("agent_id") or ""),
+                instance_id=str(current.get("instance_id") or ""),
+                current_step=current_step,
+                error=result.get("error") or error,
+                exception_type=result.get("exception_type"),
+                traceback=result.get("traceback"),
+                error_code=result.get("error_code") or f"provisioning_{current_step}_failed",
+                technical_detail=technical_detail,
+                compensation=result.get("compensation"),
+                payload={
+                    "provisioning_id": provisioning_id,
+                    "progress": progress,
+                    "failed_at": result.get("failed_at"),
+                    "desired_state": result.get("desired_state"),
+                    "observed_state": result.get("observed_state"),
+                },
+                occurred_at=result.get("failed_at") or now,
+            )
         pool_id, reserved_bytes = _request_storage_reservation(current.get("request"))
         if status == "running":
             self._publish_event(event_id=f"{provisioning_id}:running:{current_step}:{progress}",
@@ -373,7 +399,13 @@ class AgentInstanceProvisioningRepository:
             self._publish_event(event_id=f"{provisioning_id}:completed", event_type=event_type,
                 severity="info", provisioning=state, data=completed_data)
         else:
-            failed_data = {"message": "Falha durante o provisionamento da instância.", "error": error}
+            failed_data = {
+                "message": "Falha durante o provisionamento da instância.",
+                "error": error,
+                "diagnostic_id": (diagnostic or {}).get("diagnostic_id"),
+                "exception_type": (diagnostic or {}).get("exception_type"),
+                "current_step": current_step,
+            }
             failed_type = "INSTANCE_PROVISION_FAILED"
             if minecraft_update:
                 failed_data.update({
