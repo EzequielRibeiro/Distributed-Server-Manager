@@ -11,6 +11,7 @@ from agent_console_push import console_push_snapshot, wait_for_console_push
 from controller_log_journal_http import follow_instance_journal, instance_journal_logs
 from controller_session import session_user_from_headers
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
+from minecraft_version_update_preflight import MinecraftVersionUpdatePreflightService
 from instance_activity_repository import InstanceActivityRepository
 from json_serialization import to_json_compatible
 
@@ -31,6 +32,7 @@ ROUTES = {
     PREFIX + "/upgrade-options",
     PREFIX + "/upgrade",
     PREFIX + "/runtime-options",
+    PREFIX + "/minecraft-update/preflight",
     PREFIX + "/permissions",
 }
 _FILE_ACTIVITY = {
@@ -425,7 +427,7 @@ def install_customer_instance_workspace(legacy, authenticate):
     def post(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        if path not in {PREFIX + "/console", PREFIX + "/upgrade", PREFIX + "/files", PREFIX + "/backups", PREFIX + "/server-settings/refresh"}:
+        if path not in {PREFIX + "/console", PREFIX + "/upgrade", PREFIX + "/files", PREFIX + "/backups", PREFIX + "/server-settings/refresh", PREFIX + "/minecraft-update/preflight"}:
             return previous_post(self)
         user = require_user(self)
         if user is None:
@@ -434,7 +436,30 @@ def install_customer_instance_workspace(legacy, authenticate):
             body = self.read_json_body()
             instance_id = iid(parsed, body)
             api = service()
-            if path == PREFIX + "/server-settings/refresh":
+            if path == PREFIX + "/minecraft-update/preflight":
+                data = MinecraftVersionUpdatePreflightService(backend(), legacy.DSM_ROOT).preflight(
+                    user,
+                    instance_id,
+                    body.get("version"),
+                    body.get("build"),
+                )
+                code = 200
+                record(
+                    api,
+                    user,
+                    instance_id,
+                    "MINECRAFT_VERSION_UPDATE_PREFLIGHT",
+                    "runtime",
+                    target_type="minecraft_version",
+                    target_name=body.get("version"),
+                    details={
+                        "build": body.get("build"),
+                        "incompatible": (data.get("summary") or {}).get("incompatible", 0),
+                        "unknown": (data.get("summary") or {}).get("unknown", 0),
+                    },
+                    result="success",
+                )
+            elif path == PREFIX + "/server-settings/refresh":
                 data = api.queue_server_settings_surface(user, instance_id)
                 code = 202
             elif path == PREFIX + "/console":

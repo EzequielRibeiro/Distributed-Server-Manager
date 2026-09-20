@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Iterable
 
-INSTANCE_PERMISSIONS=frozenset({"instance.view","instance.start","instance.stop","instance.restart","instance.delete","instance.provision.retry","console.read","console.execute","files.read","files.download","files.upload","files.edit","files.delete","files.move","files.extract","backup.read","backup.create","backup.download","backup.restore","backup.delete","startup.read","startup.write","settings.read","settings.write","content.read","content.install","content.remove","team.read","team.manage","contract.read","contract.upgrade","activity.read"})
+INSTANCE_PERMISSIONS=frozenset({"instance.view","instance.start","instance.stop","instance.restart","instance.delete","instance.provision.retry","instance.update","console.read","console.execute","files.read","files.download","files.upload","files.edit","files.delete","files.move","files.extract","backup.read","backup.create","backup.download","backup.restore","backup.delete","startup.read","startup.write","settings.read","settings.write","content.read","content.install","content.remove","team.read","team.manage","contract.read","contract.upgrade","activity.read"})
 PERMISSION_PRESETS={
  "none":frozenset(),"custom":frozenset(),
  "viewer":frozenset({"instance.view","console.read","files.read","files.download","backup.read","startup.read","settings.read","content.read","team.read","contract.read","activity.read"}),
- "operator":frozenset({"instance.view","instance.start","instance.stop","instance.restart","console.read","files.read","files.download","files.upload","files.edit","backup.read","backup.create","backup.download","startup.read","settings.read","settings.write","content.read","content.install","content.remove","team.read","contract.read","activity.read"}),
+ "operator":frozenset({"instance.view","instance.start","instance.stop","instance.restart","instance.update","console.read","files.read","files.download","files.upload","files.edit","backup.read","backup.create","backup.download","startup.read","settings.read","settings.write","content.read","content.install","content.remove","team.read","contract.read","activity.read"}),
  "manager":INSTANCE_PERMISSIONS,
 }
 FILE_ACTION_PERMISSION={"list":"files.read","read":"files.read","download":"files.download","upload":"files.upload","edit":"files.edit","delete":"files.delete","move":"files.move","rename":"files.move","mkdir":"files.upload","extract":"files.extract"}
