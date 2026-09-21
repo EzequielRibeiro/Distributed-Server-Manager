@@ -100,7 +100,22 @@ def resolve_modrinth(project: str, game_version: str, loaders: tuple[str, ...], 
     encoded_project = quote(project, safe="")
     project_payload = requester(f"{MODRINTH_API_BASE}/project/{encoded_project}", {})
     project_type = str(project_payload.get("project_type") or "").lower() if isinstance(project_payload, Mapping) else ""
-    if project_type != ctype:
+    all_project_types = {str(value).strip().lower() for value in (project_payload.get("all_project_types") or []) if str(value).strip()} if isinstance(project_payload, Mapping) else set()
+    project_categories = {
+        str(value).strip().lower()
+        for field in ("categories", "additional_categories")
+        for value in (project_payload.get(field) or [])
+        if str(value).strip()
+    } if isinstance(project_payload, Mapping) else set()
+    if ctype == "plugin":
+        plugin_compatible = (
+            project_type == "plugin"
+            or "plugin" in all_project_types
+            or (project_type == "mod" and any(loader in project_categories for loader in loaders))
+        )
+        if not plugin_compatible:
+            raise MinecraftContentResolverError("Modrinth project is not a compatible plugin project")
+    elif project_type != ctype:
         raise MinecraftContentResolverError(f"Modrinth project is not an individual {ctype} project")
     if str(project_payload.get("status") or "unknown").lower() not in {"approved", "archived"}:
         raise MinecraftContentResolverError("Modrinth project is not available for managed installation")
@@ -232,18 +247,27 @@ def discover_modrinth(query: str, game_version: str, runtime: Mapping[str, Any],
     if not text:
         raise MinecraftContentResolverError("search query is required")
     if ctype == "modpack":
-        loaders = (_modpack_loader(runtime),); project_type = "modpack"
-    elif ctype in {"mod", "plugin"}:
-        loaders = provider_loaders(runtime, ctype); project_type = ctype
+        loaders = (_modpack_loader(runtime),); project_type = "modpack"; type_facet = "project_type:modpack"
+    elif ctype == "mod":
+        loaders = provider_loaders(runtime, ctype); project_type = "mod"; type_facet = "project_type:mod"
+    elif ctype == "plugin":
+        loaders = provider_loaders(runtime, ctype); project_type = "plugin"; type_facet = "all_project_types:plugin"
     else:
         raise MinecraftContentResolverError("Modrinth discovery does not support this content type")
-    facets = [[f"project_type:{project_type}"], [f"versions:{game_version}"], [f"categories:{value}" for value in loaders]]
+    facets = [[type_facet], [f"versions:{game_version}"], [f"categories:{value}" for value in loaders]]
     url = f"{MODRINTH_API_BASE}/search?{urlencode({'query': text, 'limit': _search_limit(limit), 'facets': json.dumps(facets, separators=(',', ':'))})}"
     payload = requester(url, {})
     hits = payload.get("hits") if isinstance(payload, Mapping) else []
     out = []
     for item in hits or []:
-        if not isinstance(item, Mapping) or str(item.get("project_type") or "").lower() != project_type:
+        if not isinstance(item, Mapping):
+            continue
+        item_type = str(item.get("project_type") or "").lower()
+        all_types = {str(value).strip().lower() for value in (item.get("all_project_types") or []) if str(value).strip()}
+        if ctype == "plugin":
+            if item_type != "plugin" and "plugin" not in all_types:
+                continue
+        elif item_type != project_type:
             continue
         project_id = str(item.get("project_id") or "").strip()
         slug = str(item.get("slug") or "").strip()
