@@ -190,8 +190,13 @@
         const mods = Boolean(types.mod);
         const plugins = Boolean(types.plugin);
         const modpacks = Boolean(bundles.modpack);
-        const votifier = plugins && ports.some((port) => normalize(port?.name) === "votifier");
-        return {mods, plugins, modpacks, votifier};
+        const hasVotifierPort = ports.some((port) => normalize(port?.name) === "votifier");
+        let votifierMode = "";
+        if (hasVotifierPort && mods && plugins) votifierMode = "Mod/Plugin";
+        else if (hasVotifierPort && plugins) votifierMode = "Plugin";
+        else if (hasVotifierPort && mods) votifierMode = "Mod";
+        const votifier = Boolean(votifierMode);
+        return {mods, plugins, modpacks, votifier, votifierMode};
     }
 
     function runtimeCardDescription(capabilities) {
@@ -455,7 +460,7 @@
             ["Mods", capabilities.mods],
             ["Plugins", capabilities.plugins],
             ["Modpacks", capabilities.modpacks],
-            ["Votifier", capabilities.votifier],
+            [capabilities.votifierMode ? `Votifier · ${capabilities.votifierMode}` : "Votifier", capabilities.votifier],
         ];
         for (const [label, supported] of entries) {
             const capability = document.createElement("span");

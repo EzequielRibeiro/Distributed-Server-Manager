@@ -44,12 +44,16 @@ class CustomerCatalogHierarchyTest(unittest.TestCase):
         self.assertIn('runtime?.content?.managed?.types', self.selector)
         self.assertIn('runtime?.content?.bundles', self.selector)
         self.assertIn('runtime?.network?.ports', self.selector)
-        self.assertIn('const votifier = plugins && ports.some', self.selector)
+        self.assertIn('const hasVotifierPort = ports.some', self.selector)
         self.assertIn('normalize(port?.name) === "votifier"', self.selector)
+        self.assertIn('votifierMode = "Mod/Plugin"', self.selector)
+        self.assertIn('votifierMode = "Plugin"', self.selector)
+        self.assertIn('votifierMode = "Mod"', self.selector)
+        self.assertIn('const votifier = Boolean(votifierMode)', self.selector)
         self.assertIn('["Mods", capabilities.mods]', self.selector)
         self.assertIn('["Plugins", capabilities.plugins]', self.selector)
         self.assertIn('["Modpacks", capabilities.modpacks]', self.selector)
-        self.assertIn('["Votifier", capabilities.votifier]', self.selector)
+        self.assertIn('Votifier · ${capabilities.votifierMode}', self.selector)
 
     def test_runtime_distribution_cards_have_responsive_visual_contract(self):
         self.assertIn('runtime-distribution-card', self.selector)
