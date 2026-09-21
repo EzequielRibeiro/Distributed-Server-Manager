@@ -9,6 +9,7 @@ turning every historical baseline checksum into a special-case migration.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Any, Callable, Mapping
 
 from activity_audit_schema import activity_audit_ddl
@@ -903,6 +904,121 @@ def _upgrade_alert_customer_identity(backend: Any, connection: Any) -> None:
         raise DatabaseMigrationError("alerts customer_id baseline upgrade incomplete")
 
 
+_MINECRAFT_MODIFIED_ONLY_RUNTIMES = {
+    "minecraft.java.paper",
+    "minecraft.java.purpur",
+    "minecraft.java.folia",
+    "minecraft.java.fabric",
+    "minecraft.java.forge",
+    "minecraft.java.neoforge",
+    "minecraft.java.quilt",
+    "minecraft.java.spongevanilla",
+    "minecraft.java.arclight",
+    "minecraft.java.youer",
+}
+
+_MINECRAFT_MODIFIED_ENTITLEMENTS = {
+    "mods": True,
+    "plugins": True,
+    "workshop": True,
+    "external_upload": True,
+    "custom_runtime": False,
+}
+
+
+def _upgrade_legacy_minecraft_contract_products(backend: Any, connection: Any) -> None:
+    """Repair only legacy implicit Minecraft contracts already using modified runtimes.
+
+    Contracts that explicitly declare product_variant or content_mode are never
+    changed. This preserves an administrator's explicit commercial choice while
+    repairing contracts created before the product selector existed.
+    """
+    required = {"service_contracts", "instance_contracts", "instances"}
+    if not required.issubset(_table_names(backend, connection)):
+        return
+
+    result = _execute(
+        backend,
+        connection,
+        "SELECT c.id AS contract_id,c.metadata_json AS metadata_json,"
+        "i.runtime_id AS runtime_id "
+        "FROM service_contracts c "
+        "JOIN instance_contracts ic ON ic.contract_id=c.id "
+        "JOIN instances i ON i.id=ic.instance_id "
+        "WHERE LOWER(c.game_id)='minecraft' "
+        "ORDER BY c.id,i.id",
+    )
+    try:
+        rows = result.fetchall()
+    finally:
+        try:
+            result.close()
+        except Exception:
+            pass
+
+    contracts: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        contract_id = str(_row_value_ci(row, "contract_id") or "").strip()
+        runtime_id = str(_row_value_ci(row, "runtime_id") or "").strip()
+        if not contract_id or not runtime_id:
+            continue
+        entry = contracts.setdefault(
+            contract_id,
+            {
+                "metadata_json": _row_value_ci(row, "metadata_json"),
+                "runtime_ids": set(),
+            },
+        )
+        entry["runtime_ids"].add(runtime_id)
+
+    ph = "%s" if backend.name in {"postgresql", "mysql"} else "?"
+    for contract_id, entry in contracts.items():
+        raw_metadata = entry.get("metadata_json")
+        try:
+            metadata = json.loads(raw_metadata or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        explicit_variant = str(metadata.get("product_variant") or "").strip().lower()
+        explicit_mode = str(metadata.get("content_mode") or "").strip().lower()
+        if explicit_variant or explicit_mode:
+            continue
+
+        runtime_ids = {
+            str(value).strip()
+            for value in entry.get("runtime_ids") or set()
+            if str(value).strip()
+        }
+        if not (runtime_ids & _MINECRAFT_MODIFIED_ONLY_RUNTIMES):
+            continue
+
+        metadata["product_variant"] = "modified"
+        metadata["content_mode"] = "modified"
+        entitlements = metadata.get("entitlements")
+        if not isinstance(entitlements, dict):
+            entitlements = {}
+        entitlements.update(_MINECRAFT_MODIFIED_ENTITLEMENTS)
+        metadata["entitlements"] = entitlements
+        encoded = json.dumps(
+            metadata,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        updated = _execute(
+            backend,
+            connection,
+            f"UPDATE service_contracts SET metadata_json={ph} WHERE id={ph}",
+            (encoded, contract_id),
+        )
+        try:
+            updated.close()
+        except Exception:
+            pass
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -923,6 +1039,7 @@ UPGRADES = (
     BaselineUpgrade(17, "database_intelligence", _upgrade_database_intelligence),
     BaselineUpgrade(18, "operation_diagnostics", _upgrade_operation_diagnostics),
     BaselineUpgrade(19, "alert_customer_identity", _upgrade_alert_customer_identity),
+    BaselineUpgrade(20, "legacy_minecraft_contract_products", _upgrade_legacy_minecraft_contract_products),
 )
 
 
