@@ -147,16 +147,21 @@
 .runtime-card-mark {
   display: grid;
   place-items: center;
-  flex: 0 0 44px;
-  width: 44px;
-  height: 44px;
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
   border: 1px solid rgba(184, 233, 134, .2);
-  border-radius: 13px;
+  border-radius: 14px;
   background: rgba(184, 233, 134, .08);
   color: var(--lime);
-  font-size: 1rem;
-  font-weight: 900;
-  letter-spacing: -.04em;
+}
+
+.runtime-card-icon {
+  display: block;
+  width: 30px;
+  height: 30px;
+  overflow: visible;
+  color: inherit;
 }
 
 .runtime-card-heading {

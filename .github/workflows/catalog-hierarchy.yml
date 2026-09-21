@@ -9,6 +9,7 @@ on:
       - 'dashboard/web/customer.html'
       - 'dashboard/web/runtime-selector.js'
       - 'dashboard/web/create-server-wizard.css'
+      - 'dashboard/web/assets/icons/runtime-sprite.svg'
       - 'tests/catalog_index_test.py'
       - 'tests/dashboard_catalog_v2_test.py'
       - 'tests/customer_catalog_hierarchy_test.py'

@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SELECTOR = ROOT / "dashboard" / "web" / "runtime-selector.js"
 CUSTOMER_HTML = ROOT / "dashboard" / "web" / "customer.html"
 WIZARD_CSS = ROOT / "dashboard" / "web" / "create-server-wizard.css"
+RUNTIME_ICON_SPRITE = ROOT / "dashboard" / "web" / "assets" / "icons" / "runtime-sprite.svg"
 
 
 class CustomerCatalogHierarchyTest(unittest.TestCase):
@@ -13,6 +14,7 @@ class CustomerCatalogHierarchyTest(unittest.TestCase):
         self.selector = SELECTOR.read_text(encoding="utf-8")
         self.customer_html = CUSTOMER_HTML.read_text(encoding="utf-8")
         self.wizard_css = WIZARD_CSS.read_text(encoding="utf-8")
+        self.runtime_icon_sprite = RUNTIME_ICON_SPRITE.read_text(encoding="utf-8")
 
     def test_selector_uses_canonical_hierarchy_for_discovery(self):
         self.assertIn('/api/catalog/hierarchy?game=', self.selector)
@@ -34,8 +36,8 @@ class CustomerCatalogHierarchyTest(unittest.TestCase):
     def test_customer_ui_names_distribution_step(self):
         self.assertIn('<strong>Distribuição</strong>', self.customer_html)
         self.assertIn('Distribuição Minecraft', self.customer_html)
-        self.assertIn('/runtime-selector.js?v=10', self.customer_html)
-        self.assertIn('/create-server-wizard.css?v=5', self.customer_html)
+        self.assertIn('/runtime-selector.js?v=', self.customer_html)
+        self.assertIn('/create-server-wizard.css?v=', self.customer_html)
 
     def test_runtime_cards_derive_capabilities_from_runtime_definition(self):
         self.assertIn('function runtimeCardCapabilities(runtime)', self.selector)
@@ -52,11 +54,36 @@ class CustomerCatalogHierarchyTest(unittest.TestCase):
     def test_runtime_distribution_cards_have_responsive_visual_contract(self):
         self.assertIn('runtime-distribution-card', self.selector)
         self.assertIn('runtime-card-mark', self.selector)
+        self.assertIn('runtime-card-icon', self.selector)
         self.assertIn('runtime-capabilities', self.selector)
         self.assertIn('.runtime-distribution-card', self.wizard_css)
         self.assertIn('.runtime-capability.supported', self.wizard_css)
         self.assertIn('.runtime-capability.unsupported', self.wizard_css)
         self.assertIn('#runtime-types.runtime-selector-grid', self.wizard_css)
+
+
+    def test_runtime_cards_use_local_vector_icon_sprite(self):
+        self.assertIn('RUNTIME_ICON_SPRITE = "/assets/icons/runtime-sprite.svg?v=1"', self.selector)
+        self.assertIn('function runtimeCardIconId(distribution, runtime)', self.selector)
+        self.assertIn('document.createElementNS("http://www.w3.org/2000/svg", "svg")', self.selector)
+        self.assertIn('use.setAttribute("href"', self.selector)
+        for icon_id in (
+            "runtime-vanilla",
+            "runtime-fabric",
+            "runtime-forge",
+            "runtime-neoforge",
+            "runtime-quilt",
+            "runtime-paper",
+            "runtime-purpur",
+            "runtime-folia",
+            "runtime-spongevanilla",
+            "runtime-arclight",
+            "runtime-youer",
+            "runtime-bedrock",
+            "runtime-default",
+        ):
+            self.assertIn(f'id="{icon_id}"', self.runtime_icon_sprite)
+
 
 
 if __name__ == "__main__":

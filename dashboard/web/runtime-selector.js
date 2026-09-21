@@ -13,6 +13,7 @@
     "use strict";
 
     const $ = (id) => document.getElementById(id);
+    const RUNTIME_ICON_SPRITE = "/assets/icons/runtime-sprite.svg?v=1";
     let openingPromise = null;
 
     const state = {
@@ -164,22 +165,22 @@
         return normalize(runtime?.variant || runtime?.loader || distribution?.id || "runtime");
     }
 
-    function runtimeCardMark(distribution, runtime) {
-        const marks = {
-            vanilla: "◆",
-            paper: "P",
-            purpur: "Pu",
-            fabric: "F",
-            forge: "⚒",
-            neoforge: "N",
-            quilt: "Q",
-            folia: "Fo",
-            spongevanilla: "S",
-            arclight: "A",
-            youer: "Y",
-            bedrock: "B",
+    function runtimeCardIconId(distribution, runtime) {
+        const icons = {
+            vanilla: "runtime-vanilla",
+            paper: "runtime-paper",
+            purpur: "runtime-purpur",
+            fabric: "runtime-fabric",
+            forge: "runtime-forge",
+            neoforge: "runtime-neoforge",
+            quilt: "runtime-quilt",
+            folia: "runtime-folia",
+            spongevanilla: "runtime-spongevanilla",
+            arclight: "runtime-arclight",
+            youer: "runtime-youer",
+            bedrock: "runtime-bedrock",
         };
-        return marks[runtimeCardVariant(distribution, runtime)] || "◈";
+        return icons[runtimeCardVariant(distribution, runtime)] || "runtime-default";
     }
 
     function runtimeCardCapabilities(runtime) {
@@ -405,7 +406,14 @@
         const mark = document.createElement("span");
         mark.className = "runtime-card-mark";
         mark.setAttribute("aria-hidden", "true");
-        mark.textContent = runtimeCardMark(distribution, runtime);
+        const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        icon.classList.add("runtime-card-icon");
+        icon.setAttribute("viewBox", "0 0 48 48");
+        icon.setAttribute("focusable", "false");
+        const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+        use.setAttribute("href", `${RUNTIME_ICON_SPRITE}#${runtimeCardIconId(distribution, runtime)}`);
+        icon.append(use);
+        mark.append(icon);
 
         const heading = document.createElement("span");
         heading.className = "runtime-card-heading";
