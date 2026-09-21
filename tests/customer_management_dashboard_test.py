@@ -151,6 +151,31 @@ class CustomerManagementRepositoryTest(unittest.TestCase):
         self.assertEqual(detail["contracts"][0]["status"], "active")
         self.assertEqual(detail["contracts"][0]["resource_profile_id"], "medium")
 
+    def test_contract_product_variant_and_entitlements_are_persisted(self):
+        created = self._create()
+        contract = self.repository.create_contract(
+            customer_code=created["customer_code"],
+            game_id="minecraft",
+            instance_limit=1,
+            ends_at=None,
+            resource_profile_id="standard",
+            resource_profile_source="game_default",
+            product_variant="modified",
+            entitlements={
+                "mods": True,
+                "plugins": True,
+                "workshop": True,
+                "external_upload": True,
+            },
+        )
+        self.assertEqual(contract["product_variant"], "modified")
+        self.assertEqual(contract["content_mode"], "modified")
+        self.assertTrue(contract["entitlements"]["mods"])
+        detail = self.repository.detail(created["customer_code"])
+        stored = next(item for item in detail["contracts"] if item["id"] == contract["id"])
+        self.assertEqual(stored["product_variant"], "modified")
+        self.assertEqual(stored["content_mode"], "modified")
+
 
 class CustomerManagementPostgreSQLContractTest(unittest.TestCase):
     def test_detail_uses_boolean_default_for_postgresql_password_state(self):
@@ -198,6 +223,8 @@ class CustomerManagementAssetContractTest(unittest.TestCase):
 
         self.assertIn("contract-create-form", contract)
         self.assertIn("contract-profile", contract)
+        self.assertIn("contract-product", contract)
+        self.assertIn("contract-product-field", contract)
         self.assertNotIn("customer-create-form", contract)
         self.assertNotIn("customer-search-field", contract)
 

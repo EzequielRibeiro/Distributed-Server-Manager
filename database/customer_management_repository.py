@@ -392,6 +392,8 @@ class CustomerManagementRepository:
                 metadata = {}
             item["resource_profile_id"] = metadata.get("resource_profile_id")
             item["resource_profile_source"] = metadata.get("resource_profile_source")
+            item["product_variant"] = metadata.get("product_variant") or metadata.get("content_mode")
+            item["content_mode"] = metadata.get("content_mode") or metadata.get("product_variant")
             normalized_contracts.append(item)
 
         normalized_users = []
@@ -417,6 +419,8 @@ class CustomerManagementRepository:
         ends_at: str | None,
         resource_profile_id: str,
         resource_profile_source: str,
+        product_variant: str | None = None,
+        entitlements: dict[str, bool] | None = None,
     ) -> dict[str, Any]:
         return self.admin.create_contract(
             customer_id=self._pk(customer_code),
@@ -425,6 +429,8 @@ class CustomerManagementRepository:
             ends_at=ends_at,
             resource_profile_id=resource_profile_id,
             resource_profile_source=resource_profile_source,
+            product_variant=product_variant,
+            entitlements=entitlements,
         )
 
 

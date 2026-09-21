@@ -9,6 +9,7 @@ from typing import Any
 from activity_audit_repository import ActivityAuditRepository
 from activity_humanizer import actor_name, humanize
 from core.catalog_resource_profile_policy import resolve_catalog_resource_profile
+from runtime_workspace_catalog import game_workspace_catalog
 from customer_admin_repository import CustomerAdminRepository
 from customer_mailer import send_temporary_password
 from customer_management_repository import CustomerManagementRepository
@@ -244,6 +245,30 @@ def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, ba
                 require_catalog=True,
             )
             resource_profile_source = "selected" if requested_profile_id else "game_default"
+            workspace_policy = game_workspace_catalog(ROOT, game_id)
+            products = workspace_policy.get("products") or {}
+            product_variant = None
+            entitlements = None
+            if isinstance(products, dict) and products:
+                requested_product = str(
+                    payload.get("product_variant")
+                    or payload.get("content_mode")
+                    or "standard"
+                ).strip().lower()
+                product = products.get(requested_product)
+                if not isinstance(product, dict):
+                    raise ValueError("invalid product_variant for this game")
+                product_variant = requested_product
+                raw_entitlements = product.get("entitlements")
+                entitlements = (
+                    {
+                        str(key): bool(value)
+                        for key, value in raw_entitlements.items()
+                        if isinstance(key, str)
+                    }
+                    if isinstance(raw_entitlements, dict)
+                    else {}
+                )
             result = management.create_contract(
                 customer_code=customer_code,
                 game_id=game_id,
@@ -251,6 +276,8 @@ def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, ba
                 ends_at=(str(payload.get("ends_at") or "").strip() or None),
                 resource_profile_id=resource_profile_id,
                 resource_profile_source=resource_profile_source,
+                product_variant=product_variant,
+                entitlements=entitlements,
             )
             _audit(
                 backend,
@@ -260,7 +287,7 @@ def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, ba
                 target_type="customer",
                 target_id=customer_code,
                 target_name=customer_name,
-                context={"game_id": game_id},
+                context={"game_id": game_id, "product_variant": product_variant},
             )
             return 201, _json_safe(result)
 

@@ -25,8 +25,17 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   with self.assertRaises(PermissionError):enforce_content_upload("plugins/example.jar",policy=policy,runtime_rules={"plugin_paths":["plugins"],"runtime_extensions":[".jar"]})
  def test_minecraft_standard_and_modified_runtime_choices(self):
   standard={"product_variant":"standard"};modified={"product_variant":"modified","entitlements":{"mods":True,"plugins":True,"workshop":True,"external_upload":True}}
-  self.assertTrue(runtime_allowed_by_contract(ROOT,"minecraft","minecraft.java.vanilla",standard));self.assertFalse(runtime_allowed_by_contract(ROOT,"minecraft","minecraft.java.paper",standard));self.assertTrue(runtime_allowed_by_contract(ROOT,"minecraft","minecraft.java.paper",modified))
-  self.assertGreater(len(allowed_runtimes(ROOT,"minecraft",modified)),len(allowed_runtimes(ROOT,"minecraft",standard)))
+  self.assertTrue(runtime_allowed_by_contract(ROOT,"minecraft","minecraft.java.vanilla",standard))
+  self.assertTrue(runtime_allowed_by_contract(ROOT,"minecraft","minecraft.bedrock.vanilla",standard))
+  for runtime_id in ("minecraft.java.paper","minecraft.java.fabric","minecraft.java.forge","minecraft.java.neoforge","minecraft.java.quilt","minecraft.java.youer"):
+   with self.subTest(runtime_id=runtime_id):
+    self.assertFalse(runtime_allowed_by_contract(ROOT,"minecraft",runtime_id,standard))
+    self.assertTrue(runtime_allowed_by_contract(ROOT,"minecraft",runtime_id,modified))
+  standard_ids={item["runtime_id"] for item in allowed_runtimes(ROOT,"minecraft",standard)}
+  modified_ids={item["runtime_id"] for item in allowed_runtimes(ROOT,"minecraft",modified)}
+  self.assertEqual(standard_ids,{"minecraft.java.vanilla","minecraft.bedrock.vanilla"})
+  self.assertIn("minecraft.java.neoforge",modified_ids)
+  self.assertGreater(len(modified_ids),len(standard_ids))
  def test_instance_mod_override_disables_derived_modpacks_and_datapacks(self):
   service=CustomerInstanceWorkspaceService.__new__(CustomerInstanceWorkspaceService);service.root=ROOT
   context={"game_id":"minecraft","runtime_id":"minecraft.java.neoforge","contract_metadata":{"product_variant":"modified"}}

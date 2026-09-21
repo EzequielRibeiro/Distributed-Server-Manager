@@ -109,6 +109,7 @@ from agent_location_http import dispatch_agent_location_post
 from region_preference_api import (
     region_options_for_user,
 )
+from runtime_workspace_catalog import allowed_runtimes, game_workspace_catalog
 
 MAX_JSON_BODY = 12 * 1024 * 1024
 MAX_INSTANCE_CONFIG = 1024 * 1024
@@ -456,15 +457,90 @@ def customer_contracts(user, database_path=DATABASE_FILE):
             return parsed > now
         except ValueError:
             return str(ends_at) > now.isoformat()
-    return [
-        row
-        | {
-            "available": row["status"] == "active"
-            and contract_not_expired(row["ends_at"])
-            and row["instances_used"] < row["instance_limit"]
+
+    result = []
+    for row in rows:
+        contract_metadata = {
+            "content_mode": row.get("content_mode"),
+            "product_variant": row.get("product_variant"),
+            "entitlements": row.get("entitlements") or {},
         }
-        for row in rows
+        try:
+            game_id = str(row.get("game_id") or "").strip().lower()
+            workspace_policy = game_workspace_catalog(DSM_ROOT, game_id)
+            products = workspace_policy.get("products") or {}
+            runtime_options = (
+                allowed_runtimes(DSM_ROOT, game_id, contract_metadata)
+                if isinstance(products, dict) and products
+                else [
+                    {"runtime_id": str(runtime_id)}
+                    for runtime_id in (workspace_policy.get("runtimes") or {})
+                ]
+            )
+        except (OSError, RuntimeError, ValueError):
+            runtime_options = []
+        result.append(
+            row
+            | {
+                "available": row["status"] == "active"
+                and contract_not_expired(row["ends_at"])
+                and row["instances_used"] < row["instance_limit"],
+                "allowed_runtime_ids": [
+                    str(item.get("runtime_id") or "").strip()
+                    for item in runtime_options
+                    if str(item.get("runtime_id") or "").strip()
+                ],
+            }
+        )
+    return result
+
+
+def customer_contract_for_runtime(
+    user,
+    game,
+    runtime_id,
+    contract_id=None,
+    database_path=DATABASE_FILE,
+):
+    game = str(game or "").strip().lower()
+    runtime_id = str(runtime_id or "").strip()
+    contract_id = str(contract_id or "").strip() or None
+    contracts = customer_contracts(user, database_path=database_path)
+    candidates = [
+        item for item in contracts
+        if str(item.get("game_id") or "").strip().lower() == game
+        and bool(item.get("available"))
     ]
+    if contract_id:
+        contract = next(
+            (item for item in candidates if str(item.get("id") or "") == contract_id),
+            None,
+        )
+        if contract is None:
+            raise PermissionError("requested contract is unavailable for this customer")
+    else:
+        contract = candidates[0] if candidates else None
+        if contract is None:
+            raise PermissionError("no contracted instance slot is available for this game")
+
+    allowed = {
+        str(value).strip()
+        for value in contract.get("allowed_runtime_ids") or []
+        if str(value).strip()
+    }
+    if runtime_id not in allowed:
+        mode = str(
+            contract.get("content_mode")
+            or contract.get("product_variant")
+            or "standard"
+        ).strip().lower()
+        if game == "minecraft" and mode == "standard":
+            raise PermissionError(
+                "Este contrato é Minecraft Padrão. "
+                "Selecione Vanilla ou faça upgrade para Minecraft Modificado."
+            )
+        raise PermissionError("requested runtime is not allowed by the contract")
+    return contract
 
 
 def create_customer_instance(
@@ -500,15 +576,25 @@ def create_customer_instance(
     variant = runtime_def.get("variant") or runtime_def.get("loader") or runtime_def.get("edition")
     repository = dashboard_repository(database_path)
 
-    placement = resolve_instance_placement(
-        user,
-        payload,
-        repository,
-    )
-
-    contract_id = str(
+    requested_contract_id = str(
         payload.get("contract_id", "")
     ).strip() or None
+    contract = customer_contract_for_runtime(
+        user,
+        game,
+        runtime_id,
+        requested_contract_id,
+        database_path=database_path,
+    )
+    contract_id = str(contract.get("id") or "").strip()
+    placement_payload = dict(payload)
+    placement_payload["contract_id"] = contract_id
+
+    placement = resolve_instance_placement(
+        user,
+        placement_payload,
+        repository,
+    )
 
     plan = repository.create_customer_instance(
         customer_id=user["scope_id"],
@@ -4463,6 +4549,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     except KeyError:
                         self.send_json(404, {"error": "game_not_found"})
                         return
+                    success = True
+                elif action == "workspace-products":
+                    game_id = str(query.get("game", [""])[0] or "").strip().lower()
+                    policy = game_workspace_catalog(DSM_ROOT, game_id)
+                    products = policy.get("products") or {}
+                    data = {
+                        "game_id": game_id,
+                        "default_product_id": (
+                            "standard"
+                            if isinstance(products, dict) and "standard" in products
+                            else (next(iter(products), "") if isinstance(products, dict) else "")
+                        ),
+                        "products": [
+                            {
+                                "id": str(product_id),
+                                "label": str((product or {}).get("label") or product_id),
+                            }
+                            for product_id, product in products.items()
+                            if isinstance(product, dict)
+                        ] if isinstance(products, dict) else [],
+                    }
                     success = True
                 elif action == "runtimes":
                     success, data = catalog_api(

@@ -145,6 +145,8 @@ class AdminManagementRepository:
         ends_at: str | None = None,
         resource_profile_id: str | None = None,
         resource_profile_source: str | None = None,
+        product_variant: str | None = None,
+        entitlements: dict[str, bool] | None = None,
     ) -> dict[str, Any]:
         customer_id = customer_pk(customer_id)
         game_id = str(game_id or "").strip().lower()
@@ -174,17 +176,21 @@ class AdminManagementRepository:
                 (contract_id,),
             ).fetchone() is not None:
                 raise ValueError("contract already exists")
-            metadata = (
-                json.dumps(
-                    {
-                        "resource_profile_id": resource_profile_id,
-                        "resource_profile_source": resource_profile_source or "selected",
-                    },
-                    separators=(",", ":"),
-                )
-                if resource_profile_id
-                else "{}"
-            )
+            metadata_payload: dict[str, Any] = {}
+            if resource_profile_id:
+                metadata_payload["resource_profile_id"] = resource_profile_id
+                metadata_payload["resource_profile_source"] = resource_profile_source or "selected"
+            normalized_product = str(product_variant or "").strip().lower()
+            if normalized_product:
+                metadata_payload["product_variant"] = normalized_product
+                metadata_payload["content_mode"] = normalized_product
+            if isinstance(entitlements, dict):
+                metadata_payload["entitlements"] = {
+                    str(key): bool(value)
+                    for key, value in entitlements.items()
+                    if isinstance(key, str)
+                }
+            metadata = json.dumps(metadata_payload, separators=(",", ":"))
             session.execute(
                 "INSERT INTO service_contracts("
                 "id,customer_id,game_id,status,instance_limit,ends_at,metadata_json"
@@ -201,6 +207,13 @@ class AdminManagementRepository:
             "ends_at": ends_at,
             "resource_profile_id": resource_profile_id,
             "resource_profile_source": resource_profile_source,
+            "product_variant": (str(product_variant).strip().lower() if product_variant else None),
+            "content_mode": (str(product_variant).strip().lower() if product_variant else None),
+            "entitlements": (
+                {str(key): bool(value) for key, value in entitlements.items() if isinstance(key, str)}
+                if isinstance(entitlements, dict)
+                else {}
+            ),
         }
 
     def customer_controller(self, customer_id: int) -> str:

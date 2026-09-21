@@ -137,6 +137,34 @@
   box-shadow: 0 0 0 1px rgba(184, 233, 134, .16), 0 14px 34px rgba(2, 11, 9, .34);
 }
 
+.runtime-distribution-card.contract-blocked,
+.runtime-distribution-card:disabled {
+  opacity: .62;
+  cursor: not-allowed;
+  filter: saturate(.65);
+}
+
+.runtime-distribution-card.contract-blocked:hover,
+.runtime-distribution-card:disabled:hover {
+  transform: none;
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+.runtime-card-contract-note {
+  display: inline-flex;
+  justify-self: start;
+  align-items: center;
+  margin-top: .1rem;
+  padding: .3rem .52rem;
+  border: 1px solid rgba(224, 184, 94, .35);
+  border-radius: 999px;
+  background: rgba(224, 184, 94, .08);
+  color: #e4c77f;
+  font-size: .7rem;
+  font-weight: 800;
+}
+
 .runtime-card-header {
   display: flex;
   align-items: center;

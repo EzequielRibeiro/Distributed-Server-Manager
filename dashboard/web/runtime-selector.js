@@ -218,6 +218,20 @@
         return "Padrão";
     }
 
+    function contractAllowsRuntime(runtimeId) {
+        const allowed = state.contract?.allowed_runtime_ids;
+        if (!Array.isArray(allowed)) return false;
+        return allowed.some((value) => String(value || "").trim() === String(runtimeId || "").trim());
+    }
+
+    function contractRuntimeMessage() {
+        const mode = normalize(state.contract?.content_mode || state.contract?.product_variant || "standard");
+        if (state.game === "minecraft" && mode === "standard") {
+            return "Exige Minecraft Modificado";
+        }
+        return "Não incluído neste contrato";
+    }
+
     function currentEditionNode() {
         return state.catalogGame?.editions?.find((item) => item.id === state.edition) || null;
     }
@@ -361,7 +375,10 @@
         const el = elements();
         el.panel.hidden = false;
         el.title.textContent = `Criar servidor ${titleCase(game)}`;
-        el.description.textContent = "Escolha a edição e a distribuição publicadas no catálogo.";
+        const contractMode = normalize(contract.content_mode || contract.product_variant || "standard");
+        el.description.textContent = game === "minecraft"
+            ? `Escolha uma distribuição incluída no contrato ${contractMode === "modified" ? "Minecraft Modificado" : "Minecraft Padrão"}.`
+            : "Escolha a edição e a distribuição publicadas no catálogo.";
         resetSelectionUI();
         showMessage("Carregando catálogo e ambientes disponíveis…");
 
@@ -390,7 +407,7 @@
         return button;
     }
 
-    function createRuntimeCard(distribution, runtime, selected, callback) {
+    function createRuntimeCard(distribution, runtime, selected, allowed, callback) {
         const capabilities = runtimeCardCapabilities(runtime);
         const variant = runtimeCardVariant(distribution, runtime);
         const button = document.createElement("button");
@@ -398,7 +415,10 @@
         button.className = "runtime-selector-card runtime-distribution-card";
         button.dataset.runtime = variant;
         button.setAttribute("aria-pressed", selected ? "true" : "false");
+        button.disabled = !allowed;
+        button.setAttribute("aria-disabled", allowed ? "false" : "true");
         if (selected) button.classList.add("selected");
+        if (!allowed) button.classList.add("contract-blocked");
 
         const header = document.createElement("span");
         header.className = "runtime-card-header";
@@ -445,8 +465,15 @@
             capabilityGrid.append(capability);
         }
 
-        button.append(header, description, capabilityGrid);
-        button.addEventListener("click", callback);
+        if (!allowed) {
+            const contractNote = document.createElement("span");
+            contractNote.className = "runtime-card-contract-note";
+            contractNote.textContent = contractRuntimeMessage();
+            button.append(header, description, capabilityGrid, contractNote);
+        } else {
+            button.append(header, description, capabilityGrid);
+            button.addEventListener("click", callback);
+        }
         return button;
     }
 
@@ -509,20 +536,26 @@
         for (const distribution of distributions) {
             const runtime = runtimeForDistribution(distribution);
             if (!runtime) continue;
+            const allowed = contractAllowsRuntime(runtime.id);
             el.types.append(createRuntimeCard(
                 distribution,
                 runtime,
                 state.distribution === distribution.id && state.runtime?.id === runtime.id,
+                allowed,
                 () => selectDistribution(distribution, runtime)
             ));
         }
         if (distributions.length === 1 && !state.distribution) {
             const runtime = runtimeForDistribution(distributions[0]);
-            if (runtime) selectDistribution(distributions[0], runtime);
+            if (runtime && contractAllowsRuntime(runtime.id)) selectDistribution(distributions[0], runtime);
         }
     }
 
     function selectDistribution(distribution, runtime) {
+        if (!contractAllowsRuntime(runtime?.id)) {
+            showMessage(contractRuntimeMessage());
+            return;
+        }
         state.buildRequestGeneration += 1;
         state.distribution = distribution.id;
         state.runtime = runtime;

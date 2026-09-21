@@ -61,6 +61,18 @@ class CustomerCatalogHierarchyTest(unittest.TestCase):
         self.assertIn('.runtime-capability.unsupported', self.wizard_css)
         self.assertIn('#runtime-types.runtime-selector-grid', self.wizard_css)
 
+    def test_runtime_cards_are_gated_by_contract_policy(self):
+        self.assertIn('function contractAllowsRuntime(runtimeId)', self.selector)
+        self.assertIn('state.contract?.allowed_runtime_ids', self.selector)
+        self.assertIn('button.disabled = !allowed', self.selector)
+        self.assertIn('contract-blocked', self.selector)
+        self.assertIn('Exige Minecraft Modificado', self.selector)
+        self.assertIn('.runtime-card-contract-note', self.wizard_css)
+
+    def test_contract_gate_runs_before_runtime_selection(self):
+        self.assertIn('if (!contractAllowsRuntime(runtime?.id))', self.selector)
+        self.assertIn('showMessage(contractRuntimeMessage())', self.selector)
+
 
     def test_runtime_cards_use_local_vector_icon_sprite(self):
         self.assertIn('RUNTIME_ICON_SPRITE = "/assets/icons/runtime-sprite.svg?v=1"', self.selector)

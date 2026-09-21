@@ -13,6 +13,7 @@ from customer_team_repository import CustomerTeamRepository
 from instance_backup_clone_repository import InstanceBackupCloneRepository
 from instance_network import occupied_ports_provider_for_backend
 from instance_provisioning_projection import dashboard_provision_state,project_agent_provisioning
+from runtime_workspace_catalog import game_workspace_catalog
 
 def runtime_directory(root:Path,game:str)->Path:return Path(root)/"catalog"/"v2"/"games"/game/"runtimes"
 def runtime_definition(root:Path,game:str,runtime_id:str)->dict[str,Any]:
@@ -48,6 +49,20 @@ def _queue_agent_provisioning(*,root,repository,runtime_def,instance_id,agent_id
 
 def install_customer_instance_creation(legacy)->None:
  previous_post=legacy.DashboardHandler.do_POST
+ def _contract_id_for_runtime(user,game,runtime_id,contract_id,root,database_path):
+  resolver=getattr(legacy,"customer_contract_for_runtime",None)
+  if callable(resolver):
+   contract=resolver(user,game,runtime_id,contract_id,database_path=database_path)
+   resolved=str(contract.get("id") or "").strip()
+   if not resolved:raise PermissionError("resolved contract is missing id")
+   return resolved
+  policy=game_workspace_catalog(root,game)
+  products=policy.get("products") or {}
+  if isinstance(products,dict) and products:
+   raise RuntimeError("contract runtime policy resolver unavailable")
+  resolved=str(contract_id or "").strip()
+  if not resolved:raise PermissionError("contract_id is required")
+  return resolved
  def create_customer_instance(user,payload,root=None,database_path=None):
   root=Path(root or legacy.DSM_ROOT);database_path=database_path or legacy.DATABASE_FILE
   if not user or user.get("role")!="customer" or not user.get("scope_id"):raise PermissionError("only a scoped customer can create an instance")
@@ -64,11 +79,13 @@ def install_customer_instance_creation(legacy)->None:
   if runtime_edition and edition.strip().lower()!=runtime_edition:raise ValueError("edition does not match the requested runtime")
   if game=="minecraft" and runtime_edition=="java" and payload.get("minecraft_eula_accepted") is not True:raise ValueError("Minecraft Java EULA acceptance is required")
   variant=runtime_def.get("variant") or runtime_def.get("loader") or runtime_def.get("edition");repository=legacy.dashboard_repository(database_path);customer_id=resolve_customer_reference(user["scope_id"],public_only=isinstance(user["scope_id"],str));source_vault_id=str(payload.get("source_vault_id") or "").strip() or None;clones=InstanceBackupCloneRepository(repository.backend,root)
+  contract_id=str(payload.get("contract_id","")).strip() or None
+  contract_id=_contract_id_for_runtime(user,game,runtime_id,contract_id,root,database_path)
   if source_vault_id:clones.validate_source(source_vault_id,customer_id,game,runtime_id)
   requested_profile_id=str(payload.get("resource_profile_id") or "").strip() or None
   resource_profile_id,_resource_profile,effective_resource_policy=resolve_catalog_resource_policy(root=root,game_id=game,resource_profile_id=requested_profile_id)
-  placement_payload=dict(payload);placement_payload["resources"]=normalize_resource_policy(effective_resource_policy).placement_resources()
-  placement=legacy.resolve_instance_placement(user,placement_payload,repository);contract_id=str(payload.get("contract_id","")).strip() or None;occupied_ports_provider=occupied_ports_provider_for_backend(repository.backend)
+  placement_payload=dict(payload);placement_payload["contract_id"]=contract_id;placement_payload["resources"]=normalize_resource_policy(effective_resource_policy).placement_resources()
+  placement=legacy.resolve_instance_placement(user,placement_payload,repository);occupied_ports_provider=occupied_ports_provider_for_backend(repository.backend)
   require_port_pool_preflight(repository.backend,placement["agent_id"],runtime_def.get("network"))
   plan=repository.create_customer_instance(customer_id=user["scope_id"],username=user["username"],game=game,runtime_id=runtime_id,edition=edition,variant=variant,version=version,build=build,instances_root=root/"instances",contract_id=contract_id,selected_agent_id=placement["agent_id"],network_profile=runtime_def.get("network"),occupied_ports_provider=occupied_ports_provider,resource_profile_id=resource_profile_id)
   try:

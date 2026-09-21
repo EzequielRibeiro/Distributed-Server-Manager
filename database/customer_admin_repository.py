@@ -153,6 +153,8 @@ class CustomerAdminRepository:
                 metadata = {}
             item["resource_profile_id"] = metadata.get("resource_profile_id")
             item["resource_profile_source"] = metadata.get("resource_profile_source")
+            item["product_variant"] = metadata.get("product_variant") or metadata.get("content_mode")
+            item["content_mode"] = metadata.get("content_mode") or metadata.get("product_variant")
             normalized_contracts.append(item)
         return {
             "customer": dict(customer),
@@ -358,6 +360,8 @@ class CustomerAdminRepository:
         ends_at: str | None = None,
         resource_profile_id: str | None = None,
         resource_profile_source: str | None = None,
+        product_variant: str | None = None,
+        entitlements: dict[str, bool] | None = None,
     ) -> dict[str, Any]:
         self.initialize()
         return self.admin.create_contract(
@@ -368,6 +372,8 @@ class CustomerAdminRepository:
             ends_at=ends_at,
             resource_profile_id=resource_profile_id,
             resource_profile_source=resource_profile_source,
+            product_variant=product_variant,
+            entitlements=entitlements,
         )
 
     def _set_password_state(self, session: AlertSession, username: str, required: bool) -> None:
