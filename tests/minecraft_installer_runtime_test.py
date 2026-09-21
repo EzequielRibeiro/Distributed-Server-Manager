@@ -143,6 +143,36 @@ class MinecraftInstallerRuntimeTest(unittest.TestCase):
             self.assertTrue(zipfile.is_zipfile(preserved))
             self.assertFalse((target / "META-INF").exists())
 
+    def test_http_file_artifact_jar_is_preserved_in_target(self):
+        runtime_dir = ROOT / "agents/linux/runtime"
+        sys.path.insert(0, str(runtime_dir))
+        try:
+            module = load("linux_game_data_executor_file_jar", runtime_dir / "game_data_executor.py")
+        finally:
+            sys.path.remove(str(runtime_dir))
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "server.jar"
+            with zipfile.ZipFile(source, "w") as jar:
+                jar.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
+                jar.writestr("com/example/Main.class", b"fake")
+            target = root / "target"
+            selection = {
+                "asset": {"name": "server.jar", "url": "https://example.invalid/server.jar"},
+                "install": {"asset": "server.jar", "url": "https://example.invalid/server.jar", "archive_type": None},
+                "artifact_mode": "file",
+                "executable": "server.jar",
+            }
+            with patch.object(module, "_download", side_effect=lambda _url, destination: shutil.copy2(source, destination)):
+                module._run_http(selection, target)
+            preserved = target / "server.jar"
+            self.assertTrue(preserved.is_file())
+            self.assertTrue(zipfile.is_zipfile(preserved))
+            self.assertFalse((target / "META-INF").exists())
+            integrity = module.inspect_game_data(target, selection)
+            self.assertEqual(integrity["health"], "ok")
+            self.assertTrue(integrity["executable_present"])
+
     def test_installer_rejects_shell_like_arguments_and_path_escape(self):
         module = load("linux_game_data_installer_invalid", ROOT / "agents/linux/runtime/game_data_installer.py")
         with tempfile.TemporaryDirectory() as td:
@@ -157,7 +187,8 @@ class MinecraftInstallerRuntimeTest(unittest.TestCase):
     def test_windows_http_installer_path_preserves_typed_java_jars(self):
         source = (ROOT / "agents/windows/runtime/game_data_executor.py").read_text(encoding="utf-8")
         self.assertIn('preserve_installer_artifact=installer_type in {"java_jar","quilt_server"}', source)
-        self.assertIn("if not preserve_installer_artifact and zipfile.is_zipfile(artifact):", source)
+        self.assertIn('preserve_file_artifact=artifact_mode in {"file","java","jar"}', source)
+        self.assertIn("if not preserve_installer_artifact and not preserve_file_artifact and zipfile.is_zipfile(artifact):", source)
 
     def test_windows_installer_contract_uses_win_args(self):
         module = load("windows_game_data_installer", ROOT / "agents/windows/runtime/game_data_installer.py")
