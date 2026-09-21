@@ -34,7 +34,8 @@ def _https(value: Any, label: str) -> str:
 
 
 def _secret_file(path: str | None) -> str:
-    candidate = str(path or os.environ.get("DSM_CURSEFORGE_API_KEY_FILE") or "").strip()
+    default_path = Path(os.environ.get("DSM_ROOT", "/opt/dsm")) / "config" / "providers" / "curseforge.key"
+    candidate = str(path or os.environ.get("DSM_CURSEFORGE_API_KEY_FILE") or default_path).strip()
     if not candidate:
         raise MinecraftContentResolverError("CurseForge API key file is not configured")
     try:
