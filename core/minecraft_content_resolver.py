@@ -103,7 +103,7 @@ def resolve_modrinth(project: str, game_version: str, loaders: tuple[str, ...], 
     all_project_types = {str(value).strip().lower() for value in (project_payload.get("all_project_types") or []) if str(value).strip()} if isinstance(project_payload, Mapping) else set()
     project_categories = {
         str(value).strip().lower()
-        for field in ("categories", "additional_categories")
+        for field in ("categories", "additional_categories", "loaders")
         for value in (project_payload.get(field) or [])
         if str(value).strip()
     } if isinstance(project_payload, Mapping) else set()
