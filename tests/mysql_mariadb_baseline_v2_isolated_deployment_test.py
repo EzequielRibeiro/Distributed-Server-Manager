@@ -177,10 +177,9 @@ def main() -> int:
                 raise AssertionError("backup_jobs backup_id lookup index is missing")
 
             # Prove that the latest registered post-baseline upgrade can be replayed
-            # against the real server flavor. Remove v19 and its Customer identity
-            # column, then let the upgrade engine restore it without a ledger gap.
-            cursor.execute("DELETE FROM baseline_upgrades WHERE version=%s", (19,))
-            cursor.execute("ALTER TABLE alerts DROP COLUMN customer_id")
+            # against the real server flavor. V20 is a conservative data repair,
+            # so removing only its ledger row must allow an idempotent replay.
+            cursor.execute("DELETE FROM baseline_upgrades WHERE version=%s", (20,))
             connection.commit()
 
             marker = rows(cursor, "SELECT checksum FROM schema_baseline LIMIT 1")[0]
@@ -190,17 +189,8 @@ def main() -> int:
                 installed_checksum=str(marker["checksum"]),
             )
             connection.commit()
-            if completed != [19]:
-                raise AssertionError(f"expected replay of upgrade 19, got {completed}")
-
-            restored = rows(
-                cursor,
-                "SELECT COUNT(*) AS total FROM information_schema.columns "
-                "WHERE table_schema=DATABASE() AND table_name='alerts' "
-                "AND column_name='customer_id'",
-            )[0]
-            if int(row_value(restored, "total")) != 1:
-                raise AssertionError("Customer alert identity upgrade did not restore its column")
+            if completed != [20]:
+                raise AssertionError(f"expected replay of upgrade 20, got {completed}")
 
             restored_ledger = rows(
                 cursor,
