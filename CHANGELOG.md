@@ -1,3 +1,10 @@
+## 2.0.110
+
+- Added native stdin console input for managed Minecraft Java instances.
+- Added per-instance Unix console socket supervision.
+- Prefer `minecraft-stdin` for native Minecraft Java commands with `minecraft-rcon` fallback.
+- Fixed console command handling for asynchronous Bukkit plugins such as LuckPerms on Youer.
+
 ## 2.0.109 - 2026-09-21
 
 ### Fixed
