@@ -1,3 +1,12 @@
+## 2.0.109 - 2026-09-21
+
+### Fixed
+- Exige seleção explícita entre Mod e Plugin no fluxo de conteúdo Minecraft.
+- Identifica variantes Bukkit/Spigot e NeoForge antes da instalação.
+- Corrige ativação de conteúdo Minecraft com IDs de provider contendo `:`, como `modrinth:Vebnzrzj`.
+- Projeta esses IDs para nomes nativos portáveis via percent-encoding em Linux e Windows.
+- Restaura a projeção nativa do LuckPerms Bukkit em runtimes Youer.
+
 ## 2.0.108 - 2026-09-21
 
 ### Fixed
