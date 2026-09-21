@@ -120,6 +120,7 @@ class CatalogAgentRuntimeRequirementsParityTest(unittest.TestCase):
             self.assertIn(f'"os": "{os_name}"' if os_name == "linux" else f'"os":"{os_name}"', source)
             self.assertIn('"architecture"', source)
             self.assertIn('"java_status"', source)
+            self.assertIn('"java_runtimes"', source)
             self.assertIn('"major"', source)
 
 

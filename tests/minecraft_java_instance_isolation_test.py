@@ -22,7 +22,7 @@ class MinecraftJavaInstanceIsolationTest(unittest.TestCase):
  def test_all_java_environment_ids_are_registered_on_linux_and_windows(self):
   for platform in ("linux","windows"):
    registry=load_module(platform,"registry");supported=set(registry.supported_profiles());self.assertTrue(set(JAVA_IDS).issubset(supported),(platform,supported))
-   expected_version=3 if platform=="linux" else 2
+   expected_version=4 if platform=="linux" else 3
    for runtime_id in JAVA_IDS:self.assertEqual(registry.resolve_profile({"game_id":"minecraft","environment_id":runtime_id}).profile_version,expected_version)
 
  def test_two_instances_share_provider_seed_but_not_working_state(self):

@@ -9,6 +9,13 @@ import subprocess
 from pathlib import Path
 from profiles.registry import supported_profiles
 try:
+    from java_runtime import discover_java_runtimes
+except ModuleNotFoundError:
+    import importlib.util as _importlib_util
+    _java_spec=_importlib_util.spec_from_file_location("_capivara_windows_java_runtime",Path(__file__).with_name("java_runtime.py"))
+    if _java_spec is None or _java_spec.loader is None:raise
+    _java_module=_importlib_util.module_from_spec(_java_spec);_java_spec.loader.exec_module(_java_module);discover_java_runtimes=_java_module.discover_java_runtimes
+try:
     from content_security import scanner_status
 except ModuleNotFoundError:
     import importlib.util as _importlib_util
@@ -52,7 +59,7 @@ def detect_capabilities()->dict[str,object]:
  steamcmd=shutil.which("steamcmd.exe") is not None or shutil.which("steamcmd") is not None or _managed_steamcmd().is_file()
  content_providers=list(_BASE_CONTENT_PROVIDERS)
  if steamcmd:content_providers.extend(("steam","steam-workshop"))
- java_status=_java_status();java=bool(java_status["functional"]);content_security=scanner_status()
+ java_status=_java_status();java_runtimes=discover_java_runtimes();java=bool(java_runtimes) or bool(java_status["functional"]);content_security=scanner_status()
  return {
   "platform":{"os":"windows","architecture":_normalize_architecture()},
   "runtime_profiles":list(supported_profiles()),
@@ -65,6 +72,7 @@ def detect_capabilities()->dict[str,object]:
   "steamcmd":steamcmd,
   "java":java,
   "java_status":java_status,
+  "java_runtimes":java_runtimes,
   "docker":shutil.which("docker.exe") is not None or shutil.which("docker") is not None,
   "wine":False,
   "backup":True,

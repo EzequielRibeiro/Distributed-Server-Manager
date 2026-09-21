@@ -5,6 +5,13 @@ import re
 import shutil
 from pathlib import Path
 from typing import Any
+try:
+    from java_runtime import select_java_executable
+except ModuleNotFoundError:
+    import importlib.util as _importlib_util
+    _java_spec=_importlib_util.spec_from_file_location("_capivara_windows_java_runtime",Path(__file__).with_name("java_runtime.py"))
+    if _java_spec is None or _java_spec.loader is None:raise
+    _java_module=_importlib_util.module_from_spec(_java_spec);_java_spec.loader.exec_module(_java_module);select_java_executable=_java_module.select_java_executable
 _TOKEN = re.compile(r"\{\{([A-Z][A-Z0-9_]{0,63})\}\}|\$\{([A-Z][A-Z0-9_]{0,63})\}")
 
 def _values(instance: dict[str, Any], context: dict[str, Any], policy: dict[str, Any]) -> dict[str, str]:
@@ -52,12 +59,9 @@ def _merge_arguments(required: list[Any], policy_arguments: list[Any], values: d
         owned.add(key)
     return merged
 
-def _resolve_executable(executable: str, root: Path) -> str:
+def _resolve_executable(executable: str, root: Path, *, requirements: dict[str, Any] | None = None) -> str:
     if executable == "@java":
-        java = shutil.which("java.exe") or shutil.which("java")
-        if not java:
-            raise RuntimeError("Java is not available on this Agent")
-        return str(Path(java).resolve())
+        return select_java_executable(requirements)
     path = Path(executable)
     return str(path if path.is_absolute() else (root / path).resolve())
 
@@ -68,16 +72,35 @@ def apply_policy(spec: dict[str, Any], instance: dict[str, Any], context: dict[s
     values = _values(instance, context, policy)
     result = dict(spec)
     root = Path(str(context.get("content_root") or context.get("install_path") or result.get("working_directory"))).resolve()
+    working_root = Path(str(result.get("working_directory") or root)).resolve()
+    engine = str(policy.get("engine") or "").strip().lower()
+    requirements = policy.get("requirements") if isinstance(policy.get("requirements"), dict) else {}
     executable = render(policy.get("executable") or Path(str(result["executable"])).name, values)
-    result["executable"] = _resolve_executable(executable, root)
+    base_arguments = list(result.get("arguments") or [])
+    selected_java: str | None = None
+    if engine == "java" and executable != "@java" and executable.lower().endswith(".jar"):
+        selected_java = select_java_executable(requirements)
+        jar_path = Path(executable)
+        if not jar_path.is_absolute():
+            jar_path = (working_root / jar_path).resolve()
+        result["executable"] = selected_java
+        base_arguments = ["-jar", str(jar_path), *base_arguments]
+    else:
+        result["executable"] = _resolve_executable(executable, root, requirements=requirements)
+        if engine == "java" and executable == "@java":
+            selected_java = result["executable"]
     policy_arguments = policy.get("arguments") if isinstance(policy.get("arguments"), list) else []
-    result["arguments"] = _merge_arguments(list(result.get("arguments") or []), policy_arguments, values)
+    result["arguments"] = _merge_arguments(base_arguments, policy_arguments, values)
     environment = dict(result.get("environment") or {})
+    if selected_java:
+        environment.setdefault("JAVA_HOME", str(Path(selected_java).resolve().parent.parent))
     for key, value in (policy.get("environment") or {}).items():
         environment[str(key)] = render(value, values)
     result["environment"] = environment
     result["catalog_runtime_policy"] = {
         "runtime_id": policy.get("runtime_id"),
+        "engine": engine,
+        "requirements": dict(requirements),
         "shutdown": policy.get("shutdown"),
         "start_timeout_seconds": policy.get("start_timeout_seconds"),
         "stop_timeout_seconds": policy.get("stop_timeout_seconds"),
