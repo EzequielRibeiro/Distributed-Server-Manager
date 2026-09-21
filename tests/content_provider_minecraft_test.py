@@ -99,6 +99,14 @@ class MinecraftProviderResolverTest(unittest.TestCase):
   self.assertEqual('1.0.2',result['version'])
   self.assertEqual('vote-me:v1',result['artifact']['package_id'])
 
+ def test_modrinth_plugin_resolution_accepts_project_loaders_when_all_types_missing(self):
+  def requester(url,headers):
+   if '/project/voteme/version?' not in url:
+    return {'id':'vote-me','project_type':'mod','loaders':['bukkit','paper','purpur','spigot'],'status':'approved'}
+   return [{'id':'v1','project_id':'vote-me','version_number':'1.0.2','version_type':'release','date_published':'2026-03-05','status':'listed','game_versions':['1.21.1'],'loaders':['bukkit','paper','purpur','spigot'],'files':[{'primary':True,'url':'https://cdn.modrinth.com/data/vote-me/versions/v1/VoteMe.jar','filename':'VoteMe.jar','size':4,'hashes':{'sha512':'a'*128,'sha1':'b'*40}}]}]
+  result=resolve_modrinth('voteme','1.21.1',('bukkit','spigot'),'plugin',requester=requester)
+  self.assertEqual('1.0.2',result['version'])
+
  def test_modrinth_plugin_resolution_accepts_loader_categories_when_all_types_missing(self):
   def requester(url,headers):
    if '/project/voteme/version?' not in url:
