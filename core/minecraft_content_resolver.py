@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import quote, urlencode
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 MODRINTH_API_BASE = "https://api.modrinth.com/v2"
@@ -22,8 +23,21 @@ class MinecraftContentResolverError(ValueError):
 
 def _request_json(url: str, headers: Mapping[str, str]) -> Any:
     request = Request(url, headers={"Accept": "application/json", "User-Agent": _USER_AGENT, **dict(headers)})
-    with urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        if "api.curseforge.com" in url and exc.code in {401, 403}:
+            raise MinecraftContentResolverError("CurseForge não autorizado: verifique a API key no Controller.") from exc
+        if "api.curseforge.com" in url and exc.code == 429:
+            raise MinecraftContentResolverError("CurseForge atingiu o limite temporário de requisições. Tente novamente em alguns instantes.") from exc
+        raise MinecraftContentResolverError(f"provider HTTP request failed with status {exc.code}") from exc
+    except (URLError, TimeoutError, OSError) as exc:
+        if "api.curseforge.com" in url:
+            raise MinecraftContentResolverError("Não foi possível conectar ao CurseForge a partir do Controller.") from exc
+        raise MinecraftContentResolverError("content provider request failed") from exc
+    except json.JSONDecodeError as exc:
+        raise MinecraftContentResolverError("content provider returned invalid JSON") from exc
 
 
 def _https(value: Any, label: str) -> str:
