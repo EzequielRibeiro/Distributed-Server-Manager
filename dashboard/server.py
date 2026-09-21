@@ -489,6 +489,54 @@ def customer_contracts(user, database_path=DATABASE_FILE):
     return result
 
 
+def customer_contract_for_runtime(
+    user,
+    game,
+    runtime_id,
+    contract_id=None,
+    database_path=DATABASE_FILE,
+):
+    game = str(game or "").strip().lower()
+    runtime_id = str(runtime_id or "").strip()
+    contract_id = str(contract_id or "").strip() or None
+    contracts = customer_contracts(user, database_path=database_path)
+    candidates = [
+        item for item in contracts
+        if str(item.get("game_id") or "").strip().lower() == game
+        and bool(item.get("available"))
+    ]
+    if contract_id:
+        contract = next(
+            (item for item in candidates if str(item.get("id") or "") == contract_id),
+            None,
+        )
+        if contract is None:
+            raise PermissionError("requested contract is unavailable for this customer")
+    else:
+        contract = candidates[0] if candidates else None
+        if contract is None:
+            raise PermissionError("no contracted instance slot is available for this game")
+
+    allowed = {
+        str(value).strip()
+        for value in contract.get("allowed_runtime_ids") or []
+        if str(value).strip()
+    }
+    if runtime_id not in allowed:
+        mode = str(
+            contract.get("content_mode")
+            or contract.get("product_variant")
+            or "standard"
+        ).strip().lower()
+        if game == "minecraft" and mode == "standard":
+            raise PermissionError(
+                "Este contrato é Minecraft Padrão. "
+                "Selecione Vanilla ou faça upgrade para Minecraft Modificado."
+            )
+        raise PermissionError("requested runtime is not allowed by the contract")
+    return contract
+
+
 def create_customer_instance(
     user,
     payload,
@@ -522,15 +570,25 @@ def create_customer_instance(
     variant = runtime_def.get("variant") or runtime_def.get("loader") or runtime_def.get("edition")
     repository = dashboard_repository(database_path)
 
-    placement = resolve_instance_placement(
-        user,
-        payload,
-        repository,
-    )
-
-    contract_id = str(
+    requested_contract_id = str(
         payload.get("contract_id", "")
     ).strip() or None
+    contract = customer_contract_for_runtime(
+        user,
+        game,
+        runtime_id,
+        requested_contract_id,
+        database_path=database_path,
+    )
+    contract_id = str(contract.get("id") or "").strip()
+    placement_payload = dict(payload)
+    placement_payload["contract_id"] = contract_id
+
+    placement = resolve_instance_placement(
+        user,
+        placement_payload,
+        repository,
+    )
 
     plan = repository.create_customer_instance(
         customer_id=user["scope_id"],
