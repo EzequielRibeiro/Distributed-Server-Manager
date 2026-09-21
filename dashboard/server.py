@@ -109,6 +109,7 @@ from agent_location_http import dispatch_agent_location_post
 from region_preference_api import (
     region_options_for_user,
 )
+from runtime_workspace_catalog import allowed_runtimes
 
 MAX_JSON_BODY = 12 * 1024 * 1024
 MAX_INSTANCE_CONFIG = 1024 * 1024
@@ -456,15 +457,36 @@ def customer_contracts(user, database_path=DATABASE_FILE):
             return parsed > now
         except ValueError:
             return str(ends_at) > now.isoformat()
-    return [
-        row
-        | {
-            "available": row["status"] == "active"
-            and contract_not_expired(row["ends_at"])
-            and row["instances_used"] < row["instance_limit"]
+
+    result = []
+    for row in rows:
+        contract_metadata = {
+            "content_mode": row.get("content_mode"),
+            "product_variant": row.get("product_variant"),
+            "entitlements": row.get("entitlements") or {},
         }
-        for row in rows
-    ]
+        try:
+            runtime_options = allowed_runtimes(
+                DSM_ROOT,
+                str(row.get("game_id") or "").strip().lower(),
+                contract_metadata,
+            )
+        except (OSError, RuntimeError, ValueError):
+            runtime_options = []
+        result.append(
+            row
+            | {
+                "available": row["status"] == "active"
+                and contract_not_expired(row["ends_at"])
+                and row["instances_used"] < row["instance_limit"],
+                "allowed_runtime_ids": [
+                    str(item.get("runtime_id") or "").strip()
+                    for item in runtime_options
+                    if str(item.get("runtime_id") or "").strip()
+                ],
+            }
+        )
+    return result
 
 
 def create_customer_instance(
