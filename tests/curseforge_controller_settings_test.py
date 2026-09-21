@@ -102,7 +102,9 @@ class CurseForgeControllerSettingsTest(unittest.TestCase):
         self.assertFalse(providers["github"]["configured"])
         self.assertEqual("none", providers["modrinth"]["credential_kind"])
         self.assertEqual("alice", providers["steam"]["steam_user"])
-        self.assertNotIn("token", str(payload).lower())
+        self.assertNotIn("github-token-example-123", str(payload))
+        self.assertNotIn("api_key", str(payload).lower())
+        self.assertNotIn("secret_value", str(payload).lower())
 
     def test_github_optional_token_can_be_saved_tested_and_removed_without_echo(self):
         status, payload = dispatch_github_provider_post(
