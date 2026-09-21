@@ -358,6 +358,8 @@ class CustomerAdminRepository:
         ends_at: str | None = None,
         resource_profile_id: str | None = None,
         resource_profile_source: str | None = None,
+        product_variant: str | None = None,
+        entitlements: dict[str, bool] | None = None,
     ) -> dict[str, Any]:
         self.initialize()
         return self.admin.create_contract(
@@ -368,6 +370,8 @@ class CustomerAdminRepository:
             ends_at=ends_at,
             resource_profile_id=resource_profile_id,
             resource_profile_source=resource_profile_source,
+            product_variant=product_variant,
+            entitlements=entitlements,
         )
 
     def _set_password_state(self, session: AlertSession, username: str, required: bool) -> None:
