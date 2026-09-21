@@ -109,7 +109,7 @@ from agent_location_http import dispatch_agent_location_post
 from region_preference_api import (
     region_options_for_user,
 )
-from runtime_workspace_catalog import allowed_runtimes
+from runtime_workspace_catalog import allowed_runtimes, game_workspace_catalog
 
 MAX_JSON_BODY = 12 * 1024 * 1024
 MAX_INSTANCE_CONFIG = 1024 * 1024
@@ -466,10 +466,16 @@ def customer_contracts(user, database_path=DATABASE_FILE):
             "entitlements": row.get("entitlements") or {},
         }
         try:
-            runtime_options = allowed_runtimes(
-                DSM_ROOT,
-                str(row.get("game_id") or "").strip().lower(),
-                contract_metadata,
+            game_id = str(row.get("game_id") or "").strip().lower()
+            workspace_policy = game_workspace_catalog(DSM_ROOT, game_id)
+            products = workspace_policy.get("products") or {}
+            runtime_options = (
+                allowed_runtimes(DSM_ROOT, game_id, contract_metadata)
+                if isinstance(products, dict) and products
+                else [
+                    {"runtime_id": str(runtime_id)}
+                    for runtime_id in (workspace_policy.get("runtimes") or {})
+                ]
             )
         except (OSError, RuntimeError, ValueError):
             runtime_options = []
