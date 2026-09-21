@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+from urllib.parse import quote
 from pathlib import Path
 from typing import Any
 
@@ -134,13 +135,20 @@ def project_minecraft_files(spec: dict[str, Any], entries: list[dict[str, Any]])
     seen: set[str] = set()
     for entry in minecraft_entries:
         content_id = str(entry.get("content_id") or "").strip()
-        if not _SAFE_ID.fullmatch(content_id):
+        if (
+            not content_id
+            or len(content_id) > 191
+            or any(char in content_id for char in ("\\x00", "\\r", "\\n", "/", "\\"))
+        ):
             raise MinecraftContentActivationError("invalid Minecraft content identifier")
+        projection_id = quote(content_id, safe="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
+        if not projection_id or len(projection_id) > 240:
+            raise MinecraftContentActivationError("Minecraft content identifier is too long for native projection")
         content_type = str(entry.get("content_type") or "").strip().lower()
         config = policy.get(content_type)
         if config is None:
             raise MinecraftContentActivationError(f"Minecraft runtime does not support content type: {content_type or 'unknown'}")
-        target = f"{config['directory'].rstrip('/')}/capivara-{content_id}"
+        target = f"{config['directory'].rstrip('/')}/capivara-{projection_id}"
         if target in seen:
             raise MinecraftContentActivationError("duplicate Minecraft content projection")
         seen.add(target)
@@ -285,7 +293,11 @@ def materialize_minecraft_files(spec: dict[str, Any]) -> list[str]:
         if not isinstance(item, dict):
             raise MinecraftContentActivationError("invalid Minecraft content projection")
         content_id = str(item.get("content_id") or "").strip()
-        if not _SAFE_ID.fullmatch(content_id):
+        if (
+            not content_id
+            or len(content_id) > 191
+            or any(char in content_id for char in ("\\x00", "\\r", "\\n", "/", "\\"))
+        ):
             raise MinecraftContentActivationError("invalid Minecraft content projection identifier")
         source = _payload_file(root, item)
         extension = source.suffix.lower()

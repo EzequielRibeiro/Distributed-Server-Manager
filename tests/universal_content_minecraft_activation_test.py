@@ -123,6 +123,61 @@ class MinecraftActivationTest(unittest.TestCase):
             projected = module.project_runtime_spec(spec, {"checksum": "hybrid", "entries": entries})
             self.assertEqual([item["target_stem"] for item in projected["content_file_projections"]], ["mods/capivara-mod-a", "plugins/capivara-plugin-a"])
 
+
+    def test_provider_scoped_content_id_projects_to_portable_filename(self):
+        for platform in ("linux", "windows"):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as tmp:
+                module = self._runtime_module(platform)
+                root = Path(tmp)
+                runtime = root / "runtime"
+                state = root / "state"
+                managed = runtime / "content" / "plugins" / "modrinth:Vebnzrzj"
+                managed.mkdir(parents=True)
+                state.mkdir()
+                (managed / "LuckPerms-Bukkit-5.5.71.jar").write_bytes(b"luckperms")
+
+                spec = {
+                    "instance_id": "i-provider",
+                    "game_id": "minecraft",
+                    "environment_id": "minecraft.java.youer",
+                    "working_directory": str(runtime),
+                    "instance_state_root": str(state),
+                    "arguments": [],
+                    "content_projection": _policy("mod", "plugin"),
+                }
+
+                snapshot = {
+                    "checksum": "provider-plugin",
+                    "entries": [{
+                        "content_id": "modrinth:Vebnzrzj",
+                        "game_id": "minecraft",
+                        "content_type": "plugin",
+                        "managed_path": str(managed),
+                    }],
+                }
+
+                projected = module.project_runtime_spec(spec, snapshot)
+
+                self.assertEqual(
+                    projected["content_file_projections"][0]["target_stem"],
+                    "plugins/capivara-modrinth%3AVebnzrzj",
+                )
+
+                written = module.materialize_content_activation(projected)
+
+                self.assertEqual(
+                    written,
+                    ["plugins/capivara-modrinth%3AVebnzrzj.jar"],
+                )
+                self.assertEqual(
+                    (
+                        runtime
+                        / "plugins"
+                        / "capivara-modrinth%3AVebnzrzj.jar"
+                    ).read_bytes(),
+                    b"luckperms",
+                )
+
     def test_refuses_unmanaged_target_collision(self):
         module = self._runtime_module("linux")
         with tempfile.TemporaryDirectory() as tmp:
