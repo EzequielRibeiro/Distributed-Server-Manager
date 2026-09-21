@@ -208,7 +208,60 @@ def _repair_private_seed_modes(source: Path, target: Path, account: pwd.struct_p
         executable = source_peer.is_file() and bool(source_peer.stat().st_mode & 0o111)
         os.chmod(current, 0o700 if executable else 0o600)
 
-def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, optional: bool = False) -> None:
+def _same_regular_file(source: Path, target: Path) -> bool:
+    if not source.is_file() or not target.is_file():
+        return False
+    if source.stat().st_size != target.stat().st_size:
+        return False
+    with source.open("rb") as left, target.open("rb") as right:
+        while True:
+            a = left.read(1024 * 1024)
+            b = right.read(1024 * 1024)
+            if a != b:
+                return False
+            if not a:
+                return True
+
+
+def _overlay_seed_directory(source: Path, target: Path, account: pwd.struct_passwd) -> None:
+    _reject_symlinks(source, label="directory seed")
+    _reject_symlinks(target, label="directory seed target")
+    for current in source.rglob("*"):
+        relative = current.relative_to(source)
+        destination = target / relative
+        if current.is_dir():
+            if destination.exists() and (not destination.is_dir() or destination.is_symlink()):
+                raise RuntimeError(f"seed overlay target type mismatch: {destination}")
+            destination.mkdir(parents=True, exist_ok=True)
+            os.chown(destination, account.pw_uid, account.pw_gid)
+            os.chmod(destination, 0o700)
+            continue
+        if not current.is_file():
+            raise RuntimeError(f"seed overlay source contains unsupported entry: {current}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            if not destination.is_file() or destination.is_symlink():
+                raise RuntimeError(f"seed overlay target type mismatch: {destination}")
+            if _same_regular_file(current, destination):
+                executable = bool(current.stat().st_mode & 0o111)
+                os.chown(destination, account.pw_uid, account.pw_gid)
+                os.chmod(destination, 0o700 if executable else 0o600)
+                continue
+        temp = destination.with_name(f".{destination.name}.{os.getpid()}.seed-overlay.tmp")
+        try:
+            shutil.copy2(current, temp)
+            executable = bool(current.stat().st_mode & 0o111)
+            os.chown(temp, account.pw_uid, account.pw_gid)
+            os.chmod(temp, 0o700 if executable else 0o600)
+            os.replace(temp, destination)
+        finally:
+            try:
+                temp.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, optional: bool = False, overlay: bool = False) -> None:
     if not source.is_dir():
         if optional:
             return
@@ -218,7 +271,10 @@ def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, o
         if not target.is_dir() or target.is_symlink():
             raise RuntimeError(f"seed directory target is not a private directory: {target}")
         if any(target.iterdir()):
-            _reject_symlinks(target, label="directory seed target")
+            if overlay:
+                _overlay_seed_directory(source, target, account)
+            else:
+                _reject_symlinks(target, label="directory seed target")
             _repair_private_seed_modes(source, target, account)
             return
         target.rmdir()
@@ -237,6 +293,9 @@ def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, o
         except OSError:
             if target.is_dir() and not target.is_symlink():
                 shutil.rmtree(staging, ignore_errors=True)
+                if overlay:
+                    _overlay_seed_directory(source, target, account)
+                    _repair_private_seed_modes(source, target, account)
                 return
             raise
     except Exception:
@@ -300,7 +359,13 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
     for item in spec.get("seed_directories", []):
         source = _seed_source(spec, working_root, item["source"], "seed directory source")
         target = _within(state_root, str(item["target"]), "seed directory target")
-        _seed_directory(source, target, account, optional=bool(item.get("optional", False)))
+        _seed_directory(
+            source,
+            target,
+            account,
+            optional=bool(item.get("optional", False)),
+            overlay=bool(item.get("overlay", False)),
+        )
     for item in spec.get("bind_paths", []):
         source = _within(state_root, str(item["source"]), "bind source")
         target = _within(working_root, str(item["target"]), "bind target")

@@ -31,11 +31,39 @@ def _reject_links(root:Path,label:str)->None:
  if _is_link(root):raise RuntimeError(f"{label} root cannot be a link or junction")
  for path in root.rglob("*"):
   if _is_link(path):raise RuntimeError(f"{label} refuses link or junction: {path.relative_to(root)}")
-def _seed_directory(source:Path,target:Path)->None:
+def _same_regular_file(source:Path,target:Path)->bool:
+ if not source.is_file() or not target.is_file():return False
+ if source.stat().st_size!=target.stat().st_size:return False
+ with source.open("rb") as left,target.open("rb") as right:
+  while True:
+   a=left.read(1024*1024);b=right.read(1024*1024)
+   if a!=b:return False
+   if not a:return True
+
+def _overlay_seed_directory(source:Path,target:Path)->None:
+ _reject_links(source,"directory seed");_reject_links(target,"directory seed target")
+ for current in source.rglob("*"):
+  relative=current.relative_to(source);destination=target/relative
+  if current.is_dir():
+   if destination.exists() and (not destination.is_dir() or _is_link(destination)):raise RuntimeError(f"seed overlay target type mismatch: {destination}")
+   destination.mkdir(parents=True,exist_ok=True);continue
+  if not current.is_file():raise RuntimeError(f"seed overlay source contains unsupported entry: {current}")
+  destination.parent.mkdir(parents=True,exist_ok=True)
+  if destination.exists():
+   if not destination.is_file() or _is_link(destination):raise RuntimeError(f"seed overlay target type mismatch: {destination}")
+   if _same_regular_file(current,destination):continue
+  temp=destination.with_name(f".{destination.name}.seed-overlay.tmp")
+  try:shutil.copy2(current,temp);temp.replace(destination)
+  finally:
+   try:temp.unlink()
+   except FileNotFoundError:pass
+
+def _seed_directory(source:Path,target:Path,*,overlay:bool=False)->None:
  if not source.is_dir():raise RuntimeError(f"seed directory source is unavailable: {source}")
  _reject_links(source,"directory seed")
  if target.exists():
   if not target.is_dir() or _is_link(target):raise RuntimeError(f"seed directory target is not a private directory: {target}")
+  if overlay:_overlay_seed_directory(source,target)
   return
  target.parent.mkdir(parents=True,exist_ok=True);staging=target.with_name(f".{target.name}.seed.tmp")
  if staging.exists():shutil.rmtree(staging,ignore_errors=True)
@@ -43,7 +71,10 @@ def _seed_directory(source:Path,target:Path)->None:
   shutil.copytree(source,staging,copy_function=shutil.copy2,symlinks=False);_reject_links(staging,"directory seed")
   try:staging.replace(target)
   except OSError:
-   if target.is_dir() and not _is_link(target):shutil.rmtree(staging,ignore_errors=True);return
+   if target.is_dir() and not _is_link(target):
+    shutil.rmtree(staging,ignore_errors=True)
+    if overlay:_overlay_seed_directory(source,target)
+    return
    raise
  except Exception:
   if staging.exists():shutil.rmtree(staging,ignore_errors=True)
@@ -62,7 +93,7 @@ def _prepare_private_state(spec:dict[str,Any])->None:
   target.parent.mkdir(parents=True,exist_ok=True)
   if not target.exists():shutil.copy2(source,target)
   elif not target.is_file() or _is_link(target):raise RuntimeError(f"seed target is not a private file: {target}")
- for item in spec.get("seed_directories",[]):source=_within(source_root,str(item["source"]),"seed directory source");target=_within(state_root,str(item["target"]),"seed directory target");_seed_directory(source,target)
+ for item in spec.get("seed_directories",[]):source=_within(source_root,str(item["source"]),"seed directory source");target=_within(state_root,str(item["target"]),"seed directory target");_seed_directory(source,target,overlay=bool(item.get("overlay",False)))
 def _validate_materialization(spec:dict[str,Any])->dict[str,Any]:
  if spec["adapter"]=="windows-process":
   exe=Path(spec["executable"]).resolve(strict=False);cwd=Path(spec["working_directory"]).resolve(strict=False);scope=spec.get("executable_scope") or "working-directory"
