@@ -17,7 +17,7 @@ class _Workspace:
 
 class _Transfers:
  def __init__(self,status="staging"):
-  self.created=[];self.staged=[];self.artifact_path=None;self.item={"transfer_id":"transfer-1","instance_id":"i1","agent_id":"agent-1","direction":"controller_to_agent","purpose":"content_upload","filename":"mod.zip","status":status,"sha256":"a"*64,"size_bytes":3,"destination_ref":"quarantine/i1/transfer-1/mod.zip" if status=="completed" else None}
+  self.created=[];self.staged=[];self.rejected=[];self.artifact_path=None;self.item={"transfer_id":"transfer-1","instance_id":"i1","agent_id":"agent-1","direction":"controller_to_agent","purpose":"content_upload","filename":"mod.zip","status":status,"sha256":"a"*64,"size_bytes":3,"destination_ref":"quarantine/i1/transfer-1/mod.zip" if status=="completed" else None}
  def create(self,**kw):self.created.append(kw);return dict(self.item)
  def get(self,tid):return dict(self.item)
  def stage_from_controller(self,tid,source,length):self.staged.append((tid,length,source.read()));self.item["status"]="queued";self.item["size_bytes"]=length;return dict(self.item)
@@ -26,6 +26,8 @@ class _Transfers:
   return Path(self.artifact_path),dict(self.item)
  def cancel(self,tid):
   self.item["status"]="cancelled";return dict(self.item)
+ def reject_content_upload(self,tid,reason):
+  self.rejected.append((tid,str(reason)));self.item["status"]="failed";self.item["last_error"]=str(reason);return dict(self.item)
 
 class _Content:
  def __init__(self):self.puts=[];self.bundles=[]
@@ -50,6 +52,11 @@ class ExternalUploadTest(unittest.TestCase):
 
  def test_finalize_requires_agent_completion(self):
   with self.assertRaises(ValueError):service(status="staging").finalize({"username":"alice"},"transfer-1",{"content_id":"m1","content_type":"mod"})
+ def test_finalize_rejection_marks_transfer_failed_for_cleanup(self):
+  s=service(status="completed")
+  with self.assertRaisesRegex(ValueError,"Identificador inválido"):s.finalize({"username":"alice"},"transfer-1",{"content_id":"All The Mods 11","content_type":"modpack"})
+  self.assertEqual(s.transfers.item["status"],"failed");self.assertEqual(s.transfers.rejected[-1][0],"transfer-1");self.assertIn("Identificador inválido",s.transfers.rejected[-1][1])
+
  def test_finalize_injects_local_provider_and_safe_provenance(self):
   s=service(status="completed");result=s.finalize({"username":"alice"},"transfer-1",{"content_id":"m1","content_type":"mod","activation_state":"enabled"});payload,actor=s.content.puts[-1]
   self.assertEqual(actor,"alice");self.assertEqual(payload["provider"],"local");self.assertEqual(payload["target"],"external/m1");self.assertEqual(payload["artifact"]["package_id"],"quarantine/i1/transfer-1/mod.zip");self.assertEqual(payload["artifact"]["sha256"],"a"*64);self.assertTrue(payload["artifact"]["archive"]);self.assertEqual(payload["provenance"]["kind"],"customer-upload");self.assertTrue(payload["provenance"]["agent_validated"]);self.assertEqual(result["assignment"]["content_id"],"m1")

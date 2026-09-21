@@ -112,7 +112,7 @@ class CustomerContentUploadService:
   except (zipfile.BadZipFile,KeyError,UnicodeDecodeError,json.JSONDecodeError,OSError):return False
   return isinstance(manifest,Mapping) and str(manifest.get("manifestType") or "")=="minecraftModpack"
 
- def finalize(self,user,transfer_id,body:Mapping[str,Any]):
+ def _finalize(self,user,transfer_id,body:Mapping[str,Any]):
   item=self._transfer(user,transfer_id)
   if str(item.get("status") or "")!="completed":raise ValueError("content upload has not reached the Agent")
   iid=str(item["instance_id"]);context,effective,_=self._access(user,iid)
@@ -142,5 +142,15 @@ class CustomerContentUploadService:
   payload={key:body[key] for key in _ALLOWED_FIELDS if key in body and key not in {"metadata"}}
   payload.update({"instance_id":iid,"content_id":content_id,"content_type":ctype,"desired_state":"installed","provider":"local","target":f"external/{content_id}","artifact":{"provider":"local","package_id":relative,"sha256":str(item.get("sha256") or "") or None,"archive":archive,"filename":name,"ephemeral_upload":True},"provenance":{"kind":"customer-upload","transfer_id":tid,"filename":name,"sha256":str(item.get("sha256") or "") or None,"quarantine_path":relative,"agent_validated":True},"metadata":dict(metadata)})
   return self.content.put(payload,requested_by=str(user.get("username") or "customer"))
+
+ def finalize(self,user,transfer_id,body:Mapping[str,Any]):
+  item=self._transfer(user,transfer_id)
+  try:
+   return self._finalize(user,transfer_id,body)
+  except Exception as exc:
+   if str(item.get("status") or "").lower()=="completed":
+    try:self.transfers.reject_content_upload(str(item["transfer_id"]),str(exc))
+    except Exception:pass
+   raise
 
 __all__=["CustomerContentUploadService"]

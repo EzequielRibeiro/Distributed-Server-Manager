@@ -134,6 +134,27 @@ class ArtifactTransferRepository:
   ph=self.dialect.placeholder
   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status={ph},transferred_bytes={ph},destination_ref={ph},last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(status,int(report.get("transferred_bytes") or item.get("size_bytes") or 0),destination_ref,error,item["transfer_id"]))
   return self.get(item["transfer_id"])
+ def reject_content_upload(self,transfer_id,reason):
+  item=self.get(transfer_id)
+  if str(item.get("purpose") or "")!="content_upload":raise ValueError("transfer is not a content upload")
+  message=str(reason or "content upload rejected").strip()[:1024] or "content upload rejected"
+  ph=self.dialect.placeholder
+  try:
+   path=self._path(transfer_id,item.get("filename"))
+   path.unlink(missing_ok=True)
+   path.with_suffix(path.suffix+".part").unlink(missing_ok=True)
+   try:path.parent.rmdir()
+   except OSError:pass
+  except (OSError,ValueError):
+   pass
+  with self.session(transaction=True) as s:
+   s.execute(f"UPDATE artifact_transfers SET status='failed',last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(message,transfer_id))
+   existing=s.execute(f"SELECT transfer_id FROM artifact_transfers WHERE purpose='content_upload_cleanup' AND source_ref={ph} AND status<>'expired' ORDER BY created_at DESC LIMIT 1",(transfer_id,)).fetchone()
+  if existing is None and item.get("agent_id") and item.get("instance_id"):
+   cleanup=self.create(agent_id=item["agent_id"],instance_id=item["instance_id"],customer_id=item.get("customer_id"),direction="controller_to_agent",purpose="content_upload_cleanup",filename=item.get("filename") or "artifact.bin",source_ref=transfer_id,requested_by=item.get("requested_by"),ttl_hours=24)
+   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status='queued',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(cleanup["transfer_id"],))
+  return self.get(transfer_id)
+
  def cancel(self,transfer_id):
   item=self.get(transfer_id)
   status=str(item.get("status") or "").strip().lower()
