@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import pwd
+import socket
 import sys
 from pathlib import Path
 from typing import Any
@@ -129,6 +130,120 @@ def _write_result(
         temp,
         path,
     )
+
+
+def _minecraft_console_socket(
+    record: dict[str, Any],
+) -> Path | None:
+    game_id = str(
+        record.get("game_id") or ""
+    ).strip().lower()
+
+    environment_id = str(
+        record.get("environment_id") or ""
+    ).strip().lower()
+
+    if (
+        game_id != "minecraft"
+        or not environment_id.startswith(
+            "minecraft.java."
+        )
+    ):
+        return None
+
+    instance_id = _token(
+        record.get("instance_id"),
+        "instance_id",
+    )
+
+    return (
+        Path("/run")
+        / f"capivara-instance-console-{instance_id}"
+        / "console.sock"
+    )
+
+
+def _minecraft_stdin(
+    record: dict[str, Any],
+    command: str,
+) -> bool:
+    path = _minecraft_console_socket(
+        record
+    )
+
+    if path is None or not path.exists():
+        return False
+
+    client = socket.socket(
+        socket.AF_UNIX,
+        socket.SOCK_STREAM,
+    )
+
+    try:
+        client.settimeout(3.0)
+        client.connect(str(path))
+
+        client.sendall(
+            command.encode("utf-8")
+            + b"\n"
+        )
+
+        client.shutdown(
+            socket.SHUT_WR
+        )
+
+        response = bytearray()
+
+        while len(response) <= 1024:
+            chunk = client.recv(
+                min(
+                    256,
+                    1025 - len(response),
+                )
+            )
+
+            if not chunk:
+                break
+
+            response.extend(chunk)
+
+            if b"\n" in response:
+                break
+
+        if len(response) > 1024:
+            raise RuntimeError(
+                "native console acknowledgement "
+                "exceeds maximum size"
+            )
+
+        acknowledgement = (
+            bytes(response)
+            .decode(
+                "utf-8",
+                errors="replace",
+            )
+            .strip()
+        )
+
+        if acknowledgement != "OK":
+            raise RuntimeError(
+                acknowledgement
+                or "native console returned "
+                "no acknowledgement"
+            )
+
+        return True
+
+    except (
+        OSError,
+        socket.timeout,
+    ) as exc:
+        raise RuntimeError(
+            "native Minecraft console transport failed"
+        ) from exc
+
+    finally:
+        client.close()
 
 
 def _minecraft_rcon(
@@ -340,10 +455,18 @@ def run(
             "native operation"
         )
 
-    output = _minecraft_rcon(
+    if _minecraft_stdin(
         record,
         command,
-    )
+    ):
+        output = []
+        transport = "minecraft-stdin"
+    else:
+        output = _minecraft_rcon(
+            record,
+            command,
+        )
+        transport = "minecraft-rcon"
 
     result = {
         "schema_version": 1,
@@ -354,7 +477,7 @@ def run(
         "instance_id": instance_id,
         "agent_id": local_agent_id,
         "operation": operation,
-        "transport": "minecraft-rcon",
+        "transport": transport,
         "status": "completed",
         "output": output,
     }

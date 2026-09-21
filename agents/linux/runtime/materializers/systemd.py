@@ -15,7 +15,10 @@ def _default_runner(command,timeout):
 def _quote(value):return '"'+value.replace("\\","\\\\").replace('"','\\"')+'"'
 def _working_directory(value):
  path=str(value or "").strip()
- if not path.startswith("/") or any(c in path for c in ("\x00","\n","\r")):raise MaterializerError("invalid systemd WorkingDirectory")
+ if not path.startswith("/"):
+  raise MaterializerError("systemd WorkingDirectory must be an absolute path")
+ if any(c in path for c in ("\x00","\n","\r")):
+  raise MaterializerError("systemd WorkingDirectory contains invalid characters")
  return path
 def _bind_path(source,target):
  source_path=str(source or "").strip();target_path=str(target or "").strip()
@@ -70,12 +73,25 @@ def _stop_signal(spec):
  return signal
 def render_unit(spec):
  instance_id=str(spec["instance_id"]);agent_id=str(spec["agent_id"]);runtime_id=str(spec["runtime_id"]);state_directory,default_state_path,private_state_path=_private_state(spec);argv=[str(spec["executable"]),*[str(x) for x in spec.get("arguments",[])]]
+ game_id=str(spec.get("game_id") or "").strip().lower()
+ environment_id=str(spec.get("environment_id") or "").strip().lower()
+ native_console=(game_id=="minecraft" and environment_id.startswith("minecraft.java."))
+ if native_console:
+  supervisor=Path(__file__).resolve().parents[1]/"console_supervisor.py"
+  console_runtime=f"capivara-instance-console-{instance_id}"
+  console_socket=f"/run/{console_runtime}/console.sock"
+  argv=["/usr/bin/python3",str(supervisor),"--socket",console_socket,"--",*argv]
  lines=["[Unit]",f"Description=Capivara instance {instance_id}","After=network-online.target","Wants=network-online.target",f"X-Capivara-GeneratedBy={_GENERATED_BY}",f"X-Capivara-Instance={instance_id}",f"X-Capivara-Agent={agent_id}",f"X-Capivara-Runtime={runtime_id}","","[Service]","Type=simple",f"User={spec['user']}","IPAccounting=yes"]
  if bool(spec.get("private_shared_memory")):lines.append("TemporaryFileSystem=/dev/shm:rw,nosuid,nodev,mode=1777")
  if private_state_path==default_state_path:lines.extend([f"StateDirectory={state_directory}","StateDirectoryMode=0700"])
  lines.append(f"BindPaths={_bind_path(private_state_path,_RUNTIME_ACCOUNT_HOME)}")
  runtime_directory=spec.get("runtime_directory")
  if runtime_directory:lines.extend([f"RuntimeDirectory={runtime_directory}","RuntimeDirectoryMode=0700"])
+ if native_console:
+  lines.extend([
+   f"RuntimeDirectory={console_runtime}",
+   "RuntimeDirectoryMode=0700",
+  ])
  for binding in spec.get("bind_paths",[]):lines.append(f"BindPaths={_bind_path(binding['source'],binding['target'])}")
  for binding in spec.get("runtime_bind_paths",[]):lines.append(f"BindPaths={_bind_path(binding['source'],binding['target'])}")
  lines.extend([f"WorkingDirectory={_working_directory(spec['working_directory'])}",f"Environment={_quote(f'HOME={_RUNTIME_ACCOUNT_HOME}')}",f"Environment={_quote(f'XDG_DATA_HOME={_RUNTIME_ACCOUNT_HOME}/.local/share')}",f"Environment={_quote(f'XDG_CACHE_HOME={_RUNTIME_ACCOUNT_HOME}/.cache')}",f"Environment={_quote(f'XDG_CONFIG_HOME={_RUNTIME_ACCOUNT_HOME}/.config')}"])
