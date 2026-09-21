@@ -75,14 +75,18 @@ def _version_rank(item: Mapping[str, Any]) -> tuple[int, str]:
     return ({"release": 3, "beta": 2, "alpha": 1}.get(channel, 0), str(item.get("date_published") or ""))
 
 
-def resolve_modrinth(project: str, game_version: str, loaders: tuple[str, ...], *, requester: Requester = _request_json) -> dict[str, Any]:
+def resolve_modrinth(project: str, game_version: str, loaders: tuple[str, ...], content_type: str = "mod", *, requester: Requester = _request_json) -> dict[str, Any]:
     project = str(project or "").strip()
+    ctype = str(content_type or "mod").strip().lower()
+    if ctype not in {"mod", "plugin"}:
+        raise MinecraftContentResolverError("Modrinth resolution supports mods and plugins only")
     if not project or any(ch in project for ch in ("/", "\\", "?", "#")):
         raise MinecraftContentResolverError("invalid Modrinth project reference")
     encoded_project = quote(project, safe="")
     project_payload = requester(f"{MODRINTH_API_BASE}/project/{encoded_project}", {})
-    if not isinstance(project_payload, Mapping) or str(project_payload.get("project_type") or "").lower() != "mod":
-        raise MinecraftContentResolverError("Modrinth project is not an individual mod/plugin project")
+    project_type = str(project_payload.get("project_type") or "").lower() if isinstance(project_payload, Mapping) else ""
+    if project_type != ctype:
+        raise MinecraftContentResolverError(f"Modrinth project is not an individual {ctype} project")
     if str(project_payload.get("status") or "unknown").lower() not in {"approved", "archived"}:
         raise MinecraftContentResolverError("Modrinth project is not available for managed installation")
     query = urlencode({"game_versions": json.dumps([game_version]), "loaders": json.dumps(list(loaders)), "include_changelog": "false"})
@@ -183,7 +187,7 @@ def resolve_minecraft_content(provider: str, project: str, game_version: str, ru
         raise MinecraftContentResolverError("Minecraft game version is unavailable")
     loaders = provider_loaders(runtime, content_type)
     if provider == "modrinth":
-        return resolve_modrinth(project, game_version, loaders, requester=requester)
+        return resolve_modrinth(project, game_version, loaders, content_type, requester=requester)
     if provider == "curseforge":
         if str(content_type).lower() != "mod":
             raise MinecraftContentResolverError("CurseForge modpack/plugin resolution is not enabled in this U6-M block")
@@ -215,7 +219,7 @@ def discover_modrinth(query: str, game_version: str, runtime: Mapping[str, Any],
     if ctype == "modpack":
         loaders = (_modpack_loader(runtime),); project_type = "modpack"
     elif ctype in {"mod", "plugin"}:
-        loaders = provider_loaders(runtime, ctype); project_type = "mod"
+        loaders = provider_loaders(runtime, ctype); project_type = ctype
     else:
         raise MinecraftContentResolverError("Modrinth discovery does not support this content type")
     facets = [[f"project_type:{project_type}"], [f"versions:{game_version}"], [f"categories:{value}" for value in loaders]]
