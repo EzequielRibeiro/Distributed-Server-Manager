@@ -54,9 +54,24 @@ github_provider_validate_repository()
     [[ "${REPO}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
 }
 
+github_token()
+{
+    local TOKEN
+    TOKEN="$(github_token)"
+    local TOKEN_FILE="${DSM_GITHUB_TOKEN_FILE:-${DSM_ROOT}/config/providers/github.token}"
+
+    if [[ -z "${TOKEN}" && -f "${TOKEN_FILE}" ]]
+    then
+        TOKEN="$(tr -d '\r\n' < "${TOKEN_FILE}")"
+    fi
+
+    printf '%s' "${TOKEN}"
+}
+
 github_api_headers()
 {
-    local TOKEN="${DSM_GITHUB_TOKEN:-}"
+    local TOKEN
+    TOKEN="$(github_token)"
 
     printf '%s\n' \
         "Accept: application/vnd.github+json" \
@@ -417,6 +432,7 @@ export -f github_log
 export -f github_error
 export -f github_provider_ensure
 export -f github_provider_validate_repository
+export -f github_token
 export -f github_api_headers
 export -f github_api_get
 export -f github_release_json

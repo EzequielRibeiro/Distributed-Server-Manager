@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import server_part21 as integration
 from database_intelligence_http import install_database_intelligence_http
+from provider_credentials_http import install_curseforge_provider_http
 
 legacy = integration.legacy
 _controller_authenticate = integration._controller_authenticate
 install_database_intelligence_http(legacy, _controller_authenticate)
+install_curseforge_provider_http(legacy, _controller_authenticate)
 
 
 def run():

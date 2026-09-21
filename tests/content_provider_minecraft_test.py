@@ -10,13 +10,14 @@ import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.error import HTTPError
 from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
 for path in (ROOT,ROOT/'core',ROOT/'database',ROOT/'dashboard'):
  if str(path) not in sys.path:sys.path.insert(0,str(path))
 
-from core.minecraft_content_resolver import MinecraftContentResolverError,discover_modrinth,provider_loaders,resolve_curseforge,resolve_modrinth
+from core.minecraft_content_resolver import MinecraftContentResolverError,_request_json,discover_modrinth,provider_loaders,resolve_curseforge,resolve_modrinth
 from dashboard.customer_content_workspace import CustomerContentWorkspaceService
 
 class _Workspace:
@@ -97,6 +98,12 @@ class MinecraftProviderResolverTest(unittest.TestCase):
   result=resolve_modrinth('voteme','1.21.1',('bukkit','spigot'),'plugin',requester=requester)
   self.assertEqual('1.0.2',result['version'])
   self.assertEqual('vote-me:v1',result['artifact']['package_id'])
+
+ def test_curseforge_http_auth_error_is_controlled(self):
+  error=HTTPError('https://api.curseforge.com/v1/games/432',403,'Forbidden',{},None)
+  with patch('core.minecraft_content_resolver.urlopen',side_effect=error):
+   with self.assertRaisesRegex(MinecraftContentResolverError,'verifique a API key'):
+    _request_json('https://api.curseforge.com/v1/games/432',{'x-api-key':'bad'})
 
  def test_curseforge_key_is_controller_only_and_sha1_is_required(self):
   seen=[]
