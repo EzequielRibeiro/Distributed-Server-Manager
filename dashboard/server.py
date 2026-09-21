@@ -4550,6 +4550,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         self.send_json(404, {"error": "game_not_found"})
                         return
                     success = True
+                elif action == "workspace-products":
+                    game_id = str(query.get("game", [""])[0] or "").strip().lower()
+                    policy = game_workspace_catalog(DSM_ROOT, game_id)
+                    products = policy.get("products") or {}
+                    data = {
+                        "game_id": game_id,
+                        "default_product_id": (
+                            "standard"
+                            if isinstance(products, dict) and "standard" in products
+                            else (next(iter(products), "") if isinstance(products, dict) else "")
+                        ),
+                        "products": [
+                            {
+                                "id": str(product_id),
+                                "label": str((product or {}).get("label") or product_id),
+                            }
+                            for product_id, product in products.items()
+                            if isinstance(product, dict)
+                        ] if isinstance(products, dict) else [],
+                    }
+                    success = True
                 elif action == "runtimes":
                     success, data = catalog_api(
                         "runtimes", query.get("game", [""])[0], user=user
