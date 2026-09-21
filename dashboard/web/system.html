@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Sistema | Capivara DSM</title>
   <link rel="stylesheet" href="/dashboard-home-v3.css">
-  <link rel="stylesheet" href="/system.css?v=2">
+  <link rel="stylesheet" href="/system.css?v=3">
 </head>
 <body class="cap-home cap-system-shell">
 <div id="sidebar-component"></div>
@@ -55,6 +55,40 @@
         </div>
         <p id="curseforge-message" class="cap-system-note">A chave salva nunca é exibida novamente pelo Controller.</p>
       </div>
+
+      <div class="cap-provider-card">
+        <div class="cap-provider-head">
+          <div><strong>GitHub Releases</strong><span>Token opcional para limites maiores e repositórios privados</span></div>
+          <span id="github-status" class="cap-system-pill off">Acesso público</span>
+        </div>
+        <label class="cap-provider-label" for="github-token">Personal Access Token (opcional)</label>
+        <div class="cap-provider-form">
+          <input id="github-token" type="password" autocomplete="new-password" spellcheck="false" placeholder="Cole um token GitHub opcional">
+          <button id="github-save" type="button">Salvar token</button>
+          <button id="github-test" type="button">Testar conexão</button>
+          <button id="github-remove" class="danger" type="button">Remover</button>
+        </div>
+        <p id="github-message" class="cap-system-note">Sem token, o provider continua usando a API pública do GitHub.</p>
+      </div>
+
+      <div class="cap-provider-card">
+        <div class="cap-provider-head">
+          <div><strong>Modrinth</strong><span>Mods, plugins e modpacks do Minecraft</span></div>
+          <span id="modrinth-status" class="cap-system-pill">Sem credencial</span>
+        </div>
+        <div class="cap-provider-actions">
+          <button id="modrinth-test" type="button">Testar conexão</button>
+        </div>
+        <p id="modrinth-message" class="cap-system-note">A API pública do Modrinth não exige API key.</p>
+      </div>
+
+      <div class="cap-provider-card">
+        <div class="cap-provider-head">
+          <div><strong>Steam / Steam Workshop</strong><span>Downloads via SteamCMD</span></div>
+          <span id="steam-status" class="cap-system-pill">Disponível</span>
+        </div>
+        <p id="steam-message" class="cap-system-note">A autenticação, quando necessária, é realizada via SteamCMD no Agent e não armazena senha ou Steam Guard no Controller.</p>
+      </div>
     </section>
 
     <section id="api-security" class="cap-system-card">
@@ -70,6 +104,6 @@
   </div>
   <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
-<script src="/system.js?v=2"></script>
+<script src="/system.js?v=3"></script>
 </body>
 </html>
