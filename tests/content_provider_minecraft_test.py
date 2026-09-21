@@ -77,27 +77,35 @@ class MinecraftProviderResolverTest(unittest.TestCase):
   self.assertEqual(result['version'],'1.9.0');self.assertEqual(result['artifact']['package_id'],'proj:release');self.assertEqual(result['artifact']['sha512'],'a'*128);self.assertEqual(result['artifact']['sha1'],'d'*40);self.assertNotIn('token',json.dumps(result).lower())
 
 
- def test_modrinth_plugin_discovery_uses_plugin_project_type_for_youer(self):
+ def test_modrinth_plugin_discovery_uses_all_project_types_for_youer(self):
   seen=[]
   def requester(url,headers):
    seen.append(url)
-   return {'hits':[{'project_id':'vote-me','slug':'voteme','title':'VoteMe','description':'Voting plugin','author':'Herza','downloads':425,'icon_url':'https://cdn.modrinth.com/icon.png','project_type':'plugin'}]}
+   return {'hits':[{'project_id':'vote-me','slug':'voteme','title':'VoteMe','description':'Voting plugin','author':'Herza','downloads':425,'icon_url':'https://cdn.modrinth.com/icon.png','project_type':'mod','all_project_types':['plugin'],'categories':['bukkit','spigot']}]}
   runtime={'loader':'youer'}
   result=discover_modrinth('voteme','1.21.1',runtime,'plugin',requester=requester)
   self.assertEqual(1,len(result))
   self.assertEqual('voteme',result[0]['project_ref'])
   self.assertEqual('plugin',result[0]['project_type'])
-  self.assertTrue(any('project_type%3Aplugin' in url or 'project_type%3Aplugin' in url.replace('%22','') for url in seen))
+  self.assertTrue(any('all_project_types%3Aplugin' in url for url in seen))
   self.assertTrue(any('categories%3Abukkit' in url or 'categories%3Aspigot' in url for url in seen))
 
- def test_modrinth_plugin_resolution_accepts_plugin_project(self):
+ def test_modrinth_plugin_resolution_accepts_multitype_project(self):
   def requester(url,headers):
    if '/project/voteme/version?' not in url:
-    return {'id':'vote-me','project_type':'plugin','status':'approved'}
+    return {'id':'vote-me','project_type':'mod','all_project_types':['plugin'],'categories':['bukkit','paper','purpur','spigot'],'status':'approved'}
    return [{'id':'v1','project_id':'vote-me','version_number':'1.0.2','version_type':'release','date_published':'2026-03-05','status':'listed','game_versions':['1.21.1'],'loaders':['bukkit','paper','purpur','spigot'],'files':[{'primary':True,'url':'https://cdn.modrinth.com/data/vote-me/versions/v1/VoteMe.jar','filename':'VoteMe.jar','size':4,'hashes':{'sha512':'a'*128,'sha1':'b'*40}}]}]
   result=resolve_modrinth('voteme','1.21.1',('bukkit','spigot'),'plugin',requester=requester)
   self.assertEqual('1.0.2',result['version'])
   self.assertEqual('vote-me:v1',result['artifact']['package_id'])
+
+ def test_modrinth_plugin_resolution_accepts_loader_categories_when_all_types_missing(self):
+  def requester(url,headers):
+   if '/project/voteme/version?' not in url:
+    return {'id':'vote-me','project_type':'mod','categories':['bukkit','spigot'],'status':'approved'}
+   return [{'id':'v1','project_id':'vote-me','version_number':'1.0.2','version_type':'release','date_published':'2026-03-05','status':'listed','game_versions':['1.21.1'],'loaders':['bukkit','spigot'],'files':[{'primary':True,'url':'https://cdn.modrinth.com/data/vote-me/versions/v1/VoteMe.jar','filename':'VoteMe.jar','size':4,'hashes':{'sha512':'a'*128,'sha1':'b'*40}}]}]
+  result=resolve_modrinth('voteme','1.21.1',('bukkit','spigot'),'plugin',requester=requester)
+  self.assertEqual('1.0.2',result['version'])
 
  def test_curseforge_http_auth_error_is_controlled(self):
   error=HTTPError('https://api.curseforge.com/v1/games/432',403,'Forbidden',{},None)
