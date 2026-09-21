@@ -10,7 +10,7 @@ from customer_instance_policy import PERMISSION_PRESETS,effective_permissions,en
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from customer_content_workspace import CustomerContentWorkspaceService
 from instance_team_repository import InstanceTeamRepository
-from runtime_workspace_catalog import allowed_runtimes,runtime_allowed_by_contract,runtime_content_activation_capabilities
+from runtime_workspace_catalog import allowed_runtimes,runtime_allowed_by_contract,runtime_content_activation_capabilities,runtime_workspace_capabilities
 from schema_baseline import load_schema_baseline
 
 class CustomerWorkspaceV2Test(unittest.TestCase):
@@ -36,6 +36,41 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   self.assertEqual(standard_ids,{"minecraft.java.vanilla","minecraft.bedrock.vanilla"})
   self.assertIn("minecraft.java.neoforge",modified_ids)
   self.assertGreater(len(modified_ids),len(standard_ids))
+ def test_minecraft_runtime_content_capability_matrix(self):
+  expected={
+   "minecraft.java.vanilla":(False,False,False),
+   "minecraft.bedrock.vanilla":(False,False,False),
+   "minecraft.java.fabric":(True,False,True),
+   "minecraft.java.forge":(True,False,True),
+   "minecraft.java.neoforge":(True,False,True),
+   "minecraft.java.quilt":(True,False,True),
+   "minecraft.java.paper":(False,True,False),
+   "minecraft.java.purpur":(False,True,False),
+   "minecraft.java.folia":(False,True,False),
+   "minecraft.java.spongevanilla":(False,True,False),
+   "minecraft.java.arclight":(True,True,False),
+   "minecraft.java.youer":(True,True,True),
+  }
+  for runtime_id,wanted in expected.items():
+   with self.subTest(runtime_id=runtime_id):
+    caps=runtime_workspace_capabilities(ROOT,"minecraft",runtime_id)
+    self.assertEqual(wanted,(caps["mods"],caps["plugins"],caps["modpacks"]))
+  arclight=runtime_workspace_capabilities(ROOT,"minecraft","minecraft.java.arclight")
+  self.assertEqual([],arclight["providers"].get("mod",[]))
+  self.assertEqual(["modrinth"],arclight["providers"].get("plugin",[]))
+
+ def test_customer_content_ui_intersects_contract_sections_with_runtime_capabilities(self):
+  script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
+  for marker in (
+   "contentSectionCapabilities",
+   "function effectiveContentSections()",
+   "capabilities[capability]===true",
+   "function searchableContentSections(",
+   "providerOptions(type).length",
+   "catálogo de busca indisponível neste runtime; use Upload externo.",
+  ):
+   self.assertIn(marker,script)
+
  def test_instance_mod_override_disables_derived_modpacks_and_datapacks(self):
   service=CustomerInstanceWorkspaceService.__new__(CustomerInstanceWorkspaceService);service.root=ROOT
   context={"game_id":"minecraft","runtime_id":"minecraft.java.neoforge","contract_metadata":{"product_variant":"modified"}}
