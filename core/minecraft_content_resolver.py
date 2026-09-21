@@ -100,20 +100,8 @@ def resolve_modrinth(project: str, game_version: str, loaders: tuple[str, ...], 
     encoded_project = quote(project, safe="")
     project_payload = requester(f"{MODRINTH_API_BASE}/project/{encoded_project}", {})
     project_type = str(project_payload.get("project_type") or "").lower() if isinstance(project_payload, Mapping) else ""
-    all_project_types = {str(value).strip().lower() for value in (project_payload.get("all_project_types") or []) if str(value).strip()} if isinstance(project_payload, Mapping) else set()
-    project_categories = {
-        str(value).strip().lower()
-        for field in ("categories", "additional_categories")
-        for value in (project_payload.get(field) or [])
-        if str(value).strip()
-    } if isinstance(project_payload, Mapping) else set()
     if ctype == "plugin":
-        plugin_compatible = (
-            project_type == "plugin"
-            or "plugin" in all_project_types
-            or (project_type == "mod" and any(loader in project_categories for loader in loaders))
-        )
-        if not plugin_compatible:
+        if project_type not in {"plugin", "mod"}:
             raise MinecraftContentResolverError("Modrinth project is not a compatible plugin project")
     elif project_type != ctype:
         raise MinecraftContentResolverError(f"Modrinth project is not an individual {ctype} project")
