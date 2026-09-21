@@ -104,8 +104,10 @@ def _run_http(selection:dict[str,Any],target:Path)->None:
   temp=Path(temporary);artifact=temp/"artifact";_download(url,artifact);_verify_sha256(artifact,expected)
   installer=selection.get("installer") if isinstance(selection.get("installer"),dict) else {}
   installer_type=str(installer.get("type") or "").strip().lower()
+  artifact_mode=str(selection.get("artifact_mode") or "executable").strip().lower()
   preserve_installer_artifact=installer_type in {"java_jar","quilt_server"}
-  if archive_type or (not preserve_installer_artifact and (zipfile.is_zipfile(artifact) or tarfile.is_tarfile(artifact))):
+  preserve_file_artifact=artifact_mode in {"file","java","jar"}
+  if archive_type or (not preserve_installer_artifact and not preserve_file_artifact and (zipfile.is_zipfile(artifact) or tarfile.is_tarfile(artifact))):
    staging=temp/"extract";staging.mkdir()
    if zipfile.is_zipfile(artifact):_extract_zip(artifact,staging)
    elif tarfile.is_tarfile(artifact):_extract_tar(artifact,staging)
