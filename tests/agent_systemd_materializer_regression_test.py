@@ -90,3 +90,38 @@ def test_bind_paths_reject_unsupported_pair_characters():
 def test_instance_state_directory_rejects_path_injection():
     with pytest.raises(MaterializerError, match="instance state directory"):
         render_unit(_spec(instance_id="../../escape"))
+
+
+def test_minecraft_java_uses_native_console_supervisor():
+    unit = render_unit(_spec(
+        instance_id="minecraft-001",
+        game_id="minecraft",
+        environment_id="minecraft.java.youer",
+        runtime_id="minecraft.java.youer",
+        executable="/usr/bin/java",
+        arguments=["-jar", "/srv/minecraft/youer.jar"],
+    ))
+
+    assert (
+        "RuntimeDirectory=capivara-instance-console-minecraft-001\n"
+        in unit
+    )
+    assert (
+        "--socket"
+        in unit
+    )
+    assert (
+        "/run/capivara-instance-console-minecraft-001/console.sock"
+        in unit
+    )
+    assert (
+        '"/usr/bin/java" "-jar" "/srv/minecraft/youer.jar"'
+        in unit
+    )
+
+
+def test_non_minecraft_runtime_does_not_use_console_supervisor():
+    unit = render_unit(_spec())
+
+    assert "console_supervisor.py" not in unit
+    assert "capivara-instance-console-" not in unit
