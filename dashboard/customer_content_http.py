@@ -20,6 +20,7 @@ BUNDLE=PATH+"/bundle"
 UPLOAD=PATH+"/upload"
 UPLOAD_STATUS=UPLOAD+"/status"
 UPLOAD_FINALIZE=UPLOAD+"/finalize"
+UPLOAD_CANCEL=UPLOAD+"/cancel"
 UPDATE_POLICY=PATH+"/update-policy"
 UPDATE_POLICY_ITEM=UPDATE_POLICY+"/item"
 STREAM=PATH+"/stream"
@@ -157,6 +158,12 @@ def install_customer_content_http(legacy,authenticate):
    try:
     body=self.read_json_body();api=CustomerContentUploadService(backend(),legacy.DSM_ROOT);result=api.finalize(user,str(body.get("transfer_id") or ""),body);assignment=result.get("assignment") or {};record(user,str(assignment.get("instance_id") or body.get("instance_id") or ""),"upload",str(assignment.get("content_id") or body.get("content_id") or ""),result);return send(self,202,result)
    except Exception as exc:return error(self,exc)
+  if parsed.path==UPLOAD_CANCEL:
+   user=require_user(self)
+   if user is None:return
+   try:
+    body=self.read_json_body();item=CustomerContentUploadService(backend(),legacy.DSM_ROOT).cancel(user,str(body.get("transfer_id") or ""));return send(self,200,{"transfer":transfer_view(item),"message":"Upload cancelado."})
+   except Exception as exc:return error(self,exc)
   if parsed.path==UPDATE_POLICY:
    user=require_user(self)
    if user is None:return
@@ -197,4 +204,4 @@ def install_customer_content_http(legacy,authenticate):
   except Exception as exc:return error(self,exc)
  legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post;legacy.DashboardHandler.do_PUT=put
 
-__all__=["PATH","SEARCH","BUNDLE","UPLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","UPDATE_POLICY","UPDATE_POLICY_ITEM","STREAM","install_customer_content_http"]
+__all__=["PATH","SEARCH","BUNDLE","UPLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","UPLOAD_CANCEL","UPDATE_POLICY","UPDATE_POLICY_ITEM","STREAM","install_customer_content_http"]
