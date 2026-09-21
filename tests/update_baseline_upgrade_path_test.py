@@ -169,6 +169,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (17, "database_intelligence"),
                     (18, "operation_diagnostics"),
                     (19, "alert_customer_identity"),
+                    (20, "legacy_minecraft_contract_products"),
                 ],
             )
 
@@ -214,6 +215,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     {"version": 17, "name": "database_intelligence"},
                     {"version": 18, "name": "operation_diagnostics"},
                     {"version": 19, "name": "alert_customer_identity"},
+                    {"version": 20, "name": "legacy_minecraft_contract_products"},
                 ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
@@ -270,6 +272,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (17, "database_intelligence"),
                     (18, "operation_diagnostics"),
                     (19, "alert_customer_identity"),
+                    (20, "legacy_minecraft_contract_products"),
                 ],
             )
 
@@ -318,6 +321,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (17, "database_intelligence"),
                     (18, "operation_diagnostics"),
                     (19, "alert_customer_identity"),
+                    (20, "legacy_minecraft_contract_products"),
                 ],
             )
 
@@ -355,6 +359,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     {"version": 17, "name": "database_intelligence"},
                     {"version": 18, "name": "operation_diagnostics"},
                     {"version": 19, "name": "alert_customer_identity"},
+                    {"version": 20, "name": "legacy_minecraft_contract_products"},
                 ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
@@ -395,6 +400,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (17, "database_intelligence"),
                     (18, "operation_diagnostics"),
                     (19, "alert_customer_identity"),
+                    (20, "legacy_minecraft_contract_products"),
                 ],
             )
 
@@ -429,6 +435,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     {"version": 17, "name": "database_intelligence"},
                     {"version": 18, "name": "operation_diagnostics"},
                     {"version": 19, "name": "alert_customer_identity"},
+                    {"version": 20, "name": "legacy_minecraft_contract_products"},
                 ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
@@ -463,6 +470,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (17, "database_intelligence"),
                     (18, "operation_diagnostics"),
                     (19, "alert_customer_identity"),
+                    (20, "legacy_minecraft_contract_products"),
                 ],
             )
 
