@@ -1,6 +1,6 @@
 (function(){
 "use strict";
-const $=id=>document.getElementById(id);const app=window.CapCustomerManagement;let profiles=[],defaultProfile="";
+const $=id=>document.getElementById(id);const app=window.CapCustomerManagement;let profiles=[],defaultProfile="",products=[],defaultProduct="";
 function option(value,label){const node=document.createElement("option");node.value=value;node.textContent=label;return node;}
 async function verifyCustomer(){
   const code=$("contract-customer-code").value.trim().toUpperCase();if(!code){app.setNotice("contract-customer-summary","Informe o código do cliente.","error");return false;}
@@ -13,6 +13,19 @@ async function loadGames(){
 }
 function profileLabel(profile){const ram=(Number(profile.memory_mb||0)/1024).toFixed(1).replace(".0","");const storage=(Number(profile.storage_mb||0)/1024).toFixed(1).replace(".0","");const players=Number(profile.player_limit||0);return `${profile.name||profile.id} · ${profile.cpu_cores} CPU · ${ram} GB RAM · ${storage} GB disco${players>0?` · até ${players} jogadores`:""}`;}
 function renderProfile(){const id=$("contract-profile").value||defaultProfile,profile=profiles.find(item=>String(item.id)===id);$("contract-profile-summary").textContent=profile?`${profile.name||profile.id}: ${profile.description||"Sem descrição"} · ${profileLabel(profile)}${id===defaultProfile?" · perfil padrão do jogo":""}.`:"Nenhum perfil disponível para este jogo.";}
+async function loadProducts(){
+  const game=$("contract-game").value,field=$("contract-product-field"),select=$("contract-product");
+  products=[];defaultProduct="";select.replaceChildren();
+  if(!game){field.hidden=true;select.disabled=true;select.append(option("","Selecione o jogo primeiro"));return;}
+  try{
+    const data=await app.request(`/api/catalog/workspace-products?game=${encodeURIComponent(game)}`);
+    products=Array.isArray(data.products)?data.products:[];defaultProduct=String(data.default_product_id||"");
+    if(!products.length){field.hidden=true;select.disabled=true;select.append(option("","Produto padrão do jogo"));return;}
+    select.append(...products.map(product=>option(product.id,product.label||product.id)));
+    select.value=defaultProduct||products[0].id;select.disabled=false;field.hidden=false;
+  }catch(error){field.hidden=true;select.disabled=true;select.append(option("","Falha ao carregar tipos"));app.setNotice("contract-result",error.message,"error");}
+}
+async function loadGameOptions(){await Promise.all([loadProfiles(),loadProducts()]);}
 async function loadProfiles(){
   const game=$("contract-game").value,select=$("contract-profile");select.replaceChildren();profiles=[];defaultProfile="";
   if(!game){select.append(option("","Selecione o jogo primeiro"));select.disabled=true;renderProfile();return;}
@@ -22,13 +35,13 @@ async function loadProfiles(){
 async function createContract(){
   const form=$("contract-create-form");if(!form.reportValidity())return;if(!(await verifyCustomer()))return;
   const button=$("contract-create-button");button.disabled=true;app.setNotice("contract-result","Criando contrato…");
-  try{const payload={customer_code:$("contract-customer-code").value.trim().toUpperCase(),game_id:$("contract-game").value,resource_profile_id:$("contract-profile").value,instance_limit:Number($("contract-limit").value||1),ends_at:$("contract-ends").value.trim()};const data=await app.request("/api/admin/customer/contracts",{method:"POST",body:JSON.stringify(payload)});app.setNotice("contract-result",`Contrato ${data.id} criado com sucesso.\nCliente: ${data.customer_code}\nJogo: ${data.game_id}\nPerfil: ${data.resource_profile_id}\nStatus: ${data.status}\nLimite de instâncias: ${data.instance_limit}`,"success");}
+  try{const payload={customer_code:$("contract-customer-code").value.trim().toUpperCase(),game_id:$("contract-game").value,resource_profile_id:$("contract-profile").value,instance_limit:Number($("contract-limit").value||1),ends_at:$("contract-ends").value.trim()};if(!$("contract-product").disabled&&$("contract-product").value)payload.product_variant=$("contract-product").value;const data=await app.request("/api/admin/customer/contracts",{method:"POST",body:JSON.stringify(payload)});const productLabel=products.find(item=>item.id===data.product_variant)?.label||data.product_variant||"Padrão do jogo";app.setNotice("contract-result",`Contrato ${data.id} criado com sucesso.\nCliente: ${data.customer_code}\nJogo: ${data.game_id}\nTipo: ${productLabel}\nPerfil: ${data.resource_profile_id}\nStatus: ${data.status}\nLimite de instâncias: ${data.instance_limit}`,"success");}
   catch(error){app.setNotice("contract-result",error.message,"error");}
   finally{button.disabled=false;}
 }
 async function init(){
   await app.loadShell("customer-contract-create.html");await loadGames();const preset=(new URLSearchParams(location.search).get("customer_code")||"").trim().toUpperCase();if(preset){$("contract-customer-code").value=preset;await verifyCustomer();}
-  $("contract-customer-code").addEventListener("blur",verifyCustomer);$("contract-game").addEventListener("change",loadProfiles);$("contract-profile").addEventListener("change",renderProfile);$("contract-create-button").addEventListener("click",createContract);
+  $("contract-customer-code").addEventListener("blur",verifyCustomer);$("contract-game").addEventListener("change",loadGameOptions);$("contract-profile").addEventListener("change",renderProfile);$("contract-create-button").addEventListener("click",createContract);
 }
 document.addEventListener("DOMContentLoaded",()=>init().catch(error=>app.setNotice("contract-result",error.message,"error")));
 })();
