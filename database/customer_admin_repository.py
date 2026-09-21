@@ -153,6 +153,8 @@ class CustomerAdminRepository:
                 metadata = {}
             item["resource_profile_id"] = metadata.get("resource_profile_id")
             item["resource_profile_source"] = metadata.get("resource_profile_source")
+            item["product_variant"] = metadata.get("product_variant") or metadata.get("content_mode")
+            item["content_mode"] = metadata.get("content_mode") or metadata.get("product_variant")
             normalized_contracts.append(item)
         return {
             "customer": dict(customer),
