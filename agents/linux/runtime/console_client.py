@@ -19,6 +19,8 @@ if str(COMMON) not in sys.path:
     sys.path.insert(0, str(COMMON))
 
 import instance_runtime
+from source_rcon import SourceRconError, execute as execute_source_rcon
+from minecraft_rcon_secret import MinecraftRconSecretError, read_password
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 RESULT_DIR = STATE_DIR / "console-results"
@@ -81,17 +83,96 @@ def _tmux_transport(console: dict[str, Any], command: str) -> list[str]:
     return _tail(console.get("output_file"))
 
 
+def _resolved_console(record: dict[str, Any]) -> dict[str, Any]:
+    console = record.get("console") if isinstance(record.get("console"), dict) else {}
+    if bool(console.get("supported")):
+        return console
+
+    game_id = str(record.get("game_id") or "").strip().lower()
+    environment_id = str(record.get("environment_id") or "").strip().lower()
+    rcon = (record.get("ports") or {}).get("rcon") or {}
+
+    # Backward compatibility for already-materialized Minecraft Java
+    # instances created before console metadata was added to the profile.
+    if (
+        game_id == "minecraft"
+        and environment_id.startswith("minecraft.java.")
+        and rcon.get("port")
+    ):
+        return {
+            "supported": True,
+            "transport": "minecraft-rcon",
+            "timeout_seconds": 5,
+        }
+
+    return console
+
+
+def _minecraft_rcon_transport(
+    record: dict[str, Any],
+    console: dict[str, Any],
+    command: str,
+) -> list[str]:
+    game_id = str(record.get("game_id") or "").strip().lower()
+    environment_id = str(record.get("environment_id") or "").strip().lower()
+
+    if game_id != "minecraft" or not environment_id.startswith("minecraft.java."):
+        raise RuntimeError("minecraft RCON transport requires Minecraft Java")
+
+    # Hybrid mode keeps runtime secrets root-owned. Commands cross the
+    # privileged helper boundary without exposing the credential.
+    if os.environ.get("CAPIVARA_NATIVE_COMMAND_UNIT_TEMPLATE"):
+        from privileged_native_command import execute as privileged_execute
+
+        result = privileged_execute(
+            record,
+            "console",
+            command=command,
+        )
+        output = result.get("output")
+        return list(output) if isinstance(output, list) else []
+
+    # Dedicated/non-Hybrid Agents may own their local runtime secret store.
+    try:
+        password = read_password(record)
+        rcon = (record.get("ports") or {}).get("rcon") or {}
+        port = int(rcon.get("port") or 0)
+        timeout = max(
+            1.0,
+            min(float(console.get("timeout_seconds") or 5), 30.0),
+        )
+
+        output = execute_source_rcon(
+            "127.0.0.1",
+            port,
+            password,
+            command,
+            timeout=timeout,
+        )
+    except (
+        MinecraftRconSecretError,
+        SourceRconError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise RuntimeError(str(exc)) from exc
+
+    return output.splitlines() if output else []
+
+
 def execute(config: dict[str, Any], instance_id: str, command: str) -> list[str]:
     record = instance_runtime.get_instance(instance_id)
     if not isinstance(record, dict): raise LookupError("instance not found")
     if str(record.get("agent_id") or "") != str(config.get("agent_id") or ""): raise PermissionError("instance belongs to another Agent")
-    console = record.get("console") if isinstance(record.get("console"), dict) else {}
+    console = _resolved_console(record)
     if not bool(console.get("supported")): raise RuntimeError("runtime does not support game console")
     command = str(command or "").strip()
     if not command or len(command) > 512 or "\x00" in command or "\n" in command or "\r" in command: raise ValueError("invalid game console command")
     transport = str(console.get("transport") or "").lower()
     if transport == "exec": return _exec_transport(console, command)
     if transport == "tmux": return _tmux_transport(console, command)
+    if transport == "minecraft-rcon":
+        return _minecraft_rcon_transport(record, console, command)
     if transport == "palworld-rest":
         from palworld_rest_console import execute as execute_palworld_rest
         return execute_palworld_rest(record, command)
@@ -129,7 +210,7 @@ def console_state(config: dict[str, Any]) -> list[dict[str, Any]]:
     result = []
     for item in instance_runtime.list_instances(config):
         record = instance_runtime.get_instance(str(item.get("instance_id") or "")) or {}
-        console = record.get("console") if isinstance(record.get("console"), dict) else {}
+        console = _resolved_console(record)
         if bool(console.get("supported")):
             result.append({"instance_id": record.get("instance_id"), "supported": True, "transport": console.get("transport"), "output": _tail(console.get("output_file"), 200)})
     return result

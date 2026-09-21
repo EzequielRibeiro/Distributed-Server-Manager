@@ -30,7 +30,7 @@ _JAVA_ENVIRONMENTS = (
 
 class MinecraftJavaRuntimeProfile(GameRuntimeProfile):
     game_ids = _JAVA_ENVIRONMENTS
-    profile_version = 5
+    profile_version = 6
 
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         instance_id = require_text(instance.get("instance_id") or instance.get("id"), "instance_id")
@@ -118,6 +118,11 @@ class MinecraftJavaRuntimeProfile(GameRuntimeProfile):
             "profile_version": self.profile_version,
             "content_projection": dict(managed_content),
             "ports": ports,
+            "console": {
+                "supported": True,
+                "transport": "minecraft-rcon",
+                "timeout_seconds": 5,
+            },
             "instance_state_root": state_root,
             "configuration_root": runtime_root,
             "files_root": runtime_root,

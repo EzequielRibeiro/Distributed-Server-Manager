@@ -1,3 +1,10 @@
+## 2.0.108 - 2026-09-21
+
+### Fixed
+- Corrige instalação de plugins Modrinth publicados com `project_type=mod`.
+- A compatibilidade de plugins passa a ser validada pelas versões disponíveis e pelos loaders compatíveis do artefato.
+- Adiciona regressão para o caso LuckPerms em Minecraft 1.21.1 com Bukkit/Paper/Spigot.
+
 # DSM CHANGELOG
 ## v2.0.36 — 2026-09-10
 

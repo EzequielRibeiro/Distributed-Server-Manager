@@ -33,6 +33,7 @@ install -d -m 0700 -o "${DSM_USER}" -g "${DSM_GROUP}" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/privileged-materialization" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/privileged-firewall" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/privileged-backup-restore" \
+  "${DSM_ROOT}/runtime/hybrid-agent-state/privileged-native-command" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/backups" \
   "${DSM_ROOT}/runtime/hybrid-agent-state/backup-results"
 
@@ -42,10 +43,12 @@ materializer_template="${DSM_ROOT}/systemd/dsm-hybrid-agent-materialize@.service
 files_access_template="${DSM_ROOT}/systemd/dsm-hybrid-agent-files-access@.service.in"
 backup_restore_template="${DSM_ROOT}/systemd/dsm-hybrid-agent-backup-restore@.service.in"
 firewall_template="${DSM_ROOT}/systemd/dsm-hybrid-agent-firewall@.service.in"
+native_command_template="${DSM_ROOT}/systemd/dsm-hybrid-agent-native-command@.service.in"
 [[ -f "${materializer_template}" ]] || { echo "[ERRO] template ausente: ${materializer_template}" >&2; exit 1; }
 [[ -f "${files_access_template}" ]] || { echo "[ERRO] template ausente: ${files_access_template}" >&2; exit 1; }
 [[ -f "${backup_restore_template}" ]] || { echo "[ERRO] template ausente: ${backup_restore_template}" >&2; exit 1; }
 [[ -f "${firewall_template}" ]] || { echo "[ERRO] template ausente: ${firewall_template}" >&2; exit 1; }
+[[ -f "${native_command_template}" ]] || { echo "[ERRO] template ausente: ${native_command_template}" >&2; exit 1; }
 
 sed \
   -e "s|@DSM_ROOT@|${DSM_ROOT}|g" \
@@ -69,12 +72,24 @@ sed \
   "${firewall_template}" > /etc/systemd/system/dsm-hybrid-agent-firewall@.service
 chmod 0644 /etc/systemd/system/dsm-hybrid-agent-firewall@.service
 
+sed \
+  -e "s|@DSM_ROOT@|${DSM_ROOT}|g" \
+  -e "s|@DSM_USER@|${DSM_USER}|g" \
+  "${native_command_template}" > /etc/systemd/system/dsm-hybrid-agent-native-command@.service
+chmod 0644 /etc/systemd/system/dsm-hybrid-agent-native-command@.service
+
 install -d -m 0755 /etc/systemd/system/dsm-dashboard-worker.service.d
 cat > /etc/systemd/system/dsm-dashboard-worker.service.d/40-hybrid-backup-restore.conf <<EOF
 [Service]
 Environment=CAPIVARA_BACKUP_RESTORE_UNIT_TEMPLATE=dsm-hybrid-agent-backup-restore@{command_id}.service
 EOF
 chmod 0644 /etc/systemd/system/dsm-dashboard-worker.service.d/40-hybrid-backup-restore.conf
+
+cat > /etc/systemd/system/dsm-dashboard-worker.service.d/45-hybrid-native-command.conf <<EOF
+[Service]
+Environment=CAPIVARA_NATIVE_COMMAND_UNIT_TEMPLATE=dsm-hybrid-agent-native-command@{command_id}.service
+EOF
+chmod 0644 /etc/systemd/system/dsm-dashboard-worker.service.d/45-hybrid-native-command.conf
 
 if command -v pkaction >/dev/null 2>&1 || [[ -d /etc/polkit-1/rules.d ]]; then
   install -d -m 0755 /etc/polkit-1/rules.d
@@ -95,6 +110,7 @@ polkit.addRule(function(action, subject) {
             unit.indexOf("dsm-hybrid-agent-materialize@") === 0 ||
             unit.indexOf("dsm-hybrid-agent-files-access@") === 0 ||
             unit.indexOf("dsm-hybrid-agent-backup-restore@") === 0 ||
+            unit.indexOf("dsm-hybrid-agent-native-command@") === 0 ||
             instanceUnit.test(unit)
         )) {
             return polkit.Result.YES;

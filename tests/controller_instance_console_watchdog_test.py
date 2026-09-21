@@ -92,6 +92,33 @@ class InstanceConsoleWatchdogTest(unittest.TestCase):
                     source,
                 )
 
+    def test_unchanged_snapshot_preserves_console_dom_and_text_selection(self):
+        for surface, source in self.sources.items():
+            with self.subTest(surface=surface):
+                self.assertIn("lastConsoleRenderSignature", source)
+                render = self.function_body(source, "renderConsolePayload")
+                self.assertIn(
+                    "signature===lastConsoleRenderSignature",
+                    render,
+                )
+                self.assertIn(
+                    "consoleSelectionActive(output)",
+                    render,
+                )
+                selection = self.function_body(
+                    source,
+                    "consoleSelectionActive",
+                )
+                self.assertIn("selection.isCollapsed", selection)
+                self.assertIn("range.commonAncestorContainer", selection)
+
+    def test_minecraft_legacy_format_codes_are_not_rendered_literally(self):
+        for surface, source in self.sources.items():
+            with self.subTest(surface=surface):
+                sanitizer = self.function_body(source, "stripAnsiControl")
+                self.assertIn("§[0-9A-FK-OR]", sanitizer)
+
+
     def test_successful_lifecycle_request_arms_watchdog_on_both_surfaces(self):
         for surface, source in self.sources.items():
             with self.subTest(surface=surface):

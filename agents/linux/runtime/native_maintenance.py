@@ -56,6 +56,21 @@ def broadcast(
 
     environment_id = str(instance.get("environment_id") or "").strip().lower()
     if game == "minecraft" and environment_id.startswith("minecraft.java."):
+        if __import__("os").environ.get("CAPIVARA_NATIVE_COMMAND_UNIT_TEMPLATE"):
+            from privileged_native_command import execute as privileged_execute
+            result = privileged_execute(
+                instance,
+                "broadcast",
+                message=message,
+            )
+            return {
+                "game_id": game,
+                "transport": "minecraft-rcon",
+                "operation": "broadcast",
+                "priority": str(priority),
+                "output": list(result.get("output") or []),
+            }
+
         try:
             password = read_password(instance)
             rcon = instance.get("ports", {}).get("rcon") or {}
@@ -106,6 +121,19 @@ def save(instance: dict[str, Any]) -> dict[str, Any]:
 
     environment_id = str(instance.get("environment_id") or "").strip().lower()
     if game == "minecraft" and environment_id.startswith("minecraft.java."):
+        if __import__("os").environ.get("CAPIVARA_NATIVE_COMMAND_UNIT_TEMPLATE"):
+            from privileged_native_command import execute as privileged_execute
+            result = privileged_execute(
+                instance,
+                "save",
+            )
+            return {
+                "game_id": game,
+                "transport": "minecraft-rcon",
+                "operation": "save",
+                "output": list(result.get("output") or []),
+            }
+
         try:
             password = read_password(instance)
             rcon = instance.get("ports", {}).get("rcon") or {}
