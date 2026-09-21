@@ -19,7 +19,7 @@ def _absolute_list(value:Any,label:str)->list[str]:
  if value is None:return []
  if not isinstance(value,list) or len(value)>128:raise RuntimeSpecError(f"invalid {label}")
  return [_absolute(x,label) for x in value]
-def _path_pairs(value:Any,label:str,*,allow_optional:bool=False)->list[dict[str,Any]]:
+def _path_pairs(value:Any,label:str,*,allow_optional:bool=False,allow_overlay:bool=False)->list[dict[str,Any]]:
  if value is None:return []
  if not isinstance(value,list) or len(value)>128:raise RuntimeSpecError(f"invalid {label}")
  out=[]
@@ -29,6 +29,9 @@ def _path_pairs(value:Any,label:str,*,allow_optional:bool=False)->list[dict[str,
   if "optional" in item:
    if not allow_optional or not isinstance(item.get("optional"),bool):raise RuntimeSpecError(f"invalid {label} optional")
    normalized["optional"]=item["optional"]
+  if "overlay" in item:
+   if not allow_overlay or not isinstance(item.get("overlay"),bool):raise RuntimeSpecError(f"invalid {label} overlay")
+   normalized["overlay"]=item["overlay"]
   out.append(normalized)
  return out
 def _arguments(value:Any,label:str)->list[str]:
@@ -101,7 +104,7 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
   result["files_root"]=_absolute(result.get("instance_state_root") or result.get("configuration_root") or result["working_directory"],"files_root")
  result["writable_directories"]=_absolute_list(result.get("writable_directories"),"writable_directories")
  result["seed_files"]=_path_pairs(result.get("seed_files"),"seed_files")
- result["seed_directories"]=_path_pairs(result.get("seed_directories"),"seed_directories",allow_optional=True)
+ result["seed_directories"]=_path_pairs(result.get("seed_directories"),"seed_directories",allow_optional=True,allow_overlay=True)
  result["working_file_copies"]=_path_pairs(result.get("working_file_copies"),"working_file_copies")
  result["bind_paths"]=_path_pairs(result.get("bind_paths"),"bind_paths")
  result["runtime_bind_paths"]=_runtime_bind_paths(result.get("runtime_bind_paths"),runtime_directory)

@@ -247,6 +247,34 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
             self.assertEqual((target / "config.txt").stat().st_mode & 0o777, 0o600)
 
 
+    def test_private_seed_overlay_repairs_missing_provider_files_without_removing_instance_data(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            target = root / "target"
+            source.mkdir()
+            target.mkdir()
+            (source / "server.jar").write_bytes(b"provider-v1")
+            (source / "libraries").mkdir()
+            (source / "libraries" / "runtime.jar").write_bytes(b"library-v1")
+            (target / "META-INF").mkdir()
+            (target / "META-INF" / "MANIFEST.MF").write_text("stale extracted jar", encoding="utf-8")
+            (target / "world").mkdir()
+            (target / "world" / "level.dat").write_bytes(b"customer-world")
+            account = type("Account", (), {"pw_uid": os.getuid(), "pw_gid": os.getgid()})()
+
+            materialize_instance._seed_directory(source, target, account, overlay=True)
+
+            self.assertEqual((target / "server.jar").read_bytes(), b"provider-v1")
+            self.assertEqual((target / "libraries" / "runtime.jar").read_bytes(), b"library-v1")
+            self.assertEqual((target / "world" / "level.dat").read_bytes(), b"customer-world")
+            self.assertTrue((target / "META-INF" / "MANIFEST.MF").is_file())
+
+            (source / "server.jar").write_bytes(b"provider-v2")
+            materialize_instance._seed_directory(source, target, account, overlay=True)
+            self.assertEqual((target / "server.jar").read_bytes(), b"provider-v2")
+            self.assertEqual((target / "world" / "level.dat").read_bytes(), b"customer-world")
+
     def test_agent_control_state_is_private_but_traversable_from_instance_root(self):
         storage_root = self.root / "instances-control"
         instance_root = storage_root / "instance-control"

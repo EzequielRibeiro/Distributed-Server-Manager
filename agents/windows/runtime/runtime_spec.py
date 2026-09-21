@@ -13,13 +13,17 @@ def _absolute(v,label):
  t=str(v or "").strip()
  if not t or not os.path.isabs(t) or "\n" in t or "\r" in t:raise RuntimeSpecError(f"invalid {label}")
  return str(Path(t))
-def _path_pairs(value,label):
+def _path_pairs(value,label,*,allow_overlay=False):
  if value is None:return []
  if not isinstance(value,list) or len(value)>128:raise RuntimeSpecError(f"invalid {label}")
  out=[]
  for item in value:
   if not isinstance(item,dict):raise RuntimeSpecError(f"invalid {label} entry")
-  out.append({"source":_absolute(item.get("source"),f"{label} source"),"target":_absolute(item.get("target"),f"{label} target")})
+  normalized={"source":_absolute(item.get("source"),f"{label} source"),"target":_absolute(item.get("target"),f"{label} target")}
+  if "overlay" in item:
+   if not allow_overlay or not isinstance(item.get("overlay"),bool):raise RuntimeSpecError(f"invalid {label} overlay")
+   normalized["overlay"]=item["overlay"]
+  out.append(normalized)
  return out
 def _absolute_list(value,label):
  if value is None:return []
@@ -43,7 +47,7 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  if r.get("files_root") is None:
   r["files_root"]=_absolute(r.get("instance_state_root") or r.get("configuration_root") or r["working_directory"],"files_root")
  r["writable_directories"]=_absolute_list(r.get("writable_directories"),"writable directory")
- r["seed_files"]=_path_pairs(r.get("seed_files"),"seed_files");r["seed_directories"]=_path_pairs(r.get("seed_directories"),"seed_directories")
+ r["seed_files"]=_path_pairs(r.get("seed_files"),"seed_files");r["seed_directories"]=_path_pairs(r.get("seed_directories"),"seed_directories",allow_overlay=True)
  args=r.get("arguments",[])
  if not isinstance(args,list) or len(args)>128:raise RuntimeSpecError("invalid arguments")
  out=[]
