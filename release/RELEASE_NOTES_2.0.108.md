@@ -10,6 +10,11 @@ Modrinth plugin resolution compatibility fix release.
 - Restores managed installation of plugins such as LuckPerms on compatible Bukkit/Paper/Spigot runtimes.
 - Keeps incompatible mod projects rejected when no plugin-compatible version exists.
 
+- Adds privileged Minecraft Java RCON console execution for Hybrid Agents without exposing RCON credentials to the unprivileged worker.
+- Restores `list`, `help` and other Minecraft console commands through the customer/controller workspace.
+- Preserves console text selection during unchanged background refreshes instead of rebuilding the DOM every safety poll.
+- Removes literal Minecraft legacy `§` formatting codes from displayed console text.
+
 ## Validation
 
 - PR #756 validated LuckPerms resolution against Modrinth for Minecraft 1.21.1.
