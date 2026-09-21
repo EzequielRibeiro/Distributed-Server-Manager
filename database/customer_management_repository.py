@@ -417,6 +417,8 @@ class CustomerManagementRepository:
         ends_at: str | None,
         resource_profile_id: str,
         resource_profile_source: str,
+        product_variant: str | None = None,
+        entitlements: dict[str, bool] | None = None,
     ) -> dict[str, Any]:
         return self.admin.create_contract(
             customer_id=self._pk(customer_code),
@@ -425,6 +427,8 @@ class CustomerManagementRepository:
             ends_at=ends_at,
             resource_profile_id=resource_profile_id,
             resource_profile_source=resource_profile_source,
+            product_variant=product_variant,
+            entitlements=entitlements,
         )
 
 
