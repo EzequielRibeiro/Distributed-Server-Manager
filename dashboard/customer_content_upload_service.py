@@ -46,6 +46,10 @@ class CustomerContentUploadService:
   if str(item.get("status") or "")!="staging":raise ValueError("content upload is not pending")
   return self.transfers.stage_from_controller(str(item["transfer_id"]),source,content_length)
  def status(self,user,transfer_id):return self._transfer(user,transfer_id)
+ def cancel(self,user,transfer_id):
+  item=self._transfer(user,transfer_id)
+  if str(item.get("status") or "").lower()=="completed":raise ValueError("content upload is already completed")
+  return self.transfers.cancel(str(item["transfer_id"]))
  def _minecraft_mrpack_bundle(self,context,item,content_id,relative,metadata):
   if str(context.get("game_id") or "").strip().lower()!="minecraft":raise ValueError(".mrpack upload is available only for Minecraft")
   runtime_id=str(context.get("runtime_id") or "").strip();game_version=str(context.get("game_version") or "").strip()

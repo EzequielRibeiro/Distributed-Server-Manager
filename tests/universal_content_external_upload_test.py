@@ -24,6 +24,8 @@ class _Transfers:
  def controller_artifact(self,tid):
   if not self.artifact_path:raise FileNotFoundError(tid)
   return Path(self.artifact_path),dict(self.item)
+ def cancel(self,tid):
+  self.item["status"]="cancelled";return dict(self.item)
 
 class _Content:
  def __init__(self):self.puts=[];self.bundles=[]
@@ -43,6 +45,9 @@ class ExternalUploadTest(unittest.TestCase):
   with self.assertRaises(PermissionError):service(p).create({"username":"alice"},"i1","mod.zip")
  def test_stage_streams_through_artifact_repository(self):
   s=service();s.stage({"username":"alice"},"transfer-1",io.BytesIO(b"abc"),3);self.assertEqual(s.transfers.staged[-1],("transfer-1",3,b"abc"))
+ def test_cancel_marks_transfer_cancelled(self):
+  s=service(status="queued");item=s.cancel({"username":"alice"},"transfer-1");self.assertEqual(item["status"],"cancelled")
+
  def test_finalize_requires_agent_completion(self):
   with self.assertRaises(ValueError):service(status="staging").finalize({"username":"alice"},"transfer-1",{"content_id":"m1","content_type":"mod"})
  def test_finalize_injects_local_provider_and_safe_provenance(self):

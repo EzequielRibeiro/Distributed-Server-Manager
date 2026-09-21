@@ -124,6 +124,7 @@ class ArtifactTransferRepository:
   if not isinstance(report,dict) or not report.get("transfer_id"):return None
   item=self.get(str(report["transfer_id"]))
   if str(item["agent_id"])!=str(agent_id):raise PermissionError("artifact transfer belongs to another Agent")
+  if str(item.get("status") or "").lower() in FINAL:return item
   status=str(report.get("status") or "").lower()
   if status not in {"completed","failed"}:raise ValueError("invalid transfer result status")
   destination_ref=item.get("destination_ref");error=str(report.get("error") or "")[:1024] or None
@@ -133,6 +134,24 @@ class ArtifactTransferRepository:
   ph=self.dialect.placeholder
   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status={ph},transferred_bytes={ph},destination_ref={ph},last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(status,int(report.get("transferred_bytes") or item.get("size_bytes") or 0),destination_ref,error,item["transfer_id"]))
   return self.get(item["transfer_id"])
+ def cancel(self,transfer_id):
+  item=self.get(transfer_id)
+  status=str(item.get("status") or "").strip().lower()
+  if status=="cancelled":return item
+  if status in {"completed","failed","expired"}:raise ValueError("artifact transfer is already final")
+  ph=self.dialect.placeholder
+  with self.session(transaction=True) as s:
+   s.execute(f"UPDATE artifact_transfers SET status='cancelled',last_error=NULL,completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph} AND status NOT IN ('completed','failed','cancelled','expired')",(transfer_id,))
+  try:
+   path=self._path(transfer_id,item.get("filename"))
+   path.unlink(missing_ok=True)
+   path.with_suffix(path.suffix+".part").unlink(missing_ok=True)
+   try:path.parent.rmdir()
+   except OSError:pass
+  except (OSError,ValueError):
+   pass
+  return self.get(transfer_id)
+
  def cleanup_expired(self):
   now=datetime.now(timezone.utc).isoformat().replace("+00:00","Z");ph=self.dialect.placeholder
   with self.session() as s:rows=s.execute(f"SELECT transfer_id,controller_path FROM artifact_transfers WHERE expires_at IS NOT NULL AND expires_at<{ph} AND status<>'expired'",(now,)).fetchall()
