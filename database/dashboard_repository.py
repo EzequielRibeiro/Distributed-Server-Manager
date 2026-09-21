@@ -95,6 +95,26 @@ class DashboardRepository:
                 metadata = {}
             item["resource_profile_id"] = metadata.get("resource_profile_id")
             item["resource_profile_source"] = metadata.get("resource_profile_source")
+            content_mode = str(
+                metadata.get("content_mode")
+                or metadata.get("product_variant")
+                or "standard"
+            ).strip().lower()
+            item["content_mode"] = content_mode
+            item["product_variant"] = str(
+                metadata.get("product_variant")
+                or content_mode
+            ).strip().lower()
+            raw_entitlements = metadata.get("entitlements")
+            item["entitlements"] = (
+                {
+                    str(key): bool(value)
+                    for key, value in raw_entitlements.items()
+                    if isinstance(key, str)
+                }
+                if isinstance(raw_entitlements, dict)
+                else {}
+            )
             result.append(item)
         return result
 
