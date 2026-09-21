@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import json, os, re
+import json, os, re, sys
 from pathlib import Path
 import subprocess
 from typing import Any
 
+_HERE=Path(__file__).resolve()
+_COMMON_CANDIDATES=(
+    _HERE.parents[2]/"common",
+    _HERE.parents[1]/"common",
+)
+COMMON=next((path for path in _COMMON_CANDIDATES if path.is_dir()),_COMMON_CANDIDATES[0])
+if str(COMMON) not in sys.path:sys.path.insert(0,str(COMMON))
+
 import instance_runtime
+from source_rcon import SourceRconError, execute as execute_source_rcon
+from minecraft_rcon_secret import MinecraftRconSecretError, read_password
 
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"))
 STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"))
@@ -40,15 +50,40 @@ def _snapshot_output(record,console):
   except (OSError,ValueError):candidate=None
   if candidate is not None:return str(console.get("transport") or "configured-output"),_tail(candidate,200)
  return None,[]
+def _resolved_console(record):
+ console=record.get("console") if isinstance(record.get("console"),dict) else {}
+ if bool(console.get("supported")):return console
+ game=str(record.get("game_id") or "").strip().lower()
+ environment_id=str(record.get("environment_id") or "").strip().lower()
+ rcon=(record.get("ports") or {}).get("rcon") or {}
+ if game=="minecraft" and environment_id.startswith("minecraft.java.") and rcon.get("port"):
+  return {"supported":True,"transport":"minecraft-rcon","timeout_seconds":5}
+ return console
+
+def _minecraft_rcon_transport(record,console,command):
+ game=str(record.get("game_id") or "").strip().lower()
+ environment_id=str(record.get("environment_id") or "").strip().lower()
+ if game!="minecraft" or not environment_id.startswith("minecraft.java."):raise RuntimeError("minecraft RCON transport requires Minecraft Java")
+ try:
+  password=read_password(record)
+  rcon=(record.get("ports") or {}).get("rcon") or {}
+  port=int(rcon.get("port") or 0)
+  timeout=max(1.0,min(float(console.get("timeout_seconds") or 5),30.0))
+  output=execute_source_rcon("127.0.0.1",port,password,command,timeout=timeout)
+ except (MinecraftRconSecretError,SourceRconError,TypeError,ValueError) as exc:
+  raise RuntimeError(str(exc)) from exc
+ return output.splitlines() if output else []
+
 def execute(config:dict[str,Any],instance_id:str,command:str)->list[str]:
  record=instance_runtime.get_instance(instance_id)
  if not isinstance(record,dict):raise LookupError("instance not found")
  if str(record.get("agent_id") or "")!=str(config.get("agent_id") or ""):raise PermissionError("instance belongs to another Agent")
- console=record.get("console") if isinstance(record.get("console"),dict) else {}
+ console=_resolved_console(record)
  if not bool(console.get("supported")):raise RuntimeError("runtime does not support game console")
  command=str(command or "").strip()
  if not command or len(command)>512 or any(x in command for x in ("\x00","\n","\r")):raise ValueError("invalid game console command")
  transport=str(console.get("transport") or "").lower()
+ if transport=="minecraft-rcon":return _minecraft_rcon_transport(record,console,command)
  if transport!="exec":raise RuntimeError(f"unsupported Windows game console transport: {transport or 'none'}")
  template=console.get("command_argv")
  if not isinstance(template,list) or not template or not all(isinstance(x,str) for x in template):raise RuntimeError("console exec transport has no trusted command_argv")
@@ -82,7 +117,7 @@ def clear_result(command_id):
 def console_state(config):
  result=[]
  for item in instance_runtime.list_instances(config):
-  record=instance_runtime.get_instance(str(item.get("instance_id") or "")) or {};console=record.get("console") if isinstance(record.get("console"),dict) else {};transport,output=_snapshot_output(record,console)
+  record=instance_runtime.get_instance(str(item.get("instance_id") or "")) or {};console=_resolved_console(record);transport,output=_snapshot_output(record,console)
   if transport is not None or bool(console.get("supported")):result.append({"instance_id":record.get("instance_id"),"supported":bool(console.get("supported")),"transport":transport or console.get("transport"),"output":output})
  return result
 __all__=["clear_result","console_state","execute","handle_command","read_result"]

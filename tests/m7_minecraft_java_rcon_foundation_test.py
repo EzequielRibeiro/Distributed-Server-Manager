@@ -142,6 +142,15 @@ class MinecraftJavaRconFoundationTest(unittest.TestCase):
                 context,
             )
 
+            self.assertEqual(
+                spec.get("console"),
+                {
+                    "supported": True,
+                    "transport": "minecraft-rcon",
+                    "timeout_seconds": 5,
+                },
+            )
+
             spec["catalog_variables"] = {
                 "PORT_GAME": "25565",
                 "PORT_RCON": "25566",
