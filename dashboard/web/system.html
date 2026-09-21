@@ -34,6 +34,29 @@
       <div id="system-config-list" class="cap-system-list" aria-live="polite"><div class="cap-empty-state">Carregando configurações...</div></div>
     </section>
 
+    <section id="content-providers" class="cap-system-card">
+      <div class="cap-section-heading">
+        <div>
+          <h2>Providers de conteúdo</h2>
+          <p>Credenciais do Controller usadas para pesquisa e instalação em catálogos externos.</p>
+        </div>
+      </div>
+      <div class="cap-provider-card">
+        <div class="cap-provider-head">
+          <div><strong>CurseForge</strong><span>Mods e modpacks do Minecraft</span></div>
+          <span id="curseforge-status" class="cap-system-pill off">Não configurado</span>
+        </div>
+        <label class="cap-provider-label" for="curseforge-key">API key</label>
+        <div class="cap-provider-form">
+          <input id="curseforge-key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Cole a API key do CurseForge">
+          <button id="curseforge-save" type="button">Salvar chave</button>
+          <button id="curseforge-test" type="button">Testar conexão</button>
+          <button id="curseforge-remove" class="danger" type="button">Remover</button>
+        </div>
+        <p id="curseforge-message" class="cap-system-note">A chave salva nunca é exibida novamente pelo Controller.</p>
+      </div>
+    </section>
+
     <section id="api-security" class="cap-system-card">
       <div class="cap-section-heading"><div><h2>API e Segurança</h2><p>Credenciais administrativas registradas no Controller.</p></div></div>
       <div id="system-token-list" class="cap-system-list" aria-live="polite"><div class="cap-empty-state">Carregando tokens...</div></div>
