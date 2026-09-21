@@ -70,6 +70,11 @@ def handle_command(config,command):
     try:dest.unlink(missing_ok=True);dest.parent.rmdir()
     except OSError:pass
     raise
+  elif direction=="controller_to_agent" and purpose=="content_upload_cleanup":
+   original=_safe(source);dest=quarantine_destination(iid,original,str(command.get("filename") or ""));dest.unlink(missing_ok=True)
+   try:dest.parent.rmdir()
+   except OSError:pass
+   transferred=0
   else:raise ValueError("unsupported artifact transfer purpose")
   result={"transfer_id":tid,"instance_id":iid,"status":"completed","transferred_bytes":transferred,**extra}
   if destination_ref and "destination_ref" not in result:result["destination_ref"]=destination_ref
