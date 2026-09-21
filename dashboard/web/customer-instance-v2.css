@@ -17,3 +17,5 @@
 .terminal .ansi-fg-94{color:#8eb7ff}.terminal .ansi-fg-95{color:#d7a8ff}.terminal .ansi-fg-96{color:#80e7ef}.terminal .ansi-fg-97{color:#ffffff}
 
 .settings-source-heading{grid-column:1/-1;padding:12px 0 2px}.settings-source-heading strong,.settings-source-heading small{display:block}.settings-source-heading small{margin-top:4px}
+
+.content-upload-progress{display:grid;gap:8px;margin-top:12px}.content-upload-progress small{color:var(--muted);font-size:12px}.content-upload-progress progress{height:12px}.content-controls #content-upload-button.danger{background:#3d2024;border-color:#63343a;color:#ffc5c8}
