@@ -22,6 +22,7 @@
         <label class="wide">Código do cliente<input id="contract-customer-code" name="customer_code" required placeholder="CLI-000001"></label>
         <div id="contract-customer-summary" class="wide customer-notice"></div>
         <label>Jogo<select id="contract-game" name="game_id" required><option value="">Carregando jogos…</option></select></label>
+        <label id="contract-product-field" hidden>Tipo do servidor<select id="contract-product" name="product_variant" disabled><option value="">Selecione o jogo primeiro</option></select><span id="contract-product-help">O tipo define quais runtimes e conteúdos o contrato permite.</span></label>
         <label>Perfil do jogo<select id="contract-profile" name="resource_profile_id" required disabled><option value="">Selecione o jogo primeiro</option></select></label>
         <label>Limite de instâncias<input id="contract-limit" name="instance_limit" type="number" min="1" value="1" required></label>
         <label>Validade<input id="contract-ends" name="ends_at" type="datetime-local"><span>Deixe em branco para contrato sem vencimento.</span></label>
@@ -34,6 +35,6 @@
   <footer class="cap-home-footer">Capivara Distributed Server Manager · Control Plane</footer>
 </main>
 <script src="/customer-management-shell.js?v=1"></script>
-<script src="/customer-contract-create.js?v=1"></script>
+<script src="/customer-contract-create.js?v=2"></script>
 </body>
 </html>
