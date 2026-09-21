@@ -48,6 +48,22 @@ def _queue_agent_provisioning(*,root,repository,runtime_def,instance_id,agent_id
 
 def install_customer_instance_creation(legacy)->None:
  previous_post=legacy.DashboardHandler.do_POST
+ def _contract_for_runtime(user,game,runtime_id,contract_id,database_path):
+  contracts=legacy.customer_contracts(user,database_path=database_path)
+  candidates=[item for item in contracts if str(item.get("game_id") or "").strip().lower()==game and bool(item.get("available"))]
+  if contract_id:
+   contract=next((item for item in candidates if str(item.get("id") or "")==contract_id),None)
+   if contract is None:raise PermissionError("requested contract is unavailable for this customer")
+  else:
+   contract=candidates[0] if candidates else None
+   if contract is None:raise PermissionError("no contracted instance slot is available for this game")
+  allowed={str(value).strip() for value in contract.get("allowed_runtime_ids") or [] if str(value).strip()}
+  if runtime_id not in allowed:
+   mode=str(contract.get("content_mode") or contract.get("product_variant") or "standard").strip().lower()
+   if game=="minecraft" and mode=="standard":
+    raise PermissionError("Este contrato é Minecraft Padrão. Selecione Vanilla ou faça upgrade para Minecraft Modificado.")
+   raise PermissionError("requested runtime is not allowed by the contract")
+  return contract
  def create_customer_instance(user,payload,root=None,database_path=None):
   root=Path(root or legacy.DSM_ROOT);database_path=database_path or legacy.DATABASE_FILE
   if not user or user.get("role")!="customer" or not user.get("scope_id"):raise PermissionError("only a scoped customer can create an instance")
@@ -64,11 +80,13 @@ def install_customer_instance_creation(legacy)->None:
   if runtime_edition and edition.strip().lower()!=runtime_edition:raise ValueError("edition does not match the requested runtime")
   if game=="minecraft" and runtime_edition=="java" and payload.get("minecraft_eula_accepted") is not True:raise ValueError("Minecraft Java EULA acceptance is required")
   variant=runtime_def.get("variant") or runtime_def.get("loader") or runtime_def.get("edition");repository=legacy.dashboard_repository(database_path);customer_id=resolve_customer_reference(user["scope_id"],public_only=isinstance(user["scope_id"],str));source_vault_id=str(payload.get("source_vault_id") or "").strip() or None;clones=InstanceBackupCloneRepository(repository.backend,root)
+  contract_id=str(payload.get("contract_id","")).strip() or None
+  contract=_contract_for_runtime(user,game,runtime_id,contract_id,database_path);contract_id=str(contract.get("id") or "").strip()
   if source_vault_id:clones.validate_source(source_vault_id,customer_id,game,runtime_id)
   requested_profile_id=str(payload.get("resource_profile_id") or "").strip() or None
   resource_profile_id,_resource_profile,effective_resource_policy=resolve_catalog_resource_policy(root=root,game_id=game,resource_profile_id=requested_profile_id)
-  placement_payload=dict(payload);placement_payload["resources"]=normalize_resource_policy(effective_resource_policy).placement_resources()
-  placement=legacy.resolve_instance_placement(user,placement_payload,repository);contract_id=str(payload.get("contract_id","")).strip() or None;occupied_ports_provider=occupied_ports_provider_for_backend(repository.backend)
+  placement_payload=dict(payload);placement_payload["contract_id"]=contract_id;placement_payload["resources"]=normalize_resource_policy(effective_resource_policy).placement_resources()
+  placement=legacy.resolve_instance_placement(user,placement_payload,repository);occupied_ports_provider=occupied_ports_provider_for_backend(repository.backend)
   require_port_pool_preflight(repository.backend,placement["agent_id"],runtime_def.get("network"))
   plan=repository.create_customer_instance(customer_id=user["scope_id"],username=user["username"],game=game,runtime_id=runtime_id,edition=edition,variant=variant,version=version,build=build,instances_root=root/"instances",contract_id=contract_id,selected_agent_id=placement["agent_id"],network_profile=runtime_def.get("network"),occupied_ports_provider=occupied_ports_provider,resource_profile_id=resource_profile_id)
   try:
