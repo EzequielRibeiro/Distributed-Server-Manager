@@ -121,7 +121,7 @@ def install_customer_content_http(legacy,authenticate):
    user=require_user(self)
    if user is None:return
    try:
-    api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT);results=api.search(user,iid(parsed),one(parsed,"provider"),one(parsed,"content_type"),one(parsed,"q"),one(parsed,"limit","20"));return send(self,200,{"results":results,"count":len(results)})
+    api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT);result=api.search_result(user,iid(parsed),one(parsed,"provider"),one(parsed,"content_type"),one(parsed,"q"),one(parsed,"limit","20"));return send(self,200,result)
    except Exception as exc:return error(self,exc)
   if parsed.path==BUNDLE:
    user=require_user(self)

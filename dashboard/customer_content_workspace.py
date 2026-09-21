@@ -312,6 +312,29 @@ class CustomerContentWorkspaceService:
   try:count=max(1,min(int(limit),50))
   except (TypeError,ValueError):count=20
   return getattr(self,"minecraft_discovery",discover_minecraft_content)(provider,text,game_version,definition,ctype,limit=count)
+ def search_result(self,user,instance_id,provider,content_type,query,limit=20):
+  selected=str(provider or "").strip().lower()
+  if selected!="auto":
+   results=self.search(user,instance_id,selected,content_type,query,limit)
+   return {"results":results,"count":len(results),"provider_used":selected,"fallback":{"automatic":False,"attempts":[{"provider":selected,"status":"success" if results else "empty"}],"upload_recommended":not bool(results)}}
+  context,capabilities,_=self._context_policy_details(user,instance_id,"content.read")
+  if str(context.get("game_id") or "").strip().lower()!="minecraft":raise PermissionError("automatic provider fallback is available only for Minecraft")
+  ctype=str(content_type or "").strip().lower()
+  allowed=[str(value).strip().lower() for value in ((capabilities.get("providers") or {}).get(ctype) or []) if str(value).strip()]
+  chain=[name for name in ("modrinth","curseforge") if name in allowed]
+  if not chain:raise PermissionError("no searchable provider is available for this runtime/content type")
+  attempts=[]
+  for name in chain:
+   try:
+    results=self.search(user,instance_id,name,ctype,query,limit)
+   except (ValueError,PermissionError,LookupError) as exc:
+    attempts.append({"provider":name,"status":"unavailable","message":str(exc)[:300]})
+    continue
+   attempts.append({"provider":name,"status":"success" if results else "empty"})
+   if results:
+    return {"results":results,"count":len(results),"provider_used":name,"fallback":{"automatic":True,"attempts":attempts,"upload_recommended":False,"github_official_supported":True}}
+  return {"results":[],"count":0,"provider_used":None,"fallback":{"automatic":True,"attempts":attempts,"upload_recommended":True,"github_official_supported":True}}
+
  def install(self,user,instance_id,body):
   context,policy=self._context_policy(user,instance_id,"content.install");payload=self._customer_payload(body);payload["instance_id"]=instance_id;payload["desired_state"]="installed";provider=str(payload.get("provider") or (payload.get("artifact") or {}).get("provider") or "").strip().lower()
   if not provider_supports(provider,"install",self.workspace.root):raise PermissionError("content provider install is unavailable")
