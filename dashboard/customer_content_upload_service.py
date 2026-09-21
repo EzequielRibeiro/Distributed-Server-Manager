@@ -120,7 +120,7 @@ class CustomerContentUploadService:
   unknown=sorted(set(body)-_ALLOWED_FIELDS-{"instance_id","transfer_id","action"})
   if unknown:raise ValueError("unsupported content fields: "+", ".join(unknown))
   content_id=str(body.get("content_id") or "").strip()
-  if not content_id or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-" for c in content_id):raise ValueError("invalid content_id")
+  if not content_id or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-" for c in content_id):raise ValueError("Identificador inválido. Use apenas letras, números, ponto, sublinhado, dois-pontos ou hífen; a interface converte nomes amigáveis para um ID seguro.")
   ctype=str(body.get("content_type") or "other").strip().lower()
   if ctype=="plugin" and not effective.plugins_allowed:raise PermissionError("plugins are not allowed by this contract")
   if ctype=="modpack" and not effective.modpacks_allowed:raise PermissionError("modpacks are not allowed by this contract")
