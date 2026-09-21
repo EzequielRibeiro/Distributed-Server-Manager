@@ -17,6 +17,9 @@ from core.minecraft_content_resolver import _secret_file
 from dashboard.provider_credentials_http import (
     dispatch_curseforge_provider_get,
     dispatch_curseforge_provider_post,
+    dispatch_github_provider_post,
+    dispatch_modrinth_provider_post,
+    dispatch_provider_overview_get,
 )
 
 
@@ -88,12 +91,68 @@ class CurseForgeControllerSettingsTest(unittest.TestCase):
         self.assertFalse(payload["configured"])
         self.assertFalse((self.root / "config" / "providers" / "curseforge.key").exists())
 
+    def test_provider_overview_reports_credential_models_without_secrets(self):
+        steam = self.root / "config" / "providers" / "steam.conf"
+        steam.parent.mkdir(parents=True, exist_ok=True)
+        steam.write_text('DSM_STEAM_USER="alice"\n', encoding="utf-8")
+        status, payload = dispatch_provider_overview_get(user=self.admin, root=self.root)
+        self.assertEqual(200, status)
+        providers = {item["provider"]: item for item in payload["providers"]}
+        self.assertFalse(providers["curseforge"]["configured"])
+        self.assertFalse(providers["github"]["configured"])
+        self.assertEqual("none", providers["modrinth"]["credential_kind"])
+        self.assertEqual("alice", providers["steam"]["steam_user"])
+        self.assertNotIn("token", str(payload).lower())
+
+    def test_github_optional_token_can_be_saved_tested_and_removed_without_echo(self):
+        status, payload = dispatch_github_provider_post(
+            {"action": "save", "token": "github-token-example-123"},
+            user=self.admin,
+            root=self.root,
+        )
+        self.assertEqual(200, status)
+        self.assertTrue(payload["configured"])
+        self.assertNotIn("github-token-example-123", str(payload))
+        token_path = self.root / "config" / "providers" / "github.token"
+        self.assertEqual(0o600, token_path.stat().st_mode & 0o777)
+        status, payload = dispatch_github_provider_post(
+            {"action": "test"},
+            user=self.admin,
+            root=self.root,
+            requester=lambda token: {"resources": {"core": {"remaining": 5000}}} if token else {},
+        )
+        self.assertEqual(200, status)
+        self.assertTrue(payload["ok"])
+        status, payload = dispatch_github_provider_post(
+            {"action": "remove"},
+            user=self.admin,
+            root=self.root,
+        )
+        self.assertEqual(200, status)
+        self.assertFalse(payload["configured"])
+        self.assertFalse(token_path.exists())
+
+    def test_modrinth_connectivity_needs_no_credential(self):
+        status, payload = dispatch_modrinth_provider_post(
+            {"action": "test"},
+            user=self.controller,
+            root=self.root,
+            requester=lambda: {"hits": []},
+        )
+        self.assertEqual(200, status)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("none", payload["credential_kind"])
+
     def test_system_page_exposes_provider_controls_without_secret_value(self):
         html = (ROOT / "dashboard" / "web" / "system.html").read_text(encoding="utf-8")
         script = (ROOT / "dashboard" / "web" / "system.js").read_text(encoding="utf-8")
-        for marker in ("Providers de conteúdo", "curseforge-key", "curseforge-save", "curseforge-test", "curseforge-remove"):
+        for marker in (
+            "Providers de conteúdo", "curseforge-key", "curseforge-save", "curseforge-test", "curseforge-remove",
+            "github-token", "github-save", "github-test", "github-remove", "modrinth-test", "steam-status",
+        ):
             self.assertIn(marker, html)
-        self.assertIn("/api/admin/providers/curseforge", script)
+        for endpoint in ("/api/admin/providers/curseforge", "/api/admin/providers/github", "/api/admin/providers/modrinth"):
+            self.assertIn(endpoint, script)
         self.assertIn('type="password"', html)
 
 
