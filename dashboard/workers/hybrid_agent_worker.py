@@ -392,7 +392,11 @@ def process_hybrid_instance_runtime_cycle(
 ) -> dict[str, Any]:
     """Consume one Controller runtime command using the embedded Hybrid runtime."""
     repository = AgentInstanceRuntimeRepository(backend)
-    command = repository.command_for_agent(agent_id, actions=actions)
+    command = (
+        repository.command_for_agent(agent_id)
+        if actions is None
+        else repository.command_for_agent(agent_id, actions=actions)
+    )
     if not isinstance(command, dict):
         return {"status": "idle"}
 
