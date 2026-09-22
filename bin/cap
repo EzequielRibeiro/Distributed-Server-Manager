@@ -14,6 +14,93 @@ case "${1:-}" in
         ;;
 esac
 
+readonly_update_command(){
+    local action="${1:-}"
+    local update_config="${DSM_ROOT}/update-manager/config.conf"
+    local github_client="${DSM_ROOT}/update-manager/github-client.sh"
+    local semver="${DSM_ROOT}/core/semver.sh"
+    local current_version latest_version release_json comparison history_file
+
+    [[ -r "${update_config}" ]] || { echo "Configuração pública do Update Manager não disponível: ${update_config}" >&2; return 1; }
+    # shellcheck source=/dev/null
+    source "${update_config}"
+
+    case "${action}" in
+        history)
+            history_file="${HISTORY_FILE:-${DSM_ROOT}/update-manager/update-history.log}"
+            if [[ -r "${history_file}" ]]; then
+                cat "${history_file}"
+            elif [[ -e "${history_file}" ]]; then
+                echo "Histórico de atualização existe, mas não é legível pelo usuário atual: ${history_file}" >&2
+                return 1
+            else
+                echo "Nenhum histórico encontrado."
+            fi
+            return 0
+            ;;
+        check)
+            [[ -r "${semver}" ]] || { echo "Helper SemVer não disponível: ${semver}" >&2; return 1; }
+            [[ -r "${github_client}" ]] || { echo "Cliente GitHub não disponível: ${github_client}" >&2; return 1; }
+            # Read-only update discovery must not require private dsm.conf.
+            log_error(){ printf 'Erro: %s\n' "$*" >&2; }
+            # shellcheck source=/dev/null
+            source "${semver}"
+            # shellcheck source=/dev/null
+            source "${github_client}"
+
+            current_version="$(cat "${PROJECT_VERSION_FILE:-${DSM_ROOT}/version}" 2>/dev/null || true)"
+            [[ -n "${current_version}" ]] || { echo "Erro: Arquivo de versão não encontrado" >&2; return 1; }
+
+            release_json="$(github_latest_release)" || return 1
+            latest_version="$(github_release_version "${release_json}")"
+            latest_version="${latest_version#v}"
+
+            is_semver "${current_version}" || { echo "Erro: Versão instalada inválida: ${current_version}" >&2; return 1; }
+            is_semver "${latest_version}" || { echo "Erro: Versão remota inválida: ${latest_version}" >&2; return 1; }
+
+            echo "Consultando novas versões DSM"
+            echo
+            echo "Versão instalada:"
+            echo "${current_version}"
+            echo
+            echo "Última versão:"
+            echo "${latest_version}"
+
+            comparison="$(semver_compare "${latest_version}" "${current_version}")"
+            case "${comparison}" in
+                0)
+                    echo
+                    echo "DSM já está atualizado."
+                    return 0
+                    ;;
+                1)
+                    echo
+                    echo "Nova versão disponível:"
+                    echo "${latest_version}"
+                    return 10
+                    ;;
+                -1)
+                    echo
+                    echo "A versão instalada está à frente da release disponível."
+                    return 0
+                    ;;
+                *)
+                    echo "Erro: Falha comparando versões DSM" >&2
+                    return 1
+                    ;;
+            esac
+            ;;
+        *)
+            return 2
+            ;;
+    esac
+}
+
+if [[ "${1:-}" == "update" && ( "${2:-}" == "check" || "${2:-}" == "history" ) ]]; then
+    readonly_update_command "${2}"
+    exit $?
+fi
+
 BOOTSTRAP="${DSM_ROOT}/core/bootstrap.sh"
 [[ -f "${BOOTSTRAP}" ]] || { echo "Bootstrap não encontrado: ${BOOTSTRAP}" >&2; exit 1; }
 # shellcheck source=/dev/null
