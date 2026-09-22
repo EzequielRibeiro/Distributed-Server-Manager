@@ -68,18 +68,19 @@
     "dayz": {
       "gamedig_type": "dayz",
       "protocol": "dayz",
-      "strategy": "offset",
+      "strategy": "direct_query_role",
       "game_role": "game",
       "query_role": "steam_query",
-      "offset": 24714,
-      "status": "supported",
+      "status": "conditional",
       "checker_type": "valve",
       "port_labels": {
         "game": "Game",
         "game_aux": "Steam",
         "steam_query": "Query Steam",
         "battleye": "BattlEye"
-      }
+      },
+      "gamedig_discovery_offset": 24714,
+      "note": "GameDig's DayZ game-port heuristic uses +24714, while DayZ supports an explicit steamQueryPort and LinuxGSM exposes a direct Valve query-check URL. Capivara therefore checks the reserved steam_query role directly instead of changing the runtime topology to match the heuristic."
     },
     "factorio": {
       "gamedig_type": "factorio",
