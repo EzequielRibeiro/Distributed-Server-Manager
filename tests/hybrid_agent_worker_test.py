@@ -125,6 +125,59 @@ class HybridAgentWorkerTest(unittest.TestCase):
         self.assertEqual(result["failed"], 0)
 
 
+
+    def test_runtime_command_filter_selects_safe_remove_without_consuming_start(self):
+        from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
+
+        repo = AgentInstanceRuntimeRepository(self.backend)
+        with self.backend.transaction() as connection:
+            from alert_repository import AlertSession
+            session = AlertSession(self.backend, connection)
+            try:
+                session.execute(
+                    "INSERT INTO nodes(id,name,status) VALUES (?,?,?)",
+                    ("hybrid-safe-node","hybrid-safe-node","active"),
+                )
+                session.execute(
+                    "INSERT INTO controllers(id,node_id,name,status) VALUES (?,?,?,?)",
+                    ("hybrid-safe-controller","hybrid-safe-node","controller","active"),
+                )
+                session.execute(
+                    "INSERT INTO agents(id,controller_id,node_id,name,status) VALUES (?,?,?,?,?)",
+                    ("hybrid-safe-agent","hybrid-safe-controller","hybrid-safe-node","agent","active"),
+                )
+                session.execute(
+                    "INSERT INTO customers(id,name,status) VALUES (?,?,?)",
+                    (999,"safe-customer","active"),
+                )
+                for iid in ("safe-start","safe-remove"):
+                    session.execute(
+                        "INSERT INTO instances(id,name,game_id,runtime_id,status,node_id,agent_id,customer_id) VALUES (?,?,?,?,?,?,?,?)",
+                        (iid,iid,"minecraft","minecraft.java.vanilla","offline","hybrid-safe-node","hybrid-safe-agent",999),
+                    )
+            finally:
+                session.close()
+
+        repo.enqueue(agent_id="hybrid-safe-agent", instance_id="safe-start", action="start")
+        remove = repo.enqueue(agent_id="hybrid-safe-agent", instance_id="safe-remove", action="remove")
+        selected = repo.command_for_agent("hybrid-safe-agent", actions={"remove"})
+
+        self.assertEqual(selected["command_id"], remove["command_id"])
+        self.assertEqual(selected["action"], "remove")
+
+    def test_heartbeat_services_backup_and_remove_before_port_reconciliation_gate(self):
+        import inspect
+        source = inspect.getsource(heartbeat_cycle)
+        self.assertLess(
+            source.index("preflight_backup = process_hybrid_backup_cycle"),
+            source.index("result = reconcile_local_hybrid_runtime"),
+        )
+        self.assertLess(
+            source.index("preflight_remove = process_hybrid_instance_runtime_cycle"),
+            source.index("result = reconcile_local_hybrid_runtime"),
+        )
+        self.assertIn('actions={"remove"}', source)
+
     def test_hybrid_configuration_cycle_round_trips_state_and_commands(self):
         agent_id = "hybrid-configuration-agent"
         config = {"agent_id": agent_id}
