@@ -62,11 +62,42 @@ def journal_command(limit: int) -> list[str]:
     return command
 
 
-def instance_journal_command(instance_id: str, limit: int) -> list[str]:
+def instance_active_since(instance_id: str) -> str | None:
     instance_id = str(instance_id or "").strip()
     if not INSTANCE_ID_RE.fullmatch(instance_id):
         raise ValueError("invalid_instance_id")
-    return [
+    unit = f"capivara-instance-{instance_id}.service"
+    try:
+        completed = subprocess.run(
+            [
+                "/usr/bin/systemctl",
+                "show",
+                unit,
+                "--property=ActiveEnterTimestamp",
+                "--value",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    value = str(completed.stdout or "").strip()
+    return value or None
+
+
+def instance_journal_command(
+    instance_id: str,
+    limit: int,
+    since: str | None = None,
+) -> list[str]:
+    instance_id = str(instance_id or "").strip()
+    if not INSTANCE_ID_RE.fullmatch(instance_id):
+        raise ValueError("invalid_instance_id")
+    command = [
         JOURNALCTL,
         "--quiet",
         "--no-pager",
@@ -75,9 +106,14 @@ def instance_journal_command(instance_id: str, limit: int) -> list[str]:
         "-n",
         str(clamp_limit(limit)),
         "--show-cursor",
+    ]
+    if since:
+        command.extend(("--since", str(since)))
+    command.extend((
         "-u",
         f"capivara-instance-{instance_id}.service",
-    ]
+    ))
+    return command
 
 
 def instance_follow_command(instance_id: str, after_cursor: str | None = None) -> list[str]:
@@ -153,7 +189,8 @@ def read_controller_logs(limit: int) -> dict[str, object]:
 
 def read_instance_logs(instance_id: str, limit: int) -> dict[str, object]:
     instance_id = str(instance_id or "").strip()
-    command = instance_journal_command(instance_id, limit)
+    since = instance_active_since(instance_id)
+    command = instance_journal_command(instance_id, limit, since)
     return _run_journal(command, source="instance", limit=limit, instance_id=instance_id)
 
 
