@@ -468,6 +468,24 @@
   // Card de contrato disponível
   // =========================================================
 
+  function contractProductLabel(contract) {
+    const game = String(contract?.game_id || "").trim().toLowerCase();
+    const mode = String(
+      contract?.product_variant ||
+      contract?.content_mode ||
+      "standard"
+    ).trim().toLowerCase();
+
+    if (game === "minecraft") {
+      return mode === "modified"
+        ? "Minecraft Modificado"
+        : "Minecraft Padrão";
+    }
+
+    return gameLabel(game);
+  }
+
+
   function contractCard(
     contract,
     slotIndex
@@ -486,6 +504,19 @@
     article.dataset.slot =
       String(
         slotIndex
+      );
+
+    article.dataset.game =
+      String(
+        contract.game_id ||
+        ""
+      );
+
+    article.dataset.product =
+      String(
+        contract.product_variant ||
+        contract.content_mode ||
+        "standard"
       );
 
 
@@ -507,8 +538,8 @@
       );
 
     title.textContent =
-      gameLabel(
-        contract.game_id
+      contractProductLabel(
+        contract
       );
 
 
@@ -518,7 +549,13 @@
       );
 
     detail.textContent =
-      "Você possui uma vaga contratada. Escolha o tipo de servidor antes da criação da instância.";
+      contract.game_id === "minecraft"
+        ? (
+            String(contract.product_variant || contract.content_mode || "standard").toLowerCase() === "modified"
+              ? "Este contrato permite Vanilla e distribuições modificadas compatíveis, incluindo runtimes de mods e plugins."
+              : "Este contrato permite apenas as distribuições incluídas no Minecraft Padrão."
+          )
+        : "Você possui uma vaga contratada. Escolha o tipo de servidor antes da criação da instância.";
 
     const profile =
       (resourceProfiles.get(contract.game_id) || [])
@@ -594,7 +631,9 @@
       "button";
 
     create.textContent =
-      "Criar servidor agora";
+      contract.game_id === "minecraft"
+        ? `Criar ${contractProductLabel(contract)}`
+        : "Criar servidor agora";
 
 
     create.addEventListener(
@@ -1026,8 +1065,8 @@
             }
 
 
-            const contract =
-              contracts.find(
+            const availableContracts =
+              contracts.filter(
                 item =>
                 item.game_id ===
                 game &&
@@ -1035,14 +1074,14 @@
               );
 
             if (
-              contract &&
+              availableContracts.length === 1 &&
               window
               .CapivaraRuntimeSelector
             ) {
               window
                 .CapivaraRuntimeSelector
                 .open(
-                  contract
+                  availableContracts[0]
                 )
                 .catch(
                   error =>
@@ -1054,6 +1093,13 @@
               return;
             }
 
+            if (
+              availableContracts.length > 1
+            ) {
+              message(
+                `Há ${availableContracts.length} contratos disponíveis para ${gameLabel(game)}. Escolha o contrato desejado em Servidores disponíveis.`
+              );
+            }
 
             $("customer-contracts")
               ?.scrollIntoView({
