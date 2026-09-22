@@ -65,7 +65,7 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         return {
             "game": {"port": base, "protocol": "udp"},
             "game_aux": {"port": base + 2, "protocol": "udp"},
-            "steam_query": {"port": base + 3, "protocol": "udp"},
+            "steam_query": {"port": base + 24714, "protocol": "udp"},
         }
 
     def test_registry_resolves_dayz_explicitly(self):
@@ -161,16 +161,16 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         }
         migrated, changed = game_runtime.migrate_runtime_spec(self.config, legacy)
         self.assertTrue(changed)
-        self.assertEqual(migrated["profile_version"], 11)
+        self.assertEqual(migrated["profile_version"], 12)
         self.assertEqual(migrated["profile_migrated_from_version"], 1)
         self.assertEqual(migrated["ports"]["game_aux"]["port"], 24012)
-        self.assertEqual(migrated["ports"]["steam_query"]["port"], 24013)
+        self.assertEqual(migrated["ports"]["steam_query"]["port"], 48724)
         self.assertIn("-port=24010", migrated["arguments"])
         self.assertTrue(migrated["config_path"].endswith("/dayz-one/config/serverDZ.cfg"))
         self.assertEqual(len(migrated["bind_paths"]), 1)
         self.assertTrue(migrated["bind_paths"][0]["source"].endswith("/dayz-one/mpmissions/dayzOffline.chernarusplus"))
 
-    def test_dayz_v3_aliased_query_port_migrates_to_v11_catalog_topology(self):
+    def test_dayz_v3_aliased_query_port_migrates_to_v12_catalog_topology(self):
         install = self.root / "serverfiles"; install.mkdir()
         private = "/var/lib/capivara-instances/dayz-one"
         bad_ports = {
@@ -209,13 +209,13 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         }
         migrated, changed = game_runtime.migrate_runtime_spec(self.config, v3)
         self.assertTrue(changed)
-        self.assertEqual(migrated["profile_version"], 11)
+        self.assertEqual(migrated["profile_version"], 12)
         self.assertEqual(migrated["profile_migrated_from_version"], 3)
         self.assertEqual(migrated["ports"]["game"]["port"], 24010)
         self.assertEqual(migrated["ports"]["game_aux"]["port"], 24012)
-        self.assertEqual(migrated["ports"]["steam_query"]["port"], 24013)
-        self.assertEqual(migrated["environment"]["CAPIVARA_STEAM_QUERY_PORT"], "24013")
-        self.assertEqual(migrated["profile_context"]["ports"]["steam_query"]["port"], 24013)
+        self.assertEqual(migrated["ports"]["steam_query"]["port"], 48724)
+        self.assertEqual(migrated["environment"]["CAPIVARA_STEAM_QUERY_PORT"], "48724")
+        self.assertEqual(migrated["profile_context"]["ports"]["steam_query"]["port"], 48724)
 
     def test_dayz_migration_preserves_already_distinct_query_reservation(self):
         profile = resolve_profile(self.instance)
