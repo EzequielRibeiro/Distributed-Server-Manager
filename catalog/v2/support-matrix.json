@@ -401,8 +401,8 @@
       "game": "minecraft",
       "engine": "java",
       "provider": "http",
-      "version_strategy": "static",
-      "resolver": null,
+      "version_strategy": "dynamic",
+      "resolver": "minecraft_java",
       "os": [
         "linux",
         "windows"
@@ -421,9 +421,6 @@
         "windows"
       ],
       "status": "supported",
-      "minecraft_versions": [
-        "1.21.1"
-      ],
       "java": [
         21
       ],
