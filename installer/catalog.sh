@@ -107,10 +107,13 @@ catalog_configure_resolver()
     FABRIC_META_BASE="$(jq -r '.version.config.api_base // "https://meta.fabricmc.net/v2"' "${FILE}")"
     BEDROCK_DOWNLOAD_PAGE="$(jq -r '.version.config.download_page // "https://www.minecraft.net/en-us/download/server/bedrock"' "${FILE}")"
     BEDROCK_LINUX_BASE="$(jq -r '.version.config.linux_base // "https://www.minecraft.net/bedrockdedicatedserver/bin-linux"' "${FILE}")"
+    MINECRAFT_JAVA_MANIFEST_URL="$(jq -r '.version.config.manifest_url // "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"' "${FILE}")"
+    MINECRAFT_JAVA_DISCOVERY_LIMIT="$(jq -r '.version.config.discovery_limit // 50' "${FILE}")"
     export GAME_ID VARIANT_ID VERSION_REPOSITORY VERSION_ASSET_PATTERN
     export VERSION_GAME_VERSION_ASSET_REGEX VERSION_DISCOVERY_LIMIT
     export PAPERMC_PROJECT PAPERMC_API_BASE FABRIC_META_BASE
     export BEDROCK_DOWNLOAD_PAGE BEDROCK_LINUX_BASE
+    export MINECRAFT_JAVA_MANIFEST_URL MINECRAFT_JAVA_DISCOVERY_LIMIT
 }
 
 catalog_resolve_static()
