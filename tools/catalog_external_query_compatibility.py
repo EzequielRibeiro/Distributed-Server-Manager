@@ -13,7 +13,7 @@ CATALOG = ROOT / "catalog" / "v2"
 COMPAT = CATALOG / "external-query-compatibility.json"
 GAMES = CATALOG / "games"
 
-_ALLOWED_STRATEGIES = {"direct", "direct_explicit", "offset", "fixed_default_query"}
+_ALLOWED_STRATEGIES = {"direct", "direct_explicit", "direct_query_role", "offset", "fixed_default_query"}
 _ALLOWED_STATUS = {"supported", "conditional"}
 
 
@@ -95,6 +95,12 @@ def audit() -> dict[str, Any]:
             findings.append("gamedig_type is required")
         if game_role not in ports:
             findings.append(f"game role is not declared by runtime: {game_role}")
+
+        if strategy == "direct_query_role":
+            if query_role not in ports:
+                findings.append(f"query role is not declared by runtime: {query_role}")
+            if not str(profile.get("checker_type") or "").strip():
+                findings.append("direct_query_role requires checker_type")
 
         if strategy == "offset":
             if query_role not in ports:
