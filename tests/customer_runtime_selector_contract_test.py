@@ -38,6 +38,13 @@ class CustomerRuntimeSelectorContractTest(
             )
         )
 
+        cls.customer_javascript = (
+            ROOT
+            / "dashboard"
+            / "web"
+            / "customer.js"
+        ).read_text(encoding="utf-8")
+
         cls.html_ids = re.findall(
             r'\bid=["\']([^"\']+)["\']',
             cls.html,
@@ -158,6 +165,44 @@ class CustomerRuntimeSelectorContractTest(
                 f"{missing}"
             ),
         )
+
+
+    def test_multiple_contracts_do_not_pick_first_runtime_product_implicitly(
+        self,
+    ):
+        self.assertIn(
+            "const availableContracts =",
+            self.customer_javascript,
+        )
+        self.assertIn(
+            "availableContracts.length === 1",
+            self.customer_javascript,
+        )
+        self.assertNotIn(
+            "const contract =\n              contracts.find",
+            self.customer_javascript,
+        )
+        self.assertIn(
+            "Escolha o contrato correto abaixo.",
+            self.customer_javascript,
+        )
+
+    def test_contract_card_identifies_minecraft_product(
+        self,
+    ):
+        self.assertIn(
+            'return mode === "modified"',
+            self.customer_javascript,
+        )
+        self.assertIn(
+            '"Minecraft Modificado"',
+            self.customer_javascript,
+        )
+        self.assertIn(
+            '"Minecraft Padrão"',
+            self.customer_javascript,
+        )
+
 
 
 if __name__ == "__main__":
