@@ -281,7 +281,7 @@ class CustomerAgentProvisioningHandoffE2E(unittest.TestCase):
         self.assertEqual(request["desired_state"], "stopped")
         self.assertEqual(request["instance"]["game_id"], "dayz")
         self.assertEqual(request["instance"]["runtime_id"], "dayz.stable")
-        self.assertEqual(set(request["ports"]), {"game", "game_aux", "steam_query"})
+        self.assertEqual(set(request["ports"]), {"game", "game_aux", "steam_query", "battleye"})
         self.assertEqual(request["content"]["selection"]["provider"], "steam")
         self.assertEqual(request["configuration"]["catalog_runtime_id"], "dayz.stable")
         self.assertEqual(request["configuration"]["catalog_game_id"], "dayz")
