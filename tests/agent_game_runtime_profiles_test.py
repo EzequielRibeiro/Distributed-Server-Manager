@@ -93,8 +93,8 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         self.assertEqual(spec["seed_directories"], [{"source": str(mission_shared), "target": str(mission_private)}])
         self.assertEqual(spec["bind_paths"], [{"source": str(mission_private), "target": str(mission_shared)}])
         self.assertEqual(spec["environment"]["CAPIVARA_GAME_PORT"], "24010")
-        self.assertEqual(spec["environment"]["CAPIVARA_STEAM_QUERY_PORT"], "24013")
-        self.assertEqual(spec["profile_version"], 11)
+        self.assertEqual(spec["environment"]["CAPIVARA_STEAM_QUERY_PORT"], "48724")
+        self.assertEqual(spec["profile_version"], 12)
         self.assertEqual(spec["ports"], self.ports())
 
     def test_catalog_network_exposure_survives_runtime_spec_build(self):
