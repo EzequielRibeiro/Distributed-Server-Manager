@@ -100,8 +100,10 @@ class CatalogCompletionTest(unittest.TestCase):
             with self.subTest(runtime=runtime_id):
                 self.assertEqual(network.get("allocation"), "block")
                 block_size = network.get("block_size")
+                sparse_offsets = network.get("sparse_offsets", False)
                 self.assertIsInstance(block_size, int)
                 self.assertGreater(block_size, 0)
+                self.assertIsInstance(sparse_offsets, bool)
                 ports = network.get("ports") or []
                 names = [item.get("name") for item in ports]
                 protocol_offsets = [(item.get("protocol"), item.get("offset")) for item in ports]
@@ -110,7 +112,8 @@ class CatalogCompletionTest(unittest.TestCase):
                 for item in ports:
                     self.assertIn(item.get("protocol"), {"tcp", "udp"})
                     self.assertGreaterEqual(item.get("offset"), 0)
-                    self.assertLess(item.get("offset"), block_size)
+                    if not sparse_offsets:
+                        self.assertLess(item.get("offset"), block_size)
                 for operation in network.get("apply") or []:
                     self.assertIn(operation.get("kind"), allowed_apply)
                     if operation.get("kind") == "derived":
