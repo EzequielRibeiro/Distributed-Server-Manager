@@ -17,6 +17,7 @@ from .base import GameRuntimeProfile, ProfileError, port_bindings, require_absol
 _MISSION = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _PROFILE_OWNED_ARGUMENTS = ("-config=", "-port=", "-profiles=")
 _LEGACY_GAME_AUX_OFFSET = 2
+_BATTLEYE_OFFSET = 4
 _STEAM_QUERY_OFFSET = 24714
 
 
@@ -85,6 +86,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
         normalized = port_bindings({"ports": ports})
         game = normalized.get("game")
         game_aux = normalized.get("game_aux")
+        battleye = normalized.get("battleye")
         steam_query = normalized.get("steam_query")
         if not game or not game_aux:
             return upgraded
@@ -96,11 +98,22 @@ class DayZRuntimeProfile(GameRuntimeProfile):
                 raise ProfileError("legacy DayZ port topology cannot be repaired safely")
             return upgraded
 
+        changed_ports = False
+        if battleye is None:
+            battleye_port = game_port + _BATTLEYE_OFFSET
+            if battleye_port > 65535:
+                raise ProfileError("legacy DayZ BattlEye port is outside valid range")
+            ports["battleye"] = {"port": battleye_port, "protocol": "udp"}
+            changed_ports = True
+
         if steam_query is None or int(steam_query["port"]) == aux_port:
             query_port = game_port + _STEAM_QUERY_OFFSET
             if query_port > 65535:
                 raise ProfileError("legacy DayZ steam query port is outside valid range")
             ports["steam_query"] = {"port": query_port, "protocol": "udp"}
+            changed_ports = True
+
+        if changed_ports:
             upgraded["ports"] = ports
         return upgraded
 
