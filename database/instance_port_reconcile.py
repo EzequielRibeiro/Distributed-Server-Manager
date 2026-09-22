@@ -213,6 +213,8 @@ def reconcile_instance_ports(
             "derived reservation collides with another instance",
             "derived reservation is occupied by an unmanaged socket",
             "derived reservation is outside active Agent ranges",
+            "persisted reservations do not share one logical port block",
+            "persisted reservation does not match logical block",
         )
         relocation_error: InstancePortReconcileError | None = None
         occupied: dict[str, set[int]] = {"tcp": set(), "udp": set()}
