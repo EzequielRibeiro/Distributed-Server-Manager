@@ -112,6 +112,26 @@
   }
 
 
+  function contractProductLabel(contract) {
+    const game = String(contract?.game_id || "").trim().toLowerCase();
+    const mode = String(
+      contract?.product_variant ||
+      contract?.content_mode ||
+      "standard"
+    ).trim().toLowerCase();
+
+    if (game === "minecraft") {
+      return mode === "modified"
+        ? "Minecraft Modificado"
+        : "Minecraft Padrão";
+    }
+
+    return mode && mode !== "standard"
+      ? `${gameLabel(game)} · ${mode}`
+      : gameLabel(game);
+  }
+
+
   function instanceUrl(item) {
     return (
       "/customer-instance.html?" +
@@ -512,13 +532,27 @@
       );
 
 
+    const product =
+      document.createElement(
+        "small"
+      );
+
+    product.className =
+      "contract-product";
+
+    product.textContent =
+      contractProductLabel(
+        contract
+      );
+
+
     const detail =
       document.createElement(
         "p"
       );
 
     detail.textContent =
-      "Você possui uma vaga contratada. Escolha o tipo de servidor antes da criação da instância.";
+      `Você possui uma vaga contratada em ${contractProductLabel(contract)}. Escolha o tipo de servidor antes da criação da instância.`;
 
     const profile =
       (resourceProfiles.get(contract.game_id) || [])
@@ -638,6 +672,7 @@
     article.append(
       label,
       title,
+      product,
       detail,
       profileBox,
       usage,
@@ -1026,23 +1061,26 @@
             }
 
 
-            const contract =
-              contracts.find(
+            const availableContracts =
+              contracts.filter(
                 item =>
                 item.game_id ===
                 game &&
+                item.status ===
+                "active" &&
                 item.available
               );
 
             if (
-              contract &&
+              availableContracts.length ===
+              1 &&
               window
               .CapivaraRuntimeSelector
             ) {
               window
                 .CapivaraRuntimeSelector
                 .open(
-                  contract
+                  availableContracts[0]
                 )
                 .catch(
                   error =>
@@ -1059,6 +1097,15 @@
               ?.scrollIntoView({
                 behavior: "smooth",
               });
+
+            if (
+              availableContracts.length >
+              1
+            ) {
+              message(
+                `Há ${availableContracts.length} contratos disponíveis para ${gameLabel(game)}. Escolha o contrato desejado abaixo.`
+              );
+            }
           }
         );
 
