@@ -61,8 +61,8 @@ def _listening_ports(runtime: dict, ports: list[dict]) -> list[dict]:
     return result
 
 
-def _external_query_check(profile: dict, ports: list[dict], host: str) -> dict | None:
-    if not profile or not host:
+def _external_query_check(profile: dict, ports: list[dict], network: dict) -> dict | None:
+    if not profile or not network:
         return None
     by_name = {str(item.get("name") or ""): item for item in ports}
     strategy = str(profile.get("strategy") or "")
@@ -78,7 +78,13 @@ def _external_query_check(profile: dict, ports: list[dict], host: str) -> dict |
     checker_type = str(profile.get("checker_type") or game_type).strip()
     if not game_type or not checker_type:
         return None
-    target = f"{host}:{port}"
+    selected_protocol = str(selected.get("protocol") or "udp").strip().lower()
+    public_endpoint = player_endpoint(network, port, protocol=selected_protocol)
+    if public_endpoint is None:
+        return None
+    target = str(public_endpoint.get("address") or "").strip()
+    if not target:
+        return None
     return {
         "provider": "ismygameserver.online",
         "gamedig_type": game_type,
@@ -88,6 +94,8 @@ def _external_query_check(profile: dict, ports: list[dict], host: str) -> dict |
         "port_role": role,
         "port": port,
         "target": target,
+        "bind_port": port,
+        "public_port": public_endpoint.get("public_port"),
         "url": f"https://ismygameserver.online/{quote(checker_type, safe='')}/{quote(target, safe=':[]')}",
         "status": str(profile.get("status") or "supported"),
         "note": profile.get("note"),
@@ -167,10 +175,6 @@ def install_customer_instance_connection(legacy, authenticate):
                 runtime = {}
             port_status = _listening_ports(runtime, ports)
 
-            public_host = (
-                str(effective_network.get("public_hostname") or "").strip()
-                or str(effective_network.get("public_ipv4") or "").strip()
-            )
             query_profile = _query_profile(
                 Path(legacy.DSM_ROOT),
                 str(context.get("game_id") or ""),
@@ -181,7 +185,7 @@ def install_customer_instance_connection(legacy, authenticate):
                 label = labels.get(str(item.get("name") or ""))
                 if label:
                     item["label"] = str(label)
-            external_check = _external_query_check(query_profile, port_status, public_host)
+            external_check = _external_query_check(query_profile, port_status, effective_network)
 
             self.send_json(200, {
                 "instance_id": instance_id,
