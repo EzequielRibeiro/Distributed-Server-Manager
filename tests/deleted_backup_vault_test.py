@@ -28,6 +28,13 @@ class DeletedBackupVaultTest(unittest.TestCase):
   item,artifact=self._ready();self.assertTrue(artifact.exists())
   with self.backend.transaction() as c:c.execute("UPDATE deleted_instance_backups SET expires_at=? WHERE vault_id=?",("2000-01-01T00:00:00Z",item["vault_id"]))
   self.assertEqual(self.vault.cleanup_expired(),1);expired=self.vault.get(item["vault_id"]);self.assertEqual(expired["status"],"expired");self.assertFalse(artifact.exists())
+ def test_removed_source_marks_pending_final_backup_failed(self):
+  item,_=self.vault.start("instance-one",requested_by="owner")
+  with self.backend.transaction() as c:c.execute("DELETE FROM instances WHERE id=?",("instance-one",))
+  item=self.vault.reconcile(item["vault_id"])
+  self.assertEqual(item["status"],"failed")
+  self.assertIn("removed before final backup completed",item["last_error"])
+  self.assertIsNone(item.get("remove_command_id"))
  def test_failed_final_backup_blocks_export_and_remove(self):
   item,_=self.vault.start("instance-one",requested_by="owner");self.vault.backups.record_agent_state("agent-one",[{"command_id":item["backup_job_id"],"instance_id":"instance-one","action":"create","status":"failed","last_error":"disk full"}]);item=self.vault.reconcile(item["vault_id"]);self.assertEqual(item["status"],"failed");self.assertIn("disk full",item["last_error"]);self.assertIsNone(item.get("remove_command_id"))
 if __name__=="__main__":unittest.main()
