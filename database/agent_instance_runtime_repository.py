@@ -85,9 +85,19 @@ class AgentInstanceRuntimeRepository:
         except (TypeError,ValueError):result["result"]=None
         return result
 
-    def command_for_agent(self, agent_id: str) -> dict[str, Any] | None:
+    def command_for_agent(self, agent_id: str, *, actions=None) -> dict[str, Any] | None:
         ph=self.dialect.placeholder
-        with self.session() as session:row=session.execute("SELECT command_id FROM agent_instance_commands "+f"WHERE agent_id={ph} AND status IN ('queued','delivered') ORDER BY created_at ASC LIMIT 1",(agent_id,)).fetchone()
+        params=[agent_id]
+        action_clause=""
+        if actions is not None:
+            normalized=sorted({str(action or "").strip().lower() for action in actions if str(action or "").strip()})
+            if not normalized:return None
+            unknown=set(normalized)-VALID_ACTIONS
+            if unknown:raise ValueError("invalid instance runtime action filter")
+            action_clause=" AND action IN ("+self.dialect.parameters(len(normalized))+")"
+            params.extend(normalized)
+        query="SELECT command_id FROM agent_instance_commands "+f"WHERE agent_id={ph} AND status IN ('queued','delivered')"+action_clause+" ORDER BY created_at ASC LIMIT 1"
+        with self.session() as session:row=session.execute(query,tuple(params)).fetchone()
         if row is None:return None
         state=self.snapshot(str(row["command_id"]));return {key:state[key] for key in ("command_id","agent_id","instance_id","action")}
 
