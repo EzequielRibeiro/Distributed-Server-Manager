@@ -17,12 +17,12 @@ from .base import GameRuntimeProfile, ProfileError, port_bindings, require_absol
 _MISSION = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _PROFILE_OWNED_ARGUMENTS = ("-config=", "-port=", "-profiles=")
 _LEGACY_GAME_AUX_OFFSET = 2
-_STEAM_QUERY_OFFSET = 3
+_STEAM_QUERY_OFFSET = 24714
 
 
 class DayZRuntimeProfile(GameRuntimeProfile):
     game_ids = ("dayz", "dayz.stable")
-    profile_version = 11
+    profile_version = 12
 
     def migration_context(self, record: dict[str, Any]) -> dict[str, Any]:
         """Reconstruct a modern context from a pre-private-state DayZ RuntimeSpec."""
