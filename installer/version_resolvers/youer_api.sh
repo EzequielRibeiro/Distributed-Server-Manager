@@ -121,7 +121,26 @@ youer_resolve()
         return 1
     fi
 
-    BUILDS="$(youer_builds "${VERSION}")" || return 1
+    if ! BUILDS="$(youer_builds "${VERSION}")"; then
+        # MohistMC documents a canonical latest-build download route. When build
+        # listing is temporarily unavailable, keep provisioning usable for an
+        # unpinned request instead of failing the Customer workflow outright.
+        if [[ -z "${BUILD:-}" ]]; then
+            BUILD="latest"
+            URL="${YOUER_API_BASE}/${VERSION}/builds/latest/download"
+            jq -nc --arg version "${VERSION}" --arg build "${BUILD}" --arg url "${URL}" '
+              {
+                version:$version,
+                build:$build,
+                minecraft_versions:[$version],
+                provider:"http",
+                selected_asset:{name:"server.jar",url:$url,content_type:"application/java-archive"},
+                install:{url:$url,asset:"server.jar"}
+              }'
+            return 0
+        fi
+        return 1
+    fi
     if [[ -n "${BUILD:-}" ]]; then
         BUILD_ITEM="$(jq -c --arg build "${BUILD}" '
           [(.builds // [])[] | select(((.number // .id // .build // empty)|tostring)==$build)] | first // empty

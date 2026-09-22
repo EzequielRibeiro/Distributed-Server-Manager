@@ -12,7 +12,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         base=f"http://127.0.0.1:{self.server.server_address[1]}"
         if self.path == "/api/v2/projects/youer":
-            body=json.dumps({"project":"youer","versions":["1.21.1","1.21.11","26.1"]}).encode()
+            body=json.dumps({"project":"youer","versions":["1.21.1","1.21.11","26.1","26.2"]}).encode()
         elif self.path == "/api/v2/projects/youer/1.21.1/builds":
             body=json.dumps({"builds":[
                 {"number":656,"url":base+"/api/v2/projects/youer/1.21.1/builds/656/download"},
@@ -29,6 +29,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             body=json.dumps({"builds":[
                 {"number":3,"url":base+"/api/v2/projects/youer/26.1/builds/3/download"}
             ]}).encode()
+        elif self.path == "/api/v2/projects/youer/26.2/builds":
+            self.send_response(503);self.end_headers();return
+        elif self.path == "/legacy/26.2/builds":
+            self.send_response(503);self.end_headers();return
         elif self.path.endswith("/download"):
             body=b"fake-jar"
             self.send_response(200)
@@ -63,13 +67,13 @@ LIST="$(version_resolver_execute list minecraft youer '')"
 jq -e '
   .variant=="youer"
   and .source=="mohistmc-api-v2"
-  and ([.versions[].version] | unique | sort) == ["1.21.1","1.21.11","26.1"]
+  and ([.versions[].version] | unique | sort) == ["1.21.1","1.21.11","26.1","26.2"]
   and ([.versions[] | select(.version=="26.1" and .build=="3")] | length)==1
   and ([.versions[] | select(.version=="1.21.11" and .build=="19")] | length)==1
 ' <<<"${LIST}" >/dev/null
 
 LATEST="$(version_resolver_execute resolve minecraft youer latest)"
-jq -e '.version=="26.1" and .build=="3" and .provider=="http" and .selected_asset.name=="server.jar" and (.selected_asset.url|endswith("/26.1/builds/3/download"))' <<<"${LATEST}" >/dev/null
+jq -e '.version=="26.2" and .build=="latest" and .provider=="http" and .selected_asset.name=="server.jar" and (.selected_asset.url|endswith("/26.2/builds/latest/download"))' <<<"${LATEST}" >/dev/null
 
 PINNED="$(version_resolver_execute resolve minecraft youer '1.21.11@18')"
 jq -e '.version=="1.21.11" and .build=="18" and (.install.url|endswith("/legacy/1.21.11/builds/18/download"))' <<<"${PINNED}" >/dev/null

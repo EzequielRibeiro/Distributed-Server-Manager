@@ -12,7 +12,8 @@
     "resolver": "youer_api",
     "config": {
       "api_base": "https://mohistmc.com/api/v2/projects/youer",
-      "discovery_limit": 25
+      "discovery_limit": 25,
+      "legacy_api_base": "https://api.mohistmc.com/project/youer"
     }
   },
   "process": {

@@ -612,7 +612,12 @@
         } else {
             versions = extractVersions(runtime);
         }
-        if (!versions.length) versions = [{value: "current", label: "Versão atual / recomendada", recommended: true}];
+        if (!versions.length) {
+            if (runtime.version?.strategy === "dynamic") {
+                throw new Error("Nenhuma versão publicada foi retornada pelo provedor deste runtime.");
+            }
+            versions = [{value: "current", label: "Versão atual / recomendada", recommended: true}];
+        }
         versions = versions.map((entry) => typeof entry === "object" && entry.value !== undefined ? entry : {
             value: String(entry.value || entry.version || entry.id),
             label: String(entry.label || entry.name || entry.version || entry.value || entry.id),
