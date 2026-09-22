@@ -9,7 +9,7 @@ function ensureCard(){
  card=document.createElement("article");
  card.id="customer-connection-card";
  card.className="card";
- card.innerHTML='<div class="row"><div><span class="muted">ENDEREÇO DO SERVIDOR</span><h2 id="customer-connection-address">Disponível após a configuração</h2><p id="customer-connection-detail" class="muted">Aguardando endpoint público do Agent.</p></div><button id="customer-connection-copy" class="btn" type="button" disabled>Copiar endereço</button></div><div id="customer-port-status" class="port-list mt-12"></div><div id="customer-query-check" class="row mt-12 hidden"><div><span class="muted">QUERY CHECK</span><strong id="customer-query-target">—</strong><p id="customer-query-detail" class="muted"></p></div><a id="customer-query-link" class="btn" href="#" target="_blank" rel="noopener noreferrer">Verificar publicamente</a></div>';
+ card.innerHTML='<div class="row"><div><span class="muted">ENDEREÇO DO SERVIDOR</span><h2 id="customer-connection-address">Disponível após a configuração</h2><p id="customer-connection-detail" class="muted">Aguardando endpoint público do Agent.</p></div><button id="customer-connection-copy" class="btn" type="button" disabled>Copiar endereço</button></div><div id="customer-query-check" class="row mt-12 hidden"><div><span class="muted">QUERY CHECK</span><strong id="customer-query-target">—</strong><p id="customer-query-detail" class="muted"></p></div><a id="customer-query-link" class="btn" href="#" target="_blank" rel="noopener noreferrer">Verificar publicamente</a></div>';
  host.insertBefore(card,host.firstChild);
  document.getElementById("customer-connection-copy").addEventListener("click",async()=>{
   const value=document.getElementById("customer-connection-address").dataset.address||"";
@@ -25,7 +25,7 @@ function ensureCard(){
 }
 
 function renderPorts(rows){
- const box=document.getElementById("customer-port-status");
+ const box=document.getElementById("ports");
  if(!box)return;
  box.replaceChildren(...(rows||[]).map(p=>{
   const d=document.createElement("div");
