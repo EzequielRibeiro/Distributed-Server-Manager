@@ -125,6 +125,87 @@ class HybridAgentWorkerTest(unittest.TestCase):
         self.assertEqual(result["failed"], 0)
 
 
+    def test_port_backfill_failure_keeps_backup_and_safe_remove_alive(self):
+        agent_id = "hybrid-degraded-agent"
+        (self.root / "config" / "agent.conf").write_text(
+            f'AGENT_ID="{agent_id}"\n'
+            'AGENT_STATUS="active"\n'
+            'DSM_NODE_ID="hybrid-node"\n'
+            'DSM_NODE_ROLE="hybrid"\n',
+            encoding="utf-8",
+        )
+
+        with (
+            patch(
+                "hybrid_agent_worker.reconcile_local_hybrid_runtime",
+                side_effect=__import__(
+                    "hybrid_runtime_port_backfill"
+                ).HybridRuntimePortBackfillError("cannot relocate network block"),
+            ),
+            patch(
+                "hybrid_agent_worker.process_hybrid_public_network_cycle",
+                return_value={"public_ipv4": None},
+            ),
+            patch(
+                "hybrid_agent_worker.process_hybrid_instance_runtime_cycle",
+                return_value={"status": "completed", "action": "remove"},
+            ) as runtime_cycle,
+            patch(
+                "hybrid_agent_worker.process_hybrid_instance_telemetry_cycle",
+                return_value={"accepted": 0},
+            ),
+            patch(
+                "hybrid_agent_worker.process_hybrid_instance_health_cycle",
+                return_value={"healthy": 0, "applied": 0},
+            ),
+            patch(
+                "hybrid_agent_worker.process_hybrid_backup_cycle",
+                return_value={"status": "completed", "completed": 1, "failed": 0},
+            ) as backup_cycle,
+        ):
+            result = heartbeat_cycle(self.root, backend=self.backend)
+
+        self.assertTrue(result["active"])
+        self.assertFalse(result["runtime_reconciled"])
+        self.assertEqual(result["health_status"], "degraded")
+        self.assertIn("cannot relocate network block", result["local_reconcile_error"])
+        self.assertEqual(result["instance_reconcile"]["status"], "blocked")
+        self.assertEqual(result["configuration"]["status"], "blocked")
+        self.assertEqual(result["content"]["status"], "blocked")
+        self.assertEqual(result["backup"]["completed"], 1)
+        backup_cycle.assert_called_once_with(self.backend, self.root, agent_id)
+        runtime_cycle.assert_called_once_with(
+            self.backend,
+            self.root,
+            agent_id,
+            allowed_actions={"stop", "remove"},
+        )
+
+    def test_degraded_runtime_cycle_does_not_deliver_unsafe_action(self):
+        agent_id = "hybrid-degraded-agent"
+        repository = Mock()
+        repository.command_for_agent.return_value = {
+            "command_id": "cmd-start",
+            "instance_id": "instance-1",
+            "action": "start",
+        }
+
+        with patch(
+            "hybrid_agent_worker.AgentInstanceRuntimeRepository",
+            return_value=repository,
+        ):
+            from hybrid_agent_worker import process_hybrid_instance_runtime_cycle
+            result = process_hybrid_instance_runtime_cycle(
+                self.backend,
+                self.root,
+                agent_id,
+                allowed_actions={"stop", "remove"},
+            )
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["action"], "start")
+        repository.mark_delivered.assert_not_called()
+
     def test_hybrid_configuration_cycle_round_trips_state_and_commands(self):
         agent_id = "hybrid-configuration-agent"
         config = {"agent_id": agent_id}
