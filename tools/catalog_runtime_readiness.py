@@ -79,7 +79,6 @@ def _network_findings(runtime: dict[str, Any]) -> list[str]:
     offsets: dict[str, int] = {}
     occupied: set[tuple[int, str]] = set()
     block_size = int(network.get("block_size") or 0)
-    sparse_offsets = network.get("sparse_offsets", False) is True
     if network.get("allocation") != "block" or block_size < 1:
         findings.append("invalid network allocation/block_size")
     for item in ports:
@@ -94,7 +93,7 @@ def _network_findings(runtime: dict[str, Any]) -> list[str]:
             findings.append(f"invalid protocol for {name}: {proto!r}")
         if exposure not in {"public", "private", "none"}:
             findings.append(f"port {name} exposure must be explicitly public, private, or none")
-        if not isinstance(offset, int) or offset < 0 or (offset >= block_size and not sparse_offsets):
+        if not isinstance(offset, int) or offset < 0 or offset >= block_size:
             findings.append(f"port {name} offset {offset!r} outside allocated block")
         else:
             offsets[name] = offset
