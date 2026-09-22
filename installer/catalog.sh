@@ -113,7 +113,10 @@ catalog_configure_resolver()
     export VERSION_GAME_VERSION_ASSET_REGEX VERSION_DISCOVERY_LIMIT
     export PAPERMC_PROJECT PAPERMC_API_BASE FABRIC_META_BASE
     export BEDROCK_DOWNLOAD_PAGE BEDROCK_LINUX_BASE
+    YOUER_API_BASE="$(jq -r '.version.config.api_base // "https://mohistmc.com/api/v2/projects/youer"' "${FILE}")"
+    YOUER_DISCOVERY_LIMIT="$(jq -r '.version.config.discovery_limit // 25' "${FILE}")"
     export MINECRAFT_JAVA_MANIFEST_URL MINECRAFT_JAVA_DISCOVERY_LIMIT
+    export YOUER_API_BASE YOUER_DISCOVERY_LIMIT
 }
 
 catalog_resolve_static()
