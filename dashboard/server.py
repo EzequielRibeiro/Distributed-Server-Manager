@@ -2356,6 +2356,23 @@ def control_instance(
             state,
         )
 
+        if action == "restart":
+            try:
+                from instance_workspace_repository import InstanceWorkspaceRepository
+
+                InstanceWorkspaceRepository(
+                    backend_from_environment()
+                ).clear_console_output(instance_id)
+            except Exception as exc:
+                audit(
+                    user,
+                    "instance.restart.console_history_clear",
+                    "error",
+                    instance_id,
+                    str(exc),
+                    database_path=database_path,
+                )
+
     audit(
         user,
         f"instance.{action}",

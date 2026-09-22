@@ -411,6 +411,16 @@ class InstanceWorkspaceRepository:
                     if text: session.execute("INSERT INTO instance_console_output(instance_id,stream,line) " + f"VALUES ({self.dialect.parameters(3)})", (str(current["instance_id"]), "console", text))
         return self.console_command(command_id)
 
+    def clear_console_output(self, instance_id: str) -> int:
+        self.instance_context(instance_id)
+        ph = self.dialect.placeholder
+        with self.session(transaction=True) as session:
+            cursor = session.execute(
+                f"DELETE FROM instance_console_output WHERE instance_id={ph}",
+                (instance_id,),
+            )
+            return max(0, int(getattr(cursor, "rowcount", 0) or 0))
+
     def console_output(self, instance_id: str, limit: int = 300) -> list[dict[str, Any]]:
         self.instance_context(instance_id); ph = self.dialect.placeholder; limit = max(1, min(int(limit), 1000))
         with self.session() as session:
