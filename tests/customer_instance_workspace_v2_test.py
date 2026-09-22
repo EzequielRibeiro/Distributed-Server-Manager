@@ -314,11 +314,25 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   self.assertIn("contentStreamHealthy",script)
   self.assertIn("scheduleContentFallback(15000)",script)
   self.assertIn("refreshInstalledContent",script)
+  self.assertIn("scheduleContentScanWatch(2500)",script)
+  self.assertIn("contentIsScanning",script)
+  self.assertIn("applyContentItems",script)
+  self.assertIn("Verificando segurança…",script)
+  self.assertIn("foi bloqueado pela verificação de segurança",script)
   self.assertNotIn("scheduleContentRefresh(3000)",script)
   self.assertIn('STREAM=PATH+"/stream"',http)
   self.assertIn('"text/event-stream; charset=utf-8"',http)
   self.assertIn('"content-state"',http)
   self.assertIn('document.addEventListener("visibilitychange"',script)
+
+ def test_customer_content_ui_animates_and_watches_security_scan_until_terminal_state(self):
+  script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
+  css=(ROOT/"dashboard"/"web"/"customer-instance-v2.css").read_text(encoding="utf-8")
+  for marker in ("contentScanTimer","contentStateById","contentNeedsLiveWatch","scheduleContentScanWatch(1000)","security-scanning","content-item-scanning"):
+   self.assertIn(marker,script if marker not in {"security-scanning","content-item-scanning"} else css)
+  self.assertIn("@keyframes content-scan-spin",css)
+  self.assertIn("@keyframes content-scan-sweep",css)
+  self.assertIn("prefers-reduced-motion",css)
 
  def test_customer_content_ui_exposes_desired_applied_and_reconciliation_error(self):
   script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
