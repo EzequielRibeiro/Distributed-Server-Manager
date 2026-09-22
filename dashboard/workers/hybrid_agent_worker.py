@@ -383,10 +383,16 @@ def process_hybrid_instance_reconcile_cycle(root: Path, agent_id: str) -> dict[s
     }
 
 
-def process_hybrid_instance_runtime_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
+def process_hybrid_instance_runtime_cycle(
+    backend,
+    root: Path,
+    agent_id: str,
+    *,
+    actions=None,
+) -> dict[str, Any]:
     """Consume one Controller runtime command using the embedded Hybrid runtime."""
     repository = AgentInstanceRuntimeRepository(backend)
-    command = repository.command_for_agent(agent_id)
+    command = repository.command_for_agent(agent_id, actions=actions)
     if not isinstance(command, dict):
         return {"status": "idle"}
 
@@ -729,6 +735,24 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         return {"active": False, "reason": "identity_incomplete"}
 
     effective_backend = backend or backend_from_environment(_database_environment(root))
+
+    # Backup and destructive removal are intentionally serviced before the
+    # Controller-authoritative network reconciliation gate. A port migration
+    # failure must remain fail-closed for start/restart/provisioning, but it
+    # must not starve final backups or removals that are needed to recover or
+    # delete an unrelated instance on the same Hybrid node.
+    preflight_backup = process_hybrid_backup_cycle(
+        effective_backend,
+        root,
+        agent_id,
+    )
+    preflight_remove = process_hybrid_instance_runtime_cycle(
+        effective_backend,
+        root,
+        agent_id,
+        actions={"remove"},
+    )
+
     result = reconcile_local_hybrid_runtime(
         RegistryRepository(effective_backend),
         root,
@@ -751,6 +775,8 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     response = {
         "active": True,
         "agent_id": agent_id,
+        "preflight_backup": preflight_backup,
+        "preflight_remove": preflight_remove,
         "public_network": public_network,
         "instance_reconcile": instance_reconcile,
         "configuration": configuration,
