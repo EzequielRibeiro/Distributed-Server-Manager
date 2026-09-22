@@ -83,6 +83,7 @@
   "network": {
     "allocation": "block",
     "block_size": 10,
+    "sparse_offsets": true,
     "ports": [
       {
         "name": "game",
@@ -99,7 +100,7 @@
       {
         "name": "steam_query",
         "protocol": "udp",
-        "offset": 3,
+        "offset": 24714,
         "exposure": "public"
       }
     ],
