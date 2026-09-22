@@ -160,5 +160,23 @@ class CustomerRuntimeSelectorContractTest(
         )
 
 
+    def test_runtime_icons_render_inline_without_external_svg_use(self):
+        text = self.javascript
+        self.assertIn("function runtimeCardIconMarkup(iconId)", text)
+        self.assertIn("icon.innerHTML = runtimeCardIconMarkup(", text)
+        self.assertNotIn("runtime-sprite.svg", text)
+        self.assertNotIn('createElementNS("http://www.w3.org/2000/svg", "use")', text)
+        for icon_id in (
+            "runtime-arclight",
+            "runtime-fabric",
+            "runtime-folia",
+            "runtime-paper",
+            "runtime-purpur",
+            "runtime-youer",
+        ):
+            self.assertIn(f'"{icon_id}"', text)
+
+
+
 if __name__ == "__main__":
     unittest.main()
