@@ -65,6 +65,7 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         return {
             "game": {"port": base, "protocol": "udp"},
             "game_aux": {"port": base + 2, "protocol": "udp"},
+            "battleye": {"port": base + 4, "protocol": "udp"},
             "steam_query": {"port": base + 3, "protocol": "udp"},
         }
 
@@ -94,7 +95,7 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         self.assertEqual(spec["bind_paths"], [{"source": str(mission_private), "target": str(mission_shared)}])
         self.assertEqual(spec["environment"]["CAPIVARA_GAME_PORT"], "24010")
         self.assertEqual(spec["environment"]["CAPIVARA_STEAM_QUERY_PORT"], "24013")
-        self.assertEqual(spec["profile_version"], 11)
+        self.assertEqual(spec["profile_version"], 12)
         self.assertEqual(spec["ports"], self.ports())
 
     def test_catalog_network_exposure_survives_runtime_spec_build(self):
@@ -161,7 +162,7 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         }
         migrated, changed = game_runtime.migrate_runtime_spec(self.config, legacy)
         self.assertTrue(changed)
-        self.assertEqual(migrated["profile_version"], 11)
+        self.assertEqual(migrated["profile_version"], 12)
         self.assertEqual(migrated["profile_migrated_from_version"], 1)
         self.assertEqual(migrated["ports"]["game_aux"]["port"], 24012)
         self.assertEqual(migrated["ports"]["steam_query"]["port"], 24013)
@@ -170,7 +171,7 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         self.assertEqual(len(migrated["bind_paths"]), 1)
         self.assertTrue(migrated["bind_paths"][0]["source"].endswith("/dayz-one/mpmissions/dayzOffline.chernarusplus"))
 
-    def test_dayz_v3_aliased_query_port_migrates_to_v11_catalog_topology(self):
+    def test_dayz_v3_aliased_query_port_migrates_to_v12_catalog_topology(self):
         install = self.root / "serverfiles"; install.mkdir()
         private = "/var/lib/capivara-instances/dayz-one"
         bad_ports = {
@@ -209,7 +210,7 @@ class GameRuntimeProfilesTest(unittest.TestCase):
         }
         migrated, changed = game_runtime.migrate_runtime_spec(self.config, v3)
         self.assertTrue(changed)
-        self.assertEqual(migrated["profile_version"], 11)
+        self.assertEqual(migrated["profile_version"], 12)
         self.assertEqual(migrated["profile_migrated_from_version"], 3)
         self.assertEqual(migrated["ports"]["game"]["port"], 24010)
         self.assertEqual(migrated["ports"]["game_aux"]["port"], 24012)

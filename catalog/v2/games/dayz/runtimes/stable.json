@@ -101,6 +101,12 @@
         "protocol": "udp",
         "offset": 3,
         "exposure": "public"
+      },
+      {
+        "name": "battleye",
+        "protocol": "udp",
+        "offset": 4,
+        "exposure": "public"
       }
     ],
     "apply": [
@@ -126,6 +132,10 @@
         "key": "steamQueryPort",
         "value": "{steam_query}",
         "syntax": "semicolon"
+      },
+      {
+        "kind": "reserve",
+        "port": "battleye"
       }
     ]
   },

@@ -17,12 +17,13 @@ from .base import GameRuntimeProfile, ProfileError, port_bindings, require_absol
 _MISSION = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _PROFILE_OWNED_ARGUMENTS = ("-config=", "-port=", "-profiles=")
 _LEGACY_GAME_AUX_OFFSET = 2
+_BATTLEYE_OFFSET = 4
 _STEAM_QUERY_OFFSET = 3
 
 
 class DayZRuntimeProfile(GameRuntimeProfile):
     game_ids = ("dayz", "dayz.stable")
-    profile_version = 11
+    profile_version = 12
 
     def migration_context(self, record: dict[str, Any]) -> dict[str, Any]:
         """Reconstruct a modern context from a pre-private-state DayZ RuntimeSpec."""
@@ -85,6 +86,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
         normalized = port_bindings({"ports": ports})
         game = normalized.get("game")
         game_aux = normalized.get("game_aux")
+        battleye = normalized.get("battleye")
         steam_query = normalized.get("steam_query")
         if not game or not game_aux:
             return upgraded
@@ -96,11 +98,22 @@ class DayZRuntimeProfile(GameRuntimeProfile):
                 raise ProfileError("legacy DayZ port topology cannot be repaired safely")
             return upgraded
 
+        changed_ports = False
+        if battleye is None:
+            battleye_port = game_port + _BATTLEYE_OFFSET
+            if battleye_port > 65535:
+                raise ProfileError("legacy DayZ BattlEye port is outside valid range")
+            ports["battleye"] = {"port": battleye_port, "protocol": "udp"}
+            changed_ports = True
+
         if steam_query is None or int(steam_query["port"]) == aux_port:
             query_port = game_port + _STEAM_QUERY_OFFSET
             if query_port > 65535:
                 raise ProfileError("legacy DayZ steam query port is outside valid range")
             ports["steam_query"] = {"port": query_port, "protocol": "udp"}
+            changed_ports = True
+
+        if changed_ports:
             upgraded["ports"] = ports
         return upgraded
 
@@ -128,8 +141,9 @@ class DayZRuntimeProfile(GameRuntimeProfile):
 
         game_port = require_port(context, "game", protocol="udp")
         game_aux_port = require_port(context, "game_aux", protocol="udp")
+        battleye_port = require_port(context, "battleye", protocol="udp")
         steam_query_port = require_port(context, "steam_query", protocol="udp")
-        if len({game_port, game_aux_port, steam_query_port}) != 3:
+        if len({game_port, game_aux_port, battleye_port, steam_query_port}) != 4:
             raise ProfileError("DayZ reserved port roles must use distinct ports")
 
         extra_arguments = context.get("arguments", [])
@@ -151,6 +165,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             "CAPIVARA_GAME_ID": "dayz",
             "CAPIVARA_GAME_PORT": str(game_port),
             "CAPIVARA_STEAM_QUERY_PORT": str(steam_query_port),
+            "CAPIVARA_BATTLEYE_PORT": str(battleye_port),
         })
         return {
             "instance_id": instance_id,
@@ -173,6 +188,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             "ports": {
                 "game": {"port": game_port, "protocol": "udp"},
                 "game_aux": {"port": game_aux_port, "protocol": "udp"},
+                "battleye": {"port": battleye_port, "protocol": "udp"},
                 "steam_query": {"port": steam_query_port, "protocol": "udp"},
             },
             "instance_state_root": instance_state_root,

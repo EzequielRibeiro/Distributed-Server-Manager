@@ -47,5 +47,7 @@ jobs:
             dashboard/server_part17.py \
             agents/linux/runtime/cap_dispatch.py \
             agents/windows/runtime/admin_gui_backend.py
+      - name: Validate customer connection JavaScript
+        run: node --check dashboard/web/customer-instance-connection.js
       - name: Run public network contract tests
         run: python -m unittest tests.agent_public_network_test -v

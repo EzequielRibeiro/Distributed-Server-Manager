@@ -106,6 +106,7 @@ class AgentStoragePoolsTest(unittest.TestCase):
                 "game": {"port": 24010, "protocol": "udp"},
                 "game_aux": {"port": 24012, "protocol": "udp"},
                 "steam_query": {"port": 24013, "protocol": "udp"},
+                "battleye": {"port": 24014, "protocol": "udp"},
             },
         }
         spec = game_runtime.build_runtime_spec(config, instance, context)

@@ -262,8 +262,8 @@ class CustomerAgentProvisioningHandoffE2E(unittest.TestCase):
         self.assertEqual(str(instance["game_id"]), "dayz")
         self.assertEqual(str(instance["runtime_id"]), "dayz.stable")
         self.assertEqual(int(instance["customer_id"]), self.customer_id)
-        self.assertEqual(len(ports), 3)
-        self.assertEqual({str(row["name"]) for row in ports}, {"game", "game_aux", "steam_query"})
+        self.assertEqual(len(ports), 4)
+        self.assertEqual({str(row["name"]) for row in ports}, {"game", "game_aux", "steam_query", "battleye"})
         self.assertTrue(all(str(row["protocol"]) == "udp" for row in ports))
 
         queue = AgentInstanceProvisioningRepository(self.backend)
@@ -281,7 +281,7 @@ class CustomerAgentProvisioningHandoffE2E(unittest.TestCase):
         self.assertEqual(request["desired_state"], "stopped")
         self.assertEqual(request["instance"]["game_id"], "dayz")
         self.assertEqual(request["instance"]["runtime_id"], "dayz.stable")
-        self.assertEqual(set(request["ports"]), {"game", "game_aux", "steam_query"})
+        self.assertEqual(set(request["ports"]), {"game", "game_aux", "steam_query", "battleye"})
         self.assertEqual(request["content"]["selection"]["provider"], "steam")
         self.assertEqual(request["configuration"]["catalog_runtime_id"], "dayz.stable")
         self.assertEqual(request["configuration"]["catalog_game_id"], "dayz")
@@ -290,7 +290,7 @@ class CustomerAgentProvisioningHandoffE2E(unittest.TestCase):
             str(item.get("name")): str(item.get("exposure"))
             for item in policy.get("network_exposure", [])
         }
-        self.assertEqual(exposure, {"game": "public", "game_aux": "public", "steam_query": "public"})
+        self.assertEqual(exposure, {"game": "public", "game_aux": "public", "steam_query": "public", "battleye": "public"})
 
         delivered = queue.command_for_agent(self.agent_id)
         self.assertIsNotNone(delivered)
