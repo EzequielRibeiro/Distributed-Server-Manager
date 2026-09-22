@@ -334,6 +334,11 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   self.assertIn("@keyframes content-scan-sweep",css)
   self.assertIn("prefers-reduced-motion",css)
 
+ def test_customer_content_ui_hides_transient_yarax_error_while_scanning(self):
+  script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
+  self.assertIn("else if(lastError&&!scanning)",script)
+  self.assertIn("Verificando segurança…",script)
+
  def test_customer_content_ui_exposes_desired_applied_and_reconciliation_error(self):
   script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
   for marker in (
