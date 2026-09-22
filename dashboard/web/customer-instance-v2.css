@@ -35,3 +35,13 @@
 .content-result-meta small{overflow:visible;text-overflow:clip;white-space:nowrap}
 @media(max-width:900px){.content-controls{grid-template-columns:1fr auto}.content-controls #content-type{grid-column:1/-1}.content-result{grid-template-columns:1fr}.content-result>.btn{justify-self:start}.content-result-icon{width:64px;height:64px;flex-basis:64px}}
 @media(max-width:520px){.content-controls{grid-template-columns:1fr}.content-controls #content-type{grid-column:auto}.content-result-main{gap:10px}.content-result-icon{width:56px;height:56px;flex-basis:56px}.content-result-heading strong{white-space:normal}.content-result>.btn{width:100%}}
+
+
+/* Live content security scan feedback. */
+.security-scanning{position:relative;overflow:hidden;background:#252d3d;border-color:#3a4d6d;color:#d8e4f7;padding-left:26px}
+.security-scanning::before{content:"";position:absolute;left:9px;width:9px;height:9px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:content-scan-spin .8s linear infinite}
+.security-scanning::after{content:"";position:absolute;inset:0;transform:translateX(-120%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.12),transparent);animation:content-scan-sweep 1.8s ease-in-out infinite}
+.content-item-scanning{box-shadow:inset 0 0 0 1px rgba(111,156,255,.12)}
+@keyframes content-scan-spin{to{transform:rotate(360deg)}}
+@keyframes content-scan-sweep{50%,100%{transform:translateX(120%)}}
+@media (prefers-reduced-motion:reduce){.security-scanning::before,.security-scanning::after{animation:none}}
