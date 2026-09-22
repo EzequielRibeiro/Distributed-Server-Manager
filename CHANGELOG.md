@@ -1,3 +1,10 @@
+## 2.0.112
+- Separate live game-console output from persisted command-response history.
+- Add a collapsed "Exibir histórico de comandos" panel with visible response-line count.
+- Clear persisted command-response history after a successful instance restart.
+- Keep start/stop lifecycle actions from clearing command history.
+- Improve long console-line wrapping on customer and Controller views.
+
 ## 2.0.111
 - Limit instance console journal snapshots to the current systemd activation.
 - Prevent logs from previous instance runs from appearing in the current console.
