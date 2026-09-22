@@ -38,6 +38,7 @@ class PortProfile:
     block_size: int
     ports: tuple[PortRequirement, ...]
     applications: tuple[NetworkApplication, ...] = ()
+    sparse_offsets: bool = False
 
     @classmethod
     def from_mapping(
@@ -79,6 +80,12 @@ class PortProfile:
         if not 1 <= block_size <= 65535:
             raise ValueError(
                 "network block_size is outside valid range"
+            )
+
+        sparse_offsets = raw.get("sparse_offsets", False)
+        if not isinstance(sparse_offsets, bool):
+            raise ValueError(
+                "network sparse_offsets must be a boolean"
             )
 
         raw_ports = raw.get("ports")
@@ -186,7 +193,7 @@ class PortProfile:
             for port in ports
         )
 
-        if max_offset >= block_size:
+        if max_offset >= block_size and not sparse_offsets:
             raise ValueError(
                 "network port offset must fit inside block_size"
             )
@@ -314,6 +321,7 @@ class PortProfile:
             block_size=block_size,
             ports=tuple(ports),
             applications=tuple(applications),
+            sparse_offsets=sparse_offsets,
         )
 
     @classmethod
