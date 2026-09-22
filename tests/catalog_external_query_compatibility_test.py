@@ -27,14 +27,15 @@ def test_dayz_matches_linuxgsm_and_gamedig_port_topology() -> None:
     assert ports["game"]["offset"] == 0
     assert ports["game_aux"]["offset"] == 2
     assert ports["battleye"]["offset"] == 4
-    assert ports["steam_query"]["offset"] == 24714
+    assert ports["steam_query"]["offset"] == 3
 
     manifest = module._load(module.COMPAT)
     profile = manifest["games"]["dayz"]
     assert profile["gamedig_type"] == "dayz"
     assert profile["checker_type"] == "valve"
     assert profile["query_role"] == "steam_query"
-    assert profile["offset"] == 24714
+    assert profile["gamedig_discovery_offset"] == 24714
+    assert profile["strategy"] == "direct_query_role"
 
 
 if __name__ == "__main__":
