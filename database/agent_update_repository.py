@@ -182,6 +182,14 @@ class AgentUpdateRepository:
     def mark_failed(self, agent_id: str, error: str) -> dict[str, Any]:
         return self._mark(agent_id, "failed", error=error)
 
+    @staticmethod
+    def _version_key(value: str | None) -> tuple[int, ...] | None:
+        text = str(value or "").strip().lstrip("v")
+        parts = text.split(".")
+        if not parts or any(not part.isdigit() for part in parts):
+            return None
+        return tuple(int(part) for part in parts)
+
     def reconcile_after_heartbeat(
         self,
         agent_id: str,
@@ -199,6 +207,26 @@ class AgentUpdateRepository:
             and str(health_status).lower() == "online"
         ):
             return self._mark(agent_id, "completed", completed=True)
+        installed_key = self._version_key(installed)
+        desired_key = self._version_key(desired)
+        if (
+            current_status in {"planned", "updating", "verifying"}
+            and installed_key is not None
+            and desired_key is not None
+            and installed_key > desired_key
+            and str(health_status).lower() == "online"
+        ):
+            ph=self.dialect.placeholder;now=utc_timestamp()
+            with self.session(transaction=True) as session:
+                self._ensure(session,agent_id)
+                session.execute(
+                    "UPDATE agent_update_state SET "
+                    f"installed_version={ph},available_version={ph},desired_version={ph},"
+                    f"update_status={ph},last_error={ph},last_update={ph},updated_at={ph} "
+                    f"WHERE agent_id={ph}",
+                    (installed,installed,installed,"completed",None,now,now,agent_id),
+                )
+            return self.snapshot(agent_id)
         if current_status == "updating" and installed != desired:
             return self._mark(agent_id, "verifying")
         return self.snapshot(agent_id)

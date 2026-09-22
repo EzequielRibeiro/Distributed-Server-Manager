@@ -210,6 +210,15 @@ class ControllerInstanceRuntimeQueueTest(unittest.TestCase):
                 ("instance-one", "node-instance", "generic-game", "Instance One", "offline", self.controller_id, "agent-instance", 1),
             )
             cur.close()
+        with self.backend.transaction() as conn:
+            conn.execute(
+                "INSERT INTO service_contracts(id,customer_id,game_id,status,instance_limit) VALUES (?,?,?,?,?)",
+                ("contract-instance-one", 1, "generic-game", "active", 1),
+            )
+            conn.execute(
+                "INSERT INTO instance_contracts(instance_id,contract_id) VALUES (?,?)",
+                ("instance-one", "contract-instance-one"),
+            )
         self.commands = AgentInstanceRuntimeRepository(self.backend); self.commands.initialize()
 
     def tearDown(self):
@@ -243,6 +252,45 @@ class ControllerInstanceRuntimeQueueTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(completed["instance_state"]["status"], "completed")
         self.assertNotIn("instance_command", completed)
+
+    def test_completed_lifecycle_reconciles_controller_instance_status(self):
+        start = self.commands.enqueue(
+            agent_id="agent-instance",
+            instance_id="instance-one",
+            action="start",
+        )
+        self.commands.apply_result("agent-instance", {
+            "command_id": start["command_id"],
+            "instance_id": "instance-one",
+            "action": "start",
+            "status": "completed",
+            "result": {"observed_state": "running"},
+        })
+        with self.backend.connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM instances WHERE id=?",
+                ("instance-one",),
+            ).fetchone()
+        self.assertEqual(row["status"], "online")
+
+        stop = self.commands.enqueue(
+            agent_id="agent-instance",
+            instance_id="instance-one",
+            action="stop",
+        )
+        self.commands.apply_result("agent-instance", {
+            "command_id": stop["command_id"],
+            "instance_id": "instance-one",
+            "action": "stop",
+            "status": "completed",
+            "result": {"observed_state": "stopped"},
+        })
+        with self.backend.connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM instances WHERE id=?",
+                ("instance-one",),
+            ).fetchone()
+        self.assertEqual(row["status"], "stopped")
 
     def test_completed_remove_after_agent_compensation_deletes_controller_record(self):
         created = self.commands.enqueue(agent_id="agent-instance", instance_id="instance-one", action="remove")
