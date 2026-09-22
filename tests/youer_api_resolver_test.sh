@@ -8,21 +8,26 @@ PORT_FILE="${TMP}/port"
 python3 - "${PORT_FILE}" <<'PY' &
 import http.server, json, pathlib, socketserver, sys
 port_file=pathlib.Path(sys.argv[1])
-builds=[{"id":657},{"id":656}]
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/project/youer/1.21.1/builds":
-            body=json.dumps(builds).encode()
-            self.send_response(200)
-            self.send_header("Content-Type","application/json")
-            self.send_header("Content-Length",str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-            return
-        if self.path in {
-            "/project/youer/1.21.1/builds/657/download",
-            "/project/youer/1.21.1/builds/656/download",
-        }:
+        base=f"http://127.0.0.1:{self.server.server_address[1]}"
+        if self.path == "/api/v2/projects/youer":
+            body=json.dumps({"project":"youer","versions":["1.21.1","1.21.11","26.1"]}).encode()
+        elif self.path == "/api/v2/projects/youer/1.21.1/builds":
+            body=json.dumps({"builds":[
+                {"number":656,"url":base+"/api/v2/projects/youer/1.21.1/builds/656/download"},
+                {"number":657,"url":base+"/api/v2/projects/youer/1.21.1/builds/657/download"}
+            ]}).encode()
+        elif self.path == "/api/v2/projects/youer/1.21.11/builds":
+            body=json.dumps({"builds":[
+                {"number":18,"url":base+"/api/v2/projects/youer/1.21.11/builds/18/download"},
+                {"number":19,"url":base+"/api/v2/projects/youer/1.21.11/builds/19/download"}
+            ]}).encode()
+        elif self.path == "/api/v2/projects/youer/26.1/builds":
+            body=json.dumps({"builds":[
+                {"number":3,"url":base+"/api/v2/projects/youer/26.1/builds/3/download"}
+            ]}).encode()
+        elif self.path.endswith("/download"):
             body=b"fake-jar"
             self.send_response(200)
             self.send_header("Content-Type","application/java-archive")
@@ -30,8 +35,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        self.send_response(404)
+        else:
+            self.send_response(404);self.end_headers();return
+        self.send_response(200)
+        self.send_header("Content-Type","application/json")
+        self.send_header("Content-Length",str(len(body)))
         self.end_headers()
+        self.wfile.write(body)
     def log_message(self,*args): pass
 with socketserver.TCPServer(("127.0.0.1",0),Handler) as server:
     port_file.write_text(str(server.server_address[1]))
@@ -42,20 +52,26 @@ trap 'kill "${SERVER_PID}" 2>/dev/null || true; rm -rf -- "${TMP}"' EXIT
 for _ in $(seq 1 50); do [[ -s "${PORT_FILE}" ]] && break; sleep 0.05; done
 PORT="$(cat "${PORT_FILE}")"
 
-export YOUER_API_BASE="http://127.0.0.1:${PORT}/project/youer"
+export YOUER_API_BASE="http://127.0.0.1:${PORT}/api/v2/projects/youer"
+export YOUER_DISCOVERY_LIMIT=25
 source "${ROOT}/installer/version_resolvers/youer_api.sh"
 
 LIST="$(version_resolver_execute list minecraft youer '')"
-jq -e '.variant=="youer" and (.versions|length)==2 and .versions[0].version=="1.21.1"' <<<"${LIST}" >/dev/null
+jq -e '
+  .variant=="youer"
+  and .source=="mohistmc-api-v2"
+  and ([.versions[].version] | unique | sort) == ["1.21.1","1.21.11","26.1"]
+  and ([.versions[] | select(.version=="26.1")][0].build=="3")
+' <<<"${LIST}" >/dev/null
 
-LATEST="$(version_resolver_execute resolve minecraft youer '1.21.1')"
-jq -e '.version=="1.21.1" and .build=="657" and .provider=="http" and .selected_asset.name=="server.jar" and (.selected_asset.url|endswith("/1.21.1/builds/657/download"))' <<<"${LATEST}" >/dev/null
+LATEST="$(version_resolver_execute resolve minecraft youer latest)"
+jq -e '.version=="26.1" and .build=="3" and .provider=="http" and .selected_asset.name=="server.jar" and (.selected_asset.url|endswith("/26.1/builds/3/download"))' <<<"${LATEST}" >/dev/null
 
-PINNED="$(version_resolver_execute resolve minecraft youer '1.21.1@656')"
-jq -e '.build=="656" and .install.asset=="server.jar"' <<<"${PINNED}" >/dev/null
+PINNED="$(version_resolver_execute resolve minecraft youer '1.21.11@18')"
+jq -e '.version=="1.21.11" and .build=="18" and (.install.url|endswith("/1.21.11/builds/18/download"))' <<<"${PINNED}" >/dev/null
 
-if version_resolver_execute resolve minecraft youer '1.21.11' >/dev/null 2>&1; then
-  echo "FAIL: unsupported Youer version was accepted" >&2
+if version_resolver_execute resolve minecraft youer '1.20.6' >/dev/null 2>&1; then
+  echo "FAIL: unpublished Youer version was accepted" >&2
   exit 1
 fi
 
