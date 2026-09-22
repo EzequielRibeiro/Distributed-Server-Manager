@@ -7,7 +7,10 @@ on:
       - 'catalog/v2/schemas/runtime-definition.schema.json'
       - 'core/network_exposure.py'
       - 'tools/catalog_runtime_readiness.py'
+      - 'tools/catalog_external_query_compatibility.py'
+      - 'catalog/v2/external-query-compatibility.json'
       - 'tests/catalog_runtime_readiness_test.py'
+      - 'tests/catalog_external_query_compatibility_test.py'
       - 'tests/network_exposure_policy_test.py'
       - '.github/workflows/catalog-runtime-readiness.yml'
   workflow_dispatch:
@@ -19,12 +22,15 @@ jobs:
       - name: Install schema validator
         run: python3 -m pip install --disable-pip-version-check jsonschema
       - name: Validate Python syntax
-        run: python3 -m py_compile core/network_exposure.py tools/catalog_runtime_readiness.py tests/catalog_runtime_readiness_test.py tests/network_exposure_policy_test.py
+        run: python3 -m py_compile core/network_exposure.py tools/catalog_runtime_readiness.py tools/catalog_external_query_compatibility.py tests/catalog_runtime_readiness_test.py tests/catalog_external_query_compatibility_test.py tests/network_exposure_policy_test.py
       - name: Audit every published runtime
         run: python3 tools/catalog_runtime_readiness.py --strict
+      - name: Audit external query compatibility
+        run: python3 tools/catalog_external_query_compatibility.py --strict
       - name: Run readiness contract tests
         run: |
           python3 tests/catalog_runtime_readiness_test.py
+          python3 tests/catalog_external_query_compatibility_test.py
           PYTHONPATH=. python3 tests/network_exposure_policy_test.py
       - name: Ensure auditor remains game-neutral
         run: |
