@@ -105,6 +105,20 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   overview=(ROOT/"dashboard/web/customer-backups.js").read_text(encoding="utf-8")
   self.assertIn("availableBackupJobs",overview)
   self.assertIn('job.action === "delete" && job.status === "completed"',overview)
+
+ def test_customer_danger_zone_reuses_authenticated_workspace_overview(self):
+  html=(ROOT/"dashboard/web/customer-instance.html").read_text(encoding="utf-8")
+  main=(ROOT/"dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
+  delete=(ROOT/"dashboard/web/customer-instance-delete.js").read_text(encoding="utf-8")
+  self.assertIn("customer-instance-delete.js",html)
+  self.assertIn("window.CapivaraCustomerInstanceOverview=overview",main)
+  self.assertIn("window.CapivaraInstanceDelete?.render?.(overview)",main)
+  self.assertIn("window.CapivaraInstanceDelete={render,install}",delete)
+  self.assertIn('permissions.has("instance.delete")',delete)
+  self.assertIn("Não foi possível carregar a exclusão:",delete)
+  self.assertIn('id="delete-instance-submit"',delete)
+  self.assertIn('request("/api/customer/instance/delete"',delete)
+
  def test_create_from_retained_backup_reuses_normal_instance_creation(self):
   creation=(ROOT/"dashboard/customer_instance_creation.py").read_text(encoding="utf-8")
   self.assertIn('source_vault_id',creation);self.assertIn('InstanceBackupCloneRepository',creation);self.assertIn('backup_clone',creation);self.assertIn('_queue_agent_provisioning',creation)
