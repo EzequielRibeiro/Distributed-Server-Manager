@@ -4,6 +4,11 @@
 - Clear persisted command-response history after a successful instance restart.
 - Keep start/stop lifecycle actions from clearing command history.
 - Improve long console-line wrapping on customer and Controller views.
+- Add provider-neutral content discovery with automatic Modrinth/CurseForge fallback.
+- Add external game-query compatibility metadata for every published catalog runtime.
+- Show customer-facing server port state from Agent listener telemetry.
+- Add ismygameserver.online Query Check links using the runtime's actual public query endpoint.
+- Refine DayZ network roles to Game, Steam/client, Steam Query, and BattlEye while keeping compact multi-instance allocation.
 
 ## 2.0.111
 - Limit instance console journal snapshots to the current systemd activation.
