@@ -83,7 +83,6 @@
   "network": {
     "allocation": "block",
     "block_size": 10,
-    "sparse_offsets": true,
     "ports": [
       {
         "name": "game",
@@ -98,15 +97,15 @@
         "exposure": "public"
       },
       {
-        "name": "battleye",
+        "name": "steam_query",
         "protocol": "udp",
-        "offset": 4,
+        "offset": 3,
         "exposure": "public"
       },
       {
-        "name": "steam_query",
+        "name": "battleye",
         "protocol": "udp",
-        "offset": 24714,
+        "offset": 4,
         "exposure": "public"
       }
     ],
