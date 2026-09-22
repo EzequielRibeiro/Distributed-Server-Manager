@@ -8,8 +8,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DATABASE = ROOT / "database"
-if str(DATABASE) not in sys.path:
-    sys.path.insert(0, str(DATABASE))
+DASHBOARD = ROOT / "dashboard"
+for module_dir in (DATABASE, DASHBOARD, ROOT):
+    if str(module_dir) not in sys.path:
+        sys.path.insert(0, str(module_dir))
 
 from agent_public_network import (
     mapped_public_port,
@@ -18,6 +20,7 @@ from agent_public_network import (
     public_port_keys,
 )
 from agent_public_network_schema import ensure_agent_public_network_schema
+from customer_instance_connection_http import _external_query_check, _listening_ports
 
 
 class AgentPublicNetworkContractTest(unittest.TestCase):
@@ -120,6 +123,56 @@ class AgentPublicNetworkContractTest(unittest.TestCase):
         text = (ROOT / "dashboard" / "web" / "customer-instance-connection.js").read_text(encoding="utf-8")
         self.assertIn("ENDEREÇO DO SERVIDOR", text)
         self.assertIn("Copiar endereço", text)
+        self.assertIn("QUERY CHECK", text)
+        self.assertIn("Verificar publicamente", text)
+
+    def test_customer_port_status_uses_agent_listener_inventory(self):
+        rows = _listening_ports(
+            {
+                "health_status": "online",
+                "network": {
+                    "udp_complete": True,
+                    "tcp_complete": True,
+                    "udp_listen": [24000, 24002, 24003],
+                    "tcp_listen": [],
+                },
+            },
+            [
+                {"name": "game", "protocol": "udp", "port": 24000},
+                {"name": "game_aux", "protocol": "udp", "port": 24002},
+                {"name": "steam_query", "protocol": "udp", "port": 24003},
+                {"name": "battleye", "protocol": "udp", "port": 24004},
+            ],
+        )
+        states = {item["name"]: item["state"] for item in rows}
+        self.assertEqual(states["game"], "listening")
+        self.assertEqual(states["steam_query"], "listening")
+        self.assertEqual(states["battleye"], "reserved")
+
+    def test_dayz_external_check_queries_actual_reserved_query_port_directly(self):
+        check = _external_query_check(
+            {
+                "gamedig_type": "dayz",
+                "checker_type": "valve",
+                "protocol": "dayz",
+                "strategy": "direct_query_role",
+                "game_role": "game",
+                "query_role": "steam_query",
+                "status": "conditional",
+            },
+            [
+                {"name": "game", "protocol": "udp", "port": 24000},
+                {"name": "steam_query", "protocol": "udp", "port": 24003},
+            ],
+            "200.100.203.92",
+        )
+        self.assertIsNotNone(check)
+        self.assertEqual(check["port"], 24003)
+        self.assertEqual(check["target"], "200.100.203.92:24003")
+        self.assertEqual(
+            check["url"],
+            "https://ismygameserver.online/valve/200.100.203.92:24003",
+        )
 
 
 if __name__ == "__main__":
