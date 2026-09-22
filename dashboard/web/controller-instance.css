@@ -2,4 +2,4 @@ body.cap-controller-instance .controller-instance-banner{display:grid;gap:5px;ma
 
 .settings-source-heading{grid-column:1/-1;padding:12px 0 2px}.settings-source-heading strong,.settings-source-heading small{display:block}.settings-source-heading small{margin-top:4px}.settings-empty{grid-column:1/-1}
 
-.console-history{margin-top:10px;border:1px solid var(--border,#2a3446);border-radius:10px;background:#111720}.console-history summary{cursor:pointer;padding:10px 12px;color:#c9d4e6;user-select:none}.console-history-terminal{min-height:0;max-height:260px;margin:0 10px 10px;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+
