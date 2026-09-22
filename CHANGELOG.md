@@ -1,3 +1,8 @@
+## 2.0.111
+- Limit instance console journal snapshots to the current systemd activation.
+- Prevent logs from previous instance runs from appearing in the current console.
+- Preserve cursor-based SSE live streaming after the bounded snapshot.
+
 ## 2.0.110
 
 - Added native stdin console input for managed Minecraft Java instances.
