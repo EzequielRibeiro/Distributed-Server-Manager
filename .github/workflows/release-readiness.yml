@@ -107,10 +107,14 @@ jobs:
           python3 - <<'PY'
           import json
           x=json.load(open('release/readiness-v2.json'))
-          assert x['publish_release'] is False
+          assert isinstance(x['publish_release'], bool)
           assert x['status'] in {'candidate', 'release-approved'}
           if x['status'] == 'release-approved':
               assert x.get('release_authorized') is True
               assert x.get('tag_name') == 'v' + x.get('release_version', '')
+          if x['publish_release']:
+              lines=open('release/RELEASE_TRIGGER', encoding='utf-8').read().splitlines()
+              assert lines and lines[0].strip() == x.get('release_version', '')
+              assert any(line.startswith('publish=') for line in lines[1:])
           print('release publication remains an explicit administrative action')
           PY

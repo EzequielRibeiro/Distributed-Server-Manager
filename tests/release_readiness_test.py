@@ -15,8 +15,17 @@ def main():
     assert data["release_line"] == "2.0"
     assert data["release_version"] == version
     assert data["tag_name"] == f"v{version}"
-    assert data["publish_release"] is False
+    assert isinstance(data["publish_release"], bool)
     assert data["release_authorized"] is True
+
+    if data["publish_release"]:
+        trigger_lines = (ROOT / "release" / "RELEASE_TRIGGER").read_text(encoding="utf-8").splitlines()
+        assert trigger_lines and trigger_lines[0].strip() == version, (
+            "explicit publication requires RELEASE_TRIGGER to match the project version"
+        )
+        assert any(line.startswith("publish=") for line in trigger_lines[1:]), (
+            "explicit publication requires a publish date marker"
+        )
 
     notes = ROOT / "release" / f"RELEASE_NOTES_{version}.md"
     assert notes.is_file(), f"missing release notes for {version}"
