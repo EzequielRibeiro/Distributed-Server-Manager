@@ -102,6 +102,19 @@ class CustomerPortalTest(unittest.TestCase):
         self.assertIn("content.install", instance_script)
         self.assertIn("Catálogo do jogo", demo_page); self.assertIn("PERFIS DISPONÍVEIS", demo_page)
 
+    def test_multiple_same_game_contracts_require_explicit_selection(self):
+        customer_script = (ROOT / "dashboard" / "web" / "customer.js").read_text(encoding="utf-8")
+        self.assertIn("function contractProductLabel(contract)", customer_script)
+        self.assertIn("Minecraft Modificado", customer_script)
+        self.assertIn("Minecraft Padrão", customer_script)
+        self.assertIn("availableContracts.length === 1", customer_script)
+        self.assertIn("availableContracts.length > 1", customer_script)
+        self.assertIn("Escolha o contrato desejado em Servidores disponíveis.", customer_script)
+        self.assertNotIn(
+            "const contract =\n              contracts.find(",
+            customer_script,
+        )
+
     def test_provisioning_status_is_visible_and_blocks_server_controls(self):
         instance_page = (ROOT / "dashboard" / "web" / "customer-instance.html").read_text(encoding="utf-8")
         instance_script = (ROOT / "dashboard" / "web" / "customer-instance-v2.js").read_text(encoding="utf-8")
