@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "kind": "ExternalQueryCompatibility",
+  "source": {
+    "project": "GameDig",
+    "repository": "gamedig/node-gamedig",
+    "ref": "master",
+    "commit": "41f3773cc46fceb433931cfea4bb8b9001d678f5",
+    "verified_at": "2026-09-22",
+    "definition_file": "lib/games.js"
+  },
+  "games": {
+    "arksurvivalascended": {
+      "gamedig_type": "asa",
+      "protocol": "asa",
+      "strategy": "direct",
+      "game_role": "game",
+      "status": "supported"
+    },
+    "arma3": {
+      "gamedig_type": "arma3",
+      "protocol": "valve",
+      "strategy": "offset",
+      "game_role": "game",
+      "query_role": "steam_query",
+      "offset": 1,
+      "status": "supported"
+    },
+    "armareforger": {
+      "gamedig_type": "armareforger",
+      "protocol": "valve",
+      "strategy": "fixed_default_query",
+      "game_role": "game",
+      "query_role": "steam_query",
+      "default_game_port": 2001,
+      "default_query_port": 17777,
+      "status": "conditional",
+      "note": "GameDig only tries the fixed query port automatically when the supplied game port matches its default. Custom Capivara game ports may require an explicit query-port-aware client."
+    },
+    "counterstrike2": {
+      "gamedig_type": "counterstrike2",
+      "protocol": "valve",
+      "strategy": "direct",
+      "game_role": "game",
+      "status": "supported"
+    },
+    "dayz": {
+      "gamedig_type": "dayz",
+      "protocol": "dayz",
+      "strategy": "offset",
+      "game_role": "game",
+      "query_role": "steam_query",
+      "offset": 24714,
+      "status": "supported"
+    },
+    "factorio": {
+      "gamedig_type": "factorio",
+      "protocol": "factorio",
+      "strategy": "direct_explicit",
+      "game_role": "game",
+      "default_query_port": 34197,
+      "status": "supported",
+      "note": "GameDig uses 34197 only when no port is supplied; an explicitly supplied Capivara game port is queried directly."
+    },
+    "fivem": {
+      "gamedig_type": "gta5f",
+      "protocol": "fivem",
+      "strategy": "direct",
+      "game_role": "game",
+      "status": "supported"
+    },
+    "garrysmod": {
+      "gamedig_type": "garrysmod",
+      "protocol": "valve",
+      "strategy": "direct",
+      "game_role": "game_udp",
+      "status": "supported"
+    },
+    "left4dead2": {
+      "gamedig_type": "l4d2",
+      "protocol": "valve",
+      "strategy": "direct",
+      "game_role": "game_udp",
+      "status": "supported"
+    },
+    "luanti": {
+      "gamedig_type": "minetest",
+      "protocol": "minetest",
+      "strategy": "direct",
+      "game_role": "game",
+      "status": "supported",
+      "note": "GameDig still exposes the historical Minetest type name; Luanti is the renamed upstream project."
+    },
+    "mindustry": {
+      "gamedig_type": "mindustry",
+      "protocol": "mindustry",
+      "strategy": "direct",
+      "game_role": "game_udp",
+      "status": "supported"
+    },
+    "minecraft": {
+      "gamedig_type": "minecraft",
+      "protocol": "minecraft",
+      "strategy": "direct",
+      "game_role": "game",
+      "status": "supported",
+      "runtime_overrides": {
+        "minecraft.bedrock.vanilla": {
+          "gamedig_type": "mbe",
+          "protocol": "minecraft",
+          "strategy": "direct",
+          "game_role": "game_ipv4",
+          "status": "supported"
+        }
+      }
+    },
+    "palworld": {
+      "gamedig_type": "palworld",
+      "protocol": "palworld",
+      "strategy": "direct",
+      "game_role": "game",
+      "status": "supported"
+    },
+    "projectzomboid": {
+      "gamedig_type": "projectzomboid",
+      "protocol": "valve",
+      "strategy": "direct",
+      "game_role": "game",
+      "status": "supported"
+    },
+    "rust": {
+      "gamedig_type": "rust",
+      "protocol": "valve",
+      "strategy": "direct",
+      "game_role": "game",
+      "status": "supported",
+      "note": "The catalog also reserves a separate query role; this gate follows GameDig's current direct-port definition and leaves live protocol behavior to E2E probing."
+    },
+    "satisfactory": {
+      "gamedig_type": "satisfactory",
+      "protocol": "satisfactory",
+      "strategy": "direct",
+      "game_role": "game_udp",
+      "status": "supported"
+    },
+    "sevendaystodie": {
+      "gamedig_type": "sdtd",
+      "protocol": "sdtd",
+      "strategy": "offset",
+      "game_role": "game",
+      "query_role": "game_aux_1",
+      "offset": 1,
+      "status": "supported"
+    },
+    "teamfortress2": {
+      "gamedig_type": "teamfortress2",
+      "protocol": "valve",
+      "strategy": "direct",
+      "game_role": "game",
+      "status": "supported"
+    },
+    "theisle": {
+      "gamedig_type": "theisle",
+      "protocol": "valve",
+      "strategy": "offset",
+      "game_role": "game",
+      "query_role": "steam_query",
+      "offset": 1,
+      "status": "supported"
+    },
+    "valheim": {
+      "gamedig_type": "valheim",
+      "protocol": "valve",
+      "strategy": "offset",
+      "game_role": "game",
+      "query_role": "game_aux",
+      "offset": 1,
+      "status": "supported"
+    }
+  }
+}
