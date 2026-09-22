@@ -210,6 +210,15 @@ class ControllerInstanceRuntimeQueueTest(unittest.TestCase):
                 ("instance-one", "node-instance", "generic-game", "Instance One", "offline", self.controller_id, "agent-instance", 1),
             )
             cur.close()
+        with self.backend.transaction() as conn:
+            conn.execute(
+                "INSERT INTO service_contracts(id,customer_id,game_id,status,instance_limit) VALUES (?,?,?,?,?)",
+                ("contract-instance-one", 1, "generic-game", "active", 1),
+            )
+            conn.execute(
+                "INSERT INTO instance_contracts(instance_id,contract_id) VALUES (?,?)",
+                ("instance-one", "contract-instance-one"),
+            )
         self.commands = AgentInstanceRuntimeRepository(self.backend); self.commands.initialize()
 
     def tearDown(self):
