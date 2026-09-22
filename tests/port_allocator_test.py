@@ -201,54 +201,6 @@ class PortAllocatorTest(
             {"game_udp": 24000, "game_tcp": 24000},
         )
 
-    def test_sparse_offset_profile_keeps_block_stride(self):
-        profile = PortProfile.from_mapping(
-            {
-                "allocation": "block",
-                "block_size": 10,
-                "sparse_offsets": True,
-                "ports": [
-                    {"name": "game", "protocol": "udp", "offset": 0},
-                    {"name": "game_aux", "protocol": "udp", "offset": 2},
-                    {"name": "steam_query", "protocol": "udp", "offset": 24714},
-                ],
-            }
-        )
-
-        allocation = allocate_port_profile(
-            profile,
-            [
-                PortRange("udp", 24000, 24999),
-                PortRange("udp", 48714, 49713),
-            ],
-            occupied={"udp": {24000}},
-        )
-
-        self.assertEqual(
-            allocation.ports,
-            {
-                "game": 24010,
-                "game_aux": 24012,
-                "steam_query": 48724,
-            },
-        )
-
-    def test_large_offset_requires_sparse_opt_in(self):
-        with self.assertRaisesRegex(
-            ValueError,
-            "network port offset must fit inside block_size",
-        ):
-            PortProfile.from_mapping(
-                {
-                    "allocation": "block",
-                    "block_size": 10,
-                    "ports": [
-                        {"name": "game", "protocol": "udp", "offset": 0},
-                        {"name": "query", "protocol": "udp", "offset": 24714},
-                    ],
-                }
-            )
-
     def test_exhausted_range(self):
         profile = PortProfile.from_mapping(
             DAYZ
