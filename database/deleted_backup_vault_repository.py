@@ -57,6 +57,8 @@ class DeletedBackupVaultRepository:
   item=self.get(vault_id);status=str(item.get("status") or "")
   if status in {"expired","failed","ready","deleted"}:return item
   if status=="backup_pending":
+   if self._instance(str(item.get("source_instance_id") or "")) is None:
+    return self._set(vault_id,status="failed",last_error="source instance was removed before final backup completed")
    job=self.backups.get_job(str(item.get("backup_job_id") or ""))
    if not job:return self._set(vault_id,status="failed",last_error="final backup job disappeared")
    job_status=str(job.get("status") or "")
