@@ -164,11 +164,12 @@ class AgentPublicNetworkContractTest(unittest.TestCase):
                 {"name": "game", "protocol": "udp", "port": 24000},
                 {"name": "steam_query", "protocol": "udp", "port": 24003},
             ],
-            "200.100.203.92",
+            {"public_ipv4": "200.100.203.92"},
         )
         self.assertIsNotNone(check)
         self.assertEqual(check["port"], 24003)
         self.assertEqual(check["target"], "200.100.203.92:24003")
+        self.assertEqual(check["public_port"], 24003)
         self.assertEqual(
             check["url"],
             "https://ismygameserver.online/valve/200.100.203.92:24003",
