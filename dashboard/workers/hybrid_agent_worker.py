@@ -41,6 +41,7 @@ from content_repository import ContentRepository
 from hybrid_game_data_client import process_hybrid_game_data_cycle
 from hybrid_instance_provisioning_client import process_hybrid_instance_provisioning_cycle
 from hybrid_local_reconciliation import reconcile_local_hybrid_runtime
+from hybrid_runtime_port_backfill import HybridRuntimePortBackfillError
 from instance_workspace_repository import InstanceWorkspaceRepository
 from observability_repository import ObservabilityRepository
 from registry_repository import RegistryRepository
@@ -383,7 +384,13 @@ def process_hybrid_instance_reconcile_cycle(root: Path, agent_id: str) -> dict[s
     }
 
 
-def process_hybrid_instance_runtime_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
+def process_hybrid_instance_runtime_cycle(
+    backend,
+    root: Path,
+    agent_id: str,
+    *,
+    allowed_actions: set[str] | None = None,
+) -> dict[str, Any]:
     """Consume one Controller runtime command using the embedded Hybrid runtime."""
     repository = AgentInstanceRuntimeRepository(backend)
     command = repository.command_for_agent(agent_id)
@@ -393,6 +400,15 @@ def process_hybrid_instance_runtime_cycle(backend, root: Path, agent_id: str) ->
     command_id = str(command.get("command_id") or "").strip()
     if not command_id:
         raise RuntimeError("Hybrid instance command is missing command_id")
+    action = str(command.get("action") or "").strip().lower()
+    if allowed_actions is not None and action not in allowed_actions:
+        return {
+            "status": "blocked",
+            "reason": "local_reconcile_degraded",
+            "command_id": command_id,
+            "instance_id": command.get("instance_id"),
+            "action": action,
+        }
 
     repository.mark_delivered(command_id)
     runtime = _instance_runtime_module(root)
@@ -729,25 +745,65 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         return {"active": False, "reason": "identity_incomplete"}
 
     effective_backend = backend or backend_from_environment(_database_environment(root))
-    result = reconcile_local_hybrid_runtime(
-        RegistryRepository(effective_backend),
-        root,
-        node_id=node_id,
-        agent_id=agent_id,
-        hostname=socket.gethostname(),
-    )
+    local_reconcile_error = None
+    try:
+        result = reconcile_local_hybrid_runtime(
+            RegistryRepository(effective_backend),
+            root,
+            node_id=node_id,
+            agent_id=agent_id,
+            hostname=socket.gethostname(),
+        )
+    except HybridRuntimePortBackfillError as exc:
+        local_reconcile_error = str(exc)
+        result = {
+            "runtime_reconciled": False,
+            "health_status": "degraded",
+            "instance_port_reconcile": {
+                "status": "failed",
+                "error": local_reconcile_error,
+            },
+        }
+
     public_network = process_hybrid_public_network_cycle(effective_backend, root, agent_id)
-    instance_reconcile = process_hybrid_instance_reconcile_cycle(root, agent_id)
-    configuration = process_hybrid_configuration_cycle(effective_backend, root, agent_id)
-    content = process_hybrid_content_cycle(effective_backend, root, agent_id)
-    runtime_events = process_hybrid_runtime_event_cycle(effective_backend, root, agent_id)
-    yarax_admin = process_hybrid_yarax_admin_cycle(effective_backend, root, agent_id)
-    instance_runtime = process_hybrid_instance_runtime_cycle(effective_backend, root, agent_id)
+    if local_reconcile_error is None:
+        instance_reconcile = process_hybrid_instance_reconcile_cycle(root, agent_id)
+        configuration = process_hybrid_configuration_cycle(effective_backend, root, agent_id)
+        content = process_hybrid_content_cycle(effective_backend, root, agent_id)
+        runtime_events = process_hybrid_runtime_event_cycle(effective_backend, root, agent_id)
+        yarax_admin = process_hybrid_yarax_admin_cycle(effective_backend, root, agent_id)
+        instance_runtime = process_hybrid_instance_runtime_cycle(effective_backend, root, agent_id)
+        provisioning = process_hybrid_instance_provisioning_cycle(effective_backend, root, agent_id)
+        game_data = process_hybrid_game_data_cycle(effective_backend, root, agent_id)
+    else:
+        # Keep destructive recovery/control-plane cleanup alive when one
+        # instance's network migration cannot safely proceed. RuntimeSpec
+        # reconciliation and mutating configuration/content/provisioning remain
+        # fail-closed until the port conflict is resolved.
+        instance_reconcile = {
+            "status": "blocked",
+            "reason": "instance_port_reconcile_failed",
+            "instances": 0,
+            "healthy": 0,
+            "files_access_prepared": 0,
+            "files_access_failed": 0,
+        }
+        configuration = {"status": "blocked", "applied": 0, "failed": 0}
+        content = {"status": "blocked", "applied": 0, "failed": 0}
+        runtime_events = {"status": "blocked", "accepted": 0, "rejected": 0}
+        yarax_admin = {"status": "blocked"}
+        instance_runtime = process_hybrid_instance_runtime_cycle(
+            effective_backend,
+            root,
+            agent_id,
+            allowed_actions={"stop", "remove"},
+        )
+        provisioning = {"status": "blocked"}
+        game_data = {"state": {"status": "blocked"}}
+
     instance_telemetry = process_hybrid_instance_telemetry_cycle(effective_backend, root, agent_id)
     instance_health = process_hybrid_instance_health_cycle(effective_backend, root, agent_id)
     backup = process_hybrid_backup_cycle(effective_backend, root, agent_id)
-    provisioning = process_hybrid_instance_provisioning_cycle(effective_backend, root, agent_id)
-    game_data = process_hybrid_game_data_cycle(effective_backend, root, agent_id)
     response = {
         "active": True,
         "agent_id": agent_id,
@@ -763,6 +819,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         "backup": backup,
         "provisioning": provisioning,
         "game_data": game_data,
+        "local_reconcile_error": local_reconcile_error,
         **result,
     }
     game_state = game_data.get("state") if isinstance(game_data.get("state"), dict) else {}
