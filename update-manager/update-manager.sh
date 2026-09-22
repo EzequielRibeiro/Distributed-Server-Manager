@@ -451,4 +451,5 @@ dsm_update_history_add()
 
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $OLD -> $NEW" \
     >> "$HISTORY_FILE"
+    chmod 0644 "$HISTORY_FILE"
 }
