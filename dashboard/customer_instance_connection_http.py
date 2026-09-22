@@ -66,7 +66,7 @@ def _external_query_check(profile: dict, ports: list[dict], host: str) -> dict |
         return None
     by_name = {str(item.get("name") or ""): item for item in ports}
     strategy = str(profile.get("strategy") or "")
-    role = str(profile.get("query_role") or "") if strategy in {"offset", "fixed_default_query"} else str(profile.get("game_role") or "")
+    role = str(profile.get("query_role") or "") if strategy in {"offset", "fixed_default_query", "direct_query_role"} else str(profile.get("game_role") or "")
     selected = by_name.get(role)
     if not selected:
         return None
