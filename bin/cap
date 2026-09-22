@@ -97,8 +97,22 @@ readonly_update_command(){
 }
 
 if [[ "${1:-}" == "update" && ( "${2:-}" == "check" || "${2:-}" == "history" ) ]]; then
-    readonly_update_command "${2}"
-    exit $?
+    ROLE_RESOLVER_EARLY="${DSM_ROOT}/core/role_context.py"
+    EARLY_ROLE="unknown"
+    if [[ -r "${ROLE_RESOLVER_EARLY}" ]]; then
+        EARLY_ROLE="$(python3 "${ROLE_RESOLVER_EARLY}" --root "${DSM_ROOT}" 2>/dev/null || true)"
+        EARLY_ROLE="${EARLY_ROLE:-unknown}"
+    fi
+    case "${EARLY_ROLE}" in
+        controller|agent|hybrid)
+            readonly_update_command "${2}"
+            exit $?
+            ;;
+        *)
+            printf "Erro: 'cap update %s' requer role controller, agent ou hybrid.\nRole local detectada: %s.\n" "${2}" "${EARLY_ROLE}" >&2
+            exit 2
+            ;;
+    esac
 fi
 
 BOOTSTRAP="${DSM_ROOT}/core/bootstrap.sh"
