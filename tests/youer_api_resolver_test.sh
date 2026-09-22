@@ -19,10 +19,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 {"number":657,"url":base+"/api/v2/projects/youer/1.21.1/builds/657/download"}
             ]}).encode()
         elif self.path == "/api/v2/projects/youer/1.21.11/builds":
-            body=json.dumps({"builds":[
-                {"number":18,"url":base+"/api/v2/projects/youer/1.21.11/builds/18/download"},
-                {"number":19,"url":base+"/api/v2/projects/youer/1.21.11/builds/19/download"}
-            ]}).encode()
+            self.send_response(503);self.end_headers();return
+        elif self.path == "/legacy/1.21.11/builds":
+            body=json.dumps([
+                {"id":18},
+                {"id":19}
+            ]).encode()
         elif self.path == "/api/v2/projects/youer/26.1/builds":
             body=json.dumps({"builds":[
                 {"number":3,"url":base+"/api/v2/projects/youer/26.1/builds/3/download"}
@@ -53,6 +55,7 @@ for _ in $(seq 1 50); do [[ -s "${PORT_FILE}" ]] && break; sleep 0.05; done
 PORT="$(cat "${PORT_FILE}")"
 
 export YOUER_API_BASE="http://127.0.0.1:${PORT}/api/v2/projects/youer"
+export YOUER_LEGACY_API_BASE="http://127.0.0.1:${PORT}/legacy"
 export YOUER_DISCOVERY_LIMIT=25
 source "${ROOT}/installer/version_resolvers/youer_api.sh"
 
@@ -61,14 +64,15 @@ jq -e '
   .variant=="youer"
   and .source=="mohistmc-api-v2"
   and ([.versions[].version] | unique | sort) == ["1.21.1","1.21.11","26.1"]
-  and ([.versions[] | select(.version=="26.1")][0].build=="3")
+  and ([.versions[] | select(.version=="26.1" and .build=="3")] | length)==1
+  and ([.versions[] | select(.version=="1.21.11" and .build=="19")] | length)==1
 ' <<<"${LIST}" >/dev/null
 
 LATEST="$(version_resolver_execute resolve minecraft youer latest)"
 jq -e '.version=="26.1" and .build=="3" and .provider=="http" and .selected_asset.name=="server.jar" and (.selected_asset.url|endswith("/26.1/builds/3/download"))' <<<"${LATEST}" >/dev/null
 
 PINNED="$(version_resolver_execute resolve minecraft youer '1.21.11@18')"
-jq -e '.version=="1.21.11" and .build=="18" and (.install.url|endswith("/1.21.11/builds/18/download"))' <<<"${PINNED}" >/dev/null
+jq -e '.version=="1.21.11" and .build=="18" and (.install.url|endswith("/legacy/1.21.11/builds/18/download"))' <<<"${PINNED}" >/dev/null
 
 if version_resolver_execute resolve minecraft youer '1.20.6' >/dev/null 2>&1; then
   echo "FAIL: unpublished Youer version was accepted" >&2

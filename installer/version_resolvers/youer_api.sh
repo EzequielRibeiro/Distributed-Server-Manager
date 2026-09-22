@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Capivara DSM - Youer resolver using the official MohistMC JSON API v2.
+# Capivara DSM - Youer resolver using MohistMC's official APIs.
 set -Eeuo pipefail
 
 YOUER_API_BASE="${YOUER_API_BASE:-https://mohistmc.com/api/v2/projects/youer}"
+YOUER_LEGACY_API_BASE="${YOUER_LEGACY_API_BASE:-https://api.mohistmc.com/project/youer}"
 YOUER_DISCOVERY_LIMIT="${YOUER_DISCOVERY_LIMIT:-25}"
 
 youer_error(){ echo "[DSM][DISCOVERY][YOUER][ERROR] $*" >&2; }
@@ -15,8 +16,21 @@ youer_project()
 
 youer_builds()
 {
-    local VERSION="$1"
-    youer_get "${YOUER_API_BASE}/${VERSION}/builds"
+    local VERSION="$1" RESPONSE
+    if RESPONSE="$(youer_get "${YOUER_API_BASE}/${VERSION}/builds" 2>/dev/null)" &&        jq -e 'type=="object" and (.builds|type)=="array"' >/dev/null 2>&1 <<<"${RESPONSE}"
+    then
+        printf '%s\n' "${RESPONSE}"
+        return 0
+    fi
+
+    if RESPONSE="$(youer_get "${YOUER_LEGACY_API_BASE}/${VERSION}/builds" 2>/dev/null)" &&        jq -e 'type=="array"' >/dev/null 2>&1 <<<"${RESPONSE}"
+    then
+        jq -nc --argjson builds "${RESPONSE}" '{builds:$builds,source:"legacy"}'
+        return 0
+    fi
+
+    youer_error "unable to query builds for ${VERSION}"
+    return 1
 }
 
 youer_version_exists()
@@ -36,7 +50,7 @@ youer_build_number()
 
 youer_list()
 {
-    local PROJECT LIMIT VERSION BUILDS
+    local PROJECT LIMIT VERSION BUILDS VERSION_ENTRY
     local OUTPUT='[]'
     PROJECT="$(youer_project)" || return 1
     LIMIT="${YOUER_DISCOVERY_LIMIT}"
@@ -46,20 +60,32 @@ youer_list()
     while IFS= read -r VERSION
     do
         [[ -n "${VERSION}" ]] || continue
-        BUILDS="$(youer_builds "${VERSION}")" || continue
-        OUTPUT="$(jq -c           --arg version "${VERSION}"           --argjson current "${OUTPUT}" '
-          ($current + [
-            (.builds // [])[]
-            | (.number // .id // .build // empty | tostring) as $build
-            | select($build != "")
-            | {
-                version:$version,
-                build:$build,
-                minecraft_versions:[$version],
-                stable:true
-              }
-          ])
-        ' <<<"${BUILDS}")"
+
+        # Keep version discovery independent from build discovery. A temporary
+        # build endpoint failure must not collapse the Customer selector to the
+        # generic "current" fallback.
+        VERSION_ENTRY="$(jq -nc --arg version "${VERSION}" '{
+          version:$version,
+          minecraft_versions:[$version],
+          stable:true
+        }')"
+        OUTPUT="$(jq -nc --argjson current "${OUTPUT}" --argjson entry "${VERSION_ENTRY}" '$current + [$entry]')"
+
+        if BUILDS="$(youer_builds "${VERSION}")"; then
+            OUTPUT="$(jq -c               --arg version "${VERSION}"               --argjson current "${OUTPUT}" '
+              ($current + [
+                (.builds // [])[]
+                | (.number // .id // .build // empty | tostring) as $build
+                | select($build != "")
+                | {
+                    version:$version,
+                    build:$build,
+                    minecraft_versions:[$version],
+                    stable:true
+                  }
+              ])
+            ' <<<"${BUILDS}")"
+        fi
     done < <(
         jq -r --argjson limit "${LIMIT}" '
           (.versions // [])
@@ -112,7 +138,7 @@ youer_resolve()
 
     [[ -n "${BUILD}" ]] || BUILD="$(youer_build_number <<<"${BUILD_ITEM}")"
     URL="$(jq -r '.url // .download_url // empty' <<<"${BUILD_ITEM}")"
-    [[ -n "${URL}" ]] || URL="${YOUER_API_BASE}/${VERSION}/builds/${BUILD}/download"
+    [[ -n "${URL}" ]] || URL="${YOUER_LEGACY_API_BASE}/${VERSION}/builds/${BUILD}/download"
 
     jq -nc --arg version "${VERSION}" --arg build "${BUILD}" --arg url "${URL}" '
       {
