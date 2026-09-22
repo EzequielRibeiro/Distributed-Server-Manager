@@ -15,7 +15,11 @@
       "protocol": "asa",
       "strategy": "direct",
       "game_role": "game",
-      "status": "supported"
+      "status": "supported",
+      "port_labels": {
+        "game": "Game",
+        "query": "Query"
+      }
     },
     "arma3": {
       "gamedig_type": "arma3",
@@ -24,7 +28,15 @@
       "game_role": "game",
       "query_role": "steam_query",
       "offset": 1,
-      "status": "supported"
+      "status": "supported",
+      "port_labels": {
+        "game": "Game",
+        "steam_query": "Query Steam",
+        "steam_master": "Steam Master",
+        "von_reserved": "VoN",
+        "battleye": "BattlEye"
+      },
+      "checker_type": "valve"
     },
     "armareforger": {
       "gamedig_type": "armareforger",
@@ -35,14 +47,23 @@
       "default_game_port": 2001,
       "default_query_port": 17777,
       "status": "conditional",
-      "note": "GameDig only tries the fixed query port automatically when the supplied game port matches its default. Custom Capivara game ports may require an explicit query-port-aware client."
+      "note": "GameDig only tries the fixed query port automatically when the supplied game port matches its default. Custom Capivara game ports may require an explicit query-port-aware client.",
+      "port_labels": {
+        "game": "Game",
+        "steam_query": "Query Steam"
+      },
+      "checker_type": "valve"
     },
     "counterstrike2": {
       "gamedig_type": "counterstrike2",
       "protocol": "valve",
       "strategy": "direct",
       "game_role": "game",
-      "status": "supported"
+      "status": "supported",
+      "port_labels": {
+        "game": "Game / A2S"
+      },
+      "checker_type": "valve"
     },
     "dayz": {
       "gamedig_type": "dayz",
@@ -67,28 +88,45 @@
       "game_role": "game",
       "default_query_port": 34197,
       "status": "supported",
-      "note": "GameDig uses 34197 only when no port is supplied; an explicitly supplied Capivara game port is queried directly."
+      "note": "GameDig uses 34197 only when no port is supplied; an explicitly supplied Capivara game port is queried directly.",
+      "port_labels": {
+        "game": "Game"
+      }
     },
     "fivem": {
       "gamedig_type": "gta5f",
       "protocol": "fivem",
       "strategy": "direct",
       "game_role": "game",
-      "status": "supported"
+      "status": "supported",
+      "port_labels": {
+        "game": "Game UDP",
+        "game_tcp": "Game TCP"
+      }
     },
     "garrysmod": {
       "gamedig_type": "garrysmod",
       "protocol": "valve",
       "strategy": "direct",
       "game_role": "game_udp",
-      "status": "supported"
+      "status": "supported",
+      "port_labels": {
+        "game_udp": "Game / A2S UDP",
+        "game_tcp": "Game TCP"
+      },
+      "checker_type": "valve"
     },
     "left4dead2": {
       "gamedig_type": "l4d2",
       "protocol": "valve",
       "strategy": "direct",
       "game_role": "game_udp",
-      "status": "supported"
+      "status": "supported",
+      "port_labels": {
+        "game_udp": "Game / A2S UDP",
+        "game_tcp": "Game TCP"
+      },
+      "checker_type": "valve"
     },
     "luanti": {
       "gamedig_type": "minetest",
@@ -96,14 +134,21 @@
       "strategy": "direct",
       "game_role": "game",
       "status": "supported",
-      "note": "GameDig still exposes the historical Minetest type name; Luanti is the renamed upstream project."
+      "note": "GameDig still exposes the historical Minetest type name; Luanti is the renamed upstream project.",
+      "port_labels": {
+        "game": "Game"
+      }
     },
     "mindustry": {
       "gamedig_type": "mindustry",
       "protocol": "mindustry",
       "strategy": "direct",
       "game_role": "game_udp",
-      "status": "supported"
+      "status": "supported",
+      "port_labels": {
+        "game_tcp": "Game TCP",
+        "game_udp": "Game UDP"
+      }
     },
     "minecraft": {
       "gamedig_type": "minecraft",
@@ -119,6 +164,14 @@
           "game_role": "game_ipv4",
           "status": "supported"
         }
+      },
+      "port_labels": {
+        "game": "Game",
+        "rcon": "RCON",
+        "query": "Query",
+        "votifier": "Votifier",
+        "game_ipv4": "Game IPv4",
+        "game_ipv6": "Game IPv6"
       }
     },
     "palworld": {
@@ -126,14 +179,23 @@
       "protocol": "palworld",
       "strategy": "direct",
       "game_role": "game",
-      "status": "supported"
+      "status": "supported",
+      "port_labels": {
+        "game": "Game",
+        "rcon": "RCON",
+        "rest_api": "REST API"
+      }
     },
     "projectzomboid": {
       "gamedig_type": "projectzomboid",
       "protocol": "valve",
       "strategy": "direct",
       "game_role": "game",
-      "status": "supported"
+      "status": "supported",
+      "port_labels": {
+        "game": "Game / A2S"
+      },
+      "checker_type": "valve"
     },
     "rust": {
       "gamedig_type": "rust",
@@ -141,14 +203,25 @@
       "strategy": "direct",
       "game_role": "game",
       "status": "supported",
-      "note": "The catalog also reserves a separate query role; this gate follows GameDig's current direct-port definition and leaves live protocol behavior to E2E probing."
+      "note": "The catalog also reserves a separate query role; this gate follows GameDig's current direct-port definition and leaves live protocol behavior to E2E probing.",
+      "port_labels": {
+        "game": "Game / A2S",
+        "query": "Query",
+        "rcon": "RCON"
+      },
+      "checker_type": "valve"
     },
     "satisfactory": {
       "gamedig_type": "satisfactory",
       "protocol": "satisfactory",
       "strategy": "direct",
       "game_role": "game_udp",
-      "status": "supported"
+      "status": "supported",
+      "port_labels": {
+        "game_udp": "Game UDP",
+        "game_tcp": "Game TCP",
+        "reliable_tcp": "Reliable TCP"
+      }
     },
     "sevendaystodie": {
       "gamedig_type": "sdtd",
@@ -157,14 +230,26 @@
       "game_role": "game",
       "query_role": "game_aux_1",
       "offset": 1,
-      "status": "supported"
+      "status": "supported",
+      "port_labels": {
+        "game": "Game",
+        "game_tcp": "Game TCP",
+        "game_aux_1": "Query",
+        "game_aux_2": "Game auxiliar 2",
+        "game_aux_3": "Game auxiliar 3"
+      },
+      "checker_type": "valve"
     },
     "teamfortress2": {
       "gamedig_type": "teamfortress2",
       "protocol": "valve",
       "strategy": "direct",
       "game_role": "game",
-      "status": "supported"
+      "status": "supported",
+      "port_labels": {
+        "game": "Game / A2S"
+      },
+      "checker_type": "valve"
     },
     "theisle": {
       "gamedig_type": "theisle",
@@ -173,7 +258,12 @@
       "game_role": "game",
       "query_role": "steam_query",
       "offset": 1,
-      "status": "supported"
+      "status": "supported",
+      "port_labels": {
+        "game": "Game",
+        "steam_query": "Query Steam"
+      },
+      "checker_type": "valve"
     },
     "valheim": {
       "gamedig_type": "valheim",
@@ -182,7 +272,12 @@
       "game_role": "game",
       "query_role": "game_aux",
       "offset": 1,
-      "status": "supported"
+      "status": "supported",
+      "port_labels": {
+        "game": "Game",
+        "game_aux": "Query / Game auxiliar"
+      },
+      "checker_type": "valve"
     }
   }
 }
