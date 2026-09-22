@@ -75,18 +75,20 @@ def _external_query_check(profile: dict, ports: list[dict], host: str) -> dict |
     except (TypeError, ValueError):
         return None
     game_type = str(profile.get("gamedig_type") or "").strip()
-    if not game_type:
+    checker_type = str(profile.get("checker_type") or game_type).strip()
+    if not game_type or not checker_type:
         return None
     target = f"{host}:{port}"
     return {
         "provider": "ismygameserver.online",
         "gamedig_type": game_type,
+        "checker_type": checker_type,
         "protocol": profile.get("protocol"),
         "strategy": strategy,
         "port_role": role,
         "port": port,
         "target": target,
-        "url": f"https://ismygameserver.online/{quote(game_type, safe='')}/{quote(target, safe=':[]')}",
+        "url": f"https://ismygameserver.online/{quote(checker_type, safe='')}/{quote(target, safe=':[]')}",
         "status": str(profile.get("status") or "supported"),
         "note": profile.get("note"),
     }
@@ -174,6 +176,11 @@ def install_customer_instance_connection(legacy, authenticate):
                 str(context.get("game_id") or ""),
                 str(context.get("runtime_id") or ""),
             )
+            labels = query_profile.get("port_labels") if isinstance(query_profile.get("port_labels"), dict) else {}
+            for item in port_status:
+                label = labels.get(str(item.get("name") or ""))
+                if label:
+                    item["label"] = str(label)
             external_check = _external_query_check(query_profile, port_status, public_host)
 
             self.send_json(200, {
