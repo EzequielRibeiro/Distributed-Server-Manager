@@ -1,3 +1,11 @@
+## 2.0.113
+- Keep game-console commands and server output in one unified terminal surface.
+- Remove the separate "Exibir histórico de comandos" panel from Customer and Controller instance views.
+- Preserve internal command-history storage without rendering it as a duplicate console stream.
+- Allow `cap update check` and `cap update history` to run without loading private `dsm.conf`.
+- Preserve role enforcement for read-only update commands through the read-only role resolver.
+- Keep update history readable without relaxing private DSM configuration permissions.
+
 ## 2.0.112
 - Separate live game-console output from persisted command-response history.
 - Add a collapsed "Exibir histórico de comandos" panel with visible response-line count.
