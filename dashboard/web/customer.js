@@ -112,6 +112,26 @@
   }
 
 
+  function contractProductLabel(contract) {
+    const game = String(contract?.game_id || "").trim().toLowerCase();
+    const mode = String(
+      contract?.product_variant ||
+      contract?.content_mode ||
+      "standard"
+    ).trim().toLowerCase();
+
+    if (game === "minecraft") {
+      return mode === "modified"
+        ? "Minecraft Modificado"
+        : "Minecraft Padrão";
+    }
+
+    return mode && mode !== "standard"
+      ? mode.replace(/[-_]+/g, " ").replace(/\b\w/g, letter => letter.toUpperCase())
+      : "Plano padrão";
+  }
+
+
   function instanceUrl(item) {
     return (
       "/customer-instance.html?" +
@@ -518,7 +538,7 @@
       );
 
     detail.textContent =
-      "Você possui uma vaga contratada. Escolha o tipo de servidor antes da criação da instância.";
+      `${contractProductLabel(contract)} · Você possui uma vaga contratada. Escolha o tipo de servidor antes da criação da instância.`;
 
     const profile =
       (resourceProfiles.get(contract.game_id) || [])
@@ -1026,8 +1046,8 @@
             }
 
 
-            const contract =
-              contracts.find(
+            const availableContracts =
+              contracts.filter(
                 item =>
                 item.game_id ===
                 game &&
@@ -1035,14 +1055,14 @@
               );
 
             if (
-              contract &&
+              availableContracts.length === 1 &&
               window
               .CapivaraRuntimeSelector
             ) {
               window
                 .CapivaraRuntimeSelector
                 .open(
-                  contract
+                  availableContracts[0]
                 )
                 .catch(
                   error =>
@@ -1054,6 +1074,11 @@
               return;
             }
 
+            if (availableContracts.length > 1) {
+              message(
+                `Há ${availableContracts.length} contratos disponíveis para ${gameLabel(game)}. Escolha o contrato correto abaixo.`
+              );
+            }
 
             $("customer-contracts")
               ?.scrollIntoView({
