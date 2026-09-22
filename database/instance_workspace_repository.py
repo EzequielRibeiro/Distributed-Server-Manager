@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
 import json
 from typing import Any, Iterator
 import uuid
@@ -15,8 +14,6 @@ from customer_instance_policy import INSTANCE_PERMISSIONS, effective_permissions
 from instance_backup_policy_defaults import default_instance_backup_policy
 
 FINAL_CONSOLE_STATES = {"completed", "failed"}
-CONSOLE_HISTORY_RETENTION_DAYS = 7
-CONSOLE_HISTORY_MAX_LINES = 500
 CONTRACT_CHANGE_STATES = {
     "requested", "pending_billing", "paid", "approved", "applying",
     "applied", "failed", "cancelled",
@@ -414,30 +411,21 @@ class InstanceWorkspaceRepository:
                     if text: session.execute("INSERT INTO instance_console_output(instance_id,stream,line) " + f"VALUES ({self.dialect.parameters(3)})", (str(current["instance_id"]), "console", text))
         return self.console_command(command_id)
 
-    def _prune_console_output(self, instance_id: str) -> None:
+    def clear_console_output(self, instance_id: str) -> int:
+        self.instance_context(instance_id)
         ph = self.dialect.placeholder
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=CONSOLE_HISTORY_RETENTION_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
         with self.session(transaction=True) as session:
-            session.execute(
-                f"DELETE FROM instance_console_output WHERE instance_id={ph} AND created_at < {ph}",
-                (instance_id, cutoff),
-            )
-            boundary = session.execute(
-                f"SELECT id FROM instance_console_output WHERE instance_id={ph} ORDER BY id DESC LIMIT 1 OFFSET {CONSOLE_HISTORY_MAX_LINES - 1}",
+            cursor = session.execute(
+                f"DELETE FROM instance_console_output WHERE instance_id={ph}",
                 (instance_id,),
-            ).fetchone()
-            if boundary is not None:
-                session.execute(
-                    f"DELETE FROM instance_console_output WHERE instance_id={ph} AND id < {ph}",
-                    (instance_id, int(boundary["id"])),
-                )
+            )
+            return max(0, int(getattr(cursor, "rowcount", 0) or 0))
 
     def console_output(self, instance_id: str, limit: int = 300) -> list[dict[str, Any]]:
-        self.instance_context(instance_id); ph = self.dialect.placeholder; limit = max(1, min(int(limit), CONSOLE_HISTORY_MAX_LINES))
-        self._prune_console_output(instance_id)
+        self.instance_context(instance_id); ph = self.dialect.placeholder; limit = max(1, min(int(limit), 1000))
         with self.session() as session:
             rows = session.execute(f"SELECT stream,line,created_at FROM instance_console_output WHERE instance_id={ph} ORDER BY id DESC LIMIT {limit}", (instance_id,)).fetchall()
         return [dict(row) for row in reversed(rows)]
 
 
-__all__ = ["CONSOLE_HISTORY_MAX_LINES", "CONSOLE_HISTORY_RETENTION_DAYS", "CONTRACT_CHANGE_STATES", "FINAL_CONSOLE_STATES", "InstanceWorkspaceRepository"]
+__all__ = ["CONTRACT_CHANGE_STATES", "FINAL_CONSOLE_STATES", "InstanceWorkspaceRepository"]
