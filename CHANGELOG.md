@@ -1,3 +1,10 @@
+## 2.0.114
+- Restore Customer "Zona de perigo" instance deletion when the dedicated delete UI fails to initialize.
+- Reuse the authenticated Customer workspace overview already loaded by the main instance page.
+- Keep danger-zone rendering idempotent across workspace refreshes.
+- Surface delete-initialization failures visibly instead of failing silently before the status element exists.
+- Preserve existing RBAC, explicit confirmation, final-backup, and Agent-owned removal safeguards.
+
 ## 2.0.113
 - Keep game-console commands and server output in one unified terminal surface.
 - Remove the separate "Exibir histórico de comandos" panel from Customer and Controller instance views.
