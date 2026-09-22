@@ -23,7 +23,7 @@ class WindowsDayZInstanceIsolationTest(unittest.TestCase):
  def tearDown(self):self.tmp.cleanup()
  def _spec(self,instance_id,port):
   state=self.root/"instances"/instance_id
-  raw=DayZRuntimeProfile().build_runtime_spec({"instance_id":instance_id,"agent_id":"agent-win","game_id":"dayz"},{"install_path":str(self.shared),"working_directory":str(self.shared),"instance_state_root":str(state),"ports":{"game":{"port":port,"protocol":"udp"},"game_aux":{"port":port+2,"protocol":"udp"},"steam_query":{"port":port+100,"protocol":"udp"}}})
+  raw=DayZRuntimeProfile().build_runtime_spec({"instance_id":instance_id,"agent_id":"agent-win","game_id":"dayz"},{"install_path":str(self.shared),"working_directory":str(self.shared),"instance_state_root":str(state),"ports":{"game":{"port":port,"protocol":"udp"},"game_aux":{"port":port+2,"protocol":"udp"},"battleye":{"port":port+4,"protocol":"udp"},"steam_query":{"port":port+24714,"protocol":"udp"}}})
   return validate_runtime_spec(raw,expected_agent_id="agent-win")
  def test_two_instances_share_binaries_but_not_mutable_state(self):
   a=self._spec("dayz-a",2302);b=self._spec("dayz-b",2402)
@@ -41,7 +41,7 @@ class WindowsDayZInstanceIsolationTest(unittest.TestCase):
   _prepare_private_state(a);self.assertIn("<a/>",a_msg.read_text(encoding="utf-8"))
  def test_customer_arguments_cannot_override_private_paths(self):
   with self.assertRaises(ProfileError):
-   DayZRuntimeProfile().build_runtime_spec({"instance_id":"dayz-a","agent_id":"agent-win","game_id":"dayz"},{"install_path":str(self.shared),"instance_state_root":str(self.root/"instances"/"dayz-a"),"ports":{"game":{"port":2302,"protocol":"udp"},"game_aux":{"port":2304,"protocol":"udp"},"steam_query":{"port":2402,"protocol":"udp"}},"arguments":["-storage=C:\\shared"]})
+   DayZRuntimeProfile().build_runtime_spec({"instance_id":"dayz-a","agent_id":"agent-win","game_id":"dayz"},{"install_path":str(self.shared),"instance_state_root":str(self.root/"instances"/"dayz-a"),"ports":{"game":{"port":2302,"protocol":"udp"},"game_aux":{"port":2304,"protocol":"udp"},"battleye":{"port":2306,"protocol":"udp"},"steam_query":{"port":27016,"protocol":"udp"}},"arguments":["-storage=C:\\shared"]})
  def test_relative_private_seed_path_is_rejected(self):
   spec=self._spec("dayz-a",2302);spec["seed_directories"]=[{"source":"relative","target":str(Path(spec["instance_state_root"])/"mission")}]
   with self.assertRaises(Exception):validate_runtime_spec(spec,expected_agent_id="agent-win")
