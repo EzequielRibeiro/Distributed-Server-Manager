@@ -76,5 +76,62 @@ class HybridAgentUpdateReconciliationTest(unittest.TestCase):
                 backend.close()
 
 
+    def test_hybrid_runtime_closes_rollout_when_controller_is_newer_than_target(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.joinpath("config").mkdir(parents=True)
+            root.joinpath("config", "agent.conf").write_text(
+                'DSM_NODE_ROLE="hybrid"\n', encoding="utf-8"
+            )
+            backend = create_backend(
+                DatabaseConfig(driver="sqlite", database=str(root / "capivara.db"))
+            )
+            try:
+                registry = RegistryRepository(backend)
+                identity = installation_profile_identity(
+                    registry, profile="hybrid", hostname="hybrid-update-newer"
+                )
+                agent_id = str(identity["agent_id"])
+                updates = AgentUpdateRepository(backend)
+                updates.initialize()
+                updates.create_rollout(
+                    [agent_id], desired_version="2.0.53", channel="stable", batch_size=1
+                )
+
+                inventory = {
+                    "hostname": "hybrid-update-newer",
+                    "os_name": "linux",
+                    "architecture": "x86_64",
+                    "capivara_version": "2.0.114",
+                    "capabilities": {},
+                    "cpu": {},
+                    "ram_total_bytes": 1024,
+                    "storage": {},
+                    "network": {},
+                }
+                with patch(
+                    "hybrid_local_reconciliation.reconcile_hybrid_runtime_ports",
+                    return_value={"status": "completed"},
+                ):
+                    result = reconcile_local_hybrid_runtime(
+                        registry,
+                        root,
+                        node_id="hybrid-update-newer",
+                        agent_id=agent_id,
+                        hostname="hybrid-update-newer",
+                        inventory=inventory,
+                    )
+
+                state = updates.snapshot(agent_id)
+                self.assertEqual(state["installed_version"], "2.0.114")
+                self.assertEqual(state["available_version"], "2.0.114")
+                self.assertEqual(state["desired_version"], "2.0.114")
+                self.assertEqual(state["update_status"], "completed")
+                self.assertIsNotNone(state["last_update"])
+                self.assertEqual(result["update_state"]["update_status"], "completed")
+            finally:
+                backend.close()
+
+
 if __name__ == "__main__":
     unittest.main()
