@@ -23,9 +23,14 @@ class MinecraftRuntimeVersionCoverageTest(unittest.TestCase):
         self.assertIn("piston-meta.mojang.com", version["config"]["manifest_url"])
         self.assertGreaterEqual(int(version["config"]["discovery_limit"]), 20)
 
-    def test_youer_remains_explicitly_scoped_to_upstream_supported_version(self):
+    def test_youer_discovers_versions_from_official_project_api(self):
         data = json.loads((RUNTIMES / "java-youer.json").read_text(encoding="utf-8"))
-        self.assertEqual(["1.21.1"], data["version"]["config"]["supported_versions"])
+        version = data["version"]
+        self.assertEqual("dynamic", version["strategy"])
+        self.assertEqual("youer_api", version["resolver"])
+        self.assertNotIn("supported_versions", version["config"])
+        self.assertIn("/api/v2/projects/youer", version["config"]["api_base"])
+        self.assertGreaterEqual(int(version["config"]["discovery_limit"]), 10)
 
 if __name__ == "__main__":
     unittest.main()
