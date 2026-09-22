@@ -78,11 +78,13 @@ class CustomerCatalogHierarchyTest(unittest.TestCase):
         self.assertIn('showMessage(contractRuntimeMessage())', self.selector)
 
 
-    def test_runtime_cards_use_local_vector_icon_sprite(self):
-        self.assertIn('RUNTIME_ICON_SPRITE = "/assets/icons/runtime-sprite.svg?v=1"', self.selector)
+    def test_runtime_cards_use_inline_vector_icons(self):
         self.assertIn('function runtimeCardIconId(distribution, runtime)', self.selector)
+        self.assertIn('function runtimeCardIconMarkup(iconId)', self.selector)
         self.assertIn('document.createElementNS("http://www.w3.org/2000/svg", "svg")', self.selector)
-        self.assertIn('use.setAttribute("href"', self.selector)
+        self.assertIn('icon.innerHTML = runtimeCardIconMarkup(', self.selector)
+        self.assertNotIn('RUNTIME_ICON_SPRITE =', self.selector)
+        self.assertNotIn('use.setAttribute("href"', self.selector)
         for icon_id in (
             "runtime-vanilla",
             "runtime-fabric",
@@ -98,7 +100,7 @@ class CustomerCatalogHierarchyTest(unittest.TestCase):
             "runtime-bedrock",
             "runtime-default",
         ):
-            self.assertIn(f'id="{icon_id}"', self.runtime_icon_sprite)
+            self.assertIn(f'"{icon_id}"', self.selector)
 
 
 
