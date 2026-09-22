@@ -67,7 +67,10 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
    "capabilities[capability]===true",
    "function searchableContentSections(",
    "providerOptions(type).length",
-   "catálogo de busca indisponível neste runtime; use Upload externo.",
+   "catálogo de busca indisponível neste runtime; use o envio de arquivo.",
+   'provider.className="hidden"',
+   'className="content-origin"',
+   'className="content-result-icon"',
   ):
    self.assertIn(marker,script)
 
