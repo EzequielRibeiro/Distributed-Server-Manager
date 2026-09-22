@@ -25,6 +25,20 @@ cp "${CAP_CLI}" "${FAKE_ROOT}/bin/cap"
 chmod +x "${FAKE_ROOT}/bin/cap"
 printf '9.8.7\n' >"${FAKE_ROOT}/version"
 
+cat >"${FAKE_ROOT}/update-manager/config.conf" <<EOF
+PROJECT_VERSION_FILE="${FAKE_ROOT}/version"
+HISTORY_FILE="${FAKE_ROOT}/update-manager/update-history.log"
+EOF
+
+cat >"${FAKE_ROOT}/update-manager/github-client.sh" <<'EOF'
+#!/usr/bin/env bash
+github_latest_release(){ printf '%s\n' '{"tag_name":"v9.8.7"}'; }
+github_release_version(){ printf '%s\n' 'v9.8.7'; }
+EOF
+
+cp "${ROOT}/core/semver.sh" "${FAKE_ROOT}/core/semver.sh"
+printf '2026-09-22 10:11:48 - 9.8.6 -> 9.8.7\n' >"${FAKE_ROOT}/update-manager/update-history.log"
+
 cat >"${FAKE_ROOT}/core/bootstrap.sh" <<EOF
 #!/usr/bin/env bash
 touch "${TMP_DIR}/bootstrap-loaded"
@@ -67,9 +81,16 @@ chmod +x \
     "${FAKE_ROOT}/update-manager/update-manager.sh" \
     "${FAKE_ROOT}/update-manager/preflight-latest.sh"
 
+rm -f "${TMP_DIR}/bootstrap-loaded"
 OUTPUT="$("${FAKE_ROOT}/bin/cap" update check)"
 [[ "$?" -eq 0 ]] || fail "cap update check falhou"
-[[ "${OUTPUT}" == "STUB_UPDATE_CHECK" ]] || fail "cap update check nao chegou ao dispatcher esperado"
+grep -q "DSM já está atualizado." <<<"${OUTPUT}" || fail "cap update check nao executou a consulta publica"
+[[ ! -e "${TMP_DIR}/bootstrap-loaded" ]] || fail "cap update check carregou configuracao privada"
+
+OUTPUT="$("${FAKE_ROOT}/bin/cap" update history)"
+[[ "$?" -eq 0 ]] || fail "cap update history falhou"
+grep -q "9.8.6 -> 9.8.7" <<<"${OUTPUT}" || fail "cap update history nao leu o historico publico"
+[[ ! -e "${TMP_DIR}/bootstrap-loaded" ]] || fail "cap update history carregou configuracao privada"
 
 OUTPUT="$("${FAKE_ROOT}/bin/cap" update preflight)"
 [[ "$?" -eq 0 ]] || fail "cap update preflight falhou"
@@ -78,10 +99,6 @@ OUTPUT="$("${FAKE_ROOT}/bin/cap" update preflight)"
 OUTPUT="$("${FAKE_ROOT}/bin/cap" update run)"
 [[ "$?" -eq 0 ]] || fail "cap update run falhou"
 [[ "${OUTPUT}" == "STUB_UPDATE_RUN" ]] || fail "cap update run nao chegou ao dispatcher esperado"
-
-OUTPUT="$("${FAKE_ROOT}/bin/cap" update history)"
-[[ "$?" -eq 0 ]] || fail "cap update history falhou"
-[[ "${OUTPUT}" == "STUB_UPDATE_HISTORY" ]] || fail "cap update history nao chegou ao dispatcher esperado"
 
 set +e
 OUTPUT="$("${FAKE_ROOT}/bin/cap" update invalid 2>&1)"
