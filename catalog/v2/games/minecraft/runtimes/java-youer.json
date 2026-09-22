@@ -11,10 +11,8 @@
     "strategy": "dynamic",
     "resolver": "youer_api",
     "config": {
-      "supported_versions": [
-        "1.21.1"
-      ],
-      "api_base": "https://api.mohistmc.com/project/youer"
+      "api_base": "https://mohistmc.com/api/v2/projects/youer",
+      "discovery_limit": 25
     }
   },
   "process": {

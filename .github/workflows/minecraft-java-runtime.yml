@@ -12,6 +12,11 @@ on:
       - 'dashboard/customer_instance_creation.py'
       - 'dashboard/web/customer.html'
       - 'dashboard/web/create-server-wizard.js'
+      - 'dashboard/api/catalog.sh'
+      - 'installer/catalog.sh'
+      - 'installer/version_resolvers/minecraft_java.sh'
+      - 'tests/minecraft_java_resolver_test.sh'
+      - 'tests/minecraft_runtime_version_coverage_test.py'
       - 'tests/minecraft_java_instance_isolation_test.py'
       - 'tests/minecraft_java_customer_eula_test.py'
       - '.github/workflows/minecraft-java-runtime.yml'
@@ -36,8 +41,13 @@ jobs:
             agents/windows/runtime/profiles/registry.py \
             dashboard/customer_instance_creation.py \
             tests/minecraft_java_instance_isolation_test.py \
-            tests/minecraft_java_customer_eula_test.py
+            tests/minecraft_java_customer_eula_test.py \
+            tests/minecraft_runtime_version_coverage_test.py
       - name: Prove Linux and Windows Minecraft Java isolation
         run: python3 tests/minecraft_java_instance_isolation_test.py
       - name: Prove explicit customer EULA contract
         run: python3 tests/minecraft_java_customer_eula_test.py
+      - name: Prove Minecraft Java version discovery coverage
+        run: |
+          bash tests/minecraft_java_resolver_test.sh
+          python3 tests/minecraft_runtime_version_coverage_test.py
