@@ -296,7 +296,9 @@ def materialize_shutdown_messages_xml(path: Path, message: DayZShutdownMessage, 
                     handle.write(payload)
                     handle.flush()
                     os.fsync(handle.fileno())
-                os.chmod(target, mode)
+                # The existing inode already has the intended mode and
+                # ownership. A group-authorized Hybrid worker may write it but
+                # cannot chmod/chown it because it is not the inode owner.
                 return target
         temporary.replace(target)
     finally:
