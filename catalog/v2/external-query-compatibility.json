@@ -162,8 +162,9 @@
           "gamedig_type": "mbe",
           "protocol": "minecraft",
           "strategy": "direct",
-          "game_role": "game_ipv4",
-          "status": "supported"
+          "game_role": "signaling",
+          "status": "conditional",
+          "note": "Modern Bedrock Dedicated Server uses NetherNet: server-port is HTTP/TCP signaling and gameplay uses negotiated UDP. The pinned GameDig mbe probe targets the legacy RakNet query path and is not authoritative for NetherNet reachability; use the native /v1/join health endpoint for current Bedrock."
         }
       },
       "port_labels": {
@@ -171,8 +172,8 @@
         "rcon": "RCON",
         "query": "Query",
         "votifier": "Votifier",
-        "game_ipv4": "Game IPv4",
-        "game_ipv6": "Game IPv6"
+        "signaling": "NetherNet signaling",
+        "gameplay_udp": "NetherNet gameplay UDP"
       }
     },
     "palworld": {
