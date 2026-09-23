@@ -157,13 +157,13 @@ def _install(config,cmd):
 def _remove(config,cmd):
  _,instance=_owned(config,cmd);iid=str(cmd.get("instance_id") or "");target=_safe_target(instance,str(cmd.get("target") or "assets"));_activate_target(config,iid,target,None);return str(target)
 def _source_metadata(cmd:dict[str,Any])->dict[str,Any]:
- artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {};package=str(artifact.get("package_id") or cmd.get("package_id") or "").strip()
- return {"provider":str(cmd.get("provider") or artifact.get("provider") or "").strip().lower(),"content_type":str(cmd.get("content_type") or "other").strip().lower(),"package_id":package or None,"game_id":str(cmd.get("game_id") or "").strip().lower() or None,"target":str(cmd.get("target") or "").strip() or None}
+ artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {};package=str(artifact.get("package_id") or cmd.get("package_id") or "").strip();filename=str(artifact.get("filename") or "").strip()
+ return {"provider":str(cmd.get("provider") or artifact.get("provider") or "").strip().lower(),"content_type":str(cmd.get("content_type") or "other").strip().lower(),"package_id":package or None,"game_id":str(cmd.get("game_id") or "").strip().lower() or None,"target":str(cmd.get("target") or "").strip() or None,"artifact_filename":filename or None}
 def _reuse_installed(config,previous,cmd,source_meta):
  if previous.get("status") not in {"applied","rolled_back"} or not previous.get("installed_version"):return False
  if str(cmd.get("desired_state") or "installed")!="installed":return False
  if str(previous.get("installed_version"))!=str(cmd.get("version") or "latest"):return False
- for key in ("provider","package_id","target","game_id"):
+ for key in ("provider","package_id","target","game_id","artifact_filename"):
   if str(previous.get(key) or "")!=str(source_meta.get(key) or ""):return False
  path=str(previous.get("managed_path") or "");return bool(path and _managed_path_current(config,cmd,path))
 def _apply(config,cmd):
@@ -214,7 +214,7 @@ def apply_content_commands(config:dict[str,Any],commands:list[dict[str,Any]])->l
    previous=prior.get((str(report.get("instance_id") or ""),str(report.get("content_id") or ""))) or {}
    if previous.get("status")=="applied" and int(previous.get("applied_revision") or 0)>0 and str(previous.get("applied_checksum") or ""):
     restored={**report,"applied_revision":int(previous["applied_revision"]),"applied_checksum":str(previous["applied_checksum"]),"status":"rolled_back","installed_version":previous.get("installed_version"),"managed_path":previous.get("managed_path"),"last_error":str(exc)[:2000],"readiness":"rolled_back","security_state":str(previous.get("security_state") or "clean")}
-    for key in ("provider","content_type","package_id","game_id","target"):
+    for key in ("provider","content_type","package_id","game_id","target","artifact_filename"):
      if previous.get(key) is not None:restored[key]=previous.get(key)
     report.clear();report.update(restored);_write(_state_path(report.get("instance_id"),report.get("content_id")),report)
    else:report.update({"status":"failed","last_error":str(exc)[:2000],"readiness":"rolled_back"});_write(_state_path(report.get("instance_id"),report.get("content_id")),report)
