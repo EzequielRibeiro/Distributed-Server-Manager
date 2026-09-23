@@ -59,9 +59,32 @@ def _managed_root(record: dict[str, Any]) -> tuple[Path, Path]:
     return state_root, files_root
 
 
-def _prepare_tree(root: Path, group_gid: int) -> dict[str, int]:
+def _declared_executables(record: dict[str, Any], files_root: Path) -> set[Path]:
+    values = [record.get("executable")]
+    for item in record.get("pre_start") or []:
+        if isinstance(item, dict):
+            values.append(item.get("executable"))
+    declared: set[Path] = set()
+    for value in values:
+        raw = str(value or "").strip()
+        if not raw:
+            continue
+        path = Path(raw)
+        if not path.is_absolute():
+            raise RuntimeError("runtime executable path must be absolute")
+        resolved = path.resolve(strict=False)
+        try:
+            resolved.relative_to(files_root)
+        except ValueError:
+            continue
+        declared.add(resolved)
+    return declared
+
+
+def _prepare_tree(root: Path, group_gid: int, executable_paths: set[Path] | None = None) -> dict[str, int]:
     directories = 0
     files = 0
+    executable_paths = {path.resolve(strict=False) for path in (executable_paths or set())}
     stack = [root]
     while stack:
         current = stack.pop()
@@ -74,7 +97,7 @@ def _prepare_tree(root: Path, group_gid: int) -> dict[str, int]:
             stack.extend(current.iterdir())
             continue
         if current.is_file():
-            executable = bool(current.stat().st_mode & 0o111)
+            executable = bool(current.stat().st_mode & 0o111) or current.resolve(strict=False) in executable_paths
             os.chown(current, -1, group_gid)
             os.chmod(current, 0o770 if executable else 0o660)
             files += 1
@@ -90,11 +113,12 @@ def run(instance_id: str) -> dict[str, Any]:
         raise RuntimeError("Agent config must be a JSON object")
     record = _owned_record(config, instance_id)
     _, files_root = _managed_root(record)
+    executable_paths = _declared_executables(record, files_root)
     try:
         group = grp.getgrnam(_AGENT_GROUP)
     except KeyError as exc:
         raise RuntimeError("capivara-agent group is unavailable") from exc
-    counts = _prepare_tree(files_root, group.gr_gid)
+    counts = _prepare_tree(files_root, group.gr_gid, executable_paths)
     return {
         "instance_id": instance_id,
         "files_root": str(files_root),
