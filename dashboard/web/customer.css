@@ -215,3 +215,12 @@
 @media (max-width: 520px) {
     .contract-profile dl { grid-template-columns: 1fr; }
 }
+
+
+/* Provisioning cards use an indeterminate construction animation instead of a stalled percentage. */
+.server-provision-text.building{color:var(--text);margin-bottom:8px}
+.server-provision-builder{height:38px;display:flex;align-items:flex-end;gap:5px;margin:2px 0 12px}
+.server-provision-builder span{display:block;width:17px;height:17px;border-radius:4px;background:var(--lime);box-shadow:0 4px 12px rgba(159,232,112,.16);transform-origin:center bottom;animation:server-provision-build 1.45s ease-in-out infinite both}
+.server-provision-builder span:nth-child(2){animation-delay:.12s}.server-provision-builder span:nth-child(3){animation-delay:.24s}.server-provision-builder span:nth-child(4){animation-delay:.36s}.server-provision-builder span:nth-child(5){animation-delay:.48s}.server-provision-builder span:nth-child(6){animation-delay:.60s}
+@keyframes server-provision-build{0%,100%{transform:translateY(9px) scale(.78);opacity:.3}42%,65%{transform:translateY(0) scale(1);opacity:1}}
+@media (prefers-reduced-motion:reduce){.server-provision-builder span{animation:none;transform:none;opacity:.8}}
