@@ -104,9 +104,11 @@ def main() -> None:
         require("server-port=22000" in a_props, "instance A signaling port was not materialized")
         require("server-udp-ports=22001" in a_props, "instance A gameplay UDP port was not materialized")
         require("transport=nethernet" in a_props, "instance A NetherNet transport was not materialized")
+        require("server-portv6=" not in a_props, "instance A legacy Bedrock IPv6 port must be removed")
         require("server-port=23000" in b_props, "instance B signaling port was not materialized")
         require("server-udp-ports=23001" in b_props, "instance B gameplay UDP port was not materialized")
         require("transport=nethernet" in b_props, "instance B NetherNet transport was not materialized")
+        require("server-portv6=" not in b_props, "instance B legacy Bedrock IPv6 port must be removed")
         require("server-port=19132" in shared_props and "server-portv6=19133" in shared_props, "provider seed must remain unchanged")
 
         registry = importlib.import_module("agents.linux.runtime.profiles.registry")
