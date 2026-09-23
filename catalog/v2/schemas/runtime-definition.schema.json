@@ -560,6 +560,35 @@
         "compatibility_note": {
           "type": "string",
           "minLength": 1
+        },
+        "embedded_mod_loaders": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "version"
+              ],
+              "properties": {
+                "id": {
+                  "enum": [
+                    "fabric",
+                    "forge",
+                    "neoforge",
+                    "quilt"
+                  ]
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
+              }
+            }
+          }
         }
       }
     },
