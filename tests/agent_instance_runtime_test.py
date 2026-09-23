@@ -292,6 +292,46 @@ class ControllerInstanceRuntimeQueueTest(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row["status"], "stopped")
 
+    def test_failed_start_projects_failed_controller_status(self):
+        start = self.commands.enqueue(
+            agent_id="agent-instance",
+            instance_id="instance-one",
+            action="start",
+        )
+        self.commands.apply_result("agent-instance", {
+            "command_id": start["command_id"],
+            "instance_id": "instance-one",
+            "action": "start",
+            "status": "failed",
+            "error": "runtime failed to start",
+        })
+        with self.backend.connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM instances WHERE id=?",
+                ("instance-one",),
+            ).fetchone()
+        self.assertEqual(row["status"], "failed")
+
+    def test_completed_start_with_failed_observation_does_not_project_online(self):
+        start = self.commands.enqueue(
+            agent_id="agent-instance",
+            instance_id="instance-one",
+            action="start",
+        )
+        self.commands.apply_result("agent-instance", {
+            "command_id": start["command_id"],
+            "instance_id": "instance-one",
+            "action": "start",
+            "status": "completed",
+            "result": {"observed_state": "failed"},
+        })
+        with self.backend.connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM instances WHERE id=?",
+                ("instance-one",),
+            ).fetchone()
+        self.assertEqual(row["status"], "failed")
+
     def test_completed_remove_after_agent_compensation_deletes_controller_record(self):
         created = self.commands.enqueue(agent_id="agent-instance", instance_id="instance-one", action="remove")
         completed = self.commands.apply_result("agent-instance", {
