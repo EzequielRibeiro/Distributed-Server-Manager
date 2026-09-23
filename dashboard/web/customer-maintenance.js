@@ -9,9 +9,11 @@ function fmtDate(value){if(!value)return"—";const date=new Date(value);return 
 function remainingLabel(seconds){const value=Number(seconds||0);if(value%3600===0)return`${value/3600} h`;if(value%60===0)return`${value/60} min`;return`${value} s`}
 function setActive(){document.querySelectorAll("[data-view]").forEach(button=>button.classList.toggle("active",button.dataset.view==="maintenance"));document.querySelectorAll(".view").forEach(view=>view.classList.toggle("active",view.id==="view-maintenance"));load().catch(error=>toast(error.message))}
 function ensureSurface(){
- if(document.getElementById("maintenance-tab"))return;
- const nav=document.querySelector(".sidebar nav"),backupTab=nav?.querySelector('[data-view="backups"]'),button=node("button","Manutenção");button.id="maintenance-tab";button.dataset.view="maintenance";button.onclick=setActive;if(nav)nav.insertBefore(button,backupTab||nav.querySelector('[data-view="team"]')||null);
- const section=node("section","","view");section.id="view-maintenance";const backups=document.getElementById("view-backups");(backups?.parentNode||document.querySelector("main"))?.insertBefore(section,backups||null)
+ const nav=document.querySelector(".sidebar nav"),backupTab=nav?.querySelector('[data-view="backups"]');let button=document.getElementById("maintenance-tab");
+ if(!button){button=node("button","Manutenção");button.id="maintenance-tab";button.dataset.view="maintenance";if(nav)nav.insertBefore(button,backupTab||nav.querySelector('[data-view="team"]')||null)}
+ if(button.dataset.maintenanceBound!=="1"){button.addEventListener("click",setActive);button.dataset.maintenanceBound="1"}
+ let section=document.getElementById("view-maintenance");
+ if(!section){section=node("section","","view");section.id="view-maintenance";const backups=document.getElementById("view-backups");(backups?.parentNode||document.querySelector("main"))?.insertBefore(section,backups||null)}
 }
 function capabilitySummary(caps){const list=node("div","","content-results"),values=[["Restart programado",caps.scheduled_restart],["Aviso aos jogadores",caps.native_countdown?"nativo":caps.broadcast],["Save gracioso",caps.save],["Shutdown gracioso",caps.graceful_shutdown]];values.forEach(([label,value])=>{const row=node("div","","row"),name=node("span",label),state=node("strong",value==="nativo"?"Nativo":value?"Suportado":"Não suportado");row.append(name,state);list.append(row)});return list}
 function formLabel(text,input,help=""){const label=node("label"),caption=node("span",text);label.append(caption,input);if(help){const small=node("small",help,"muted");label.append(small)}return label}
