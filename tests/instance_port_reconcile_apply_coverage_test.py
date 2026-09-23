@@ -228,6 +228,69 @@ class InstancePortReconcileApplyCoverageTest(unittest.TestCase):
         self.assertTrue(session.deleted)
         self.assertEqual(len(session.inserted), 4)
 
+    def test_bedrock_nethernnet_role_migration_relocates_stopped_legacy_block(self):
+        network = {
+            "allocation": "block",
+            "block_size": 2,
+            "ports": [
+                {"name": "signaling", "protocol": "tcp", "offset": 0},
+                {"name": "gameplay_udp", "protocol": "udp", "offset": 1},
+            ],
+        }
+        session = _Session(
+            status="stopped",
+            existing=[
+                {"name": "game_ipv4", "protocol": "udp", "port": 24006, "bind_address": "0.0.0.0"},
+                {"name": "game_ipv6", "protocol": "udp", "port": 24007, "bind_address": "0.0.0.0"},
+            ],
+        )
+        repository = _Repository(session)
+
+        result = reconcile_instance_ports(
+            repository,
+            "cli-000001-minecraft-001",
+            network,
+            occupied_ports_provider=lambda *_args, **_kwargs: set(),
+        )
+
+        self.assertTrue(result["changed"])
+        self.assertTrue(result["relocated"])
+        self.assertEqual(
+            result["previous_ports"],
+            {"game_ipv4": 24006, "game_ipv6": 24007},
+        )
+        self.assertEqual(
+            result["ports"],
+            {"signaling": 24000, "gameplay_udp": 24001},
+        )
+        self.assertTrue(session.deleted)
+        self.assertEqual(len(session.inserted), 2)
+
+    def test_bedrock_nethernnet_role_migration_refuses_running_instance(self):
+        network = {
+            "allocation": "block",
+            "block_size": 2,
+            "ports": [
+                {"name": "signaling", "protocol": "tcp", "offset": 0},
+                {"name": "gameplay_udp", "protocol": "udp", "offset": 1},
+            ],
+        }
+        repository = _Repository(_Session(
+            status="running",
+            existing=[
+                {"name": "game_ipv4", "protocol": "udp", "port": 24006, "bind_address": "0.0.0.0"},
+                {"name": "game_ipv6", "protocol": "udp", "port": 24007, "bind_address": "0.0.0.0"},
+            ],
+        ))
+
+        with self.assertRaisesRegex(Exception, "cannot relocate network block while instance status is running"):
+            reconcile_instance_ports(
+                repository,
+                "cli-000001-minecraft-001",
+                network,
+                occupied_ports_provider=lambda *_args, **_kwargs: set(),
+            )
+
     def test_expanded_profile_refuses_relocation_while_instance_is_running(self):
         network = {
             "allocation": "block",
