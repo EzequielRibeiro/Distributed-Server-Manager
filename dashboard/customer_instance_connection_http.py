@@ -223,8 +223,19 @@ def install_customer_instance_connection(legacy, authenticate):
                         timeout=3.0,
                     )
                 except SteamQueryError as exc:
+                    listener_state = next(
+                        (
+                            str(item.get("state") or "")
+                            for item in port_status
+                            if str(item.get("name") or "") == str(target["role"])
+                        ),
+                        "",
+                    )
+                    listener_online = listener_state == "listening"
                     self.send_json(200, {
-                        "online": False,
+                        "online": None if listener_online else False,
+                        "listener_online": listener_online,
+                        "public_reachable": False,
                         "target": target["target"],
                         "port_role": target["role"],
                         "message": str(exc)[:300],
@@ -232,6 +243,8 @@ def install_customer_instance_connection(legacy, authenticate):
                     return
                 result["target"] = target["target"]
                 result["port_role"] = target["role"]
+                result["listener_online"] = True
+                result["public_reachable"] = True
                 self.send_json(200, result)
                 return
 
