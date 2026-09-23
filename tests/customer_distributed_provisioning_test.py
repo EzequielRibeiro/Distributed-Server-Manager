@@ -58,11 +58,14 @@ class _FakeDashboardRepository:
             "game_id": "dayz",
             "customer": {"id": kwargs["customer_id"]},
         }
+        metadata_path = instance_path / ".dsm" / "instance-metadata.json"
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        metadata_path.write_text(json.dumps(metadata, sort_keys=True), encoding="utf-8")
         return {
             "instance_id": instance_id,
             "name": "Aurora DayZ",
             "instance_path": instance_path,
-            "metadata_path": instance_path / ".dsm" / "instance-metadata.json",
+            "metadata_path": metadata_path,
             "metadata": metadata,
             "agent_id": kwargs["selected_agent_id"],
             "node_id": node_id,
