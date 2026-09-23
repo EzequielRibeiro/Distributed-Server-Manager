@@ -175,6 +175,7 @@ class CustomerDistributedProvisioningTest(unittest.TestCase):
                     {"catalog_runtime_id": "dayz.stable", "catalog_game_id": "dayz"},
                 ),
             ) as resolver,
+            patch.object(integration, "CustomerTeamRepository", return_value=Mock(set_instance_access=Mock())),
             patch.object(integration, "AgentInstanceProvisioningRepository", _FakeProvisioningRepository),
             patch.object(integration, "project_agent_provisioning", side_effect=self._projection),
         ):
