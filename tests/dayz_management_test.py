@@ -22,6 +22,7 @@ class DayZManagementTest(unittest.TestCase):
   view=discover_missions(self.record);self.assertEqual(view["current"],"dayzOffline.chernarusplus")
   self.assertEqual({x["id"] for x in view["missions"]},{"dayzOffline.chernarusplus","dayzOffline.enoch"})
   changed=apply_mission(self.record,"dayzOffline.enoch");self.assertEqual(current_mission(changed),"dayzOffline.enoch")
+  self.assertEqual(changed["profile_context"]["dayz_mission"],"dayzOffline.enoch")
   self.assertTrue((self.state/"mpmissions"/"dayzOffline.enoch").is_dir())
   with self.assertRaises(FileNotFoundError):apply_mission(self.record,"community.not-installed")
  def test_wipe_backs_up_and_removes_current_persistence(self):
