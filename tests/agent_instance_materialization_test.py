@@ -350,12 +350,15 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
         storage_root = self.root / "hybrid-instance-storage"
         instance_root = storage_root / "instance-one"
         managed = state / "managed-content" / "instance-one"
+        activation = state / "content-activation" / "instance-one.json"
         shared = state / "game-data" / "minecraft" / "youer" / "26.2" / "791"
         (instance_root / "runtime").mkdir(parents=True)
         managed.mkdir(parents=True)
+        activation.parent.mkdir(parents=True)
         shared.mkdir(parents=True)
         (instance_root / "runtime" / "world.dat").write_text("instance", encoding="utf-8")
         (managed / "content.json").write_text("managed", encoding="utf-8")
+        activation.write_text('{"entries":[{"game_id":"minecraft"}]}\n', encoding="utf-8")
         (shared / "server.jar").write_text("shared", encoding="utf-8")
         original_state = materialize_instance.STATE_DIR
         materialize_instance.STATE_DIR = state
@@ -373,6 +376,7 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
         self.assertTrue(result["changed"])
         self.assertFalse(instance_root.exists())
         self.assertFalse(managed.exists())
+        self.assertFalse(activation.exists())
         self.assertTrue((shared / "server.jar").is_file())
         self.assertTrue(result["shared_game_data_preserved"])
 
