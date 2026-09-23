@@ -4,7 +4,8 @@
 CPU/RSS and systemd IP accounting are collected from the instance unit, not
 from the Agent host. A dedicated network interface remains a fallback for
 runtimes that expose one. DayZ query telemetry uses its reserved Steam query
-port directly through A2S_INFO without an external helper process.
+port directly through A2S_INFO, while Minecraft Java uses the native Server
+List Ping protocol on the reserved game port. Both stay loopback-only.
 """
 from __future__ import annotations
 
@@ -245,6 +246,139 @@ def _storage_used(path_value: Any, *, max_entries: int = 200000) -> int | None:
     return None if walk_failed else total
 
 
+
+def _storage_usage_root(record: dict[str, Any]) -> Any:
+    """Prefer the customer-manageable runtime tree over the private control root."""
+    state_raw = str(record.get("instance_state_root") or "").strip()
+    candidates = [
+        record.get("files_root"),
+        record.get("working_directory"),
+        record.get("path"),
+        record.get("instance_state_root"),
+    ]
+    state_root = Path(state_raw).resolve(strict=False) if state_raw else None
+    for raw in candidates:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        candidate = Path(text).resolve(strict=False)
+        if state_root is not None:
+            try:
+                candidate.relative_to(state_root)
+            except ValueError:
+                continue
+            if candidate == state_root and any(
+                str(value or "").strip()
+                for value in (record.get("working_directory"), record.get("path"))
+            ):
+                continue
+        return str(candidate)
+    return state_raw or None
+
+
+def _varint(value: int) -> bytes:
+    value &= 0xFFFFFFFF
+    out = bytearray()
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        if value:
+            out.append(byte | 0x80)
+        else:
+            out.append(byte)
+            return bytes(out)
+
+
+def _read_varint(sock) -> int:
+    value = 0
+    for index in range(5):
+        raw = sock.recv(1)
+        if not raw:
+            raise OSError("unexpected EOF while reading Minecraft VarInt")
+        byte = raw[0]
+        value |= (byte & 0x7F) << (7 * index)
+        if not (byte & 0x80):
+            return value
+    raise ValueError("invalid Minecraft VarInt")
+
+
+def _recv_exact(sock, length: int) -> bytes:
+    if length < 0 or length > 1024 * 1024:
+        raise ValueError("invalid Minecraft payload length")
+    chunks = bytearray()
+    while len(chunks) < length:
+        chunk = sock.recv(length - len(chunks))
+        if not chunk:
+            raise OSError("unexpected EOF while reading Minecraft payload")
+        chunks.extend(chunk)
+    return bytes(chunks)
+
+
+def _minecraft_status(host: str, port: int, timeout_seconds: int = 2) -> dict[str, Any]:
+    """Query Minecraft Java Server List Ping over loopback TCP."""
+    try:
+        port = int(port)
+        timeout = max(1, min(int(timeout_seconds), 5))
+    except (TypeError, ValueError):
+        return {}
+    if not 1 <= port <= 65535:
+        return {}
+    host_bytes = host.encode("utf-8")
+    handshake = (
+        b"\x00"
+        + _varint(0)
+        + _varint(len(host_bytes))
+        + host_bytes
+        + int(port).to_bytes(2, "big")
+        + b"\x01"
+    )
+    started = time.monotonic()
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            sock.settimeout(timeout)
+            sock.sendall(_varint(len(handshake)) + handshake)
+            sock.sendall(b"\x01\x00")
+            packet_length = _read_varint(sock)
+            packet_id = _read_varint(sock)
+            if packet_id != 0:
+                return {}
+            json_length = _read_varint(sock)
+            if json_length < 0 or json_length > packet_length or json_length > 1024 * 1024:
+                return {}
+            payload = _recv_exact(sock, json_length)
+    except (OSError, ValueError, socket.timeout):
+        return {}
+    try:
+        document = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return {}
+    players = document.get("players") if isinstance(document, dict) else None
+    result: dict[str, Any] = {}
+    if isinstance(players, dict):
+        try:
+            result["players_online"] = max(0, int(players.get("online")))
+        except (TypeError, ValueError):
+            pass
+        try:
+            result["players_max"] = max(0, int(players.get("max")))
+        except (TypeError, ValueError):
+            pass
+    result["latency_ms"] = round((time.monotonic() - started) * 1000.0, 2)
+    return result
+
+
+def _minecraft_query(record: dict[str, Any], telemetry_config: dict[str, Any]) -> dict[str, Any]:
+    ports = record.get("ports") if isinstance(record.get("ports"), dict) else {}
+    game = ports.get("game")
+    raw_port = game.get("port") if isinstance(game, dict) else game
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError):
+        return {}
+    timeout = telemetry_config.get("query_timeout_seconds") or 2
+    return _minecraft_status("127.0.0.1", port, timeout)
+
+
 def _read_cstring(payload: bytes, offset: int) -> tuple[bytes, int] | None:
     end = payload.find(b"\x00", offset)
     if end < 0:
@@ -374,7 +508,12 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
 
         game_id = str(record.get("game_id") or "").strip().lower()
         profile = str(record.get("profile") or "").strip().lower()
-        game = _dayz_query(record, telemetry_config) if game_id in {"dayz", "dayz.stable"} or profile == "dayz" else _game_query(telemetry_config)
+        if game_id in {"dayz", "dayz.stable"} or profile == "dayz":
+            game = _dayz_query(record, telemetry_config)
+        elif game_id == "minecraft" or profile.startswith("minecraft"):
+            game = _minecraft_query(record, telemetry_config)
+        else:
+            game = _game_query(telemetry_config)
 
         try:
             view = instance_runtime.status(config, instance_id)
@@ -383,13 +522,13 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
         except Exception:
             health = "unknown"
 
-        private_state_root = record.get("instance_state_root") or record.get("path")
+        storage_root = _storage_usage_root(record)
         results.append({
             "instance_id": instance_id,
             "storage_pool_id": str(record.get("storage_pool_id") or "") or None,
             "cpu_percent": cpu,
             "memory_bytes": memory,
-            "storage_used_bytes": _storage_used(private_state_root),
+            "storage_used_bytes": _storage_used(storage_root),
             "network_rx_bytes": rx,
             "network_tx_bytes": tx,
             "players_online": game.get("players_online"),
