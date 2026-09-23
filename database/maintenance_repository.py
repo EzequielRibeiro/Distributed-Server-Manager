@@ -127,8 +127,8 @@ class MaintenanceRepository:
  def next_due_for_run(self,run_id:str,*,now:datetime|None=None)->datetime|None:
   run=self.run(run_id);policy=self.policy(str(run['instance_id']));current=(now or datetime.now(timezone.utc)).astimezone(timezone.utc)
   return next_due_at(policy,now=current,anchor=current)
- def finish(self,run_id:str,*,success:bool,error_code:str|None=None,error_detail:str|None=None,now:datetime|None=None)->dict[str,Any]:
-  run=self.run(run_id);policy=self.policy(str(run['instance_id']));current=(now or datetime.now(timezone.utc)).astimezone(timezone.utc);due=next_due_at(policy,now=current,anchor=current);stamp=_stamp(current);status='completed' if success else 'failed';stage='completed' if success else 'failed';detail=str(error_detail or '')[:2000] or None;code=str(error_code or '')[:128] or None;ph=self.dialect.placeholder
+ def finish(self,run_id:str,*,success:bool,error_code:str|None=None,error_detail:str|None=None,now:datetime|None=None,next_due_override:datetime|str|None=None)->dict[str,Any]:
+  run=self.run(run_id);policy=self.policy(str(run['instance_id']));current=(now or datetime.now(timezone.utc)).astimezone(timezone.utc);due=_parse(next_due_override) if next_due_override is not None else next_due_at(policy,now=current,anchor=current);stamp=_stamp(current);status='completed' if success else 'failed';stage='completed' if success else 'failed';detail=str(error_detail or '')[:2000] or None;code=str(error_code or '')[:128] or None;ph=self.dialect.placeholder
   with self.session(transaction=True) as session:
    session.execute(f'UPDATE instance_maintenance_runs SET status={ph},stage={ph},error_code={ph},error_detail={ph},completed_at={ph},updated_at={ph} WHERE run_id={ph}',(status,stage,code,detail,stamp,stamp,run_id));session.execute(f'UPDATE instance_maintenance_state SET next_due_at={ph},active_run_id=NULL,last_completed_at={ph},last_error={ph},updated_at={ph} WHERE instance_id={ph}',(_stamp(due),stamp,None if success else detail,stamp,run['instance_id']))
   return self.run(run_id)
