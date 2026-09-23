@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import sys
 from pathlib import Path
 import stat
 import tempfile
@@ -10,6 +11,9 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
+RUNTIME = ROOT / "agents" / "linux" / "runtime"
+if str(RUNTIME) not in sys.path:
+    sys.path.insert(0, str(RUNTIME))
 
 
 def _load(name: str, path: Path):
