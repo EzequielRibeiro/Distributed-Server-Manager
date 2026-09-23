@@ -16,7 +16,12 @@ def _safe_name(value:Any,label:str)->str:
  if not text or any(ch not in allowed for ch in text):raise ValueError(f"invalid {label}")
  return text
 def _target_for(selection:dict[str,Any])->Path:
- game=_safe_name(selection.get("game"),"game");declared=Path(str(selection.get("install_dir") or "serverfiles"));leaf=_safe_name(declared.name if declared.name not in {"",".","/"} else "serverfiles","install target");target=(GAME_DATA_ROOT/game/leaf).resolve();target.relative_to(GAME_DATA_ROOT);return target
+ game=_safe_name(selection.get("game"),"game");declared=Path(str(selection.get("install_dir") or "serverfiles"));leaf=_safe_name(declared.name if declared.name not in {"",".","/"} else "serverfiles","install target");target=(GAME_DATA_ROOT/game/leaf).resolve();target.relative_to(GAME_DATA_ROOT)
+ if _minecraft_java_runtime(selection):
+  version=_safe_name(selection.get("version") or "current","version")
+  build=_safe_name(selection.get("build") or selection.get("tag") or "current","build")
+  target=(target/version/build).resolve();target.relative_to(GAME_DATA_ROOT)
+ return target
 def _minecraft_java_runtime(selection:dict[str,Any])->bool:
  runtime_id=str(selection.get("runtime_definition") or selection.get("runtime_id") or "").strip().lower()
  return runtime_id.startswith("minecraft.java.")
