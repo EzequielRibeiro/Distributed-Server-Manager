@@ -23,3 +23,17 @@ This release improves the Customer experience for runtime selection, managed con
 - PR #805: customer visuals, catalog image proxy, and native Steam query.
 - The final PR revision completed 31/31 GitHub checks successfully.
 - Linux and Windows final E2E, CI Gate, Release Readiness, database isolated deployment gates, customer distributed E2E, and Agent public network all passed.
+
+## DayZ map, restart, and wipe management
+
+- Adds Agent-owned mission discovery and safe map switching for DayZ.
+- Preserves previous mission state when changing maps and restarts the instance through the managed lifecycle.
+- Exposes the scheduled maintenance/restart surface in the Customer instance page, including DayZ native countdown through `messages.xml`.
+- Adds immediate and date/time-scheduled wipes with explicit scope, cancellation while queued, pre-wipe backup by default, history, and restart after execution.
+- Supports Linux, Windows, and Hybrid Agents through the shared DayZ management operation contract.
+- Adds Baseline v2 upgrade 21 for the DayZ operation queue.
+
+### Additional validation
+
+- PR #808: DayZ map switching, scheduled restart surface, and wipe operations.
+- The final PR revision completed 41/41 GitHub checks successfully, including CI, Release Readiness, Maintenance Restart Framework, DayZ Native Restart, Linux/Windows parity paths, and PostgreSQL/MySQL/MariaDB baseline gates.
