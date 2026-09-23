@@ -164,24 +164,29 @@ def project_minecraft_files(spec: dict[str, Any], entries: list[dict[str, Any]])
             raise MinecraftContentActivationError(f"Minecraft runtime does not support content type: {content_type or 'unknown'}")
         extensions = list(config["extensions"])
         filename = _safe_artifact_filename(entry.get("artifact_filename"), extensions)
-        if filename is None:
-            filename = f"capivara-{projection_id}{extensions[0]}"
-        target = f"{config['directory'].rstrip('/')}/{filename}"
-        if target in seen:
-            candidate = Path(filename)
-            suffix = hashlib.sha256(content_id.encode("utf-8")).hexdigest()[:8]
-            filename = f"{candidate.stem}-{suffix}{candidate.suffix}"
-            target = f"{config['directory'].rstrip('/')}/{filename}"
-        if target in seen:
-            raise MinecraftContentActivationError("duplicate Minecraft content projection")
-        seen.add(target)
-        projections.append({
+        projection = {
             "content_id": content_id,
             "content_type": content_type,
             "managed_path": _managed_path(entry),
-            "target_name": target,
             "extensions": extensions,
-        })
+        }
+        if filename is None:
+            target = f"{config['directory'].rstrip('/')}/capivara-{projection_id}"
+            if target in seen:
+                raise MinecraftContentActivationError("duplicate Minecraft content projection")
+            projection["target_stem"] = target
+        else:
+            target = f"{config['directory'].rstrip('/')}/{filename}"
+            if target in seen:
+                candidate = Path(filename)
+                suffix = hashlib.sha256(content_id.encode("utf-8")).hexdigest()[:8]
+                filename = f"{candidate.stem}-{suffix}{candidate.suffix}"
+                target = f"{config['directory'].rstrip('/')}/{filename}"
+            if target in seen:
+                raise MinecraftContentActivationError("duplicate Minecraft content projection")
+            projection["target_name"] = target
+        seen.add(target)
+        projections.append(projection)
     return projections
 
 
