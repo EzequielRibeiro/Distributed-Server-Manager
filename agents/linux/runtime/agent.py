@@ -226,14 +226,14 @@ def heartbeat(config):
         native_restart_state={}
     if str(native_restart_state.get("status") or "").lower() in {"completed","failed"} and native_restart_state.get("command_id"):
         clear_native_restart_result(str(native_restart_state["command_id"]))
-        dayz_operation_command=result.get("dayz_operation_command")
+    dayz_operation_command=result.get("dayz_operation_command")
     if isinstance(dayz_operation_command,dict):
         dayz_result=handle_dayz_operation_command(config,dayz_operation_command);synchronous_result_ready=True
         _log(f"dayz operation={dayz_result.get('operation_id')} action={dayz_result.get('action')} status={dayz_result.get('status')}")
     dayz_operation_state=result.get("dayz_operation_state") if isinstance(result.get("dayz_operation_state"),dict) else {}
     if str(dayz_operation_state.get("status") or "").lower() in {"completed","failed"} and dayz_operation_state.get("operation_id"):
         clear_dayz_operation_result(str(dayz_operation_state["operation_id"]))
-yarax_command=result.get("yarax_admin_command")
+    yarax_command=result.get("yarax_admin_command")
     if isinstance(yarax_command,dict):
         yarax_report=handle_yarax_admin_command(yarax_command);synchronous_result_ready=True;_log(f"yarax operation={yarax_report.get('operation_id')} action={yarax_report.get('action')} status={yarax_report.get('status')}")
     yarax_state=result.get("yarax_admin_state") if isinstance(result.get("yarax_admin_state"),dict) else {}
