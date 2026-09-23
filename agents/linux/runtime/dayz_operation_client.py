@@ -10,7 +10,8 @@ COMMON_DIR=RUNTIME_DIR.parent.parent/"common"
 for item in (RUNTIME_DIR,COMMON_DIR):
     if str(item) not in sys.path:sys.path.insert(0,str(item))
 from dayz_management import apply_mission,discover_missions,wipe
-from instance_runtime import get_instance,lifecycle,register_instance,status
+from instance_runtime import get_instance,lifecycle,status
+import privileged_materialization
 STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"))
 RESULT_DIR=STATE_DIR/"dayz-operation-results";HISTORY_DIR=STATE_DIR/"dayz-operation-history"
 def _now():return datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
@@ -43,7 +44,7 @@ def handle_command(config:dict[str,Any],command:dict[str,Any])->dict[str,Any]:
         elif action=="change_mission":
             before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"}
             if was_running:lifecycle(config,iid,"stop")
-            updated=apply_mission(record,payload.get("mission"));register_instance(updated)
+            updated=apply_mission(record,payload.get("mission"));privileged_materialization.materialize(config,updated)
             if was_running:lifecycle(config,iid,"start")
             result={"previous_mission":discover_missions(record)["current"],"mission":discover_missions(updated)["current"],"restarted":was_running}
         elif action=="wipe":
