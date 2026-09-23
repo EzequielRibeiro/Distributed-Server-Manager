@@ -783,7 +783,8 @@ class DashboardRepository:
         )
         with self.session(transaction=True) as session:
             cursor = session.execute(
-                f"UPDATE instances SET status={ph} WHERE id={ph} AND status<>{ph} "
+                f"UPDATE instances SET status={ph},updated_at={self.dialect.current_timestamp} "
+                f"WHERE id={ph} AND status<>{ph} "
                 f"AND status NOT IN ({self.dialect.parameters(len(protected))})",
                 (status, instance_id, status, *protected),
             )
