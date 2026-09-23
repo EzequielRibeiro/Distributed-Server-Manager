@@ -23,6 +23,8 @@ class CustomerMaintenancePolicySurfaceTest(unittest.TestCase):
  def test_ui_is_safe_and_capability_driven(self):
   text=(ROOT/'dashboard/web/customer-maintenance.js').read_text(encoding='utf-8')
   self.assertIn('/api/customer/instance/workspace/maintenance',text);self.assertIn('native_countdown',text);self.assertIn('coalesce_updates',text);self.assertIn('settings.write', (ROOT/'dashboard/customer_maintenance_workspace.py').read_text(encoding='utf-8'))
+  self.assertIn('Intl.supportedValuesOf("timeZone")',text);self.assertIn('mode==="fixed"',text);self.assertIn('offset<intervalSeconds',text);self.assertIn('syncWarnings()',text)
+  self.assertNotIn('createElement("input");timezone.id="maintenance-timezone"',text)
   self.assertNotIn('innerHTML',text);self.assertNotIn('eval(',text);self.assertNotIn('shell',text.lower())
  def test_composition_and_static_policy_are_wired(self):
   part=(ROOT/'dashboard/server_part20.py').read_text(encoding='utf-8');service=(ROOT/'systemd/dsm-dashboard.service').read_text(encoding='utf-8');assets=(ROOT/'dashboard/static_asset_policy.py').read_text(encoding='utf-8');loader=(ROOT/'dashboard/web/customer-content-update-policy.js').read_text(encoding='utf-8')
