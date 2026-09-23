@@ -12,6 +12,9 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
   self.assertIn("install_customer_dayz_http",layer)
   self.assertIn('"/customer-dayz.js"',layer)
   self.assertIn('"/customer-maintenance.js"',layer)
+  dayz_js=(ROOT/"dashboard"/"web"/"customer-dayz.js").read_text(encoding="utf-8")
+  self.assertIn('scope.append(new Option("Persistência do mapa atual","persistence"),new Option("Persistência + perfis","persistence-and-profiles"))',dayz_js)
+  self.assertNotIn('scope.add(new Option("Persistência do mapa atual","persistence"),new Option("Persistência + perfis","persistence-and-profiles"))',dayz_js)
  def test_dayz_api_supports_map_and_scheduled_wipe(self):
   source=(ROOT/"dashboard"/"customer_dayz_http.py").read_text(encoding="utf-8")
   for token in ('"refresh_maps"','"change_mission"','"wipe"','"cancel"',"scheduled_at"):
