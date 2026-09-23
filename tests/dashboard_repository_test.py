@@ -277,9 +277,20 @@ class DashboardRepositoryTest(unittest.TestCase):
             self.assertEqual(row["status"], protected)
 
         self.repository.update_instance_status(instance_id, "online")
+        with self.repository.session(transaction=True) as session:
+            session.execute(
+                "UPDATE instances SET updated_at=? WHERE id=?",
+                ("2000-01-01T00:00:00Z", instance_id),
+            )
         self.assertEqual(
             self.repository.reconcile_instance_status(instance_id, "offline"), 1
         )
+        with self.repository.session() as session:
+            row = session.execute(
+                "SELECT status,updated_at FROM instances WHERE id=?", (instance_id,)
+            ).fetchone()
+        self.assertEqual(row["status"], "offline")
+        self.assertNotEqual(str(row["updated_at"]), "2000-01-01T00:00:00Z")
 
 
 if __name__ == "__main__":
