@@ -136,6 +136,10 @@ def remove(config:dict[str,Any],instance_id:str)->dict[str,Any]:
  if managed.exists():
   if _is_link(managed) or not managed.is_dir():raise RuntimeError("instance managed content state is not a safe directory")
   _reject_links(managed,"instance managed content state");shutil.rmtree(managed);removed.append(str(managed))
+ activation=(Path(instance_runtime.STATE_DIR)/"content-activation"/f"{instance_id}.json").resolve(strict=False)
+ if activation.exists():
+  if _is_link(activation) or not activation.is_file():raise RuntimeError("instance content activation snapshot is not a safe file")
+  activation.unlink();removed.append(str(activation))
  try:instance_runtime._instance_path(instance_id).unlink()
  except FileNotFoundError:pass
  cleanup={"changed":bool(removed),"removed_paths":removed,"shared_game_data_preserved":True}
