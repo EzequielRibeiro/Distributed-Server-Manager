@@ -35,7 +35,7 @@ def current_mission(record):
     for arg in record.get("arguments") or []:
         text=str(arg)
         if text.lower().startswith("-mission="):
-            return _safe(Path(text.split("=",1)[1].strip().strip(""'")).name)
+            return _safe(Path(text.split("=",1)[1].strip().strip("\"'")).name)
     return "dayzOffline.chernarusplus"
 def discover_missions(record):
     current=current_mission(record);names=set()
