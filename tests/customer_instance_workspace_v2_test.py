@@ -334,6 +334,22 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   self.assertIn("@keyframes content-scan-sweep",css)
   self.assertIn("prefers-reduced-motion",css)
 
+ def test_customer_provisioning_uses_indeterminate_construction_animation(self):
+  detail=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
+  detail_css=(ROOT/"dashboard"/"web"/"customer-instance-v2.css").read_text(encoding="utf-8")
+  detail_html=(ROOT/"dashboard"/"web"/"customer-instance.html").read_text(encoding="utf-8")
+  overview=(ROOT/"dashboard"/"web"/"customer.js").read_text(encoding="utf-8")
+  overview_css=(ROOT/"dashboard"/"web"/"customer.css").read_text(encoding="utf-8")
+  self.assertIn('["queued","delivered","running","provisioning","installing"].includes(provisionStatus)',detail)
+  self.assertIn('Construindo servidor…',detail)
+  self.assertIn('id="provision-builder"',detail_html)
+  self.assertIn(".provision-builder",detail_css)
+  self.assertIn("@keyframes provision-build",detail_css)
+  self.assertIn("prefers-reduced-motion",detail_css)
+  self.assertIn("server-provision-builder",overview)
+  self.assertIn("Construindo servidor…",overview)
+  self.assertIn("@keyframes server-provision-build",overview_css)
+
  def test_customer_content_ui_hides_transient_yarax_error_while_scanning(self):
   script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
   self.assertIn("else if(lastError&&!scanning)",script)
