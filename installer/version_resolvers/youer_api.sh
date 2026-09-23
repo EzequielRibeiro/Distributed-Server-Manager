@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 YOUER_API_BASE="${YOUER_API_BASE:-https://mohistmc.com/api/v2/projects/youer}"
 YOUER_LEGACY_API_BASE="${YOUER_LEGACY_API_BASE:-https://api.mohistmc.com/project/youer}"
+YOUER_GITHUB_BRANCHES_API="${YOUER_GITHUB_BRANCHES_API:-https://api.github.com/repos/MohistMC/Youer/branches?per_page=100}"
 YOUER_DISCOVERY_LIMIT="${YOUER_DISCOVERY_LIMIT:-25}"
 
 youer_error(){ echo "[DSM][DISCOVERY][YOUER][ERROR] $*" >&2; }
@@ -12,6 +13,38 @@ youer_get(){ curl --fail --silent --show-error --location --connect-timeout 15 -
 youer_project()
 {
     youer_get "${YOUER_API_BASE}"
+}
+
+youer_discovery_project()
+{
+    local PROJECT BRANCHES VERSIONS
+    if PROJECT="$(youer_project 2>/dev/null)" && \
+       jq -e 'type=="object" and (.versions|type)=="array" and (.versions|length)>0' >/dev/null 2>&1 <<<"${PROJECT}"
+    then
+        printf '%s\n' "${PROJECT}"
+        return 0
+    fi
+
+    if ! BRANCHES="$(youer_get "${YOUER_GITHUB_BRANCHES_API}" 2>/dev/null)" || \
+       ! jq -e 'type=="array"' >/dev/null 2>&1 <<<"${BRANCHES}"
+    then
+        youer_error "official API returned no versions and GitHub branch fallback failed"
+        return 1
+    fi
+
+    VERSIONS="$(
+        jq -r '
+          .[]?.name
+          | tostring
+          | select(test("^[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))
+        ' <<<"${BRANCHES}" | sort -Vr | jq -Rsc 'split("\n") | map(select(length > 0))'
+    )"
+    if ! jq -e 'length > 0' >/dev/null 2>&1 <<<"${VERSIONS}"
+    then
+        youer_error "no release branches were published by the official Youer repository"
+        return 1
+    fi
+    jq -nc --argjson versions "${VERSIONS}" '{versions:$versions,source:"github-branches"}'
 }
 
 youer_builds()
@@ -52,7 +85,7 @@ youer_list()
 {
     local PROJECT LIMIT VERSION BUILDS VERSION_ENTRY
     local OUTPUT='[]'
-    PROJECT="$(youer_project)" || return 1
+    PROJECT="$(youer_discovery_project)" || return 1
     LIMIT="${YOUER_DISCOVERY_LIMIT}"
     [[ "${LIMIT}" =~ ^[0-9]+$ ]] || LIMIT=25
     (( LIMIT > 0 )) || LIMIT=25
@@ -110,7 +143,7 @@ youer_resolve()
     [[ -n "${SELECTOR}" ]] || { youer_error "selector is required"; return 2; }
     IFS='@' read -r VERSION BUILD <<<"${SELECTOR}"
 
-    PROJECT="$(youer_project)" || return 1
+    PROJECT="$(youer_discovery_project)" || return 1
     if [[ "${VERSION}" == "current" || "${VERSION}" == "latest" ]]; then
         VERSION="$(jq -r '(.versions // []) | map(tostring) | last // empty' <<<"${PROJECT}")"
     fi
