@@ -48,6 +48,33 @@ class _FakeSocket:
         return response, ("127.0.0.1", 27016)
 
 
+
+class _FakeTcpSocket:
+    def __init__(self, response: bytes):
+        self.response = bytearray(response)
+        self.sent = bytearray()
+        self.timeout = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def settimeout(self, value):
+        self.timeout = value
+
+    def sendall(self, payload):
+        self.sent.extend(payload)
+
+    def recv(self, size):
+        if not self.response:
+            return b""
+        chunk = self.response[:size]
+        del self.response[:size]
+        return bytes(chunk)
+
+
 class _ContentPolicy:
     mods_allowed = False
     plugins_allowed = False
@@ -169,6 +196,39 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
         timed_out = _FakeSocket([socket.timeout("timeout")])
         with patch.object(telemetry.socket, "socket", return_value=timed_out):
             self.assertEqual(telemetry._a2s_info("127.0.0.1", 27016, 1), {})
+
+    def test_minecraft_status_parses_players_and_latency(self):
+        document = b'{"players":{"online":3,"max":20},"version":{"name":"26.2"}}'
+        packet = telemetry._varint(1 + len(telemetry._varint(len(document))) + len(document)) + 1) + telemetry._varint(len(document)) + document
+        fake = _FakeTcpSocket(packet)
+        with patch.object(telemetry.socket, "create_connection", return_value=fake), patch.object(
+            telemetry.time, "monotonic", side_effect=[100.0, 100.025]
+        ):
+            result = telemetry._minecraft_status("127.0.0.1", 25565, 2)
+        self.assertEqual(result["players_online"], 3)
+        self.assertEqual(result["players_max"], 20)
+        self.assertEqual(result["latency_ms"], 25.0)
+        self.assertGreater(len(fake.sent), 2)
+
+    def test_minecraft_query_uses_reserved_game_port(self):
+        record = {"ports": {"game": {"port": 24008, "protocol": "tcp"}}}
+        with patch.object(
+            telemetry,
+            "_minecraft_status",
+            return_value={"players_online": 1, "players_max": 20, "latency_ms": 4.5},
+        ) as query:
+            result = telemetry._minecraft_query(record, {})
+        self.assertEqual(result["players_online"], 1)
+        query.assert_called_once_with("127.0.0.1", 24008, 2)
+
+    def test_storage_usage_prefers_scoped_runtime_tree(self):
+        record = {
+            "instance_state_root": "/srv/instance",
+            "files_root": "/srv/instance",
+            "working_directory": "/srv/instance/runtime",
+            "path": "/srv/instance/runtime",
+        }
+        self.assertEqual(telemetry._storage_usage_root(record), "/srv/instance/runtime")
 
     def test_storage_zero_only_for_measurable_empty_directory(self):
         with tempfile.TemporaryDirectory() as directory:
