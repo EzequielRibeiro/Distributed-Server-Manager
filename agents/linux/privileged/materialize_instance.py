@@ -456,6 +456,71 @@ def _prepare_content_activation_access(spec: dict[str, Any]) -> None:
             elif current.is_file():
                 _grant_group_bits(current, gid, 0o040)
 
+    # Bundle override files are also materialized by the unprivileged worker.
+    # Expose only the exact parent directories needed by the active bundle
+    # roots, without granting read/list access to unrelated runtime state.
+    overrides = spec.get("content_bundle_overrides")
+    if isinstance(overrides, list):
+        protected_top = {"mods", "plugins", ".dsm", "libraries", "versions", "runtime", "content", "logs"}
+        protected_suffixes = {".jar", ".exe", ".dll", ".so", ".dylib", ".bat", ".cmd", ".ps1", ".sh"}
+        for item in overrides:
+            if not isinstance(item, dict):
+                raise RuntimeError("invalid Minecraft bundle override projection")
+            managed_raw = str(item.get("managed_path") or "").strip()
+            roots = item.get("roots") if isinstance(item.get("roots"), list) else []
+            managed = Path(managed_raw)
+            if not managed_raw or not managed.is_absolute() or managed.is_symlink():
+                raise RuntimeError("invalid Minecraft bundle override source")
+            source = managed.resolve(strict=True)
+            content_root = (working_root / "content").resolve(strict=False)
+            try:
+                source.relative_to(content_root)
+            except ValueError as exc:
+                raise RuntimeError("Minecraft bundle override source escapes managed content") from exc
+            for raw_root in roots:
+                root_name = str(raw_root or "").strip()
+                if not root_name or "/" in root_name or "\\" in root_name or root_name in {".", ".."}:
+                    raise RuntimeError("invalid Minecraft bundle override root")
+                layer = source / root_name
+                if not layer.is_dir() or layer.is_symlink():
+                    raise RuntimeError("Minecraft bundle override root is unavailable")
+                for current, dirs, files in os.walk(layer, followlinks=False):
+                    current_path = Path(current)
+                    for name in list(dirs):
+                        if (current_path / name).is_symlink():
+                            raise RuntimeError("Minecraft bundle override contains symlinks")
+                    for name in files:
+                        source_file = current_path / name
+                        if source_file.is_symlink() or not source_file.is_file():
+                            raise RuntimeError("Minecraft bundle override contains unsafe file")
+                        relative = source_file.relative_to(layer)
+                        if any(part in {"", ".", ".."} for part in relative.parts):
+                            raise RuntimeError("invalid Minecraft bundle override target")
+                        if relative.parts[0].lower() in protected_top or source_file.suffix.lower() in protected_suffixes:
+                            raise RuntimeError("Minecraft bundle override targets protected runtime content")
+                        target = (working_root / relative).resolve(strict=False)
+                        try:
+                            target.relative_to(working_root)
+                        except ValueError as exc:
+                            raise RuntimeError("Minecraft bundle override target escapes runtime") from exc
+                        parent = target.parent
+                        chain: list[Path] = []
+                        walk = parent
+                        while True:
+                            chain.append(walk)
+                            if walk == working_root:
+                                break
+                            if working_root not in walk.parents:
+                                raise RuntimeError("Minecraft bundle override parent escapes runtime")
+                            walk = walk.parent
+                        for directory in reversed(chain):
+                            directory.mkdir(exist_ok=True)
+                            _grant_group_bits(directory, gid, 0o030 if directory == parent else 0o010)
+                        if target.exists():
+                            if target.is_symlink() or not target.is_file():
+                                raise RuntimeError("Minecraft bundle override target is unsafe")
+                            _grant_group_bits(target, gid, 0o040)
+
     # Native projection directories are the only runtime locations the control
     # worker may mutate during content activation.
     for raw in types.values():
