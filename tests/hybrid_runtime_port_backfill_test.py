@@ -336,6 +336,14 @@ class HybridRuntimePortBackfillTest(unittest.TestCase):
         )
         self.assertEqual(persisted["catalog_variables"]["PORT_SIGNALING"], "24006")
         self.assertEqual(persisted["catalog_variables"]["PORT_GAMEPLAY_UDP"], "24007")
+        self.assertEqual(
+            persisted["profile_context"]["catalog_runtime_policy"]["network_exposure"],
+            persisted["catalog_runtime_policy"]["network_exposure"],
+        )
+        self.assertEqual(
+            persisted["profile_context"]["catalog_runtime_policy"]["network_properties"],
+            persisted["catalog_network_properties"],
+        )
         self.assertNotIn("PORT_GAME_IPV4", persisted["catalog_variables"])
         self.assertNotIn("PORT_GAME_IPV6", persisted["catalog_variables"])
         self.assertEqual(result["specs_updated"], 1)
@@ -380,6 +388,12 @@ class HybridRuntimePortBackfillTest(unittest.TestCase):
         }
         complete["profile_context"] = dict(complete["profile_context"])
         complete["profile_context"]["ports"] = dict(complete["ports"])
+        complete["catalog_network_properties"] = []
+        complete["catalog_variables"] = {
+            "PORT_GAME": "24010",
+            "PORT_RCON": "24011",
+            "PORT_REST_API": "24012",
+        }
         self.path.write_text(json.dumps(complete), encoding="utf-8")
         repository = self._repository()
 
