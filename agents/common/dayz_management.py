@@ -101,6 +101,16 @@ def _persistence_paths(record,mission):
         for item in private.iterdir():
             if item.is_dir() and item.name.lower().startswith("storage_"):paths.append(item)
     except OSError:pass
+    for raw in record.get("arguments") or []:
+        text=str(raw or "").strip()
+        if not text.lower().startswith("-storage="):continue
+        candidate=Path(text.split("=",1)[1].strip().strip("\"'"))
+        if not candidate.is_absolute():candidate=root/candidate
+        try:resolved=candidate.resolve();resolved.relative_to(root)
+        except (OSError,ValueError):continue
+        if resolved.exists() and resolved not in paths:paths.append(resolved)
+    default_storage=(root/"storage").resolve()
+    if default_storage.exists() and default_storage not in paths:paths.append(default_storage)
     return paths
 def wipe(record,scope="persistence",backup=True):
     mission=current_mission(record);scope=str(scope or "persistence").strip().lower()
