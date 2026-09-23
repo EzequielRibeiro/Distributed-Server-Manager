@@ -212,11 +212,16 @@ def reconcile_hybrid_runtime_ports(
         # The database transaction and collision checks are authoritative. Never
         # synthesize ports from offsets in Agent-local state.
         try:
+            runtime_stopped_proof = (
+                str(record.get("desired_state") or "").strip().lower() == "stopped"
+                and str(record.get("observed_state") or "").strip().lower() == "stopped"
+            )
             result = reconcile_instance_ports(
                 repository,
                 instance_id,
                 network_profile,
                 occupied_ports_provider=occupied_ports_provider,
+                runtime_stopped_proof=runtime_stopped_proof,
             )
         except Exception as exc:
             raise HybridRuntimePortBackfillError(
