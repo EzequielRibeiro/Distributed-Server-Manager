@@ -45,10 +45,10 @@ class HybridCustomerFilesAccessTest(unittest.TestCase):
             os.chmod(root, 0o700)
             os.chmod(child, 0o700)
             os.chmod(file_path, 0o600)
-            os.chmod(executable, 0o700)
+            os.chmod(executable, 0o600)
 
             with mock.patch.object(self.helper.os, "chown") as chown:
-                result = self.helper._prepare_tree(root, 987)
+                result = self.helper._prepare_tree(root, 987, {executable.resolve()})
 
             self.assertEqual(stat.S_IMODE(root.stat().st_mode), 0o770)
             self.assertEqual(stat.S_IMODE(child.stat().st_mode), 0o770)
@@ -58,6 +58,21 @@ class HybridCustomerFilesAccessTest(unittest.TestCase):
             self.assertEqual(chown.call_count, 4)
             for path in (root, child, file_path, executable):
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode) & 0o007, 0)
+
+    def test_declared_executable_is_recovered_from_runtime_record(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "runtime"
+            root.mkdir()
+            executable = root / "bedrock_server"
+            executable.write_bytes(b"binary")
+            executable.chmod(0o600)
+            record = {
+                "files_root": str(root),
+                "executable": str(executable),
+                "pre_start": [],
+            }
+            declared = self.helper._declared_executables(record, root.resolve())
+            self.assertEqual(declared, {executable.resolve()})
 
     def test_prepare_tree_rejects_symlinks(self):
         with tempfile.TemporaryDirectory() as temp:
