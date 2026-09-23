@@ -9,7 +9,7 @@ function ensureCard(){
  card=document.createElement("article");
  card.id="customer-connection-card";
  card.className="card";
- card.innerHTML='<div class="row"><div><span class="muted">ENDEREÇO DO SERVIDOR</span><h2 id="customer-connection-address">Disponível após a configuração</h2><p id="customer-connection-detail" class="muted">Aguardando endpoint público do Agent.</p></div><button id="customer-connection-copy" class="btn" type="button" disabled>Copiar endereço</button></div><div id="customer-query-check" class="row mt-12 hidden"><div><span class="muted">QUERY CHECK</span><strong id="customer-query-target">—</strong><p id="customer-query-detail" class="muted"></p></div><a id="customer-query-link" class="btn" href="#" target="_blank" rel="noopener noreferrer">Verificar publicamente</a></div>';
+ card.innerHTML='<div class="row"><div><span class="muted">ENDEREÇO DO SERVIDOR</span><h2 id="customer-connection-address">Disponível após a configuração</h2><p id="customer-connection-detail" class="muted">Aguardando endpoint público do Agent.</p></div><button id="customer-connection-copy" class="btn" type="button" disabled>Copiar endereço</button></div><div id="customer-query-check" class="row mt-12 hidden"><div><span class="muted">QUERY CHECK</span><strong id="customer-query-target">—</strong><p id="customer-query-detail" class="muted"></p><div id="customer-query-result" class="muted"></div></div><a id="customer-query-link" class="btn" href="#" target="_blank" rel="noopener noreferrer">Verificar publicamente</a><button id="customer-query-native" class="btn primary hidden" type="button">Testar Steam Query</button></div>';
  host.insertBefore(card,host.firstChild);
  document.getElementById("customer-connection-copy").addEventListener("click",async()=>{
   const value=document.getElementById("customer-connection-address").dataset.address||"";
@@ -38,17 +38,61 @@ function renderPorts(rows){
  }));
 }
 
+
+async function runNativeQuery(){
+ const button=document.getElementById("customer-query-native");
+ const result=document.getElementById("customer-query-result");
+ if(!button||!result||!iid)return;
+ const original=button.textContent;
+ button.disabled=true;button.textContent="Testando…";result.textContent="Consultando Steam Query pelo Capivara DSM…";
+ try{
+  const r=await fetch(`/api/customer/instance/connection/test?instance_id=${encodeURIComponent(iid)}`,{
+   headers:{Accept:"application/json","X-Capivara-Auth-Area":"customer"},
+   credentials:"same-origin",cache:"no-store"
+  });
+  if(r.status===401){location.replace("/customer-login.html");return}
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(d.message||`HTTP ${r.status}`);
+  if(!d.online){result.textContent=`OFFLINE · ${d.message||"Steam Query não respondeu."}`;return}
+  const info=d.info||{},rules=d.rules||{};
+  const parts=[
+   "ONLINE",
+   info.name||null,
+   info.map?`Mapa ${info.map}`:null,
+   Number.isFinite(Number(info.players))&&Number.isFinite(Number(info.max_players))?`${info.players}/${info.max_players} jogadores`:null,
+   info.version?`v${info.version}`:null,
+   rules.format==="key_value"?`${Object.keys(rules.rules||{}).length} regras`:rules.declared?`${rules.declared} regras/dados publicados`:null
+  ].filter(Boolean);
+  result.textContent=parts.join(" · ");
+ }catch(e){result.textContent=`Falha no teste: ${e.message}`}
+ finally{button.disabled=false;button.textContent=original}
+}
+
 function renderQuery(check){
  const wrap=document.getElementById("customer-query-check");
  const link=document.getElementById("customer-query-link");
+ const nativeButton=document.getElementById("customer-query-native");
  const target=document.getElementById("customer-query-target");
  const detail=document.getElementById("customer-query-detail");
- if(!wrap||!link||!target||!detail)return;
- if(!check?.url){wrap.classList.add("hidden");return}
+ const result=document.getElementById("customer-query-result");
+ if(!wrap||!link||!nativeButton||!target||!detail||!result)return;
+ if(!check){wrap.classList.add("hidden");return}
  wrap.classList.remove("hidden");
  target.textContent=check.target||"—";
- link.href=check.url;
- detail.textContent=`Consulta pública via ${check.provider||"serviço externo"} · ${String(check.protocol||"").toUpperCase()}${check.status==="conditional"?" · compatibilidade condicional":""}`;
+ result.textContent="";
+ if(check.native){
+  link.classList.add("hidden");
+  nativeButton.classList.remove("hidden");
+  nativeButton.onclick=runNativeQuery;
+  detail.textContent=`Teste nativo Steam Query pelo Capivara DSM · ${String(check.protocol||"A2S").toUpperCase()}${check.status==="conditional"?" · compatibilidade condicional":""}`;
+ }else if(check.url){
+  nativeButton.classList.add("hidden");
+  link.classList.remove("hidden");
+  link.href=check.url;
+  detail.textContent=`Consulta pública via ${check.provider||"serviço externo"} · ${String(check.protocol||"").toUpperCase()}${check.status==="conditional"?" · compatibilidade condicional":""}`;
+ }else{
+  wrap.classList.add("hidden");
+ }
 }
 
 async function load(){

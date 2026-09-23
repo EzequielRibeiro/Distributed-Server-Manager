@@ -5,6 +5,7 @@ import hashlib
 import json
 import time
 from urllib.parse import parse_qs,urlparse
+from urllib.request import HTTPRedirectHandler,Request,build_opener
 from controller_session import session_user_from_headers
 from content_action_capabilities import project_content_actions
 from customer_content_workspace import CustomerContentWorkspaceService
@@ -16,6 +17,7 @@ from server_update_repository import ServerUpdateRepository
 
 PATH="/api/customer/instance/workspace/content"
 SEARCH=PATH+"/search"
+ICON=PATH+"/icon"
 BUNDLE=PATH+"/bundle"
 UPLOAD=PATH+"/upload"
 UPLOAD_STATUS=UPLOAD+"/status"
@@ -24,6 +26,34 @@ UPLOAD_CANCEL=UPLOAD+"/cancel"
 UPDATE_POLICY=PATH+"/update-policy"
 UPDATE_POLICY_ITEM=UPDATE_POLICY+"/item"
 STREAM=PATH+"/stream"
+
+
+ICON_HOST_SUFFIXES=(".modrinth.com",".forgecdn.net")
+ICON_MAX_BYTES=4*1024*1024
+
+def _allowed_icon_url(value):
+ parsed=urlparse(str(value or "").strip())
+ if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password:return False
+ host=parsed.hostname.lower().rstrip(".")
+ return any(host.endswith(suffix) and host!=suffix.lstrip(".") or host==suffix.lstrip(".") for suffix in ICON_HOST_SUFFIXES)
+
+class _IconRedirectHandler(HTTPRedirectHandler):
+ def redirect_request(self,req,fp,code,msg,headers,newurl):
+  if not _allowed_icon_url(newurl):raise ValueError("content icon redirect is not allowed")
+  return super().redirect_request(req,fp,code,msg,headers,newurl)
+
+def _fetch_content_icon(url):
+ if not _allowed_icon_url(url):raise ValueError("content icon source is not allowed")
+ request=Request(url,headers={"Accept":"image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.8","User-Agent":"Capivara-DSM/2"})
+ opener=build_opener(_IconRedirectHandler())
+ with opener.open(request,timeout=10) as response:
+  content_type=str(response.headers.get_content_type() or "").lower()
+  if content_type not in {"image/avif","image/webp","image/png","image/jpeg","image/gif"}:raise ValueError("content icon response is not a supported image")
+  length=response.headers.get("Content-Length")
+  if length and int(length)>ICON_MAX_BYTES:raise ValueError("content icon exceeds size limit")
+  data=response.read(ICON_MAX_BYTES+1)
+  if len(data)>ICON_MAX_BYTES:raise ValueError("content icon exceeds size limit")
+  return content_type,data
 
 def install_customer_content_http(legacy,authenticate):
  previous_get=legacy.DashboardHandler.do_GET;previous_post=legacy.DashboardHandler.do_POST;previous_put=getattr(legacy.DashboardHandler,"do_PUT",None)
@@ -124,6 +154,16 @@ def install_customer_content_http(legacy,authenticate):
    try:
     api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT);result=api.search_result(user,iid(parsed),one(parsed,"provider"),one(parsed,"content_type"),one(parsed,"q"),one(parsed,"limit","20"));return send(self,200,result)
    except Exception as exc:return error(self,exc)
+  if parsed.path==ICON:
+   user=require_user(self)
+   if user is None:return
+   try:
+    instance_id=iid(parsed)
+    if not instance_id:raise ValueError("instance_id is required")
+    api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT);api.workspace.require(user,instance_id,"content.read")
+    content_type,data=_fetch_content_icon(one(parsed,"url"))
+    self.send_response(200);self.send_header("Content-Type",content_type);self.send_header("Content-Length",str(len(data)));self.send_header("Cache-Control","private, max-age=86400");self.send_header("X-Content-Type-Options","nosniff");self.end_headers();self.wfile.write(data);return
+   except Exception as exc:return error(self,exc)
   if parsed.path==BUNDLE:
    user=require_user(self)
    if user is None:return
@@ -204,4 +244,4 @@ def install_customer_content_http(legacy,authenticate):
   except Exception as exc:return error(self,exc)
  legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post;legacy.DashboardHandler.do_PUT=put
 
-__all__=["PATH","SEARCH","BUNDLE","UPLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","UPLOAD_CANCEL","UPDATE_POLICY","UPDATE_POLICY_ITEM","STREAM","install_customer_content_http"]
+__all__=["PATH","SEARCH","ICON","BUNDLE","UPLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","UPLOAD_CANCEL","UPDATE_POLICY","UPDATE_POLICY_ITEM","STREAM","install_customer_content_http"]

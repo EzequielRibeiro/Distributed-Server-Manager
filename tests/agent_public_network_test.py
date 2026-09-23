@@ -149,7 +149,7 @@ class AgentPublicNetworkContractTest(unittest.TestCase):
         self.assertEqual(states["steam_query"], "listening")
         self.assertEqual(states["battleye"], "reserved")
 
-    def test_dayz_external_check_queries_actual_reserved_query_port_directly(self):
+    def test_dayz_native_check_queries_actual_reserved_query_port_directly(self):
         check = _external_query_check(
             {
                 "gamedig_type": "dayz",
@@ -170,10 +170,10 @@ class AgentPublicNetworkContractTest(unittest.TestCase):
         self.assertEqual(check["port"], 24003)
         self.assertEqual(check["target"], "200.100.203.92:24003")
         self.assertEqual(check["public_port"], 24003)
-        self.assertEqual(
-            check["url"],
-            "https://ismygameserver.online/valve/200.100.203.92:24003",
-        )
+        self.assertTrue(check["native"])
+        self.assertEqual(check["provider"], "capivara-steam-query")
+        self.assertEqual(check["test_url"], "/api/customer/instance/connection/test")
+        self.assertNotIn("url", check)
 
 
 if __name__ == "__main__":

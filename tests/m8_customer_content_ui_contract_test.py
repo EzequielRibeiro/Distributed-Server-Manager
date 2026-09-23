@@ -53,5 +53,13 @@ class M8CustomerContentUiContractTest(unittest.TestCase):
         self.assertIn('Segurança: ${String(securityNotice.message).slice(0,500)}',text)
 
 
+    def test_search_result_icons_use_same_origin_proxy(self):
+        text=self.text
+        self.assertIn('function contentIconUrl(url)',text)
+        self.assertIn('/content/icon?',text)
+        self.assertIn('icon.src=contentIconUrl(item.icon_url)',text)
+        self.assertNotIn('icon.src=item.icon_url',text)
+
+
 if __name__=="__main__":
     unittest.main()

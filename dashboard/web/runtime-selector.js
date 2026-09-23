@@ -13,7 +13,6 @@
     "use strict";
 
     const $ = (id) => document.getElementById(id);
-    const RUNTIME_ICON_SPRITE = "/assets/icons/runtime-sprite.svg?v=1";
     let openingPromise = null;
 
     const state = {
@@ -181,6 +180,25 @@
             bedrock: "runtime-bedrock",
         };
         return icons[runtimeCardVariant(distribution, runtime)] || "runtime-default";
+    }
+
+    function runtimeCardIconMarkup(iconId) {
+        const icons = {
+            "runtime-vanilla": '<path d="M24 5 39 13.5V31L24 39 9 31V13.5L24 5Z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><path d="m9 13.5 15 8.5 15-8.5M24 22v17" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/>',
+            "runtime-fabric": '<path d="M10 11h28v26H10zM16 7v34M24 7v34M32 7v34M6 16h36M6 24h36M6 32h36" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>',
+            "runtime-forge": '<path d="M12 13h17l5 5-7 7-5-5-9 9-6-6 9-9-4-1Z" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round"/><path d="m29 10 9 9M11 35h26M16 31h16l4 4H12l4-4Z" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>',
+            "runtime-neoforge": '<path d="M24 5 39 14v20L24 43 9 34V14L24 5Z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/><path d="M16 32V16l16 16V16" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>',
+            "runtime-quilt": '<path d="M9 9h13v13H9zM26 9h13v13H26zM9 26h13v13H9zM26 26h13v13H26z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/><path d="m9 22 13-13m4 30 13-13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>',
+            "runtime-paper": '<path d="M14 6h14l8 8v28H14V6Z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/><path d="M28 6v9h8M19 23h12M19 29h12M19 35h8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>',
+            "runtime-purpur": '<path d="m24 5 16 19-16 19L8 24 24 5Z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><path d="M19 32V16h6a6 6 0 0 1 0 12h-6" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>',
+            "runtime-folia": '<path d="M38 9C24 10 13 18 11 34c11 1 24-5 27-25Z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><path d="M13 36c7-10 13-15 22-21M22 28c0-4-1-7-3-10M27 23c4 0 7 1 10 3" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/>',
+            "runtime-spongevanilla": '<rect x="9" y="9" width="30" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="2.4"/><circle cx="17" cy="17" r="2.5" fill="currentColor"/><circle cx="30" cy="15" r="3" fill="currentColor"/><circle cx="24" cy="26" r="3.5" fill="currentColor"/><circle cx="15" cy="32" r="2.2" fill="currentColor"/><circle cx="33" cy="33" r="2.5" fill="currentColor"/>',
+            "runtime-arclight": '<path d="M8 31c5-15 17-22 32-18-11 3-18 10-22 22" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="m34 8 1.8 4.3L40 14l-4.2 1.7L34 20l-1.8-4.3L28 14l4.2-1.7L34 8Z" fill="currentColor"/><path d="M14 37h21" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>',
+            "runtime-youer": '<path d="M12 10 24 25 36 10M24 25v14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 34h8M31 34h8M9 40h30" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/>',
+            "runtime-bedrock": '<path d="M8 13h32v22H8V13Z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><path d="M8 21h32M15 13v8M31 13v8M14 35v-8h8v8M27 35v-8h7v8" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linejoin="round"/>',
+            "runtime-default": '<circle cx="24" cy="24" r="16" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="M24 13v22M13 24h22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>',
+        };
+        return icons[iconId] || icons["runtime-default"];
     }
 
     function runtimeCardCapabilities(runtime) {
@@ -435,9 +453,7 @@
         icon.classList.add("runtime-card-icon");
         icon.setAttribute("viewBox", "0 0 48 48");
         icon.setAttribute("focusable", "false");
-        const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
-        use.setAttribute("href", `${RUNTIME_ICON_SPRITE}#${runtimeCardIconId(distribution, runtime)}`);
-        icon.append(use);
+        icon.innerHTML = runtimeCardIconMarkup(runtimeCardIconId(distribution, runtime));
         mark.append(icon);
 
         const heading = document.createElement("span");
