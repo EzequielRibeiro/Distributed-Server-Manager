@@ -100,6 +100,39 @@ class DayZNativeMessagesTest(unittest.TestCase):
             self.assertEqual(mission, 'dayzOffline.chernarusplus')
             self.assertEqual(mission_root, (root / 'mpmissions' / mission).resolve())
 
+    def test_private_runtime_config_and_mission_root_are_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            runtime_root = base / "shared-game-data"
+            state_root = base / "private-instance"
+            config = state_root / "config" / "serverDZ.cfg"
+            mission = state_root / "mpmissions" / "dayzOffline.chernarusplus"
+
+            runtime_root.mkdir(parents=True)
+            config.parent.mkdir(parents=True)
+            mission.mkdir(parents=True)
+            config.write_text(
+                'class Missions { class DayZ { template="dayzOffline.chernarusplus"; }; };\n',
+                encoding="utf-8",
+            )
+
+            record = self._record(
+                runtime_root,
+                arguments=[f"-config={config}"],
+            )
+            record["instance_state_root"] = str(state_root)
+            record["files_root"] = str(state_root)
+
+            resolved_mission, resolved_root = resolve_dayz_mission(record)
+            self.assertEqual(resolved_mission, "dayzOffline.chernarusplus")
+            self.assertEqual(resolved_root, mission.resolve())
+
+            plan = native_restart_plan(record, 90)
+            self.assertEqual(
+                plan.messages_path,
+                str((mission / "db" / "messages.xml").resolve()),
+            )
+
     def test_mission_launch_argument_is_authoritative(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -113,7 +146,7 @@ class DayZNativeMessagesTest(unittest.TestCase):
     def test_rejects_path_escape_and_non_dayz_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            with self.assertRaisesRegex(DayZMessagesError, 'outside instance root'):
+            with self.assertRaisesRegex(DayZMessagesError, 'outside instance roots?'):
                 resolve_dayz_mission(self._record(root, arguments=['-mission=../foreign/dayzOffline.enoch']))
             record = self._record(root)
             record['game_id'] = 'minecraft'
