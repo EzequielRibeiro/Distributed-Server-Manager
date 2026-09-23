@@ -115,6 +115,61 @@ def _bindings_from_reservations(
     return bindings
 
 
+def _network_variable_template(value: Any) -> str:
+    """Translate Catalog {role} placeholders to persisted Agent variables."""
+    return re.sub(
+        r"\{([a-z][a-z0-9_]{0,63})\}",
+        lambda match: "{{PORT_" + match.group(1).upper() + "}}",
+        str(value),
+    )
+
+
+def _canonical_network_state(
+    network_profile: Mapping[str, Any],
+    bindings: Mapping[str, Mapping[str, Any]],
+) -> tuple[list[dict[str, str]], list[dict[str, str]], dict[str, str]]:
+    exposure: list[dict[str, str]] = []
+    requirements = network_profile.get("ports")
+    if not isinstance(requirements, list):
+        requirements = []
+    for item in requirements:
+        if not isinstance(item, Mapping):
+            continue
+        exposure.append(
+            {
+                "name": str(item.get("name") or "").strip(),
+                "protocol": str(item.get("protocol") or "").strip().lower(),
+                "exposure": str(item.get("exposure") or "none").strip().lower(),
+            }
+        )
+
+    properties: list[dict[str, str]] = []
+    applications = network_profile.get("apply")
+    if not isinstance(applications, list):
+        applications = []
+    for item in applications:
+        if not isinstance(item, Mapping):
+            continue
+        if str(item.get("kind") or "").strip().lower() != "property":
+            continue
+        properties.append(
+            {
+                "path": str(item.get("file") or "").strip(),
+                "key": str(item.get("key") or "").strip(),
+                "value": _network_variable_template(item.get("value") or ""),
+                "syntax": str(item.get("syntax") or "equals").strip().lower(),
+            }
+        )
+
+    variables = {
+        "PORT_" + str(name).upper().replace("-", "_"): str(binding["port"])
+        for name, binding in bindings.items()
+    }
+    if "PORT_STEAM_QUERY" not in variables and "PORT_GAME_AUX" in variables:
+        variables["PORT_STEAM_QUERY"] = variables["PORT_GAME_AUX"]
+    return exposure, properties, variables
+
+
 def reconcile_hybrid_runtime_ports(
     backend,
     root: Path,
@@ -244,10 +299,40 @@ def reconcile_hybrid_runtime_ports(
         else:
             profile_context = dict(profile_context)
 
-        changed = updated.get("ports") != bindings or profile_context.get("ports") != bindings
+        exposure, properties, port_variables = _canonical_network_state(
+            network_profile,
+            bindings,
+        )
+        runtime_policy = updated.get("catalog_runtime_policy")
+        if isinstance(runtime_policy, dict):
+            runtime_policy = dict(runtime_policy)
+            runtime_policy["network_exposure"] = exposure
+            updated["catalog_runtime_policy"] = runtime_policy
+
+        variables = updated.get("catalog_variables")
+        variables = dict(variables) if isinstance(variables, dict) else {}
+        variables = {
+            str(key): value
+            for key, value in variables.items()
+            if not str(key).startswith("PORT_")
+        }
+        variables.update(port_variables)
+
+        changed = (
+            updated.get("ports") != bindings
+            or profile_context.get("ports") != bindings
+            or (
+                isinstance(record.get("catalog_runtime_policy"), dict)
+                and record["catalog_runtime_policy"].get("network_exposure") != exposure
+            )
+            or updated.get("catalog_network_properties") != properties
+            or updated.get("catalog_variables") != variables
+        )
         updated["ports"] = bindings
         profile_context["ports"] = bindings
         updated["profile_context"] = profile_context
+        updated["catalog_network_properties"] = properties
+        updated["catalog_variables"] = variables
         if changed:
             _write_spec(path, updated)
             specs_updated += 1
