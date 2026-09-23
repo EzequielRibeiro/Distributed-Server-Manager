@@ -291,6 +291,37 @@ class InstancePortReconcileApplyCoverageTest(unittest.TestCase):
                 occupied_ports_provider=lambda *_args, **_kwargs: set(),
             )
 
+    def test_role_migration_accepts_explicit_runtime_stopped_proof(self):
+        network = {
+            "allocation": "block",
+            "block_size": 2,
+            "ports": [
+                {"name": "signaling", "protocol": "tcp", "offset": 0},
+                {"name": "gameplay_udp", "protocol": "udp", "offset": 1},
+            ],
+        }
+        repository = _Repository(_Session(
+            status="online",
+            existing=[
+                {"name": "game_ipv4", "protocol": "udp", "port": 24006, "bind_address": "0.0.0.0"},
+                {"name": "game_ipv6", "protocol": "udp", "port": 24007, "bind_address": "0.0.0.0"},
+            ],
+        ))
+
+        result = reconcile_instance_ports(
+            repository,
+            "cli-000001-minecraft-001",
+            network,
+            occupied_ports_provider=lambda *_args, **_kwargs: set(),
+            runtime_stopped_proof=True,
+        )
+
+        self.assertTrue(result["relocated"])
+        self.assertEqual(
+            result["ports"],
+            {"signaling": 24000, "gameplay_udp": 24001},
+        )
+
     def test_expanded_profile_refuses_relocation_while_instance_is_running(self):
         network = {
             "allocation": "block",
