@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
 from agents.common.dayz_messages import (
@@ -166,6 +167,27 @@ class DayZNativeMessagesTest(unittest.TestCase):
             self.assertEqual(result.messages_path, str((mission / 'db' / 'messages.xml').resolve()))
             self.assertEqual(result.message.deadline_minutes, 90)
             self.assertIn('<shutdown>1</shutdown>', result.xml)
+
+    def test_group_authorized_fallback_preserves_existing_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "messages.xml"
+            target.write_text(
+                "<messages></messages>\n",
+                encoding="utf-8",
+            )
+            target.chmod(0o660)
+            inode_before = target.stat().st_ino
+
+            with patch("agents.common.dayz_messages.os.chown", side_effect=PermissionError):
+                result = materialize_shutdown_messages_xml(
+                    target,
+                    DayZShutdownMessage(30),
+                )
+
+            self.assertEqual(result, target)
+            self.assertEqual(target.stat().st_ino, inode_before)
+            self.assertEqual(target.stat().st_mode & 0o777, 0o660)
+            self.assertIn("Capivara maintenance:", target.read_text(encoding="utf-8"))
 
     def test_materializes_atomically_to_messages_xml(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
