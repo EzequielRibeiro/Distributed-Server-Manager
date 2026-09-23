@@ -14,6 +14,34 @@ class MinecraftBedrockRuntimeProfile(GameRuntimeProfile):
     game_ids = (_BEDROCK_ENVIRONMENT,)
     profile_version = 3
 
+    def upgrade_migration_context(
+        self,
+        record: dict[str, Any],
+        context: dict[str, Any],
+        stored_version: int,
+    ) -> dict[str, Any]:
+        upgraded = dict(context)
+        raw_ports = upgraded.get("ports")
+        if isinstance(raw_ports, dict):
+            upgraded["ports"] = {
+                role: dict(raw_ports[role])
+                for role in ("signaling", "gameplay_udp")
+                if isinstance(raw_ports.get(role), dict)
+            }
+        policy = upgraded.get("catalog_runtime_policy")
+        if isinstance(policy, dict):
+            policy = dict(policy)
+            exposure = policy.get("network_exposure")
+            if isinstance(exposure, list):
+                policy["network_exposure"] = [
+                    dict(item)
+                    for item in exposure
+                    if isinstance(item, dict)
+                    and str(item.get("name") or "") in {"signaling", "gameplay_udp"}
+                ]
+            upgraded["catalog_runtime_policy"] = policy
+        return upgraded
+
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         instance_id = require_text(instance.get("instance_id") or instance.get("id"), "instance_id")
         agent_id = require_text(instance.get("agent_id"), "agent_id")
