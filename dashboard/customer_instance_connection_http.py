@@ -123,6 +123,26 @@ def _external_query_check(profile: dict, ports: list[dict], network: dict) -> di
     return payload
 
 
+def _native_query_failure(target: dict, ports: list[dict], error: Exception) -> dict:
+    listener_state = next(
+        (
+            str(item.get("state") or "")
+            for item in ports
+            if str(item.get("name") or "") == str(target.get("role") or "")
+        ),
+        "",
+    )
+    listener_online = listener_state == "listening"
+    return {
+        "online": None if listener_online else False,
+        "listener_online": listener_online,
+        "public_reachable": False,
+        "target": target.get("target"),
+        "port_role": target.get("role"),
+        "message": str(error)[:300],
+    }
+
+
 def install_customer_instance_connection(legacy, authenticate):
     previous_get = legacy.DashboardHandler.do_GET
     legacy.STATIC_FILES["/customer-instance-core.js"] = legacy.WEB_DIR / "customer-instance-v2.js"
@@ -223,23 +243,7 @@ def install_customer_instance_connection(legacy, authenticate):
                         timeout=3.0,
                     )
                 except SteamQueryError as exc:
-                    listener_state = next(
-                        (
-                            str(item.get("state") or "")
-                            for item in port_status
-                            if str(item.get("name") or "") == str(target["role"])
-                        ),
-                        "",
-                    )
-                    listener_online = listener_state == "listening"
-                    self.send_json(200, {
-                        "online": None if listener_online else False,
-                        "listener_online": listener_online,
-                        "public_reachable": False,
-                        "target": target["target"],
-                        "port_role": target["role"],
-                        "message": str(exc)[:300],
-                    })
+                    self.send_json(200, _native_query_failure(target, port_status, exc))
                     return
                 result["target"] = target["target"]
                 result["port_role"] = target["role"]
