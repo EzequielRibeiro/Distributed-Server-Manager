@@ -23,16 +23,21 @@ def _parse_datetime(value:Any)->datetime|None:
 def normalize_policy(raw:Mapping[str,Any]|None)->dict[str,Any]:
  value=dict(raw or {});enabled=bool(value.get("enabled",False));mode=str(value.get("schedule_mode") or "fixed").strip().lower()
  if mode not in SCHEDULE_MODES:raise MaintenanceValidationError("invalid maintenance schedule_mode")
- zone_name=str(value.get("timezone") or "UTC").strip()
- try:ZoneInfo(zone_name)
- except (ZoneInfoNotFoundError,ValueError) as exc:raise MaintenanceValidationError("invalid maintenance timezone") from exc
- start_time=str(value.get("start_time") or "04:00").strip()
- if not _TIME.fullmatch(start_time):raise MaintenanceValidationError("invalid maintenance start_time")
- raw_days=value.get("weekdays",list(range(7)))
- if not isinstance(raw_days,list) or not raw_days:raise MaintenanceValidationError("maintenance weekdays must be a non-empty list")
- try:weekdays=sorted(set(int(day) for day in raw_days))
- except (TypeError,ValueError) as exc:raise MaintenanceValidationError("invalid maintenance weekdays") from exc
- if any(day<0 or day>6 for day in weekdays):raise MaintenanceValidationError("maintenance weekdays must be between 0 and 6")
+ if mode=="fixed":
+  zone_name=str(value.get("timezone") or "UTC").strip()
+  try:ZoneInfo(zone_name)
+  except (ZoneInfoNotFoundError,ValueError) as exc:raise MaintenanceValidationError("invalid maintenance timezone") from exc
+  start_time=str(value.get("start_time") or "04:00").strip()
+  if not _TIME.fullmatch(start_time):raise MaintenanceValidationError("invalid maintenance start_time")
+  raw_days=value.get("weekdays",list(range(7)))
+  if not isinstance(raw_days,list) or not raw_days:raise MaintenanceValidationError("maintenance weekdays must be a non-empty list")
+  try:weekdays=sorted(set(int(day) for day in raw_days))
+  except (TypeError,ValueError) as exc:raise MaintenanceValidationError("invalid maintenance weekdays") from exc
+  if any(day<0 or day>6 for day in weekdays):raise MaintenanceValidationError("maintenance weekdays must be between 0 and 6")
+ else:
+  # Interval schedules are elapsed-time based. Wall-clock fields are
+  # intentionally canonicalized so timezone/DST cannot affect the cadence.
+  zone_name="UTC";start_time="04:00";weekdays=list(range(7))
  try:interval_seconds=int(value.get("interval_seconds") or 86400)
  except (TypeError,ValueError) as exc:raise MaintenanceValidationError("invalid maintenance interval_seconds") from exc
  if not 3600<=interval_seconds<=604800:raise MaintenanceValidationError("maintenance interval_seconds must be between 3600 and 604800")
