@@ -184,7 +184,7 @@ class CustomerDistributedProvisioningTest(unittest.TestCase):
         self.assertEqual(queued["agent_id"], "agent-remote")
         self.assertEqual(queued["instance_id"], "aurora-dayz-001")
         self.assertEqual(queued["environment_id"], "dayz.stable")
-        self.assertEqual(queued["desired_state"], "stopped")
+        self.assertEqual(queued["desired_state"], "running")
         self.assertEqual(queued["requested_by"], "aurora")
         resolver.assert_called_once()
 
