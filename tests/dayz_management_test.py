@@ -28,5 +28,11 @@ class DayZManagementTest(unittest.TestCase):
   result=wipe(self.record,"persistence",True);self.assertTrue(Path(result["backup"]).is_file())
   self.assertFalse((self.state/"mpmissions"/"dayzOffline.chernarusplus"/"storage_1").exists())
   self.assertTrue((self.state/"config"/"serverDZ.cfg").is_file())
+ def test_wipe_honors_private_storage_argument(self):
+  storage=self.state/"storage";storage.mkdir();(storage/"players.db").write_text("state",encoding="utf-8")
+  record={**self.record,"arguments":[*self.record["arguments"],"-storage="+str(storage)]}
+  result=wipe(record,"persistence",True)
+  self.assertFalse(storage.exists())
+  self.assertTrue(Path(result["backup"]).is_file())
 
 if __name__=="__main__":unittest.main()
