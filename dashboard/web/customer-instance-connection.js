@@ -53,7 +53,10 @@ async function runNativeQuery(){
   if(r.status===401){location.replace("/customer-login.html");return}
   const d=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(d.message||`HTTP ${r.status}`);
-  if(!d.online){result.textContent=`OFFLINE · ${d.message||"Steam Query não respondeu."}`;return}
+  if(d.online!==true){
+   if(d.listener_online){result.textContent=`ONLINE NO AGENT · acesso público não confirmado · ${d.message||"Steam Query pública não respondeu."}`;return}
+   result.textContent=`SEM RESPOSTA · ${d.message||"Steam Query não respondeu."}`;return
+  }
   const info=d.info||{},rules=d.rules||{};
   const parts=[
    "ONLINE",

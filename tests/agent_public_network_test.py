@@ -20,7 +20,7 @@ from agent_public_network import (
     public_port_keys,
 )
 from agent_public_network_schema import ensure_agent_public_network_schema
-from customer_instance_connection_http import _external_query_check, _listening_ports
+from customer_instance_connection_http import _external_query_check, _listening_ports, _native_query_failure
 
 
 class AgentPublicNetworkContractTest(unittest.TestCase):
@@ -148,6 +148,27 @@ class AgentPublicNetworkContractTest(unittest.TestCase):
         self.assertEqual(states["game"], "listening")
         self.assertEqual(states["steam_query"], "listening")
         self.assertEqual(states["battleye"], "reserved")
+
+    def test_native_query_timeout_does_not_mark_confirmed_listener_offline(self):
+        result = _native_query_failure(
+            {"role": "steam_query", "target": "200.100.203.92:24003"},
+            [{"name": "steam_query", "state": "listening"}],
+            TimeoutError("timed out"),
+        )
+        self.assertIsNone(result["online"])
+        self.assertTrue(result["listener_online"])
+        self.assertFalse(result["public_reachable"])
+        self.assertEqual(result["target"], "200.100.203.92:24003")
+
+    def test_native_query_timeout_is_offline_when_listener_is_not_confirmed(self):
+        result = _native_query_failure(
+            {"role": "steam_query", "target": "200.100.203.92:24003"},
+            [{"name": "steam_query", "state": "reserved"}],
+            TimeoutError("timed out"),
+        )
+        self.assertFalse(result["online"])
+        self.assertFalse(result["listener_online"])
+        self.assertFalse(result["public_reachable"])
 
     def test_dayz_native_check_queries_actual_reserved_query_port_directly(self):
         check = _external_query_check(

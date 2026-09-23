@@ -13,7 +13,8 @@
     "config": {
       "api_base": "https://mohistmc.com/api/v2/projects/youer",
       "discovery_limit": 25,
-      "legacy_api_base": "https://api.mohistmc.com/project/youer"
+      "legacy_api_base": "https://api.mohistmc.com/project/youer",
+      "github_branches_api": "https://api.github.com/repos/MohistMC/Youer/branches?per_page=100"
     }
   },
   "process": {

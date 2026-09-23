@@ -113,7 +113,7 @@ canonical_resolver_call()
         export PAPERMC_PROJECT PAPERMC_API_BASE FABRIC_META_BASE
         export BEDROCK_DOWNLOAD_PAGE BEDROCK_LINUX_BASE
         export MINECRAFT_JAVA_MANIFEST_URL MINECRAFT_JAVA_DISCOVERY_LIMIT
-        export PURPUR_PROJECT PURPUR_API_BASE QUILT_META_BASE YOUER_API_BASE YOUER_LEGACY_API_BASE YOUER_DISCOVERY_LIMIT
+        export PURPUR_PROJECT PURPUR_API_BASE QUILT_META_BASE YOUER_API_BASE YOUER_LEGACY_API_BASE YOUER_GITHUB_BRANCHES_API YOUER_DISCOVERY_LIMIT
         export FORGE_MAVEN_BASE NEOFORGE_MAVEN_BASE SPONGE_MAVEN_BASE
 
         GAME_ID="$(jq -r '.game // empty' "${RUNTIME_FILE}")"
@@ -134,6 +134,7 @@ canonical_resolver_call()
         QUILT_META_BASE="$(jq -r '.version.config.api_base // "https://meta.quiltmc.org/v3"' "${RUNTIME_FILE}")"
         YOUER_API_BASE="$(jq -r '.version.config.api_base // "https://mohistmc.com/api/v2/projects/youer"' "${RUNTIME_FILE}")"
         YOUER_LEGACY_API_BASE="$(jq -r '.version.config.legacy_api_base // "https://api.mohistmc.com/project/youer"' "${RUNTIME_FILE}")"
+        YOUER_GITHUB_BRANCHES_API="$(jq -r '.version.config.github_branches_api // "https://api.github.com/repos/MohistMC/Youer/branches?per_page=100"' "${RUNTIME_FILE}")"
         YOUER_DISCOVERY_LIMIT="$(jq -r '.version.config.discovery_limit // 25' "${RUNTIME_FILE}")"
         FORGE_MAVEN_BASE="$(jq -r '.version.config.maven_base // empty' "${RUNTIME_FILE}")"
         NEOFORGE_MAVEN_BASE="$(jq -r '.version.config.maven_base // empty' "${RUNTIME_FILE}")"
