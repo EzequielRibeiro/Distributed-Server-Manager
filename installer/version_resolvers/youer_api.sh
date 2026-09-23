@@ -37,7 +37,7 @@ youer_discovery_project()
           .[]?.name
           | tostring
           | select(test("^[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))
-        ' <<<"${BRANCHES}" | sort -Vr | jq -Rsc 'split("\n") | map(select(length > 0))'
+        ' <<<"${BRANCHES}" | sort -V | jq -Rsc 'split("\n") | map(select(length > 0))'
     )"
     if ! jq -e 'length > 0' >/dev/null 2>&1 <<<"${VERSIONS}"
     then
