@@ -70,6 +70,10 @@ def apply_mission(record,mission):
         if text.lower().startswith("-mission="):text=f"-mission={private}"
         args.append(text)
     result=dict(record);result["mission"]=mission;result["arguments"]=args
+    profile_context=dict(record.get("profile_context") or {})
+    profile_context["dayz_mission"]=mission
+    profile_context["mission"]=mission
+    result["profile_context"]=profile_context
     state_root=_root(record);working=_working(record);shared=working/"mpmissions"/mission
     seeds=[]
     for item in record.get("seed_directories") or []:
