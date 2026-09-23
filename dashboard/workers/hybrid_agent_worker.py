@@ -439,7 +439,15 @@ def process_hybrid_dayz_operation_cycle(backend, root: Path, agent_id: str) -> d
     for item in (runtime_dir, common_dir):
         if str(item) not in sys.path:sys.path.insert(0,str(item))
     import dayz_operation_client
-    report = dayz_operation_client.handle_command(_hybrid_agent_config(root, agent_id), command)
+    previous_template = os.environ.get("CAPIVARA_MATERIALIZER_UNIT_TEMPLATE")
+    os.environ["CAPIVARA_MATERIALIZER_UNIT_TEMPLATE"] = "dsm-hybrid-agent-materialize@{instance_id}.service"
+    try:
+        report = dayz_operation_client.handle_command(_hybrid_agent_config(root, agent_id), command)
+    finally:
+        if previous_template is None:
+            os.environ.pop("CAPIVARA_MATERIALIZER_UNIT_TEMPLATE", None)
+        else:
+            os.environ["CAPIVARA_MATERIALIZER_UNIT_TEMPLATE"] = previous_template
     completed = repository.apply_result(agent_id, report)
     if isinstance(completed, dict) and str(completed.get("status") or "").lower() in {"completed","failed"}:
         dayz_operation_client.clear_result(operation_id)
