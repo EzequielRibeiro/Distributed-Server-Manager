@@ -109,6 +109,7 @@ def _entry(state: dict[str, Any]) -> dict[str, Any] | None:
         "package_id": str(state.get("package_id") or "").strip() or None,
         "target": str(state.get("target") or "").strip() or None,
         "managed_path": str(state.get("managed_path") or "").strip() or None,
+        "artifact_filename": str(state.get("artifact_filename") or "").strip() or None,
         "activation_order": _order(state.get("activation_order")),
         "dependencies": [str(value).strip() for value in (state.get("dependencies") or []) if str(value).strip()],
         "activation": activation,
