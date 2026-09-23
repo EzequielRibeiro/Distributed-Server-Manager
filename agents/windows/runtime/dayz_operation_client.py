@@ -11,7 +11,8 @@ for item in (RUNTIME_DIR,COMMON_DIR):
     if str(item) not in sys.path:sys.path.insert(0,str(item))
 from dayz_management import apply_mission,discover_missions,wipe
 from instance_runtime import get_instance,lifecycle,register_instance,status
-PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\\ProgramData"))\nSTATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"))
+PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\\ProgramData"))
+STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"))
 RESULT_DIR=STATE_DIR/"dayz-operation-results";HISTORY_DIR=STATE_DIR/"dayz-operation-history"
 def _now():return datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
 def _token(value,label):
@@ -30,31 +31,52 @@ def _write(path,payload):
         except FileNotFoundError:pass
 def _history(oid):return HISTORY_DIR/f"{_token(oid,'operation_id')}.json"
 def _result(oid):return RESULT_DIR/f"{_token(oid,'operation_id')}.json"
+def _change_mission(config,record,iid,payload):
+    previous_mission=discover_missions(record)["current"];target=str(payload.get("mission") or "").strip()
+    before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"}
+    if was_running:lifecycle(config,iid,"stop")
+    updated=None
+    try:
+        updated=apply_mission(record,target)
+        register_instance(updated)
+        if was_running:lifecycle(config,iid,"start")
+        return {"previous_mission":previous_mission,"mission":target,"restarted":was_running,"rollback":False}
+    except Exception as exc:
+        rollback_error=None
+        if updated is not None and previous_mission and previous_mission!=target:
+            try:
+                rollback=apply_mission(updated,previous_mission)
+                register_instance(rollback)
+            except Exception as rollback_exc:rollback_error=str(rollback_exc)[:1000]
+        if was_running:
+            try:lifecycle(config,iid,"start")
+            except Exception as start_exc:
+                rollback_error=(rollback_error+"; " if rollback_error else "")+f"restart after rollback failed: {start_exc}"
+        detail=f"mission change failed and was rolled back: {exc}" if rollback_error is None else f"mission change failed: {exc}; rollback error: {rollback_error}"
+        raise RuntimeError(detail) from exc
 def handle_command(config:dict[str,Any],command:dict[str,Any])->dict[str,Any]:
     oid=_token(command.get("operation_id"),"operation_id");previous=_read(_history(oid))
     if previous is not None:_write(_result(oid),previous);return previous
     iid=str(command.get("instance_id") or "").strip();action=str(command.get("action") or "").strip().lower();payload=command.get("payload") if isinstance(command.get("payload"),dict) else {}
+    partial=None
     try:
         iid=_token(iid,"instance_id");record=get_instance(iid)
         if record is None:raise LookupError(f"instance not found: {iid}")
         if str(record.get("agent_id") or "")!=str(config.get("agent_id") or ""):raise PermissionError("instance belongs to another Agent")
         if str(record.get("game_id") or "").lower()!="dayz":raise ValueError("DayZ operation requires DayZ instance")
         if action=="discover_missions":result=discover_missions(record)
-        elif action=="change_mission":
-            before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"}
-            if was_running:lifecycle(config,iid,"stop")
-            updated=apply_mission(record,payload.get("mission"));register_instance(updated)
-            if was_running:lifecycle(config,iid,"start")
-            result={"previous_mission":discover_missions(record)["current"],"mission":discover_missions(updated)["current"],"restarted":was_running}
+        elif action=="change_mission":result=_change_mission(config,record,iid,payload)
         elif action=="wipe":
             before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"}
             if was_running:lifecycle(config,iid,"stop")
-            result=wipe(record,payload.get("scope") or "persistence",bool(payload.get("backup",True)))
+            partial=wipe(record,payload.get("scope") or "persistence",bool(payload.get("backup",True)))
             if was_running:lifecycle(config,iid,"start")
-            result["restarted"]=was_running
+            result={**partial,"restarted":was_running}
         else:raise ValueError("unsupported DayZ operation")
         response={"operation_id":oid,"instance_id":iid,"action":action,"status":"completed","result":result,"generated_at":_now()}
-    except Exception as exc:response={"operation_id":oid,"instance_id":iid or None,"action":action or None,"status":"failed","error":str(exc)[:2000],"generated_at":_now()}
+    except Exception as exc:
+        response={"operation_id":oid,"instance_id":iid or None,"action":action or None,"status":"failed","error":str(exc)[:2000],"generated_at":_now()}
+        if isinstance(partial,dict):response["result"]={**partial,"restarted":False}
     _write(_history(oid),response);_write(_result(oid),response);return response
 def read_result():
     try:paths=sorted(RESULT_DIR.glob("*.json"))
