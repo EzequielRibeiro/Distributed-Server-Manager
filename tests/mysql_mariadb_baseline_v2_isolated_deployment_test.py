@@ -177,9 +177,10 @@ def main() -> int:
                 raise AssertionError("backup_jobs backup_id lookup index is missing")
 
             # Prove that the latest registered post-baseline upgrade can be replayed
-            # against the real server flavor. V20 is a conservative data repair,
-            # so removing only its ledger row must allow an idempotent replay.
-            cursor.execute("DELETE FROM baseline_upgrades WHERE version=%s", (20,))
+            # against the real server flavor. Remove only the latest ledger row and
+            # prove that the additive upgrade can be replayed idempotently.
+            latest = UPGRADES[-1]
+            cursor.execute("DELETE FROM baseline_upgrades WHERE version=%s", (latest.version,))
             connection.commit()
 
             marker = rows(cursor, "SELECT checksum FROM schema_baseline LIMIT 1")[0]
@@ -189,8 +190,8 @@ def main() -> int:
                 installed_checksum=str(marker["checksum"]),
             )
             connection.commit()
-            if completed != [20]:
-                raise AssertionError(f"expected replay of upgrade 20, got {completed}")
+            if completed != [latest.version]:
+                raise AssertionError(f"expected replay of upgrade {latest.version}, got {completed}")
 
             restored_ledger = rows(
                 cursor,

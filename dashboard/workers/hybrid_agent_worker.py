@@ -33,6 +33,7 @@ os.environ.setdefault("CAPIVARA_AGENT_CONFIG", str(_HYBRID_STATE / "agent.json")
 os.environ.setdefault("CAPIVARA_AGENT_SERVICE", "dsm-dashboard-worker.service")
 
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
+from dayz_management_repository import DayZManagementRepository
 from agent_public_network import AgentPublicNetworkRepository
 from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
 from backup_repository import BackupRepository
@@ -424,6 +425,34 @@ def process_hybrid_instance_runtime_cycle(
     }
 
 
+def process_hybrid_dayz_operation_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
+    """Execute one due DayZ map/wipe operation through the embedded Agent."""
+    repository = DayZManagementRepository(backend)
+    repository.initialize()
+    command = repository.command_for_agent(agent_id)
+    if not isinstance(command, dict):
+        return {"status": "idle"}
+    operation_id = str(command.get("operation_id") or "").strip()
+    repository.mark_delivered(operation_id)
+    runtime_dir = root / "agents" / "linux" / "runtime"
+    common_dir = root / "agents" / "common"
+    for item in (runtime_dir, common_dir):
+        if str(item) not in sys.path:sys.path.insert(0,str(item))
+    import dayz_operation_client
+    previous_template = os.environ.get("CAPIVARA_MATERIALIZER_UNIT_TEMPLATE")
+    os.environ["CAPIVARA_MATERIALIZER_UNIT_TEMPLATE"] = "dsm-hybrid-agent-materialize@{instance_id}.service"
+    try:
+        report = dayz_operation_client.handle_command(_hybrid_agent_config(root, agent_id), command)
+    finally:
+        if previous_template is None:
+            os.environ.pop("CAPIVARA_MATERIALIZER_UNIT_TEMPLATE", None)
+        else:
+            os.environ["CAPIVARA_MATERIALIZER_UNIT_TEMPLATE"] = previous_template
+    completed = repository.apply_result(agent_id, report)
+    if isinstance(completed, dict) and str(completed.get("status") or "").lower() in {"completed","failed"}:
+        dayz_operation_client.clear_result(operation_id)
+    return {"status":str((completed or {}).get("status") or report.get("status") or "unknown"),"operation_id":operation_id,"instance_id":command.get("instance_id"),"action":command.get("action")}
+
 def _ingest_hybrid_instance_observability(backend, agent_id: str, samples: list[dict[str, Any]]) -> dict[str, Any]:
     """Project accepted Hybrid instance samples into the shared observability timeline."""
     from agent_heartbeat_api import _observability_from_heartbeat
@@ -773,6 +802,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         runtime_events = process_hybrid_runtime_event_cycle(effective_backend, root, agent_id)
         yarax_admin = process_hybrid_yarax_admin_cycle(effective_backend, root, agent_id)
         instance_runtime = process_hybrid_instance_runtime_cycle(effective_backend, root, agent_id)
+        dayz_operation = process_hybrid_dayz_operation_cycle(effective_backend, root, agent_id)
         provisioning = process_hybrid_instance_provisioning_cycle(effective_backend, root, agent_id)
         game_data = process_hybrid_game_data_cycle(effective_backend, root, agent_id)
     else:
@@ -798,6 +828,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
             agent_id,
             allowed_actions={"stop", "remove"},
         )
+        dayz_operation = {"status":"blocked","reason":"instance_port_reconcile_failed"}
         provisioning = {"status": "blocked"}
         game_data = {"state": {"status": "blocked"}}
 
@@ -814,6 +845,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         "runtime_events": runtime_events,
         "yarax_admin": yarax_admin,
         "instance_runtime": instance_runtime,
+        "dayz_operation": dayz_operation,
         "instance_telemetry": instance_telemetry,
         "instance_health": instance_health,
         "backup": backup,
@@ -833,6 +865,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         f"events={runtime_events.get('accepted', 0)}a/{runtime_events.get('rejected', 0)}r "
         f"yarax={yarax_admin.get('status', 'idle')} "
         f"instance_runtime={instance_runtime.get('status', 'idle')} "
+        f"dayz_operation={dayz_operation.get('status', 'idle')} "
         f"instance_telemetry={instance_telemetry.get('accepted', 0)} "
         f"instance_health={instance_health.get('healthy', 0)}/{instance_health.get('applied', 0)} "
         f"backup={backup.get('completed', 0)}c/{backup.get('failed', 0)}f "
