@@ -67,6 +67,35 @@ def main() -> None:
         (install / "worlds" / "provider-seed.txt").write_text("seed", encoding="utf-8")
 
         profile = MinecraftBedrockRuntimeProfile()
+        upgraded_context = profile.upgrade_migration_context(
+            {},
+            {
+                "ports": {
+                    "game_ipv4": {"port": 22000, "protocol": "udp"},
+                    "game_ipv6": {"port": 22001, "protocol": "udp"},
+                    "signaling": {"port": 22000, "protocol": "tcp"},
+                    "gameplay_udp": {"port": 22001, "protocol": "udp"},
+                },
+                "catalog_runtime_policy": {
+                    "network_exposure": [
+                        {"name": "game_ipv4", "protocol": "udp", "exposure": "public"},
+                        {"name": "game_ipv6", "protocol": "udp", "exposure": "public"},
+                        {"name": "signaling", "protocol": "tcp", "exposure": "public"},
+                        {"name": "gameplay_udp", "protocol": "udp", "exposure": "public"},
+                    ]
+                },
+            },
+            2,
+        )
+        require(
+            set(upgraded_context["ports"]) == {"signaling", "gameplay_udp"},
+            "Bedrock migration must discard legacy port roles",
+        )
+        require(
+            {item["name"] for item in upgraded_context["catalog_runtime_policy"]["network_exposure"]}
+            == {"signaling", "gameplay_udp"},
+            "Bedrock migration must discard legacy exposure roles",
+        )
         a = build(profile, install, root / "instances" / "bedrock-a", "bedrock-a", 22000)
         b = build(profile, install, root / "instances" / "bedrock-b", "bedrock-b", 23000)
 
