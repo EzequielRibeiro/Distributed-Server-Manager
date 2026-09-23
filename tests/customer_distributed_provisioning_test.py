@@ -72,6 +72,13 @@ class _FakeDashboardRepository:
     def delete_instance(self, instance_id):
         self.deleted.append(instance_id)
 
+    def retry_instance(self, instance_id):
+        return {
+            "id": instance_id,
+            "node_id": "remote-node",
+            "game_id": "dayz",
+        }
+
     def reserve_retry(self, instance_id, node_id, game):
         self.status_updates.append((instance_id, "queued"))
         return {
@@ -171,7 +178,7 @@ class CustomerDistributedProvisioningTest(unittest.TestCase):
             patch.object(integration, "project_agent_provisioning", side_effect=self._projection),
         ):
             result = self.legacy.create_customer_instance(
-                {"role": "customer", "scope_id": "customer-aurora", "username": "aurora"},
+                {"role": "customer", "scope_id": 1, "username": "aurora"},
                 self._payload(),
             )
 
@@ -209,8 +216,8 @@ class CustomerDistributedProvisioningTest(unittest.TestCase):
             patch.object(integration, "project_agent_provisioning", side_effect=self._projection),
         ):
             result = self.legacy.retry_instance_provisioning(
-                {"role": "customer", "scope_id": "customer-aurora", "username": "aurora"},
-                instance,
+                {"role": "customer", "scope_id": 1, "username": "aurora"},
+                "aurora-dayz-001",
             )
 
         self.assertTrue(result["retried"])
