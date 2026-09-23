@@ -244,8 +244,11 @@ def native_restart_plan(record: dict[str, Any], deadline_minutes: int, *, existi
     if not instance_id:
         raise DayZMessagesError("instance_id is required")
     mission, mission_root = resolve_dayz_mission(record)
-    root = _runtime_root(record)
-    target = _inside(root, mission_root / "db" / "messages.xml", "DayZ messages.xml")
+    target = _inside_trusted_roots(
+        record,
+        mission_root / "db" / "messages.xml",
+        "DayZ messages.xml",
+    )
     message = DayZShutdownMessage(int(deadline_minutes))
     return DayZNativeRestartPlan(
         instance_id=instance_id,
