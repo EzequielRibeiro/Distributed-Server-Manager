@@ -9,8 +9,10 @@ from agent_public_network import AgentPublicNetworkRepository, player_endpoint
 from agent_runtime_repository import AgentRuntimeRepository
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from controller_session import session_user_from_headers
+from steam_query import SteamQueryError, query_steam_a2s
 
 PATH = "/api/customer/instance/connection"
+TEST_PATH = PATH + "/test"
 _PRIMARY_NAMES = ("game", "game_ipv4", "game_udp", "server", "primary", "game_port", "port")
 
 
@@ -61,7 +63,7 @@ def _listening_ports(runtime: dict, ports: list[dict]) -> list[dict]:
     return result
 
 
-def _external_query_check(profile: dict, ports: list[dict], network: dict) -> dict | None:
+def _query_target(profile: dict, ports: list[dict], network: dict) -> dict | None:
     if not profile or not network:
         return None
     by_name = {str(item.get("name") or ""): item for item in ports}
@@ -74,10 +76,6 @@ def _external_query_check(profile: dict, ports: list[dict], network: dict) -> di
         port = int(selected.get("port"))
     except (TypeError, ValueError):
         return None
-    game_type = str(profile.get("gamedig_type") or "").strip()
-    checker_type = str(profile.get("checker_type") or game_type).strip()
-    if not game_type or not checker_type:
-        return None
     selected_protocol = str(selected.get("protocol") or "udp").strip().lower()
     public_endpoint = player_endpoint(network, port, protocol=selected_protocol)
     if public_endpoint is None:
@@ -86,20 +84,43 @@ def _external_query_check(profile: dict, ports: list[dict], network: dict) -> di
     if not target:
         return None
     return {
-        "provider": "ismygameserver.online",
+        "role": role,
+        "port": port,
+        "protocol": selected_protocol,
+        "endpoint": public_endpoint,
+        "target": target,
+    }
+
+
+def _external_query_check(profile: dict, ports: list[dict], network: dict) -> dict | None:
+    target = _query_target(profile, ports, network)
+    if target is None:
+        return None
+    game_type = str(profile.get("gamedig_type") or "").strip()
+    checker_type = str(profile.get("checker_type") or game_type).strip()
+    if not game_type or not checker_type:
+        return None
+    native_steam = checker_type == "valve"
+    payload = {
+        "provider": "capivara-steam-query" if native_steam else "ismygameserver.online",
+        "native": native_steam,
         "gamedig_type": game_type,
         "checker_type": checker_type,
         "protocol": profile.get("protocol"),
-        "strategy": strategy,
-        "port_role": role,
-        "port": port,
-        "target": target,
-        "bind_port": port,
-        "public_port": public_endpoint.get("public_port"),
-        "url": f"https://ismygameserver.online/{quote(checker_type, safe='')}/{quote(target, safe=':[]')}",
+        "strategy": str(profile.get("strategy") or ""),
+        "port_role": target["role"],
+        "port": target["port"],
+        "target": target["target"],
+        "bind_port": target["port"],
+        "public_port": target["endpoint"].get("public_port"),
         "status": str(profile.get("status") or "supported"),
         "note": profile.get("note"),
     }
+    if native_steam:
+        payload["test_url"] = TEST_PATH
+    else:
+        payload["url"] = f"https://ismygameserver.online/{quote(checker_type, safe='')}/{quote(target['target'], safe=':[]')}"
+    return payload
 
 
 def install_customer_instance_connection(legacy, authenticate):
@@ -132,7 +153,7 @@ def install_customer_instance_connection(legacy, authenticate):
 
     def get(self):
         parsed = urlparse(self.path)
-        if parsed.path != PATH:
+        if parsed.path not in {PATH, TEST_PATH}:
             return previous_get(self)
         user = user_for(self)
         if user is None:
@@ -187,6 +208,33 @@ def install_customer_instance_connection(legacy, authenticate):
                     item["label"] = str(label)
             external_check = _external_query_check(query_profile, port_status, effective_network)
 
+            if parsed.path == TEST_PATH:
+                if not external_check or not external_check.get("native"):
+                    self.send_json(400, {"error": "native_query_unavailable", "message": "O teste nativo Steam Query não está disponível para este jogo."})
+                    return
+                target = _query_target(query_profile, port_status, effective_network)
+                if target is None:
+                    self.send_json(400, {"error": "query_target_unavailable", "message": "A porta pública de query não está disponível."})
+                    return
+                try:
+                    result = query_steam_a2s(
+                        str(target["endpoint"].get("host") or ""),
+                        int(target["endpoint"].get("public_port") or target["port"]),
+                        timeout=3.0,
+                    )
+                except SteamQueryError as exc:
+                    self.send_json(200, {
+                        "online": False,
+                        "target": target["target"],
+                        "port_role": target["role"],
+                        "message": str(exc)[:300],
+                    })
+                    return
+                result["target"] = target["target"]
+                result["port_role"] = target["role"]
+                self.send_json(200, result)
+                return
+
             self.send_json(200, {
                 "instance_id": instance_id,
                 "status": context.get("status"),
@@ -209,4 +257,4 @@ def install_customer_instance_connection(legacy, authenticate):
     legacy.DashboardHandler.do_GET = get
 
 
-__all__ = ["PATH", "install_customer_instance_connection"]
+__all__ = ["PATH", "TEST_PATH", "install_customer_instance_connection"]
