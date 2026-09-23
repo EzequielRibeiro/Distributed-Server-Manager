@@ -30,6 +30,7 @@ class CustomerMaintenancePolicySurfaceTest(unittest.TestCase):
  def test_composition_and_static_policy_are_wired(self):
   part=(ROOT/'dashboard/server_part20.py').read_text(encoding='utf-8');service=(ROOT/'systemd/dsm-dashboard.service').read_text(encoding='utf-8');assets=(ROOT/'dashboard/static_asset_policy.py').read_text(encoding='utf-8');loader=(ROOT/'dashboard/web/customer-content-update-policy.js').read_text(encoding='utf-8')
   self.assertIn('install_customer_maintenance_http',part);self.assertIn('server_part20.py',service);self.assertIn('/customer-maintenance.js',assets);self.assertIn('/customer-maintenance.js',loader)
+  page=(ROOT/'dashboard/web/customer-instance.html').read_text(encoding='utf-8');self.assertIn('/customer-maintenance.js?v=3',page);self.assertIn('data-capivara-maintenance="1"',page);self.assertLess(page.index('/customer-maintenance.js?v=3'),page.index('/customer-content-update-policy.js'))
 
 
 if __name__=='__main__':unittest.main()
