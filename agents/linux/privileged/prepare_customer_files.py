@@ -74,8 +74,9 @@ def _prepare_tree(root: Path, group_gid: int) -> dict[str, int]:
             stack.extend(current.iterdir())
             continue
         if current.is_file():
+            executable = bool(current.stat().st_mode & 0o111)
             os.chown(current, -1, group_gid)
-            os.chmod(current, 0o660)
+            os.chmod(current, 0o770 if executable else 0o660)
             files += 1
     return {"directories": directories, "files": files}
 
@@ -100,6 +101,7 @@ def run(instance_id: str) -> dict[str, Any]:
         "group": _AGENT_GROUP,
         "directory_mode": "0770",
         "file_mode": "0660",
+        "executable_file_mode": "0770",
         **counts,
     }
 
