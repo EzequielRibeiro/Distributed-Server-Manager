@@ -393,7 +393,7 @@ def _remove_instance_private_state(spec: dict[str, Any], config: dict[str, Any])
         raise RuntimeError("instance state root does not match Agent storage pool policy")
 
     removed: list[str] = []
-    targets = (
+    directory_targets = (
         (expected, storage_root.resolve(strict=False), "instance private state"),
         (
             (STATE_DIR / "managed-content" / instance_id).resolve(strict=False),
@@ -401,7 +401,7 @@ def _remove_instance_private_state(spec: dict[str, Any], config: dict[str, Any])
             "instance managed content state",
         ),
     )
-    for target, allowed_root, label in targets:
+    for target, allowed_root, label in directory_targets:
         try:
             target.relative_to(allowed_root)
         except ValueError as exc:
@@ -412,6 +412,25 @@ def _remove_instance_private_state(spec: dict[str, Any], config: dict[str, Any])
             raise RuntimeError(f"{label} is not a safe directory")
         _reject_symlinks(target, label=label)
         shutil.rmtree(target)
+        removed.append(str(target))
+
+    file_targets = (
+        (
+            (STATE_DIR / "content-activation" / f"{instance_id}.json").resolve(strict=False),
+            (STATE_DIR / "content-activation").resolve(strict=False),
+            "instance content activation snapshot",
+        ),
+    )
+    for target, allowed_root, label in file_targets:
+        try:
+            target.relative_to(allowed_root)
+        except ValueError as exc:
+            raise RuntimeError(f"{label} escapes its allowed root") from exc
+        if not target.exists():
+            continue
+        if target.is_symlink() or not target.is_file():
+            raise RuntimeError(f"{label} is not a safe file")
+        target.unlink()
         removed.append(str(target))
     return {
         "changed": bool(removed),
