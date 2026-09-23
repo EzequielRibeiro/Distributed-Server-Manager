@@ -149,6 +149,24 @@ class SystemdAdapterTest(unittest.TestCase):
         self.assertFalse(result["changed"])
         self.assertTrue(result["idempotent"])
 
+    def test_start_detects_immediate_crash_during_settle_window(self):
+        calls = []
+        states = iter(["inactive", "active", "failed"])
+
+        def runner(command, timeout):
+            calls.append((list(command), timeout))
+            if command[1] == "show":
+                active = next(states)
+                sub = "running" if active == "active" else "failed" if active == "failed" else "dead"
+                return 0, f"LoadState=loaded\nActiveState={active}\nSubState={sub}", ""
+            return 0, "", ""
+
+        with patch("adapters.systemd.time.sleep", return_value=None), patch(
+            "adapters.systemd.time.monotonic", side_effect=[0.0, 0.0, 3.0]
+        ):
+            with self.assertRaisesRegex(AdapterError, "startup settle window"):
+                SystemdAdapter(runner=runner).start({"instance_id": "srv-001"})
+
     def test_stop_waits_longer_than_materialized_systemd_stop_budget(self):
         calls = []
         states = iter(["active", "inactive"])
