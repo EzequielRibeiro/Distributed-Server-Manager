@@ -345,6 +345,46 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
         chown.assert_any_call(control_root, hybrid_control_account.pw_uid, agent_group.gr_gid)
 
 
+    def test_minecraft_managed_content_paths_are_accessible_to_control_group(self):
+        state_root = self.root / "instances-content" / "instance-content"
+        working = state_root / "runtime"
+        payload = working / "content" / "external" / "VoteMe"
+        payload.mkdir(parents=True)
+        artifact = payload / "voteme.jar"
+        artifact.write_bytes(b"plugin")
+        plugins = working / "plugins"
+        plugins.mkdir()
+        private_world = working / "world"
+        private_world.mkdir()
+
+        for path in (working, working / "content", working / "content" / "external", payload, plugins, private_world):
+            os.chmod(path, 0o700)
+        os.chmod(artifact, 0o600)
+
+        spec = {
+            "instance_id": "instance-content",
+            "game_id": "minecraft",
+            "environment_id": "minecraft.java.youer",
+            "instance_state_root": str(state_root),
+            "working_directory": str(working),
+            "content_projection": {
+                "adapter": "minecraft-java",
+                "types": {
+                    "plugin": {"directory": "plugins", "extensions": [".jar"]},
+                },
+            },
+        }
+        current_gid = working.stat().st_gid
+        runtime_group = type("Group", (), {"gr_gid": current_gid})()
+        with mock.patch.object(materialize_instance.grp, "getgrnam", return_value=runtime_group):
+            materialize_instance._prepare_content_activation_access(spec)
+
+        self.assertEqual(stat.S_IMODE(payload.stat().st_mode) & 0o050, 0o050)
+        self.assertEqual(stat.S_IMODE(artifact.stat().st_mode) & 0o040, 0o040)
+        self.assertEqual(stat.S_IMODE(plugins.stat().st_mode) & 0o070, 0o070)
+        self.assertEqual(stat.S_IMODE(private_world.stat().st_mode), 0o700)
+
+
     def test_hybrid_runtime_boundary_is_repaired_for_runtime_group(self):
         state = self.root / "hybrid-agent-state"
         game_data = state / "game-data"

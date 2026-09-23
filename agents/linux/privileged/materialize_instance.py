@@ -375,12 +375,181 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
         target.mkdir(parents=True, exist_ok=True)
 
 
+def _grant_group_bits(path: Path, gid: int, bits: int) -> None:
+    current = path.stat()
+    if current.st_gid != gid:
+        os.chown(path, -1, gid)
+        current = path.stat()
+    mode = stat.S_IMODE(current.st_mode)
+    required = mode | bits
+    if required != mode:
+        os.chmod(path, required)
+
+
+def _prepare_content_activation_access(spec: dict[str, Any]) -> None:
+    """Expose only managed Minecraft content paths to the trusted Agent group.
+
+    Instance runtime trees remain private by default. Minecraft managed-content
+    activation, however, is reconciled by the unprivileged Agent/Hybrid worker
+    after the privileged unit materialization step. It therefore needs:
+      * read/traverse access to runtime/content managed payloads; and
+      * write access to the catalog-declared native projection directories
+        (for example mods/ and plugins/).
+
+    Access is granted only to capivara-agent and only inside the instance
+    working directory. Other runtime state keeps its private modes.
+    """
+    game = str(spec.get("game_id") or "").strip().lower()
+    environment = str(spec.get("environment_id") or "").strip().lower()
+    projection = spec.get("content_projection")
+    if game != "minecraft" and not environment.startswith("minecraft."):
+        return
+    if not isinstance(projection, dict):
+        return
+    types = projection.get("types")
+    if not isinstance(types, dict) or not types:
+        return
+
+    state_raw = str(spec.get("instance_state_root") or "").strip()
+    working_raw = str(spec.get("working_directory") or "").strip()
+    if not state_raw or not working_raw:
+        return
+    state_root = Path(state_raw).resolve()
+    working_root = Path(working_raw).resolve()
+    try:
+        working_root.relative_to(state_root)
+    except ValueError as exc:
+        raise RuntimeError("Minecraft content activation working directory escapes instance state") from exc
+
+    try:
+        agent_group = grp.getgrnam(_AGENT_GROUP)
+    except KeyError as exc:
+        raise RuntimeError("capivara-agent group is unavailable") from exc
+    gid = agent_group.gr_gid
+
+    # Permit traversal from the instance boundary to the working directory.
+    current = working_root
+    while True:
+        if current.exists():
+            _grant_group_bits(current, gid, 0o010)
+        if current == state_root:
+            break
+        if state_root not in current.parents:
+            raise RuntimeError("Minecraft content activation path escapes instance state")
+        current = current.parent
+
+    # Managed payloads are immutable inputs to projection. The control worker
+    # needs group read/traverse, but no group write permission.
+    content_root = (working_root / "content").resolve(strict=False)
+    try:
+        content_root.relative_to(working_root)
+    except ValueError as exc:
+        raise RuntimeError("Minecraft managed content root escapes runtime") from exc
+    if content_root.exists():
+        if content_root.is_symlink():
+            raise RuntimeError("Minecraft managed content root cannot be a symlink")
+        for current in [content_root, *content_root.rglob("*")]:
+            if current.is_symlink():
+                raise RuntimeError("Minecraft managed content cannot contain symlinks")
+            if current.is_dir():
+                _grant_group_bits(current, gid, 0o050)
+            elif current.is_file():
+                _grant_group_bits(current, gid, 0o040)
+
+    # Bundle override files are also materialized by the unprivileged worker.
+    # Expose only the exact parent directories needed by the active bundle
+    # roots, without granting read/list access to unrelated runtime state.
+    overrides = spec.get("content_bundle_overrides")
+    if isinstance(overrides, list):
+        protected_top = {"mods", "plugins", ".dsm", "libraries", "versions", "runtime", "content", "logs"}
+        protected_suffixes = {".jar", ".exe", ".dll", ".so", ".dylib", ".bat", ".cmd", ".ps1", ".sh"}
+        for item in overrides:
+            if not isinstance(item, dict):
+                raise RuntimeError("invalid Minecraft bundle override projection")
+            managed_raw = str(item.get("managed_path") or "").strip()
+            roots = item.get("roots") if isinstance(item.get("roots"), list) else []
+            managed = Path(managed_raw)
+            if not managed_raw or not managed.is_absolute() or managed.is_symlink():
+                raise RuntimeError("invalid Minecraft bundle override source")
+            source = managed.resolve(strict=True)
+            content_root = (working_root / "content").resolve(strict=False)
+            try:
+                source.relative_to(content_root)
+            except ValueError as exc:
+                raise RuntimeError("Minecraft bundle override source escapes managed content") from exc
+            for raw_root in roots:
+                root_name = str(raw_root or "").strip()
+                if not root_name or "/" in root_name or "\\" in root_name or root_name in {".", ".."}:
+                    raise RuntimeError("invalid Minecraft bundle override root")
+                layer = source / root_name
+                if not layer.is_dir() or layer.is_symlink():
+                    raise RuntimeError("Minecraft bundle override root is unavailable")
+                for current, dirs, files in os.walk(layer, followlinks=False):
+                    current_path = Path(current)
+                    for name in list(dirs):
+                        if (current_path / name).is_symlink():
+                            raise RuntimeError("Minecraft bundle override contains symlinks")
+                    for name in files:
+                        source_file = current_path / name
+                        if source_file.is_symlink() or not source_file.is_file():
+                            raise RuntimeError("Minecraft bundle override contains unsafe file")
+                        relative = source_file.relative_to(layer)
+                        if any(part in {"", ".", ".."} for part in relative.parts):
+                            raise RuntimeError("invalid Minecraft bundle override target")
+                        if relative.parts[0].lower() in protected_top or source_file.suffix.lower() in protected_suffixes:
+                            raise RuntimeError("Minecraft bundle override targets protected runtime content")
+                        target = (working_root / relative).resolve(strict=False)
+                        try:
+                            target.relative_to(working_root)
+                        except ValueError as exc:
+                            raise RuntimeError("Minecraft bundle override target escapes runtime") from exc
+                        parent = target.parent
+                        chain: list[Path] = []
+                        walk = parent
+                        while True:
+                            chain.append(walk)
+                            if walk == working_root:
+                                break
+                            if working_root not in walk.parents:
+                                raise RuntimeError("Minecraft bundle override parent escapes runtime")
+                            walk = walk.parent
+                        for directory in reversed(chain):
+                            directory.mkdir(exist_ok=True)
+                            _grant_group_bits(directory, gid, 0o030 if directory == parent else 0o010)
+                        if target.exists():
+                            if target.is_symlink() or not target.is_file():
+                                raise RuntimeError("Minecraft bundle override target is unsafe")
+                            _grant_group_bits(target, gid, 0o040)
+
+    # Native projection directories are the only runtime locations the control
+    # worker may mutate during content activation.
+    for raw in types.values():
+        if not isinstance(raw, dict):
+            continue
+        relative = Path(str(raw.get("directory") or "").strip().replace("\\", "/"))
+        if not str(relative) or relative.is_absolute() or ".." in relative.parts:
+            raise RuntimeError("invalid Minecraft managed content projection directory")
+        target = (working_root / relative).resolve(strict=False)
+        try:
+            target.relative_to(working_root)
+        except ValueError as exc:
+            raise RuntimeError("Minecraft projection directory escapes runtime") from exc
+        target.mkdir(parents=True, exist_ok=True)
+        walk = target
+        while True:
+            _grant_group_bits(walk, gid, 0o070 if walk == target else 0o010)
+            if walk == working_root:
+                break
+            walk = walk.parent
+
+
 def _ensure_runtime_identity(spec: dict[str, Any], config: dict[str, Any]) -> None:
     user = str(spec.get("user") or _DEFAULT_RUNTIME_USER)
     account = _validate_runtime_user(user)
     _prepare_runtime_access(str(spec["working_directory"]), user)
     _validate_runtime_access(str(spec["working_directory"]), user)
     _prepare_private_state(spec, account, _instance_storage_root(config, spec.get("storage_pool_id")))
+    _prepare_content_activation_access(spec)
 
 
 def _sha256(path: Path) -> str:

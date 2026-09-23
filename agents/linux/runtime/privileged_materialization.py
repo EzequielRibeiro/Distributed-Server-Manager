@@ -11,6 +11,8 @@ from typing import Any
 
 import instance_runtime
 from adapters import resolve_adapter
+from content_activation_projection import activation_snapshot
+from content_activation_runtime import project_runtime_spec
 from runtime_events import emit_runtime_event
 from runtime_spec import validate_runtime_spec
 
@@ -112,7 +114,9 @@ def migrate_storage_pool_copy(
 
 def materialize(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
     agent_id = str(config.get("agent_id") or "").strip()
-    normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
+    instance_id = str(spec.get("instance_id") or "").strip()
+    projected = project_runtime_spec(spec, activation_snapshot(instance_id)) if instance_id else dict(spec)
+    normalized = validate_runtime_spec(projected, expected_agent_id=agent_id)
     emit_runtime_event(
         Path(instance_runtime.STATE_DIR), "INSTANCE_RUNTIME_MATERIALIZING",
         instance_id=normalized["instance_id"], agent_id=agent_id,
