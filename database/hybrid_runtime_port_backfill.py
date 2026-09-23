@@ -312,6 +312,11 @@ def reconcile_hybrid_runtime_ports(
         context_policy = profile_context.get("catalog_runtime_policy")
         if isinstance(context_policy, dict):
             context_policy = dict(context_policy)
+        elif isinstance(runtime_policy, dict):
+            context_policy = dict(runtime_policy)
+        else:
+            context_policy = None
+        if isinstance(context_policy, dict):
             context_policy["network_exposure"] = exposure
             context_policy["network_properties"] = properties
             profile_context["catalog_runtime_policy"] = context_policy
