@@ -124,6 +124,7 @@ class HybridRuntimePortBackfillTest(unittest.TestCase):
             "palworld-legacy",
             PALWORLD_NETWORK,
             occupied_ports_provider=occupied,
+            runtime_stopped_proof=False,
         )
         persisted = json.loads(self.path.read_text(encoding="utf-8"))
         expected = {
@@ -136,6 +137,51 @@ class HybridRuntimePortBackfillTest(unittest.TestCase):
         self.assertEqual(persisted["desired_state"], "stopped")
         self.assertEqual(result["reservations_backfilled"], 1)
         self.assertEqual(result["specs_updated"], 1)
+
+    def test_verified_stopped_runtime_proof_is_forwarded(self):
+        stopped = dict(self.original)
+        stopped["observed_state"] = "stopped"
+        self.path.write_text(json.dumps(stopped), encoding="utf-8")
+        repository = self._repository()
+        occupied = Mock(return_value=set())
+
+        with (
+            patch(
+                "hybrid_runtime_port_backfill.InstanceWorkspaceRepository",
+                return_value=repository,
+            ),
+            patch(
+                "hybrid_runtime_port_backfill.occupied_ports_provider_for_backend",
+                return_value=occupied,
+            ),
+            patch(
+                "hybrid_runtime_port_backfill.runtime_definition",
+                return_value={"id": "palworld.stable", "network": PALWORLD_NETWORK},
+            ),
+            patch(
+                "hybrid_runtime_port_backfill.reconcile_instance_ports",
+                return_value={
+                    "instance_id": "palworld-legacy",
+                    "base_port": 24010,
+                    "ports": {"game": 24010, "rcon": 24011, "rest_api": 24012},
+                    "inserted": [],
+                    "changed": False,
+                },
+            ) as reconcile_ports,
+        ):
+            reconcile_hybrid_runtime_ports(
+                self.backend,
+                self.root,
+                "agent-hybrid",
+            )
+
+        reconcile_ports.assert_called_once_with(
+            repository,
+            "palworld-legacy",
+            PALWORLD_NETWORK,
+            occupied_ports_provider=occupied,
+            runtime_stopped_proof=True,
+        )
 
     def test_controller_reconcile_failure_leaves_runtime_spec_unchanged(self):
         repository = self._repository()
