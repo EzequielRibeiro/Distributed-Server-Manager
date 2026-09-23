@@ -13,6 +13,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         base=f"http://127.0.0.1:{self.server.server_address[1]}"
         if self.path == "/api/v2/projects/youer":
             body=json.dumps({"project":"youer","versions":["1.21.1","1.21.11","26.1","26.2"]}).encode()
+        elif self.path == "/api/v2/projects/youer-empty":
+            body=json.dumps({"project":"youer","versions":[]}).encode()
+        elif self.path == "/github/branches":
+            body=json.dumps([
+                {"name":"1.21.1"},
+                {"name":"26.2-spigot"},
+                {"name":"26.2"},
+                {"name":"26.3"}
+            ]).encode()
         elif self.path == "/api/v2/projects/youer/1.21.1/builds":
             body=json.dumps({"builds":[
                 {"number":656,"url":base+"/api/v2/projects/youer/1.21.1/builds/656/download"},
@@ -77,6 +86,20 @@ jq -e '.version=="26.2" and .build=="latest" and .provider=="http" and .selected
 
 PINNED="$(version_resolver_execute resolve minecraft youer '1.21.11@18')"
 jq -e '.version=="1.21.11" and .build=="18" and (.install.url|endswith("/legacy/1.21.11/builds/18/download"))' <<<"${PINNED}" >/dev/null
+
+export YOUER_API_BASE="http://127.0.0.1:${PORT}/api/v2/projects/youer-empty"
+export YOUER_GITHUB_BRANCHES_API="http://127.0.0.1:${PORT}/github/branches"
+FALLBACK_LIST="$(version_resolver_execute list minecraft youer '')"
+jq -e '
+  [.versions[].version] | unique == ["1.21.1","26.2","26.3"]
+' <<<"${FALLBACK_LIST}" >/dev/null
+jq -e '
+  [.versions[].version] | .[0:3] == ["26.3","26.2","1.21.1"]
+' <<<"${FALLBACK_LIST}" >/dev/null
+FALLBACK_RESOLVED="$(version_resolver_execute resolve minecraft youer '26.3')"
+jq -e '.version=="26.3" and .build=="latest"' <<<"${FALLBACK_RESOLVED}" >/dev/null
+
+export YOUER_API_BASE="http://127.0.0.1:${PORT}/api/v2/projects/youer"
 
 if version_resolver_execute resolve minecraft youer '1.20.6' >/dev/null 2>&1; then
   echo "FAIL: unpublished Youer version was accepted" >&2
