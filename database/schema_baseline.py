@@ -15,6 +15,7 @@ from content_contract_v2_schema import ensure_content_contract_v2_schema
 from content_bundle_schema import ensure_content_bundle_schema
 from native_restart_schema import ensure_native_restart_schema
 from discord_integration_schema import ensure_discord_integration_schema
+from dayz_management_schema import ensure_dayz_management_schema
 from event_consumer_schema import ensure_event_consumer_schema
 from instance_workspace_schema import ensure_instance_workspace_schema
 from instance_workspace_extended_schema import ensure_instance_workspace_extended_schema
@@ -38,7 +39,7 @@ def load_schema_baseline(backend):
  if not path.is_file():raise FileNotFoundError(f"database schema baseline not found: {path}")
  source_sql=path.read_text(encoding="utf-8")
  if not source_sql.strip():raise ValueError(f"database schema baseline is empty: {path}")
- sql=compile_baseline_v2(source_sql,normalized);sql=finalize_baseline_sql(sql,normalized);sql=ensure_activity_audit_schema(sql,normalized);sql=ensure_event_consumer_schema(sql,normalized);sql=ensure_notification_outbox_schema(sql,normalized);sql=ensure_operation_diagnostics_schema(sql,normalized);sql=ensure_instance_workspace_schema(sql,normalized);sql=ensure_instance_workspace_extended_schema(sql,normalized);sql=ensure_artifact_transfer_schema(sql,normalized);sql=ensure_discord_integration_schema(sql,normalized);sql=ensure_agent_public_network_schema(sql,normalized);sql=ensure_alert_scope_history_schema(sql,normalized);sql=ensure_alert_event_note_schema(sql,normalized);sql=ensure_server_update_schema(sql,normalized);sql=ensure_content_contract_v2_schema(sql,normalized);sql=ensure_content_bundle_schema(sql,normalized);sql=ensure_maintenance_schema(sql,normalized);sql=ensure_native_restart_schema(sql,normalized)
+ sql=compile_baseline_v2(source_sql,normalized);sql=finalize_baseline_sql(sql,normalized);sql=ensure_activity_audit_schema(sql,normalized);sql=ensure_event_consumer_schema(sql,normalized);sql=ensure_notification_outbox_schema(sql,normalized);sql=ensure_operation_diagnostics_schema(sql,normalized);sql=ensure_instance_workspace_schema(sql,normalized);sql=ensure_instance_workspace_extended_schema(sql,normalized);sql=ensure_artifact_transfer_schema(sql,normalized);sql=ensure_discord_integration_schema(sql,normalized);sql=ensure_agent_public_network_schema(sql,normalized);sql=ensure_alert_scope_history_schema(sql,normalized);sql=ensure_alert_event_note_schema(sql,normalized);sql=ensure_server_update_schema(sql,normalized);sql=ensure_content_contract_v2_schema(sql,normalized);sql=ensure_content_bundle_schema(sql,normalized);sql=ensure_maintenance_schema(sql,normalized);sql=ensure_native_restart_schema(sql,normalized);sql=ensure_dayz_management_schema(sql,normalized)
  return SchemaBaseline(normalized,BASELINE_NAME,path,sql,hashlib.sha256(sql.encode()).hexdigest())
 def baseline_marker_sql(backend):
  normalized=normalize_backend_name(backend)
