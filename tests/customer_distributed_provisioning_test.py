@@ -166,6 +166,7 @@ class CustomerDistributedProvisioningTest(unittest.TestCase):
     def test_customer_creation_queues_b10_and_never_runs_controller_installer(self):
         with (
             patch.object(integration, "occupied_ports_provider_for_backend", return_value=lambda *args: set()),
+            patch.object(integration, "require_port_pool_preflight", return_value=None),
             patch.object(
                 integration,
                 "resolve_catalog_provisioning",
