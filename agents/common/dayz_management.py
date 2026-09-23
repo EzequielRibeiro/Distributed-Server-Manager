@@ -70,6 +70,26 @@ def apply_mission(record,mission):
         if text.lower().startswith("-mission="):text=f"-mission={private}"
         args.append(text)
     result=dict(record);result["mission"]=mission;result["arguments"]=args
+    state_root=_root(record);working=_working(record);shared=working/"mpmissions"/mission
+    seeds=[]
+    for item in record.get("seed_directories") or []:
+        if not isinstance(item,dict):continue
+        target=str(item.get("target") or "")
+        if target and Path(target).parent.resolve()==(state_root/"mpmissions").resolve():continue
+        seeds.append(dict(item))
+    seeds.append({"source":str(shared),"target":str(private)})
+    result["seed_directories"]=seeds
+    if str(record.get("adapter") or "").lower()=="systemd":
+        binds=[]
+        for item in record.get("bind_paths") or []:
+            if not isinstance(item,dict):continue
+            source=str(item.get("source") or "");target=str(item.get("target") or "")
+            mission_bind=False
+            try:mission_bind=Path(source).parent.resolve()==(state_root/"mpmissions").resolve() or Path(target).parent.resolve()==(working/"mpmissions").resolve()
+            except Exception:mission_bind=False
+            if not mission_bind:binds.append(dict(item))
+        binds.append({"source":str(private),"target":str(shared)})
+        result["bind_paths"]=binds
     return result
 def _persistence_paths(record,mission):
     root=_root(record);private=_copy_if_needed(record,mission);paths=[]
