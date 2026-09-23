@@ -34,10 +34,11 @@ class MinecraftBedrockRuntimeProfile(GameRuntimeProfile):
         state_root = require_absolute(context.get("instance_state_root"), "instance_state_root")
         runtime_root = str(Path(state_root) / "runtime")
         ports = port_bindings(context)
-        for role in ("game_ipv4", "game_ipv6"):
+        required_ports = {"signaling": "tcp", "gameplay_udp": "udp"}
+        for role, protocol in required_ports.items():
             binding = ports.get(role)
-            if not isinstance(binding, dict) or str(binding.get("protocol") or "").lower() != "udp" or not binding.get("port"):
-                raise ProfileError(f"required reserved UDP port is missing: {role}")
+            if not isinstance(binding, dict) or str(binding.get("protocol") or "").lower() != protocol or not binding.get("port"):
+                raise ProfileError(f"required reserved {protocol.upper()} port is missing: {role}")
 
         environment = context.get("environment") or {}
         if not isinstance(environment, dict):
