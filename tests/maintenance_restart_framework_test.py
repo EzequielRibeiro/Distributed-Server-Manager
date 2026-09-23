@@ -46,6 +46,8 @@ class MaintenanceRestartFrameworkTest(unittest.TestCase):
   with self.assertRaises(MaintenanceValidationError):normalize_policy({'timezone':'../bad'})
   with self.assertRaises(MaintenanceValidationError):normalize_policy({'warning_template':'{shell}'})
   with self.assertRaises(MaintenanceValidationError):normalize_policy({'schedule_mode':'interval','interval_seconds':3600,'warning_offsets_seconds':[3600]})
+  interval=normalize_policy({'schedule_mode':'interval','interval_seconds':3600,'timezone':'../bad','start_time':'99:99','weekdays':[],'warning_offsets_seconds':[1800,300,60]})
+  self.assertEqual(interval['timezone'],'UTC');self.assertEqual(interval['start_time'],'04:00');self.assertEqual(interval['weekdays'],list(range(7)))
  def test_fixed_schedule_resolves_dst_gap_to_first_valid_wall_time(self):
   policy={'enabled':True,'schedule_mode':'fixed','timezone':'America/New_York','weekdays':[6],'start_time':'02:30','warning_offsets_seconds':[]};now=datetime(2026,3,8,6,50,tzinfo=timezone.utc);self.assertEqual(next_due_at(policy,now=now),datetime(2026,3,8,7,0,tzinfo=timezone.utc))
  def test_interval_uses_completion_anchor_without_immediate_restart(self):
