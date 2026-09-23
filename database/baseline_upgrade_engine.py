@@ -21,6 +21,7 @@ from discord_integration_schema import discord_integration_ddl
 from content_contract_v2_schema import content_contract_v2_ddl
 from content_bundle_schema import content_bundle_ddl
 from dayz_native_restart_schema import dayz_native_restart_ddl
+from dayz_management_schema import dayz_management_ddl
 from database_intelligence_schema import database_intelligence_ddl
 from native_restart_schema import native_restart_ddl
 from maintenance_schema import maintenance_ddl
@@ -1019,6 +1020,15 @@ def _upgrade_legacy_minecraft_contract_products(backend: Any, connection: Any) -
             pass
 
 
+def _upgrade_dayz_management(backend: Any, connection: Any) -> None:
+    """Add queued DayZ map discovery/change and scheduled wipe operations."""
+    if "dayz_operations" in _table_names(backend, connection):
+        return
+    _execute_script(backend, connection, dayz_management_ddl(backend.name))
+    if "dayz_operations" not in _table_names(backend, connection):
+        raise DatabaseMigrationError("DayZ management baseline upgrade incomplete")
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -1040,6 +1050,7 @@ UPGRADES = (
     BaselineUpgrade(18, "operation_diagnostics", _upgrade_operation_diagnostics),
     BaselineUpgrade(19, "alert_customer_identity", _upgrade_alert_customer_identity),
     BaselineUpgrade(20, "legacy_minecraft_contract_products", _upgrade_legacy_minecraft_contract_products),
+    BaselineUpgrade(21, "dayz_management_operations", _upgrade_dayz_management),
 )
 
 
