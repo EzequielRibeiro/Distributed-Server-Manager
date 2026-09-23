@@ -183,6 +183,163 @@ class HybridRuntimePortBackfillTest(unittest.TestCase):
             runtime_stopped_proof=True,
         )
 
+    def test_bedrock_legacy_runtime_policy_is_refreshed_from_current_catalog(self):
+        instance_id = "cli-000001-minecraft-001"
+        path = self.specs / f"{instance_id}.json"
+        stale = {
+            "schema_version": 1,
+            "kind": "CapivaraAgentInstance",
+            "instance_id": instance_id,
+            "agent_id": "agent-hybrid",
+            "game_id": "minecraft",
+            "environment_id": "minecraft.bedrock.vanilla",
+            "desired_state": "stopped",
+            "observed_state": "stopped",
+            "ports": {
+                "gameplay_udp": {"port": 24007, "protocol": "udp"},
+                "signaling": {"port": 24006, "protocol": "tcp"},
+            },
+            "profile_context": {
+                "ports": {
+                    "gameplay_udp": {"port": 24007, "protocol": "udp"},
+                    "signaling": {"port": 24006, "protocol": "tcp"},
+                },
+            },
+            "catalog_runtime_policy": {
+                "runtime_id": "minecraft.bedrock.vanilla",
+                "engine": "native",
+                "network_exposure": [
+                    {"name": "game_ipv4", "protocol": "udp", "exposure": "public"},
+                    {"name": "game_ipv6", "protocol": "udp", "exposure": "public"},
+                ],
+            },
+            "catalog_network_properties": [
+                {
+                    "path": "server.properties",
+                    "key": "server-port",
+                    "value": "{{PORT_GAME_IPV4}}",
+                    "syntax": "equals",
+                },
+                {
+                    "path": "server.properties",
+                    "key": "server-portv6",
+                    "value": "{{PORT_GAME_IPV6}}",
+                    "syntax": "equals",
+                },
+            ],
+            "catalog_variables": {
+                "INSTANCE_ID": instance_id,
+                "PORT_GAME_IPV4": "24006",
+                "PORT_GAME_IPV6": "24007",
+            },
+        }
+        path.write_text(json.dumps(stale), encoding="utf-8")
+        self.path.unlink()
+
+        network = {
+            "allocation": "block",
+            "block_size": 2,
+            "ports": [
+                {"name": "signaling", "protocol": "tcp", "offset": 0, "exposure": "public"},
+                {"name": "gameplay_udp", "protocol": "udp", "offset": 1, "exposure": "public"},
+            ],
+            "apply": [
+                {
+                    "kind": "property",
+                    "file": "server.properties",
+                    "key": "server-port",
+                    "value": "{signaling}",
+                },
+                {
+                    "kind": "property",
+                    "file": "server.properties",
+                    "key": "server-udp-ports",
+                    "value": "{gameplay_udp}",
+                },
+                {
+                    "kind": "property",
+                    "file": "server.properties",
+                    "key": "transport",
+                    "value": "nethernet",
+                },
+            ],
+        }
+        repository = Mock()
+        repository.instance_context.return_value = {
+            "id": instance_id,
+            "agent_id": "agent-hybrid",
+            "game_id": "minecraft",
+            "runtime_id": "minecraft.bedrock.vanilla",
+        }
+
+        with (
+            patch(
+                "hybrid_runtime_port_backfill.InstanceWorkspaceRepository",
+                return_value=repository,
+            ),
+            patch(
+                "hybrid_runtime_port_backfill.occupied_ports_provider_for_backend",
+                return_value=Mock(return_value=set()),
+            ),
+            patch(
+                "hybrid_runtime_port_backfill.runtime_definition",
+                return_value={"id": "minecraft.bedrock.vanilla", "network": network},
+            ),
+            patch(
+                "hybrid_runtime_port_backfill.reconcile_instance_ports",
+                return_value={
+                    "instance_id": instance_id,
+                    "base_port": 24006,
+                    "ports": {"signaling": 24006, "gameplay_udp": 24007},
+                    "inserted": [],
+                    "changed": False,
+                },
+            ),
+            patch("hybrid_runtime_port_backfill.os.chown"),
+        ):
+            result = reconcile_hybrid_runtime_ports(
+                self.backend,
+                self.root,
+                "agent-hybrid",
+            )
+
+        persisted = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            persisted["catalog_runtime_policy"]["network_exposure"],
+            [
+                {"name": "signaling", "protocol": "tcp", "exposure": "public"},
+                {"name": "gameplay_udp", "protocol": "udp", "exposure": "public"},
+            ],
+        )
+        self.assertEqual(
+            persisted["catalog_network_properties"],
+            [
+                {
+                    "path": "server.properties",
+                    "key": "server-port",
+                    "value": "{{PORT_SIGNALING}}",
+                    "syntax": "equals",
+                },
+                {
+                    "path": "server.properties",
+                    "key": "server-udp-ports",
+                    "value": "{{PORT_GAMEPLAY_UDP}}",
+                    "syntax": "equals",
+                },
+                {
+                    "path": "server.properties",
+                    "key": "transport",
+                    "value": "nethernet",
+                    "syntax": "equals",
+                },
+            ],
+        )
+        self.assertEqual(persisted["catalog_variables"]["PORT_SIGNALING"], "24006")
+        self.assertEqual(persisted["catalog_variables"]["PORT_GAMEPLAY_UDP"], "24007")
+        self.assertNotIn("PORT_GAME_IPV4", persisted["catalog_variables"])
+        self.assertNotIn("PORT_GAME_IPV6", persisted["catalog_variables"])
+        self.assertEqual(result["specs_updated"], 1)
+
     def test_controller_reconcile_failure_leaves_runtime_spec_unchanged(self):
         repository = self._repository()
         before = self.path.read_text(encoding="utf-8")
