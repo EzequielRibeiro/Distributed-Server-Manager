@@ -210,6 +210,7 @@ def reconcile_instance_ports(
         # be listening for this instance and must not be treated as conflicts.
         requirements = {item.name: item for item in profile.ports}
         relocatable_messages = (
+            "instance has reservations outside the current runtime profile",
             "derived reservation collides with another instance",
             "derived reservation is occupied by an unmanaged socket",
             "derived reservation is outside active Agent ranges",
