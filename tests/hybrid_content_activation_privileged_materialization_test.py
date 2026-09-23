@@ -12,6 +12,7 @@ if str(RUNTIME) not in sys.path:
     sys.path.insert(0, str(RUNTIME))
 
 import content_activation_apply as module
+import privileged_materialization
 
 
 class HybridContentActivationPrivilegedMaterializationTest(unittest.TestCase):
@@ -76,6 +77,44 @@ class HybridContentActivationPrivilegedMaterializationTest(unittest.TestCase):
             privileged.call_args_list,
             [call(config, projected), call(config, previous)],
         )
+
+
+    def test_privileged_materialization_projects_activation_before_root_helper(self):
+        spec = {
+            "instance_id": "cli-000001-minecraft-001",
+            "agent_id": "agent-horizon-server",
+            "adapter": "systemd",
+        }
+        snapshot = {
+            "instance_id": spec["instance_id"],
+            "checksum": "bundle-checksum",
+            "entries": [{"game_id": "minecraft"}],
+        }
+        projected = {
+            **spec,
+            "content_bundle_overrides": [
+                {
+                    "content_id": "modpack:test",
+                    "managed_path": "/runtime/content/modpack-test",
+                    "roots": ["overrides"],
+                }
+            ],
+        }
+        config = {"agent_id": "agent-horizon-server"}
+
+        with (
+            patch.object(privileged_materialization, "activation_snapshot", return_value=snapshot) as activation,
+            patch.object(privileged_materialization, "project_runtime_spec", return_value=projected) as project,
+            patch.object(privileged_materialization, "validate_runtime_spec", side_effect=lambda value, expected_agent_id=None: value),
+            patch.object(privileged_materialization, "_invoke", return_value={"changed": True}) as invoke,
+            patch.object(privileged_materialization.instance_runtime, "register_instance", return_value=projected),
+            patch.object(privileged_materialization, "emit_runtime_event", return_value={}),
+        ):
+            privileged_materialization.materialize(config, spec)
+
+        activation.assert_called_once_with(spec["instance_id"])
+        project.assert_called_once_with(spec, snapshot)
+        invoke.assert_called_once_with("apply", projected)
 
 
 if __name__ == "__main__":
