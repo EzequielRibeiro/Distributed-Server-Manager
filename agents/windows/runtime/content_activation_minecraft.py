@@ -73,6 +73,20 @@ def _managed_path(entry: dict[str, Any]) -> str:
         raise MinecraftContentActivationError("invalid managed content path")
     return str(Path(value))
 
+def _safe_artifact_filename(value: Any, extensions: list[str]) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if len(text) > 240 or text in {".", ".."} or text.startswith("."):
+        raise MinecraftContentActivationError("invalid Minecraft artifact filename")
+    if any(char in text for char in ("\x00", "\r", "\n", "/", "\\")):
+        raise MinecraftContentActivationError("invalid Minecraft artifact filename")
+    path = Path(text)
+    if path.name != text or path.suffix.lower() not in {str(v).lower() for v in extensions}:
+        raise MinecraftContentActivationError("Minecraft artifact filename extension is not allowed")
+    return text
+
+
 def _safe_relative_directory(value: Any) -> str:
     text = str(value or "").strip().replace("\\", "/")
     path = Path(text)
@@ -148,7 +162,16 @@ def project_minecraft_files(spec: dict[str, Any], entries: list[dict[str, Any]])
         config = policy.get(content_type)
         if config is None:
             raise MinecraftContentActivationError(f"Minecraft runtime does not support content type: {content_type or 'unknown'}")
-        target = f"{config['directory'].rstrip('/')}/capivara-{projection_id}"
+        extensions = list(config["extensions"])
+        filename = _safe_artifact_filename(entry.get("artifact_filename"), extensions)
+        if filename is None:
+            filename = f"capivara-{projection_id}{extensions[0]}"
+        target = f"{config['directory'].rstrip('/')}/{filename}"
+        if target in seen:
+            candidate = Path(filename)
+            suffix = hashlib.sha256(content_id.encode("utf-8")).hexdigest()[:8]
+            filename = f"{candidate.stem}-{suffix}{candidate.suffix}"
+            target = f"{config['directory'].rstrip('/')}/{filename}"
         if target in seen:
             raise MinecraftContentActivationError("duplicate Minecraft content projection")
         seen.add(target)
@@ -156,8 +179,8 @@ def project_minecraft_files(spec: dict[str, Any], entries: list[dict[str, Any]])
             "content_id": content_id,
             "content_type": content_type,
             "managed_path": _managed_path(entry),
-            "target_stem": target,
-            "extensions": list(config["extensions"]),
+            "target_name": target,
+            "extensions": extensions,
         })
     return projections
 
@@ -214,8 +237,11 @@ def _managed_relative_target(value: str, extension: str | None = None) -> Path:
     relative = Path(text)
     if not text or relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 2:
         raise MinecraftContentActivationError("invalid Minecraft native projection target")
-    if relative.parts[0] not in {"mods", "plugins"} or not relative.name.startswith("capivara-"):
+    if relative.parts[0] not in {"mods", "plugins"}:
         raise MinecraftContentActivationError("unowned Minecraft native projection target")
+    name = relative.name
+    if name in {"", ".", ".."} or name.startswith(".") or any(char in name for char in ("\x00", "\r", "\n")):
+        raise MinecraftContentActivationError("invalid Minecraft native projection filename")
     if extension is not None and not relative.name.endswith(extension):
         raise MinecraftContentActivationError("Minecraft projection target extension mismatch")
     return relative
@@ -301,8 +327,12 @@ def materialize_minecraft_files(spec: dict[str, Any]) -> list[str]:
             raise MinecraftContentActivationError("invalid Minecraft content projection identifier")
         source = _payload_file(root, item)
         extension = source.suffix.lower()
-        stem = str(item.get("target_stem") or "")
-        relative = _managed_relative_target(stem + extension, extension)
+        target_name = str(item.get("target_name") or "").strip()
+        if target_name:
+            relative = _managed_relative_target(target_name, extension)
+        else:
+            stem = str(item.get("target_stem") or "")
+            relative = _managed_relative_target(stem + extension, extension)
         key = relative.as_posix()
         if key in desired:
             raise MinecraftContentActivationError("duplicate Minecraft native projection target")
