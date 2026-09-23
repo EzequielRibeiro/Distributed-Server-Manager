@@ -32,6 +32,7 @@ from console_stream_client import start_console_stream
 from content_client import apply_content_commands, content_state
 from content_cache_inventory import snapshot as content_cache_inventory
 from content_update_inventory import inventory as content_update_inventory, start_background as start_content_update_inventory
+from dayz_operation_client import clear_result as clear_dayz_operation_result, handle_command as handle_dayz_operation_command, read_result as read_dayz_operation_result
 from doctor_client import clear_result as clear_doctor_result, handle_command as handle_doctor_command, read_result as read_doctor_result
 from native_restart_client import clear_result as clear_native_restart_result, handle_command as handle_native_restart_command, read_result as read_native_restart_result
 from game_data_client import clear_game_data_result, read_game_data_result, stage_game_data_command
@@ -141,7 +142,7 @@ def _inventory(config):
     network=collect_network_inventory();network["public_ipv4_observation"]=observe_public_ipv4()
     payload={"agent_id":config["agent_id"],"hostname":socket.gethostname(),"os":platform.system().lower(),"architecture":platform.machine(),"capivara_version":installed_version,"address":config.get("advertise_address"),"fingerprint":config["fingerprint"],"host_identity":_host_identity(),"capabilities":detect_capabilities(),"cpu":{"logical_cores":os.cpu_count(),"machine":platform.machine()},"ram_total_bytes":_memory_total_bytes(),"storage":{"root_total_bytes":disk.total,"root_free_bytes":disk.free},"network":network,"instances":instance_inventory(config),"instance_reconciliation":reconciliation_inventory(config),"instance_runtime_health":health_inventory(config),"instance_telemetry":collect_instance_telemetry(config),"instance_console_state":console_state(config),"instance_runtime_metrics":runtime_metrics_snapshot(queue_depth=_queue_depth()),"runtime_events":read_runtime_events(STATE_DIR,limit=int(config.get("event_batch_size",200))),"configuration_state":configuration_state(),"content_state":content_state(),"content_cache_inventory":content_cache_inventory(),"content_update_inventory":content_update_inventory(),"backup_state":backup_state(),"broadcast_state":broadcast_state(),"heartbeat_interval_seconds":int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)),"degraded_after_seconds":int(config.get("degraded_after_seconds",60)),"offline_after_seconds":int(config.get("offline_after_seconds",120))}
     payload["agent_logs"]=_recent_logs()
-    result_readers=(("update_result",read_update_result),("provisioning_result",read_provisioning_result),("storage_pool_migration_result",read_storage_pool_migration_result),("game_data_result",read_game_data_result),("instance_result",read_instance_result),("native_restart_result",read_native_restart_result),("console_result",read_console_result),("file_result",read_file_result),("resource_result",read_resource_result),("artifact_result",read_artifact_result),("doctor_result",read_doctor_result),("yarax_admin_result",read_yarax_admin_result),("uninstall_result",read_uninstall_result))
+    result_readers=(("update_result",read_update_result),("provisioning_result",read_provisioning_result),("storage_pool_migration_result",read_storage_pool_migration_result),("game_data_result",read_game_data_result),("instance_result",read_instance_result),("native_restart_result",read_native_restart_result),("dayz_operation_result",read_dayz_operation_result),("console_result",read_console_result),("file_result",read_file_result),("resource_result",read_resource_result),("artifact_result",read_artifact_result),("doctor_result",read_doctor_result),("yarax_admin_result",read_yarax_admin_result),("uninstall_result",read_uninstall_result))
     for key,reader in result_readers:
         value=reader()
         if value:payload[key]=value
@@ -161,6 +162,7 @@ def _flush_command_results(config):
     result_contracts = (
         ("instance_result", read_instance_result, "instance_state", clear_instance_result, "command_id"),
         ("native_restart_result", read_native_restart_result, "native_restart_state", clear_native_restart_result, "command_id"),
+        ("dayz_operation_result", read_dayz_operation_result, "dayz_operation_state", clear_dayz_operation_result, "operation_id"),
         ("console_result", read_console_result, "console_state", clear_console_result, "command_id"),
         ("file_result", read_file_result, "file_state", clear_file_result, "command_id"),
         ("resource_result", read_resource_result, "resource_state", clear_resource_result, "command_id"),
@@ -224,7 +226,14 @@ def heartbeat(config):
         native_restart_state={}
     if str(native_restart_state.get("status") or "").lower() in {"completed","failed"} and native_restart_state.get("command_id"):
         clear_native_restart_result(str(native_restart_state["command_id"]))
-    yarax_command=result.get("yarax_admin_command")
+        dayz_operation_command=result.get("dayz_operation_command")
+    if isinstance(dayz_operation_command,dict):
+        dayz_result=handle_dayz_operation_command(config,dayz_operation_command);synchronous_result_ready=True
+        _log(f"dayz operation={dayz_result.get('operation_id')} action={dayz_result.get('action')} status={dayz_result.get('status')}")
+    dayz_operation_state=result.get("dayz_operation_state") if isinstance(result.get("dayz_operation_state"),dict) else {}
+    if str(dayz_operation_state.get("status") or "").lower() in {"completed","failed"} and dayz_operation_state.get("operation_id"):
+        clear_dayz_operation_result(str(dayz_operation_state["operation_id"]))
+yarax_command=result.get("yarax_admin_command")
     if isinstance(yarax_command,dict):
         yarax_report=handle_yarax_admin_command(yarax_command);synchronous_result_ready=True;_log(f"yarax operation={yarax_report.get('operation_id')} action={yarax_report.get('action')} status={yarax_report.get('status')}")
     yarax_state=result.get("yarax_admin_state") if isinstance(result.get("yarax_admin_state"),dict) else {}
@@ -271,6 +280,7 @@ def heartbeat(config):
                 ("artifact_state", "artifact_command", "transfer_id"),
                 ("doctor_state", "doctor_command", "request_id"),
                 ("yarax_admin_state", "yarax_admin_command", "operation_id"),
+                ("dayz_operation_state", "dayz_operation_command", "operation_id"),
             )
             for state_key, command_key, id_key in flushed_contracts:
                 state = flushed.get(state_key)
