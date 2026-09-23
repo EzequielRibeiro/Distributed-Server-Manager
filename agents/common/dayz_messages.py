@@ -279,6 +279,7 @@ def materialize_shutdown_messages_xml(path: Path, message: DayZShutdownMessage, 
     with NamedTemporaryFile("w", encoding="utf-8", dir=target.parent, prefix=".messages.xml.", delete=False) as handle:
         handle.write(payload)
         handle.flush()
+        os.fsync(handle.fileno())
         temporary = Path(handle.name)
     try:
         os.chmod(temporary, mode)
@@ -286,7 +287,17 @@ def materialize_shutdown_messages_xml(path: Path, message: DayZShutdownMessage, 
             try:
                 os.chown(temporary, owner[0], owner[1])
             except PermissionError:
-                pass
+                # Hybrid workers commonly have group-write access to the
+                # instance file but cannot chown an atomic replacement back to
+                # the instance runtime identity.  Preserve the existing inode
+                # ownership instead of silently replacing it with the worker.
+                temporary.unlink()
+                with target.open("w", encoding="utf-8") as handle:
+                    handle.write(payload)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.chmod(target, mode)
+                return target
         temporary.replace(target)
     finally:
         try:
