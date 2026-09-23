@@ -24,8 +24,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             ]).encode()
         elif self.path == "/api/v2/projects/youer/1.21.1/builds":
             body=json.dumps({"builds":[
-                {"number":656,"url":base+"/api/v2/projects/youer/1.21.1/builds/656/download"},
-                {"number":657,"url":base+"/api/v2/projects/youer/1.21.1/builds/657/download"}
+                {"number":number,"url":base+f"/api/v2/projects/youer/1.21.1/builds/{number}/download"}
+                for number in range(1, 201)
             ]}).encode()
         elif self.path == "/api/v2/projects/youer/1.21.11/builds":
             self.send_response(503);self.end_headers();return
@@ -70,6 +70,7 @@ PORT="$(cat "${PORT_FILE}")"
 export YOUER_API_BASE="http://127.0.0.1:${PORT}/api/v2/projects/youer"
 export YOUER_LEGACY_API_BASE="http://127.0.0.1:${PORT}/legacy"
 export YOUER_DISCOVERY_LIMIT=25
+export YOUER_BUILD_DISCOVERY_LIMIT=25
 source "${ROOT}/installer/version_resolvers/youer_api.sh"
 
 LIST="$(version_resolver_execute list minecraft youer '')"
@@ -79,6 +80,12 @@ jq -e '
   and ([.versions[].version] | unique | sort) == ["1.21.1","1.21.11","26.1","26.2"]
   and ([.versions[] | select(.version=="26.1" and .build=="3")] | length)==1
   and ([.versions[] | select(.version=="1.21.11" and .build=="19")] | length)==1
+' <<<"${LIST}" >/dev/null
+
+jq -e '
+  ([.versions[] | select(.version=="1.21.1" and .build)] | length) == 25
+  and ([.versions[] | select(.version=="1.21.1" and .build) | (.build|tonumber)] | min) == 176
+  and ([.versions[] | select(.version=="1.21.1" and .build) | (.build|tonumber)] | max) == 200
 ' <<<"${LIST}" >/dev/null
 
 LATEST="$(version_resolver_execute resolve minecraft youer latest)"
