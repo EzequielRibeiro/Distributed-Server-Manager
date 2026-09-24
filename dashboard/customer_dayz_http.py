@@ -6,11 +6,13 @@ from urllib.parse import parse_qs,urlparse
 from controller_session import session_user_from_headers
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from customer_content_workspace import CustomerContentWorkspaceService
+from customer_content_upload_service import CustomerContentUploadService
 from dayz_management_repository import DayZManagementRepository,DayZOperationConflict
 from json_serialization import to_json_compatible
 
 PATH="/api/customer/instance/dayz"
 COMMUNITY_MAP=PATH+"/community-map"
+COMMUNITY_MAP_UPLOAD_FINALIZE=COMMUNITY_MAP+"/upload-finalize"
 DISCOVERY_SCHEMA_VERSION=2
 
 def _discovery_payload(op):
@@ -72,13 +74,20 @@ def install_customer_dayz_http(legacy,authenticate):
         except Exception as exc:return error(self,exc)
     def post(self):
         parsed=urlparse(self.path)
-        if parsed.path not in {PATH,COMMUNITY_MAP}:return previous_post(self)
+        if parsed.path not in {PATH,COMMUNITY_MAP,COMMUNITY_MAP_UPLOAD_FINALIZE}:return previous_post(self)
         user=require_user(self)
         if user is None:return
         try:
             body=self.read_json_body();instance_id=iid(parsed,body)
             if parsed.path==COMMUNITY_MAP:
                 result=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT).install_dayz_community_map(user,instance_id,body)
+                return send(self,202,{"community_map":result,"view":view(user,instance_id)})
+            if parsed.path==COMMUNITY_MAP_UPLOAD_FINALIZE:
+                content=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT)
+                prepared=content.dayz_community_workshop_dependencies(user,instance_id,body.get("workshop_items") or [],body.get("activation_order") or 100)
+                upload=CustomerContentUploadService(backend(),legacy.DSM_ROOT)
+                finalize_body={"instance_id":instance_id,"transfer_id":str(body.get("transfer_id") or ""),"content_id":str(body.get("content_id") or ""),"activation_order":int(prepared["activation_order"]),"metadata":{"display_name":str(body.get("name") or body.get("content_id") or "")[:191]}}
+                result=upload.finalize_dayz_community_map(user,finalize_body["transfer_id"],finalize_body,prepared["items"])
                 return send(self,202,{"community_map":result,"view":view(user,instance_id)})
             workspace,context,repo=service(user,instance_id,"instance.restart");workspace.require(user,instance_id,"settings.write");repo.initialize()
             action=str(body.get("action") or "").strip().lower();actor=str(user.get("username") or user.get("id") or "customer")
@@ -108,4 +117,4 @@ def install_customer_dayz_http(legacy,authenticate):
         except Exception as exc:return error(self,exc)
     legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post
 
-__all__=["COMMUNITY_MAP","PATH","install_customer_dayz_http"]
+__all__=["COMMUNITY_MAP","COMMUNITY_MAP_UPLOAD_FINALIZE","PATH","install_customer_dayz_http"]
