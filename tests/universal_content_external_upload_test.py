@@ -30,9 +30,11 @@ class _Transfers:
   self.rejected.append((tid,str(reason)));self.item["status"]="failed";self.item["last_error"]=str(reason);return dict(self.item)
 
 class _Content:
- def __init__(self):self.puts=[];self.bundles=[]
+ def __init__(self):self.puts=[];self.bundles=[];self.history=[]
  def put(self,payload,requested_by=None):self.puts.append((dict(payload),requested_by));return {"changed":True,"assignment":dict(payload,revision=1)}
- def put_bundle(self,parent,bundle,children,requested_by=None):self.bundles.append((dict(parent),dict(bundle),[dict(x) for x in children],requested_by));return {"changed":True,"assignment":dict(parent,revision=1),"children":children}
+ def bundle_history(self,instance_id,content_id):return list(self.history)
+ def bundle_diff(self,instance_id,content_id,bundle):return {"added":["new-mod"],"removed":[],"updated":[],"unchanged":[]}
+ def put_bundle(self,parent,bundle,children,requested_by=None):self.bundles.append((dict(parent),dict(bundle),[dict(x) for x in children],requested_by));return {"changed":True,"bundle_revision":len(self.bundles),"assignment":dict(parent,revision=1),"children":children}
 
 def service(policy=None,status="staging"):
  s=CustomerContentUploadService.__new__(CustomerContentUploadService);s.backend=None;s.root=ROOT;s.workspace=_Workspace(policy);s.transfers=_Transfers(status);s.content=_Content();return s
@@ -84,7 +86,7 @@ class ExternalUploadTest(unittest.TestCase):
    s=service(status="completed");s.transfers.artifact_path=path;s.transfers.item["filename"]="pack.mrpack";s.transfers.item["destination_ref"]="quarantine/i1/transfer-1/pack.mrpack";s.transfers.item["sha256"]=hashlib.sha256(out.getvalue()).hexdigest()
    result=s.finalize({"username":"alice"},"transfer-1",{"content_id":"pack-1","content_type":"modpack"})
    parent,bundle,children,actor=s.content.bundles[-1]
-   self.assertEqual(actor,"alice");self.assertEqual(parent["provider"],"modrinth");self.assertEqual(bundle["manifest_kind"],"mrpack-v1");self.assertEqual(bundle["loader_id"],"fabric");self.assertEqual(len(children),1);self.assertEqual(children[0]["provider"],"modrinth");self.assertEqual(result["assignment"]["content_id"],"pack-1")
+   self.assertEqual(actor,"alice");self.assertEqual(parent["provider"],"modrinth");self.assertEqual(bundle["manifest_kind"],"mrpack-v1");self.assertEqual(bundle["loader_id"],"fabric");self.assertEqual(len(children),1);self.assertEqual(children[0]["provider"],"modrinth");self.assertEqual(result["assignment"]["content_id"],"pack-1");self.assertEqual(result["revision_source"],"external-upload");self.assertEqual(result["manifest_diff"]["added"],["new-mod"])
   finally:
    Path(path).unlink(missing_ok=True)
 

@@ -65,6 +65,13 @@ class MinecraftVersionUpdatePreflightService:
                 continue
             ctype = str(item.get("content_type") or "").strip().lower()
             provider = str(item.get("provider") or "").strip().lower()
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            bundle_marker = metadata.get("bundle") if isinstance(metadata.get("bundle"), dict) else {}
+            parent_content_id = str(bundle_marker.get("parent_content_id") or "").strip()
+            # Modpack children are owned by their parent bundle and cannot be
+            # independently changed. Evaluate the modpack as one update unit.
+            if parent_content_id and ctype != "modpack":
+                continue
             activation = str(item.get("activation_state") or "enabled").strip().lower()
             base = {
                 "content_id": str(item.get("content_id") or ""),
@@ -73,7 +80,8 @@ class MinecraftVersionUpdatePreflightService:
                 "version": str(item.get("version") or ""),
                 "activation_state": activation,
                 "revision": int(item.get("revision") or 0),
-                "can_disable": activation == "enabled" and ctype in {"mod", "plugin", "modpack"},
+                "can_disable": activation == "enabled" and ctype in {"mod", "plugin", "modpack", "datapack"},
+                "can_remove": ctype in {"mod", "plugin", "modpack", "datapack"},
             }
             if activation == "disabled":
                 result.append({**base, "compatibility": "disabled", "reason": "Conteúdo já está desativado."})
@@ -121,7 +129,7 @@ class MinecraftVersionUpdatePreflightService:
         resolved_build = str(selection.get("build") or build)
         content = self._content_compatibility(str(instance_id), resolved_version, definition)
         counts = {name: sum(1 for item in content if item["compatibility"] == name) for name in ("compatible", "incompatible", "unknown", "disabled")}
-        blocking = counts["incompatible"]
+        blocking = counts["incompatible"] + counts["unknown"]
         return {
             "kind": "MinecraftVersionUpdatePreflight",
             "instance_id": str(instance_id),
@@ -138,9 +146,12 @@ class MinecraftVersionUpdatePreflightService:
             "content": content,
             "summary": counts,
             "requires_confirmation": True,
-            "has_known_incompatibilities": blocking > 0,
+            "has_known_incompatibilities": counts["incompatible"] > 0,
+            "has_unverified_content": counts["unknown"] > 0,
+            "has_blocking_content": blocking > 0,
+            "blocking_content_count": blocking,
             "can_request_update": blocking == 0,
-            "warning": "Alterar a versão do Minecraft pode tornar mods, plugins, modpacks, mundos ou configurações incompatíveis. Faça backup e valide o servidor após a mudança.",
+            "warning": "A troca de versão só é liberada quando todo conteúdo ativo possui compatibilidade confirmada. Conteúdo incompatível ou não verificável deve ser removido, atualizado ou desativado antes da operação.",
         }
 
 

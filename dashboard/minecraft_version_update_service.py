@@ -39,8 +39,8 @@ class MinecraftVersionUpdateService:
             raise ValueError("explicit compatibility-risk confirmation is required")
 
         preflight = self.preflight_service.preflight(user, instance_id, version, build)
-        if preflight.get("has_known_incompatibilities"):
-            raise ValueError("known incompatible content must be disabled or updated before changing Minecraft version")
+        if not preflight.get("can_request_update"):
+            raise ValueError("incompatible or unverified managed content must be removed, updated or disabled before changing Minecraft version")
 
         context = self.workspace.require(user, instance_id, "instance.update")
         runtime_id = str(context.get("runtime_id") or "").strip()

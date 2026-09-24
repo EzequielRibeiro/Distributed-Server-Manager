@@ -135,7 +135,17 @@ class CustomerContentUploadService:
   if ctype=="modpack":
    if lower.endswith(".mrpack"):
     parent,bundle,children=self._minecraft_mrpack_bundle(context,item,content_id,relative,metadata)
-    return self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"))
+    history_before=self.content.bundle_history(iid,content_id)
+    previous_bundle_revision=int(history_before[0]["revision"]) if history_before else None
+    diff=self.content.bundle_diff(iid,content_id,bundle)
+    parent_meta=dict(parent.get("metadata") or {})
+    parent_meta["revision_source"]={"kind":"external-upload","filename":name,"transfer_id":tid}
+    parent["metadata"]=parent_meta
+    result=self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"))
+    result["manifest_diff"]=diff
+    result["previous_bundle_revision"]=previous_bundle_revision if result.get("changed") else None
+    result["revision_source"]="external-upload"
+    return result
    if lower.endswith(".zip") and self._detect_curseforge_export(item):
     raise ValueError("Pacote CurseForge detectado. Esse formato referencia IDs do CurseForge e não contém URLs suficientes para instalação sem uma 3rd Party API Key. Use o equivalente .mrpack/Modrinth ou configure a chave CurseForge no Controller.")
    raise ValueError("Upload de modpack suporta .mrpack. ZIP CurseForge requer 3rd Party API Key.")
