@@ -36,6 +36,8 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
   self.assertIn('content_mode not in {"disable","keep"}',source)
   self.assertIn("stale_after_change",source)
   self.assertIn('op.get("action")=="change_mission" and op.get("status")=="completed"',source)
+  self.assertIn('COMMUNITY_MAP=PATH+"/community-map"',source)
+  self.assertIn("install_dayz_community_map",source)
   for platform in ("linux","windows"):
    operation=(ROOT/"agents"/platform/"runtime"/"dayz_operation_client.py").read_text(encoding="utf-8")
    runtime=(ROOT/"agents"/platform/"runtime"/"content_activation_runtime.py").read_text(encoding="utf-8")
