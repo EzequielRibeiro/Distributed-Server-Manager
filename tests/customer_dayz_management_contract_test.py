@@ -7,7 +7,7 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
  def test_customer_surface_is_composed(self):
   html=(ROOT/"dashboard"/"web"/"customer-instance.html").read_text(encoding="utf-8")
   self.assertIn("/customer-maintenance.js?v=3",html)
-  self.assertIn("/customer-dayz.js?v=5",html)
+  self.assertIn("/customer-dayz.js?v=7",html)
   layer=(ROOT/"dashboard"/"server_part20.py").read_text(encoding="utf-8")
   self.assertIn("install_customer_dayz_http",layer)
   self.assertIn('"/customer-dayz.js"',layer)
@@ -26,6 +26,9 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
   self.assertIn("Iniciar novo mapa com mods desabilitados (recomendado)",dayz_js)
   self.assertIn("Manter mods ativos (preflight de compatibilidade)",dayz_js)
   self.assertIn("content_mode:mapContentMode",dayz_js)
+  self.assertIn('"Adicionar mapa comunitário"',dayz_js)
+  self.assertIn('COMMUNITY_API=API+"/community-map"',dayz_js)
+  self.assertIn('"workshop_items:ids"',dayz_js)
  def test_dayz_api_supports_map_and_scheduled_wipe(self):
   source=(ROOT/"dashboard"/"customer_dayz_http.py").read_text(encoding="utf-8")
   for token in ('"refresh_maps"','"change_mission"','"wipe"','"cancel"',"scheduled_at"):
