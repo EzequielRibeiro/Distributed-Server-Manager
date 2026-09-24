@@ -335,36 +335,12 @@ class CustomerContentWorkspaceService:
     return {"results":results,"count":len(results),"provider_used":name,"fallback":{"automatic":True,"attempts":attempts,"upload_recommended":False,"github_official_supported":True}}
   return {"results":[],"count":0,"provider_used":None,"fallback":{"automatic":True,"attempts":attempts,"upload_recommended":True,"github_official_supported":True}}
 
- def install_dayz_community_map(self,user,instance_id,body):
-  if not isinstance(body,Mapping):raise ValueError("community map payload must be an object")
-  allowed={"content_id","source","workshop_items","activation_order","name"}
-  unknown=sorted(set(body)-allowed-{"instance_id"})
-  if unknown:raise ValueError("unsupported community map fields: "+", ".join(unknown))
+ def dayz_community_workshop_dependencies(self,user,instance_id,workshop_items,activation_order=100):
   context,policy=self._context_policy(user,instance_id,"content.install")
   if str(context.get("game_id") or "").strip().lower()!="dayz":raise PermissionError("community map installation is available only for DayZ")
-  content_id=str(body.get("content_id") or "").strip()
-  if not content_id:raise ValueError("content_id is required")
-  source=body.get("source")
-  if not isinstance(source,Mapping):raise ValueError("community map source must be an object")
-  provider=str(source.get("provider") or "").strip().lower()
-  if provider not in {"github","http-archive"}:raise ValueError("community map source provider must be github or http-archive")
-  try:order=max(0,min(int(body.get("activation_order") or 100),1000000))
+  try:order=max(0,min(int(activation_order or 100),1000000))
   except (TypeError,ValueError) as exc:raise ValueError("invalid activation_order") from exc
-  artifact={"provider":provider,"archive":True}
-  provenance={"community_map":{"provider":provider}}
-  if provider=="github":
-   repository=str(source.get("repository") or "").strip()
-   ref=str(source.get("ref") or "main").strip()
-   if not repository or len(repository)>191 or repository.count("/")!=1 or any(not part or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for ch in part) for part in repository.split("/")):raise ValueError("invalid GitHub repository")
-   if not ref or len(ref)>191 or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/-" for ch in ref) or ".." in ref.split("/"):raise ValueError("invalid GitHub ref")
-   artifact.update({"url":f"https://codeload.github.com/{repository}/zip/{ref}","filename":"community-map.zip"})
-   provenance["community_map"].update({"repository":repository,"ref":ref})
-  else:
-   url=str(source.get("url") or "").strip()
-   if not url.startswith("https://"):raise ValueError("community map archive requires HTTPS")
-   artifact.update({"url":url,"filename":"community-map.archive"})
-   provenance["community_map"]["url"]=url
-  workshop_raw=body.get("workshop_items") or []
+  workshop_raw=workshop_items or []
   if not isinstance(workshop_raw,list) or len(workshop_raw)>32:raise ValueError("workshop_items must be a list of at most 32 items")
   workshop_ids=[]
   for value in workshop_raw:
@@ -379,8 +355,39 @@ class CustomerContentWorkspaceService:
    for dependency in nested:
     self._enforce_policy(dependency,policy);item_index[str(dependency.get("content_id") or "")]=dependency
    item_index[item["content_id"]]=item;dependencies.append(item["content_id"])
-  items=list(item_index.values())
-  payload={"instance_id":instance_id,"content_id":content_id,"content_type":"map","provider":provider,"desired_state":"installed","activation_state":"enabled","activation_order":order+len(items),"artifact":artifact,"provenance":provenance,"metadata":{"community_map":{"name":str(body.get("name") or content_id).strip()[:191]}},"dependencies":dependencies}
+  return {"context":context,"policy":policy,"items":list(item_index.values()),"dependencies":dependencies,"activation_order":order+len(item_index)}
+
+ def install_dayz_community_map(self,user,instance_id,body):
+  if not isinstance(body,Mapping):raise ValueError("community map payload must be an object")
+  allowed={"content_id","source","workshop_items","activation_order","name"}
+  unknown=sorted(set(body)-allowed-{"instance_id"})
+  if unknown:raise ValueError("unsupported community map fields: "+", ".join(unknown))
+  context,policy=self._context_policy(user,instance_id,"content.install")
+  if str(context.get("game_id") or "").strip().lower()!="dayz":raise PermissionError("community map installation is available only for DayZ")
+  content_id=str(body.get("content_id") or "").strip()
+  if not content_id:raise ValueError("content_id is required")
+  source=body.get("source")
+  if not isinstance(source,Mapping):raise ValueError("community map source must be an object")
+  provider=str(source.get("provider") or "").strip().lower()
+  if provider not in {"github","http-archive"}:raise ValueError("community map source provider must be github or http-archive")
+  prepared=self.dayz_community_workshop_dependencies(user,instance_id,body.get("workshop_items") or [],body.get("activation_order") or 100)
+  order=int(prepared["activation_order"])
+  artifact={"provider":provider,"archive":True}
+  provenance={"community_map":{"provider":provider}}
+  if provider=="github":
+   repository=str(source.get("repository") or "").strip()
+   ref=str(source.get("ref") or "main").strip()
+   if not repository or len(repository)>191 or repository.count("/")!=1 or any(not part or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for ch in part) for part in repository.split("/")):raise ValueError("invalid GitHub repository")
+   if not ref or len(ref)>191 or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/-" for ch in ref) or ".." in ref.split("/"):raise ValueError("invalid GitHub ref")
+   artifact.update({"url":f"https://codeload.github.com/{repository}/zip/{ref}","filename":"community-map.zip"})
+   provenance["community_map"].update({"repository":repository,"ref":ref})
+  else:
+   url=str(source.get("url") or "").strip()
+   if not url.startswith("https://"):raise ValueError("community map archive requires HTTPS")
+   artifact.update({"url":url,"filename":"community-map.archive"})
+   provenance["community_map"]["url"]=url
+  items=list(prepared["items"]);dependencies=list(prepared["dependencies"])
+  payload={"instance_id":instance_id,"content_id":content_id,"content_type":"map","provider":provider,"desired_state":"installed","activation_state":"enabled","activation_order":order,"artifact":artifact,"provenance":provenance,"metadata":{"community_map":{"name":str(body.get("name") or content_id).strip()[:191]}},"dependencies":dependencies}
   self._enforce_policy(payload,policy)
   actor=str(user.get("username") or "customer")
   result=self.content.put_many([*items,payload],requested_by=actor)
