@@ -37,7 +37,8 @@ class MinecraftVersionUpdatePreflightTest(unittest.TestCase):
         self.assertIn("Downgrade bloqueado",script)
         self.assertIn("Versão do Minecraft",html)
         self.assertIn("compatibilidade",html.lower())
-        self.assertLess(html.index('id="view-settings"'),html.index('id="minecraft-update-card"'))
+        self.assertIn('id="minecraft-version-tab"',html)
+        self.assertLess(html.index('id="view-version"'),html.index('id="minecraft-update-card"'))
         self.assertLess(html.index('id="minecraft-update-card"'),html.index('id="view-upgrade"'))
         self.assertIn("sem trocar a versão, o runtime, o mundo",html)
 
