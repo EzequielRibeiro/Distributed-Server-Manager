@@ -189,7 +189,7 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
     def test_native_bedrock_ping_parses_players_and_latency(self):
         fake = _FakeSocket([self._bedrock_pong(players=6, players_max=30)])
         with patch.object(telemetry.socket, "socket", return_value=fake), patch.object(
-            telemetry.time, "monotonic", side_effect=[10.0, 10.012]
+            telemetry.time, "monotonic", side_effect=[9.5, 10.0, 10.012]
         ):
             result = telemetry._bedrock_ping("127.0.0.1", 19132, 1)
         self.assertEqual(result["players_online"], 6)
