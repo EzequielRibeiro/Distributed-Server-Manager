@@ -25,13 +25,13 @@ def _safe(name):
     if not _SAFE.fullmatch(value):raise ValueError("invalid DayZ mission")
     return value
 def current_mission(record):
-    value=str(record.get("mission") or "").strip()
-    if value and _SAFE.fullmatch(value):return value
     path=_config(record)
     try:source=path.read_text(encoding="utf-8",errors="replace")
     except OSError:source=""
     match=_TEMPLATE.search(source)
     if match:return _safe(match.group(2).strip())
+    value=str(record.get("mission") or "").strip()
+    if value and _SAFE.fullmatch(value):return value
     for arg in record.get("arguments") or []:
         text=str(arg)
         if text.lower().startswith("-mission="):
