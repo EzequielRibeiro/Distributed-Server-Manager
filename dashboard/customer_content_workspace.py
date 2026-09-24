@@ -372,10 +372,14 @@ class CustomerContentWorkspaceService:
    if text.startswith("steam-workshop:"):text=text.split(":",1)[1]
    if not text.isdigit() or len(text)>20:raise ValueError("invalid Steam Workshop item")
    if text not in workshop_ids:workshop_ids.append(text)
-  dependencies=[];items=[]
+  dependencies=[];item_index={}
   for index,published_id in enumerate(workshop_ids):
    item={"instance_id":instance_id,"content_id":f"steam-workshop:{published_id}","content_type":"workshop","provider":"steam-workshop","desired_state":"installed","activation_state":"enabled","activation_order":order+index,"artifact":{"provider":"steam-workshop","published_file_id":published_id}}
-   self._enforce_policy(item,policy);self._resolve_workshop(context,item);self._prepare_activation_defaults(context,item);items.append(item);dependencies.append(item["content_id"])
+   self._enforce_policy(item,policy);self._resolve_workshop(context,item);nested=self._resolve_workshop_dependencies(context,item);self._prepare_activation_defaults(context,item)
+   for dependency in nested:
+    self._enforce_policy(dependency,policy);item_index[str(dependency.get("content_id") or "")]=dependency
+   item_index[item["content_id"]]=item;dependencies.append(item["content_id"])
+  items=list(item_index.values())
   payload={"instance_id":instance_id,"content_id":content_id,"content_type":"map","provider":provider,"desired_state":"installed","activation_state":"enabled","activation_order":order+len(items),"artifact":artifact,"provenance":provenance,"metadata":{"community_map":{"name":str(body.get("name") or content_id).strip()[:191]}},"dependencies":dependencies}
   self._enforce_policy(payload,policy)
   actor=str(user.get("username") or "customer")
