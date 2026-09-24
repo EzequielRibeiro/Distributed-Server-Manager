@@ -73,6 +73,48 @@ class DayZMapSwitchStabilizationTest(unittest.TestCase):
         self.assertEqual(restarts, 2)
         self.assertEqual(result, "success")
 
+    def test_activation_order_is_reported_in_projected_snapshot_order(self):
+        snapshot = {
+            "entries": [
+                {"content_id": "cf", "game_id": "dayz", "package_id": "221100:1559212036", "activation_order": 10},
+                {"content_id": "vpp", "game_id": "dayz", "package_id": "221100:1828439124", "activation_order": 20},
+                {"content_id": "codelock", "game_id": "dayz", "package_id": "221100:1646187754", "activation_order": 30},
+            ]
+        }
+        self.assertEqual(
+            [item["content_id"] for item in dayz_operation_client._activation_order(snapshot)],
+            ["cf", "vpp", "codelock"],
+        )
+
+    def test_hybrid_rollback_repairs_file_access_through_privileged_helper(self):
+        completed = type("Completed", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+        with (
+            patch.dict(
+                os.environ,
+                {"CAPIVARA_MATERIALIZER_UNIT_TEMPLATE": "dsm-hybrid-agent-materialize@{instance_id}.service"},
+                clear=False,
+            ),
+            patch.object(dayz_operation_client.subprocess, "run", return_value=completed) as run,
+        ):
+            unit = dayz_operation_client._repair_hybrid_file_access("dayz-1")
+        self.assertEqual(unit, "dsm-hybrid-agent-files-access@dayz-1.service")
+        run.assert_called_once_with(
+            ["systemctl", "start", "dsm-hybrid-agent-files-access@dayz-1.service", "--no-pager"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+
+    def test_non_hybrid_rollback_does_not_require_file_access_helper(self):
+        with (
+            patch.dict(os.environ, {"CAPIVARA_MATERIALIZER_UNIT_TEMPLATE": "capivara-agent-materialize@{instance_id}.service"}, clear=False),
+            patch.object(dayz_operation_client.subprocess, "run") as run,
+        ):
+            unit = dayz_operation_client._repair_hybrid_file_access("dayz-1")
+        self.assertIsNone(unit)
+        run.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
