@@ -33,18 +33,45 @@ def _write(path,payload):
         except FileNotFoundError:pass
 def _history(oid):return HISTORY_DIR/f"{_token(oid,'operation_id')}.json"
 def _result(oid):return RESULT_DIR/f"{_token(oid,'operation_id')}.json"
+def _runtime_identity(view):
+    adapter=view.get("adapter_state") if isinstance(view.get("adapter_state"),dict) else {}
+    raw_pid=adapter.get("main_pid") if adapter.get("main_pid") is not None else adapter.get("pid")
+    try:pid=int(raw_pid or 0)
+    except (TypeError,ValueError):pid=0
+    raw_restarts=adapter.get("restart_count")
+    try:restarts=int(raw_restarts) if raw_restarts is not None else None
+    except (TypeError,ValueError):restarts=None
+    return (pid or None,restarts,str(adapter.get("result") or ""))
+
 def _stabilize(config,iid):
-    try:seconds=max(0,min(int(os.environ.get("CAPIVARA_DAYZ_SWITCH_STABILIZE_SECONDS","40")),120))
-    except (TypeError,ValueError):seconds=40
-    if seconds<=0:return {"seconds":0,"observed_state":str(status(config,iid).get("observed_state") or "unknown")}
-    deadline=time.monotonic()+seconds;last="unknown"
+    try:seconds=max(0,min(int(os.environ.get("CAPIVARA_DAYZ_SWITCH_STABILIZE_SECONDS","120")),300))
+    except (TypeError,ValueError):seconds=120
+    initial_pid=None;initial_restarts=None;last="unknown"
+    if seconds<=0:
+        view=status(config,iid);last=str(view.get("observed_state") or "unknown");pid,restarts,_=_runtime_identity(view)
+        return {"seconds":0,"observed_state":last,"process_id":pid,"restart_count":restarts}
+    deadline=time.monotonic()+seconds
     while time.monotonic()<deadline:
-        view=status(config,iid);last=str(view.get("observed_state") or "unknown")
+        view=status(config,iid);last=str(view.get("observed_state") or "unknown");pid,restarts,result=_runtime_identity(view)
         if last not in {"running","starting"}:raise RuntimeError(f"DayZ runtime became {last} during map-switch stabilization")
+        if result in {"oom-kill","signal","core-dump","exit-code","watchdog","timeout","resources"}:
+            raise RuntimeError(f"DayZ runtime reported systemd result {result} during map-switch stabilization")
+        if pid:
+            if initial_pid is None:initial_pid=pid
+            elif pid!=initial_pid:raise RuntimeError(f"DayZ runtime restarted during map-switch stabilization: pid {initial_pid} -> {pid}")
+        if restarts is not None:
+            if initial_restarts is None:initial_restarts=restarts
+            elif restarts>initial_restarts:raise RuntimeError(f"DayZ runtime restart count increased during map-switch stabilization: {initial_restarts} -> {restarts}")
         time.sleep(min(5,max(.1,deadline-time.monotonic())))
-    final=status(config,iid);last=str(final.get("observed_state") or "unknown")
+    final=status(config,iid);last=str(final.get("observed_state") or "unknown");pid,restarts,result=_runtime_identity(final)
     if last!="running":raise RuntimeError(f"DayZ runtime did not stabilize after map switch: {last}")
-    return {"seconds":seconds,"observed_state":last}
+    if result in {"oom-kill","signal","core-dump","exit-code","watchdog","timeout","resources"}:
+        raise RuntimeError(f"DayZ runtime reported systemd result {result} after map-switch stabilization")
+    if initial_pid is not None and pid is not None and pid!=initial_pid:
+        raise RuntimeError(f"DayZ runtime restarted during map-switch stabilization: pid {initial_pid} -> {pid}")
+    if initial_restarts is not None and restarts is not None and restarts>initial_restarts:
+        raise RuntimeError(f"DayZ runtime restart count increased during map-switch stabilization: {initial_restarts} -> {restarts}")
+    return {"seconds":seconds,"observed_state":last,"process_id":pid or initial_pid,"restart_count":restarts}
 
 def _change_mission(config,record,iid,payload):
     before_view=discover_missions(record);previous_mission=before_view["current"];target=str(payload.get("mission") or "").strip()
