@@ -13,6 +13,7 @@ from controller_session import session_user_from_headers
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from minecraft_version_update_preflight import MinecraftVersionUpdatePreflightService
 from minecraft_version_update_service import MinecraftVersionUpdateService
+from minecraft_runtime_migration_service import MinecraftRuntimeMigrationService
 from instance_activity_repository import InstanceActivityRepository
 from json_serialization import to_json_compatible
 
@@ -35,6 +36,8 @@ ROUTES = {
     PREFIX + "/runtime-options",
     PREFIX + "/minecraft-update/preflight",
     PREFIX + "/minecraft-update",
+    PREFIX + "/minecraft-runtime/preflight",
+    PREFIX + "/minecraft-runtime",
     PREFIX + "/permissions",
 }
 _FILE_ACTIVITY = {
@@ -429,7 +432,7 @@ def install_customer_instance_workspace(legacy, authenticate):
     def post(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        if path not in {PREFIX + "/console", PREFIX + "/upgrade", PREFIX + "/files", PREFIX + "/backups", PREFIX + "/server-settings/refresh", PREFIX + "/minecraft-update/preflight", PREFIX + "/minecraft-update"}:
+        if path not in {PREFIX + "/console", PREFIX + "/upgrade", PREFIX + "/files", PREFIX + "/backups", PREFIX + "/server-settings/refresh", PREFIX + "/minecraft-update/preflight", PREFIX + "/minecraft-update", PREFIX + "/minecraft-runtime/preflight", PREFIX + "/minecraft-runtime"}:
             return previous_post(self)
         user = require_user(self)
         if user is None:
@@ -438,7 +441,57 @@ def install_customer_instance_workspace(legacy, authenticate):
             body = self.read_json_body()
             instance_id = iid(parsed, body)
             api = service()
-            if path == PREFIX + "/minecraft-update/preflight":
+            if path == PREFIX + "/minecraft-runtime/preflight":
+                data = MinecraftRuntimeMigrationService(backend(), legacy.DSM_ROOT).preflight(
+                    user,
+                    instance_id,
+                    body.get("runtime_id"),
+                    body.get("version"),
+                    body.get("build"),
+                )
+                code = 200
+                record(
+                    api,
+                    user,
+                    instance_id,
+                    "MINECRAFT_RUNTIME_MIGRATION_PREFLIGHT",
+                    "runtime",
+                    target_type="minecraft_runtime",
+                    target_name=body.get("runtime_id"),
+                    details={
+                        "version": body.get("version"),
+                        "build": body.get("build"),
+                        "incompatible": (data.get("summary") or {}).get("incompatible", 0),
+                        "unknown": (data.get("summary") or {}).get("unknown", 0),
+                    },
+                    result="success",
+                )
+            elif path == PREFIX + "/minecraft-runtime":
+                data = MinecraftRuntimeMigrationService(backend(), legacy.DSM_ROOT).request(
+                    user,
+                    instance_id,
+                    body.get("runtime_id"),
+                    body.get("version"),
+                    body.get("build"),
+                    confirm_risk=body.get("confirm_risk") is True,
+                )
+                code = 202
+                record(
+                    api,
+                    user,
+                    instance_id,
+                    "MINECRAFT_RUNTIME_MIGRATION_REQUESTED",
+                    "runtime",
+                    target_type="minecraft_runtime",
+                    target_name=body.get("runtime_id"),
+                    details={
+                        "version": body.get("version"),
+                        "build": body.get("build"),
+                        "provisioning_id": data.get("provisioning_id"),
+                    },
+                    result="accepted",
+                )
+            elif path == PREFIX + "/minecraft-update/preflight":
                 data = MinecraftVersionUpdatePreflightService(backend(), legacy.DSM_ROOT).preflight(
                     user,
                     instance_id,
