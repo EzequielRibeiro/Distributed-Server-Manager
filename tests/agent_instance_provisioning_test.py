@@ -206,6 +206,7 @@ class ControllerProvisioningQueueTest(unittest.TestCase):
         )
         self.assertEqual(first["provisioning_id"], second["provisioning_id"])
         self.assertEqual(first["request"]["ports"]["game"]["port"], 24000)
+        self.assertEqual(first["request"]["instance"]["runtime_id"], "dayz.stable")
 
     def test_authenticated_heartbeat_delivers_progress_and_completion(self):
         created = self.jobs.enqueue(
