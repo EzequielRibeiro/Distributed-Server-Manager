@@ -20,6 +20,7 @@ SEARCH=PATH+"/search"
 ICON=PATH+"/icon"
 BUNDLE=PATH+"/bundle"
 UPLOAD=PATH+"/upload"
+UPLOAD_URL=UPLOAD+"/url"
 UPLOAD_STATUS=UPLOAD+"/status"
 UPLOAD_FINALIZE=UPLOAD+"/finalize"
 UPLOAD_CANCEL=UPLOAD+"/cancel"
@@ -186,6 +187,12 @@ def install_customer_content_http(legacy,authenticate):
   except Exception as exc:error(self,exc)
  def post(self):
   parsed=urlparse(self.path)
+  if parsed.path==UPLOAD_URL:
+   user=require_user(self)
+   if user is None:return
+   try:
+    body=self.read_json_body();instance_id=iid(parsed,body);item=CustomerContentUploadService(backend(),legacy.DSM_ROOT).import_url(user,instance_id,body.get("url"));return send(self,201,{"transfer":transfer_view(item)})
+   except Exception as exc:return error(self,exc)
   if parsed.path==UPLOAD:
    user=require_user(self)
    if user is None:return
@@ -244,4 +251,4 @@ def install_customer_content_http(legacy,authenticate):
   except Exception as exc:return error(self,exc)
  legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post;legacy.DashboardHandler.do_PUT=put
 
-__all__=["PATH","SEARCH","ICON","BUNDLE","UPLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","UPLOAD_CANCEL","UPDATE_POLICY","UPDATE_POLICY_ITEM","STREAM","install_customer_content_http"]
+__all__=["PATH","SEARCH","ICON","BUNDLE","UPLOAD","UPLOAD_URL","UPLOAD_STATUS","UPLOAD_FINALIZE","UPLOAD_CANCEL","UPDATE_POLICY","UPDATE_POLICY_ITEM","STREAM","install_customer_content_http"]

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import hashlib,io,json,sys,tempfile,unittest,zipfile
+import hashlib,io,json,socket,sys,tempfile,unittest,zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1]
 for path in (ROOT/"dashboard",ROOT/"database",ROOT/"core"):
  if str(path) not in sys.path:sys.path.insert(0,str(path))
-from customer_content_upload_service import CustomerContentUploadService
+from customer_content_upload_service import CustomerContentUploadService,_safe_external_url
 
 class _Workspace:
  def __init__(self,policy=None):
@@ -40,6 +41,24 @@ def service(policy=None,status="staging"):
  s=CustomerContentUploadService.__new__(CustomerContentUploadService);s.backend=None;s.root=ROOT;s.workspace=_Workspace(policy);s.transfers=_Transfers(status);s.content=_Content();return s
 
 class ExternalUploadTest(unittest.TestCase):
+
+ def test_external_url_requires_https_and_public_destination(self):
+  with self.assertRaisesRegex(ValueError,"HTTPS"):
+   _safe_external_url("http://example.com/pack.mrpack")
+  with patch("customer_content_upload_service.socket.getaddrinfo",return_value=[(socket.AF_INET,socket.SOCK_STREAM,6,"",("127.0.0.1",443))]):
+   with self.assertRaisesRegex(ValueError,"private or reserved"):
+    _safe_external_url("https://example.com/pack.mrpack")
+  with patch("customer_content_upload_service.socket.getaddrinfo",return_value=[(socket.AF_INET,socket.SOCK_STREAM,6,"",("8.8.8.8",443))]):
+   self.assertEqual(_safe_external_url("https://example.com/pack.mrpack"),"https://example.com/pack.mrpack")
+
+ def test_external_url_surface_is_exposed_in_customer_workspace(self):
+  http=(ROOT/"dashboard/customer_content_http.py").read_text(encoding="utf-8")
+  js=(ROOT/"dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
+  self.assertIn('UPLOAD_URL=UPLOAD+"/url"',http)
+  self.assertIn("/content/upload/url",js)
+  self.assertIn("content-upload-url",js)
+  self.assertIn("Importar URL",js)
+
  def test_create_requires_content_install_and_uses_transfer_plane(self):
   s=service();item=s.create({"username":"alice"},"i1","mod.zip")
   self.assertEqual(s.workspace.calls[-1],("i1","content.install"));created=s.transfers.created[-1]
