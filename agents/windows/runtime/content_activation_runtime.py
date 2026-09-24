@@ -86,6 +86,7 @@ def project_runtime_spec(spec:dict[str,Any],snapshot:dict[str,Any])->dict[str,An
  content_args=[];properties=[]
  game_id=str(result.get("game_id") or "").strip().lower();dayz_enabled=not (game_id=="dayz" and result.get("dayz_content_enabled") is False)
  if game_id=="dayz":result["dayz_content_enabled"]=dayz_enabled
+ if game_id=="dayz" and not dayz_enabled:base=[value for value in base if not str(value).strip().lower().startswith(("-mod=","-servermod="))]
  dayz_entries=[entry for entry in entries if _adapter(entry)=="dayz"] if dayz_enabled else []
  if dayz_entries:
   try:dayz=project_dayz_activation(result,dayz_entries)
