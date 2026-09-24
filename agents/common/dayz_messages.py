@@ -117,6 +117,37 @@ def _inside(root: Path, candidate: Path, label: str) -> Path:
     return resolved
 
 
+def _instance_state_root(record: dict[str, Any]) -> Path | None:
+    for key in ("instance_state_root", "files_root"):
+        value = str(record.get(key) or "").strip()
+        if not value:
+            continue
+        root = Path(value)
+        if not root.is_absolute():
+            raise DayZMessagesError(f"DayZ {key} must be absolute")
+        return root.resolve()
+    return None
+
+
+def _inside_trusted_roots(
+    record: dict[str, Any],
+    candidate: Path,
+    label: str,
+) -> Path:
+    roots = [_runtime_root(record)]
+    state_root = _instance_state_root(record)
+    if state_root is not None and state_root not in roots:
+        roots.append(state_root)
+    resolved = candidate.resolve()
+    for root in roots:
+        try:
+            resolved.relative_to(root)
+            return resolved
+        except ValueError:
+            continue
+    raise DayZMessagesError(f"{label} is outside instance roots")
+
+
 def _argument(record: dict[str, Any], pattern: re.Pattern[str]) -> str | None:
     values = record.get("arguments")
     if not isinstance(values, list):
@@ -133,17 +164,27 @@ def resolve_dayz_mission(record: dict[str, Any]) -> tuple[str, Path]:
     if str(record.get("game_id") or "").strip().lower() != "dayz":
         raise DayZMessagesError("native DayZ restart requires game_id=dayz")
     root = _runtime_root(record)
+    state_root = _instance_state_root(record)
     mission_value = _argument(record, _MISSION_ARG)
     if mission_value:
         raw = Path(mission_value)
-        mission_root = _inside(root, raw if raw.is_absolute() else root / raw, "DayZ mission path")
+        candidate = raw if raw.is_absolute() else root / raw
+        mission_root = _inside_trusted_roots(
+            record,
+            candidate,
+            "DayZ mission path",
+        )
         mission = mission_root.name
     else:
         config_value = _argument(record, _CONFIG_ARG) or "serverDZ.cfg"
         config_path = Path(config_value)
         if not config_path.is_absolute():
             config_path = root / config_path
-        config_path = _inside(root, config_path, "DayZ server config")
+        config_path = _inside_trusted_roots(
+            record,
+            config_path,
+            "DayZ server config",
+        )
         try:
             source = config_path.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
@@ -152,7 +193,12 @@ def resolve_dayz_mission(record: dict[str, Any]) -> tuple[str, Path]:
         if not match:
             raise DayZMessagesError("DayZ mission template not found in server config")
         mission = match.group(1).strip()
-        mission_root = _inside(root, root / "mpmissions" / mission, "DayZ mission path")
+        mission_base = state_root if state_root is not None else root
+        mission_root = _inside_trusted_roots(
+            record,
+            mission_base / "mpmissions" / mission,
+            "DayZ mission path",
+        )
     if not _SAFE_MISSION.fullmatch(mission):
         raise DayZMessagesError("invalid DayZ mission name")
     return mission, mission_root
@@ -198,8 +244,11 @@ def native_restart_plan(record: dict[str, Any], deadline_minutes: int, *, existi
     if not instance_id:
         raise DayZMessagesError("instance_id is required")
     mission, mission_root = resolve_dayz_mission(record)
-    root = _runtime_root(record)
-    target = _inside(root, mission_root / "db" / "messages.xml", "DayZ messages.xml")
+    target = _inside_trusted_roots(
+        record,
+        mission_root / "db" / "messages.xml",
+        "DayZ messages.xml",
+    )
     message = DayZShutdownMessage(int(deadline_minutes))
     return DayZNativeRestartPlan(
         instance_id=instance_id,
@@ -230,6 +279,7 @@ def materialize_shutdown_messages_xml(path: Path, message: DayZShutdownMessage, 
     with NamedTemporaryFile("w", encoding="utf-8", dir=target.parent, prefix=".messages.xml.", delete=False) as handle:
         handle.write(payload)
         handle.flush()
+        os.fsync(handle.fileno())
         temporary = Path(handle.name)
     try:
         os.chmod(temporary, mode)
@@ -237,7 +287,19 @@ def materialize_shutdown_messages_xml(path: Path, message: DayZShutdownMessage, 
             try:
                 os.chown(temporary, owner[0], owner[1])
             except PermissionError:
-                pass
+                # Hybrid workers commonly have group-write access to the
+                # instance file but cannot chown an atomic replacement back to
+                # the instance runtime identity.  Preserve the existing inode
+                # ownership instead of silently replacing it with the worker.
+                temporary.unlink()
+                with target.open("w", encoding="utf-8") as handle:
+                    handle.write(payload)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                # The existing inode already has the intended mode and
+                # ownership. A group-authorized Hybrid worker may write it but
+                # cannot chmod/chown it because it is not the inode owner.
+                return target
         temporary.replace(target)
     finally:
         try:

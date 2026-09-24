@@ -9,6 +9,17 @@ from dayz_management_repository import DayZManagementRepository,DayZOperationCon
 from json_serialization import to_json_compatible
 
 PATH="/api/customer/instance/dayz"
+DISCOVERY_SCHEMA_VERSION=2
+
+def _discovery_payload(op):
+    if not isinstance(op,dict) or op.get("action")!="discover_missions" or op.get("status")!="completed":return None
+    payload=(op.get("result") or {}).get("result")
+    if not isinstance(payload,dict) or int(payload.get("schema_version") or 0)<DISCOVERY_SCHEMA_VERSION:return None
+    missions=payload.get("missions")
+    if not isinstance(missions,list):return None
+    required={"id","official","community","active","installed","available","can_activate","state","source"}
+    if any(not isinstance(item,dict) or not required.issubset(item) for item in missions):return None
+    return payload
 
 def install_customer_dayz_http(legacy,authenticate):
     previous_get=legacy.DashboardHandler.do_GET;previous_post=legacy.DashboardHandler.do_POST
@@ -31,15 +42,14 @@ def install_customer_dayz_http(legacy,authenticate):
         return workspace,context,DayZManagementRepository(backend())
     def view(user,instance_id):
         workspace,context,repo=service(user,instance_id);repo.initialize();ops=repo.list_for_instance(instance_id,25)
-        discovery=next((op for op in ops if op.get("action")=="discover_missions" and op.get("status")=="completed" and isinstance((op.get("result") or {}).get("result"),dict)),None)
+        discovery=next(((op,_discovery_payload(op)) for op in ops if _discovery_payload(op) is not None),None)
         active_discovery=next((op for op in ops if op.get("action")=="discover_missions" and op.get("status") in {"queued","delivered"}),None)
         if discovery is None and active_discovery is None:
             actor=str((user or {}).get("username") or (user or {}).get("id") or "customer")
             repo.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="discover_missions",requested_by=actor)
             ops=repo.list_for_instance(instance_id,25)
-        maps={}
-        discovery=next((op for op in ops if op.get("action")=="discover_missions" and op.get("status")=="completed" and isinstance((op.get("result") or {}).get("result"),dict)),None)
-        if discovery:maps=(discovery.get("result") or {}).get("result") or {}
+        discovery=next(((op,_discovery_payload(op)) for op in ops if _discovery_payload(op) is not None),None)
+        maps=discovery[1] if discovery else {}
         return {"instance_id":instance_id,"editable":"instance.restart" in workspace.permissions(user,instance_id) and "settings.write" in workspace.permissions(user,instance_id),"maps":maps,"operations":[{k:op.get(k) for k in ("operation_id","action","status","scheduled_at","last_error","created_at","delivered_at","completed_at","canceled_at","payload","result")} for op in ops[:15]]}
     def error(self,exc):
         if isinstance(exc,PermissionError):return send(self,403,{"error":"forbidden","message":str(exc)})

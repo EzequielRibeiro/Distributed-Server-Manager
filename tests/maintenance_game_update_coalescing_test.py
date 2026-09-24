@@ -27,7 +27,7 @@ class _Repo:
  def mark_stop(self,rid,cid):return self._mark('stop_command_id',cid,'stopping')
  def mark_start(self,rid,cid):return self._mark('start_command_id',cid,'starting')
  def mark_readiness(self,rid,cid):return self._mark('readiness_command_id',cid,'validating')
- def finish(self,rid,success,error_code=None,error_detail=None,now=None):self.finished.append((success,error_code,error_detail));self.current['status']='completed' if success else 'failed';return self.current
+ def finish(self,rid,success,error_code=None,error_detail=None,now=None,next_due_override=None):self.finished.append((success,error_code,error_detail));self.current['status']='completed' if success else 'failed';return self.current
 
 class _Automation:
  def initialize(self):pass

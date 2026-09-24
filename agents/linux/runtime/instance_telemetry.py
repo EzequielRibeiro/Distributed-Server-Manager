@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import struct
 import subprocess
 import time
 from typing import Any
@@ -22,6 +23,7 @@ STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-a
 SAMPLE_STATE_DIR = STATE_DIR / "instance-telemetry"
 _A2S_INFO_REQUEST = b"\xff\xff\xff\xffTSource Engine Query\x00"
 _A2S_HEADER = b"\xff\xff\xff\xff"
+_RAKNET_MAGIC = bytes.fromhex("00ffff00fefefefefdfdfdfd12345678")
 
 
 def _systemd_main_pid(instance_id: str) -> int | None:
@@ -299,6 +301,94 @@ def _a2s_info(host: str, port: int, timeout_seconds: int = 2) -> dict[str, Any]:
     return result
 
 
+def _parse_bedrock_pong(payload: bytes) -> dict[str, int]:
+    # RakNet Unconnected Pong: id + ping time + server guid + magic + u16 string + MOTD.
+    if len(payload) < 35 or payload[0] != 0x1C or payload[17:33] != _RAKNET_MAGIC:
+        return {}
+    size = int.from_bytes(payload[33:35], "big")
+    if size <= 0 or 35 + size > len(payload):
+        return {}
+    try:
+        fields = payload[35:35 + size].decode("utf-8", errors="strict").split(";")
+    except UnicodeDecodeError:
+        return {}
+    if len(fields) < 6 or fields[0] not in {"MCPE", "MCEE"}:
+        return {}
+    try:
+        players = int(fields[4])
+        maximum = int(fields[5])
+    except (TypeError, ValueError):
+        return {}
+    if players < 0 or maximum < 0:
+        return {}
+    return {"players_online": players, "players_max": maximum}
+
+
+def _bedrock_ping(host: str, port: int, timeout_seconds: int = 2) -> dict[str, Any]:
+    """Query a Minecraft Bedrock server using the RakNet unconnected ping."""
+    try:
+        port = int(port)
+        timeout = max(1, min(int(timeout_seconds), 5))
+    except (TypeError, ValueError):
+        return {}
+    if not 1 <= port <= 65535:
+        return {}
+    stamp = int(time.monotonic() * 1000) & ((1 << 63) - 1)
+    packet = b"\x01" + struct.pack(">Q", stamp) + _RAKNET_MAGIC + struct.pack(">Q", 0)
+    started = time.monotonic()
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(timeout)
+            sock.sendto(packet, (host, port))
+            payload, _ = sock.recvfrom(4096)
+    except (OSError, socket.timeout):
+        return {}
+    result: dict[str, Any] = _parse_bedrock_pong(payload)
+    if result:
+        result["latency_ms"] = round((time.monotonic() - started) * 1000.0, 2)
+    return result
+
+
+def _tcp_connect_latency(host: str, port: int, timeout_seconds: int = 2) -> dict[str, Any]:
+    try:
+        port = int(port)
+        timeout = max(1, min(int(timeout_seconds), 5))
+    except (TypeError, ValueError):
+        return {}
+    if not 1 <= port <= 65535:
+        return {}
+    started = time.monotonic()
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            pass
+    except OSError:
+        return {}
+    return {"latency_ms": round((time.monotonic() - started) * 1000.0, 2)}
+
+
+def _bedrock_query(record: dict[str, Any], telemetry_config: dict[str, Any]) -> dict[str, Any]:
+    ports = record.get("ports") if isinstance(record.get("ports"), dict) else {}
+    timeout = telemetry_config.get("query_timeout_seconds") or 2
+
+    # Bedrock 1.26.50+ can use NetherNet, where the published server port is a
+    # TCP signaling endpoint instead of the legacy RakNet UDP listener.  A TCP
+    # connect round trip gives us a local server-response latency without
+    # pretending that the old RakNet ping is still available.
+    signaling = ports.get("signaling")
+    raw_signaling = signaling.get("port") if isinstance(signaling, dict) else signaling
+    if raw_signaling is not None:
+        result = _tcp_connect_latency("127.0.0.1", raw_signaling, timeout)
+        if result:
+            return result
+
+    # Preserve legacy RakNet telemetry for older Bedrock runtime profiles.
+    binding = ports.get("game_ipv4")
+    raw_port = binding.get("port") if isinstance(binding, dict) else binding
+    if raw_port is None:
+        return {}
+    return _bedrock_ping("127.0.0.1", raw_port, timeout)
+
+
 def _dayz_query(record: dict[str, Any], telemetry_config: dict[str, Any]) -> dict[str, Any]:
     ports = record.get("ports") if isinstance(record.get("ports"), dict) else {}
     query = ports.get("steam_query")
@@ -374,7 +464,13 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
 
         game_id = str(record.get("game_id") or "").strip().lower()
         profile = str(record.get("profile") or "").strip().lower()
-        game = _dayz_query(record, telemetry_config) if game_id in {"dayz", "dayz.stable"} or profile == "dayz" else _game_query(telemetry_config)
+        environment_id = str(record.get("environment_id") or "").strip().lower()
+        if game_id in {"dayz", "dayz.stable"} or profile == "dayz":
+            game = _dayz_query(record, telemetry_config)
+        elif profile == "minecraft-bedrock" or environment_id == "minecraft.bedrock.vanilla":
+            game = _bedrock_query(record, telemetry_config)
+        else:
+            game = _game_query(telemetry_config)
 
         try:
             view = instance_runtime.status(config, instance_id)
@@ -383,13 +479,16 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
         except Exception:
             health = "unknown"
 
-        private_state_root = record.get("instance_state_root") or record.get("path")
+        # Measure the customer-manageable tree first. Hybrid prepares files_root
+        # for capivara-agent group access, while the parent instance_state_root may
+        # intentionally remain traversal-restricted (notably Minecraft Bedrock).
+        storage_root = record.get("files_root") or record.get("instance_state_root") or record.get("path")
         results.append({
             "instance_id": instance_id,
             "storage_pool_id": str(record.get("storage_pool_id") or "") or None,
             "cpu_percent": cpu,
             "memory_bytes": memory,
-            "storage_used_bytes": _storage_used(private_state_root),
+            "storage_used_bytes": _storage_used(storage_root),
             "network_rx_bytes": rx,
             "network_tx_bytes": tx,
             "players_online": game.get("players_online"),

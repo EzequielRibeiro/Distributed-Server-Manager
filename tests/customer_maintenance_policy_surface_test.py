@@ -23,10 +23,14 @@ class CustomerMaintenancePolicySurfaceTest(unittest.TestCase):
  def test_ui_is_safe_and_capability_driven(self):
   text=(ROOT/'dashboard/web/customer-maintenance.js').read_text(encoding='utf-8')
   self.assertIn('/api/customer/instance/workspace/maintenance',text);self.assertIn('native_countdown',text);self.assertIn('coalesce_updates',text);self.assertIn('settings.write', (ROOT/'dashboard/customer_maintenance_workspace.py').read_text(encoding='utf-8'))
+  self.assertIn('Intl.supportedValuesOf("timeZone")',text);self.assertIn('mode==="fixed"',text);self.assertIn('offset<intervalSeconds',text);self.assertIn('syncWarnings()',text)
+  self.assertIn('renderLoadError',text);self.assertIn('Tentar novamente',text);self.assertIn('let section=document.getElementById("view-maintenance")',text)
+  self.assertNotIn('createElement("input");timezone.id="maintenance-timezone"',text)
   self.assertNotIn('innerHTML',text);self.assertNotIn('eval(',text);self.assertNotIn('shell',text.lower())
  def test_composition_and_static_policy_are_wired(self):
   part=(ROOT/'dashboard/server_part20.py').read_text(encoding='utf-8');service=(ROOT/'systemd/dsm-dashboard.service').read_text(encoding='utf-8');assets=(ROOT/'dashboard/static_asset_policy.py').read_text(encoding='utf-8');loader=(ROOT/'dashboard/web/customer-content-update-policy.js').read_text(encoding='utf-8')
   self.assertIn('install_customer_maintenance_http',part);self.assertIn('server_part20.py',service);self.assertIn('/customer-maintenance.js',assets);self.assertIn('/customer-maintenance.js',loader)
+  page=(ROOT/'dashboard/web/customer-instance.html').read_text(encoding='utf-8');self.assertIn('/customer-maintenance.js?v=3',page);self.assertIn('data-capivara-maintenance="1"',page);self.assertLess(page.index('/customer-maintenance.js?v=3'),page.index('/customer-content-update-policy.js'))
 
 
 if __name__=='__main__':unittest.main()
