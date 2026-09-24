@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
 
 from content_repository import ContentRepository
@@ -11,6 +12,32 @@ from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from minecraft_content_resolver import MinecraftContentResolverError, resolve_minecraft_content
 from minecraft_modpack_resolver import resolve_minecraft_modpack
 from catalog_provisioning_resolver import resolve_catalog_provisioning
+
+
+def _version_tuple(value: Any) -> tuple[int, ...] | None:
+    text = str(value or "").strip()
+    match = re.fullmatch(r"[vV]?(\d+(?:\.\d+){1,3})(?:[-+].*)?", text)
+    if not match:
+        return None
+    parts = tuple(int(piece) for piece in match.group(1).split("."))
+    while len(parts) > 1 and parts[-1] == 0:
+        parts = parts[:-1]
+    return parts
+
+
+def _version_direction(current: Any, target: Any) -> str:
+    before = _version_tuple(current)
+    after = _version_tuple(target)
+    if before is None or after is None:
+        return "unknown"
+    width = max(len(before), len(after))
+    left = before + (0,) * (width - len(before))
+    right = after + (0,) * (width - len(after))
+    if right < left:
+        return "downgrade"
+    if right > left:
+        return "upgrade"
+    return "same"
 
 
 class MinecraftVersionUpdatePreflightService:
@@ -130,12 +157,15 @@ class MinecraftVersionUpdatePreflightService:
         content = self._content_compatibility(str(instance_id), resolved_version, definition)
         counts = {name: sum(1 for item in content if item["compatibility"] == name) for name in ("compatible", "incompatible", "unknown", "disabled")}
         blocking = counts["incompatible"] + counts["unknown"]
+        current_version = str(context.get("game_version") or "")
+        direction = _version_direction(current_version, resolved_version)
+        downgrade = direction == "downgrade"
         return {
             "kind": "MinecraftVersionUpdatePreflight",
             "instance_id": str(instance_id),
             "runtime_id": runtime_id,
             "current": {
-                "version": str(context.get("game_version") or ""),
+                "version": current_version,
                 "build": str(context.get("build_id") or ""),
             },
             "target": {
@@ -150,8 +180,14 @@ class MinecraftVersionUpdatePreflightService:
             "has_unverified_content": counts["unknown"] > 0,
             "has_blocking_content": blocking > 0,
             "blocking_content_count": blocking,
-            "can_request_update": blocking == 0,
-            "warning": "A troca de versão só é liberada quando todo conteúdo ativo possui compatibilidade confirmada. Conteúdo incompatível ou não verificável deve ser removido, atualizado ou desativado antes da operação.",
+            "version_direction": direction,
+            "has_blocking_version": downgrade,
+            "can_request_update": blocking == 0 and not downgrade,
+            "warning": (
+                "Downgrade de Minecraft bloqueado: mundos criados por versões mais novas podem não ser compatíveis com versões anteriores."
+                if downgrade
+                else "A troca de versão só é liberada quando todo conteúdo ativo possui compatibilidade confirmada. Conteúdo incompatível ou não verificável deve ser removido, atualizado ou desativado antes da operação."
+            ),
         }
 
 
