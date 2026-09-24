@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Execute typed DayZ map and wipe operations on Linux Agent."""
 from __future__ import annotations
-import json,os,sys
+import json,os,sys,time
 from datetime import datetime,timezone
 from pathlib import Path
 from typing import Any
@@ -33,6 +33,19 @@ def _write(path,payload):
         except FileNotFoundError:pass
 def _history(oid):return HISTORY_DIR/f"{_token(oid,'operation_id')}.json"
 def _result(oid):return RESULT_DIR/f"{_token(oid,'operation_id')}.json"
+def _stabilize(config,iid):
+    try:seconds=max(0,min(int(os.environ.get("CAPIVARA_DAYZ_SWITCH_STABILIZE_SECONDS","40")),120))
+    except (TypeError,ValueError):seconds=40
+    if seconds<=0:return {"seconds":0,"observed_state":str(status(config,iid).get("observed_state") or "unknown")}
+    deadline=time.monotonic()+seconds;last="unknown"
+    while time.monotonic()<deadline:
+        view=status(config,iid);last=str(view.get("observed_state") or "unknown")
+        if last not in {"running","starting"}:raise RuntimeError(f"DayZ runtime became {last} during map-switch stabilization")
+        time.sleep(min(5,max(.1,deadline-time.monotonic())))
+    final=status(config,iid);last=str(final.get("observed_state") or "unknown")
+    if last!="running":raise RuntimeError(f"DayZ runtime did not stabilize after map switch: {last}")
+    return {"seconds":seconds,"observed_state":last}
+
 def _change_mission(config,record,iid,payload):
     before_view=discover_missions(record);previous_mission=before_view["current"];target=str(payload.get("mission") or "").strip()
     target_item=next((item for item in before_view["missions"] if item.get("id")==target),None)
@@ -54,10 +67,12 @@ def _change_mission(config,record,iid,payload):
         updated["dayz_content_enabled"]=content_mode=="keep"
         updated=project_runtime_spec(updated,snapshot)
         privileged_materialization.materialize(config,updated)
-        if was_running:lifecycle(config,iid,"start")
+        stabilization=None
+        if was_running:
+            lifecycle(config,iid,"start");stabilization=_stabilize(config,iid)
         after_view=discover_missions(updated);active=next((item for item in after_view["missions"] if item.get("active")),None)
         if not active or active.get("id")!=target:raise RuntimeError(f"DayZ mission activation verification failed: {target}")
-        return {"previous_mission":previous_mission,"mission":target,"restarted":was_running,"rollback":False,"changed":True,"map":active,"content_mode":content_mode,"mods_enabled":content_mode=="keep","mod_preflight":preflight}
+        return {"previous_mission":previous_mission,"mission":target,"restarted":was_running,"rollback":False,"changed":True,"map":active,"content_mode":content_mode,"mods_enabled":content_mode=="keep","mod_preflight":preflight,"stabilization":stabilization}
     except Exception as exc:
         rollback_error=None
         if previous_mission and previous_mission!=target:
