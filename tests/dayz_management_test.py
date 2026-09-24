@@ -34,6 +34,9 @@ class DayZManagementTest(unittest.TestCase):
   self.assertEqual(changed["bind_paths"],[{"source":str(self.state/"mpmissions"/"dayzOffline.enoch"),"target":str(self.game/"mpmissions"/"dayzOffline.enoch")}])
   self.assertTrue((self.state/"mpmissions"/"dayzOffline.chernarusplus"/"storage_1"/"players.db").is_file())
   with self.assertRaises(FileNotFoundError):apply_mission(self.record,"community.not-installed")
+ def test_current_mission_prefers_observed_config_over_stale_record(self):
+  record={**self.record,"mission":"dayzOffline.enoch"}
+  self.assertEqual(current_mission(record),"dayzOffline.chernarusplus")
  def test_switch_updates_content_base_bind_paths_used_by_mod_activation(self):
   record={**self.record,
    "content_base_bind_paths":[{"source":str(self.state/"mpmissions"/"dayzOffline.chernarusplus"),"target":str(self.game/"mpmissions"/"dayzOffline.chernarusplus")}],
