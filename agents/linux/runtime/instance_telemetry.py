@@ -479,13 +479,16 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
         except Exception:
             health = "unknown"
 
-        private_state_root = record.get("instance_state_root") or record.get("path")
+        # Measure the customer-manageable tree first. Hybrid prepares files_root
+        # for capivara-agent group access, while the parent instance_state_root may
+        # intentionally remain traversal-restricted (notably Minecraft Bedrock).
+        storage_root = record.get("files_root") or record.get("instance_state_root") or record.get("path")
         results.append({
             "instance_id": instance_id,
             "storage_pool_id": str(record.get("storage_pool_id") or "") or None,
             "cpu_percent": cpu,
             "memory_bytes": memory,
-            "storage_used_bytes": _storage_used(private_state_root),
+            "storage_used_bytes": _storage_used(storage_root),
             "network_rx_bytes": rx,
             "network_tx_bytes": tx,
             "players_online": game.get("players_online"),
