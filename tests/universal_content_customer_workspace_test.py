@@ -121,6 +121,18 @@ class CustomerContentWorkspaceTest(unittest.TestCase):
   service.mutate({"username":"u"},"i1","pack","disable",{});self.assertEqual(service.content.bundle_states[-1][2]["activation_state"],"disabled")
   service.mutate({"username":"u"},"i1","pack","remove",{});self.assertEqual(service.content.bundle_states[-1][2]["desired_state"],"absent")
   with self.assertRaises(PermissionError):service.mutate({"username":"u"},"i1","pack","update",{"version":"2"})
+ def test_prepare_clean_preserves_instance_and_skips_bundle_children(self):
+  context={"id":"i1","game_id":"minecraft","agent_id":"agent-1","runtime_id":"minecraft.java.youer","game_version":"1.21.1"};service=_service(_policy(),context=context);removed=[]
+  service.content.list=lambda **kwargs:[
+   {"content_id":"pack","content_type":"modpack","desired_state":"installed","metadata":{}},
+   {"content_id":"pack-child","content_type":"mod","desired_state":"installed","metadata":{"bundle":{"parent_content_id":"pack"}}},
+   {"content_id":"extra-plugin","content_type":"plugin","desired_state":"installed","metadata":{}},
+   {"content_id":"disabled-mod","content_type":"mod","desired_state":"absent","metadata":{}},
+  ]
+  service.mutate=lambda user,iid,cid,action,body:removed.append((cid,action)) or {"changed":True}
+  result=service.prepare_clean_for_version_change({"username":"u"},"i1")
+  self.assertEqual(removed,[("pack","remove"),("extra-plugin","remove")]);self.assertTrue(result["completed"]);self.assertIn("world",result["preserved"]);self.assertIn("ports",result["preserved"])
+
  def test_missing_assignment_is_not_found(self):
   with self.assertRaises(KeyError):_service(_policy()).mutate({"username":"u"},"i1","missing","disable",{})
 
