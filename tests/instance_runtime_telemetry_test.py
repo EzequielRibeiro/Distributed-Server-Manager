@@ -174,7 +174,18 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
             + motd
         )
 
-    def test_bedrock_uses_reserved_ipv4_game_port(self):
+    def test_bedrock_uses_nethernet_signaling_port_when_available(self):
+        record = {"ports": {"signaling": {"port": 24100, "protocol": "tcp"}}}
+        with patch.object(
+            telemetry,
+            "_tcp_connect_latency",
+            return_value={"latency_ms": 4.2},
+        ) as query:
+            result = telemetry._bedrock_query(record, {})
+        self.assertEqual(result["latency_ms"], 4.2)
+        query.assert_called_once_with("127.0.0.1", 24100, 2)
+
+    def test_bedrock_falls_back_to_reserved_raknet_ipv4_port(self):
         record = {"ports": {"game_ipv4": {"port": 24100, "protocol": "udp"}}}
         with patch.object(
             telemetry,
@@ -185,6 +196,15 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
         self.assertEqual(result["players_online"], 2)
         self.assertEqual(result["latency_ms"], 3.5)
         query.assert_called_once_with("127.0.0.1", 24100, 2)
+
+    def test_tcp_connect_latency_reports_round_trip(self):
+        fake = _FakeSocket([])
+        with patch.object(telemetry.socket, "create_connection", return_value=fake) as connect, patch.object(
+            telemetry.time, "monotonic", side_effect=[20.0, 20.004]
+        ):
+            result = telemetry._tcp_connect_latency("127.0.0.1", 24006, 1)
+        self.assertEqual(result["latency_ms"], 4.0)
+        connect.assert_called_once_with(("127.0.0.1", 24006), timeout=1)
 
     def test_native_bedrock_ping_parses_players_and_latency(self):
         fake = _FakeSocket([self._bedrock_pong(players=6, players_max=30)])
