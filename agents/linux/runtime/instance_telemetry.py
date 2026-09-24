@@ -349,16 +349,44 @@ def _bedrock_ping(host: str, port: int, timeout_seconds: int = 2) -> dict[str, A
     return result
 
 
-def _bedrock_query(record: dict[str, Any], telemetry_config: dict[str, Any]) -> dict[str, Any]:
-    ports = record.get("ports") if isinstance(record.get("ports"), dict) else {}
-    binding = ports.get("game_ipv4")
-    raw_port = binding.get("port") if isinstance(binding, dict) else binding
+def _tcp_connect_latency(host: str, port: int, timeout_seconds: int = 2) -> dict[str, Any]:
     try:
-        port = int(raw_port)
+        port = int(port)
+        timeout = max(1, min(int(timeout_seconds), 5))
     except (TypeError, ValueError):
         return {}
+    if not 1 <= port <= 65535:
+        return {}
+    started = time.monotonic()
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            pass
+    except OSError:
+        return {}
+    return {"latency_ms": round((time.monotonic() - started) * 1000.0, 2)}
+
+
+def _bedrock_query(record: dict[str, Any], telemetry_config: dict[str, Any]) -> dict[str, Any]:
+    ports = record.get("ports") if isinstance(record.get("ports"), dict) else {}
     timeout = telemetry_config.get("query_timeout_seconds") or 2
-    return _bedrock_ping("127.0.0.1", port, timeout)
+
+    # Bedrock 1.26.50+ can use NetherNet, where the published server port is a
+    # TCP signaling endpoint instead of the legacy RakNet UDP listener.  A TCP
+    # connect round trip gives us a local server-response latency without
+    # pretending that the old RakNet ping is still available.
+    signaling = ports.get("signaling")
+    raw_signaling = signaling.get("port") if isinstance(signaling, dict) else signaling
+    if raw_signaling is not None:
+        result = _tcp_connect_latency("127.0.0.1", raw_signaling, timeout)
+        if result:
+            return result
+
+    # Preserve legacy RakNet telemetry for older Bedrock runtime profiles.
+    binding = ports.get("game_ipv4")
+    raw_port = binding.get("port") if isinstance(binding, dict) else binding
+    if raw_port is None:
+        return {}
+    return _bedrock_ping("127.0.0.1", raw_port, timeout)
 
 
 def _dayz_query(record: dict[str, Any], telemetry_config: dict[str, Any]) -> dict[str, Any]:
