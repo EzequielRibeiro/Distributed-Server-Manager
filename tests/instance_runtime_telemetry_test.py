@@ -162,6 +162,48 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
         self.assertEqual(len(fake.sent), 2)
         self.assertEqual(fake.sent[1][0], telemetry._A2S_INFO_REQUEST + challenge)
 
+    @staticmethod
+    def _bedrock_pong(players=4, players_max=20):
+        motd = f"MCPE;Capivara Bedrock;999;1.21.100;{players};{players_max};123456;Bedrock level;Survival;1;19132;19133;".encode("utf-8")
+        return (
+            b"\x1c"
+            + (123).to_bytes(8, "big")
+            + (456).to_bytes(8, "big")
+            + telemetry._RAKNET_MAGIC
+            + len(motd).to_bytes(2, "big")
+            + motd
+        )
+
+    def test_bedrock_uses_reserved_ipv4_game_port(self):
+        record = {"ports": {"game_ipv4": {"port": 24100, "protocol": "udp"}}}
+        with patch.object(
+            telemetry,
+            "_bedrock_ping",
+            return_value={"players_online": 2, "players_max": 10, "latency_ms": 3.5},
+        ) as query:
+            result = telemetry._bedrock_query(record, {})
+        self.assertEqual(result["players_online"], 2)
+        self.assertEqual(result["latency_ms"], 3.5)
+        query.assert_called_once_with("127.0.0.1", 24100, 2)
+
+    def test_native_bedrock_ping_parses_players_and_latency(self):
+        fake = _FakeSocket([self._bedrock_pong(players=6, players_max=30)])
+        with patch.object(telemetry.socket, "socket", return_value=fake), patch.object(
+            telemetry.time, "monotonic", side_effect=[10.0, 10.012]
+        ):
+            result = telemetry._bedrock_ping("127.0.0.1", 19132, 1)
+        self.assertEqual(result["players_online"], 6)
+        self.assertEqual(result["players_max"], 30)
+        self.assertEqual(result["latency_ms"], 12.0)
+        self.assertEqual(fake.sent[0][1], ("127.0.0.1", 19132))
+        self.assertEqual(fake.sent[0][0][0], 0x01)
+        self.assertIn(telemetry._RAKNET_MAGIC, fake.sent[0][0])
+
+    def test_native_bedrock_failure_is_unknown(self):
+        malformed = _FakeSocket([b"not-raknet"])
+        with patch.object(telemetry.socket, "socket", return_value=malformed):
+            self.assertEqual(telemetry._bedrock_ping("127.0.0.1", 19132, 1), {})
+
     def test_native_a2s_failure_is_unknown(self):
         malformed = _FakeSocket([b"not-a2s"])
         with patch.object(telemetry.socket, "socket", return_value=malformed):
