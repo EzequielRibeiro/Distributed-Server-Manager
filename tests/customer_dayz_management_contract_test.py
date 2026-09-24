@@ -22,6 +22,8 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
   source=(ROOT/"dashboard"/"customer_dayz_http.py").read_text(encoding="utf-8")
   for token in ('"refresh_maps"','"change_mission"','"wipe"','"cancel"',"scheduled_at"):
    self.assertIn(token,source)
+  self.assertIn("DISCOVERY_SCHEMA_VERSION=2",source)
+  self.assertIn("_discovery_payload",source)
  def test_upgrade_is_registered(self):
   source=(ROOT/"database"/"baseline_upgrade_engine.py").read_text(encoding="utf-8")
   self.assertIn('BaselineUpgrade(21, "dayz_management_operations"',source)

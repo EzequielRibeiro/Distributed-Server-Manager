@@ -64,6 +64,7 @@ def discover_missions(record):
         })
     active_item=next((item for item in result if item["active"]),None)
     return {
+        "schema_version":2,
         "current":current,
         "current_name":(active_item or {}).get("name",current),
         "missions":result,

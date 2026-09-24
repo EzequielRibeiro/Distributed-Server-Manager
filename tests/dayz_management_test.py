@@ -19,7 +19,7 @@ class DayZManagementTest(unittest.TestCase):
   self.record={"instance_id":"dayz-1","agent_id":"agent-1","game_id":"dayz","adapter":"systemd","working_directory":str(self.game),"instance_state_root":str(self.state),"config_path":str(self.state/"config"/"serverDZ.cfg"),"arguments":["-config="+str(self.state/"config"/"serverDZ.cfg")],"bind_paths":[{"source":str(self.state/"mpmissions"/"dayzOffline.chernarusplus"),"target":str(self.game/"mpmissions"/"dayzOffline.chernarusplus")}]}
  def tearDown(self):self.temp.cleanup()
  def test_discovers_and_switches_only_available_missions(self):
-  view=discover_missions(self.record);self.assertEqual(view["current"],"dayzOffline.chernarusplus")
+  view=discover_missions(self.record);self.assertEqual(view["schema_version"],2);self.assertEqual(view["current"],"dayzOffline.chernarusplus")
   by_id={x["id"]:x for x in view["missions"]}
   self.assertEqual(set(by_id),{"dayzOffline.chernarusplus","dayzOffline.enoch","dayzOffline.sakhal"})
   self.assertTrue(by_id["dayzOffline.chernarusplus"]["active"])
