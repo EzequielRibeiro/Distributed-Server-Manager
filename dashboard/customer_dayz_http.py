@@ -82,7 +82,9 @@ def install_customer_dayz_http(legacy,authenticate):
                 if not mission:raise ValueError("mission is required")
                 content_mode=str(body.get("content_mode") or "disable").strip().lower()
                 if content_mode not in {"disable","keep"}:raise ValueError("invalid DayZ map content mode")
-                queued=repo.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="change_mission",payload={"mission":mission,"content_mode":content_mode},requested_by=actor)
+                persistence_mode=str(body.get("persistence_mode") or "fresh").strip().lower()
+                if persistence_mode not in {"fresh","keep"}:raise ValueError("invalid DayZ map persistence mode")
+                queued=repo.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="change_mission",payload={"mission":mission,"content_mode":content_mode,"persistence_mode":persistence_mode},requested_by=actor)
             elif action=="wipe":
                 scheduled_at=body.get("scheduled_at")
                 if scheduled_at:
