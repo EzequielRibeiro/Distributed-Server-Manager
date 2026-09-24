@@ -109,16 +109,20 @@ def apply_mission(record,mission):
     seeds.append({"source":str(shared),"target":str(private)})
     result["seed_directories"]=seeds
     if str(record.get("adapter") or "").lower()=="systemd":
-        binds=[]
-        for item in record.get("bind_paths") or []:
-            if not isinstance(item,dict):continue
-            source=str(item.get("source") or "");target=str(item.get("target") or "")
-            mission_bind=False
-            try:mission_bind=Path(source).parent.resolve()==(state_root/"mpmissions").resolve() or Path(target).parent.resolve()==(working/"mpmissions").resolve()
-            except Exception:mission_bind=False
-            if not mission_bind:binds.append(dict(item))
-        binds.append({"source":str(private),"target":str(shared)})
-        result["bind_paths"]=binds
+        def replace_mission_bind(raw):
+            binds=[]
+            for item in raw or []:
+                if not isinstance(item,dict):continue
+                source=str(item.get("source") or "");target=str(item.get("target") or "")
+                mission_bind=False
+                try:mission_bind=Path(source).parent.resolve()==(state_root/"mpmissions").resolve() or Path(target).parent.resolve()==(working/"mpmissions").resolve()
+                except Exception:mission_bind=False
+                if not mission_bind:binds.append(dict(item))
+            binds.append({"source":str(private),"target":str(shared)})
+            return binds
+        result["bind_paths"]=replace_mission_bind(record.get("bind_paths"))
+        if isinstance(record.get("content_base_bind_paths"),list):
+            result["content_base_bind_paths"]=replace_mission_bind(record.get("content_base_bind_paths"))
     return result
 def _persistence_paths(record,mission):
     root=_root(record);private=_copy_if_needed(record,mission);paths=[]

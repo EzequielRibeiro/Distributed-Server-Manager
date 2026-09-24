@@ -34,6 +34,20 @@ class DayZManagementTest(unittest.TestCase):
   self.assertEqual(changed["bind_paths"],[{"source":str(self.state/"mpmissions"/"dayzOffline.enoch"),"target":str(self.game/"mpmissions"/"dayzOffline.enoch")}])
   self.assertTrue((self.state/"mpmissions"/"dayzOffline.chernarusplus"/"storage_1"/"players.db").is_file())
   with self.assertRaises(FileNotFoundError):apply_mission(self.record,"community.not-installed")
+ def test_switch_updates_content_base_bind_paths_used_by_mod_activation(self):
+  record={**self.record,
+   "content_base_bind_paths":[{"source":str(self.state/"mpmissions"/"dayzOffline.chernarusplus"),"target":str(self.game/"mpmissions"/"dayzOffline.chernarusplus")}],
+   "bind_paths":[
+    {"source":str(self.state/"mpmissions"/"dayzOffline.chernarusplus"),"target":str(self.game/"mpmissions"/"dayzOffline.chernarusplus")},
+    {"source":str(self.state/".dsm"/"dayz-keys"),"target":str(self.game/"keys")},
+   ],
+  }
+  changed=apply_mission(record,"dayzOffline.enoch")
+  expected={"source":str(self.state/"mpmissions"/"dayzOffline.enoch"),"target":str(self.game/"mpmissions"/"dayzOffline.enoch")}
+  self.assertEqual(changed["content_base_bind_paths"],[expected])
+  self.assertIn(expected,changed["bind_paths"])
+  self.assertIn({"source":str(self.state/".dsm"/"dayz-keys"),"target":str(self.game/"keys")},changed["bind_paths"])
+  self.assertFalse(any("chernarusplus" in b["source"] or "chernarusplus" in b["target"] for b in changed["content_base_bind_paths"]))
  def test_discovers_community_mission_and_marks_source(self):
   mission=self.game/"mpmissions"/"dayzOffline.namalsk";mission.mkdir(parents=True)
   view=discover_missions(self.record);item=next(x for x in view["missions"] if x["id"]=="dayzOffline.namalsk")
