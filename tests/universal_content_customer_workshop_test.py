@@ -131,6 +131,81 @@ class CustomerWorkshopIntegrationTest(unittest.TestCase):
         self.assertTrue(cf["metadata"]["dependency"]["auto_managed"])
         self.assertEqual(cf["metadata"]["dependency"]["required_by"], "1828439124")
 
+    def test_dayz_community_map_composes_github_source_and_workshop_dependencies(self):
+        seen = []
+        def resolver(reference, *, expected_app_id):
+            published = str(reference).split(":")[-1]
+            seen.append((published, expected_app_id))
+            return {
+                "provider": "steam-workshop",
+                "package_id": f"{expected_app_id}:{published}",
+                "published_file_id": published,
+                "consumer_app_id": expected_app_id,
+                "metadata": {
+                    "published_file_id": published,
+                    "consumer_app_id": expected_app_id,
+                    "title": f"Workshop {published}",
+                },
+            }
+        service = _service(resolver=resolver)
+        service.workspace.policy.mods_allowed = True
+        result = service.install_dayz_community_map(
+            {"username": "u"},
+            "i1",
+            {
+                "content_id": "dayz-map:namalsk",
+                "name": "Namalsk",
+                "source": {
+                    "provider": "github",
+                    "repository": "SumrakDZN/Namalsk-Server",
+                    "ref": "main",
+                },
+                "workshop_items": ["2289456201", "2289461232"],
+                "activation_order": 40,
+            },
+        )
+        self.assertEqual(seen, [("2289456201", "221100"), ("2289461232", "221100")])
+        self.assertEqual(
+            [item["content_id"] for item in result["assignments"]],
+            [
+                "steam-workshop:2289456201",
+                "steam-workshop:2289461232",
+                "dayz-map:namalsk",
+            ],
+        )
+        community = result["assignment"]
+        self.assertEqual(community["content_type"], "map")
+        self.assertEqual(community["provider"], "github")
+        self.assertEqual(
+            community["artifact"]["url"],
+            "https://codeload.github.com/SumrakDZN/Namalsk-Server/zip/main",
+        )
+        self.assertTrue(community["artifact"]["archive"])
+        self.assertEqual(
+            community["dependencies"],
+            ["steam-workshop:2289456201", "steam-workshop:2289461232"],
+        )
+        self.assertEqual(community["activation_order"], 42)
+        self.assertEqual(community["provenance"]["community_map"]["repository"], "SumrakDZN/Namalsk-Server")
+
+    def test_dayz_community_map_rejects_unsafe_github_ref(self):
+        service = _service()
+        service.workspace.policy.mods_allowed = True
+        with self.assertRaisesRegex(ValueError, "invalid GitHub ref"):
+            service.install_dayz_community_map(
+                {"username": "u"},
+                "i1",
+                {
+                    "content_id": "dayz-map:test",
+                    "source": {
+                        "provider": "github",
+                        "repository": "owner/repo",
+                        "ref": "../main",
+                    },
+                    "workshop_items": [],
+                },
+            )
+
     def test_project_zomboid_uses_its_consumer_app_id(self):
         seen = []
         service = _service(game_id="projectzomboid", runtime_id="projectzomboid.stable", resolver=lambda reference, *, expected_app_id: (
