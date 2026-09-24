@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[1]
 for p in (ROOT,ROOT/"core",ROOT/"database",ROOT/"dashboard"):
     if str(p) not in sys.path:sys.path.insert(0,str(p))
 
-from minecraft_version_update_preflight import MinecraftVersionUpdatePreflightService
+from minecraft_version_update_preflight import MinecraftVersionUpdatePreflightService,_version_direction
 
 
 class MinecraftVersionUpdatePreflightTest(unittest.TestCase):
@@ -33,8 +33,16 @@ class MinecraftVersionUpdatePreflightTest(unittest.TestCase):
         self.assertIn("minecraft-update-preflight",script)
         self.assertIn("Remover bloqueadores e reanalisar",script)
         self.assertIn("has_blocking_content",script)
+        self.assertIn("has_blocking_version",script)
+        self.assertIn("Downgrade bloqueado",script)
         self.assertIn("Versão do Minecraft",html)
         self.assertIn("compatibilidade",html.lower())
+
+    def test_version_direction_blocks_downgrade(self):
+        self.assertEqual(_version_direction("1.21.4","1.21.1"),"downgrade")
+        self.assertEqual(_version_direction("1.21.1","1.21.4"),"upgrade")
+        self.assertEqual(_version_direction("1.21.1","1.21.1"),"same")
+        self.assertEqual(_version_direction("latest","1.21.1"),"unknown")
 
     def test_unknown_content_blocks_version_change_and_bundle_children_are_collapsed(self):
         service=MinecraftVersionUpdatePreflightService.__new__(MinecraftVersionUpdatePreflightService)
