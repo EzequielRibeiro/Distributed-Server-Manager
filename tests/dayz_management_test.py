@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 COMMON=ROOT/"agents"/"common"
 if str(COMMON) not in sys.path:sys.path.insert(0,str(COMMON))
-from dayz_management import apply_mission,current_mission,discover_missions,wipe
+from dayz_management import apply_mission,current_mission,discover_missions,mod_compatibility_preflight,wipe
 
 class DayZManagementTest(unittest.TestCase):
  def setUp(self):
@@ -56,6 +56,23 @@ class DayZManagementTest(unittest.TestCase):
   changed=apply_mission(self.record,item["id"])
   self.assertEqual(current_mission(changed),"dayzOffline.namalsk")
   self.assertTrue((self.state/"mpmissions"/"dayzOffline.namalsk").is_dir())
+ def test_mod_preflight_keeps_unknown_separate_from_compatible(self):
+  snapshot={"entries":[
+   {"content_id":"cf","game_id":"dayz","package_id":"221100:1559212036","activation":{"adapter":"dayz","mode":"mod"},"dependencies":[],"dayz_map_compatibility":{"all_missions":True}},
+   {"content_id":"admin","game_id":"dayz","package_id":"221100:1828439124","activation":{"adapter":"dayz","mode":"mod"},"dependencies":[]},
+  ]}
+  result=mod_compatibility_preflight(snapshot,"dayzOffline.enoch")
+  self.assertEqual(result["status"],"unknown");self.assertFalse(result["blocking"])
+  self.assertEqual(result["active_mods"],2);self.assertEqual(result["compatible"],1);self.assertEqual(result["unknown"],1);self.assertEqual(result["incompatible"],0)
+ def test_mod_preflight_blocks_explicit_incompatibility_and_missing_dependency(self):
+  snapshot={"entries":[
+   {"content_id":"map-specific","game_id":"dayz","package_id":"221100:1","activation":{"adapter":"dayz","mode":"mod"},"dependencies":[],"dayz_map_compatibility":{"compatible_missions":["dayzOffline.chernarusplus"]}},
+   {"content_id":"dependent","game_id":"dayz","package_id":"221100:2","activation":{"adapter":"dayz","mode":"mod"},"dependencies":["missing-base"],"dayz_map_compatibility":{"all_missions":True}},
+  ]}
+  result=mod_compatibility_preflight(snapshot,"dayzOffline.enoch")
+  self.assertEqual(result["status"],"incompatible");self.assertTrue(result["blocking"])
+  self.assertEqual(result["incompatible"],2)
+  reasons={item["reason"] for item in result["items"]};self.assertIn("mission_not_in_compatibility_allowlist",reasons);self.assertIn("missing_dependency",reasons)
  def test_wipe_backs_up_and_removes_current_persistence(self):
   result=wipe(self.record,"persistence",True);self.assertTrue(Path(result["backup"]).is_file())
   self.assertFalse((self.state/"mpmissions"/"dayzOffline.chernarusplus"/"storage_1").exists())
