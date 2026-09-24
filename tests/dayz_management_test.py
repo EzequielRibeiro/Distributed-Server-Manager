@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 COMMON=ROOT/"agents"/"common"
 if str(COMMON) not in sys.path:sys.path.insert(0,str(COMMON))
-from dayz_management import apply_mission,current_mission,discover_missions,mod_compatibility_preflight,wipe
+from dayz_management import apply_mission,current_mission,discover_missions,mod_compatibility_preflight,prepare_mission_persistence,restore_mission_persistence,wipe
 
 class DayZManagementTest(unittest.TestCase):
  def setUp(self):
@@ -76,6 +76,21 @@ class DayZManagementTest(unittest.TestCase):
   self.assertEqual(result["status"],"incompatible");self.assertTrue(result["blocking"])
   self.assertEqual(result["incompatible"],2)
   reasons={item["reason"] for item in result["items"]};self.assertIn("mission_not_in_compatibility_allowlist",reasons);self.assertIn("missing_dependency",reasons)
+ def test_fresh_persistence_archives_target_storage_and_can_restore_it(self):
+  target=self.state/"mpmissions"/"dayzOffline.enoch";target.mkdir(parents=True,exist_ok=True)
+  storage=target/"storage_1";storage.mkdir();(storage/"players.db").write_text("old-state",encoding="utf-8")
+  prepared=prepare_mission_persistence(self.record,"dayzOffline.enoch","fresh")
+  self.assertEqual(prepared["mode"],"fresh");self.assertFalse(storage.exists());self.assertEqual(len(prepared["archived"]),1)
+  backup=Path(prepared["archived"][0]["backup"]);self.assertTrue((backup/"players.db").is_file())
+  storage.mkdir();(storage/"players.db").write_text("new-state",encoding="utf-8")
+  restored=restore_mission_persistence(prepared)
+  self.assertIn(str(storage.resolve()),restored["restored"]);self.assertEqual((storage/"players.db").read_text(encoding="utf-8"),"old-state")
+  self.assertFalse(Path(prepared["backup_root"]).exists())
+ def test_keep_persistence_leaves_target_storage_in_place(self):
+  target=self.state/"mpmissions"/"dayzOffline.enoch";target.mkdir(parents=True,exist_ok=True)
+  storage=target/"storage_1";storage.mkdir();(storage/"players.db").write_text("state",encoding="utf-8")
+  prepared=prepare_mission_persistence(self.record,"dayzOffline.enoch","keep")
+  self.assertTrue(storage.exists());self.assertEqual(prepared["archived"],[]);self.assertIsNone(prepared["backup_root"])
  def test_wipe_backs_up_and_removes_current_persistence(self):
   result=wipe(self.record,"persistence",True);self.assertTrue(Path(result["backup"]).is_file())
   self.assertFalse((self.state/"mpmissions"/"dayzOffline.chernarusplus"/"storage_1").exists())
