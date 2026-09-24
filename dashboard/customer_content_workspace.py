@@ -358,7 +358,7 @@ class CustomerContentWorkspaceService:
    if action=="enable":return self.content.set_bundle_state(instance_id,content_id,desired_state="installed",activation_state="enabled",requested_by=actor)
    if action=="rollback":
     revision=(body or {}).get("revision");return self.content.rollback_bundle(instance_id,content_id,revision,requested_by=actor,reason="customer")
-   if action=="update":
+   if action in {"preview-update","update"}:
     self._validate_update_request(body)
     if not provider_supports(provider,"update",self.workspace.root):raise ValueError("automatic modpack update is unavailable for this provider")
     if provider not in {"modrinth","curseforge"}:raise ValueError("automatic modpack update is unavailable for this provider")
@@ -366,7 +366,11 @@ class CustomerContentWorkspaceService:
     if not project:raise ValueError("modpack provider project identity is unavailable")
     payload=self._desired(current);payload["instance_id"]=instance_id;payload["artifact"]={"provider":provider,"package_id":project};payload["desired_state"]="installed";self._enforce_structured_provider(context,payload);resolved=self._resolve_minecraft_modpack(context,payload)
     if resolved is None:raise ValueError("modpack resolver is unavailable")
-    parent,bundle,children=resolved;history_before=self.content.bundle_history(instance_id,content_id);current_bundle_revision=int(history_before[0]["revision"]) if history_before else None;self._mark_update_checkpoint(current,parent,bundle_revision=current_bundle_revision);diff=self.content.bundle_diff(instance_id,content_id,bundle);result=self.content.put_bundle(parent,bundle,children,requested_by=actor);result["manifest_diff"]=diff;result["previous_bundle_revision"]=current_bundle_revision if result.get("changed") else None;return result
+    parent,bundle,children=resolved;diff=self.content.bundle_diff(instance_id,content_id,bundle)
+    history_before=self.content.bundle_history(instance_id,content_id);current_bundle_revision=int(history_before[0]["revision"]) if history_before else None
+    if action=="preview-update":
+     return {"preview":True,"changed":bool(diff["added"] or diff["removed"] or diff["updated"]),"assignment":current,"target":{"provider":provider,"project":project,"version":parent.get("version"),"provider_version_id":bundle.get("provider_version_id"),"minecraft_version":bundle.get("minecraft_version"),"loader_id":bundle.get("loader_id"),"loader_version":bundle.get("loader_version")},"manifest_diff":diff,"current_bundle_revision":current_bundle_revision}
+    self._mark_update_checkpoint(current,parent,bundle_revision=current_bundle_revision);result=self.content.put_bundle(parent,bundle,children,requested_by=actor);result["manifest_diff"]=diff;result["previous_bundle_revision"]=current_bundle_revision if result.get("changed") else None;return result
    raise ValueError("modpack reorder is not supported")
   payload=self._desired(current);payload["instance_id"]=instance_id
   if action=="remove":payload["desired_state"]="absent";payload["activation_state"]="disabled"
