@@ -27,6 +27,7 @@ function ensureCard(){
 function renderPorts(rows){
  const box=document.getElementById("ports");
  if(!box)return;
+ box.dataset.connectionEnhanced="1";
  box.replaceChildren(...(rows||[]).map(p=>{
   const d=document.createElement("div");
   d.className="row";
