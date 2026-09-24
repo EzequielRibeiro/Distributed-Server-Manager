@@ -8,7 +8,7 @@ from typing import Any
 _SAFE=re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _TEMPLATE=re.compile(r'(\btemplate\s*=\s*["\'])([^"\']+)(["\']\s*;)',re.I)
 _OFFICIAL={"dayzOffline.chernarusplus":"Chernarus","dayzOffline.enoch":"Livonia","dayzOffline.sakhal":"Sakhal"}
-_STORAGE_DIR=re.compile(r"^storage_\\d+$",re.I)
+_STORAGE_DIR=re.compile(r"^storage_\d+$",re.I)
 
 def _root(record):
     value=str(record.get("instance_state_root") or "").strip()
