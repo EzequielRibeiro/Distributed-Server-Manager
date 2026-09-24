@@ -5,10 +5,12 @@ from datetime import datetime,timezone
 from urllib.parse import parse_qs,urlparse
 from controller_session import session_user_from_headers
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
+from customer_content_workspace import CustomerContentWorkspaceService
 from dayz_management_repository import DayZManagementRepository,DayZOperationConflict
 from json_serialization import to_json_compatible
 
 PATH="/api/customer/instance/dayz"
+COMMUNITY_MAP=PATH+"/community-map"
 DISCOVERY_SCHEMA_VERSION=2
 
 def _discovery_payload(op):
@@ -70,11 +72,15 @@ def install_customer_dayz_http(legacy,authenticate):
         except Exception as exc:return error(self,exc)
     def post(self):
         parsed=urlparse(self.path)
-        if parsed.path!=PATH:return previous_post(self)
+        if parsed.path not in {PATH,COMMUNITY_MAP}:return previous_post(self)
         user=require_user(self)
         if user is None:return
         try:
-            body=self.read_json_body();instance_id=iid(parsed,body);workspace,context,repo=service(user,instance_id,"instance.restart");workspace.require(user,instance_id,"settings.write");repo.initialize()
+            body=self.read_json_body();instance_id=iid(parsed,body)
+            if parsed.path==COMMUNITY_MAP:
+                result=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT).install_dayz_community_map(user,instance_id,body)
+                return send(self,202,{"community_map":result,"view":view(user,instance_id)})
+            workspace,context,repo=service(user,instance_id,"instance.restart");workspace.require(user,instance_id,"settings.write");repo.initialize()
             action=str(body.get("action") or "").strip().lower();actor=str(user.get("username") or user.get("id") or "customer")
             if action=="refresh_maps":queued=repo.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="discover_missions",requested_by=actor)
             elif action=="change_mission":
@@ -102,4 +108,4 @@ def install_customer_dayz_http(legacy,authenticate):
         except Exception as exc:return error(self,exc)
     legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post
 
-__all__=["PATH","install_customer_dayz_http"]
+__all__=["COMMUNITY_MAP","PATH","install_customer_dayz_http"]
