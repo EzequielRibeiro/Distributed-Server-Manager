@@ -101,6 +101,7 @@ def mod_compatibility_preflight(snapshot,mission):
         if not isinstance(raw,dict):continue
         activation=raw.get("activation") if isinstance(raw.get("activation"),dict) else {}
         if str(raw.get("game_id") or "").strip().lower()!="dayz" and str(activation.get("adapter") or "").strip().lower()!="dayz":continue
+        if str(raw.get("content_type") or "").strip().lower()=="map":continue
         dayz.append(dict(raw))
     active_ids={str(item.get("content_id") or "").strip() for item in dayz if str(item.get("content_id") or "").strip()}
     items=[];compatible=unknown=incompatible=0
@@ -168,14 +169,13 @@ def apply_mission(record,mission):
     profile_context["mission"]=mission
     result["profile_context"]=profile_context
     state_root=_root(record);working=_working(record);shared=working/"mpmissions"/mission
-    seed_source=shared if shared.is_dir() else _community_sources(record).get(mission)
     seeds=[]
     for item in record.get("seed_directories") or []:
         if not isinstance(item,dict):continue
         target=str(item.get("target") or "")
         if target and Path(target).parent.resolve()==(state_root/"mpmissions").resolve():continue
         seeds.append(dict(item))
-    if seed_source is not None:seeds.append({"source":str(seed_source),"target":str(private)})
+    if shared.is_dir():seeds.append({"source":str(shared),"target":str(private)})
     result["seed_directories"]=seeds
     if str(record.get("adapter") or "").lower()=="systemd":
         def replace_mission_bind(raw):
