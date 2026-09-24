@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Execute typed DayZ map and wipe operations on Linux Agent."""
 from __future__ import annotations
-import json,os,sys,time
+import json,os,subprocess,sys,time
 from datetime import datetime,timezone
 from pathlib import Path
 from typing import Any
@@ -78,6 +78,31 @@ def _content_enabled(record):
     if isinstance(explicit,bool):return explicit
     return any(str(arg or "").lower().startswith(("-mod=","-servermod=")) for arg in record.get("arguments") or [])
 
+def _activation_order(snapshot):
+    entries=(snapshot or {}).get("entries") if isinstance(snapshot,dict) else []
+    if not isinstance(entries,list):return []
+    result=[]
+    for item in entries:
+        if not isinstance(item,dict) or str(item.get("game_id") or "").strip().lower()!="dayz":continue
+        result.append({
+            "content_id":str(item.get("content_id") or ""),
+            "package_id":str(item.get("package_id") or ""),
+            "activation_order":int(item.get("activation_order") or 0),
+        })
+    return result
+
+def _repair_hybrid_file_access(iid):
+    template=str(os.environ.get("CAPIVARA_HYBRID_FILES_ACCESS_UNIT_TEMPLATE") or "").strip()
+    if not template:
+        materializer=str(os.environ.get("CAPIVARA_MATERIALIZER_UNIT_TEMPLATE") or "")
+        if "dsm-hybrid-agent-materialize@" not in materializer:return None
+        template="dsm-hybrid-agent-files-access@{instance_id}.service"
+    unit=template.format(instance_id=_token(iid,"instance_id"))
+    completed=subprocess.run(["systemctl","start",unit,"--no-pager"],capture_output=True,text=True,check=False,timeout=60)
+    if completed.returncode!=0:
+        raise RuntimeError((completed.stderr or completed.stdout or "Hybrid file-access helper failed")[:1000])
+    return unit
+
 def _change_mission(config,record,iid,payload):
     before_view=discover_missions(record);previous_mission=before_view["current"];target=str(payload.get("mission") or "").strip()
     target_item=next((item for item in before_view["missions"] if item.get("id")==target),None)
@@ -92,7 +117,7 @@ def _change_mission(config,record,iid,payload):
         blocked=[str(item.get("content_id") or item.get("package_id") or "content") for item in preflight.get("items") or [] if item.get("status")=="incompatible"]
         raise RuntimeError("DayZ mod compatibility preflight blocked mission "+target+": "+", ".join(blocked[:10]))
     if target==previous_mission:
-        return {"previous_mission":previous_mission,"mission":target,"restarted":False,"rollback":False,"changed":False,"map":target_item,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"mod_preflight":preflight}
+        return {"previous_mission":previous_mission,"mission":target,"restarted":False,"rollback":False,"changed":False,"map":target_item,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"mod_preflight":preflight,"activation_order":_activation_order(snapshot)}
     before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"};previous_content_enabled=_content_enabled(record)
     if was_running:lifecycle(config,iid,"stop")
     persistence=None
@@ -107,7 +132,7 @@ def _change_mission(config,record,iid,payload):
             lifecycle(config,iid,"start");stabilization=_stabilize(config,iid)
         after_view=discover_missions(updated);active=next((item for item in after_view["missions"] if item.get("active")),None)
         if not active or active.get("id")!=target:raise RuntimeError(f"DayZ mission activation verification failed: {target}")
-        return {"previous_mission":previous_mission,"mission":target,"restarted":was_running,"rollback":False,"changed":True,"map":active,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"persistence":persistence,"mod_preflight":preflight,"stabilization":stabilization}
+        return {"previous_mission":previous_mission,"mission":target,"restarted":was_running,"rollback":False,"changed":True,"map":active,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"persistence":persistence,"mod_preflight":preflight,"activation_order":_activation_order(snapshot),"stabilization":stabilization}
     except Exception as exc:
         rollback_error=None
         if was_running:
@@ -115,6 +140,8 @@ def _change_mission(config,record,iid,payload):
                 current=status(config,iid)
                 if current.get("observed_state") in {"running","starting"}:lifecycle(config,iid,"stop")
             except Exception as stop_exc:rollback_error=f"stop before rollback failed: {stop_exc}"
+        try:_repair_hybrid_file_access(iid)
+        except Exception as access_exc:rollback_error=(rollback_error+"; " if rollback_error else "")+f"file-access repair failed: {access_exc}"
         if persistence is not None:
             try:restore_mission_persistence(persistence)
             except Exception as persistence_exc:rollback_error=(rollback_error+"; " if rollback_error else "")+f"persistence rollback failed: {persistence_exc}"
