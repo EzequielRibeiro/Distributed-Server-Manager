@@ -233,6 +233,7 @@ def install_customer_content_http(legacy,authenticate):
   try:
    body=self.read_json_body();instance_id=iid(parsed,body);action=str(body.get("action") or "install").strip().lower();api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT)
    if action=="install":result=api.install(user,instance_id,body)
+   elif action=="prepare-clean":result=api.prepare_clean_for_version_change(user,instance_id)
    else:
     content_id=str(body.get("content_id") or "").strip()
     if not content_id:raise ValueError("content_id is required")
