@@ -73,6 +73,53 @@ def discover_missions(record):
             "installed":sum(1 for item in result if item["installed"]),
         },
     }
+def mod_compatibility_preflight(snapshot,mission):
+    mission=_safe(mission)
+    entries=(snapshot or {}).get("entries") if isinstance(snapshot,dict) else []
+    if not isinstance(entries,list):entries=[]
+    dayz=[]
+    for raw in entries:
+        if not isinstance(raw,dict):continue
+        activation=raw.get("activation") if isinstance(raw.get("activation"),dict) else {}
+        if str(raw.get("game_id") or "").strip().lower()!="dayz" and str(activation.get("adapter") or "").strip().lower()!="dayz":continue
+        dayz.append(dict(raw))
+    active_ids={str(item.get("content_id") or "").strip() for item in dayz if str(item.get("content_id") or "").strip()}
+    items=[];compatible=unknown=incompatible=0
+    for item in dayz:
+        cid=str(item.get("content_id") or item.get("package_id") or "conteúdo").strip()
+        package=str(item.get("package_id") or "").strip() or None
+        missing=[str(dep).strip() for dep in item.get("dependencies") or [] if str(dep).strip() not in active_ids]
+        rules=item.get("dayz_map_compatibility") if isinstance(item.get("dayz_map_compatibility"),dict) else {}
+        allowed=[str(value).strip() for value in rules.get("compatible_missions") or [] if _SAFE.fullmatch(str(value).strip())]
+        denied=[str(value).strip() for value in rules.get("incompatible_missions") or [] if _SAFE.fullmatch(str(value).strip())]
+        reason=None
+        if missing:
+            state="incompatible";reason="missing_dependency"
+        elif mission in denied:
+            state="incompatible";reason="explicit_incompatibility"
+        elif allowed:
+            state="compatible" if mission in allowed else "incompatible"
+            if state=="incompatible":reason="mission_not_in_compatibility_allowlist"
+        elif rules.get("all_missions") is True:
+            state="compatible"
+        else:
+            state="unknown";reason="compatibility_not_declared"
+        if state=="compatible":compatible+=1
+        elif state=="unknown":unknown+=1
+        else:incompatible+=1
+        items.append({"content_id":cid,"package_id":package,"status":state,"reason":reason,"missing_dependencies":missing})
+    status="incompatible" if incompatible else ("unknown" if unknown else "compatible")
+    return {
+        "mission":mission,
+        "status":status,
+        "blocking":bool(incompatible),
+        "active_mods":len(dayz),
+        "compatible":compatible,
+        "unknown":unknown,
+        "incompatible":incompatible,
+        "items":items,
+    }
+
 def _copy_if_needed(record,mission):
     state=_root(record)/"mpmissions"/mission
     if state.is_dir():return state
@@ -158,4 +205,4 @@ def wipe(record,scope="persistence",backup=True):
         if path.is_dir():shutil.rmtree(path);removed.append(str(path))
         elif path.exists():path.unlink();removed.append(str(path))
     return {"mission":mission,"scope":scope,"backup":str(archive) if archive else None,"removed":removed}
-__all__=["apply_mission","current_mission","discover_missions","wipe"]
+__all__=["apply_mission","current_mission","discover_missions","mod_compatibility_preflight","wipe"]
