@@ -9,7 +9,7 @@ RUNTIME_DIR=Path(__file__).resolve().parent
 COMMON_DIR=RUNTIME_DIR.parent.parent/"common"
 for item in (RUNTIME_DIR,COMMON_DIR):
     if str(item) not in sys.path:sys.path.insert(0,str(item))
-from dayz_management import apply_mission,discover_missions,mod_compatibility_preflight,wipe
+from dayz_management import apply_mission,discover_missions,mod_compatibility_preflight,prepare_mission_persistence,restore_mission_persistence,wipe
 from content_activation_projection import activation_snapshot
 from content_activation_runtime import project_runtime_spec
 from instance_runtime import get_instance,lifecycle,register_instance,status
@@ -69,6 +69,11 @@ def _stabilize(config,iid):
         raise RuntimeError(f"DayZ runtime restart count increased during map-switch stabilization: {initial_restarts} -> {restarts}")
     return {"seconds":seconds,"observed_state":last,"process_id":pid or initial_pid,"restart_count":restarts}
 
+def _content_enabled(record):
+    explicit=record.get("dayz_content_enabled")
+    if isinstance(explicit,bool):return explicit
+    return any(str(arg or "").lower().startswith(("-mod=","-servermod=")) for arg in record.get("arguments") or [])
+
 def _change_mission(config,record,iid,payload):
     before_view=discover_missions(record);previous_mission=before_view["current"];target=str(payload.get("mission") or "").strip()
     target_item=next((item for item in before_view["missions"] if item.get("id")==target),None)
@@ -76,16 +81,19 @@ def _change_mission(config,record,iid,payload):
         raise FileNotFoundError(f"DayZ mission is not installed or available: {target}")
     content_mode=str(payload.get("content_mode") or "disable").strip().lower()
     if content_mode not in {"disable","keep"}:raise ValueError("invalid DayZ map content mode")
+    persistence_mode=str(payload.get("persistence_mode") or "fresh").strip().lower()
+    if persistence_mode not in {"fresh","keep"}:raise ValueError("invalid DayZ map persistence mode")
     snapshot=activation_snapshot(iid);preflight=mod_compatibility_preflight(snapshot,target)
     if content_mode=="keep" and preflight.get("blocking"):
         blocked=[str(item.get("content_id") or item.get("package_id") or "content") for item in preflight.get("items") or [] if item.get("status")=="incompatible"]
         raise RuntimeError("DayZ mod compatibility preflight blocked mission "+target+": "+", ".join(blocked[:10]))
     if target==previous_mission:
-        return {"previous_mission":previous_mission,"mission":target,"restarted":False,"rollback":False,"changed":False,"map":target_item,"content_mode":content_mode,"mods_enabled":content_mode=="keep","mod_preflight":preflight}
-    before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"}
+        return {"previous_mission":previous_mission,"mission":target,"restarted":False,"rollback":False,"changed":False,"map":target_item,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"mod_preflight":preflight}
+    before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"};previous_content_enabled=_content_enabled(record)
     if was_running:lifecycle(config,iid,"stop")
-    updated=None
+    persistence=None
     try:
+        persistence=prepare_mission_persistence(record,target,persistence_mode)
         updated=apply_mission(record,target)
         updated["dayz_content_enabled"]=content_mode=="keep"
         updated=project_runtime_spec(updated,snapshot)
@@ -95,14 +103,24 @@ def _change_mission(config,record,iid,payload):
             lifecycle(config,iid,"start");stabilization=_stabilize(config,iid)
         after_view=discover_missions(updated);active=next((item for item in after_view["missions"] if item.get("active")),None)
         if not active or active.get("id")!=target:raise RuntimeError(f"DayZ mission activation verification failed: {target}")
-        return {"previous_mission":previous_mission,"mission":target,"restarted":was_running,"rollback":False,"changed":True,"map":active,"content_mode":content_mode,"mods_enabled":content_mode=="keep","mod_preflight":preflight,"stabilization":stabilization}
+        return {"previous_mission":previous_mission,"mission":target,"restarted":was_running,"rollback":False,"changed":True,"map":active,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"persistence":persistence,"mod_preflight":preflight,"stabilization":stabilization}
     except Exception as exc:
         rollback_error=None
+        if was_running:
+            try:
+                current=status(config,iid)
+                if current.get("observed_state") in {"running","starting"}:lifecycle(config,iid,"stop")
+            except Exception as stop_exc:rollback_error=f"stop before rollback failed: {stop_exc}"
+        if persistence is not None:
+            try:restore_mission_persistence(persistence)
+            except Exception as persistence_exc:rollback_error=(rollback_error+"; " if rollback_error else "")+f"persistence rollback failed: {persistence_exc}"
         if previous_mission and previous_mission!=target:
             try:
                 rollback=apply_mission(record,previous_mission)
+                rollback["dayz_content_enabled"]=previous_content_enabled
+                rollback=project_runtime_spec(rollback,snapshot)
                 register_instance(rollback)
-            except Exception as rollback_exc:rollback_error=str(rollback_exc)[:1000]
+            except Exception as rollback_exc:rollback_error=(rollback_error+"; " if rollback_error else "")+str(rollback_exc)[:1000]
         if was_running:
             try:lifecycle(config,iid,"start")
             except Exception as start_exc:
