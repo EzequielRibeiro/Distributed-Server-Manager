@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 _SAFE=re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _TEMPLATE=re.compile(r'(\btemplate\s*=\s*["\'])([^"\']+)(["\']\s*;)',re.I)
-_OFFICIAL={"dayzOffline.chernarusplus":"Chernarus","dayzOffline.enoch":"Livonia"}
+_OFFICIAL={"dayzOffline.chernarusplus":"Chernarus","dayzOffline.enoch":"Livonia","dayzOffline.sakhal":"Sakhal"}
 
 def _root(record):
     value=str(record.get("instance_state_root") or "").strip()
@@ -38,17 +38,40 @@ def current_mission(record):
             return _safe(Path(text.split("=",1)[1].strip().strip("\"'")).name)
     return "dayzOffline.chernarusplus"
 def discover_missions(record):
-    current=current_mission(record);names=set()
-    for base in (_root(record)/"mpmissions",_working(record)/"mpmissions"):
+    current=current_mission(record);root=_root(record);working=_working(record)
+    private_root=root/"mpmissions";shared_root=working/"mpmissions"
+    names=set(_OFFICIAL)
+    locations={}
+    for kind,base in (("instance",private_root),("runtime",shared_root)):
         try:items=list(base.iterdir())
         except OSError:items=[]
         for item in items:
-            if item.is_dir() and _SAFE.fullmatch(item.name):names.add(item.name)
+            if item.is_dir() and _SAFE.fullmatch(item.name):
+                names.add(item.name);locations.setdefault(item.name,set()).add(kind)
     if current:names.add(current)
     result=[]
     for name in sorted(names,key=lambda x:(_OFFICIAL.get(x,x).lower(),x.lower())):
-        result.append({"id":name,"name":_OFFICIAL.get(name,name),"official":name in _OFFICIAL,"current":name==current})
-    return {"current":current,"missions":result}
+        where=locations.get(name,set());official=name in _OFFICIAL
+        installed="instance" in where
+        available=installed or "runtime" in where
+        active=name==current
+        state="active" if active else ("installed" if installed else ("available" if available else "unavailable"))
+        source="official-runtime" if official else ("community-instance" if installed else "community-runtime")
+        result.append({
+            "id":name,"name":_OFFICIAL.get(name,name),"official":official,"community":not official,
+            "current":active,"active":active,"installed":installed,"available":available,
+            "can_activate":available,"state":state,"source":source,
+        })
+    active_item=next((item for item in result if item["active"]),None)
+    return {
+        "current":current,
+        "current_name":(active_item or {}).get("name",current),
+        "missions":result,
+        "counts":{
+            "available":sum(1 for item in result if item["available"]),
+            "installed":sum(1 for item in result if item["installed"]),
+        },
+    }
 def _copy_if_needed(record,mission):
     state=_root(record)/"mpmissions"/mission
     if state.is_dir():return state
@@ -57,8 +80,9 @@ def _copy_if_needed(record,mission):
     state.parent.mkdir(parents=True,exist_ok=True);shutil.copytree(source,state)
     return state
 def apply_mission(record,mission):
-    mission=_safe(mission);available={x["id"] for x in discover_missions(record)["missions"]}
-    if mission not in available:raise FileNotFoundError(f"DayZ mission is not available: {mission}")
+    mission=_safe(mission);view=discover_missions(record)
+    available={x["id"] for x in view["missions"] if x.get("can_activate")}
+    if mission not in available:raise FileNotFoundError(f"DayZ mission is not installed or available: {mission}")
     private=_copy_if_needed(record,mission);cfg=_config(record)
     source=cfg.read_text(encoding="utf-8",errors="replace")
     if not _TEMPLATE.search(source):raise ValueError("DayZ mission template not found in server config")

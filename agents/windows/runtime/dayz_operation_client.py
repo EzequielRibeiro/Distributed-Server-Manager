@@ -32,7 +32,12 @@ def _write(path,payload):
 def _history(oid):return HISTORY_DIR/f"{_token(oid,'operation_id')}.json"
 def _result(oid):return RESULT_DIR/f"{_token(oid,'operation_id')}.json"
 def _change_mission(config,record,iid,payload):
-    previous_mission=discover_missions(record)["current"];target=str(payload.get("mission") or "").strip()
+    before_view=discover_missions(record);previous_mission=before_view["current"];target=str(payload.get("mission") or "").strip()
+    target_item=next((item for item in before_view["missions"] if item.get("id")==target),None)
+    if target_item is None or not target_item.get("can_activate"):
+        raise FileNotFoundError(f"DayZ mission is not installed or available: {target}")
+    if target==previous_mission:
+        return {"previous_mission":previous_mission,"mission":target,"restarted":False,"rollback":False,"changed":False,"map":target_item}
     before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"}
     if was_running:lifecycle(config,iid,"stop")
     updated=None
@@ -40,7 +45,9 @@ def _change_mission(config,record,iid,payload):
         updated=apply_mission(record,target)
         register_instance(updated)
         if was_running:lifecycle(config,iid,"start")
-        return {"previous_mission":previous_mission,"mission":target,"restarted":was_running,"rollback":False}
+        after_view=discover_missions(updated);active=next((item for item in after_view["missions"] if item.get("active")),None)
+        if not active or active.get("id")!=target:raise RuntimeError(f"DayZ mission activation verification failed: {target}")
+        return {"previous_mission":previous_mission,"mission":target,"restarted":was_running,"rollback":False,"changed":True,"map":active}
     except Exception as exc:
         rollback_error=None
         if updated is not None and previous_mission and previous_mission!=target:
