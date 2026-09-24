@@ -3,13 +3,14 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock,patch
 
 ROOT=Path(__file__).resolve().parents[1]
 for p in (ROOT,ROOT/"core",ROOT/"database",ROOT/"dashboard"):
     if str(p) not in sys.path:sys.path.insert(0,str(p))
 
 from minecraft_version_update_service import MinecraftVersionUpdateService
+from minecraft_runtime_migration_service import MinecraftRuntimeMigrationService
 
 
 class MinecraftVersionUpdateExecutionTest(unittest.TestCase):
@@ -35,6 +36,7 @@ class MinecraftVersionUpdateExecutionTest(unittest.TestCase):
         windows=(ROOT/"agents/windows/runtime/provisioning_executor.py").read_text(encoding="utf-8")
         for source in (linux,windows):
             self.assertIn("minecraft_version_update",source)
+            self.assertIn("minecraft_runtime_migration",source)
             self.assertIn("backup_current_runtime",source)
             self.assertIn("previous_runtime_restored",source)
             self.assertIn("update_readiness",source)
@@ -45,6 +47,9 @@ class MinecraftVersionUpdateExecutionTest(unittest.TestCase):
         self.assertIn("UPDATE instances SET game_version=",source)
         self.assertIn("MINECRAFT_VERSION_UPDATE_COMPLETED",source)
         self.assertIn("MINECRAFT_VERSION_UPDATE_FAILED",source)
+        self.assertIn("MINECRAFT_RUNTIME_MIGRATION_COMPLETED",source)
+        self.assertIn("MINECRAFT_RUNTIME_MIGRATION_FAILED",source)
+        self.assertIn("UPDATE instances SET runtime_id=",source)
 
     def test_customer_ui_requires_preflight_then_confirmation(self):
         source=(ROOT/"dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
@@ -52,6 +57,35 @@ class MinecraftVersionUpdateExecutionTest(unittest.TestCase):
         self.assertIn("confirm_risk:true",source)
         self.assertIn("/minecraft-update/preflight",source)
         self.assertIn("/minecraft-update",source)
+        self.assertIn("minecraft-update-runtime",source)
+        self.assertIn("/minecraft-runtime/preflight",source)
+        self.assertIn("/minecraft-runtime",source)
+
+    def test_runtime_migration_preflight_is_contract_scoped_and_fail_closed(self):
+        service=MinecraftRuntimeMigrationService.__new__(MinecraftRuntimeMigrationService)
+        service.root=ROOT
+        service.workspace=Mock()
+        service.workspace.require.return_value={"id":"instance-a","game_id":"minecraft","runtime_id":"minecraft.java.youer","game_version":"1.21.1","build_id":"old","contract_metadata":{}}
+        service.compatibility=Mock()
+        service.compatibility._content_compatibility.return_value=[{"compatibility":"unknown"}]
+        current={"id":"minecraft.java.youer","edition":"java","version":{"resolver":"youer_api"}}
+        target={"id":"minecraft.java.paper","name":"Paper","edition":"java","version":{"resolver":"papermc"}}
+        with patch("minecraft_runtime_migration_service.allowed_runtimes",return_value=[{"runtime_id":"minecraft.java.paper"}]),patch("minecraft_runtime_migration_service.runtime_definition",side_effect=lambda root,game,runtime: target if runtime=="minecraft.java.paper" else current),patch("minecraft_runtime_migration_service.resolve_catalog_provisioning",return_value=({"version":"1.21.4","build":"100"},{})):
+            result=service.preflight({"role":"customer"},"instance-a","minecraft.java.paper","1.21.4","100")
+        self.assertFalse(result["can_request_migration"])
+        self.assertEqual(result["blocking_content_count"],1)
+        self.assertEqual(result["target"]["runtime_id"],"minecraft.java.paper")
+
+    def test_runtime_migration_rejects_cross_edition(self):
+        service=MinecraftRuntimeMigrationService.__new__(MinecraftRuntimeMigrationService)
+        service.root=ROOT
+        service.workspace=Mock()
+        context={"id":"instance-a","game_id":"minecraft","runtime_id":"minecraft.java.paper","contract_metadata":{}}
+        current={"id":"minecraft.java.paper","edition":"java"}
+        target={"id":"minecraft.bedrock.vanilla","edition":"bedrock"}
+        with patch("minecraft_runtime_migration_service.allowed_runtimes",return_value=[{"runtime_id":"minecraft.bedrock.vanilla"}]),patch("minecraft_runtime_migration_service.runtime_definition",side_effect=lambda root,game,runtime: target if runtime=="minecraft.bedrock.vanilla" else current):
+            with self.assertRaisesRegex(ValueError,"editions"):
+                service._target_definition(context,"minecraft.bedrock.vanilla")
 
 
 if __name__=="__main__":
