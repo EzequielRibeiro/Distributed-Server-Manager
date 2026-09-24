@@ -255,7 +255,7 @@ class CustomerContentWorkspaceService:
    else:
     previous=self.content.previous_revision(instance_id,str(item.get("content_id") or ""));rollback_revision=int(previous["revision"]) if previous else None
    metadata=item.get("metadata") if isinstance(item.get("metadata"),Mapping) else {};revision_source=metadata.get("revision_source") if isinstance(metadata.get("revision_source"),Mapping) else {};external_revision=ctype=="modpack" and str(revision_source.get("kind") or "").strip().lower()=="external-upload"
-   item["provider_capabilities"]=provider_capabilities(provider,self.workspace.root);item["update"]={"supported":bool(provider_supports(provider,"update",self.workspace.root) and not external_revision),"rollback_available":rollback_revision is not None,"rollback_revision":rollback_revision,"revision_source":str(revision_source.get("kind") or "") or None}
+   item["provider_capabilities"]=provider_capabilities(provider,self.workspace.root);item["update"]={"supported":bool(provider_supports(provider,"update",self.workspace.root) and not external_revision),"rollback_available":rollback_revision is not None,"rollback_revision":rollback_revision,"revision_source":str(revision_source.get("kind") or "") or None,"preview_required":bool(ctype=="modpack" and not external_revision)}
    activation_config=self._activation_configuration(context,item)
    if activation_config is not None:item["activation_config"]=activation_config
    self._customer_security_projection(item)
