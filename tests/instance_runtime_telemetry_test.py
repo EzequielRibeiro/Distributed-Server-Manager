@@ -241,6 +241,23 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
         self.assertIsNone(telemetry._storage_used("/path/that/does/not/exist"))
         self.assertIsNone(telemetry._storage_used(None))
 
+    def test_collect_prefers_files_root_for_storage_measurement(self):
+        record = {
+            "instance_id": "bedrock-001",
+            "agent_id": "agent-test",
+            "game_id": "minecraft",
+            "environment_id": "minecraft.bedrock.vanilla",
+            "profile": "minecraft-bedrock",
+            "adapter": "systemd",
+            "files_root": "/instance/runtime",
+            "instance_state_root": "/instance",
+            "ports": {"signaling": {"port": 24006, "protocol": "tcp"}},
+        }
+        with patch.object(telemetry.instance_runtime, "list_instances", return_value=[{"instance_id": "bedrock-001"}]),              patch.object(telemetry.instance_runtime, "get_instance", return_value=record),              patch.object(telemetry.instance_runtime, "status", return_value={"observed_state": "running"}),              patch.object(telemetry, "_systemd_main_pid", return_value=None),              patch.object(telemetry, "_systemd_resources", return_value=(None, None)),              patch.object(telemetry, "_systemd_network", return_value=(None, None)),              patch.object(telemetry, "_bedrock_query", return_value={"latency_ms": 1.2}),              patch.object(telemetry, "_storage_used", return_value=1234) as storage:
+            samples = telemetry.collect_instance_telemetry({})
+        self.assertEqual(samples[0]["storage_used_bytes"], 1234)
+        storage.assert_called_once_with("/instance/runtime")
+
     def test_storage_scan_error_is_unknown_not_partial(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(telemetry.os, "walk", side_effect=OSError("denied")):
