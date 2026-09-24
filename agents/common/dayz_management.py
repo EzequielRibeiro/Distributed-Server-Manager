@@ -25,6 +25,21 @@ def _safe(name):
     value=str(name or "").strip()
     if not _SAFE.fullmatch(value):raise ValueError("invalid DayZ mission")
     return value
+def _community_sources(record):
+    root=_root(record);allowed=(root/"content").resolve();result={}
+    raw=record.get("content_dayz_community_missions")
+    if not isinstance(raw,list):return result
+    for item in raw:
+        if not isinstance(item,dict):continue
+        mission=str(item.get("id") or "").strip()
+        source_text=str(item.get("source") or "").strip()
+        if not _SAFE.fullmatch(mission) or not source_text:continue
+        source=Path(source_text).resolve()
+        try:source.relative_to(allowed)
+        except ValueError:continue
+        if source.is_dir():result[mission]=source
+    return result
+
 def current_mission(record):
     path=_config(record)
     try:source=path.read_text(encoding="utf-8",errors="replace")
@@ -40,7 +55,7 @@ def current_mission(record):
     return "dayzOffline.chernarusplus"
 def discover_missions(record):
     current=current_mission(record);root=_root(record);working=_working(record)
-    private_root=root/"mpmissions";shared_root=working/"mpmissions"
+    private_root=root/"mpmissions";shared_root=working/"mpmissions";community=_community_sources(record)
     names=set(_OFFICIAL)
     locations={}
     for kind,base in (("instance",private_root),("runtime",shared_root)):
@@ -49,15 +64,18 @@ def discover_missions(record):
         for item in items:
             if item.is_dir() and _SAFE.fullmatch(item.name):
                 names.add(item.name);locations.setdefault(item.name,set()).add(kind)
+    for name,source_path in community.items():
+        if source_path.is_dir():
+            names.add(name);locations.setdefault(name,set()).add("content")
     if current:names.add(current)
     result=[]
     for name in sorted(names,key=lambda x:(_OFFICIAL.get(x,x).lower(),x.lower())):
         where=locations.get(name,set());official=name in _OFFICIAL
         installed="instance" in where
-        available=installed or "runtime" in where
+        available=installed or "runtime" in where or "content" in where
         active=name==current
         state="active" if active else ("installed" if installed else ("available" if available else "unavailable"))
-        source="official-runtime" if official else ("community-instance" if installed else "community-runtime")
+        source="official-runtime" if official else ("community-instance" if installed else ("community-content" if "content" in where else "community-runtime"))
         result.append({
             "id":name,"name":_OFFICIAL.get(name,name),"official":official,"community":not official,
             "current":active,"active":active,"installed":installed,"available":available,
@@ -125,7 +143,9 @@ def _copy_if_needed(record,mission):
     state=_root(record)/"mpmissions"/mission
     if state.is_dir():return state
     source=_working(record)/"mpmissions"/mission
-    if not source.is_dir():raise FileNotFoundError(f"DayZ mission is not installed: {mission}")
+    if not source.is_dir():
+        source=_community_sources(record).get(mission)
+    if not source or not source.is_dir():raise FileNotFoundError(f"DayZ mission is not installed: {mission}")
     state.parent.mkdir(parents=True,exist_ok=True);shutil.copytree(source,state)
     return state
 def apply_mission(record,mission):
@@ -148,13 +168,14 @@ def apply_mission(record,mission):
     profile_context["mission"]=mission
     result["profile_context"]=profile_context
     state_root=_root(record);working=_working(record);shared=working/"mpmissions"/mission
+    seed_source=shared if shared.is_dir() else _community_sources(record).get(mission)
     seeds=[]
     for item in record.get("seed_directories") or []:
         if not isinstance(item,dict):continue
         target=str(item.get("target") or "")
         if target and Path(target).parent.resolve()==(state_root/"mpmissions").resolve():continue
         seeds.append(dict(item))
-    seeds.append({"source":str(shared),"target":str(private)})
+    if seed_source is not None:seeds.append({"source":str(seed_source),"target":str(private)})
     result["seed_directories"]=seeds
     if str(record.get("adapter") or "").lower()=="systemd":
         def replace_mission_bind(raw):
