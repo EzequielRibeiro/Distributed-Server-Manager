@@ -346,6 +346,28 @@ class CustomerContentWorkspaceService:
   if dependencies:
    result=self.content.put_many([*dependencies,payload],requested_by=actor);result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==str(payload.get("content_id") or ""));result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=str(payload.get("content_id") or "")];return result
   return self.content.put(payload,requested_by=actor)
+
+ def prepare_clean_for_version_change(self,user,instance_id):
+  """Remove customer-managed Minecraft content while preserving instance data."""
+  context=self.workspace.require(user,instance_id,"content.remove")
+  if str(context.get("game_id") or "").strip().lower()!="minecraft":raise PermissionError("clean version-change preparation is available only for Minecraft")
+  rows=self.content.list(instance_id=instance_id,limit=2000);candidates=[]
+  for item in rows:
+   if str(item.get("desired_state") or "installed").strip().lower()!="installed":continue
+   ctype=str(item.get("content_type") or "").strip().lower()
+   if ctype not in {"mod","plugin","modpack","datapack"}:continue
+   metadata=item.get("metadata") if isinstance(item.get("metadata"),Mapping) else {}
+   marker=metadata.get("bundle") if isinstance(metadata.get("bundle"),Mapping) else {}
+   if str(marker.get("parent_content_id") or "").strip() and ctype!="modpack":continue
+   content_id=str(item.get("content_id") or "").strip()
+   if content_id:candidates.append(content_id)
+  removed=[];failed=[]
+  for content_id in candidates:
+   try:self.mutate(user,instance_id,content_id,"remove",{});removed.append(content_id)
+   except Exception as exc:failed.append({"content_id":content_id,"error":str(exc)[:500]})
+  return {"kind":"MinecraftCleanContentPreparation","instance_id":str(instance_id),"removed":removed,"failed":failed,"completed":not failed,"preserved":["instance","world","ports","resource_profile","backups","permissions"]}
+
+
  def mutate(self,user,instance_id,content_id,action,body=None):
   action=str(action or "").strip().lower();required="content.remove" if action=="remove" else "content.install";context,policy=self._context_policy(user,instance_id,required);current=self._existing(instance_id,content_id);actor=str(user.get("username") or "customer");ctype=str(current.get("content_type") or "").lower();provider=str(current.get("provider") or "").strip().lower()
   marker=(current.get("metadata") or {}).get("bundle") if isinstance(current.get("metadata"),Mapping) else None
