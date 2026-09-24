@@ -15,7 +15,7 @@ from content_activation_runtime import project_runtime_spec
 from instance_runtime import get_instance,lifecycle,status
 import privileged_materialization
 STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"))
-RESULT_DIR=STATE_DIR/"dayz-operation-results";HISTORY_DIR=STATE_DIR/"dayz-operation-history";TRACE_DIR=STATE_DIR/"dayz-operation-traces"
+RESULT_DIR=STATE_DIR/"dayz-operation-results";HISTORY_DIR=STATE_DIR/"dayz-operation-history"
 def _now():return datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
 def _token(value,label):
     value=str(value or "").strip()
@@ -33,30 +33,6 @@ def _write(path,payload):
         except FileNotFoundError:pass
 def _history(oid):return HISTORY_DIR/f"{_token(oid,'operation_id')}.json"
 def _result(oid):return RESULT_DIR/f"{_token(oid,'operation_id')}.json"
-def _trace_path(oid):return TRACE_DIR/f"{_token(oid,'operation_id')}.jsonl"
-def _path_meta(path):
-    try:
-        stat=path.stat()
-        return {"exists":True,"size":stat.st_size,"mtime_ns":stat.st_mtime_ns}
-    except FileNotFoundError:return {"exists":False}
-    except OSError as exc:return {"exists":False,"error":str(exc)[:500]}
-def _trace_stage(oid,stage,record,mission=None):
-    mission=str(mission or record.get("mission") or "").strip()
-    root=Path(str(record.get("instance_state_root") or "")).resolve()
-    storage=root/"mpmissions"/mission/"storage_1" if mission else root/"mpmissions"/"__unknown__"/"storage_1"
-    payload={
-        "generated_at":_now(),"stage":stage,"mission":mission,
-        "dayz_content_enabled":record.get("dayz_content_enabled"),
-        "storage_1":_path_meta(storage),
-        "types_bin":_path_meta(storage/"data"/"types.bin"),
-        "events_bin":_path_meta(storage/"data"/"events.bin"),
-        "seed_directories":record.get("seed_directories") or [],
-        "bind_paths":record.get("bind_paths") or [],
-        "arguments":record.get("arguments") or [],
-    }
-    path=_trace_path(oid);path.parent.mkdir(parents=True,exist_ok=True)
-    with path.open("a",encoding="utf-8") as handle:
-        handle.write(json.dumps(payload,sort_keys=True)+"\n")
 def _runtime_identity(view):
     adapter=view.get("adapter_state") if isinstance(view.get("adapter_state"),dict) else {}
     raw_pid=adapter.get("main_pid") if adapter.get("main_pid") is not None else adapter.get("pid")
@@ -127,7 +103,7 @@ def _repair_hybrid_file_access(iid):
         raise RuntimeError((completed.stderr or completed.stdout or "Hybrid file-access helper failed")[:1000])
     return unit
 
-def _change_mission(config,record,iid,payload,operation_id=None):
+def _change_mission(config,record,iid,payload):
     before_view=discover_missions(record);previous_mission=before_view["current"];target=str(payload.get("mission") or "").strip()
     target_item=next((item for item in before_view["missions"] if item.get("id")==target),None)
     if target_item is None or not target_item.get("can_activate"):
@@ -143,26 +119,17 @@ def _change_mission(config,record,iid,payload,operation_id=None):
     if target==previous_mission:
         return {"previous_mission":previous_mission,"mission":target,"restarted":False,"rollback":False,"changed":False,"map":target_item,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"mod_preflight":preflight,"activation_order":_activation_order(snapshot)}
     before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"};previous_content_enabled=_content_enabled(record)
-    if operation_id:_trace_stage(operation_id,"before_stop",record,target)
     if was_running:lifecycle(config,iid,"stop")
-    if operation_id:_trace_stage(operation_id,"after_stop",record,target)
     persistence=None
     try:
         persistence=prepare_mission_persistence(record,target,persistence_mode)
-        if operation_id:_trace_stage(operation_id,"after_prepare_persistence",record,target)
         updated=apply_mission(record,target)
-        if operation_id:_trace_stage(operation_id,"after_apply_mission",updated,target)
         updated["dayz_content_enabled"]=content_mode=="keep"
         updated=project_runtime_spec(updated,snapshot)
-        if operation_id:_trace_stage(operation_id,"after_content_projection",updated,target)
         privileged_materialization.materialize(config,updated)
-        if operation_id:_trace_stage(operation_id,"after_materialization",updated,target)
         stabilization=None
         if was_running:
-            if operation_id:_trace_stage(operation_id,"before_start",updated,target)
-            lifecycle(config,iid,"start")
-            if operation_id:_trace_stage(operation_id,"after_start",updated,target)
-            stabilization=_stabilize(config,iid)
+            lifecycle(config,iid,"start");stabilization=_stabilize(config,iid)
         after_view=discover_missions(updated);active=next((item for item in after_view["missions"] if item.get("active")),None)
         if not active or active.get("id")!=target:raise RuntimeError(f"DayZ mission activation verification failed: {target}")
         return {"previous_mission":previous_mission,"mission":target,"restarted":was_running,"rollback":False,"changed":True,"map":active,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"persistence":persistence,"mod_preflight":preflight,"activation_order":_activation_order(snapshot),"stabilization":stabilization}
@@ -202,7 +169,7 @@ def handle_command(config:dict[str,Any],command:dict[str,Any])->dict[str,Any]:
         if str(record.get("agent_id") or "")!=str(config.get("agent_id") or ""):raise PermissionError("instance belongs to another Agent")
         if str(record.get("game_id") or "").lower()!="dayz":raise ValueError("DayZ operation requires DayZ instance")
         if action=="discover_missions":result=discover_missions(record)
-        elif action=="change_mission":result=_change_mission(config,record,iid,payload,operation_id=oid)
+        elif action=="change_mission":result=_change_mission(config,record,iid,payload)
         elif action=="wipe":
             before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"}
             if was_running:lifecycle(config,iid,"stop")
