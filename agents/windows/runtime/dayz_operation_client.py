@@ -9,7 +9,9 @@ RUNTIME_DIR=Path(__file__).resolve().parent
 COMMON_DIR=RUNTIME_DIR.parent.parent/"common"
 for item in (RUNTIME_DIR,COMMON_DIR):
     if str(item) not in sys.path:sys.path.insert(0,str(item))
-from dayz_management import apply_mission,discover_missions,wipe
+from dayz_management import apply_mission,discover_missions,mod_compatibility_preflight,wipe
+from content_activation_projection import activation_snapshot
+from content_activation_runtime import project_runtime_spec
 from instance_runtime import get_instance,lifecycle,register_instance,status
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\\ProgramData"))
 STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"))
@@ -36,23 +38,31 @@ def _change_mission(config,record,iid,payload):
     target_item=next((item for item in before_view["missions"] if item.get("id")==target),None)
     if target_item is None or not target_item.get("can_activate"):
         raise FileNotFoundError(f"DayZ mission is not installed or available: {target}")
+    content_mode=str(payload.get("content_mode") or "disable").strip().lower()
+    if content_mode not in {"disable","keep"}:raise ValueError("invalid DayZ map content mode")
+    snapshot=activation_snapshot(iid);preflight=mod_compatibility_preflight(snapshot,target)
+    if content_mode=="keep" and preflight.get("blocking"):
+        blocked=[str(item.get("content_id") or item.get("package_id") or "content") for item in preflight.get("items") or [] if item.get("status")=="incompatible"]
+        raise RuntimeError("DayZ mod compatibility preflight blocked mission "+target+": "+", ".join(blocked[:10]))
     if target==previous_mission:
-        return {"previous_mission":previous_mission,"mission":target,"restarted":False,"rollback":False,"changed":False,"map":target_item}
+        return {"previous_mission":previous_mission,"mission":target,"restarted":False,"rollback":False,"changed":False,"map":target_item,"content_mode":content_mode,"mods_enabled":content_mode=="keep","mod_preflight":preflight}
     before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"}
     if was_running:lifecycle(config,iid,"stop")
     updated=None
     try:
         updated=apply_mission(record,target)
+        updated["dayz_content_enabled"]=content_mode=="keep"
+        updated=project_runtime_spec(updated,snapshot)
         register_instance(updated)
         if was_running:lifecycle(config,iid,"start")
         after_view=discover_missions(updated);active=next((item for item in after_view["missions"] if item.get("active")),None)
         if not active or active.get("id")!=target:raise RuntimeError(f"DayZ mission activation verification failed: {target}")
-        return {"previous_mission":previous_mission,"mission":target,"restarted":was_running,"rollback":False,"changed":True,"map":active}
+        return {"previous_mission":previous_mission,"mission":target,"restarted":was_running,"rollback":False,"changed":True,"map":active,"content_mode":content_mode,"mods_enabled":content_mode=="keep","mod_preflight":preflight}
     except Exception as exc:
         rollback_error=None
-        if updated is not None and previous_mission and previous_mission!=target:
+        if previous_mission and previous_mission!=target:
             try:
-                rollback=apply_mission(updated,previous_mission)
+                rollback=apply_mission(record,previous_mission)
                 register_instance(rollback)
             except Exception as rollback_exc:rollback_error=str(rollback_exc)[:1000]
         if was_running:
