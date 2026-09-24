@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 COMMON=ROOT/"agents"/"common"
 if str(COMMON) not in sys.path:sys.path.insert(0,str(COMMON))
-from dayz_management import apply_mission,current_mission,discover_missions,wipe
+from dayz_management import apply_mission,current_mission,discover_missions,mod_compatibility_preflight,prepare_mission_persistence,restore_mission_persistence,wipe
 
 class DayZManagementTest(unittest.TestCase):
  def setUp(self):
@@ -34,6 +34,23 @@ class DayZManagementTest(unittest.TestCase):
   self.assertEqual(changed["bind_paths"],[{"source":str(self.state/"mpmissions"/"dayzOffline.enoch"),"target":str(self.game/"mpmissions"/"dayzOffline.enoch")}])
   self.assertTrue((self.state/"mpmissions"/"dayzOffline.chernarusplus"/"storage_1"/"players.db").is_file())
   with self.assertRaises(FileNotFoundError):apply_mission(self.record,"community.not-installed")
+ def test_current_mission_prefers_observed_config_over_stale_record(self):
+  record={**self.record,"mission":"dayzOffline.enoch"}
+  self.assertEqual(current_mission(record),"dayzOffline.chernarusplus")
+ def test_switch_updates_content_base_bind_paths_used_by_mod_activation(self):
+  record={**self.record,
+   "content_base_bind_paths":[{"source":str(self.state/"mpmissions"/"dayzOffline.chernarusplus"),"target":str(self.game/"mpmissions"/"dayzOffline.chernarusplus")}],
+   "bind_paths":[
+    {"source":str(self.state/"mpmissions"/"dayzOffline.chernarusplus"),"target":str(self.game/"mpmissions"/"dayzOffline.chernarusplus")},
+    {"source":str(self.state/".dsm"/"dayz-keys"),"target":str(self.game/"keys")},
+   ],
+  }
+  changed=apply_mission(record,"dayzOffline.enoch")
+  expected={"source":str(self.state/"mpmissions"/"dayzOffline.enoch"),"target":str(self.game/"mpmissions"/"dayzOffline.enoch")}
+  self.assertEqual(changed["content_base_bind_paths"],[expected])
+  self.assertIn(expected,changed["bind_paths"])
+  self.assertIn({"source":str(self.state/".dsm"/"dayz-keys"),"target":str(self.game/"keys")},changed["bind_paths"])
+  self.assertFalse(any("chernarusplus" in b["source"] or "chernarusplus" in b["target"] for b in changed["content_base_bind_paths"]))
  def test_discovers_community_mission_and_marks_source(self):
   mission=self.game/"mpmissions"/"dayzOffline.namalsk";mission.mkdir(parents=True)
   view=discover_missions(self.record);item=next(x for x in view["missions"] if x["id"]=="dayzOffline.namalsk")
@@ -42,6 +59,47 @@ class DayZManagementTest(unittest.TestCase):
   changed=apply_mission(self.record,item["id"])
   self.assertEqual(current_mission(changed),"dayzOffline.namalsk")
   self.assertTrue((self.state/"mpmissions"/"dayzOffline.namalsk").is_dir())
+ def test_mod_preflight_keeps_unknown_separate_from_compatible(self):
+  snapshot={"entries":[
+   {"content_id":"cf","game_id":"dayz","package_id":"221100:1559212036","activation":{"adapter":"dayz","mode":"mod"},"dependencies":[],"dayz_map_compatibility":{"all_missions":True}},
+   {"content_id":"admin","game_id":"dayz","package_id":"221100:1828439124","activation":{"adapter":"dayz","mode":"mod"},"dependencies":[]},
+  ]}
+  result=mod_compatibility_preflight(snapshot,"dayzOffline.enoch")
+  self.assertEqual(result["status"],"unknown");self.assertFalse(result["blocking"])
+  self.assertEqual(result["active_mods"],2);self.assertEqual(result["compatible"],1);self.assertEqual(result["unknown"],1);self.assertEqual(result["incompatible"],0)
+ def test_mod_preflight_blocks_explicit_incompatibility_and_missing_dependency(self):
+  snapshot={"entries":[
+   {"content_id":"map-specific","game_id":"dayz","package_id":"221100:1","activation":{"adapter":"dayz","mode":"mod"},"dependencies":[],"dayz_map_compatibility":{"compatible_missions":["dayzOffline.chernarusplus"]}},
+   {"content_id":"dependent","game_id":"dayz","package_id":"221100:2","activation":{"adapter":"dayz","mode":"mod"},"dependencies":["missing-base"],"dayz_map_compatibility":{"all_missions":True}},
+  ]}
+  result=mod_compatibility_preflight(snapshot,"dayzOffline.enoch")
+  self.assertEqual(result["status"],"incompatible");self.assertTrue(result["blocking"])
+  self.assertEqual(result["incompatible"],2)
+  reasons={item["reason"] for item in result["items"]};self.assertIn("mission_not_in_compatibility_allowlist",reasons);self.assertIn("missing_dependency",reasons)
+ def test_fresh_persistence_archives_target_storage_and_can_restore_it(self):
+  target=self.state/"mpmissions"/"dayzOffline.enoch";target.mkdir(parents=True,exist_ok=True)
+  storage=target/"storage_1";storage.mkdir();(storage/"players.db").write_text("old-state",encoding="utf-8")
+  prepared=prepare_mission_persistence(self.record,"dayzOffline.enoch","fresh")
+  self.assertEqual(prepared["mode"],"fresh");self.assertFalse(storage.exists());self.assertEqual(len(prepared["archived"]),1)
+  backup=Path(prepared["archived"][0]["backup"]);self.assertTrue((backup/"players.db").is_file())
+  storage.mkdir();(storage/"players.db").write_text("new-state",encoding="utf-8")
+  restored=restore_mission_persistence(prepared)
+  self.assertIn(str(storage.resolve()),restored["restored"]);self.assertEqual((storage/"players.db").read_text(encoding="utf-8"),"old-state")
+  self.assertFalse(Path(prepared["backup_root"]).exists())
+ def test_fresh_persistence_ignores_manual_storage_backups(self):
+  target=self.state/"mpmissions"/"dayzOffline.enoch";target.mkdir(parents=True,exist_ok=True)
+  storage=target/"storage_1";storage.mkdir();(storage/"players.db").write_text("live",encoding="utf-8")
+  manual=target/"storage_1.backup-20260924-114325";manual.mkdir();(manual/"players.db").write_text("manual-backup",encoding="utf-8")
+  prepared=prepare_mission_persistence(self.record,"dayzOffline.enoch","fresh")
+  self.assertFalse(storage.exists());self.assertTrue(manual.is_dir())
+  self.assertEqual([Path(item["original"]).name for item in prepared["archived"]],["storage_1"])
+  restore_mission_persistence(prepared)
+  self.assertTrue(storage.is_dir());self.assertTrue(manual.is_dir())
+ def test_keep_persistence_leaves_target_storage_in_place(self):
+  target=self.state/"mpmissions"/"dayzOffline.enoch";target.mkdir(parents=True,exist_ok=True)
+  storage=target/"storage_1";storage.mkdir();(storage/"players.db").write_text("state",encoding="utf-8")
+  prepared=prepare_mission_persistence(self.record,"dayzOffline.enoch","keep")
+  self.assertTrue(storage.exists());self.assertEqual(prepared["archived"],[]);self.assertIsNone(prepared["backup_root"])
  def test_wipe_backs_up_and_removes_current_persistence(self):
   result=wipe(self.record,"persistence",True);self.assertTrue(Path(result["backup"]).is_file())
   self.assertFalse((self.state/"mpmissions"/"dayzOffline.chernarusplus"/"storage_1").exists())

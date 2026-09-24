@@ -78,6 +78,29 @@ def _activation(command: Mapping[str, Any]) -> dict[str, str]:
     return result
 
 
+def _dayz_map_compatibility(command: Mapping[str, Any]) -> dict[str, Any]:
+    metadata = command.get("metadata") if isinstance(command.get("metadata"), Mapping) else {}
+    raw = command.get("dayz_map_compatibility") if isinstance(command.get("dayz_map_compatibility"), Mapping) else metadata.get("dayz_map_compatibility")
+    if not isinstance(raw, Mapping):
+        return {}
+    result: dict[str, Any] = {}
+    if raw.get("all_missions") is True:
+        result["all_missions"] = True
+    for key in ("compatible_missions", "incompatible_missions"):
+        values = raw.get(key)
+        if not isinstance(values, list):
+            continue
+        clean: list[str] = []
+        for value in values[:64]:
+            text = str(value or "").strip()
+            if text and len(text) <= 128 and all(ch.isalnum() or ch in "._-" for ch in text):
+                if text not in clean:
+                    clean.append(text)
+        if clean:
+            result[key] = clean
+    return result
+
+
 def _entry(state: dict[str, Any]) -> dict[str, Any] | None:
     status = str(state.get("status") or "")
     active_security = str(state.get("security_state") or "unscanned")
@@ -112,6 +135,7 @@ def _entry(state: dict[str, Any]) -> dict[str, Any] | None:
         "activation_order": _order(state.get("activation_order")),
         "dependencies": [str(value).strip() for value in (state.get("dependencies") or []) if str(value).strip()],
         "activation": activation,
+        "dayz_map_compatibility": dict(state.get("dayz_map_compatibility") or {}) if isinstance(state.get("dayz_map_compatibility"), dict) else {},
     }
 
 
@@ -209,6 +233,7 @@ def synchronize_activation_state(commands: list[dict[str, Any]], reports: list[d
         state["activation_order"] = _order(command.get("activation_order"))
         state["dependencies"] = [str(value).strip() for value in (command.get("dependencies") or []) if str(value).strip()]
         state["activation"] = _activation(command)
+        state["dayz_map_compatibility"] = _dayz_map_compatibility(command)
         _write(path, state)
         changed_instances.add(iid)
 

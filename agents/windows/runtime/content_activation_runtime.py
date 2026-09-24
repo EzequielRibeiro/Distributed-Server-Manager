@@ -84,7 +84,10 @@ def project_runtime_spec(spec:dict[str,Any],snapshot:dict[str,Any])->dict[str,An
  if len(games)>1:raise ContentRuntimeActivationError("activation snapshot mixes games")
  base=list(result.get("content_base_arguments") if isinstance(result.get("content_base_arguments"),list) else result.get("arguments") or [])
  content_args=[];properties=[]
- dayz_entries=[entry for entry in entries if _adapter(entry)=="dayz"]
+ game_id=str(result.get("game_id") or "").strip().lower();dayz_enabled=not (game_id=="dayz" and result.get("dayz_content_enabled") is False)
+ if game_id=="dayz":result["dayz_content_enabled"]=dayz_enabled
+ if game_id=="dayz" and not dayz_enabled:base=[value for value in base if not str(value).strip().lower().startswith(("-mod=","-servermod="))]
+ dayz_entries=[entry for entry in entries if _adapter(entry)=="dayz"] if dayz_enabled else []
  if dayz_entries:
   try:dayz=project_dayz_activation(result,dayz_entries)
   except DayZContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc

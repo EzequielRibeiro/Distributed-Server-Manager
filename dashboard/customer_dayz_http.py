@@ -44,7 +44,11 @@ def install_customer_dayz_http(legacy,authenticate):
         workspace,context,repo=service(user,instance_id);repo.initialize();ops=repo.list_for_instance(instance_id,25)
         discovery=next(((op,_discovery_payload(op)) for op in ops if _discovery_payload(op) is not None),None)
         active_discovery=next((op for op in ops if op.get("action")=="discover_missions" and op.get("status") in {"queued","delivered"}),None)
-        if discovery is None and active_discovery is None:
+        latest_change=next((op for op in ops if op.get("action")=="change_mission" and op.get("status")=="completed"),None)
+        discovery_created=(discovery[0].get("created_at") if discovery else None)
+        change_completed=(latest_change.get("completed_at") if latest_change else None)
+        stale_after_change=bool(latest_change and (discovery is None or (change_completed and discovery_created and change_completed>discovery_created)))
+        if (discovery is None or stale_after_change) and active_discovery is None:
             actor=str((user or {}).get("username") or (user or {}).get("id") or "customer")
             repo.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="discover_missions",requested_by=actor)
             ops=repo.list_for_instance(instance_id,25)
@@ -76,7 +80,11 @@ def install_customer_dayz_http(legacy,authenticate):
             elif action=="change_mission":
                 mission=str(body.get("mission") or "").strip()
                 if not mission:raise ValueError("mission is required")
-                queued=repo.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="change_mission",payload={"mission":mission},requested_by=actor)
+                content_mode=str(body.get("content_mode") or "disable").strip().lower()
+                if content_mode not in {"disable","keep"}:raise ValueError("invalid DayZ map content mode")
+                persistence_mode=str(body.get("persistence_mode") or "fresh").strip().lower()
+                if persistence_mode not in {"fresh","keep"}:raise ValueError("invalid DayZ map persistence mode")
+                queued=repo.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="change_mission",payload={"mission":mission,"content_mode":content_mode,"persistence_mode":persistence_mode},requested_by=actor)
             elif action=="wipe":
                 scheduled_at=body.get("scheduled_at")
                 if scheduled_at:
