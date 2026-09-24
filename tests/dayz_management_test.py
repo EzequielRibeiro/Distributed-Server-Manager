@@ -86,6 +86,15 @@ class DayZManagementTest(unittest.TestCase):
   restored=restore_mission_persistence(prepared)
   self.assertIn(str(storage.resolve()),restored["restored"]);self.assertEqual((storage/"players.db").read_text(encoding="utf-8"),"old-state")
   self.assertFalse(Path(prepared["backup_root"]).exists())
+ def test_fresh_persistence_ignores_manual_storage_backups(self):
+  target=self.state/"mpmissions"/"dayzOffline.enoch";target.mkdir(parents=True,exist_ok=True)
+  storage=target/"storage_1";storage.mkdir();(storage/"players.db").write_text("live",encoding="utf-8")
+  manual=target/"storage_1.backup-20260924-114325";manual.mkdir();(manual/"players.db").write_text("manual-backup",encoding="utf-8")
+  prepared=prepare_mission_persistence(self.record,"dayzOffline.enoch","fresh")
+  self.assertFalse(storage.exists());self.assertTrue(manual.is_dir())
+  self.assertEqual([Path(item["original"]).name for item in prepared["archived"]],["storage_1"])
+  restore_mission_persistence(prepared)
+  self.assertTrue(storage.is_dir());self.assertTrue(manual.is_dir())
  def test_keep_persistence_leaves_target_storage_in_place(self):
   target=self.state/"mpmissions"/"dayzOffline.enoch";target.mkdir(parents=True,exist_ok=True)
   storage=target/"storage_1";storage.mkdir();(storage/"players.db").write_text("state",encoding="utf-8")
