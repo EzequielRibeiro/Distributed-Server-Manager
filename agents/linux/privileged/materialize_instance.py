@@ -19,6 +19,7 @@ if str(RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_DIR))
 
 from catalog_runtime_policy import materialize_network_properties, materialize_templates
+from content_activation_runtime import materialize_content_activation
 from minecraft_rcon_secret import materialize_password as materialize_minecraft_rcon_password
 from palworld_admin_secret import materialize_admin_password
 from server_settings_runtime import materialize_server_settings
@@ -261,6 +262,21 @@ def _overlay_seed_directory(source: Path, target: Path, account: pwd.struct_pass
                 pass
 
 
+def _prepare_seed_parent(parent: Path, account: pwd.struct_passwd) -> None:
+    """Secure new seed parents without changing an existing instance boundary."""
+    missing: list[Path] = []
+    current = parent
+    while not current.exists():
+        missing.append(current)
+        current = current.parent
+    if current.is_symlink() or not current.is_dir():
+        raise RuntimeError("seed parent is not a safe directory")
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700)
+        os.chown(directory, account.pw_uid, account.pw_gid)
+        os.chmod(directory, 0o700)
+
+
 def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, optional: bool = False, overlay: bool = False) -> None:
     if not source.is_dir():
         if optional:
@@ -278,9 +294,7 @@ def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, o
             _repair_private_seed_modes(source, target, account)
             return
         target.rmdir()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    os.chown(target.parent, account.pw_uid, account.pw_gid)
-    os.chmod(target.parent, 0o700)
+    _prepare_seed_parent(target.parent, account)
     staging = target.with_name(f".{target.name}.{os.getpid()}.seed.tmp")
     if staging.exists():
         shutil.rmtree(staging, ignore_errors=True)
@@ -348,9 +362,7 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
         target = _within(state_root, str(item["target"]), "seed target")
         if not source.is_file():
             raise RuntimeError(f"seed source is unavailable: {source}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        os.chown(target.parent, account.pw_uid, account.pw_gid)
-        os.chmod(target.parent, 0o700)
+        _prepare_seed_parent(target.parent, account)
         if not target.exists():
             shutil.copy2(source, target)
         executable = bool(source.stat().st_mode & 0o111)
@@ -373,6 +385,55 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
         os.chown(source, account.pw_uid, account.pw_gid)
         os.chmod(source, 0o700)
         target.mkdir(parents=True, exist_ok=True)
+
+
+def _sync_private_minecraft_content(spec: dict[str, Any], config: dict[str, Any]) -> list[str]:
+    """Activate Java content as the confined root helper, not as the Controller worker.
+
+    The instance runtime remains mode 0700 for capivara-instance; granting the
+    Controller account access to world files would break that isolation.
+    """
+    if str(spec.get("game_id") or "").lower() != "minecraft" or not str(
+        spec.get("environment_id") or ""
+    ).lower().startswith("minecraft.java."):
+        raise RuntimeError("private content synchronization is Minecraft Java only")
+    expected = _instance_storage_root(config, spec.get("storage_pool_id")) / spec["instance_id"]
+    state_raw = Path(str(spec.get("instance_state_root") or ""))
+    work_raw = Path(str(spec.get("working_directory") or ""))
+    if (not state_raw.is_absolute() or state_raw.is_symlink()
+            or state_raw.resolve() != expected.resolve()):
+        raise RuntimeError("Minecraft state root does not match Agent storage policy")
+    if (not work_raw.is_absolute() or work_raw.is_symlink()
+            or work_raw.resolve() != (expected / "runtime").resolve()
+            or not work_raw.is_dir()):
+        raise RuntimeError("Minecraft runtime is outside its private instance root")
+    group = grp.getgrnam(_AGENT_GROUP)
+    runtime_user = _validate_runtime_user(str(spec.get("user") or _DEFAULT_RUNTIME_USER))
+    boundary = state_raw.stat()
+    if (boundary.st_uid != runtime_user.pw_uid or boundary.st_gid != group.gr_gid
+            or stat.S_IMODE(boundary.st_mode) != 0o710):
+        raise RuntimeError("Minecraft instance boundary lacks isolated control access")
+    control_user = pwd.getpwnam(
+        str(os.environ.get("CAPIVARA_AGENT_RESULT_USER") or "capivara-agent").strip()
+    )
+    control = state_raw / ".dsm"
+    if control.is_symlink() or not control.is_dir():
+        raise RuntimeError("Minecraft private control directory is unavailable")
+    control_stat = control.stat()
+    if (control_stat.st_uid != control_user.pw_uid
+            or stat.S_IMODE(control_stat.st_mode) != 0o700):
+        raise RuntimeError("Minecraft control directory must be private to the Agent")
+    files = materialize_content_activation(spec)
+    for filename in ("content-activation-files.json", "content-activation-overrides.json"):
+        manifest = control / filename
+        if manifest.is_symlink():
+            raise RuntimeError("Minecraft activation manifest cannot be a symlink")
+        if manifest.exists():
+            if not manifest.is_file():
+                raise RuntimeError("Minecraft activation manifest must be a regular file")
+            os.chown(manifest, control_user.pw_uid, group.gr_gid)
+            os.chmod(manifest, 0o600)
+    return files
 
 
 def _ensure_runtime_identity(spec: dict[str, Any], config: dict[str, Any]) -> None:
@@ -627,6 +688,7 @@ def run(instance_id: str) -> dict[str, Any]:
     working_file_copies: list[dict[str, Any]] = []
     dayz_mod_aliases: list[dict[str, Any]] = []
     removed_dayz_mod_aliases: list[str] = []
+    content_files: list[str] = []
     if action == "apply":
         _ensure_runtime_identity(spec, config)
         working_file_copies = _sync_working_file_copies(spec)
@@ -641,7 +703,17 @@ def run(instance_id: str) -> dict[str, Any]:
             materialize_minecraft_rcon_password(spec)
         server_settings = materialize_server_settings(spec)
         server_settings.extend(materialize_dynamic_values(spec))
+        if str(spec.get("game_id") or "").lower() == "minecraft" and str(
+            spec.get("environment_id") or ""
+        ).lower().startswith("minecraft.java."):
+            content_files = _sync_private_minecraft_content(spec, config)
         operation = materializer.apply(spec)
+    elif action == "sync-minecraft-content":
+        installed = materializer.inspect(spec)
+        if not installed.get("exists") or not installed.get("owned"):
+            raise RuntimeError("Minecraft content synchronization requires an owned runtime")
+        content_files = _sync_private_minecraft_content(spec, config)
+        operation = {"action": action, "changed": bool(content_files), "content_files": content_files}
     elif action == "remove":
         operation = materializer.remove(spec)
         removed_dayz_mod_aliases = _remove_dayz_mod_aliases(spec)
@@ -660,7 +732,8 @@ def run(instance_id: str) -> dict[str, Any]:
               "server_settings": server_settings if action == "apply" else [],
               "working_file_copies": working_file_copies,
               "dayz_mod_aliases": dayz_mod_aliases,
-              "removed_dayz_mod_aliases": removed_dayz_mod_aliases}
+              "removed_dayz_mod_aliases": removed_dayz_mod_aliases,
+              "content_files": content_files}
     _write_result(result_path, result)
     return result
 

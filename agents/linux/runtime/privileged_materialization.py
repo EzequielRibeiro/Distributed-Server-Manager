@@ -85,6 +85,21 @@ def _invoke(action: str, spec: dict[str, Any], **extra: Any) -> dict[str, Any]:
     return operation
 
 
+def sync_minecraft_content(config: dict[str, Any], spec: dict[str, Any]) -> list[str]:
+    """Delegate isolated Minecraft content writes to the checked root helper."""
+    agent_id = str(config.get("agent_id") or "").strip()
+    normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
+    if str(normalized.get("game_id") or "").lower() != "minecraft" or not str(
+        normalized.get("environment_id") or ""
+    ).lower().startswith("minecraft.java."):
+        raise ValueError("privileged content synchronization requires Minecraft Java")
+    result = _invoke("sync-minecraft-content", normalized)
+    files = result.get("content_files")
+    if not isinstance(files, list) or any(not isinstance(item, str) for item in files):
+        raise RuntimeError("privileged Minecraft content synchronization returned invalid files")
+    return files
+
+
 def migrate_storage_copy(config: dict[str, Any], spec: dict[str, Any], *, target_root: str) -> dict[str, Any]:
     """Legacy Agent-wide root migration copy; target root is validated by the root helper."""
     agent_id = str(config.get("agent_id") or "").strip()
@@ -168,4 +183,4 @@ def remove(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     }
 
 
-__all__ = ["materialize", "migrate_storage_copy", "migrate_storage_pool_copy", "remove"]
+__all__ = ["materialize", "sync_minecraft_content", "migrate_storage_copy", "migrate_storage_pool_copy", "remove"]

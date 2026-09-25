@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 import instance_runtime
+import privileged_materialization
 from adapters import resolve_adapter
 from content_activation_projection import activation_snapshot
 from content_activation_runtime import materialize_content_activation,project_runtime_spec
@@ -26,9 +27,13 @@ def materialize(config:dict[str,Any],spec:dict[str,Any])->dict[str,Any]:
 def reconcile(config:dict[str,Any],instance_id:str)->dict[str,Any]:
  record=instance_runtime._owned(config,instance_id);projected=_project(record)
  if projected!=record:record=instance_runtime.register_instance(projected)
- normalized=validate_runtime_spec(record,expected_agent_id=str(config.get("agent_id") or ""));materializer=resolve_materializer(normalized);content_files=materialize_content_activation(normalized);materialized=materializer.inspect(normalized)
+ normalized=validate_runtime_spec(record,expected_agent_id=str(config.get("agent_id") or ""));materializer=resolve_materializer(normalized);materialized=materializer.inspect(normalized)
  if not materialized.get("exists") or not materialized.get("owned"):raise RuntimeError("instance runtime is not safely materialized")
- if not materialized.get("matches"):materializer.apply(normalized)
+ minecraft_private=(str(normalized.get("game_id") or "").lower()=="minecraft" and str(normalized.get("environment_id") or "").lower().startswith("minecraft.java."))
+ if not materialized.get("matches"):
+  if minecraft_private:privileged_materialization.materialize(config,normalized)
+  else:materializer.apply(normalized)
+ content_files=(privileged_materialization.sync_minecraft_content(config,normalized) if minecraft_private else materialize_content_activation(normalized))
  adapter=resolve_adapter(normalized);before=adapter.status(normalized);desired=normalized["desired_state"];running=bool(before.get("running"));operation=None
  if desired=="running" and not running:operation=adapter.start(normalized)
  elif desired=="stopped" and running:operation=adapter.stop(normalized)
