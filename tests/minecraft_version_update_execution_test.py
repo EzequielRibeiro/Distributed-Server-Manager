@@ -43,7 +43,7 @@ class MinecraftVersionUpdateExecutionTest(unittest.TestCase):
 
     def test_controller_commits_version_only_after_completed_agent_result(self):
         source=(ROOT/"database/agent_instance_provisioning_repository.py").read_text(encoding="utf-8")
-        self.assertIn('status == "completed" and minecraft_update',source)
+        self.assertIn('status == "completed" and minecraft_change',source)
         self.assertIn("UPDATE instances SET game_version=",source)
         self.assertIn("MINECRAFT_VERSION_UPDATE_COMPLETED",source)
         self.assertIn("MINECRAFT_VERSION_UPDATE_FAILED",source)
@@ -93,6 +93,7 @@ class MinecraftVersionUpdateExecutionTest(unittest.TestCase):
 
     def test_runtime_migration_does_not_accept_unrelated_active_provisioning(self):
         service=MinecraftRuntimeMigrationService.__new__(MinecraftRuntimeMigrationService)
+        service.backend=Mock()
         service.root=ROOT
         service.workspace=Mock()
         service._context=lambda user,iid: {"id":iid,"game_id":"minecraft","runtime_id":"minecraft.java.youer","game_version":"1.21.1","build_id":"old","agent_id":"agent-a"}
