@@ -542,7 +542,7 @@ class DashboardRepository:
     def instance_context(self, instance_id: str) -> dict[str, Any] | None:
         with self.session() as session:
             row = session.execute(
-                "SELECT controller_id,agent_id,node_id,customer_id FROM instances "
+                "SELECT controller_id,agent_id,node_id,game_id,customer_id FROM instances "
                 f"WHERE id={self.dialect.placeholder}",
                 (instance_id,),
             ).fetchone()
