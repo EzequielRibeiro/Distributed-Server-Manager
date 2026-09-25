@@ -61,6 +61,20 @@ class MinecraftVersionUpdateExecutionTest(unittest.TestCase):
         self.assertIn("/minecraft-runtime/preflight",source)
         self.assertIn("/minecraft-runtime",source)
 
+    def test_version_update_rejects_an_unrelated_active_job(self):
+        service=MinecraftVersionUpdateService.__new__(MinecraftVersionUpdateService)
+        service.backend=Mock()
+        service.root=ROOT
+        service.workspace=Mock()
+        service.preflight_service=Mock()
+        service.preflight_service.preflight.return_value={"can_request_update":True,"target":{"version":"1.21.4","build":"100"}}
+        service.workspace.require.return_value={"runtime_id":"minecraft.java.paper","agent_id":"agent-a","game_version":"1.21.1","build_id":"old"}
+        service.workspace._runtime_projection.return_value={"state":"running"}
+        with patch("minecraft_version_update_service.runtime_definition",return_value={"edition":"java"}),patch("minecraft_version_update_service._selector",return_value="1.21.4@100"),patch("minecraft_version_update_service.resolve_catalog_provisioning",return_value=({"version":"1.21.4","build":"100"},{})),patch("minecraft_version_update_service.AgentInstanceProvisioningRepository") as repository:
+            repository.return_value.enqueue.return_value={"provisioning_id":"old-dayz-job","status":"running","request":{"configuration":{}}}
+            with self.assertRaisesRegex(ValueError,"different active provisioning"):
+                service.request({"username":"alice"},"instance-a","1.21.4","100",confirm_risk=True)
+
     def test_runtime_migration_preflight_is_contract_scoped_and_fail_closed(self):
         service=MinecraftRuntimeMigrationService.__new__(MinecraftRuntimeMigrationService)
         service.root=ROOT
