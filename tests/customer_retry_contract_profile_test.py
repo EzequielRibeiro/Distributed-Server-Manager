@@ -150,13 +150,28 @@ class CustomerRetryContractProfileTest(unittest.TestCase):
             audit=Mock(),
         )
         integration.install_customer_instance_creation(legacy)
-        with patch.object(integration, "runtime_definition", return_value={"id": "minecraft.java.vanilla"}), \
+
+        class WorkspaceAccess:
+            def __init__(self, backend):
+                pass
+
+            def effective_permissions_for(self, username, instance_id):
+                # An owner gets manager via account membership; a scoped
+                # viewer or foreign customer gets no retry permission.
+                return {"instance.provision.retry"} if username == "owner" else set()
+
+        with patch.object(integration, "InstanceWorkspaceRepository", WorkspaceAccess), \
+             patch.object(integration, "runtime_definition", return_value={"id": "minecraft.java.vanilla"}), \
              patch.object(integration, "_queue_agent_provisioning",
                           return_value=({"status": "queued"}, {"status": "queued"})) as queue:
             owner_handler = legacy.DashboardHandler()
             owner_handler.do_POST()
             self.assertEqual(owner_handler.response[0], 200)
             self.assertEqual(queue.call_args.kwargs["resource_profile_id"], "low")
+            user[0] = {"username": "viewer", "role": "customer", "scope_id": 1}
+            viewer_handler = legacy.DashboardHandler()
+            viewer_handler.do_POST()
+            self.assertEqual(viewer_handler.response[0], 403)
             user[0] = {"username": "foreign", "role": "customer", "scope_id": 2}
             foreign_handler = legacy.DashboardHandler()
             foreign_handler.do_POST()
