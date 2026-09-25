@@ -10,7 +10,7 @@ from agent_instance_provisioning_repository import AgentInstanceProvisioningRepo
 from catalog_provisioning_resolver import resolve_catalog_provisioning
 from customer_instance_creation import _selector, runtime_definition
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
-from minecraft_version_update_preflight import MinecraftVersionUpdatePreflightService
+from minecraft_version_update_preflight import MinecraftVersionUpdatePreflightService, _version_direction
 from runtime_workspace_catalog import allowed_runtimes
 
 
@@ -96,6 +96,8 @@ class MinecraftRuntimeMigrationService:
             for name in ("compatible", "incompatible", "unknown", "disabled")
         }
         blocking = counts["incompatible"] + counts["unknown"]
+        direction = _version_direction(str(context.get("game_version") or ""), resolved_version)
+        downgrade = direction == "downgrade"
         return {
             "kind": "MinecraftRuntimeMigrationPreflight",
             "instance_id": str(instance_id),
@@ -116,9 +118,13 @@ class MinecraftRuntimeMigrationService:
             "summary": counts,
             "has_blocking_content": blocking > 0,
             "blocking_content_count": blocking,
-            "can_request_migration": blocking == 0,
+            "version_direction": direction,
+            "has_blocking_version": downgrade,
+            "can_request_migration": blocking == 0 and not downgrade,
             "warning": (
-                "A migração mantém a mesma instância, mundo, portas, plano e permissões. "
+                ("Downgrade bloqueado: migração para versões mais antigas pode danificar o mundo atual. "
+                 "Crie outra instância ou restaure um backup compatível." if downgrade else
+                 "A migração mantém a mesma instância, mundo, portas, plano e permissões. ") +
                 "O runtime atual só será substituído após backup, materialização isolada e readiness do runtime alvo."
             ),
         }
@@ -136,6 +142,8 @@ class MinecraftRuntimeMigrationService:
         if confirm_risk is not True:
             raise ValueError("explicit runtime-migration confirmation is required")
         preflight = self.preflight(user, instance_id, target_runtime_id, version, build)
+        if preflight.get("has_blocking_version"):
+            raise ValueError("Minecraft runtime migration downgrade is blocked to protect the existing world")
         if not preflight.get("can_request_migration"):
             raise ValueError("incompatible or unverified managed content must be removed, updated or disabled before changing Minecraft runtime")
 
@@ -187,6 +195,16 @@ class MinecraftRuntimeMigrationService:
             desired_state=desired_state,
             requested_by=str(user.get("username") or user.get("id") or "customer"),
         )
+        queued = state.get("request") if isinstance(state.get("request"), dict) else {}
+        actual_configuration = queued.get("configuration") if isinstance(queued.get("configuration"), dict) else {}
+        actual_migration = actual_configuration.get("minecraft_runtime_migration")
+        if not isinstance(actual_migration, dict) or any(
+            str(actual_migration.get(key) or "") != str(configuration["minecraft_runtime_migration"][key])
+            for key in ("from_runtime_id", "target_runtime_id", "target_version", "target_build", "isolated_install_dir")
+        ):
+            # enqueue may return an existing active provisioning operation. Never
+            # present an unrelated job as an accepted migration.
+            raise ValueError("instance already has a different active provisioning operation")
         return {
             "accepted": True,
             "instance_id": str(instance_id),
