@@ -13,6 +13,7 @@ from customer_team_repository import CustomerTeamRepository
 from instance_backup_clone_repository import InstanceBackupCloneRepository
 from instance_network import occupied_ports_provider_for_backend
 from instance_provisioning_projection import dashboard_provision_state,project_agent_provisioning
+from instance_workspace_repository import InstanceWorkspaceRepository
 from runtime_workspace_catalog import game_workspace_catalog
 
 def runtime_directory(root:Path,game:str)->Path:return Path(root)/"catalog"/"v2"/"games"/game/"runtimes"
@@ -128,8 +129,12 @@ def install_customer_instance_creation(legacy)->None:
   else:
    context=repository.instance_context(instance_id)
    if context is None:return False
-   if role=="controller" and str(user.get("scope_id") or "")==str(context.get("controller_id") or ""):profile="operator"
-   elif role=="customer" and str(user.get("scope_id") or "") and str(user.get("scope_id"))==str(context.get("customer_id") or ""):profile="manager"
+   if role=="customer":
+   # Match workspace RBAC: scoped membership alone does not grant manager.
+   permissions=InstanceWorkspaceRepository(repository.backend).effective_permissions_for(
+    str(user.get("username") or ""),instance_id)
+   return "instance.provision.retry" in permissions
+  if role=="controller" and str(user.get("scope_id") or "")==str(context.get("controller_id") or ""):profile="operator"
    else:profile=repository.permission_profile(str(user.get("username") or ""),instance_id)
   return bool(profile and "instance.provision.retry" in legacy.INSTANCE_PERMISSIONS.get(profile,set()))
  def retry_instance_provisioning(user,instance_id,database_path=None):
