@@ -92,6 +92,14 @@ class ExternalUploadTest(unittest.TestCase):
   self.assertEqual(community["metadata"]["display_name"],"Namalsk")
   self.assertEqual([item["content_id"] for item in result["dependencies"]],["steam-workshop:2289456201","steam-workshop:2289461232"])
 
+ def test_rejected_dayz_community_map_upload_is_cleaned_up(self):
+  s=service(status="completed")
+  s.transfers.item["destination_ref"]="quarantine/other/transfer-1/mod.zip"
+  with self.assertRaises(ValueError):
+   s.finalize_dayz_community_map({"username":"alice"},"transfer-1",{"content_id":"dayz-map:bad"},[])
+  self.assertEqual(s.transfers.item["status"],"failed")
+  self.assertEqual(s.transfers.rejected[-1][0],"transfer-1")
+
  def test_finalize_requires_agent_quarantine_ack(self):
   s=service(status="completed");s.transfers.item["destination_ref"]="content-uploads/i1/transfer-1/mod.zip"
   with self.assertRaises(ValueError):s.finalize({"username":"alice"},"transfer-1",{"content_id":"m1","content_type":"mod"})
