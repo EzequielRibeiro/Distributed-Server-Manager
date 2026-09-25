@@ -100,5 +100,68 @@ class CustomerRetryContractProfileTest(unittest.TestCase):
         finally:
             conn.close()
 
+
+    def test_http_retry_allows_registered_owner_without_instance_access(self):
+        class Repository:
+            backend = object()
+
+            def instance_context(self, instance_id):
+                return {"customer_id": 1, "controller_id": "controller-horizon-server"}
+
+            def permission_profile(self, username, instance_id):
+                return None  # CLI-created instances may not have this grant yet.
+
+            def retry_instance(self, instance_id):
+                return {"node_id": "horizon-server", "game_id": "minecraft",
+                        "contract_id": "contract-low", "contract_status": "active",
+                        "contract_metadata_json": '{"resource_profile_id":"low"}'}
+
+            def reserve_retry(self, instance_id, node_id, game_id):
+                return {"runtime_id": "minecraft.java.vanilla", "edition": "java",
+                        "game_version": "26.3", "build_id": "26.3",
+                        "agent_id": "agent-horizon-server", "status": "failed"}
+
+        class Handler:
+            path = "/api/instance/provision/retry"
+            headers = {}
+
+            def read_json_body(self):
+                return {"instance_id": "cli-000001-minecraft-001"}
+
+            def send_json(self, status, data):
+                self.response = (status, data)
+
+            def forbidden(self):
+                self.response = (403, None)
+
+            def unauthorized(self):
+                self.response = (401, None)
+
+            def do_POST(self):
+                raise AssertionError("retry route was not installed")
+
+        user = [{"username": "owner", "role": "customer", "scope_id": 1}]
+        legacy = types.SimpleNamespace(
+            DashboardHandler=Handler, DSM_ROOT=ROOT, DATABASE_FILE=ROOT / "test.db",
+            dashboard_repository=lambda _: Repository(),
+            authenticate=lambda headers: user[0],
+            can_write=lambda actor: True,
+            INSTANCE_PERMISSIONS={"manager": {"instance.provision.retry"}},
+            audit=Mock(),
+        )
+        integration.install_customer_instance_creation(legacy)
+        with patch.object(integration, "runtime_definition", return_value={"id": "minecraft.java.vanilla"}), \
+             patch.object(integration, "_queue_agent_provisioning",
+                          return_value=({"status": "queued"}, {"status": "queued"})) as queue:
+            owner_handler = legacy.DashboardHandler()
+            owner_handler.do_POST()
+            self.assertEqual(owner_handler.response[0], 200)
+            self.assertEqual(queue.call_args.kwargs["resource_profile_id"], "low")
+            user[0] = {"username": "foreign", "role": "customer", "scope_id": 2}
+            foreign_handler = legacy.DashboardHandler()
+            foreign_handler.do_POST()
+            self.assertEqual(foreign_handler.response[0], 403)
+            self.assertEqual(queue.call_count, 1)
+
 if __name__ == "__main__":
     unittest.main()
