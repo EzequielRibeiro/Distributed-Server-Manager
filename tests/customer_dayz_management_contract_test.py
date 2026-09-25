@@ -7,7 +7,7 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
  def test_customer_surface_is_composed(self):
   html=(ROOT/"dashboard"/"web"/"customer-instance.html").read_text(encoding="utf-8")
   self.assertIn("/customer-maintenance.js?v=3",html)
-  self.assertIn("/customer-dayz.js?v=8",html)
+  self.assertIn("/customer-dayz.js?v=9",html)
   layer=(ROOT/"dashboard"/"server_part20.py").read_text(encoding="utf-8")
   self.assertIn("install_customer_dayz_http",layer)
   self.assertIn('"/customer-dayz.js"',layer)
@@ -32,6 +32,9 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
   self.assertIn('"Upload direto","upload"',dayz_js)
   self.assertIn('COMMUNITY_API+"/upload-finalize"',dayz_js)
   self.assertIn("uploadCommunityArchive",dayz_js)
+  self.assertIn("communityFormDirty",dayz_js)
+  self.assertIn('if(communityFormDirty&&document.getElementById("dayz-community-map-id"))return',dayz_js)
+  self.assertIn("markCommunityDirty",dayz_js)
  def test_dayz_api_supports_map_and_scheduled_wipe(self):
   source=(ROOT/"dashboard"/"customer_dayz_http.py").read_text(encoding="utf-8")
   for token in ('"refresh_maps"','"change_mission"','"wipe"','"cancel"',"scheduled_at"):
