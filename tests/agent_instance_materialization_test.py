@@ -177,7 +177,7 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
              mock.patch.object(runtime_materialization, "materialize_content_activation",
                                side_effect=AssertionError("worker must not access private Java runtime")), \
              mock.patch.object(runtime_materialization.privileged_materialization,
-                               "sync_minecraft_content", return_value=["plugins/test.jar"]) as sync:
+                               "sync_private_content", return_value=["plugins/test.jar"]) as sync:
             result = runtime_materialization.reconcile(self.config, "instance-one")
         self.assertEqual(result["observed_state"], "stopped")
         self.assertEqual(result["content_files"], ["plugins/test.jar"])

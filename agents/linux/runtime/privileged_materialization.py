@@ -85,7 +85,7 @@ def _invoke(action: str, spec: dict[str, Any], **extra: Any) -> dict[str, Any]:
     return operation
 
 
-def sync_minecraft_content(config: dict[str, Any], spec: dict[str, Any]) -> list[str]:
+def sync_private_content(config: dict[str, Any], spec: dict[str, Any]) -> list[str]:
     """Delegate isolated Minecraft content writes to the checked root helper."""
     agent_id = str(config.get("agent_id") or "").strip()
     normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
@@ -183,4 +183,4 @@ def remove(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     }
 
 
-__all__ = ["materialize", "sync_minecraft_content", "migrate_storage_copy", "migrate_storage_pool_copy", "remove"]
+__all__ = ["materialize", "sync_private_content", "migrate_storage_copy", "migrate_storage_pool_copy", "remove"]
