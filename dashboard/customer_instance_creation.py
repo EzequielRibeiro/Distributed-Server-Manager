@@ -47,6 +47,17 @@ def _queue_agent_provisioning(*,root,repository,runtime_def,instance_id,agent_id
  except Exception:provision=dashboard_provision_state(state)
  return state,provision
 
+def _contracted_retry_profile(current: dict[str, Any]) -> str | None:
+ """Use the current linked contract, not the catalog default, on retry."""
+ if not str(current.get("contract_id") or "").strip():
+  return None
+ if str(current.get("contract_status") or "").strip().lower()!="active":
+  raise PermissionError("linked instance contract is not active")
+ try:metadata=json.loads(current.get("contract_metadata_json") or "{}")
+ except (TypeError,ValueError) as exc:raise ValueError("invalid linked contract metadata") from exc
+ if not isinstance(metadata,dict):raise ValueError("invalid linked contract metadata")
+ return str(metadata.get("resource_profile_id") or metadata.get("profile_id") or "").strip().lower() or None
+
 def install_customer_instance_creation(legacy)->None:
  previous_post=legacy.DashboardHandler.do_POST
  def _contract_id_for_runtime(user,game,runtime_id,contract_id,root,database_path):
@@ -125,10 +136,11 @@ def install_customer_instance_creation(legacy)->None:
   if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,127}",instance_id):raise ValueError("invalid instance_id")
   repository=legacy.dashboard_repository(database_path);current=repository.retry_instance(instance_id)
   if current is None:raise ValueError("instance is not registered")
+  resource_profile_id=_contracted_retry_profile(current)
   node_id=str(current["node_id"] or "").strip();game=str(current["game_id"] or "").strip();row=repository.reserve_retry(instance_id,node_id,game);runtime_id=str(row["runtime_id"] or "").strip();edition=str(row["edition"] or "").strip();version=str(row["game_version"] or "").strip();build=str(row["build_id"] or "").strip();agent_id=str(row["agent_id"] or "").strip()
   if not all((runtime_id,edition,version,build,agent_id)):repository.update_instance_status(instance_id,row["status"]);raise ValueError("instance runtime selection is incomplete")
   runtime_def=runtime_definition(Path(legacy.DSM_ROOT),game,runtime_id)
-  try:_,provision=_queue_agent_provisioning(root=Path(legacy.DSM_ROOT),repository=repository,runtime_def=runtime_def,instance_id=instance_id,agent_id=agent_id,runtime_id=runtime_id,version=version,build=build,requested_by=str((user or {}).get("username") or "customer"))
+  try:_,provision=_queue_agent_provisioning(root=Path(legacy.DSM_ROOT),repository=repository,runtime_def=runtime_def,instance_id=instance_id,agent_id=agent_id,runtime_id=runtime_id,version=version,build=build,requested_by=str((user or {}).get("username") or "customer"),resource_profile_id=resource_profile_id)
   except Exception:repository.update_instance_status(instance_id,row["status"]);raise
   legacy.audit(user,"instance.provision.retry","started",instance_id,f"runtime={runtime_id};version={version};build={build};transport=agent-b10",database_path=database_path)
   return {"retried":True,"instance_id":instance_id,"runtime_id":runtime_id,"edition":edition,"version":version,"build":build,"provision":provision}
