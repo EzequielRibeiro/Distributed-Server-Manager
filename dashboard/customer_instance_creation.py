@@ -129,6 +129,7 @@ def install_customer_instance_creation(legacy)->None:
    context=repository.instance_context(instance_id)
    if context is None:return False
    if role=="controller" and str(user.get("scope_id") or "")==str(context.get("controller_id") or ""):profile="operator"
+   elif role=="customer" and str(user.get("scope_id") or "") and str(user.get("scope_id"))==str(context.get("customer_id") or ""):profile="manager"
    else:profile=repository.permission_profile(str(user.get("username") or ""),instance_id)
   return bool(profile and "instance.provision.retry" in legacy.INSTANCE_PERMISSIONS.get(profile,set()))
  def retry_instance_provisioning(user,instance_id,database_path=None):
