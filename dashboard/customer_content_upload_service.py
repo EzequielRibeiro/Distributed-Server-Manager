@@ -151,10 +151,17 @@ class CustomerContentUploadService:
   return self.content.put(payload,requested_by=actor)
 
  def finalize_dayz_community_map(self,user,transfer_id,body:Mapping[str,Any],dependency_assignments):
-  if not isinstance(body,Mapping):raise ValueError("content payload must be an object")
-  payload=dict(body);payload["content_type"]="map";payload["activation_state"]="enabled"
-  payload["dependencies"]=[str(item.get("content_id") or "").strip() for item in (dependency_assignments or []) if isinstance(item,Mapping) and str(item.get("content_id") or "").strip()]
-  return self._finalize(user,transfer_id,payload,extra_assignments=dependency_assignments)
+  item=self._transfer(user,transfer_id)
+  try:
+   if not isinstance(body,Mapping):raise ValueError("content payload must be an object")
+   payload=dict(body);payload["content_type"]="map";payload["activation_state"]="enabled"
+   payload["dependencies"]=[str(value.get("content_id") or "").strip() for value in (dependency_assignments or []) if isinstance(value,Mapping) and str(value.get("content_id") or "").strip()]
+   return self._finalize(user,transfer_id,payload,extra_assignments=dependency_assignments)
+  except Exception as exc:
+   if str(item.get("status") or "").lower()=="completed":
+    try:self.transfers.reject_content_upload(str(item["transfer_id"]),str(exc))
+    except Exception:pass
+   raise
 
  def finalize(self,user,transfer_id,body:Mapping[str,Any]):
   item=self._transfer(user,transfer_id)
