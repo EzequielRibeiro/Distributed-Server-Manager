@@ -786,11 +786,18 @@
         }
     }
 
+    function requiresMinecraftJavaEula(game, edition) {
+        return normalize(game) === "minecraft" && normalize(edition) === "java";
+    }
+
     function updateSummary() {
         const el = elements();
         const complete = Boolean(state.game && state.edition && state.distribution && state.runtime && state.version && state.build);
         el.regionStep.hidden = !complete;
         el.summaryStep.hidden = !complete;
+        const minecraftJavaEula = requiresMinecraftJavaEula(state.game, state.edition);
+        el.minecraftNotice.hidden = !complete || !minecraftJavaEula;
+        if (!minecraftJavaEula && el.minecraftEula) el.minecraftEula.checked = false;
         if (!complete) {
             el.submit.disabled = true;
             return;
@@ -802,7 +809,6 @@
         el.summaryBuild.textContent = state.build.label;
         el.summaryRegion.textContent = state.region ? regionLabel(state.region) : "Automática";
         el.summaryRegionFallback.textContent = state.allowCrossRegion ? "Sim" : "Não";
-        el.minecraftNotice.hidden = state.game !== "minecraft";
         el.submit.disabled = !state.placementReady;
     }
 
@@ -910,6 +916,7 @@
     window.CapivaraRuntimeSelector = {
         open,
         close: closeSelector,
+        requiresMinecraftJavaEula,
         state() {
             return {
                 contract: state.contract,
