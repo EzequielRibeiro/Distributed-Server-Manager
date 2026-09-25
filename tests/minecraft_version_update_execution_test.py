@@ -76,6 +76,33 @@ class MinecraftVersionUpdateExecutionTest(unittest.TestCase):
         self.assertEqual(result["blocking_content_count"],1)
         self.assertEqual(result["target"]["runtime_id"],"minecraft.java.paper")
 
+    def test_runtime_migration_blocks_downgrade_even_when_content_is_empty(self):
+        service=MinecraftRuntimeMigrationService.__new__(MinecraftRuntimeMigrationService)
+        service.root=ROOT
+        service.workspace=Mock()
+        service.workspace.require.return_value={"id":"instance-a","game_id":"minecraft","runtime_id":"minecraft.java.youer","game_version":"1.21.4","build_id":"old","contract_metadata":{}}
+        service.compatibility=Mock()
+        service.compatibility._content_compatibility.return_value=[]
+        current={"id":"minecraft.java.youer","edition":"java"}
+        target={"id":"minecraft.java.paper","name":"Paper","edition":"java"}
+        with patch("minecraft_runtime_migration_service.allowed_runtimes",return_value=[{"runtime_id":"minecraft.java.paper"}]),patch("minecraft_runtime_migration_service.runtime_definition",side_effect=lambda root,game,runtime: target if runtime=="minecraft.java.paper" else current),patch("minecraft_runtime_migration_service.resolve_catalog_provisioning",return_value=({"version":"1.21.1","build":"100"},{})):
+            result=service.preflight({"role":"customer"},"instance-a","minecraft.java.paper","1.21.1","100")
+        self.assertEqual(result["version_direction"],"downgrade")
+        self.assertTrue(result["has_blocking_version"])
+        self.assertFalse(result["can_request_migration"])
+
+    def test_runtime_migration_does_not_accept_unrelated_active_provisioning(self):
+        service=MinecraftRuntimeMigrationService.__new__(MinecraftRuntimeMigrationService)
+        service.root=ROOT
+        service.workspace=Mock()
+        service._context=lambda user,iid: {"id":iid,"game_id":"minecraft","runtime_id":"minecraft.java.youer","game_version":"1.21.1","build_id":"old","agent_id":"agent-a"}
+        service.preflight=lambda *args: {"can_request_migration":True,"target":{"runtime_id":"minecraft.java.paper","version":"1.21.4","build":"100","selector":"1.21.4@100"}}
+        service.workspace._runtime_projection.return_value={"state":"running"}
+        with patch("minecraft_runtime_migration_service.runtime_definition",return_value={"edition":"java"}),patch("minecraft_runtime_migration_service.resolve_catalog_provisioning",return_value=({"version":"1.21.4","build":"100"},{})),patch("minecraft_runtime_migration_service.AgentInstanceProvisioningRepository") as repository:
+            repository.return_value.enqueue.return_value={"provisioning_id":"existing-unrelated","status":"running","request":{"configuration":{}}}
+            with self.assertRaisesRegex(ValueError,"different active provisioning"):
+                service.request({"username":"alice"},"instance-a","minecraft.java.paper","1.21.4","100",confirm_risk=True)
+
     def test_runtime_migration_rejects_cross_edition(self):
         service=MinecraftRuntimeMigrationService.__new__(MinecraftRuntimeMigrationService)
         service.root=ROOT
