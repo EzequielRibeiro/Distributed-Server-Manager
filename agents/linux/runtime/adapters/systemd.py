@@ -62,6 +62,9 @@ class SystemdAdapter(InstanceRuntimeAdapter):
                 "--property=LoadState",
                 "--property=ActiveState",
                 "--property=SubState",
+                "--property=MainPID",
+                "--property=NRestarts",
+                "--property=Result",
                 "--no-pager",
             ],
             10,
@@ -74,6 +77,14 @@ class SystemdAdapter(InstanceRuntimeAdapter):
         load_state = values.get("LoadState", "unknown")
         active_state = values.get("ActiveState", "unknown")
         sub_state = values.get("SubState", "unknown")
+        try:
+            main_pid = int(values.get("MainPID") or 0)
+        except (TypeError, ValueError):
+            main_pid = 0
+        try:
+            restart_count = int(values.get("NRestarts") or 0)
+        except (TypeError, ValueError):
+            restart_count = 0
         return {
             "adapter": self.name,
             "unit": unit,
@@ -82,6 +93,9 @@ class SystemdAdapter(InstanceRuntimeAdapter):
             "active_state": active_state,
             "sub_state": sub_state,
             "running": active_state == "active",
+            "main_pid": main_pid or None,
+            "restart_count": max(0, restart_count),
+            "result": values.get("Result", "unknown"),
             "error": stderr[:2000] or None,
         }
 
