@@ -15,7 +15,7 @@ import traceback
 from typing import Any
 
 from game_data_executor import _execute as execute_game_data
-from backup_client import _create as create_backup
+from backup_client import _create as create_backup, _restore as restore_backup
 import game_runtime
 import instance_runtime
 import privileged_materialization
@@ -153,6 +153,13 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
                         },
                     },
                 )
+            if bool(update_meta.get("backup_before_update", True)) and not (
+                isinstance(update_backup, dict)
+                and str(update_backup.get("backup_id") or "").strip()
+                and str(update_backup.get("sha256") or "").strip()
+                and int(update_backup.get("size_bytes") or 0) > 0
+            ):
+                raise RuntimeError("Minecraft update requires a verified pre-update backup")
             if update_was_running:
                 instance_runtime.lifecycle(config, request["instance_id"], "stop")
                 update_stopped = True
@@ -247,6 +254,11 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
                     privileged_materialization.materialize(config, restored)
                     if isinstance(restored.get("catalog_runtime_policy"), dict):
                         privileged_firewall.reconcile(restored)
+                    if update_backup:
+                        restore_backup(config, {"instance_id": request["instance_id"],
+                                                "backup_id": update_backup["backup_id"],
+                                                "command_id": request["provisioning_id"] + "-rollback"})
+                        compensation.append("previous_world_restored")
                     runtime_materialization.reconcile(config, request["instance_id"])
                     compensation.append("previous_runtime_restored")
                 elif update_stopped and update_was_running:

@@ -51,6 +51,15 @@ class MinecraftVersionUpdateExecutionTest(unittest.TestCase):
         self.assertIn("MINECRAFT_RUNTIME_MIGRATION_FAILED",source)
         self.assertIn("UPDATE instances SET runtime_id=",source)
 
+    def test_both_agents_require_verified_backup_and_restore_world_on_failure(self):
+        for platform in ("linux", "windows"):
+            source=(ROOT/f"agents/{platform}/runtime/provisioning_executor.py").read_text(encoding="utf-8")
+            self.assertIn('"previous_world_restored"',source)
+            self.assertIn('"backup_id": update_backup["backup_id"]',source)
+            self.assertIn('restore_backup(config,',source)
+            self.assertIn('str(update_backup.get("sha256") or "").strip()',source)
+            self.assertLess(source.index('restore_backup(config,'), source.index('compensation.append("previous_runtime_restored")'))
+
     def test_customer_ui_requires_preflight_then_confirmation(self):
         source=(ROOT/"dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
         self.assertIn("Atualizar versão do Minecraft",source)
