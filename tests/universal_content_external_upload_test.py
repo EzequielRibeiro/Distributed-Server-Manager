@@ -32,6 +32,10 @@ class _Transfers:
 class _Content:
  def __init__(self):self.puts=[];self.bundles=[]
  def put(self,payload,requested_by=None):self.puts.append((dict(payload),requested_by));return {"changed":True,"assignment":dict(payload,revision=1)}
+ def put_many(self,payloads,requested_by=None):
+  items=[dict(payload) for payload in payloads]
+  self.puts.extend((dict(payload),requested_by) for payload in items)
+  return {"changed":True,"assignments":items}
  def put_bundle(self,parent,bundle,children,requested_by=None):self.bundles.append((dict(parent),dict(bundle),[dict(x) for x in children],requested_by));return {"changed":True,"assignment":dict(parent,revision=1),"children":children}
 
 def service(policy=None,status="staging"):
@@ -68,6 +72,26 @@ class ExternalUploadTest(unittest.TestCase):
   s=service(status="completed");s.transfers.item["filename"]="plugin.jar";s.transfers.item["destination_ref"]="quarantine/i1/transfer-1/plugin.jar"
   s.finalize({"username":"alice"},"transfer-1",{"content_id":"plugin-1","content_type":"plugin"});payload,_=s.content.puts[-1]
   self.assertFalse(payload["artifact"]["archive"]);self.assertEqual(payload["artifact"]["package_id"],"quarantine/i1/transfer-1/plugin.jar")
+ def test_finalize_dayz_community_map_composes_local_map_and_workshop_dependencies(self):
+  s=service(status="completed")
+  dependencies=[
+   {"instance_id":"i1","content_id":"steam-workshop:2289456201","content_type":"workshop","provider":"steam-workshop","desired_state":"installed","activation_state":"enabled","activation_order":100,"artifact":{"provider":"steam-workshop","package_id":"221100:2289456201"}},
+   {"instance_id":"i1","content_id":"steam-workshop:2289461232","content_type":"workshop","provider":"steam-workshop","desired_state":"installed","activation_state":"enabled","activation_order":101,"artifact":{"provider":"steam-workshop","package_id":"221100:2289461232"}},
+  ]
+  result=s.finalize_dayz_community_map({"username":"alice"},"transfer-1",{"content_id":"dayz-map:namalsk","activation_order":102,"metadata":{"display_name":"Namalsk"}},dependencies)
+  self.assertEqual([item["content_id"] for item in result["assignments"]],["steam-workshop:2289456201","steam-workshop:2289461232","dayz-map:namalsk"])
+  community=result["assignment"]
+  self.assertEqual(community["content_type"],"map")
+  self.assertEqual(community["provider"],"local")
+  self.assertEqual(community["activation_state"],"enabled")
+  self.assertEqual(community["activation_order"],102)
+  self.assertEqual(community["dependencies"],["steam-workshop:2289456201","steam-workshop:2289461232"])
+  self.assertTrue(community["artifact"]["ephemeral_upload"])
+  self.assertTrue(community["artifact"]["archive"])
+  self.assertEqual(community["artifact"]["package_id"],"quarantine/i1/transfer-1/mod.zip")
+  self.assertEqual(community["metadata"]["display_name"],"Namalsk")
+  self.assertEqual([item["content_id"] for item in result["dependencies"]],["steam-workshop:2289456201","steam-workshop:2289461232"])
+
  def test_finalize_requires_agent_quarantine_ack(self):
   s=service(status="completed");s.transfers.item["destination_ref"]="content-uploads/i1/transfer-1/mod.zip"
   with self.assertRaises(ValueError):s.finalize({"username":"alice"},"transfer-1",{"content_id":"m1","content_type":"mod"})
