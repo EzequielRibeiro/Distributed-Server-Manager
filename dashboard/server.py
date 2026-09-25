@@ -318,18 +318,56 @@ def instance_customer_id(metadata):
     )
 
 
+def _registered_instance_record(instance_path, database_path=DATABASE_FILE):
+    """Use the database as authority even before Agent materialization.
+
+    (registered=True, row=None) means the instance id exists but the requested
+    node/game path does not match. Never fall back to filesystem metadata then.
+    """
+    instance = Path(catalog_instance_path(str(instance_path)))
+    relative = instance.relative_to(INSTANCE_ROOT)
+    if len(relative.parts) != 3:
+        return False, None
+    node_id, game_id, instance_id = relative.parts
+    row = dashboard_repository(database_path).instance_context(instance_id)
+    if row is None:
+        return False, None
+    if (
+        str(row.get("node_id") or "") != node_id
+        or str(row.get("game_id") or "") != game_id
+    ):
+        return True, None
+    return True, row
+
+
 def can_access_instance(user, instance_path, write=False):
     if not user:
         return False
-    if user.get("role") == "admin":
+    role = user.get("role")
+    if role == "admin":
         return True
+    try:
+        registered, record = _registered_instance_record(instance_path)
+    except Exception:
+        # Fail closed when the registry cannot be queried or the path is unsafe.
+        return False
+    scope = user.get("scope_id")
+    if registered:
+        if record is None:
+            return False
+        if role == "controller":
+            return bool(scope and str(scope) == str(record.get("controller_id") or ""))
+        if role == "customer":
+            return bool(scope and str(scope) == str(record.get("customer_id") or ""))
+        return not write and role == "operator"
+    # Legacy instances that predate database registration retain their
+    # filesystem-based checks; registered instances NEVER fall back here.
     metadata = instance_metadata(instance_path)
-    scope = user.get("scope_id", "")
-    if user.get("role") == "controller":
-        return bool(scope and scope == metadata.get("controller_id"))
-    if user.get("role") == "customer":
-        return bool(scope and scope == instance_customer_id(metadata))
-    return not write and user.get("role") == "operator"
+    if role == "controller":
+        return bool(scope and str(scope) == str(metadata.get("controller_id") or ""))
+    if role == "customer":
+        return bool(scope and str(scope) == str(instance_customer_id(metadata) or ""))
+    return not write and role == "operator"
 
 
 def game_files_root(instance_path):
@@ -1771,15 +1809,25 @@ def instance_permission_profile(user, instance_path, database_path=DATABASE_FILE
         return None
     if user.get("role") == "admin":
         return "manager"
-    metadata = instance_metadata(instance_path)
-    if user.get("role") == "customer" and user.get("scope_id") == instance_customer_id(
-        metadata
-    ):
-        return "manager"
-    if user.get("role") == "controller" and user.get("scope_id") == metadata.get(
-        "controller_id"
-    ):
-        return "operator"
+    try:
+        registered, record = _registered_instance_record(instance_path, database_path)
+    except Exception:
+        return None
+    if registered:
+        if record is None:
+            return None
+        scope = user.get("scope_id")
+        if user.get("role") == "customer" and scope and str(scope) == str(record.get("customer_id") or ""):
+            return "manager"
+        if user.get("role") == "controller" and scope and str(scope) == str(record.get("controller_id") or ""):
+            return "operator"
+    else:
+        metadata = instance_metadata(instance_path)
+        scope = user.get("scope_id")
+        if user.get("role") == "customer" and scope and str(scope) == str(instance_customer_id(metadata) or ""):
+            return "manager"
+        if user.get("role") == "controller" and scope and str(scope) == str(metadata.get("controller_id") or ""):
+            return "operator"
     try:
         return dashboard_repository(database_path).permission_profile(
             user.get("username"),
