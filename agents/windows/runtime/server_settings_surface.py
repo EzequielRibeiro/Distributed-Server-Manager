@@ -111,11 +111,15 @@ def _secret(key:str)->bool:
  compact=re.sub(r"[^a-z0-9_]","",str(key).lower())
  return any(word in compact for word in _SECRET_WORDS)
 
-def _platform_managed(key:str)->bool:
+def _platform_managed(key:str,src:dict[str,Any]|None=None)->bool:
  raw=str(key or "").strip();compact=re.sub(r"[^a-z0-9]","",raw.lower())
  common={"port","serverport","serverportv6","queryport","steamqueryport","rconport","publicport","bindport","gameport","gamequeryport","a2sport","steamport","bindaddress","publicaddress","serverip","bindip","publicip","endpointaddudp","endpointaddtcp"}
  if compact in common:return True
  if re.search(r"(?:^|[_-])(bind|public|query|steam|rcon|a2s|game)[_-]?port$",raw,re.I):return True
+ context=src if isinstance(src,dict) else {}
+ runtime_id=str(context.get("runtime_id") or "").strip().lower()
+ path=str(context.get("path") or "").strip().replace("\\","/").lower()
+ if runtime_id.startswith("dayz") and path=="serverdz.cfg" and compact=="template":return True
  return False
 
 def _field_id(path:str,fmt:str,locator:str)->str:
@@ -202,7 +206,7 @@ def _field(path:str,fmt:str,locator:str,key:str,value:Any,src:dict[str,Any],*,se
  boolean_values=semantic.get("boolean_values") if isinstance(semantic.get("boolean_values"),dict) else None
  if kind=="boolean" and boolean_values and not isinstance(value,bool):
   text=str(value);value=True if text==str(boolean_values.get("true")) else False if text==str(boolean_values.get("false")) else _coerce(value,"boolean")
- secret=_secret(key);managed=str(key).lower() in src.get("managed",set()) or _platform_managed(key)
+ secret=_secret(key);managed=str(key).lower() in src.get("managed",set()) or _platform_managed(key,src)
  editable=not managed and not secret
  item={"id":_field_id(path,fmt,f"{locator}#{occurrence}"),"path":path,"format":fmt,"key":key,"label":str(decl.get("label") or key),"type":kind,"editable":editable,"managed":managed,"secret":secret,"logical_id":logical,"section":section,"occurrence":occurrence,"locator":locator,"quoted":raw_quote}
  if decl.get("description"):item["description"]=decl["description"]

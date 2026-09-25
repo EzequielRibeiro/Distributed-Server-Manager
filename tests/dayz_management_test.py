@@ -59,6 +59,24 @@ class DayZManagementTest(unittest.TestCase):
   changed=apply_mission(self.record,item["id"])
   self.assertEqual(current_mission(changed),"dayzOffline.namalsk")
   self.assertTrue((self.state/"mpmissions"/"dayzOffline.namalsk").is_dir())
+ def test_discovers_and_copies_managed_community_mission(self):
+  source=self.state/"content"/"maps"/"namalsk"/"Mission Files"/"regular.namalsk"
+  (source/"db").mkdir(parents=True);(source/"init.c").write_text("void main() {}\n",encoding="utf-8");(source/"db"/"types.xml").write_text("<types/>\n",encoding="utf-8")
+  record={**self.record,"content_dayz_community_missions":[{"id":"regular.namalsk","source":str(source),"content_id":"github:namalsk"}]}
+  view=discover_missions(record);item=next(x for x in view["missions"] if x["id"]=="regular.namalsk")
+  self.assertTrue(item["community"]);self.assertEqual(item["source"],"community-content");self.assertTrue(item["available"]);self.assertFalse(item["installed"])
+  changed=apply_mission(record,"regular.namalsk")
+  private=self.state/"mpmissions"/"regular.namalsk"
+  self.assertTrue((private/"init.c").is_file());self.assertTrue((private/"db"/"types.xml").is_file())
+  self.assertEqual(current_mission(changed),"regular.namalsk")
+  self.assertFalse(any(str(item.get("source") or "").startswith(str(self.state/"content")) for item in changed.get("seed_directories") or []))
+ def test_mod_preflight_ignores_map_assignments(self):
+  snapshot={"entries":[
+   {"content_id":"map","game_id":"dayz","content_type":"map","managed_path":"/unused","dependencies":["missing-map-dependency"]},
+   {"content_id":"cf","game_id":"dayz","content_type":"mod","package_id":"221100:1559212036","activation":{"adapter":"dayz","mode":"mod"},"dependencies":[]},
+  ]}
+  result=mod_compatibility_preflight(snapshot,"regular.namalsk")
+  self.assertEqual(result["active_mods"],1);self.assertEqual(result["unknown"],1);self.assertFalse(result["blocking"])
  def test_mod_preflight_keeps_unknown_separate_from_compatible(self):
   snapshot={"entries":[
    {"content_id":"cf","game_id":"dayz","package_id":"221100:1559212036","activation":{"adapter":"dayz","mode":"mod"},"dependencies":[],"dayz_map_compatibility":{"all_missions":True}},

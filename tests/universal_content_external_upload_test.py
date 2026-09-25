@@ -33,6 +33,10 @@ class _Transfers:
 class _Content:
  def __init__(self):self.puts=[];self.bundles=[];self.history=[]
  def put(self,payload,requested_by=None):self.puts.append((dict(payload),requested_by));return {"changed":True,"assignment":dict(payload,revision=1)}
+ def put_many(self,payloads,requested_by=None):
+  items=[dict(payload) for payload in payloads]
+  self.puts.extend((dict(payload),requested_by) for payload in items)
+  return {"changed":True,"assignments":items}
  def bundle_history(self,instance_id,content_id):return list(self.history)
  def bundle_diff(self,instance_id,content_id,bundle):return {"added":["new-mod"],"removed":[],"updated":[],"unchanged":[]}
  def put_bundle(self,parent,bundle,children,requested_by=None):self.bundles.append((dict(parent),dict(bundle),[dict(x) for x in children],requested_by));return {"changed":True,"bundle_revision":len(self.bundles),"assignment":dict(parent,revision=1),"children":children}

@@ -156,7 +156,7 @@ class CustomerContentUploadService:
   except (zipfile.BadZipFile,KeyError,UnicodeDecodeError,json.JSONDecodeError,OSError):return False
   return isinstance(manifest,Mapping) and str(manifest.get("manifestType") or "")=="minecraftModpack"
 
- def _finalize(self,user,transfer_id,body:Mapping[str,Any]):
+ def _finalize(self,user,transfer_id,body:Mapping[str,Any],extra_assignments=None):
   item=self._transfer(user,transfer_id)
   if str(item.get("status") or "")!="completed":raise ValueError("content upload has not reached the Agent")
   iid=str(item["instance_id"]);context,effective,_=self._access(user,iid)
@@ -195,7 +195,27 @@ class CustomerContentUploadService:
    raise ValueError("Upload de modpack suporta .mrpack. ZIP CurseForge requer 3rd Party API Key.")
   payload={key:body[key] for key in _ALLOWED_FIELDS if key in body and key not in {"metadata"}}
   payload.update({"instance_id":iid,"content_id":content_id,"content_type":ctype,"desired_state":"installed","provider":"local","target":f"external/{content_id}","artifact":{"provider":"local","package_id":relative,"sha256":str(item.get("sha256") or "") or None,"archive":archive,"filename":name,"ephemeral_upload":True},"provenance":{"kind":"customer-upload","transfer_id":tid,"filename":name,"sha256":str(item.get("sha256") or "") or None,"quarantine_path":relative,"agent_validated":True},"metadata":dict(metadata)})
-  return self.content.put(payload,requested_by=str(user.get("username") or "customer"))
+  actor=str(user.get("username") or "customer")
+  extras=[dict(value) for value in (extra_assignments or []) if isinstance(value,Mapping)]
+  if extras:
+   result=self.content.put_many([*extras,payload],requested_by=actor)
+   result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==content_id)
+   result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=content_id]
+   return result
+  return self.content.put(payload,requested_by=actor)
+
+ def finalize_dayz_community_map(self,user,transfer_id,body:Mapping[str,Any],dependency_assignments):
+  item=self._transfer(user,transfer_id)
+  try:
+   if not isinstance(body,Mapping):raise ValueError("content payload must be an object")
+   payload=dict(body);payload["content_type"]="map";payload["activation_state"]="enabled"
+   payload["dependencies"]=[str(value.get("content_id") or "").strip() for value in (dependency_assignments or []) if isinstance(value,Mapping) and str(value.get("content_id") or "").strip()]
+   return self._finalize(user,transfer_id,payload,extra_assignments=dependency_assignments)
+  except Exception as exc:
+   if str(item.get("status") or "").lower()=="completed":
+    try:self.transfers.reject_content_upload(str(item["transfer_id"]),str(exc))
+    except Exception:pass
+   raise
 
  def finalize(self,user,transfer_id,body:Mapping[str,Any]):
   item=self._transfer(user,transfer_id)

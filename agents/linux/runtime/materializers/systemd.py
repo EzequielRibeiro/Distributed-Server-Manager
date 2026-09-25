@@ -95,7 +95,7 @@ def render_unit(spec):
  for binding in spec.get("bind_paths",[]):lines.append(f"BindPaths={_bind_path(binding['source'],binding['target'])}")
  for binding in spec.get("runtime_bind_paths",[]):lines.append(f"BindPaths={_bind_path(binding['source'],binding['target'])}")
  lines.extend([f"WorkingDirectory={_working_directory(spec['working_directory'])}",f"Environment={_quote(f'HOME={_RUNTIME_ACCOUNT_HOME}')}",f"Environment={_quote(f'XDG_DATA_HOME={_RUNTIME_ACCOUNT_HOME}/.local/share')}",f"Environment={_quote(f'XDG_CACHE_HOME={_RUNTIME_ACCOUNT_HOME}/.cache')}",f"Environment={_quote(f'XDG_CONFIG_HOME={_RUNTIME_ACCOUNT_HOME}/.config')}"])
- lines.extend(_credential_lines(spec));lines.extend(_resource_lines(spec))
+ lines.extend(_credential_lines(spec));lines.append("LimitCORE=0");lines.extend(_resource_lines(spec))
  for item in spec.get("pre_start",[]):
   pre_argv=[str(item["executable"]),*[str(x) for x in item.get("arguments",[])]];lines.append("ExecStartPre="+" ".join(_quote(x) for x in pre_argv))
  lines.append("ExecStart="+" ".join(_quote(x) for x in argv));lines.extend(_success_exit_status_lines(spec));lines.extend(["Restart=no",f"KillSignal={_stop_signal(spec)}","TimeoutStopSec=60"])

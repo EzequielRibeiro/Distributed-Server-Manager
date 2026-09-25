@@ -2,9 +2,17 @@
 from __future__ import annotations
 
 import os
+import sys
 import zipfile
 from pathlib import Path
 from typing import Any
+
+RUNTIME_DIR = Path(__file__).resolve().parent
+COMMON_DIR = RUNTIME_DIR.parent.parent / "common"
+if str(COMMON_DIR) not in sys.path:
+    sys.path.insert(0, str(COMMON_DIR))
+
+from dayz_community_missions import community_mission_manifest
 
 
 class ContentSemanticValidationError(ValueError):
@@ -38,6 +46,18 @@ def _validate_dayz_mod(root: Path, files: list[Path]) -> dict[str, Any]:
             "uploaded file is not a valid DayZ mod: no PBO content was found"
         )
     return {"validator": "dayz-mod-v1", "pbo_files": len(pbo)}
+
+
+def _validate_dayz_map(root: Path) -> dict[str, Any]:
+    try:
+        manifest = community_mission_manifest(root)
+    except ValueError as exc:
+        raise ContentSemanticValidationError(str(exc)) from exc
+    return {
+        "validator": "dayz-community-map-v1",
+        "missions": manifest["missions"],
+        "mission_count": manifest["count"],
+    }
 
 
 def _jar_entries(path: Path) -> set[str]:
@@ -103,14 +123,20 @@ def validate_external_content_payload(
 ) -> dict[str, Any]:
     artifact = command.get("artifact") if isinstance(command.get("artifact"), dict) else {}
     provider = str(command.get("provider") or artifact.get("provider") or "").strip().lower()
-    if provider != "local" or artifact.get("ephemeral_upload") is not True:
-        return {"validator": "not-required"}
-
     payload = Path(root)
-    files = _regular_files(payload)
     game_id = str(command.get("game_id") or "").strip().lower()
     content_type = str(command.get("content_type") or "").strip().lower()
 
+    # Community DayZ maps are always inspected after provider acquisition, not
+    # only when they originate from a customer upload. This keeps GitHub/HTTP
+    # mission sources behind the same fail-closed semantic boundary.
+    if game_id == "dayz" and content_type == "map":
+        return _validate_dayz_map(payload)
+
+    if provider != "local" or artifact.get("ephemeral_upload") is not True:
+        return {"validator": "not-required"}
+
+    files = _regular_files(payload)
     if game_id == "dayz" and content_type == "mod":
         return _validate_dayz_mod(payload, files)
     if game_id == "minecraft":

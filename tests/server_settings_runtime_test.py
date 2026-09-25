@@ -142,7 +142,7 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
  def test_observed_dayz_surface_reads_real_parameters_and_protects_platform_fields(self):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);cfg=root/'serverDZ.cfg'
-   cfg.write_text('hostname = "First"; // Server name\npassword = "join-secret";\npasswordAdmin = "admin-secret";\ndescription = "A server";\nenableWhitelist = 0;\nmaxPlayers = 60;\nverifySignatures = 2;\ndisable3rdPerson = 0;\nserverTimeAcceleration = 12;\nsteamQueryPort = 27016;\nhostname = "Effective";\nmaxPlayers = 32;\n',encoding='utf-8')
+   cfg.write_text('hostname = "First"; // Server name\npassword = "join-secret";\npasswordAdmin = "admin-secret";\ndescription = "A server";\nenableWhitelist = 0;\nmaxPlayers = 60;\nverifySignatures = 2;\ndisable3rdPerson = 0;\nserverTimeAcceleration = 12;\nsteamQueryPort = 27016;\ntemplate = "regular.namalsk";\nhostname = "Effective";\nmaxPlayers = 32;\n',encoding='utf-8')
    spec={'configuration_root':str(root),'arguments':[],'environment_id':'dayz.stable','catalog_server_settings':declaration('dayz.stable'),'catalog_network_properties':[{'path':'serverDZ.cfg','key':'steamQueryPort','syntax':'semicolon'}]}
    surface=observed_surface(spec);fields=surface['fields'];by_key={item['key']:item for item in fields}
    self.assertEqual('Effective',by_key['hostname']['value']);self.assertEqual(32,by_key['maxPlayers']['value'])
@@ -150,12 +150,14 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
    self.assertTrue(by_key['password']['secret']);self.assertIsNone(by_key['password']['value']);self.assertFalse(by_key['password']['editable']);self.assertTrue(by_key['password']['has_value'])
    self.assertTrue(by_key['passwordAdmin']['secret']);self.assertFalse(by_key['passwordAdmin']['editable'])
    self.assertFalse(by_key['steamQueryPort']['editable']);self.assertTrue(by_key['steamQueryPort']['managed'])
+   self.assertFalse(by_key['template']['editable']);self.assertTrue(by_key['template']['managed']);self.assertEqual('regular.namalsk',by_key['template']['value'])
    self.assertEqual(2,by_key['verifySignatures']['value']);self.assertTrue(by_key['verifySignatures']['editable'])
    dynamic=normalize_dynamic_values(spec,{by_key['verifySignatures']['id']:1,by_key['disable3rdPerson']['id']:1})
    updated=dict(spec);updated['server_settings_dynamic_values']=dynamic
    self.assertEqual(['serverDZ.cfg'],materialize_dynamic_values(updated));text=cfg.read_text()
    self.assertIn('verifySignatures = 1;',text);self.assertIn('disable3rdPerson = 1;',text)
    with self.assertRaises(PermissionError):normalize_dynamic_values(spec,{by_key['steamQueryPort']['id']:24003})
+   with self.assertRaises(PermissionError):normalize_dynamic_values(spec,{by_key['template']['id']:'dayzOffline.chernarusplus'})
    with self.assertRaises(PermissionError):normalize_dynamic_values(spec,{'cfg-forged':1})
 
  def test_dayz_extended_semantics_arrays_dependencies_and_comment_preservation(self):
@@ -203,9 +205,10 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
  def test_windows_observed_surface_matches_linux_security_contract(self):
   module_path=ROOT/'agents/windows/runtime/server_settings_surface.py';specmod=importlib.util.spec_from_file_location('windows_server_settings_surface_tested',module_path);module=importlib.util.module_from_spec(specmod);assert specmod and specmod.loader;specmod.loader.exec_module(module)
   with tempfile.TemporaryDirectory() as td:
-   root=Path(td);(root/'serverDZ.cfg').write_text('hostname="Win";\npassword="secret";\nmaxPlayers=20;\nsteamQueryPort=2305;\nverifySignatures=2;\n',encoding='utf-8')
+   root=Path(td);(root/'serverDZ.cfg').write_text('hostname="Win";\npassword="secret";\nmaxPlayers=20;\nsteamQueryPort=2305;\ntemplate="regular.namalsk";\nverifySignatures=2;\n',encoding='utf-8')
    spec={'configuration_root':str(root),'arguments':[],'environment_id':'dayz.stable','catalog_server_settings':declaration('dayz.stable'),'catalog_network_properties':[{'path':'serverDZ.cfg','key':'steamQueryPort','syntax':'semicolon'}]};surface=module.observed_surface(spec);by_key={f['key']:f for f in surface['fields']}
-   self.assertFalse(by_key['password']['editable']);self.assertIsNone(by_key['password']['value']);self.assertFalse(by_key['steamQueryPort']['editable'])
+   self.assertFalse(by_key['password']['editable']);self.assertIsNone(by_key['password']['value']);self.assertFalse(by_key['steamQueryPort']['editable']);self.assertFalse(by_key['template']['editable']);self.assertTrue(by_key['template']['managed'])
+   with self.assertRaises(PermissionError):module.normalize_dynamic_values(spec,{by_key['template']['id']:'dayzOffline.chernarusplus'})
    updated=dict(spec);updated['server_settings_dynamic_values']=module.normalize_dynamic_values(spec,{by_key['verifySignatures']['id']:1});module.materialize_dynamic_values(updated);self.assertRegex((root/'serverDZ.cfg').read_text(),r'verifySignatures\s*=\s*1;')
 
  def test_observed_surface_masks_credentials_and_runtime_owned_network_values(self):
