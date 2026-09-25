@@ -116,6 +116,7 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
         content = unit_path_for_spec(spec).read_text(encoding="utf-8")
         self.assertIn("X-Capivara-Instance=instance-one", content)
         self.assertIn('"value with spaces"', content)
+        self.assertIn("LimitCORE=0", content)
         unit_path_for_spec(spec).write_text("[Service]\nExecStart=/bin/false\n", encoding="utf-8")
         with self.assertRaises(Exception):
             materializer.apply(spec)
