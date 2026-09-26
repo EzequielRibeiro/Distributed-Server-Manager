@@ -15,6 +15,11 @@ on:
       - 'dashboard/customer_content_http.py'
       - 'dashboard/web/customer-instance-v2.js'
       - 'core/minecraft_serverpack.py'
+      - 'agents/linux/runtime/content_activation_minecraft.py'
+      - 'agents/windows/runtime/content_activation_minecraft.py'
+      - 'scripts/minecraft_modpack_world_audit.py'
+      - 'tests/minecraft_modpack_world_audit_test.py'
+      - 'tests/minecraft_serverpack_incremental_update_test.py'
       - 'core/content_bundle.py'
       - 'agents/common/minecraft_serverpack_agent.py'
       - 'agents/linux/runtime/content_client.py'
@@ -40,6 +45,11 @@ on:
       - 'dashboard/customer_content_http.py'
       - 'dashboard/web/customer-instance-v2.js'
       - 'core/minecraft_serverpack.py'
+      - 'agents/linux/runtime/content_activation_minecraft.py'
+      - 'agents/windows/runtime/content_activation_minecraft.py'
+      - 'scripts/minecraft_modpack_world_audit.py'
+      - 'tests/minecraft_modpack_world_audit_test.py'
+      - 'tests/minecraft_serverpack_incremental_update_test.py'
       - 'core/content_bundle.py'
       - 'agents/common/minecraft_serverpack_agent.py'
       - 'agents/linux/runtime/content_client.py'
@@ -70,6 +80,9 @@ jobs:
             dashboard/customer_content_http.py \
             core/minecraft_serverpack.py \
             core/minecraft_modpack_resolver.py \
+            scripts/minecraft_modpack_world_audit.py \
+            agents/linux/runtime/content_activation_minecraft.py \
+            agents/windows/runtime/content_activation_minecraft.py \
             dashboard/customer_content_workspace.py \
             agents/common/minecraft_serverpack_agent.py
           node --check dashboard/web/customer-instance-v2.js
@@ -88,7 +101,8 @@ jobs:
             tests.minecraft_serverpack_ui_contract_test \
             tests.content_provider_fallback_test \
             tests.minecraft_modpack_client_only_test \
-            tests.minecraft_modpack_distribution_test -v
+            tests.minecraft_modpack_distribution_test \
+            tests.minecraft_modpack_world_audit_test -v
       - name: Existing upload and bundle regressions
         env:
           PYTHONPATH: .

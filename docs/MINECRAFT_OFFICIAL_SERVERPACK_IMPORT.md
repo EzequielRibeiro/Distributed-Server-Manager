@@ -113,6 +113,59 @@ Limites v1: 4 GiB ZIP, 8 GiB expandido, 12 mil entradas, 1500 mods e no máximo
 8 pastas aprovadas de configuração. O processamento do Agent permite 2000
 comandos, mantendo o limite de 2000 assignments do Controller.
 
+
+## Preservação obrigatória de mundos ao enviar novas versões
+
+Uma nova versão do modpack é uma **revisão de conteúdo**, nunca uma
+reinstalação da instância ou uma autorização implícita para fazer *wipe*.
+A atualização deve conservar o mesmo `instance_id`, `content_id`,
+`server.properties` e o `level-name`. O Controller confronta as revisões,
+recusa mudanças incompatíveis de Minecraft/NeoForge e exige confirmação de
+backup para atualizações do Server Pack oficial. A remoção, adição ou troca de
+um mod não remove nem reconstrói o mundo.
+
+Em **ambos** os Agents, o materializador impede que overrides de qualquer
+modpack sejam projetados sobre os mundos padrão, o mundo configurado em
+`level-name`, Nether/End, `worlds/`, `dimensions/`,
+arquivos de região `.mca`/`.mcr`, `level.dat`, dados de jogadores,
+ou `server.properties`. Os novos scripts do pacote permanecem inertes.
+A atualização oficial também preserva as configurações existentes e não
+recopia mods que não mudaram. Em caso de incompatibilidade, interromper
+a operação e oferecer rollback do **conteúdo**, nunca recriação do mapa.
+
+### Evidência obrigatória na homologação real
+
+Com o **servidor Minecraft parado** e um backup concluído e verificado,
+registre o estado do mundo antes de aplicar a nova versão:
+
+```bash
+python3 scripts/minecraft_modpack_world_audit.py \
+  --instance-root "/caminho/da/instancia/game-data" \
+  --save-baseline "/home/ezequiel/dsm-test-evidence/minecraft-world-before.json"
+```
+
+Após reconciliação dos novos mods, **antes de iniciar o Minecraft**,
+confirme que nenhum arquivo do mundo mudou:
+
+```bash
+python3 scripts/minecraft_modpack_world_audit.py \
+  --instance-root "/caminho/da/instancia/game-data" \
+  --compare-baseline "/home/ezequiel/dsm-test-evidence/minecraft-world-before.json"
+```
+
+A segunda verificação deve retornar `WORLD_UNCHANGED`. Retornos
+`WORLD_PRESERVATION_FAILED` ou `WORLD_AUDIT_ERROR` bloqueiam a
+homologação, reinício e release até diagnóstico e eventual restauração do
+backup. O script é somente leitura para a instância: verifica SHA-256 de
+regiões, dimensões, dados de jogadores e demais arquivos presentes nos
+diretórios de mundo. Salva o relatório fora da instância.
+
+Após o primeiro reinício, mods podem modificar **novos chunks ou formatos
+de mundo** conforme suas próprias regras. Os guards do Capivara impedem
+reinstalação/overwrite pelo gerenciador; não constituem garantia de
+compatibilidade de *worldgen* entre versões de mods. Guardar backup e
+validar o primeiro boot antes de declarar a atualização concluída.
+
 ### Validação offline inicial, antes de ativar o fluxo
 
 Copiar manualmente o ZIP baixado do site oficial para o host de teste e executar:
