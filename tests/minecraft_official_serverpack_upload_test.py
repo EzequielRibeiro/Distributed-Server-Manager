@@ -25,7 +25,8 @@ CONTEXT={"id":"i1","agent_id":"agent-1","customer_id":7,
          "game_version":"26.1.2","build_id":"26.1.2.109"}
 METADATA={"display_name":"ATM11 0.9.0 beta","serverpack":{
  "format":"official-serverpack-v1","curseforge_project_id":str(PROJECT),
- "curseforge_file_id":str(FILE),"loader_version":"26.1.2.109"}}
+ "curseforge_file_id":str(FILE),"loader_version":"26.1.2.109",
+ "expected_revision":0}}
 
 def mock_api(path, *, flags=None, file_version_tags=None, project_id=PROJECT):
  sha1=hashlib.sha1(path.read_bytes()).hexdigest()
@@ -78,6 +79,8 @@ class OfficialServerPackUploadTest(unittest.TestCase):
     preview=s.preview_serverpack(USER,"transfer-1",
       {"content_id":"atm11","content_type":"modpack","metadata":METADATA})
     self.assertEqual(preview["mod_count"],2)
+    self.assertEqual(preview["update_plan"]["operation"],"install")
+    self.assertEqual(preview["update_plan"]["previous_revision"],0)
     self.assertEqual(preview["loader_version"],"26.1.2.109")
     self.assertTrue(preview["requires_stopped_instance"])
     self.assertFalse(preview["runs_pack_scripts"])
