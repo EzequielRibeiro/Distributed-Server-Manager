@@ -32,7 +32,7 @@ class ServerPackUIContractTest(unittest.TestCase):
   self.assertTrue(js.index('if(!confirm(intro+')<js.index('return metadata\n}'))
   self.assertIn('scripts', (ROOT/"docs/MINECRAFT_OFFICIAL_SERVERPACK_IMPORT.md").read_text())
   html=(ROOT/"dashboard/web/customer-instance.html").read_text()
-  self.assertIn('customer-instance-v2.js?v=25',html)
+  self.assertIn('customer-instance-v2.js?v=26',html)
 
 
 if __name__=="__main__":
