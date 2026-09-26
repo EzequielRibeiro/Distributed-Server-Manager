@@ -1,0 +1,80 @@
+name: Official Minecraft Server Packs
+
+on:
+  pull_request:
+    paths:
+      - 'dashboard/customer_modpack_source_discovery.py'
+      - 'dashboard/customer_serverpack_service.py'
+      - 'dashboard/customer_content_upload_service.py'
+      - 'dashboard/customer_content_http.py'
+      - 'dashboard/web/customer-instance-v2.js'
+      - 'core/minecraft_serverpack.py'
+      - 'core/content_bundle.py'
+      - 'agents/common/minecraft_serverpack_agent.py'
+      - 'agents/linux/runtime/content_client.py'
+      - 'agents/windows/runtime/content_client.py'
+      - 'tests/minecraft_modpack_source_discovery_test.py'
+      - 'tests/minecraft_modpack_auto_source_test.py'
+      - 'tests/minecraft_serverpack_*.py'
+      - 'tests/minecraft_official_serverpack_upload_test.py'
+      - 'tests/universal_content_external_upload_test.py'
+      - '.github/workflows/official-minecraft-serverpacks.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/customer_modpack_source_discovery.py'
+      - 'dashboard/customer_serverpack_service.py'
+      - 'dashboard/customer_content_upload_service.py'
+      - 'dashboard/customer_content_http.py'
+      - 'dashboard/web/customer-instance-v2.js'
+      - 'core/minecraft_serverpack.py'
+      - 'core/content_bundle.py'
+      - 'agents/common/minecraft_serverpack_agent.py'
+      - 'agents/linux/runtime/content_client.py'
+      - 'agents/windows/runtime/content_client.py'
+      - 'tests/minecraft_modpack_source_discovery_test.py'
+      - 'tests/minecraft_modpack_auto_source_test.py'
+      - 'tests/minecraft_serverpack_*.py'
+      - 'tests/minecraft_official_serverpack_upload_test.py'
+      - 'tests/universal_content_external_upload_test.py'
+      - '.github/workflows/official-minecraft-serverpacks.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  provider-discovery:
+    name: Official Server Packs - provider discovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Python and browser syntax
+        run: |
+          python3 -m py_compile \
+            dashboard/customer_modpack_source_discovery.py \
+            dashboard/customer_content_upload_service.py \
+            dashboard/customer_serverpack_service.py \
+            dashboard/customer_content_http.py \
+            core/minecraft_serverpack.py \
+            agents/common/minecraft_serverpack_agent.py
+          node --check dashboard/web/customer-instance-v2.js
+      - name: Provider contract and authorized staging tests
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 -m unittest \
+            tests.minecraft_modpack_source_discovery_test \
+            tests.minecraft_modpack_auto_source_test \
+            tests.minecraft_official_serverpack_upload_test \
+            tests.minecraft_serverpack_agent_test \
+            tests.minecraft_serverpack_inspection_test \
+            tests.minecraft_serverpack_ui_contract_test -v
+      - name: Existing upload and bundle regressions
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 -m unittest \
+            tests.universal_content_external_upload_test \
+            tests.universal_content_bundle_test \
+            tests.universal_content_customer_workspace_test -q
