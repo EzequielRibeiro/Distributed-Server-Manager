@@ -49,7 +49,8 @@ def _resource_lines(spec):
   try:cpu=float(cpu)
   except (TypeError,ValueError) as exc:raise MaterializerError("invalid cpu_limit_cores") from exc
   if cpu<=0:raise MaterializerError("CPU limit must be positive")
-  lines.append(f"CPUQuota={cpu*100:.3f}%")
+  quota=f"{cpu*100:.2f}".rstrip("0").rstrip(".")
+  lines.append(f"CPUQuota={quota}%")
  pids=spec.get("pids_limit")
  if pids is not None:
   try:pids=int(pids)
