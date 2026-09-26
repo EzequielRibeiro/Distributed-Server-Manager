@@ -125,7 +125,7 @@ def _minecraft_policy(spec: dict[str, Any]) -> dict[str, dict[str, Any]] | None:
 
 
 def project_minecraft_files(spec: dict[str, Any], entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    minecraft_entries = [entry for entry in entries if _adapter(entry) == "minecraft-java" and str((entry.get("activation") or {}).get("mode") or "").strip().lower() != "bundle-parent"]
+    minecraft_entries = [entry for entry in entries if _adapter(entry) == "minecraft-java" and str((entry.get("activation") or {}).get("mode") or "").strip().lower() not in {"bundle-parent", "bundle-parent-preserve-config"}]
     if not minecraft_entries:
         return []
     policy = _minecraft_policy(spec)
