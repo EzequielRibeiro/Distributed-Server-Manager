@@ -145,6 +145,21 @@ def _cf_sha1(file:Mapping[str,Any])->str:
    if len(value)==40:return value
  raise MinecraftContentResolverError("CurseForge file is missing SHA-1")
 
+def _cf_game_version_matches(game_version:str,game_versions:Any)->bool:
+ """Accept an exact tag or an unambiguous 26.x release-series tag.
+
+ CurseForge may advertise a 26.1.x mod file with the general `26.1` tag.
+ Do not infer compatibility for old 1.x versions, another release series,
+ or files declaring an explicit but different patch within this series.
+ """
+ expected=str(game_version or "").strip().lower();tags={str(value).strip().lower() for value in (game_versions or [])}
+ if expected in tags:return True
+ parts=expected.split(".")
+ if len(parts)!=3 or not all(part.isdigit() for part in parts) or int(parts[0])<26:return False
+ series=".".join(parts[:2])
+ if series not in tags:return False
+ return not any(tag.startswith(series+".") and tag[len(series)+1:].isdigit() and tag!=expected for tag in tags)
+
 def _cf_download(mod_id:int,file:Mapping[str,Any],key:str,requester:JsonRequester)->str:
  url=str(file.get("downloadUrl") or "").strip();file_id=int(file.get("id") or 0)
  if not url:
@@ -191,7 +206,7 @@ def resolve_curseforge_modpack(project:str,parent_content_id:str,game_version:st
   fp=requester(f"{CURSEFORGE_API_BASE}/mods/{project_id}/files/{child_file_id}",headers);fd=fp.get("data") if isinstance(fp,Mapping) else None
   if not isinstance(fd,Mapping) or int(fd.get("id") or 0)!=child_file_id or not bool(fd.get("isAvailable",True)):raise MinecraftContentResolverError("CurseForge modpack member file is unavailable")
   versions=[str(v).lower() for v in fd.get("gameVersions") or []]
-  if game_version.lower() not in versions or loader not in versions:raise MinecraftContentResolverError("CurseForge modpack member is incompatible with runtime")
+  if not _cf_game_version_matches(game_version,versions) or loader not in versions:raise MinecraftContentResolverError(f"CurseForge modpack member {project_id} file {child_file_id} is incompatible with Minecraft {game_version}/{loader} (provider tags: {', '.join(versions[:12])})")
   filename=str(fd.get("fileName") or "").strip()
   if not filename.lower().endswith(".jar"):raise MinecraftContentResolverError("CurseForge modpack member is not a JAR mod")
   path=f"mods/{filename}";cid=_child_id(parent_content_id,path);artifact={"provider":"curseforge","package_id":f"{project_id}:{child_file_id}","url":_cf_download(project_id,fd,key,requester),"filename":filename,"sha1":_cf_sha1(fd)}

@@ -9,12 +9,13 @@ import zipfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/"core"))
-from minecraft_modpack_resolver import resolve_curseforge_modpack
+from minecraft_modpack_resolver import resolve_curseforge_modpack,_cf_game_version_matches
 from minecraft_content_resolver import MinecraftContentResolverError
 from content_bundle import normalize_bundle
 
 class ClientOnlyCurseForgeManifestTest(unittest.TestCase):
- def fixture(self,entries,classes):
+ def fixture(self,entries,classes,version_tags=None):
+  version_tags=version_tags or {}
   manifest={"manifestType":"minecraftModpack","manifestVersion":1,
     "minecraft":{"version":"26.1.2","modLoaders":[{"id":"neoforge-26.1.2.11","primary":True}]},
     "files":[{"projectID":ident,"fileID":ident+5000,"required":True} for ident in entries]}
@@ -47,7 +48,7 @@ class ClientOnlyCurseForgeManifestTest(unittest.TestCase):
      file_id=int(parts[2])
      assert file_id==ident+5000
      return {"data":{"id":file_id,"isAvailable":True,
-       "fileName":"mod.jar","displayName":"Mod 1","gameVersions":["26.1.2","NeoForge"],
+       "fileName":"mod.jar","displayName":"Mod 1","gameVersions":version_tags.get(ident,["26.1.2","NeoForge"]),
        "downloadUrl":"https://edge.forgecdn.net/mod.jar",
        "hashes":[{"algo":1,"value":"a"*40}]}}
    raise AssertionError("Unexpected provider request: "+url)
@@ -98,6 +99,40 @@ class ClientOnlyCurseForgeManifestTest(unittest.TestCase):
    resolve(runtime)
   runtime["compatibility"]["embedded_mod_loaders"]["26.1.2"]["version"]="26.1.2.11"
   self.assertEqual(1,len(resolve(runtime)["children"]))
+
+ def test_curseforge_261_series_version_tag_accepts_2612_with_matching_loader(self):
+  resolve,_=self.fixture([100,635427],{100:(6,432),635427:(6,432)},
+   version_tags={635427:["NeoForge","26.1"]})
+  result=resolve()
+  self.assertEqual(2,len(result["children"]))
+  self.assertEqual("26.1.2",result["bundle"]["minecraft_version"])
+
+ def test_series_match_does_not_override_loader_or_explicit_other_patch(self):
+  cases=[
+   (["NeoForge","26.2"],"incompatible"),
+   (["NeoForge","26.1.1"],"incompatible"),
+   (["NeoForge","26.1","26.1.1"],"incompatible"),
+   (["Forge","26.1"],"incompatible"),
+   (["26.1"],"incompatible"),
+  ]
+  for game_tags,_ in cases:
+   with self.subTest(game_tags=game_tags):
+    resolve,_=self.fixture([635427],{635427:(6,432)},
+     version_tags={635427:game_tags})
+    with self.assertRaisesRegex(MinecraftContentResolverError,
+        "member 635427.*incompatible"):
+     resolve()
+
+ def test_general_series_matching_is_explicit_and_bounded(self):
+  self.assertTrue(_cf_game_version_matches("26.1.2",["NeoForge","26.1"]))
+  self.assertTrue(_cf_game_version_matches("26.1.2",["NeoForge","26.1.2"]))
+  self.assertFalse(_cf_game_version_matches("26.1.2",["26.2"]))
+  self.assertFalse(_cf_game_version_matches("26.1.2",["26.1.12"]))
+  self.assertFalse(_cf_game_version_matches("26.1.2",["26.1.1"]))
+  self.assertFalse(_cf_game_version_matches("26.1.2",["26.1","26.1.1"]))
+  self.assertFalse(_cf_game_version_matches("1.21.1",["1.21"]))
+  self.assertFalse(_cf_game_version_matches("26.1.2",["26.1.2-beta"]))
+  self.assertFalse(_cf_game_version_matches("26.1.2",[""]))
 
 if __name__=="__main__":
  unittest.main()
