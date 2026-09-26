@@ -40,13 +40,31 @@ def verify_installed_neoforge(instance_root: Path, expected: str) -> dict[str, s
             raise ValueError("Instance-local NeoForge launcher metadata is missing.")
         if args.stat().st_size>32768:
             raise ValueError("NeoForge launcher metadata is unexpectedly large")
-        raw=args.read_text(encoding="utf-8")
-        used=set(re.findall(r"neoforge[/\\]([0-9A-Za-z.+-]+)[/\\](?:unix_args|win_args)\.txt",raw))
-        if used!={expected}:
-            raise ValueError("Active launcher does not prove the exact NeoForge build.")
         candidate=libs/expected
-        if not (candidate/"unix_args.txt").is_file() and not (candidate/"win_args.txt").is_file():
+        if candidate.is_symlink() or not candidate.is_dir():
+            raise ValueError("Expected NeoForge library directory is unsafe or missing")
+        # DSM normalizes launch args by copying the installer-produced
+        # unix_args.txt/win_args.txt into capivara-launch.args. In that case
+        # the active file contains arguments rather than a reference to its
+        # original path. Compare the exact bytes against the selected build.
+        canonical=[]
+        for filename in ("unix_args.txt", "win_args.txt"):
+            file=candidate/filename
+            if file.is_symlink():
+                raise ValueError("NeoForge canonical launcher arguments are a symlink")
+            if file.is_file():
+                if file.stat().st_size>32768:
+                    raise ValueError("NeoForge canonical launcher arguments exceed safety limit")
+                canonical.append(file)
+        if not canonical:
             raise ValueError("NeoForge launcher arguments for the exact build are missing")
+        raw=args.read_bytes()
+        if not any(raw==file.read_bytes() for file in canonical):
+            # Accept a launcher that explicitly refers to exactly this
+            # build's canonical args path, but never an unrelated/stale build.
+            used=set(re.findall(rb"neoforge[/\\]([0-9A-Za-z.+-]+)[/\\](?:unix_args|win_args)\.txt",raw))
+            if used!={expected.encode("ascii")}:
+                raise ValueError("Active launcher does not prove the exact NeoForge build.")
         proofs.append(str(candidate))
     if not found or not proofs:
         raise ValueError("Unable to verify the installed NeoForge build in the instance; Server Pack import blocked.")

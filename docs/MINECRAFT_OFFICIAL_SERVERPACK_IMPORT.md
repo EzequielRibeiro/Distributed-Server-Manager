@@ -208,7 +208,18 @@ ativação do pacote real nem comparação pós-atualização. O filesystem
 raiz estava com cerca de 7,5 GiB livres e 92% de utilização; verificar
 capacidade de backup e reserva antes da instalação. A versão ativa
 do NeoForge na instância 003 ainda necessita comprovação por leitura
-dos metadados protegidos do runtime.
+dos metadados protegidos do runtime. A primeira verificação encontrou
+um falso negativo no formato de lançamento: o instalador do Capivara
+**copia** `unix_args.txt` ou `win_args.txt` para
+`capivara-launch.args`. O verificador foi ajustado para exigir
+equivalência exata dos argumentos copiados com os da versão candidata
+ou referência direta inequívoca ao mesmo build; um diretório de
+biblioteca antigo, isoladamente, não comprova qual versão está ativa.
+O diagnóstico do host agora relata somente os nomes dos builds
+presentes e quais argumentos correspondem ao lançador, sem exibir
+o conteúdo bruto da configuração. **Não liberar a importação**
+até a nova leitura privilegiada confirmar compatibilidade ou
+identificar a necessidade de migração separada do NeoForge.
 
 ### Condições de parada
 

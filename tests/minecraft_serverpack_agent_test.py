@@ -125,6 +125,32 @@ class ServerPackAgentTest(unittest.TestCase):
      with self.assertRaisesRegex(ValueError,"8 GiB expanded"):
       client._serverpack_disk_preflight(source,stage)
 
+ def test_normalized_capivara_launch_args_copy_proves_installed_build(self):
+  # DSM copies the installer-produced platform args file to this filename.
+  # A byte-identical copy is valid evidence even without a library path.
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td)
+   libs=root/"libraries"/"net"/"neoforged"/"neoforge"
+   canonical=libs/"26.1.2.109"/"unix_args.txt"
+   canonical.parent.mkdir(parents=True)
+   canonical.write_bytes(b"-cp libraries/a.jar:libs/b.jar\\n--launchTarget neoforgeserver\\n")
+   active=root/"capivara-launch.args"
+   active.write_bytes(canonical.read_bytes())
+   self.assertEqual(verify_installed_neoforge(root,"26.1.2.109")["loader_version"],"26.1.2.109")
+   # Merely leaving the expected library on disk is not proof it is active.
+   stale=libs/"26.1.2.107"/"unix_args.txt"
+   stale.parent.mkdir()
+   stale.write_bytes(b"-cp libraries/different.jar\\n--launchTarget neoforgeserver\\n")
+   active.write_bytes(stale.read_bytes())
+   with self.assertRaisesRegex(ValueError,"Active launcher does not prove"):
+    verify_installed_neoforge(root,"26.1.2.109")
+   # The Windows normalization copies win_args.txt instead.
+   active.write_bytes(canonical.read_bytes())
+   canonical.unlink()
+   win=canonical.with_name("win_args.txt")
+   win.write_bytes(active.read_bytes())
+   self.assertEqual(verify_installed_neoforge(root,"26.1.2.109")["loader_version"],"26.1.2.109")
+
  def test_linux_and_windows_clients_accept_more_than_200_mod_commands(self):
   for platform in ("linux","windows"):
    source=(ROOT/f"agents/{platform}/runtime/content_client.py").read_text()
