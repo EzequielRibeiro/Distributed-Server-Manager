@@ -201,6 +201,106 @@ class AgentNonDestructiveProjectionTest(unittest.TestCase):
                 self.assertEqual(world.read_bytes(),b"KEEP ALL PLAYER AND WORLD DATA")
                 self.assertEqual((source/"user.toml").read_text(),"new-default=NOT_APPLIED")
 
+    def test_uploaded_modpack_cannot_replace_default_or_custom_world_data(self):
+        """Both Agent backends must reject world payloads before any file changes."""
+        suspicious = (
+            "world/region/r.0.0.mca",
+            "world_nether/DIM-1/region/r.0.0.mca",
+            "world_the_end/DIM1/region/r.0.0.mca",
+            "dimensions/minecraft/the_nether/region/r.0.0.mca",
+            "survival/level.dat",
+            "survival/region/r.0.0.mca",
+            "survival_nether/region/r.0.0.mca",
+            "survival_the_end/region/r.0.0.mca",
+            "server.properties",
+            "config/level.dat",
+            "config/region/r.0.0.mca",
+        )
+        for platform in ("linux", "windows"):
+            module = load_activation(platform)
+            for attempted in suspicious:
+                with self.subTest(platform=platform, payload=attempted), tempfile.TemporaryDirectory() as td:
+                    base = Path(td)
+                    root = base / "game"
+                    root.mkdir()
+                    state = base / "state"
+                    state.mkdir()
+                    props = root / "server.properties"
+                    props.write_text("level-name=survival\\nmax-players=30\\n", encoding="utf-8")
+                    sentinels = {}
+                    for relative in (
+                        "survival/level.dat",
+                        "survival/region/r.0.0.mca",
+                        "survival/playerdata/1234.dat",
+                        "survival_nether/DIM-1/region/r.0.0.mca",
+                        "survival_the_end/DIM1/region/r.0.0.mca",
+                    ):
+                        file = root / relative
+                        file.parent.mkdir(parents=True, exist_ok=True)
+                        file.write_bytes(("CUSTOMER WORLD: " + relative).encode())
+                        sentinels[relative] = file.read_bytes()
+                    source = root / "content" / "modpacks" / "pack"
+                    target = source / "server-overrides" / attempted
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(b"UNTRUSTED MODPACK NEW WORLD")
+                    spec = {
+                        "game_id": "minecraft",
+                        "content_projection": {},
+                        "working_directory": str(root),
+                        "instance_state_root": str(state),
+                        "content_bundle_overrides": [{
+                            "content_id": "pack",
+                            "managed_path": str(source),
+                            "roots": ["server-overrides"],
+                        }],
+                    }
+                    with self.assertRaisesRegex(
+                        module.MinecraftContentActivationError, "world|protected"
+                    ):
+                        module.materialize_minecraft_overrides(spec)
+                    self.assertEqual(
+                        props.read_text(encoding="utf-8"),
+                        "level-name=survival\\nmax-players=30\\n"
+                    )
+                    for relative, expected in sentinels.items():
+                        self.assertEqual((root / relative).read_bytes(), expected)
+
+    def test_safe_modpack_config_import_keeps_custom_world(self):
+        for platform in ("linux", "windows"):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as td:
+                module = load_activation(platform)
+                root = Path(td) / "game"
+                root.mkdir()
+                state = Path(td) / "state"
+                state.mkdir()
+                (root / "server.properties").write_text("level-name=My Survival\\n")
+                marker = root / "My Survival" / "region" / "r.1.1.mca"
+                marker.parent.mkdir(parents=True)
+                marker.write_bytes(b"PERSISTENT REGION")
+                source = root / "content" / "modpacks" / "pack"
+                config = source / "server-overrides" / "config" / "new-mod.toml"
+                config.parent.mkdir(parents=True)
+                config.write_text("new-feature=true")
+                spec = {
+                    "game_id": "minecraft",
+                    "content_projection": {},
+                    "working_directory": str(root),
+                    "instance_state_root": str(state),
+                    "content_bundle_overrides": [{
+                        "content_id": "pack",
+                        "managed_path": str(source),
+                        "roots": ["server-overrides"],
+                    }],
+                }
+                self.assertEqual(
+                    module.materialize_minecraft_overrides(spec),
+                    ["config/new-mod.toml"]
+                )
+                self.assertEqual(marker.read_bytes(), b"PERSISTENT REGION")
+                self.assertEqual(
+                    (root / "server.properties").read_text(), "level-name=My Survival\\n"
+                )
+
     def test_unchanged_jars_are_not_replaced_during_update(self):
         for platform in ("linux","windows"):
             with self.subTest(platform=platform),tempfile.TemporaryDirectory() as td:
