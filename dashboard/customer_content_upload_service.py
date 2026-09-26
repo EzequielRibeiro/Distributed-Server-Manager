@@ -88,14 +88,24 @@ class CustomerContentUploadService:
     if not raw_length:raise ValueError("external content URL must provide Content-Length")
     length=int(raw_length)
     if length<1 or length>max_bytes:raise ValueError("O arquivo excede o tamanho máximo permitido para esta importação.")
-    staged=self.transfers.stage_from_controller(transfer_id,response,length)
     if expected_sha1 is not None:
-     file,_=self.transfers.controller_artifact(transfer_id)
-     digest=hashlib.sha1()
-     with file.open("rb") as handle:
-      for chunk in iter(lambda:handle.read(1024*1024),b""):digest.update(chunk)
-     if digest.hexdigest()!=str(expected_sha1).lower():
-      raise ValueError("O arquivo transferido não corresponde ao SHA-1 publicado pelo provedor.")
+     # Verify the complete provider stream before queueing any Agent command.
+     import tempfile
+     with tempfile.SpooledTemporaryFile(max_size=16*1024*1024,mode="w+b") as verified:
+      digest=hashlib.sha1();received=0
+      while received<length:
+       chunk=response.read(min(1024*1024,length-received))
+       if not chunk:break
+       received+=len(chunk)
+       digest.update(chunk);verified.write(chunk)
+      if received!=length or response.read(1):
+       raise ValueError("O tamanho do download oficial diverge do Content-Length.")
+      if digest.hexdigest()!=str(expected_sha1).lower():
+       raise ValueError("O arquivo transferido não corresponde ao SHA-1 publicado pelo provedor.")
+      verified.seek(0)
+      staged=self.transfers.stage_from_controller(transfer_id,verified,length)
+    else:
+     staged=self.transfers.stage_from_controller(transfer_id,response,length)
   except Exception:
    try:self.transfers.cancel(transfer_id)
    except Exception:pass
