@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - 'agents/linux/runtime/instance_telemetry.py'
+      - 'agents/windows/runtime/instance_telemetry.py'
+      - 'agents/common/minecraft_java_status.py'
+      - 'tests/minecraft_java_status_telemetry_test.py'
       - 'agents/linux/runtime/materializers/systemd.py'
       - 'dashboard/customer_instance_workspace_service.py'
       - 'dashboard/web/customer-instance-v2.js'
@@ -13,6 +16,9 @@ on:
     branches: [main]
     paths:
       - 'agents/linux/runtime/instance_telemetry.py'
+      - 'agents/windows/runtime/instance_telemetry.py'
+      - 'agents/common/minecraft_java_status.py'
+      - 'tests/minecraft_java_status_telemetry_test.py'
       - 'agents/linux/runtime/materializers/systemd.py'
       - 'dashboard/customer_instance_workspace_service.py'
       - 'dashboard/web/customer-instance-v2.js'
@@ -32,6 +38,9 @@ jobs:
         run: |
           python3 -m py_compile \
             agents/linux/runtime/instance_telemetry.py \
+            agents/windows/runtime/instance_telemetry.py \
+            agents/common/minecraft_java_status.py \
+            tests/minecraft_java_status_telemetry_test.py \
             agents/linux/runtime/materializers/systemd.py \
             dashboard/customer_instance_workspace_service.py \
             tests/instance_runtime_telemetry_test.py
@@ -42,6 +51,8 @@ jobs:
             tests.instance_runtime_telemetry_test.InstanceRuntimeTelemetryTest.test_systemd_unit_enables_ip_accounting \
             tests.instance_runtime_telemetry_test.InstanceRuntimeTelemetryTest.test_systemd_network_returns_instance_counters \
             tests.instance_runtime_telemetry_test.InstanceRuntimeTelemetryTest.test_unavailable_systemd_network_is_unknown_not_zero
+      - name: Test Minecraft Java status and Linux/Windows collection
+        run: python3 -m unittest tests/minecraft_java_status_telemetry_test.py
       - name: Test DayZ A2S telemetry
         run: |
           python3 -m unittest \
