@@ -8,6 +8,7 @@ Customer PKs numeric while exposing customer_code as the public reference.
 from __future__ import annotations
 
 import json
+from datetime import date
 import re
 import secrets
 from typing import Any
@@ -374,7 +375,7 @@ class CustomerManagementRepository:
                     (customer_id,),
                 ).fetchall()
                 instances = session.execute(
-                    "SELECT i.id,i.name,i.game_id,i.status,i.agent_id,i.runtime_id,ic.contract_id "
+                    "SELECT i.id,i.name,i.game_id,i.status,i.agent_id,i.node_id,i.runtime_id,ic.contract_id "
                     "FROM instances i "
                     "LEFT JOIN instance_contracts ic ON ic.instance_id=i.id "
                     f"WHERE i.customer_id={ph} ORDER BY i.name,i.id",
@@ -409,6 +410,111 @@ class CustomerManagementRepository:
             "contracts": normalized_contracts,
             "instances": [dict(row) for row in instances],
         }
+
+    def edit_contract(
+        self, customer_code: str, contract_id: str, changes: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Only edit administrative limits/expiry; billing and live resources have separate flows."""
+        if not isinstance(changes, dict) or not changes or set(changes) - {"instance_limit", "ends_at"}:
+            raise ValueError("only instance_limit and ends_at can be edited here")
+        contract_id = str(contract_id or "").strip()
+        if not contract_id:
+            raise ValueError("contract_id is required")
+        cid = self._pk(customer_code)
+        self.initialize()
+        ph = self.dialect.placeholder
+        with self.backend.transaction() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                row = session.execute(
+                    f"SELECT id,customer_id,instance_limit,ends_at,starts_at FROM service_contracts WHERE id={ph} AND customer_id={ph}"
+                    + (" FOR UPDATE" if self.backend.name == "postgresql" else ""),
+                    (contract_id, cid),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("contract does not belong to customer")
+                used = session.execute(
+                    f"SELECT COUNT(*) AS total FROM instance_contracts WHERE contract_id={ph}",
+                    (contract_id,),
+                ).fetchone()
+                current = dict(row)
+                limit = current["instance_limit"]
+                if "instance_limit" in changes:
+                    raw = changes["instance_limit"]
+                    if isinstance(raw, bool) or not str(raw).isdigit():
+                        raise ValueError("instance_limit must be a positive integer")
+                    limit = int(raw)
+                    if not 1 <= limit <= 1000:
+                        raise ValueError("instance_limit must be between 1 and 1000")
+                    if limit < int(used["total"]):
+                        raise ValueError("instance_limit cannot be below linked instances")
+                expires = current["ends_at"]
+                if "ends_at" in changes:
+                    raw = changes["ends_at"]
+                    if raw is None or raw == "":
+                        expires = None
+                    else:
+                        if not isinstance(raw, str):
+                            raise ValueError("ends_at must be a date")
+                        try:
+                            expiry = date.fromisoformat(raw)
+                        except ValueError as error:
+                            raise ValueError("ends_at must use YYYY-MM-DD") from error
+                        started = date.fromisoformat(str(current["starts_at"])[:10])
+                        if expiry < started:
+                            raise ValueError("ends_at must not be before contract start")
+                        expires = expiry.isoformat() + "T23:59:59+00:00"
+                changed = limit != current["instance_limit"] or (
+                    "ends_at" in changes and (
+                        str(expires or "")[:10] != str(current["ends_at"] or "")[:10]
+                    )
+                )
+                if changed:
+                    session.execute(
+                        f"UPDATE service_contracts SET instance_limit={ph},ends_at={ph},updated_at={self.dialect.current_timestamp} WHERE id={ph} AND customer_id={ph}",
+                        (limit, expires, contract_id, cid),
+                    )
+            finally:
+                session.close()
+        return {
+            "updated": changed,
+            "before": {"instance_limit": current["instance_limit"], "ends_at": str(current["ends_at"]) if current["ends_at"] else None},
+            "after": {"instance_limit": limit, "ends_at": str(expires) if expires else None},
+        }
+
+    def edit_instance_name(
+        self, customer_code: str, instance_id: str, name: str
+    ) -> dict[str, Any]:
+        """Only the control-plane display name changes, never live runtime settings."""
+        instance_id = str(instance_id or "").strip()
+        name = str(name or "").strip()
+        if not instance_id:
+            raise ValueError("instance_id is required")
+        if not name or len(name) > 120 or any(ord(char) < 32 for char in name):
+            raise ValueError("name must contain 1-120 printable characters")
+        cid = self._pk(customer_code)
+        self.initialize()
+        ph = self.dialect.placeholder
+        with self.backend.transaction() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                row = session.execute(
+                    f"SELECT name FROM instances WHERE id={ph} AND customer_id={ph}"
+                    + (" FOR UPDATE" if self.backend.name == "postgresql" else ""),
+                    (instance_id, cid),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("instance does not belong to customer")
+                old_name = row["name"]
+                changed = old_name != name
+                if changed:
+                    session.execute(
+                        f"UPDATE instances SET name={ph},updated_at={self.dialect.current_timestamp} WHERE id={ph} AND customer_id={ph}",
+                        (name, instance_id, cid),
+                    )
+            finally:
+                session.close()
+        return {"updated": changed, "before": {"name": old_name}, "after": {"name": name}}
 
     def create_contract(
         self,
