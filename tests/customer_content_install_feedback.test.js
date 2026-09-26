@@ -18,6 +18,8 @@ assert(source.includes("button.onclick=()=>installDiscoveredContent(item,button,
 assert(source.includes("body.append(feedback);row.append(main,button)"),
     "mobile feedback must render under content metadata instead of overlapping heading");
 const css = fs.readFileSync(path.join(root,"dashboard/web/customer-instance-v2.css"),"utf8");
+assert(css.includes(".content-install-wait::before"),"reload shows animated pending banner");
+assert(source.includes("if(!contentSearchResults.length){if(contentInstallLock)"),"reload does not display empty search while installing");
 assert(css.includes(".content-result .content-install-status{display:block"),
     "installation feedback must wrap as a block on narrow screens");
 function runFixture(request,loadContent) {

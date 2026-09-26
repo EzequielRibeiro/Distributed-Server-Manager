@@ -73,3 +73,7 @@
 .content-result .content-install-status.content-install-animating{position:relative;padding:8px 8px 8px 31px;border:1px solid #42618c;border-radius:8px;background:#1a2a40;color:#dceaff}
 .content-result .content-install-status.content-install-animating::before{content:"";position:absolute;top:calc(50% - 7px);left:9px;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:content-scan-spin .85s linear infinite}
 @media(prefers-reduced-motion:reduce){.content-result .content-install-status.content-install-animating::before{animation:none;border-right-color:currentColor}}
+
+.content-install-wait{position:relative;padding:12px 12px 12px 38px;border:1px solid #42618c;border-radius:10px;background:#1a2a40;color:#dceaff;line-height:1.45}
+.content-install-wait::before{content:"";position:absolute;top:calc(50% - 8px);left:12px;width:16px;height:16px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:content-scan-spin .85s linear infinite}
+@media(prefers-reduced-motion:reduce){.content-install-wait::before{animation:none;border-right-color:currentColor}}
