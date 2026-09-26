@@ -135,6 +135,7 @@ class CustomerDeletionAuthorizationTest(unittest.TestCase):
         source = (ROOT / "dashboard/web/customer-instance-delete.js").read_text()
         self.assertIn('permissions.has("backup.create")&&permissions.has("backup.download")', source)
         self.assertIn('canFinalBackup?"checked":"disabled"', source)
+        self.assertIn('if(e.status===403){status("Não foi possível confirmar', source)
         self.assertIn("throw e}}status(", source)
 
 
