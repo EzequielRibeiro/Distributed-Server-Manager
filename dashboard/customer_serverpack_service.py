@@ -121,7 +121,7 @@ def build_serverpack_bundle(root: Path, context: Mapping[str, Any], item: Mappin
         children.append({
             "instance_id": str(context.get("id") or item.get("instance_id") or ""),
             "content_id": member_id, "content_type": "mod",
-            "provider": "local", "version": official["file_id"],
+            "provider": "local", "version": info["sha256"][:32],
             "artifact": artifact, "target": f"mods/{member_id}",
             "dependencies": [content_id],
             "provenance": {"kind": "official-serverpack-child",
