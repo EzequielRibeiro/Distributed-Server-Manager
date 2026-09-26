@@ -54,8 +54,74 @@ function setContentStreamActive(active){if(active&&document.visibilityState==="v
 async function refreshInstalledContent(){if(!iid||contentRefreshBusy||!contentViewActive()||!can("content.read"))return;contentRefreshBusy=true;try{const data=await request(`${api}/content?instance_id=${encodeURIComponent(iid)}&_ts=${Date.now()}`,{cache:"no-store"});applyContentItems(data.content)}finally{contentRefreshBusy=false}}
 async function loadContent(){if(!can("content.read"))return;const data=await request(`${api}/content?instance_id=${encodeURIComponent(iid)}`);applyContentItems(data.content,{render:false});renderContent();connectContentStream();scheduleContentScanWatch(1000)}
 async function searchContent(){const type=selectedContentType(),provider=$("content-provider")?.value||"",query=$("content-query")?.value.trim()||"";if(!type||!provider||!query){toast("Informe o conteúdo que deseja procurar.");return}const box=$("content-results");if(box)box.textContent="Buscando conteúdo compatível...";const params=new URLSearchParams({instance_id:iid,provider,content_type:type,q:query,limit:"20"});try{const data=await request(`${api}/content/search?${params}`);contentSearchResults=Array.isArray(data.results)?data.results:[];contentSearchFallback=data.fallback||null;renderSearchResults()}catch(error){contentSearchResults=[];contentSearchFallback=null;if(box){box.replaceChildren();const message=document.createElement("div");message.className="content-search-error";message.textContent=error.message||"Não foi possível consultar o provedor de conteúdo.";box.append(message)}throw error}}
-function renderSearchResults(){const box=$("content-results");if(!box)return;box.replaceChildren();if(!contentSearchResults.length){box.textContent=contentSearchFallback?.automatic?"Nenhum conteúdo compatível encontrado nos catálogos disponíveis. Você também pode enviar um arquivo.":"Nenhum conteúdo compatível encontrado.";return}contentSearchResults.forEach(item=>{const row=document.createElement("article"),main=document.createElement("div"),body=document.createElement("div"),head=document.createElement("div"),title=document.createElement("strong"),origin=document.createElement("span"),author=document.createElement("small"),description=document.createElement("p"),meta=document.createElement("div"),typeBadge=document.createElement("span"),downloads=document.createElement("small"),button=document.createElement("button");row.className="content-result";main.className="content-result-main";body.className="content-result-body";head.className="content-result-heading";title.textContent=item.name||item.slug||item.project_id;origin.className="content-origin";origin.textContent=item.provider==="modrinth"?"Modrinth":item.provider==="curseforge"?"CurseForge":item.provider==="steam-workshop"?"Steam Workshop":String(item.provider||"Catálogo");head.append(title,origin);if(item.author){author.className="content-result-author";author.textContent=`por ${item.author}`}description.className="content-result-description";description.textContent=String(item.description||"").trim();typeBadge.className="content-badge";typeBadge.textContent=contentLabels[item.content_type]||item.content_type;meta.className="content-result-meta";meta.append(typeBadge);if(Number(item.downloads||0)){downloads.textContent=`↓ ${Number(item.downloads).toLocaleString("pt-BR")} downloads`;meta.append(downloads)}body.append(head);if(item.author)body.append(author);if(description.textContent)body.append(description);body.append(meta);if(item.icon_url){const icon=document.createElement("img");icon.className="content-result-icon";icon.src=contentIconUrl(item.icon_url);icon.alt="";icon.loading="lazy";icon.onerror=()=>icon.remove();main.append(icon)}main.append(body);button.className="btn primary";button.textContent="Instalar";button.disabled=!can("content.install");button.onclick=()=>installDiscoveredContent(item);row.append(main,button);box.append(row)})}
-async function installDiscoveredContent(item){const artifact=item.provider==="steam-workshop"?{published_file_id:item.project_ref}:{project_id:item.project_ref};await request(`${api}/content`,{method:"POST",body:JSON.stringify({instance_id:iid,action:"install",content_id:item.content_id,content_type:item.content_type,provider:item.provider,artifact,metadata:{display_name:item.name||item.slug||item.content_id}})});toast("Instalação de conteúdo solicitada.");contentSearchResults=[];await loadContent()}
+function renderSearchResults(){const box=$("content-results");if(!box)return;box.replaceChildren();if(!contentSearchResults.length){box.textContent=contentSearchFallback?.automatic?"Nenhum conteúdo compatível encontrado nos catálogos disponíveis. Você também pode enviar um arquivo.":"Nenhum conteúdo compatível encontrado.";return}contentSearchResults.forEach(item=>{const row=document.createElement("article"),main=document.createElement("div"),body=document.createElement("div"),head=document.createElement("div"),title=document.createElement("strong"),origin=document.createElement("span"),author=document.createElement("small"),description=document.createElement("p"),meta=document.createElement("div"),typeBadge=document.createElement("span"),downloads=document.createElement("small"),button=document.createElement("button");row.className="content-result";main.className="content-result-main";body.className="content-result-body";head.className="content-result-heading";title.textContent=item.name||item.slug||item.project_id;origin.className="content-origin";origin.textContent=item.provider==="modrinth"?"Modrinth":item.provider==="curseforge"?"CurseForge":item.provider==="steam-workshop"?"Steam Workshop":String(item.provider||"Catálogo");head.append(title,origin);if(item.author){author.className="content-result-author";author.textContent=`por ${item.author}`}description.className="content-result-description";description.textContent=String(item.description||"").trim();typeBadge.className="content-badge";typeBadge.textContent=contentLabels[item.content_type]||item.content_type;meta.className="content-result-meta";meta.append(typeBadge);if(Number(item.downloads||0)){downloads.textContent=`↓ ${Number(item.downloads).toLocaleString("pt-BR")} downloads`;meta.append(downloads)}body.append(head);if(item.author)body.append(author);if(description.textContent)body.append(description);body.append(meta);if(item.icon_url){const icon=document.createElement("img");icon.className="content-result-icon";icon.src=contentIconUrl(item.icon_url);icon.alt="";icon.loading="lazy";icon.onerror=()=>icon.remove();main.append(icon)}main.append(body);button.className="btn primary";button.textContent="Instalar";button.disabled=!can("content.install");button.onclick=()=>installDiscoveredContent(item,button);row.append(main,button);box.append(row)})}
+async function installDiscoveredContent(item,button=null){
+ if(contentUploadActive){toast("Aguarde o envio de conteúdo em andamento.");return}
+ if(button?.disabled)return;
+ const originalLabel=button?.textContent||"Instalar";
+ if(button){button.disabled=true;button.textContent="Verificando…"}
+ try{
+  if(item.content_type==="modpack"&&["curseforge","modrinth"].includes(item.provider)){
+   const query={instance_id:iid,provider:item.provider,project_id:item.project_ref,version_id:""};
+   const data=await request(api+"/content/modpack/discover",{method:"POST",body:JSON.stringify(query)});
+   const source=data.source||{};
+   if(item.provider==="curseforge"){
+    if(source.mode==="manual_required"){
+     const fields=$("content-upload-serverpack-fields");
+     $("content-upload-type").value="modpack";
+     $("content-upload-id").value=item.name||item.content_id;
+     $("content-upload-cf-project").value=source.project_id||"";
+     $("content-upload-cf-file").value=source.serverpack_file_id||"";
+     fields?.classList.remove("hidden");
+     const link=document.createElement("a");
+     link.href=source.official_page;
+     link.target="_blank";link.rel="noopener noreferrer";
+     link.textContent="Baixar Server Pack oficial para envio manual: "+(item.name||"modpack");
+     const results=$("content-results");
+     if(results)results.prepend(link);
+     toast(source.reason||"Download externo não autorizado. Envie o ZIP oficial manualmente.");
+     return;
+    }
+    if(source.mode==="serverpack_auto"){
+     if(!confirm("Server Pack oficial encontrado: "+source.file_name+" ("+fmtBytes(source.size_bytes)+").\n\nDeseja baixar pelo CDN autorizado do CurseForge, validar o ZIP e preparar a importação? Faça backup e PARE a instância antes de confirmar."))return;
+     const build=($("content-upload-loader-version")?.value||"").trim()||prompt("Informe a versão EXATA do NeoForge publicada para este Server Pack (ex.: 26.1.2.109):","");
+     if(!build)throw new Error("Versão do NeoForge obrigatória para validação.");
+     contentUploadActive=true;
+     setManagedUploadUi(true,0,"Baixando Server Pack do CDN oficial…");
+     const saved=await request(api+"/content/modpack/serverpack/download",{method:"POST",body:JSON.stringify({...query,serverpack_file_id:source.serverpack_file_id})});
+     const transfer=saved.transfer;
+     if(!transfer?.transfer_id)throw new Error("O Controller não confirmou a transferência oficial.");
+     contentUploadTransferId=transfer.transfer_id;
+     setManagedUploadUi(true,100,"Download verificado; aguardando inspeção do Agent…");
+     let current=null;
+     for(let n=0;n<600;n++){
+      await new Promise(resolve=>setTimeout(resolve,1000));
+      current=(await request(api+"/content/upload/status?transfer_id="+encodeURIComponent(transfer.transfer_id))).transfer;
+      if(current?.status==="completed")break;
+      if(current?.status==="failed"||current?.status==="cancelled")throw new Error(current.last_error||"O Agent rejeitou o ZIP oficial.");
+     }
+     if(current?.status!=="completed")throw new Error("Aguardando conclusão da transferência pelo Agent; verifique o status antes de solicitar novamente.");
+     const sourceFields={curseforge_project_id:source.project_id,curseforge_file_id:source.serverpack_file_id,loader_version:build};
+     const metadata=await previewOfficialServerpack(transfer,item.content_id,"modpack",source.file_name,item.name||item.content_id,sourceFields);
+     const done=await request(api+"/content/upload/finalize",{method:"POST",body:JSON.stringify({instance_id:iid,transfer_id:transfer.transfer_id,content_id:item.content_id,content_type:"modpack",metadata})});
+     toast(done.manifest_diff?"Server Pack registrado: "+bundleDiffText(done.manifest_diff):"Server Pack enviado para validação.");
+     contentSearchResults=[];await loadContent();return;
+    }
+    if(!confirm((source.reason||"Nenhum Server Pack oficial disponível.")+"\nDeseja tentar a instalação padrão de mods, respeitando possíveis restrições do CurseForge?"))return;
+   }else if(source.mode!=="managed_modrinth"){
+    toast(source.reason||"Nenhum arquivo .mrpack verificável disponível para este runtime.");
+    return;
+   }
+  }
+  const artifact=item.provider==="steam-workshop"?{published_file_id:item.project_ref}:{project_id:item.project_ref};
+  await request(api+"/content",{method:"POST",body:JSON.stringify({instance_id:iid,action:"install",content_id:item.content_id,content_type:item.content_type,provider:item.provider,artifact,metadata:{display_name:item.name||item.slug||item.content_id}})});
+  toast("Instalação de conteúdo solicitada.");contentSearchResults=[];await loadContent();
+ }catch(error){toast(error.message||"Não foi possível solicitar a instalação.");}
+ finally{
+  if(button){button.disabled=!can("content.install");button.textContent=originalLabel}
+  contentUploadActive=false;contentUploadTransferId=null;setManagedUploadUi(false,0,"")
+ }
+}
 async function mutateContent(item,action,extra={}){try{await request(`${api}/content`,{method:"POST",body:JSON.stringify({instance_id:iid,content_id:item.content_id,action,...extra})});toast(`Conteúdo: ${action} solicitado.`);await loadContent();return true}catch(error){toast(error.message||"Não foi possível concluir a operação de conteúdo.");return false}}
 async function updateManagedContent(item){if(item.update?.preview_required!==true)return mutateContent(item,"update");try{const preview=await request(`${api}/content`,{method:"POST",body:JSON.stringify({instance_id:iid,content_id:item.content_id,action:"preview-update"})});if(!preview.changed){toast("O modpack já está na revisão mais recente compatível.");return false}const target=preview.target||{},message=[`Nova revisão disponível para ${contentName(item)}.`,target.provider_version_id?`Revisão: ${target.provider_version_id}`:null,target.minecraft_version?`Minecraft: ${target.minecraft_version}`:null,target.loader_id?`Loader: ${target.loader_id} ${target.loader_version||""}`:null,bundleDiffText(preview.manifest_diff),"A atualização será aplicada como uma revisão única do modpack e poderá ser revertida."].filter(Boolean).join("\n");if(!confirm(message))return false;return mutateContent(item,"update")}catch(error){toast(error.message||"Não foi possível analisar a atualização do modpack.");return false}}
 function bundleDiffText(diff){const d=diff||{};return [`+${(d.added||[]).length} adicionados`,`−${(d.removed||[]).length} removidos`,`${(d.updated||[]).length} atualizados`,`${(d.unchanged||[]).length} inalterados`].join(" · ")}
@@ -67,10 +133,10 @@ function uploadFileWithProgress(url,file,onProgress){return new Promise((resolve
 async function cancelManagedContentUpload(){if(!contentUploadActive)return;contentUploadCancelled=true;const transferId=contentUploadTransferId;setManagedUploadUi(true,$("content-upload-progress")?.value||0,"Cancelando envio…");if(contentUploadXhr)contentUploadXhr.abort();if(transferId){try{await request(`${api}/content/upload/cancel`,{method:"POST",body:JSON.stringify({instance_id:iid,transfer_id:transferId})})}catch(error){if(!String(error.message||"").includes("already completed"))toast(`Não foi possível cancelar no servidor: ${error.message}`)}}}
 function normalizeContentId(value){return String(value||"").trim().normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9._:-]+/g,"-").replace(/^-+|-+$/g,"").slice(0,191)}
 function updateServerpackFields(){const box=$("content-upload-serverpack-fields"),type=$("content-upload-type")?.value||"",file=$("content-upload-file")?.files?.[0]?.name||"",url=$("content-upload-url")?.value||"";const isZip=type==="modpack"&&(/\.zip$/i.test(file)||/\.zip(?:[?#]|$)/i.test(url));box?.classList.toggle("hidden",!isZip)}
-async function previewOfficialServerpack(transfer,contentId,type,name,displayName){
+async function previewOfficialServerpack(transfer,contentId,type,name,displayName,sourceFields=null){
  const metadata={display_name:displayName};
  if(type!=="modpack"||!/\.zip$/i.test(String(name||"")))return metadata;
- const projectId=$("content-upload-cf-project")?.value.trim(),fileId=$("content-upload-cf-file")?.value.trim(),build=$("content-upload-loader-version")?.value.trim();
+ const projectId=sourceFields?.curseforge_project_id??$("content-upload-cf-project")?.value.trim(),fileId=sourceFields?.curseforge_file_id??$("content-upload-cf-file")?.value.trim(),build=sourceFields?.loader_version??$("content-upload-loader-version")?.value.trim();
  if(!/^\d+$/.test(projectId||"")||!/^\d+$/.test(fileId||"")||!build)throw new Error("Para ZIP oficial, informe os IDs do projeto/arquivo no CurseForge e a versão exata do NeoForge.");
  metadata.serverpack={format:"official-serverpack-v1",curseforge_project_id:projectId,curseforge_file_id:fileId,loader_version:build};
  setManagedUploadUi(true,100,"Conferindo ZIP, integridade e versão do NeoForge…");
