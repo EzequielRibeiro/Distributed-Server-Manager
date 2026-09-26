@@ -26,13 +26,15 @@ class ServerPackUIContractTest(unittest.TestCase):
    self.assertIn(fragment,js)
   self.assertEqual(js.count('metadata:await previewOfficialServerpack'),1)
   self.assertEqual(js.count('...await previewOfficialServerpack'),1)
+  self.assertNotIn('prompt("Informe a versão EXATA do NeoForge',js)
+  self.assertIn('o NeoForge será detectado pelo instalador do ZIP',js)
 
  def test_workspace_never_auto_enables_a_serverpack(self):
   js=(ROOT/"dashboard/web/customer-instance-v2.js").read_text()
   self.assertTrue(js.index('if(!confirm(intro+')<js.index('return metadata\n}'))
   self.assertIn('scripts', (ROOT/"docs/MINECRAFT_OFFICIAL_SERVERPACK_IMPORT.md").read_text())
   html=(ROOT/"dashboard/web/customer-instance.html").read_text()
-  self.assertIn('customer-instance-v2.js?v=26',html)
+  self.assertIn('customer-instance-v2.js?v=27',html)
 
 
 if __name__=="__main__":

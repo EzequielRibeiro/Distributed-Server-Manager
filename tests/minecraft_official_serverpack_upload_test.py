@@ -103,6 +103,34 @@ class OfficialServerPackUploadTest(unittest.TestCase):
    self.assertEqual(result["revision_source"],"official-serverpack-upload")
    self.assertGreaterEqual(len(calls),4)
 
+ def test_official_zip_without_manifest_auto_detects_neoforge_installer(self):
+  with tempfile.TemporaryDirectory() as td:
+   path,s,_,_,patcher=self.fixture(td)
+   with zipfile.ZipFile(path,"w",zipfile.ZIP_DEFLATED) as server:
+    server.writestr("neoforge-26.1.2.109-installer.jar",b"verified-installer")
+    server.writestr("startserver.sh","NEOFORGE_VERSION=26.1.2.109\n")
+    server.writestr("mods/example.jar",b"server-mod")
+    server.writestr("config/options.toml",b"unchanged-config")
+   s.transfers.item["sha256"]=hashlib.sha256(path.read_bytes()).hexdigest()
+   s.transfers.item["size_bytes"]=path.stat().st_size
+   requester,_=mock_api(path)
+   automatic={"display_name":"ATM11","serverpack":{
+    "format":"official-serverpack-v1",
+    "curseforge_project_id":str(PROJECT),
+    "curseforge_file_id":str(FILE),
+   }}
+   with patcher:
+    preview,parent,bundle,children=build_serverpack_bundle(
+       Path(td),CONTEXT,s.transfers.item,s.transfers.item["destination_ref"],
+       "atm11",automatic,path,requester=requester,
+       load_secret=lambda _: "test-secret")
+   self.assertEqual(preview["loader_version"],"26.1.2.109")
+   self.assertTrue(preview["loader_version_verified_in_zip"])
+   self.assertFalse(preview["loader_version_manually_declared"])
+   self.assertEqual(preview["mod_count"],1)
+   self.assertEqual(bundle["loader_version"],"26.1.2.109")
+   self.assertEqual(len(children),1)
+
  def test_official_sha1_mismatch_is_hard_rejection(self):
   with tempfile.TemporaryDirectory() as td:
    path,s,requester,_,patcher=self.fixture(td)

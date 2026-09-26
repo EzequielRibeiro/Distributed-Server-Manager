@@ -32,6 +32,45 @@ class ServerPackInspectionTest(unittest.TestCase):
    self.assertEqual(found["sha256"],hashlib.sha256(path.read_bytes()).hexdigest())
    self.assertEqual(found["members"][0]["sha256"],hashlib.sha256(b"jar-one").hexdigest())
 
+ def test_official_atm11_loader_is_derived_from_unexecuted_installer(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   path=Path(tmp)/"serverfiles.zip"
+   pack(path,{
+     "mods/core.jar":b"mod-content",
+     "config/a.toml":"present=true",
+     "kubejs/server_scripts/demo.js":"// server script, never executed by ZIP inspector",
+     "neoforge-26.1.2.109-installer.jar":b"official-installer-fixture",
+     "startserver.sh":"#!/bin/sh\nNEOFORGE_VERSION=26.1.2.109\nexit 42\n",
+     "startserver.bat":"set NEOFORGE_VERSION=26.1.2.109\r\nexit /b 42",
+   })
+   found=inspect_serverpack(path,"26.1.2","neoforge")
+   self.assertEqual(found["loader_version"],"26.1.2.109")
+   self.assertEqual(found["count"],1)
+   self.assertTrue(found["documented_loader_version"])
+   self.assertTrue(found["documented_game_version"])
+   self.assertEqual(found["ignored_executables"],["startserver.bat","startserver.sh"])
+   self.assertEqual(found["override_dirs"],["config","kubejs"])
+
+ def test_rejects_ambiguous_or_conflicting_neoforge_installer_metadata(self):
+  base={"mods/a.jar":b"jar","neoforge-26.1.2.109-installer.jar":b"fixture"}
+  conflicts=(
+    {"neoforge-26.1.2.110-installer.jar":b"other"},
+    {"settings.cfg":"MCVER=26.1.2\nMODLOADER=neoforge\nNEOFORGE_VERSION=26.1.2.110"},
+    {"startserver.sh":"NEOFORGE_VERSION=26.1.2.110\n"},
+    {"startserver.bat":"set NEOFORGE_VERSION=26.1.2.110\r\n"},
+  )
+  for extra in conflicts:
+   with self.subTest(extra=extra),tempfile.TemporaryDirectory() as tmp:
+    path=Path(tmp)/"conflict.zip"
+    pack(path,{**base,**extra})
+    with self.assertRaises(MinecraftServerPackError):
+     inspect_serverpack(path,"26.1.2","neoforge")
+  with tempfile.TemporaryDirectory() as tmp:
+   path=Path(tmp)/"wrong-game.zip"
+   pack(path,{"mods/a.jar":b"jar","neoforge-26.1.1.109-installer.jar":b"fixture"})
+   with self.assertRaises(MinecraftServerPackError):
+    inspect_serverpack(path,"26.1.2","neoforge")
+
  def test_wrapper_folder_is_supported_without_install_scripts(self):
   with tempfile.TemporaryDirectory() as tmp:
    path=Path(tmp)/"wrapped.zip"

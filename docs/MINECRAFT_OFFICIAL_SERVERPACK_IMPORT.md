@@ -86,9 +86,13 @@ bloqueado. Server packs com scripts que baixam mods em tempo de instalação, se
 `mods/*.jar` incluídos, também não são aceitos.
 
 Fluxo:
-1. Cliente realiza backup e para a instância. Baixa o ZIP no site/app oficial do autor.
-2. Em **Conteúdo > Enviar arquivo**, escolhe `Modpack`, ZIP, ID do projeto e ID do
-   arquivo publicados pelo CurseForge, além da versão exata do NeoForge.
+1. Cliente realiza backup e para a instância. O Controller consulta o arquivo oficial
+   e o transfere pelo CDN autorizado. Caso haja restrição, o cliente pode obter
+   o ZIP diretamente no site/app do autor.
+2. Para envio manual, em **Conteúdo > Enviar arquivo**, escolhe `Modpack`, ZIP
+   e os IDs oficiais do projeto e arquivo do CurseForge. A versão exata do
+   NeoForge é inferida do instalador presente no ZIP, sem executá-lo; somente
+   pacotes sem essa evidência exigem indicação manual, posteriormente validada.
 3. Controller envia o ZIP pelo mecanismo de transferência existente. O Agent
    coloca em quarentena, inspeciona a estrutura e confirma SHA256.
 4. **Prévia obrigatória**: Controller lê apenas o ZIP original, valida caminhos,
@@ -168,12 +172,13 @@ validar o primeiro boot antes de declarar a atualização concluída.
 
 ### Validação offline inicial, antes de ativar o fluxo
 
-Copiar manualmente o ZIP baixado do site oficial para o host de teste e executar:
+Com um ZIP oficial obtido por download autorizado ou enviado pelo cliente,
+inspecionar sua estrutura sem instalar componentes:
 
 ```bash
 python3 scripts/minecraft_serverpack_preflight.py \
   /caminho/ServerFiles-0.9.0-beta.zip \
-  --minecraft 26.1.2 --loader neoforge --loader-build 26.1.2.109
+  --minecraft 26.1.2 --loader neoforge
 ```
 
 Esta verificação é apenas estrutural e local; **não comprova origem** por si
@@ -181,6 +186,29 @@ só. A prévia autenticada, depois do upload pelo cliente, exige correspondênci
 de SHA-1 no CurseForge, versão da instância e loader. Não disponibilizar
 instalação até passar pelos dois diagnósticos e concluir um ciclo de
 homologação de segurança + backup/rollback com o ZIP real.
+
+### Evidências reais ATM11 0.9.0-beta (26/09/2026)
+
+Download pela API foi **autorizado** para o projeto 1148445, arquivo
+Server Pack 8916964. O ZIP real foi baixado uma vez, verificado pelo
+SHA-1 oficial, e recebeu SHA-256
+`3d1ed149bcdeb793777e1c846ffe439600eae7913837fd027077946f4e59fcc3`.
+Possui 518.936.896 bytes, 1.925 entradas e aproximadamente 0,56 GiB
+descompactado: **254 JARs de mods de servidor** e diretórios aprovados
+`config/` e `kubejs/`. O próprio ZIP inclui
+`neoforge-26.1.2.109-installer.jar`, `startserver.sh` e
+`startserver.bat`, que concordam com a versão exata **26.1.2.109**.
+O importador pode inferir e validar essa versão por leitura; **jamais
+executa o instalador ou os scripts de inicialização**. A entrada
+`local/kubejs/dev.json` não é projetada no runtime gerenciado.
+
+O host de testes disponibilizou **36 arquivos de mundo** para uma
+baseline SHA-256 e recebeu `WORLD_UNCHANGED`; ainda não houve
+ativação do pacote real nem comparação pós-atualização. O filesystem
+raiz estava com cerca de 7,5 GiB livres e 92% de utilização; verificar
+capacidade de backup e reserva antes da instalação. A versão ativa
+do NeoForge na instância 003 ainda necessita comprovação por leitura
+dos metadados protegidos do runtime.
 
 ### Condições de parada
 

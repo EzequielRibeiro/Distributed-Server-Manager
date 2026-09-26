@@ -27,6 +27,8 @@ _ACCEPTED_OVERRIDES = frozenset({
 _ALLOWED_COMPRESSIONS = {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}
 _TOKEN = re.compile(r"^[a-zA-Z0-9._+-]{1,80}$")
 _VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+){1,3}(?:[+.-][A-Za-z0-9]+)*$")
+_NEOFORGE_INSTALLER = re.compile(r"^neoforge-([0-9]+(?:\.[0-9]+){3})-installer\.jar$", re.I)
+_NEOFORGE_SCRIPT_VERSION = re.compile(r"^(?:set\s+)?NEOFORGE_VERSION\s*=\s*([0-9]+(?:\.[0-9]+){3})\s*$", re.I | re.M)
 
 
 class MinecraftServerPackError(ValueError):
@@ -138,6 +140,40 @@ def inspect_serverpack(path: Path | str, minecraft_version: str, loader: str,
         documented_version = metadata.get("minecraft", "")
         documented_loader = metadata.get("loader", "").lower()
         documented_build = metadata.get("loader_version", "")
+        # Official server ZIPs (such as ATM11) can omit settings.cfg yet
+        # include the exact, unexecuted NeoForge installer at the ZIP root.
+        # Reject ambiguous installers or conflicting launcher declarations.
+        installer_builds = set()
+        for candidate in files:
+            if "/" not in candidate:
+                match = _NEOFORGE_INSTALLER.fullmatch(candidate)
+                if match:
+                    installer_builds.add(match.group(1))
+        if len(installer_builds) > 1:
+            raise MinecraftServerPackError("Server Pack contém instaladores NeoForge conflitantes.")
+        installer_build = next(iter(installer_builds), "")
+        if installer_build:
+            installer_game = ".".join(installer_build.split(".")[:3])
+            if (target_loader != "neoforge" or installer_game != target_version
+                    or (documented_version and documented_version != installer_game)
+                    or (documented_loader and documented_loader != target_loader)
+                    or (documented_build and documented_build != installer_build)):
+                raise MinecraftServerPackError(
+                    "O instalador NeoForge do ZIP não corresponde à versão do Minecraft/loader declarada.")
+            for script_name in ("startserver.sh", "startserver.bat"):
+                script = files.get(script_name)
+                if not script:
+                    continue
+                if script.file_size > _MAX_META:
+                    raise MinecraftServerPackError("Script do Server Pack excede limite para leitura segura.")
+                text = archive.read(script).decode("utf-8", errors="replace")
+                announced = set(_NEOFORGE_SCRIPT_VERSION.findall(text))
+                if announced and announced != {installer_build}:
+                    raise MinecraftServerPackError(
+                        "Script de inicialização diverge do instalador NeoForge; nenhuma execução é permitida.")
+            documented_version = documented_version or installer_game
+            documented_loader = documented_loader or target_loader
+            documented_build = documented_build or installer_build
         if documented_version and documented_version != target_version:
             raise MinecraftServerPackError(
                 f"Server Pack declara Minecraft {documented_version}; instância utiliza {target_version}.")

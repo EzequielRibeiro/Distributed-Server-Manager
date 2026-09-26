@@ -87,8 +87,9 @@ async function installDiscoveredContent(item,button=null,feedback=null){
     }
     if(source.mode==="serverpack_auto"){
      if(!confirm("Server Pack oficial encontrado: "+source.file_name+" ("+fmtBytes(source.size_bytes)+").\n\nDeseja baixar pelo CDN autorizado do CurseForge, validar o ZIP e preparar a importação? Faça backup e PARE a instância antes de confirmar."))return;
-     const build=($("content-upload-loader-version")?.value||"").trim()||prompt("Informe a versão EXATA do NeoForge publicada para este Server Pack (ex.: 26.1.2.109):","");
-     if(!build)throw new Error("Versão do NeoForge obrigatória para validação.");
+     // Infer the loader from the verified installer inside the official ZIP.
+     // A manually entered version remains optional and is cross-checked when provided.
+     const build=($("content-upload-loader-version")?.value||"").trim();
      contentUploadActive=true;
      setManagedUploadUi(true,0,"Baixando Server Pack do CDN oficial…");
      const saved=await request(api+"/content/modpack/serverpack/download",{method:"POST",body:JSON.stringify({...query,serverpack_file_id:source.serverpack_file_id})});
@@ -148,7 +149,7 @@ async function previewOfficialServerpack(transfer,contentId,type,name,displayNam
  const metadata={display_name:displayName};
  if(type!=="modpack"||!/\.zip$/i.test(String(name||"")))return metadata;
  const projectId=sourceFields?.curseforge_project_id??$("content-upload-cf-project")?.value.trim(),fileId=sourceFields?.curseforge_file_id??$("content-upload-cf-file")?.value.trim(),build=sourceFields?.loader_version??$("content-upload-loader-version")?.value.trim();
- if(!/^\d+$/.test(projectId||"")||!/^\d+$/.test(fileId||"")||!build)throw new Error("Para ZIP oficial, informe os IDs do projeto/arquivo no CurseForge e a versão exata do NeoForge.");
+ if(!/^\d+$/.test(projectId||"")||!/^\d+$/.test(fileId||""))throw new Error("Informe os IDs do projeto/arquivo oficiais no CurseForge; o NeoForge será detectado pelo instalador do ZIP quando disponível.");
  metadata.serverpack={format:"official-serverpack-v1",curseforge_project_id:projectId,curseforge_file_id:fileId,loader_version:build};
  setManagedUploadUi(true,100,"Conferindo ZIP, integridade e versão do NeoForge…");
  const answer=await request(`${api}/content/upload/preview`,{method:"POST",body:JSON.stringify({instance_id:iid,transfer_id:transfer.transfer_id,content_id:contentId,content_type:type,metadata})});
@@ -173,7 +174,7 @@ function renderContent(){const box=$("content-body");if(!box)return;box.replaceC
 serverFields.id="content-upload-serverpack-fields";serverFields.className="content-controls hidden";
 cfProject.id="content-upload-cf-project";cfProject.placeholder="CurseForge: ID do projeto (ex.: 1148445)";cfProject.inputMode="numeric";
 cfFile.id="content-upload-cf-file";cfFile.placeholder="CurseForge: ID do ZIP oficial (ex.: 8916964)";cfFile.inputMode="numeric";
-build.id="content-upload-loader-version";build.placeholder="Versão exata NeoForge (ex.: 26.1.2.109)";
+build.id="content-upload-loader-version";build.placeholder="NeoForge (opcional se o ZIP incluir instalador oficial)";
 serverNote.className="muted";serverNote.textContent="ZIP oficial: a instância deve estar parada e com backup. Somente arquivos verificados pelo CurseForge serão aceitos; scripts de inicialização não serão executados.";
 serverFields.append(cfProject,cfFile,build,serverNote);
 uploadType.onchange=updateServerpackFields;file.onchange=updateServerpackFields;url.oninput=updateServerpackFields;
