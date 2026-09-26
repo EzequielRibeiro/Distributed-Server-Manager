@@ -13,6 +13,7 @@ if str(COMMON_DIR) not in sys.path:
     sys.path.insert(0, str(COMMON_DIR))
 
 from dayz_community_missions import community_mission_manifest
+from minecraft_serverpack_agent import validate_extracted_serverpack
 
 
 class ContentSemanticValidationError(ValueError):
@@ -140,6 +141,8 @@ def validate_external_content_payload(
     if game_id == "dayz" and content_type == "mod":
         return _validate_dayz_mod(payload, files)
     if game_id == "minecraft":
+        if content_type == "modpack" and artifact.get("serverpack_v1") is True:
+            return validate_extracted_serverpack(payload, artifact)
         return _validate_minecraft(payload, files, content_type)
 
     raise ContentSemanticValidationError(

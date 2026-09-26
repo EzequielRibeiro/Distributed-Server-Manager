@@ -11,6 +11,10 @@ from content_activation_projection import synchronize_activation_state
 from content_activation_apply import ContentActivationApplyError,ContentActivationRollbackError,apply_activation_snapshots
 from content_security import ContentSecurityRejected,require_clean
 from content_semantic_validation import validate_external_content_payload
+import sys
+_AGENT_COMMON=Path(__file__).resolve().parents[2]/"common"
+if str(_AGENT_COMMON) not in sys.path:sys.path.insert(0,str(_AGENT_COMMON))
+from minecraft_serverpack_agent import prepare_serverpack_payload,verify_installed_neoforge
 STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));CONTENT_STATE=STATE_ROOT/"managed-content";GAME_DATA_ROOT=Path(os.environ.get("CAPIVARA_GAME_DATA_ROOT",str(STATE_ROOT/"game-data"))).resolve()
 try:SECURITY_RETRY_SECONDS=max(30,min(int(os.environ.get("CAPIVARA_CONTENT_SECURITY_RETRY_SECONDS","300")),3600))
 except (TypeError,ValueError):SECURITY_RETRY_SECONDS=300
@@ -91,7 +95,29 @@ def _extract(archive,dest):
     if total>max_expanded:raise ValueError("archive expands beyond safety limit")
    t.extractall(dest,members=members,filter="data");return
  raise ValueError("unsupported archive format")
-def _source(provider,artifact,stage):return resolve_source(provider,artifact,stage,GAME_DATA_ROOT)
+def _source(provider,artifact,stage,config=None,cmd=None):
+ # Server Pack children read their previously scanned parent directory; no
+ # third-party downloads, temp quarantine dependency, or executable scripts.
+ if artifact.get("serverpack_child_v1") is True:
+  if provider!="local" or not isinstance(cmd,dict) or config is None:raise ValueError("invalid Server Pack child request")
+  iid=_safe_component(cmd.get("instance_id"));parent_id=_safe_component(artifact.get("bundle_parent_content_id"))
+  member=str(artifact.get("bundle_member") or "").replace("\\","/")
+  if (not member.startswith("mods/") or member.count("/")!=1 or not member.lower().endswith(".jar")
+      or any(token in {"",".",".."} for token in member.split("/"))):raise ValueError("unsafe Server Pack mod member")
+  state=_dependency_state(iid,parent_id)
+  if state.get("status")!="applied" or state.get("security_state")!="clean":
+   raise ValueError("Server Pack parent must be installed and scanned first")
+  _,instance=_owned(config,cmd)
+  root=_safe_target(instance,f"modpacks/{parent_id}")
+  actual=Path(str(state.get("managed_path") or ""))
+  if not root.is_dir() or root.is_symlink() or actual!=root:
+   raise ValueError("Server Pack parent managed path is invalid")
+  candidate=root/member
+  if candidate.is_symlink() or not candidate.is_file():
+   raise ValueError("Server Pack mod is missing or unsafe")
+  candidate.resolve(strict=True).relative_to(root.resolve(strict=True))
+  return candidate
+ return resolve_source(provider,artifact,stage,GAME_DATA_ROOT)
 def _dependency_state(instance_id,content_id):
  p=_state_path(instance_id,content_id)
  try:return json.loads(p.read_text()) if p.exists() else {}
@@ -147,8 +173,16 @@ def _security_context(config,cmd):
 def _install(config,cmd):
  _validate_relations(cmd);_,instance=_owned(config,cmd);iid=str(cmd.get("instance_id") or "");target=_safe_target(instance,str(cmd.get("target") or "assets"));artifact=dict(cmd.get("artifact") or {});provider=str(cmd.get("provider") or artifact.get("provider") or "");parent=target.parent;parent.mkdir(parents=True,exist_ok=True);stage=Path(tempfile.mkdtemp(prefix=f".{target.name}.c4-",dir=str(parent)));security_context=_security_context(config,cmd)
  try:
-  source=_source(provider,artifact,stage);_verify_artifact(source,artifact);source_scan=require_clean(source,context=security_context);payload=stage/"payload";payload.mkdir();archive=provider=="http-archive" or bool(artifact.get("archive"));expanded_scan=None
-  if archive:_extract(source,payload);expanded_scan=require_clean(payload,context=security_context)
+  if artifact.get("serverpack_v1") is True or artifact.get("serverpack_child_v1") is True:
+   if str(artifact.get("serverpack_loader") or "")!="neoforge":raise ValueError("Unsupported Server Pack loader")
+   verify_installed_neoforge(instance,str(artifact.get("serverpack_loader_version") or ""))
+   state=str(instance_runtime.status(config,iid).get("observed_state") or "").lower()
+   if state!="stopped":raise ValueError("Pare a instância Minecraft antes de aplicar o Server Pack. A instalação em execução foi recusada.")
+  source=_source(provider,artifact,stage,config,cmd);_verify_artifact(source,artifact);source_scan=require_clean(source,context=security_context);payload=stage/"payload";payload.mkdir();archive=provider=="http-archive" or bool(artifact.get("archive"));expanded_scan=None
+  if archive:
+   _extract(source,payload)
+   if artifact.get("serverpack_v1") is True:prepare_serverpack_payload(payload,artifact)
+   expanded_scan=require_clean(payload,context=security_context)
   elif source.is_dir():shutil.copytree(source,payload,dirs_exist_ok=True)
   else:shutil.copy2(source,payload/(str(artifact.get("filename") or source.name or "content.bin")))
   validate_external_content_payload(payload,cmd)
@@ -195,7 +229,7 @@ def _apply(config,cmd):
  except Exception as exc:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"unknown","security_state":"unscanned","security_policy_version":1,**source_meta}
  _write(state,report);return report
 def apply_content_commands(config:dict[str,Any],commands:list[dict[str,Any]])->list[dict[str,Any]]:
- bounded=[c for c in commands[:200] if isinstance(c,dict)];ordered=[c for c in bounded if c.get("desired_state")=="absent"]+[c for c in bounded if c.get("desired_state")!="absent"];reports=[];pending=ordered;prior={(str(c.get("instance_id") or ""),str(c.get("content_id") or "")):_dependency_state(str(c.get("instance_id") or ""),str(c.get("content_id") or "")) for c in bounded}
+ bounded=[c for c in commands[:2000] if isinstance(c,dict)];ordered=[c for c in bounded if c.get("desired_state")=="absent"]+[c for c in bounded if c.get("desired_state")!="absent"];reports=[];pending=ordered;prior={(str(c.get("instance_id") or ""),str(c.get("content_id") or "")):_dependency_state(str(c.get("instance_id") or ""),str(c.get("content_id") or "")) for c in bounded}
  for _ in range(max(1,len(pending)+1)):
   if not pending:break
   retry=[];progress=False
@@ -205,7 +239,7 @@ def apply_content_commands(config:dict[str,Any],commands:list[dict[str,Any]])->l
    else:progress=True
   if not retry or not progress:break
   pending=retry
- final=reports[-200:];snapshots=synchronize_activation_state(bounded,final)
+ final=reports[-2000:];snapshots=synchronize_activation_state(bounded,final)
  try:apply_activation_snapshots(config,snapshots)
  except ContentActivationRollbackError as exc:
   for report in final:

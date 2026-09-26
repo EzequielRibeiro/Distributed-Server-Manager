@@ -16,6 +16,7 @@ from content_repository import ContentRepository
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from minecraft_content_resolver import provider_loaders
 from runtime_workspace_catalog import runtime_definition
+from customer_serverpack_service import build_serverpack_bundle
 
 _ALLOWED_FIELDS=frozenset({"content_id","content_type","activation_state","activation_order","version","metadata","dependencies","conflicts"})
 _ARCHIVE_SUFFIXES=(".zip",".mrpack",".tar",".tar.gz",".tgz")
@@ -156,6 +157,43 @@ class CustomerContentUploadService:
   except (zipfile.BadZipFile,KeyError,UnicodeDecodeError,json.JSONDecodeError,OSError):return False
   return isinstance(manifest,Mapping) and str(manifest.get("manifestType") or "")=="minecraftModpack"
 
+ def _serverpack_capacity(self,context,content_id,children):
+  """Guard the per-Agent 2000-item reconciliation envelope before any DB write."""
+  agent_id=str(context.get("agent_id") or "").strip()
+  iid=str(context.get("id") or "").strip()
+  if not agent_id or not iid:raise ValueError("Agent/instância não foi identificado.")
+  existing=self.content.list(agent_id=agent_id,limit=2000)
+  if len(existing)>=2000:raise ValueError("O Agent atingiu o limite de 2000 conteúdos gerenciados.")
+  identities={(str(item.get("instance_id") or ""),str(item.get("content_id") or "")) for item in existing}
+  requested={(iid,str(content_id))}|{(iid,str(child["content_id"])) for child in children}
+  if len(identities|requested)>2000:
+   raise ValueError("O Server Pack excede a capacidade de 2000 conteúdos gerenciados deste Agent.")
+
+ def preview_serverpack(self,user,transfer_id,body:Mapping[str,Any]):
+  """Read-only inspection. Never changes desired content or uploads again."""
+  item=self._transfer(user,transfer_id)
+  if str(item.get("status") or "")!="completed":
+   raise ValueError("O Server Pack ainda não chegou ao Agent.")
+  context,effective,_=self._access(user,str(item["instance_id"]))
+  if not effective.modpacks_allowed or not effective.mods_allowed:
+   raise PermissionError("O contrato não autoriza importação de modpacks.")
+  if not isinstance(body,Mapping) or set(body)-{"instance_id","transfer_id","content_id","content_type","metadata"}:
+   raise ValueError("Metadados de Server Pack inválidos.")
+  cid=str(body.get("content_id") or "").strip()
+  if not cid or len(cid)>191 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-" for c in cid):
+   raise ValueError("Identificador de Server Pack inválido.")
+  filename=self._filename(item.get("filename"))
+  if not filename.lower().endswith(".zip") or self._detect_curseforge_export(item):
+   raise ValueError("Importe um ZIP de servidor oficial, não uma exportação CurseForge.")
+  relative=str(item.get("destination_ref") or "").replace("\\","/")
+  expected=(Path("quarantine")/str(item["instance_id"])/str(item["transfer_id"])/filename).as_posix()
+  if relative!=expected:raise ValueError("A confirmação do upload pelo Agent não corresponde ao arquivo.")
+  path,_=self.transfers.controller_artifact(str(item["transfer_id"]))
+  metadata=body.get("metadata") if isinstance(body.get("metadata"),Mapping) else {}
+  preview,_,_,children=build_serverpack_bundle(self.root,context,item,relative,cid,metadata,path)
+  self._serverpack_capacity(context,cid,children)
+  return preview
+
  def _finalize(self,user,transfer_id,body:Mapping[str,Any],extra_assignments=None):
   item=self._transfer(user,transfer_id)
   if str(item.get("status") or "")!="completed":raise ValueError("content upload has not reached the Agent")
@@ -191,8 +229,22 @@ class CustomerContentUploadService:
     result["revision_source"]="external-upload"
     return result
    if lower.endswith(".zip") and self._detect_curseforge_export(item):
-    raise ValueError("Pacote CurseForge detectado. Esse formato referencia IDs do CurseForge e não contém URLs suficientes para instalação sem uma 3rd Party API Key. Use o equivalente .mrpack/Modrinth ou configure a chave CurseForge no Controller.")
-   raise ValueError("Upload de modpack suporta .mrpack. ZIP CurseForge requer 3rd Party API Key.")
+    raise ValueError("Pacote CurseForge detectado: a exportação normal exige 3rd Party API Key e respeita as restrições de distribuição dos autores. Use o ZIP oficial de servidor para importação manual validada.")
+   if lower.endswith(".zip"):
+    if not effective.mods_allowed:raise PermissionError("Mods não são permitidos neste contrato.")
+    path,_=self.transfers.controller_artifact(tid)
+    preview,parent,bundle,children=build_serverpack_bundle(self.root,context,item,relative,content_id,metadata,path)
+    self._serverpack_capacity(context,content_id,children)
+    history_before=self.content.bundle_history(iid,content_id)
+    previous_bundle_revision=int(history_before[0]["revision"]) if history_before else None
+    diff=self.content.bundle_diff(iid,content_id,bundle)
+    result=self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"))
+    result["serverpack_preview"]=preview
+    result["manifest_diff"]=diff
+    result["previous_bundle_revision"]=previous_bundle_revision if result.get("changed") else None
+    result["revision_source"]="official-serverpack-upload"
+    return result
+   raise ValueError("Modpack exige .mrpack ou ZIP oficial de servidor validado.")
   payload={key:body[key] for key in _ALLOWED_FIELDS if key in body and key not in {"metadata"}}
   payload.update({"instance_id":iid,"content_id":content_id,"content_type":ctype,"desired_state":"installed","provider":"local","target":f"external/{content_id}","artifact":{"provider":"local","package_id":relative,"sha256":str(item.get("sha256") or "") or None,"archive":archive,"filename":name,"ephemeral_upload":True},"provenance":{"kind":"customer-upload","transfer_id":tid,"filename":name,"sha256":str(item.get("sha256") or "") or None,"quarantine_path":relative,"agent_validated":True},"metadata":dict(metadata)})
   actor=str(user.get("username") or "customer")
