@@ -356,3 +356,6 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Explicitly honor HTML hidden even when .runtime-notice sets display:grid. */
+#minecraft-runtime-notice[hidden]{display:none!important}
