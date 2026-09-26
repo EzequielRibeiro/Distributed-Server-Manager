@@ -265,8 +265,8 @@
       );
 
     name.textContent =
-      item.metadata
-      ?.display_name ||
+      item.name ||
+      item.metadata?.display_name ||
       item.instance;
 
     const runtime =

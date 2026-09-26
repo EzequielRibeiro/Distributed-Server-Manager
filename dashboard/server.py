@@ -3128,6 +3128,7 @@ def api_runtime_list(database_path=DATABASE_FILE):
             "server": server,
             "game": game,
             "instance": instance,
+            "name": row.get("name") or instance,
             "status": row.get("status") or "unknown",
             "health": "unknown",
         }

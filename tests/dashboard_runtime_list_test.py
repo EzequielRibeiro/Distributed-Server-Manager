@@ -23,6 +23,7 @@ class _FakeDashboardRepository:
                 "id": "cli-000001-dayz-001",
                 "node_id": "horizon-server",
                 "game_id": "dayz",
+                "name": "Servidor DayZ atualizado",
                 "status": "failed",
             }
         ]
@@ -61,6 +62,7 @@ class DashboardRuntimeListTest(unittest.TestCase):
                     "server": "horizon-server",
                     "game": "dayz",
                     "instance": "cli-000001-dayz-001",
+                    "name": "Servidor DayZ atualizado",
                     "status": "failed",
                     "health": "unknown",
                 }
