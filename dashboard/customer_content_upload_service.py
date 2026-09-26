@@ -17,17 +17,20 @@ from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from minecraft_content_resolver import provider_loaders
 from runtime_workspace_catalog import runtime_definition
 from customer_serverpack_service import build_serverpack_bundle
+from customer_modpack_source_discovery import discover_modpack as detect_modpack_source
 
 _ALLOWED_FIELDS=frozenset({"content_id","content_type","activation_state","activation_order","version","metadata","dependencies","conflicts"})
 _ARCHIVE_SUFFIXES=(".zip",".mrpack",".tar",".tar.gz",".tgz")
 _UPLOAD_SUFFIXES=(*_ARCHIVE_SUFFIXES,".jar")
 _EXTERNAL_URL_MAX_BYTES=8*1024*1024*1024
 
-def _safe_external_url(value):
+def _safe_external_url(value, trusted_suffix=None):
  raw=str(value or "").strip();parsed=urlparse(raw)
  if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password:raise ValueError("external content URL must use HTTPS without embedded credentials")
  if parsed.port not in {None,443}:raise ValueError("external content URL must use the standard HTTPS port")
  host=parsed.hostname.rstrip(".").lower()
+ if trusted_suffix and (host==trusted_suffix or not host.endswith("."+trusted_suffix)):
+  raise ValueError("O download deve usar o CDN oficial do provedor.")
  try:addresses=socket.getaddrinfo(host,443,type=socket.SOCK_STREAM)
  except socket.gaierror as exc:raise ValueError("external content URL host cannot be resolved") from exc
  if not addresses:raise ValueError("external content URL host cannot be resolved")
@@ -38,8 +41,10 @@ def _safe_external_url(value):
  return raw
 
 class _ExternalContentRedirectHandler(HTTPRedirectHandler):
+ def __init__(self,trusted_suffix=None):
+  super().__init__();self.trusted_suffix=trusted_suffix
  def redirect_request(self,req,fp,code,msg,headers,newurl):
-  _safe_external_url(newurl)
+  _safe_external_url(newurl,self.trusted_suffix)
   return super().redirect_request(req,fp,code,msg,headers,newurl)
 
 class CustomerContentUploadService:
@@ -65,27 +70,70 @@ class CustomerContentUploadService:
  def create(self,user,instance_id,filename):
   context,_,agent_id=self._access(user,instance_id);name=self._filename(filename)
   return self.transfers.create(agent_id=agent_id,instance_id=instance_id,customer_id=context.get("customer_id"),direction="controller_to_agent",purpose="content_upload",filename=name,requested_by=str(user.get("username") or ""),ttl_hours=24)
- def import_url(self,user,instance_id,url):
-  safe=_safe_external_url(url);parsed=urlparse(safe);name=self._filename(Path(parsed.path).name)
+ def import_url(self,user,instance_id,url,*,trusted_suffix=None,filename_override=None,expected_sha1=None,max_bytes=_EXTERNAL_URL_MAX_BYTES):
+  safe=_safe_external_url(url,trusted_suffix);parsed=urlparse(safe)
+  name=self._filename(filename_override if filename_override else Path(parsed.path).name)
+  if expected_sha1 is not None and (len(str(expected_sha1))!=40 or any(c not in "0123456789abcdef" for c in str(expected_sha1).lower())):
+   raise ValueError("SHA-1 oficial inválido.")
   item=self.create(user,instance_id,name);transfer_id=str(item["transfer_id"])
   request=Request(safe,headers={"Accept":"application/octet-stream,application/zip;q=0.9,*/*;q=0.5","User-Agent":"Capivara-DSM/2"})
   # Disable environment proxies for this SSRF-sensitive fetch. Redirects are
   # revalidated and a declared Content-Length is required so the 8 GiB ceiling
   # remains fail-closed before bytes are accepted into staging.
-  opener=build_opener(ProxyHandler({}),_ExternalContentRedirectHandler())
+  opener=build_opener(ProxyHandler({}),_ExternalContentRedirectHandler(trusted_suffix))
   try:
    with opener.open(request,timeout=30) as response:
-    _safe_external_url(response.geturl())
+    _safe_external_url(response.geturl(),trusted_suffix)
     raw_length=str(response.headers.get("Content-Length") or "").strip()
     if not raw_length:raise ValueError("external content URL must provide Content-Length")
     length=int(raw_length)
-    if length<1 or length>_EXTERNAL_URL_MAX_BYTES:raise ValueError("external content artifact exceeds the 8 GiB import limit")
+    if length<1 or length>max_bytes:raise ValueError("O arquivo excede o tamanho máximo permitido para esta importação.")
     staged=self.transfers.stage_from_controller(transfer_id,response,length)
+    if expected_sha1 is not None:
+     file,_=self.transfers.controller_artifact(transfer_id)
+     digest=hashlib.sha1()
+     with file.open("rb") as handle:
+      for chunk in iter(lambda:handle.read(1024*1024),b""):digest.update(chunk)
+     if digest.hexdigest()!=str(expected_sha1).lower():
+      raise ValueError("O arquivo transferido não corresponde ao SHA-1 publicado pelo provedor.")
   except Exception:
    try:self.transfers.cancel(transfer_id)
    except Exception:pass
    raise
   return staged
+ def discover_provider_modpack(self,user,instance_id,body):
+  if not isinstance(body,Mapping):raise ValueError("Consulta de modpack inválida.")
+  context,effective,_=self._access(user,instance_id)
+  if str(context.get("game_id") or "").lower()!="minecraft" or not effective.modpacks_allowed or not effective.mods_allowed:
+   raise PermissionError("A instância não autoriza modpacks de Minecraft.")
+  provider=str(body.get("provider") or "").strip().lower()
+  project=str(body.get("project_id") or "").strip()
+  version_id=str(body.get("version_id") or "").strip()
+  if len(project)>80 or len(version_id)>80:
+   raise ValueError("Identificador do provedor excede o limite.")
+  runtime=runtime_definition(self.root,"minecraft",str(context.get("runtime_id") or ""))
+  loaders=provider_loaders(runtime,"mod") if runtime else []
+  version=str(context.get("game_version") or "")
+  if not version or len(loaders)!=1:
+   raise ValueError("Runtime Minecraft e loader devem estar definidos.")
+  return detect_modpack_source(provider,project,version,loaders[0],version_id)
+
+ def download_discovered_serverpack(self,user,instance_id,body):
+  if not isinstance(body,Mapping) or body.get("provider")!="curseforge":
+   raise ValueError("O download de Server Pack exige um arquivo oficial do CurseForge.")
+  discovery=self.discover_provider_modpack(user,instance_id,body)
+  if discovery.get("mode")!="serverpack_auto":
+   raise ValueError(str(discovery.get("reason") or "O download oficial não foi autorizado."))
+  chosen=str(body.get("serverpack_file_id") or "").strip()
+  if chosen!=str(discovery.get("serverpack_file_id") or ""):
+   raise ValueError("O Server Pack selecionado mudou; atualize a descoberta.")
+  url=str(discovery["download_url"])
+  item=self.import_url(user,instance_id,url,trusted_suffix="forgecdn.net",
+                       filename_override=str(discovery["file_name"]),expected_sha1=str(discovery["sha1"]),
+                       max_bytes=4*1024*1024*1024)
+  source={k:discovery[k] for k in ("provider","project_id","serverpack_file_id","file_name","sha1","size_bytes","official_page")}
+  return {"transfer":item,"source":source}
+
  def stage(self,user,transfer_id,source,content_length):
   item=self._transfer(user,transfer_id)
   if str(item.get("status") or "")!="staging":raise ValueError("content upload is not pending")
