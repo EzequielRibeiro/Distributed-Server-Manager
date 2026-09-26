@@ -7,6 +7,9 @@ const vm = require("node:vm");
 const root = path.resolve(__dirname,"..");
 const source = fs.readFileSync(process.env.CAPIVARA_MAIN_SCRIPT ||
     path.join(root,"dashboard/web/customer-instance-v2.js"),"utf8");
+const helpersStart = source.indexOf("function syncContentInstallLock(");
+const helpersEnd = source.indexOf("function applyContentItems(",helpersStart);
+const helpers = source.slice(helpersStart,helpersEnd);
 const start = source.indexOf("async function installDiscoveredContent(");
 const end = source.indexOf("async function mutateContent(",start);
 assert(start > 0 && end > start,"install action must exist");
@@ -26,11 +29,20 @@ function runFixture(request,loadContent) {
   const feedback = {textContent:"",classList:{
     add(k){styles.add(k)},remove(k){styles.delete(k)}
   }};
+  const other = {disabled:false,title:""};
+  const search={disabled:false};
+  const upload={disabled:false};const importUrl={disabled:false};
+  const resultRow={dataset:{contentId:"curseforge:123"},classList:{toggle(){}},
+    querySelector:()=>({classList:{toggle(){}}})};
+  const contentResult={querySelectorAll:selector=>selector===".content-result"?[resultRow]:[button,other]};
+  const elements={"content-search":search,"content-results":contentResult,
+    "content-upload-button":upload,"content-upload-url-button":importUrl};
   const context = {request,loadContent,api:"/api/test",iid:"minecraft-003",
-    contentSearchResults:[{}],toast:text=>notices.push(text)};
-  const install = vm.runInNewContext(source.slice(start,end)+
+    contentSearchResults:[{}],contentInstallLock:null,can:()=>true,
+    $:id=>elements[id],toast:text=>notices.push(text)};
+  const install = vm.runInNewContext(helpers+source.slice(start,end)+
     "\ninstallDiscoveredContent",context);
-  return {install,button,feedback,styles,notices,context};
+  return {install,button,other,search,upload,importUrl,feedback,styles,notices,context};
 }
 const item={content_id:"curseforge:123",content_type:"modpack",provider:"curseforge",
     project_ref:"123",name:"All the Mods 11"};
@@ -47,18 +59,43 @@ async function main(){
   const first=fixture.install(item,fixture.button,fixture.feedback);
   const second=fixture.install(item,fixture.button,fixture.feedback);
   assert.equal(fixture.button.disabled,true);
+  assert.equal(fixture.other.disabled,true,"other install buttons blocked while submitting");
+  assert.equal(fixture.search.disabled,true,"search blocked while submitting");
+  assert.equal(fixture.upload.disabled,true,"upload blocked");
+  assert.equal(fixture.importUrl.disabled,true,"URL import blocked");
   assert.equal(fixture.button.textContent,"Verificando…");
   assert.match(fixture.feedback.textContent,/dependências/);
   assert.equal(requests,1,"second click must not send duplicate request");
   submit({});
   await Promise.all([first,second]);
   assert.equal(fixture.button.textContent,"Solicitado");
+  assert.equal(fixture.other.disabled,true,"accepted request must retain lock");
+  assert.equal(fixture.context.contentInstallLock.stage,"processing");
+  // Backend terminal states, not HTTP acceptance, release the other actions.
+  // Completion is exercised in a shared context to observe lock state.
+  const terminalContext={contentInstallLock:{contentId:item.content_id,stage:"processing"},
+    contentReconcileState:v=>v.reconciliation.status,contentSecurityState:v=>v.security_state,
+    $:fixture.context.$,can:()=>true};
+  const terminal = vm.runInNewContext(helpers+"\ncheckContentInstallCompletion",terminalContext);
+  terminal([{content_id:item.content_id,reconciliation:{status:"pending"},security_state:"clean"}]);
+  assert(terminalContext.contentInstallLock,"pending reconciliation retains the lock");
+  terminal([{content_id:item.content_id,reconciliation:{status:"failed"},security_state:"clean"}]);
+  assert.equal(terminalContext.contentInstallLock,null,"backend failure releases the lock");
+  assert.equal(fixture.other.disabled,false);
+  assert.equal(fixture.search.disabled,false);
+  assert.equal(fixture.upload.disabled,false);
+  assert.equal(fixture.importUrl.disabled,false);
+
   assert.match(fixture.feedback.textContent,/Solicitação aceita/);
-  assert.equal(fixture.button.disabled,true);
+  assert.equal(fixture.button.disabled,false,"terminal backend failure unlocks primary button");
   // The backend response is retained as customer-visible retryable feedback.
   fixture=runFixture(async()=>{throw new Error("Nenhuma versão compatível com 26.1.2")},async()=>{});
   await fixture.install(item,fixture.button,fixture.feedback);
   assert.equal(fixture.button.disabled,false);
+  assert.equal(fixture.other.disabled,false,"submission failure unlocks other buttons");
+  assert.equal(fixture.search.disabled,false);
+  assert.equal(fixture.upload.disabled,false);
+  assert.equal(fixture.importUrl.disabled,false);
   assert.equal(fixture.button.textContent,"Instalar");
   assert.match(fixture.feedback.textContent,/26.1.2/);
   assert(fixture.styles.has("content-search-error"));

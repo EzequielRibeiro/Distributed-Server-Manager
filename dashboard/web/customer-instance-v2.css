@@ -67,3 +67,9 @@
 .content-result .content-install-status:empty{display:none}
 .content-result-main{min-width:0;max-width:100%}
 @media(max-width:520px){.content-result{min-width:0}.content-result-heading{min-width:0}.content-result-description{overflow-wrap:anywhere}}
+
+/* Visible, accessible progress indicator for one active modpack request. */
+.content-result-installing{border-color:#5579af;box-shadow:inset 0 0 0 1px rgba(111,156,255,.22)}
+.content-result .content-install-status.content-install-animating{position:relative;padding:8px 8px 8px 31px;border:1px solid #42618c;border-radius:8px;background:#1a2a40;color:#dceaff}
+.content-result .content-install-status.content-install-animating::before{content:"";position:absolute;top:calc(50% - 7px);left:9px;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:content-scan-spin .85s linear infinite}
+@media(prefers-reduced-motion:reduce){.content-result .content-install-status.content-install-animating::before{animation:none;border-right-color:currentColor}}
