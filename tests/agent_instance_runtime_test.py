@@ -149,6 +149,24 @@ class SystemdAdapterTest(unittest.TestCase):
         self.assertFalse(result["changed"])
         self.assertTrue(result["idempotent"])
 
+    def test_start_detects_immediate_crash_during_settle_window(self):
+        calls = []
+        states = iter(["inactive", "active", "failed"])
+
+        def runner(command, timeout):
+            calls.append((list(command), timeout))
+            if command[1] == "show":
+                active = next(states)
+                sub = "running" if active == "active" else "failed" if active == "failed" else "dead"
+                return 0, f"LoadState=loaded\nActiveState={active}\nSubState={sub}", ""
+            return 0, "", ""
+
+        with patch("adapters.systemd.time.sleep", return_value=None), patch(
+            "adapters.systemd.time.monotonic", side_effect=[0.0, 0.0, 3.0]
+        ):
+            with self.assertRaisesRegex(AdapterError, "startup settle window"):
+                SystemdAdapter(runner=runner).start({"instance_id": "srv-001"})
+
     def test_stop_waits_longer_than_materialized_systemd_stop_budget(self):
         calls = []
         states = iter(["active", "inactive"])
@@ -291,6 +309,46 @@ class ControllerInstanceRuntimeQueueTest(unittest.TestCase):
                 ("instance-one",),
             ).fetchone()
         self.assertEqual(row["status"], "stopped")
+
+    def test_failed_start_projects_failed_controller_status(self):
+        start = self.commands.enqueue(
+            agent_id="agent-instance",
+            instance_id="instance-one",
+            action="start",
+        )
+        self.commands.apply_result("agent-instance", {
+            "command_id": start["command_id"],
+            "instance_id": "instance-one",
+            "action": "start",
+            "status": "failed",
+            "error": "runtime failed to start",
+        })
+        with self.backend.connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM instances WHERE id=?",
+                ("instance-one",),
+            ).fetchone()
+        self.assertEqual(row["status"], "failed")
+
+    def test_completed_start_with_failed_observation_does_not_project_online(self):
+        start = self.commands.enqueue(
+            agent_id="agent-instance",
+            instance_id="instance-one",
+            action="start",
+        )
+        self.commands.apply_result("agent-instance", {
+            "command_id": start["command_id"],
+            "instance_id": "instance-one",
+            "action": "start",
+            "status": "completed",
+            "result": {"observed_state": "failed"},
+        })
+        with self.backend.connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM instances WHERE id=?",
+                ("instance-one",),
+            ).fetchone()
+        self.assertEqual(row["status"], "failed")
 
     def test_completed_remove_after_agent_compensation_deletes_controller_record(self):
         created = self.commands.enqueue(agent_id="agent-instance", instance_id="instance-one", action="remove")

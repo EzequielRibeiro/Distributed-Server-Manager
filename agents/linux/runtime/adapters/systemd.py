@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import time
 from typing import Any, Callable
 
 from .base import AdapterError, InstanceRuntimeAdapter
@@ -18,6 +19,8 @@ Runner = Callable[[list[str], int], tuple[int, str, str]]
 # a legitimate stop can be reported as failed before systemd reaches its final
 # inactive/failed state and the explicit-stop normalization can run.
 _SYSTEMD_STOP_COMMAND_TIMEOUT_SECONDS = 75
+_SYSTEMD_START_SETTLE_SECONDS = 2.0
+_SYSTEMD_START_SETTLE_POLL_SECONDS = 0.25
 
 
 def _default_runner(command: list[str], timeout: int) -> tuple[int, str, str]:
@@ -155,6 +158,16 @@ class SystemdAdapter(InstanceRuntimeAdapter):
             raise AdapterError(f"instance did not reach expected state after {action}")
         if action == "stop" and after.get("active_state") == "failed":
             raise AdapterError("instance remained failed after stop normalization")
+        if expected_running:
+            deadline = time.monotonic() + _SYSTEMD_START_SETTLE_SECONDS
+            while time.monotonic() < deadline:
+                time.sleep(_SYSTEMD_START_SETTLE_POLL_SECONDS)
+                after = self._show(instance)
+                if not after["available"]:
+                    raise AdapterError("instance systemd unit became unavailable during startup")
+                if not after["running"]:
+                    detail = after.get("active_state") or after.get("sub_state") or "not-running"
+                    raise AdapterError(f"instance failed during startup settle window: {detail}")
         return {"action": action, "changed": True, "idempotent": False, "state": after}
 
     def start(self, instance: dict[str, Any]) -> dict[str, Any]:
