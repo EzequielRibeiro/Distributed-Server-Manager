@@ -81,3 +81,15 @@ async function main(){
   console.log("PASS: progress, duplicate protection, explicit API error, retry and refresh ambiguity");
 }
 main().catch(error=>{console.error(error);process.exitCode=1});
+// The parent can report applied while Agent is still processing required children.
+const summaryStart=source.indexOf('function contentBundlePending(');
+const summaryEnd=source.indexOf('function applyContentItems(',summaryStart);
+assert(summaryStart>0&&summaryEnd>summaryStart);
+const {pending,failed}=vm.runInNewContext(source.slice(summaryStart,summaryEnd)+
+  '\n({pending:contentBundlePending,failed:contentBundleFailed})', {
+    contentInstallLock:null,contentReconcileState:v=>v.reconciliation.status,
+    contentSecurityState:v=>v.security_state,$:()=>null,can:()=>true});
+assert(pending({bundle_summary:{child_count:2,reconciliation_statuses:{applied:1,pending:1}}}),
+  'a parent applied before children must retain the installation lock');
+assert(!pending({bundle_summary:{child_count:2,reconciliation_statuses:{applied:2}}}));
+assert(failed({bundle_summary:{child_count:2,reconciliation_statuses:{applied:1,failed:1}}}));

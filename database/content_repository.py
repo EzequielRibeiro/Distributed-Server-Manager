@@ -69,13 +69,49 @@ class ContentRepository:
    s=AlertSession(self.backend,c)
    try:return self._existing_session(s,instance_id,content_id)
    finally:s.close()
+ def _guard_parallel_modpack_session(self,s,instance_id,requested_content_id,game_id):
+  """Serialize new Minecraft content changes against an in-flight modpack.
+
+  Called *inside* the assignment write transaction: SQLite uses BEGIN IMMEDIATE,
+  and server databases lock the instance row before reading Agent state.
+  Updates to the existing parent keep their established revision semantics.
+  """
+  if str(game_id or "").lower()!="minecraft":return
+  if self.backend.name!="sqlite":
+   s.execute(f"SELECT id FROM instances WHERE id={self.ph} FOR UPDATE",(instance_id,)).fetchone()
+  rows=s.execute(f"SELECT a.content_id,a.content_type,a.metadata_json,a.revision,a.checksum,"
+   "st.desired_revision,st.desired_checksum,st.status "
+   "FROM content_assignments a LEFT JOIN agent_content_state st "
+   "ON st.agent_id=a.agent_id AND st.instance_id=a.instance_id AND st.content_id=a.content_id "
+   f"WHERE a.instance_id={self.ph} AND a.desired_state='installed'",(instance_id,)).fetchall()
+  by_id={str(row["content_id"]):dict(row) for row in rows}
+  settled={"applied","failed","error","blocked","security_blocked","security_scan_failed"}
+  def waiting(row):
+   aligned=(row.get("desired_revision") is not None
+            and int(row["desired_revision"])==int(row["revision"])
+            and str(row.get("desired_checksum") or "")==str(row["checksum"]))
+   return not aligned or str(row.get("status") or "").lower() not in settled
+  for parent in by_id.values():
+   if parent["content_type"]!="modpack" or parent["content_id"]==requested_content_id:continue
+   if waiting(parent):
+    raise ContentValidationError("Outra instalação de modpack está em andamento. Aguarde a confirmação do Agent.")
+   if str(parent.get("status") or "").lower()!="applied":continue
+   for child in by_id.values():
+    if child["content_id"]==parent["content_id"]:continue
+    try:meta=json.loads(child.get("metadata_json") or "{}")
+    except (TypeError,ValueError):continue
+    marker=meta.get("bundle") if isinstance(meta,dict) else None
+    if isinstance(marker,dict) and marker.get("parent_content_id")==parent["content_id"] and waiting(child):
+     raise ContentValidationError("A instalação das dependências do modpack está em andamento. Aguarde a confirmação do Agent.")
  def put(self,raw:Mapping[str,Any],*,requested_by:str|None=None):
   body=dict(raw or {});instance_id=str(body.get("instance_id") or "").strip();inst=self._instance(instance_id)
   if inst is None:raise ContentValidationError("instance does not exist")
   item=self._prepare_assignment(body,inst);now=utc_now()
   with self.backend.transaction() as c:
    s=AlertSession(self.backend,c)
-   try:stored,changed=self._write_assignment_session(s,item,self._existing_session(s,item["instance_id"],item["content_id"]),requested_by,now)
+   try:
+    self._guard_parallel_modpack_session(s,instance_id,item["content_id"],dict(inst).get("game_id"))
+    stored,changed=self._write_assignment_session(s,item,self._existing_session(s,item["instance_id"],item["content_id"]),requested_by,now)
    finally:s.close()
   return {"assignment":self.get(item["instance_id"],item["content_id"]),"changed":changed}
  def put_many(self,raws:list[Mapping[str,Any]],*,requested_by:str|None=None):
@@ -98,6 +134,7 @@ class ContentRepository:
   with self.backend.transaction() as c:
    s=AlertSession(self.backend,c)
    try:
+    for item in items:self._guard_parallel_modpack_session(s,instance_id,item["content_id"],dict(inst).get("game_id"))
     for item in items:
      _,changed=self._write_assignment_session(s,item,self._existing_session(s,item["instance_id"],item["content_id"]),requested_by,now);changed_any|=changed
    finally:s.close()
@@ -127,6 +164,7 @@ class ContentRepository:
   with self.backend.transaction() as c:
    s=AlertSession(self.backend,c)
    try:
+    self._guard_parallel_modpack_session(s,instance_id,parent["content_id"],dict(inst).get("game_id"))
     existing_bundle_row=s.execute(f"SELECT * FROM content_bundles WHERE instance_id={self.ph} AND parent_content_id={self.ph}",(instance_id,parent["content_id"])).fetchone();existing_bundle=dict(existing_bundle_row) if existing_bundle_row else None
     if (existing_bundle and parent_body["desired_state"]=="installed"
         and str(existing_bundle.get("manifest_kind") or "")=="serverpack-local-v1"):
