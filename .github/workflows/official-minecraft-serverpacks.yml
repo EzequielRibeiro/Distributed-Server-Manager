@@ -68,6 +68,7 @@ jobs:
             tests.minecraft_modpack_auto_source_test \
             tests.minecraft_official_serverpack_upload_test \
             tests.minecraft_serverpack_agent_test \
+            tests.minecraft_serverpack_incremental_update_test \
             tests.minecraft_serverpack_inspection_test \
             tests.minecraft_serverpack_ui_contract_test -v
       - name: Existing upload and bundle regressions
