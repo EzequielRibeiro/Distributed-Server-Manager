@@ -41,8 +41,8 @@ def build(profile: MinecraftBedrockRuntimeProfile, install: Path, state: Path, i
         "instance_state_root": str(state),
         "catalog_runtime_policy": policy,
         "ports": {
-            "game_ipv4": {"port": first, "protocol": "udp"},
-            "game_ipv6": {"port": first + 1, "protocol": "udp"},
+            "signaling": {"port": first, "protocol": "tcp"},
+            "gameplay_udp": {"port": first + 1, "protocol": "udp"},
         },
     }
     instance = {
@@ -67,6 +67,35 @@ def main() -> None:
         (install / "worlds" / "provider-seed.txt").write_text("seed", encoding="utf-8")
 
         profile = MinecraftBedrockRuntimeProfile()
+        upgraded_context = profile.upgrade_migration_context(
+            {},
+            {
+                "ports": {
+                    "game_ipv4": {"port": 22000, "protocol": "udp"},
+                    "game_ipv6": {"port": 22001, "protocol": "udp"},
+                    "signaling": {"port": 22000, "protocol": "tcp"},
+                    "gameplay_udp": {"port": 22001, "protocol": "udp"},
+                },
+                "catalog_runtime_policy": {
+                    "network_exposure": [
+                        {"name": "game_ipv4", "protocol": "udp", "exposure": "public"},
+                        {"name": "game_ipv6", "protocol": "udp", "exposure": "public"},
+                        {"name": "signaling", "protocol": "tcp", "exposure": "public"},
+                        {"name": "gameplay_udp", "protocol": "udp", "exposure": "public"},
+                    ]
+                },
+            },
+            2,
+        )
+        require(
+            set(upgraded_context["ports"]) == {"signaling", "gameplay_udp"},
+            "Bedrock migration must discard legacy port roles",
+        )
+        require(
+            {item["name"] for item in upgraded_context["catalog_runtime_policy"]["network_exposure"]}
+            == {"signaling", "gameplay_udp"},
+            "Bedrock migration must discard legacy exposure roles",
+        )
         a = build(profile, install, root / "instances" / "bedrock-a", "bedrock-a", 22000)
         b = build(profile, install, root / "instances" / "bedrock-b", "bedrock-b", 23000)
 
@@ -84,8 +113,13 @@ def main() -> None:
         require(b["executable"] == str(Path(b["working_directory"]) / "bedrock_server"), "instance B executable must use private runtime")
         require(not Path(a["executable"]).is_relative_to(install), "instance A executable must not use shared provider content")
         require(not Path(b["executable"]).is_relative_to(install), "instance B executable must not use shared provider content")
-        require(a["ports"]["game_ipv4"]["port"] == 22000 and a["ports"]["game_ipv6"]["port"] == 22001, "instance A port block is wrong")
-        require(b["ports"]["game_ipv4"]["port"] == 23000 and b["ports"]["game_ipv6"]["port"] == 23001, "instance B port block is wrong")
+        require(a["ports"]["signaling"] == {"port": 22000, "protocol": "tcp"}, "instance A signaling port is wrong")
+        require(a["ports"]["gameplay_udp"] == {"port": 22001, "protocol": "udp"}, "instance A gameplay UDP port is wrong")
+        require(b["ports"]["signaling"] == {"port": 23000, "protocol": "tcp"}, "instance B signaling port is wrong")
+        require(b["ports"]["gameplay_udp"] == {"port": 23001, "protocol": "udp"}, "instance B gameplay UDP port is wrong")
+        exposure = a["catalog_runtime_policy"]["network_exposure"]
+        require({"name": "signaling", "protocol": "tcp", "exposure": "public"} in exposure, "Bedrock signaling TCP must be public")
+        require({"name": "gameplay_udp", "protocol": "udp", "exposure": "public"} in exposure, "Bedrock gameplay UDP must be public")
 
         # Simulate the copy-once seed boundary, then prove network policy edits private files only.
         import shutil
@@ -96,8 +130,14 @@ def main() -> None:
         a_props = (Path(a["working_directory"]) / "server.properties").read_text(encoding="utf-8")
         b_props = (Path(b["working_directory"]) / "server.properties").read_text(encoding="utf-8")
         shared_props = (install / "server.properties").read_text(encoding="utf-8")
-        require("server-port=22000" in a_props and "server-portv6=22001" in a_props, "instance A private ports were not materialized")
-        require("server-port=23000" in b_props and "server-portv6=23001" in b_props, "instance B private ports were not materialized")
+        require("server-port=22000" in a_props, "instance A signaling port was not materialized")
+        require("server-udp-ports=22001" in a_props, "instance A gameplay UDP port was not materialized")
+        require("transport=nethernet" in a_props, "instance A NetherNet transport was not materialized")
+        require("server-portv6=" not in a_props, "instance A legacy Bedrock IPv6 port must be removed")
+        require("server-port=23000" in b_props, "instance B signaling port was not materialized")
+        require("server-udp-ports=23001" in b_props, "instance B gameplay UDP port was not materialized")
+        require("transport=nethernet" in b_props, "instance B NetherNet transport was not materialized")
+        require("server-portv6=" not in b_props, "instance B legacy Bedrock IPv6 port must be removed")
         require("server-port=19132" in shared_props and "server-portv6=19133" in shared_props, "provider seed must remain unchanged")
 
         registry = importlib.import_module("agents.linux.runtime.profiles.registry")

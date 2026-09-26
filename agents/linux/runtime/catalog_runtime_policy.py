@@ -275,6 +275,47 @@ def _property_line(existing: str, key: str, value: str, syntax: str) -> str:
         if match: return match.group(1) + value + (" " if comment else "") + comment
     return f"{key} = {value};" if syntax == "semicolon" else f"{key}={value}"
 
+def _cleanup_obsolete_bedrock_network_properties(
+    spec: dict[str, Any],
+    root: Path,
+    properties: list[Any],
+) -> list[str]:
+    environment_id = str(spec.get("environment_id") or "").strip().lower()
+    if environment_id != "minecraft.bedrock.vanilla":
+        return []
+
+    declared = {
+        str(item.get("key") or "").strip()
+        for item in properties
+        if isinstance(item, dict)
+        and str(item.get("path") or "").replace("\\", "/") == "server.properties"
+    }
+    if not {"server-port", "server-udp-ports", "transport"}.issubset(declared):
+        return []
+
+    target = (root / "server.properties").resolve()
+    target.relative_to(root)
+    if target.is_symlink():
+        raise ValueError("network property file cannot be a symbolic link")
+    if not target.is_file():
+        return []
+
+    text = target.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
+    updated = [
+        line
+        for line in lines
+        if not re.match(r"^\s*server-portv6\s*=", line)
+    ]
+    if len(updated) == len(lines):
+        return []
+    target.write_text(
+        "\n".join(updated) + ("\n" if text.endswith(("\n", "\r")) else ""),
+        encoding="utf-8",
+    )
+    return ["server.properties"]
+
+
 def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
     properties = spec.get("catalog_network_properties") if isinstance(spec.get("catalog_network_properties"), list) else []
     root = _configuration_root(spec)
@@ -317,6 +358,7 @@ def materialize_network_properties(spec: dict[str, Any]) -> list[str]:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
         written.append(relative.as_posix())
+    written.extend(_cleanup_obsolete_bedrock_network_properties(spec, root, properties))
     return sorted(set(written))
 
 

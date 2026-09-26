@@ -12,7 +12,35 @@ _BEDROCK_ENVIRONMENT = "minecraft.bedrock.vanilla"
 
 class MinecraftBedrockRuntimeProfile(GameRuntimeProfile):
     game_ids = (_BEDROCK_ENVIRONMENT,)
-    profile_version = 2
+    profile_version = 3
+
+    def upgrade_migration_context(
+        self,
+        record: dict[str, Any],
+        context: dict[str, Any],
+        stored_version: int,
+    ) -> dict[str, Any]:
+        upgraded = dict(context)
+        raw_ports = upgraded.get("ports")
+        if isinstance(raw_ports, dict):
+            upgraded["ports"] = {
+                role: dict(raw_ports[role])
+                for role in ("signaling", "gameplay_udp")
+                if isinstance(raw_ports.get(role), dict)
+            }
+        policy = upgraded.get("catalog_runtime_policy")
+        if isinstance(policy, dict):
+            policy = dict(policy)
+            exposure = policy.get("network_exposure")
+            if isinstance(exposure, list):
+                policy["network_exposure"] = [
+                    dict(item)
+                    for item in exposure
+                    if isinstance(item, dict)
+                    and str(item.get("name") or "") in {"signaling", "gameplay_udp"}
+                ]
+            upgraded["catalog_runtime_policy"] = policy
+        return upgraded
 
     def build_runtime_spec(self, instance: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         instance_id = require_text(instance.get("instance_id") or instance.get("id"), "instance_id")
@@ -34,10 +62,11 @@ class MinecraftBedrockRuntimeProfile(GameRuntimeProfile):
         state_root = require_absolute(context.get("instance_state_root"), "instance_state_root")
         runtime_root = str(Path(state_root) / "runtime")
         ports = port_bindings(context)
-        for role in ("game_ipv4", "game_ipv6"):
+        required_ports = {"signaling": "tcp", "gameplay_udp": "udp"}
+        for role, protocol in required_ports.items():
             binding = ports.get(role)
-            if not isinstance(binding, dict) or str(binding.get("protocol") or "").lower() != "udp" or not binding.get("port"):
-                raise ProfileError(f"required reserved UDP port is missing: {role}")
+            if not isinstance(binding, dict) or str(binding.get("protocol") or "").lower() != protocol or not binding.get("port"):
+                raise ProfileError(f"required reserved {protocol.upper()} port is missing: {role}")
 
         environment = context.get("environment") or {}
         if not isinstance(environment, dict):

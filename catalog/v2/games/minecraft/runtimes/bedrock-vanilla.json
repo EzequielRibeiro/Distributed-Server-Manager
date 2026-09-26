@@ -42,13 +42,13 @@
     "block_size": 2,
     "ports": [
       {
-        "name": "game_ipv4",
-        "protocol": "udp",
+        "name": "signaling",
+        "protocol": "tcp",
         "offset": 0,
         "exposure": "public"
       },
       {
-        "name": "game_ipv6",
+        "name": "gameplay_udp",
         "protocol": "udp",
         "offset": 1,
         "exposure": "public"
@@ -59,13 +59,19 @@
         "kind": "property",
         "file": "server.properties",
         "key": "server-port",
-        "value": "{game_ipv4}"
+        "value": "{signaling}"
       },
       {
         "kind": "property",
         "file": "server.properties",
-        "key": "server-portv6",
-        "value": "{game_ipv6}"
+        "key": "server-udp-ports",
+        "value": "{gameplay_udp}"
+      },
+      {
+        "kind": "property",
+        "file": "server.properties",
+        "key": "transport",
+        "value": "nethernet"
       }
     ]
   },
