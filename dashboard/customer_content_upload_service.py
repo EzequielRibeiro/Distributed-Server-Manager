@@ -250,7 +250,9 @@ class CustomerContentUploadService:
   previous=history[0] if history else None
   revision=int(previous.get("revision") or 0) if previous else 0
   if previous:
-   same=(str(previous.get("provider") or "")=="local"
+   same=(str(bundle.get("provider") or "")=="local"
+         and str(bundle.get("manifest_kind") or "")=="serverpack-local-v1"
+         and str(previous.get("provider") or "")=="local"
          and str(previous.get("manifest_kind") or "")=="serverpack-local-v1"
          and str(previous.get("provider_project_id") or "")==str(bundle["provider_project_id"])
          and str(previous.get("minecraft_version") or "")==str(bundle["minecraft_version"])
