@@ -51,6 +51,14 @@ class ControllerIncrementalUpdateTest(unittest.TestCase):
             s._serverpack_revision_plan(CONTEXT,"atm11",
                 {**bundle,"provider_version_id":"file-123"},3)
 
+    def test_new_content_id_does_not_create_second_active_modpack(self):
+        s=service(status="completed")
+        s.content.list=lambda **kwargs:[{"instance_id":"i1","content_id":"atm11",
+            "content_type":"modpack","desired_state":"installed","activation_state":"enabled"}]
+        with self.assertRaisesRegex(ValueError,"modpack ativo"):
+            s._serverpack_capacity(CONTEXT,"atm11-copy",[])
+        s._serverpack_capacity(CONTEXT,"atm11",[])
+
     def test_existing_bundle_stays_same_instance_and_retains_revision_rollback(self):
         owner=SQLiteFixture()
         owner.setUp()

@@ -12,6 +12,48 @@ o usuário pode baixar o ZIP **ServerFiles-0.9.0-beta.zip** diretamente do autor
 página original do CurseForge (projeto **1148445**, arquivo **8916964**).
 O Capivara nunca baixa esse ZIP em nome do usuário via API restrita.
 
+## Descoberta automática e atualização incremental
+
+A seleção de modpacks agora prioriza o Server Pack oficial disponível
+pela API CurseForge (`serverPackFileId`/`isServerPack`), com download
+apenas quando o provedor autoriza e o SHA-1 do ZIP original é verificado
+antes de enfileirar a transferência para o Agent. No Modrinth,
+o fluxo usa o resolvedor existente de arquivos `.mrpack` compatíveis
+com o servidor. Downloads restritos devem usar upload manual do
+arquivo fornecido diretamente pelo autor.
+
+**Uma nova versão do modpack não reinstala o servidor Minecraft.**
+O mesmo `instance_id` e `content_id` são preservados: a prévia identifica
+a revisão instalada e mostra o delta de mods adicionados, alterados,
+removidos e inalterados. A nova versão exige correspondência exata da
+revisão conferida na prévia e confirmação explícita de backup e instância
+parada. Outra versão publicada não pode criar um segundo modpack ativo
+na mesma instância sem atualização do ID existente.
+
+- Uma atualização normal não pode alterar o projeto de origem, a versão
+  Minecraft, o loader ou seu build. Mudanças dessas identidades exigem
+  uma migração separada, com backup.
+- Mundo, dados dos jogadores, configurações de rede, identidade da
+  instância e backups estão fora do armazenamento gerenciado dos mods
+  e **não são substituídos por uma atualização**.
+- Ao aplicar uma atualização, o materializador Linux/Windows preserva
+  as configurações existentes, inclusive personalizações locais;
+  os defaults novos do ZIP não sobrescrevem os arquivos atuais.
+  Configurações novas exigidas pelo pacote precisam de revisão/migração
+  explícita em procedimento separado.
+- Mods do Server Pack conservam IDs derivados do caminho e versões por
+  SHA256. O Agent reutiliza os idênticos, enquanto a projeção nativa
+  evita copiar novamente arquivos byte a byte iguais.
+- O banco mantém o histórico e o diff do bundle e oferece reversão
+  de revisões gerenciadas.
+
+**Pendente para liberação:** um teste real de atualização com ZIP
+original, backup verificável, recuperação de falha parcial quando
+há mods removidos e retenção de artefatos antigos para rollback.
+A confirmação do usuário de que existe backup não comprova
+automaticamente sua integridade. Não efetuar merge/release até
+homologar essas condições em um Agent isolado.
+
 ## Primeira versão
 
 Somente runtime Minecraft Java **NeoForge**, com arquivo ZIP já transferido pelo
