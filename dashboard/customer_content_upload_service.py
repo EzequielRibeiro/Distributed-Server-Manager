@@ -235,6 +235,39 @@ class CustomerContentUploadService:
   if len(identities|requested)>2000:
    raise ValueError("O Server Pack excede a capacidade de 2000 conteúdos gerenciados deste Agent.")
 
+ def _serverpack_revision_plan(self,context,content_id,bundle,expected_revision=None):
+  """Plan a same-instance update; a new ZIP never means recreating the server."""
+  iid=str(context.get("id") or "")
+  history=self.content.bundle_history(iid,content_id)
+  previous=history[0] if history else None
+  revision=int(previous.get("revision") or 0) if previous else 0
+  if previous:
+   same=(str(previous.get("provider") or "")=="local"
+         and str(previous.get("manifest_kind") or "")=="serverpack-local-v1"
+         and str(previous.get("provider_project_id") or "")==str(bundle["provider_project_id"])
+         and str(previous.get("minecraft_version") or "")==str(bundle["minecraft_version"])
+         and str(previous.get("loader_id") or "")==str(bundle["loader_id"])
+         and str(previous.get("loader_version") or "")==str(bundle["loader_version"]))
+   if not same:raise ValueError(
+    "Atualização recusada: o pacote alterou projeto Minecraft, formato ou NeoForge. "
+    "Faça uma migração de runtime separada, com backup; a instância não será recriada.")
+  if expected_revision is not None:
+   if isinstance(expected_revision,bool) or str(expected_revision)!=str(revision):
+    raise ValueError("A revisão do modpack mudou desde a prévia. Refaça a validação antes de atualizar.")
+  diff=self.content.bundle_diff(iid,content_id,bundle) if previous else {
+   "added":[str(member["content_id"]) for member in bundle.get("members") or []],
+   "removed":[],"updated":[],"unchanged":[]}
+  if previous and (str(previous.get("provider_version_id") or "")==
+                   str(bundle["provider_version_id"])):
+   if diff["added"] or diff["removed"] or diff["updated"]:
+    raise ValueError("O provedor alterou o conteúdo de uma versão já publicada. "
+                     "Selecione uma nova versão identificável; nenhum arquivo será substituído.")
+  return {"operation":"update" if previous else "install",
+          "previous_revision":revision,"manifest_diff":diff,
+          "preserve_world":True,"preserve_existing_config":bool(previous),
+          "requires_stopped_instance":True,
+          "requires_backup_confirmation":bool(previous)}
+
  def preview_serverpack(self,user,transfer_id,body:Mapping[str,Any]):
   """Read-only inspection. Never changes desired content or uploads again."""
   item=self._transfer(user,transfer_id)
@@ -256,8 +289,10 @@ class CustomerContentUploadService:
   if relative!=expected:raise ValueError("A confirmação do upload pelo Agent não corresponde ao arquivo.")
   path,_=self.transfers.controller_artifact(str(item["transfer_id"]))
   metadata=body.get("metadata") if isinstance(body.get("metadata"),Mapping) else {}
-  preview,_,_,children=build_serverpack_bundle(self.root,context,item,relative,cid,metadata,path)
+  preview,_,bundle,children=build_serverpack_bundle(self.root,context,item,relative,cid,metadata,path)
   self._serverpack_capacity(context,cid,children)
+  plan=self._serverpack_revision_plan(context,cid,bundle)
+  preview["update_plan"]=plan
   return preview
 
  def _finalize(self,user,transfer_id,body:Mapping[str,Any],extra_assignments=None):
@@ -301,6 +336,19 @@ class CustomerContentUploadService:
     path,_=self.transfers.controller_artifact(tid)
     preview,parent,bundle,children=build_serverpack_bundle(self.root,context,item,relative,content_id,metadata,path)
     self._serverpack_capacity(context,content_id,children)
+    declaration=metadata.get("serverpack") if isinstance(metadata.get("serverpack"),Mapping) else {}
+    if "expected_revision" not in declaration:
+     raise ValueError("Importação recusada: execute a prévia e confirme a revisão antes de instalar.")
+    plan=self._serverpack_revision_plan(context,content_id,bundle,
+                                        declaration.get("expected_revision"))
+    if plan["operation"]=="update":
+     if declaration.get("backup_confirmed") is not True:
+      raise ValueError("Confirme um backup concluído antes de atualizar o Server Pack.")
+     parent_meta=dict(parent.get("metadata") or {})
+     parent_meta["serverpack_update_policy"]="preserve-existing-config"
+     parent_meta["serverpack_previous_revision"]=plan["previous_revision"]
+     parent["metadata"]=parent_meta
+    preview["update_plan"]=plan
     history_before=self.content.bundle_history(iid,content_id)
     previous_bundle_revision=int(history_before[0]["revision"]) if history_before else None
     diff=self.content.bundle_diff(iid,content_id,bundle)
