@@ -282,7 +282,7 @@ def materialize_minecraft_files(spec: dict[str, Any]) -> list[str]:
     environment = str(spec.get("environment_id") or "").strip().lower()
     if game != "minecraft" and not environment.startswith("minecraft.") and not items and "content_projection" not in spec:
         return []
-    if len(items) > 512:
+    if len(items) > 2000:
         raise MinecraftContentActivationError("too many Minecraft content projections")
     root = _runtime_root(spec)
     manifest = _manifest_path(spec)
@@ -319,6 +319,10 @@ def materialize_minecraft_files(spec: dict[str, Any]) -> list[str]:
             target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists() and relative_text not in previous_set:
                 raise MinecraftContentActivationError("refusing to overwrite unmanaged Minecraft runtime content")
+            # A new pack revision must not recopy unchanged managed JARs.
+            if (target.exists() and relative_text in previous_set
+                    and target.is_file() and _file_sha256(target) == _file_sha256(source)):
+                continue
             stage = target.with_name(f".{target.name}.{os.getpid()}.capivara-new")
             if stage.exists():
                 if stage.is_dir():
@@ -388,7 +392,7 @@ def materialize_minecraft_files(spec: dict[str, Any]) -> list[str]:
 
 
 def project_minecraft_bundle_overrides(spec: dict[str, Any], entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    parents = [entry for entry in entries if _adapter(entry) == "minecraft-java" and str((entry.get("activation") or {}).get("mode") or "").strip().lower() == "bundle-parent"]
+    parents = [entry for entry in entries if _adapter(entry) == "minecraft-java" and str((entry.get("activation") or {}).get("mode") or "").strip().lower() in {"bundle-parent","bundle-parent-preserve-config"}]
     if not parents:
         return []
     if len(parents) != 1:
@@ -405,7 +409,8 @@ def project_minecraft_bundle_overrides(spec: dict[str, Any], entries: list[dict[
             roots.append(root)
     if len(roots) > 8:
         raise MinecraftContentActivationError("too many Minecraft modpack override roots")
-    return [{"content_id": str(entry.get("content_id") or ""), "managed_path": _managed_path(entry), "roots": roots}]
+    return [{"content_id": str(entry.get("content_id") or ""), "managed_path": _managed_path(entry), "roots": roots,
+             "preserve_existing_config": str(activation.get("mode") or "").strip().lower() == "bundle-parent-preserve-config"}]
 
 
 def _override_manifest_path(spec: dict[str, Any]) -> Path:
@@ -503,6 +508,10 @@ def materialize_minecraft_overrides(spec: dict[str, Any]) -> list[str]:
     # persisted and later disable/remove can safely clean managed overrides.
     if not items and not spec.get("instance_state_root"):
         return []
+    if items and items[0].get("preserve_existing_config") is True:
+        # Never replace, delete or normalize a customer's config during a
+        # modpack update. Preserve managed configs AND any local edits.
+        return sorted(_read_override_manifest(_override_manifest_path(spec)))
     root = _runtime_root(spec)
     roots: list[str] = []
     source: Path | None = None

@@ -128,6 +128,16 @@ class ContentRepository:
    s=AlertSession(self.backend,c)
    try:
     existing_bundle_row=s.execute(f"SELECT * FROM content_bundles WHERE instance_id={self.ph} AND parent_content_id={self.ph}",(instance_id,parent["content_id"])).fetchone();existing_bundle=dict(existing_bundle_row) if existing_bundle_row else None
+    if existing_bundle and parent_body["desired_state"]=="installed":
+     # A new modpack revision is not a clean server reinstall: keep all
+     # existing configurations (including customer edits) in their current
+     # location; the newly published defaults remain staged, not projected.
+     revised_metadata=dict(parent_body.get("metadata") or {})
+     revised_activation=dict(revised_metadata.get("activation") or {})
+     revised_activation["mode"]="bundle-parent-preserve-config"
+     revised_metadata["activation"]=revised_activation
+     parent_body["metadata"]=revised_metadata
+     parent=self._prepare_assignment(parent_body,inst)
     old_ids=set()
     if existing_bundle:
      prior=s.execute(f"SELECT manifest_json FROM content_bundle_revisions WHERE bundle_id={self.ph} AND revision={self.ph}",(existing_bundle["bundle_id"],existing_bundle["revision"])).fetchone()
