@@ -383,6 +383,62 @@ def _ensure_runtime_identity(spec: dict[str, Any], config: dict[str, Any]) -> No
     _prepare_private_state(spec, account, _instance_storage_root(config, spec.get("storage_pool_id")))
 
 
+def _remove_instance_private_state(spec: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    """Remove only instance-owned storage while preserving shared game-data caches."""
+    instance_id = _token(spec["instance_id"])
+    storage_root = _instance_storage_root(config, spec.get("storage_pool_id"))
+    expected = (storage_root / instance_id).resolve(strict=False)
+    configured = Path(str(spec.get("instance_state_root") or expected)).resolve(strict=False)
+    if configured != expected:
+        raise RuntimeError("instance state root does not match Agent storage pool policy")
+
+    removed: list[str] = []
+    directory_targets = (
+        (expected, storage_root.resolve(strict=False), "instance private state"),
+        (
+            (STATE_DIR / "managed-content" / instance_id).resolve(strict=False),
+            (STATE_DIR / "managed-content").resolve(strict=False),
+            "instance managed content state",
+        ),
+    )
+    for target, allowed_root, label in directory_targets:
+        try:
+            target.relative_to(allowed_root)
+        except ValueError as exc:
+            raise RuntimeError(f"{label} escapes its allowed root") from exc
+        if not target.exists():
+            continue
+        if target.is_symlink() or not target.is_dir():
+            raise RuntimeError(f"{label} is not a safe directory")
+        _reject_symlinks(target, label=label)
+        shutil.rmtree(target)
+        removed.append(str(target))
+
+    file_targets = (
+        (
+            (STATE_DIR / "content-activation" / f"{instance_id}.json").resolve(strict=False),
+            (STATE_DIR / "content-activation").resolve(strict=False),
+            "instance content activation snapshot",
+        ),
+    )
+    for target, allowed_root, label in file_targets:
+        try:
+            target.relative_to(allowed_root)
+        except ValueError as exc:
+            raise RuntimeError(f"{label} escapes its allowed root") from exc
+        if not target.exists():
+            continue
+        if target.is_symlink() or not target.is_file():
+            raise RuntimeError(f"{label} is not a safe file")
+        target.unlink()
+        removed.append(str(target))
+    return {
+        "changed": bool(removed),
+        "removed_paths": removed,
+        "shared_game_data_preserved": True,
+    }
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -645,6 +701,8 @@ def run(instance_id: str) -> dict[str, Any]:
     elif action == "remove":
         operation = materializer.remove(spec)
         removed_dayz_mod_aliases = _remove_dayz_mod_aliases(spec)
+        private_state_cleanup = _remove_instance_private_state(spec, config)
+        operation = {**operation, "private_state_cleanup": private_state_cleanup}
     elif action == "migrate-storage-copy":
         operation = _migrate_storage_copy(
             config,

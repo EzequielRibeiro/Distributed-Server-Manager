@@ -345,6 +345,42 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
         chown.assert_any_call(control_root, hybrid_control_account.pw_uid, agent_group.gr_gid)
 
 
+    def test_remove_private_state_deletes_instance_owned_data_only(self):
+        state = self.root / "hybrid-agent-state"
+        storage_root = self.root / "hybrid-instance-storage"
+        instance_root = storage_root / "instance-one"
+        managed = state / "managed-content" / "instance-one"
+        activation = state / "content-activation" / "instance-one.json"
+        shared = state / "game-data" / "minecraft" / "youer" / "26.2" / "791"
+        (instance_root / "runtime").mkdir(parents=True)
+        managed.mkdir(parents=True)
+        activation.parent.mkdir(parents=True)
+        shared.mkdir(parents=True)
+        (instance_root / "runtime" / "world.dat").write_text("instance", encoding="utf-8")
+        (managed / "content.json").write_text("managed", encoding="utf-8")
+        activation.write_text('{"entries":[{"game_id":"minecraft"}]}\n', encoding="utf-8")
+        (shared / "server.jar").write_text("shared", encoding="utf-8")
+        original_state = materialize_instance.STATE_DIR
+        materialize_instance.STATE_DIR = state
+        try:
+            with mock.patch.object(materialize_instance, "_instance_storage_root", return_value=storage_root):
+                result = materialize_instance._remove_instance_private_state(
+                    {
+                        "instance_id": "instance-one",
+                        "instance_state_root": str(instance_root),
+                    },
+                    {"agent_id": "agent-one"},
+                )
+        finally:
+            materialize_instance.STATE_DIR = original_state
+        self.assertTrue(result["changed"])
+        self.assertFalse(instance_root.exists())
+        self.assertFalse(managed.exists())
+        self.assertFalse(activation.exists())
+        self.assertTrue((shared / "server.jar").is_file())
+        self.assertTrue(result["shared_game_data_preserved"])
+
+
     def test_hybrid_runtime_boundary_is_repaired_for_runtime_group(self):
         state = self.root / "hybrid-agent-state"
         game_data = state / "game-data"
