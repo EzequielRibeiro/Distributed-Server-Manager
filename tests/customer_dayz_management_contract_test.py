@@ -7,7 +7,7 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
  def test_customer_surface_is_composed(self):
   html=(ROOT/"dashboard"/"web"/"customer-instance.html").read_text(encoding="utf-8")
   self.assertIn("/customer-maintenance.js?v=4",html)
-  self.assertIn("/customer-dayz.js?v=9",html)
+  self.assertIn("/customer-dayz.js?v=10",html)
   layer=(ROOT/"dashboard"/"server_part20.py").read_text(encoding="utf-8")
   self.assertIn("install_customer_dayz_http",layer)
   self.assertIn('"/customer-dayz.js"',layer)
