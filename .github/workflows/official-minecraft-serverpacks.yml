@@ -30,6 +30,7 @@ on:
       - 'tests/minecraft_modpack_auto_source_test.py'
       - 'tests/minecraft_serverpack_*.py'
       - 'tests/minecraft_official_serverpack_upload_test.py'
+      - 'tests/minecraft_serverpack_http_transfer_test.py'
       - 'tests/universal_content_external_upload_test.py'
       - '.github/workflows/official-minecraft-serverpacks.yml'
   push:
@@ -62,6 +63,7 @@ on:
       - 'tests/minecraft_modpack_auto_source_test.py'
       - 'tests/minecraft_serverpack_*.py'
       - 'tests/minecraft_official_serverpack_upload_test.py'
+      - 'tests/minecraft_serverpack_http_transfer_test.py'
       - 'tests/universal_content_external_upload_test.py'
       - '.github/workflows/official-minecraft-serverpacks.yml'
 
@@ -114,6 +116,10 @@ jobs:
             tests.minecraft_modpack_client_only_test \
             tests.minecraft_modpack_distribution_test \
             tests.minecraft_modpack_world_audit_test -v
+      - name: Loopback HTTP binary transfer, Agent quarantine and cleanup
+        env:
+          PYTHONPATH: .
+        run: python3 -m unittest tests.minecraft_serverpack_http_transfer_test -v
       - name: Existing upload and bundle regressions
         env:
           PYTHONPATH: .
