@@ -21,6 +21,8 @@ CUSTOMER_ADMIN_OPTIONS = "/api/admin/customers/options"
 CUSTOMER_ADMIN_DETAIL = "/api/admin/customer"
 CUSTOMER_ADMIN_PASSWORD_RESET = "/api/admin/customer/password-reset"
 CUSTOMER_ADMIN_CONTRACT = "/api/admin/customer/contracts"
+CUSTOMER_ADMIN_CONTRACT_EDIT = "/api/admin/customer/contract/update"
+CUSTOMER_ADMIN_INSTANCE_EDIT = "/api/admin/customer/instance/update"
 CUSTOMER_ADMIN_MEMBER_ROLE = "/api/admin/customer/member-role"
 CUSTOMER_ADMIN_ACCESS = "/api/admin/customer/access"
 CUSTOMER_PASSWORD_CHANGE = "/api/customer/password/change-temporary"
@@ -33,6 +35,8 @@ CUSTOMER_ADMIN_POST_PATHS = {
     CUSTOMER_ADMIN_COLLECTION,
     CUSTOMER_ADMIN_PASSWORD_RESET,
     CUSTOMER_ADMIN_CONTRACT,
+    CUSTOMER_ADMIN_CONTRACT_EDIT,
+    CUSTOMER_ADMIN_INSTANCE_EDIT,
     CUSTOMER_ADMIN_MEMBER_ROLE,
     CUSTOMER_ADMIN_ACCESS,
     CUSTOMER_PASSWORD_CHANGE,
@@ -290,6 +294,55 @@ def dispatch_customer_admin_post(path: str, payload: dict[str, Any], *, user, ba
                 context={"game_id": game_id, "product_variant": product_variant},
             )
             return 201, _json_safe(result)
+
+        if path in {CUSTOMER_ADMIN_CONTRACT_EDIT, CUSTOMER_ADMIN_INSTANCE_EDIT}:
+            # Operators can consult clients, but editing contracts and instance
+            # identities requires administrative privileges and tenant scope.
+            if not _admin_write(user):
+                return 403, {"error": "administrative write access required"}
+            code = _customer_code(payload)
+            detail = management.detail(code)
+            customer = detail["customer"]
+            if _role(user) == "controller" and (
+                not user.get("scope_id") or
+                str(user["scope_id"]) != str(customer.get("controller_id") or "")
+            ):
+                return 403, {"error": "controller is outside customer scope"}
+            if path == CUSTOMER_ADMIN_CONTRACT_EDIT:
+                contract_id = str(payload.get("contract_id") or "").strip()
+                changes = payload.get("changes")
+                result = management.edit_contract(code, contract_id, changes)
+                if result["updated"]:
+                    _audit(
+                        backend, user,
+                        action="customer.contract.updated",
+                        category="contracts",
+                        target_type="service_contract",
+                        target_id=contract_id,
+                        target_name=contract_id,
+                        changes={
+                            key: {"before": result["before"].get(key), "after": result["after"].get(key)}
+                            for key in result["after"] if result["before"].get(key) != result["after"].get(key)
+                        },
+                        context={"customer_code": code},
+                    )
+            else:
+                instance_id = str(payload.get("instance_id") or "").strip()
+                if set(payload) - {"customer_code", "instance_id", "name"}:
+                    raise ValueError("unsupported instance edit fields")
+                result = management.edit_instance_name(code, instance_id, payload.get("name"))
+                if result["updated"]:
+                    _audit(
+                        backend, user,
+                        action="customer.instance.updated",
+                        category="instances",
+                        target_type="instance",
+                        target_id=instance_id,
+                        target_name=result["after"]["name"],
+                        changes={"name": {"before": result["before"]["name"], "after": result["after"]["name"]}},
+                        context={"customer_code": code},
+                    )
+            return 200, _json_safe(result | {"detail": management.detail(code)})
 
         if path == CUSTOMER_ADMIN_MEMBER_ROLE:
             customer_code = _customer_code(payload)
