@@ -62,6 +62,23 @@ class ProviderAutoSourceTest(unittest.TestCase):
         discover.assert_called_once_with("curseforge", "99", "1.21.1", "neoforge", "")
         self.assertEqual(s.workspace.calls[-1], ("i1", "content.install"))
 
+    def test_catalog_discovery_does_not_require_external_upload_entitlement(self):
+        policy = SimpleNamespace(external_upload_allowed=False,
+                                 modifications_allowed=True, modpacks_allowed=True,
+                                 mods_allowed=True, plugins_allowed=False, datapacks_allowed=False)
+        s = service(policy=policy)
+        with patch("customer_content_upload_service.runtime_definition", return_value={"loader": "neoforge"}), patch(
+                "customer_content_upload_service.detect_modpack_source",
+                return_value={"provider": "modrinth", "mode": "managed_modrinth"}):
+            found = s.discover_provider_modpack(
+                USER, "i1", {"provider": "modrinth", "project_id": "some-modpack"})
+        self.assertEqual(found["mode"], "managed_modrinth")
+        with patch.object(s, "discover_provider_modpack", return_value=dict(DISCOVERED)):
+            with self.assertRaises(PermissionError):
+                s.download_discovered_serverpack(USER, "i1", {
+                    "provider": "curseforge", "project_id": "99", "serverpack_file_id": "456"})
+        self.assertEqual(s.transfers.created, [])
+
     def test_auto_download_stages_only_verified_provider_bytes(self):
         s = service()
         with patch.object(s, "discover_provider_modpack", return_value=dict(DISCOVERED)), patch(
