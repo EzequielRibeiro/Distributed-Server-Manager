@@ -60,3 +60,10 @@
 @keyframes provision-progress{0%{transform:translateX(-110%)}50%{transform:translateX(95%)}100%{transform:translateX(275%)}}
 @keyframes provision-sweep{55%,100%{transform:translateX(120%)}}
 @media (prefers-reduced-motion:reduce){.provision.building::after,.provision-builder span,.provision.building .progress::before{animation:none}.provision-builder span{transform:none;opacity:.8}.provision.building .progress::before{width:100%;opacity:.35}}
+
+/* Installation feedback belongs below the result metadata, never beside its title. */
+.content-result-body{min-width:0;width:100%}
+.content-result .content-install-status{display:block;min-width:0;max-width:100%;overflow-wrap:anywhere;word-break:normal;white-space:normal;line-height:1.45;margin-top:6px}
+.content-result .content-install-status:empty{display:none}
+.content-result-main{min-width:0;max-width:100%}
+@media(max-width:520px){.content-result{min-width:0}.content-result-heading{min-width:0}.content-result-description{overflow-wrap:anywhere}}

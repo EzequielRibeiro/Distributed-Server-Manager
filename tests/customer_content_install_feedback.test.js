@@ -12,6 +12,11 @@ const end = source.indexOf("async function mutateContent(",start);
 assert(start > 0 && end > start,"install action must exist");
 assert(source.includes("button.onclick=()=>installDiscoveredContent(item,button,feedback)"),
     "the rendered search result must wire button and inline feedback");
+assert(source.includes("body.append(feedback);row.append(main,button)"),
+    "mobile feedback must render under content metadata instead of overlapping heading");
+const css = fs.readFileSync(path.join(root,"dashboard/web/customer-instance-v2.css"),"utf8");
+assert(css.includes(".content-result .content-install-status{display:block"),
+    "installation feedback must wrap as a block on narrow screens");
 function runFixture(request,loadContent) {
   const notices = [];
   const styles = new Set();
