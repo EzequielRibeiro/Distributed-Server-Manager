@@ -54,12 +54,14 @@ function setContentStreamActive(active){if(active&&document.visibilityState==="v
 async function refreshInstalledContent(){if(!iid||contentRefreshBusy||!contentViewActive()||!can("content.read"))return;contentRefreshBusy=true;try{const data=await request(`${api}/content?instance_id=${encodeURIComponent(iid)}&_ts=${Date.now()}`,{cache:"no-store"});applyContentItems(data.content)}finally{contentRefreshBusy=false}}
 async function loadContent(){if(!can("content.read"))return;const data=await request(`${api}/content?instance_id=${encodeURIComponent(iid)}`);applyContentItems(data.content,{render:false});renderContent();connectContentStream();scheduleContentScanWatch(1000)}
 async function searchContent(){const type=selectedContentType(),provider=$("content-provider")?.value||"",query=$("content-query")?.value.trim()||"";if(!type||!provider||!query){toast("Informe o conteúdo que deseja procurar.");return}const box=$("content-results");if(box)box.textContent="Buscando conteúdo compatível...";const params=new URLSearchParams({instance_id:iid,provider,content_type:type,q:query,limit:"20"});try{const data=await request(`${api}/content/search?${params}`);contentSearchResults=Array.isArray(data.results)?data.results:[];contentSearchFallback=data.fallback||null;renderSearchResults()}catch(error){contentSearchResults=[];contentSearchFallback=null;if(box){box.replaceChildren();const message=document.createElement("div");message.className="content-search-error";message.textContent=error.message||"Não foi possível consultar o provedor de conteúdo.";box.append(message)}throw error}}
-function renderSearchResults(){const box=$("content-results");if(!box)return;box.replaceChildren();if(!contentSearchResults.length){box.textContent=contentSearchFallback?.automatic?"Nenhum conteúdo compatível encontrado nos catálogos disponíveis. Você também pode enviar um arquivo.":"Nenhum conteúdo compatível encontrado.";return}contentSearchResults.forEach(item=>{const row=document.createElement("article"),main=document.createElement("div"),body=document.createElement("div"),head=document.createElement("div"),title=document.createElement("strong"),origin=document.createElement("span"),author=document.createElement("small"),description=document.createElement("p"),meta=document.createElement("div"),typeBadge=document.createElement("span"),downloads=document.createElement("small"),button=document.createElement("button");row.className="content-result";main.className="content-result-main";body.className="content-result-body";head.className="content-result-heading";title.textContent=item.name||item.slug||item.project_id;origin.className="content-origin";origin.textContent=item.provider==="modrinth"?"Modrinth":item.provider==="curseforge"?"CurseForge":item.provider==="steam-workshop"?"Steam Workshop":String(item.provider||"Catálogo");head.append(title,origin);if(item.author){author.className="content-result-author";author.textContent=`por ${item.author}`}description.className="content-result-description";description.textContent=String(item.description||"").trim();typeBadge.className="content-badge";typeBadge.textContent=contentLabels[item.content_type]||item.content_type;meta.className="content-result-meta";meta.append(typeBadge);if(Number(item.downloads||0)){downloads.textContent=`↓ ${Number(item.downloads).toLocaleString("pt-BR")} downloads`;meta.append(downloads)}body.append(head);if(item.author)body.append(author);if(description.textContent)body.append(description);body.append(meta);if(item.icon_url){const icon=document.createElement("img");icon.className="content-result-icon";icon.src=contentIconUrl(item.icon_url);icon.alt="";icon.loading="lazy";icon.onerror=()=>icon.remove();main.append(icon)}main.append(body);button.className="btn primary";button.textContent="Instalar";button.disabled=!can("content.install");button.onclick=()=>installDiscoveredContent(item,button);row.append(main,button);box.append(row)})}
-async function installDiscoveredContent(item,button=null){
+function renderSearchResults(){const box=$("content-results");if(!box)return;box.replaceChildren();const partial=contentSearchFallback?.degraded===true;const note=partial?document.createElement("p"):null;if(note){note.className="content-search-error";note.textContent="Busca parcial: um dos catálogos está indisponível. Os resultados podem estar incompletos."}if(!contentSearchResults.length){box.textContent=contentSearchFallback?.automatic?"Nenhum conteúdo compatível com a versão e o loader atuais foi encontrado. Você também pode enviar um arquivo.":"Nenhum conteúdo compatível encontrado.";if(note)box.append(note);return}if(note)box.append(note);contentSearchResults.forEach(item=>{const row=document.createElement("article"),main=document.createElement("div"),body=document.createElement("div"),head=document.createElement("div"),title=document.createElement("strong"),origin=document.createElement("span"),author=document.createElement("small"),description=document.createElement("p"),meta=document.createElement("div"),typeBadge=document.createElement("span"),downloads=document.createElement("small"),button=document.createElement("button");row.className="content-result";main.className="content-result-main";body.className="content-result-body";head.className="content-result-heading";title.textContent=item.name||item.slug||item.project_id;origin.className="content-origin";origin.textContent=item.provider==="modrinth"?"Modrinth":item.provider==="curseforge"?"CurseForge":item.provider==="steam-workshop"?"Steam Workshop":String(item.provider||"Catálogo");head.append(title,origin);if(item.author){author.className="content-result-author";author.textContent=`por ${item.author}`}description.className="content-result-description";description.textContent=String(item.description||"").trim();typeBadge.className="content-badge";typeBadge.textContent=contentLabels[item.content_type]||item.content_type;meta.className="content-result-meta";meta.append(typeBadge);if(Number(item.downloads||0)){downloads.textContent=`↓ ${Number(item.downloads).toLocaleString("pt-BR")} downloads`;meta.append(downloads)}body.append(head);if(item.author)body.append(author);if(description.textContent)body.append(description);body.append(meta);if(item.icon_url){const icon=document.createElement("img");icon.className="content-result-icon";icon.src=contentIconUrl(item.icon_url);icon.alt="";icon.loading="lazy";icon.onerror=()=>icon.remove();main.append(icon)}main.append(body);button.className="btn primary";button.textContent="Instalar";button.disabled=!can("content.install");const feedback=document.createElement("small");feedback.className="content-install-status";feedback.setAttribute("role","status");feedback.setAttribute("aria-live","polite");button.onclick=()=>installDiscoveredContent(item,button,feedback);main.append(feedback);row.append(main,button);box.append(row)})}
+async function installDiscoveredContent(item,button=null,feedback=null){
  if(contentUploadActive){toast("Aguarde o envio de conteúdo em andamento.");return}
  if(button?.disabled)return;
  const originalLabel=button?.textContent||"Instalar";
- if(button){button.disabled=true;button.textContent="Verificando…"}
+ let accepted=false;
+ if(button){button.disabled=true;button.textContent="Verificando…";button.setAttribute("aria-busy","true")}
+ if(feedback){feedback.textContent="Validando compatibilidade e dependências…";feedback.classList.remove("content-search-error")}
  try{
   if(item.content_type==="modpack"&&["curseforge","modrinth"].includes(item.provider)){
    const query={instance_id:iid,provider:item.provider,project_id:item.project_ref,version_id:""};
@@ -79,6 +81,7 @@ async function installDiscoveredContent(item,button=null){
      link.textContent="Baixar Server Pack oficial para envio manual: "+(item.name||"modpack");
      const results=$("content-results");
      if(results)results.prepend(link);
+     if(feedback)feedback.textContent=source.reason||"Download externo não autorizado. Envie o ZIP oficial manualmente.";
      toast(source.reason||"Download externo não autorizado. Envie o ZIP oficial manualmente.");
      return;
     }
@@ -104,21 +107,29 @@ async function installDiscoveredContent(item,button=null){
      const sourceFields={curseforge_project_id:source.project_id,curseforge_file_id:source.serverpack_file_id,loader_version:build};
      const metadata=await previewOfficialServerpack(transfer,item.content_id,"modpack",source.file_name,item.name||item.content_id,sourceFields);
      const done=await request(api+"/content/upload/finalize",{method:"POST",body:JSON.stringify({instance_id:iid,transfer_id:transfer.transfer_id,content_id:item.content_id,content_type:"modpack",metadata})});
+     accepted=true;
+     if(feedback)feedback.textContent="Solicitação aceita. O Server Pack foi registrado para instalação; acompanhe o processamento.";
      toast(done.manifest_diff?"Server Pack registrado: "+bundleDiffText(done.manifest_diff):"Server Pack enviado para validação.");
-     contentSearchResults=[];await loadContent();return;
+     contentSearchResults=[];
+     try{await loadContent()}catch(error){if(feedback)feedback.textContent="Solicitação aceita, mas não foi possível atualizar o painel. Atualize a página para acompanhar.";toast("Solicitação aceita. Atualize a página para acompanhar.");}
+     return;
     }
-    if(!confirm((source.reason||"Nenhum Server Pack oficial disponível.")+"\nDeseja tentar a instalação padrão de mods, respeitando possíveis restrições do CurseForge?"))return;
+    if(!confirm((source.reason||"Nenhum Server Pack oficial disponível.")+"\nDeseja tentar a instalação padrão de mods, respeitando possíveis restrições do CurseForge?")){if(feedback)feedback.textContent=source.reason||"Nenhum Server Pack oficial disponível.";return;}
    }else if(source.mode!=="managed_modrinth"){
+    if(feedback)feedback.textContent=source.reason||"Nenhum arquivo .mrpack verificável disponível para este runtime.";
     toast(source.reason||"Nenhum arquivo .mrpack verificável disponível para este runtime.");
     return;
    }
   }
   const artifact=item.provider==="steam-workshop"?{published_file_id:item.project_ref}:{project_id:item.project_ref};
   await request(api+"/content",{method:"POST",body:JSON.stringify({instance_id:iid,action:"install",content_id:item.content_id,content_type:item.content_type,provider:item.provider,artifact,metadata:{display_name:item.name||item.slug||item.content_id}})});
-  toast("Instalação de conteúdo solicitada.");contentSearchResults=[];await loadContent();
- }catch(error){toast(error.message||"Não foi possível solicitar a instalação.");}
+  accepted=true;
+  if(feedback)feedback.textContent="Solicitação aceita. Acompanhe o resultado em Conteúdo gerenciado.";
+  toast("Instalação solicitada; acompanhe o processamento.");contentSearchResults=[];
+  try{await loadContent()}catch(error){if(feedback)feedback.textContent="Solicitação aceita, mas não foi possível atualizar o painel. Atualize a página para acompanhar.";toast("Solicitação aceita. Atualize a página para acompanhar.");}
+ }catch(error){if(feedback){feedback.classList.add("content-search-error");feedback.textContent="Não foi possível solicitar a instalação: "+String(error.message||"Falha desconhecida")};toast(feedback?.textContent||error.message||"Não foi possível solicitar a instalação.");}
  finally{
-  if(button){button.disabled=!can("content.install");button.textContent=originalLabel}
+  if(button){button.removeAttribute("aria-busy");button.disabled=accepted||!can("content.install");button.textContent=accepted?"Solicitado":originalLabel}
   contentUploadActive=false;contentUploadTransferId=null;setManagedUploadUi(false,0,"")
  }
 }
