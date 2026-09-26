@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -99,6 +100,30 @@ class ServerPackAgentTest(unittest.TestCase):
    args.write_text("@libraries/net/neoforged/neoforge/26.1.2.99/unix_args.txt")
    with self.assertRaisesRegex(ValueError,"Active launcher"):
     verify_installed_neoforge(root,"26.1.2.109")
+
+ def test_official_serverpack_checks_real_staging_volume_space(self):
+  gib=1024**3
+  for platform in ("linux","windows"):
+   with self.subTest(platform=platform),tempfile.TemporaryDirectory() as td:
+    folder=ROOT/f"agents/{platform}/runtime"
+    sys.path.insert(0,str(folder))
+    spec=importlib.util.spec_from_file_location(f"serverpack_disk_{platform}",folder/"content_client.py")
+    client=importlib.util.module_from_spec(spec);spec.loader.exec_module(client)
+    source=Path(td)/"official.zip"
+    stage=Path(td)/"stage"
+    stage.mkdir()
+    with zipfile.ZipFile(source,"w",zipfile.ZIP_DEFLATED) as archive:
+     archive.writestr("mods/example.jar",b"z"*32768)
+    with patch.object(client.shutil,"disk_usage",return_value=SimpleNamespace(total=100*gib,free=1*gib)):
+     with self.assertRaisesRegex(ValueError,"Espaço insuficiente"):
+      client._serverpack_disk_preflight(source,stage)
+    with patch.object(client.shutil,"disk_usage",return_value=SimpleNamespace(total=100*gib,free=20*gib)):
+     self.assertEqual(client._serverpack_disk_preflight(source,stage),32768)
+    with patch.object(client.zipfile,"ZipFile") as archive:
+     archive.return_value.__enter__.return_value.infolist.return_value=[
+       SimpleNamespace(file_size=9*gib)]
+     with self.assertRaisesRegex(ValueError,"8 GiB expanded"):
+      client._serverpack_disk_preflight(source,stage)
 
  def test_linux_and_windows_clients_accept_more_than_200_mod_commands(self):
   for platform in ("linux","windows"):

@@ -169,6 +169,22 @@ def _security_context(config,cmd):
   "game_id":str(cmd.get("game_id") or ""),
  }
 
+def _serverpack_disk_preflight(source:Path,stage:Path):
+ # Extraction is performed on the Agent's game-data volume, NOT in the ZIP's
+ # original quarantine folder. Keep enough free disk for the OS and rollback.
+ if not source.is_file() or source.is_symlink():raise ValueError("Server Pack source must be a regular ZIP file")
+ if source.stat().st_size>4*1024**3:raise ValueError("Server Pack ZIP exceeds 4 GiB")
+ with zipfile.ZipFile(source) as archive:
+  entries=archive.infolist()
+  if not entries or len(entries)>12000:raise ValueError("Server Pack ZIP has an invalid number of entries")
+  expanded=sum(x.file_size for x in entries)
+  if expanded<=0 or expanded>8*1024**3:raise ValueError("Server Pack ZIP exceeds 8 GiB expanded")
+ disk=shutil.disk_usage(stage)
+ reserve=max(2*1024**3,min(5*1024**3,disk.total//20))
+ if disk.free<expanded+reserve:
+  raise ValueError("Espaço insuficiente no Agent para extrair o Server Pack com reserva de segurança; libere espaço antes de continuar.")
+ return expanded
+
 def _install(config,cmd):
  _validate_relations(cmd);_,instance=_owned(config,cmd);iid=str(cmd.get("instance_id") or "");target=_safe_target(instance,str(cmd.get("target") or "assets"));artifact=dict(cmd.get("artifact") or {});provider=str(cmd.get("provider") or artifact.get("provider") or "");parent=target.parent;parent.mkdir(parents=True,exist_ok=True);stage=Path(tempfile.mkdtemp(prefix=f".{target.name}.c4-",dir=str(parent)));security_context=_security_context(config,cmd)
  try:
@@ -177,7 +193,9 @@ def _install(config,cmd):
    verify_installed_neoforge(instance,str(artifact.get("serverpack_loader_version") or ""))
    state=str(instance_runtime.status(config,iid).get("observed_state") or "").lower()
    if state!="stopped":raise ValueError("Pare a instância Minecraft antes de aplicar o Server Pack. A instalação em execução foi recusada.")
-  source=_source(provider,artifact,stage,config,cmd);_verify_artifact(source,artifact);source_scan=require_clean(source,context=security_context);payload=stage/"payload";payload.mkdir();archive=provider=="http-archive" or bool(artifact.get("archive"));expanded_scan=None
+  source=_source(provider,artifact,stage,config,cmd);_verify_artifact(source,artifact)
+  if artifact.get("serverpack_v1") is True:_serverpack_disk_preflight(source,stage)
+  source_scan=require_clean(source,context=security_context);payload=stage/"payload";payload.mkdir();archive=provider=="http-archive" or bool(artifact.get("archive"));expanded_scan=None
   if archive:
    _extract(source,payload)
    if artifact.get("serverpack_v1") is True:prepare_serverpack_payload(payload,artifact)
