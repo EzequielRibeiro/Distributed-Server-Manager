@@ -248,13 +248,12 @@ A validação privilegiada posterior retornou `INSTALLED_NEOFORGE_MATCH
   atualização inválida, preserva a revisão instalada anterior.
   A simulação com um filho corrompido foi rejeitada sem modificar o
   conteúdo anterior, as propriedades ou o mundo.
-- **Ainda pendente:** integrar as mudanças conflitantes de PR #837 sem
-  descartar correções, validar a fila Controller↔Agent completa e executar
-  a inicialização/observabilidade do ATM11 em ambiente separado com
-  CPU/RAM suficientes. Qualquer teste na instância real exige autorização
-  específica, backup verificado, verificação de espaço e plano de reversão.
-  Os scripts de teste locais ficam fora do PR e não são um produto
-  distribuído.
+- A integração UI/funcional de PR #837 foi posteriormente incorporada à
+  árvore de PR #839 (PR #837 aparece no histórico ancestral). Os ensaios
+  seguintes são registrados abaixo, sem substituírem testes multi-host.
+  Qualquer teste na instância real exige autorização específica, backup
+  verificado, verificação de espaço e plano de reversão. Os scripts locais
+  de teste ficam fora do PR e não são um produto distribuído.
 
 ### Condições de parada
 
@@ -269,9 +268,59 @@ A validação privilegiada posterior retornou `INSTALLED_NEOFORGE_MATCH
 **Não usar** o recurso para ignorar licença, substituir o runtime ou aplicar
 mudanças sobre um mundo ativo.
 
-**Integração obrigatória para a release:** PR #837 contém as correções de
-pesquisa unificada e do resolvedor CurseForge. Há sobreposição na UI com este
-PR #839. Antes de qualquer merge, conciliar os dois conjuntos de alterações,
-executar novamente testes de regressão e homologar o ZIP original e o Agent
-real no host. Aprovação em CI não substitui esse teste. O pacote oficial real ainda precisa de QA
-antes da implantação e da release.
+**Ordem de merges:** as correções do PR #837 (pesquisa unificada e
+restrições CurseForge) já integram o histórico deste PR #839. Se ambos forem
+aprovados, integrar PR #837 primeiro e depois PR #839, conferindo novamente o
+diff, o CI e a homologação antes da implantação. Não usar a ausência de
+conflitos como autorização automática de merge ou release.
+
+### Resultado adicional da homologação isolada (26/09/2026, após a integração)
+
+- **Integridade:** auditoria privilegiada fornecida pelo operador confirmou
+  `WORLD_UNCHANGED world verified files 36` para o mundo original Minecraft
+  003. O ZIP original e o conteúdo expandido foram escaneados com YARA-X real
+  gerenciado `1.20.0`, ruleset `2026.09.19.1`, ambos `clean`; a limitação
+  do conjunto atual de regras permanece a descrita acima.
+- **Inicialização real e recuperação, fora do Agent gerenciado:** em diretório
+  independente, Java 25 + NeoForge `26.1.2.109`, RAM de heap até 4 GiB e
+  bind `127.0.0.1:25579`, a primeira inicialização passou pela EULA aceita
+  *somente nesse sandbox* e chegou a `Done (34.237s)!` depois de cerca de
+  216 segundos de carga total. O teste foi encerrado pelo timeout previsto.
+  Um segundo boot sobre o mesmo mundo temporário chegou a `Done (1.660s)!`
+  após cerca de 178 segundos e o comando `stop` terminou com código zero,
+  salvando todas as dimensões. Nenhuma instância do Capivara foi reiniciada;
+  nenhuma instalação foi aplicada em Minecraft 003.
+- **Controller e Agent:** com banco SQLite temporário, arquivo oficial,
+  produção do preview e bundle de 254 componentes, o Controller persistiu
+  255 comandos. O Agent Linux aplicou os 255 em diretório isolado, devolveu
+  255 reports; o Controller confirmou o estado final e liberou novos pedidos
+  após a conclusão dos filhos. Uma falha de ativação *injetada* na segunda
+  revisão de um filho provocou rollback automático do bundle para a
+  revisão oficial anterior; hash do filho e mundo temporário preservados.
+  O scanner foi simulado **somente nesta integração**, pois foi testado
+  separadamente no pacote real.
+- **Transferência HTTP:** exercitada a rota HTTP real do Controller e o
+  cliente outbound do Agent Linux por `127.0.0.1` com credenciais fictícias.
+  O ZIP de 518.936.896 bytes foi transferido, verificado por SHA-256,
+  inspecionado na quarentena (1.925 entradas), confirmado no Controller;
+  requisições sem autenticação foram negadas e a rejeição simulada limpou
+  spool e quarentena. Uma regressão HTTP com ZIP sintético menor foi
+  adicionada ao workflow e aprovada localmente.
+- **Concorrência:** o lock transacional do Controller bloqueia outras
+  instalações enquanto o modpack ou seus filhos aguardam confirmação.
+  Um teste com duas sessões concorrentes de banco SQLite confirmou
+  exatamente um pedido aceito; a regressão faz parte do workflow.
+- **Compatibilidade do modpack:** houve avisos/erros reproduzíveis de
+  integração KubeJS/Architectury, Jade/Undergarden, loot tables SFM e
+  Iron Furnaces, modificadores globais de loot e referências ausentes de
+  itens. Todos ocorreram em boots que chegaram ao estado pronto;
+  *não* há ainda ensaio de cliente/gameplay demonstrando que essas
+  funcionalidades estão operacionais. A mensagem Netty/kqueue afeta
+  o appender de debug no Linux; a instância isolada prosseguiu.
+- **Escopo ainda não aprovado:** a conexão HTTP homologada foi de loopback
+  no host, *não* uma transferência autenticada entre dois computadores
+  por TLS com Agent cadastrado. Não houve provisionamento completo de
+  nova instância sob o orquestrador distribuído em máquinas separadas nem
+  teste funcional dos mods acima. Resolver esses gates e avaliar os avisos
+  antes de aprovar deployment/release. Nunca usar a instância 003 como
+  ambiente de experimento por conveniência.
