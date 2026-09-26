@@ -75,8 +75,10 @@ for (const [game, edition, expected] of cases) {
     def test_markup_is_hidden_and_cache_version_changes(self):
         html = (WEB / "customer.html").read_text()
         self.assertIn('id="minecraft-runtime-notice" class="runtime-notice" hidden', html)
+        self.assertRegex(html, r'/create-server-wizard\.css\?v=\d+')
+        self.assertIn("#minecraft-runtime-notice[hidden]{display:none!important}",
+                      (WEB / "create-server-wizard.css").read_text())
         for marker in (
-            '/create-server-wizard.css?v=8',
             '/runtime-selector.js?v=13',
             '/create-server-wizard.js?v=5',
         ):
