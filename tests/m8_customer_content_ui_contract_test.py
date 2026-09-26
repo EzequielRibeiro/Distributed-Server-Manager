@@ -46,7 +46,7 @@ class M8CustomerContentUiContractTest(unittest.TestCase):
 
     def test_ui_bootstrap_cache_version_updated(self):
         html=(ROOT/"dashboard"/"web"/"customer-instance.html").read_text(encoding="utf-8")
-        self.assertIn("/customer-instance-v2.js?v=22",html)
+        self.assertIn("/customer-instance-v2.js?v=24",html)
 
     def test_content_status_has_sse_push_and_resilient_fallback(self):
         text=self.text
