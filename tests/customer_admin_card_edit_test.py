@@ -190,6 +190,7 @@ class CustomerAdminCardEditTest(unittest.TestCase):
         self.assertIn('"/api/admin/customer/instance/update"', script)
         self.assertIn('canEdit=["admin","controller"]', script)
         self.assertIn("/customer-admin.js?v=8", html)
+        self.assertIn("/customer-management.css?v=2", html)
 
 
 if __name__ == "__main__":
