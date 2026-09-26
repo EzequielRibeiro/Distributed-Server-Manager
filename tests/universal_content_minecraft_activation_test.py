@@ -178,6 +178,32 @@ class MinecraftActivationTest(unittest.TestCase):
                     b"luckperms",
                 )
 
+    def test_original_artifact_filename_is_preserved(self):
+        for platform in ("linux", "windows"):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as tmp:
+                module = self._runtime_module(platform)
+                root = Path(tmp); runtime = root / "runtime"; state = root / "state"
+                managed = runtime / "content" / "mod-a"
+                managed.mkdir(parents=True); state.mkdir()
+                (managed / "payload.jar").write_bytes(b"mod")
+                spec = {
+                    "instance_id": "filename-1", "game_id": "minecraft",
+                    "environment_id": "minecraft.java.youer",
+                    "working_directory": str(runtime), "instance_state_root": str(state),
+                    "arguments": [], "content_projection": _policy("mod"),
+                }
+                snapshot = {"checksum": "filename", "entries": [{
+                    "content_id": "mb-deadbeef", "game_id": "minecraft",
+                    "content_type": "mod", "managed_path": str(managed),
+                    "artifact_filename": "YetAnotherConfigLib-3.9.6+26.2-neoforge.jar",
+                }]}
+                projected = module.project_runtime_spec(spec, snapshot)
+                projection = projected["content_file_projections"][0]
+                self.assertEqual(projection["target_name"], "mods/YetAnotherConfigLib-3.9.6+26.2-neoforge.jar")
+                written = module.materialize_content_activation(projected)
+                self.assertEqual(written, ["mods/YetAnotherConfigLib-3.9.6+26.2-neoforge.jar"])
+                self.assertEqual((runtime / "mods" / "YetAnotherConfigLib-3.9.6+26.2-neoforge.jar").read_bytes(), b"mod")
+
     def test_refuses_unmanaged_target_collision(self):
         module = self._runtime_module("linux")
         with tempfile.TemporaryDirectory() as tmp:

@@ -152,7 +152,13 @@
       "bukkit-plugin",
       "spigot-plugin"
     ],
-    "compatibility_note": "Youer combines NeoForge mod support with Bukkit/Spigot plugin APIs. Individual mod/plugin compatibility can vary; Paper/Purpur compatibility must not be assumed universal."
+    "compatibility_note": "Youer combines NeoForge mod support with Bukkit/Spigot plugin APIs. Individual mod/plugin compatibility can vary; Paper/Purpur compatibility must not be assumed universal.",
+    "embedded_mod_loaders": {
+      "26.2": {
+        "id": "neoforge",
+        "version": "26.2.0.7-beta"
+      }
+    }
   },
   "server_settings": {
     "restart_required": true,

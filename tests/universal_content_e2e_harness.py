@@ -142,7 +142,12 @@ def settle(max_rounds=6):
    record_agent_heartbeat(AGENT,{'agent_id':AGENT,'content_state':reports2},backend=backend,root=ROOT)
  return all_reports
 
-def native(runtime,folder,cid):return runtime/folder/f'capivara-{cid}.jar'
+def native(runtime,folder,cid):
+ state=STATE/'managed-content'/runtime.name/f'{cid}.json'
+ try:payload=json.loads(state.read_text(encoding='utf-8')) if state.exists() else {}
+ except (OSError,json.JSONDecodeError):payload={}
+ filename=str(payload.get('artifact_filename') or '').strip()
+ return runtime/folder/(filename or f'capivara-{cid}.jar')
 
 # Paper + plugin ordering, enable/disable and isolation.
 p1v1=jar_bytes('paper-a-p1-v1');p2v1=jar_bytes('paper-a-p2-v1');pbv1=jar_bytes('paper-b-v1')

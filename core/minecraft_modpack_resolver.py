@@ -66,6 +66,14 @@ def _loader(runtime:Mapping[str,Any])->str:
  return loaders[0]
 
 def _loader_dependency(loader:str)->str:return {"fabric":"fabric-loader","forge":"forge","neoforge":"neoforge","quilt":"quilt-loader"}[loader]
+def _require_runtime_loader_compatibility(runtime:Mapping[str,Any],game_version:str,loader:str,loader_version:str)->None:
+ compatibility=runtime.get("compatibility") if isinstance(runtime.get("compatibility"),Mapping) else {}
+ declared=compatibility.get("embedded_mod_loaders") if isinstance(compatibility.get("embedded_mod_loaders"),Mapping) else {}
+ effective=declared.get(str(game_version)) if isinstance(declared,Mapping) else None
+ if not isinstance(effective,Mapping):return
+ effective_id=str(effective.get("id") or "").strip().lower();effective_version=str(effective.get("version") or "").strip()
+ if effective_id and effective_id!=str(loader).strip().lower():raise MinecraftContentResolverError(f"runtime embedded loader is {effective_id}, but modpack requires {loader}")
+ if effective_version and effective_version!=str(loader_version).strip():raise MinecraftContentResolverError(f"modpack requires {loader} {loader_version}, but runtime provides {effective_version}")
 def _child_id(parent_content_id:str,path:str)->str:return "mb-"+hashlib.sha256((str(parent_content_id)+"\0"+path).encode()).hexdigest()[:32]
 def _rank(item:Mapping[str,Any])->tuple[int,str]:return ({"release":3,"beta":2,"alpha":1}.get(str(item.get("version_type") or "").lower(),0),str(item.get("date_published") or item.get("fileDate") or ""))
 
@@ -98,6 +106,7 @@ def resolve_modrinth_modpack(project:str,parent_content_id:str,game_version:str,
  if str(deps.get("minecraft") or "")!=game_version:raise MinecraftContentResolverError("Modrinth modpack Minecraft version does not match the instance")
  loader_version=str(deps.get(_loader_dependency(loader)) or "").strip()
  if not loader_version:raise MinecraftContentResolverError("Modrinth modpack loader does not match the instance runtime")
+ _require_runtime_loader_compatibility(runtime,game_version,loader,loader_version)
  members=[];children=[]
  for item in index.get("files") or []:
   if not isinstance(item,Mapping):raise MinecraftContentResolverError("invalid Modrinth modpack file entry")
@@ -162,6 +171,7 @@ def resolve_curseforge_modpack(project:str,parent_content_id:str,game_version:st
  if not raw_loader.lower().startswith(prefix):raise MinecraftContentResolverError("CurseForge modpack loader does not match the instance runtime")
  loader_version=raw_loader[len(prefix):]
  if not loader_version:raise MinecraftContentResolverError("CurseForge modpack loader version is missing")
+ _require_runtime_loader_compatibility(runtime,game_version,loader,loader_version)
  members=[];children=[]
  for index,entry in enumerate(manifest.get("files") or []):
   if not isinstance(entry,Mapping):raise MinecraftContentResolverError("invalid CurseForge modpack member")
