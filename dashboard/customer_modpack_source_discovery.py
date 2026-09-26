@@ -140,7 +140,11 @@ def discover_curseforge(project_ref: str, minecraft_version: str, loader: str,
         return {**common, "mode": "manual_required",
                 "reason": "O arquivo oficial não oferece metadados suficientes para download verificado."}
 
-    url = _cdn_url(chosen.get("downloadUrl"), "curseforge")
+    raw_download = str(chosen.get("downloadUrl") or "").strip()
+    url = _cdn_url(raw_download, "curseforge")
+    if raw_download and not url:
+        return {**common, "mode": "manual_required",
+                "reason": "O arquivo oficial oferece uma URL fora do CDN autorizado; importação automática recusada."}
     if not url:
         try:
             payload = requester(
