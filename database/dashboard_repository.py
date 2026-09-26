@@ -278,6 +278,19 @@ class DashboardRepository:
                     f"SELECT 1 FROM instances WHERE id={ph}", (instance_id,)
                 ).fetchone()
                 if exists is None:
+                    # Historic identities must never be recycled: audit entries
+                    # survive normal deletion, while orphaned assignments cover
+                    # records created by older versions without a tombstone.
+                    exists = session.execute(
+                        f"SELECT 1 FROM audit_log WHERE instance_id={ph} LIMIT 1",
+                        (instance_id,),
+                    ).fetchone()
+                if exists is None:
+                    exists = session.execute(
+                        f"SELECT 1 FROM content_assignments WHERE instance_id={ph} LIMIT 1",
+                        (instance_id,),
+                    ).fetchone()
+                if exists is None:
                     break
                 sequence += 1
             game_name = {
@@ -633,10 +646,43 @@ class DashboardRepository:
                 (instance_id,),
             )
 
-            cursor = session.execute(
-                f"DELETE FROM instances WHERE id={ph}",
+            # Universal Content tables intentionally do not have a foreign
+            # key to instances in the current baseline. Purge all operational
+            # children inside this same transaction before retiring identity.
+            session.execute(
+                "DELETE FROM content_bundle_revisions WHERE bundle_id IN "
+                f"(SELECT bundle_id FROM content_bundles WHERE instance_id={ph})",
                 (instance_id,),
             )
+            for table in (
+                "content_bundles",
+                "content_assignment_revisions",
+                "agent_content_state",
+                "content_update_policy",
+                "content_update_state",
+                "content_assignments",
+            ):
+                if table == "content_assignment_revisions":
+                    session.execute(
+                        "DELETE FROM content_assignment_revisions WHERE assignment_id IN "
+                        f"(SELECT assignment_id FROM content_assignments WHERE instance_id={ph})",
+                        (instance_id,),
+                    )
+                else:
+                    session.execute(
+                        f"DELETE FROM {table} WHERE instance_id={ph}", (instance_id,),
+                    )
+            cursor = session.execute(
+                f"DELETE FROM instances WHERE id={ph}", (instance_id,),
+            )
+            if cursor.rowcount:
+                # Durable identity tombstone (audit_log is preserved).
+                session.execute(
+                    "INSERT INTO audit_log(username,instance_id,action,result,details) "
+                    f"VALUES ({self.dialect.parameters(5)})",
+                    ("system", instance_id, "instance.identity.retired", "success",
+                     "Identifier permanently reserved after deletion"),
+                )
 
         return cursor.rowcount
 
