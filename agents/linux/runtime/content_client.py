@@ -11,6 +11,10 @@ from content_activation_projection import synchronize_activation_state
 from content_activation_apply import ContentActivationApplyError,ContentActivationRollbackError,apply_activation_snapshots
 from content_security import ContentSecurityRejected,require_clean
 from content_semantic_validation import validate_external_content_payload
+import sys
+_AGENT_COMMON=Path(__file__).resolve().parents[2]/"common"
+if str(_AGENT_COMMON) not in sys.path:sys.path.insert(0,str(_AGENT_COMMON))
+from minecraft_serverpack_agent import prepare_serverpack_payload,verify_installed_neoforge
 STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"));CONTENT_STATE=STATE_ROOT/"managed-content";GAME_DATA_ROOT=Path(os.environ.get("CAPIVARA_GAME_DATA_ROOT",str(STATE_ROOT/"game-data"))).resolve()
 try:SECURITY_RETRY_SECONDS=max(30,min(int(os.environ.get("CAPIVARA_CONTENT_SECURITY_RETRY_SECONDS","300")),3600))
 except (TypeError,ValueError):SECURITY_RETRY_SECONDS=300
@@ -91,7 +95,29 @@ def _extract(archive,dest):
     if total>max_expanded:raise ValueError("archive expands beyond safety limit")
    t.extractall(dest,members=members,filter="data");return
  raise ValueError("unsupported archive format")
-def _source(provider,artifact,stage):return resolve_source(provider,artifact,stage,GAME_DATA_ROOT)
+def _source(provider,artifact,stage,config=None,cmd=None):
+ # Server Pack children read their previously scanned parent directory; no
+ # third-party downloads, temp quarantine dependency, or executable scripts.
+ if artifact.get("serverpack_child_v1") is True:
+  if provider!="local" or not isinstance(cmd,dict) or config is None:raise ValueError("invalid Server Pack child request")
+  iid=_safe_component(cmd.get("instance_id"));parent_id=_safe_component(artifact.get("bundle_parent_content_id"))
+  member=str(artifact.get("bundle_member") or "").replace("\\","/")
+  if (not member.startswith("mods/") or member.count("/")!=1 or not member.lower().endswith(".jar")
+      or any(token in {"",".",".."} for token in member.split("/"))):raise ValueError("unsafe Server Pack mod member")
+  state=_dependency_state(iid,parent_id)
+  if state.get("status")!="applied" or state.get("security_state")!="clean":
+   raise ValueError("Server Pack parent must be installed and scanned first")
+  _,instance=_owned(config,cmd)
+  root=_safe_target(instance,f"modpacks/{parent_id}")
+  actual=Path(str(state.get("managed_path") or ""))
+  if not root.is_dir() or root.is_symlink() or actual!=root:
+   raise ValueError("Server Pack parent managed path is invalid")
+  candidate=root/member
+  if candidate.is_symlink() or not candidate.is_file():
+   raise ValueError("Server Pack mod is missing or unsafe")
+  candidate.resolve(strict=True).relative_to(root.resolve(strict=True))
+  return candidate
+ return resolve_source(provider,artifact,stage,GAME_DATA_ROOT)
 def _dependency_state(instance_id,content_id):
  p=_state_path(instance_id,content_id)
  try:return json.loads(p.read_text()) if p.exists() else {}
@@ -144,11 +170,37 @@ def _security_context(config,cmd):
   "game_id":str(cmd.get("game_id") or ""),
  }
 
+def _serverpack_disk_preflight(source:Path,stage:Path):
+ # Extraction is performed on the Agent's game-data volume, NOT in the ZIP's
+ # original quarantine folder. Keep enough free disk for the OS and rollback.
+ if not source.is_file() or source.is_symlink():raise ValueError("Server Pack source must be a regular ZIP file")
+ if source.stat().st_size>4*1024**3:raise ValueError("Server Pack ZIP exceeds 4 GiB")
+ with zipfile.ZipFile(source) as archive:
+  entries=archive.infolist()
+  if not entries or len(entries)>12000:raise ValueError("Server Pack ZIP has an invalid number of entries")
+  expanded=sum(x.file_size for x in entries)
+  if expanded<=0 or expanded>8*1024**3:raise ValueError("Server Pack ZIP exceeds 8 GiB expanded")
+ disk=shutil.disk_usage(stage)
+ reserve=max(2*1024**3,min(5*1024**3,disk.total//20))
+ if disk.free<expanded+reserve:
+  raise ValueError("Espaço insuficiente no Agent para extrair o Server Pack com reserva de segurança; libere espaço antes de continuar.")
+ return expanded
+
 def _install(config,cmd):
  _validate_relations(cmd);_,instance=_owned(config,cmd);iid=str(cmd.get("instance_id") or "");target=_safe_target(instance,str(cmd.get("target") or "assets"));artifact=dict(cmd.get("artifact") or {});provider=str(cmd.get("provider") or artifact.get("provider") or "");parent=target.parent;parent.mkdir(parents=True,exist_ok=True);stage=Path(tempfile.mkdtemp(prefix=f".{target.name}.c4-",dir=str(parent)));security_context=_security_context(config,cmd)
  try:
-  source=_source(provider,artifact,stage);_verify_artifact(source,artifact);source_scan=require_clean(source,context=security_context);payload=stage/"payload";payload.mkdir();archive=provider=="http-archive" or bool(artifact.get("archive"));expanded_scan=None
-  if archive:_extract(source,payload);expanded_scan=require_clean(payload,context=security_context)
+  if artifact.get("serverpack_v1") is True or artifact.get("serverpack_child_v1") is True:
+   if str(artifact.get("serverpack_loader") or "")!="neoforge":raise ValueError("Unsupported Server Pack loader")
+   verify_installed_neoforge(instance,str(artifact.get("serverpack_loader_version") or ""))
+   state=str(instance_runtime.status(config,iid).get("observed_state") or "").lower()
+   if state!="stopped":raise ValueError("Pare a instância Minecraft antes de aplicar o Server Pack. A instalação em execução foi recusada.")
+  source=_source(provider,artifact,stage,config,cmd);_verify_artifact(source,artifact)
+  if artifact.get("serverpack_v1") is True:_serverpack_disk_preflight(source,stage)
+  source_scan=require_clean(source,context=security_context);payload=stage/"payload";payload.mkdir();archive=provider=="http-archive" or bool(artifact.get("archive"));expanded_scan=None
+  if archive:
+   _extract(source,payload)
+   if artifact.get("serverpack_v1") is True:prepare_serverpack_payload(payload,artifact)
+   expanded_scan=require_clean(payload,context=security_context)
   elif source.is_dir():shutil.copytree(source,payload,dirs_exist_ok=True)
   else:shutil.copy2(source,payload/(str(artifact.get("filename") or source.name or "content.bin")))
   validate_external_content_payload(payload,cmd)
@@ -159,20 +211,52 @@ def _remove(config,cmd):
  _,instance=_owned(config,cmd);iid=str(cmd.get("instance_id") or "");target=_safe_target(instance,str(cmd.get("target") or "assets"));_activate_target(config,iid,target,None);return str(target)
 def _source_metadata(cmd:dict[str,Any])->dict[str,Any]:
  artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {};package=str(artifact.get("package_id") or cmd.get("package_id") or "").strip()
- return {"provider":str(cmd.get("provider") or artifact.get("provider") or "").strip().lower(),"content_type":str(cmd.get("content_type") or "other").strip().lower(),"package_id":package or None,"game_id":str(cmd.get("game_id") or "").strip().lower() or None,"target":str(cmd.get("target") or "").strip() or None}
+ meta={"provider":str(cmd.get("provider") or artifact.get("provider") or "").strip().lower(),"content_type":str(cmd.get("content_type") or "other").strip().lower(),"package_id":package or None,"game_id":str(cmd.get("game_id") or "").strip().lower() or None,"target":str(cmd.get("target") or "").strip() or None}
+ if artifact.get("serverpack_v1") is True or artifact.get("serverpack_child_v1") is True:
+  meta["source_sha256"]=str(artifact.get("sha256") or "").strip().lower()
+  meta["source_size_bytes"]=artifact.get("size_bytes")
+ return meta
+
+def _serverpack_replay_valid(previous,cmd,source_meta):
+ artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {}
+ if artifact.get("serverpack_v1") is not True and artifact.get("serverpack_child_v1") is not True:
+  return True
+ digest=str(source_meta.get("source_sha256") or "")
+ if len(digest)!=64 or any(c not in "0123456789abcdef" for c in digest):
+  return False
+ size=source_meta.get("source_size_bytes")
+ try:valid_size=isinstance(size,int) and not isinstance(size,bool) and size>=0
+ except (TypeError,ValueError):valid_size=False
+ if not valid_size:return False
+ if str(previous.get("source_sha256") or "")!=digest:return False
+ if previous.get("source_size_bytes")!=size:return False
+ return True
+
 def _reuse_installed(config,previous,cmd,source_meta):
  if previous.get("status") not in {"applied","rolled_back"} or not previous.get("installed_version"):return False
  if str(cmd.get("desired_state") or "installed")!="installed":return False
  if str(previous.get("installed_version"))!=str(cmd.get("version") or "latest"):return False
+ if not _serverpack_replay_valid(previous,cmd,source_meta):return False
  for key in ("provider","package_id","target","game_id"):
   if str(previous.get(key) or "")!=str(source_meta.get(key) or ""):return False
+ artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {}
+ if artifact.get("serverpack_v1") is True or artifact.get("serverpack_child_v1") is True:
+  # Metadata-only revisions must not silently bypass the mandatory stopped
+  # state and exact active NeoForge build attestation.
+  try:
+   _,instance=_owned(config,cmd)
+   if str(instance_runtime.status(config,str(cmd.get("instance_id") or "")).get("observed_state") or "").lower()!="stopped":
+    return False
+   verify_installed_neoforge(instance,str(artifact.get("serverpack_loader_version") or ""))
+  except (OSError,ValueError,PermissionError,LookupError):
+   return False
  path=str(previous.get("managed_path") or "")
  return bool(path and _managed_path_current(config,cmd,path))
 def _apply(config,cmd):
  iid=str(cmd.get("instance_id") or "");cid=str(cmd.get("content_id") or "");revision=int(cmd.get("revision") or 0);checksum=str(cmd.get("checksum") or "");state=_state_path(iid,cid);source_meta=_source_metadata(cmd)
  try:previous=json.loads(state.read_text()) if state.exists() else {}
  except Exception:previous={}
- if previous.get("status")=="applied" and previous.get("applied_revision")==revision and previous.get("applied_checksum")==checksum and previous.get("security_state")=="clean" and int(previous.get("security_policy_version") or 0)>=1 and _managed_path_current(config,cmd,previous.get("managed_path")):
+ if previous.get("status")=="applied" and previous.get("applied_revision")==revision and previous.get("applied_checksum")==checksum and previous.get("security_state")=="clean" and int(previous.get("security_policy_version") or 0)>=1 and _serverpack_replay_valid(previous,cmd,source_meta) and _managed_path_current(config,cmd,previous.get("managed_path")):
   merged={**previous,**{k:v for k,v in source_meta.items() if v is not None}};_write(state,merged);return merged
  if previous.get("status")=="security_scan_failed" and int(previous.get("desired_revision") or 0)==revision and str(previous.get("desired_checksum") or "")==checksum:
   try:retry_after=float(previous.get("security_retry_after_epoch") or 0)
@@ -192,10 +276,42 @@ def _apply(config,cmd):
    restored_meta={key:(previous.get(key) if previous.get(key) is not None else source_meta.get(key)) for key in ("provider","content_type","package_id","game_id","target")}
    report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":int(previous.get("applied_revision")),"desired_checksum":checksum,"applied_checksum":str(previous.get("applied_checksum")),"status":"rolled_back","installed_version":previous.get("installed_version"),"managed_path":previous.get("managed_path"),"last_error":str(exc)[:2000],"readiness":"rolled_back","security_state":str(previous.get("security_state") or "clean"),"security_policy_version":int(previous.get("security_policy_version") or 1),**restored_meta}
   else:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"rolled_back","security_state":"unscanned","security_policy_version":1,**source_meta}
- except Exception as exc:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"unknown","security_state":"unscanned","security_policy_version":1,**source_meta}
+ except Exception as exc:
+  artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {}
+  official=artifact.get("serverpack_v1") is True or artifact.get("serverpack_child_v1") is True
+  has_previous=(previous.get("status") in {"applied","rolled_back"}
+                and int(previous.get("applied_revision") or 0)>0
+                and bool(previous.get("applied_checksum"))
+                and bool(previous.get("installed_version"))
+                and _managed_path_current(config,cmd,previous.get("managed_path")))
+  if official and has_previous:
+   # A rejected Server Pack update must never discard the last known-good
+   # installed revision and its original attestation. Signal Controller to
+   # rollback the desired bundle revision rather than orphaning live files.
+   preserved={key:previous.get(key) for key in ("provider","content_type","package_id",
+              "game_id","target","source_sha256","source_size_bytes")}
+   same_revision=(int(previous["applied_revision"])==revision
+                  and str(previous["applied_checksum"])==checksum)
+   report={"instance_id":iid,"content_id":cid,"desired_revision":revision,
+           "applied_revision":int(previous["applied_revision"]),
+           "desired_checksum":checksum,"applied_checksum":previous["applied_checksum"],
+           "status":"failed" if same_revision else "rolled_back",
+           "installed_version":previous["installed_version"],
+           "managed_path":previous["managed_path"],"last_error":str(exc)[:2000],
+           "readiness":"attestation_mismatch" if same_revision else "rolled_back",
+           "security_state":previous.get("security_state") or "clean",
+           "applied_security_state":previous.get("applied_security_state") or "clean",
+           "security_policy_version":int(previous.get("security_policy_version") or 1),
+           **preserved}
+  else:
+   report={"instance_id":iid,"content_id":cid,"desired_revision":revision,
+           "applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,
+           "status":"failed","installed_version":None,"managed_path":None,
+           "last_error":str(exc)[:2000],"readiness":"unknown",
+           "security_state":"unscanned","security_policy_version":1,**source_meta}
  _write(state,report);return report
 def apply_content_commands(config:dict[str,Any],commands:list[dict[str,Any]])->list[dict[str,Any]]:
- bounded=[c for c in commands[:200] if isinstance(c,dict)];ordered=[c for c in bounded if c.get("desired_state")=="absent"]+[c for c in bounded if c.get("desired_state")!="absent"];reports=[];pending=ordered;prior={(str(c.get("instance_id") or ""),str(c.get("content_id") or "")):_dependency_state(str(c.get("instance_id") or ""),str(c.get("content_id") or "")) for c in bounded}
+ bounded=[c for c in commands[:2000] if isinstance(c,dict)];ordered=[c for c in bounded if c.get("desired_state")=="absent"]+[c for c in bounded if c.get("desired_state")!="absent"];reports=[];pending=ordered;prior={(str(c.get("instance_id") or ""),str(c.get("content_id") or "")):_dependency_state(str(c.get("instance_id") or ""),str(c.get("content_id") or "")) for c in bounded}
  for _ in range(max(1,len(pending)+1)):
   if not pending:break
   retry=[];progress=False
@@ -205,7 +321,7 @@ def apply_content_commands(config:dict[str,Any],commands:list[dict[str,Any]])->l
    else:progress=True
   if not retry or not progress:break
   pending=retry
- final=reports[-200:];snapshots=synchronize_activation_state(bounded,final)
+ final=reports[-2000:];snapshots=synchronize_activation_state(bounded,final)
  try:apply_activation_snapshots(config,snapshots)
  except ContentActivationRollbackError as exc:
   for report in final:

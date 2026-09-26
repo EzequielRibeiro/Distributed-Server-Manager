@@ -125,7 +125,7 @@ def _minecraft_policy(spec: dict[str, Any]) -> dict[str, dict[str, Any]] | None:
 
 
 def project_minecraft_files(spec: dict[str, Any], entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    minecraft_entries = [entry for entry in entries if _adapter(entry) == "minecraft-java" and str((entry.get("activation") or {}).get("mode") or "").strip().lower() != "bundle-parent"]
+    minecraft_entries = [entry for entry in entries if _adapter(entry) == "minecraft-java" and str((entry.get("activation") or {}).get("mode") or "").strip().lower() not in {"bundle-parent", "bundle-parent-preserve-config"}]
     if not minecraft_entries:
         return []
     policy = _minecraft_policy(spec)
@@ -239,7 +239,7 @@ def _read_manifest(path: Path) -> list[str]:
     if not isinstance(payload, dict) or payload.get("kind") != "CapivaraContentFileProjection":
         raise MinecraftContentActivationError("invalid Minecraft activation manifest")
     targets = payload.get("targets")
-    if not isinstance(targets, list) or len(targets) > 512:
+    if not isinstance(targets, list) or len(targets) > 2000:
         raise MinecraftContentActivationError("invalid Minecraft activation manifest targets")
     result: list[str] = []
     for value in targets:
@@ -282,7 +282,7 @@ def materialize_minecraft_files(spec: dict[str, Any]) -> list[str]:
     environment = str(spec.get("environment_id") or "").strip().lower()
     if game != "minecraft" and not environment.startswith("minecraft.") and not items and "content_projection" not in spec:
         return []
-    if len(items) > 512:
+    if len(items) > 2000:
         raise MinecraftContentActivationError("too many Minecraft content projections")
     root = _runtime_root(spec)
     manifest = _manifest_path(spec)
@@ -319,6 +319,10 @@ def materialize_minecraft_files(spec: dict[str, Any]) -> list[str]:
             target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists() and relative_text not in previous_set:
                 raise MinecraftContentActivationError("refusing to overwrite unmanaged Minecraft runtime content")
+            # A new pack revision must not recopy unchanged managed JARs.
+            if (target.exists() and relative_text in previous_set
+                    and target.is_file() and _file_sha256(target) == _file_sha256(source)):
+                continue
             stage = target.with_name(f".{target.name}.{os.getpid()}.capivara-new")
             if stage.exists():
                 if stage.is_dir():
@@ -388,7 +392,7 @@ def materialize_minecraft_files(spec: dict[str, Any]) -> list[str]:
 
 
 def project_minecraft_bundle_overrides(spec: dict[str, Any], entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    parents = [entry for entry in entries if _adapter(entry) == "minecraft-java" and str((entry.get("activation") or {}).get("mode") or "").strip().lower() == "bundle-parent"]
+    parents = [entry for entry in entries if _adapter(entry) == "minecraft-java" and str((entry.get("activation") or {}).get("mode") or "").strip().lower() in {"bundle-parent","bundle-parent-preserve-config"}]
     if not parents:
         return []
     if len(parents) != 1:
@@ -405,7 +409,8 @@ def project_minecraft_bundle_overrides(spec: dict[str, Any], entries: list[dict[
             roots.append(root)
     if len(roots) > 8:
         raise MinecraftContentActivationError("too many Minecraft modpack override roots")
-    return [{"content_id": str(entry.get("content_id") or ""), "managed_path": _managed_path(entry), "roots": roots}]
+    return [{"content_id": str(entry.get("content_id") or ""), "managed_path": _managed_path(entry), "roots": roots,
+             "preserve_existing_config": str(activation.get("mode") or "").strip().lower() == "bundle-parent-preserve-config"}]
 
 
 def _override_manifest_path(spec: dict[str, Any]) -> Path:
@@ -459,14 +464,61 @@ def _write_override_manifest(path: Path, targets: dict[str, str]) -> None:
     os.replace(temp, path)
 
 
-def _safe_override_target(value: Any) -> Path:
+_PROTECTED_WORLD_ROOTS = frozenset({
+    "world", "world_nether", "world_the_end", "worlds",
+    "dimensions", "dim-1", "dim1", "region", "entities",
+    "playerdata", "advancements", "stats", "poi",
+})
+_WORLD_FILES = frozenset({"level.dat", "level.dat_old", "session.lock", "uid.dat"})
+
+
+def _protected_world_names(runtime_root: Path) -> set[str]:
+    """Include the active level-name, not only Minecraft's default world folder.
+
+    Never interpret a new modpack as permission to replace the customer's
+    existing map, player data, server.properties or dimension directories.
+    """
+    names = set(_PROTECTED_WORLD_ROOTS)
+    properties = runtime_root / "server.properties"
+    if properties.is_symlink():
+        raise MinecraftContentActivationError("Minecraft server.properties cannot be a symlink")
+    if properties.is_file():
+        if properties.stat().st_size > 256 * 1024:
+            raise MinecraftContentActivationError("Minecraft server.properties exceeds safety limit")
+        try:
+            lines = properties.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as exc:
+            raise MinecraftContentActivationError("Cannot inspect the active Minecraft world name") from exc
+        for line in lines:
+            entry = line.strip()
+            if not entry or entry.startswith(("#", "!")) or "=" not in entry:
+                continue
+            key, value = entry.split("=", 1)
+            if key.strip().lower() != "level-name":
+                continue
+            level = value.strip()
+            if (not level or level in {".", ".."} or "/" in level or "\\" in level
+                    or any(ord(c) < 32 for c in level)):
+                raise MinecraftContentActivationError("Invalid configured Minecraft world name")
+            names.update({level.casefold(), (level + "_nether").casefold(),
+                          (level + "_the_end").casefold()})
+    return names
+
+
+def _safe_override_target(value: Any, protected_worlds: set[str] | None = None) -> Path:
     text = str(value or "").strip().replace("\\", "/")
     path = Path(text)
     if not text or path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
         raise MinecraftContentActivationError("invalid Minecraft override target")
-    first = path.parts[0].lower()
+    first = path.parts[0].casefold()
     if first in {"mods", "plugins", ".dsm", "libraries", "versions", "runtime", "content", "logs"}:
         raise MinecraftContentActivationError("Minecraft modpack override targets a protected runtime path")
+    if (first in _PROTECTED_WORLD_ROOTS
+            or (protected_worlds is not None and first in protected_worlds)
+            or path.name.casefold() in _WORLD_FILES
+            or path.suffix.lower() in {".mca", ".mcr"} or first == "server.properties"):
+        raise MinecraftContentActivationError(
+            "Minecraft modpack override cannot replace an existing world or server.properties")
     if path.suffix.lower() in {".jar", ".exe", ".dll", ".so", ".dylib", ".bat", ".cmd", ".ps1", ".sh"}:
         raise MinecraftContentActivationError("Minecraft modpack override contains a protected executable artifact")
     return path
@@ -503,7 +555,12 @@ def materialize_minecraft_overrides(spec: dict[str, Any]) -> list[str]:
     # persisted and later disable/remove can safely clean managed overrides.
     if not items and not spec.get("instance_state_root"):
         return []
+    if items and items[0].get("preserve_existing_config") is True:
+        # Never replace, delete or normalize a customer's config during a
+        # modpack update. Preserve managed configs AND any local edits.
+        return sorted(_read_override_manifest(_override_manifest_path(spec)))
     root = _runtime_root(spec)
+    world_roots = _protected_world_names(root)
     roots: list[str] = []
     source: Path | None = None
     if items:
@@ -531,7 +588,7 @@ def materialize_minecraft_overrides(spec: dict[str, Any]) -> list[str]:
                 candidate = current_path / name
                 if candidate.is_symlink() or not candidate.is_file():
                     raise MinecraftContentActivationError("Minecraft modpack override contains an unsafe file")
-                relative = _safe_override_target(candidate.relative_to(layer).as_posix()).as_posix()
+                relative = _safe_override_target(candidate.relative_to(layer).as_posix(), world_roots).as_posix()
                 count += 1
                 total += candidate.stat().st_size
                 if count > 20000 or total > 4 * 1024 * 1024 * 1024:
@@ -545,7 +602,7 @@ def materialize_minecraft_overrides(spec: dict[str, Any]) -> list[str]:
     placed: set[str] = set()
     try:
         for relative_text, source_file in desired_sources.items():
-            target = _safe_runtime_target(root, _safe_override_target(relative_text))
+            target = _safe_runtime_target(root, _safe_override_target(relative_text, world_roots))
             target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists():
                 if relative_text not in previous:
@@ -558,7 +615,7 @@ def materialize_minecraft_overrides(spec: dict[str, Any]) -> list[str]:
             shutil.copy2(source_file, stage)
             staged[relative_text] = stage
         for relative_text, stage in staged.items():
-            target = _safe_runtime_target(root, _safe_override_target(relative_text))
+            target = _safe_runtime_target(root, _safe_override_target(relative_text, world_roots))
             if target.exists():
                 backup = target.with_name(f".{target.name}.{os.getpid()}.capivara-bundle-old")
                 os.replace(target, backup)
@@ -568,7 +625,7 @@ def materialize_minecraft_overrides(spec: dict[str, Any]) -> list[str]:
         for relative_text, checksum in sorted(previous.items()):
             if relative_text in desired_sources:
                 continue
-            target = _safe_runtime_target(root, _safe_override_target(relative_text))
+            target = _safe_runtime_target(root, _safe_override_target(relative_text, world_roots))
             if target.exists():
                 if not target.is_file() or target.is_symlink() or _file_sha256(target) != checksum:
                     raise MinecraftContentActivationError("stale Minecraft modpack file was modified locally")
@@ -578,14 +635,14 @@ def materialize_minecraft_overrides(spec: dict[str, Any]) -> list[str]:
         _write_override_manifest(manifest, desired_hashes)
     except Exception:
         for relative_text in placed:
-            target = _safe_runtime_target(root, _safe_override_target(relative_text))
+            target = _safe_runtime_target(root, _safe_override_target(relative_text, world_roots))
             try:
                 if target.exists() and target.is_file():
                     target.unlink()
             except OSError:
                 pass
         for relative_text, backup in backups.items():
-            target = _safe_runtime_target(root, _safe_override_target(relative_text))
+            target = _safe_runtime_target(root, _safe_override_target(relative_text, world_roots))
             try:
                 if backup.exists():
                     if target.exists() and target.is_file():
