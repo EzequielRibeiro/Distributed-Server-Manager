@@ -15,7 +15,9 @@ def install_deleted_backup_vault_http(legacy,authenticate):
  def vault():return DeletedBackupVaultRepository(backend(),root)
  def workspace():return CustomerInstanceWorkspaceService(backend(),root)
  def actor(self):
-  value=session_user_from_headers(self.headers)
+  # This endpoint belongs to the Customer area even when the browser also
+  # holds a Controller session; never select the default Controller cookie.
+  value=session_user_from_headers(self.headers,area="customer")
   if value is not None:return value
   try:return authenticate(self.headers)
   except Exception:return None
@@ -70,7 +72,13 @@ def install_deleted_backup_vault_http(legacy,authenticate):
    if not confirmation or confirmation not in {expected,str(context.get("id") or "")}:raise ValueError("Digite o nome ou ID da instância para confirmar a exclusão.")
    final_backup=bool(body.get("final_backup",True));requested_by=str(user.get("username") or "customer")
    if final_backup:
-    workspace().require(user,instance_id,"backup.create");workspace().require(user,instance_id,"backup.download");item,idempotent=vault().start(instance_id,requested_by=requested_by,retention_hours=168);return self.send_json(202,{"mode":"backup_then_remove","vault":public_item(item),"idempotent":idempotent})
+    try:
+     workspace().require(user,instance_id,"backup.create")
+     workspace().require(user,instance_id,"backup.download")
+    except PermissionError:
+     return self.send_json(403,{"error":"final_backup_permission_required","message":"Sua conta não possui todas as permissões para criar e baixar o backup final. Solicite acesso ou desmarque o backup final para excluir sem cópia de segurança."})
+    item,idempotent=vault().start(instance_id,requested_by=requested_by,retention_hours=168)
+    return self.send_json(202,{"mode":"backup_then_remove","vault":public_item(item),"idempotent":idempotent})
    command=AgentInstanceRuntimeRepository(backend()).enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="remove",requested_by=requested_by);return self.send_json(202,{"mode":"remove","command_id":command.get("command_id"),"status":command.get("status")})
   except PermissionError:return self.send_json(403,{"error":"forbidden"})
   except KeyError:return self.send_json(404,{"error":"not_found"})
