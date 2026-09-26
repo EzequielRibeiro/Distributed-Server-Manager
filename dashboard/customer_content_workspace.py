@@ -324,7 +324,7 @@ class CustomerContentWorkspaceService:
   allowed=[str(value).strip().lower() for value in ((capabilities.get("providers") or {}).get(ctype) or []) if str(value).strip()]
   chain=[name for name in ("modrinth","curseforge") if name in allowed]
   if not chain:raise PermissionError("no searchable provider is available for this runtime/content type")
-  attempts=[]
+  attempts=[];combined=[];contributors=[];seen=set()
   for name in chain:
    try:
     results=self.search(user,instance_id,name,ctype,query,limit)
@@ -332,9 +332,27 @@ class CustomerContentWorkspaceService:
     attempts.append({"provider":name,"status":"unavailable","message":str(exc)[:300]})
     continue
    attempts.append({"provider":name,"status":"success" if results else "empty"})
-   if results:
-    return {"results":results,"count":len(results),"provider_used":name,"fallback":{"automatic":True,"attempts":attempts,"upload_recommended":False,"github_official_supported":True}}
-  return {"results":[],"count":0,"provider_used":None,"fallback":{"automatic":True,"attempts":attempts,"upload_recommended":True,"github_official_supported":True}}
+   if results:contributors.append(name)
+   for item in results:
+    identity=str(item.get("content_id") or "").strip() if isinstance(item,dict) else ""
+    if not identity or identity in seen:continue
+    seen.add(identity);combined.append(item)
+  # Search both catalogs: a loosely matching Modrinth result must not suppress
+  # an exact CurseForge match (e.g. All the Mods vs MrCrayfish modpacks).
+  normalized=lambda value:" ".join(str(value or "").casefold().split())
+  needle=normalized(query)
+  def relevance(item):
+   title=normalized(item.get("name"));slug=normalized(item.get("slug"))
+   if title==needle or slug==needle:return 0
+   if title.startswith(needle+" ") or slug.startswith(needle+"-"):return 1
+   if needle in title or needle in slug:return 2
+   return 3
+  combined.sort(key=lambda item:(relevance(item),-int(item.get("downloads") or 0),normalized(item.get("name"))))
+  try:max_results=max(1,min(int(limit),50))
+  except (TypeError,ValueError):max_results=20
+  selected=combined[:max_results]
+  source="multiple" if len(contributors)>1 else contributors[0] if contributors else None
+  return {"results":selected,"count":len(selected),"provider_used":source,"fallback":{"automatic":True,"attempts":attempts,"upload_recommended":not bool(selected),"github_official_supported":True,"degraded":any(x["status"]=="unavailable" for x in attempts)}}
 
  def dayz_community_workshop_dependencies(self,user,instance_id,workshop_items,activation_order=100):
   context,policy=self._context_policy(user,instance_id,"content.install")
