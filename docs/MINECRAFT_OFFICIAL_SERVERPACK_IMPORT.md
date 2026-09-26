@@ -202,24 +202,59 @@ O importador pode inferir e validar essa versão por leitura; **jamais
 executa o instalador ou os scripts de inicialização**. A entrada
 `local/kubejs/dev.json` não é projetada no runtime gerenciado.
 
-O host de testes disponibilizou **36 arquivos de mundo** para uma
-baseline SHA-256 e recebeu `WORLD_UNCHANGED`; ainda não houve
-ativação do pacote real nem comparação pós-atualização. O filesystem
-raiz estava com cerca de 7,5 GiB livres e 92% de utilização; verificar
-capacidade de backup e reserva antes da instalação. A versão ativa
-do NeoForge na instância 003 ainda necessita comprovação por leitura
-dos metadados protegidos do runtime. A primeira verificação encontrou
+O host de testes registrou a baseline SHA-256 de **36 arquivos de mundo**.
+O backup novo do Minecraft 003, criado depois da baseline, teve hash
+físico verificado e correspondeu aos **36/36 arquivos**. Uma restauração
+isolada usando o extrator instalado do Capivara recuperou 36/36 arquivos,
+enquanto o mundo original permaneceu `WORLD_UNCHANGED`. O backup antigo
+também foi preservado fora da retenção normal. Na última avaliação,
+havia ~12 GiB livres; confirmar a reserva novamente antes da operação. A versão ativa
+do NeoForge na instância 003 foi confirmada por leitura privilegiada
+como **26.1.2.109**, a versão exata exigida pelo arquivo oficial. A primeira verificação encontrou
 um falso negativo no formato de lançamento: o instalador do Capivara
 **copia** `unix_args.txt` ou `win_args.txt` para
 `capivara-launch.args`. O verificador foi ajustado para exigir
 equivalência exata dos argumentos copiados com os da versão candidata
 ou referência direta inequívoca ao mesmo build; um diretório de
 biblioteca antigo, isoladamente, não comprova qual versão está ativa.
-O diagnóstico do host agora relata somente os nomes dos builds
-presentes e quais argumentos correspondem ao lançador, sem exibir
-o conteúdo bruto da configuração. **Não liberar a importação**
-até a nova leitura privilegiada confirmar compatibilidade ou
-identificar a necessidade de migração separada do NeoForge.
+A validação privilegiada posterior retornou `INSTALLED_NEOFORGE_MATCH
+26.1.2.109`; não houve migração do loader nem alteração da instância.
+
+### Evidências adicionais de homologação isolada (26/09/2026)
+
+- O YARA-X híbrido gerenciado está na versão **1.20.0**, com as regras
+  fixadas `2026.09.19.1` e verificação de integridade aprovada. O Agent
+  examinou de verdade o ZIP oficial e a árvore expandida isolada:
+  ambos retornaram `clean`. O conjunto gerenciado atual inclui apenas
+  uma regra de teste EICAR; isso não equivale a uma triagem abrangente
+  contra malware, nem dispensa a inspeção de artefatos no Agent.
+- A projeção offline do pacote original materializou **254 JARs** e
+  **1.304 arquivos de configuração** em instância temporária, sem alterar
+  o mundo personalizado, `server.properties` nem a configuração modificada
+  após uma segunda projeção de atualização.
+- O teste de ponta a ponta do **Agent Linux de PR #839**, também isolado,
+  executou um lote de **255 comandos reais** (um pai e 254 filhos) usando
+  o ZIP oficial. O ciclo instalou todos, validou o hash instalado dos
+  254 filhos e reproduziu a reconciliação sem duplicar conteúdo.
+  Nesse ensaio, somente a interface do scanner foi simulada: as varreduras
+  com o scanner real ocorreram separadamente no ZIP e no pai extraído.
+  O ciclo não executou os processos do jogo nem tocou `/opt/dsm`.
+- Esse teste identificou um problema de atestação em revisões que mantinham
+  a versão anterior: o Agent podia reutilizar conteúdo sem conferir se
+  o SHA-256 ou o tamanho esperado tinha mudado. A correção Linux/Windows
+  persiste a atestação da origem e só reutiliza artefatos oficiais
+  quando SHA-256 e tamanho permanecem idênticos. A revisão de reuso
+  também exige instância parada e versão exata do loader. Em caso de
+  atualização inválida, preserva a revisão instalada anterior.
+  A simulação com um filho corrompido foi rejeitada sem modificar o
+  conteúdo anterior, as propriedades ou o mundo.
+- **Ainda pendente:** integrar as mudanças conflitantes de PR #837 sem
+  descartar correções, validar a fila Controller↔Agent completa e executar
+  a inicialização/observabilidade do ATM11 em ambiente separado com
+  CPU/RAM suficientes. Qualquer teste na instância real exige autorização
+  específica, backup verificado, verificação de espaço e plano de reversão.
+  Os scripts de teste locais ficam fora do PR e não são um produto
+  distribuído.
 
 ### Condições de parada
 

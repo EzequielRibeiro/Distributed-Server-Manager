@@ -211,20 +211,52 @@ def _remove(config,cmd):
  _,instance=_owned(config,cmd);iid=str(cmd.get("instance_id") or "");target=_safe_target(instance,str(cmd.get("target") or "assets"));_activate_target(config,iid,target,None);return str(target)
 def _source_metadata(cmd:dict[str,Any])->dict[str,Any]:
  artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {};package=str(artifact.get("package_id") or cmd.get("package_id") or "").strip()
- return {"provider":str(cmd.get("provider") or artifact.get("provider") or "").strip().lower(),"content_type":str(cmd.get("content_type") or "other").strip().lower(),"package_id":package or None,"game_id":str(cmd.get("game_id") or "").strip().lower() or None,"target":str(cmd.get("target") or "").strip() or None}
+ meta={"provider":str(cmd.get("provider") or artifact.get("provider") or "").strip().lower(),"content_type":str(cmd.get("content_type") or "other").strip().lower(),"package_id":package or None,"game_id":str(cmd.get("game_id") or "").strip().lower() or None,"target":str(cmd.get("target") or "").strip() or None}
+ if artifact.get("serverpack_v1") is True or artifact.get("serverpack_child_v1") is True:
+  meta["source_sha256"]=str(artifact.get("sha256") or "").strip().lower()
+  meta["source_size_bytes"]=artifact.get("size_bytes")
+ return meta
+
+def _serverpack_replay_valid(previous,cmd,source_meta):
+ artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {}
+ if artifact.get("serverpack_v1") is not True and artifact.get("serverpack_child_v1") is not True:
+  return True
+ digest=str(source_meta.get("source_sha256") or "")
+ if len(digest)!=64 or any(c not in "0123456789abcdef" for c in digest):
+  return False
+ size=source_meta.get("source_size_bytes")
+ try:valid_size=isinstance(size,int) and not isinstance(size,bool) and size>=0
+ except (TypeError,ValueError):valid_size=False
+ if not valid_size:return False
+ if str(previous.get("source_sha256") or "")!=digest:return False
+ if previous.get("source_size_bytes")!=size:return False
+ return True
+
 def _reuse_installed(config,previous,cmd,source_meta):
  if previous.get("status") not in {"applied","rolled_back"} or not previous.get("installed_version"):return False
  if str(cmd.get("desired_state") or "installed")!="installed":return False
  if str(previous.get("installed_version"))!=str(cmd.get("version") or "latest"):return False
+ if not _serverpack_replay_valid(previous,cmd,source_meta):return False
  for key in ("provider","package_id","target","game_id"):
   if str(previous.get(key) or "")!=str(source_meta.get(key) or ""):return False
+ artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {}
+ if artifact.get("serverpack_v1") is True or artifact.get("serverpack_child_v1") is True:
+  # Metadata-only revisions must not silently bypass the mandatory stopped
+  # state and exact active NeoForge build attestation.
+  try:
+   _,instance=_owned(config,cmd)
+   if str(instance_runtime.status(config,str(cmd.get("instance_id") or "")).get("observed_state") or "").lower()!="stopped":
+    return False
+   verify_installed_neoforge(instance,str(artifact.get("serverpack_loader_version") or ""))
+  except (OSError,ValueError,PermissionError,LookupError):
+   return False
  path=str(previous.get("managed_path") or "")
  return bool(path and _managed_path_current(config,cmd,path))
 def _apply(config,cmd):
  iid=str(cmd.get("instance_id") or "");cid=str(cmd.get("content_id") or "");revision=int(cmd.get("revision") or 0);checksum=str(cmd.get("checksum") or "");state=_state_path(iid,cid);source_meta=_source_metadata(cmd)
  try:previous=json.loads(state.read_text()) if state.exists() else {}
  except Exception:previous={}
- if previous.get("status")=="applied" and previous.get("applied_revision")==revision and previous.get("applied_checksum")==checksum and previous.get("security_state")=="clean" and int(previous.get("security_policy_version") or 0)>=1 and _managed_path_current(config,cmd,previous.get("managed_path")):
+ if previous.get("status")=="applied" and previous.get("applied_revision")==revision and previous.get("applied_checksum")==checksum and previous.get("security_state")=="clean" and int(previous.get("security_policy_version") or 0)>=1 and _serverpack_replay_valid(previous,cmd,source_meta) and _managed_path_current(config,cmd,previous.get("managed_path")):
   merged={**previous,**{k:v for k,v in source_meta.items() if v is not None}};_write(state,merged);return merged
  if previous.get("status")=="security_scan_failed" and int(previous.get("desired_revision") or 0)==revision and str(previous.get("desired_checksum") or "")==checksum:
   try:retry_after=float(previous.get("security_retry_after_epoch") or 0)
@@ -244,7 +276,39 @@ def _apply(config,cmd):
    restored_meta={key:(previous.get(key) if previous.get(key) is not None else source_meta.get(key)) for key in ("provider","content_type","package_id","game_id","target")}
    report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":int(previous.get("applied_revision")),"desired_checksum":checksum,"applied_checksum":str(previous.get("applied_checksum")),"status":"rolled_back","installed_version":previous.get("installed_version"),"managed_path":previous.get("managed_path"),"last_error":str(exc)[:2000],"readiness":"rolled_back","security_state":str(previous.get("security_state") or "clean"),"security_policy_version":int(previous.get("security_policy_version") or 1),**restored_meta}
   else:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"rolled_back","security_state":"unscanned","security_policy_version":1,**source_meta}
- except Exception as exc:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"unknown","security_state":"unscanned","security_policy_version":1,**source_meta}
+ except Exception as exc:
+  artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {}
+  official=artifact.get("serverpack_v1") is True or artifact.get("serverpack_child_v1") is True
+  has_previous=(previous.get("status") in {"applied","rolled_back"}
+                and int(previous.get("applied_revision") or 0)>0
+                and bool(previous.get("applied_checksum"))
+                and bool(previous.get("installed_version"))
+                and _managed_path_current(config,cmd,previous.get("managed_path")))
+  if official and has_previous:
+   # A rejected Server Pack update must never discard the last known-good
+   # installed revision and its original attestation. Signal Controller to
+   # rollback the desired bundle revision rather than orphaning live files.
+   preserved={key:previous.get(key) for key in ("provider","content_type","package_id",
+              "game_id","target","source_sha256","source_size_bytes")}
+   same_revision=(int(previous["applied_revision"])==revision
+                  and str(previous["applied_checksum"])==checksum)
+   report={"instance_id":iid,"content_id":cid,"desired_revision":revision,
+           "applied_revision":int(previous["applied_revision"]),
+           "desired_checksum":checksum,"applied_checksum":previous["applied_checksum"],
+           "status":"failed" if same_revision else "rolled_back",
+           "installed_version":previous["installed_version"],
+           "managed_path":previous["managed_path"],"last_error":str(exc)[:2000],
+           "readiness":"attestation_mismatch" if same_revision else "rolled_back",
+           "security_state":previous.get("security_state") or "clean",
+           "applied_security_state":previous.get("applied_security_state") or "clean",
+           "security_policy_version":int(previous.get("security_policy_version") or 1),
+           **preserved}
+  else:
+   report={"instance_id":iid,"content_id":cid,"desired_revision":revision,
+           "applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,
+           "status":"failed","installed_version":None,"managed_path":None,
+           "last_error":str(exc)[:2000],"readiness":"unknown",
+           "security_state":"unscanned","security_policy_version":1,**source_meta}
  _write(state,report);return report
 def apply_content_commands(config:dict[str,Any],commands:list[dict[str,Any]])->list[dict[str,Any]]:
  bounded=[c for c in commands[:2000] if isinstance(c,dict)];ordered=[c for c in bounded if c.get("desired_state")=="absent"]+[c for c in bounded if c.get("desired_state")!="absent"];reports=[];pending=ordered;prior={(str(c.get("instance_id") or ""),str(c.get("content_id") or "")):_dependency_state(str(c.get("instance_id") or ""),str(c.get("content_id") or "")) for c in bounded}
