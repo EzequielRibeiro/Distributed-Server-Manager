@@ -106,6 +106,7 @@ jobs:
             tests.minecraft_serverpack_agent_test \
             tests.minecraft_serverpack_replay_attestation_test \
             tests.minecraft_serverpack_language_library_test \
+            tests.m8_customer_content_ui_contract_test \
             tests.minecraft_serverpack_incremental_update_test \
             tests.minecraft_serverpack_inspection_test \
             tests.minecraft_serverpack_ui_contract_test \

@@ -37,6 +37,17 @@ class M8CustomerContentUiContractTest(unittest.TestCase):
         text=self.text
         self.assertIn('catch(error){toast(error.message||"Não foi possível concluir a operação de conteúdo.");return false}',text)
 
+    def test_search_result_install_always_reports_progress_or_failure(self):
+        text=self.text
+        self.assertIn('button.onclick=()=>installDiscoveredContent(item,button,feedback)',text)
+        self.assertIn('button.textContent="Verificando…"',text)
+        self.assertIn('feedback.textContent="Não foi possível solicitar a instalação: "+',text)
+        self.assertIn('button.disabled=accepted',text)
+
+    def test_ui_bootstrap_cache_version_updated(self):
+        html=(ROOT/"dashboard"/"web"/"customer-instance.html").read_text(encoding="utf-8")
+        self.assertIn("/customer-instance-v2.js?v=27",html)
+
     def test_content_status_has_sse_push_and_resilient_fallback(self):
         text=self.text
         self.assertIn("new EventSource",text)
