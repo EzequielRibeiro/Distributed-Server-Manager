@@ -742,6 +742,13 @@
           "items": {
             "$ref": "#/$defs/network_apply"
           }
+        },
+        "legacy_reservations": {
+          "type": "array",
+          "description": "Previously reserved roles retained only for safe reconciliation of existing instances; not allocated for new instances.",
+          "items": {
+            "$ref": "#/$defs/network/properties/ports/items"
+          }
         }
       }
     },

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+import json
 import unittest
 from pathlib import Path
 
@@ -186,6 +187,35 @@ class InstancePortReconcileApplyCoverageTest(unittest.TestCase):
         self.assertFalse(result["changed"])
         self.assertFalse(result["relocated"])
         self.assertIsNotNone(repository.test_session.updated_metadata)
+
+    def test_vanilla_legacy_votifier_is_kept_and_new_one_is_not_reserved(self):
+        network = json.loads((
+            ROOT / "catalog/v2/games/minecraft/runtimes/java-vanilla.json"
+        ).read_text(encoding="utf-8"))["network"]
+        base = [
+            {"name": "game", "protocol": "tcp", "port": 24000},
+            {"name": "rcon", "protocol": "tcp", "port": 24001},
+            {"name": "query", "protocol": "udp", "port": 24002},
+        ]
+        for has_legacy in (False, True):
+            rows = [*base]
+            if has_legacy:
+                rows.append({"name": "votifier", "protocol": "tcp", "port": 24003})
+            session = _Session(status="online", existing=rows)
+            repo = _Repository(session)
+            result = reconcile_instance_ports(
+                repo, "cli-000001-minecraft-001", network,
+                occupied_ports_provider=lambda *_args: set(),
+            )
+            self.assertFalse(result["changed"])
+            self.assertFalse(result["relocated"])
+            self.assertEqual("votifier" in result["ports"], has_legacy)
+            self.assertEqual(session.inserted, [])
+            self.assertFalse(session.deleted)
+            self.assertEqual(
+                "votifier" in json.loads(session.updated_metadata)["network"]["ports"],
+                has_legacy,
+            )
 
     def test_expanded_minecraft_profile_relocates_offline_legacy_block_on_collision(self):
         network = {

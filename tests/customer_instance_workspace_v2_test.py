@@ -95,7 +95,7 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   self.assertIn('overview.runtime?.state||inst.status||"unknown"',telemetry_js)
   self.assertIn('$("start").disabled=!can("instance.start")||!!pr||!startable||busy',telemetry_js)
   self.assertIn('$("stop").disabled=!can("instance.stop")||!!pr||!running||busy',telemetry_js)
-  for marker in ("networkRate",'network_rx_bytes','network_tx_bytes','sampled_at','telemetry-window',"Runtime sem query de latência","Não suportada",'return"< 1 ms"','t.latency_ms!=null?fmtMs(t.latency_ms)'):
+  for marker in ("networkRate",'network_rx_bytes','network_tx_bytes','sampled_at','telemetry-window',"Sem amostras de latência","Sem dados",'return"< 1 ms"','t.latency_ms!=null?fmtMs(t.latency_ms)'):
    self.assertIn(marker,telemetry_js)
   transfer=(ROOT/"dashboard/web/customer-backup-transfer.js").read_text(encoding="utf-8")
   for route in ("/api/customer/artifacts/backup-export","/api/customer/artifacts/backup-import","/api/customer/artifacts/upload","/api/customer/artifacts/restore-import"):
