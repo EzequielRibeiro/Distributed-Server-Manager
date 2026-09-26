@@ -35,14 +35,18 @@ function runFixture(request,loadContent) {
   const resultRow={dataset:{contentId:"curseforge:123"},classList:{toggle(){}},
     querySelector:()=>({classList:{toggle(){}}})};
   const contentResult={querySelectorAll:selector=>selector===".content-result"?[resultRow]:[button,other]};
+  const managedButton={textContent:"Atualizar",disabled:false,title:""};
+  const viewButton={textContent:"Ver conteúdo",disabled:false,title:""};
+  const managed={querySelectorAll:()=>[managedButton,viewButton]};
   const elements={"content-search":search,"content-results":contentResult,
-    "content-upload-button":upload,"content-upload-url-button":importUrl};
+    "content-upload-button":upload,"content-upload-url-button":importUrl,
+    "content-installed":managed};
   const context = {request,loadContent,api:"/api/test",iid:"minecraft-003",
     contentSearchResults:[{}],contentInstallLock:null,can:()=>true,
     $:id=>elements[id],toast:text=>notices.push(text)};
   const install = vm.runInNewContext(helpers+source.slice(start,end)+
     "\ninstallDiscoveredContent",context);
-  return {install,button,other,search,upload,importUrl,feedback,styles,notices,context};
+  return {install,button,other,search,upload,importUrl,managedButton,viewButton,feedback,styles,notices,context};
 }
 const item={content_id:"curseforge:123",content_type:"modpack",provider:"curseforge",
     project_ref:"123",name:"All the Mods 11"};
@@ -63,6 +67,8 @@ async function main(){
   assert.equal(fixture.search.disabled,true,"search blocked while submitting");
   assert.equal(fixture.upload.disabled,true,"upload blocked");
   assert.equal(fixture.importUrl.disabled,true,"URL import blocked");
+  assert.equal(fixture.managedButton.disabled,true,"managed modifications blocked");
+  assert.equal(fixture.viewButton.disabled,false,"read-only details remain available");
   assert.equal(fixture.button.textContent,"Verificando…");
   assert.match(fixture.feedback.textContent,/dependências/);
   assert.equal(requests,1,"second click must not send duplicate request");
@@ -85,6 +91,7 @@ async function main(){
   assert.equal(fixture.search.disabled,false);
   assert.equal(fixture.upload.disabled,false);
   assert.equal(fixture.importUrl.disabled,false);
+  assert.equal(fixture.managedButton.disabled,false);
 
   assert.match(fixture.feedback.textContent,/Solicitação aceita/);
   assert.equal(fixture.button.disabled,false,"terminal backend failure unlocks primary button");
@@ -96,10 +103,24 @@ async function main(){
   assert.equal(fixture.search.disabled,false);
   assert.equal(fixture.upload.disabled,false);
   assert.equal(fixture.importUrl.disabled,false);
+  assert.equal(fixture.managedButton.disabled,false);
   assert.equal(fixture.button.textContent,"Instalar");
   assert.match(fixture.feedback.textContent,/26.1.2/);
   assert(fixture.styles.has("content-search-error"));
   assert(fixture.notices.some(x=>x.includes("26.1.2")));
+  // A pending modpack reported by the Controller must restore the lock after reload.
+  const restored={contentInstallLock:null,contentReconcileState:v=>v.reconciliation.status,
+    $:fixture.context.$,can:()=>true};
+  const restore=vm.runInNewContext(helpers+"\n"+
+    source.slice(source.indexOf("function restoreContentInstallLock("),
+      source.indexOf("function applyContentItems("))+"\nrestoreContentInstallLock",restored);
+  restore([{content_id:item.content_id,content_type:"modpack",desired_state:"installed",
+    reconciliation:{status:"pending"}}]);
+  assert.equal(restored.contentInstallLock.contentId,item.content_id);
+  restored.contentInstallLock=null;
+  restore([{content_id:item.content_id,content_type:"modpack",desired_state:"installed",
+    reconciliation:{status:"applied"}}]);
+  assert.equal(restored.contentInstallLock,null,"completed items do not restore the lock");
   // Never label a successful POST as failed if the follow-up refresh fails.
   fixture=runFixture(async()=>({ok:true}),async()=>{throw new Error("refresh offline")});
   await fixture.install(item,fixture.button,fixture.feedback);
