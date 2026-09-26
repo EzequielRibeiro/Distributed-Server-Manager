@@ -88,6 +88,8 @@ class ServerPackAgentTest(unittest.TestCase):
    lib=root/"game-data"/"libraries"/"net"/"neoforged"/"neoforge"/"26.1.2.109"
    lib.mkdir(parents=True)
    (lib/"unix_args.txt").write_text("@some-launcher")
+   with self.assertRaisesRegex(ValueError,"launcher metadata is missing"):
+    verify_installed_neoforge(root,"26.1.2.109")
    args=root/"game-data"/"capivara-launch.args"
    args.write_text("@libraries/net/neoforged/neoforge/26.1.2.109/unix_args.txt")
    accepted=verify_installed_neoforge(root,"26.1.2.109")

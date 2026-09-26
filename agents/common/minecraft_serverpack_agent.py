@@ -36,13 +36,14 @@ def verify_installed_neoforge(instance_root: Path, expected: str) -> dict[str, s
         if expected not in versions:
             raise ValueError(f"Installed NeoForge build differs from Server Pack: expected {expected}.")
         args=runtime/"capivara-launch.args"
-        if args.is_file() and not args.is_symlink():
-            if args.stat().st_size>32768:
-                raise ValueError("NeoForge launcher metadata is unexpectedly large")
-            raw=args.read_text(encoding="utf-8")
-            used=set(re.findall(r"neoforge[/\\]([0-9A-Za-z.+-]+)[/\\](?:unix_args|win_args)\.txt",raw))
-            if used and used!={expected}:
-                raise ValueError("Active launcher uses a different NeoForge build.")
+        if not args.is_file() or args.is_symlink():
+            raise ValueError("Instance-local NeoForge launcher metadata is missing.")
+        if args.stat().st_size>32768:
+            raise ValueError("NeoForge launcher metadata is unexpectedly large")
+        raw=args.read_text(encoding="utf-8")
+        used=set(re.findall(r"neoforge[/\\]([0-9A-Za-z.+-]+)[/\\](?:unix_args|win_args)\.txt",raw))
+        if used!={expected}:
+            raise ValueError("Active launcher does not prove the exact NeoForge build.")
         candidate=libs/expected
         if not (candidate/"unix_args.txt").is_file() and not (candidate/"win_args.txt").is_file():
             raise ValueError("NeoForge launcher arguments for the exact build are missing")
