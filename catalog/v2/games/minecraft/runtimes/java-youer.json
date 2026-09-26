@@ -252,5 +252,19 @@
         "max": 32
       }
     }
+  },
+  "requirements_by_version": {
+    "26.2": {
+      "java": {
+        "min": 25,
+        "max": 25
+      }
+    },
+    "26.3": {
+      "java": {
+        "min": 25,
+        "max": 25
+      }
+    }
   }
 }
