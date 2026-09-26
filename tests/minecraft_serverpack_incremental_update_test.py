@@ -51,6 +51,25 @@ class ControllerIncrementalUpdateTest(unittest.TestCase):
             s._serverpack_revision_plan(CONTEXT,"atm11",
                 {**bundle,"provider_version_id":"file-123"},3)
 
+    def test_same_official_file_with_unchanged_mods_is_a_noop(self):
+        s=service(status="completed")
+        s.content.history=[{"revision":6,"provider":"local",
+            "manifest_kind":"serverpack-local-v1",
+            "provider_project_id":"cf-1148445",
+            "provider_version_id":"file-123",
+            "minecraft_version":"26.1.2",
+            "loader_id":"neoforge","loader_version":"26.1.2.109"}]
+        s.content.bundle_diff=lambda *args:{
+            "added":[],"removed":[],"updated":[],"unchanged":["same"]}
+        candidate={"provider":"local","manifest_kind":"serverpack-local-v1",
+            "provider_project_id":"cf-1148445","provider_version_id":"file-123",
+            "minecraft_version":"26.1.2","loader_id":"neoforge",
+            "loader_version":"26.1.2.109"}
+        plan=s._serverpack_revision_plan(CONTEXT,"atm11",candidate,6)
+        self.assertEqual(plan["operation"],"unchanged")
+        self.assertFalse(plan["requires_backup_confirmation"])
+        self.assertFalse(plan["requires_stopped_instance"])
+
     def test_new_content_id_does_not_create_second_active_modpack(self):
         s=service(status="completed")
         s.content.list=lambda **kwargs:[{"instance_id":"i1","content_id":"atm11",

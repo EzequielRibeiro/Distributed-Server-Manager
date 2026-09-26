@@ -272,11 +272,14 @@ class CustomerContentUploadService:
    if diff["added"] or diff["removed"] or diff["updated"]:
     raise ValueError("O provedor alterou o conteúdo de uma versão já publicada. "
                      "Selecione uma nova versão identificável; nenhum arquivo será substituído.")
-  return {"operation":"update" if previous else "install",
+  unchanged=bool(previous and str(previous.get("provider_version_id") or "")==
+                       str(bundle["provider_version_id"])
+                 and not (diff["added"] or diff["removed"] or diff["updated"]))
+  return {"operation":"unchanged" if unchanged else "update" if previous else "install",
           "previous_revision":revision,"manifest_diff":diff,
           "preserve_world":True,"preserve_existing_config":bool(previous),
-          "requires_stopped_instance":True,
-          "requires_backup_confirmation":bool(previous)}
+          "requires_stopped_instance":not unchanged,
+          "requires_backup_confirmation":bool(previous and not unchanged)}
 
  def preview_serverpack(self,user,transfer_id,body:Mapping[str,Any]):
   """Read-only inspection. Never changes desired content or uploads again."""
@@ -351,6 +354,8 @@ class CustomerContentUploadService:
      raise ValueError("Importação recusada: execute a prévia e confirme a revisão antes de instalar.")
     plan=self._serverpack_revision_plan(context,content_id,bundle,
                                         declaration.get("expected_revision"))
+    if plan["operation"]=="unchanged":
+     raise ValueError("Esta versão do Server Pack já está instalada. Nenhuma reinstalação foi iniciada.")
     if plan["operation"]=="update":
      if declaration.get("backup_confirmed") is not True:
       raise ValueError("Confirme um backup concluído antes de atualizar o Server Pack.")

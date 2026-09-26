@@ -144,6 +144,7 @@ async function previewOfficialServerpack(transfer,contentId,type,name,displayNam
  const preview=answer.serverpack||{};
  if(preview.kind!=="CapivaraOfficialServerPackPreview"||!preview.requires_stopped_instance)throw new Error("A prévia oficial do Server Pack é inválida.");
  const plan=preview.update_plan||{};
+ if(plan.operation==="unchanged")throw new Error("Esta versão do Server Pack já está instalada. Nenhuma reinstalação será iniciada.");
  if(!["install","update"].includes(plan.operation)||!Number.isInteger(plan.previous_revision)||plan.previous_revision<0)throw new Error("A prévia não confirmou uma revisão segura de instalação.");
  const changes=plan.manifest_diff?bundleDiffText(plan.manifest_diff):"";
  const intro=`Server Pack oficial: ${preview.source?.file_name||name}\nMinecraft ${preview.minecraft_version} · ${preview.loader_id} ${preview.loader_version}\nMods do servidor: ${preview.mod_count} · Configurações no ZIP: ${(preview.override_dirs||[]).join(", ")||"nenhuma"}\nScripts ignorados: ${(preview.ignored_launchers||[]).length}\nSHA256: ${preview.archive_sha256}`;
