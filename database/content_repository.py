@@ -92,7 +92,7 @@ class ContentRepository:
             and str(row.get("desired_checksum") or "")==str(row["checksum"]))
    return not aligned or str(row.get("status") or "").lower() not in settled
   for parent in by_id.values():
-   if parent["content_type"]!="modpack" or parent["content_id"]==requested_content_id:continue
+   if parent["content_type"]!="modpack":continue
    if waiting(parent):
     raise ContentValidationError("Outra instalação de modpack está em andamento. Aguarde a confirmação do Agent.")
    if str(parent.get("status") or "").lower()!="applied":continue

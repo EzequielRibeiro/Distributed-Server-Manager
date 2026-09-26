@@ -29,10 +29,21 @@ class ParallelModpackGuardTest(unittest.TestCase):
  def test_parent_terminal_failure_releases_other_install(self):
   self.report('pack','failed')
   self.assertTrue(self.repo.put(self.owner.assignment('1'),customer_install_guard=True)['changed'])
- def test_same_parent_revision_semantics_preserved(self):
-  result=self.repo.put_bundle(self.owner.parent('2'),fixture._bundle('v2',[fixture._member('child-a')]),
-                              [self.owner.child('child-a')])
+ def test_same_parent_duplicate_blocked_until_all_children_settle(self):
+  update=lambda:self.repo.put_bundle(self.owner.parent('2'),
+     fixture._bundle('v2',[fixture._member('child-a')]),
+     [self.owner.child('child-a')],customer_install_guard=True)
+  with self.assertRaisesRegex(ContentValidationError,'modpack'):update()
+  self.report('pack','applied')
+  with self.assertRaisesRegex(ContentValidationError,'dependências'):update()
+  self.report('child-a','applied')
+  result=update()
   self.assertTrue(result['changed'])
   self.assertEqual(self.repo.get('inst','pack')['version'],'2')
+  with self.assertRaisesRegex(ContentValidationError,'modpack'):
+   self.repo.put_bundle(self.owner.parent('3'),
+      fixture._bundle('v3',[fixture._member('child-a')]),
+      [self.owner.child('child-a')],customer_install_guard=True)
+
 
 if __name__=='__main__':unittest.main()
