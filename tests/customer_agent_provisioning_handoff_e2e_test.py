@@ -278,7 +278,7 @@ class CustomerAgentProvisioningHandoffE2E(unittest.TestCase):
         self.assertEqual(request["kind"], "CapivaraInstanceProvisioningRequest")
         self.assertEqual(request["instance_id"], instance_id)
         self.assertEqual(request["agent_id"], self.agent_id)
-        self.assertEqual(request["desired_state"], "stopped")
+        self.assertEqual(request["desired_state"], "running")
         self.assertEqual(request["instance"]["game_id"], "dayz")
         self.assertEqual(request["instance"]["runtime_id"], "dayz.stable")
         self.assertEqual(set(request["ports"]), {"game", "game_aux", "steam_query", "battleye"})
@@ -305,7 +305,7 @@ class CustomerAgentProvisioningHandoffE2E(unittest.TestCase):
             selector="current",
             selection=request["content"]["selection"],
             configuration=request["configuration"],
-            desired_state="stopped",
+            desired_state="running",
             requested_by="customer-handoff",
         )
         self.assertEqual(duplicate["provisioning_id"], state["provisioning_id"])

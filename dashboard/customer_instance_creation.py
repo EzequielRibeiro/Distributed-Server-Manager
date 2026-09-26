@@ -42,7 +42,7 @@ def _queue_agent_provisioning(*,root,repository,runtime_def,instance_id,agent_id
  selector=_selector(runtime_def,version,build);requested_configuration={}
  if resource_profile_id:requested_configuration["resource_profile_id"]=resource_profile_id
  selection,configuration=resolve_catalog_provisioning(environment_id=runtime_id,selector=selector,selection={},configuration=requested_configuration,root=root)
- jobs=AgentInstanceProvisioningRepository(repository.backend);jobs.initialize();state=jobs.enqueue(agent_id=agent_id,instance_id=instance_id,environment_id=runtime_id,selector=selector,selection=selection,configuration=configuration,desired_state="stopped",requested_by=requested_by)
+ jobs=AgentInstanceProvisioningRepository(repository.backend);jobs.initialize();state=jobs.enqueue(agent_id=agent_id,instance_id=instance_id,environment_id=runtime_id,selector=selector,selection=selection,configuration=configuration,desired_state="running",requested_by=requested_by)
  try:provision=project_agent_provisioning(repository.backend,state,root=root)
  except Exception:provision=dashboard_provision_state(state)
  return state,provision
