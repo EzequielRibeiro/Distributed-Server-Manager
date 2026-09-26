@@ -63,7 +63,13 @@ def test_minecraft_java_reserved_service_ports_are_declared_and_applied() -> Non
                 {"name": "votifier", "protocol": "tcp", "offset": 3}
             ], "Existing Vanilla Votifier reservations must remain reconcilable"
         else:
-            assert ports["votifier"].get("protocol") == "tcp", f"{runtime_id}: Votifier port must be TCP"
+            optional = {item["name"]: item for item in network.get("on_demand_ports") or []}
+            assert optional["votifier"].get("protocol") == "tcp", f"{runtime_id}: optional Votifier must use TCP"
+            assert optional["votifier"].get("offset") == 3
+            assert network.get("legacy_reservations") == [
+                {"name": "votifier", "protocol": "tcp", "offset": 3}
+            ], f"{runtime_id}: old Votifier reservation must be preserved"
+        assert "votifier" not in ports, f"{runtime_id}: must never reserve Votifier by default"
         applications = network.get("apply") or []
         properties = {str(item.get("key") or ""): str(item.get("value") or "") for item in applications if item.get("kind") == "property"}
         reserved_only = {str(item.get("port") or "") for item in applications if item.get("kind") == "reserve"}
@@ -73,7 +79,7 @@ def test_minecraft_java_reserved_service_ports_are_declared_and_applied() -> Non
         if runtime_id == "minecraft.java.vanilla":
             assert "votifier" not in reserved_only
         else:
-            assert "votifier" in reserved_only, f"{runtime_id}: Votifier must be available for supported mod/plugin implementations"
+            assert "votifier" not in reserved_only, f"{runtime_id}: opt-in required to reserve Votifier"
 
 
 def test_every_published_runtime_validates_against_canonical_schema() -> None:

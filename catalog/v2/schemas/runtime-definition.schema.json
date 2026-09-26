@@ -749,6 +749,13 @@
           "items": {
             "$ref": "#/$defs/network/properties/ports/items"
           }
+        },
+        "on_demand_ports": {
+          "type": "array",
+          "description": "Optional service roles are NOT allocated until explicitly enabled.",
+          "items": {
+            "$ref": "#/$defs/network/properties/ports/items"
+          }
         }
       }
     },

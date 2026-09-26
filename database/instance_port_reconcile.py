@@ -37,6 +37,7 @@ def plan_instance_port_reconcile(
     conflicts: Mapping[str, set[int]] | None = None,
     occupied: Mapping[str, set[int]] | None = None,
     legacy_reservations: Mapping[str, PortRequirement] | None = None,
+    optional_dynamic_roles: frozenset[str] = frozenset(),
 ) -> ReconcilePlan:
     """Plan missing reservations without moving any already-persisted port."""
     rows = [dict(row) for row in existing_rows]
@@ -86,7 +87,8 @@ def plan_instance_port_reconcile(
             raise InstancePortReconcileError(
                 f"persisted reservation protocol mismatch for {name}"
             )
-        bases.add(port - requirement.offset)
+        if name not in optional_dynamic_roles:
+            bases.add(port - requirement.offset)
         normalized[name] = (protocol, port, bind_address)
 
     if len(bases) != 1:
@@ -168,6 +170,24 @@ def reconcile_instance_ports(
     if not isinstance(raw_legacy, list):
         raise InstancePortReconcileError("legacy reservations must be a list")
     legacy: dict[str, PortRequirement] = {}
+    raw_optional = network_profile.get("on_demand_ports", [])
+    if not isinstance(raw_optional, list):
+        raise InstancePortReconcileError("on-demand port roles must be a list")
+    dynamic_names = frozenset(str(item.get("name") or "") for item in raw_optional if isinstance(item, dict))
+    if len(dynamic_names) != len(raw_optional):
+        raise InstancePortReconcileError("duplicate or invalid on-demand port roles")
+    # A role may appear both as historical fixed-offset and currently on-demand.
+    # Validate its protocol but represent it only once during reconciliation.
+    if raw_optional:
+        for item in raw_optional:
+            if not isinstance(item, dict):
+                raise InstancePortReconcileError("invalid on-demand port definition")
+            same = next((old for old in raw_legacy if isinstance(old, dict) and old.get("name") == item.get("name")), None)
+            if same is not None and (same.get("protocol") != item.get("protocol") or same.get("offset") != item.get("offset")):
+                raise InstancePortReconcileError("on-demand port conflicts with historical port")
+        raw_legacy = [*raw_legacy, *(item for item in raw_optional if item.get("name") not in {
+            old.get("name") for old in raw_legacy if isinstance(old, dict)
+        })]
     if raw_legacy:
         # Apply the same profile validator to historical and current roles,
         # including duplicate-name and block-offset checks.
@@ -258,6 +278,7 @@ def reconcile_instance_ports(
                 ranges,
                 conflicts=conflicts,
                 legacy_reservations=legacy,
+                optional_dynamic_roles=dynamic_names,
             )
             for name in preliminary.missing:
                 requirement = requirements[name]
@@ -278,6 +299,7 @@ def reconcile_instance_ports(
                     conflicts=conflicts,
                     occupied=occupied,
                     legacy_reservations=legacy,
+                    optional_dynamic_roles=dynamic_names,
                 )
             except InstancePortReconcileError as exc:
                 if not str(exc).startswith(relocatable_messages):

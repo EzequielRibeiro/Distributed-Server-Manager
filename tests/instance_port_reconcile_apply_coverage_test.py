@@ -217,6 +217,30 @@ class InstancePortReconcileApplyCoverageTest(unittest.TestCase):
                 has_legacy,
             )
 
+    def test_explicit_optional_port_outside_legacy_offset_keeps_running_port_bindings(self):
+        import json
+        network = json.loads((
+            ROOT / "catalog/v2/games/minecraft/runtimes/java-paper.json"
+        ).read_text(encoding="utf-8"))["network"]
+        for extra in (False, True):
+            rows = [
+                {"name": "game", "protocol": "tcp", "port": 24000},
+                {"name": "rcon", "protocol": "tcp", "port": 24001},
+                {"name": "query", "protocol": "udp", "port": 24002},
+            ]
+            if extra:
+                rows.append({"name": "votifier", "protocol": "tcp", "port": 24025})
+            session = _Session(status="online", existing=rows)
+            result = reconcile_instance_ports(
+                _Repository(session), "cli-000001-minecraft-001",
+                network, occupied_ports_provider=lambda *_args: set(),
+            )
+            self.assertFalse(result["changed"])
+            self.assertFalse(result["relocated"])
+            self.assertEqual(result["ports"].get("votifier"), 24025 if extra else None)
+            self.assertEqual(session.inserted, [])
+            self.assertFalse(session.deleted)
+
     def test_expanded_minecraft_profile_relocates_offline_legacy_block_on_collision(self):
         network = {
             "allocation": "block",

@@ -53,8 +53,8 @@ class MinecraftJavaInstanceIsolationTest(unittest.TestCase):
     paper_instance={**instance,"environment_id":"minecraft.java.paper"}
     missing=context(install,root/"state","minecraft.java.paper")
     del missing["ports"]["votifier"]
-    with self.assertRaises(Exception):
-     paper.build_runtime_spec(paper_instance,missing)
+    spec=paper.build_runtime_spec(paper_instance,missing)
+    self.assertNotIn("votifier",spec["ports"])
 
  def test_bedrock_never_falls_into_java_profile(self):
   linux=load_module("linux","registry")

@@ -20,6 +20,7 @@ from hybrid_local_reconciliation import reconcile_local_hybrid_runtime
 from hybrid_runtime_port_backfill import (
     HybridRuntimePortBackfillError,
     reconcile_hybrid_runtime_ports,
+    _bindings_from_reservations,
 )
 from hybrid_agent_worker import heartbeat_cycle
 
@@ -78,6 +79,74 @@ class HybridRuntimePortBackfillTest(unittest.TestCase):
             "runtime_id": "palworld.stable",
         }
         return repository
+
+    def test_optional_and_legacy_bindings_are_preserved_only_when_owned(self):
+        network = json.loads((
+            ROOT / "catalog/v2/games/minecraft/runtimes/java-paper.json"
+        ).read_text(encoding="utf-8"))["network"]
+        base = {"game": 24000, "rcon": 24001, "query": 24002}
+        bindings = _bindings_from_reservations(network, base)
+        self.assertNotIn("votifier", bindings)
+        bindings = _bindings_from_reservations(network, {**base, "votifier": 24027})
+        self.assertEqual(bindings["votifier"], {"port": 24027, "protocol": "tcp"})
+
+    def test_targeted_sync_fails_closed_if_runtime_spec_is_missing(self):
+        with self.assertRaisesRegex(HybridRuntimePortBackfillError, "target"):
+            reconcile_hybrid_runtime_ports(
+                self.backend, self.root, "agent-hybrid",
+                only_instance_id="missing-instance",
+            )
+
+    def test_optional_exposure_refresh_preserves_migration_context(self):
+        repository = self._repository()
+        definition = json.loads((
+            ROOT / "catalog/v2/games/minecraft/runtimes/java-paper.json"
+        ).read_text(encoding="utf-8"))
+        network = definition["network"]
+        record = dict(self.original)
+        record["catalog_runtime_policy"] = {
+            "runtime_id": "minecraft.java.paper",
+            "network_exposure": [{"name": "votifier", "protocol": "tcp", "exposure": "public"}],
+        }
+        record["profile_context"] = {
+            "ports": {"game": {"port": 24010, "protocol": "tcp"}},
+            "catalog_runtime_policy": {
+                "runtime_id": "minecraft.java.paper",
+                "executable": "/usr/bin/java",
+                "arguments": ["-jar", "server.jar"],
+                "network_exposure": [{"name": "votifier", "protocol": "tcp", "exposure": "public"}],
+            },
+        }
+        self.path.write_text(json.dumps(record), encoding="utf-8")
+        result = {
+            "instance_id": "palworld-legacy",
+            "ports": {"game": 24010, "rcon": 24011, "query": 24012},
+            "changed": False,
+        }
+        with (
+            patch("hybrid_runtime_port_backfill.InstanceWorkspaceRepository",
+                  return_value=repository),
+            patch("hybrid_runtime_port_backfill.occupied_ports_provider_for_backend",
+                  return_value=Mock(return_value=set())),
+            patch("hybrid_runtime_port_backfill.runtime_definition",
+                  return_value=definition),
+            patch("hybrid_runtime_port_backfill.reconcile_instance_ports",
+                  return_value=result),
+            patch("hybrid_runtime_port_backfill.os.chown"),
+        ):
+            state = reconcile_hybrid_runtime_ports(
+                self.backend, self.root, "agent-hybrid",
+                only_instance_id="palworld-legacy",
+            )
+        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(state["specs_updated"], 1)
+        self.assertNotIn("votifier", payload["ports"])
+        top = payload["catalog_runtime_policy"]["network_exposure"]
+        nested = payload["profile_context"]["catalog_runtime_policy"]
+        self.assertEqual(top, nested["network_exposure"])
+        self.assertTrue(next(item for item in top if item["name"] == "votifier")["optional"])
+        self.assertEqual(nested["executable"], "/usr/bin/java")
+        self.assertEqual(nested["arguments"], ["-jar", "server.jar"])
 
     def test_backfill_persists_controller_reservations_in_runtime_spec(self):
         repository = self._repository()

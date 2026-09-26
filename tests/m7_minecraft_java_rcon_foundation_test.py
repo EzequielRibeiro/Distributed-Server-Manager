@@ -83,7 +83,7 @@ class MinecraftJavaRconFoundationTest(unittest.TestCase):
                 )
             else:
                 self.assertEqual(
-                    ports["votifier"],
+                    {x["name"]: x for x in network.get("on_demand_ports") or []}["votifier"],
                     {
                         "name": "votifier",
                         "protocol": "tcp",

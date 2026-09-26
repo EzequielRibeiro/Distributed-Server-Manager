@@ -23,7 +23,7 @@ class MinecraftJavaRuntimeProfile(GameRuntimeProfile):
   query_binding=ports.get("query")
   if not isinstance(query_binding,dict) or str(query_binding.get("protocol") or "").lower()!="udp" or not query_binding.get("port"):raise ProfileError("Minecraft Java requires a UDP query reservation")
   votifier_binding=ports.get("votifier")
-  if environment_id!="minecraft.java.vanilla" or votifier_binding is not None:
+  if votifier_binding is not None:
    if not isinstance(votifier_binding,dict) or str(votifier_binding.get("protocol") or "").lower()!="tcp" or not votifier_binding.get("port"):raise ProfileError("Minecraft Java requires a valid TCP Votifier reservation")
   env=context.get("environment") or {}
   if not isinstance(env,dict):raise ProfileError("invalid Minecraft Java environment")

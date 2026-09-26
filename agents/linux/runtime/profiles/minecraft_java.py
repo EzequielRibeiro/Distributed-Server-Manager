@@ -84,9 +84,9 @@ class MinecraftJavaRuntimeProfile(GameRuntimeProfile):
             raise ProfileError("Minecraft Java requires a UDP query reservation")
 
         votifier_binding = ports.get("votifier")
-        # Vanilla cannot run the Votifier plugin/mod. Preserve already persisted
-        # legacy bindings, but new Vanilla instances must not require this port.
-        if environment_id != "minecraft.java.vanilla" or votifier_binding is not None:
+        # Votifier is optional for every Java distribution. Preserve and
+        # validate historical bindings when they are present.
+        if votifier_binding is not None:
             if (
                 not isinstance(votifier_binding, dict)
                 or str(votifier_binding.get("protocol") or "").lower() != "tcp"

@@ -12,6 +12,7 @@ from customer_reference import resolve_customer_reference
 from customer_team_repository import CustomerTeamRepository
 from instance_backup_clone_repository import InstanceBackupCloneRepository
 from instance_network import occupied_ports_provider_for_backend
+from core.network.optional_ports import enabled_network_profile
 from instance_provisioning_projection import dashboard_provision_state,project_agent_provisioning
 from instance_workspace_repository import InstanceWorkspaceRepository
 from runtime_workspace_catalog import game_workspace_catalog
@@ -97,9 +98,12 @@ def install_customer_instance_creation(legacy)->None:
   requested_profile_id=str(payload.get("resource_profile_id") or "").strip() or None
   resource_profile_id,_resource_profile,effective_resource_policy=resolve_catalog_resource_policy(root=root,game_id=game,resource_profile_id=requested_profile_id)
   placement_payload=dict(payload);placement_payload["contract_id"]=contract_id;placement_payload["resources"]=normalize_resource_policy(effective_resource_policy).placement_resources()
+  optional_votifier=payload.get("votifier_enabled",False)
+  if not isinstance(optional_votifier,bool):raise ValueError("votifier_enabled must be a boolean")
+  effective_network=enabled_network_profile(runtime_def,optional_roles=frozenset({"votifier"})) if optional_votifier else runtime_def.get("network")
   placement=legacy.resolve_instance_placement(user,placement_payload,repository);occupied_ports_provider=occupied_ports_provider_for_backend(repository.backend)
-  require_port_pool_preflight(repository.backend,placement["agent_id"],runtime_def.get("network"))
-  plan=repository.create_customer_instance(customer_id=user["scope_id"],username=user["username"],game=game,runtime_id=runtime_id,edition=edition,variant=variant,version=version,build=build,instances_root=root/"instances",contract_id=contract_id,selected_agent_id=placement["agent_id"],network_profile=runtime_def.get("network"),occupied_ports_provider=occupied_ports_provider,resource_profile_id=resource_profile_id)
+  require_port_pool_preflight(repository.backend,placement["agent_id"],effective_network)
+  plan=repository.create_customer_instance(customer_id=user["scope_id"],username=user["username"],game=game,runtime_id=runtime_id,edition=edition,variant=variant,version=version,build=build,instances_root=root/"instances",contract_id=contract_id,selected_agent_id=placement["agent_id"],network_profile=effective_network,occupied_ports_provider=occupied_ports_provider,resource_profile_id=resource_profile_id)
   try:
    CustomerTeamRepository(repository.backend).set_instance_access(
     customer_id,
