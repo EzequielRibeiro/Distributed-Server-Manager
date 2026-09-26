@@ -54,10 +54,33 @@ A confirmação do usuário de que existe backup não comprova
 automaticamente sua integridade. Não efetuar merge/release até
 homologar essas condições em um Agent isolado.
 
+## Descoberta e instalação por provedor
+
+O Controller consulta as versões compatíveis antes de solicitar a instalação:
+
+- **CurseForge:** identifica o ZIP oficial pelos campos `isServerPack` e
+  `serverPackFileId`. Quando o autor e o endpoint permitem distribuição, usa
+  somente o CDN oficial, verifica o SHA-1 publicado **antes de enfileirar** a
+  transferência, depois exige a mesma conferência no preview autenticado.
+  Respostas 403 ou arquivos sem metadados suficientes resultam em **envio
+  manual pelo cliente**; nunca se supõe uma URL nem se ignora um mod obrigatório.
+- **Modrinth:** localiza a versão `.mrpack` compatível no catálogo e aproveita
+  o resolvedor existente, respeitando componentes exclusivos do cliente,
+  hashes, loaders e regras de servidor. O Modrinth não garante a publicação
+  de um ZIP de servidor separado.
+
+Na UI, antes de cada operação, o cliente vê o pacote identificado, tamanho,
+versão e confirma a preparação. Uma operação de instalação completa só pode
+ser registrada depois de backup confirmado, instância parada, preview de
+integridade e validações de segurança do Agent. A revisão incremental compara
+mods adicionados, atualizados, removidos e inalterados e mantém os arquivos do
+mundo e configurações não gerenciadas; rollback usa as revisões existentes.
+
 ## Primeira versão
 
-Somente runtime Minecraft Java **NeoForge**, com arquivo ZIP já transferido pelo
-próprio usuário e confirmado pelo Agent. Não é um conversor geral de qualquer
+Somente runtime Minecraft Java **NeoForge**. Quando o download automático
+não é autorizado, aceita um ZIP original já obtido pelo próprio usuário e
+confirmado pelo Agent. Não é um conversor geral de qualquer
 exportação CurseForge: ZIP com `manifest.json` e referências a downloads continua
 bloqueado. Server packs com scripts que baixam mods em tempo de instalação, sem
 `mods/*.jar` incluídos, também não são aceitos.
@@ -117,5 +140,11 @@ homologação de segurança + backup/rollback com o ZIP real.
 - falta de capacidade de Agent e/ou permissão de upload/mods/modpack.
 
 **Não usar** o recurso para ignorar licença, substituir o runtime ou aplicar
-mudanças sobre um mundo ativo. O pacote oficial real ainda precisa de QA
+mudanças sobre um mundo ativo.
+
+**Integração obrigatória para a release:** PR #837 contém as correções de
+pesquisa unificada e do resolvedor CurseForge. Há sobreposição na UI com este
+PR #839. Antes de qualquer merge, conciliar os dois conjuntos de alterações,
+executar novamente testes de regressão e homologar o ZIP original e o Agent
+real no host. Aprovação em CI não substitui esse teste. O pacote oficial real ainda precisa de QA
 antes da implantação e da release.
