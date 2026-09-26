@@ -178,7 +178,7 @@ def discover_modrinth(project_ref: str, minecraft_version: str, loader: str,
     compatible = [v for v in (items if isinstance(items, list) else [])
                   if isinstance(v, Mapping) and minecraft_version in (v.get("game_versions") or [])
                   and loader in (v.get("loaders") or [])
-                  and str(v.get("status") or "listed") in {"listed", "archived"}]
+                  and str(v.get("status") or "listed") in {"listed", "unknown"}]
     if version_ref:
         compatible = [v for v in compatible if v.get("id") == version_ref]
     compatible.sort(key=lambda v: str(v.get("date_published") or ""), reverse=True)
