@@ -265,6 +265,41 @@ class AgentNonDestructiveProjectionTest(unittest.TestCase):
                     for relative, expected in sentinels.items():
                         self.assertEqual((root / relative).read_bytes(), expected)
 
+    def test_mrpack_revision_cannot_import_a_world_through_overrides(self):
+        """The standard Modrinth .mrpack path has the same non-wipe contract."""
+        for platform in ("linux", "windows"):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as td:
+                module = load_activation(platform)
+                root = Path(td) / "game"
+                root.mkdir()
+                state = Path(td) / "state"
+                state.mkdir()
+                (root / "server.properties").write_text("level-name=PersonalWorld\n")
+                player_data = root / "PersonalWorld" / "playerdata" / "uuid.dat"
+                player_data.parent.mkdir(parents=True)
+                player_data.write_bytes(b"KEEP INVENTORY")
+                source = root / "content" / "modpacks" / "mrpack-1"
+                untrusted = source / "overrides" / "PersonalWorld" / "region" / "r.0.0.mca"
+                untrusted.parent.mkdir(parents=True)
+                untrusted.write_bytes(b"REGENERATED CHUNK")
+                spec = {
+                    "game_id": "minecraft",
+                    "content_projection": {},
+                    "working_directory": str(root),
+                    "instance_state_root": str(state),
+                    "content_bundle_overrides": [{
+                        "content_id": "mrpack-1",
+                        "managed_path": str(source),
+                        "roots": ["overrides"],
+                    }],
+                }
+                with self.assertRaisesRegex(
+                    module.MinecraftContentActivationError, "world"
+                ):
+                    module.materialize_minecraft_overrides(spec)
+                self.assertEqual(player_data.read_bytes(), b"KEEP INVENTORY")
+                self.assertFalse((root / "PersonalWorld" / "region").exists())
+
     def test_safe_modpack_config_import_keeps_custom_world(self):
         for platform in ("linux", "windows"):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as td:
