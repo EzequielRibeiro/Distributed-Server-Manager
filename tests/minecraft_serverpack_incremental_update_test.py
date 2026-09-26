@@ -226,7 +226,7 @@ class AgentNonDestructiveProjectionTest(unittest.TestCase):
                     state = base / "state"
                     state.mkdir()
                     props = root / "server.properties"
-                    props.write_text("level-name=survival\\nmax-players=30\\n", encoding="utf-8")
+                    props.write_text("level-name=survival\nmax-players=30\n", encoding="utf-8")
                     sentinels = {}
                     for relative in (
                         "survival/level.dat",
@@ -260,7 +260,7 @@ class AgentNonDestructiveProjectionTest(unittest.TestCase):
                         module.materialize_minecraft_overrides(spec)
                     self.assertEqual(
                         props.read_text(encoding="utf-8"),
-                        "level-name=survival\\nmax-players=30\\n"
+                        "level-name=survival\nmax-players=30\n"
                     )
                     for relative, expected in sentinels.items():
                         self.assertEqual((root / relative).read_bytes(), expected)
@@ -273,7 +273,7 @@ class AgentNonDestructiveProjectionTest(unittest.TestCase):
                 root.mkdir()
                 state = Path(td) / "state"
                 state.mkdir()
-                (root / "server.properties").write_text("level-name=My Survival\\n")
+                (root / "server.properties").write_text("level-name=My Survival\n")
                 marker = root / "My Survival" / "region" / "r.1.1.mca"
                 marker.parent.mkdir(parents=True)
                 marker.write_bytes(b"PERSISTENT REGION")
@@ -298,7 +298,7 @@ class AgentNonDestructiveProjectionTest(unittest.TestCase):
                 )
                 self.assertEqual(marker.read_bytes(), b"PERSISTENT REGION")
                 self.assertEqual(
-                    (root / "server.properties").read_text(), "level-name=My Survival\\n"
+                    (root / "server.properties").read_text(), "level-name=My Survival\n"
                 )
 
     def test_unchanged_jars_are_not_replaced_during_update(self):
