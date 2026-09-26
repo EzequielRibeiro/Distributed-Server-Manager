@@ -14,6 +14,12 @@ import re
 import shutil
 from pathlib import Path
 from typing import Any
+import sys
+
+COMMON_DIR = Path(__file__).resolve().parent.parent.parent / "common"
+if str(COMMON_DIR) not in sys.path:
+    sys.path.insert(0, str(COMMON_DIR))
+from dayz_community_missions import discover_community_missions
 
 _MAX_KEYS = 512
 _MAX_KEY_BYTES = 2 * 1024 * 1024
@@ -130,6 +136,28 @@ def _discover_bikeys(root: Path) -> list[dict[str, str]]:
         result.append({"source": str(resolved), "name": key.name, "sha256": _sha256(resolved)})
     return result
 
+
+
+def project_dayz_community_maps(spec: dict[str, Any], entries: list[dict[str, Any]]) -> list[dict[str, str]]:
+    missions: dict[str, dict[str, str]] = {}
+    for entry in entries:
+        source_root = _managed_path(spec, entry)
+        content_id = str(entry.get("content_id") or "").strip()
+        try:
+            discovered = discover_community_missions(source_root)
+        except ValueError as exc:
+            raise DayZContentActivationError(str(exc)) from exc
+        for item in discovered:
+            mission_id = str(item.get("id") or "").strip()
+            relative = str(item.get("relative_path") or "").strip()
+            source = _within(source_root, source_root / relative, "DayZ community mission")
+            folded = mission_id.casefold()
+            current = missions.get(folded)
+            candidate = {"id": mission_id, "source": str(source), "content_id": content_id}
+            if current and current["source"] != candidate["source"]:
+                raise DayZContentActivationError(f"conflicting DayZ community mission: {mission_id}")
+            missions[folded] = candidate
+    return [missions[key] for key in sorted(missions)]
 
 def project_dayz_activation(spec: dict[str, Any], entries: list[dict[str, Any]]) -> dict[str, Any]:
     mods: list[str] = []
@@ -256,4 +284,4 @@ def materialize_dayz_keyring(spec: dict[str, Any]) -> list[str]:
         raise
 
 
-__all__ = ["DayZContentActivationError", "materialize_dayz_keyring", "project_dayz_activation"]
+__all__ = ["DayZContentActivationError", "materialize_dayz_keyring", "project_dayz_activation", "project_dayz_community_maps"]

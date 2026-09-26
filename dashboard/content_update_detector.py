@@ -49,7 +49,8 @@ class ControllerContentUpdateDetector:
   if not force and self._last_scan_monotonic and now-self._last_scan_monotonic<self.interval_seconds:return {'checked':0,'available':0,'current':0,'failed':0,'skipped':0}
   checked=available=current=failed=skipped=0;grouped:dict[str,list[dict[str,Any]]]={}
   for item in self.content.list(desired_state='installed',limit=max(1,min(int(limit),2000))):
-   provider=str(item.get('provider') or '').strip().lower();ctype=str(item.get('content_type') or '').strip().lower()
+   provider=str(item.get('provider') or '').strip().lower();ctype=str(item.get('content_type') or '').strip().lower();metadata=item.get('metadata') if isinstance(item.get('metadata'),Mapping) else {};revision_source=metadata.get('revision_source') if isinstance(metadata.get('revision_source'),Mapping) else {}
+   if ctype=='modpack' and str(revision_source.get('kind') or '').strip().lower()=='external-upload':skipped+=1;continue
    if provider not in _STRUCTURED_PROVIDERS:continue
    if ctype not in _SUPPORTED_TYPES or _bundle_child(item):skipped+=1;continue
    iid=str(item.get('instance_id') or '');cid=str(item.get('content_id') or '');aid=str(item.get('agent_id') or '')

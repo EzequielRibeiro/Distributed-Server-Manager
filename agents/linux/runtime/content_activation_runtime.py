@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 try:
- from content_activation_dayz import DayZContentActivationError,materialize_dayz_keyring,project_dayz_activation
+ from content_activation_dayz import DayZContentActivationError,materialize_dayz_keyring,project_dayz_activation,project_dayz_community_maps
 except ModuleNotFoundError as exc:
  if exc.name != "content_activation_dayz":raise
  import importlib.util
@@ -22,6 +22,7 @@ except ModuleNotFoundError as exc:
  DayZContentActivationError=_dayz_module.DayZContentActivationError
  materialize_dayz_keyring=_dayz_module.materialize_dayz_keyring
  project_dayz_activation=_dayz_module.project_dayz_activation
+ project_dayz_community_maps=_dayz_module.project_dayz_community_maps
 try:
  from content_activation_minecraft import MinecraftContentActivationError,materialize_minecraft_files,materialize_minecraft_overrides,project_minecraft_bundle_overrides,project_minecraft_files
 except ModuleNotFoundError as exc:
@@ -85,7 +86,13 @@ def project_runtime_spec(spec:dict[str,Any],snapshot:dict[str,Any])->dict[str,An
  game_id=str(result.get("game_id") or "").strip().lower();dayz_enabled=not (game_id=="dayz" and result.get("dayz_content_enabled") is False)
  if game_id=="dayz":result["dayz_content_enabled"]=dayz_enabled
  if game_id=="dayz" and not dayz_enabled:base=[value for value in base if not str(value).strip().lower().startswith(("-mod=","-servermod="))]
- dayz_entries=[entry for entry in entries if _adapter(entry)=="dayz"] if dayz_enabled else []
+ dayz_map_entries=[entry for entry in entries if _adapter(entry)=="dayz" and str(entry.get("content_type") or "").strip().lower()=="map"]
+ dayz_entries=[entry for entry in entries if _adapter(entry)=="dayz" and str(entry.get("content_type") or "").strip().lower()!="map"] if dayz_enabled else []
+ try:
+  community_missions=project_dayz_community_maps(result,dayz_map_entries) if game_id=="dayz" else []
+ except DayZContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc
+ if community_missions:result["content_dayz_community_missions"]=community_missions
+ else:result.pop("content_dayz_community_missions",None)
  if dayz_entries:
   try:
    dayz=project_dayz_activation(result,dayz_entries);content_args.extend(dayz["arguments"]);dayz_keys=list(dayz["key_sources"]);dayz_aliases=list(dayz["aliases"])

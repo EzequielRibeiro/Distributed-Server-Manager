@@ -18,6 +18,20 @@ import time
 from typing import Any
 
 import instance_runtime
+import sys
+
+# Shared protocol reader works in the source tree and packaged Agent layout.
+_HERE = Path(__file__).resolve()
+_COMMON = next((
+    candidate for candidate in (
+        _HERE.parents[2] / "common",
+        _HERE.parents[1] / "common",
+    ) if candidate.is_dir()
+), _HERE.parents[2] / "common")
+if str(_COMMON) not in sys.path:
+    sys.path.insert(0, str(_COMMON))
+from minecraft_java_status import query_reserved_java_game_port
+
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 SAMPLE_STATE_DIR = STATE_DIR / "instance-telemetry"
@@ -469,6 +483,10 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
             game = _dayz_query(record, telemetry_config)
         elif profile == "minecraft-bedrock" or environment_id == "minecraft.bedrock.vanilla":
             game = _bedrock_query(record, telemetry_config)
+        elif game_id == "minecraft" and (
+            profile == "minecraft-java" or environment_id.startswith("minecraft.java.")
+        ):
+            game = query_reserved_java_game_port(record, telemetry_config) or _game_query(telemetry_config)
         else:
             game = _game_query(telemetry_config)
 

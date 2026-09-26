@@ -542,7 +542,7 @@ class DashboardRepository:
     def instance_context(self, instance_id: str) -> dict[str, Any] | None:
         with self.session() as session:
             row = session.execute(
-                "SELECT controller_id,agent_id,node_id,customer_id FROM instances "
+                "SELECT controller_id,agent_id,node_id,game_id,customer_id FROM instances "
                 f"WHERE id={self.dialect.placeholder}",
                 (instance_id,),
             ).fetchone()
@@ -736,9 +736,13 @@ class DashboardRepository:
     def retry_instance(self, instance_id: str) -> dict[str, Any] | None:
         with self.session() as session:
             row = session.execute(
-                "SELECT id,node_id,game_id,agent_id,runtime_id,edition,"
-                "game_version,build_id,status FROM instances WHERE id="
-                + self.dialect.placeholder,
+                "SELECT i.id,i.node_id,i.game_id,i.agent_id,i.runtime_id,i.edition,"
+                "i.game_version,i.build_id,i.status,ic.contract_id,"
+                "c.status AS contract_status,c.metadata_json AS contract_metadata_json "
+                "FROM instances i "
+                "LEFT JOIN instance_contracts ic ON ic.instance_id=i.id "
+                "LEFT JOIN service_contracts c ON c.id=ic.contract_id "
+                "WHERE i.id=" + self.dialect.placeholder,
                 (instance_id,),
             ).fetchone()
         return None if row is None else dict(row)

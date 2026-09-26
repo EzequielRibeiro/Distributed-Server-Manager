@@ -6,6 +6,21 @@ from ctypes import wintypes
 from pathlib import Path
 from typing import Any
 import instance_runtime
+import sys
+from pathlib import Path
+
+# Shared protocol reader works in the source tree and packaged Agent layout.
+_HERE = Path(__file__).resolve()
+_COMMON = next((
+    candidate for candidate in (
+        _HERE.parents[2] / "common",
+        _HERE.parents[1] / "common",
+    ) if candidate.is_dir()
+), _HERE.parents[2] / "common")
+if str(_COMMON) not in sys.path:
+    sys.path.insert(0, str(_COMMON))
+from minecraft_java_status import query_reserved_java_game_port
+
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_DIR=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));SAMPLE_STATE_DIR=STATE_DIR/"instance-telemetry"
 def _process_pid(instance_id,record):
  adapter=str(record.get("adapter") or "").lower()
@@ -64,7 +79,15 @@ def _query(config):
 def collect_instance_telemetry(config:dict[str,Any]):
  result=[]
  for item in instance_runtime.list_instances(config):
-  iid=str(item.get("instance_id") or "").strip();record=instance_runtime.get_instance(iid) or {};pid=_process_pid(iid,record);cpu,rss,started=_process_values(pid);game=_query(record.get("telemetry") if isinstance(record.get("telemetry"),dict) else {})
+  iid=str(item.get("instance_id") or "").strip();record=instance_runtime.get_instance(iid) or {};pid=_process_pid(iid,record);cpu,rss,started=_process_values(pid)
+  query_config=record.get("telemetry") if isinstance(record.get("telemetry"),dict) else {}
+  game_id=str(record.get("game_id") or "").strip().lower()
+  profile=str(record.get("profile") or "").strip().lower()
+  environment_id=str(record.get("environment_id") or "").strip().lower()
+  if game_id=="minecraft" and (profile=="minecraft-java" or environment_id.startswith("minecraft.java.")):
+   game=query_reserved_java_game_port(record,query_config) or _query(query_config)
+  else:
+   game=_query(query_config)
   try:view=instance_runtime.status(config,iid);state=str(view.get("observed_state") or "unknown").lower();health="healthy" if state=="running" else "degraded" if state in {"starting","failed","unavailable"} else "unknown"
   except Exception:health="unknown"
   private_root=record.get("instance_state_root") or record.get("path")

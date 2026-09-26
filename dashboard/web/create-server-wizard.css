@@ -316,6 +316,12 @@
   font-size: .78rem;
 }
 
+/* Author display:grid would otherwise override the UA [hidden] rule. */
+.runtime-create-panel[hidden],
+.runtime-create-panel [hidden] {
+  display: none !important;
+}
+
 .runtime-notice {
   display: grid;
   gap: .55rem;
@@ -350,3 +356,6 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Explicitly honor HTML hidden even when .runtime-notice sets display:grid. */
+#minecraft-runtime-notice[hidden]{display:none!important}

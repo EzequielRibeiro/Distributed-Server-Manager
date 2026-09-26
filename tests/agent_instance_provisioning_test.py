@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -130,6 +131,34 @@ class ProvisioningExecutorTest(unittest.TestCase):
         self.assertEqual(result["content"]["provider"], "steam")
         self.assertTrue((Path(result["workspace"]["root"])).is_dir())
 
+    def test_failed_minecraft_update_restores_previous_world_and_runtime(self):
+        self._wire_success()
+        self.request["configuration"]={"minecraft_version_update":{
+            "kind":"MinecraftVersionUpdate","backup_before_update":True,
+            "target_version":"1.21.4","target_build":"100"}}
+        previous={"instance_id":"instance-one","agent_id":"agent-one","runtime_id":"minecraft.java.paper","desired_state":"stopped"}
+        calls=[]
+        materialize=provisioning_executor.privileged_materialization.materialize
+        def track_materialize(config,spec):
+            calls.append(("materialize",spec["runtime_id"]))
+            return materialize(config,spec)
+        def reconcile(config,instance_id):
+            if not any(item[0]=="restore" for item in calls):
+                raise RuntimeError("simulated failed boot after world write")
+            calls.append(("reconcile",instance_id))
+            return {"observed_state":"stopped"}
+        provisioning_executor.privileged_materialization.materialize=track_materialize
+        provisioning_executor.runtime_materialization.reconcile=reconcile
+        with patch.object(provisioning_executor.instance_runtime,"get_instance",return_value=previous),patch.object(provisioning_executor.instance_runtime,"status",return_value={"observed_state":"stopped"}),patch.object(provisioning_executor,"create_backup",return_value={"backup_id":"snapshot-1","sha256":"a"*64,"size_bytes":1234}),patch.object(provisioning_executor,"restore_backup",side_effect=lambda config,cmd:calls.append(("restore",cmd["backup_id"]))):
+            result=provisioning_executor.execute(self.config,self.request,self.result_path)
+        self.assertEqual(result["status"],"failed")
+        self.assertEqual(calls[:3],[
+            ("materialize","runtime-one"),
+            ("materialize","minecraft.java.paper"),
+            ("restore","snapshot-1")])
+        self.assertIn("previous_world_restored",result["compensation"])
+        self.assertIn("previous_runtime_restored",result["compensation"])
+
     def test_contract_validation_failure_is_persisted_in_result(self):
         request = dict(self.request)
         request["selector"] = "invalid selector"
@@ -206,6 +235,7 @@ class ControllerProvisioningQueueTest(unittest.TestCase):
         )
         self.assertEqual(first["provisioning_id"], second["provisioning_id"])
         self.assertEqual(first["request"]["ports"]["game"]["port"], 24000)
+        self.assertEqual(first["request"]["instance"]["runtime_id"], "dayz.stable")
 
     def test_authenticated_heartbeat_delivers_progress_and_completion(self):
         created = self.jobs.enqueue(

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import hashlib,io,json,sys,tempfile,unittest,zipfile
+import hashlib,io,json,socket,sys,tempfile,unittest,zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1]
 for path in (ROOT/"dashboard",ROOT/"database",ROOT/"core"):
  if str(path) not in sys.path:sys.path.insert(0,str(path))
-from customer_content_upload_service import CustomerContentUploadService
+from customer_content_upload_service import CustomerContentUploadService,_safe_external_url
 
 class _Workspace:
  def __init__(self,policy=None):
@@ -30,14 +31,38 @@ class _Transfers:
   self.rejected.append((tid,str(reason)));self.item["status"]="failed";self.item["last_error"]=str(reason);return dict(self.item)
 
 class _Content:
- def __init__(self):self.puts=[];self.bundles=[]
+ def __init__(self):self.puts=[];self.bundles=[];self.history=[]
  def put(self,payload,requested_by=None):self.puts.append((dict(payload),requested_by));return {"changed":True,"assignment":dict(payload,revision=1)}
- def put_bundle(self,parent,bundle,children,requested_by=None):self.bundles.append((dict(parent),dict(bundle),[dict(x) for x in children],requested_by));return {"changed":True,"assignment":dict(parent,revision=1),"children":children}
+ def put_many(self,payloads,requested_by=None):
+  items=[dict(payload) for payload in payloads]
+  self.puts.extend((dict(payload),requested_by) for payload in items)
+  return {"changed":True,"assignments":items}
+ def bundle_history(self,instance_id,content_id):return list(self.history)
+ def bundle_diff(self,instance_id,content_id,bundle):return {"added":["new-mod"],"removed":[],"updated":[],"unchanged":[]}
+ def put_bundle(self,parent,bundle,children,requested_by=None):self.bundles.append((dict(parent),dict(bundle),[dict(x) for x in children],requested_by));return {"changed":True,"bundle_revision":len(self.bundles),"assignment":dict(parent,revision=1),"children":children}
 
 def service(policy=None,status="staging"):
  s=CustomerContentUploadService.__new__(CustomerContentUploadService);s.backend=None;s.root=ROOT;s.workspace=_Workspace(policy);s.transfers=_Transfers(status);s.content=_Content();return s
 
 class ExternalUploadTest(unittest.TestCase):
+
+ def test_external_url_requires_https_and_public_destination(self):
+  with self.assertRaisesRegex(ValueError,"HTTPS"):
+   _safe_external_url("http://example.com/pack.mrpack")
+  with patch("customer_content_upload_service.socket.getaddrinfo",return_value=[(socket.AF_INET,socket.SOCK_STREAM,6,"",("127.0.0.1",443))]):
+   with self.assertRaisesRegex(ValueError,"private or reserved"):
+    _safe_external_url("https://example.com/pack.mrpack")
+  with patch("customer_content_upload_service.socket.getaddrinfo",return_value=[(socket.AF_INET,socket.SOCK_STREAM,6,"",("8.8.8.8",443))]):
+   self.assertEqual(_safe_external_url("https://example.com/pack.mrpack"),"https://example.com/pack.mrpack")
+
+ def test_external_url_surface_is_exposed_in_customer_workspace(self):
+  http=(ROOT/"dashboard/customer_content_http.py").read_text(encoding="utf-8")
+  js=(ROOT/"dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
+  self.assertIn('UPLOAD_URL=UPLOAD+"/url"',http)
+  self.assertIn("/content/upload/url",js)
+  self.assertIn("content-upload-url",js)
+  self.assertIn("Importar URL",js)
+
  def test_create_requires_content_install_and_uses_transfer_plane(self):
   s=service();item=s.create({"username":"alice"},"i1","mod.zip")
   self.assertEqual(s.workspace.calls[-1],("i1","content.install"));created=s.transfers.created[-1]
@@ -84,7 +109,7 @@ class ExternalUploadTest(unittest.TestCase):
    s=service(status="completed");s.transfers.artifact_path=path;s.transfers.item["filename"]="pack.mrpack";s.transfers.item["destination_ref"]="quarantine/i1/transfer-1/pack.mrpack";s.transfers.item["sha256"]=hashlib.sha256(out.getvalue()).hexdigest()
    result=s.finalize({"username":"alice"},"transfer-1",{"content_id":"pack-1","content_type":"modpack"})
    parent,bundle,children,actor=s.content.bundles[-1]
-   self.assertEqual(actor,"alice");self.assertEqual(parent["provider"],"modrinth");self.assertEqual(bundle["manifest_kind"],"mrpack-v1");self.assertEqual(bundle["loader_id"],"fabric");self.assertEqual(len(children),1);self.assertEqual(children[0]["provider"],"modrinth");self.assertEqual(result["assignment"]["content_id"],"pack-1")
+   self.assertEqual(actor,"alice");self.assertEqual(parent["provider"],"modrinth");self.assertEqual(bundle["manifest_kind"],"mrpack-v1");self.assertEqual(bundle["loader_id"],"fabric");self.assertEqual(len(children),1);self.assertEqual(children[0]["provider"],"modrinth");self.assertEqual(result["assignment"]["content_id"],"pack-1");self.assertEqual(result["revision_source"],"external-upload");self.assertEqual(result["manifest_diff"]["added"],["new-mod"])
   finally:
    Path(path).unlink(missing_ok=True)
 

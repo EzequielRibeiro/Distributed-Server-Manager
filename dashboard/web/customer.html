@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Meus servidores | Capivara DSM</title>
-  <link rel="stylesheet" href="/customer.css?v=2">
-  <link rel="stylesheet" href="/create-server-wizard.css?v=7">
+  <link rel="stylesheet" href="/customer.css?v=3">
+  <link rel="stylesheet" href="/create-server-wizard.css?v=9">
 </head>
 <body>
 <div class="customer-shell">
@@ -50,18 +50,18 @@
           <div class="runtime-step-header"><span class="runtime-step-number">7</span><div><strong>Confirmar servidor</strong><small>Revise as escolhas antes da criação.</small></div></div>
           <div id="runtime-selection-summary" class="runtime-selection-summary"><div><span>Jogo</span><strong id="runtime-summary-game">—</strong></div><div><span>Edição</span><strong id="runtime-summary-edition">—</strong></div><div><span>Distribuição</span><strong id="runtime-summary-runtime">—</strong></div><div><span>Versão</span><strong id="runtime-summary-version">—</strong></div><div><span>Build</span><strong id="runtime-summary-build">—</strong></div><div><span>Localização</span><strong id="runtime-summary-region">—</strong></div><div><span>Fallback regional</span><strong id="runtime-summary-region-fallback">Não</strong></div></div>
           <div id="minecraft-runtime-notice" class="runtime-notice" hidden><strong>Distribuição Minecraft</strong><p>A escolha determina quais mods, plugins e recursos poderão ser utilizados posteriormente.</p><label class="runtime-region-fallback"><input id="minecraft-eula-accepted" type="checkbox"><span>Li e aceito a Minecraft EULA para esta instância Java.</span></label><small>O aceite é obrigatório para criar servidores Minecraft Java e é validado novamente pelo Controller.</small></div>
-          <div class="runtime-create-actions"><button id="create-instance-submit" class="button" type="button" disabled>Criar servidor</button></div>
+          <label id="votifier-creation-option" class="runtime-region-fallback" hidden><input id="votifier-creation-enabled" type="checkbox"><span>Reservar porta TCP para Votifier (exige mod/plugin compatível e configuração manual).</span></label><div class="runtime-create-actions"><button id="create-instance-submit" class="button" type="button" disabled>Criar servidor</button></div>
         </div>
       </article>
     </section>
     <div id="customer-message" class="customer-message" role="status" aria-live="polite"></div>
   </main>
 </div>
-<script src="/customer.js?v=2"></script>
+<script src="/customer.js?v=3"></script>
 <script src="/customer-profile.js?v=3"></script>
 <script src="/customer-email-change.js?v=1"></script>
 <script src="/customer-placement-client.js?v=3"></script>
-<script src="/runtime-selector.js?v=12"></script>
-<script src="/create-server-wizard.js?v=4"></script>
+<script src="/runtime-selector.js?v=14"></script>
+<script src="/create-server-wizard.js?v=5"></script>
 </body>
 </html>

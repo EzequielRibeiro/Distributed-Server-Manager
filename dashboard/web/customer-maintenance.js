@@ -13,7 +13,7 @@ function setActive(){document.querySelectorAll("[data-view]").forEach(button=>bu
 function ensureSurface(){
  const nav=document.querySelector(".sidebar nav"),backupTab=nav?.querySelector('[data-view="backups"]');let button=document.getElementById("maintenance-tab");
  if(!button){button=node("button","Manutenção");button.id="maintenance-tab";button.dataset.view="maintenance";if(nav)nav.insertBefore(button,backupTab||nav.querySelector('[data-view="team"]')||null)}
- button.onclick=setActive;
+ if(button.dataset.maintenanceBound!=="1"){button.addEventListener("click",event=>{event.preventDefault();setActive()});button.dataset.maintenanceBound="1"}
  let section=document.getElementById("view-maintenance");
  if(!section){section=node("section","","view");section.id="view-maintenance";const backups=document.getElementById("view-backups");(backups?.parentNode||document.querySelector("main"))?.insertBefore(section,backups||null)}
 }

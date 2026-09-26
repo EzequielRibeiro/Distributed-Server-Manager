@@ -110,7 +110,10 @@ class CustomerContentWorkspaceTest(unittest.TestCase):
  def test_modpack_update_is_server_resolved_and_returns_manifest_diff(self):
   context={"id":"i1","game_id":"minecraft","agent_id":"agent-1","runtime_id":"minecraft.java.fabric","game_version":"1.21.1"};current={**_current(),"content_id":"pack","content_type":"modpack","provider":"modrinth","artifact":{"provider":"modrinth","package_id":"pack:new"},"provenance":{"minecraft_modpack":{"project_id":"pack-project","version_id":"old"}},"metadata":{"bundle":{"parent_content_id":"pack"},"minecraft_modpack":{"provider_project_id":"pack-project","provider_version_id":"old"}}};service=_service(_policy(),current,context);service.content.bundle_diff=lambda *args:{"added":["mb-new"],"removed":[],"updated":[],"unchanged":[]};service.content.bundle_history=lambda *args:[{"revision":2},{"revision":1}]
   service.modpack_resolver=lambda provider,project,parent,version,runtime:{"parent":{"version":"Pack 2","artifact":{"provider":"modrinth","url":"https://cdn.modrinth.com/pack2.mrpack","filename":"pack.mrpack","sha512":"a"*128,"archive":True},"provenance":{"project_id":"pack-project","version_id":"new"}},"bundle":{"provider":"modrinth","provider_project_id":"pack-project","provider_version_id":"new","minecraft_version":"1.21.1","loader_id":"fabric","loader_version":"0.16","manifest_kind":"mrpack-v1","members":[{"content_id":"mb-new","path":"mods/new.jar","required":True,"artifact":{"provider":"modrinth","url":"https://cdn.modrinth.com/new.jar","filename":"new.jar","sha512":"b"*128}}],"override_roots":["overrides"]},"children":[{"content_id":"mb-new","content_type":"mod","provider":"modrinth","version":"2","artifact":{"provider":"modrinth","url":"https://cdn.modrinth.com/new.jar","filename":"new.jar","sha512":"b"*128},"target":"mods/mb-new"}]}
-  with patch('customer_content_workspace.runtime_definition',return_value={"loader":"fabric","content":{"bundles":{"modpack":{"providers":["modrinth"]}}}}):result=service.mutate({"username":"u"},"i1","pack","update",{})
+  with patch('customer_content_workspace.runtime_definition',return_value={"loader":"fabric","content":{"bundles":{"modpack":{"providers":["modrinth"]}}}}):
+   preview=service.mutate({"username":"u"},"i1","pack","preview-update",{})
+   self.assertTrue(preview["preview"]);self.assertTrue(preview["changed"]);self.assertEqual(preview["manifest_diff"]["added"],["mb-new"]);self.assertEqual(preview["target"]["provider_version_id"],"new");self.assertEqual(service.content.bundles,[])
+   result=service.mutate({"username":"u"},"i1","pack","update",{})
   self.assertEqual(service.content.bundles[-1][1]["provider_version_id"],"new");self.assertEqual(result["manifest_diff"]["added"],["mb-new"]);self.assertEqual(result["previous_bundle_revision"],2);self.assertEqual(service.content.bundles[-1][0]["provenance"]["update_checkpoint"]["previous_bundle_revision"],2)
   service.mutate({"username":"u"},"i1","pack","rollback",{"revision":1});self.assertEqual(service.content.bundle_rollbacks[-1][2],1)
  def test_modpack_lifecycle_propagates_and_generic_update_fails_closed(self):
@@ -118,6 +121,18 @@ class CustomerContentWorkspaceTest(unittest.TestCase):
   service.mutate({"username":"u"},"i1","pack","disable",{});self.assertEqual(service.content.bundle_states[-1][2]["activation_state"],"disabled")
   service.mutate({"username":"u"},"i1","pack","remove",{});self.assertEqual(service.content.bundle_states[-1][2]["desired_state"],"absent")
   with self.assertRaises(PermissionError):service.mutate({"username":"u"},"i1","pack","update",{"version":"2"})
+ def test_prepare_clean_preserves_instance_and_skips_bundle_children(self):
+  context={"id":"i1","game_id":"minecraft","agent_id":"agent-1","runtime_id":"minecraft.java.youer","game_version":"1.21.1"};service=_service(_policy(),context=context);removed=[]
+  service.content.list=lambda **kwargs:[
+   {"content_id":"pack","content_type":"modpack","desired_state":"installed","metadata":{}},
+   {"content_id":"pack-child","content_type":"mod","desired_state":"installed","metadata":{"bundle":{"parent_content_id":"pack"}}},
+   {"content_id":"extra-plugin","content_type":"plugin","desired_state":"installed","metadata":{}},
+   {"content_id":"disabled-mod","content_type":"mod","desired_state":"absent","metadata":{}},
+  ]
+  service.mutate=lambda user,iid,cid,action,body:removed.append((cid,action)) or {"changed":True}
+  result=service.prepare_clean_for_version_change({"username":"u"},"i1")
+  self.assertEqual(removed,[("pack","remove"),("extra-plugin","remove")]);self.assertTrue(result["completed"]);self.assertIn("world",result["preserved"]);self.assertIn("ports",result["preserved"])
+
  def test_missing_assignment_is_not_found(self):
   with self.assertRaises(KeyError):_service(_policy()).mutate({"username":"u"},"i1","missing","disable",{})
 

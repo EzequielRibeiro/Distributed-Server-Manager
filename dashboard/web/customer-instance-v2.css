@@ -45,3 +45,18 @@
 @keyframes content-scan-spin{to{transform:rotate(360deg)}}
 @keyframes content-scan-sweep{50%,100%{transform:translateX(120%)}}
 @media (prefers-reduced-motion:reduce){.security-scanning::before,.security-scanning::after{animation:none}}
+
+/* Provisioning: show an indeterminate construction state while the Agent is working. */
+.provision.building{position:relative;overflow:hidden}
+.provision.building::after{content:"";position:absolute;inset:0;pointer-events:none;transform:translateX(-120%);background:linear-gradient(90deg,transparent,rgba(111,156,255,.07),transparent);animation:provision-sweep 2.2s ease-in-out infinite}
+.provision-builder{height:54px;display:flex;align-items:flex-end;gap:7px;margin:12px 0 14px;padding:0 4px}
+.provision-builder span{display:block;width:24px;height:24px;border-radius:5px;background:var(--accent);box-shadow:0 5px 16px rgba(111,156,255,.18);transform-origin:center bottom;animation:provision-build 1.45s ease-in-out infinite both}
+.provision-builder span:nth-child(2){animation-delay:.12s}.provision-builder span:nth-child(3){animation-delay:.24s}.provision-builder span:nth-child(4){animation-delay:.36s}.provision-builder span:nth-child(5){animation-delay:.48s}.provision-builder span:nth-child(6){animation-delay:.60s}
+.provision.building .progress{position:relative;overflow:hidden}
+.provision.building .progress::-webkit-progress-value{background:transparent}
+.provision.building .progress::-moz-progress-bar{background:transparent}
+.provision.building .progress::before{content:"";position:absolute;inset:0;width:38%;border-radius:999px;background:var(--accent);animation:provision-progress 1.55s ease-in-out infinite}
+@keyframes provision-build{0%,100%{transform:translateY(12px) scale(.78);opacity:.3}42%,65%{transform:translateY(0) scale(1);opacity:1}}
+@keyframes provision-progress{0%{transform:translateX(-110%)}50%{transform:translateX(95%)}100%{transform:translateX(275%)}}
+@keyframes provision-sweep{55%,100%{transform:translateX(120%)}}
+@media (prefers-reduced-motion:reduce){.provision.building::after,.provision-builder span,.provision.building .progress::before{animation:none}.provision-builder span{transform:none;opacity:.8}.provision.building .progress::before{width:100%;opacity:.35}}

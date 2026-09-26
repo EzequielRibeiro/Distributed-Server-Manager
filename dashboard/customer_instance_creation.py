@@ -12,7 +12,9 @@ from customer_reference import resolve_customer_reference
 from customer_team_repository import CustomerTeamRepository
 from instance_backup_clone_repository import InstanceBackupCloneRepository
 from instance_network import occupied_ports_provider_for_backend
+from core.network.optional_ports import enabled_network_profile
 from instance_provisioning_projection import dashboard_provision_state,project_agent_provisioning
+from instance_workspace_repository import InstanceWorkspaceRepository
 from runtime_workspace_catalog import game_workspace_catalog
 
 def runtime_directory(root:Path,game:str)->Path:return Path(root)/"catalog"/"v2"/"games"/game/"runtimes"
@@ -46,6 +48,17 @@ def _queue_agent_provisioning(*,root,repository,runtime_def,instance_id,agent_id
  try:provision=project_agent_provisioning(repository.backend,state,root=root)
  except Exception:provision=dashboard_provision_state(state)
  return state,provision
+
+def _contracted_retry_profile(current: dict[str, Any]) -> str | None:
+ """Use the current linked contract, not the catalog default, on retry."""
+ if not str(current.get("contract_id") or "").strip():
+  return None
+ if str(current.get("contract_status") or "").strip().lower()!="active":
+  raise PermissionError("linked instance contract is not active")
+ try:metadata=json.loads(current.get("contract_metadata_json") or "{}")
+ except (TypeError,ValueError) as exc:raise ValueError("invalid linked contract metadata") from exc
+ if not isinstance(metadata,dict):raise ValueError("invalid linked contract metadata")
+ return str(metadata.get("resource_profile_id") or metadata.get("profile_id") or "").strip().lower() or None
 
 def install_customer_instance_creation(legacy)->None:
  previous_post=legacy.DashboardHandler.do_POST
@@ -85,9 +98,12 @@ def install_customer_instance_creation(legacy)->None:
   requested_profile_id=str(payload.get("resource_profile_id") or "").strip() or None
   resource_profile_id,_resource_profile,effective_resource_policy=resolve_catalog_resource_policy(root=root,game_id=game,resource_profile_id=requested_profile_id)
   placement_payload=dict(payload);placement_payload["contract_id"]=contract_id;placement_payload["resources"]=normalize_resource_policy(effective_resource_policy).placement_resources()
+  optional_votifier=payload.get("votifier_enabled",False)
+  if not isinstance(optional_votifier,bool):raise ValueError("votifier_enabled must be a boolean")
+  effective_network=enabled_network_profile(runtime_def,optional_roles=frozenset({"votifier"})) if optional_votifier else runtime_def.get("network")
   placement=legacy.resolve_instance_placement(user,placement_payload,repository);occupied_ports_provider=occupied_ports_provider_for_backend(repository.backend)
-  require_port_pool_preflight(repository.backend,placement["agent_id"],runtime_def.get("network"))
-  plan=repository.create_customer_instance(customer_id=user["scope_id"],username=user["username"],game=game,runtime_id=runtime_id,edition=edition,variant=variant,version=version,build=build,instances_root=root/"instances",contract_id=contract_id,selected_agent_id=placement["agent_id"],network_profile=runtime_def.get("network"),occupied_ports_provider=occupied_ports_provider,resource_profile_id=resource_profile_id)
+  require_port_pool_preflight(repository.backend,placement["agent_id"],effective_network)
+  plan=repository.create_customer_instance(customer_id=user["scope_id"],username=user["username"],game=game,runtime_id=runtime_id,edition=edition,variant=variant,version=version,build=build,instances_root=root/"instances",contract_id=contract_id,selected_agent_id=placement["agent_id"],network_profile=effective_network,occupied_ports_provider=occupied_ports_provider,resource_profile_id=resource_profile_id)
   try:
    CustomerTeamRepository(repository.backend).set_instance_access(
     customer_id,
@@ -117,6 +133,11 @@ def install_customer_instance_creation(legacy)->None:
   else:
    context=repository.instance_context(instance_id)
    if context is None:return False
+   if role=="customer":
+    # Scope membership alone does not grant retry: use workspace RBAC.
+    permissions=InstanceWorkspaceRepository(repository.backend).effective_permissions_for(
+     str(user.get("username") or ""),instance_id)
+    return "instance.provision.retry" in permissions
    if role=="controller" and str(user.get("scope_id") or "")==str(context.get("controller_id") or ""):profile="operator"
    else:profile=repository.permission_profile(str(user.get("username") or ""),instance_id)
   return bool(profile and "instance.provision.retry" in legacy.INSTANCE_PERMISSIONS.get(profile,set()))
@@ -125,10 +146,11 @@ def install_customer_instance_creation(legacy)->None:
   if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,127}",instance_id):raise ValueError("invalid instance_id")
   repository=legacy.dashboard_repository(database_path);current=repository.retry_instance(instance_id)
   if current is None:raise ValueError("instance is not registered")
+  resource_profile_id=_contracted_retry_profile(current)
   node_id=str(current["node_id"] or "").strip();game=str(current["game_id"] or "").strip();row=repository.reserve_retry(instance_id,node_id,game);runtime_id=str(row["runtime_id"] or "").strip();edition=str(row["edition"] or "").strip();version=str(row["game_version"] or "").strip();build=str(row["build_id"] or "").strip();agent_id=str(row["agent_id"] or "").strip()
   if not all((runtime_id,edition,version,build,agent_id)):repository.update_instance_status(instance_id,row["status"]);raise ValueError("instance runtime selection is incomplete")
   runtime_def=runtime_definition(Path(legacy.DSM_ROOT),game,runtime_id)
-  try:_,provision=_queue_agent_provisioning(root=Path(legacy.DSM_ROOT),repository=repository,runtime_def=runtime_def,instance_id=instance_id,agent_id=agent_id,runtime_id=runtime_id,version=version,build=build,requested_by=str((user or {}).get("username") or "customer"))
+  try:_,provision=_queue_agent_provisioning(root=Path(legacy.DSM_ROOT),repository=repository,runtime_def=runtime_def,instance_id=instance_id,agent_id=agent_id,runtime_id=runtime_id,version=version,build=build,requested_by=str((user or {}).get("username") or "customer"),resource_profile_id=resource_profile_id)
   except Exception:repository.update_instance_status(instance_id,row["status"]);raise
   legacy.audit(user,"instance.provision.retry","started",instance_id,f"runtime={runtime_id};version={version};build={build};transport=agent-b10",database_path=database_path)
   return {"retried":True,"instance_id":instance_id,"runtime_id":runtime_id,"edition":edition,"version":version,"build":build,"provision":provision}

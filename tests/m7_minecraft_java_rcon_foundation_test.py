@@ -75,16 +75,23 @@ class MinecraftJavaRconFoundationTest(unittest.TestCase):
                 },
                 data["id"],
             )
-            self.assertEqual(
-                ports["votifier"],
-                {
-                    "name": "votifier",
-                    "protocol": "tcp",
-                    "offset": 3,
-                    "exposure": "public",
-                },
-                data["id"],
-            )
+            if data["id"] == "minecraft.java.vanilla":
+                self.assertNotIn("votifier", ports)
+                self.assertEqual(
+                    network["legacy_reservations"],
+                    [{"name": "votifier", "protocol": "tcp", "offset": 3}],
+                )
+            else:
+                self.assertEqual(
+                    {x["name"]: x for x in network.get("on_demand_ports") or []}["votifier"],
+                    {
+                        "name": "votifier",
+                        "protocol": "tcp",
+                        "offset": 3,
+                        "exposure": "public",
+                    },
+                    data["id"],
+                )
 
     def test_linux_profile_requires_rcon_and_materializes_non_secret_properties(self):
         with tempfile.TemporaryDirectory() as tmp:

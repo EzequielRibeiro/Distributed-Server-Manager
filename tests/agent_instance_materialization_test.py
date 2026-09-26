@@ -116,6 +116,7 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
         content = unit_path_for_spec(spec).read_text(encoding="utf-8")
         self.assertIn("X-Capivara-Instance=instance-one", content)
         self.assertIn('"value with spaces"', content)
+        self.assertIn("LimitCORE=0", content)
         unit_path_for_spec(spec).write_text("[Service]\nExecStart=/bin/false\n", encoding="utf-8")
         with self.assertRaises(Exception):
             materializer.apply(spec)
@@ -155,6 +156,106 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
         self.assertTrue(result["changed"])
         self.assertEqual(result["observed_state"], "running")
         self.assertEqual(instance_runtime.get_instance("instance-one")["desired_state"], "running")
+
+    def test_java_reconcile_delegates_private_content_without_worker_file_access(self):
+        state_root = self.root / "pool" / "instance-one"
+        spec = self.spec(
+            game_id="minecraft", environment_id="minecraft.java.vanilla",
+            instance_state_root=str(state_root),
+            desired_state="stopped", content_projection={},
+        )
+        normalized = validate_runtime_spec(spec, expected_agent_id="agent-one")
+        instance_runtime.register_instance(normalized)
+
+        class Materializer:
+            def inspect(self, spec):
+                return {"exists": True, "owned": True, "matches": True}
+
+        adapter = FakeAdapter(running=False)
+        with mock.patch.object(runtime_materialization, "resolve_materializer", return_value=Materializer()), \
+             mock.patch.object(runtime_materialization, "resolve_adapter", return_value=adapter), \
+             mock.patch.object(runtime_materialization, "materialize_content_activation",
+                               side_effect=AssertionError("worker must not access private Java runtime")), \
+             mock.patch.object(runtime_materialization.privileged_materialization,
+                               "sync_private_content", return_value=["plugins/test.jar"]) as sync:
+            result = runtime_materialization.reconcile(self.config, "instance-one")
+        self.assertEqual(result["observed_state"], "stopped")
+        self.assertEqual(result["content_files"], ["plugins/test.jar"])
+        sync.assert_called_once()
+
+    def test_java_private_seed_and_real_content_sync_remain_isolated(self):
+        state = self.root / "hybrid-state"
+        source = state / "game-data" / "minecraft" / "vanilla"
+        source.mkdir(parents=True)
+        (source / "server.jar").write_bytes(b"jar")
+        pool = self.root / "hybrid-pool"
+        boundary = pool / "java-one"
+        working = boundary / "runtime"
+        spec = {
+            "instance_id": "java-one", "game_id": "minecraft",
+            "environment_id": "minecraft.java.vanilla",
+            "instance_state_root": str(boundary), "working_directory": str(working),
+            "user": "capivara-instance", "content_projection": {},
+            "profile_context": {"content_root": str(source)},
+            "seed_files": [],
+            "seed_directories": [{"source": str(source), "target": str(working), "overlay": True}],
+            "writable_directories": [str(working)], "bind_paths": [],
+        }
+        user = type("Account", (), {"pw_uid": os.getuid(), "pw_gid": os.getgid()})()
+        group = type("Group", (), {"gr_gid": os.getgid()})()
+        previous = materialize_instance.STATE_DIR
+        materialize_instance.STATE_DIR = state
+        try:
+            with mock.patch.object(materialize_instance.os, "chown"), \
+                 mock.patch.object(materialize_instance.pwd, "getpwnam", return_value=user), \
+                 mock.patch.object(materialize_instance.grp, "getgrnam", return_value=group):
+                materialize_instance._prepare_private_state(spec, user, pool)
+                files = materialize_instance._sync_private_minecraft_content(
+                    spec, {"instance_storage_root": str(pool)}
+                )
+            self.assertEqual(files, [])
+            self.assertEqual(stat.S_IMODE(boundary.stat().st_mode), 0o710)
+            self.assertEqual(stat.S_IMODE(working.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE((boundary / ".dsm").stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(
+                (boundary / ".dsm" / "content-activation-files.json").stat().st_mode), 0o600)
+            self.assertTrue((working / "server.jar").is_file())
+        finally:
+            materialize_instance.STATE_DIR = previous
+
+    def test_privileged_java_sync_rejects_cross_instance_runtime(self):
+        pool = self.root / "java-pool"
+        boundary = pool / "java-one"
+        working = boundary / "runtime"
+        control = boundary / ".dsm"
+        working.mkdir(parents=True)
+        control.mkdir()
+        boundary.chmod(0o710)
+        working.chmod(0o700)
+        control.chmod(0o700)
+        user = type("Account", (), {"pw_uid": os.getuid(), "pw_gid": os.getgid()})()
+        group = type("Group", (), {"gr_gid": os.getgid()})()
+        spec = {
+            "instance_id": "java-one", "game_id": "minecraft",
+            "environment_id": "minecraft.java.vanilla",
+            "working_directory": str(working),
+            "instance_state_root": str(boundary),
+            "user": "capivara-instance",
+        }
+        config = {"instance_storage_root": str(pool)}
+        with mock.patch.object(materialize_instance.grp, "getgrnam", return_value=group), \
+             mock.patch.object(materialize_instance.pwd, "getpwnam", return_value=user), \
+             mock.patch.object(materialize_instance, "materialize_content_activation",
+                               return_value=["mods/test.jar"]) as sync:
+            self.assertEqual(materialize_instance._sync_private_minecraft_content(spec, config),
+                             ["mods/test.jar"])
+            sync.assert_called_once()
+            outside = dict(spec, working_directory=str(self.work))
+            with self.assertRaisesRegex(RuntimeError, "outside its private instance root"):
+                materialize_instance._sync_private_minecraft_content(outside, config)
+            other = dict(spec, instance_state_root=str(pool / "other"))
+            with self.assertRaisesRegex(RuntimeError, "does not match Agent storage policy"):
+                materialize_instance._sync_private_minecraft_content(other, config)
 
     def test_inventory_observes_live_adapter_state_instead_of_stale_cache(self):
         adapter = FakeAdapter(running=False)
@@ -204,6 +305,8 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
                  mock.patch.object(materialize_instance.grp, "getgrnam", return_value=agent_group):
                 materialize_instance._prepare_private_state(spec, account, storage_root)
             self.assertTrue((working / "bedrock_server").is_file())
+            # The seed must not reset the Agent's traversal rights to the boundary.
+            self.assertEqual(stat.S_IMODE(instance_root.stat().st_mode), 0o710)
             self.assertEqual(stat.S_IMODE((working / "bedrock_server").stat().st_mode), 0o700)
             (working / "bedrock_server").chmod(0o600)
             preserved = working / "operator-data.txt"
@@ -214,6 +317,7 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
                  mock.patch.object(materialize_instance.grp, "getgrnam", return_value=agent_group):
                 materialize_instance._prepare_private_state(spec, account, storage_root)
             self.assertEqual(preserved.read_text(encoding="utf-8"), "keep")
+            self.assertEqual(stat.S_IMODE(instance_root.stat().st_mode), 0o710)
             self.assertEqual(stat.S_IMODE((working / "bedrock_server").stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(preserved.stat().st_mode), 0o600)
             self.assertFalse((working / "provider-new.txt").exists())

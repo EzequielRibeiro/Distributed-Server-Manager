@@ -254,7 +254,8 @@ class CustomerContentWorkspaceService:
     history=self.content.bundle_history(instance_id,str(item.get("content_id") or ""));rollback_revision=int(history[1]["revision"]) if len(history)>1 else None
    else:
     previous=self.content.previous_revision(instance_id,str(item.get("content_id") or ""));rollback_revision=int(previous["revision"]) if previous else None
-   item["provider_capabilities"]=provider_capabilities(provider,self.workspace.root);item["update"]={"supported":provider_supports(provider,"update",self.workspace.root),"rollback_available":rollback_revision is not None,"rollback_revision":rollback_revision}
+   metadata=item.get("metadata") if isinstance(item.get("metadata"),Mapping) else {};revision_source=metadata.get("revision_source") if isinstance(metadata.get("revision_source"),Mapping) else {};external_revision=ctype=="modpack" and str(revision_source.get("kind") or "").strip().lower()=="external-upload"
+   item["provider_capabilities"]=provider_capabilities(provider,self.workspace.root);item["update"]={"supported":bool(provider_supports(provider,"update",self.workspace.root) and not external_revision),"rollback_available":rollback_revision is not None,"rollback_revision":rollback_revision,"revision_source":str(revision_source.get("kind") or "") or None,"preview_required":bool(ctype=="modpack" and not external_revision)}
    activation_config=self._activation_configuration(context,item)
    if activation_config is not None:item["activation_config"]=activation_config
    self._customer_security_projection(item)
@@ -335,6 +336,66 @@ class CustomerContentWorkspaceService:
     return {"results":results,"count":len(results),"provider_used":name,"fallback":{"automatic":True,"attempts":attempts,"upload_recommended":False,"github_official_supported":True}}
   return {"results":[],"count":0,"provider_used":None,"fallback":{"automatic":True,"attempts":attempts,"upload_recommended":True,"github_official_supported":True}}
 
+ def dayz_community_workshop_dependencies(self,user,instance_id,workshop_items,activation_order=100):
+  context,policy=self._context_policy(user,instance_id,"content.install")
+  if str(context.get("game_id") or "").strip().lower()!="dayz":raise PermissionError("community map installation is available only for DayZ")
+  try:order=max(0,min(int(activation_order or 100),1000000))
+  except (TypeError,ValueError) as exc:raise ValueError("invalid activation_order") from exc
+  workshop_raw=workshop_items or []
+  if not isinstance(workshop_raw,list) or len(workshop_raw)>32:raise ValueError("workshop_items must be a list of at most 32 items")
+  workshop_ids=[]
+  for value in workshop_raw:
+   text=str(value or "").strip()
+   if text.startswith("steam-workshop:"):text=text.split(":",1)[1]
+   if not text.isdigit() or len(text)>20:raise ValueError("invalid Steam Workshop item")
+   if text not in workshop_ids:workshop_ids.append(text)
+  dependencies=[];item_index={}
+  for index,published_id in enumerate(workshop_ids):
+   item={"instance_id":instance_id,"content_id":f"steam-workshop:{published_id}","content_type":"workshop","provider":"steam-workshop","desired_state":"installed","activation_state":"enabled","activation_order":order+index,"artifact":{"provider":"steam-workshop","published_file_id":published_id}}
+   self._enforce_policy(item,policy);self._resolve_workshop(context,item);nested=self._resolve_workshop_dependencies(context,item);self._prepare_activation_defaults(context,item)
+   for dependency in nested:
+    self._enforce_policy(dependency,policy);item_index[str(dependency.get("content_id") or "")]=dependency
+   item_index[item["content_id"]]=item;dependencies.append(item["content_id"])
+  return {"context":context,"policy":policy,"items":list(item_index.values()),"dependencies":dependencies,"activation_order":order+len(item_index)}
+
+ def install_dayz_community_map(self,user,instance_id,body):
+  if not isinstance(body,Mapping):raise ValueError("community map payload must be an object")
+  allowed={"content_id","source","workshop_items","activation_order","name"}
+  unknown=sorted(set(body)-allowed-{"instance_id"})
+  if unknown:raise ValueError("unsupported community map fields: "+", ".join(unknown))
+  context,policy=self._context_policy(user,instance_id,"content.install")
+  if str(context.get("game_id") or "").strip().lower()!="dayz":raise PermissionError("community map installation is available only for DayZ")
+  content_id=str(body.get("content_id") or "").strip()
+  if not content_id:raise ValueError("content_id is required")
+  source=body.get("source")
+  if not isinstance(source,Mapping):raise ValueError("community map source must be an object")
+  provider=str(source.get("provider") or "").strip().lower()
+  if provider not in {"github","http-archive"}:raise ValueError("community map source provider must be github or http-archive")
+  prepared=self.dayz_community_workshop_dependencies(user,instance_id,body.get("workshop_items") or [],body.get("activation_order") or 100)
+  order=int(prepared["activation_order"])
+  artifact={"provider":provider,"archive":True}
+  provenance={"community_map":{"provider":provider}}
+  if provider=="github":
+   repository=str(source.get("repository") or "").strip()
+   ref=str(source.get("ref") or "main").strip()
+   if not repository or len(repository)>191 or repository.count("/")!=1 or any(not part or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for ch in part) for part in repository.split("/")):raise ValueError("invalid GitHub repository")
+   if not ref or len(ref)>191 or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/-" for ch in ref) or ".." in ref.split("/"):raise ValueError("invalid GitHub ref")
+   artifact.update({"url":f"https://codeload.github.com/{repository}/zip/{ref}","filename":"community-map.zip"})
+   provenance["community_map"].update({"repository":repository,"ref":ref})
+  else:
+   url=str(source.get("url") or "").strip()
+   if not url.startswith("https://"):raise ValueError("community map archive requires HTTPS")
+   artifact.update({"url":url,"filename":"community-map.archive"})
+   provenance["community_map"]["url"]=url
+  items=list(prepared["items"]);dependencies=list(prepared["dependencies"])
+  payload={"instance_id":instance_id,"content_id":content_id,"content_type":"map","provider":provider,"desired_state":"installed","activation_state":"enabled","activation_order":order,"artifact":artifact,"provenance":provenance,"metadata":{"community_map":{"name":str(body.get("name") or content_id).strip()[:191]}},"dependencies":dependencies}
+  self._enforce_policy(payload,policy)
+  actor=str(user.get("username") or "customer")
+  result=self.content.put_many([*items,payload],requested_by=actor)
+  result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==content_id)
+  result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=content_id]
+  return result
+
  def install(self,user,instance_id,body):
   context,policy=self._context_policy(user,instance_id,"content.install");payload=self._customer_payload(body);payload["instance_id"]=instance_id;payload["desired_state"]="installed";provider=str(payload.get("provider") or (payload.get("artifact") or {}).get("provider") or "").strip().lower()
   if not provider_supports(provider,"install",self.workspace.root):raise PermissionError("content provider install is unavailable")
@@ -346,6 +407,28 @@ class CustomerContentWorkspaceService:
   if dependencies:
    result=self.content.put_many([*dependencies,payload],requested_by=actor);result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==str(payload.get("content_id") or ""));result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=str(payload.get("content_id") or "")];return result
   return self.content.put(payload,requested_by=actor)
+
+ def prepare_clean_for_version_change(self,user,instance_id):
+  """Remove customer-managed Minecraft content while preserving instance data."""
+  context=self.workspace.require(user,instance_id,"content.remove")
+  if str(context.get("game_id") or "").strip().lower()!="minecraft":raise PermissionError("clean version-change preparation is available only for Minecraft")
+  rows=self.content.list(instance_id=instance_id,limit=2000);candidates=[]
+  for item in rows:
+   if str(item.get("desired_state") or "installed").strip().lower()!="installed":continue
+   ctype=str(item.get("content_type") or "").strip().lower()
+   if ctype not in {"mod","plugin","modpack","datapack"}:continue
+   metadata=item.get("metadata") if isinstance(item.get("metadata"),Mapping) else {}
+   marker=metadata.get("bundle") if isinstance(metadata.get("bundle"),Mapping) else {}
+   if str(marker.get("parent_content_id") or "").strip() and ctype!="modpack":continue
+   content_id=str(item.get("content_id") or "").strip()
+   if content_id:candidates.append(content_id)
+  removed=[];failed=[]
+  for content_id in candidates:
+   try:self.mutate(user,instance_id,content_id,"remove",{});removed.append(content_id)
+   except Exception as exc:failed.append({"content_id":content_id,"error":str(exc)[:500]})
+  return {"kind":"MinecraftCleanContentPreparation","instance_id":str(instance_id),"removed":removed,"failed":failed,"completed":not failed,"preserved":["instance","world","ports","resource_profile","backups","permissions"]}
+
+
  def mutate(self,user,instance_id,content_id,action,body=None):
   action=str(action or "").strip().lower();required="content.remove" if action=="remove" else "content.install";context,policy=self._context_policy(user,instance_id,required);current=self._existing(instance_id,content_id);actor=str(user.get("username") or "customer");ctype=str(current.get("content_type") or "").lower();provider=str(current.get("provider") or "").strip().lower()
   marker=(current.get("metadata") or {}).get("bundle") if isinstance(current.get("metadata"),Mapping) else None
@@ -358,7 +441,7 @@ class CustomerContentWorkspaceService:
    if action=="enable":return self.content.set_bundle_state(instance_id,content_id,desired_state="installed",activation_state="enabled",requested_by=actor)
    if action=="rollback":
     revision=(body or {}).get("revision");return self.content.rollback_bundle(instance_id,content_id,revision,requested_by=actor,reason="customer")
-   if action=="update":
+   if action in {"preview-update","update"}:
     self._validate_update_request(body)
     if not provider_supports(provider,"update",self.workspace.root):raise ValueError("automatic modpack update is unavailable for this provider")
     if provider not in {"modrinth","curseforge"}:raise ValueError("automatic modpack update is unavailable for this provider")
@@ -366,7 +449,11 @@ class CustomerContentWorkspaceService:
     if not project:raise ValueError("modpack provider project identity is unavailable")
     payload=self._desired(current);payload["instance_id"]=instance_id;payload["artifact"]={"provider":provider,"package_id":project};payload["desired_state"]="installed";self._enforce_structured_provider(context,payload);resolved=self._resolve_minecraft_modpack(context,payload)
     if resolved is None:raise ValueError("modpack resolver is unavailable")
-    parent,bundle,children=resolved;history_before=self.content.bundle_history(instance_id,content_id);current_bundle_revision=int(history_before[0]["revision"]) if history_before else None;self._mark_update_checkpoint(current,parent,bundle_revision=current_bundle_revision);diff=self.content.bundle_diff(instance_id,content_id,bundle);result=self.content.put_bundle(parent,bundle,children,requested_by=actor);result["manifest_diff"]=diff;result["previous_bundle_revision"]=current_bundle_revision if result.get("changed") else None;return result
+    parent,bundle,children=resolved;diff=self.content.bundle_diff(instance_id,content_id,bundle)
+    history_before=self.content.bundle_history(instance_id,content_id);current_bundle_revision=int(history_before[0]["revision"]) if history_before else None
+    if action=="preview-update":
+     return {"preview":True,"changed":bool(diff["added"] or diff["removed"] or diff["updated"]),"assignment":current,"target":{"provider":provider,"project":project,"version":parent.get("version"),"provider_version_id":bundle.get("provider_version_id"),"minecraft_version":bundle.get("minecraft_version"),"loader_id":bundle.get("loader_id"),"loader_version":bundle.get("loader_version")},"manifest_diff":diff,"current_bundle_revision":current_bundle_revision}
+    self._mark_update_checkpoint(current,parent,bundle_revision=current_bundle_revision);result=self.content.put_bundle(parent,bundle,children,requested_by=actor);result["manifest_diff"]=diff;result["previous_bundle_revision"]=current_bundle_revision if result.get("changed") else None;return result
    raise ValueError("modpack reorder is not supported")
   payload=self._desired(current);payload["instance_id"]=instance_id
   if action=="remove":payload["desired_state"]="absent";payload["activation_state"]="disabled"

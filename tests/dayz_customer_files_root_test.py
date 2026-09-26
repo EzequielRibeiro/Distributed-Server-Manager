@@ -34,12 +34,13 @@ class DayZCustomerFilesRootTest(unittest.TestCase):
                 "ports": {
                     "game": {"port": 2302, "protocol": "udp"},
                     "game_aux": {"port": 2304, "protocol": "udp"},
+            "battleye": {"port": 2306, "protocol": "udp"},
                     "steam_query": {"port": 2305, "protocol": "udp"},
                 },
             },
         )
 
-        self.assertEqual(profile.profile_version, 11)
+        self.assertEqual(profile.profile_version, 12)
         self.assertEqual(spec["working_directory"], install_root)
         self.assertEqual(spec["files_root"], state_root)
         self.assertEqual(spec["configuration_root"], f"{state_root}/config")
@@ -59,6 +60,7 @@ class DayZCustomerFilesRootTest(unittest.TestCase):
             "ports": {
                 "game": {"port": 2302, "protocol": "udp"},
                 "game_aux": {"port": 2304, "protocol": "udp"},
+            "battleye": {"port": 2306, "protocol": "udp"},
                 "steam_query": {"port": 2305, "protocol": "udp"},
             },
         }

@@ -123,8 +123,12 @@ class AgentPublicNetworkContractTest(unittest.TestCase):
         text = (ROOT / "dashboard" / "web" / "customer-instance-connection.js").read_text(encoding="utf-8")
         self.assertIn("ENDEREÇO DO SERVIDOR", text)
         self.assertIn("Copiar endereço", text)
-        self.assertIn("QUERY CHECK", text)
-        self.assertIn("Verificar publicamente", text)
+        # The redundant public QUERY CHECK panel was intentionally removed;
+        # native query behavior still has separate backend contract tests.
+        self.assertIn("customer-connection-card", text)
+        self.assertIn("navigator.clipboard.writeText", text)
+        self.assertIn("renderPorts(d.ports||[])", text)
+        self.assertNotIn("customer-query-check", text)
 
     def test_customer_port_status_uses_agent_listener_inventory(self):
         rows = _listening_ports(

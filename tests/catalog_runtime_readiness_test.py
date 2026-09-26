@@ -54,17 +54,32 @@ def test_minecraft_java_reserved_service_ports_are_declared_and_applied() -> Non
             continue
         network = runtime.get("network") or {}
         ports = {str(item.get("name") or ""): item for item in network.get("ports") or []}
-        assert set(ports) >= {"game", "rcon", "query", "votifier"}, f"{runtime_id}: missing reserved Minecraft service port"
-        assert network.get("block_size") == 4, f"{runtime_id}: Minecraft Java must reserve one four-port block"
+        assert set(ports) >= {"game", "rcon", "query"}, f"{runtime_id}: missing core Minecraft service port"
+        assert network.get("block_size") == 4, f"{runtime_id}: legacy-safe four-port stride must remain unchanged"
         assert ports["query"].get("protocol") == "udp", f"{runtime_id}: query port must be UDP"
-        assert ports["votifier"].get("protocol") == "tcp", f"{runtime_id}: Votifier port must be TCP"
+        if runtime_id == "minecraft.java.vanilla":
+            assert "votifier" not in ports, "Vanilla must not reserve an unusable Votifier port"
+            assert network.get("legacy_reservations") == [
+                {"name": "votifier", "protocol": "tcp", "offset": 3}
+            ], "Existing Vanilla Votifier reservations must remain reconcilable"
+        else:
+            optional = {item["name"]: item for item in network.get("on_demand_ports") or []}
+            assert optional["votifier"].get("protocol") == "tcp", f"{runtime_id}: optional Votifier must use TCP"
+            assert optional["votifier"].get("offset") == 3
+            assert network.get("legacy_reservations") == [
+                {"name": "votifier", "protocol": "tcp", "offset": 3}
+            ], f"{runtime_id}: old Votifier reservation must be preserved"
+        assert "votifier" not in ports, f"{runtime_id}: must never reserve Votifier by default"
         applications = network.get("apply") or []
         properties = {str(item.get("key") or ""): str(item.get("value") or "") for item in applications if item.get("kind") == "property"}
         reserved_only = {str(item.get("port") or "") for item in applications if item.get("kind") == "reserve"}
         assert properties.get("enable-rcon") == "true", f"{runtime_id}: RCON must be enabled explicitly"
         assert properties.get("rcon.port") == "{rcon}", f"{runtime_id}: RCON port must use reserved role"
         assert properties.get("query.port") == "{query}", f"{runtime_id}: query port must use reserved role"
-        assert "votifier" in reserved_only, f"{runtime_id}: Votifier port must remain reserved even without a plugin config target"
+        if runtime_id == "minecraft.java.vanilla":
+            assert "votifier" not in reserved_only
+        else:
+            assert "votifier" not in reserved_only, f"{runtime_id}: opt-in required to reserve Votifier"
 
 
 def test_every_published_runtime_validates_against_canonical_schema() -> None:

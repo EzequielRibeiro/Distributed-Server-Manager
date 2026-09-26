@@ -2,11 +2,14 @@
 """Customer external-upload bridge into Universal Content and Artifact Transfer."""
 from __future__ import annotations
 import hashlib
+import ipaddress
 import json
+import socket
 import zipfile
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlparse
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from artifact_transfer_repository import ArtifactTransferRepository
 from content_repository import ContentRepository
@@ -17,6 +20,26 @@ from runtime_workspace_catalog import runtime_definition
 _ALLOWED_FIELDS=frozenset({"content_id","content_type","activation_state","activation_order","version","metadata","dependencies","conflicts"})
 _ARCHIVE_SUFFIXES=(".zip",".mrpack",".tar",".tar.gz",".tgz")
 _UPLOAD_SUFFIXES=(*_ARCHIVE_SUFFIXES,".jar")
+_EXTERNAL_URL_MAX_BYTES=8*1024*1024*1024
+
+def _safe_external_url(value):
+ raw=str(value or "").strip();parsed=urlparse(raw)
+ if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password:raise ValueError("external content URL must use HTTPS without embedded credentials")
+ if parsed.port not in {None,443}:raise ValueError("external content URL must use the standard HTTPS port")
+ host=parsed.hostname.rstrip(".").lower()
+ try:addresses=socket.getaddrinfo(host,443,type=socket.SOCK_STREAM)
+ except socket.gaierror as exc:raise ValueError("external content URL host cannot be resolved") from exc
+ if not addresses:raise ValueError("external content URL host cannot be resolved")
+ for entry in addresses:
+  address=ipaddress.ip_address(entry[4][0].split("%",1)[0])
+  if address.is_private or address.is_loopback or address.is_link_local or address.is_multicast or address.is_reserved or address.is_unspecified:
+   raise ValueError("external content URL resolves to a private or reserved address")
+ return raw
+
+class _ExternalContentRedirectHandler(HTTPRedirectHandler):
+ def redirect_request(self,req,fp,code,msg,headers,newurl):
+  _safe_external_url(newurl)
+  return super().redirect_request(req,fp,code,msg,headers,newurl)
 
 class CustomerContentUploadService:
  def __init__(self,backend,root):
@@ -41,6 +64,27 @@ class CustomerContentUploadService:
  def create(self,user,instance_id,filename):
   context,_,agent_id=self._access(user,instance_id);name=self._filename(filename)
   return self.transfers.create(agent_id=agent_id,instance_id=instance_id,customer_id=context.get("customer_id"),direction="controller_to_agent",purpose="content_upload",filename=name,requested_by=str(user.get("username") or ""),ttl_hours=24)
+ def import_url(self,user,instance_id,url):
+  safe=_safe_external_url(url);parsed=urlparse(safe);name=self._filename(Path(parsed.path).name)
+  item=self.create(user,instance_id,name);transfer_id=str(item["transfer_id"])
+  request=Request(safe,headers={"Accept":"application/octet-stream,application/zip;q=0.9,*/*;q=0.5","User-Agent":"Capivara-DSM/2"})
+  # Disable environment proxies for this SSRF-sensitive fetch. Redirects are
+  # revalidated and a declared Content-Length is required so the 8 GiB ceiling
+  # remains fail-closed before bytes are accepted into staging.
+  opener=build_opener(ProxyHandler({}),_ExternalContentRedirectHandler())
+  try:
+   with opener.open(request,timeout=30) as response:
+    _safe_external_url(response.geturl())
+    raw_length=str(response.headers.get("Content-Length") or "").strip()
+    if not raw_length:raise ValueError("external content URL must provide Content-Length")
+    length=int(raw_length)
+    if length<1 or length>_EXTERNAL_URL_MAX_BYTES:raise ValueError("external content artifact exceeds the 8 GiB import limit")
+    staged=self.transfers.stage_from_controller(transfer_id,response,length)
+  except Exception:
+   try:self.transfers.cancel(transfer_id)
+   except Exception:pass
+   raise
+  return staged
  def stage(self,user,transfer_id,source,content_length):
   item=self._transfer(user,transfer_id)
   if str(item.get("status") or "")!="staging":raise ValueError("content upload is not pending")
@@ -112,7 +156,7 @@ class CustomerContentUploadService:
   except (zipfile.BadZipFile,KeyError,UnicodeDecodeError,json.JSONDecodeError,OSError):return False
   return isinstance(manifest,Mapping) and str(manifest.get("manifestType") or "")=="minecraftModpack"
 
- def _finalize(self,user,transfer_id,body:Mapping[str,Any]):
+ def _finalize(self,user,transfer_id,body:Mapping[str,Any],extra_assignments=None):
   item=self._transfer(user,transfer_id)
   if str(item.get("status") or "")!="completed":raise ValueError("content upload has not reached the Agent")
   iid=str(item["instance_id"]);context,effective,_=self._access(user,iid)
@@ -135,13 +179,43 @@ class CustomerContentUploadService:
   if ctype=="modpack":
    if lower.endswith(".mrpack"):
     parent,bundle,children=self._minecraft_mrpack_bundle(context,item,content_id,relative,metadata)
-    return self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"))
+    history_before=self.content.bundle_history(iid,content_id)
+    previous_bundle_revision=int(history_before[0]["revision"]) if history_before else None
+    diff=self.content.bundle_diff(iid,content_id,bundle)
+    parent_meta=dict(parent.get("metadata") or {})
+    parent_meta["revision_source"]={"kind":"external-upload","filename":name,"transfer_id":tid}
+    parent["metadata"]=parent_meta
+    result=self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"))
+    result["manifest_diff"]=diff
+    result["previous_bundle_revision"]=previous_bundle_revision if result.get("changed") else None
+    result["revision_source"]="external-upload"
+    return result
    if lower.endswith(".zip") and self._detect_curseforge_export(item):
     raise ValueError("Pacote CurseForge detectado. Esse formato referencia IDs do CurseForge e não contém URLs suficientes para instalação sem uma 3rd Party API Key. Use o equivalente .mrpack/Modrinth ou configure a chave CurseForge no Controller.")
    raise ValueError("Upload de modpack suporta .mrpack. ZIP CurseForge requer 3rd Party API Key.")
   payload={key:body[key] for key in _ALLOWED_FIELDS if key in body and key not in {"metadata"}}
   payload.update({"instance_id":iid,"content_id":content_id,"content_type":ctype,"desired_state":"installed","provider":"local","target":f"external/{content_id}","artifact":{"provider":"local","package_id":relative,"sha256":str(item.get("sha256") or "") or None,"archive":archive,"filename":name,"ephemeral_upload":True},"provenance":{"kind":"customer-upload","transfer_id":tid,"filename":name,"sha256":str(item.get("sha256") or "") or None,"quarantine_path":relative,"agent_validated":True},"metadata":dict(metadata)})
-  return self.content.put(payload,requested_by=str(user.get("username") or "customer"))
+  actor=str(user.get("username") or "customer")
+  extras=[dict(value) for value in (extra_assignments or []) if isinstance(value,Mapping)]
+  if extras:
+   result=self.content.put_many([*extras,payload],requested_by=actor)
+   result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==content_id)
+   result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=content_id]
+   return result
+  return self.content.put(payload,requested_by=actor)
+
+ def finalize_dayz_community_map(self,user,transfer_id,body:Mapping[str,Any],dependency_assignments):
+  item=self._transfer(user,transfer_id)
+  try:
+   if not isinstance(body,Mapping):raise ValueError("content payload must be an object")
+   payload=dict(body);payload["content_type"]="map";payload["activation_state"]="enabled"
+   payload["dependencies"]=[str(value.get("content_id") or "").strip() for value in (dependency_assignments or []) if isinstance(value,Mapping) and str(value.get("content_id") or "").strip()]
+   return self._finalize(user,transfer_id,payload,extra_assignments=dependency_assignments)
+  except Exception as exc:
+   if str(item.get("status") or "").lower()=="completed":
+    try:self.transfers.reject_content_upload(str(item["transfer_id"]),str(exc))
+    except Exception:pass
+   raise
 
  def finalize(self,user,transfer_id,body:Mapping[str,Any]):
   item=self._transfer(user,transfer_id)
