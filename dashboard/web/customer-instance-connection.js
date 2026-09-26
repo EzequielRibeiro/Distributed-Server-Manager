@@ -43,7 +43,7 @@ function ensureVotifierCard(){
  toggle.className="btn";
  toggle.type="button";
  toggle.addEventListener("click", async()=>{
-  if(toggle.disabled)return;
+  if(toggle.disabled||toggle.dataset.canEditNow!=="true")return;
   const enabled=toggle.dataset.pendingAction==="enable" ? true
    :toggle.dataset.pendingAction==="disable" ? false
    :toggle.dataset.enabled!=="true";
@@ -65,7 +65,7 @@ function ensureVotifierCard(){
    await load();
   }catch(error){
    status.textContent=error.message;
-   toggle.disabled=false;
+   toggle.disabled=toggle.dataset.canEditNow!=="true";
   }
  });
  card.append(heading,status,toggle);
@@ -73,7 +73,7 @@ function ensureVotifierCard(){
  if(connection?.parentNode)connection.after(card);else host.prepend(card);
  return card;
 }
-function renderVotifier(value){
+function renderVotifier(value, instanceStatus){
  const card=ensureVotifierCard();
  if(!card)return;
  const item=value||{};
@@ -83,6 +83,8 @@ function renderVotifier(value){
  const button=document.getElementById("customer-votifier-toggle");
  const reserved=item.reserved===true;
  const port=item.port;
+ // The backend also checks the managed systemd unit, protecting against stale UI state.
+ const stopped=["stopped","offline"].includes(String(instanceStatus||"").trim().toLowerCase());
  status.textContent=item.pending
   ?item.pending_drop
    ?"Desativação pendente: a porta permanece protegida até o Agent confirmar."
@@ -91,8 +93,10 @@ function renderVotifier(value){
    ?`Reservada: ${port}/TCP. Configure manualmente o mod ou plugin Votifier para usar esta porta.`
    :"Nenhuma porta Votifier reservada. Habilite apenas quando for utilizar um mod ou plugin compatível.";
  if(!item.manageable&&!item.pending&&reserved)status.textContent+=" A alteração exige sincronização compatível do Agent.";
+ if(item.manageable&&!stopped)status.textContent+=" Pare o servidor para ativar ou liberar a porta Votifier.";
  button.hidden=!item.manageable;
- button.disabled=false;
+ button.disabled=!item.manageable||!stopped;
+ button.dataset.canEditNow=String(item.manageable===true&&stopped);
  button.dataset.enabled=String(reserved);
  button.dataset.pendingAction=item.pending
   ?(item.pending_drop?"disable":"enable"):"";
@@ -132,7 +136,7 @@ async function load(){
   const d=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(d.message||`HTTP ${r.status}`);
   renderPorts(d.ports||[]);
-  renderVotifier(d.votifier);
+  renderVotifier(d.votifier,d.status);
   const c=d.connection;
   if(!c){
    address.textContent="Acesso público ainda não configurado";
@@ -147,6 +151,9 @@ async function load(){
   const source=c.source==="dns"?"Acesso por DNS":"Acesso por IPv4 público";
   detail.textContent=`${source} · ${String(c.protocol||"udp").toUpperCase()} · Agent ${String(d.agent_health||"unknown").toUpperCase()}`;
  }catch(e){
+  // A failed refresh must never leave a previously enabled action clickable.
+  const toggle=document.getElementById("customer-votifier-toggle");
+  if(toggle){toggle.disabled=true;toggle.dataset.canEditNow="false";}
   address.textContent="Endereço indisponível";
   address.dataset.address="";
   detail.textContent=e.message;
