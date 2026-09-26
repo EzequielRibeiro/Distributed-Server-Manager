@@ -103,18 +103,18 @@ class ContentRepository:
     marker=meta.get("bundle") if isinstance(meta,dict) else None
     if isinstance(marker,dict) and marker.get("parent_content_id")==parent["content_id"] and waiting(child):
      raise ContentValidationError("A instalação das dependências do modpack está em andamento. Aguarde a confirmação do Agent.")
- def put(self,raw:Mapping[str,Any],*,requested_by:str|None=None):
+ def put(self,raw:Mapping[str,Any],*,requested_by:str|None=None,customer_install_guard=False):
   body=dict(raw or {});instance_id=str(body.get("instance_id") or "").strip();inst=self._instance(instance_id)
   if inst is None:raise ContentValidationError("instance does not exist")
   item=self._prepare_assignment(body,inst);now=utc_now()
   with self.backend.transaction() as c:
    s=AlertSession(self.backend,c)
    try:
-    self._guard_parallel_modpack_session(s,instance_id,item["content_id"],dict(inst).get("game_id"))
+    if customer_install_guard:self._guard_parallel_modpack_session(s,instance_id,item["content_id"],dict(inst).get("game_id"))
     stored,changed=self._write_assignment_session(s,item,self._existing_session(s,item["instance_id"],item["content_id"]),requested_by,now)
    finally:s.close()
   return {"assignment":self.get(item["instance_id"],item["content_id"]),"changed":changed}
- def put_many(self,raws:list[Mapping[str,Any]],*,requested_by:str|None=None):
+ def put_many(self,raws:list[Mapping[str,Any]],*,requested_by:str|None=None,customer_install_guard=False):
   bodies=[dict(raw or {}) for raw in (raws or [])]
   if not bodies:raise ContentValidationError("content assignments are required")
   instance_ids={str(body.get("instance_id") or "").strip() for body in bodies}
@@ -134,13 +134,14 @@ class ContentRepository:
   with self.backend.transaction() as c:
    s=AlertSession(self.backend,c)
    try:
-    for item in items:self._guard_parallel_modpack_session(s,instance_id,item["content_id"],dict(inst).get("game_id"))
+    if customer_install_guard:
+     for item in items:self._guard_parallel_modpack_session(s,instance_id,item["content_id"],dict(inst).get("game_id"))
     for item in items:
      _,changed=self._write_assignment_session(s,item,self._existing_session(s,item["instance_id"],item["content_id"]),requested_by,now);changed_any|=changed
    finally:s.close()
   stored=[self.get(instance_id,item["content_id"]) for item in items]
   return {"assignments":stored,"changed":changed_any}
- def put_bundle(self,parent_raw:Mapping[str,Any],bundle_raw:Mapping[str,Any],children_raw:list[Mapping[str,Any]],*,requested_by:str|None=None):
+ def put_bundle(self,parent_raw:Mapping[str,Any],bundle_raw:Mapping[str,Any],children_raw:list[Mapping[str,Any]],*,requested_by:str|None=None,customer_install_guard=False):
   parent_body=dict(parent_raw or {});instance_id=str(parent_body.get("instance_id") or "").strip();inst=self._instance(instance_id)
   if inst is None:raise ContentValidationError("instance does not exist")
   if str(dict(inst).get("game_id") or "").strip().lower()!="minecraft":raise ContentValidationError("content bundles currently require Minecraft")
@@ -164,7 +165,7 @@ class ContentRepository:
   with self.backend.transaction() as c:
    s=AlertSession(self.backend,c)
    try:
-    self._guard_parallel_modpack_session(s,instance_id,parent["content_id"],dict(inst).get("game_id"))
+    if customer_install_guard:self._guard_parallel_modpack_session(s,instance_id,parent["content_id"],dict(inst).get("game_id"))
     existing_bundle_row=s.execute(f"SELECT * FROM content_bundles WHERE instance_id={self.ph} AND parent_content_id={self.ph}",(instance_id,parent["content_id"])).fetchone();existing_bundle=dict(existing_bundle_row) if existing_bundle_row else None
     if (existing_bundle and parent_body["desired_state"]=="installed"
         and str(existing_bundle.get("manifest_kind") or "")=="serverpack-local-v1"):

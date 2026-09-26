@@ -19,16 +19,16 @@ class ParallelModpackGuardTest(unittest.TestCase):
     status=status,installed_version=value.get('version'),security_state='clean')])
  def test_blocks_other_install_until_parent_and_child_are_applied(self):
   with self.assertRaisesRegex(ContentValidationError,'modpack'):
-   self.repo.put(self.owner.assignment('1'))
+   self.repo.put(self.owner.assignment('1'),customer_install_guard=True)
   self.assertIsNone(self.repo.get('inst','mod-one'))
   self.report('pack','applied')
   with self.assertRaisesRegex(ContentValidationError,'dependências'):
-   self.repo.put(self.owner.assignment('1'))
+   self.repo.put(self.owner.assignment('1'),customer_install_guard=True)
   self.report('child-a','applied')
-  self.assertTrue(self.repo.put(self.owner.assignment('1'))['changed'])
+  self.assertTrue(self.repo.put(self.owner.assignment('1'),customer_install_guard=True)['changed'])
  def test_parent_terminal_failure_releases_other_install(self):
   self.report('pack','failed')
-  self.assertTrue(self.repo.put(self.owner.assignment('1'))['changed'])
+  self.assertTrue(self.repo.put(self.owner.assignment('1'),customer_install_guard=True)['changed'])
  def test_same_parent_revision_semantics_preserved(self):
   result=self.repo.put_bundle(self.owner.parent('2'),fixture._bundle('v2',[fixture._member('child-a')]),
                               [self.owner.child('child-a')])

@@ -48,6 +48,11 @@ class _ExternalContentRedirectHandler(HTTPRedirectHandler):
   return super().redirect_request(req,fp,code,msg,headers,newurl)
 
 class CustomerContentUploadService:
+ def _customer_guard_options(self):
+  # Test fakes and internal repository work retain their existing interface;
+  # only authenticated customer writes request the transactional gate.
+  return {"customer_install_guard":True} if isinstance(self.content,ContentRepository) else {}
+
  def __init__(self,backend,root):
   self.backend=backend;self.root=Path(root);self.workspace=CustomerInstanceWorkspaceService(backend,self.root);self.transfers=ArtifactTransferRepository(backend,self.root);self.content=ContentRepository(backend)
  def _access(self,user,instance_id):
@@ -337,7 +342,7 @@ class CustomerContentUploadService:
     parent_meta=dict(parent.get("metadata") or {})
     parent_meta["revision_source"]={"kind":"external-upload","filename":name,"transfer_id":tid}
     parent["metadata"]=parent_meta
-    result=self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"))
+    result=self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"),**self._customer_guard_options())
     result["manifest_diff"]=diff
     result["previous_bundle_revision"]=previous_bundle_revision if result.get("changed") else None
     result["revision_source"]="external-upload"
@@ -367,7 +372,7 @@ class CustomerContentUploadService:
     history_before=self.content.bundle_history(iid,content_id)
     previous_bundle_revision=int(history_before[0]["revision"]) if history_before else None
     diff=self.content.bundle_diff(iid,content_id,bundle)
-    result=self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"))
+    result=self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"),**self._customer_guard_options())
     result["serverpack_preview"]=preview
     result["manifest_diff"]=diff
     result["previous_bundle_revision"]=previous_bundle_revision if result.get("changed") else None
@@ -379,11 +384,11 @@ class CustomerContentUploadService:
   actor=str(user.get("username") or "customer")
   extras=[dict(value) for value in (extra_assignments or []) if isinstance(value,Mapping)]
   if extras:
-   result=self.content.put_many([*extras,payload],requested_by=actor)
+   result=self.content.put_many([*extras,payload],requested_by=actor,**self._customer_guard_options())
    result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==content_id)
    result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=content_id]
    return result
-  return self.content.put(payload,requested_by=actor)
+  return self.content.put(payload,requested_by=actor,**self._customer_guard_options())
 
  def finalize_dayz_community_map(self,user,transfer_id,body:Mapping[str,Any],dependency_assignments):
   item=self._transfer(user,transfer_id)
