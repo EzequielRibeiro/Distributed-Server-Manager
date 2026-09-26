@@ -128,10 +128,12 @@ class ContentRepository:
    s=AlertSession(self.backend,c)
    try:
     existing_bundle_row=s.execute(f"SELECT * FROM content_bundles WHERE instance_id={self.ph} AND parent_content_id={self.ph}",(instance_id,parent["content_id"])).fetchone();existing_bundle=dict(existing_bundle_row) if existing_bundle_row else None
-    if existing_bundle and parent_body["desired_state"]=="installed":
-     # A new modpack revision is not a clean server reinstall: keep all
-     # existing configurations (including customer edits) in their current
-     # location; the newly published defaults remain staged, not projected.
+    if (existing_bundle and parent_body["desired_state"]=="installed"
+        and str(existing_bundle.get("manifest_kind") or "")=="serverpack-local-v1"):
+     # Official Server Pack updates and their rollbacks must never project
+     # new ZIP defaults on top of existing customer configurations. Other
+     # managed providers retain their established safe, ownership-checked
+     # override update behavior for unmodified default configurations.
      revised_metadata=dict(parent_body.get("metadata") or {})
      revised_activation=dict(revised_metadata.get("activation") or {})
      revised_activation["mode"]="bundle-parent-preserve-config"

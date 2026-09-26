@@ -78,6 +78,55 @@ class ControllerIncrementalUpdateTest(unittest.TestCase):
             s._serverpack_capacity(CONTEXT,"atm11-copy",[])
         s._serverpack_capacity(CONTEXT,"atm11",[])
 
+    def test_official_serverpack_updates_and_rollback_keep_existing_config(self):
+        owner=SQLiteFixture()
+        owner.setUp()
+        try:
+            db=owner.repo
+            def pack(file_id,version_digest):
+                member={"provider":"local","serverpack_child_v1":True,
+                        "ephemeral_upload":True,"bundle_parent_content_id":"pack",
+                        "bundle_member":"mods/example.jar","serverpack_loader":"neoforge",
+                        "serverpack_loader_version":"26.1.2.109",
+                        "sha256":version_digest*64,"size_bytes":8}
+                parent={"instance_id":"inst","content_id":"pack","content_type":"modpack",
+                        "provider":"local","version":file_id,
+                        "artifact":{"provider":"local","archive":True,
+                                    "package_id":"quarantine/"+file_id,
+                                    "sha256":version_digest*64}}
+                bundle={"provider":"local","provider_project_id":"cf-1148445",
+                        "provider_version_id":"file-"+file_id,
+                        "minecraft_version":"26.1.2","loader_id":"neoforge",
+                        "loader_version":"26.1.2.109",
+                        "manifest_kind":"serverpack-local-v1",
+                        "members":[{"content_id":"example","path":"mods/example.jar",
+                                    "required":True,"artifact":member}],
+                        "override_roots":["server-overrides"]}
+                child={"instance_id":"inst","content_id":"example",
+                       "content_type":"mod","provider":"local",
+                       "version":version_digest*32,"artifact":member,
+                       "target":"mods/example","dependencies":["pack"]}
+                return parent,bundle,[child]
+            parent1,bundle1,children1=pack("1","a")
+            initial=db.put_bundle(parent1,bundle1,children1)
+            self.assertEqual(initial["assignment"]["metadata"]["activation"]["mode"],
+                             "bundle-parent")
+            parent2,bundle2,children2=pack("2","b")
+            updated=db.put_bundle(parent2,bundle2,children2)
+            self.assertEqual(updated["assignment"]["metadata"]["activation"]["mode"],
+                             "bundle-parent-preserve-config")
+            self.assertEqual(updated["assignment"]["instance_id"],"inst")
+            self.assertEqual(updated["assignment"]["content_id"],"pack")
+            self.assertEqual(db.get("inst","example")["version"],"b"*32)
+            rolled=db.rollback_bundle("inst","pack",1,
+                                      reason="new modpack version failed")
+            self.assertEqual(rolled["bundle_revision"],3)
+            self.assertEqual(db.get("inst","pack")["metadata"]["activation"]["mode"],
+                             "bundle-parent-preserve-config")
+            self.assertEqual(db.get("inst","example")["version"],"a"*32)
+        finally:
+            owner.tearDown()
+
     def test_existing_bundle_stays_same_instance_and_retains_revision_rollback(self):
         owner=SQLiteFixture()
         owner.setUp()
@@ -95,14 +144,14 @@ class ControllerIncrementalUpdateTest(unittest.TestCase):
             self.assertEqual(changed["assignment"]["instance_id"],"inst")
             self.assertEqual(changed["assignment"]["content_id"],"pack")
             self.assertEqual(changed["assignment"]["metadata"]["activation"]["mode"],
-                             "bundle-parent-preserve-config")
+                             "bundle-parent")
             self.assertEqual(db.get("inst","a")["desired_state"],"installed")
             reverted=db.rollback_bundle("inst","pack",1,requested_by="owner",
                                         reason="unexpected gameplay regression")
             self.assertEqual(reverted["bundle_revision"],3)
             self.assertEqual(db.get("inst","pack")["version"],"1")
             self.assertEqual(db.get("inst","pack")["metadata"]["activation"]["mode"],
-                             "bundle-parent-preserve-config")
+                             "bundle-parent")
             self.assertEqual(db.get("inst","new")["desired_state"],"absent")
         finally:
             owner.tearDown()
