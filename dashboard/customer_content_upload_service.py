@@ -229,6 +229,14 @@ class CustomerContentUploadService:
   iid=str(context.get("id") or "").strip()
   if not agent_id or not iid:raise ValueError("Agent/instância não foi identificado.")
   existing=self.content.list(agent_id=agent_id,limit=2000)
+  for assigned in existing:
+   if (str(assigned.get("instance_id") or "")==iid
+       and str(assigned.get("content_type") or "")=="modpack"
+       and str(assigned.get("content_id") or "")!=str(content_id)
+       and str(assigned.get("desired_state") or "installed")=="installed"
+       and str(assigned.get("activation_state") or "enabled")=="enabled"):
+    raise ValueError("Esta instância já possui um modpack ativo. Use o identificador "
+                     "do modpack existente para atualizar, sem criar outra instalação.")
   if len(existing)>=2000:raise ValueError("O Agent atingiu o limite de 2000 conteúdos gerenciados.")
   identities={(str(item.get("instance_id") or ""),str(item.get("content_id") or "")) for item in existing}
   requested={(iid,str(content_id))}|{(iid,str(child["content_id"])) for child in children}
