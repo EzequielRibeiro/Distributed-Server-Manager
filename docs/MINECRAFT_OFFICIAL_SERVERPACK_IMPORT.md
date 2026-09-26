@@ -305,11 +305,16 @@ conflitos como autorização automática de merge ou release.
   inspecionado na quarentena (1.925 entradas), confirmado no Controller;
   requisições sem autenticação foram negadas e a rejeição simulada limpou
   spool e quarentena. Uma regressão HTTP com ZIP sintético menor foi
-  adicionada ao workflow e aprovada localmente.
+  adicionada ao workflow e aprovada localmente. O mesmo ZIP oficial
+  também foi transferido por HTTPS de loopback, usando certificado
+  temporário explicitamente confiável. A regressão HTTP/HTTPS verifica
+  que o cliente rejeita certificados não confiáveis e preserva hash,
+  autenticação e limpeza.
 - **Concorrência:** o lock transacional do Controller bloqueia outras
   instalações enquanto o modpack ou seus filhos aguardam confirmação.
   Um teste com duas sessões concorrentes de banco SQLite confirmou
-  exatamente um pedido aceito; a regressão faz parte do workflow.
+  exatamente um pedido aceito; a regressão faz parte do workflow
+  `official-minecraft-serverpacks.yml`.
 - **Compatibilidade do modpack:** houve avisos/erros reproduzíveis de
   integração KubeJS/Architectury, Jade/Undergarden, loot tables SFM e
   Iron Furnaces, modificadores globais de loot e referências ausentes de
@@ -317,9 +322,9 @@ conflitos como autorização automática de merge ou release.
   *não* há ainda ensaio de cliente/gameplay demonstrando que essas
   funcionalidades estão operacionais. A mensagem Netty/kqueue afeta
   o appender de debug no Linux; a instância isolada prosseguiu.
-- **Escopo ainda não aprovado:** a conexão HTTP homologada foi de loopback
-  no host, *não* uma transferência autenticada entre dois computadores
-  por TLS com Agent cadastrado. Não houve provisionamento completo de
+- **Escopo ainda não aprovado:** as conexões HTTP e HTTPS homologadas
+  foram de loopback no host, *não* uma transferência autenticada entre
+  dois computadores por TLS com Agent cadastrado. Não houve provisionamento completo de
   nova instância sob o orquestrador distribuído em máquinas separadas nem
   teste funcional dos mods acima. Resolver esses gates e avaliar os avisos
   antes de aprovar deployment/release. Nunca usar a instância 003 como
