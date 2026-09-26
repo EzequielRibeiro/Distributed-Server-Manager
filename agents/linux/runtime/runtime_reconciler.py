@@ -185,6 +185,11 @@ def _reconcile_locked(config: dict[str, Any], record: dict[str, Any], normalized
 
 
 def reconcile_instance(config: dict[str, Any], instance_id: str, *, force: bool = False) -> dict[str, Any]:
+    from relocation_fence import locked
+    if locked(instance_id):
+        # Bypass all desired-state reconciliation, including direct adapter
+        # starts, until a matching Controller-ordered recovery clears the fence.
+        return {"instance_id": instance_id, "status": "relocation_fenced", "skipped": True}
     record = instance_runtime._owned(config, instance_id)
     normalized = validate_runtime_spec(record, expected_agent_id=str(config.get("agent_id") or ""))
     retry_at = _parse(record.get("reconcile_next_retry_at"))

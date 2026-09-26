@@ -92,6 +92,7 @@ CONTROLLER_STATIC_PATHS = frozenset({
     "/controller-instance-runtime-live.js",
     "/controller-instance-backup-transfer.js",
     "/controller-instance-activity.js",
+    "/controller-instance-relocation.js",
     "/catalog.html",
     "/catalog-v2.css",
     "/catalog-page.css",

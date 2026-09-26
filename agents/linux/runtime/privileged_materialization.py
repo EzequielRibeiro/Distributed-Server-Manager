@@ -169,3 +169,14 @@ def remove(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
 
 
 __all__ = ["materialize", "migrate_storage_copy", "migrate_storage_pool_copy", "remove"]
+
+
+def disable_relocation_source(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
+    normalized = validate_runtime_spec(spec, expected_agent_id=str(config.get("agent_id") or ""))
+    return _invoke("relocation-disable-unit", normalized)
+
+
+def restore_relocation_source(config: dict[str, Any], spec: dict[str, Any], *,
+                              restore_enabled: bool) -> dict[str, Any]:
+    normalized = validate_runtime_spec(spec, expected_agent_id=str(config.get("agent_id") or ""))
+    return _invoke("relocation-restore-unit", normalized, restore_enabled=bool(restore_enabled))

@@ -17,7 +17,7 @@ INSTANCE_DIR = STATE_DIR / "instances"
 RESULT_DIR = STATE_DIR / "instance-results"
 HISTORY_DIR = STATE_DIR / "instance-command-history"
 _TOKEN = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
-VALID_ACTIONS = {"status", "doctor", "save", "start", "stop", "restart", "remove"}
+VALID_ACTIONS = {"status", "doctor", "save", "start", "stop", "restart", "remove", "fence", "unfence"}
 LIFECYCLE_ACTIONS = {"start", "stop", "restart"}
 
 
@@ -121,6 +121,10 @@ def save(config:dict[str,Any],instance_id:str)->dict[str,Any]:
 def lifecycle(config: dict[str, Any], instance_id: str, action: str) -> dict[str, Any]:
     action=str(action or "").strip().lower()
     if action not in LIFECYCLE_ACTIONS:raise ValueError("unsupported instance lifecycle action")
+    if action in {"start", "restart"}:
+        from relocation_fence import locked
+        if locked(instance_id):
+            raise PermissionError("instance remains fenced for Agent relocation")
     from runtime_limits import runtime_limits
     from runtime_metrics import increment
     from runtime_operations import runtime_operation
@@ -161,6 +165,24 @@ def handle_command(config:dict[str,Any],command:dict[str,Any])->dict[str,Any]:
         elif action=="doctor":payload=doctor(config,instance_id)
         elif action=="save":payload=save(config,instance_id)
         elif action=="remove":payload=remove(config,instance_id)
+        elif str(command.get("requested_by") or "").startswith("relocation:"):
+            from relocation_fence import fence, unfence
+            from re import fullmatch
+            match = fullmatch(
+                r"(relocation:relocation-[0-9a-f]{32}):(source-fence|source-unfence|source-start|target-stop|target-start)",
+                str(command.get("requested_by") or ""),
+            )
+            if not match:
+                raise PermissionError("invalid relocation operation token")
+            token, phase = match.groups()
+            if phase == "source-fence" and action == "stop":
+                payload = fence(config, instance_id, token)
+            elif phase == "source-unfence" and action == "stop":
+                payload = unfence(config, instance_id, token)
+            elif (phase, action) in {("source-start","start"),("target-stop","stop"),("target-start","start")}:
+                payload = lifecycle(config, instance_id, action)
+            else:
+                raise PermissionError("invalid relocation lifecycle phase")
         else:payload=lifecycle(config,instance_id,action)
         result={"command_id":command_id,"instance_id":instance_id,"action":action,"status":"completed","result":payload,"generated_at":_now()}
     except Exception as exc:result={"command_id":command_id,"instance_id":instance_id or None,"action":action or None,"status":"failed","error":str(exc)[:2000],"generated_at":_now()}

@@ -42,6 +42,8 @@ def _reconcile_locked(config,record,normalized):
   latest=instance_runtime._owned(config,normalized["instance_id"]);updated=_save(latest,status="healthy",observed_state=observed,drift=None,retry_count=0,next_retry_at=None,error=None,recovery_action=action);increment("instance_recovered") if recovered else None;increment("reconcile_completed");_event("INSTANCE_RECOVERED",updated,{"desired_state":desired,"observed_state":observed,"action":action}) if recovered else None;return {"instance_id":normalized["instance_id"],"status":"healthy","desired_state":desired,"observed_state":observed,"recovered":recovered,"action":action,"retry_count":0}
  except Exception as exc:return _failure(config,instance_runtime.get_instance(normalized["instance_id"]) or record,exc,drift=drift)
 def reconcile_instance(config:dict[str,Any],instance_id:str,*,force:bool=False)->dict[str,Any]:
+ from relocation_fence import locked
+ if locked(instance_id):return {"instance_id":instance_id,"status":"relocation_fenced","skipped":True}
  record=instance_runtime._owned(config,instance_id);normalized=validate_runtime_spec(record,expected_agent_id=str(config.get("agent_id") or ""));retry_at=_parse(record.get("reconcile_next_retry_at"))
  if not force and retry_at is not None and retry_at>_now():return {"instance_id":normalized["instance_id"],"status":str(record.get("reconcile_status") or "retry_wait"),"retry_count":int(record.get("reconcile_retry_count") or 0),"next_retry_at":_stamp(retry_at),"skipped":True}
  started=time.monotonic()

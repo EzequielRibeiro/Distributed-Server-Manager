@@ -15,6 +15,7 @@ from instance_file_repository import InstanceFileRepository
 from configuration_repository import ConfigurationRepository
 from instance_workspace_policy import INSTANCE_PERMISSIONS,content_ui_sections,effective_content_policy,enforce_managed_content_mutation,require_permission,validate_server_settings,validate_startup_values
 from instance_workspace_repository import InstanceWorkspaceRepository
+from instance_agent_relocation_gate import require_unlocked
 from runtime_instance_projection import project_runtime_state
 from runtime_workspace_catalog import allowed_runtimes,contract_entitlements,runtime_workspace_capabilities
 
@@ -32,7 +33,11 @@ class CustomerInstanceWorkspaceService:
   if role in {"admin","controller"}:return set(INSTANCE_PERMISSIONS)
   if role!="customer":return set()
   return self.repo.effective_permissions_for(str(user.get("username") or ""),instance_id)
- def require(self,user,instance_id,permission):require_permission(self.permissions(user,instance_id),permission);return self.repo.instance_context(instance_id)
+ def require(self,user,instance_id,permission):
+  require_permission(self.permissions(user,instance_id),permission)
+  if permission not in {"instance.view","console.read","files.read","files.download","backup.read","startup.read","settings.read","content.read","team.read","contract.read"}:
+   require_unlocked(self.backend,instance_id)
+  return self.repo.instance_context(instance_id)
  def _ports(self,instance_id):
   ph=self.dialect.placeholder
   with self.backend.connect() as c:

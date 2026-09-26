@@ -196,8 +196,11 @@ def reconcile_instance_ports(
 
         other_rows = session.execute(
             "SELECT protocol,port FROM instance_ports "
-            f"WHERE node_id={ph} AND instance_id<>{ph}",
-            (instance["node_id"], str(instance_id)),
+            f"WHERE node_id={ph} AND instance_id<>{ph} "
+            "UNION ALL "
+            "SELECT protocol,port FROM instance_agent_relocation_port_holds "
+            f"WHERE node_id={ph}",
+            (instance["node_id"], str(instance_id), instance["node_id"]),
         ).fetchall()
         conflicts: dict[str, set[int]] = {"tcp": set(), "udp": set()}
         for row in other_rows:

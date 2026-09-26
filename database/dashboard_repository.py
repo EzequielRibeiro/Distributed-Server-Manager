@@ -24,6 +24,7 @@ from core.network.port_profile import PortProfile
 from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
 from customer_reference import resolve_customer_reference
+from instance_agent_relocation_gate import require_unlocked
 
 
 def _json_ready_value(value: Any) -> Any:
@@ -398,10 +399,12 @@ class DashboardRepository:
                     )
 
                 reserved_rows = session.execute(
-                    "SELECT protocol,port "
-                    "FROM instance_ports "
+                    "SELECT protocol,port FROM instance_ports "
+                    f"WHERE node_id={ph} "
+                    "UNION ALL "
+                    "SELECT protocol,port FROM instance_agent_relocation_port_holds "
                     f"WHERE node_id={ph}",
-                    (agent["node_id"],),
+                    (agent["node_id"], agent["node_id"]),
                 ).fetchall()
 
                 reserved: dict[str, set[int]] = {
@@ -601,6 +604,7 @@ class DashboardRepository:
 
     def delete_instance(self, instance_id: str) -> int:
         """Remove one instance and its operational relations transactionally."""
+        require_unlocked(self.backend, instance_id)
         ph = self.dialect.placeholder
 
         with self.session(transaction=True) as session:
@@ -749,6 +753,7 @@ class DashboardRepository:
         node_id: str,
         game_id: str,
     ) -> dict[str, Any]:
+        require_unlocked(self.backend, instance_id)
         ph = self.dialect.placeholder
         with self.session(transaction=True) as session:
             row = session.execute(
