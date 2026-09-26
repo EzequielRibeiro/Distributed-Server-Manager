@@ -183,6 +183,9 @@ def detect_capabilities() -> dict[str, object]:
         },
         "docker": docker,
         "wine": wine,
+        # Explicit protocol negotiation: old Agents must never accept a
+        # relocation STOP as a regular stop without durable startup fencing.
+        "instance_relocation_fence_v1": True,
         "backup": True,
         "mod-management": False,
     }

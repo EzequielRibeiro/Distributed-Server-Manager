@@ -20,6 +20,7 @@ from backup_intelligence import aggregate_health, evaluate_policy
 from backup_platform import BackupValidationError, normalize_policy
 from event_platform import utc_now
 from instance_backup_policy_defaults import default_instance_backup_policy
+from instance_agent_relocation_gate import require_unlocked, active_relocation
 
 
 def _datetime(value: Any) -> datetime | None:
@@ -102,6 +103,7 @@ class BackupRepository:
             finally:session.close()
 
     def request(self, instance_id, *, action="create", backup_id=None, reason="manual", requested_by=None):
+        require_unlocked(self.backend, instance_id, requested_by=requested_by)
         instance=self._instance(instance_id)
         if instance is None:raise BackupValidationError("instance does not exist")
         aid=str(dict(instance).get("agent_id") or "");policy=self.get_policy(instance_id);command_id=str(uuid.uuid4());now=utc_now()
@@ -360,6 +362,7 @@ class BackupRepository:
         self._ensure_workspace_policies(agent_id)
         now_utc=datetime.fromtimestamp(float(now_epoch),tz=timezone.utc) if now_epoch is not None else datetime.now(timezone.utc);now_value=now_utc.timestamp();created=[]
         for policy in self.list_policies(agent_id=agent_id):
+            if active_relocation(self.backend, policy["instance_id"]):continue
             if not policy["enabled"]:continue
             jobs=self.list_effective_jobs(instance_id=policy["instance_id"],limit=100)
             if any(job["status"] in {"pending","running"} for job in jobs):continue
@@ -377,6 +380,9 @@ class BackupRepository:
         self.schedule_due(agent_id);output=[]
         for job in reversed(self.list_jobs(agent_id=agent_id,status="pending",limit=100)):
             policy=self.get_policy(job["instance_id"])
+            if str(job.get("reason") or "").startswith("agent_relocation:") and job["action"] == "create":
+                policy={**(policy or {}), "enabled":True, "mode":"full", "consistency":"stopped",
+                        "compression":"gzip", "include_paths":[], "exclude_paths":[], "retention_count":7}
             output.append({"schema_version":1,"kind":"CapivaraBackupCommand","command_id":job["command_id"],"action":job["action"],"instance_id":job["instance_id"],"agent_id":agent_id,"backup_id":job.get("backup_id"),"reason":job.get("reason"),"policy":policy or {},"requested_by":job.get("requested_by")})
         return output
 

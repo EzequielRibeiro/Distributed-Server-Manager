@@ -134,6 +134,8 @@ class AgentInstanceProvisioningRepository:
                 raise ValueError("required_storage_bytes must be an integer") from exc
             if required_storage_bytes < 0:
                 raise ValueError("required_storage_bytes cannot be negative")
+        from instance_agent_relocation_gate import require_unlocked
+        require_unlocked(self.backend, instance_id, requested_by=requested_by)
         requested_capacity = int(required_storage_bytes or 0)
 
         ph = self.dialect.placeholder

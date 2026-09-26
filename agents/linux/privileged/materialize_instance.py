@@ -642,6 +642,33 @@ def run(instance_id: str) -> dict[str, Any]:
         server_settings = materialize_server_settings(spec)
         server_settings.extend(materialize_dynamic_values(spec))
         operation = materializer.apply(spec)
+    elif action in {"relocation-disable-unit", "relocation-restore-unit"}:
+        import subprocess
+        if str(spec.get("adapter") or "") != "systemd":
+            raise RuntimeError("relocation startup fencing requires a managed systemd unit")
+        inspection = materializer.inspect(spec)
+        if not inspection.get("exists") or not inspection.get("owned"):
+            raise PermissionError("refusing to change startup of an unowned unit")
+        unit = str(inspection["unit"])
+        if action == "relocation-disable-unit":
+            args = ["systemctl", "disable", unit]
+        else:
+            state = subprocess.run(
+                ["systemctl", "show", unit, "--property=ActiveState", "--value"],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            if state.returncode or state.stdout.strip() != "inactive":
+                raise RuntimeError("source must remain inactive to restore startup policy")
+            restore = request.get("restore_enabled")
+            if type(restore) is not bool:
+                raise ValueError("explicit prior enabled state required")
+            args = ["systemctl", "enable" if restore else "disable", unit]
+        result = subprocess.run(args, capture_output=True, text=True,
+                                timeout=30, check=False)
+        if result.returncode:
+            raise RuntimeError((result.stderr or result.stdout or "systemctl failed")[:500])
+        operation = {"unit": unit, "disabled": action == "relocation-disable-unit",
+                     "restore_enabled": request.get("restore_enabled")}
     elif action == "remove":
         operation = materializer.remove(spec)
         removed_dayz_mod_aliases = _remove_dayz_mod_aliases(spec)

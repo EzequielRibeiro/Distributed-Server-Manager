@@ -4,6 +4,7 @@ from __future__ import annotations
 import json,uuid
 from alert_repository import AlertSession,dialect_for_backend
 from core.effective_resource_policy import normalize_resource_policy
+from instance_agent_relocation_gate import require_unlocked
 
 class InstanceResourceRepository:
     def __init__(self,backend):self.backend=backend;self.dialect=dialect_for_backend(backend)
@@ -18,6 +19,7 @@ class InstanceResourceRepository:
     def enqueue(self,agent_id,instance_id,profile_id,resources,requested_by=None):
         agent_id=str(agent_id or "").strip();instance_id=str(instance_id or "").strip();profile_id=str(profile_id or "").strip()
         if not all((agent_id,instance_id,profile_id)):raise ValueError("agent_id, instance_id and profile_id are required")
+        require_unlocked(self.backend, instance_id, requested_by=requested_by)
         resources=normalize_resource_policy(dict(resources or {})).agent_resources();self.initialize();ph=self.dialect.placeholder;cid="resource-cmd-"+uuid.uuid4().hex
         if not resources:raise ValueError("resource policy has no enforceable limits")
         with self.backend.transaction() as c:

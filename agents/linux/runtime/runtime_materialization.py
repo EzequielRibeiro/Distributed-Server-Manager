@@ -24,6 +24,9 @@ def materialize(config:dict[str,Any],spec:dict[str,Any])->dict[str,Any]:
   emit_runtime_event(_state_dir(),"INSTANCE_RUNTIME_FAILED",instance_id=normalized["instance_id"],agent_id=agent_id,data={"phase":"materialize","error":str(exc)[:2000]});raise
 
 def reconcile(config:dict[str,Any],instance_id:str)->dict[str,Any]:
+ from relocation_fence import locked
+ if locked(instance_id):
+  raise PermissionError("runtime reconciliation is disabled while relocation source is fenced")
  record=instance_runtime._owned(config,instance_id);projected=_project(record)
  if projected!=record:record=instance_runtime.register_instance(projected)
  normalized=validate_runtime_spec(record,expected_agent_id=str(config.get("agent_id") or ""));materializer=resolve_materializer(normalized);content_files=materialize_content_activation(normalized);materialized=materializer.inspect(normalized)

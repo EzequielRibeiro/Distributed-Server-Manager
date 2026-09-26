@@ -76,6 +76,7 @@ DASHBOARD_V3_FILES = {
     "/controller-instance-runtime-live.js": legacy.WEB_DIR / "customer-instance-runtime-live.js",
     "/controller-instance-backup-transfer.js": legacy.WEB_DIR / "customer-backup-transfer.js",
     "/controller-instance-activity.js": legacy.WEB_DIR / "customer-instance-activity.js",
+    "/controller-instance-relocation.js": legacy.WEB_DIR / "controller-instance-relocation.js",
     "/catalog.html": legacy.WEB_DIR / "catalog.html",
     "/catalog-page.css": legacy.WEB_DIR / "catalog-page.css",
     "/catalog-installation.css": legacy.WEB_DIR / "catalog-installation.css",
