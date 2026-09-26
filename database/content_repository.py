@@ -74,7 +74,8 @@ class ContentRepository:
 
   Called *inside* the assignment write transaction: SQLite uses BEGIN IMMEDIATE,
   and server databases lock the instance row before reading Agent state.
-  Updates to the existing parent keep their established revision semantics.
+  Any in-flight modpack, including the requested parent, blocks a second
+  customer write until the Agent reports the parent and all child outcomes.
   """
   if str(game_id or "").lower()!="minecraft":return
   if self.backend.name!="sqlite":

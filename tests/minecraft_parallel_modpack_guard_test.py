@@ -1,5 +1,6 @@
 """Persistence-level installation lock for independent Minecraft content changes."""
 from __future__ import annotations
+import threading
 import unittest
 from tests import universal_content_update_rollback_test as fixture
 from content_platform import ContentValidationError
@@ -44,6 +45,34 @@ class ParallelModpackGuardTest(unittest.TestCase):
    self.repo.put_bundle(self.owner.parent('3'),
       fixture._bundle('v3',[fixture._member('child-a')]),
       [self.owner.child('child-a')],customer_install_guard=True)
+
+ def test_two_concurrent_customer_sessions_allow_only_one_update(self):
+  # Two independent Controller requests share SQLite but not an HTTP session.
+  # BEGIN IMMEDIATE serializes their writes; the losing request must detect
+  # the first request's unacknowledged modpack revision.
+  from content_repository import ContentRepository
+  self.report('pack','applied')
+  self.report('child-a','applied')
+  repo2=ContentRepository(self.owner.backend)
+  start=threading.Barrier(3)
+  results=[]
+  def attempt(repo,version):
+   try:
+    start.wait(timeout=5)
+    value=repo.put_bundle(self.owner.parent(version),
+     fixture._bundle('v'+version,[fixture._member('child-a')]),
+     [self.owner.child('child-a')],customer_install_guard=True)
+    results.append(('success',value['assignment']['revision']))
+   except ContentValidationError:results.append(('blocked',version))
+   except Exception as exc:results.append(('unexpected',repr(exc)))
+  threads=[threading.Thread(target=attempt,args=(repo,version))
+           for repo,version in ((self.repo,'2'),(repo2,'3'))]
+  for thread in threads:thread.start()
+  start.wait(timeout=5)
+  for thread in threads:thread.join(timeout=15)
+  self.assertTrue(all(not thread.is_alive() for thread in threads))
+  self.assertEqual(sorted(label for label,_ in results),['blocked','success'],results)
+  self.assertEqual(self.repo.get('inst','pack')['revision'],2)
 
 
 if __name__=='__main__':unittest.main()

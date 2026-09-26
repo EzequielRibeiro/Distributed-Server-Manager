@@ -31,6 +31,7 @@ on:
       - 'tests/minecraft_serverpack_*.py'
       - 'tests/minecraft_official_serverpack_upload_test.py'
       - 'tests/minecraft_serverpack_http_transfer_test.py'
+      - 'tests/minecraft_parallel_modpack_guard_test.py'
       - 'tests/universal_content_external_upload_test.py'
       - '.github/workflows/official-minecraft-serverpacks.yml'
   push:
@@ -64,6 +65,7 @@ on:
       - 'tests/minecraft_serverpack_*.py'
       - 'tests/minecraft_official_serverpack_upload_test.py'
       - 'tests/minecraft_serverpack_http_transfer_test.py'
+      - 'tests/minecraft_parallel_modpack_guard_test.py'
       - 'tests/universal_content_external_upload_test.py'
       - '.github/workflows/official-minecraft-serverpacks.yml'
 
@@ -120,6 +122,10 @@ jobs:
         env:
           PYTHONPATH: .
         run: python3 -m unittest tests.minecraft_serverpack_http_transfer_test -v
+      - name: Cross-session transactional modpack installation lock
+        env:
+          PYTHONPATH: .
+        run: python3 -m unittest tests.minecraft_parallel_modpack_guard_test -v
       - name: Existing upload and bundle regressions
         env:
           PYTHONPATH: .
