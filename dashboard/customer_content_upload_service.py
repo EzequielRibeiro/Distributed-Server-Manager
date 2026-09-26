@@ -113,9 +113,17 @@ class CustomerContentUploadService:
   return staged
  def discover_provider_modpack(self,user,instance_id,body):
   if not isinstance(body,Mapping):raise ValueError("Consulta de modpack inválida.")
-  context,effective,_=self._access(user,instance_id)
-  if str(context.get("game_id") or "").lower()!="minecraft" or not effective.modpacks_allowed or not effective.mods_allowed:
+  # Catalog discovery is available even when the contract forbids external
+  # uploads. Actual ZIP transfer still passes through _access().
+  context=self.workspace.require(user,instance_id,"content.install")
+  policy=self.workspace.repo.workspace_policy(instance_id)
+  _,effective=self.workspace._contract_policy(context,policy)
+  if (str(context.get("game_id") or "").lower()!="minecraft"
+      or not effective.modifications_allowed or not effective.modpacks_allowed
+      or not effective.mods_allowed):
    raise PermissionError("A instância não autoriza modpacks de Minecraft.")
+  if not str(context.get("agent_id") or "").strip():
+   raise ValueError("A instância ainda não possui Agent.")
   provider=str(body.get("provider") or "").strip().lower()
   project=str(body.get("project_id") or "").strip()
   version_id=str(body.get("version_id") or "").strip()
