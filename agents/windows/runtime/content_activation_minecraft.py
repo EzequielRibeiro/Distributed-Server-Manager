@@ -239,7 +239,7 @@ def _read_manifest(path: Path) -> list[str]:
     if not isinstance(payload, dict) or payload.get("kind") != "CapivaraContentFileProjection":
         raise MinecraftContentActivationError("invalid Minecraft activation manifest")
     targets = payload.get("targets")
-    if not isinstance(targets, list) or len(targets) > 512:
+    if not isinstance(targets, list) or len(targets) > 2000:
         raise MinecraftContentActivationError("invalid Minecraft activation manifest targets")
     result: list[str] = []
     for value in targets:
