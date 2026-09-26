@@ -71,7 +71,46 @@ def _jar_entries(path: Path) -> set[str]:
         ) from exc
 
 
-def _validate_minecraft(root: Path, files: list[Path], content_type: str) -> dict[str, Any]:
+def _verified_neoforge_language_library(path: Path, artifact: dict[str, Any]) -> bool:
+    """Allow NeoForge SPI language-library JARs only inside verified official packs.
+
+    A signed-language-provider library is deliberately not a conventional mod:
+    the SPI entry + FMLModType LIBRARY in its manifest are its metadata.
+    Normal local mod uploads must still contain standard mod descriptors.
+    The caller has already checked the official Server Pack parent, the
+    individual member SHA-256 and the scanner's clean verdict.
+    """
+    if not (artifact.get("serverpack_child_v1") is True
+            and artifact.get("serverpack_loader") == "neoforge"
+            and artifact.get("ephemeral_upload") is True):
+        return False
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names={name.casefold():name for name in archive.namelist()}
+            manifest=names.get("meta-inf/manifest.mf")
+            service=names.get("meta-inf/services/net.neoforged.neoforgespi.language.imodlanguageloader")
+            if not manifest or not service:
+                return False
+            if archive.getinfo(manifest).file_size>64*1024 or archive.getinfo(service).file_size>4096:
+                return False
+            lines=archive.read(manifest).decode("utf-8",errors="strict").splitlines()
+            if not any(line.strip().casefold()=="fmlmodtype: library" for line in lines):
+                return False
+            providers=[line.strip() for line in archive.read(service).decode("utf-8",errors="strict").splitlines()
+                       if line.strip() and not line.lstrip().startswith("#")]
+            if len(providers)!=1:
+                return False
+            provider=providers[0]
+            if (len(provider)>240 or any(not(part.isidentifier()) for part in provider.split("."))
+                    or (provider.replace(".","/")+".class").casefold() not in names):
+                return False
+            return True
+    except (OSError,ValueError,UnicodeError,zipfile.BadZipFile):
+        return False
+
+
+def _validate_minecraft(root: Path, files: list[Path], content_type: str,
+                        artifact: dict[str, Any] | None = None) -> dict[str, Any]:
     if content_type == "datapack":
         manifests = [
             item for item in files
@@ -108,6 +147,8 @@ def _validate_minecraft(root: Path, files: list[Path], content_type: str) -> dic
             "meta-inf/neoforge.mods.toml",
         }
         if not lowered.intersection(markers):
+            if artifact and _verified_neoforge_language_library(jars[0], artifact):
+                return {"validator": "minecraft-neoforge-language-library-v1", "jar": jars[0].name}
             raise ContentSemanticValidationError(
                 "uploaded JAR is not a recognized Minecraft mod"
             )
@@ -143,7 +184,7 @@ def validate_external_content_payload(
     if game_id == "minecraft":
         if content_type == "modpack" and artifact.get("serverpack_v1") is True:
             return validate_extracted_serverpack(payload, artifact)
-        return _validate_minecraft(payload, files, content_type)
+        return _validate_minecraft(payload, files, content_type, artifact)
 
     raise ContentSemanticValidationError(
         "external upload validation is not available for this game/content type"

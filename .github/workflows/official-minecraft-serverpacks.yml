@@ -24,6 +24,8 @@ on:
       - 'agents/common/minecraft_serverpack_agent.py'
       - 'agents/linux/runtime/content_client.py'
       - 'agents/windows/runtime/content_client.py'
+      - 'agents/linux/runtime/content_semantic_validation.py'
+      - 'agents/windows/runtime/content_semantic_validation.py'
       - 'tests/minecraft_modpack_source_discovery_test.py'
       - 'tests/minecraft_modpack_auto_source_test.py'
       - 'tests/minecraft_serverpack_*.py'
@@ -54,6 +56,8 @@ on:
       - 'agents/common/minecraft_serverpack_agent.py'
       - 'agents/linux/runtime/content_client.py'
       - 'agents/windows/runtime/content_client.py'
+      - 'agents/linux/runtime/content_semantic_validation.py'
+      - 'agents/windows/runtime/content_semantic_validation.py'
       - 'tests/minecraft_modpack_source_discovery_test.py'
       - 'tests/minecraft_modpack_auto_source_test.py'
       - 'tests/minecraft_serverpack_*.py'
@@ -84,7 +88,9 @@ jobs:
             agents/linux/runtime/content_activation_minecraft.py \
             agents/windows/runtime/content_activation_minecraft.py \
             dashboard/customer_content_workspace.py \
-            agents/common/minecraft_serverpack_agent.py
+            agents/common/minecraft_serverpack_agent.py \
+            agents/linux/runtime/content_semantic_validation.py \
+            agents/windows/runtime/content_semantic_validation.py
           node --check dashboard/web/customer-instance-v2.js
           node tests/customer_content_install_feedback.test.js
       - name: Provider contract and authorized staging tests
@@ -96,6 +102,7 @@ jobs:
             tests.minecraft_modpack_auto_source_test \
             tests.minecraft_official_serverpack_upload_test \
             tests.minecraft_serverpack_agent_test \
+            tests.minecraft_serverpack_language_library_test \
             tests.minecraft_serverpack_incremental_update_test \
             tests.minecraft_serverpack_inspection_test \
             tests.minecraft_serverpack_ui_contract_test \
