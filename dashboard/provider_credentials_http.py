@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import hmac
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,14 @@ def _key_path(root: Path) -> Path:
     return Path(root) / "config" / "providers" / "curseforge.key"
 
 
+def _test_status_path(root: Path) -> Path:
+    return Path(root) / "config" / "providers" / "curseforge-test-status.json"
+
+
+def _invalidate_test_status(root: Path) -> None:
+    _test_status_path(root).unlink(missing_ok=True)
+
+
 def _github_token_path(root: Path) -> Path:
     return Path(root) / "config" / "providers" / "github.token"
 
@@ -47,6 +56,50 @@ def _read_key(root: Path) -> str:
     if not value or "\n" in value or "\r" in value:
         raise ValueError("A chave CurseForge configurada é inválida.")
     return value
+
+
+def _test_status(root: Path) -> dict | None:
+    """Show only results bound to the unchanged credential on disk."""
+    try:
+        key_info = _key_path(root).stat()
+        saved = json.loads(_test_status_path(root).read_text(encoding="utf-8"))
+        if (not isinstance(saved, dict)
+                or saved.get("credential_mtime_ns") != key_info.st_mtime_ns
+                or saved.get("credential_inode") != key_info.st_ino
+                or type(saved.get("ok")) is not bool
+                or not isinstance(saved.get("checked_at"), str)
+                or not isinstance(saved.get("message"), str)):
+            return None
+        return {name: saved[name] for name in ("ok", "checked_at", "message")}
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _persist_test_status(root: Path, key_info, result: dict) -> None:
+    """Never store the credential or an irreversible hash of it."""
+    directory = _test_status_path(root).parent
+    directory.mkdir(parents=True, exist_ok=True)
+    document = {
+        "schema_version": 1, "credential_mtime_ns": key_info.st_mtime_ns,
+        "credential_inode": key_info.st_ino, "ok": bool(result["ok"]),
+        "message": str(result["message"])[:250],
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    fd, name = tempfile.mkstemp(prefix=".curseforge-test-", dir=str(directory), text=True)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(document, stream)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        # A concurrent credential change invalidates this test result.
+        current = _key_path(root).stat()
+        if (current.st_mtime_ns, current.st_ino) != (key_info.st_mtime_ns, key_info.st_ino):
+            return
+        os.replace(name, _test_status_path(root))
+    finally:
+        Path(name).unlink(missing_ok=True)
 
 
 def _validate_key(value) -> str:
@@ -73,6 +126,7 @@ def _write_key(root: Path, value) -> None:
             os.fsync(stream.fileno())
         os.replace(temporary, path)
         path.chmod(0o600)
+        _invalidate_test_status(root)
     except Exception:
         try:
             os.close(fd)
@@ -87,6 +141,7 @@ def _write_key(root: Path, value) -> None:
 
 def _remove_key(root: Path) -> None:
     _key_path(root).unlink(missing_ok=True)
+    _invalidate_test_status(root)
 
 
 def _write_secret(path: Path, value, *, label: str) -> None:
@@ -140,6 +195,7 @@ def _status(root: Path) -> dict:
         "configured": configured,
         "modified_at": modified_at,
         "secret_exposed": False,
+        "last_test": _test_status(root) if configured else None,
     }
 
 
@@ -311,8 +367,14 @@ def dispatch_curseforge_provider_post(payload, *, user, root: Path, requester=No
             _write_key(root, body.get("api_key"))
             return 200, {**_status(root), "message": "API key CurseForge salva com segurança."}
         if action == "test":
-            key = _validate_key(body.get("api_key")) if body.get("api_key") else _read_key(root)
+            submitted = bool(body.get("api_key"))
+            key = _validate_key(body.get("api_key")) if submitted else _read_key(root)
+            stored = _read_key(root)
+            key_info = _key_path(root).stat()
             result = _test_key(key, requester=requester)
+            # A temporary key must never replace the saved key's validation history.
+            if hmac.compare_digest(key, stored):
+                _persist_test_status(root, key_info, result)
             return (200 if result["ok"] else 400), {**_status(root), **result}
         if action == "remove":
             _remove_key(root)
