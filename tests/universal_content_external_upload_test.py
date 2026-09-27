@@ -66,6 +66,9 @@ class ExternalUploadTest(unittest.TestCase):
   self.assertIn("self.close_connection=True",http)
   self.assertIn("_UPLOAD_SLOTS.release()",http)
   self.assertIn("upload_slots_busy",http)
+  self.assertIn("shutil.disk_usage(legacy.DSM_ROOT)",http)
+  self.assertIn("_UPLOAD_DISK_RESERVE=5*1024**3",http)
+  self.assertIn("_UPLOAD_MAX_BYTES=8*1024**3",http)
  def test_external_url_surface_is_exposed_in_customer_workspace(self):
   http=(ROOT/"dashboard/customer_content_http.py").read_text(encoding="utf-8")
   js=(ROOT/"dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
