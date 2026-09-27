@@ -4,13 +4,14 @@ import sys
 import unittest
 from pathlib import Path
 from urllib.error import HTTPError
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "core"))
 sys.path.insert(0, str(ROOT / "dashboard"))
 
 from customer_modpack_source_discovery import discover_modpack, _cdn_url
-from minecraft_content_resolver import MinecraftContentResolverError
+from minecraft_content_resolver import MinecraftContentResolverError, _request_json
 
 MAIN = {"id": 123, "modId": 99, "isAvailable": True,
         "isServerPack": False, "serverPackFileId": 456,
@@ -56,6 +57,21 @@ def cf_fixture(*, project_override=None, main_override=None, pack_override=None,
 
 
 class ModpackDiscoveryTest(unittest.TestCase):
+    def test_curseforge_authentication_and_download_denials_are_distinct(self):
+        scenarios = (
+            ("https://api.curseforge.com/v1/mods/99", 401, "autenticação"),
+            ("https://api.curseforge.com/v1/categories", 403, "operação"),
+            ("https://api.curseforge.com/v1/mods/99/files/456/download-url", 403, "importação manual"),
+        )
+        for url, code, expected in scenarios:
+            with self.subTest(url=url, code=code):
+                with patch("minecraft_content_resolver.urlopen", side_effect=HTTPError(url, code, "Denied", None, None)):
+                    with self.assertRaisesRegex(MinecraftContentResolverError, expected) as caught:
+                        _request_json(url, {"x-api-key": "test-key"})
+                self.assertIsInstance(caught.exception.__cause__, HTTPError)
+                self.assertEqual(caught.exception.__cause__.code, code)
+                self.assertNotIn("test-key", str(caught.exception))
+
     def discover_cf(self, requester, version_ref=""):
         return discover_modpack("curseforge", "99", "26.1.2", "neoforge",
                                 version_ref, requester=requester,
