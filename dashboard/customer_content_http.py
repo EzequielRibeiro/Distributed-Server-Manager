@@ -3,6 +3,8 @@
 from __future__ import annotations
 import hashlib
 import json
+import socket
+import threading
 import time
 from urllib.parse import parse_qs,urlparse
 from urllib.request import HTTPRedirectHandler,Request,build_opener
@@ -30,6 +32,8 @@ UPLOAD_CANCEL=UPLOAD+"/cancel"
 UPDATE_POLICY=PATH+"/update-policy"
 UPDATE_POLICY_ITEM=UPDATE_POLICY+"/item"
 STREAM=PATH+"/stream"
+_UPLOAD_SLOTS=threading.BoundedSemaphore(2)
+_UPLOAD_IDLE_SECONDS=45
 
 
 ICON_HOST_SUFFIXES=(".modrinth.com",".forgecdn.net")
@@ -271,10 +275,30 @@ def install_customer_content_http(legacy,authenticate):
    if previous_put is not None:return previous_put(self)
    return send(self,404,{"error":"not_found"})
   user=require_user(self)
-  if user is None:return
+  if user is None:
+   self.close_connection=True
+   return
+  if not _UPLOAD_SLOTS.acquire(blocking=False):
+   self.close_connection=True
+   return send(self,503,{"error":"upload_slots_busy","message":"Limite de uploads simultâneos atingido. Tente novamente."})
+  previous_timeout=self.connection.gettimeout()
   try:
-   item=CustomerContentUploadService(backend(),legacy.DSM_ROOT).stage(user,one(parsed,"transfer_id"),self.rfile,content_length(self));return send(self,201,{"transfer":transfer_view(item)})
-  except Exception as exc:return error(self,exc)
+   # Idle sockets must never hold a Dashboard request thread indefinitely.
+   self.connection.settimeout(_UPLOAD_IDLE_SECONDS)
+   item=CustomerContentUploadService(backend(),legacy.DSM_ROOT).stage(
+    user,one(parsed,"transfer_id"),self.rfile,content_length(self))
+   return send(self,201,{"transfer":transfer_view(item)})
+  except (socket.timeout,TimeoutError,ConnectionError,EOFError):
+   self.close_connection=True
+   return None
+  except Exception as exc:
+   self.close_connection=True
+   try:return error(self,exc)
+   except (BrokenPipeError,ConnectionResetError,OSError):return None
+  finally:
+   try:self.connection.settimeout(previous_timeout)
+   except OSError:pass
+   _UPLOAD_SLOTS.release()
  legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post;legacy.DashboardHandler.do_PUT=put
 
 __all__=["PATH","SEARCH","ICON","BUNDLE","UPLOAD","UPLOAD_URL","UPLOAD_PREVIEW","MODPACK_DISCOVER","MODPACK_SERVERPACK_DOWNLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","UPLOAD_CANCEL","UPDATE_POLICY","UPDATE_POLICY_ITEM","STREAM","install_customer_content_http"]
