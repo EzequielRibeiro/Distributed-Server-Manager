@@ -160,7 +160,15 @@ class CustomerContentUploadService:
  def stage(self,user,transfer_id,source,content_length):
   item=self._transfer(user,transfer_id)
   if str(item.get("status") or "")!="staging":raise ValueError("content upload is not pending")
-  return self.transfers.stage_from_controller(str(item["transfer_id"]),source,content_length)
+  try:
+   return self.transfers.stage_from_controller(str(item["transfer_id"]),source,content_length)
+  except Exception:
+   # An interrupted HTTP body otherwise leaves an indefinite 'staging'
+   # record with no indication to the customer. Never delete Agent data here:
+   # this transfer has not been queued or acknowledged yet.
+   try:self.transfers.fail_staging_upload(str(item["transfer_id"]),"Upload interrompido antes do recebimento completo pelo Controller.")
+   except Exception:pass
+   raise
  def status(self,user,transfer_id):return self._transfer(user,transfer_id)
  def cancel(self,user,transfer_id):
   item=self._transfer(user,transfer_id)
