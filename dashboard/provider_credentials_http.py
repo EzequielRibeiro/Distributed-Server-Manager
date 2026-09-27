@@ -369,11 +369,16 @@ def dispatch_curseforge_provider_post(payload, *, user, root: Path, requester=No
         if action == "test":
             submitted = bool(body.get("api_key"))
             key = _validate_key(body.get("api_key")) if submitted else _read_key(root)
-            stored = _read_key(root)
-            key_info = _key_path(root).stat()
+            stored = ""
+            key_info = None
+            try:
+                stored = _read_key(root)
+                key_info = _key_path(root).stat()
+            except ValueError:
+                pass
             result = _test_key(key, requester=requester)
             # A temporary key must never replace the saved key's validation history.
-            if hmac.compare_digest(key, stored):
+            if key_info is not None and hmac.compare_digest(key, stored):
                 _persist_test_status(root, key_info, result)
             return (200 if result["ok"] else 400), {**_status(root), **result}
         if action == "remove":
