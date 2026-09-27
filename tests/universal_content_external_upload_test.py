@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib,io,json,socket,sys,tempfile,unittest,zipfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock,patch
 ROOT=Path(__file__).resolve().parents[1]
 for path in (ROOT/"dashboard",ROOT/"database",ROOT/"core"):
  if str(path) not in sys.path:sys.path.insert(0,str(path))
 from customer_content_upload_service import CustomerContentUploadService,_safe_external_url
+import customer_content_http as upload_http
 
 class _Workspace:
  def __init__(self,policy=None):
@@ -58,6 +59,34 @@ class ExternalUploadTest(unittest.TestCase):
     _safe_external_url("https://example.com/pack.mrpack")
   with patch("customer_content_upload_service.socket.getaddrinfo",return_value=[(socket.AF_INET,socket.SOCK_STREAM,6,"",("8.8.8.8",443))]):
    self.assertEqual(_safe_external_url("https://example.com/pack.mrpack"),"https://example.com/pack.mrpack")
+
+ def test_stalled_http_handler_releases_upload_slot(self):
+  # Exercise the installed PUT handler, not merely source-text inspection.
+  class Handler:
+   def do_GET(self):pass
+   def do_POST(self):pass
+   def send_json(self,status,data):self.sent=(status,data)
+  legacy=SimpleNamespace(
+   DashboardHandler=Handler,DATABASE_FILE="unused",DSM_ROOT=ROOT,
+   dashboard_repository=lambda _:SimpleNamespace(backend=object()))
+  upload_http.install_customer_content_http(
+   legacy,lambda _:{"role":"customer","username":"alice"})
+  handler=Handler();handler.path=upload_http.UPLOAD+"?transfer_id=transfer-1"
+  handler.headers={"Content-Length":"2"};handler.rfile=io.BytesIO(b"x")
+  handler.connection=Mock();handler.connection.gettimeout.return_value=None
+  handler.close_connection=False
+  with (patch.object(upload_http.shutil,"disk_usage",return_value=SimpleNamespace(free=100*1024**3)),
+        patch.object(upload_http,"CustomerContentUploadService") as service_cls):
+   service_cls.return_value.stage.side_effect=socket.timeout("client stopped sending")
+   handler.do_PUT()
+  self.assertTrue(handler.close_connection)
+  handler.connection.settimeout.assert_any_call(45)
+  handler.connection.settimeout.assert_any_call(None)
+  self.assertTrue(upload_http._UPLOAD_SLOTS.acquire(blocking=False))
+  self.assertTrue(upload_http._UPLOAD_SLOTS.acquire(blocking=False))
+  self.assertFalse(upload_http._UPLOAD_SLOTS.acquire(blocking=False))
+  upload_http._UPLOAD_SLOTS.release()
+  upload_http._UPLOAD_SLOTS.release()
 
  def test_upload_http_isolates_stalled_customer_connections(self):
   http=(ROOT/"dashboard/customer_content_http.py").read_text(encoding="utf-8")
