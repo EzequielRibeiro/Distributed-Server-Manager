@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import hashlib,io,json,socket,sys,tempfile,unittest,zipfile
+import hashlib,http.client,io,json,socket,sys,tempfile,threading,time,unittest,zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock,patch
@@ -59,6 +59,40 @@ class ExternalUploadTest(unittest.TestCase):
     _safe_external_url("https://example.com/pack.mrpack")
   with patch("customer_content_upload_service.socket.getaddrinfo",return_value=[(socket.AF_INET,socket.SOCK_STREAM,6,"",("8.8.8.8",443))]):
    self.assertEqual(_safe_external_url("https://example.com/pack.mrpack"),"https://example.com/pack.mrpack")
+
+ def test_real_socket_upload_slots_recover_after_stalled_clients(self):
+  from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+  class Handler(BaseHTTPRequestHandler):
+   protocol_version="HTTP/1.1"
+   def do_GET(self):self.send_json(404,{"error":"not_found"})
+   def do_POST(self):self.send_json(404,{"error":"not_found"})
+   def log_message(self,*args):pass
+   def send_json(self,status,data):
+    body=json.dumps(data).encode();self.send_response(status);self.send_header("Content-Type","application/json");self.send_header("Content-Length",str(len(body)));self.end_headers();self.wfile.write(body)
+  legacy=SimpleNamespace(DashboardHandler=Handler,DATABASE_FILE="unused",DSM_ROOT=ROOT,dashboard_repository=lambda _:SimpleNamespace(backend=object()))
+  upload_http.install_customer_content_http(legacy,lambda _:{"role":"customer","username":"alice"})
+  entered=threading.Event();count={"n":0};lock=threading.Lock()
+  def stage(*args):
+   with lock:
+    count["n"]+=1
+    if count["n"]>=2:entered.set()
+   time.sleep(.3);raise socket.timeout("simulated idle client")
+  with patch.object(upload_http.shutil,"disk_usage",return_value=SimpleNamespace(free=100*1024**3)),patch.object(upload_http,"CustomerContentUploadService") as service_cls:
+   service_cls.return_value.stage.side_effect=stage;server=ThreadingHTTPServer(("127.0.0.1",0),Handler);threading.Thread(target=server.serve_forever,daemon=True).start();port=server.server_address[1];sockets=[];conns=[]
+   try:
+    def partial(tid):
+     sock=socket.create_connection(("127.0.0.1",port));sockets.append(sock);sock.sendall(f"PUT {upload_http.UPLOAD}?transfer_id={tid} HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nx".encode())
+    partial("t1");partial("t2");self.assertTrue(entered.wait(1))
+    conn=http.client.HTTPConnection("127.0.0.1",port,timeout=2);conns.append(conn);conn.request("PUT",upload_http.UPLOAD+"?transfer_id=t3",body=b"xx",headers={"Content-Length":"2"});self.assertEqual(conn.getresponse().status,503)
+    time.sleep(.5);conn2=http.client.HTTPConnection("127.0.0.1",port,timeout=2);conns.append(conn2);conn2.request("PUT",upload_http.UPLOAD+"?transfer_id=t4",body=b"xx",headers={"Content-Length":"2"})
+    try:self.assertNotEqual(conn2.getresponse().status,503)
+    except http.client.RemoteDisconnected:pass
+    self.assertGreaterEqual(count["n"],3)
+   finally:
+    for item in conns+sockets:
+     try:item.close()
+     except Exception:pass
+    server.shutdown();server.server_close()
 
  def test_stalled_http_handler_releases_upload_slot(self):
   # Exercise the installed PUT handler, not merely source-text inspection.
