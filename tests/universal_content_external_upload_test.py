@@ -59,6 +59,13 @@ class ExternalUploadTest(unittest.TestCase):
   with patch("customer_content_upload_service.socket.getaddrinfo",return_value=[(socket.AF_INET,socket.SOCK_STREAM,6,"",("8.8.8.8",443))]):
    self.assertEqual(_safe_external_url("https://example.com/pack.mrpack"),"https://example.com/pack.mrpack")
 
+ def test_upload_http_isolates_stalled_customer_connections(self):
+  http=(ROOT/"dashboard/customer_content_http.py").read_text(encoding="utf-8")
+  self.assertIn("threading.BoundedSemaphore(2)",http)
+  self.assertIn("self.connection.settimeout(_UPLOAD_IDLE_SECONDS)",http)
+  self.assertIn("self.close_connection=True",http)
+  self.assertIn("_UPLOAD_SLOTS.release()",http)
+  self.assertIn("upload_slots_busy",http)
  def test_external_url_surface_is_exposed_in_customer_workspace(self):
   http=(ROOT/"dashboard/customer_content_http.py").read_text(encoding="utf-8")
   js=(ROOT/"dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
