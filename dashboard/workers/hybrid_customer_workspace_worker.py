@@ -308,9 +308,11 @@ def _cleanup_content_upload_artifact(
     if str(original.get("filename")) != str(item.get("filename")):
         raise ValueError("content upload cleanup filename mismatch")
     quarantine = _runtime_client(root, "content_upload_quarantine")
-    destination = quarantine.quarantine_destination(
-        instance_id, original_id, str(original["filename"]))
-    if destination.is_symlink():
+    # Inspect the lexical path before resolving it; resolving a symlink would
+    # hide that the quarantined filename was replaced with a link.
+    directory = quarantine.QUARANTINE_ROOT / instance_id / original_id
+    destination = directory / str(original["filename"])
+    if directory.resolve() != directory or destination.is_symlink():
         raise ValueError("content upload cleanup refuses symbolic links")
     destination.unlink(missing_ok=True)
     try:
