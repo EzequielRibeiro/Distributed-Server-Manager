@@ -77,3 +77,14 @@
 .content-install-wait{position:relative;padding:12px 12px 12px 38px;border:1px solid #42618c;border-radius:10px;background:#1a2a40;color:#dceaff;line-height:1.45}
 .content-install-wait::before{content:"";position:absolute;top:calc(50% - 8px);left:12px;width:16px;height:16px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:content-scan-spin .85s linear infinite}
 @media(prefers-reduced-motion:reduce){.content-install-wait::before{animation:none;border-right-color:currentColor}}
+
+
+/* Mobile-safe installation feedback occupies its own full-width grid row. */
+.content-result > .content-result-main{grid-column:1/-1}
+.content-result > .content-install-status{grid-column:1/-1;display:block;box-sizing:border-box;width:100%;min-width:0;max-width:100%;overflow-wrap:anywhere;white-space:normal;line-height:1.5;margin:0}
+.content-result > .content-install-status:empty{display:none}
+.content-result > .content-install-status.content-search-error{padding:12px;border:1px solid #92545b;border-radius:10px;background:#3a2229;color:#ffe0e3}
+.content-result > .btn{grid-column:1/-1;justify-self:stretch;width:100%}
+.content-result-installing > .btn[aria-busy="true"]::before{content:"";display:inline-block;width:15px;height:15px;vertical-align:-3px;margin-right:10px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:content-scan-spin .85s linear infinite}
+@media(max-width:520px){.content-result > .content-install-status{font-size:13px}.content-result > .content-install-status.content-install-animating{padding:10px 10px 10px 34px}}
+@media(prefers-reduced-motion:reduce){.content-result-installing > .btn[aria-busy="true"]::before{animation:none;border-right-color:currentColor}}
