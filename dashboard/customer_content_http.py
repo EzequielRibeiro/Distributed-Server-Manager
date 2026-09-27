@@ -3,6 +3,7 @@
 from __future__ import annotations
 import hashlib
 import json
+import shutil
 import socket
 import threading
 import time
@@ -34,6 +35,8 @@ UPDATE_POLICY_ITEM=UPDATE_POLICY+"/item"
 STREAM=PATH+"/stream"
 _UPLOAD_SLOTS=threading.BoundedSemaphore(2)
 _UPLOAD_IDLE_SECONDS=45
+_UPLOAD_MAX_BYTES=8*1024**3
+_UPLOAD_DISK_RESERVE=5*1024**3
 
 
 ICON_HOST_SUFFIXES=(".modrinth.com",".forgecdn.net")
@@ -88,7 +91,10 @@ def install_customer_content_http(legacy,authenticate):
   value=str(self.headers.get("Content-Length") or "").strip()
   if not value:raise ValueError("Content-Length is required")
   length=int(value)
-  if length<0 or length>64*1024*1024*1024:raise ValueError("content upload exceeds 64 GiB transfer limit")
+  if length<1 or length>_UPLOAD_MAX_BYTES:raise ValueError("O envio excede o limite de 8 GiB ou tem tamanho inválido.")
+  # Protect OS, database and other instances even with two concurrent uploads.
+  if shutil.disk_usage(legacy.DSM_ROOT).free < 2*length+_UPLOAD_DISK_RESERVE:
+   raise ValueError("Espaço insuficiente no Controller para receber o arquivo com reserva de segurança.")
   return length
  def transfer_view(item):return {k:item.get(k) for k in ("transfer_id","instance_id","direction","purpose","filename","status","size_bytes","transferred_bytes","sha256","last_error","expires_at")}
  def content_view(user,instance_id):
