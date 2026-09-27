@@ -22,6 +22,10 @@ class _Transfers:
  def create(self,**kw):self.created.append(kw);return dict(self.item)
  def get(self,tid):return dict(self.item)
  def stage_from_controller(self,tid,source,length):self.staged.append((tid,length,source.read()));self.item["status"]="queued";self.item["size_bytes"]=length;return dict(self.item)
+ def fail_staging_upload(self,tid,reason):
+  if self.item["status"]=="staging":
+   self.item["status"]="failed";self.item["last_error"]=reason
+  return dict(self.item)
  def controller_artifact(self,tid):
   if not self.artifact_path:raise FileNotFoundError(tid)
   return Path(self.artifact_path),dict(self.item)
@@ -72,6 +76,16 @@ class ExternalUploadTest(unittest.TestCase):
   with self.assertRaises(PermissionError):service(p).create({"username":"alice"},"i1","mod.zip")
  def test_stage_streams_through_artifact_repository(self):
   s=service();s.stage({"username":"alice"},"transfer-1",io.BytesIO(b"abc"),3);self.assertEqual(s.transfers.staged[-1],("transfer-1",3,b"abc"))
+ def test_interrupted_request_records_failure(self):
+  s=service()
+  def broken_stage(tid,source,length):
+   raise ValueError("artifact content length mismatch")
+  s.transfers.stage_from_controller=broken_stage
+  with self.assertRaisesRegex(ValueError,"length mismatch"):
+   s.stage({"username":"alice"},"transfer-1",io.BytesIO(b"abc"),518936896)
+  self.assertEqual(s.transfers.item["status"],"failed")
+  self.assertIn("interrompido",s.transfers.item["last_error"])
+  self.assertEqual(s.transfers.item["purpose"],"content_upload")
  def test_cancel_marks_transfer_cancelled(self):
   s=service(status="queued");item=s.cancel({"username":"alice"},"transfer-1");self.assertEqual(item["status"],"cancelled")
 
