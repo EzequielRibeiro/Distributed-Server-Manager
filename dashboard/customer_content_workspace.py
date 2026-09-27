@@ -17,6 +17,11 @@ _UPDATE_FIELDS=frozenset({"activation_state","activation_order","version","provi
 _ENVELOPE_FIELDS=frozenset({"instance_id","content_id","action"})
 
 class CustomerContentWorkspaceService:
+ def _customer_guard_options(self):
+  # Test fakes and internal repository work retain their existing interface;
+  # only authenticated customer writes request the transactional gate.
+  return {"customer_install_guard":True} if isinstance(self.content,ContentRepository) else {}
+
  def __init__(self,backend,root):
   self.workspace=CustomerInstanceWorkspaceService(backend,root);self.content=ContentRepository(backend);self.workshop_resolver=resolve_workshop_item;self.minecraft_resolver=resolve_minecraft_content;self.minecraft_discovery=discover_minecraft_content;self.modpack_resolver=resolve_minecraft_modpack
  def _context_policy_details(self,user,instance_id,permission):
@@ -324,7 +329,7 @@ class CustomerContentWorkspaceService:
   allowed=[str(value).strip().lower() for value in ((capabilities.get("providers") or {}).get(ctype) or []) if str(value).strip()]
   chain=[name for name in ("modrinth","curseforge") if name in allowed]
   if not chain:raise PermissionError("no searchable provider is available for this runtime/content type")
-  attempts=[]
+  attempts=[];combined=[];contributors=[];seen=set()
   for name in chain:
    try:
     results=self.search(user,instance_id,name,ctype,query,limit)
@@ -332,9 +337,27 @@ class CustomerContentWorkspaceService:
     attempts.append({"provider":name,"status":"unavailable","message":str(exc)[:300]})
     continue
    attempts.append({"provider":name,"status":"success" if results else "empty"})
-   if results:
-    return {"results":results,"count":len(results),"provider_used":name,"fallback":{"automatic":True,"attempts":attempts,"upload_recommended":False,"github_official_supported":True}}
-  return {"results":[],"count":0,"provider_used":None,"fallback":{"automatic":True,"attempts":attempts,"upload_recommended":True,"github_official_supported":True}}
+   if results:contributors.append(name)
+   for item in results:
+    identity=str(item.get("content_id") or "").strip() if isinstance(item,dict) else ""
+    if not identity or identity in seen:continue
+    seen.add(identity);combined.append(item)
+  # Search both catalogs: a loosely matching Modrinth result must not suppress
+  # an exact CurseForge match (e.g. All the Mods vs MrCrayfish modpacks).
+  normalized=lambda value:" ".join(str(value or "").casefold().split())
+  needle=normalized(query)
+  def relevance(item):
+   title=normalized(item.get("name"));slug=normalized(item.get("slug"))
+   if title==needle or slug==needle:return 0
+   if title.startswith(needle+" ") or slug.startswith(needle+"-"):return 1
+   if needle in title or needle in slug:return 2
+   return 3
+  combined.sort(key=lambda item:(relevance(item),-int(item.get("downloads") or 0),normalized(item.get("name"))))
+  try:max_results=max(1,min(int(limit),50))
+  except (TypeError,ValueError):max_results=20
+  selected=combined[:max_results]
+  source="multiple" if len(contributors)>1 else contributors[0] if contributors else None
+  return {"results":selected,"count":len(selected),"provider_used":source,"fallback":{"automatic":True,"attempts":attempts,"upload_recommended":not bool(selected),"github_official_supported":True,"degraded":any(x["status"]=="unavailable" for x in attempts)}}
 
  def dayz_community_workshop_dependencies(self,user,instance_id,workshop_items,activation_order=100):
   context,policy=self._context_policy(user,instance_id,"content.install")
@@ -391,7 +414,7 @@ class CustomerContentWorkspaceService:
   payload={"instance_id":instance_id,"content_id":content_id,"content_type":"map","provider":provider,"desired_state":"installed","activation_state":"enabled","activation_order":order,"artifact":artifact,"provenance":provenance,"metadata":{"community_map":{"name":str(body.get("name") or content_id).strip()[:191]}},"dependencies":dependencies}
   self._enforce_policy(payload,policy)
   actor=str(user.get("username") or "customer")
-  result=self.content.put_many([*items,payload],requested_by=actor)
+  result=self.content.put_many([*items,payload],requested_by=actor,**self._customer_guard_options())
   result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==content_id)
   result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=content_id]
   return result
@@ -402,11 +425,11 @@ class CustomerContentWorkspaceService:
   self._enforce_policy(payload,policy);self._enforce_structured_provider(context,payload)
   modpack=self._resolve_minecraft_modpack(context,payload)
   if modpack is not None:
-   parent,bundle,children=modpack;return self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"))
+   parent,bundle,children=modpack;return self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"),**self._customer_guard_options())
   self._resolve_workshop(context,payload);dependencies=self._resolve_workshop_dependencies(context,payload);self._resolve_minecraft_provider(context,payload);self._prepare_activation_defaults(context,payload);actor=str(user.get("username") or "customer")
   if dependencies:
-   result=self.content.put_many([*dependencies,payload],requested_by=actor);result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==str(payload.get("content_id") or ""));result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=str(payload.get("content_id") or "")];return result
-  return self.content.put(payload,requested_by=actor)
+   result=self.content.put_many([*dependencies,payload],requested_by=actor,**self._customer_guard_options());result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==str(payload.get("content_id") or ""));result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=str(payload.get("content_id") or "")];return result
+  return self.content.put(payload,requested_by=actor,**self._customer_guard_options())
 
  def prepare_clean_for_version_change(self,user,instance_id):
   """Remove customer-managed Minecraft content while preserving instance data."""
@@ -453,7 +476,7 @@ class CustomerContentWorkspaceService:
     history_before=self.content.bundle_history(instance_id,content_id);current_bundle_revision=int(history_before[0]["revision"]) if history_before else None
     if action=="preview-update":
      return {"preview":True,"changed":bool(diff["added"] or diff["removed"] or diff["updated"]),"assignment":current,"target":{"provider":provider,"project":project,"version":parent.get("version"),"provider_version_id":bundle.get("provider_version_id"),"minecraft_version":bundle.get("minecraft_version"),"loader_id":bundle.get("loader_id"),"loader_version":bundle.get("loader_version")},"manifest_diff":diff,"current_bundle_revision":current_bundle_revision}
-    self._mark_update_checkpoint(current,parent,bundle_revision=current_bundle_revision);result=self.content.put_bundle(parent,bundle,children,requested_by=actor);result["manifest_diff"]=diff;result["previous_bundle_revision"]=current_bundle_revision if result.get("changed") else None;return result
+    self._mark_update_checkpoint(current,parent,bundle_revision=current_bundle_revision);result=self.content.put_bundle(parent,bundle,children,requested_by=actor,**self._customer_guard_options());result["manifest_diff"]=diff;result["previous_bundle_revision"]=current_bundle_revision if result.get("changed") else None;return result
    raise ValueError("modpack reorder is not supported")
   payload=self._desired(current);payload["instance_id"]=instance_id
   if action=="remove":payload["desired_state"]="absent";payload["activation_state"]="disabled"
@@ -479,8 +502,8 @@ class CustomerContentWorkspaceService:
   if action=="update" and provider in {"steam","steam-workshop"}:
    dependencies=self._resolve_workshop_dependencies(context,payload)
    if dependencies:
-    result=self.content.put_many([*dependencies,payload],requested_by=actor);result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==content_id);result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=content_id];return result
-  return self.content.put(payload,requested_by=actor)
+    result=self.content.put_many([*dependencies,payload],requested_by=actor,**self._customer_guard_options());result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==content_id);result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=content_id];return result
+  return self.content.put(payload,requested_by=actor,**self._customer_guard_options())
 
 
 __all__=["CustomerContentWorkspaceService"]

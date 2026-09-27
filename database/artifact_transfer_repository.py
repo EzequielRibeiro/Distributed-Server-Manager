@@ -116,6 +116,17 @@ class ArtifactTransferRepository:
   ph=self.dialect.placeholder
   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET size_bytes={ph},transferred_bytes=0,sha256={ph},controller_path={ph},status='queued',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(total,digest,str(path),transfer_id))
   return self.get(transfer_id)
+ def fail_staging_upload(self,transfer_id,reason):
+  """Persist an interrupted Controller-side upload without touching Agent data."""
+  item=self.get(transfer_id)
+  if item.get("purpose")!="content_upload" or item.get("direction")!="controller_to_agent":
+   raise ValueError("transfer is not a content upload")
+  if item.get("status")!="staging":return item
+  ph=self.dialect.placeholder
+  message=str(reason or "Upload interrompido antes da conclusão.")[:1024]
+  with self.session(transaction=True) as s:
+   s.execute(f"UPDATE artifact_transfers SET status='failed',last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph} AND status='staging'",(message,transfer_id))
+  return self.get(transfer_id)
  def controller_artifact(self,transfer_id):
   item=self.get(transfer_id);path=Path(str(item.get("controller_path") or "")).resolve();path.relative_to(self.spool)
   if not path.is_file() or path.is_symlink():raise FileNotFoundError("artifact is not ready")

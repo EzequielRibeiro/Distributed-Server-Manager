@@ -11,7 +11,7 @@ class CustomerVotifierRunningGateTest(unittest.TestCase):
     def test_asset_is_cache_busted(self):
         html = (ROOT / "dashboard/web/customer-instance.html").read_text()
         wrapper = (ROOT / "dashboard/web/customer-instance-v2-wrapper.js").read_text()
-        self.assertIn("/customer-instance-v2.js?v=23", html)
+        self.assertIn("/customer-instance-v2.js?v=28",html)
         self.assertIn("/customer-instance-connection.js?v=3", wrapper)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
