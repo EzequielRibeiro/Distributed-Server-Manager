@@ -236,6 +236,38 @@ class HybridCustomerWorkspaceWorkerTest(unittest.TestCase):
         )
         self.assertEqual(result["status"], "completed")
 
+    def test_hybrid_cleanup_handles_rejected_upload_without_backup_import(self):
+        repository = Mock()
+        repository.command_for_agent.return_value = {
+            "transfer_id": "transfer-cleanup-1",
+            "direction": "controller_to_agent",
+            "purpose": "content_upload_cleanup",
+            "instance_id": "instance-1",
+            "source_ref": "transfer-content-1",
+            "filename": "server.zip",
+        }
+        repository.apply_agent_result.return_value = {"status": "completed"}
+        with (
+            patch("hybrid_customer_workspace_worker._hybrid_agent_config",
+                  return_value={"agent_id": "hybrid-1"}),
+            patch("hybrid_customer_workspace_worker.ArtifactTransferRepository",
+                  return_value=repository),
+            patch("hybrid_customer_workspace_worker._cleanup_content_upload_artifact"
+                  ) as cleanup,
+            patch("hybrid_customer_workspace_worker._install_controller_artifact"
+                  ) as backup_import,
+        ):
+            result = process_hybrid_artifact_cycle(self.backend, self.root, "hybrid-1")
+        cleanup.assert_called_once()
+        self.assertEqual(cleanup.call_args.args[-1], "hybrid-1")
+        backup_import.assert_not_called()
+        self.assertEqual(result["status"], "completed")
+        repository.apply_agent_result.assert_called_once_with("hybrid-1", {
+            "transfer_id": "transfer-cleanup-1",
+            "status": "completed",
+            "transferred_bytes": 0,
+        })
+
     def test_unknown_controller_to_agent_purpose_fails_closed(self):
         repository = Mock()
         repository.command_for_agent.return_value = {
