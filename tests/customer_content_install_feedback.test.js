@@ -118,3 +118,34 @@ assert(pending({bundle_summary:{child_count:2,reconciliation_statuses:{applied:1
   'a parent applied before children must retain the installation lock');
 assert(!pending({bundle_summary:{child_count:2,reconciliation_statuses:{applied:2}}}));
 assert(failed({bundle_summary:{child_count:2,reconciliation_statuses:{applied:1,failed:1}}}));
+
+
+ 
+// Upload status must persist in this tab and distinguish acceptance from installation.
+assert(source.includes('showContentUploadOutcome("failed",error.message||"Falha durante o envio ou validação."'),
+  "Upload failures must be recorded in a persistent status panel");
+assert(source.includes('showContentUploadOutcome("accepted","A solicitação foi registrada pelo Controller.'),
+  "Controller acceptance must not be described as successful game installation");
+assert(source.includes("box.append(uploadCard);renderContentUploadOutcome();"),
+  "The status must be restored when the upload panel is rebuilt");
+const outcomeStart=source.indexOf("const contentUploadOutcomeKey=");
+const outcomeEnd=source.indexOf("function uploadFileWithProgress(",outcomeStart);
+assert(outcomeStart>0&&outcomeEnd>outcomeStart);
+const saved=new Map();
+const storage={setItem:(k,v)=>saved.set(k,v),getItem:k=>saved.get(k)||null};
+let panel={hidden:true,className:"",textContent:""};
+const ctx={iid:"minecraft-003",$:id=>id==="content-upload-outcome"?panel:null,sessionStorage:storage};
+const outcome=vm.runInNewContext(source.slice(outcomeStart,outcomeEnd)+String.fromCharCode(10)+
+  "({show:showContentUploadOutcome,render:renderContentUploadOutcome})",ctx);
+outcome.show("failed","ZIP recusado pelo Agent","transfer-test-123");
+assert.equal(panel.hidden,false);
+assert.match(panel.textContent,/ZIP recusado pelo Agent/);
+assert.match(panel.textContent,/transfer-test-123/);
+panel={hidden:true,className:"",textContent:""};
+outcome.render();
+assert.equal(panel.hidden,false,"last failure must survive UI re-render");
+assert.match(panel.textContent,/não concluído/);
+outcome.show("accepted","Controller registrou a solicitação","transfer-test-124");
+assert.match(panel.textContent,/registrada/);
+assert(!panel.textContent.includes("instalado com sucesso"));
+console.log("PASS: persistent upload outcome survives re-render with correct failure and acceptance semantics");
