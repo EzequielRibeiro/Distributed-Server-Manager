@@ -65,6 +65,62 @@ class CurseForgeControllerSettingsTest(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual("Conexão com CurseForge validada.", payload["message"])
 
+    def test_last_test_persists_on_get_without_exposing_credential(self):
+        secret = "example-curseforge-key-123"
+        dispatch_curseforge_provider_post(
+            {"action": "save", "api_key": secret}, user=self.admin, root=self.root)
+        status, tested = dispatch_curseforge_provider_post(
+            {"action": "test"}, user=self.admin, root=self.root,
+            requester=lambda key: {"data": {"id": 432}} if key == secret else {})
+        self.assertEqual(status, 200)
+        status, refreshed = dispatch_curseforge_provider_get(user=self.admin, root=self.root)
+        self.assertEqual(status, 200)
+        self.assertTrue(refreshed["last_test"]["ok"])
+        self.assertTrue(refreshed["last_test"]["checked_at"])
+        self.assertEqual(refreshed["last_test"]["message"], tested["message"])
+        self.assertNotIn(secret, str(refreshed))
+        status_path = self.root / "config/providers/curseforge-test-status.json"
+        self.assertEqual(status_path.stat().st_mode & 0o777, 0o600)
+        self.assertNotIn(secret, status_path.read_text())
+
+    def test_failed_test_persists_then_key_rotation_and_removal_invalidate_it(self):
+        dispatch_curseforge_provider_post(
+            {"action": "save", "api_key": "old-curseforge-key"}, user=self.admin, root=self.root)
+        code, _ = dispatch_curseforge_provider_post(
+            {"action": "test"}, user=self.admin, root=self.root, requester=lambda key: {})
+        self.assertEqual(code, 400)
+        _, current = dispatch_curseforge_provider_get(user=self.controller, root=self.root)
+        self.assertFalse(current["last_test"]["ok"])
+        dispatch_curseforge_provider_post(
+            {"action": "save", "api_key": "rotated-curseforge-key"}, user=self.admin, root=self.root)
+        _, rotated = dispatch_curseforge_provider_get(user=self.admin, root=self.root)
+        self.assertIsNone(rotated["last_test"])
+        dispatch_curseforge_provider_post(
+            {"action": "test"}, user=self.admin, root=self.root,
+            requester=lambda key: {"data": {"id": 432}})
+        dispatch_curseforge_provider_post({"action": "remove"}, user=self.admin, root=self.root)
+        _, removed = dispatch_curseforge_provider_get(user=self.admin, root=self.root)
+        self.assertFalse(removed["configured"])
+        self.assertIsNone(removed["last_test"])
+        self.assertFalse((self.root / "config/providers/curseforge-test-status.json").exists())
+
+    def test_unsaved_candidate_and_stale_status_do_not_claim_saved_key_was_tested(self):
+        secret = "saved-curseforge-key"
+        dispatch_curseforge_provider_post(
+            {"action": "save", "api_key": secret}, user=self.admin, root=self.root)
+        dispatch_curseforge_provider_post(
+            {"action": "test", "api_key": "unsaved-curseforge-key"}, user=self.admin,
+            root=self.root, requester=lambda key: {"data": {"id": 432}})
+        _, current = dispatch_curseforge_provider_get(user=self.admin, root=self.root)
+        self.assertIsNone(current["last_test"])
+        dispatch_curseforge_provider_post(
+            {"action": "test"}, user=self.admin, root=self.root,
+            requester=lambda key: {"data": {"id": 432}})
+        key_path = self.root / "config/providers/curseforge.key"
+        key_path.write_text("changed-curseforge-key\n")
+        _, stale = dispatch_curseforge_provider_get(user=self.admin, root=self.root)
+        self.assertIsNone(stale["last_test"])
+
     def test_customer_cannot_read_or_change_provider_secret(self):
         status, _ = dispatch_curseforge_provider_get(user=self.customer, root=self.root)
         self.assertEqual(403, status)
