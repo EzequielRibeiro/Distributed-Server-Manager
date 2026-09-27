@@ -73,7 +73,7 @@ class UploadRetentionTest(unittest.TestCase):
 
     def test_free_space_reserve_stops_stream_before_writing(self):
         file_path = Path(self.temp.name) / "scratch.bin"
-        with file_path.open("wb") as output, \\
+        with file_path.open("wb") as output, \
              patch("artifact_transfer_repository.shutil.disk_usage",
                    return_value=SimpleNamespace(free=5)):
             with self.assertRaisesRegex(OSError, "Espaço livre insuficiente"):
