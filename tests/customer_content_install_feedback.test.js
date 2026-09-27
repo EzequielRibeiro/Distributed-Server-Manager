@@ -149,3 +149,19 @@ outcome.show("accepted","Controller registrou a solicitação","transfer-test-12
 assert.match(panel.textContent,/registrada/);
 assert(!panel.textContent.includes("instalado com sucesso"));
 console.log("PASS: persistent upload outcome survives re-render with correct failure and acceptance semantics");
+
+
+// Interrupted upload recovery must not retry the 500 MiB body after refresh.
+assert(source.includes('const contentUploadInflightKey="capivara:upload-inflight:"+iid'),
+  "the active transfer reference must survive page refresh");
+assert(source.includes('saveContentUploadInflight(transfer.transfer_id,file.name,"uploading")'),
+  "the transfer ID must be saved before the browser starts uploading bytes");
+assert(source.includes('reconcileInterruptedContentUpload().catch(console.warn)'),
+  "content view must reconcile interrupted uploads after refresh");
+assert(source.includes('latest.transfer?.status!=="staging"'),
+  "discard must recheck server state before cancellation");
+assert(source.includes('clearContentUploadInflight(transferId);'),
+  "finished transfers must release client-side tracking");
+assert(!source.includes('xhr.upload.onload=()=>request(api+"/content/upload"'),
+  "recovery must not automatically duplicate the original upload");
+console.log("PASS: interrupted transfer is recoverable with user-controlled discard");
