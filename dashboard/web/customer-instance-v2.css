@@ -88,3 +88,11 @@
 .content-result-installing > .btn[aria-busy="true"]::before{content:"";display:inline-block;width:15px;height:15px;vertical-align:-3px;margin-right:10px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:content-scan-spin .85s linear infinite}
 @media(max-width:520px){.content-result > .content-install-status{font-size:13px}.content-result > .content-install-status.content-install-animating{padding:10px 10px 10px 34px}}
 @media(prefers-reduced-motion:reduce){.content-result-installing > .btn[aria-busy="true"]::before{animation:none;border-right-color:currentColor}}
+
+
+/* Persistent per-instance upload result: never rely on an ephemeral toast alone. */
+.content-upload-outcome{box-sizing:border-box;min-width:0;width:100%;padding:12px 14px;margin-top:12px;border:1px solid #476387;border-radius:10px;background:#1a2a40;color:#e2eafd;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5}
+.content-upload-outcome[hidden]{display:none}
+.content-upload-outcome-accepted{background:#17382e;border-color:#328364;color:#b7f5d9}
+.content-upload-outcome-failed{background:#3a2229;border-color:#92545b;color:#ffe0e3}
+@media(max-width:520px){.content-upload-outcome{padding:12px;font-size:13px}}
