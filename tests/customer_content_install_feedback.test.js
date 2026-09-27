@@ -15,6 +15,17 @@ const end = source.indexOf("async function mutateContent(",start);
 assert(start > 0 && end > start,"install action must exist");
 assert(source.includes("button.onclick=()=>installDiscoveredContent(item,button,feedback)"),
     "the rendered search result must wire button and inline feedback");
+assert(source.includes("row.append(main,feedback,button)"),
+    "feedback must be a full-width sibling, not trapped beside the title and thumbnail");
+assert(!source.includes("body.append(feedback);row.append(main,button)"),
+    "mobile feedback must not be nested in narrow result metadata");
+assert(source.includes('if(!feedback)toast(error.message||"Não foi possível solicitar a instalação.");'),
+    "an inline error must not also cover mobile cards as a global overlay");
+const css=fs.readFileSync(path.join(root,"dashboard/web/customer-instance-v2.css"),"utf8");
+assert(css.includes(".content-result > .content-install-status{grid-column:1/-1"),
+    "feedback must span the full result card width");
+assert(css.includes('.content-result-installing > .btn[aria-busy="true"]::before'),
+    "pending Install buttons need a visible spinner");
 function runFixture(request,loadContent) {
   const notices = [];
   const styles = new Set();
@@ -24,15 +35,21 @@ function runFixture(request,loadContent) {
   const feedback = {textContent:"",classList:{
     add(k){styles.add(k)},remove(k){styles.delete(k)}
   }};
-  const other={disabled:false,title:""},search={disabled:false},upload={disabled:false},importUrl={disabled:false};
+  const other={disabled:false,title:""},search={disabled:false},
+    upload={disabled:false,dataset:{}},importUrl={disabled:false,dataset:{}},
+    type={disabled:false,dataset:{}},query={disabled:false,dataset:{}},
+    file={disabled:false,dataset:{}},preDisabled={disabled:true,dataset:{}};
   const resultRow={dataset:{contentId:"curseforge:123"},classList:{toggle(){}},querySelector:()=>({classList:{toggle(){}}})};
   const results={querySelectorAll:selector=>selector===".content-result"?[resultRow]:[button,other]};
-  const elements={"content-search":search,"content-results":results,"content-upload-button":upload,"content-upload-url-button":importUrl};
+  const elements={"content-search":search,"content-results":results,
+    "content-upload-button":upload,"content-upload-url-button":importUrl,
+    "content-type":type,"content-query":query,"content-upload-file":file,
+    "content-upload-url":preDisabled};
   const context = {request,loadContent,api:"/api/test",iid:"minecraft-003",
     $:id=>elements[id],contentInstallLock:null,contentSearchResults:[{}],contentUploadActive:false,contentUploadTransferId:null,can:()=>true,setManagedUploadUi:()=>{},toast:text=>notices.push(text)};
   const install = vm.runInNewContext(helpers+source.slice(start,end)+
     "\ninstallDiscoveredContent",context);
-  return {install,button,other,search,upload,feedback,styles,notices,context};
+  return {install,button,other,search,upload,importUrl,type,query,file,preDisabled,feedback,styles,notices,context};
 }
 const item={content_id:"curseforge:123",content_type:"mod",provider:"curseforge",
     project_ref:"123",name:"All the Mods 11"};
@@ -52,6 +69,10 @@ async function main(){
   assert.equal(fixture.other.disabled,true);
   assert.equal(fixture.search.disabled,true);
   assert.equal(fixture.upload.disabled,true);
+  assert.equal(fixture.importUrl.disabled,true);
+  assert.equal(fixture.type.disabled,true);
+  assert.equal(fixture.query.disabled,true);
+  assert.equal(fixture.file.disabled,true);
   assert.equal(fixture.button.textContent,"Verificando…");
   assert.match(fixture.feedback.textContent,/dependências/);
   assert.equal(requests,1,"second click must not send duplicate request");
@@ -67,10 +88,14 @@ async function main(){
   await fixture.install(item,fixture.button,fixture.feedback);
   assert.equal(fixture.button.disabled,false);
   assert.equal(fixture.other.disabled,false);
+  assert.equal(fixture.type.disabled,false);
+  assert.equal(fixture.query.disabled,false);
+  assert.equal(fixture.file.disabled,false);
+  assert.equal(fixture.preDisabled.disabled,true,"previously disabled inputs must stay disabled");
   assert.equal(fixture.button.textContent,"Instalar");
   assert.match(fixture.feedback.textContent,/26.1.2/);
   assert(fixture.styles.has("content-search-error"));
-  assert(fixture.notices.some(x=>x.includes("26.1.2")));
+  assert(!fixture.notices.some(x=>x.includes("26.1.2")),"mobile inline error must not overlap the card as a toast");
   // Never label a successful POST as failed if the follow-up refresh fails.
   fixture=runFixture(async()=>({ok:true}),async()=>{throw new Error("refresh offline")});
   await fixture.install(item,fixture.button,fixture.feedback);
@@ -78,7 +103,7 @@ async function main(){
   assert.match(fixture.feedback.textContent,/Solicitação aceita/);
   assert.match(fixture.feedback.textContent,/atualizar o painel/);
   assert(fixture.notices.some(x=>x.includes("Atualize a página")));
-  console.log("PASS: progress, duplicate protection, explicit API error, retry and refresh ambiguity");
+  console.log("PASS: mobile feedback layout, spinner, full content lock, duplicate protection, inline error, retry and refresh ambiguity");
 }
 main().catch(error=>{console.error(error);process.exitCode=1});
 // The parent can report applied while Agent is still processing required children.
