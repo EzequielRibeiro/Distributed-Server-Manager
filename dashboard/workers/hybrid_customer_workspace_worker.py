@@ -292,6 +292,7 @@ def _cleanup_content_upload_artifact(
     item: dict[str, Any],
     root: Path,
     config: dict[str, Any],
+    agent_id: str,
 ) -> None:
     """Delete only an original upload's quarantine ZIP after an authorized cleanup."""
     instance_id = _safe_token(item.get("instance_id"), "instance_id")
@@ -301,7 +302,7 @@ def _cleanup_content_upload_artifact(
     if (original.get("purpose") != "content_upload"
             or original.get("direction") != "controller_to_agent"
             or str(original.get("instance_id")) != instance_id
-            or str(original.get("agent_id")) != str(item.get("agent_id"))
+            or str(original.get("agent_id")) != agent_id
             or original.get("status") not in {"failed", "completed"}):
         raise ValueError("content upload cleanup ownership/state mismatch")
     if str(original.get("filename")) != str(item.get("filename")):
@@ -363,7 +364,7 @@ def process_hybrid_artifact_cycle(backend, root: Path, agent_id: str) -> dict[st
                     "sha256": detail["sha256"],
                 }
             elif purpose == "content_upload_cleanup":
-                _cleanup_content_upload_artifact(repository, command, root, config)
+                _cleanup_content_upload_artifact(repository, command, root, config, agent_id)
                 report = {
                     "transfer_id": transfer_id,
                     "status": "completed",
