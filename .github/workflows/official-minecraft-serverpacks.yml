@@ -13,6 +13,9 @@ on:
       - 'dashboard/customer_serverpack_service.py'
       - 'dashboard/customer_content_upload_service.py'
       - 'dashboard/customer_content_http.py'
+      - 'dashboard/workers/content_upload_retention_worker.py'
+      - 'dashboard/workers/worker.sh'
+      - 'tests/content_upload_retention_worker_test.py'
       - 'dashboard/web/customer-instance-v2.js'
       - 'core/minecraft_serverpack.py'
       - 'agents/linux/runtime/content_activation_minecraft.py'
@@ -47,6 +50,9 @@ on:
       - 'dashboard/customer_serverpack_service.py'
       - 'dashboard/customer_content_upload_service.py'
       - 'dashboard/customer_content_http.py'
+      - 'dashboard/workers/content_upload_retention_worker.py'
+      - 'dashboard/workers/worker.sh'
+      - 'tests/content_upload_retention_worker_test.py'
       - 'dashboard/web/customer-instance-v2.js'
       - 'core/minecraft_serverpack.py'
       - 'agents/linux/runtime/content_activation_minecraft.py'
@@ -86,6 +92,7 @@ jobs:
             dashboard/customer_content_upload_service.py \
             dashboard/customer_serverpack_service.py \
             dashboard/customer_content_http.py \
+            dashboard/workers/content_upload_retention_worker.py \
             core/minecraft_serverpack.py \
             core/minecraft_modpack_resolver.py \
             scripts/minecraft_modpack_world_audit.py \
@@ -132,5 +139,6 @@ jobs:
         run: |
           python3 -m unittest \
             tests.universal_content_external_upload_test \
+            tests.content_upload_retention_worker_test \
             tests.universal_content_bundle_test \
             tests.universal_content_customer_workspace_test -q
