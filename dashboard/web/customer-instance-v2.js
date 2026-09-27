@@ -167,7 +167,9 @@ async function reconcileInterruptedContentUpload(){
  try{
   const result=await request(api+"/content/upload/status?transfer_id="+encodeURIComponent(transferId));
   const status=String(result.transfer?.status||"");
-  if(status==="staging"){
+  if(status==="staging"&&pending.phase==="queued"){
+   showContentUploadOutcome("pending","Transferência ainda em preparação no Controller. Aguarde e atualize para consultar o resultado.",transferId);
+  }else if(status==="staging"){
    showContentUploadOutcome("failed","Envio interrompido antes da confirmação do Controller. Você pode descartar a transferência incompleta abaixo. Nenhum arquivo foi instalado.",transferId);
    const panel=$("content-upload-outcome");
    if(panel&&!panel.querySelector("button")){
