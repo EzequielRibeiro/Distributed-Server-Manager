@@ -2,6 +2,7 @@
 """Fail-closed upload retention: never remove an active writer or unrelated data."""
 from __future__ import annotations
 
+import io
 import os
 import sys
 import tempfile
@@ -14,6 +15,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "database"), str(ROOT / "dashboard" / "workers")]
 from content_upload_retention_worker import sweep
+from artifact_transfer_repository import _copy_artifact_stream
 
 
 class Repository:
@@ -68,6 +70,15 @@ class UploadRetentionTest(unittest.TestCase):
         self.partial.write_bytes(b"incomplete test bytes")
         old = (self.now - timedelta(hours=2)).timestamp()
         os.utime(self.partial, (old, old))
+
+    def test_free_space_reserve_stops_stream_before_writing(self):
+        file_path = Path(self.temp.name) / "scratch.bin"
+        with file_path.open("wb") as output, \\
+             patch("artifact_transfer_repository.shutil.disk_usage",
+                   return_value=SimpleNamespace(free=5)):
+            with self.assertRaisesRegex(OSError, "Espaço livre insuficiente"):
+                _copy_artifact_stream(io.BytesIO(b"1234"), output, 4, reserve_free_bytes=4)
+        self.assertEqual(file_path.stat().st_size, 0)
 
     def test_abandoned_closed_partial_fails_and_removes_only_partial(self):
         self.old_partial()
