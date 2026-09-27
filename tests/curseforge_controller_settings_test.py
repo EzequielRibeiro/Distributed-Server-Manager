@@ -121,6 +121,17 @@ class CurseForgeControllerSettingsTest(unittest.TestCase):
         _, stale = dispatch_curseforge_provider_get(user=self.admin, root=self.root)
         self.assertIsNone(stale["last_test"])
 
+    def test_unsaved_key_can_be_tested_without_creating_history_or_credential(self):
+        status, result = dispatch_curseforge_provider_post(
+            {"action": "test", "api_key": "candidate-unsaved-key"},
+            user=self.admin, root=self.root,
+            requester=lambda key: {"data": {"id": 432}} if key else {})
+        self.assertEqual(status, 200)
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["configured"])
+        self.assertIsNone(result["last_test"])
+        self.assertFalse((self.root / "config/providers/curseforge-test-status.json").exists())
+
     def test_customer_cannot_read_or_change_provider_secret(self):
         status, _ = dispatch_curseforge_provider_get(user=self.customer, root=self.root)
         self.assertEqual(403, status)
