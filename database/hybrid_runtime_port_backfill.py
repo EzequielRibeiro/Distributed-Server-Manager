@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Mapping
@@ -86,7 +87,16 @@ def _bindings_from_reservations(
         )
 
     bindings: dict[str, dict[str, Any]] = {}
-    for requirement in requirements:
+    optional = [
+        *network_profile.get("on_demand_ports", []),
+        *network_profile.get("legacy_reservations", []),
+    ]
+    # A reserved optional or pre-upgrade role must not vanish during Hybrid
+    # heartbeat reconciliation. Never synthesize an absent optional role.
+    declared = [*requirements, *(item for item in optional
+                                if isinstance(item, Mapping)
+                                and str(item.get("name") or "") in reservations)]
+    for requirement in declared:
         if not isinstance(requirement, Mapping):
             raise HybridRuntimePortBackfillError(
                 "runtime network profile has an invalid port requirement"
@@ -111,6 +121,11 @@ def _bindings_from_reservations(
             raise HybridRuntimePortBackfillError(
                 f"Controller reservation result has an invalid port for role: {name}"
             )
+        existing = bindings.get(name)
+        if existing is not None:
+            if existing != {"port": port, "protocol": protocol}:
+                raise HybridRuntimePortBackfillError("conflicting declared network port role")
+            continue
         bindings[name] = {"port": port, "protocol": protocol}
     return bindings
 
@@ -119,6 +134,8 @@ def reconcile_hybrid_runtime_ports(
     backend,
     root: Path,
     agent_id: str,
+    *,
+    only_instance_id: str | None = None,
 ) -> dict[str, Any]:
     """Backfill DB reservations first, then persist canonical bindings locally.
 
@@ -126,6 +143,10 @@ def reconcile_hybrid_runtime_ports(
     propagated so the caller can stop before RuntimeSpec migration/reconciliation.
     """
     specs_root = _runtime_specs_root(root)
+    if only_instance_id is not None and not _TOKEN.fullmatch(str(only_instance_id)):
+        raise HybridRuntimePortBackfillError("invalid target instance id")
+    if only_instance_id is not None and not (specs_root / f"{only_instance_id}.json").is_file():
+        raise HybridRuntimePortBackfillError("target Hybrid RuntimeSpec is unavailable")
     if not specs_root.exists():
         return {
             "status": "completed",
@@ -152,6 +173,8 @@ def reconcile_hybrid_runtime_ports(
         ) from exc
 
     for path in paths:
+        if only_instance_id is not None and path.stem != only_instance_id:
+            continue
         record = _read_spec(path)
         if str(record.get("agent_id") or "").strip() != str(agent_id):
             continue
@@ -229,6 +252,27 @@ def reconcile_hybrid_runtime_ports(
                 f"Controller port reconciliation returned an invalid result: {instance_id}"
             )
         bindings = _bindings_from_reservations(network_profile, reservations)
+        metadata = context.get("instance_metadata") or {}
+        pending_drop = metadata.get("network_optional_pending_drop") if isinstance(metadata, dict) else None
+        if isinstance(pending_drop, list) and "votifier" in pending_drop:
+            if str(context.get("status") or "").lower() not in {"stopped", "offline"}:
+                raise HybridRuntimePortBackfillError("cannot remove Votifier binding while instance is active")
+            try:
+                systemd = subprocess.run(
+                    ["systemctl", "show", f"capivara-instance-{instance_id}.service",
+                     "--property=ActiveState", "--property=LoadState", "--no-pager"],
+                    capture_output=True, text=True, timeout=6, check=False,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise HybridRuntimePortBackfillError(
+                    "instance lifecycle cannot be verified before Votifier release"
+                ) from exc
+            state = dict(line.split("=", 1) for line in systemd.stdout.splitlines() if "=" in line)
+            if systemd.returncode != 0 or state.get("LoadState") != "loaded" or state.get("ActiveState") != "inactive":
+                raise HybridRuntimePortBackfillError(
+                    "managed instance unit must be loaded and inactive before Votifier release"
+                )
+            bindings.pop("votifier", None)
         if bool(result.get("changed")):
             reservations_backfilled += 1
 
@@ -240,6 +284,35 @@ def reconcile_hybrid_runtime_ports(
             profile_context = dict(profile_context)
 
         changed = updated.get("ports") != bindings or profile_context.get("ports") != bindings
+        # A pre-change spec might still require Votifier for all Minecraft Java
+        # runtimes. Refresh its exposure policy from the canonical Catalog.
+        if network_profile.get("on_demand_ports") or network_profile.get("legacy_reservations"):
+            required = list(network_profile.get("ports") or [])
+            optional = list(network_profile.get("on_demand_ports") or [])
+            exposure = [
+                {"name": item["name"], "protocol": item["protocol"],
+                 "exposure": item.get("exposure", "none"),
+                 **({"optional": True} if is_optional else {})}
+                for is_optional, group in ((False, required), (True, optional))
+                for item in group
+            ]
+            old_policy = updated.get("catalog_runtime_policy")
+            if isinstance(old_policy, dict):
+                new_policy = dict(old_policy)
+                new_policy["network_exposure"] = exposure
+                if old_policy != new_policy:
+                    changed = True
+                    updated["catalog_runtime_policy"] = new_policy
+            # The profile migration path reads persisted structured context,
+            # not just the top-level policy. Keep its other executable/launch
+            # configuration intact while replacing only network exposure.
+            context_policy = profile_context.get("catalog_runtime_policy")
+            if isinstance(context_policy, dict):
+                new_context_policy = dict(context_policy)
+                new_context_policy["network_exposure"] = exposure
+                if context_policy != new_context_policy:
+                    changed = True
+                    profile_context["catalog_runtime_policy"] = new_context_policy
         updated["ports"] = bindings
         profile_context["ports"] = bindings
         updated["profile_context"] = profile_context

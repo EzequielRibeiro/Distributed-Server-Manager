@@ -23,6 +23,11 @@ class M9ModpackUiContractTest(unittest.TestCase):
         for token in ('bundle.bundle_state==="customized"?"Personalizado":"Gerenciado"','bundle.current_revision','bundle.diff_from_previous','bundle.members','bundle.revisions'):
             self.assertIn(token,text)
 
+    def test_modpack_update_is_previewed_before_mutation(self):
+        self.assertIn('action:"preview-update"',self.text)
+        self.assertIn("bundleDiffText(preview.manifest_diff)",self.text)
+        self.assertIn("updateManagedContent(item)",self.text)
+
     def test_browser_does_not_render_artifact_authority_from_bundle_details(self):
         text=self.text
         block=text[text.index("function renderBundleDetails"):text.index("async function toggleBundleDetails")]

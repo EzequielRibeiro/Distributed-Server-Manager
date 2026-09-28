@@ -125,7 +125,23 @@ def remove(config:dict[str,Any],instance_id:str)->dict[str,Any]:
  record=instance_runtime._owned(config,instance_id);normalized=validate_runtime_spec(record,expected_agent_id=str(config.get("agent_id") or ""));adapter=resolve_adapter(normalized);state=adapter.status(normalized);stopped=None
  if bool(state.get("running") or state.get("active_state")=="active"):stopped=adapter.stop(normalized)
  firewall=managed_firewall.remove(normalized)
+ removed=[]
+ raw_state=str(normalized.get("instance_state_root") or "").strip()
+ if raw_state:
+  state_root=Path(raw_state).resolve(strict=False)
+  if state_root.exists():
+   if _is_link(state_root) or not state_root.is_dir():raise RuntimeError("instance private state is not a safe directory")
+   _reject_links(state_root,"instance private state");shutil.rmtree(state_root);removed.append(str(state_root))
+ managed=(Path(instance_runtime.STATE_DIR)/"managed-content"/instance_id).resolve(strict=False)
+ if managed.exists():
+  if _is_link(managed) or not managed.is_dir():raise RuntimeError("instance managed content state is not a safe directory")
+  _reject_links(managed,"instance managed content state");shutil.rmtree(managed);removed.append(str(managed))
+ activation=(Path(instance_runtime.STATE_DIR)/"content-activation"/f"{instance_id}.json").resolve(strict=False)
+ if activation.exists():
+  if _is_link(activation) or not activation.is_file():raise RuntimeError("instance content activation snapshot is not a safe file")
+  activation.unlink();removed.append(str(activation))
  try:instance_runtime._instance_path(instance_id).unlink()
  except FileNotFoundError:pass
- event=emit_runtime_event(_events(),"INSTANCE_RUNTIME_REMOVED",agent_id=normalized["agent_id"],instance_id=normalized["instance_id"],data={"changed":True});return {"instance_id":normalized["instance_id"],"stop":stopped,"firewall":firewall,"operation":{"action":"remove","changed":True},"event":event}
+ cleanup={"changed":bool(removed),"removed_paths":removed,"shared_game_data_preserved":True}
+ event=emit_runtime_event(_events(),"INSTANCE_RUNTIME_REMOVED",agent_id=normalized["agent_id"],instance_id=normalized["instance_id"],data={"changed":True});return {"instance_id":normalized["instance_id"],"stop":stopped,"firewall":firewall,"operation":{"action":"remove","changed":True,"private_state_cleanup":cleanup},"event":event}
 __all__=["materialize","reconcile","remove"]

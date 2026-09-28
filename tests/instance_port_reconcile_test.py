@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 
 from core.network.port_allocator import PortRange
-from core.network.port_profile import PortProfile
+from core.network.port_profile import PortProfile, PortRequirement
 from database.instance_port_reconcile import (
     InstancePortReconcileError,
     plan_instance_port_reconcile,
@@ -147,6 +147,39 @@ class InstancePortReconcilePlanTest(unittest.TestCase):
     def test_rejects_profile_without_existing_anchor(self):
         with self.assertRaisesRegex(InstancePortReconcileError, "no persisted"):
             plan_instance_port_reconcile(PROFILE, [], RANGES)
+
+
+    def test_new_vanilla_does_not_backfill_votifier_but_retains_legacy(self):
+        vanilla = PortProfile.from_reservations({
+            "allocation": "block", "block_size": 4,
+            "ports": [
+                {"name": "game", "protocol": "tcp", "offset": 0},
+                {"name": "rcon", "protocol": "tcp", "offset": 1},
+                {"name": "query", "protocol": "udp", "offset": 2},
+            ],
+        })
+        legacy = {"votifier": PortRequirement("votifier", "tcp", 3)}
+        base_rows = [
+            {"name": "game", "protocol": "tcp", "port": 24012},
+            {"name": "rcon", "protocol": "tcp", "port": 24013},
+            {"name": "query", "protocol": "udp", "port": 24014},
+        ]
+        new = plan_instance_port_reconcile(vanilla, base_rows, RANGES, legacy_reservations=legacy)
+        self.assertNotIn("votifier", new.ports)
+        self.assertEqual(new.missing, ())
+        old = plan_instance_port_reconcile(vanilla, [
+            *base_rows, {"name": "votifier", "protocol": "tcp", "port": 24015},
+        ], RANGES, legacy_reservations=legacy)
+        self.assertEqual(old.ports["votifier"], 24015)
+        self.assertEqual(old.missing, ())
+        with self.assertRaisesRegex(InstancePortReconcileError, "logical port block"):
+            plan_instance_port_reconcile(vanilla, [
+                *base_rows, {"name": "votifier", "protocol": "tcp", "port": 24019},
+            ], RANGES, legacy_reservations=legacy)
+        with self.assertRaisesRegex(InstancePortReconcileError, "outside the current runtime profile"):
+            plan_instance_port_reconcile(vanilla, [
+                *base_rows, {"name": "untrusted", "protocol": "tcp", "port": 24015},
+            ], RANGES, legacy_reservations=legacy)
 
 
 if __name__ == "__main__":

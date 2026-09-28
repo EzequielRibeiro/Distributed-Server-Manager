@@ -15,7 +15,7 @@ import traceback
 from typing import Any
 
 from game_data_executor import _execute as execute_game_data
-from backup_client import _create as create_backup
+from backup_client import _create as create_backup, _restore as restore_backup
 import game_runtime
 import instance_runtime
 import privileged_materialization
@@ -107,13 +107,15 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
     content_result: dict[str, Any] | None = None
     compensation: list[str] = []
     configuration = dict(request.get("configuration") or {})
-    update_meta = configuration.get("minecraft_version_update") if isinstance(configuration.get("minecraft_version_update"), dict) else None
+    version_update_meta = configuration.get("minecraft_version_update") if isinstance(configuration.get("minecraft_version_update"), dict) else None
+    migration_meta = configuration.get("minecraft_runtime_migration") if isinstance(configuration.get("minecraft_runtime_migration"), dict) else None
+    update_meta = migration_meta or version_update_meta
     previous_runtime = instance_runtime.get_instance(request["instance_id"]) if update_meta else None
     update_was_running = False
     update_backup: dict[str, Any] | None = None
     update_stopped = False
     if update_meta and previous_runtime is None:
-        raise RuntimeError("Minecraft version update requires an existing instance runtime")
+        raise RuntimeError("Minecraft runtime change requires an existing instance runtime")
     _result(result_path, request, status="running", current_step=step, progress=5)
     _event("INSTANCE_PROVISIONING_STARTED", request, step=step, progress=5)
     try:
@@ -151,6 +153,13 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
                         },
                     },
                 )
+            if bool(update_meta.get("backup_before_update", True)) and not (
+                isinstance(update_backup, dict)
+                and str(update_backup.get("backup_id") or "").strip()
+                and str(update_backup.get("sha256") or "").strip()
+                and int(update_backup.get("size_bytes") or 0) > 0
+            ):
+                raise RuntimeError("Minecraft update requires a verified pre-update backup")
             if update_was_running:
                 instance_runtime.lifecycle(config, request["instance_id"], "stop")
                 update_stopped = True
@@ -201,7 +210,7 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
             _result(result_path, request, status="running", current_step=step, progress=96)
             update_readiness = instance_runtime.doctor(config, request["instance_id"])
             if not bool(update_readiness.get("ready")):
-                raise RuntimeError("updated Minecraft runtime failed readiness validation")
+                raise RuntimeError("changed Minecraft runtime failed readiness validation")
             _event("INSTANCE_PROVISIONING_STEP", request, step=step, progress=97, data={"readiness": update_readiness.get("status")})
         final = _result(result_path, request, status="completed", current_step="completed", progress=100,
                         desired_state=request["desired_state"], observed_state=observed_state, workspace=workspace,
@@ -211,12 +220,21 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
                                  "adapter": spec.get("adapter"), "runtime_id": spec.get("runtime_id"),
                                  "materialized_changed": bool((materialization.get("operation") or {}).get("changed"))},
                         minecraft_version_update={
-                            "target_version": update_meta.get("target_version"),
-                            "target_build": update_meta.get("target_build"),
+                            "target_version": version_update_meta.get("target_version"),
+                            "target_build": version_update_meta.get("target_build"),
                             "backup_id": (update_backup or {}).get("backup_id"),
-                            "isolated_install_dir": update_meta.get("isolated_install_dir"),
+                            "isolated_install_dir": version_update_meta.get("isolated_install_dir"),
                             "readiness": (update_readiness or {}).get("status"),
-                        } if update_meta else None)
+                        } if version_update_meta else None,
+                        minecraft_runtime_migration={
+                            "from_runtime_id": migration_meta.get("from_runtime_id"),
+                            "target_runtime_id": migration_meta.get("target_runtime_id"),
+                            "target_version": migration_meta.get("target_version"),
+                            "target_build": migration_meta.get("target_build"),
+                            "backup_id": (update_backup or {}).get("backup_id"),
+                            "isolated_install_dir": migration_meta.get("isolated_install_dir"),
+                            "readiness": (update_readiness or {}).get("status"),
+                        } if migration_meta else None)
         increment("provisioning_completed")
         _event("INSTANCE_PROVISIONING_COMPLETED", request, step="completed", progress=100,
                data={"desired_state": request["desired_state"], "observed_state": observed_state})
@@ -236,6 +254,11 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
                     privileged_materialization.materialize(config, restored)
                     if isinstance(restored.get("catalog_runtime_policy"), dict):
                         privileged_firewall.reconcile(restored)
+                    if update_backup:
+                        restore_backup(config, {"instance_id": request["instance_id"],
+                                                "backup_id": update_backup["backup_id"],
+                                                "command_id": request["provisioning_id"] + "-rollback"})
+                        compensation.append("previous_world_restored")
                     runtime_materialization.reconcile(config, request["instance_id"])
                     compensation.append("previous_runtime_restored")
                 elif update_stopped and update_was_running:

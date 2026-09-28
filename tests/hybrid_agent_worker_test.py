@@ -21,6 +21,7 @@ from hybrid_agent_worker import (
     heartbeat_cycle,
     process_hybrid_backup_cycle,
     process_hybrid_configuration_cycle,
+    process_hybrid_native_restart_cycle,
     process_hybrid_runtime_event_cycle,
 )
 from infrastructure_role_cli import promote_local_controller
@@ -124,6 +125,89 @@ class HybridAgentWorkerTest(unittest.TestCase):
         self.assertEqual(result["completed"], 1)
         self.assertEqual(result["failed"], 0)
 
+
+    def test_hybrid_native_restart_cycle_materializes_and_acks_command(self):
+        from types import SimpleNamespace
+
+        agent_id = "hybrid-dayz-agent"
+        command = {
+            "command_id": "native-maint-001",
+            "agent_id": agent_id,
+            "instance_id": "dayz-001",
+            "game_id": "dayz",
+            "runtime_id": "dayz.stable",
+            "strategy": "dayz-shutdown-messages",
+            "due_at": "2026-09-23T21:00:00Z",
+            "payload": {
+                "schema_version": 1,
+                "kind": "CapivaraDayZNativeRestart",
+            },
+        }
+        report = {
+            "command_id": command["command_id"],
+            "instance_id": command["instance_id"],
+            "status": "completed",
+            "result": {
+                "kind": "CapivaraDayZNativeRestartPrepared",
+                "materialized": True,
+            },
+        }
+
+        repository = Mock()
+        repository.command_for_agent.return_value = command
+        repository.apply_result.return_value = {
+            **command,
+            "status": "completed",
+            "result": report,
+        }
+        client = SimpleNamespace(
+            handle_command=Mock(return_value=report),
+            clear_result=Mock(),
+        )
+
+        with (
+            patch(
+                "hybrid_agent_worker.NativeRestartRepository",
+                return_value=repository,
+            ),
+            patch(
+                "hybrid_agent_worker._hybrid_agent_config",
+                return_value={"agent_id": agent_id},
+            ),
+            patch(
+                "hybrid_agent_worker._instance_runtime_module",
+                return_value=Mock(),
+            ),
+            patch.dict(sys.modules, {"native_restart_client": client}),
+        ):
+            result = process_hybrid_native_restart_cycle(
+                self.backend,
+                self.root,
+                agent_id,
+            )
+
+        repository.initialize.assert_called_once_with()
+        repository.command_for_agent.assert_called_once_with(agent_id)
+        repository.mark_delivered.assert_called_once_with(command["command_id"])
+        client.handle_command.assert_called_once_with(
+            {"agent_id": agent_id},
+            command,
+        )
+        repository.apply_result.assert_called_once_with(agent_id, report)
+        client.clear_result.assert_called_once_with(command["command_id"])
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["instance_id"], "dayz-001")
+        self.assertEqual(result["strategy"], "dayz-shutdown-messages")
+
+    def test_hybrid_native_restart_precedes_dayz_operation(self):
+        import inspect
+        from hybrid_agent_worker import heartbeat_cycle
+
+        source = inspect.getsource(heartbeat_cycle)
+        self.assertLess(
+            source.index("process_hybrid_native_restart_cycle"),
+            source.index("process_hybrid_dayz_operation_cycle"),
+        )
 
     def test_port_backfill_failure_keeps_backup_and_safe_remove_alive(self):
         agent_id = "hybrid-degraded-agent"

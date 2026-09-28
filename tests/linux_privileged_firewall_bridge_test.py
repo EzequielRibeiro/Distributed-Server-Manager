@@ -52,6 +52,18 @@ def legacy_dayz_spec():
     }
 
 
+def test_optional_votifier_rule_is_emitted_only_when_reserved():
+    record = spec()
+    record["catalog_runtime_policy"]["network_exposure"].append(
+        {"name": "votifier", "protocol": "tcp", "exposure": "public", "optional": True}
+    )
+    assert all(x["name"] != "votifier" for x in privileged_firewall.public_rules(record))
+    record["ports"]["votifier"] = {"port": 24031, "protocol": "tcp"}
+    assert privileged_firewall.public_rules(record)[-1] == {
+        "name": "votifier", "protocol": "tcp", "port": 24031,
+    }
+
+
 def test_only_explicit_public_ports_become_firewall_rules():
     assert privileged_firewall.public_rules(spec()) == [
         {"name": "game", "protocol": "udp", "port": 24000},

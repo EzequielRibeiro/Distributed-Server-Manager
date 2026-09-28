@@ -8,7 +8,7 @@ from customer_account_http import AUTHENTICATED_PATHS,PUBLIC_PATHS,dispatch_cust
 from customer_auth_api import CUSTOMER_AUTH_PATHS,dispatch_customer_auth
 from customer_http_auth import authenticate_customer
 from customer_invitation_api import PUBLIC_INVITATION_PATHS,TEAM_INVITATION_PATHS,dispatch_customer_invitations
-from customer_rbac import instance_profile as customer_instance_profile,may_create_instance
+from customer_rbac import account_role_for_user,instance_profile as customer_instance_profile,may_create_instance
 from customer_security import customer_rate_limiter,remote_identity
 from customer_team_api import CUSTOMER_TEAM_PATHS,dispatch_customer_team
 from customer_verification_api import CUSTOMER_VERIFICATION_PATHS,dispatch_customer_verification
@@ -109,7 +109,30 @@ def _require_area_role(handler,user,allowed_roles):
     return True
 def integrated_instance_permission_profile(user,instance_path,database_path=legacy.DATABASE_FILE):
     if user and user.get("role")=="customer":
-        profile=customer_instance_profile(user,Path(instance_path).name,_backend())
+        # The installed HTTP handler uses this wrapper, not the bare
+        # server.can_access_instance implementation. Validate the registered
+        # node/game/owner before consulting any per-instance grants or files.
+        try:
+            registered,record=legacy._registered_instance_record(instance_path,database_path)
+        except Exception:
+            return None  # Fail closed if the registry cannot be consulted.
+        if registered:
+            if record is None or not user.get("scope_id") or str(user["scope_id"])!=str(record.get("customer_id") or ""):
+                return None
+            try:
+                backend=_backend()
+                # Workspace v2 already grants an account owner manager rights
+                # without requiring an instance_access grant or materialized file.
+                if account_role_for_user(user,backend)=="owner":
+                    return "manager"
+                return customer_instance_profile(user,Path(instance_path).name,backend)
+            except Exception:
+                return None
+        # Preserve legacy filesystem ownership for unregistered instances.
+        try:
+            profile=customer_instance_profile(user,Path(instance_path).name,_backend())
+        except Exception:
+            return None
         if profile:return profile
         metadata=legacy.instance_metadata(instance_path);owner=metadata.get("owner",{}) if isinstance(metadata,dict) else {}
         if isinstance(owner,dict) and owner.get("username")==user.get("username") and legacy.instance_customer_id(metadata)==user.get("scope_id"):return "manager"
