@@ -23,6 +23,7 @@ _ALLOWED_FIELDS=frozenset({"content_id","content_type","activation_state","activ
 _ARCHIVE_SUFFIXES=(".zip",".mrpack",".tar",".tar.gz",".tgz")
 _UPLOAD_SUFFIXES=(*_ARCHIVE_SUFFIXES,".jar")
 _EXTERNAL_URL_MAX_BYTES=8*1024*1024*1024
+_CUSTOMER_UPLOAD_MAX_BYTES=8*1024*1024*1024
 
 def _safe_external_url(value, trusted_suffix=None):
  raw=str(value or "").strip();parsed=urlparse(raw)
@@ -161,6 +162,8 @@ class CustomerContentUploadService:
   item=self._transfer(user,transfer_id)
   if str(item.get("status") or "")!="staging":raise ValueError("content upload is not pending")
   try:
+   if content_length is None or not 0<int(content_length)<=_CUSTOMER_UPLOAD_MAX_BYTES:
+    raise ValueError("Upload excede o limite de 8 GiB do Controller ou não informa tamanho válido.")
    return self.transfers.stage_from_controller(str(item["transfer_id"]),source,content_length)
   except Exception:
    # An interrupted HTTP body otherwise leaves an indefinite 'staging'
