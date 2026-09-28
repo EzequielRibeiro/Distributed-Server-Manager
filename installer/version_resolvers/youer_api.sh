@@ -6,6 +6,7 @@ YOUER_API_BASE="${YOUER_API_BASE:-https://mohistmc.com/api/v2/projects/youer}"
 YOUER_LEGACY_API_BASE="${YOUER_LEGACY_API_BASE:-https://api.mohistmc.com/project/youer}"
 YOUER_GITHUB_BRANCHES_API="${YOUER_GITHUB_BRANCHES_API:-https://api.github.com/repos/MohistMC/Youer/branches?per_page=100}"
 YOUER_DISCOVERY_LIMIT="${YOUER_DISCOVERY_LIMIT:-25}"
+YOUER_BUILD_DISCOVERY_LIMIT="${YOUER_BUILD_DISCOVERY_LIMIT:-50}"
 
 youer_error(){ echo "[DSM][DISCOVERY][YOUER][ERROR] $*" >&2; }
 youer_get(){ curl --fail --silent --show-error --location --connect-timeout 15 --max-time 45 "$1"; }
@@ -83,12 +84,15 @@ youer_build_number()
 
 youer_list()
 {
-    local PROJECT LIMIT VERSION BUILDS VERSION_ENTRY
+    local PROJECT LIMIT BUILD_LIMIT VERSION BUILDS VERSION_ENTRY
     local OUTPUT='[]'
     PROJECT="$(youer_discovery_project)" || return 1
     LIMIT="${YOUER_DISCOVERY_LIMIT}"
     [[ "${LIMIT}" =~ ^[0-9]+$ ]] || LIMIT=25
     (( LIMIT > 0 )) || LIMIT=25
+    BUILD_LIMIT="${YOUER_BUILD_DISCOVERY_LIMIT}"
+    [[ "${BUILD_LIMIT}" =~ ^[0-9]+$ ]] || BUILD_LIMIT=50
+    (( BUILD_LIMIT > 0 )) || BUILD_LIMIT=50
 
     while IFS= read -r VERSION
     do
@@ -105,19 +109,38 @@ youer_list()
         OUTPUT="$(jq -nc --argjson current "${OUTPUT}" --argjson entry "${VERSION_ENTRY}" '$current + [$entry]')"
 
         if BUILDS="$(youer_builds "${VERSION}")"; then
-            OUTPUT="$(jq -c               --arg version "${VERSION}"               --argjson current "${OUTPUT}" '
-              ($current + [
-                (.builds // [])[]
-                | (.number // .id // .build // empty | tostring) as $build
-                | select($build != "")
-                | {
-                    version:$version,
-                    build:$build,
-                    minecraft_versions:[$version],
-                    stable:true
-                  }
-              ])
-            ' <<<"${BUILDS}")"
+            # Keep large upstream build histories out of argv. Some Youer
+            # versions publish enough builds to exceed Linux ARG_MAX when the
+            # accumulated JSON is passed through --argjson on every loop.
+            # Feed both JSON documents through stdin and keep only the newest
+            # builds needed by the Customer selector.
+            OUTPUT="$(
+                printf '%s\n%s\n' "${OUTPUT}" "${BUILDS}" |
+                    jq -cs \
+                      --arg version "${VERSION}" \
+                      --argjson build_limit "${BUILD_LIMIT}" '
+                      .[0] as $current
+                      | .[1] as $response
+                      | (
+                          ($response.builds // [])
+                          | if length > $build_limit
+                            then .[-$build_limit:]
+                            else .
+                            end
+                        ) as $builds
+                      | ($current + [
+                          $builds[]
+                          | (.number // .id // .build // empty | tostring) as $build
+                          | select($build != "")
+                          | {
+                              version:$version,
+                              build:$build,
+                              minecraft_versions:[$version],
+                              stable:true
+                            }
+                        ])
+                    '
+            )"
         fi
     done < <(
         jq -r --argjson limit "${LIMIT}" '
