@@ -245,8 +245,15 @@ def _apply_command_batch(args:list[str],binding:dict[str,Any],value:Any)->list[s
 def prepare_spec(spec:dict[str,Any],values:dict[str,Any],*,declaration:dict[str,Any]|None=None)->dict[str,Any]:
     if not isinstance(spec,dict) or not isinstance(values,dict):raise ValueError("invalid server settings application")
     local=spec.get("catalog_server_settings") if isinstance(spec.get("catalog_server_settings"),dict) else {}
-    declaration=local if isinstance(local.get("fields"),dict) and local.get("fields") else (declaration if isinstance(declaration,dict) else {})
-    fields=declaration.get("fields") if isinstance(declaration.get("fields"),dict) else {}
+    supplied=declaration if isinstance(declaration,dict) else {}
+    # Controller catalog can be newer than the persisted RuntimeSpec. Merge fields
+    # so new declarations are added without losing runtime-local metadata.
+    declaration=dict(local)
+    declaration.update({k:v for k,v in supplied.items() if k != "fields"})
+    local_fields=local.get("fields") if isinstance(local.get("fields"),dict) else {}
+    supplied_fields=supplied.get("fields") if isinstance(supplied.get("fields"),dict) else {}
+    declaration["fields"]={**local_fields,**supplied_fields}
+    fields=declaration["fields"]
     unknown=set(values)-set(fields)
     if unknown:raise ValueError("undeclared server settings: "+", ".join(sorted(unknown)))
     normalized={key:_coerce(key,fields[key],value) for key,value in values.items()}
@@ -270,7 +277,15 @@ def prepare_spec(spec:dict[str,Any],values:dict[str,Any],*,declaration:dict[str,
     return result
 
 def materialize_server_settings(spec:dict[str,Any])->list[str]:
-    values=spec.get("server_settings_values") if isinstance(spec.get("server_settings_values"),dict) else {}
+    values=dict(spec.get("server_settings_values")) if isinstance(spec.get("server_settings_values"),dict) else {}
+    secret_refs=spec.get("server_settings_secret_refs") if isinstance(spec.get("server_settings_secret_refs"),dict) else {}
+    cleared=[str(item) for item in (spec.get("server_settings_cleared_protected_fields") or []) if str(item).strip()]
+    if secret_refs:
+        from runtime_secret_store import credential_path
+        instance_id=str(spec.get("instance_id") or "")
+        for logical,ref in secret_refs.items():
+            values[str(logical)]=credential_path(ref,expected_instance_id=instance_id).read_text(encoding="utf-8")
+    for logical in cleared: values[logical]=""
     if not values:return []
     declaration=spec.get("catalog_server_settings") if isinstance(spec.get("catalog_server_settings"),dict) else {};fields=declaration.get("fields") if isinstance(declaration.get("fields"),dict) else {}
     root=_root(spec);written=[]
