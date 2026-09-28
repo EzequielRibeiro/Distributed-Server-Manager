@@ -662,6 +662,28 @@ def _migrate_storage_copy(
     }
 
 
+def _grant_customer_files_access(spec: dict[str, Any]) -> None:
+    files_root_raw = str(spec.get("files_root") or "").strip()
+    if not files_root_raw:
+        return
+    state_root = Path(str(spec["instance_state_root"])).resolve()
+    files_root = _within(state_root, files_root_raw, "customer files root")
+    if not files_root.is_dir() or files_root.is_symlink():
+        return
+    try:
+        agent_group = grp.getgrnam(_AGENT_GROUP)
+    except KeyError as exc:
+        raise RuntimeError("Agent control group is unavailable") from exc
+    for current in [files_root, *files_root.rglob("*")]:
+        if current.is_symlink():
+            raise RuntimeError(f"customer files tree contains a symlink: {current}")
+        os.chown(current, -1, agent_group.gr_gid)
+        if current.is_dir():
+            os.chmod(current, 0o770)
+        elif current.is_file():
+            os.chmod(current, 0o770 if current.stat().st_mode & 0o111 else 0o660)
+
+
 def run(instance_id: str) -> dict[str, Any]:
     if os.geteuid() != 0:
         raise RuntimeError("privileged materializer helper must run as root")
@@ -734,6 +756,8 @@ def run(instance_id: str) -> dict[str, Any]:
               "dayz_mod_aliases": dayz_mod_aliases,
               "removed_dayz_mod_aliases": removed_dayz_mod_aliases,
               "content_files": content_files}
+    if action == "apply":
+        _grant_customer_files_access(spec)
     _write_result(result_path, result)
     return result
 
@@ -749,6 +773,17 @@ def main() -> int:
         print(json.dumps(result, sort_keys=True), flush=True)
         return 0
     except Exception as exc:
+        try:
+            request_path = REQUEST_ROOT / f"{_token(instance_id)}.request.json"
+            request = json.loads(request_path.read_text(encoding="utf-8"))
+            if str(request.get("action") or "").strip().lower() == "apply":
+                config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+                local_agent_id = str(config.get("agent_id") or "").strip()
+                spec = validate_runtime_spec(request.get("spec"), expected_agent_id=local_agent_id)
+                if spec.get("instance_id") == _token(instance_id):
+                    _grant_customer_files_access(spec)
+        except Exception:
+            pass
         _write_result(result_path, {"status": "failed", "instance_id": instance_id, "error": str(exc)[:2000]})
         print(f"privileged materialization failed: {exc}", file=sys.stderr, flush=True)
         return 1

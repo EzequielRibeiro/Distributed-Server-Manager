@@ -366,7 +366,8 @@ def execute(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
         declaration=record.get("catalog_server_settings") if isinstance(record.get("catalog_server_settings"),dict) else {}
         supplied=payload.get("declaration") if isinstance(payload.get("declaration"),dict) else {}
         surface_spec=dict(record)
-        if not isinstance(declaration.get("fields"),dict) or not declaration.get("fields"):surface_spec["catalog_server_settings"]=supplied
+        if isinstance(supplied.get("fields"),dict) and supplied.get("fields"):surface_spec["catalog_server_settings"]=supplied
+        elif not isinstance(declaration.get("fields"),dict) or not declaration.get("fields"):surface_spec["catalog_server_settings"]=supplied
         return observed_surface(surface_spec)
     if action == "list": return _list(root, path, policy)
     if action == "usage": return {"usage_bytes": _usage(root), "limit_bytes": _quota(policy)}

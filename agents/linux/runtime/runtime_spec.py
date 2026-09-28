@@ -108,5 +108,8 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  result["working_file_copies"]=_path_pairs(result.get("working_file_copies"),"working_file_copies")
  result["bind_paths"]=_path_pairs(result.get("bind_paths"),"bind_paths")
  result["runtime_bind_paths"]=_runtime_bind_paths(result.get("runtime_bind_paths"),runtime_directory)
+ # Preserve validated server-settings metadata needed by the privileged boundary.
+ for key in ("catalog_server_settings","server_settings_values","server_settings_dynamic_values","server_settings_secret_refs","server_settings_cleared_protected_fields"):
+  if key in spec: result[key]=spec[key]
  result["path"]=result["working_directory"];return result
 __all__=["RuntimeSpecError","VALID_DESIRED_STATES","VALID_STOP_SIGNALS","validate_runtime_spec"]

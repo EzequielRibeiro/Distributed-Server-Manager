@@ -633,7 +633,7 @@ def install_customer_instance_workspace(legacy, authenticate):
                     result="success",
                 )
             elif path.endswith("server-settings"):
-                data = api.save_server_settings(user, instance_id, body.get("values"), body.get("surface_command_id"))
+                data = api.save_server_settings(user, instance_id, body.get("values"), body.get("surface_command_id"), body.get("secret_actions"))
                 record(
                     api,
                     user,

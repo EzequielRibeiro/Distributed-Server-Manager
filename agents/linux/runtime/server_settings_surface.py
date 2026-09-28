@@ -207,7 +207,7 @@ def _field(path:str,fmt:str,locator:str,key:str,value:Any,src:dict[str,Any],*,se
  if kind=="boolean" and boolean_values and not isinstance(value,bool):
   text=str(value);value=True if text==str(boolean_values.get("true")) else False if text==str(boolean_values.get("false")) else _coerce(value,"boolean")
  secret=_secret(key);managed=str(key).lower() in src.get("managed",set()) or _platform_managed(key,src)
- editable=not managed and not secret
+ editable=not managed and (not secret or (bool(decl.get("customer_editable")) and str(decl.get("secret_policy") or "").strip().lower()=="customer-editable"))
  item={"id":_field_id(path,fmt,f"{locator}#{occurrence}"),"path":path,"format":fmt,"key":key,"label":str(decl.get("label") or key),"type":kind,"editable":editable,"managed":managed,"secret":secret,"logical_id":logical,"section":section,"occurrence":occurrence,"locator":locator,"quoted":raw_quote}
  if decl.get("description"):item["description"]=decl["description"]
  for name in ("min","max","max_length","allowed","step","group","requires_argument","safe_relative_path","max_items","boolean_values"):

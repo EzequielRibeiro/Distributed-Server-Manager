@@ -122,7 +122,7 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
     current=game_runtime.build_runtime_spec(config,instance,context);self.assertEqual(12,current['profile_version'])
     old=dict(current);old['profile_version']=8;old['server_settings_values']={'server_name':'Migrated DayZ','max_players':32}
     migrated,changed=game_runtime.migrate_runtime_spec(config,old)
-   self.assertTrue(changed);self.assertEqual(12,migrated['profile_version']);self.assertEqual({'server_name':'Migrated DayZ','max_players':32},migrated['server_settings_values']);self.assertEqual({'server_name','max_players'},set(migrated['catalog_server_settings']['fields']))
+   self.assertTrue(changed);self.assertEqual(12,migrated['profile_version']);self.assertEqual({'server_name':'Migrated DayZ','max_players':32},migrated['server_settings_values']);self.assertEqual({'server_name','max_players','join_password','admin_password'},set(migrated['catalog_server_settings']['fields']))
    cfg=Path(migrated['configuration_root'])/'serverDZ.cfg';cfg.parent.mkdir(parents=True,exist_ok=True);cfg.write_text('hostname = "Old"; // comment\nhostname = "Duplicate";\nmaxPlayers = 60; // comment\nmaxPlayers = 20;\n',encoding='utf-8');materialize_server_settings(migrated);text=cfg.read_text();self.assertEqual(1,text.count('hostname ='));self.assertEqual(1,text.count('maxPlayers ='));self.assertIn('hostname = "Migrated DayZ";',text);self.assertIn('maxPlayers = 32;',text)
 
  def test_dayz_profile_migration_preserves_settings_when_profile_context_predates_settings(self):
@@ -147,8 +147,8 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
    surface=observed_surface(spec);fields=surface['fields'];by_key={item['key']:item for item in fields}
    self.assertEqual('Effective',by_key['hostname']['value']);self.assertEqual(32,by_key['maxPlayers']['value'])
    self.assertEqual(1,sum(item.get('logical_id')=='server_name' for item in fields));self.assertEqual(1,sum(item.get('logical_id')=='max_players' for item in fields))
-   self.assertTrue(by_key['password']['secret']);self.assertIsNone(by_key['password']['value']);self.assertFalse(by_key['password']['editable']);self.assertTrue(by_key['password']['has_value'])
-   self.assertTrue(by_key['passwordAdmin']['secret']);self.assertFalse(by_key['passwordAdmin']['editable'])
+   self.assertTrue(by_key['password']['secret']);self.assertIsNone(by_key['password']['value']);self.assertTrue(by_key['password']['editable']);self.assertTrue(by_key['password']['has_value'])
+   self.assertTrue(by_key['passwordAdmin']['secret']);self.assertTrue(by_key['passwordAdmin']['editable']);self.assertIsNone(by_key['passwordAdmin']['value'])
    self.assertFalse(by_key['steamQueryPort']['editable']);self.assertTrue(by_key['steamQueryPort']['managed'])
    self.assertFalse(by_key['template']['editable']);self.assertTrue(by_key['template']['managed']);self.assertEqual('regular.namalsk',by_key['template']['value'])
    self.assertEqual(2,by_key['verifySignatures']['value']);self.assertTrue(by_key['verifySignatures']['editable'])
@@ -207,7 +207,7 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);(root/'serverDZ.cfg').write_text('hostname="Win";\npassword="secret";\nmaxPlayers=20;\nsteamQueryPort=2305;\ntemplate="regular.namalsk";\nverifySignatures=2;\n',encoding='utf-8')
    spec={'configuration_root':str(root),'arguments':[],'environment_id':'dayz.stable','catalog_server_settings':declaration('dayz.stable'),'catalog_network_properties':[{'path':'serverDZ.cfg','key':'steamQueryPort','syntax':'semicolon'}]};surface=module.observed_surface(spec);by_key={f['key']:f for f in surface['fields']}
-   self.assertFalse(by_key['password']['editable']);self.assertIsNone(by_key['password']['value']);self.assertFalse(by_key['steamQueryPort']['editable']);self.assertFalse(by_key['template']['editable']);self.assertTrue(by_key['template']['managed'])
+   self.assertTrue(by_key['password']['editable']);self.assertIsNone(by_key['password']['value']);self.assertFalse(by_key['steamQueryPort']['editable']);self.assertFalse(by_key['template']['editable']);self.assertTrue(by_key['template']['managed'])
    with self.assertRaises(PermissionError):module.normalize_dynamic_values(spec,{by_key['template']['id']:'dayzOffline.chernarusplus'})
    updated=dict(spec);updated['server_settings_dynamic_values']=module.normalize_dynamic_values(spec,{by_key['verifySignatures']['id']:1});module.materialize_dynamic_values(updated);self.assertRegex((root/'serverDZ.cfg').read_text(),r'verifySignatures\s*=\s*1;')
 
@@ -232,6 +232,29 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
   with patch.object(workspace_service,'runtime_workspace_capabilities',return_value={'server_settings':dayz}),patch.object(workspace_service,'ConfigurationRepository',ConfigRepo):
    with self.assertRaises(ValueError):service.save_server_settings({'username':'owner'},'instance-1',{'known-players':33},'surface-1')
    with self.assertRaises(PermissionError):service.save_server_settings({'username':'owner'},'instance-1',{'managed-port':24003},'surface-1')
+
+ def test_workspace_secret_remove_persists_tombstone_until_replacement(self):
+  dayz=declaration('dayz.stable');captured=[]
+  surface={'fields':[{'id':'join-secret','logical_id':'join_password','type':'string','editable':True,'secret':True}]}
+  state={'value':{'runtime_id':'dayz.stable','settings':{},'dynamic_values':{},'protected_refs':{'join_password_ref':'instance/instance-1/SERVER_SETTING_JOIN_PASSWORD'},'cleared_protected_fields':[],'declaration':dayz}}
+  class ConfigRepo:
+   def __init__(self,backend):pass
+   def initialize(self):pass
+   def get(self,**kwargs):return state
+   def put(self,raw,updated_by=None):
+    state['value']=raw['value'];captured.append(raw['value']);return {'configuration':{'revision':len(captured)+1,'checksum':'new'},'changed':True}
+  class Outbox:
+   def __init__(self,backend):pass
+   def enqueue(self,**kwargs):return {'ref':'instance/instance-1/'+kwargs['name']}
+  service=workspace_service.CustomerInstanceWorkspaceService.__new__(workspace_service.CustomerInstanceWorkspaceService);service.root=ROOT;service.backend=object();service.require=lambda user,iid,perm:{'game_id':'dayz','runtime_id':'dayz.stable'};service.repo=type('Repo',(),{'workspace_policy':lambda self,iid:{}})();service._resolved_resource_policy=lambda context,policy:{'player_limit':32};service.files=type('Files',(),{'snapshot':lambda self,cid:{'command_id':cid,'instance_id':'instance-1','action':'settings_surface','status':'completed','result':surface}})()
+  with patch.object(workspace_service,'runtime_workspace_capabilities',return_value={'server_settings':dayz}),patch.object(workspace_service,'ConfigurationRepository',ConfigRepo),patch.object(workspace_service,'RuntimeSecretOutbox',Outbox):
+   service.save_server_settings({'username':'owner'},'instance-1',{},'surface-1',{'join-secret':'remove'})
+   self.assertNotIn('join_password_ref',captured[-1]['protected_refs']);self.assertEqual(['join_password'],captured[-1]['cleared_protected_fields'])
+   service.save_server_settings({'username':'owner'},'instance-1',{},'surface-1')
+   self.assertEqual(['join_password'],captured[-1]['cleared_protected_fields'])
+   service.save_server_settings({'username':'owner'},'instance-1',{'join-secret':'replacement'},'surface-1')
+   self.assertIn('join_password_ref',captured[-1]['protected_refs']);self.assertEqual([],captured[-1]['cleared_protected_fields']);self.assertNotIn('replacement',repr(captured[-1]))
+
 
  def test_settings_surface_is_internal_and_does_not_require_file_manager_permission(self):
   service=workspace_service.CustomerInstanceWorkspaceService.__new__(workspace_service.CustomerInstanceWorkspaceService);service.root=ROOT;service.require=lambda user,iid,perm:{'agent_id':'agent-1','game_id':'dayz','runtime_id':'dayz.stable'}

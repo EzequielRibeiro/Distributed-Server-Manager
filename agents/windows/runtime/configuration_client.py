@@ -36,7 +36,12 @@ def _apply_server_settings(value,target_id):
  from server_settings_surface import apply_runtime_dependencies, normalize_dynamic_values
  record=instance_runtime.get_instance(target_id)
  if not isinstance(record,dict):raise LookupError(f"instance not found: {target_id}")
- settings=value.get("settings") if isinstance(value.get("settings"),dict) else value
+ settings=dict(value.get("settings")) if isinstance(value.get("settings"),dict) else dict(value)
+ protected=value.get("protected_refs") if isinstance(value.get("protected_refs"),dict) else {}
+ secret_refs={}
+ for ref_key,ref in protected.items():
+  logical=str(ref_key); logical=logical[:-4] if logical.endswith("_ref") else logical
+  secret_refs[logical]=str(ref)
  declaration=value.get("declaration") if isinstance(value.get("declaration"),dict) else None
  runtime_id=str(value.get("runtime_id") or "").strip()
  current_runtime=str(record.get("environment_id") or "").strip()
@@ -44,8 +49,11 @@ def _apply_server_settings(value,target_id):
  agent_id=str(record.get("agent_id") or "").strip();config=_load_local_config(agent_id);updated=prepare_spec(record,settings,declaration=declaration)
  dynamic=value.get("dynamic_values") if isinstance(value.get("dynamic_values"),dict) else {}
  updated["server_settings_dynamic_values"]=normalize_dynamic_values(updated,dynamic,player_limit=value.get("player_limit")) if dynamic else {};updated=apply_runtime_dependencies(updated)
+ if secret_refs: updated["server_settings_secret_refs"]=secret_refs
+ cleared=[str(item) for item in (value.get("cleared_protected_fields") or []) if str(item).strip()]
+ if cleared: updated["server_settings_cleared_protected_fields"]=sorted(set(cleared))
  privileged_materialization.materialize(config,updated)
- return {"runtime_id":current_runtime,"settings":dict(updated.get("server_settings_values") or {}),"dynamic_values":dict(updated.get("server_settings_dynamic_values") or {}),"declaration":dict(updated.get("catalog_server_settings") or {})}
+ return {"runtime_id":current_runtime,"settings":dict(updated.get("server_settings_values") or {}),"protected_refs":dict(protected),"cleared_protected_fields":list(updated.get("server_settings_cleared_protected_fields") or []),"dynamic_values":dict(updated.get("server_settings_dynamic_values") or {}),"declaration":dict(updated.get("catalog_server_settings") or {})}
 def configuration_state():
  try:v=json.loads((ROOT/"state.json").read_text(encoding="utf-8"))
  except (OSError,json.JSONDecodeError):return []
@@ -66,6 +74,9 @@ def apply_configuration(command):
  doc={"schema_version":1,"kind":"CapivaraAppliedConfiguration","namespace":namespace,"target_type":target_type,"target_id":target_id,"revision":revision,"checksum":checksum,"value":applied,"applied_at":_now(),"configuration_refs":list(command.get("configuration_refs") or [])};_write(_path(command),doc)
  return {"target_type":target_type,"target_id":target_id,"namespace":namespace,"desired_revision":revision,"applied_revision":revision,"desired_checksum":checksum,"applied_checksum":checksum,"status":"applied","last_error":None,"reported_at":doc["applied_at"],"configuration_refs":doc["configuration_refs"]}
 def apply_configuration_commands(commands):
+ # Secret delivery is a dependency of configurations that carry protected refs.
+ # Apply one-time runtime-secret commands first regardless of Controller ordering.
+ commands=sorted(list(commands),key=lambda item:0 if str((item or {}).get("namespace") or "").strip().lower()==_RUNTIME_SECRET_NAMESPACE else 1)
  states={(str(x.get("target_type") or ""),str(x.get("target_id") or ""),str(x.get("namespace") or "")):x for x in configuration_state()};changed=False
  for command in commands[:1000]:
   try:report=apply_configuration(command)
