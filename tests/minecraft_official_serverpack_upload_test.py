@@ -131,6 +131,44 @@ class OfficialServerPackUploadTest(unittest.TestCase):
    self.assertEqual(bundle["loader_version"],"26.1.2.109")
    self.assertEqual(len(children),1)
 
+ def test_manual_serverpack_zip_needs_no_curseforge_key_and_uses_sha_identity(self):
+  with tempfile.TemporaryDirectory() as td:
+   path,s,_,_,patcher=self.fixture(td)
+   manual={"display_name":"ATM11 manual","serverpack":{"format":"uploaded-serverpack-v1"}}
+   with patcher,patch("customer_content_upload_service.build_serverpack_bundle",
+      partial(build_serverpack_bundle,requester=lambda *a,**k: (_ for _ in ()).throw(AssertionError("provider must not be called")),
+              load_secret=lambda *a,**k: (_ for _ in ()).throw(AssertionError("secret must not be read")))):
+    preview=s.preview_serverpack(USER,"transfer-1",
+      {"content_id":"atm11","content_type":"modpack","metadata":manual})
+    self.assertEqual(preview["kind"],"CapivaraServerPackPreview")
+    self.assertEqual(preview["source"]["provider"],"customer-upload")
+    self.assertEqual(preview["mod_count"],2)
+    self.assertFalse(preview["runs_pack_scripts"])
+    manual["serverpack"]["expected_revision"]=preview["update_plan"]["previous_revision"]
+    result=s.finalize(USER,"transfer-1",{"content_id":"atm11",
+      "content_type":"modpack","metadata":manual})
+   parent,bundle,children,_=s.content.bundles[-1]
+   digest=hashlib.sha256(path.read_bytes()).hexdigest()
+   self.assertEqual(bundle["provider_project_id"],"upload-atm11")
+   self.assertEqual(bundle["provider_version_id"],"sha256-"+digest)
+   self.assertEqual(parent["version"],"sha256-"+digest)
+   self.assertEqual(parent["provenance"]["kind"],"customer-serverpack-upload")
+   self.assertEqual(len(children),2)
+   self.assertEqual(result["revision_source"],"official-serverpack-upload")
+
+ def test_manual_serverpack_without_embedded_version_proof_is_rejected(self):
+  with tempfile.TemporaryDirectory() as td:
+   path,s,_,_,patcher=self.fixture(td)
+   with zipfile.ZipFile(path,"w",zipfile.ZIP_DEFLATED) as pack:
+    pack.writestr("mods/example.jar",b"server-mod")
+   s.transfers.item["sha256"]=hashlib.sha256(path.read_bytes()).hexdigest()
+   manual={"serverpack":{"format":"uploaded-serverpack-v1","loader_version":"26.1.2.109"}}
+   with patcher,self.assertRaisesRegex(ValueError,"comprovar internamente"):
+    build_serverpack_bundle(Path(td),CONTEXT,s.transfers.item,
+      s.transfers.item["destination_ref"],"atm11",manual,path,
+      requester=lambda *a,**k: (_ for _ in ()).throw(AssertionError("provider must not be called")),
+      load_secret=lambda *a,**k: (_ for _ in ()).throw(AssertionError("secret must not be read")))
+
  def test_official_sha1_mismatch_is_hard_rejection(self):
   with tempfile.TemporaryDirectory() as td:
    path,s,requester,_,patcher=self.fixture(td)

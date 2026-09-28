@@ -217,17 +217,17 @@ async function previewOfficialServerpack(transfer,contentId,type,name,displayNam
  const metadata={display_name:displayName};
  if(type!=="modpack"||!/\.zip$/i.test(String(name||"")))return metadata;
  const projectId=sourceFields?.curseforge_project_id??$("content-upload-cf-project")?.value.trim(),fileId=sourceFields?.curseforge_file_id??$("content-upload-cf-file")?.value.trim(),build=sourceFields?.loader_version??$("content-upload-loader-version")?.value.trim();
- if(!/^\d+$/.test(projectId||"")||!/^\d+$/.test(fileId||""))throw new Error("Informe os IDs do projeto/arquivo oficiais no CurseForge; o NeoForge será detectado pelo instalador do ZIP quando disponível.");
- metadata.serverpack={format:"official-serverpack-v1",curseforge_project_id:projectId,curseforge_file_id:fileId,loader_version:build};
+ const official=/^\d+$/.test(projectId||"")&&/^\d+$/.test(fileId||"");
+ metadata.serverpack=official?{format:"official-serverpack-v1",curseforge_project_id:projectId,curseforge_file_id:fileId,loader_version:build}:{format:"uploaded-serverpack-v1",loader_version:build};
  setManagedUploadUi(true,100,"Conferindo ZIP, integridade e versão do NeoForge…");
  const answer=await request(`${api}/content/upload/preview`,{method:"POST",body:JSON.stringify({instance_id:iid,transfer_id:transfer.transfer_id,content_id:contentId,content_type:type,metadata})});
  const preview=answer.serverpack||{};
- if(preview.kind!=="CapivaraOfficialServerPackPreview"||!preview.requires_stopped_instance)throw new Error("A prévia oficial do Server Pack é inválida.");
+ if(preview.kind!=="CapivaraServerPackPreview"||!preview.requires_stopped_instance)throw new Error("A prévia do Server Pack é inválida.");
  const plan=preview.update_plan||{};
  if(plan.operation==="unchanged")throw new Error("Esta versão do Server Pack já está instalada. Nenhuma reinstalação será iniciada.");
  if(!["install","update"].includes(plan.operation)||!Number.isInteger(plan.previous_revision)||plan.previous_revision<0)throw new Error("A prévia não confirmou uma revisão segura de instalação.");
  const changes=plan.manifest_diff?bundleDiffText(plan.manifest_diff):"";
- const intro=`Server Pack oficial: ${preview.source?.file_name||name}\nMinecraft ${preview.minecraft_version} · ${preview.loader_id} ${preview.loader_version}\nMods do servidor: ${preview.mod_count} · Configurações no ZIP: ${(preview.override_dirs||[]).join(", ")||"nenhuma"}\nScripts ignorados: ${(preview.ignored_launchers||[]).length}\nSHA256: ${preview.archive_sha256}`;
+ const intro=`Server Pack: ${preview.source?.file_name||name}\nMinecraft ${preview.minecraft_version} · ${preview.loader_id} ${preview.loader_version}\nMods do servidor: ${preview.mod_count} · Configurações no ZIP: ${(preview.override_dirs||[]).join(", ")||"nenhuma"}\nScripts ignorados: ${(preview.ignored_launchers||[]).length}\nSHA256: ${preview.archive_sha256}`;
  const safety=plan.operation==="update"
    ?"ATUALIZAÇÃO INCREMENTAL (revisão atual "+plan.previous_revision+")\n"+changes+"\nO mundo, os dados e as configurações existentes permanecerão preservados. Configurações novas do ZIP NÃO substituirão as personalizadas. Faça um backup ANTES da atualização."
    :"PRIMEIRA INSTALAÇÃO: os arquivos serão gerenciados pelo Capivara; nenhuma reinstalação do Minecraft será iniciada.";
@@ -243,7 +243,7 @@ serverFields.id="content-upload-serverpack-fields";serverFields.className="conte
 cfProject.id="content-upload-cf-project";cfProject.placeholder="CurseForge: ID do projeto (ex.: 1148445)";cfProject.inputMode="numeric";
 cfFile.id="content-upload-cf-file";cfFile.placeholder="CurseForge: ID do ZIP oficial (ex.: 8916964)";cfFile.inputMode="numeric";
 build.id="content-upload-loader-version";build.placeholder="NeoForge (opcional se o ZIP incluir instalador oficial)";
-serverNote.className="muted";serverNote.textContent="ZIP oficial: a instância deve estar parada e com backup. Somente arquivos verificados pelo CurseForge serão aceitos; scripts de inicialização não serão executados.";
+serverNote.className="muted";serverNote.textContent="ZIP de servidor: IDs do CurseForge são opcionais. Sem eles, Minecraft e NeoForge devem ser comprovados pelo próprio ZIP. Scripts de inicialização nunca serão executados.";
 serverFields.append(cfProject,cfFile,build,serverNote);
 uploadType.onchange=updateServerpackFields;file.onchange=updateServerpackFields;url.oninput=updateServerpackFields;
 form.append(id,uploadType,file,button,url,urlButton);const outcome=document.createElement("div");outcome.id="content-upload-outcome";outcome.hidden=true;outcome.setAttribute("role","status");outcome.setAttribute("aria-live","polite");uploadCard.append(title,form,serverFields,progressWrap,outcome);updateServerpackFields();box.append(uploadCard);renderContentUploadOutcome();reconcileInterruptedContentUpload().catch(console.warn);if(contentUploadActive)setManagedUploadUi(true,0,"Upload em andamento…")}const installedCard=document.createElement("article"),installedTitle=document.createElement("h2"),installed=document.createElement("div");installedCard.className="card";installedTitle.textContent="Conteúdo gerenciado";installed.id="content-installed";installed.className="content-installed";installedCard.append(installedTitle,installed);box.append(installedCard);renderInstalledContent();syncContentInstallLock()}
