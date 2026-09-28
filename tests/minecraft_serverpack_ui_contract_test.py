@@ -15,11 +15,11 @@ class ServerPackUIContractTest(unittest.TestCase):
   self.assertIn('if parsed.path==UPLOAD_FINALIZE:',src)
   self.assertLess(src.index("if parsed.path==UPLOAD_PREVIEW"),src.index("if parsed.path==UPLOAD_FINALIZE"))
 
- def test_zip_requires_official_provider_metadata_and_consent(self):
+ def test_zip_supports_manual_or_official_provenance_and_requires_consent(self):
   js=(ROOT/"dashboard/web/customer-instance-v2.js").read_text()
   for fragment in ('previewOfficialServerpack(', 'content-upload-cf-project',
                    'content-upload-cf-file', 'content-upload-loader-version',
-                   'metadata.serverpack={format:"official-serverpack-v1"',
+                   'format:"official-serverpack-v1"', 'format:"uploaded-serverpack-v1"',
                    '/content/upload/preview', 'requires_stopped_instance',
                    'if(!confirm(intro+', 'await previewOfficialServerpack',
                    'type!=="modpack"||!/\\.zip$/i'):
@@ -27,7 +27,8 @@ class ServerPackUIContractTest(unittest.TestCase):
   self.assertEqual(js.count('metadata:await previewOfficialServerpack'),1)
   self.assertEqual(js.count('...await previewOfficialServerpack'),1)
   self.assertNotIn('prompt("Informe a versão EXATA do NeoForge',js)
-  self.assertIn('o NeoForge será detectado pelo instalador do ZIP',js)
+  self.assertIn('IDs do CurseForge são opcionais',js)
+  self.assertIn('preview.kind!=="CapivaraServerPackPreview"',js)
 
  def test_workspace_never_auto_enables_a_serverpack(self):
   js=(ROOT/"dashboard/web/customer-instance-v2.js").read_text()

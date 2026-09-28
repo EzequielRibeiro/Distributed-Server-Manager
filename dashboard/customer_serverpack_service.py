@@ -78,8 +78,9 @@ def build_serverpack_bundle(root: Path, context: Mapping[str, Any], item: Mappin
     if str(context.get("game_id") or "").lower() != "minecraft":
         raise ValueError("Importação de Server Pack disponível somente para Minecraft Java.")
     source = metadata.get("serverpack") if isinstance(metadata.get("serverpack"), Mapping) else {}
-    if source.get("format") != "official-serverpack-v1":
-        raise ValueError("Confirme explicitamente o formato de Server Pack oficial.")
+    pack_format = str(source.get("format") or "").strip()
+    if pack_format not in {"official-serverpack-v1", "uploaded-serverpack-v1"}:
+        raise ValueError("Confirme explicitamente o formato de Server Pack enviado.")
     runtime_id = str(context.get("runtime_id") or "").strip()
     version = str(context.get("game_version") or "").strip()
     runtime = runtime_definition(Path(root), "minecraft", runtime_id)
@@ -99,9 +100,21 @@ def build_serverpack_bundle(root: Path, context: Mapping[str, Any], item: Mappin
     uploaded_sha = str(item.get("sha256") or "").strip().lower()
     if not re.fullmatch(r"[0-9a-f]{64}", uploaded_sha) or uploaded_sha != inspected["sha256"]:
         raise ValueError("SHA-256 do arquivo não corresponde à transferência validada pelo Agent.")
-    official = _official_curseforge(artifact_path, source, version, requester, load_secret)
-    if not official["minecraft_tag_confirmed"] and not inspected["documented_game_version"]:
-        raise ValueError("Nem o arquivo oficial nem o manifesto interno comprovam a versão Minecraft deste Server Pack.")
+    if pack_format == "official-serverpack-v1":
+        origin = _official_curseforge(artifact_path, source, version, requester, load_secret)
+        if not origin["minecraft_tag_confirmed"] and not inspected["documented_game_version"]:
+            raise ValueError("Nem o arquivo oficial nem o manifesto interno comprovam a versão Minecraft deste Server Pack.")
+        provenance_kind = "official-customer-serverpack-upload"
+        project_identity = "cf-" + origin["project_id"]
+        version_identity = "file-" + origin["file_id"]
+    else:
+        if not inspected["documented_game_version"] or not inspected["documented_loader_version"]:
+            raise ValueError("O ZIP enviado precisa comprovar internamente Minecraft e a versão exata do loader.")
+        origin = {"provider": "customer-upload", "file_name": str(item.get("filename") or ""),
+                  "sha256": inspected["sha256"], "verified_by": "embedded-serverpack-metadata"}
+        provenance_kind = "customer-serverpack-upload"
+        project_identity = "upload-" + content_id
+        version_identity = "sha256-" + inspected["sha256"]
     prefix = inspected["root_prefix"]
     members = []
     children = []
@@ -125,8 +138,7 @@ def build_serverpack_bundle(root: Path, context: Mapping[str, Any], item: Mappin
             "artifact": artifact, "target": f"mods/{member_id}",
             "dependencies": [content_id],
             "provenance": {"kind": "official-serverpack-child",
-                           "project_id": official["project_id"],
-                           "file_id": official["file_id"],
+                           "source": origin,
                            "archive_member": info["archive_member"]},
         })
     name = str(item.get("filename") or "")
@@ -143,23 +155,23 @@ def build_serverpack_bundle(root: Path, context: Mapping[str, Any], item: Mappin
     parent = {
         "instance_id": str(context.get("id") or item.get("instance_id") or ""),
         "content_id": content_id, "content_type": "modpack",
-        "provider": "local", "version": official["file_id"],
+        "provider": "local", "version": version_identity,
         "desired_state": "installed", "activation_state": "enabled",
         "target": f"modpacks/{content_id}",
         "artifact": parent_artifact,
-        "provenance": {"kind": "official-customer-serverpack-upload",
+        "provenance": {"kind": provenance_kind,
                        "transfer_id": str(item["transfer_id"]),
-                       "official": official},
+                       "source": origin},
         "metadata": {"display_name": str(metadata.get("display_name") or content_id)[:191],
-                     "serverpack": {"format": "official-serverpack-v1",
+                     "serverpack": {"format": pack_format,
                                     "mod_count": len(members),
                                     "ignored_launchers": inspected["ignored_executables"][:30],
-                                    "source": official}},
+                                    "source": origin}},
     }
     bundle = {
         "provider": "local",
-        "provider_project_id": "cf-" + official["project_id"],
-        "provider_version_id": "file-" + official["file_id"],
+        "provider_project_id": project_identity,
+        "provider_version_id": version_identity,
         "minecraft_version": version, "loader_id": loader,
         "loader_version": inspected["loader_version"],
         "manifest_kind": "serverpack-local-v1",
@@ -167,7 +179,7 @@ def build_serverpack_bundle(root: Path, context: Mapping[str, Any], item: Mappin
         "override_roots": ["server-overrides"] if inspected["override_dirs"] else [],
     }
     preview = {
-        "kind": "CapivaraOfficialServerPackPreview", "source": official,
+        "kind": "CapivaraServerPackPreview", "source": origin,
         "minecraft_version": version, "loader_id": loader,
         "loader_version": inspected["loader_version"],
         "mod_count": len(members), "override_dirs": inspected["override_dirs"],
