@@ -77,12 +77,6 @@
         "protocol": "udp",
         "offset": 2,
         "exposure": "public"
-      },
-      {
-        "name": "votifier",
-        "protocol": "tcp",
-        "offset": 3,
-        "exposure": "public"
       }
     ],
     "apply": [
@@ -115,10 +109,21 @@
         "file": "server.properties",
         "key": "query.port",
         "value": "{query}"
-      },
+      }
+    ],
+    "on_demand_ports": [
       {
-        "kind": "reserve",
-        "port": "votifier"
+        "name": "votifier",
+        "protocol": "tcp",
+        "offset": 3,
+        "exposure": "public"
+      }
+    ],
+    "legacy_reservations": [
+      {
+        "name": "votifier",
+        "protocol": "tcp",
+        "offset": 3
       }
     ]
   },

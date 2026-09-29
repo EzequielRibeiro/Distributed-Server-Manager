@@ -17,6 +17,7 @@ from backend import DatabaseConfig
 from backend_factory import create_backend
 from hybrid_customer_workspace_worker import (
     _import_suffix,
+    _cleanup_content_upload_artifact,
     process_hybrid_artifact_cycle,
     process_hybrid_console_cycle,
     process_hybrid_file_cycle,
@@ -235,6 +236,103 @@ class HybridCustomerWorkspaceWorkerTest(unittest.TestCase):
             },
         )
         self.assertEqual(result["status"], "completed")
+
+    def test_hybrid_cleanup_removes_only_owned_quarantine_file(self):
+        from types import SimpleNamespace
+        root = Path(self.temp.name) / "quarantine"
+        directory = root / "instance-1" / "transfer-content-1"
+        directory.mkdir(parents=True)
+        target = directory / "server.zip"
+        target.write_bytes(b"temporary upload")
+        sibling = root / "instance-2" / "transfer-content-2"
+        sibling.mkdir(parents=True)
+        protected = sibling / "server.zip"
+        protected.write_bytes(b"other customer's upload")
+        original = {"purpose": "content_upload",
+                    "direction": "controller_to_agent",
+                    "instance_id": "instance-1",
+                    "agent_id": "hybrid-1",
+                    "filename": "server.zip",
+                    "status": "failed"}
+        repository = Mock()
+        repository.get.return_value = original
+        cleanup = {"instance_id": "instance-1",
+                   "source_ref": "transfer-content-1", "filename": "server.zip"}
+        with (
+            patch("hybrid_customer_workspace_worker._owned_instance"),
+            patch("hybrid_customer_workspace_worker._runtime_client",
+                  return_value=SimpleNamespace(QUARANTINE_ROOT=root)),
+        ):
+            _cleanup_content_upload_artifact(
+                repository, cleanup, self.root, {}, "hybrid-1")
+            self.assertFalse(target.exists())
+            self.assertTrue(protected.exists())
+            # Idempotent cleanup is safe for retrying an acknowledged command.
+            _cleanup_content_upload_artifact(
+                repository, cleanup, self.root, {}, "hybrid-1")
+            for changed in ({"agent_id": "another-agent"},
+                            {"instance_id": "instance-2"}):
+                repository.get.return_value = {**original, **changed}
+                with self.assertRaisesRegex(ValueError, "ownership/state mismatch"):
+                    _cleanup_content_upload_artifact(
+                        repository, cleanup, self.root, {}, "hybrid-1")
+
+    def test_hybrid_cleanup_refuses_symlinked_quarantine_file(self):
+        from types import SimpleNamespace
+        root = Path(self.temp.name) / "quarantine"
+        directory = root / "instance-1" / "transfer-content-1"
+        directory.mkdir(parents=True)
+        protected = Path(self.temp.name) / "protected.zip"
+        protected.write_bytes(b"must not be removed")
+        (directory / "server.zip").symlink_to(protected)
+        repository = Mock()
+        repository.get.return_value = {
+            "purpose": "content_upload", "direction": "controller_to_agent",
+            "instance_id": "instance-1", "agent_id": "hybrid-1",
+            "filename": "server.zip", "status": "failed"}
+        cleanup = {"instance_id": "instance-1",
+                   "source_ref": "transfer-content-1", "filename": "server.zip"}
+        with (
+            patch("hybrid_customer_workspace_worker._owned_instance"),
+            patch("hybrid_customer_workspace_worker._runtime_client",
+                  return_value=SimpleNamespace(QUARANTINE_ROOT=root)),
+        ):
+            with self.assertRaisesRegex(ValueError, "symbolic links"):
+                _cleanup_content_upload_artifact(
+                    repository, cleanup, self.root, {}, "hybrid-1")
+        self.assertEqual(protected.read_bytes(), b"must not be removed")
+
+    def test_hybrid_cleanup_handles_rejected_upload_without_backup_import(self):
+        repository = Mock()
+        repository.command_for_agent.return_value = {
+            "transfer_id": "transfer-cleanup-1",
+            "direction": "controller_to_agent",
+            "purpose": "content_upload_cleanup",
+            "instance_id": "instance-1",
+            "source_ref": "transfer-content-1",
+            "filename": "server.zip",
+        }
+        repository.apply_agent_result.return_value = {"status": "completed"}
+        with (
+            patch("hybrid_customer_workspace_worker._hybrid_agent_config",
+                  return_value={"agent_id": "hybrid-1"}),
+            patch("hybrid_customer_workspace_worker.ArtifactTransferRepository",
+                  return_value=repository),
+            patch("hybrid_customer_workspace_worker._cleanup_content_upload_artifact"
+                  ) as cleanup,
+            patch("hybrid_customer_workspace_worker._install_controller_artifact"
+                  ) as backup_import,
+        ):
+            result = process_hybrid_artifact_cycle(self.backend, self.root, "hybrid-1")
+        cleanup.assert_called_once()
+        self.assertEqual(cleanup.call_args.args[-1], "hybrid-1")
+        backup_import.assert_not_called()
+        self.assertEqual(result["status"], "completed")
+        repository.apply_agent_result.assert_called_once_with("hybrid-1", {
+            "transfer_id": "transfer-cleanup-1",
+            "status": "completed",
+            "transferred_bytes": 0,
+        })
 
     def test_unknown_controller_to_agent_purpose_fails_closed(self):
         repository = Mock()

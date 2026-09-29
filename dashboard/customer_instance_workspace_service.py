@@ -13,6 +13,7 @@ from backup_repository import BackupRepository
 from catalog_resource_profiles_http import catalog_resource_profiles
 from instance_file_repository import InstanceFileRepository
 from configuration_repository import ConfigurationRepository
+from runtime_secret_repository import RuntimeSecretOutbox
 from instance_workspace_policy import INSTANCE_PERMISSIONS,content_ui_sections,effective_content_policy,enforce_managed_content_mutation,require_permission,validate_server_settings,validate_startup_values
 from instance_workspace_repository import InstanceWorkspaceRepository
 from runtime_instance_projection import project_runtime_state
@@ -191,12 +192,26 @@ class CustomerInstanceWorkspaceService:
   warning=by_key.get("pingwarning");critical=by_key.get("pingcritical");maximum=by_key.get("maxping")
   if warning is not None and critical is not None and float(warning)>float(critical):raise ValueError("pingWarning must be less than or equal to pingCritical")
   if critical is not None and maximum is not None and float(critical)>float(maximum):raise ValueError("pingCritical must be less than or equal to MaxPing")
- def save_server_settings(self,user,instance_id,values,surface_command_id=None):
+ def save_server_settings(self,user,instance_id,values,surface_command_id=None,secret_actions=None):
+  cleared_protected_fields=[]
   context=self.require(user,instance_id,"settings.write");policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));declaration=dict(caps.get("server_settings") or {});repo=ConfigurationRepository(self.backend);repo.initialize();current=repo.get(scope_type="instance",scope_id=instance_id,namespace="capivara.instance.server-settings");player_limit=policy.get("player_limit");dynamic_patch={};fields={}
   if surface_command_id:
    state=self.server_settings_surface_status(user,instance_id,surface_command_id)
    if str(state.get("status") or "")!="completed":raise RuntimeError("server settings surface is not ready")
    surface=state.get("result") if isinstance(state.get("result"),dict) else {};fields={str(item.get("id") or ""):item for item in surface.get("fields") or [] if isinstance(item,dict) and item.get("id")};logical={}
+   protected_refs={}
+   secret_actions=secret_actions if isinstance(secret_actions,dict) else {}
+   for field_id,action in secret_actions.items():
+    field=fields.get(str(field_id))
+    if not field:raise PermissionError("unknown server setting")
+    if not bool(field.get("editable")) or not bool(field.get("secret")):raise PermissionError("server setting secret action is not allowed")
+    if str(action or "").strip().lower()!="remove":raise ValueError("invalid server setting secret action")
+    logical_id=str(field.get("logical_id") or "").strip()
+    if not logical_id:raise PermissionError("dynamic secret server settings require a catalog declaration")
+    name=("SERVER_SETTING_"+logical_id).upper().replace("-","_")
+    RuntimeSecretOutbox(self.backend).enqueue(instance_id=instance_id,name=name,action="revoke",requested_by=str((user or {}).get("username") or (user or {}).get("id") or "customer"))
+    protected_refs[logical_id+"_ref"]=None
+    cleared_protected_fields.append(logical_id)
    for field_id,raw in (values or {}).items():
     field=fields.get(str(field_id))
     if not field:raise PermissionError("unknown server setting")
@@ -204,11 +219,24 @@ class CustomerInstanceWorkspaceService:
     if bool(field.get("secret")) and raw in {None,""}:continue
     value=self._surface_value(field,raw,player_limit)
     logical_id=str(field.get("logical_id") or "").strip()
-    if logical_id:logical[logical_id]=value
+    if bool(field.get("secret")):
+     if not logical_id:raise PermissionError("dynamic secret server settings require a catalog declaration")
+     name=("SERVER_SETTING_"+logical_id).upper().replace("-","_")
+     job=RuntimeSecretOutbox(self.backend).enqueue(instance_id=instance_id,name=name,action="put",value=value,requested_by=str((user or {}).get("username") or (user or {}).get("id") or "customer"))
+     protected_refs[logical_id+"_ref"]=job["ref"]
+    elif logical_id:logical[logical_id]=value
     else:dynamic_patch[str(field_id)]=value
    partial=validate_server_settings(logical,declaration,player_limit=player_limit)
   else:partial=validate_server_settings(values,declaration,player_limit=player_limit)
-  merged={**self._server_settings_value(current),**partial};merged=validate_server_settings(merged,declaration,player_limit=player_limit);dynamic={**self._server_settings_dynamic_value(current),**dynamic_patch};self._validate_server_setting_relationships(fields,dynamic);actor=str((user or {}).get("username") or (user or {}).get("id") or "customer");runtime_id=str(context.get("runtime_id") or "").strip();payload={"runtime_id":runtime_id,"settings":merged,"dynamic_values":dynamic,"player_limit":player_limit,"declaration":declaration};stored=repo.put({"scope_type":"instance","scope_id":instance_id,"namespace":"capivara.instance.server-settings","value":payload},updated_by=actor);row=stored.get("configuration") or {};return {"values":merged,"dynamic_values":dynamic,"declaration":declaration,"revision":row.get("revision"),"checksum":row.get("checksum"),"changed":bool(stored.get("changed")),"restart_required":bool(declaration.get("restart_required",True))}
+  merged={**self._server_settings_value(current),**partial};merged=validate_server_settings(merged,declaration,player_limit=player_limit);dynamic={**self._server_settings_dynamic_value(current),**dynamic_patch};self._validate_server_setting_relationships(fields,dynamic);actor=str((user or {}).get("username") or (user or {}).get("id") or "customer");runtime_id=str(context.get("runtime_id") or "").strip();existing_raw=dict((current or {}).get("value") or {});cleared_protected_fields=list(existing_raw.get("cleared_protected_fields") or [])+cleared_protected_fields;protected={**(existing_raw.get("protected_refs") if isinstance(existing_raw.get("protected_refs"),dict) else {})};
+  if surface_command_id:
+   for key,ref in protected_refs.items():
+    if ref is None:protected.pop(key,None)
+    else:
+     protected[key]=ref
+     logical_key=key[:-4] if key.endswith("_ref") else key
+     cleared_protected_fields=[item for item in cleared_protected_fields if item!=logical_key]
+  payload={"runtime_id":runtime_id,"settings":merged,"dynamic_values":dynamic,"protected_refs":protected,"cleared_protected_fields":sorted(set(cleared_protected_fields)),"player_limit":player_limit,"declaration":declaration};stored=repo.put({"scope_type":"instance","scope_id":instance_id,"namespace":"capivara.instance.server-settings","value":payload},updated_by=actor);row=stored.get("configuration") or {};return {"values":merged,"dynamic_values":dynamic,"declaration":declaration,"revision":row.get("revision"),"checksum":row.get("checksum"),"changed":bool(stored.get("changed")),"restart_required":bool(declaration.get("restart_required",True))}
  def _file_command_policy(self,context,policy):
   caps,content=self._contract_policy(context,policy);return {"storage_limit_bytes":policy.get("storage_limit_bytes"),"content_policy":content.as_dict(),"file_policy":dict(caps.get("file_policy") or {})}
  def queue_file(self,user,instance_id,action,*,path=None,target_path=None,payload=None):

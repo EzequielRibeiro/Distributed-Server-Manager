@@ -3,7 +3,7 @@
 from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime,timedelta,timezone
-import hashlib,os
+import hashlib,os,shutil
 from pathlib import Path
 import uuid
 from alert_repository import AlertSession,dialect_for_backend
@@ -12,7 +12,7 @@ FINAL={"completed","failed","cancelled","expired"};ACTIVE={"staging","queued","d
 _ARTIFACT_CHUNK_BYTES=1024*1024
 _MAX_ARTIFACT_BYTES=64*1024*1024*1024
 
-def _copy_artifact_stream(source,out,content_length=None):
+def _copy_artifact_stream(source,out,content_length=None,*,reserve_free_bytes=0):
  expected=None if content_length is None else int(content_length)
  if expected is not None and (expected<0 or expected>_MAX_ARTIFACT_BYTES):raise ValueError("artifact exceeds 64 GiB transfer limit")
  h=hashlib.sha256();total=0;remaining=expected
@@ -27,6 +27,8 @@ def _copy_artifact_stream(source,out,content_length=None):
   if remaining is not None:
    if len(chunk)>remaining:raise ValueError("artifact content length mismatch")
    remaining-=len(chunk)
+  if reserve_free_bytes and shutil.disk_usage(out.name).free < reserve_free_bytes + len(chunk):
+   raise OSError("Espaço livre insuficiente no Controller para receber o upload sem comprometer o sistema.")
   h.update(chunk);out.write(chunk)
  if expected is not None and total!=expected:raise ValueError("artifact content length mismatch")
  return total,h.hexdigest()
@@ -108,13 +110,24 @@ class ArtifactTransferRepository:
   if item["direction"]!="controller_to_agent":raise ValueError("transfer direction does not accept Controller upload")
   path=self._path(transfer_id,item["filename"]);path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_suffix(path.suffix+".part");total=0;digest=""
   try:
-   with tmp.open("wb") as out:total,digest=_copy_artifact_stream(source,out,content_length)
+   with tmp.open("wb") as out:total,digest=_copy_artifact_stream(source,out,content_length,reserve_free_bytes=2*1024**3 if item.get("purpose")=="content_upload" else 0)
    os.replace(tmp,path)
   finally:
    try:tmp.unlink()
    except FileNotFoundError:pass
   ph=self.dialect.placeholder
   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET size_bytes={ph},transferred_bytes=0,sha256={ph},controller_path={ph},status='queued',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(total,digest,str(path),transfer_id))
+  return self.get(transfer_id)
+ def fail_staging_upload(self,transfer_id,reason):
+  """Persist an interrupted Controller-side upload without touching Agent data."""
+  item=self.get(transfer_id)
+  if item.get("purpose")!="content_upload" or item.get("direction")!="controller_to_agent":
+   raise ValueError("transfer is not a content upload")
+  if item.get("status")!="staging":return item
+  ph=self.dialect.placeholder
+  message=str(reason or "Upload interrompido antes da conclusão.")[:1024]
+  with self.session(transaction=True) as s:
+   s.execute(f"UPDATE artifact_transfers SET status='failed',last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph} AND status='staging'",(message,transfer_id))
   return self.get(transfer_id)
  def controller_artifact(self,transfer_id):
   item=self.get(transfer_id);path=Path(str(item.get("controller_path") or "")).resolve();path.relative_to(self.spool)

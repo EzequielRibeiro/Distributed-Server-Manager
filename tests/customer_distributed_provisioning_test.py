@@ -58,11 +58,14 @@ class _FakeDashboardRepository:
             "game_id": "dayz",
             "customer": {"id": kwargs["customer_id"]},
         }
+        metadata_path = instance_path / ".dsm" / "instance-metadata.json"
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        metadata_path.write_text(json.dumps(metadata, sort_keys=True), encoding="utf-8")
         return {
             "instance_id": instance_id,
             "name": "Aurora DayZ",
             "instance_path": instance_path,
-            "metadata_path": instance_path / ".dsm" / "instance-metadata.json",
+            "metadata_path": metadata_path,
             "metadata": metadata,
             "agent_id": kwargs["selected_agent_id"],
             "node_id": node_id,
@@ -71,6 +74,13 @@ class _FakeDashboardRepository:
 
     def delete_instance(self, instance_id):
         self.deleted.append(instance_id)
+
+    def retry_instance(self, instance_id):
+        return {
+            "id": instance_id,
+            "node_id": "remote-node",
+            "game_id": "dayz",
+        }
 
     def reserve_retry(self, instance_id, node_id, game):
         self.status_updates.append((instance_id, "queued"))
@@ -159,6 +169,7 @@ class CustomerDistributedProvisioningTest(unittest.TestCase):
     def test_customer_creation_queues_b10_and_never_runs_controller_installer(self):
         with (
             patch.object(integration, "occupied_ports_provider_for_backend", return_value=lambda *args: set()),
+            patch.object(integration, "require_port_pool_preflight", return_value=None),
             patch.object(
                 integration,
                 "resolve_catalog_provisioning",
@@ -167,11 +178,12 @@ class CustomerDistributedProvisioningTest(unittest.TestCase):
                     {"catalog_runtime_id": "dayz.stable", "catalog_game_id": "dayz"},
                 ),
             ) as resolver,
+            patch.object(integration, "CustomerTeamRepository", return_value=Mock(set_instance_access=Mock())),
             patch.object(integration, "AgentInstanceProvisioningRepository", _FakeProvisioningRepository),
             patch.object(integration, "project_agent_provisioning", side_effect=self._projection),
         ):
             result = self.legacy.create_customer_instance(
-                {"role": "customer", "scope_id": "customer-aurora", "username": "aurora"},
+                {"role": "customer", "scope_id": 1, "username": "aurora"},
                 self._payload(),
             )
 
@@ -184,7 +196,7 @@ class CustomerDistributedProvisioningTest(unittest.TestCase):
         self.assertEqual(queued["agent_id"], "agent-remote")
         self.assertEqual(queued["instance_id"], "aurora-dayz-001")
         self.assertEqual(queued["environment_id"], "dayz.stable")
-        self.assertEqual(queued["desired_state"], "stopped")
+        self.assertEqual(queued["desired_state"], "running")
         self.assertEqual(queued["requested_by"], "aurora")
         resolver.assert_called_once()
 
@@ -209,8 +221,8 @@ class CustomerDistributedProvisioningTest(unittest.TestCase):
             patch.object(integration, "project_agent_provisioning", side_effect=self._projection),
         ):
             result = self.legacy.retry_instance_provisioning(
-                {"role": "customer", "scope_id": "customer-aurora", "username": "aurora"},
-                instance,
+                {"role": "customer", "scope_id": 1, "username": "aurora"},
+                "aurora-dayz-001",
             )
 
         self.assertTrue(result["retried"])

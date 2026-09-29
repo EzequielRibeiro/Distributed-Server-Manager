@@ -38,6 +38,8 @@ class CustomerContentUpdatePolicySurfaceTest(unittest.TestCase):
   self.assertNotIn('innerHTML',ui)
   self.assertIn('<script src="/customer-content-update-policy.js"></script>',html)
   self.assertIn('"/customer-content-update-policy.js"',static)
+  composition=(ROOT/'dashboard/server_part20.py').read_text(encoding='utf-8')
+  self.assertIn('"/customer-content-update-policy.js":legacy.WEB_DIR/"customer-content-update-policy.js"',composition)
  def test_customer_ui_never_accepts_provider_or_version_for_policy_writes(self):
   ui=(ROOT/'dashboard/web/customer-content-update-policy.js').read_text(encoding='utf-8')
   self.assertIn('JSON.stringify({instance_id:iid,policy})',ui)

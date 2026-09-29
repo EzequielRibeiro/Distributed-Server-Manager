@@ -93,7 +93,7 @@ class _Repository:
     def mark_readiness(self, run_id, command_id):
         return self._mark("readiness_command_id", command_id, "validating")
 
-    def finish(self, run_id, success, error_code=None, error_detail=None, now=None):
+    def finish(self, run_id, success, error_code=None, error_detail=None, now=None, next_due_override=None):
         self.finished.append((bool(success), error_code, error_detail))
         self.current["status"] = "completed" if success else "failed"
         return dict(self.current)

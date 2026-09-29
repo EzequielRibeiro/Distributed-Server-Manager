@@ -162,6 +162,68 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
         self.assertEqual(len(fake.sent), 2)
         self.assertEqual(fake.sent[1][0], telemetry._A2S_INFO_REQUEST + challenge)
 
+    @staticmethod
+    def _bedrock_pong(players=4, players_max=20):
+        motd = f"MCPE;Capivara Bedrock;999;1.21.100;{players};{players_max};123456;Bedrock level;Survival;1;19132;19133;".encode("utf-8")
+        return (
+            b"\x1c"
+            + (123).to_bytes(8, "big")
+            + (456).to_bytes(8, "big")
+            + telemetry._RAKNET_MAGIC
+            + len(motd).to_bytes(2, "big")
+            + motd
+        )
+
+    def test_bedrock_uses_nethernet_signaling_port_when_available(self):
+        record = {"ports": {"signaling": {"port": 24100, "protocol": "tcp"}}}
+        with patch.object(
+            telemetry,
+            "_tcp_connect_latency",
+            return_value={"latency_ms": 4.2},
+        ) as query:
+            result = telemetry._bedrock_query(record, {})
+        self.assertEqual(result["latency_ms"], 4.2)
+        query.assert_called_once_with("127.0.0.1", 24100, 2)
+
+    def test_bedrock_falls_back_to_reserved_raknet_ipv4_port(self):
+        record = {"ports": {"game_ipv4": {"port": 24100, "protocol": "udp"}}}
+        with patch.object(
+            telemetry,
+            "_bedrock_ping",
+            return_value={"players_online": 2, "players_max": 10, "latency_ms": 3.5},
+        ) as query:
+            result = telemetry._bedrock_query(record, {})
+        self.assertEqual(result["players_online"], 2)
+        self.assertEqual(result["latency_ms"], 3.5)
+        query.assert_called_once_with("127.0.0.1", 24100, 2)
+
+    def test_tcp_connect_latency_reports_round_trip(self):
+        fake = _FakeSocket([])
+        with patch.object(telemetry.socket, "create_connection", return_value=fake) as connect, patch.object(
+            telemetry.time, "monotonic", side_effect=[20.0, 20.004]
+        ):
+            result = telemetry._tcp_connect_latency("127.0.0.1", 24006, 1)
+        self.assertEqual(result["latency_ms"], 4.0)
+        connect.assert_called_once_with(("127.0.0.1", 24006), timeout=1)
+
+    def test_native_bedrock_ping_parses_players_and_latency(self):
+        fake = _FakeSocket([self._bedrock_pong(players=6, players_max=30)])
+        with patch.object(telemetry.socket, "socket", return_value=fake), patch.object(
+            telemetry.time, "monotonic", side_effect=[9.5, 10.0, 10.012]
+        ):
+            result = telemetry._bedrock_ping("127.0.0.1", 19132, 1)
+        self.assertEqual(result["players_online"], 6)
+        self.assertEqual(result["players_max"], 30)
+        self.assertEqual(result["latency_ms"], 12.0)
+        self.assertEqual(fake.sent[0][1], ("127.0.0.1", 19132))
+        self.assertEqual(fake.sent[0][0][0], 0x01)
+        self.assertIn(telemetry._RAKNET_MAGIC, fake.sent[0][0])
+
+    def test_native_bedrock_failure_is_unknown(self):
+        malformed = _FakeSocket([b"not-raknet"])
+        with patch.object(telemetry.socket, "socket", return_value=malformed):
+            self.assertEqual(telemetry._bedrock_ping("127.0.0.1", 19132, 1), {})
+
     def test_native_a2s_failure_is_unknown(self):
         malformed = _FakeSocket([b"not-a2s"])
         with patch.object(telemetry.socket, "socket", return_value=malformed):
@@ -178,6 +240,23 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
             self.assertIsNone(telemetry._storage_used(directory, max_entries=0))
         self.assertIsNone(telemetry._storage_used("/path/that/does/not/exist"))
         self.assertIsNone(telemetry._storage_used(None))
+
+    def test_collect_prefers_files_root_for_storage_measurement(self):
+        record = {
+            "instance_id": "bedrock-001",
+            "agent_id": "agent-test",
+            "game_id": "minecraft",
+            "environment_id": "minecraft.bedrock.vanilla",
+            "profile": "minecraft-bedrock",
+            "adapter": "systemd",
+            "files_root": "/instance/runtime",
+            "instance_state_root": "/instance",
+            "ports": {"signaling": {"port": 24006, "protocol": "tcp"}},
+        }
+        with patch.object(telemetry.instance_runtime, "list_instances", return_value=[{"instance_id": "bedrock-001"}]),              patch.object(telemetry.instance_runtime, "get_instance", return_value=record),              patch.object(telemetry.instance_runtime, "status", return_value={"observed_state": "running"}),              patch.object(telemetry, "_systemd_main_pid", return_value=None),              patch.object(telemetry, "_systemd_resources", return_value=(None, None)),              patch.object(telemetry, "_systemd_network", return_value=(None, None)),              patch.object(telemetry, "_bedrock_query", return_value={"latency_ms": 1.2}),              patch.object(telemetry, "_storage_used", return_value=1234) as storage:
+            samples = telemetry.collect_instance_telemetry({})
+        self.assertEqual(samples[0]["storage_used_bytes"], 1234)
+        storage.assert_called_once_with("/instance/runtime")
 
     def test_storage_scan_error_is_unknown_not_partial(self):
         with tempfile.TemporaryDirectory() as directory:

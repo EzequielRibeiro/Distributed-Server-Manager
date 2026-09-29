@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import hashlib,io,json,sys,tempfile,unittest,zipfile
+import hashlib,http.client,io,json,socket,sys,tempfile,threading,time,unittest,zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock,patch
 ROOT=Path(__file__).resolve().parents[1]
 for path in (ROOT/"dashboard",ROOT/"database",ROOT/"core"):
  if str(path) not in sys.path:sys.path.insert(0,str(path))
-from customer_content_upload_service import CustomerContentUploadService
+from customer_content_upload_service import CustomerContentUploadService,_safe_external_url
+import customer_content_http as upload_http
 
 class _Workspace:
  def __init__(self,policy=None):
@@ -21,6 +23,10 @@ class _Transfers:
  def create(self,**kw):self.created.append(kw);return dict(self.item)
  def get(self,tid):return dict(self.item)
  def stage_from_controller(self,tid,source,length):self.staged.append((tid,length,source.read()));self.item["status"]="queued";self.item["size_bytes"]=length;return dict(self.item)
+ def fail_staging_upload(self,tid,reason):
+  if self.item["status"]=="staging":
+   self.item["status"]="failed";self.item["last_error"]=reason
+  return dict(self.item)
  def controller_artifact(self,tid):
   if not self.artifact_path:raise FileNotFoundError(tid)
   return Path(self.artifact_path),dict(self.item)
@@ -30,14 +36,110 @@ class _Transfers:
   self.rejected.append((tid,str(reason)));self.item["status"]="failed";self.item["last_error"]=str(reason);return dict(self.item)
 
 class _Content:
- def __init__(self):self.puts=[];self.bundles=[]
+ def __init__(self):self.puts=[];self.bundles=[];self.history=[]
  def put(self,payload,requested_by=None):self.puts.append((dict(payload),requested_by));return {"changed":True,"assignment":dict(payload,revision=1)}
- def put_bundle(self,parent,bundle,children,requested_by=None):self.bundles.append((dict(parent),dict(bundle),[dict(x) for x in children],requested_by));return {"changed":True,"assignment":dict(parent,revision=1),"children":children}
+ def put_many(self,payloads,requested_by=None):
+  items=[dict(payload) for payload in payloads]
+  self.puts.extend((dict(payload),requested_by) for payload in items)
+  return {"changed":True,"assignments":items}
+ def bundle_history(self,instance_id,content_id):return list(self.history)
+ def bundle_diff(self,instance_id,content_id,bundle):return {"added":["new-mod"],"removed":[],"updated":[],"unchanged":[]}
+ def put_bundle(self,parent,bundle,children,requested_by=None):self.bundles.append((dict(parent),dict(bundle),[dict(x) for x in children],requested_by));return {"changed":True,"bundle_revision":len(self.bundles),"assignment":dict(parent,revision=1),"children":children}
 
 def service(policy=None,status="staging"):
  s=CustomerContentUploadService.__new__(CustomerContentUploadService);s.backend=None;s.root=ROOT;s.workspace=_Workspace(policy);s.transfers=_Transfers(status);s.content=_Content();return s
 
 class ExternalUploadTest(unittest.TestCase):
+
+ def test_external_url_requires_https_and_public_destination(self):
+  with self.assertRaisesRegex(ValueError,"HTTPS"):
+   _safe_external_url("http://example.com/pack.mrpack")
+  with patch("customer_content_upload_service.socket.getaddrinfo",return_value=[(socket.AF_INET,socket.SOCK_STREAM,6,"",("127.0.0.1",443))]):
+   with self.assertRaisesRegex(ValueError,"private or reserved"):
+    _safe_external_url("https://example.com/pack.mrpack")
+  with patch("customer_content_upload_service.socket.getaddrinfo",return_value=[(socket.AF_INET,socket.SOCK_STREAM,6,"",("8.8.8.8",443))]):
+   self.assertEqual(_safe_external_url("https://example.com/pack.mrpack"),"https://example.com/pack.mrpack")
+
+ def test_real_socket_upload_slots_recover_after_stalled_clients(self):
+  from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+  class Handler(BaseHTTPRequestHandler):
+   protocol_version="HTTP/1.1"
+   def do_GET(self):self.send_json(404,{"error":"not_found"})
+   def do_POST(self):self.send_json(404,{"error":"not_found"})
+   def log_message(self,*args):pass
+   def send_json(self,status,data):
+    body=json.dumps(data).encode();self.send_response(status);self.send_header("Content-Type","application/json");self.send_header("Content-Length",str(len(body)));self.end_headers();self.wfile.write(body)
+  legacy=SimpleNamespace(DashboardHandler=Handler,DATABASE_FILE="unused",DSM_ROOT=ROOT,dashboard_repository=lambda _:SimpleNamespace(backend=object()))
+  upload_http.install_customer_content_http(legacy,lambda _:{"role":"customer","username":"alice"})
+  entered=threading.Event();count={"n":0};lock=threading.Lock()
+  def stage(*args):
+   with lock:
+    count["n"]+=1
+    if count["n"]>=2:entered.set()
+   time.sleep(.3);raise socket.timeout("simulated idle client")
+  with patch.object(upload_http.shutil,"disk_usage",return_value=SimpleNamespace(free=100*1024**3)),patch.object(upload_http,"CustomerContentUploadService") as service_cls:
+   service_cls.return_value.stage.side_effect=stage;server=ThreadingHTTPServer(("127.0.0.1",0),Handler);threading.Thread(target=server.serve_forever,daemon=True).start();port=server.server_address[1];sockets=[];conns=[]
+   try:
+    def partial(tid):
+     sock=socket.create_connection(("127.0.0.1",port));sockets.append(sock);sock.sendall(f"PUT {upload_http.UPLOAD}?transfer_id={tid} HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nx".encode())
+    partial("t1");partial("t2");self.assertTrue(entered.wait(1))
+    conn=http.client.HTTPConnection("127.0.0.1",port,timeout=2);conns.append(conn);conn.request("PUT",upload_http.UPLOAD+"?transfer_id=t3",body=b"xx",headers={"Content-Length":"2"});self.assertEqual(conn.getresponse().status,503)
+    time.sleep(.5);conn2=http.client.HTTPConnection("127.0.0.1",port,timeout=2);conns.append(conn2);conn2.request("PUT",upload_http.UPLOAD+"?transfer_id=t4",body=b"xx",headers={"Content-Length":"2"})
+    try:self.assertNotEqual(conn2.getresponse().status,503)
+    except http.client.RemoteDisconnected:pass
+    self.assertGreaterEqual(count["n"],3)
+   finally:
+    for item in conns+sockets:
+     try:item.close()
+     except Exception:pass
+    server.shutdown();server.server_close()
+
+ def test_stalled_http_handler_releases_upload_slot(self):
+  # Exercise the installed PUT handler, not merely source-text inspection.
+  class Handler:
+   def do_GET(self):pass
+   def do_POST(self):pass
+   def send_json(self,status,data):self.sent=(status,data)
+  legacy=SimpleNamespace(
+   DashboardHandler=Handler,DATABASE_FILE="unused",DSM_ROOT=ROOT,
+   dashboard_repository=lambda _:SimpleNamespace(backend=object()))
+  upload_http.install_customer_content_http(
+   legacy,lambda _:{"role":"customer","username":"alice"})
+  handler=Handler();handler.path=upload_http.UPLOAD+"?transfer_id=transfer-1"
+  handler.headers={"Content-Length":"2"};handler.rfile=io.BytesIO(b"x")
+  handler.connection=Mock();handler.connection.gettimeout.return_value=None
+  handler.close_connection=False
+  with (patch.object(upload_http.shutil,"disk_usage",return_value=SimpleNamespace(free=100*1024**3)),
+        patch.object(upload_http,"CustomerContentUploadService") as service_cls):
+   service_cls.return_value.stage.side_effect=socket.timeout("client stopped sending")
+   handler.do_PUT()
+  self.assertTrue(handler.close_connection)
+  handler.connection.settimeout.assert_any_call(45)
+  handler.connection.settimeout.assert_any_call(None)
+  self.assertTrue(upload_http._UPLOAD_SLOTS.acquire(blocking=False))
+  self.assertTrue(upload_http._UPLOAD_SLOTS.acquire(blocking=False))
+  self.assertFalse(upload_http._UPLOAD_SLOTS.acquire(blocking=False))
+  upload_http._UPLOAD_SLOTS.release()
+  upload_http._UPLOAD_SLOTS.release()
+
+ def test_upload_http_isolates_stalled_customer_connections(self):
+  http=(ROOT/"dashboard/customer_content_http.py").read_text(encoding="utf-8")
+  self.assertIn("threading.BoundedSemaphore(2)",http)
+  self.assertIn("self.connection.settimeout(_UPLOAD_IDLE_SECONDS)",http)
+  self.assertIn("self.close_connection=True",http)
+  self.assertIn("_UPLOAD_SLOTS.release()",http)
+  self.assertIn("upload_slots_busy",http)
+  self.assertIn("shutil.disk_usage(legacy.DSM_ROOT)",http)
+  self.assertIn("_UPLOAD_DISK_RESERVE=5*1024**3",http)
+  self.assertIn("_UPLOAD_MAX_BYTES=8*1024**3",http)
+ def test_external_url_surface_is_exposed_in_customer_workspace(self):
+  http=(ROOT/"dashboard/customer_content_http.py").read_text(encoding="utf-8")
+  js=(ROOT/"dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
+  self.assertIn('UPLOAD_URL=UPLOAD+"/url"',http)
+  self.assertIn("/content/upload/url",js)
+  self.assertIn("content-upload-url",js)
+  self.assertIn("Importar URL",js)
+
  def test_create_requires_content_install_and_uses_transfer_plane(self):
   s=service();item=s.create({"username":"alice"},"i1","mod.zip")
   self.assertEqual(s.workspace.calls[-1],("i1","content.install"));created=s.transfers.created[-1]
@@ -47,6 +149,16 @@ class ExternalUploadTest(unittest.TestCase):
   with self.assertRaises(PermissionError):service(p).create({"username":"alice"},"i1","mod.zip")
  def test_stage_streams_through_artifact_repository(self):
   s=service();s.stage({"username":"alice"},"transfer-1",io.BytesIO(b"abc"),3);self.assertEqual(s.transfers.staged[-1],("transfer-1",3,b"abc"))
+ def test_interrupted_request_records_failure(self):
+  s=service()
+  def broken_stage(tid,source,length):
+   raise ValueError("artifact content length mismatch")
+  s.transfers.stage_from_controller=broken_stage
+  with self.assertRaisesRegex(ValueError,"length mismatch"):
+   s.stage({"username":"alice"},"transfer-1",io.BytesIO(b"abc"),518936896)
+  self.assertEqual(s.transfers.item["status"],"failed")
+  self.assertIn("interrompido",s.transfers.item["last_error"])
+  self.assertEqual(s.transfers.item["purpose"],"content_upload")
  def test_cancel_marks_transfer_cancelled(self):
   s=service(status="queued");item=s.cancel({"username":"alice"},"transfer-1");self.assertEqual(item["status"],"cancelled")
 
@@ -84,7 +196,7 @@ class ExternalUploadTest(unittest.TestCase):
    s=service(status="completed");s.transfers.artifact_path=path;s.transfers.item["filename"]="pack.mrpack";s.transfers.item["destination_ref"]="quarantine/i1/transfer-1/pack.mrpack";s.transfers.item["sha256"]=hashlib.sha256(out.getvalue()).hexdigest()
    result=s.finalize({"username":"alice"},"transfer-1",{"content_id":"pack-1","content_type":"modpack"})
    parent,bundle,children,actor=s.content.bundles[-1]
-   self.assertEqual(actor,"alice");self.assertEqual(parent["provider"],"modrinth");self.assertEqual(bundle["manifest_kind"],"mrpack-v1");self.assertEqual(bundle["loader_id"],"fabric");self.assertEqual(len(children),1);self.assertEqual(children[0]["provider"],"modrinth");self.assertEqual(result["assignment"]["content_id"],"pack-1")
+   self.assertEqual(actor,"alice");self.assertEqual(parent["provider"],"modrinth");self.assertEqual(bundle["manifest_kind"],"mrpack-v1");self.assertEqual(bundle["loader_id"],"fabric");self.assertEqual(len(children),1);self.assertEqual(children[0]["provider"],"modrinth");self.assertEqual(result["assignment"]["content_id"],"pack-1");self.assertEqual(result["revision_source"],"external-upload");self.assertEqual(result["manifest_diff"]["added"],["new-mod"])
   finally:
    Path(path).unlink(missing_ok=True)
 

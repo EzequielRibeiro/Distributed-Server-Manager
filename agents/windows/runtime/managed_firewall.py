@@ -130,6 +130,8 @@ def public_rules(spec: dict[str, Any]) -> list[dict[str, Any]]:
         binding = ports.get(name)
 
         if not isinstance(binding, dict):
+            if raw.get("optional") is True:
+                continue
             raise ValueError(
                 f"resolved port is unavailable for {name}"
             )

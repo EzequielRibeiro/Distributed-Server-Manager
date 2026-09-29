@@ -57,6 +57,25 @@ class SystemdStopNormalizationTest(unittest.TestCase):
             runner.commands,
         )
 
+
+    def test_status_exposes_process_identity_and_restart_count(self):
+        def runner(command, timeout):
+            if command[:2] != ["systemctl", "show"]:
+                raise AssertionError(command)
+            return 0, (
+                "LoadState=loaded\n"
+                "ActiveState=active\n"
+                "SubState=running\n"
+                "MainPID=4321\n"
+                "NRestarts=2\n"
+                "Result=success\n"
+            ), ""
+
+        state = SystemdAdapter(runner=runner).status(INSTANCE)
+        self.assertEqual(state["main_pid"], 4321)
+        self.assertEqual(state["restart_count"], 2)
+        self.assertEqual(state["result"], "success")
+
     def test_status_does_not_clear_failed_state(self):
         runner = FakeRunner(["failed"])
         state = SystemdAdapter(runner=runner).status(INSTANCE)

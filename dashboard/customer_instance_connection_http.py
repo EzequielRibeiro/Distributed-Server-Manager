@@ -10,9 +10,12 @@ from agent_runtime_repository import AgentRuntimeRepository
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from controller_session import session_user_from_headers
 from steam_query import SteamQueryError, query_steam_a2s
+from customer_instance_creation import runtime_definition
+from instance_optional_port_service import OptionalPortError, set_votifier
 
 PATH = "/api/customer/instance/connection"
 TEST_PATH = PATH + "/test"
+VOTIFIER_PATH = PATH + "/votifier"
 _PRIMARY_NAMES = ("game", "game_ipv4", "game_udp", "server", "primary", "game_port", "port")
 
 
@@ -145,6 +148,7 @@ def _native_query_failure(target: dict, ports: list[dict], error: Exception) -> 
 
 def install_customer_instance_connection(legacy, authenticate):
     previous_get = legacy.DashboardHandler.do_GET
+    previous_post = legacy.DashboardHandler.do_POST
     legacy.STATIC_FILES["/customer-instance-core.js"] = legacy.WEB_DIR / "customer-instance-v2.js"
     legacy.STATIC_FILES["/customer-instance-v2.js"] = legacy.WEB_DIR / "customer-instance-v2-wrapper.js"
     legacy.STATIC_FILES["/customer-instance-connection.js"] = legacy.WEB_DIR / "customer-instance-connection.js"
@@ -252,7 +256,58 @@ def install_customer_instance_connection(legacy, authenticate):
                 self.send_json(200, result)
                 return
 
+            try:
+                definition = runtime_definition(
+                    Path(legacy.DSM_ROOT), str(context.get("game_id") or ""),
+                    str(context.get("runtime_id") or ""),
+                )
+            except (OSError, ValueError):
+                definition = {}
+            network_definition = definition.get("network") or {}
+            opt_in = any(
+                item.get("name") == "votifier"
+                for item in network_definition.get("on_demand_ports") or []
+            )
+            legacy_role = any(
+                item.get("name") == "votifier"
+                for item in network_definition.get("legacy_reservations") or []
+            )
+            votifier_port = next(
+                (item["port"] for item in ports if str(item.get("name")) == "votifier"),
+                None,
+            )
+            metadata = context.get("instance_metadata") or {}
+            pending = "votifier" in (metadata.get("network_optional_pending_drop") or [])
+            local_spec = Path(legacy.DSM_ROOT) / "runtime" / "hybrid-agent-state" / "instances" / f"{instance_id}.json"
+            synced_port = None
+            try:
+                local_agent = json.loads((
+                    Path(legacy.DSM_ROOT) / "runtime" / "hybrid-agent-state" / "agent.json"
+                ).read_text(encoding="utf-8"))
+                spec = json.loads(local_spec.read_text(encoding="utf-8"))
+                hybrid_mutable = (
+                    isinstance(local_agent, dict)
+                    and local_agent.get("agent_id") == context.get("agent_id")
+                    and spec.get("agent_id") == context.get("agent_id")
+                )
+                if hybrid_mutable:
+                    synced_port = ((spec.get("ports") or {}).get("votifier") or {}).get("port")
+            except (OSError, ValueError, AttributeError):
+                hybrid_mutable = False
+            pending_activation = bool(
+                hybrid_mutable and votifier_port is not None and not pending
+                and str(synced_port) != str(votifier_port)
+            )
             self.send_json(200, {
+                "votifier": {
+                    "supported": opt_in,
+                    "reserved": votifier_port is not None,
+                    "port": votifier_port,
+                    "pending": pending or pending_activation,
+                    "pending_drop": pending,
+                    "manageable": hybrid_mutable and (opt_in or legacy_role)
+                                  and "settings.write" in api.permissions(user, instance_id),
+                },
                 "instance_id": instance_id,
                 "status": context.get("status"),
                 "connection": endpoint,
@@ -271,7 +326,46 @@ def install_customer_instance_connection(legacy, authenticate):
         except Exception:
             self.send_json(500, {"error": "connection_failed", "message": "Não foi possível determinar o endereço público do servidor."})
 
+    def post(self):
+        if urlparse(self.path).path != VOTIFIER_PATH:
+            return previous_post(self)
+        user = session_user_from_headers(self.headers, area="customer")
+        if user is None:
+            self.unauthorized()
+            return
+        try:
+            body = self.read_json_body()
+            instance_id = str(body.get("instance_id") or "").strip()
+            enabled = body.get("enabled")
+            if not isinstance(enabled, bool):
+                raise ValueError("enabled deve ser booleano")
+            api = CustomerInstanceWorkspaceService(backend(), legacy.DSM_ROOT)
+            context = api.require(user, instance_id, "settings.write")
+            if enabled:
+                policy = api.repo.workspace_policy(instance_id)
+                _, content = api._contract_policy(
+                    context, api._resolved_resource_policy(context, policy),
+                )
+                if not (content.mods_allowed or content.plugins_allowed):
+                    raise PermissionError("O contrato não autoriza mods nem plugins Votifier.")
+            result = set_votifier(
+                backend(), Path(legacy.DSM_ROOT), instance_id, enabled=enabled,
+            )
+            self.send_json(202 if result["status"] == "pending_sync" else 200, result)
+        except PermissionError:
+            self.forbidden()
+        except (OptionalPortError, ValueError) as exc:
+            self.send_json(409, {"error": "votifier_unavailable", "message": str(exc)})
+        except (KeyError, LookupError):
+            self.send_json(404, {"error": "not_found", "message": "Instância não encontrada."})
+        except Exception:
+            self.send_json(500, {
+                "error": "votifier_failed",
+                "message": "Falha na sincronização da reserva Votifier; confira o status da porta.",
+            })
+
     legacy.DashboardHandler.do_GET = get
+    legacy.DashboardHandler.do_POST = post
 
 
 __all__ = ["PATH", "TEST_PATH", "install_customer_instance_connection"]
