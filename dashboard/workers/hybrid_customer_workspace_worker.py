@@ -286,6 +286,41 @@ def _install_content_upload_artifact(
             pass
 
 
+
+def _cleanup_content_upload_artifact(
+    repository: ArtifactTransferRepository,
+    item: dict[str, Any],
+    root: Path,
+    config: dict[str, Any],
+    agent_id: str,
+) -> None:
+    """Delete only an original upload's quarantine ZIP after an authorized cleanup."""
+    instance_id = _safe_token(item.get("instance_id"), "instance_id")
+    original_id = _safe_token(item.get("source_ref"), "source_ref")
+    _owned_instance(root, config, instance_id)
+    original = repository.get(original_id)
+    if (original.get("purpose") != "content_upload"
+            or original.get("direction") != "controller_to_agent"
+            or str(original.get("instance_id")) != instance_id
+            or str(original.get("agent_id")) != agent_id
+            or original.get("status") not in {"failed", "completed"}):
+        raise ValueError("content upload cleanup ownership/state mismatch")
+    if str(original.get("filename")) != str(item.get("filename")):
+        raise ValueError("content upload cleanup filename mismatch")
+    quarantine = _runtime_client(root, "content_upload_quarantine")
+    # Inspect the lexical path before resolving it; resolving a symlink would
+    # hide that the quarantined filename was replaced with a link.
+    directory = quarantine.QUARANTINE_ROOT / instance_id / original_id
+    destination = directory / str(original["filename"])
+    if directory.resolve() != directory or destination.is_symlink():
+        raise ValueError("content upload cleanup refuses symbolic links")
+    destination.unlink(missing_ok=True)
+    try:
+        destination.parent.rmdir()
+    except OSError:
+        pass
+
+
 def process_hybrid_artifact_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
     """Bridge one Artifact Transfer locally without Agent HTTP credentials."""
     config = _hybrid_agent_config(root, agent_id, optional=True)
@@ -329,6 +364,13 @@ def process_hybrid_artifact_cycle(backend, root: Path, agent_id: str) -> dict[st
                     "archive_type": detail["archive_type"],
                     "archive_entries": detail["archive_entries"],
                     "sha256": detail["sha256"],
+                }
+            elif purpose == "content_upload_cleanup":
+                _cleanup_content_upload_artifact(repository, command, root, config, agent_id)
+                report = {
+                    "transfer_id": transfer_id,
+                    "status": "completed",
+                    "transferred_bytes": 0,
                 }
             elif purpose in {"backup_import", "backup_clone"}:
                 detail = _install_controller_artifact(

@@ -34,10 +34,13 @@ os.environ.setdefault("CAPIVARA_AGENT_SERVICE", "dsm-dashboard-worker.service")
 
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
 from dayz_management_repository import DayZManagementRepository
+from native_restart_repository import NativeRestartRepository
 from agent_public_network import AgentPublicNetworkRepository
 from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
 from backup_repository import BackupRepository
 from configuration_repository import ConfigurationRepository
+from runtime_secret_integration import install_runtime_secret_transport
+install_runtime_secret_transport()
 from content_repository import ContentRepository
 from hybrid_game_data_client import process_hybrid_game_data_cycle
 from hybrid_instance_provisioning_client import process_hybrid_instance_provisioning_cycle
@@ -425,6 +428,44 @@ def process_hybrid_instance_runtime_cycle(
     }
 
 
+def process_hybrid_native_restart_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
+    """Execute one queued native restart preparation through the embedded Hybrid Agent."""
+    repository = NativeRestartRepository(backend)
+    repository.initialize()
+    command = repository.command_for_agent(agent_id)
+    if not isinstance(command, dict):
+        return {"status": "idle"}
+
+    command_id = str(command.get("command_id") or "").strip()
+    repository.mark_delivered(command_id)
+
+    _instance_runtime_module(root)
+    import native_restart_client
+
+    report = native_restart_client.handle_command(
+        _hybrid_agent_config(root, agent_id),
+        command,
+    )
+    completed = repository.apply_result(agent_id, report)
+    if (
+        isinstance(completed, dict)
+        and str(completed.get("status") or "").lower() in {"completed", "failed"}
+    ):
+        native_restart_client.clear_result(command_id)
+
+    return {
+        "status": str(
+            (completed or {}).get("status")
+            or report.get("status")
+            or "unknown"
+        ),
+        "command_id": command_id,
+        "instance_id": command.get("instance_id"),
+        "game_id": command.get("game_id"),
+        "strategy": command.get("strategy"),
+    }
+
+
 def process_hybrid_dayz_operation_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
     """Execute one due DayZ map/wipe operation through the embedded Agent."""
     repository = DayZManagementRepository(backend)
@@ -802,6 +843,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         runtime_events = process_hybrid_runtime_event_cycle(effective_backend, root, agent_id)
         yarax_admin = process_hybrid_yarax_admin_cycle(effective_backend, root, agent_id)
         instance_runtime = process_hybrid_instance_runtime_cycle(effective_backend, root, agent_id)
+        native_restart = process_hybrid_native_restart_cycle(effective_backend, root, agent_id)
         dayz_operation = process_hybrid_dayz_operation_cycle(effective_backend, root, agent_id)
         provisioning = process_hybrid_instance_provisioning_cycle(effective_backend, root, agent_id)
         game_data = process_hybrid_game_data_cycle(effective_backend, root, agent_id)
@@ -828,6 +870,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
             agent_id,
             allowed_actions={"stop", "remove"},
         )
+        native_restart = {"status":"blocked","reason":"instance_port_reconcile_failed"}
         dayz_operation = {"status":"blocked","reason":"instance_port_reconcile_failed"}
         provisioning = {"status": "blocked"}
         game_data = {"state": {"status": "blocked"}}
@@ -845,6 +888,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         "runtime_events": runtime_events,
         "yarax_admin": yarax_admin,
         "instance_runtime": instance_runtime,
+        "native_restart": native_restart,
         "dayz_operation": dayz_operation,
         "instance_telemetry": instance_telemetry,
         "instance_health": instance_health,
@@ -865,6 +909,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         f"events={runtime_events.get('accepted', 0)}a/{runtime_events.get('rejected', 0)}r "
         f"yarax={yarax_admin.get('status', 'idle')} "
         f"instance_runtime={instance_runtime.get('status', 'idle')} "
+        f"native_restart={native_restart.get('status', 'idle')} "
         f"dayz_operation={dayz_operation.get('status', 'idle')} "
         f"instance_telemetry={instance_telemetry.get('accepted', 0)} "
         f"instance_health={instance_health.get('healthy', 0)}/{instance_health.get('applied', 0)} "

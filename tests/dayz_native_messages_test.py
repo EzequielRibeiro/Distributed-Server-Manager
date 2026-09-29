@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
 from agents.common.dayz_messages import (
@@ -63,20 +64,25 @@ class DayZNativeMessagesTest(unittest.TestCase):
         with self.assertRaises(DayZMessagesError):
             render_shutdown_messages_xml(DayZShutdownMessage(15, 'x' * 161))
 
-    def test_preserves_community_messages_and_replaces_only_capivara_entry(self) -> None:
+    def test_preserves_community_notices_and_replaces_shutdown_authority(self) -> None:
         existing = f'''<?xml version="1.0" encoding="UTF-8"?>
 <messages>
   <message><delay>5</delay><repeat>30</repeat><deadline>0</deadline><onConnect>1</onConnect><shutdown>0</shutdown><text>Community notice</text></message>
+  <message><delay>0</delay><repeat>0</repeat><deadline>480</deadline><onConnect>0</onConnect><shutdown>1</shutdown><text>This server will restart in #tmin minutes.</text></message>
   <message><delay>0</delay><repeat>0</repeat><deadline>5</deadline><onConnect>0</onConnect><shutdown>1</shutdown><text>{MANAGED_TEXT}</text></message>
 </messages>
 '''
         payload = render_shutdown_messages_xml(DayZShutdownMessage(120), existing_xml=existing)
         root = ET.fromstring(payload)
-        texts = [str(node.findtext('text') or '') for node in root.findall('message')]
+        messages = list(root.findall('message'))
+        texts = [str(node.findtext('text') or '') for node in messages]
         self.assertEqual(texts.count('Community notice'), 1)
+        self.assertNotIn('This server will restart in #tmin minutes.', texts)
         self.assertEqual(texts.count(MANAGED_TEXT), 1)
-        managed = next(node for node in root.findall('message') if node.findtext('text') == MANAGED_TEXT)
-        self.assertEqual(managed.findtext('deadline'), '120')
+        shutdowns = [node for node in messages if str(node.findtext('shutdown') or '0').strip() == '1']
+        self.assertEqual(len(shutdowns), 1)
+        self.assertEqual(shutdowns[0].findtext('text'), MANAGED_TEXT)
+        self.assertEqual(shutdowns[0].findtext('deadline'), '120')
 
     def test_rejects_invalid_deadline_target_and_existing_xml(self) -> None:
         with self.assertRaises(DayZMessagesError):
@@ -100,6 +106,39 @@ class DayZNativeMessagesTest(unittest.TestCase):
             self.assertEqual(mission, 'dayzOffline.chernarusplus')
             self.assertEqual(mission_root, (root / 'mpmissions' / mission).resolve())
 
+    def test_private_runtime_config_and_mission_root_are_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            runtime_root = base / "shared-game-data"
+            state_root = base / "private-instance"
+            config = state_root / "config" / "serverDZ.cfg"
+            mission = state_root / "mpmissions" / "dayzOffline.chernarusplus"
+
+            runtime_root.mkdir(parents=True)
+            config.parent.mkdir(parents=True)
+            mission.mkdir(parents=True)
+            config.write_text(
+                'class Missions { class DayZ { template="dayzOffline.chernarusplus"; }; };\n',
+                encoding="utf-8",
+            )
+
+            record = self._record(
+                runtime_root,
+                arguments=[f"-config={config}"],
+            )
+            record["instance_state_root"] = str(state_root)
+            record["files_root"] = str(state_root)
+
+            resolved_mission, resolved_root = resolve_dayz_mission(record)
+            self.assertEqual(resolved_mission, "dayzOffline.chernarusplus")
+            self.assertEqual(resolved_root, mission.resolve())
+
+            plan = native_restart_plan(record, 90)
+            self.assertEqual(
+                plan.messages_path,
+                str((mission / "db" / "messages.xml").resolve()),
+            )
+
     def test_mission_launch_argument_is_authoritative(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -113,7 +152,7 @@ class DayZNativeMessagesTest(unittest.TestCase):
     def test_rejects_path_escape_and_non_dayz_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            with self.assertRaisesRegex(DayZMessagesError, 'outside instance root'):
+            with self.assertRaisesRegex(DayZMessagesError, 'outside instance roots?'):
                 resolve_dayz_mission(self._record(root, arguments=['-mission=../foreign/dayzOffline.enoch']))
             record = self._record(root)
             record['game_id'] = 'minecraft'
@@ -133,6 +172,27 @@ class DayZNativeMessagesTest(unittest.TestCase):
             self.assertEqual(result.messages_path, str((mission / 'db' / 'messages.xml').resolve()))
             self.assertEqual(result.message.deadline_minutes, 90)
             self.assertIn('<shutdown>1</shutdown>', result.xml)
+
+    def test_group_authorized_fallback_preserves_existing_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "messages.xml"
+            target.write_text(
+                "<messages></messages>\n",
+                encoding="utf-8",
+            )
+            target.chmod(0o660)
+            inode_before = target.stat().st_ino
+
+            with patch("agents.common.dayz_messages.os.chown", side_effect=PermissionError):
+                result = materialize_shutdown_messages_xml(
+                    target,
+                    DayZShutdownMessage(30),
+                )
+
+            self.assertEqual(result, target)
+            self.assertEqual(target.stat().st_ino, inode_before)
+            self.assertEqual(target.stat().st_mode & 0o777, 0o660)
+            self.assertIn("Capivara maintenance:", target.read_text(encoding="utf-8"))
 
     def test_materializes_atomically_to_messages_xml(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

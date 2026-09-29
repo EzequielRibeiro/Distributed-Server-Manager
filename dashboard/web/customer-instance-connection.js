@@ -9,7 +9,7 @@ function ensureCard(){
  card=document.createElement("article");
  card.id="customer-connection-card";
  card.className="card";
- card.innerHTML='<div class="row"><div><span class="muted">ENDEREÇO DO SERVIDOR</span><h2 id="customer-connection-address">Disponível após a configuração</h2><p id="customer-connection-detail" class="muted">Aguardando endpoint público do Agent.</p></div><button id="customer-connection-copy" class="btn" type="button" disabled>Copiar endereço</button></div><div id="customer-query-check" class="row mt-12 hidden"><div><span class="muted">QUERY CHECK</span><strong id="customer-query-target">—</strong><p id="customer-query-detail" class="muted"></p><div id="customer-query-result" class="muted"></div></div><a id="customer-query-link" class="btn" href="#" target="_blank" rel="noopener noreferrer">Verificar publicamente</a><button id="customer-query-native" class="btn primary hidden" type="button">Testar Steam Query</button></div>';
+ card.innerHTML='<div class="row"><div><span class="muted">ENDEREÇO DO SERVIDOR</span><h2 id="customer-connection-address">Disponível após a configuração</h2><p id="customer-connection-detail" class="muted">Aguardando endpoint público do Agent.</p></div><button id="customer-connection-copy" class="btn" type="button" disabled>Copiar endereço</button></div>';
  host.insertBefore(card,host.firstChild);
  document.getElementById("customer-connection-copy").addEventListener("click",async()=>{
   const value=document.getElementById("customer-connection-address").dataset.address||"";
@@ -24,9 +24,91 @@ function ensureCard(){
  return card;
 }
 
+function ensureVotifierCard(){
+ let card=document.getElementById("customer-votifier-card");
+ if(card)return card;
+ const host=document.getElementById("view-overview");
+ if(!host)return null;
+ card=document.createElement("article");
+ card.id="customer-votifier-card";
+ card.className="card";
+ card.hidden=true;
+ const heading=document.createElement("h2");
+ heading.textContent="Votifier · porta sob demanda";
+ const status=document.createElement("p");
+ status.id="customer-votifier-status";
+ status.className="muted";
+ const toggle=document.createElement("button");
+ toggle.id="customer-votifier-toggle";
+ toggle.className="btn";
+ toggle.type="button";
+ toggle.addEventListener("click", async()=>{
+  if(toggle.disabled||toggle.dataset.canEditNow!=="true")return;
+  const enabled=toggle.dataset.pendingAction==="enable" ? true
+   :toggle.dataset.pendingAction==="disable" ? false
+   :toggle.dataset.enabled!=="true";
+  if(!enabled&&!confirm("Liberar a reserva do Votifier? Remova ou desative a configuração do mod/plugin antes de continuar."))return;
+  toggle.disabled=true;
+  status.textContent="Sincronizando reserva com o Agent…";
+  try{
+   const response=await fetch("/api/customer/instance/connection/votifier",{
+    method:"POST",credentials:"same-origin",cache:"no-store",
+    headers:{"Content-Type":"application/json","Accept":"application/json","X-Capivara-Auth-Area":"customer"},
+    body:JSON.stringify({instance_id:iid,enabled})
+   });
+   const payload=await response.json().catch(()=>({}));
+   if(!response.ok)throw new Error(payload.message||"A operação Votifier falhou.");
+   status.textContent=payload.status==="pending_sync"
+    ?"Reserva pendente de sincronização. Tente novamente com o servidor parado."
+    :enabled?"Porta reservada. Configure o Votifier para escutá-la; inicie o servidor depois."
+            :"Porta liberada para outras instâncias.";
+   await load();
+  }catch(error){
+   status.textContent=error.message;
+   toggle.disabled=toggle.dataset.canEditNow!=="true";
+  }
+ });
+ card.append(heading,status,toggle);
+ const connection=document.getElementById("customer-connection-card");
+ if(connection?.parentNode)connection.after(card);else host.prepend(card);
+ return card;
+}
+function renderVotifier(value, instanceStatus){
+ const card=ensureVotifierCard();
+ if(!card)return;
+ const item=value||{};
+ card.hidden=!(item.supported||item.reserved);
+ if(card.hidden)return;
+ const status=document.getElementById("customer-votifier-status");
+ const button=document.getElementById("customer-votifier-toggle");
+ const reserved=item.reserved===true;
+ const port=item.port;
+ // The backend also checks the managed systemd unit, protecting against stale UI state.
+ const stopped=["stopped","offline"].includes(String(instanceStatus||"").trim().toLowerCase());
+ status.textContent=item.pending
+  ?item.pending_drop
+   ?"Desativação pendente: a porta permanece protegida até o Agent confirmar."
+   :"Ativação pendente: a reserva está protegida, mas o Agent ainda precisa sincronizar."
+  :reserved
+   ?`Reservada: ${port}/TCP. Configure manualmente o mod ou plugin Votifier para usar esta porta.`
+   :"Nenhuma porta Votifier reservada. Habilite apenas quando for utilizar um mod ou plugin compatível.";
+ if(!item.manageable&&!item.pending&&reserved)status.textContent+=" A alteração exige sincronização compatível do Agent.";
+ if(item.manageable&&!stopped)status.textContent+=" Pare o servidor para ativar ou liberar a porta Votifier.";
+ button.hidden=!item.manageable;
+ button.disabled=!item.manageable||!stopped;
+ button.dataset.canEditNow=String(item.manageable===true&&stopped);
+ button.dataset.enabled=String(reserved);
+ button.dataset.pendingAction=item.pending
+  ?(item.pending_drop?"disable":"enable"):"";
+ button.textContent=item.pending
+  ?(item.pending_drop?"Concluir liberação":"Concluir ativação")
+  :reserved?"Liberar reserva":"Reservar porta Votifier";
+}
+
 function renderPorts(rows){
  const box=document.getElementById("ports");
  if(!box)return;
+ box.dataset.connectionEnhanced="1";
  box.replaceChildren(...(rows||[]).map(p=>{
   const d=document.createElement("div");
   d.className="row";
@@ -38,65 +120,6 @@ function renderPorts(rows){
  }));
 }
 
-
-async function runNativeQuery(){
- const button=document.getElementById("customer-query-native");
- const result=document.getElementById("customer-query-result");
- if(!button||!result||!iid)return;
- const original=button.textContent;
- button.disabled=true;button.textContent="Testando…";result.textContent="Consultando Steam Query pelo Capivara DSM…";
- try{
-  const r=await fetch(`/api/customer/instance/connection/test?instance_id=${encodeURIComponent(iid)}`,{
-   headers:{Accept:"application/json","X-Capivara-Auth-Area":"customer"},
-   credentials:"same-origin",cache:"no-store"
-  });
-  if(r.status===401){location.replace("/customer-login.html");return}
-  const d=await r.json().catch(()=>({}));
-  if(!r.ok)throw new Error(d.message||`HTTP ${r.status}`);
-  if(d.online!==true){
-   if(d.listener_online){result.textContent=`ONLINE NO AGENT · acesso público não confirmado · ${d.message||"Steam Query pública não respondeu."}`;return}
-   result.textContent=`SEM RESPOSTA · ${d.message||"Steam Query não respondeu."}`;return
-  }
-  const info=d.info||{},rules=d.rules||{};
-  const parts=[
-   "ONLINE",
-   info.name||null,
-   info.map?`Mapa ${info.map}`:null,
-   Number.isFinite(Number(info.players))&&Number.isFinite(Number(info.max_players))?`${info.players}/${info.max_players} jogadores`:null,
-   info.version?`v${info.version}`:null,
-   rules.format==="key_value"?`${Object.keys(rules.rules||{}).length} regras`:rules.declared?`${rules.declared} regras/dados publicados`:null
-  ].filter(Boolean);
-  result.textContent=parts.join(" · ");
- }catch(e){result.textContent=`Falha no teste: ${e.message}`}
- finally{button.disabled=false;button.textContent=original}
-}
-
-function renderQuery(check){
- const wrap=document.getElementById("customer-query-check");
- const link=document.getElementById("customer-query-link");
- const nativeButton=document.getElementById("customer-query-native");
- const target=document.getElementById("customer-query-target");
- const detail=document.getElementById("customer-query-detail");
- const result=document.getElementById("customer-query-result");
- if(!wrap||!link||!nativeButton||!target||!detail||!result)return;
- if(!check){wrap.classList.add("hidden");return}
- wrap.classList.remove("hidden");
- target.textContent=check.target||"—";
- result.textContent="";
- if(check.native){
-  link.classList.add("hidden");
-  nativeButton.classList.remove("hidden");
-  nativeButton.onclick=runNativeQuery;
-  detail.textContent=`Teste nativo Steam Query pelo Capivara DSM · ${String(check.protocol||"A2S").toUpperCase()}${check.status==="conditional"?" · compatibilidade condicional":""}`;
- }else if(check.url){
-  nativeButton.classList.add("hidden");
-  link.classList.remove("hidden");
-  link.href=check.url;
-  detail.textContent=`Consulta pública via ${check.provider||"serviço externo"} · ${String(check.protocol||"").toUpperCase()}${check.status==="conditional"?" · compatibilidade condicional":""}`;
- }else{
-  wrap.classList.add("hidden");
- }
-}
 
 async function load(){
  if(!iid||!ensureCard())return;
@@ -113,7 +136,7 @@ async function load(){
   const d=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(d.message||`HTTP ${r.status}`);
   renderPorts(d.ports||[]);
-  renderQuery(d.external_query);
+  renderVotifier(d.votifier,d.status);
   const c=d.connection;
   if(!c){
    address.textContent="Acesso público ainda não configurado";
@@ -128,6 +151,9 @@ async function load(){
   const source=c.source==="dns"?"Acesso por DNS":"Acesso por IPv4 público";
   detail.textContent=`${source} · ${String(c.protocol||"udp").toUpperCase()} · Agent ${String(d.agent_health||"unknown").toUpperCase()}`;
  }catch(e){
+  // A failed refresh must never leave a previously enabled action clickable.
+  const toggle=document.getElementById("customer-votifier-toggle");
+  if(toggle){toggle.disabled=true;toggle.dataset.canEditNow="false";}
   address.textContent="Endereço indisponível";
   address.dataset.address="";
   detail.textContent=e.message;

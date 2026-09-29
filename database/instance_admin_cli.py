@@ -156,6 +156,25 @@ def _configuration(definition: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _contract_profile_configuration(
+    contracts: list[dict[str, Any]], contract_id: str, game_id: str, configuration: dict[str, Any]
+) -> dict[str, Any]:
+    """Carry the contracted resource profile into Agent provisioning, not just metadata."""
+    contract = next((item for item in contracts if str(item.get("id") or "") == contract_id), None)
+    if contract is None:
+        raise PermissionError("requested contract does not belong to this customer")
+    if str(contract.get("game_id") or "").lower() != game_id:
+        raise PermissionError("requested contract does not cover this game")
+    if str(contract.get("status") or "").lower() != "active":
+        raise PermissionError("requested contract is not active")
+    selected = str(contract.get("resource_profile_id") or "").strip().lower()
+    result = dict(configuration)
+    if selected:
+        result["resource_profile_id"] = selected
+        result["allowed_resource_profiles"] = [selected]
+    return result
+
+
 def create_instance(args, *, backend=None) -> dict[str, Any]:
     backend = backend or backend_from_environment()
     backend.initialize()
@@ -173,7 +192,10 @@ def create_instance(args, *, backend=None) -> dict[str, Any]:
         raise ValueError("runtime definition has no id")
     selector = _runtime_selector(definition)
     selection = _content_selection(definition, selector)
-    configuration = _configuration(definition)
+    configuration = _contract_profile_configuration(
+        dashboard.customer_contracts(customer_id), str(args.contract).strip(), game_id,
+        _configuration(definition),
+    )
     selection, configuration = resolve_catalog_provisioning(
         environment_id=runtime_id,
         selector=selector,
@@ -211,6 +233,7 @@ def create_instance(args, *, backend=None) -> dict[str, Any]:
         version=str(selection.get("version") or definition.get("variant") or "current"),
         build=str(selection.get("build") or ""),
         contract_id=str(args.contract).strip(),
+        resource_profile_id=configuration.get("resource_profile_id"),
         selected_agent_id=str(placement["agent_id"]),
         instances_root=instances_root,
         network_profile=(definition.get("network") if isinstance(definition.get("network"), dict) else None),

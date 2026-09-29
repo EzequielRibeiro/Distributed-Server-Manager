@@ -10,12 +10,12 @@ def test_materializer_service_allows_runtime_identity_reconciliation_without_ful
 
     assert "User=root\n" in content
     assert "Group=root\n" in content
-    assert "ProtectSystem=full\n" in content
-    assert "ProtectSystem=strict\n" not in content
+    assert "ProtectSystem=strict\n" in content
+    assert "ProtectSystem=full\n" not in content
     assert (
         "ReadWritePaths=/etc/systemd/system "
         "/var/lib/capivara-agent/privileged-materialization "
-        "/var/lib/capivara-agent/game-data\n"
+        "/var/lib/capivara-agent/game-data /var/lib/capivara-instances\n"
         in content
     )
     assert "ProtectHome=true\n" in content

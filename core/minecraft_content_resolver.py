@@ -27,8 +27,12 @@ def _request_json(url: str, headers: Mapping[str, str]) -> Any:
         with urlopen(request, timeout=30) as response:
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
-        if "api.curseforge.com" in url and exc.code in {401, 403}:
-            raise MinecraftContentResolverError("CurseForge não autorizado: verifique a API key no Controller.") from exc
+        if "api.curseforge.com" in url and exc.code == 401:
+            raise MinecraftContentResolverError("CurseForge recusou a autenticação (HTTP 401). Verifique a API key no Controller.") from exc
+        if "api.curseforge.com" in url and exc.code == 403:
+            if url.split("?", 1)[0].endswith("/download-url"):
+                raise MinecraftContentResolverError("CurseForge restringiu o download deste arquivo (HTTP 403). Utilize a importação manual do pacote oficial quando disponível.") from exc
+            raise MinecraftContentResolverError("CurseForge recusou o acesso a esta operação (HTTP 403). A validade da API key deve ser verificada separadamente.") from exc
         if "api.curseforge.com" in url and exc.code == 429:
             raise MinecraftContentResolverError("CurseForge atingiu o limite temporário de requisições. Tente novamente em alguns instantes.") from exc
         raise MinecraftContentResolverError(f"provider HTTP request failed with status {exc.code}") from exc

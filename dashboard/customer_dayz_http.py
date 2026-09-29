@@ -5,10 +5,25 @@ from datetime import datetime,timezone
 from urllib.parse import parse_qs,urlparse
 from controller_session import session_user_from_headers
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
+from customer_content_workspace import CustomerContentWorkspaceService
+from customer_content_upload_service import CustomerContentUploadService
 from dayz_management_repository import DayZManagementRepository,DayZOperationConflict
 from json_serialization import to_json_compatible
 
 PATH="/api/customer/instance/dayz"
+COMMUNITY_MAP=PATH+"/community-map"
+COMMUNITY_MAP_UPLOAD_FINALIZE=COMMUNITY_MAP+"/upload-finalize"
+DISCOVERY_SCHEMA_VERSION=2
+
+def _discovery_payload(op):
+    if not isinstance(op,dict) or op.get("action")!="discover_missions" or op.get("status")!="completed":return None
+    payload=(op.get("result") or {}).get("result")
+    if not isinstance(payload,dict) or int(payload.get("schema_version") or 0)<DISCOVERY_SCHEMA_VERSION:return None
+    missions=payload.get("missions")
+    if not isinstance(missions,list):return None
+    required={"id","official","community","active","installed","available","can_activate","state","source"}
+    if any(not isinstance(item,dict) or not required.issubset(item) for item in missions):return None
+    return payload
 
 def install_customer_dayz_http(legacy,authenticate):
     previous_get=legacy.DashboardHandler.do_GET;previous_post=legacy.DashboardHandler.do_POST
@@ -31,15 +46,18 @@ def install_customer_dayz_http(legacy,authenticate):
         return workspace,context,DayZManagementRepository(backend())
     def view(user,instance_id):
         workspace,context,repo=service(user,instance_id);repo.initialize();ops=repo.list_for_instance(instance_id,25)
-        discovery=next((op for op in ops if op.get("action")=="discover_missions" and op.get("status")=="completed" and isinstance((op.get("result") or {}).get("result"),dict)),None)
+        discovery=next(((op,_discovery_payload(op)) for op in ops if _discovery_payload(op) is not None),None)
         active_discovery=next((op for op in ops if op.get("action")=="discover_missions" and op.get("status") in {"queued","delivered"}),None)
-        if discovery is None and active_discovery is None:
+        latest_change=next((op for op in ops if op.get("action")=="change_mission" and op.get("status")=="completed"),None)
+        discovery_created=(discovery[0].get("created_at") if discovery else None)
+        change_completed=(latest_change.get("completed_at") if latest_change else None)
+        stale_after_change=bool(latest_change and (discovery is None or (change_completed and discovery_created and change_completed>discovery_created)))
+        if (discovery is None or stale_after_change) and active_discovery is None:
             actor=str((user or {}).get("username") or (user or {}).get("id") or "customer")
             repo.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="discover_missions",requested_by=actor)
             ops=repo.list_for_instance(instance_id,25)
-        maps={}
-        discovery=next((op for op in ops if op.get("action")=="discover_missions" and op.get("status")=="completed" and isinstance((op.get("result") or {}).get("result"),dict)),None)
-        if discovery:maps=(discovery.get("result") or {}).get("result") or {}
+        discovery=next(((op,_discovery_payload(op)) for op in ops if _discovery_payload(op) is not None),None)
+        maps=discovery[1] if discovery else {}
         return {"instance_id":instance_id,"editable":"instance.restart" in workspace.permissions(user,instance_id) and "settings.write" in workspace.permissions(user,instance_id),"maps":maps,"operations":[{k:op.get(k) for k in ("operation_id","action","status","scheduled_at","last_error","created_at","delivered_at","completed_at","canceled_at","payload","result")} for op in ops[:15]]}
     def error(self,exc):
         if isinstance(exc,PermissionError):return send(self,403,{"error":"forbidden","message":str(exc)})
@@ -56,17 +74,32 @@ def install_customer_dayz_http(legacy,authenticate):
         except Exception as exc:return error(self,exc)
     def post(self):
         parsed=urlparse(self.path)
-        if parsed.path!=PATH:return previous_post(self)
+        if parsed.path not in {PATH,COMMUNITY_MAP,COMMUNITY_MAP_UPLOAD_FINALIZE}:return previous_post(self)
         user=require_user(self)
         if user is None:return
         try:
-            body=self.read_json_body();instance_id=iid(parsed,body);workspace,context,repo=service(user,instance_id,"instance.restart");workspace.require(user,instance_id,"settings.write");repo.initialize()
+            body=self.read_json_body();instance_id=iid(parsed,body)
+            if parsed.path==COMMUNITY_MAP:
+                result=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT).install_dayz_community_map(user,instance_id,body)
+                return send(self,202,{"community_map":result,"view":view(user,instance_id)})
+            if parsed.path==COMMUNITY_MAP_UPLOAD_FINALIZE:
+                content=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT)
+                prepared=content.dayz_community_workshop_dependencies(user,instance_id,body.get("workshop_items") or [],body.get("activation_order") or 100)
+                upload=CustomerContentUploadService(backend(),legacy.DSM_ROOT)
+                finalize_body={"instance_id":instance_id,"transfer_id":str(body.get("transfer_id") or ""),"content_id":str(body.get("content_id") or ""),"activation_order":int(prepared["activation_order"]),"metadata":{"display_name":str(body.get("name") or body.get("content_id") or "")[:191]}}
+                result=upload.finalize_dayz_community_map(user,finalize_body["transfer_id"],finalize_body,prepared["items"])
+                return send(self,202,{"community_map":result,"view":view(user,instance_id)})
+            workspace,context,repo=service(user,instance_id,"instance.restart");workspace.require(user,instance_id,"settings.write");repo.initialize()
             action=str(body.get("action") or "").strip().lower();actor=str(user.get("username") or user.get("id") or "customer")
             if action=="refresh_maps":queued=repo.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="discover_missions",requested_by=actor)
             elif action=="change_mission":
                 mission=str(body.get("mission") or "").strip()
                 if not mission:raise ValueError("mission is required")
-                queued=repo.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="change_mission",payload={"mission":mission},requested_by=actor)
+                content_mode=str(body.get("content_mode") or "disable").strip().lower()
+                if content_mode not in {"disable","keep"}:raise ValueError("invalid DayZ map content mode")
+                persistence_mode=str(body.get("persistence_mode") or "fresh").strip().lower()
+                if persistence_mode not in {"fresh","keep"}:raise ValueError("invalid DayZ map persistence mode")
+                queued=repo.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="change_mission",payload={"mission":mission,"content_mode":content_mode,"persistence_mode":persistence_mode},requested_by=actor)
             elif action=="wipe":
                 scheduled_at=body.get("scheduled_at")
                 if scheduled_at:
@@ -84,4 +117,4 @@ def install_customer_dayz_http(legacy,authenticate):
         except Exception as exc:return error(self,exc)
     legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post
 
-__all__=["PATH","install_customer_dayz_http"]
+__all__=["COMMUNITY_MAP","COMMUNITY_MAP_UPLOAD_FINALIZE","PATH","install_customer_dayz_http"]

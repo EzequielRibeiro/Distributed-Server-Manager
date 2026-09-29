@@ -148,6 +148,7 @@ def resolve_instance_placement(
         game_id=game_id,
         runtime_id=runtime_id,
         resources=resources,
+        version=str(payload.get("version") or payload.get("game_version") or "").strip() or None,
     )
 
     decision = choose_agent_for_instance(
