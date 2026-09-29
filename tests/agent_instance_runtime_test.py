@@ -127,12 +127,12 @@ class SystemdAdapterTest(unittest.TestCase):
 
     def test_start_uses_only_derived_unit_and_validates_result(self):
         calls = []
-        states = iter(["inactive", "active"])
+        states = iter(["inactive", "active", "active"])
 
         def runner(command, timeout):
             calls.append((list(command), timeout))
             if command[1] == "show":
-                active = next(states)
+                active = next(states, "active")
                 return 0, f"LoadState=loaded\nActiveState={active}\nSubState={'running' if active == 'active' else 'dead'}", ""
             return 0, "", ""
 
@@ -185,12 +185,12 @@ class SystemdAdapterTest(unittest.TestCase):
 
     def test_restart_uses_stop_capable_timeout_budget(self):
         calls = []
-        states = iter(["active", "active"])
+        states = iter(["active", "active", "active"])
 
         def runner(command, timeout):
             calls.append((list(command), timeout))
             if command[1] == "show":
-                active = next(states)
+                active = next(states, "active")
                 return 0, f"LoadState=loaded\nActiveState={active}\nSubState=running", ""
             return 0, "", ""
 

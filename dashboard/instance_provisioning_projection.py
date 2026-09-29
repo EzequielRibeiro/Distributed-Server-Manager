@@ -21,6 +21,12 @@ def dashboard_provision_state(state: dict[str, Any] | None) -> dict[str, Any]:
     result = source.get("result") if isinstance(source.get("result"), dict) else {}
     error = str(source.get("last_error") or result.get("error") or "").strip()
     steam_auth_required = bool(result.get("steam_auth_required"))
+    if distributed_status == "failed" and not steam_auth_required and error:
+        lowered_error = error.lower()
+        steam_auth_required = any(
+            token in lowered_error
+            for token in ("steam guard", "steam auth", "steam login", "steam authentication")
+        )
 
     if distributed_status in {"queued", "delivered"}:
         status = "queued"

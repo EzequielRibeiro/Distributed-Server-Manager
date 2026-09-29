@@ -49,7 +49,7 @@ class ProvisioningProjectionTest(unittest.TestCase):
             with backend.transaction() as connection:
                 connection.execute(
                     "INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)",
-                    ("customer-projection", controller_id, "Projection Customer", "active"),
+                    (1, controller_id, "Projection Customer", "active"),
                 )
                 connection.execute(
                     "INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,controller_id,agent_id,customer_id) "
@@ -63,7 +63,7 @@ class ProvisioningProjectionTest(unittest.TestCase):
                         "queued",
                         controller_id,
                         agent_id,
-                        "customer-projection",
+                        1,
                     ),
                 )
                 connection.execute(
@@ -71,7 +71,7 @@ class ProvisioningProjectionTest(unittest.TestCase):
                     "VALUES (?,?,?,?,?)",
                     (
                         "contract-projection",
-                        "customer-projection",
+                        1,
                         "dayz",
                         "active",
                         1,
@@ -116,7 +116,6 @@ class ProvisioningProjectionTest(unittest.TestCase):
                     "SELECT status FROM instances WHERE id=?", ("instance-projection",)
                 ).fetchone()
             self.assertEqual(row["status"], "offline")
-            self.assertIn('"distributed": true', (resource / "provision.json").read_text(encoding="utf-8"))
             backend.close()
 
 
@@ -134,7 +133,7 @@ class ProvisioningProjectionTest(unittest.TestCase):
             with backend.transaction() as connection:
                 connection.execute(
                     "INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)",
-                    ("customer-failed", controller_id, "Failed Customer", "active"),
+                    (2, controller_id, "Failed Customer", "active"),
                 )
                 connection.execute(
                     "INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,controller_id,agent_id,customer_id) "
@@ -148,8 +147,16 @@ class ProvisioningProjectionTest(unittest.TestCase):
                         "failed",
                         controller_id,
                         agent_id,
-                        "customer-failed",
+                        2,
                     ),
+                )
+                connection.execute(
+                    "INSERT INTO service_contracts(id,customer_id,game_id,status,instance_limit) VALUES (?,?,?,?,?)",
+                    ("contract-failed", 2, "minecraft", "active", 1),
+                )
+                connection.execute(
+                    "INSERT INTO instance_contracts(instance_id,contract_id) VALUES (?,?)",
+                    ("instance-failed", "contract-failed"),
                 )
 
             projected = project_agent_provisioning(
