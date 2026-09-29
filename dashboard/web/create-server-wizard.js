@@ -8,7 +8,7 @@
   function setState(state,detail=""){currentState=state;const node=ensureStatusNode();if(!node)return;node.dataset.state=state;node.replaceChildren();const strong=document.createElement("strong");strong.textContent=STATUS_TEXT[state]||state;node.append(strong);if(detail){const small=document.createElement("small");small.textContent=detail;node.append(small);}}
   function setOpeningCtasHidden(hidden){document.querySelectorAll(".server-card.contract .server-actions button").forEach(button=>{button.hidden=Boolean(hidden);});}
   function syncFallbackSummary(){const checkbox=$("runtime-region-fallback"),summary=$("runtime-summary-region-fallback");if(checkbox&&summary)summary.textContent=checkbox.checked ? "Sim" : "Não";}
-  function requiresMinecraftJavaEula(){const notice=$("minecraft-runtime-notice"),edition=$("runtime-summary-edition");return Boolean(notice&&!notice.hidden&&String(edition?.textContent||"").trim().toLowerCase().includes("java"));}
+  function requiresMinecraftJavaEula(){const selector=window.CapivaraRuntimeSelector,selected=selector?.state?.();return Boolean(selector?.requiresMinecraftJavaEula?.(selected?.game,selected?.edition));}
   function eulaAccepted(){return Boolean($("minecraft-eula-accepted")?.checked);}
   function resetEula(){const checkbox=$("minecraft-eula-accepted");if(checkbox)checkbox.checked=false;}
   function enforceSubmitState(){const submit=$("create-instance-submit");if(!submit)return;const mustDisable=placementReady===false||(requiresMinecraftJavaEula()&&!eulaAccepted());if(mustDisable&&!submit.disabled)submit.disabled=true;}

@@ -26,7 +26,7 @@ class _Repo:
  def mark_stop(self,rid,cid):return self._mark('stop_command_id',cid,'stopping')
  def mark_start(self,rid,cid):return self._mark('start_command_id',cid,'starting')
  def mark_readiness(self,rid,cid):return self._mark('readiness_command_id',cid,'validating')
- def finish(self,rid,success,error_code=None,error_detail=None,now=None):self.finished.append((success,error_code,error_detail));self.current['status']='completed' if success else 'failed';return self.current
+ def finish(self,rid,success,error_code=None,error_detail=None,now=None,next_due_override=None):self.finished.append((success,error_code,error_detail,next_due_override));self.current['status']='completed' if success else 'failed';return self.current
 class _Automation:
  def __init__(self):self.items=[]
  def initialize(self):pass
@@ -46,6 +46,8 @@ class MaintenanceRestartFrameworkTest(unittest.TestCase):
   with self.assertRaises(MaintenanceValidationError):normalize_policy({'timezone':'../bad'})
   with self.assertRaises(MaintenanceValidationError):normalize_policy({'warning_template':'{shell}'})
   with self.assertRaises(MaintenanceValidationError):normalize_policy({'schedule_mode':'interval','interval_seconds':3600,'warning_offsets_seconds':[3600]})
+  interval=normalize_policy({'schedule_mode':'interval','interval_seconds':3600,'timezone':'../bad','start_time':'99:99','weekdays':[],'warning_offsets_seconds':[1800,300,60]})
+  self.assertEqual(interval['timezone'],'UTC');self.assertEqual(interval['start_time'],'04:00');self.assertEqual(interval['weekdays'],list(range(7)))
  def test_fixed_schedule_resolves_dst_gap_to_first_valid_wall_time(self):
   policy={'enabled':True,'schedule_mode':'fixed','timezone':'America/New_York','weekdays':[6],'start_time':'02:30','warning_offsets_seconds':[]};now=datetime(2026,3,8,6,50,tzinfo=timezone.utc);self.assertEqual(next_due_at(policy,now=now),datetime(2026,3,8,7,0,tzinfo=timezone.utc))
  def test_interval_uses_completion_anchor_without_immediate_restart(self):
@@ -68,7 +70,15 @@ class MaintenanceRestartFrameworkTest(unittest.TestCase):
   worker.tick(now=datetime(2026,9,16,15,0,5,tzinfo=timezone.utc));self.assertEqual([x['action'] for x in life.enqueued],['status','stop']);stop=repo.current['stop_command_id'];_complete(life,stop,{'observed_state':'stopped'})
   worker.tick(now=datetime(2026,9,16,15,0,10,tzinfo=timezone.utc));self.assertEqual([x['action'] for x in life.enqueued],['status','stop','start']);start=repo.current['start_command_id'];_complete(life,start,{'observed_state':'running'})
   worker.tick(now=datetime(2026,9,16,15,0,15,tzinfo=timezone.utc));self.assertEqual([x['action'] for x in life.enqueued],['status','stop','start','doctor']);doctor=repo.current['readiness_command_id'];_complete(life,doctor,{'ready':True})
-  worker.tick(now=datetime(2026,9,16,15,0,20,tzinfo=timezone.utc));self.assertEqual(repo.finished,[(True,None,None)]);self.assertNotIn('restart',[x['action'] for x in life.enqueued])
+  worker.tick(now=datetime(2026,9,16,15,0,20,tzinfo=timezone.utc));self.assertEqual(repo.finished,[(True,None,None,None)]);self.assertNotIn('restart',[x['action'] for x in life.enqueued])
+ def test_success_uses_prepared_native_restart_due_as_next_schedule_anchor(self):
+  run=_run();run.update({'status':'running','event':maintenance_event({'enabled':True},{}),'preflight_command_id':'pre','stop_command_id':'stop','start_command_id':'start','readiness_command_id':'doctor'})
+  run['event']['native_restart']={'command_id':'native-1','due_at':'2026-09-16T16:00:00Z','status':'completed'}
+  repo=_Repo(run);life=_Lifecycle();_complete(life,'pre',{'observed_state':'running'});_complete(life,'stop',{'observed_state':'stopped'});_complete(life,'start',{'observed_state':'running'});_complete(life,'doctor',{'ready':True})
+  worker=MaintenanceWorker(None,repository=repo,automation=_Automation(),lifecycle=life,capability_resolver=lambda _: {})
+  worker.tick(now=datetime(2026,9,16,15,1,tzinfo=timezone.utc))
+  self.assertEqual(repo.finished[0][3],'2026-09-16T16:00:00Z')
+
  def test_save_is_only_enqueued_when_runtime_declares_support(self):
   repo=_Repo(_run());life=_Lifecycle();worker=MaintenanceWorker(None,repository=repo,automation=_Automation(),lifecycle=life,capability_resolver=lambda _: {'save':True})
   worker.tick(now=datetime(2026,9,16,15,0,tzinfo=timezone.utc));pre=repo.current['preflight_command_id'];_complete(life,pre,{'observed_state':'running'});worker.tick(now=datetime(2026,9,16,15,0,1,tzinfo=timezone.utc));self.assertEqual([x['action'] for x in life.enqueued],['status','save']);save=repo.current['save_command_id'];_complete(life,save,{});worker.tick(now=datetime(2026,9,16,15,0,2,tzinfo=timezone.utc));self.assertEqual([x['action'] for x in life.enqueued],['status','save','stop'])

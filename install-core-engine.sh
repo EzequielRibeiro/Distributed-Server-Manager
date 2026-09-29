@@ -1924,12 +1924,12 @@ EOF_AGENT
 initialize_runtime_state()
 {
     local initializer="${DSM_ROOT}/dashboard/state/init_state.sh"
-    [[ -f "${initializer}" ]] || die "Inicializador de estado ausente: ${initializer}"
     if (( DRY_RUN ))
     then
         log "[DRY-RUN] inicializaria o estado operacional do Dashboard."
         return 0
     fi
+    [[ -f "${initializer}" ]] || die "Inicializador de estado ausente: ${initializer}"
     DSM_ROOT="${DSM_ROOT}" bash "${initializer}"
     chown -R "${DSM_SERVICE_USER}:${DSM_SERVICE_GROUP}" \
         "${DSM_ROOT}/dashboard/state"

@@ -3,8 +3,9 @@ from __future__ import annotations
 import json,os,tempfile
 from datetime import datetime,timezone
 from pathlib import Path
+from runtime_secret_store import put_secret,revoke_secret
 from storage_pools import default_storage_pool_id,storage_pools
-PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));ROOT=STATE_ROOT/"managed-configuration";CONFIG_PATH=Path(os.environ.get("CAPIVARA_AGENT_CONFIG",PROGRAM_DATA/"CapivaraAgent"/"agent.json"));_STORAGE_NAMESPACE="capivara.agent.storage";_SERVER_SETTINGS_NAMESPACE="capivara.instance.server-settings"
+PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));ROOT=STATE_ROOT/"managed-configuration";CONFIG_PATH=Path(os.environ.get("CAPIVARA_AGENT_CONFIG",PROGRAM_DATA/"CapivaraAgent"/"agent.json"));_STORAGE_NAMESPACE="capivara.agent.storage";_RUNTIME_SECRET_NAMESPACE="capivara.runtime.secret";_SERVER_SETTINGS_NAMESPACE="capivara.instance.server-settings"
 def _now():return datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
 def _safe(v):return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in str(v))
 def _path(c):return ROOT/_safe(c.get("target_type") or "agent")/_safe(c.get("target_id") or "unknown")/f"{_safe(c.get('namespace') or 'default')}.json"
@@ -30,13 +31,26 @@ def _apply_storage(value,target_id):
  config["storage_pools"]=[{k:p[k] for k in ("id","name","root_path","storage_class","enabled","priority","reserve_bytes")} for p in normalized];config["default_storage_pool_id"]=default_id
  if value.get("instance_storage_root"):config["instance_storage_root"]=str(value["instance_storage_root"]).strip()
  _write(CONFIG_PATH,config);return {"storage_pools":config["storage_pools"],"default_storage_pool_id":default_id,"instance_storage_root":config.get("instance_storage_root")}
+def _apply_runtime_secret(value,target_id):
+ action=str(value.get("action") or "put").strip().lower();ref=str(value.get("ref") or "").strip()
+ if action=="put":
+  if "secret_value" not in value:raise ValueError("runtime secret value is required")
+  result=put_secret(ref,value["secret_value"],expected_instance_id=target_id)
+ elif action=="revoke":result=revoke_secret(ref,expected_instance_id=target_id)
+ else:raise ValueError("runtime secret action must be put or revoke")
+ return {"ref":result["ref"],"name":result["name"],"present":bool(result.get("present")),"operation":action}
 def _apply_server_settings(value,target_id):
  import instance_runtime,privileged_materialization
  from server_settings_runtime import prepare_spec
  from server_settings_surface import apply_runtime_dependencies, normalize_dynamic_values
  record=instance_runtime.get_instance(target_id)
  if not isinstance(record,dict):raise LookupError(f"instance not found: {target_id}")
- settings=value.get("settings") if isinstance(value.get("settings"),dict) else value
+ settings=dict(value.get("settings")) if isinstance(value.get("settings"),dict) else dict(value)
+ protected=value.get("protected_refs") if isinstance(value.get("protected_refs"),dict) else {}
+ secret_refs={}
+ for ref_key,ref in protected.items():
+  logical=str(ref_key); logical=logical[:-4] if logical.endswith("_ref") else logical
+  secret_refs[logical]=str(ref)
  declaration=value.get("declaration") if isinstance(value.get("declaration"),dict) else None
  runtime_id=str(value.get("runtime_id") or "").strip()
  current_runtime=str(record.get("environment_id") or "").strip()
@@ -44,8 +58,11 @@ def _apply_server_settings(value,target_id):
  agent_id=str(record.get("agent_id") or "").strip();config=_load_local_config(agent_id);updated=prepare_spec(record,settings,declaration=declaration)
  dynamic=value.get("dynamic_values") if isinstance(value.get("dynamic_values"),dict) else {}
  updated["server_settings_dynamic_values"]=normalize_dynamic_values(updated,dynamic,player_limit=value.get("player_limit")) if dynamic else {};updated=apply_runtime_dependencies(updated)
+ if secret_refs: updated["server_settings_secret_refs"]=secret_refs
+ cleared=[str(item) for item in (value.get("cleared_protected_fields") or []) if str(item).strip()]
+ if cleared: updated["server_settings_cleared_protected_fields"]=sorted(set(cleared))
  privileged_materialization.materialize(config,updated)
- return {"runtime_id":current_runtime,"settings":dict(updated.get("server_settings_values") or {}),"dynamic_values":dict(updated.get("server_settings_dynamic_values") or {}),"declaration":dict(updated.get("catalog_server_settings") or {})}
+ return {"runtime_id":current_runtime,"settings":dict(updated.get("server_settings_values") or {}),"protected_refs":dict(protected),"cleared_protected_fields":list(updated.get("server_settings_cleared_protected_fields") or []),"dynamic_values":dict(updated.get("server_settings_dynamic_values") or {}),"declaration":dict(updated.get("catalog_server_settings") or {})}
 def configuration_state():
  try:v=json.loads((ROOT/"state.json").read_text(encoding="utf-8"))
  except (OSError,json.JSONDecodeError):return []
@@ -57,6 +74,10 @@ def apply_configuration(command):
  if target_type not in {"agent","instance"} or not target_id:raise ValueError("configuration target is invalid")
  if not namespace or not checksum or not revision:raise ValueError("configuration namespace/revision/checksum required")
  applied=value
+ if namespace==_RUNTIME_SECRET_NAMESPACE:
+  if target_type!="instance":raise ValueError("runtime secret requires instance target")
+  secret_result=_apply_runtime_secret(value,target_id);now=_now()
+  return {"target_type":target_type,"target_id":target_id,"namespace":namespace,"desired_revision":revision,"applied_revision":revision,"desired_checksum":checksum,"applied_checksum":checksum,"status":"applied","last_error":None,"reported_at":now,"configuration_refs":[],"secret":secret_result}
  if namespace==_STORAGE_NAMESPACE:
   if target_type!="agent":raise ValueError("Agent storage configuration requires agent target")
   applied=_apply_storage(value,target_id)
@@ -66,6 +87,9 @@ def apply_configuration(command):
  doc={"schema_version":1,"kind":"CapivaraAppliedConfiguration","namespace":namespace,"target_type":target_type,"target_id":target_id,"revision":revision,"checksum":checksum,"value":applied,"applied_at":_now(),"configuration_refs":list(command.get("configuration_refs") or [])};_write(_path(command),doc)
  return {"target_type":target_type,"target_id":target_id,"namespace":namespace,"desired_revision":revision,"applied_revision":revision,"desired_checksum":checksum,"applied_checksum":checksum,"status":"applied","last_error":None,"reported_at":doc["applied_at"],"configuration_refs":doc["configuration_refs"]}
 def apply_configuration_commands(commands):
+ # Secret delivery is a dependency of configurations that carry protected refs.
+ # Apply one-time runtime-secret commands first regardless of Controller ordering.
+ commands=sorted(list(commands),key=lambda item:0 if str((item or {}).get("namespace") or "").strip().lower()==_RUNTIME_SECRET_NAMESPACE else 1)
  states={(str(x.get("target_type") or ""),str(x.get("target_id") or ""),str(x.get("namespace") or "")):x for x in configuration_state()};changed=False
  for command in commands[:1000]:
   try:report=apply_configuration(command)

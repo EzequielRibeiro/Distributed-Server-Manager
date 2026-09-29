@@ -142,14 +142,31 @@ def _port_requirements(definition: dict[str, Any]) -> tuple[PortRequirement, ...
     )
 
 
+def runtime_requirements_for_version(
+    definition: dict[str, Any] | None,
+    version: str | None = None,
+) -> dict[str, Any]:
+    definition = definition if isinstance(definition, dict) else {}
+    requirements = dict(definition.get("requirements") or {}) if isinstance(definition.get("requirements"), dict) else {}
+    selected = str(version or "").strip()
+    overrides = definition.get("requirements_by_version")
+    if selected and isinstance(overrides, dict):
+        specific = overrides.get(selected)
+        if isinstance(specific, dict):
+            for key, value in specific.items():
+                requirements[str(key)] = value
+    return requirements
+
+
 def requirements_from_runtime_definition(
     definition: dict[str, Any] | None,
     *,
     resources: dict[str, Any] | None = None,
+    version: str | None = None,
 ) -> PlacementRequirements:
     definition = definition if isinstance(definition, dict) else {}
     resource = resources if isinstance(resources, dict) else {}
-    requirements = definition.get("requirements") if isinstance(definition.get("requirements"), dict) else {}
+    requirements = runtime_requirements_for_version(definition, version)
     java = requirements.get("java") if isinstance(requirements.get("java"), dict) else {}
     placement = definition.get("placement") if isinstance(definition.get("placement"), dict) else {}
     minimums = placement.get("resources") if isinstance(placement.get("resources"), dict) else {}
@@ -181,9 +198,10 @@ def requirements_for_instance(
     runtime_id: str | None = None,
     resources: dict[str, Any] | None = None,
     catalog_root: Path | None = None,
+    version: str | None = None,
 ) -> PlacementRequirements:
     definition = load_runtime_definition(runtime_id, catalog_root=catalog_root)
-    result = requirements_from_runtime_definition(definition, resources=resources)
+    result = requirements_from_runtime_definition(definition, resources=resources, version=version)
     if result.game_id is not None:
         return result
     return PlacementRequirements(
@@ -201,4 +219,5 @@ __all__ = [
     "load_runtime_definition",
     "requirements_for_instance",
     "requirements_from_runtime_definition",
+    "runtime_requirements_for_version",
 ]

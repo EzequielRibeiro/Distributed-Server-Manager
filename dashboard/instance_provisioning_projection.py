@@ -21,6 +21,12 @@ def dashboard_provision_state(state: dict[str, Any] | None) -> dict[str, Any]:
     result = source.get("result") if isinstance(source.get("result"), dict) else {}
     error = str(source.get("last_error") or result.get("error") or "").strip()
     steam_auth_required = bool(result.get("steam_auth_required"))
+    if distributed_status == "failed" and not steam_auth_required and error:
+        lowered_error = error.lower()
+        steam_auth_required = any(
+            token in lowered_error
+            for token in ("steam guard", "steam auth", "steam login", "steam authentication")
+        )
 
     if distributed_status in {"queued", "delivered"}:
         status = "queued"
@@ -88,7 +94,19 @@ def project_agent_provisioning(
     if not instance_id:
         raise ValueError("instance_id is required for provisioning state")
     payload = dashboard_provision_state(source)
-    DashboardRepository(backend).update_instance_status(instance_id, payload["status"])
+    repository = DashboardRepository(backend)
+    # A completed provisioning result is durable history. Once a later lifecycle
+    # start/restart has failed, replaying that old completed result must not erase
+    # the retryable Controller failure state by projecting it back to offline/online.
+    if str(source.get("status") or "").strip().lower() == "completed":
+        ph = repository.dialect.placeholder
+        with repository.session(transaction=True) as session:
+            session.execute(
+                f"UPDATE instances SET status={ph} WHERE id={ph} AND status<>{ph}",
+                (payload["status"], instance_id, "failed"),
+            )
+    else:
+        repository.update_instance_status(instance_id, payload["status"])
     return payload
 
 

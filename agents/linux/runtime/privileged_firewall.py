@@ -79,7 +79,7 @@ def _hybrid_catalog_exposure(spec: dict[str, Any]) -> list[dict[str, Any]] | Non
         raise ValueError(f"catalog network ports are unavailable for {runtime_id}")
 
     exposure: list[dict[str, Any]] = []
-    for raw in raw_ports:
+    for raw in [*(network.get("ports") or []), *(network.get("on_demand_ports") or [])]:
         if not isinstance(raw, dict):
             raise ValueError(f"invalid catalog network port for {runtime_id}")
         exposure.append(
@@ -87,6 +87,10 @@ def _hybrid_catalog_exposure(spec: dict[str, Any]) -> list[dict[str, Any]] | Non
                 "name": raw.get("name"),
                 "protocol": raw.get("protocol"),
                 "exposure": raw.get("exposure", "none"),
+                **({"optional": True} if raw.get("name") in {
+                    entry.get("name") for entry in network.get("on_demand_ports") or []
+                    if isinstance(entry, dict)
+                } else {}),
             }
         )
     return exposure
@@ -139,6 +143,8 @@ def public_rules(spec: dict[str, Any]) -> list[dict[str, Any]]:
 
         binding = ports.get(name)
         if not isinstance(binding, dict):
+            if raw.get("optional") is True:
+                continue
             raise ValueError(f"resolved port is unavailable for {name}")
 
         try:

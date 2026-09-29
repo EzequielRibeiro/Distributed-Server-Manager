@@ -31,7 +31,11 @@ def _validate_secret_policy(value: Any, path: str = "") -> None:
         for key, nested in value.items():
             name = str(key).strip().lower()
             child = f"{path}.{name}" if path else name
-            if any(token in name for token in SENSITIVE_TOKENS):
+            # Catalog declarations are metadata, not secret values. A declared field
+            # may legitimately be named password/passwordAdmin; its value still
+            # travels only through protected_refs + runtime secret transport.
+            declaration_metadata = path == "declaration.fields" or path.startswith("declaration.fields.") or ".declaration.fields." in ("." + path + ".")
+            if any(token in name for token in SENSITIVE_TOKENS) and not declaration_metadata:
                 if name.endswith("_ref"):
                     if not isinstance(nested, str) or not nested.strip():
                         raise ConfigurationValidationError(f"{child} must be a non-empty secret reference")

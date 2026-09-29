@@ -3,6 +3,9 @@
 from __future__ import annotations
 import hashlib
 import json
+import shutil
+import socket
+import threading
 import time
 from urllib.parse import parse_qs,urlparse
 from urllib.request import HTTPRedirectHandler,Request,build_opener
@@ -20,12 +23,20 @@ SEARCH=PATH+"/search"
 ICON=PATH+"/icon"
 BUNDLE=PATH+"/bundle"
 UPLOAD=PATH+"/upload"
+UPLOAD_URL=UPLOAD+"/url"
+UPLOAD_PREVIEW=UPLOAD+"/preview"
+MODPACK_DISCOVER=PATH+"/modpack/discover"
+MODPACK_SERVERPACK_DOWNLOAD=PATH+"/modpack/serverpack/download"
 UPLOAD_STATUS=UPLOAD+"/status"
 UPLOAD_FINALIZE=UPLOAD+"/finalize"
 UPLOAD_CANCEL=UPLOAD+"/cancel"
 UPDATE_POLICY=PATH+"/update-policy"
 UPDATE_POLICY_ITEM=UPDATE_POLICY+"/item"
 STREAM=PATH+"/stream"
+_UPLOAD_SLOTS=threading.BoundedSemaphore(2)
+_UPLOAD_IDLE_SECONDS=45
+_UPLOAD_MAX_BYTES=8*1024**3
+_UPLOAD_DISK_RESERVE=5*1024**3
 
 
 ICON_HOST_SUFFIXES=(".modrinth.com",".forgecdn.net")
@@ -80,7 +91,10 @@ def install_customer_content_http(legacy,authenticate):
   value=str(self.headers.get("Content-Length") or "").strip()
   if not value:raise ValueError("Content-Length is required")
   length=int(value)
-  if length<0 or length>64*1024*1024*1024:raise ValueError("content upload exceeds 64 GiB transfer limit")
+  if length<1 or length>_UPLOAD_MAX_BYTES:raise ValueError("O envio excede o limite de 8 GiB ou tem tamanho inválido.")
+  # Protect OS, database and other instances even with two concurrent uploads.
+  if shutil.disk_usage(legacy.DSM_ROOT).free < 2*length+_UPLOAD_DISK_RESERVE:
+   raise ValueError("Espaço insuficiente no Controller para receber o arquivo com reserva de segurança.")
   return length
  def transfer_view(item):return {k:item.get(k) for k in ("transfer_id","instance_id","direction","purpose","filename","status","size_bytes","transferred_bytes","sha256","last_error","expires_at")}
  def content_view(user,instance_id):
@@ -186,11 +200,39 @@ def install_customer_content_http(legacy,authenticate):
   except Exception as exc:error(self,exc)
  def post(self):
   parsed=urlparse(self.path)
+  if parsed.path==MODPACK_DISCOVER:
+   user=require_user(self)
+   if user is None:return
+   try:
+    body=self.read_json_body();instance_id=iid(parsed,body)
+    discovered=CustomerContentUploadService(backend(),legacy.DSM_ROOT).discover_provider_modpack(user,instance_id,body)
+    return send(self,200,{"source":discovered})
+   except Exception as exc:return error(self,exc)
+  if parsed.path==MODPACK_SERVERPACK_DOWNLOAD:
+   user=require_user(self)
+   if user is None:return
+   try:
+    body=self.read_json_body();instance_id=iid(parsed,body)
+    downloaded=CustomerContentUploadService(backend(),legacy.DSM_ROOT).download_discovered_serverpack(user,instance_id,body)
+    return send(self,201,downloaded)
+   except Exception as exc:return error(self,exc)
+  if parsed.path==UPLOAD_URL:
+   user=require_user(self)
+   if user is None:return
+   try:
+    body=self.read_json_body();instance_id=iid(parsed,body);item=CustomerContentUploadService(backend(),legacy.DSM_ROOT).import_url(user,instance_id,body.get("url"));return send(self,201,{"transfer":transfer_view(item)})
+   except Exception as exc:return error(self,exc)
   if parsed.path==UPLOAD:
    user=require_user(self)
    if user is None:return
    try:
     body=self.read_json_body();instance_id=iid(parsed,body);item=CustomerContentUploadService(backend(),legacy.DSM_ROOT).create(user,instance_id,body.get("filename"));return send(self,201,{"transfer":transfer_view(item)})
+   except Exception as exc:return error(self,exc)
+  if parsed.path==UPLOAD_PREVIEW:
+   user=require_user(self)
+   if user is None:return
+   try:
+    body=self.read_json_body();api=CustomerContentUploadService(backend(),legacy.DSM_ROOT);preview=api.preview_serverpack(user,str(body.get("transfer_id") or ""),body);return send(self,200,{"serverpack":preview})
    except Exception as exc:return error(self,exc)
   if parsed.path==UPLOAD_FINALIZE:
    user=require_user(self)
@@ -226,6 +268,7 @@ def install_customer_content_http(legacy,authenticate):
   try:
    body=self.read_json_body();instance_id=iid(parsed,body);action=str(body.get("action") or "install").strip().lower();api=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT)
    if action=="install":result=api.install(user,instance_id,body)
+   elif action=="prepare-clean":result=api.prepare_clean_for_version_change(user,instance_id)
    else:
     content_id=str(body.get("content_id") or "").strip()
     if not content_id:raise ValueError("content_id is required")
@@ -238,10 +281,30 @@ def install_customer_content_http(legacy,authenticate):
    if previous_put is not None:return previous_put(self)
    return send(self,404,{"error":"not_found"})
   user=require_user(self)
-  if user is None:return
+  if user is None:
+   self.close_connection=True
+   return
+  if not _UPLOAD_SLOTS.acquire(blocking=False):
+   self.close_connection=True
+   return send(self,503,{"error":"upload_slots_busy","message":"Limite de uploads simultâneos atingido. Tente novamente."})
+  previous_timeout=self.connection.gettimeout()
   try:
-   item=CustomerContentUploadService(backend(),legacy.DSM_ROOT).stage(user,one(parsed,"transfer_id"),self.rfile,content_length(self));return send(self,201,{"transfer":transfer_view(item)})
-  except Exception as exc:return error(self,exc)
+   # Idle sockets must never hold a Dashboard request thread indefinitely.
+   self.connection.settimeout(_UPLOAD_IDLE_SECONDS)
+   item=CustomerContentUploadService(backend(),legacy.DSM_ROOT).stage(
+    user,one(parsed,"transfer_id"),self.rfile,content_length(self))
+   return send(self,201,{"transfer":transfer_view(item)})
+  except (socket.timeout,TimeoutError,ConnectionError,EOFError):
+   self.close_connection=True
+   return None
+  except Exception as exc:
+   self.close_connection=True
+   try:return error(self,exc)
+   except (BrokenPipeError,ConnectionResetError,OSError):return None
+  finally:
+   try:self.connection.settimeout(previous_timeout)
+   except OSError:pass
+   _UPLOAD_SLOTS.release()
  legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post;legacy.DashboardHandler.do_PUT=put
 
-__all__=["PATH","SEARCH","ICON","BUNDLE","UPLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","UPLOAD_CANCEL","UPDATE_POLICY","UPDATE_POLICY_ITEM","STREAM","install_customer_content_http"]
+__all__=["PATH","SEARCH","ICON","BUNDLE","UPLOAD","UPLOAD_URL","UPLOAD_PREVIEW","MODPACK_DISCOVER","MODPACK_SERVERPACK_DOWNLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","UPLOAD_CANCEL","UPDATE_POLICY","UPDATE_POLICY_ITEM","STREAM","install_customer_content_http"]

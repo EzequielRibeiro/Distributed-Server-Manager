@@ -17,6 +17,46 @@ import game_data_executor
 import game_data_integrity
 
 class AgentGameDataExecutableTest(unittest.TestCase):
+    def test_minecraft_java_target_is_scoped_by_version_and_build(self):
+        selection = {
+            "game": "minecraft",
+            "runtime_definition": "minecraft.java.youer",
+            "install_dir": "/opt/dsm/game-data/minecraft/youer",
+            "version": "26.2",
+            "build": "791",
+        }
+        original = game_data_executor.GAME_DATA_ROOT
+        with tempfile.TemporaryDirectory() as td:
+            game_data_executor.GAME_DATA_ROOT = Path(td)
+            try:
+                target = game_data_executor._target_for(selection)
+            finally:
+                game_data_executor.GAME_DATA_ROOT = original
+        self.assertTrue(str(target).endswith("/minecraft/youer/26.2/791"))
+
+    def test_minecraft_java_versions_do_not_share_game_data_target(self):
+        original = game_data_executor.GAME_DATA_ROOT
+        with tempfile.TemporaryDirectory() as td:
+            game_data_executor.GAME_DATA_ROOT = Path(td)
+            try:
+                old = game_data_executor._target_for({
+                    "game": "minecraft",
+                    "runtime_definition": "minecraft.java.youer",
+                    "install_dir": "/opt/dsm/game-data/minecraft/youer",
+                    "version": "1.21.1",
+                    "build": "657",
+                })
+                new = game_data_executor._target_for({
+                    "game": "minecraft",
+                    "runtime_definition": "minecraft.java.youer",
+                    "install_dir": "/opt/dsm/game-data/minecraft/youer",
+                    "version": "26.2",
+                    "build": "791",
+                })
+            finally:
+                game_data_executor.GAME_DATA_ROOT = original
+        self.assertNotEqual(old, new)
+
     def test_http_archive_declared_executable_is_owner_executable(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td); archive = root / "bedrock.zip"; target = root / "game-data"

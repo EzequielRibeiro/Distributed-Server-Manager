@@ -108,10 +108,15 @@ class MinecraftProviderResolverTest(unittest.TestCase):
   self.assertEqual('1.0.2',result['version'])
 
  def test_curseforge_http_auth_error_is_controlled(self):
-  error=HTTPError('https://api.curseforge.com/v1/games/432',403,'Forbidden',{},None)
-  with patch('core.minecraft_content_resolver.urlopen',side_effect=error):
-   with self.assertRaisesRegex(MinecraftContentResolverError,'verifique a API key'):
-    _request_json('https://api.curseforge.com/v1/games/432',{'x-api-key':'bad'})
+  url='https://api.curseforge.com/v1/games/432'
+  for code,expected in ((401,'autenticação'),(403,'acesso a esta operação')):
+   with self.subTest(code=code):
+    error=HTTPError(url,code,'Denied',{},None)
+    with patch('core.minecraft_content_resolver.urlopen',side_effect=error):
+     with self.assertRaisesRegex(MinecraftContentResolverError,expected) as caught:
+      _request_json(url,{'x-api-key':'bad'})
+    self.assertIs(caught.exception.__cause__,error)
+    self.assertNotIn('bad',str(caught.exception))
 
  def test_curseforge_key_is_controller_only_and_sha1_is_required(self):
   seen=[]

@@ -354,7 +354,7 @@ class MaintenanceWorker:
    event,committed=self._finalize_game_work(run,event,result)
    if not committed:return
    if self._has_rollbackable_game(event):event['recovery']={'phase':'stop','reason':str(event.get('work_error') or 'game update commit failed')};self.repository.update_event(rid,event,stage='rollback-stopping');return
-   latest=self.repository.run(rid);error=str((latest.get('event') or {}).get('work_error') or '').strip();self.repository.finish(rid,success=not bool(error),error_code='maintenance_work_failed' if error else None,error_detail=error or None,now=now);result['failed' if error else 'completed']+=1
+   latest=self.repository.run(rid);latest_event=latest.get('event') or {};error=str(latest_event.get('work_error') or '').strip();native_state=latest_event.get('native_restart') if isinstance(latest_event.get('native_restart'),dict) else {};next_due_override=native_state.get('due_at') if not error and native_state.get('status')=='completed' else None;self.repository.finish(rid,success=not bool(error),error_code='maintenance_work_failed' if error else None,error_detail=error or None,now=now,next_due_override=next_due_override);result['failed' if error else 'completed']+=1
   else:
    reason=(doctor or {}).get('last_error') or 'instance is not ready after maintenance'
    if self._has_rollbackable_game(event):event['recovery']={'phase':'stop','reason':str(reason)};self.repository.update_event(rid,event,stage='rollback-stopping');return

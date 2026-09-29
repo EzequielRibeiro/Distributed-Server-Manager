@@ -265,8 +265,8 @@
       );
 
     name.textContent =
-      item.metadata
-      ?.display_name ||
+      item.name ||
+      item.metadata?.display_name ||
       item.instance;
 
     const runtime =
@@ -328,32 +328,90 @@
     if (
       [
         "queued",
+        "delivered",
+        "running",
         "provisioning",
+        "installing",
         "pending_steam_auth",
       ].includes(
         item.provision
         ?.status
       )
     ) {
+      const provisionStatus =
+        String(
+          item.provision?.status || ""
+        ).toLowerCase();
+
+      const building =
+        [
+          "queued",
+          "delivered",
+          "running",
+          "provisioning",
+          "installing",
+        ].includes(
+          provisionStatus
+        );
+
       const detail =
         document.createElement(
           "p"
         );
 
+      detail.className =
+        building
+          ? "server-provision-text building"
+          : "server-provision-text";
+
       detail.textContent =
-        `${
-                    item.provision
-                        .message
-                    || "Preparando instalação…"
-                } (${
-                    item.provision
-                        .progress
-                    || 0
-                }%)`;
+        building
+          ? `${item.provision.message || item.provision.stage || "Preparando instalação"} · Construindo servidor…`
+          : (
+              item.provision.message ||
+              item.provision.stage ||
+              "Aguardando ação para continuar."
+            );
 
       article.append(
         detail
       );
+
+      if (building) {
+        const builder =
+          document.createElement(
+            "div"
+          );
+
+        builder.className =
+          "server-provision-builder";
+
+        builder.setAttribute(
+          "role",
+          "status"
+        );
+
+        builder.setAttribute(
+          "aria-label",
+          "Servidor sendo construído"
+        );
+
+        for (
+          let index = 0;
+          index < 6;
+          index += 1
+        ) {
+          builder.append(
+            document.createElement(
+              "span"
+            )
+          );
+        }
+
+        article.append(
+          builder
+        );
+      }
     }
 
 

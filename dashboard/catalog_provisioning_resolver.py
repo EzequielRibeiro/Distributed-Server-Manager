@@ -9,6 +9,7 @@ from agent_game_data_api import prepare_runtime_selection
 from core.catalog_resource_profile_policy import load_game_resource_profiles, resolve_catalog_resource_profile
 from core.effective_resource_policy import normalize_resource_policy
 from core.canonical_parameter_policy import canonicalize_parameter_payload
+from core.placement_requirements import runtime_requirements_for_version
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -40,6 +41,8 @@ def resolve_catalog_provisioning(*, environment_id: str, selector: str, selectio
         raise ValueError("runtime selection does not match environment_id")
     config = dict(configuration or {})
     policy = canonicalize_parameter_payload(load_policy(root, runtime))
+    selected_version = str(resolved_selection.get("version") or "").strip()
+    policy["requirements"] = runtime_requirements_for_version(runtime, selected_version)
     config["catalog_runtime_policy"] = policy
     config["canonical_parameter_policy"] = {
         "arguments": list(policy.get("arguments") or []),
