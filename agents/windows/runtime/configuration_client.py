@@ -55,7 +55,7 @@ def _apply_server_settings(value,target_id):
  runtime_id=str(value.get("runtime_id") or "").strip()
  current_runtime=str(record.get("environment_id") or "").strip()
  if runtime_id and current_runtime and runtime_id!=current_runtime:raise ValueError("server settings runtime does not match instance")
- agent_id=str(record.get("agent_id") or "").strip();config=_load_local_config(agent_id);updated=prepare_spec(record,settings,declaration=declaration)
+ agent_id=str(record.get("agent_id") or "").strip();config=_local_config(agent_id);updated=prepare_spec(record,settings,declaration=declaration)
  dynamic=value.get("dynamic_values") if isinstance(value.get("dynamic_values"),dict) else {}
  updated["server_settings_dynamic_values"]=normalize_dynamic_values(updated,dynamic,player_limit=value.get("player_limit")) if dynamic else {};updated=apply_runtime_dependencies(updated)
  if secret_refs: updated["server_settings_secret_refs"]=secret_refs
