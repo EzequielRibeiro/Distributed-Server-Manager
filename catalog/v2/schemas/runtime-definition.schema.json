@@ -339,6 +339,16 @@
     },
     "server_settings": {
       "$ref": "#/$defs/server_settings"
+    },
+    "requirements_by_version": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/version_requirement_override"
+      }
     }
   },
   "$defs": {
@@ -1319,6 +1329,27 @@
           },
           "propertyNames": {
             "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          }
+        }
+      }
+    },
+    "version_requirement_override": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "java": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "min": {
+              "type": "integer"
+            },
+            "max": {
+              "type": "integer"
+            }
           }
         }
       }
