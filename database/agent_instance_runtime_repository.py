@@ -114,7 +114,7 @@ class AgentInstanceRuntimeRepository:
             if link is not None:contract_id=str(link["contract_id"])
         with self.session(transaction=True) as session:session.execute("UPDATE agent_instance_commands SET "+f"status={ph},result_json={ph},last_error={ph},completed_at={ph},updated_at={ph} WHERE command_id={ph} AND status NOT IN ('completed','failed')",(status,payload,error,now,now,command_id))
         completed=self.snapshot(command_id)
-        if status=="completed" and reported_action in LIFECYCLE_ACTIONS:
+        if reported_action in LIFECYCLE_ACTIONS:
             should_project=True
             with self.session() as session:
                 ownership=session.execute(
@@ -129,11 +129,27 @@ class AgentInstanceRuntimeRepository:
                     should_project=link is not None
             if should_project:
                 from dashboard_repository import DashboardRepository
-                controller_status="stopped" if reported_action=="stop" else "online"
-                DashboardRepository(self.backend).reconcile_instance_status(
-                    reported_instance_id,
-                    controller_status,
-                )
+                observed=""
+                nested=result.get("result")
+                if isinstance(nested,dict):
+                    observed=str(nested.get("observed_state") or "").strip().lower()
+                if status=="failed" and reported_action in {"start","restart"}:
+                    controller_status="failed"
+                elif observed in {"failed","unavailable"}:
+                    controller_status="failed"
+                elif observed=="running":
+                    controller_status="online"
+                elif observed=="stopped":
+                    controller_status="stopped"
+                elif status=="completed":
+                    controller_status="stopped" if reported_action=="stop" else "online"
+                else:
+                    controller_status=None
+                if controller_status is not None:
+                    DashboardRepository(self.backend).reconcile_instance_status(
+                        reported_instance_id,
+                        controller_status,
+                    )
         if reported_action=="remove" and status=="completed":
             from admin_management_repository import AdminManagementRepository
             from dashboard_repository import DashboardRepository

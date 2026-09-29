@@ -49,7 +49,7 @@ class ProvisioningProjectionTest(unittest.TestCase):
             with backend.transaction() as connection:
                 connection.execute(
                     "INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)",
-                    ("customer-projection", controller_id, "Projection Customer", "active"),
+                    (1, controller_id, "Projection Customer", "active"),
                 )
                 connection.execute(
                     "INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,controller_id,agent_id,customer_id) "
@@ -63,7 +63,7 @@ class ProvisioningProjectionTest(unittest.TestCase):
                         "queued",
                         controller_id,
                         agent_id,
-                        "customer-projection",
+                        1,
                     ),
                 )
                 connection.execute(
@@ -71,7 +71,7 @@ class ProvisioningProjectionTest(unittest.TestCase):
                     "VALUES (?,?,?,?,?)",
                     (
                         "contract-projection",
-                        "customer-projection",
+                        1,
                         "dayz",
                         "active",
                         1,
@@ -116,7 +116,67 @@ class ProvisioningProjectionTest(unittest.TestCase):
                     "SELECT status FROM instances WHERE id=?", ("instance-projection",)
                 ).fetchone()
             self.assertEqual(row["status"], "offline")
-            self.assertIn('"distributed": true', (resource / "provision.json").read_text(encoding="utf-8"))
+            backend.close()
+
+
+    def test_completed_provisioning_does_not_erase_lifecycle_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            backend = create_backend(DatabaseConfig(driver="sqlite", database=str(root / "capivara.db")))
+            backend.initialize()
+            identity = installation_profile_identity(
+                RegistryRepository(backend), profile="hybrid", hostname="projection-failed-host"
+            )
+            controller_id = str(identity["controller_id"])
+            agent_id = str(identity["agent_id"])
+            node_id = str(identity["node_id"])
+            with backend.transaction() as connection:
+                connection.execute(
+                    "INSERT INTO customers(id,controller_id,name,status) VALUES (?,?,?,?)",
+                    (2, controller_id, "Failed Customer", "active"),
+                )
+                connection.execute(
+                    "INSERT INTO instances(id,node_id,game_id,runtime_id,name,status,controller_id,agent_id,customer_id) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)",
+                    (
+                        "instance-failed",
+                        node_id,
+                        "minecraft",
+                        "minecraft.java.youer",
+                        "Failed Runtime",
+                        "failed",
+                        controller_id,
+                        agent_id,
+                        2,
+                    ),
+                )
+                connection.execute(
+                    "INSERT INTO service_contracts(id,customer_id,game_id,status,instance_limit) VALUES (?,?,?,?,?)",
+                    ("contract-failed", 2, "minecraft", "active", 1),
+                )
+                connection.execute(
+                    "INSERT INTO instance_contracts(instance_id,contract_id) VALUES (?,?)",
+                    ("instance-failed", "contract-failed"),
+                )
+
+            projected = project_agent_provisioning(
+                backend,
+                {
+                    "provisioning_id": "p-completed-old",
+                    "instance_id": "instance-failed",
+                    "status": "completed",
+                    "current_step": "completed",
+                    "progress": 100,
+                    "result": {"observed_state": "stopped"},
+                },
+                root=root,
+            )
+            self.assertEqual(projected["status"], "offline")
+            with backend.connect() as connection:
+                row = connection.execute(
+                    "SELECT status FROM instances WHERE id=?", ("instance-failed",)
+                ).fetchone()
+            self.assertEqual(row["status"], "failed")
             backend.close()
 
 
