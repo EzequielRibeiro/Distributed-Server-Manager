@@ -4,6 +4,12 @@ import unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 class CustomerDayZManagementContractTest(unittest.TestCase):
+ def test_mobile_datetime_picker_is_not_replaced_during_refresh(self):
+  source=(ROOT/"dashboard"/"web"/"customer-dayz.js").read_text(encoding="utf-8")
+  self.assertIn("nativePickerActive",source)
+  self.assertIn("document.activeElement",source)
+  self.assertIn("!nativePickerActive&&!editing",source)
+
  def test_customer_surface_is_composed(self):
   html=(ROOT/"dashboard"/"web"/"customer-instance.html").read_text(encoding="utf-8")
   self.assertIn("/customer-maintenance.js?v=4",html)
