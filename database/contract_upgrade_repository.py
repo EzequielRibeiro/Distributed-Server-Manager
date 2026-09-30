@@ -2,6 +2,7 @@
 """Transactional application of paid Customer instance Resource Profile changes."""
 from __future__ import annotations
 import json,uuid
+from contextlib import nullcontext
 from typing import Any
 from alert_repository import AlertSession,dialect_for_backend
 from core.effective_resource_policy import normalize_resource_policy
@@ -54,5 +55,39 @@ class ContractUpgradeRepository:
                 session.execute(f"UPDATE contract_change_requests SET status='applying',billing_reference={ph},approved_at=COALESCE(approved_at,{self.dialect.current_timestamp}),updated_at={self.dialect.current_timestamp} WHERE request_id={ph}",(billing_reference,request_id))
             finally:session.close()
         return {"request_id":request_id,"status":"applying","instance_id":state["instance_id"],"profile_id":profile_id,"resources":new_resources,"effective_resource_policy":effective.as_dict(),"resource_command_id":resource_command_id,"idempotent":False}
+
+
+    def apply_product(self,contract_id:str,product:dict[str,Any],*,applied_by:str,connection=None)->dict[str,Any]:
+        contract_id=str(contract_id or "").strip();applied_by=str(applied_by or "").strip() or "admin";product=dict(product or {});product_id=str(product.get("id") or "").strip().lower()
+        if not contract_id or not product_id:raise ValueError("contract_id and product are required")
+        if product_id!="modified":raise ValueError("only upgrade to modified is supported")
+        entitlements={str(k):bool(v) for k,v in (product.get("entitlements") or {}).items() if isinstance(k,str)}
+        self.backend.initialize();ph=self.dialect.placeholder
+        tx = self.backend.transaction() if connection is None else nullcontext(connection)
+        with tx as connection:
+            session=self._session(connection)
+            try:
+                row=session.execute(f"SELECT id,game_id,status,metadata_json FROM service_contracts WHERE id={ph}",(contract_id,)).fetchone()
+                if row is None:raise LookupError("contract not found")
+                if str(row["status"] or "").strip().lower()!="active":raise ValueError("contract is not active")
+                metadata=self._decode(row["metadata_json"]);current=str(metadata.get("product_variant") or metadata.get("content_mode") or "standard").strip().lower()
+                if current==product_id:return {"id":contract_id,"product_variant":product_id,"instances_updated":0,"idempotent":True}
+                if current!="standard":raise ValueError(f"unsupported contract product transition: {current} -> {product_id}")
+                resources=metadata.get("resources") if isinstance(metadata.get("resources"),dict) else {};profile_id=str(metadata.get("resource_profile_id") or metadata.get("profile_id") or "").strip() or None;previous_entitlements=metadata.get("entitlements") if isinstance(metadata.get("entitlements"),dict) else {}
+                revisions=session.execute(f"SELECT COALESCE(MAX(revision_number),0) AS n FROM service_contract_revisions WHERE contract_id={ph}",(contract_id,)).fetchone();number=int(revisions["n"] or 0)
+                if number==0:
+                    session.execute("INSERT INTO service_contract_revisions(revision_id,contract_id,instance_id,revision_number,resource_profile_id,resources_json,entitlements_json,reason,billing_reference,created_by) "+f"VALUES ({self.dialect.parameters(10)})",("contract-rev-"+uuid.uuid4().hex,contract_id,None,1,profile_id,json.dumps(resources,separators=(",",":"),sort_keys=True),json.dumps(previous_entitlements,separators=(",",":"),sort_keys=True),"baseline",None,applied_by));number=1
+                session.execute(f"UPDATE service_contract_revisions SET effective_until={self.dialect.current_timestamp} WHERE contract_id={ph} AND revision_number={ph} AND effective_until IS NULL",(contract_id,number))
+                metadata["product_variant"]=product_id;metadata["content_mode"]=product_id;metadata["entitlements"]=entitlements
+                session.execute(f"UPDATE service_contracts SET metadata_json={ph},updated_at={self.dialect.current_timestamp} WHERE id={ph}",(json.dumps(metadata,separators=(",",":"),sort_keys=True),contract_id))
+                linked=session.execute("SELECT i.id FROM instances i JOIN instance_contracts ic ON ic.instance_id=i.id "+f"WHERE ic.contract_id={ph}",(contract_id,)).fetchall();updated=0
+                for item in linked:
+                    policy=session.execute(f"SELECT 1 FROM instance_workspace_policy WHERE instance_id={ph}",(item["id"],)).fetchone()
+                    if policy is not None:
+                        session.execute(f"UPDATE instance_workspace_policy SET content_mode={ph},mods_allowed={ph},plugins_allowed={ph},workshop_allowed={ph},external_upload_allowed={ph},custom_runtime_allowed={ph},updated_at={self.dialect.current_timestamp} WHERE instance_id={ph}",(product_id,self._bool(entitlements.get("mods")),self._bool(entitlements.get("plugins")),self._bool(entitlements.get("workshop")),self._bool(entitlements.get("external_upload",True)),self._bool(entitlements.get("custom_runtime")),item["id"]));updated+=1
+                session.execute("INSERT INTO service_contract_revisions(revision_id,contract_id,instance_id,revision_number,resource_profile_id,resources_json,entitlements_json,reason,billing_reference,created_by) "+f"VALUES ({self.dialect.parameters(10)})",("contract-rev-"+uuid.uuid4().hex,contract_id,None,number+1,profile_id,json.dumps(resources,separators=(",",":"),sort_keys=True),json.dumps(entitlements,separators=(",",":"),sort_keys=True),"product_upgrade",None,applied_by))
+            finally:
+                session.close()
+        return {"id":contract_id,"product_variant":product_id,"instances_updated":updated,"idempotent":False}
 
 __all__=["ContractUpgradeRepository"]

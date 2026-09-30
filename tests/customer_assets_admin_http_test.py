@@ -106,12 +106,28 @@ class CustomerAssetsAdminTest(unittest.TestCase):
             ROOT, "minecraft", "minecraft.java.fabric", metadata
         ))
 
-    def test_linked_contract_cannot_shrink_below_usage_or_change_product(self):
+    def test_linked_contract_can_upgrade_product_without_reprovisioning(self):
+        self.attach()
+        before = self.manager.detail(self.code)["instances"][0]
+        result = self.act("edit_contract", {"product_variant": "modified"})
+        self.assertEqual(result["product_variant"], "modified")
+        self.assertFalse(result["idempotent"])
+        after = self.manager.detail(self.code)["instances"][0]
+        for key in ("id", "agent_id", "status", "game_id", "runtime_id", "contract_id"):
+            self.assertEqual(before[key], after[key])
+        contract = self.manager.detail(self.code)["contracts"][0]
+        self.assertEqual(contract["product_variant"], "modified")
+        with self.backend.connect() as conn:
+            revisions = conn.execute("SELECT reason,entitlements_json FROM service_contract_revisions WHERE contract_id=? ORDER BY revision_number", (self.contract_id,)).fetchall()
+        self.assertEqual([row["reason"] for row in revisions], ["baseline", "product_upgrade"])
+        self.assertTrue(self.act("edit_contract", {"product_variant": "modified"})["idempotent"])
+
+    def test_linked_contract_still_guards_capacity_lifecycle_and_mixed_upgrade(self):
         self.attach()
         with self.assertRaisesRegex(ValueError, "Limite"):
             self.act("edit_contract", {"instance_limit": 0})
-        with self.assertRaisesRegex(ValueError, "migração"):
-            self.act("edit_contract", {"product_variant": "modified"})
+        with self.assertRaisesRegex(ValueError, "isoladamente"):
+            self.act("edit_contract", {"product_variant": "modified", "instance_limit": 3})
         with self.assertRaisesRegex(ValueError, "fluxo operacional"):
             self.act("edit_contract", {"status": "cancelled"})
         self.assertEqual(self.manager.detail(self.code)["contracts"][0]["status"], "active")
