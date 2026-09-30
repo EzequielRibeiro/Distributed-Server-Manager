@@ -22,5 +22,31 @@ class CustomerDayzGameGateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout+"\n"+result.stderr)
         self.assertIn("PASS:", result.stdout)
 
+class DayzWipeScheduleFieldsContractTest(unittest.TestCase):
+    def test_wipe_uses_mobile_safe_date_and_time_selects(self):
+        script = (ROOT / "dashboard/web/customer-dayz.js").read_text(encoding="utf-8")
+        self.assertIn('wipeDateWrap=el("div","","date-select")', script)
+        self.assertIn('wipeDateWrap.id="dayz-wipe-date"', script)
+        self.assertIn('wipeTime=el("div","","time-select")', script)
+        self.assertIn('wipeTime.id="dayz-wipe-time"', script)
+        self.assertIn('wipeDay.append(new Option("Dia","")', script)
+        self.assertIn('wipeMonth.append(new Option("Mês","")', script)
+        self.assertIn('wipeYear.append(new Option("Ano","")', script)
+        self.assertNotIn('type="datetime-local"', script)
+        self.assertNotIn('type="date"', script)
+        self.assertNotIn('type="time"', script)
+        self.assertNotIn('showPicker', script)
+        self.assertIn('if(hasDate&&!completeDate){toast("Selecione dia, mês e ano do wipe.");return}', script)
+        self.assertIn('`${wipeYear.value}-${wipeMonth.value}-${wipeDay.value}`', script)
+        self.assertIn('`${wipeHour.value}:${wipeMinute.value}`', script)
+        self.assertIn('scheduled_at:future?future.toISOString():null', script)
+        self.assertIn('const pendingWipe=operations.find(op=>op.action==="wipe"', script)
+        self.assertIn('wipeDay.value=String(due.getDate()).padStart(2,"0")', script)
+        self.assertIn('let wipeFormDirty=false', script)
+        self.assertIn('const markWipeDirty=()=>{wipeFormDirty=true}', script)
+        self.assertIn('[wipeDay,wipeMonth,wipeYear,wipeHour,wipeMinute].forEach', script)
+        self.assertIn('&&!wipeFormDirty&&!editing)load()', script)
+        self.assertNotIn('nativePickerActive', script)
+
 if __name__=="__main__":
     unittest.main()

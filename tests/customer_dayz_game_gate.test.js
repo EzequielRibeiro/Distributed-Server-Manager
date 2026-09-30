@@ -16,7 +16,10 @@ function fixture(initial) {
     querySelector: q => q === ".sidebar nav" ? nav : q === "main" ? main : null,
     createElement: tag => ({tag, dataset: {}, classList: {contains: () => false}, remove() { delete nodes[this.id]; }}),
   };
-  const window = {CapivaraCustomerInstanceOverview: initial};
+  const window = {
+    CapivaraCustomerInstanceOverview: initial,
+    addEventListener() {},
+  };
   const context = {window, document, URLSearchParams, location: {search: "?instance_id=instance-one"},
     fetch: async () => {counts.fetch++; return {ok: false, status: 503, json: async () => ({error: "test failure"})};},
     setInterval() {}, clearTimeout() {}, setTimeout() {}};
