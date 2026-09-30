@@ -59,6 +59,35 @@ class HybridCustomerFilesAccessTest(unittest.TestCase):
             for path in (root, child, file_path, executable):
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode) & 0o007, 0)
 
+    def test_prepare_tree_is_metadata_idempotent_when_access_is_already_correct(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "instance"
+            child = root / "config"
+            file_path = child / "server.cfg"
+            child.mkdir(parents=True)
+            file_path.write_text("hostname=test\n", encoding="utf-8")
+            executable = child / "bedrock_server"
+            executable.write_bytes(b"binary")
+            for directory in (root, child):
+                os.chmod(directory, 0o770)
+            os.chmod(file_path, 0o660)
+            os.chmod(executable, 0o770)
+            gid = root.stat().st_gid
+            before = {path: path.stat().st_ctime_ns for path in (root, child, file_path, executable)}
+
+            with mock.patch.object(self.helper.os, "chown", wraps=os.chown) as chown, mock.patch.object(
+                self.helper.os, "chmod", wraps=os.chmod
+            ) as chmod:
+                result = self.helper._prepare_tree(root, gid, {executable.resolve()})
+
+            self.assertEqual(result, {"directories": 2, "files": 2})
+            chown.assert_not_called()
+            chmod.assert_not_called()
+            self.assertEqual(
+                before,
+                {path: path.stat().st_ctime_ns for path in (root, child, file_path, executable)},
+            )
+
     def test_declared_executable_is_recovered_from_runtime_record(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "runtime"
