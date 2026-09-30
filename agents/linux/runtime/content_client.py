@@ -210,8 +210,8 @@ def _install(config,cmd):
 def _remove(config,cmd):
  _,instance=_owned(config,cmd);iid=str(cmd.get("instance_id") or "");target=_safe_target(instance,str(cmd.get("target") or "assets"));_activate_target(config,iid,target,None);return str(target)
 def _source_metadata(cmd:dict[str,Any])->dict[str,Any]:
- artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {};package=str(artifact.get("package_id") or cmd.get("package_id") or "").strip()
- meta={"provider":str(cmd.get("provider") or artifact.get("provider") or "").strip().lower(),"content_type":str(cmd.get("content_type") or "other").strip().lower(),"package_id":package or None,"game_id":str(cmd.get("game_id") or "").strip().lower() or None,"target":str(cmd.get("target") or "").strip() or None}
+ artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {};package=str(artifact.get("package_id") or cmd.get("package_id") or "").strip();filename=str(artifact.get("filename") or "").strip()
+ meta={"provider":str(cmd.get("provider") or artifact.get("provider") or "").strip().lower(),"content_type":str(cmd.get("content_type") or "other").strip().lower(),"package_id":package or None,"game_id":str(cmd.get("game_id") or "").strip().lower() or None,"target":str(cmd.get("target") or "").strip() or None,"artifact_filename":filename or None}
  if artifact.get("serverpack_v1") is True or artifact.get("serverpack_child_v1") is True:
   meta["source_sha256"]=str(artifact.get("sha256") or "").strip().lower()
   meta["source_size_bytes"]=artifact.get("size_bytes")
@@ -237,7 +237,7 @@ def _reuse_installed(config,previous,cmd,source_meta):
  if str(cmd.get("desired_state") or "installed")!="installed":return False
  if str(previous.get("installed_version"))!=str(cmd.get("version") or "latest"):return False
  if not _serverpack_replay_valid(previous,cmd,source_meta):return False
- for key in ("provider","package_id","target","game_id"):
+ for key in ("provider","package_id","target","game_id","artifact_filename"):
   if str(previous.get(key) or "")!=str(source_meta.get(key) or ""):return False
  artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {}
  if artifact.get("serverpack_v1") is True or artifact.get("serverpack_child_v1") is True:
@@ -273,7 +273,7 @@ def _apply(config,cmd):
  except ContentRollbackError as exc:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"rollback_failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"rollback_failed","security_state":"unscanned","security_policy_version":1,**source_meta}
  except ContentActivationError as exc:
   if previous.get("status")=="applied" and int(previous.get("applied_revision") or 0)>0 and str(previous.get("applied_checksum") or ""):
-   restored_meta={key:(previous.get(key) if previous.get(key) is not None else source_meta.get(key)) for key in ("provider","content_type","package_id","game_id","target")}
+   restored_meta={key:(previous.get(key) if previous.get(key) is not None else source_meta.get(key)) for key in ("provider","content_type","package_id","game_id","target","artifact_filename")}
    report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":int(previous.get("applied_revision")),"desired_checksum":checksum,"applied_checksum":str(previous.get("applied_checksum")),"status":"rolled_back","installed_version":previous.get("installed_version"),"managed_path":previous.get("managed_path"),"last_error":str(exc)[:2000],"readiness":"rolled_back","security_state":str(previous.get("security_state") or "clean"),"security_policy_version":int(previous.get("security_policy_version") or 1),**restored_meta}
   else:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"rolled_back","security_state":"unscanned","security_policy_version":1,**source_meta}
  except Exception as exc:

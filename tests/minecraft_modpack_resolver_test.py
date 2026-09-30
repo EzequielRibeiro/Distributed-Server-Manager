@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 if str(ROOT/"core") not in sys.path:sys.path.insert(0,str(ROOT/"core"))
 from content_bundle import normalize_bundle
-from minecraft_modpack_resolver import resolve_curseforge_modpack,resolve_modrinth_modpack
+from minecraft_modpack_resolver import _require_runtime_loader_compatibility,resolve_curseforge_modpack,resolve_modrinth_modpack
 from minecraft_content_resolver import MinecraftContentResolverError
 
 def zip_bytes(files):
@@ -32,6 +32,12 @@ class MinecraftModpackResolverTest(unittest.TestCase):
    if url.endswith('/project/pack'):return {"id":"p","project_type":"modpack","status":"approved"}
    return [{"id":"v","project_id":"p","version_number":"1","version_type":"release","status":"listed","game_versions":["1.21.1"],"loaders":["fabric"],"files":[{"filename":"x.mrpack","url":"https://cdn.modrinth.com/x","primary":True,"hashes":{"sha512":h512,"sha1":h1}}]}]
   with self.assertRaises(MinecraftContentResolverError):resolve_modrinth_modpack("pack","parent","1.21.1",{"loader":"fabric"},requester=request,bytes_requester=lambda u,h,l:pack)
+ def test_runtime_embedded_loader_must_match_modpack(self):
+  runtime={"loader":"youer","compatibility":{"embedded_mod_loaders":{"26.2":{"id":"neoforge","version":"26.2.0.7-beta"}}}}
+  with self.assertRaisesRegex(MinecraftContentResolverError,"modpack requires neoforge 26.2.0.75"):
+   _require_runtime_loader_compatibility(runtime,"26.2","neoforge","26.2.0.75")
+  _require_runtime_loader_compatibility(runtime,"26.2","neoforge","26.2.0.7-beta")
+
  def test_curseforge_zip_resolves_required_mods_without_leaking_key(self):
   manifest={"manifestType":"minecraftModpack","manifestVersion":1,"minecraft":{"version":"1.21.1","modLoaders":[{"id":"fabric-0.16.10","primary":True}]},"files":[{"projectID":100,"fileID":200,"required":True}],"overrides":"overrides"};pack=zip_bytes({"manifest.json":json.dumps(manifest),"overrides/config/test.toml":"x=1"});pack_sha1=hashlib.sha1(pack).hexdigest();seen=[]
   def request(url,headers):
