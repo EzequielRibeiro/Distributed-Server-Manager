@@ -452,9 +452,42 @@ def _read_override_manifest(path: Path) -> dict[str, str]:
     return result
 
 
-def _write_override_manifest(path: Path, targets: dict[str, str]) -> None:
+def _read_override_seed_checksum(path: Path) -> str:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return ""
+    except (OSError, json.JSONDecodeError) as exc:
+        raise MinecraftContentActivationError("invalid Minecraft override manifest") from exc
+    if not isinstance(payload, dict) or payload.get("kind") != "CapivaraContentOverrideProjection":
+        raise MinecraftContentActivationError("invalid Minecraft override manifest")
+    if int(payload.get("schema_version") or 1) < 2:
+        return ""
+    checksum = str(payload.get("bundle_seed_checksum") or "").strip().lower()
+    if checksum and not re.fullmatch(r"[0-9a-f]{64}", checksum):
+        raise MinecraftContentActivationError("invalid Minecraft override seed checksum")
+    return checksum
+
+def _bundle_seed_checksum(item: dict[str, Any], targets: dict[str, str]) -> str:
+    identity = {
+        "content_id": str(item.get("content_id") or ""),
+        "roots": [str(value) for value in (item.get("roots") or [])],
+        "targets": [{"path": key, "sha256": targets[key]} for key in sorted(targets)],
+    }
+    return hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+def _write_override_manifest(path: Path, targets: dict[str, str], bundle_seed_checksum: str = "") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"schema_version": 1, "kind": "CapivaraContentOverrideProjection", "targets": [{"path": key, "sha256": targets[key]} for key in sorted(targets)]}
+    checksum = str(bundle_seed_checksum or "").strip().lower()
+    if checksum and not re.fullmatch(r"[0-9a-f]{64}", checksum):
+        raise MinecraftContentActivationError("invalid Minecraft override seed checksum")
+    payload = {
+        "schema_version": 2 if checksum else 1,
+        "kind": "CapivaraContentOverrideProjection",
+        "targets": [{"path": key, "sha256": targets[key]} for key in sorted(targets)],
+    }
+    if checksum:
+        payload["bundle_seed_checksum"] = checksum
     temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     try:
@@ -597,6 +630,18 @@ def materialize_minecraft_overrides(spec: dict[str, Any]) -> list[str]:
                 desired_hashes[relative] = _file_sha256(candidate)
     manifest = _override_manifest_path(spec)
     previous = _read_override_manifest(manifest)
+    seed_checksum = _bundle_seed_checksum(items[0], desired_hashes) if items else ""
+    previous_seed_checksum = _read_override_seed_checksum(manifest)
+    if items and seed_checksum and previous_seed_checksum == seed_checksum:
+        # Reconciliation of the exact bundle seed already materialized.
+        # Runtime/mod-owned config mutations and deletions are legitimate state.
+        return sorted(previous)
+    if items and seed_checksum and not previous_seed_checksum and previous == desired_hashes:
+        # Safe v1 -> v2 migration: the old ownership manifest exactly matches
+        # the current immutable bundle seed. Record identity without touching
+        # live runtime files, which may have legitimately mutated or vanished.
+        _write_override_manifest(manifest, previous, seed_checksum)
+        return sorted(previous)
     staged: dict[str, Path] = {}
     backups: dict[str, Path] = {}
     placed: set[str] = set()
@@ -606,8 +651,17 @@ def materialize_minecraft_overrides(spec: dict[str, Any]) -> list[str]:
             target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists():
                 if relative_text not in previous:
-                    raise MinecraftContentActivationError("refusing to overwrite unmanaged Minecraft modpack file")
-                if not target.is_file() or target.is_symlink() or _file_sha256(target) != previous[relative_text]:
+                    # A fresh Minecraft runtime is seeded from the immutable runtime
+                    # distribution before server-pack overrides are projected. Allow
+                    # replacement only for an untouched byte-identical seed file.
+                    context = spec.get("profile_context") if isinstance(spec.get("profile_context"), dict) else {}
+                    seed_raw = context.get("install_path") or context.get("content_root")
+                    seed_file = (Path(str(seed_raw)).resolve() / relative_text) if seed_raw else None
+                    if (seed_file is None or not seed_file.is_file() or seed_file.is_symlink()
+                            or not target.is_file() or target.is_symlink()
+                            or _file_sha256(target) != _file_sha256(seed_file)):
+                        raise MinecraftContentActivationError("refusing to overwrite unmanaged Minecraft modpack file")
+                elif not target.is_file() or target.is_symlink() or _file_sha256(target) != previous[relative_text]:
                     raise MinecraftContentActivationError("managed Minecraft modpack file was modified locally")
             stage = target.with_name(f".{target.name}.{os.getpid()}.capivara-bundle-new")
             if stage.exists():
@@ -632,7 +686,7 @@ def materialize_minecraft_overrides(spec: dict[str, Any]) -> list[str]:
                 backup = target.with_name(f".{target.name}.{os.getpid()}.capivara-bundle-old")
                 os.replace(target, backup)
                 backups[relative_text] = backup
-        _write_override_manifest(manifest, desired_hashes)
+        _write_override_manifest(manifest, desired_hashes, seed_checksum)
     except Exception:
         for relative_text in placed:
             target = _safe_runtime_target(root, _safe_override_target(relative_text, world_roots))

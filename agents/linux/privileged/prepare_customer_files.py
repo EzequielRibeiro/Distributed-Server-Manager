@@ -91,15 +91,22 @@ def _prepare_tree(root: Path, group_gid: int, executable_paths: set[Path] | None
         if current.is_symlink():
             raise RuntimeError(f"customer files tree contains a symlink: {current}")
         if current.is_dir():
-            os.chown(current, -1, group_gid)
-            os.chmod(current, 0o770)
+            metadata = current.stat()
+            if metadata.st_gid != group_gid:
+                os.chown(current, -1, group_gid)
+            if (metadata.st_mode & 0o7777) != 0o770:
+                os.chmod(current, 0o770)
             directories += 1
             stack.extend(current.iterdir())
             continue
         if current.is_file():
-            executable = bool(current.stat().st_mode & 0o111) or current.resolve(strict=False) in executable_paths
-            os.chown(current, -1, group_gid)
-            os.chmod(current, 0o770 if executable else 0o660)
+            metadata = current.stat()
+            executable = bool(metadata.st_mode & 0o111) or current.resolve(strict=False) in executable_paths
+            desired_mode = 0o770 if executable else 0o660
+            if metadata.st_gid != group_gid:
+                os.chown(current, -1, group_gid)
+            if (metadata.st_mode & 0o7777) != desired_mode:
+                os.chmod(current, desired_mode)
             files += 1
     return {"directories": directories, "files": files}
 

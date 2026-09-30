@@ -733,11 +733,17 @@ def _grant_customer_files_access(spec: dict[str, Any]) -> None:
     for current in [files_root, *files_root.rglob("*")]:
         if current.is_symlink():
             raise RuntimeError(f"customer files tree contains a symlink: {current}")
-        os.chown(current, -1, agent_group.gr_gid)
+        metadata = current.stat()
+        if metadata.st_gid != agent_group.gr_gid:
+            os.chown(current, -1, agent_group.gr_gid)
         if current.is_dir():
-            os.chmod(current, 0o770)
+            desired_mode = 0o770
         elif current.is_file():
-            os.chmod(current, 0o770 if current.stat().st_mode & 0o111 else 0o660)
+            desired_mode = 0o770 if metadata.st_mode & 0o111 else 0o660
+        else:
+            continue
+        if (metadata.st_mode & 0o7777) != desired_mode:
+            os.chmod(current, desired_mode)
 
 
 def run(instance_id: str) -> dict[str, Any]:
