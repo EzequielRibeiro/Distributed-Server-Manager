@@ -15,6 +15,7 @@ from alert_repository import AlertSession, dialect_for_backend
 from core.catalog_resource_profile_policy import resolve_catalog_resource_profile
 from customer_audit import audit_customer_event
 from customer_management_repository import CustomerManagementRepository
+from contract_upgrade_repository import ContractUpgradeRepository
 from runtime_workspace_catalog import game_workspace_catalog
 
 PATH = "/api/admin/customer/assets"
@@ -127,8 +128,21 @@ def edit_customer_asset(payload, *, user, backend, root=ROOT):
                         params.append(_expiry(changes["ends_at"]))
                     if "resource_profile_id" in changes or "product_variant" in changes:
                         metadata = _metadata(row["metadata_json"])
-                        if used:
-                            raise ValueError("Alterações de perfil/produto exigem migração das instâncias vinculadas.")
+                        if used and "resource_profile_id" in changes:
+                            raise ValueError("Alterações de perfil exigem migração das instâncias vinculadas.")
+                        if used and "product_variant" in changes:
+                            if set(changes) != {"product_variant"}:
+                                raise ValueError("Upgrade de produto com instâncias deve ser realizado isoladamente.")
+                            product_id = str(changes["product_variant"] or "").strip().lower()
+                            products = game_workspace_catalog(root, str(row["game_id"])).get("products") or {}
+                            if not isinstance(products, dict) or product_id not in products:
+                                raise ValueError("Produto não disponível neste jogo.")
+                            result = ContractUpgradeRepository(backend).apply_product(
+                                identifier, {"id": product_id, **products[product_id]},
+                                applied_by=str(user.get("username") or "admin"), connection=connection,
+                            )
+                            event = "CUSTOMER_CONTRACT_PRODUCT_UPGRADED"
+                            fields = []
                         if "resource_profile_id" in changes:
                             selected = str(changes["resource_profile_id"] or "").strip().lower()
                             profile_id, _, _ = resolve_catalog_resource_profile(
@@ -138,7 +152,7 @@ def edit_customer_asset(payload, *, user, backend, root=ROOT):
                             )
                             metadata["resource_profile_id"] = profile_id
                             metadata["resource_profile_source"] = "selected" if selected else "game_default"
-                        if "product_variant" in changes:
+                        if "product_variant" in changes and not used:
                             product_id = str(changes["product_variant"] or "").strip().lower()
                             products = game_workspace_catalog(root, str(row["game_id"])).get("products") or {}
                             if not isinstance(products, dict) or product_id not in products:
@@ -146,22 +160,17 @@ def edit_customer_asset(payload, *, user, backend, root=ROOT):
                             product = products[product_id]
                             metadata["product_variant"] = product_id
                             metadata["content_mode"] = product_id
-                            metadata["entitlements"] = {
-                                str(key): bool(value)
-                                for key, value in (product.get("entitlements") or {}).items()
-                            }
-                        fields.append(f"metadata_json={ph}")
-                        params.append(json.dumps(metadata, separators=(",", ":")))
-                    if not fields:
+                            metadata["entitlements"] = {str(key): bool(value) for key, value in (product.get("entitlements") or {}).items()}
+                        if not used:
+                            fields.append(f"metadata_json={ph}")
+                            params.append(json.dumps(metadata, separators=(",", ":")))
+                    if not fields and not (used and "product_variant" in changes):
                         raise ValueError("Nenhum campo editável informado.")
-                    params.extend((identifier, customer_id))
-                    session.execute(
-                        "UPDATE service_contracts SET " + ", ".join(fields)
-                        + f",updated_at={now} WHERE id={ph} AND customer_id={ph}",
-                        tuple(params),
-                    )
-                    event = "CUSTOMER_CONTRACT_UPDATED"
-                    result = {"updated": True, "id": identifier, "instances_used": used}
+                    if fields:
+                        params.extend((identifier, customer_id))
+                        session.execute("UPDATE service_contracts SET " + ", ".join(fields) + f",updated_at={now} WHERE id={ph} AND customer_id={ph}", tuple(params))
+                        event = "CUSTOMER_CONTRACT_UPDATED"
+                        result = {"updated": True, "id": identifier, "instances_used": used}
             elif action == "edit_instance":
                 unknown = set(changes) - INSTANCE_FIELDS
                 if unknown:
