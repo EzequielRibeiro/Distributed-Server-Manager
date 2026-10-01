@@ -154,7 +154,7 @@ class OfficialServerPackUploadTest(unittest.TestCase):
      s.revalidate_staged_loader_plan(USER,"transfer-1",body,fingerprint)
     s.content.history[0]["revision"]=2
     s.workspace.require=lambda u,i,p:dict(CONTEXT,build_id="26.1.2.109")
-    with self.assertRaisesRegex(ValueError,"loader já mudou"):
+    with self.assertRaisesRegex(ValueError,"Atualização recusada"):
      s.revalidate_staged_loader_plan(USER,"transfer-1",body,fingerprint)
     self.assertEqual([],s.content.bundles)
 
