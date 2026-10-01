@@ -318,9 +318,38 @@ class CustomerContentUploadService:
   if relative!=expected:raise ValueError("A confirmação do upload pelo Agent não corresponde ao arquivo.")
   path,_=self.transfers.controller_artifact(str(item["transfer_id"]))
   metadata=body.get("metadata") if isinstance(body.get("metadata"),Mapping) else {}
-  preview,_,bundle,children=build_serverpack_bundle(self.root,context,item,relative,cid,metadata,path)
+  # Read-only preview can inspect a future loader. Finalization deliberately
+  # retains strict installed-build checks and same-build revision rules.
+  preview,_,bundle,children=build_serverpack_bundle(
+   self.root,context,item,relative,cid,metadata,path,preview_loader_mismatch=True)
   self._serverpack_capacity(context,cid,children)
-  plan=self._serverpack_revision_plan(context,cid,bundle)
+  installed_build=str(context.get("build_id") or "").strip()
+  requested_build=str(bundle.get("loader_version") or "").strip()
+  if installed_build and requested_build!=installed_build:
+   history=self.content.bundle_history(str(context.get("id") or ""),cid)
+   previous=history[0] if history else None
+   if not previous or any(
+     str(previous.get(key) or "")!=str(bundle.get(key) or "")
+     for key in ("provider","manifest_kind","provider_project_id","minecraft_version","loader_id")
+   ):
+    raise ValueError("A prévia de migração exige o mesmo modpack registrado, Minecraft e loader; não é possível trocar a identidade do pacote.")
+   diff=self.content.bundle_diff(str(context.get("id") or ""),cid,bundle)
+   plan={
+    "operation":"staged_loader_migration_preview",
+    "install_allowed":False,
+    "requires_staged_migration":True,
+    "previous_revision":int(previous.get("revision") or 0),
+    "from_loader_version":installed_build,
+    "target_loader_version":requested_build,
+    "manifest_diff":diff,
+    "preserve_world":True,
+    "preserve_existing_config":True,
+    "requires_stopped_instance":True,
+    "requires_backup_confirmation":True,
+    "warning":"Prévia validada; a instalação permanece bloqueada até homologar a migração conjunta do loader e Server Pack com backup verificável."
+   }
+  else:
+   plan=self._serverpack_revision_plan(context,cid,bundle)
   preview["update_plan"]=plan
   return preview
 
