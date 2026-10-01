@@ -224,6 +224,15 @@ async function previewOfficialServerpack(transfer,contentId,type,name,displayNam
  const preview=answer.serverpack||{};
  if(preview.kind!=="CapivaraServerPackPreview"||!preview.requires_stopped_instance)throw new Error("A prévia do Server Pack é inválida.");
  const plan=preview.update_plan||{};
+ if(plan.operation==="staged_loader_migration_preview"){
+  const changes=plan.manifest_diff?bundleDiffText(plan.manifest_diff):"";
+  const message="ZIP validado somente para PRÉVIA.\n"+
+   "NeoForge instalado: "+plan.from_loader_version+"\n"+
+   "NeoForge exigido: "+plan.target_loader_version+"\n"+changes+"\n"+
+   "A instalação NÃO foi autorizada. A migração conjunta exige backup verificado e homologação; o mundo e o modpack atual permanecem intactos.";
+  showContentUploadOutcome("pending",message,transfer.transfer_id);
+  throw new Error(message);
+ }
  if(plan.operation==="unchanged")throw new Error("Esta versão do Server Pack já está instalada. Nenhuma reinstalação será iniciada.");
  if(!["install","update"].includes(plan.operation)||!Number.isInteger(plan.previous_revision)||plan.previous_revision<0)throw new Error("A prévia não confirmou uma revisão segura de instalação.");
  const changes=plan.manifest_diff?bundleDiffText(plan.manifest_diff):"";
