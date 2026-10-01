@@ -93,6 +93,8 @@ class CustomerDeleteAuthRegressionTest(unittest.TestCase):
         self.assertIn('permissions.has("backup.create")&&permissions.has("backup.download")',js)
         self.assertIn('canFinalBackup?"checked":"disabled"',js)
         self.assertIn("A exclusão sem backup é irreversível",js)
+        self.assertIn('if(e.status===403){status("Não foi possível confirmar',js)
+        self.assertNotIn('if(e.status===403||e.status===404)',js)
     def test_authorized_final_backup_keeps_backup_before_removal(self):
         (code,body),_=self.invoke(backup=True)
         self.assertEqual(code,202)
