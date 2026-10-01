@@ -128,6 +128,36 @@ class OfficialServerPackUploadTest(unittest.TestCase):
      s.finalize(USER,"transfer-1",{"content_id":"atm11","content_type":"modpack","metadata":METADATA})
     self.assertEqual([],s.content.bundles)
 
+ def test_staged_migration_revalidation_checks_fingerprint_and_live_revision(self):
+  with tempfile.TemporaryDirectory() as td:
+   path,s,requester,_,patcher=self.fixture(td)
+   s.workspace.require=lambda u,i,p:dict(CONTEXT,build_id="26.1.2.94")
+   s.content.history=[{"revision":2,"provider":"local","manifest_kind":"serverpack-local-v1",
+    "provider_project_id":"cf-1148445","minecraft_version":"26.1.2",
+    "loader_id":"neoforge","loader_version":"26.1.2.94",
+    "manifest_sha256":"a"*64}]
+   body={"content_id":"atm11","content_type":"modpack","metadata":METADATA}
+   with patcher,patch("customer_content_upload_service.build_serverpack_bundle",
+     partial(build_serverpack_bundle,requester=requester,load_secret=lambda path:"test-secret")):
+    initial=s.preview_serverpack(USER,"transfer-1",body)
+    fingerprint=initial["update_plan"]["migration_plan_sha256"]
+    attested=s.revalidate_staged_loader_plan(USER,"transfer-1",body,fingerprint)
+    self.assertTrue(attested["valid"])
+    self.assertFalse(attested["install_allowed"])
+    self.assertEqual([],s.content.bundles)
+    with self.assertRaisesRegex(ValueError,"Fingerprint"):
+     s.revalidate_staged_loader_plan(USER,"transfer-1",body,"invalid")
+    with self.assertRaisesRegex(ValueError,"revalide"):
+     s.revalidate_staged_loader_plan(USER,"transfer-1",body,"f"*64)
+    s.content.history[0]["revision"]=3
+    with self.assertRaisesRegex(ValueError,"revalide"):
+     s.revalidate_staged_loader_plan(USER,"transfer-1",body,fingerprint)
+    s.content.history[0]["revision"]=2
+    s.workspace.require=lambda u,i,p:dict(CONTEXT,build_id="26.1.2.109")
+    with self.assertRaisesRegex(ValueError,"loader já mudou"):
+     s.revalidate_staged_loader_plan(USER,"transfer-1",body,fingerprint)
+    self.assertEqual([],s.content.bundles)
+
  def test_future_loader_preview_rejects_stale_installed_build(self):
   with tempfile.TemporaryDirectory() as td:
    path,s,requester,_,patcher=self.fixture(td)
