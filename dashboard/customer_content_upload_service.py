@@ -333,9 +333,41 @@ class CustomerContentUploadService:
      for key in ("provider","manifest_kind","provider_project_id","minecraft_version","loader_id")
    ):
     raise ValueError("A prévia de migração exige o mesmo modpack registrado, Minecraft e loader; não é possível trocar a identidade do pacote.")
+   # Bind a future migration request to the exact current content revision,
+   # current installed build, and verified incoming archive. This is evidence
+   # only; never a token that authorizes installation.
+   previous_revision=int(previous.get("revision") or 0)
+   previous_manifest=str(previous.get("manifest_sha256") or "").strip().lower()
+   incoming_sha=str(preview.get("archive_sha256") or "").strip().lower()
+   if previous_revision<1 or not incoming_sha or len(incoming_sha)!=64:
+    raise ValueError("A migração exige revisão existente e SHA256 verificável do novo Server Pack.")
+   if str(previous.get("loader_version") or "").strip()!=installed_build:
+    raise ValueError("A versão instalada não confere com o histórico do modpack; reconcilie o estado antes da migração.")
+   current_parts=installed_build.split(".")
+   future_parts=requested_build.split(".")
+   if not all(piece.isdigit() for piece in current_parts+future_parts):
+    raise ValueError("A migração exige versões numéricas verificáveis do NeoForge.")
+   if tuple(map(int,future_parts))<=tuple(map(int,current_parts)):
+    raise ValueError("O fluxo de migração de Server Pack não permite downgrade ou build inalterado.")
    diff=self.content.bundle_diff(str(context.get("id") or ""),cid,bundle)
+   evidence={
+    "instance_id":str(context.get("id") or ""),
+    "content_id":cid,
+    "transfer_id":str(item.get("transfer_id") or ""),
+    "incoming_sha256":incoming_sha,
+    "previous_bundle_revision":previous_revision,
+    "previous_manifest_sha256":previous_manifest,
+    "from_loader_version":installed_build,
+    "target_loader_version":requested_build,
+    "minecraft_version":str(bundle.get("minecraft_version") or ""),
+    "provider_project_id":str(bundle.get("provider_project_id") or ""),
+    "provider_version_id":str(bundle.get("provider_version_id") or "")
+   }
+   migration_plan_sha256=hashlib.sha256(json.dumps(evidence,sort_keys=True,separators=(",",":")).encode("utf-8")).hexdigest()
    plan={
     "operation":"staged_loader_migration_preview",
+    "migration_plan_sha256":migration_plan_sha256,
+    "evidence":evidence,
     "install_allowed":False,
     "requires_staged_migration":True,
     "previous_revision":int(previous.get("revision") or 0),
