@@ -60,6 +60,43 @@ class MinecraftVersionUpdatePreflightTest(unittest.TestCase):
         self.assertEqual(rows[0]["compatibility"],"unknown")
         self.assertTrue(rows[0]["can_remove"])
 
+    def test_local_serverpack_preflight_reports_recorded_loader_but_stays_blocked(self):
+        service = MinecraftVersionUpdatePreflightService.__new__(MinecraftVersionUpdatePreflightService)
+        service.content = Mock()
+        service.content.list.return_value = [
+            {"content_id": "all-the-mods-11", "content_type": "modpack",
+             "provider": "local", "activation_state": "enabled"}
+        ]
+        service.content.bundle_history.return_value = [{
+            "manifest_kind": "serverpack-local-v1",
+            "minecraft_version": "26.1.2",
+            "loader_id": "neoforge", "loader_version": "26.1.2.94",
+            "revision": 3,
+        }]
+        rows = service._content_compatibility("minecraft-005", "26.1.2", {})
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["compatibility"], "unknown")
+        self.assertEqual(rows[0]["recorded_serverpack"]["loader_version"], "26.1.2.94")
+        self.assertTrue(rows[0]["requires_staged_migration"])
+        self.assertFalse(rows[0]["can_remove"])
+        self.assertIn("novo ZIP oficial", rows[0]["reason"])
+
+    def test_local_serverpack_without_bundle_stays_unknown(self):
+        service = MinecraftVersionUpdatePreflightService.__new__(MinecraftVersionUpdatePreflightService)
+        service.content = Mock()
+        service.content.list.return_value = [
+            {"content_id": "all-the-mods-11", "content_type": "modpack", "provider": "local"}
+        ]
+        service.content.bundle_history.return_value = []
+        rows = service._content_compatibility("minecraft-005", "26.1.2", {})
+        self.assertEqual(rows[0]["compatibility"], "unknown")
+        self.assertFalse(rows[0]["can_remove"])
+
+    def test_customer_hides_destructive_bulk_actions_for_staged_pack(self):
+        script = (ROOT / "dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
+        self.assertIn("blockers.some(item=>item.requires_staged_migration)", script)
+        self.assertIn("Não remova o modpack atual", script)
+
     @patch("minecraft_version_update_preflight.resolve_catalog_provisioning")
     @patch("minecraft_version_update_preflight._selector")
     @patch("minecraft_version_update_preflight.runtime_definition")
