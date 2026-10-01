@@ -385,6 +385,33 @@ class CustomerContentUploadService:
   preview["update_plan"]=plan
   return preview
 
+
+ def revalidate_staged_loader_plan(self,user,transfer_id,body:Mapping[str,Any],expected_plan_sha256:str):
+  """Re-attest a migration preview against live transfer, bundle and build.
+
+  Read only: this is not an installation authorization. A future executor
+  must call it again under an exclusive instance lock before mutating state.
+  """
+  expected=str(expected_plan_sha256 or "").strip().lower()
+  if len(expected)!=64 or any(char not in "0123456789abcdef" for char in expected):
+   raise ValueError("Fingerprint da migração inválido: gere uma nova prévia.")
+  preview=self.preview_serverpack(user,transfer_id,body)
+  plan=preview.get("update_plan") or {}
+  if plan.get("operation")!="staged_loader_migration_preview":
+   raise ValueError("O loader já mudou ou o ZIP não exige esta migração; gere nova prévia.")
+  if str(plan.get("migration_plan_sha256") or "")!=expected:
+   raise ValueError("O ZIP, loader, transferência ou revisão mudou desde a prévia; revalide antes de atualizar.")
+  # Never return an executable request or let this validation alter assignments.
+  return {
+   "valid":True,
+   "install_allowed":False,
+   "migration_plan_sha256":expected,
+   "evidence":dict(plan["evidence"]),
+   "manifest_diff":dict(plan.get("manifest_diff") or {}),
+   "requires_verified_backup":True,
+   "requires_exclusive_instance_lock":True,
+  }
+
  def _finalize(self,user,transfer_id,body:Mapping[str,Any],extra_assignments=None):
   item=self._transfer(user,transfer_id)
   if str(item.get("status") or "")!="completed":raise ValueError("content upload has not reached the Agent")
