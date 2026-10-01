@@ -107,6 +107,8 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
     content_result: dict[str, Any] | None = None
     compensation: list[str] = []
     configuration = dict(request.get("configuration") or {})
+    if "minecraft_serverpack_migration" in configuration:
+        raise RuntimeError("staged Minecraft loader and Server Pack migration executor is not yet homologated; refusing to modify the instance")
     version_update_meta = configuration.get("minecraft_version_update") if isinstance(configuration.get("minecraft_version_update"), dict) else None
     migration_meta = configuration.get("minecraft_runtime_migration") if isinstance(configuration.get("minecraft_runtime_migration"), dict) else None
     update_meta = migration_meta or version_update_meta
