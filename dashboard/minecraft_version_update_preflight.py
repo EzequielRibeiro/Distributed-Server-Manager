@@ -126,6 +126,47 @@ class MinecraftVersionUpdatePreflightService:
                         raise MinecraftContentResolverError("project reference is unavailable")
                     resolve_minecraft_content(provider, project, target_version, definition, ctype)
                     result.append({**base, "compatibility": "compatible", "reason": "Existe versão compatível no provider."})
+                elif ctype == "modpack" and provider == "local":
+                    # A local Server Pack is not automatically compatible with a
+                    # new runtime. Its recorded bundle revision can, however,
+                    # explain precisely what has to be verified before a staged
+                    # loader + content migration. Never infer compatibility from
+                    # project identity or from a manually entered loader alone.
+                    history = self.content.bundle_history(instance_id, base["content_id"])
+                    current = history[0] if history else {}
+                    if str(current.get("manifest_kind") or "") == "serverpack-local-v1":
+                        recorded_mc = str(current.get("minecraft_version") or "").strip()
+                        recorded_loader = str(current.get("loader_id") or "").strip()
+                        recorded_build = str(current.get("loader_version") or "").strip()
+                        if recorded_mc and recorded_loader and recorded_build:
+                            reason = (
+                                f"Server Pack registrado: Minecraft {recorded_mc}, "
+                                f"{recorded_loader} {recorded_build}. "
+                                "Para trocar o loader, valide um novo ZIP oficial "
+                                "e prepare uma migração conjunta com backup; "
+                                "a revisão atual não comprova compatibilidade com o destino."
+                            )
+                            if recorded_mc != target_version:
+                                reason = (
+                                    f"Server Pack registrado para Minecraft {recorded_mc}, "
+                                    f"mas o destino usa {target_version}. " + reason
+                                )
+                            result.append({
+                                **base, "compatibility": "unknown",
+                                "reason": reason,
+                                "recorded_serverpack": {
+                                    "minecraft_version": recorded_mc,
+                                    "loader_id": recorded_loader,
+                                    "loader_version": recorded_build,
+                                    "bundle_revision": int(current.get("revision") or 0),
+                                },
+                                "requires_staged_migration": True,
+                                "can_remove": False,
+                            })
+                        else:
+                            result.append({**base, "compatibility": "unknown", "reason": "A revisão local não possui metadados suficientes; validar o ZIP original antes de qualquer migração.", "can_remove": False})
+                    else:
+                        result.append({**base, "compatibility": "unknown", "reason": "Modpack local sem revisão de Server Pack verificável; não é seguro removê-lo automaticamente para atualizar o runtime.", "can_remove": False})
                 else:
                     result.append({**base, "compatibility": "unknown", "reason": "Compatibilidade não pode ser confirmada automaticamente para este conteúdo."})
             except MinecraftContentResolverError as exc:
