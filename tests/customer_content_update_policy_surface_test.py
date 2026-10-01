@@ -36,7 +36,7 @@ class CustomerContentUpdatePolicySurfaceTest(unittest.TestCase):
   self.assertIn('Backup antes da atualização do jogo',ui)
   self.assertIn('rollback transacional U9',ui)
   self.assertNotIn('innerHTML',ui)
-  self.assertIn('<script src="/customer-content-update-policy.js"></script>',html)
+  self.assertRegex(html,r'<script src="/customer-content-update-policy\.js(?:\?v=\d+)?"></script>')
   self.assertIn('"/customer-content-update-policy.js"',static)
   composition=(ROOT/'dashboard/server_part20.py').read_text(encoding='utf-8')
   self.assertIn('"/customer-content-update-policy.js":legacy.WEB_DIR/"customer-content-update-policy.js"',composition)

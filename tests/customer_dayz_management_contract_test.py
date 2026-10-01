@@ -4,16 +4,20 @@ import unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 class CustomerDayZManagementContractTest(unittest.TestCase):
- def test_mobile_datetime_picker_is_not_replaced_during_refresh(self):
+ def test_mobile_datetime_selects_are_preserved_and_pending_wipe_is_restored(self):
   source=(ROOT/"dashboard"/"web"/"customer-dayz.js").read_text(encoding="utf-8")
-  self.assertIn("nativePickerActive",source)
+  self.assertNotIn("nativePickerActive",source)
+  self.assertNotIn("showPicker",source)
   self.assertIn("document.activeElement",source)
-  self.assertIn("!nativePickerActive&&!editing",source)
+  self.assertIn("&&!wipeFormDirty&&!editing)load()",source)
+  self.assertIn('const pendingWipe=operations.find(op=>op.action==="wipe"',source)
+  self.assertIn('wipeDay.value=String(due.getDate()).padStart(2,"0")',source)
+  self.assertIn('wipeMinute.value=String(due.getMinutes()).padStart(2,"0")',source)
 
  def test_customer_surface_is_composed(self):
   html=(ROOT/"dashboard"/"web"/"customer-instance.html").read_text(encoding="utf-8")
-  self.assertIn("/customer-maintenance.js?v=4",html)
-  self.assertIn("/customer-dayz.js?v=10",html)
+  self.assertRegex(html,r"/customer-maintenance\.js\?v=\d+")
+  self.assertRegex(html,r"/customer-dayz\.js\?v=\d+")
   layer=(ROOT/"dashboard"/"server_part20.py").read_text(encoding="utf-8")
   self.assertIn("install_customer_dayz_http",layer)
   self.assertIn('"/customer-dayz.js"',layer)
