@@ -69,5 +69,15 @@ class MigrationCapacityAssessmentTest(unittest.TestCase):
                     budget(**{key:value})
 
 
+    def test_both_agents_reject_staged_migration_before_side_effects(self):
+        for os_name in ("linux","windows"):
+            with self.subTest(os_name=os_name):
+                code = (ROOT / "agents" / os_name / "runtime" / "provisioning_executor.py").read_text(encoding="utf-8")
+                self.assertIn('if "minecraft_serverpack_migration" in configuration:', code)
+                rejection = code.index("staged Minecraft loader and Server Pack migration executor is not yet homologated")
+                self.assertLess(rejection, code.index('step = "install_content"'))
+                self.assertLess(rejection, code.index("create_backup("))
+
+
 if __name__ == "__main__":
     unittest.main()
