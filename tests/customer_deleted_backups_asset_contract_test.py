@@ -24,9 +24,10 @@ class CustomerDeletedBackupsAssetContractTest(unittest.TestCase):
 
     def test_instance_delete_redirects_when_deleted_workspace_disappears(self):
         text = (ROOT / "dashboard" / "web" / "customer-instance-delete.js").read_text(encoding="utf-8")
-        self.assertIn("e.status===403||e.status===404", text)
-        self.assertIn("Esta instalação não existe mais", text)
-        self.assertIn('location.replace("/customer.html")', text)
+        self.assertIn("if(e.status===404)", text)
+        self.assertIn("if(e.status===403){status(\"Não foi possível confirmar", text)
+        self.assertNotIn("e.status===403||e.status===404", text)
+        self.assertIn('location.href="/customer.html"', text)
 
 
     def test_asset_exists_as_javascript_source(self):
