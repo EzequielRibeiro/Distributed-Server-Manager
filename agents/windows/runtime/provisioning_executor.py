@@ -78,6 +78,8 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
     materialized = False
     compensation: list[str] = []
     configuration = request.get("configuration") if isinstance(request.get("configuration"), dict) else {}
+    if "minecraft_serverpack_migration" in configuration:
+        raise RuntimeError("staged Minecraft loader and Server Pack migration executor is not yet homologated; refusing to modify the instance")
     version_update_meta = configuration.get("minecraft_version_update") if isinstance(configuration.get("minecraft_version_update"), dict) else None
     migration_meta = configuration.get("minecraft_runtime_migration") if isinstance(configuration.get("minecraft_runtime_migration"), dict) else None
     update_meta = migration_meta or version_update_meta
