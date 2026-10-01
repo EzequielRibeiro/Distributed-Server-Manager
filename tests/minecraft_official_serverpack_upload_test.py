@@ -103,6 +103,39 @@ class OfficialServerPackUploadTest(unittest.TestCase):
    self.assertEqual(result["revision_source"],"official-serverpack-upload")
    self.assertGreaterEqual(len(calls),4)
 
+ def test_future_loader_preview_is_read_only_and_finalization_remains_blocked(self):
+  with tempfile.TemporaryDirectory() as td:
+   path,s,requester,_,patcher=self.fixture(td)
+   s.workspace.require=lambda u,i,p:dict(CONTEXT,build_id="26.1.2.94")
+   s.content.history=[{"revision":2,"provider":"local","manifest_kind":"serverpack-local-v1",
+     "provider_project_id":"cf-1148445","minecraft_version":"26.1.2",
+     "loader_id":"neoforge","loader_version":"26.1.2.94","provider_version_id":"file-prior"}]
+   with patcher,patch("customer_content_upload_service.build_serverpack_bundle",
+      partial(build_serverpack_bundle,requester=requester,load_secret=lambda path:"test-secret")):
+    preview=s.preview_serverpack(USER,"transfer-1",{"content_id":"atm11","content_type":"modpack","metadata":METADATA})
+    plan=preview["update_plan"]
+    self.assertEqual(plan["operation"],"staged_loader_migration_preview")
+    self.assertFalse(plan["install_allowed"])
+    self.assertEqual(plan["from_loader_version"],"26.1.2.94")
+    self.assertEqual(plan["target_loader_version"],"26.1.2.109")
+    self.assertEqual(plan["previous_revision"],2)
+    self.assertEqual([],s.content.bundles)
+    with self.assertRaisesRegex(ValueError,"instância possui"):
+     s.finalize(USER,"transfer-1",{"content_id":"atm11","content_type":"modpack","metadata":METADATA})
+    self.assertEqual([],s.content.bundles)
+
+ def test_future_loader_preview_rejects_other_modpack_identity(self):
+  with tempfile.TemporaryDirectory() as td:
+   path,s,requester,_,patcher=self.fixture(td)
+   s.workspace.require=lambda u,i,p:dict(CONTEXT,build_id="26.1.2.94")
+   s.content.history=[{"revision":1,"provider":"local","manifest_kind":"serverpack-local-v1",
+      "provider_project_id":"cf-another-project","minecraft_version":"26.1.2",
+      "loader_id":"neoforge","loader_version":"26.1.2.94"}]
+   with patcher,patch("customer_content_upload_service.build_serverpack_bundle",
+      partial(build_serverpack_bundle,requester=requester,load_secret=lambda path:"test-secret")):
+    with self.assertRaisesRegex(ValueError,"mesmo modpack"):
+     s.preview_serverpack(USER,"transfer-1",{"content_id":"atm11","content_type":"modpack","metadata":METADATA})
+
  def test_official_zip_without_manifest_auto_detects_neoforge_installer(self):
   with tempfile.TemporaryDirectory() as td:
    path,s,_,_,patcher=self.fixture(td)
