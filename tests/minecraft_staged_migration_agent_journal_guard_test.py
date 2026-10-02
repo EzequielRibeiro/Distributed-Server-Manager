@@ -58,6 +58,19 @@ class InterruptedServerpackJournalGuardTest(unittest.TestCase):
                             self.fail("locked operation unexpectedly started")
                     self.assertEqual(journal_path.read_text(), original)
 
+    def test_corrupted_existing_journal_blocks_new_operations(self):
+        for platform in ("linux", "windows"):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as td:
+                module = self._load_agent(platform, td)
+                journal_path = module._path("sandbox-test")
+                journal_path.parent.mkdir(parents=True)
+                journal_path.write_text("{truncated")
+                with self.assertRaisesRegex(RuntimeError, "unreadable"):
+                    with module.runtime_operation({"agent_id": "test-agent"},
+                                                  "sandbox-test", "provision"):
+                        self.fail("corrupted journal unexpectedly overwritten")
+                self.assertEqual(journal_path.read_text(), "{truncated")
+
     def test_normal_completed_journal_does_not_block_existing_operations(self):
         for platform in ("linux", "windows"):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as td:
