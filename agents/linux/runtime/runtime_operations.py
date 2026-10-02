@@ -99,9 +99,15 @@ def runtime_operation(config: dict[str, Any], instance_id: str, operation: str, 
         raise ValueError("agent_id is required")
     instance_id = instance_runtime._token(instance_id, "instance_id")
     operation = str(operation or "").strip()
-    previous = read_operation(instance_id)
     started = time.monotonic()
     with instance_lock(instance_id, operation, timeout_seconds=lock_timeout_seconds):
+        # Never overwrite evidence of a staged Server Pack transaction after a
+        # crash. Only a dedicated, separately homologated recovery routine may
+        # clear this barrier. Inspect journal under the exclusive instance lock.
+        previous = read_operation(instance_id)
+        if (previous and previous.get("operation") == "minecraft_serverpack_migration"
+                and previous.get("status") in {"running", "interrupted", "failed"}):
+            raise RuntimeError("interrupted staged Minecraft migration requires manual recovery; instance operation blocked")
         journal = {
             "schema_version": 1,
             "kind": "CapivaraInstanceRuntimeOperation",
