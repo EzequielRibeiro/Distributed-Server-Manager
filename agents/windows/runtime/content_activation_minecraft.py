@@ -164,6 +164,9 @@ def project_minecraft_files(spec: dict[str, Any], entries: list[dict[str, Any]])
             raise MinecraftContentActivationError(f"Minecraft runtime does not support content type: {content_type or 'unknown'}")
         extensions = list(config["extensions"])
         filename = _safe_artifact_filename(entry.get("artifact_filename"), extensions)
+        legacy_target = f"{config['directory'].rstrip('/')}/capivara-{projection_id}"
+        if filename is None and str(entry.get("provider") or "").strip().lower() in {"modrinth", "curseforge", "local"}:
+            filename = _verified_source_filename(spec, entry, extensions, legacy_target)
         projection = {
             "content_id": content_id,
             "content_type": content_type,
@@ -188,6 +191,34 @@ def project_minecraft_files(spec: dict[str, Any], entries: list[dict[str, Any]])
         seen.add(target)
         projections.append(projection)
     return projections
+
+
+def _verified_source_filename(spec: dict[str, Any], entry: dict[str, Any],
+                              extensions: list[str], legacy_target: str) -> str | None:
+    """Infer only a non-placeholder filename from one verified managed payload.
+
+    Already-projected legacy files keep their existing names. The explicit
+    artifact filename always takes precedence. Unrecognized providers retain
+    the previous capivara-ID naming behavior.
+    """
+    if str(entry.get("provider") or "").strip().lower() not in {"modrinth", "curseforge", "local"}:
+        return None
+    manifest = _read_manifest(_manifest_path(spec))
+    if legacy_target + ".jar" in manifest:
+        return None
+    root = _runtime_root(spec)
+    # Never rename an existing unmanaged or previously projected native file.
+    if (root / (legacy_target + ".jar")).exists():
+        return None
+    source = _payload_file(root, {
+        "managed_path": _managed_path(entry),
+        "extensions": extensions,
+    })
+    name = source.name
+    if name.lower() in {"payload.jar", "content.jar", "mod.jar", "plugin.jar",
+                        "download.jar", "file.jar", "artifact.jar"}:
+        return None
+    return _safe_artifact_filename(name, extensions)
 
 
 def _runtime_root(spec: dict[str, Any]) -> Path:
