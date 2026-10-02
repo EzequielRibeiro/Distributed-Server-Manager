@@ -35,19 +35,28 @@ const context={
   confirm:()=>{confirmations++;return true},
   request:async (url,opts)=>{
     requests++;
-    assert.equal(url,"/api/test/content/upload/preview");
     const body=JSON.parse(opts.body);
     assert.equal(body.transfer_id,"synthetic-transfer");
-    return {serverpack:{
-      kind:"CapivaraServerPackPreview",
-      requires_stopped_instance:true,
-      update_plan:{
-        operation:"staged_loader_migration_preview",
-        install_allowed:false,
-        from_loader_version:"26.1.2.94",
-        target_loader_version:"26.1.2.109",
-        manifest_diff:{added:["a"],removed:[],updated:[],unchanged:[]},
-      },
+    if(url==="/api/test/content/upload/preview"){
+      return {serverpack:{
+        kind:"CapivaraServerPackPreview",
+        requires_stopped_instance:true,
+        update_plan:{
+          operation:"staged_loader_migration_preview",
+          install_allowed:false,
+          migration_plan_sha256:"b".repeat(64),
+          from_loader_version:"26.1.2.94",
+          target_loader_version:"26.1.2.109",
+          manifest_diff:{added:["a"],removed:[],updated:[],unchanged:[]},
+        },
+      }};
+    }
+    assert.equal(url,"/api/test/content/upload/migration/revalidate");
+    assert.equal(body.migration_plan_sha256,"b".repeat(64));
+    return {migration:{
+      valid:true,
+      install_allowed:false,
+      migration_plan_sha256:"b".repeat(64),
     }};
   },
 };
@@ -58,13 +67,14 @@ const run=vm.runInNewContext(previewSource+"\npreviewOfficialServerpack",context
   catch(error){thrown=error}
   assert(thrown&&thrown.previewOnly===true,
          "future loader preview must be explicitly distinguished from upload failure");
-  assert.equal(requests,1);
+  assert.equal(requests,2,"preview must be revalidated against current transfer/revision before persistence");
   assert.equal(confirmations,0,"preview must never prompt to install incompatible ZIP");
   assert.equal(outcomes.length,1);
   assert.equal(outcomes[0].state,"preview_only");
   assert.match(outcomes[0].message,/NeoForge instalado: 26.1.2.94/);
   assert.match(outcomes[0].message,/NeoForge exigido: 26.1.2.109/);
   assert.match(outcomes[0].message,/instalação NÃO foi autorizada/);
+  assert.match(outcomes[0].message,/Fingerprint: b{64}/);
   assert.equal(outcomes[0].transfer,"synthetic-transfer");
   console.log("PASS: client preserves staged loader ZIP evidence without finalization or misleading failure");
 })().catch(error=>{console.error(error);process.exitCode=1});
