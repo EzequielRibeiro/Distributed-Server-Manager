@@ -105,6 +105,8 @@ def runtime_operation(config: dict[str, Any], instance_id: str, operation: str, 
         # crash. Only a dedicated, separately homologated recovery routine may
         # clear this barrier. Inspect journal under the exclusive instance lock.
         previous = read_operation(instance_id)
+        if previous is None and _path(instance_id).exists():
+            raise RuntimeError("instance operation journal is unreadable; manual recovery required")
         if (previous and previous.get("operation") == "minecraft_serverpack_migration"
                 and previous.get("status") in {"running", "interrupted", "failed"}):
             raise RuntimeError("interrupted staged Minecraft migration requires manual recovery; instance operation blocked")
