@@ -74,3 +74,63 @@ def assess_staged_migration(
         "requires_exclusive_recheck": True,
         "install_allowed": False,
     }
+
+
+def assess_separate_backup_volume(
+    *,
+    runtime_volume: Mapping[str, Any],
+    backup_volume: Mapping[str, Any],
+    new_backup_bytes: int,
+    serverpack_zip_bytes: int,
+    expanded_pack_bytes: int,
+    new_runtime_bytes: int,
+    backup_evidence: Mapping[str, Any],
+    plan_evidence: Mapping[str, Any],
+    headroom_bytes: int = 2 * 1024**3,
+) -> dict[str, Any]:
+    """Budget two separately mounted volumes; planning only, never approval.
+
+    Existing verified backups are retained. The backup volume reserves room
+    for one *additional* fresh full backup, while runtime volume needs space
+    for ZIP, expanded modpack, isolated loader and its own safety headroom.
+    Device IDs must be independently measured on the owning Agent.
+    """
+    if not isinstance(runtime_volume, Mapping) or not isinstance(backup_volume, Mapping):
+        raise StagedMigrationSafetyError("both measured volumes are required")
+    runtime_device = str(runtime_volume.get("device_id") or "").strip()
+    backup_device = str(backup_volume.get("device_id") or "").strip()
+    if not runtime_device or not backup_device or runtime_device == backup_device:
+        raise StagedMigrationSafetyError("backup and runtime must have separate verified storage devices")
+    runtime_free = _positive_bytes(runtime_volume.get("available_bytes"), "runtime.available_bytes")
+    backup_free = _positive_bytes(backup_volume.get("available_bytes"), "backup.available_bytes")
+    backup_required = _positive_bytes(new_backup_bytes, "new_backup_bytes")
+    zip_size = _positive_bytes(serverpack_zip_bytes, "serverpack_zip_bytes")
+    expanded = _positive_bytes(expanded_pack_bytes, "expanded_pack_bytes")
+    isolated = _positive_bytes(new_runtime_bytes, "new_runtime_bytes")
+    headroom = _positive_bytes(headroom_bytes, "headroom_bytes")
+    if not isinstance(backup_evidence, Mapping) or not isinstance(plan_evidence, Mapping):
+        raise StagedMigrationSafetyError("verified backup and migration evidence required")
+    checksum = str(backup_evidence.get("sha256") or "").strip().lower()
+    fingerprint = str(plan_evidence.get("migration_plan_sha256") or "").strip().lower()
+    if (not str(backup_evidence.get("backup_id") or "").strip()
+        or not _SHA256.fullmatch(checksum)
+        or backup_evidence.get("integrity_verified") is not True):
+        raise StagedMigrationSafetyError("an independently verified backup is mandatory")
+    if not _SHA256.fullmatch(fingerprint) or plan_evidence.get("install_allowed") is not False:
+        raise StagedMigrationSafetyError("a current non-executable migration plan is mandatory")
+    runtime_required = zip_size + expanded + isolated + headroom
+    backup_required += headroom
+    return {
+        "kind": "MinecraftStagedMigrationSeparateVolumeAssessment",
+        "runtime_device_id": runtime_device,
+        "backup_device_id": backup_device,
+        "runtime_required_bytes": runtime_required,
+        "runtime_available_bytes": runtime_free,
+        "runtime_shortfall_bytes": max(0, runtime_required - runtime_free),
+        "backup_required_bytes": backup_required,
+        "backup_available_bytes": backup_free,
+        "backup_shortfall_bytes": max(0, backup_required - backup_free),
+        "sufficient": runtime_free >= runtime_required and backup_free >= backup_required,
+        "requires_exclusive_recheck": True,
+        "install_allowed": False,
+    }
