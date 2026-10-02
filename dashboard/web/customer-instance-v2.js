@@ -220,16 +220,20 @@ async function previewOfficialServerpack(transfer,contentId,type,name,displayNam
  const official=/^\d+$/.test(projectId||"")&&/^\d+$/.test(fileId||"");
  metadata.serverpack=official?{format:"official-serverpack-v1",curseforge_project_id:projectId,curseforge_file_id:fileId,loader_version:build}:{format:"uploaded-serverpack-v1",loader_version:build};
  setManagedUploadUi(true,100,"Conferindo ZIP, integridade e versão do NeoForge…");
- const answer=await request(`${api}/content/upload/preview`,{method:"POST",body:JSON.stringify({instance_id:iid,transfer_id:transfer.transfer_id,content_id:contentId,content_type:type,metadata})});
+ const previewRequest={instance_id:iid,transfer_id:transfer.transfer_id,content_id:contentId,content_type:type,metadata};
+ const answer=await request(`${api}/content/upload/preview`,{method:"POST",body:JSON.stringify(previewRequest)});
  const preview=answer.serverpack||{};
  if(preview.kind!=="CapivaraServerPackPreview"||!preview.requires_stopped_instance)throw new Error("A prévia do Server Pack é inválida.");
  const plan=preview.update_plan||{};
  if(plan.operation==="staged_loader_migration_preview"){
   const changes=plan.manifest_diff?bundleDiffText(plan.manifest_diff):"";
-  const message="ZIP validado somente para PRÉVIA.\n"+
+  const attested=await request(`${api}/content/upload/migration/revalidate`,{method:"POST",body:JSON.stringify({...previewRequest,migration_plan_sha256:plan.migration_plan_sha256})});
+  const evidence=attested.migration||{};
+  if(evidence.valid!==true||evidence.install_allowed!==false||evidence.migration_plan_sha256!==plan.migration_plan_sha256)throw new Error("A revalidação da migração não confirmou a mesma prévia. Envie o ZIP novamente.");
+  const message="ZIP validado e PRÉVIA REVALIDADA.\n"+
    "NeoForge instalado: "+plan.from_loader_version+"\n"+
    "NeoForge exigido: "+plan.target_loader_version+"\n"+changes+"\n"+
-   "A instalação NÃO foi autorizada. A migração conjunta exige backup verificado e homologação; o mundo e o modpack atual permanecem intactos.";
+   "A instalação NÃO foi autorizada. Fingerprint: "+plan.migration_plan_sha256+"\nA migração conjunta exige backup verificado e homologação; o mundo e o modpack atual permanecem intactos.";
   showContentUploadOutcome("preview_only",message,transfer.transfer_id);
   const notice=new Error(message);notice.previewOnly=true;throw notice;
  }
