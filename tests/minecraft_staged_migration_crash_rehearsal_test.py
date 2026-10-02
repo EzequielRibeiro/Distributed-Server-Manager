@@ -151,13 +151,40 @@ class CrashJournalTest(unittest.TestCase):
             self.assertFalse((self.root/"migration-journal.json").exists())
         self._prepare()
 
-    def test_orphan_temporary_journal_is_discarded_under_lock(self):
-        (self.root/".migration-journal.tmp").write_text("{incomplete")
+    def test_orphan_temporary_journal_blocks_forward_prepare_without_durable_journal(self):
+        orphan=self.root/".migration-journal.tmp"
+        orphan.write_text("{incomplete")
+        with self.assertRaisesRegex(CrashRehearsalError,"orphan"):
+            self._prepare()
+        with self.assertRaisesRegex(CrashRehearsalError,"journal is absent"):
+            recover(self.root)
+        self.assertEqual(orphan.read_text(),"{incomplete")
+        self.assertTrue((self.root/"active").is_dir())
+
+    def test_fsynchronized_temp_crash_requires_explicit_verified_recovery(self):
         self._prepare()
-        self.assertFalse((self.root/".migration-journal.tmp").exists())
+        self.assertEqual(self._crash("after_journal_temp_fsync"),73)
+        orphan=self.root/".migration-journal.tmp"
+        self.assertTrue(orphan.is_file())
         self.assertEqual(json.loads((self.root/"migration-journal.json").read_text())["phase"],"prepared")
-        switch(self.root)
-        recover(self.root)
+        self.assertEqual(json.loads(orphan.read_text())["phase"],"swapping")
+        with self.assertRaisesRegex(CrashRehearsalError,"orphan"):
+            switch(self.root)
+        with self.assertRaisesRegex(CrashRehearsalError,"orphan"):
+            commit(self.root,readiness_passed=True)
+        self.assertEqual(recover(self.root)["status"],"recovered")
+        self.assertFalse(orphan.exists())
+        self.assertEqual((self.root/"active"/"mod.jar").read_bytes(),b"original mod content")
+
+    def test_orphan_temp_is_retained_if_original_checksum_fails(self):
+        self._prepare()
+        self.assertEqual(self._crash("after_journal_temp_fsync"),73)
+        orphan=self.root/".migration-journal.tmp"
+        (self.root/"active"/"mod.jar").write_bytes(b"tamper")
+        with self.assertRaisesRegex(CrashRehearsalError,"retain orphan"):
+            recover(self.root)
+        self.assertTrue(orphan.is_file())
+        self.assertEqual((self.root/"active"/"mod.jar").read_bytes(),b"tamper")
 
     def test_unsafe_symlink_temporary_journal_is_rejected(self):
         outside = self.root/"outside-marker"
