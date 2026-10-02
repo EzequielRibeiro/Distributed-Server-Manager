@@ -29,8 +29,11 @@ def _sync_dir(directory: Path) -> None:
 
 
 def _root(root: Path) -> Path:
-    root = Path(root).resolve(strict=True)
-    if root == Path("/") or root.is_symlink() or not (root / _MARKER).is_file():
+    candidate = Path(root)
+    if candidate.is_symlink():
+        raise CrashRehearsalError("symlink test root prohibited")
+    root = candidate.resolve(strict=True)
+    if root == Path("/") or not (root / _MARKER).is_file():
         raise CrashRehearsalError("a marked disposable test root is required")
     # Prevent a copied marker in a real instance runtime from enabling this
     # prototype accidentally: a second explicit process opt-in is required.
@@ -55,6 +58,24 @@ def _file_hash(path: Path) -> str:
             digest.update(chunk)
     return digest.hexdigest()
 
+
+
+def _tree_hash(directory: Path) -> str:
+    """Merkle-like digest of all test runtime files, not just the loader."""
+    if not directory.is_dir() or directory.is_symlink():
+        raise CrashRehearsalError("runtime directory missing or symlinked")
+    digest = hashlib.sha256()
+    files = sorted(directory.rglob("*"))
+    for file in files:
+        if file.is_symlink() or (not file.is_file() and not file.is_dir()):
+            raise CrashRehearsalError("symlinks and special runtime files are prohibited")
+        if file.is_dir():
+            continue
+        relative = file.relative_to(directory).as_posix().encode("utf-8")
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        digest.update(bytes.fromhex(_file_hash(file)))
+    return digest.hexdigest()
 
 def _atomic(root: Path, data: dict) -> None:
     journal = _member(root, "migration-journal.json")
@@ -93,7 +114,8 @@ def prepare(root: Path, *, original_hash: str, checkpoint_verified: bool) -> Non
         raise CrashRehearsalError("verified checkpoint and expected original file hash required")
     if not (stage / "neoforge.txt").is_file():
         raise CrashRehearsalError("staged test loader is missing")
-    _atomic(root, {"schema": 1, "phase": "prepared", "original_hash": original_hash})
+    _atomic(root, {"schema": 1, "phase": "prepared", "original_hash": original_hash,
+                   "original_tree_hash": _tree_hash(active)})
 
 
 def switch(root: Path, *, crash_at: str = "") -> None:
@@ -129,16 +151,18 @@ def recover(root: Path) -> dict:
     rollback = _member(root, "rollback-runtime")
     quarantine = _member(root, "quarantine-new")
     expected = data.get("original_hash")
-    if not isinstance(expected, str) or len(expected) != 64:
+    expected_tree = data.get("original_tree_hash")
+    if (not isinstance(expected, str) or len(expected) != 64 or
+            not isinstance(expected_tree, str) or len(expected_tree) != 64):
         raise CrashRehearsalError("journal has no usable original checksum")
     if data["phase"] == "recovered":
-        if _file_hash(active / "neoforge.txt") != expected:
+        if _file_hash(active / "neoforge.txt") != expected or _tree_hash(active) != expected_tree:
             raise CrashRehearsalError("recovered files differ from original checksum")
         return {"status": "already_recovered"}
     # A journal can be one step behind fs renames after a process crash.
     # Inspect actual directory state and never discard the rollback copy.
     if rollback.exists():
-        if not rollback.is_dir() or _file_hash(rollback / "neoforge.txt") != expected:
+        if not rollback.is_dir() or _file_hash(rollback / "neoforge.txt") != expected or _tree_hash(rollback) != expected_tree:
             raise CrashRehearsalError("rollback copy missing or incorrect: manual intervention")
         if quarantine.exists() and not (
             data["phase"] == "recovering" and not active.exists() and quarantine.is_dir()
@@ -153,9 +177,9 @@ def recover(root: Path) -> dict:
         _sync_dir(root)
     else:
         # Recovery may have been interrupted AFTER restoring the original.
-        if _file_hash(active / "neoforge.txt") != expected:
+        if _file_hash(active / "neoforge.txt") != expected or _tree_hash(active) != expected_tree:
             raise CrashRehearsalError("original files unavailable: manual intervention")
-    if _file_hash(active / "neoforge.txt") != expected:
+    if _file_hash(active / "neoforge.txt") != expected or _tree_hash(active) != expected_tree:
         raise CrashRehearsalError("post-restore hash mismatch")
     data["phase"] = "recovered"
     _atomic(root, data)
