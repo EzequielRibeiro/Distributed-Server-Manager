@@ -57,6 +57,69 @@ class OriginalMinecraftModFilenamesTest(unittest.TestCase):
                     self.assertEqual((runtime / "mods" / "Create-6.0.1-neoforge.jar").read_bytes(),
                                      b"simulated mod bytes")
 
+    def test_verified_atm11_serverpack_children_keep_archive_member_names(self):
+        from customer_serverpack_service import build_serverpack_bundle
+        from tests.minecraft_official_serverpack_upload_test import (
+            OfficialServerPackUploadTest, CONTEXT, METADATA,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            path, service, requester, _, patched_catalog = (
+                OfficialServerPackUploadTest().fixture(td)
+            )
+            with patched_catalog:
+                _, _, _, children = build_serverpack_bundle(
+                    Path(td), CONTEXT, service.transfers.item,
+                    service.transfers.item["destination_ref"], "atm11",
+                    METADATA, path, requester=requester,
+                    load_secret=lambda _: "test-secret",
+                )
+            self.assertEqual(
+                {child["artifact"]["filename"] for child in children},
+                {"a.jar", "b.jar"},
+            )
+            for platform in ("linux", "windows"):
+                with self.subTest(platform=platform):
+                    root = Path(td) / platform
+                    root.mkdir()
+                    module = adapter(platform)
+                    runtime = root / "runtime"
+                    state = root / "state"
+                    state.mkdir()
+                    entries = []
+                    for child in children:
+                        artifact = child["artifact"]
+                        managed = runtime / "content" / child["content_id"]
+                        managed.mkdir(parents=True)
+                        (managed / artifact["filename"]).write_bytes(b"fixture mod")
+                        entries.append({
+                            "content_id": child["content_id"],
+                            "game_id": "minecraft",
+                            "content_type": child["content_type"],
+                            "provider": child["provider"],
+                            "artifact_filename": artifact["filename"],
+                            "managed_path": str(managed),
+                        })
+                    spec = {
+                        "instance_id": "synthetic-serverpack",
+                        "game_id": "minecraft",
+                        "environment_id": "minecraft.java.neoforge",
+                        "working_directory": str(runtime),
+                        "instance_state_root": str(state),
+                        "content_projection": {"adapter": "minecraft-java", "types": {
+                            "mod": {"directory": "mods", "extensions": [".jar"]}}},
+                    }
+                    projected = module.project_minecraft_files(spec, entries)
+                    self.assertEqual(
+                        {item["target_name"] for item in projected},
+                        {"mods/a.jar", "mods/b.jar"},
+                    )
+                    self.assertEqual(
+                        module.materialize_minecraft_files({
+                            **spec, "content_file_projections": projected,
+                        }),
+                        ["mods/a.jar", "mods/b.jar"],
+                    )
+
     def test_existing_legacy_managed_name_never_changes(self):
         for platform in ("linux", "windows"):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as tmp:
