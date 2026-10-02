@@ -123,7 +123,7 @@ def _read(root: Path) -> dict:
     return result
 
 
-def prepare(root: Path, *, original_hash: str, checkpoint_verified: bool) -> None:
+def _prepare_locked(root: Path, *, original_hash: str, checkpoint_verified: bool) -> None:
     root = _root(root)
     active = _member(root, "active")
     stage = _member(root, "stage")
@@ -143,7 +143,7 @@ def prepare(root: Path, *, original_hash: str, checkpoint_verified: bool) -> Non
                    "staged_tree_hash": _tree_hash(stage)})
 
 
-def switch(root: Path, *, crash_at: str = "") -> None:
+def _switch_locked(root: Path, *, crash_at: str = "") -> None:
     root = _root(root)
     data = _read(root)
     if data["phase"] != "prepared":
@@ -170,7 +170,7 @@ def switch(root: Path, *, crash_at: str = "") -> None:
     _atomic(root, data)
 
 
-def recover(root: Path) -> dict:
+def _recover_locked(root: Path) -> dict:
     root = _root(root)
     data = _read(root)
     if data["phase"] == "committed":
@@ -214,7 +214,7 @@ def recover(root: Path) -> dict:
     return {"status": "recovered", "quarantine_retained": quarantine.exists()}
 
 
-def commit(root: Path, *, readiness_passed: bool) -> None:
+def _commit_locked(root: Path, *, readiness_passed: bool) -> None:
     root = _root(root)
     data = _read(root)
     if data["phase"] != "swapped" or readiness_passed is not True:
@@ -224,3 +224,24 @@ def commit(root: Path, *, readiness_passed: bool) -> None:
     data["phase"] = "committed"
     _atomic(root, data)
     # Original rollback snapshot is intentionally retained.
+
+
+# Public test-only operations serialize journal reads and all filesystem steps.
+def prepare(root: Path, *, original_hash: str, checkpoint_verified: bool) -> None:
+    with disposable_lock(root):
+        return _prepare_locked(root, original_hash=original_hash, checkpoint_verified=checkpoint_verified)
+
+
+def switch(root: Path, *, crash_at: str = "") -> None:
+    with disposable_lock(root):
+        return _switch_locked(root, crash_at=crash_at)
+
+
+def recover(root: Path) -> dict:
+    with disposable_lock(root):
+        return _recover_locked(root)
+
+
+def commit(root: Path, *, readiness_passed: bool) -> None:
+    with disposable_lock(root):
+        return _commit_locked(root, readiness_passed=readiness_passed)
