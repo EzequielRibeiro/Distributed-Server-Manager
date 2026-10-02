@@ -19,6 +19,8 @@ def scenario(*, fail=None, preflight=True, space=True, rollback_fails=False):
                 raise RuntimeError("injected " + name)
             if name == "doctor":
                 return True
+            if name == "checkpoint":
+                return {"verified": True}
         return call
     callbacks = dict(
         revalidate=lambda: {"valid": preflight, "install_allowed": False},
@@ -79,6 +81,13 @@ class StagedMigrationRehearsalTest(unittest.TestCase):
         with self.assertRaisesRegex(RehearsalError, "manual intervention"):
             rehearse_staged_migration(**args)
         self.assertEqual(events[-2:], ["rollback", "cleanup"])
+
+    def test_unverified_checkpoint_blocks_activation(self):
+        events, args = scenario()
+        args["checkpoint"] = lambda: events.append("checkpoint") or {"verified": False}
+        with self.assertRaisesRegex(RehearsalError, "verified backup evidence"):
+            rehearse_staged_migration(**args)
+        self.assertEqual(events, ["stage", "checkpoint", "cleanup"])
 
     def test_cleanup_failure_blocks_acceptance(self):
         events, args = scenario(fail="cleanup")
