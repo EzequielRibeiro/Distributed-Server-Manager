@@ -218,7 +218,12 @@ def _verified_source_filename(spec: dict[str, Any], entry: dict[str, Any],
     if name.lower() in {"payload.jar", "content.jar", "mod.jar", "plugin.jar",
                         "download.jar", "file.jar", "artifact.jar"}:
         return None
-    return _safe_artifact_filename(name, extensions)
+    try:
+        return _safe_artifact_filename(name, extensions)
+    except MinecraftContentActivationError:
+        # Metadata absent and the managed filename is not portable: preserve
+        # existing safe ID naming rather than introducing a new failure.
+        return None
 
 
 def _runtime_root(spec: dict[str, Any]) -> Path:
