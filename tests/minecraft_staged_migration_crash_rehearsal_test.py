@@ -170,7 +170,7 @@ class CrashJournalTest(unittest.TestCase):
         self.assertEqual(json.loads(orphan.read_text())["phase"],"swapping")
         with self.assertRaisesRegex(CrashRehearsalError,"orphan"):
             switch(self.root)
-        with self.assertRaisesRegex(CrashRehearsalError,"orphan"):
+        with self.assertRaisesRegex(CrashRehearsalError,"readiness and completed swap"):
             commit(self.root,readiness_passed=True)
         self.assertEqual(recover(self.root)["status"],"recovered")
         self.assertFalse(orphan.exists())
