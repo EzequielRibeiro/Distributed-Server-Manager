@@ -121,6 +121,22 @@ class CrashJournalTest(unittest.TestCase):
         self.assertEqual(result["status"],"recovered")
         self.assertEqual((self.root/"active"/"mod.jar").read_bytes(),b"original mod content")
 
+    def test_changed_staged_mod_blocks_switch_before_first_rename(self):
+        self._prepare()
+        (self.root/"stage"/"mod.jar").write_bytes(b"injected staged mod")
+        with self.assertRaisesRegex(CrashRehearsalError,"changed after checkpoint"):
+            switch(self.root)
+        self.assertTrue((self.root/"active").exists())
+        self.assertFalse((self.root/"rollback-runtime").exists())
+
+    def test_changed_current_mod_blocks_switch_before_first_rename(self):
+        self._prepare()
+        (self.root/"active"/"mod.jar").write_bytes(b"changed while waiting")
+        with self.assertRaisesRegex(CrashRehearsalError,"changed after checkpoint"):
+            switch(self.root)
+        self.assertTrue((self.root/"active").exists())
+        self.assertFalse((self.root/"rollback-runtime").exists())
+
     def test_commit_keeps_rollback_snapshot(self):
         self._prepare()
         switch(self.root)
