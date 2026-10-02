@@ -163,7 +163,7 @@ class CrashJournalTest(unittest.TestCase):
         outside = self.root/"outside-marker"
         outside.write_text("do not touch")
         (self.root/".migration-journal.tmp").symlink_to(outside)
-        with self.assertRaisesRegex(CrashRehearsalError,"unsafe journal temporary"):
+        with self.assertRaisesRegex(CrashRehearsalError,"symlink paths are prohibited"):
             self._prepare()
         self.assertEqual(outside.read_text(),"do not touch")
         self.assertFalse((self.root/"migration-journal.json").exists())
