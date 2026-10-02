@@ -104,6 +104,12 @@ def _tree_hash(directory: Path) -> str:
 def _atomic(root: Path, data: dict) -> None:
     journal = _member(root, "migration-journal.json")
     temp = _member(root, ".migration-journal.tmp")
+    # Called only while holding disposable_lock. An interrupted write may
+    # leave a partial temp file; never treat it as completed journal state.
+    if temp.is_symlink() or (temp.exists() and not temp.is_file()):
+        raise CrashRehearsalError("unsafe journal temporary file")
+    if temp.exists():
+        temp.unlink()
     with temp.open("x", encoding="utf-8") as out:
         json.dump(data, out, sort_keys=True)
         out.flush()
