@@ -35,6 +35,8 @@ def runtime_operation(config:dict[str,Any],instance_id:str,operation:str,*,lock_
   # A failed or interrupted staged migration must retain its journal until
   # a separately homologated recovery routine verifies its artifacts.
   previous=read_operation(instance_id)
+  if previous is None and _path(instance_id).exists():
+   raise RuntimeError("instance operation journal is unreadable; manual recovery required")
   if (previous and previous.get("operation")=="minecraft_serverpack_migration"
       and previous.get("status") in {"running","interrupted","failed"}):
    raise RuntimeError("interrupted staged Minecraft migration requires manual recovery; instance operation blocked")
