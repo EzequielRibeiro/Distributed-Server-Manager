@@ -140,7 +140,9 @@ def recover(root: Path) -> dict:
     if rollback.exists():
         if not rollback.is_dir() or _file_hash(rollback / "neoforge.txt") != expected:
             raise CrashRehearsalError("rollback copy missing or incorrect: manual intervention")
-        if quarantine.exists():
+        if quarantine.exists() and not (
+            data["phase"] == "recovering" and not active.exists() and quarantine.is_dir()
+        ):
             raise CrashRehearsalError("quarantine occupied: manual intervention")
         data["phase"] = "recovering"
         _atomic(root, data)
