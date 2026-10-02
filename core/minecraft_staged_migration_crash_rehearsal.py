@@ -8,6 +8,7 @@ No backup, Agent lock, live world integrity, or readiness is provided here.
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import json
 import os
 from pathlib import Path
