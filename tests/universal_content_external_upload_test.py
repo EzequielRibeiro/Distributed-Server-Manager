@@ -60,6 +60,32 @@ class ExternalUploadTest(unittest.TestCase):
   with patch("customer_content_upload_service.socket.getaddrinfo",return_value=[(socket.AF_INET,socket.SOCK_STREAM,6,"",("8.8.8.8",443))]):
    self.assertEqual(_safe_external_url("https://example.com/pack.mrpack"),"https://example.com/pack.mrpack")
 
+ def test_staged_migration_revalidation_http_strips_fingerprint_from_preview_body(self):
+  class Handler:
+   def do_GET(self):pass
+   def do_POST(self):pass
+   def send_json(self,status,data):self.sent=(status,data)
+   def read_json_body(self):return dict(self.body)
+   def unauthorized(self):raise AssertionError("unexpected unauthorized")
+   def forbidden(self):raise AssertionError("unexpected forbidden")
+  legacy=SimpleNamespace(DashboardHandler=Handler,DATABASE_FILE="unused",DSM_ROOT=ROOT,
+                         dashboard_repository=lambda _:SimpleNamespace(backend=object()))
+  upload_http.install_customer_content_http(legacy,lambda _:{"role":"customer","username":"alice"})
+  handler=Handler();handler.path=upload_http.UPLOAD_MIGRATION_REVALIDATE;handler.headers={}
+  handler.body={"instance_id":"i1","transfer_id":"transfer-1","content_id":"atm11",
+                "content_type":"modpack","metadata":{"serverpack":{"format":"uploaded-serverpack-v1"}},
+                "migration_plan_sha256":"b"*64}
+  with patch.object(upload_http,"CustomerContentUploadService") as service_cls:
+   service_cls.return_value.revalidate_staged_loader_plan.return_value={
+    "valid":True,"install_allowed":False,"migration_plan_sha256":"b"*64}
+   handler.do_POST()
+   args=service_cls.return_value.revalidate_staged_loader_plan.call_args.args
+   self.assertEqual(args[1],"transfer-1")
+   self.assertNotIn("migration_plan_sha256",args[2])
+   self.assertEqual(args[3],"b"*64)
+  self.assertEqual(handler.sent[0],200)
+  self.assertTrue(handler.sent[1]["migration"]["valid"])
+
  def test_real_socket_upload_slots_recover_after_stalled_clients(self):
   from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
   class Handler(BaseHTTPRequestHandler):
