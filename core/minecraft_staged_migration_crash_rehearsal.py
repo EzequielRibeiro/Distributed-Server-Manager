@@ -115,7 +115,8 @@ def prepare(root: Path, *, original_hash: str, checkpoint_verified: bool) -> Non
     if not (stage / "neoforge.txt").is_file():
         raise CrashRehearsalError("staged test loader is missing")
     _atomic(root, {"schema": 1, "phase": "prepared", "original_hash": original_hash,
-                   "original_tree_hash": _tree_hash(active)})
+                   "original_tree_hash": _tree_hash(active),
+                   "staged_tree_hash": _tree_hash(stage)})
 
 
 def switch(root: Path, *, crash_at: str = "") -> None:
@@ -128,6 +129,9 @@ def switch(root: Path, *, crash_at: str = "") -> None:
     rollback = _member(root, "rollback-runtime")
     if not active.is_dir() or not stage.is_dir() or rollback.exists():
         raise CrashRehearsalError("test workspace changed since preparation")
+    if (_tree_hash(active) != data.get("original_tree_hash") or
+            _tree_hash(stage) != data.get("staged_tree_hash")):
+        raise CrashRehearsalError("test runtime files changed after checkpoint: revalidate before switch")
     data["phase"] = "swapping"
     _atomic(root, data)
     os.replace(active, rollback)
