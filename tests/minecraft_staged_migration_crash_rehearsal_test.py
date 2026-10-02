@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Subprocess crash tests; ALL paths are isolated disposable temp directories."""
+from __future__ import annotations
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/"core"))
+from minecraft_staged_migration_crash_rehearsal import (
+    CrashRehearsalError, prepare, switch, recover, commit,
+)
+
+
+class CrashJournalTest(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(prefix="capivara-journal-test-")
+        self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name)
+        (self.root/".capivara-disposable-migration-test").write_text("test only")
+        (self.root/"active").mkdir()
+        (self.root/"active"/"neoforge.txt").write_text("26.1.2.94")
+        (self.root/"stage").mkdir()
+        (self.root/"stage"/"neoforge.txt").write_text("26.1.2.109")
+        self.oldhash=hashlib.sha256(b"26.1.2.94").hexdigest()
+        self.previous=os.environ.get("CAPIVARA_DISPOSABLE_MIGRATION_REHEARSAL")
+        os.environ["CAPIVARA_DISPOSABLE_MIGRATION_REHEARSAL"]="YES"
+        self.addCleanup(self._restore_env)
+
+    def _restore_env(self):
+        if self.previous is None:
+            os.environ.pop("CAPIVARA_DISPOSABLE_MIGRATION_REHEARSAL",None)
+        else:
+            os.environ["CAPIVARA_DISPOSABLE_MIGRATION_REHEARSAL"]=self.previous
+
+    def _prepare(self):
+        prepare(self.root,original_hash=self.oldhash,checkpoint_verified=True)
+
+    def _crash(self,step):
+        cmd=[sys.executable,"-c",
+             "import sys; sys.path.insert(0,sys.argv[1]); "
+             "from minecraft_staged_migration_crash_rehearsal import switch; "
+             "switch(sys.argv[2],crash_at=sys.argv[3])",
+             str(ROOT/"core"),str(self.root),step]
+        return subprocess.run(cmd,env=dict(os.environ),capture_output=True,timeout=8).returncode
+
+    def test_explicit_disposable_flag_required(self):
+        os.environ.pop("CAPIVARA_DISPOSABLE_MIGRATION_REHEARSAL")
+        with self.assertRaisesRegex(CrashRehearsalError,"opt-in"):
+            prepare(self.root,original_hash=self.oldhash,checkpoint_verified=True)
+        self.assertFalse((self.root/"migration-journal.json").exists())
+
+    def test_checkpoint_is_required_before_first_rename(self):
+        with self.assertRaisesRegex(CrashRehearsalError,"verified checkpoint"):
+            prepare(self.root,original_hash=self.oldhash,checkpoint_verified=False)
+        self.assertTrue((self.root/"active").exists())
+
+    def test_crash_after_old_rename_restores_exact_original(self):
+        self._prepare()
+        self.assertEqual(self._crash("after_old_rename"),71)
+        self.assertFalse((self.root/"active").exists())
+        result=recover(self.root)
+        self.assertEqual(result["status"],"recovered")
+        self.assertEqual((self.root/"active"/"neoforge.txt").read_text(),"26.1.2.94")
+        self.assertEqual(recover(self.root)["status"],"already_recovered")
+
+    def test_crash_after_new_rename_quarantines_new_and_restores_old(self):
+        self._prepare()
+        self.assertEqual(self._crash("after_new_rename"),72)
+        self.assertEqual((self.root/"active"/"neoforge.txt").read_text(),"26.1.2.109")
+        self.assertTrue(recover(self.root)["quarantine_retained"])
+        self.assertEqual((self.root/"active"/"neoforge.txt").read_text(),"26.1.2.94")
+        self.assertEqual((self.root/"quarantine-new"/"neoforge.txt").read_text(),"26.1.2.109")
+
+    def test_recovery_resumes_after_second_crash_during_restore(self):
+        self._prepare()
+        self.assertEqual(self._crash("after_new_rename"),72)
+        # Simulate a process dying after persisting 'recovering' and moving
+        # the new runtime to quarantine but before restoring the old runtime.
+        journal=self.root/"migration-journal.json"
+        entry=json.loads(journal.read_text());entry["phase"]="recovering"
+        journal.write_text(json.dumps(entry))
+        (self.root/"active").rename(self.root/"quarantine-new")
+        self.assertEqual(recover(self.root)["status"],"recovered")
+        self.assertEqual((self.root/"active"/"neoforge.txt").read_text(),"26.1.2.94")
+
+    def test_corrupt_or_missing_original_refuses_recovery(self):
+        self._prepare()
+        self.assertEqual(self._crash("after_new_rename"),72)
+        (self.root/"rollback-runtime"/"neoforge.txt").write_text("tampered")
+        with self.assertRaisesRegex(CrashRehearsalError,"incorrect"):
+            recover(self.root)
+        self.assertEqual((self.root/"active"/"neoforge.txt").read_text(),"26.1.2.109")
+
+    def test_commit_keeps_rollback_snapshot(self):
+        self._prepare()
+        switch(self.root)
+        commit(self.root,readiness_passed=True)
+        self.assertEqual((self.root/"rollback-runtime"/"neoforge.txt").read_text(),"26.1.2.94")
+        with self.assertRaisesRegex(CrashRehearsalError,"committed"):
+            recover(self.root)
+
+
+if __name__=="__main__":
+    unittest.main()
