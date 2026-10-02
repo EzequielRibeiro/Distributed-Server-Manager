@@ -181,7 +181,7 @@ def _switch_locked(root: Path, *, crash_at: str = "") -> None:
     _atomic(root, data)
 
 
-def _recover_locked(root: Path) -> dict:
+def _recover_locked(root: Path, *, crash_at: str = "") -> dict:
     root = _root(root)
     data = _read(root)
     if data["phase"] == "committed":
@@ -225,8 +225,12 @@ def _recover_locked(root: Path) -> dict:
         if active.exists():
             os.replace(active, quarantine)
             _sync_dir(root)
+            if crash_at == "after_recovery_quarantine":
+                os._exit(74)  # disposable child-process fault injection
         os.replace(rollback, active)
         _sync_dir(root)
+        if crash_at == "after_recovery_restore":
+            os._exit(75)
     else:
         # Recovery may have been interrupted AFTER restoring the original.
         if _file_hash(active / "neoforge.txt") != expected or _tree_hash(active) != expected_tree:
@@ -243,8 +247,16 @@ def _commit_locked(root: Path, *, readiness_passed: bool) -> None:
     data = _read(root)
     if data["phase"] != "swapped" or readiness_passed is not True:
         raise CrashRehearsalError("readiness and completed swap are required")
-    if not _member(root, "rollback-runtime").is_dir():
-        raise CrashRehearsalError("rollback snapshot missing")
+    original = _member(root, "rollback-runtime")
+    current = _member(root, "active")
+    if (not original.is_dir() or original.is_symlink() or
+            not current.is_dir() or current.is_symlink()):
+        raise CrashRehearsalError("rollback snapshot or staged active runtime missing")
+    if (_tree_hash(original) != data.get("original_tree_hash") or
+            _file_hash(original / "neoforge.txt") != data.get("original_hash")):
+        raise CrashRehearsalError("rollback snapshot checksum changed: refuse commit")
+    if _tree_hash(current) != data.get("staged_tree_hash"):
+        raise CrashRehearsalError("active staged runtime checksum changed: refuse commit")
     data["phase"] = "committed"
     _atomic(root, data)
     # Original rollback snapshot is intentionally retained.
@@ -261,9 +273,9 @@ def switch(root: Path, *, crash_at: str = "") -> None:
         return _switch_locked(root, crash_at=crash_at)
 
 
-def recover(root: Path) -> dict:
+def recover(root: Path, *, crash_at: str = "") -> dict:
     with disposable_lock(root):
-        return _recover_locked(root)
+        return _recover_locked(root, crash_at=crash_at)
 
 
 def commit(root: Path, *, readiness_passed: bool) -> None:
