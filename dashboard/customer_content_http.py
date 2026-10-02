@@ -240,8 +240,9 @@ def install_customer_content_http(legacy,authenticate):
    if user is None:return
    try:
     body=self.read_json_body();fingerprint=str(body.get("migration_plan_sha256") or "")
+    preview_body={key:body.get(key) for key in ("instance_id","transfer_id","content_id","content_type","metadata") if key in body}
     api=CustomerContentUploadService(backend(),legacy.DSM_ROOT)
-    attestation=api.revalidate_staged_loader_plan(user,str(body.get("transfer_id") or ""),body,fingerprint)
+    attestation=api.revalidate_staged_loader_plan(user,str(body.get("transfer_id") or ""),preview_body,fingerprint)
     return send(self,200,{"migration":attestation})
    except Exception as exc:return error(self,exc)
   if parsed.path==UPLOAD_FINALIZE:
