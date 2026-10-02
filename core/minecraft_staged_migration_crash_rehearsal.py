@@ -7,6 +7,8 @@ No backup, Agent lock, live world integrity, or readiness is provided here.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import hashlib
 import fcntl
 import json
@@ -41,6 +43,27 @@ def _root(root: Path) -> Path:
     if os.environ.get("CAPIVARA_DISPOSABLE_MIGRATION_REHEARSAL") != "YES":
         raise CrashRehearsalError("disposable test process opt-in is required")
     return root
+
+
+@contextmanager
+def disposable_lock(root: Path):
+    """Nonblocking interprocess lock strictly for marked disposable workspaces."""
+    root = _root(root)
+    lock_path = root / ".migration-exclusive.lock"
+    if lock_path.is_symlink():
+        raise CrashRehearsalError("symlinked test lock is prohibited")
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise CrashRehearsalError("disposable transaction already locked") from exc
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 def _member(root: Path, name: str) -> Path:
