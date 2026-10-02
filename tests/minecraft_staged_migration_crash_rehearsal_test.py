@@ -13,7 +13,7 @@ import unittest
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/"core"))
 from minecraft_staged_migration_crash_rehearsal import (
-    CrashRehearsalError, prepare, switch, recover, commit,
+    CrashRehearsalError, prepare, switch, recover, commit, disposable_lock,
 )
 
 
@@ -136,6 +136,37 @@ class CrashJournalTest(unittest.TestCase):
             switch(self.root)
         self.assertTrue((self.root/"active").exists())
         self.assertFalse((self.root/"rollback-runtime").exists())
+
+    def test_exclusive_lock_rejects_competing_subprocess(self):
+        script = ("import sys;sys.path.insert(0,sys.argv[1]);"
+                  "from minecraft_staged_migration_crash_rehearsal import prepare;"
+                  "prepare(sys.argv[2], original_hash=sys.argv[3], checkpoint_verified=True)")
+        with disposable_lock(self.root):
+            process = subprocess.run(
+                [sys.executable, "-c", script, str(ROOT/"core"),
+                 str(self.root), self.oldhash],
+                env=dict(os.environ), capture_output=True, text=True, timeout=8)
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn("already locked", process.stderr)
+            self.assertFalse((self.root/"migration-journal.json").exists())
+        self._prepare()
+
+    def test_orphan_temporary_journal_is_discarded_under_lock(self):
+        (self.root/".migration-journal.tmp").write_text("{incomplete")
+        self._prepare()
+        self.assertFalse((self.root/".migration-journal.tmp").exists())
+        self.assertEqual(json.loads((self.root/"migration-journal.json").read_text())["phase"],"prepared")
+        switch(self.root)
+        recover(self.root)
+
+    def test_unsafe_symlink_temporary_journal_is_rejected(self):
+        outside = self.root/"outside-marker"
+        outside.write_text("do not touch")
+        (self.root/".migration-journal.tmp").symlink_to(outside)
+        with self.assertRaisesRegex(CrashRehearsalError,"unsafe journal temporary"):
+            self._prepare()
+        self.assertEqual(outside.read_text(),"do not touch")
+        self.assertFalse((self.root/"migration-journal.json").exists())
 
     def test_commit_keeps_rollback_snapshot(self):
         self._prepare()
