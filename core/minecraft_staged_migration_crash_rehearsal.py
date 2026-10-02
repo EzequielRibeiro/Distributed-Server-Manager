@@ -101,19 +101,22 @@ def _tree_hash(directory: Path) -> str:
         digest.update(bytes.fromhex(_file_hash(file)))
     return digest.hexdigest()
 
-def _atomic(root: Path, data: dict) -> None:
+def _atomic(root: Path, data: dict, *, crash_after_fsync: bool = False) -> None:
     journal = _member(root, "migration-journal.json")
     temp = _member(root, ".migration-journal.tmp")
-    # Called only while holding disposable_lock. An interrupted write may
-    # leave a partial temp file; never treat it as completed journal state.
+    # A leftover fsynced temporary journal is crash evidence. Ordinary
+    # operations MUST NOT discard it: only verified explicit recovery may.
     if temp.is_symlink() or (temp.exists() and not temp.is_file()):
         raise CrashRehearsalError("unsafe journal temporary file")
     if temp.exists():
-        temp.unlink()
+        raise CrashRehearsalError("orphan journal temporary file: explicit recovery required")
     with temp.open("x", encoding="utf-8") as out:
         json.dump(data, out, sort_keys=True)
         out.flush()
         os.fsync(out.fileno())
+    _sync_dir(root)
+    if crash_after_fsync:
+        os._exit(73)  # disposable child-process fault after durable temp write
     os.replace(temp, journal)
     _sync_dir(root)
 
@@ -140,6 +143,8 @@ def _prepare_locked(root: Path, *, original_hash: str, checkpoint_verified: bool
         raise CrashRehearsalError("rollback/quarantine location occupied")
     if _member(root, "migration-journal.json").exists():
         raise CrashRehearsalError("previous journal exists; recover first")
+    if _member(root, ".migration-journal.tmp").exists():
+        raise CrashRehearsalError("orphan journal temporary file: manual recovery required")
     if checkpoint_verified is not True or _file_hash(active / "neoforge.txt") != original_hash:
         raise CrashRehearsalError("verified checkpoint and expected original file hash required")
     if not (stage / "neoforge.txt").is_file():
@@ -163,7 +168,7 @@ def _switch_locked(root: Path, *, crash_at: str = "") -> None:
             _tree_hash(stage) != data.get("staged_tree_hash")):
         raise CrashRehearsalError("test runtime files changed after checkpoint: revalidate before switch")
     data["phase"] = "swapping"
-    _atomic(root, data)
+    _atomic(root, data, crash_after_fsync=crash_at == "after_journal_temp_fsync")
     os.replace(active, rollback)
     _sync_dir(root)
     if crash_at == "after_old_rename":
@@ -186,9 +191,22 @@ def _recover_locked(root: Path) -> dict:
     quarantine = _member(root, "quarantine-new")
     expected = data.get("original_hash")
     expected_tree = data.get("original_tree_hash")
+    orphan_temp = _member(root, ".migration-journal.tmp")
     if (not isinstance(expected, str) or len(expected) != 64 or
             not isinstance(expected_tree, str) or len(expected_tree) != 64):
         raise CrashRehearsalError("journal has no usable original checksum")
+    # Explicit recovery may discard a partial/fsynced uncommitted journal
+    # only after a durable committed journal AND its original runtime are
+    # independently checked. Never trust the orphan temp as the latest phase.
+    if orphan_temp.exists():
+        if not orphan_temp.is_file():
+            raise CrashRehearsalError("unsafe journal temporary file")
+        original = rollback if rollback.exists() else active
+        if (not original.is_dir() or _file_hash(original / "neoforge.txt") != expected
+                or _tree_hash(original) != expected_tree):
+            raise CrashRehearsalError("unverified original runtime: retain orphan journal for manual recovery")
+        orphan_temp.unlink()
+        _sync_dir(root)
     if data["phase"] == "recovered":
         if _file_hash(active / "neoforge.txt") != expected or _tree_hash(active) != expected_tree:
             raise CrashRehearsalError("recovered files differ from original checksum")
