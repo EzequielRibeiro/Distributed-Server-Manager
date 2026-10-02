@@ -165,7 +165,8 @@ def project_minecraft_files(spec: dict[str, Any], entries: list[dict[str, Any]])
         extensions = list(config["extensions"])
         filename = _safe_artifact_filename(entry.get("artifact_filename"), extensions)
         legacy_target = f"{config['directory'].rstrip('/')}/capivara-{projection_id}"
-        if filename is None and str(entry.get("provider") or "").strip().lower() in {"modrinth", "curseforge", "local"}:
+        if (filename is None and content_type in {"mod", "plugin"}
+                and str(entry.get("provider") or "").strip().lower() in {"modrinth", "curseforge", "local"}):
             filename = _verified_source_filename(spec, entry, extensions, legacy_target)
         projection = {
             "content_id": content_id,
@@ -216,7 +217,8 @@ def _verified_source_filename(spec: dict[str, Any], entry: dict[str, Any],
     })
     name = source.name
     if name.lower() in {"payload.jar", "content.jar", "mod.jar", "plugin.jar",
-                        "download.jar", "file.jar", "artifact.jar"}:
+                        "download.jar", "file.jar", "artifact.jar", "source.jar",
+                        "upload.jar", "unknown.jar", "server.jar", "temp.jar"}:
         return None
     try:
         return _safe_artifact_filename(name, extensions)
