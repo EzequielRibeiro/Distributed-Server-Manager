@@ -31,8 +31,9 @@ class ServerPackUIContractTest(unittest.TestCase):
   self.assertEqual(js.count('...await previewOfficialServerpack'),1)
   self.assertNotIn('prompt("Informe a versão EXATA do NeoForge',js)
   self.assertIn('IDs do CurseForge são opcionais',js)
-  self.assertIn('preview.kind!=="CapivaraServerPackPreview"', '/content/upload/migration/revalidate',
-                   'migration_plan_sha256:plan.migration_plan_sha256',js)
+  self.assertIn('preview.kind!=="CapivaraServerPackPreview"',js)
+  self.assertIn('/content/upload/migration/revalidate',js)
+  self.assertIn('migration_plan_sha256:plan.migration_plan_sha256',js)
 
  def test_workspace_never_auto_enables_a_serverpack(self):
   js=(ROOT/"dashboard/web/customer-instance-v2.js").read_text()
