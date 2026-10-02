@@ -90,6 +90,54 @@ class CrashJournalTest(unittest.TestCase):
         self.assertEqual(recover(self.root)["status"],"recovered")
         self.assertEqual((self.root/"active"/"neoforge.txt").read_text(),"26.1.2.94")
 
+    def _crash_recovery(self,step):
+        cmd=[sys.executable,"-c",
+             "import sys;sys.path.insert(0,sys.argv[1]);"
+             "from minecraft_staged_migration_crash_rehearsal import recover;"
+             "recover(sys.argv[2],crash_at=sys.argv[3])",
+             str(ROOT/"core"),str(self.root),step]
+        return subprocess.run(cmd,env=dict(os.environ),capture_output=True,timeout=8).returncode
+
+    def test_crash_during_quarantine_recovery_resumes_without_data_loss(self):
+        self._prepare()
+        self.assertEqual(self._crash("after_new_rename"),72)
+        self.assertEqual(self._crash_recovery("after_recovery_quarantine"),74)
+        self.assertFalse((self.root/"active").exists())
+        self.assertTrue((self.root/"quarantine-new"/"neoforge.txt").exists())
+        self.assertEqual((self.root/"rollback-runtime"/"mod.jar").read_bytes(),b"original mod content")
+        self.assertEqual(recover(self.root)["status"],"recovered")
+        self.assertEqual((self.root/"active"/"neoforge.txt").read_text(),"26.1.2.94")
+        self.assertEqual((self.root/"quarantine-new"/"neoforge.txt").read_text(),"26.1.2.109")
+        self.assertEqual(recover(self.root)["status"],"already_recovered")
+
+    def test_crash_after_restoring_old_tree_recovers_idempotently(self):
+        self._prepare()
+        self.assertEqual(self._crash("after_new_rename"),72)
+        self.assertEqual(self._crash_recovery("after_recovery_restore"),75)
+        self.assertFalse((self.root/"rollback-runtime").exists())
+        self.assertEqual((self.root/"active"/"mod.jar").read_bytes(),b"original mod content")
+        self.assertEqual(recover(self.root)["status"],"recovered")
+        self.assertEqual(recover(self.root)["status"],"already_recovered")
+
+    def test_tampered_new_runtime_refuses_commit_and_keeps_rollback(self):
+        self._prepare()
+        switch(self.root)
+        (self.root/"active"/"neoforge.txt").write_text("tampered")
+        with self.assertRaisesRegex(CrashRehearsalError,"active staged runtime checksum"):
+            commit(self.root,readiness_passed=True)
+        self.assertEqual((self.root/"rollback-runtime"/"mod.jar").read_bytes(),b"original mod content")
+        self.assertEqual(recover(self.root)["status"],"recovered")
+
+    def test_tampered_old_tree_refuses_commit_and_preserves_evidence(self):
+        self._prepare()
+        switch(self.root)
+        (self.root/"rollback-runtime"/"mod.jar").write_bytes(b"tampered original")
+        with self.assertRaisesRegex(CrashRehearsalError,"rollback snapshot checksum"):
+            commit(self.root,readiness_passed=True)
+        self.assertEqual(json.loads((self.root/"migration-journal.json").read_text())["phase"],"swapped")
+        with self.assertRaisesRegex(CrashRehearsalError,"manual intervention"):
+            recover(self.root)
+
     def test_corrupt_or_missing_original_refuses_recovery(self):
         self._prepare()
         self.assertEqual(self._crash("after_new_rename"),72)
