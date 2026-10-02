@@ -116,6 +116,19 @@ class OriginalMinecraftModFilenamesTest(unittest.TestCase):
                 self.assertEqual(len(paths),2)
                 self.assertEqual((runtime / "mods" / "Original.jar").read_bytes(), b"simulated mod bytes")
 
+    def test_invalid_inferred_filename_keeps_legacy_naming(self):
+        for platform in ("linux", "windows"):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as tmp:
+                module = adapter(platform)
+                runtime, _, spec, entry = instance(Path(tmp), "initial.jar")
+                original = Path(entry["managed_path"]) / "initial.jar"
+                # No disk filenames exceeding filesystem limits are needed:
+                # use a portable but forbidden leading-dot filename instead.
+                bad = original.with_name(".hidden-mod.jar")
+                original.rename(bad)
+                item, = module.project_minecraft_files(spec, [entry])
+                self.assertEqual(item["target_stem"], "mods/capivara-mb-synthetic")
+
     def test_unmanaged_original_name_is_not_overwritten(self):
         for platform in ("linux", "windows"):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as tmp:
