@@ -6,6 +6,8 @@ const fs=require("node:fs");
 const path=require("node:path");
 const vm=require("node:vm");
 const source=fs.readFileSync(path.join(__dirname,"../dashboard/web/customer-instance-v2.js"),"utf8");
+const css=fs.readFileSync(path.join(__dirname,"../dashboard/web/customer-instance-v2.css"),"utf8");
+assert(css.includes(".content-upload-outcome-preview_only{"),"read-only preview must have its own visual state");
 const first=source.indexOf("async function previewOfficialServerpack(");
 const last=source.indexOf("async function uploadManagedContent(",first);
 assert(first>=0&&last>first);
