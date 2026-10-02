@@ -25,6 +25,7 @@ class CrashJournalTest(unittest.TestCase):
         (self.root/".capivara-disposable-migration-test").write_text("test only")
         (self.root/"active").mkdir()
         (self.root/"active"/"neoforge.txt").write_text("26.1.2.94")
+        (self.root/"active"/"mod.jar").write_bytes(b"original mod content")
         (self.root/"stage").mkdir()
         (self.root/"stage"/"neoforge.txt").write_text("26.1.2.109")
         self.oldhash=hashlib.sha256(b"26.1.2.94").hexdigest()
@@ -96,6 +97,29 @@ class CrashJournalTest(unittest.TestCase):
         with self.assertRaisesRegex(CrashRehearsalError,"incorrect"):
             recover(self.root)
         self.assertEqual((self.root/"active"/"neoforge.txt").read_text(),"26.1.2.109")
+
+    def test_tampered_mod_in_rollback_requires_manual_intervention(self):
+        self._prepare()
+        self.assertEqual(self._crash("after_new_rename"),72)
+        (self.root/"rollback-runtime"/"mod.jar").write_bytes(b"tampered content")
+        with self.assertRaisesRegex(CrashRehearsalError,"incorrect"):
+            recover(self.root)
+        self.assertEqual((self.root/"active"/"neoforge.txt").read_text(),"26.1.2.109")
+
+    def test_corrupt_journal_never_modifies_runtime(self):
+        self._prepare()
+        self.assertEqual(self._crash("after_new_rename"),72)
+        (self.root/"migration-journal.json").write_text("not-json")
+        with self.assertRaisesRegex(CrashRehearsalError,"manual intervention"):
+            recover(self.root)
+        self.assertEqual((self.root/"active"/"neoforge.txt").read_text(),"26.1.2.109")
+
+    def test_recovery_preserves_entire_old_tree(self):
+        self._prepare()
+        self.assertEqual(self._crash("after_new_rename"),72)
+        result=recover(self.root)
+        self.assertEqual(result["status"],"recovered")
+        self.assertEqual((self.root/"active"/"mod.jar").read_bytes(),b"original mod content")
 
     def test_commit_keeps_rollback_snapshot(self):
         self._prepare()
