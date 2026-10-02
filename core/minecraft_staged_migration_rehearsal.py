@@ -52,7 +52,9 @@ def rehearse_staged_migration(
         staging_started = True
         stage()
         trace.append("staged")
-        checkpoint()
+        checkpoint_result = checkpoint()
+        if not isinstance(checkpoint_result, dict) or checkpoint_result.get("verified") is not True:
+            raise RehearsalError("checkpoint did not provide independently verified backup evidence")
         checkpoint_ready = True
         trace.append("checkpointed")
         activate()
