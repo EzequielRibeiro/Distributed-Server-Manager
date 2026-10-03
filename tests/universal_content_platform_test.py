@@ -56,6 +56,24 @@ class ContentContractTest(unittest.TestCase):
    with patch.object(content_client,"_owned",return_value=({"instance_id":"instance-c4","agent_id":"agent-c4"},instance)),patch.object(content_client,"_source",return_value=source),patch.object(content_client,"require_clean",return_value={"security_state":"clean","engine":"yara-x","policy_version":1,"matches":[]}),patch.object(content_client.instance_runtime,"status",return_value={"observed_state":"running"}),patch.object(content_client.instance_runtime,"lifecycle",side_effect=life),patch.object(content_client.instance_runtime,"doctor",side_effect=[{"ready":False},{"ready":True}]):
     with self.assertRaises(content_client.ContentActivationError):content_client._install({"agent_id":"agent-c4"},cmd)
    self.assertTrue((target/"old.bin").is_file());self.assertFalse((target/"new.bin").exists());self.assertEqual(lifecycle,["stop","start","stop","start"]);self.assertFalse(target.with_name(target.name+".c4-old").exists())
+ def test_workshop_install_materializes_directly_into_private_instance_transaction(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);instance=root/"instance";instance.mkdir();source=root/"steam"/"1602372402";source.mkdir(parents=True);(source/"map.pbo").write_bytes(b"tiny")
+   cmd={"instance_id":"instance-c4","content_id":"steam-workshop:1602372402","target":"workshop/steam-workshop:1602372402","provider":"steam-workshop","artifact":{"package_id":"221100:1602372402","revision":"1749060012"}}
+   seen={}
+   def materialize(artifact,game_data_root,consume):
+    seen["source"]=source;return consume(source)
+   def activate(config,iid,target,payload):
+    seen["target"]=target;seen["payload_files"]=[x.relative_to(payload).as_posix() for x in payload.rglob("*") if x.is_file()]
+    target.parent.mkdir(parents=True,exist_ok=True);import shutil;shutil.copytree(payload,target)
+   clean={"security_state":"clean","engine":"yara-x","policy_version":1,"matches":[]}
+   with patch.object(content_client,"_owned",return_value=({"instance_id":"instance-c4","agent_id":"agent-c4"},instance)),patch.object(content_client.content_provider_steam_workshop,"materialize_steam_workshop",side_effect=materialize) as lease,patch.object(content_client,"require_clean",return_value=clean) as scan,patch.object(content_client,"validate_external_content_payload") as validate,patch.object(content_client,"_activate_target",side_effect=activate):
+    path,security=content_client._install({"agent_id":"agent-c4"},cmd)
+   self.assertEqual(Path(path),instance/"content"/"workshop"/"steam-workshop:1602372402")
+   self.assertEqual(seen["payload_files"],["map.pbo"]);self.assertTrue((Path(path)/"map.pbo").is_file())
+   lease.assert_called_once();scan.assert_called_once_with(source,context=content_client._security_context({"agent_id":"agent-c4"},cmd));validate.assert_called_once()
+   self.assertEqual(security["engine"],"yara-x")
+
  def test_security_rejection_never_activates_content(self):
   with tempfile.TemporaryDirectory() as td:
    instance=Path(td)/"instance";instance.mkdir();source=Path(td)/"blocked.jar";source.write_bytes(b"blocked")

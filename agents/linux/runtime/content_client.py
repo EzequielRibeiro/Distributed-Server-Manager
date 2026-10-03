@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 import instance_runtime
 from content_provider import resolve_source
-import content_provider_steam_workshop  # noqa: F401
+import content_provider_steam_workshop
 from content_activation_projection import synchronize_activation_state
 from content_activation_apply import ContentActivationApplyError,ContentActivationRollbackError,apply_activation_snapshots
 from content_security import ContentSecurityRejected,require_clean
@@ -194,15 +194,23 @@ def _install(config,cmd):
    verify_installed_neoforge(instance,str(artifact.get("serverpack_loader_version") or ""))
    state=str(instance_runtime.status(config,iid).get("observed_state") or "").lower()
    if state!="stopped":raise ValueError("Pare a instância Minecraft antes de aplicar o Server Pack. A instalação em execução foi recusada.")
-  source=_source(provider,artifact,stage,config,cmd);_verify_artifact(source,artifact)
-  if artifact.get("serverpack_v1") is True:_serverpack_disk_preflight(source,stage)
-  source_scan=require_clean(source,context=security_context);payload=stage/"payload";payload.mkdir();archive=provider=="http-archive" or bool(artifact.get("archive"));expanded_scan=None
-  if archive:
-   _extract(source,payload)
-   if artifact.get("serverpack_v1") is True:prepare_serverpack_payload(payload,artifact)
-   expanded_scan=require_clean(payload,context=security_context)
-  elif source.is_dir():shutil.copytree(source,payload,dirs_exist_ok=True)
-  else:shutil.copy2(source,payload/(str(artifact.get("filename") or source.name or "content.bin")))
+  payload=stage/"payload";payload.mkdir();archive=provider=="http-archive" or bool(artifact.get("archive"));expanded_scan=None
+  def materialize(source):
+   nonlocal expanded_scan
+   _verify_artifact(source,artifact)
+   if artifact.get("serverpack_v1") is True:_serverpack_disk_preflight(source,stage)
+   source_scan=require_clean(source,context=security_context)
+   if archive:
+    _extract(source,payload)
+    if artifact.get("serverpack_v1") is True:prepare_serverpack_payload(payload,artifact)
+    expanded_scan=require_clean(payload,context=security_context)
+   elif source.is_dir():shutil.copytree(source,payload,dirs_exist_ok=True)
+   else:shutil.copy2(source,payload/(str(artifact.get("filename") or source.name or "content.bin")))
+   return source_scan
+  if provider in {"steam","steam-workshop"}:
+   source_scan=content_provider_steam_workshop.materialize_steam_workshop(artifact,GAME_DATA_ROOT,materialize)
+  else:
+   source=_source(provider,artifact,stage,config,cmd);source_scan=materialize(source)
   validate_external_content_payload(payload,cmd)
   _activate_target(config,iid,target,payload)
  finally:shutil.rmtree(stage,ignore_errors=True)

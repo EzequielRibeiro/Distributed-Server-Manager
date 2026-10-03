@@ -13,7 +13,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from content_provider import register_provider
 from content_cache_inventory import record_cache_event
@@ -58,13 +58,19 @@ def _prune_revision_cache(
 
     protected = set(protected_revisions or ())
     protected.add(keep_revision)
+    # The retention limit is the total normal revision window, including the
+    # current revision. Controller-protected rollback revisions are additive
+    # and are never evicted merely because they exceed that window.
     keep = set(protected)
+    normal_slots = max(0, limit - 1)
+    kept_normal = 0
     for path in candidates:
         if path.name in keep:
             continue
-        if len(keep - protected) >= limit:
+        if kept_normal >= normal_slots:
             break
         keep.add(path.name)
+        kept_normal += 1
 
     removed: list[str] = []
     for path in candidates:
@@ -366,9 +372,71 @@ def resolve_steam_workshop(artifact: dict[str, Any], stage: Path, game_data_root
         return result
 
 
+
+def materialize_steam_workshop(artifact: dict[str, Any], game_data_root: Path, consume: Callable[[Path], Any]) -> Any:
+    """Consume an exact Workshop revision while holding its revision lease."""
+    app_id, item_id = _identity(artifact)
+    revision = _revision(artifact)
+    if not revision:
+        return consume(_download_and_resolve(artifact, game_data_root, app_id, item_id, None, set()))
+    lock_path = _revision_lock_path(game_data_root, app_id, item_id, revision)
+    with _RevisionLock(lock_path):
+        cached = _revision_cache_path(game_data_root, app_id, item_id, revision)
+        if cached.is_dir():
+            record_cache_event("hit")
+            return consume(cached)
+        executable = _steamcmd()
+        # SteamCMD may already have the exact immutable revision in its managed
+        # cache. Validate it under the revision lock and consume it directly;
+        # this avoids both a redundant SteamCMD validation pass and the former
+        # provider-cache snapshot copy.
+        live_errors = []
+        for candidate in _cache_candidates(executable, game_data_root, app_id, item_id):
+            if not candidate.is_dir():
+                continue
+            try:
+                _validate_revision_source(candidate, app_id, item_id, revision)
+            except RuntimeError as exc:
+                live_errors.append(str(exc))
+                continue
+            record_cache_event("hit")
+            return consume(candidate)
+        login = _login(artifact)
+        session_home = str(Path(os.environ.get("CAPIVARA_STEAM_HOME") or os.environ.get("HOME") or str(Path(game_data_root).resolve().parent)).resolve())
+        env = {**os.environ, "HOME": session_home, "CAPIVARA_STEAM_HOME": session_home}
+        completed = subprocess.run(
+            [executable, "+login", login, "+workshop_download_item", app_id, item_id, "validate", "+quit"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, timeout=_TIMEOUT_SECONDS, check=False, env=env,
+        )
+        output_text = completed.stdout or ""
+        if completed.returncode != 0:
+            output = output_text.lower()
+            if "password" in output or "steam guard" in output or "two-factor" in output:
+                raise RuntimeError("Steam authentication is required or expired on this Agent")
+            raise RuntimeError(f"Steam Workshop download failed with exit code {completed.returncode}")
+        failure = _DOWNLOAD_FAILURE.search(output_text)
+        if failure:
+            raise RuntimeError(f"Steam Workshop download failed: {failure.group(1).strip()}")
+        errors = []
+        for candidate in _cache_candidates(executable, game_data_root, app_id, item_id):
+            if not candidate.is_dir():
+                continue
+            try:
+                _validate_revision_source(candidate, app_id, item_id, revision)
+            except RuntimeError as exc:
+                errors.append(str(exc))
+                continue
+            record_cache_event("download")
+            return consume(candidate)
+        if errors:
+            raise RuntimeError("SteamCMD completed but no managed Workshop cache matched the requested revision: " + "; ".join(errors[:3]))
+        raise RuntimeError("SteamCMD completed but the Workshop item was not found in a managed Steam cache")
+
+
 # `steam-workshop` is canonical. `steam` remains accepted for previously stored
 # Workshop assignments while callers migrate to the explicit provider name.
 register_provider("steam-workshop", resolve_steam_workshop)
 register_provider("steam", resolve_steam_workshop)
 
-__all__ = ["resolve_steam_workshop"]
+__all__ = ["resolve_steam_workshop", "materialize_steam_workshop"]
