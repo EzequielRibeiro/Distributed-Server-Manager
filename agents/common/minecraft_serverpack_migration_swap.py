@@ -68,6 +68,41 @@ def _tree_hash(root:Path)->str:
         digest.update(len(rel).to_bytes(4,"big"));digest.update(rel);digest.update(file_hash.digest())
     return digest.hexdigest()
 
+_MANAGED_ROOTS=frozenset({"libraries","mods"})
+_MANAGED_FILES=frozenset({"capivara-launch.args","user_jvm_args.txt","run.sh","run.bat","eula.txt"})
+
+
+def _managed_hash(root:Path)->str:
+    """Hash only provider/pack-owned runtime material allowed to stay immutable.
+
+    A successful readiness boot is expected to modify world data, logs, caches,
+    server.properties and sometimes mod configuration. Those instance-private
+    writes must not invalidate commit. Loader libraries, launch metadata and
+    managed mod JARs, however, must remain byte-identical to the staged
+    checkpoint.
+    """
+    if not root.is_dir() or root.is_symlink():
+        raise MinecraftServerPackMigrationSwapError("runtime tree is missing or unsafe")
+    digest=hashlib.sha256();found=False
+    for current in sorted(root.rglob("*")):
+        if current.is_symlink() or (not current.is_dir() and not current.is_file()):
+            raise MinecraftServerPackMigrationSwapError("runtime tree contains unsafe filesystem entries")
+        if current.is_dir():continue
+        relative=current.relative_to(root)
+        if not relative.parts:
+            continue
+        if relative.parts[0] not in _MANAGED_ROOTS and relative.as_posix() not in _MANAGED_FILES:
+            continue
+        found=True
+        encoded=relative.as_posix().encode("utf-8")
+        file_hash=hashlib.sha256()
+        with current.open("rb") as stream:
+            for chunk in iter(lambda:stream.read(1024*1024),b""):file_hash.update(chunk)
+        digest.update(len(encoded).to_bytes(4,"big"));digest.update(encoded);digest.update(file_hash.digest())
+    if not found:
+        raise MinecraftServerPackMigrationSwapError("managed runtime checkpoint is empty")
+    return digest.hexdigest()
+
 
 def _atomic(paths:dict[str,Path],payload:dict[str,Any])->None:
     journal=paths["journal"];temp=paths["temp"]
@@ -123,6 +158,7 @@ def prepare(instance_state_root:Path,*,migration_plan_sha256:str,target_loader_v
         "target_loader_version":str(target_loader_version),
         "original_tree_sha256":_tree_hash(paths["active"]),
         "staged_tree_sha256":_tree_hash(paths["stage"]),
+        "staged_managed_sha256":_managed_hash(paths["stage"]),
         "backup":backup_verified,"loader_proof":proof,
     }
     _atomic(paths,payload)
@@ -150,8 +186,8 @@ def commit(instance_state_root:Path,*,readiness_passed:bool)->dict[str,Any]:
     paths=_paths(instance_state_root);data=_read(paths)
     if data["phase"]!="swapped" or readiness_passed is not True:
         raise MinecraftServerPackMigrationSwapError("successful readiness after swap is required")
-    if _tree_hash(paths["active"])!=data.get("staged_tree_sha256"):
-        raise MinecraftServerPackMigrationSwapError("active candidate changed before commit")
+    if _managed_hash(paths["active"])!=data.get("staged_managed_sha256"):
+        raise MinecraftServerPackMigrationSwapError("managed runtime changed before commit")
     if _tree_hash(paths["rollback"])!=data.get("original_tree_sha256"):
         raise MinecraftServerPackMigrationSwapError("rollback runtime changed before commit")
     verify_installed_neoforge(paths["active"],str(data.get("target_loader_version") or ""))
