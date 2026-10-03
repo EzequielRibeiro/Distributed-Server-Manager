@@ -15,6 +15,7 @@ for path in (ROOT, ROOT / "database"):
         sys.path.insert(0, str(path))
 
 from observability_repository import ObservabilityRepository
+from artifact_transfer_repository import ArtifactTransferRepository
 from runtime_backend import backend_from_environment
 
 INTERVAL_SECONDS = max(60, min(int(os.environ.get("DSM_OBSERVABILITY_RETENTION_WORKER_SECONDS", "300")), 3600))
@@ -88,6 +89,8 @@ class ObservabilityRetentionWorker:
 def run_forever(root: Path = ROOT, interval: int = INTERVAL_SECONDS) -> None:
     backend = backend_from_environment(_database_environment(root))
     worker = ObservabilityRetentionWorker(backend)
+    artifact_transfers = ArtifactTransferRepository(backend, root)
+    artifact_transfers.initialize()
     while True:
         try:
             report = worker.tick()
@@ -99,6 +102,12 @@ def run_forever(root: Path = ROOT, interval: int = INTERVAL_SECONDS) -> None:
                 )
         except Exception as exc:
             print(f"observability retention worker failed: {exc}", file=sys.stderr, flush=True)
+        try:
+            expired = artifact_transfers.cleanup_expired()
+            if expired:
+                print(f"artifact transfer retention expired={expired}", flush=True)
+        except Exception as exc:
+            print(f"artifact transfer retention failed: {exc}", file=sys.stderr, flush=True)
         time.sleep(max(60, int(interval)))
 
 

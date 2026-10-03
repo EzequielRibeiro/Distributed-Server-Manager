@@ -17,6 +17,7 @@ from backend import DatabaseConfig
 from backend_factory import create_backend
 from observability_repository import ObservabilityRepository
 from observability_retention_worker import ObservabilityRetentionWorker
+from artifact_transfer_repository import ArtifactTransferRepository
 
 
 class ObservabilityRetentionWorkerTest(unittest.TestCase):
@@ -65,6 +66,47 @@ class ObservabilityRetentionWorkerTest(unittest.TestCase):
         self.assertEqual(report["pending"], 6)
         self.assertEqual(report["deleted"], 6)
         self.assertEqual(repo.count_before("2026-09-13T00:00:00Z"), 0)
+
+
+    def test_artifact_cleanup_removes_only_expired_spool_files(self):
+        root = Path(self.temp.name) / "dsm"
+        repo = ArtifactTransferRepository(self.backend, root)
+        repo.initialize()
+        expired = repo.create(
+            agent_id="agent-c3",
+            instance_id=None,
+            customer_id=None,
+            direction="controller_to_agent",
+            purpose="content_upload",
+            filename="expired.zip",
+            ttl_hours=1,
+        )
+        active = repo.create(
+            agent_id="agent-c3",
+            instance_id=None,
+            customer_id=None,
+            direction="controller_to_agent",
+            purpose="content_upload",
+            filename="active.zip",
+            ttl_hours=24,
+        )
+        expired_path = Path(expired["controller_path"])
+        active_path = Path(active["controller_path"])
+        expired_path.parent.mkdir(parents=True, exist_ok=True)
+        active_path.parent.mkdir(parents=True, exist_ok=True)
+        expired_path.write_bytes(b"expired")
+        active_path.write_bytes(b"active")
+        with self.backend.transaction() as connection:
+            connection.execute(
+                "UPDATE artifact_transfers SET expires_at=? WHERE transfer_id=?",
+                ("2000-01-01T00:00:00Z", expired["transfer_id"]),
+            )
+
+        self.assertEqual(repo.cleanup_expired(), 1)
+        self.assertFalse(expired_path.exists())
+        self.assertTrue(active_path.exists())
+        self.assertEqual(repo.get(expired["transfer_id"])["status"], "expired")
+        self.assertNotEqual(repo.get(active["transfer_id"])["status"], "expired")
 
 
 if __name__ == "__main__":
