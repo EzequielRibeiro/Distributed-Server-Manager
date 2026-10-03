@@ -116,8 +116,11 @@ class MigrationCapacityAssessmentTest(unittest.TestCase):
             with self.subTest(os_name=os_name):
                 code = (ROOT / "agents" / os_name / "runtime" / "provisioning_executor.py").read_text(encoding="utf-8")
                 self.assertIn('if "minecraft_serverpack_migration" in configuration:', code)
+                self.assertIn("validate_minecraft_serverpack_migration(", code)
+                validation = code.index("validate_minecraft_serverpack_migration(")
                 rejection = code.index("staged Minecraft loader and Server Pack migration executor is not yet homologated")
-                self.assertLess(rejection, code.index('step = "install_content"'))
+                self.assertLess(validation, rejection)
+                self.assertLess(rejection, code.index('step = "install_content"') if 'step = "install_content"' in code else code.index("execute_game_data("))
                 self.assertLess(rejection, code.index("create_backup("))
 
 
