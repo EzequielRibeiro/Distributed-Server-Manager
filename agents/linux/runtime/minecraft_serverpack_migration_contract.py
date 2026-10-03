@@ -54,6 +54,7 @@ def validate_minecraft_serverpack_migration(
     allowed = {
         "kind", "schema_version", "instance_id", "content_id", "transfer_id",
         "filename", "archive_sha256", "archive_size_bytes",
+        "serverpack_prefix", "serverpack_mod_count", "serverpack_override_dirs",
         "migration_plan_sha256", "previous_bundle_revision",
         "previous_manifest_sha256", "from_loader_version",
         "target_loader_version", "minecraft_version", "isolated_install_dir",
@@ -103,6 +104,47 @@ def validate_minecraft_serverpack_migration(
             "migration size/revision evidence must be positive"
         )
     result["archive_size_bytes"] = archive_size
+    try:
+        mod_count = int(result.get("serverpack_mod_count"))
+    except (TypeError, ValueError) as exc:
+        raise MinecraftServerPackMigrationContractError(
+            "invalid Server Pack mod count"
+        ) from exc
+    if not 1 <= mod_count <= 1500:
+        raise MinecraftServerPackMigrationContractError(
+            "invalid Server Pack mod count"
+        )
+    result["serverpack_mod_count"] = mod_count
+    prefix = str(result.get("serverpack_prefix") or "").strip()
+    if prefix and (
+        "/" in prefix
+        or "\\" in prefix
+        or prefix in {".", ".."}
+        or any(not (c.isalnum() or c in "-_.") for c in prefix)
+    ):
+        raise MinecraftServerPackMigrationContractError(
+            "invalid Server Pack wrapper"
+        )
+    result["serverpack_prefix"] = prefix
+    roots = result.get("serverpack_override_dirs")
+    if (
+        not isinstance(roots, list)
+        or len(roots) > 8
+        or len(roots) != len(set(str(x) for x in roots))
+    ):
+        raise MinecraftServerPackMigrationContractError(
+            "invalid Server Pack override directories"
+        )
+    allowed_roots = {
+        "config", "defaultconfigs", "kubejs", "global_packs", "openloader",
+        "crafttweaker", "scripts", "ftbquests", "resources",
+    }
+    cleaned_roots = [str(value or "").strip() for value in roots]
+    if any(root not in allowed_roots for root in cleaned_roots):
+        raise MinecraftServerPackMigrationContractError(
+            "invalid Server Pack override directories"
+        )
+    result["serverpack_override_dirs"] = cleaned_roots
     result["previous_bundle_revision"] = previous_revision
     current = _loader(result.get("from_loader_version"), "from_loader_version")
     target = _loader(result.get("target_loader_version"), "target_loader_version")
