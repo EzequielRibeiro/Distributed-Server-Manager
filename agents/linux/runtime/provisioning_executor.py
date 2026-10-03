@@ -27,6 +27,7 @@ from runtime_events import emit_runtime_event
 from runtime_limits import runtime_limits
 from runtime_metrics import increment, observe_duration
 from runtime_operations import runtime_operation
+from minecraft_serverpack_migration_contract import validate_minecraft_serverpack_migration
 
 
 _SECRET_PATTERNS = (
@@ -108,6 +109,10 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
     compensation: list[str] = []
     configuration = dict(request.get("configuration") or {})
     if "minecraft_serverpack_migration" in configuration:
+        validate_minecraft_serverpack_migration(
+            configuration["minecraft_serverpack_migration"],
+            instance_id=str(request.get("instance_id") or ""),
+        )
         raise RuntimeError("staged Minecraft loader and Server Pack migration executor is not yet homologated; refusing to modify the instance")
     version_update_meta = configuration.get("minecraft_version_update") if isinstance(configuration.get("minecraft_version_update"), dict) else None
     migration_meta = configuration.get("minecraft_runtime_migration") if isinstance(configuration.get("minecraft_runtime_migration"), dict) else None
