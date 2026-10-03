@@ -303,7 +303,7 @@ def _cleanup_content_upload_artifact(
             or original.get("direction") != "controller_to_agent"
             or str(original.get("instance_id")) != instance_id
             or str(original.get("agent_id")) != agent_id
-            or original.get("status") not in {"failed", "completed"}):
+            or original.get("status") not in {"failed", "completed", "expired"}):
         raise ValueError("content upload cleanup ownership/state mismatch")
     if str(original.get("filename")) != str(item.get("filename")):
         raise ValueError("content upload cleanup filename mismatch")

@@ -104,8 +104,13 @@ def run_forever(root: Path = ROOT, interval: int = INTERVAL_SECONDS) -> None:
             print(f"observability retention worker failed: {exc}", file=sys.stderr, flush=True)
         try:
             expired = artifact_transfers.cleanup_expired()
-            if expired:
-                print(f"artifact transfer retention expired={expired}", flush=True)
+            cleanup_queued = artifact_transfers.enqueue_expired_content_upload_cleanup()
+            if expired or cleanup_queued:
+                print(
+                    f"artifact transfer retention expired={expired} "
+                    f"quarantine_cleanup_queued={cleanup_queued}",
+                    flush=True,
+                )
         except Exception as exc:
             print(f"artifact transfer retention failed: {exc}", file=sys.stderr, flush=True)
         time.sleep(max(60, int(interval)))

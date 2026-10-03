@@ -44,6 +44,11 @@ class ObservabilityRetentionWorkerTest(unittest.TestCase):
                 "INSERT INTO agents(id,controller_id,node_id,name,status) VALUES (?,?,?,?,?)",
                 ("agent-c3", "controller-c3", "node-agent", "Agent C3", "active"),
             )
+            customer = connection.execute(
+                "INSERT INTO customers(controller_id,name) VALUES (?,?)",
+                ("controller-c3", "Retention Customer"),
+            )
+            self.customer_id = int(customer.lastrowid)
 
     def tearDown(self):
         self.backend.close()
@@ -67,6 +72,89 @@ class ObservabilityRetentionWorkerTest(unittest.TestCase):
         self.assertEqual(report["deleted"], 6)
         self.assertEqual(repo.count_before("2026-09-13T00:00:00Z"), 0)
 
+
+    def _expired_upload(self, repo, suffix):
+        instance_id = "instance-"+suffix
+        with self.backend.transaction() as connection:
+            connection.execute(
+                 "INSERT OR IGNORE INTO instances(id,node_id,game_id,name,status,controller_id,agent_id,customer_id) VALUES (?,?,?,?,?,?,?,?)",
+                (instance_id,"node-agent","minecraft","Retention "+suffix,"stopped","controller-c3","agent-c3",self.customer_id),
+            )
+        item = repo.create(
+            agent_id="agent-c3",
+            instance_id=instance_id,
+            customer_id=None,
+            direction="controller_to_agent",
+            purpose="content_upload",
+            filename="pack.zip",
+            ttl_hours=1,
+        )
+        destination = f"quarantine/instance-{suffix}/{item['transfer_id']}/pack.zip"
+        with self.backend.transaction() as connection:
+            connection.execute(
+                "UPDATE artifact_transfers SET status=?,destination_ref=?,expires_at=? WHERE transfer_id=?",
+                ("expired", destination, "2000-01-01T00:00:00Z", item["transfer_id"]),
+            )
+        return repo.get(item["transfer_id"])
+
+    def _assignment_reference(self, transfer_id, *, historical=False):
+        now = "2026-10-03T00:00:00Z"
+        provenance = '{"transfer_id":"'+transfer_id+'"}'
+        with self.backend.transaction() as connection:
+            if historical:
+                connection.execute(
+                    """INSERT INTO content_assignment_revisions(
+                       assignment_id,revision,desired_state,version,provider,target,
+                       artifact_json,provenance_json,dependencies_json,conflicts_json,
+                       checksum,requested_by,created_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    ("assignment-history",1,"installed","1","local","external/pack",
+                     "{}",provenance,"[]","[]","checksum","tester",now),
+                )
+            else:
+                connection.execute(
+                    """INSERT INTO content_assignments(
+                       assignment_id,instance_id,agent_id,content_id,game_id,content_type,
+                       desired_state,version,provider,target,artifact_json,provenance_json,
+                       dependencies_json,conflicts_json,revision,checksum,requested_by,
+                       created_at,updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    ("assignment-current","instance-current","agent-c3","pack","minecraft",
+                     "modpack","installed","1","local","external/pack","{}",provenance,
+                     "[]","[]",1,"checksum","tester",now,now),
+                )
+
+    def test_expired_unreferenced_upload_queues_agent_quarantine_cleanup(self):
+        root = Path(self.temp.name) / "dsm-cleanup"
+        repo = ArtifactTransferRepository(self.backend, root)
+        repo.initialize()
+        original = self._expired_upload(repo, "orphan")
+
+        self.assertEqual(repo.enqueue_expired_content_upload_cleanup(), 1)
+        command = repo.command_for_agent("agent-c3")
+        self.assertEqual(command["purpose"], "content_upload_cleanup")
+        self.assertEqual(command["source_ref"], original["transfer_id"])
+        self.assertEqual(command["instance_id"], "instance-orphan")
+
+    def test_expired_upload_with_current_assignment_reference_is_preserved(self):
+        root = Path(self.temp.name) / "dsm-current"
+        repo = ArtifactTransferRepository(self.backend, root)
+        repo.initialize()
+        original = self._expired_upload(repo, "current")
+        self._assignment_reference(original["transfer_id"])
+
+        self.assertEqual(repo.enqueue_expired_content_upload_cleanup(), 0)
+        self.assertIsNone(repo.command_for_agent("agent-c3"))
+
+    def test_expired_upload_with_historical_assignment_reference_is_preserved(self):
+        root = Path(self.temp.name) / "dsm-history"
+        repo = ArtifactTransferRepository(self.backend, root)
+        repo.initialize()
+        original = self._expired_upload(repo, "history")
+        self._assignment_reference(original["transfer_id"], historical=True)
+
+        self.assertEqual(repo.enqueue_expired_content_upload_cleanup(), 0)
+        self.assertIsNone(repo.command_for_agent("agent-c3"))
 
     def test_artifact_cleanup_removes_only_expired_spool_files(self):
         root = Path(self.temp.name) / "dsm"
