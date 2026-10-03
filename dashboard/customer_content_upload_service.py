@@ -436,11 +436,8 @@ class CustomerContentUploadService:
   relative=str(item.get("destination_ref") or "").strip().replace("\\","/")
   path,_=self.transfers.controller_artifact(str(item["transfer_id"]))
   metadata=body.get("metadata") if isinstance(body.get("metadata"),Mapping) else {}
-  preview,parent,bundle,children=build_serverpack_bundle(
-   self.root,context,item,relative,cid,metadata,path,preview_loader_mismatch=True)
-  live_plan=preview.get("update_plan") if isinstance(preview.get("update_plan"),Mapping) else None
-  # build_serverpack_bundle returns raw package evidence only; recompute through
-  # preview_serverpack so identity/revision/build gates are re-applied.
+  # Re-run the complete read-only preview so identity/revision/build gates
+  # are re-applied immediately before we freeze a pending publication.
   preview=self.preview_serverpack(user,transfer_id,body)
   live_plan=preview.get("update_plan") if isinstance(preview.get("update_plan"),Mapping) else {}
   if (live_plan.get("operation")!="staged_loader_migration_preview"
