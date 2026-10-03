@@ -78,6 +78,16 @@ def build_pending_bundle_commit(
         raise MinecraftServerPackPendingCommitError(
             "pending bundle parent identity mismatch"
         )
+    if (
+        str(parent.get("provider") or "").lower()!="local"
+        or str(parent.get("content_type") or "").lower()!="modpack"
+        or str(bundle.get("provider") or "").lower()!="local"
+        or str(bundle.get("manifest_kind") or "").lower()!="serverpack-local-v1"
+        or str(bundle.get("loader_id") or "").lower()!="neoforge"
+    ):
+        raise MinecraftServerPackPendingCommitError(
+            "pending bundle is not an official local NeoForge Server Pack"
+        )
     if not children:
         raise MinecraftServerPackPendingCommitError(
             "pending Server Pack must contain managed children"
@@ -89,6 +99,14 @@ def build_pending_bundle_commit(
                 "pending bundle child instance mismatch"
             )
         child_id=_token(child.get("content_id"),"child content_id")
+        if (
+            str(child.get("provider") or "").lower()!="local"
+            or str(child.get("content_type") or "").lower()!="mod"
+            or str(child.get("target") or "")!=f"mods/{child_id}"
+        ):
+            raise MinecraftServerPackPendingCommitError(
+                "pending Server Pack child is not a managed local mod"
+            )
         if child_id==cid:
             raise MinecraftServerPackPendingCommitError(
                 "pending bundle parent cannot be a child"
