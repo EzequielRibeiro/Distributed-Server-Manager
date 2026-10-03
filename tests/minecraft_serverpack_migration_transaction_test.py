@@ -14,6 +14,8 @@ VALID={
  "instance_id":"pr855-node1-homolog","content_id":"atm11",
  "transfer_id":"transfer-abc","filename":"ServerFiles-0.9.0-beta.zip",
  "archive_sha256":"a"*64,"archive_size_bytes":518936896,
+ "serverpack_prefix":"","serverpack_mod_count":254,
+ "serverpack_override_dirs":["config","kubejs"],
  "migration_plan_sha256":"b"*64,"previous_bundle_revision":3,
  "previous_manifest_sha256":"c"*64,
  "from_loader_version":"26.1.2.94","target_loader_version":"26.1.2.109",
