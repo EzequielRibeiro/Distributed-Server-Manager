@@ -52,6 +52,35 @@ class SwapTest(unittest.TestCase):
    with self.assertRaisesRegex(module.MinecraftServerPackMigrationSwapError,"cannot be silently recovered"):
     module.recover(root)
 
+ def test_readiness_may_change_world_config_and_logs_but_not_managed_loader_or_mods(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=self.make(Path(name))
+   (root/"runtime.migration-stage/mods").mkdir(exist_ok=True)
+   (root/"runtime.migration-stage/mods/a.jar").write_bytes(b"A")
+   module.prepare(root,migration_plan_sha256="b"*64,
+    target_loader_version="26.1.2.109",backup=BACKUP)
+   module.switch(root)
+   active=root/"runtime"
+   (active/"world/level.dat").write_bytes(b"NEW-WORLD-STATE")
+   (active/"server.properties").write_text("motd=changed by runtime\n")
+   (active/"logs").mkdir(exist_ok=True);(active/"logs/latest.log").write_text("Done\n")
+   result=module.commit(root,readiness_passed=True)
+   self.assertEqual(result["status"],"committed")
+
+ def test_managed_mod_tamper_after_readiness_blocks_commit(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=self.make(Path(name))
+   (root/"runtime.migration-stage/mods").mkdir(exist_ok=True)
+   jar=root/"runtime.migration-stage/mods/a.jar";jar.write_bytes(b"A")
+   module.prepare(root,migration_plan_sha256="b"*64,
+    target_loader_version="26.1.2.109",backup=BACKUP)
+   module.switch(root)
+   (root/"runtime/mods/a.jar").write_bytes(b"TAMPER")
+   with self.assertRaisesRegex(
+    module.MinecraftServerPackMigrationSwapError,
+    "managed runtime changed"):
+    module.commit(root,readiness_passed=True)
+
  def test_failed_candidate_recovers_original_and_retains_failed_tree(self):
   with tempfile.TemporaryDirectory() as name:
    root=self.make(Path(name))
