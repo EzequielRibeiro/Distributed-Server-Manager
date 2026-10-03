@@ -18,6 +18,7 @@ from minecraft_content_resolver import provider_loaders
 from runtime_workspace_catalog import runtime_definition
 from customer_serverpack_service import build_serverpack_bundle
 from customer_modpack_source_discovery import discover_modpack as detect_modpack_source
+from core.minecraft_serverpack_pending_commit import build_pending_bundle_commit
 
 _ALLOWED_FIELDS=frozenset({"content_id","content_type","activation_state","activation_order","version","metadata","dependencies","conflicts"})
 _ARCHIVE_SUFFIXES=(".zip",".mrpack",".tar",".tar.gz",".tgz")
@@ -416,6 +417,61 @@ class CustomerContentUploadService:
    "requires_verified_backup":True,
    "requires_exclusive_instance_lock":True,
   }
+
+ def prepare_staged_loader_migration(self,user,transfer_id,body:Mapping[str,Any],expected_plan_sha256:str):
+  """Build immutable Controller-side pending publication evidence.
+
+  Read only with respect to content desired state: this method does not call
+  put_bundle and does not enqueue provisioning. It is the Controller bridge
+  between a revalidated customer preview and a future transactional request.
+  """
+  attested=self.revalidate_staged_loader_plan(
+   user,transfer_id,body,expected_plan_sha256)
+  item=self._transfer(user,transfer_id)
+  context,effective,_=self._access(user,str(item["instance_id"]))
+  if not effective.modpacks_allowed or not effective.mods_allowed:
+   raise PermissionError("O contrato não autoriza importação de modpacks.")
+  cid=str(body.get("content_id") or "").strip()
+  filename=self._filename(item.get("filename"))
+  relative=str(item.get("destination_ref") or "").strip().replace("\\","/")
+  path,_=self.transfers.controller_artifact(str(item["transfer_id"]))
+  metadata=body.get("metadata") if isinstance(body.get("metadata"),Mapping) else {}
+  preview,parent,bundle,children=build_serverpack_bundle(
+   self.root,context,item,relative,cid,metadata,path,preview_loader_mismatch=True)
+  live_plan=preview.get("update_plan") if isinstance(preview.get("update_plan"),Mapping) else None
+  # build_serverpack_bundle returns raw package evidence only; recompute through
+  # preview_serverpack so identity/revision/build gates are re-applied.
+  preview=self.preview_serverpack(user,transfer_id,body)
+  live_plan=preview.get("update_plan") if isinstance(preview.get("update_plan"),Mapping) else {}
+  if (live_plan.get("operation")!="staged_loader_migration_preview"
+      or str(live_plan.get("migration_plan_sha256") or "")!=str(expected_plan_sha256 or "").strip().lower()):
+   raise ValueError("A prévia de migração mudou antes de preparar o commit pendente.")
+  # Rebuild once more with the same verified artifact so the exact candidate
+  # assignments/manifests stored in the pending descriptor are derived from
+  # the same bytes that produced the live fingerprint.
+  _raw_preview,parent,bundle,children=build_serverpack_bundle(
+   self.root,context,item,relative,cid,metadata,path,preview_loader_mismatch=True)
+  evidence=dict(attested.get("evidence") or {})
+  previous_revision=int(evidence.get("previous_bundle_revision") or 0)
+  pending=build_pending_bundle_commit(
+   instance_id=str(context.get("id") or ""),
+   content_id=cid,
+   transfer_id=str(item.get("transfer_id") or ""),
+   migration_plan_sha256=str(attested.get("migration_plan_sha256") or ""),
+   expected_previous_revision=previous_revision,
+   parent=parent,
+   bundle=bundle,
+   children=children,
+   requested_by=str(user.get("username") or user.get("id") or "customer"),
+  )
+  return {
+   "kind":"MinecraftServerPackPreparedMigration",
+   "install_allowed":False,
+   "migration":attested,
+   "pending_bundle_commit":pending,
+   "candidate_bundle_revision":previous_revision+1,
+  }
+
 
  def _finalize(self,user,transfer_id,body:Mapping[str,Any],extra_assignments=None):
   item=self._transfer(user,transfer_id)
