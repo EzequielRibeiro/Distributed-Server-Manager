@@ -63,7 +63,11 @@ def publish_pending_serverpack_bundle(
         authorized["bundle"],
         authorized["children"],
         requested_by=str(authorized["requested_by"]),
-        customer_install_guard=True,
+        # This is completion of the already-serialized provisioning operation,
+        # not a second customer write. The expected revision check above is the
+        # concurrency gate; the normal customer modpack guard would otherwise
+        # reject the in-flight parent that this very operation is completing.
+        customer_install_guard=False,
     )
     if not published.get("changed"):
         raise MinecraftServerPackPendingPublicationError(
