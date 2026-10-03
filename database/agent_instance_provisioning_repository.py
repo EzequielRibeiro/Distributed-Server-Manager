@@ -11,6 +11,7 @@ from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
 from core.agent_health import utc_timestamp
 from operation_diagnostic_repository import OperationDiagnosticRepository
+from minecraft_serverpack_pending_publication import publish_pending_serverpack_bundle
 from storage_pool_placement import select_storage_pool
 from universal_event_repository import UniversalEventRepository
 
@@ -330,6 +331,17 @@ class AgentInstanceProvisioningRepository:
         minecraft_change = minecraft_migration or minecraft_update
         ph = self.dialect.placeholder
         with self.session(transaction=True) as session:
+            if status == "completed":
+                publication = publish_pending_serverpack_bundle(
+                    backend=self.backend,
+                    session=session,
+                    request=request,
+                    result=result,
+                    instance_id=str(current.get("instance_id") or ""),
+                )
+                if publication is not None:
+                    result = {**result, "controller_bundle_publication": publication}
+                    payload = json.dumps(result, separators=(",", ":"), sort_keys=True)
             if status == "running":
                 session.execute(
                     "UPDATE agent_instance_provisioning SET "
