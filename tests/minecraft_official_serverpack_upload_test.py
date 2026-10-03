@@ -158,6 +158,33 @@ class OfficialServerPackUploadTest(unittest.TestCase):
      s.revalidate_staged_loader_plan(USER,"transfer-1",body,fingerprint)
     self.assertEqual([],s.content.bundles)
 
+ def test_future_loader_prepare_creates_pending_bundle_without_publishing(self):
+  with tempfile.TemporaryDirectory() as td:
+   path,s,requester,_,patcher=self.fixture(td)
+   s.workspace.require=lambda u,i,p:dict(CONTEXT,build_id="26.1.2.94")
+   s.content.history=[{"revision":2,"provider":"local","manifest_kind":"serverpack-local-v1",
+    "provider_project_id":"cf-1148445","minecraft_version":"26.1.2",
+    "loader_id":"neoforge","loader_version":"26.1.2.94",
+    "manifest_sha256":"a"*64}]
+   body={"content_id":"atm11","content_type":"modpack","metadata":METADATA}
+   with patcher,patch("customer_content_upload_service.build_serverpack_bundle",
+     partial(build_serverpack_bundle,requester=requester,load_secret=lambda path:"test-secret")):
+    initial=s.preview_serverpack(USER,"transfer-1",body)
+    fingerprint=initial["update_plan"]["migration_plan_sha256"]
+    prepared=s.prepare_staged_loader_migration(
+     USER,"transfer-1",body,fingerprint)
+   self.assertEqual(prepared["kind"],"MinecraftServerPackPreparedMigration")
+   self.assertFalse(prepared["install_allowed"])
+   pending=prepared["pending_bundle_commit"]
+   self.assertFalse(pending["publish_allowed"])
+   self.assertEqual(pending["expected_previous_revision"],2)
+   self.assertEqual(pending["migration_plan_sha256"],fingerprint)
+   self.assertEqual(pending["instance_id"],"i1")
+   self.assertEqual(pending["content_id"],"atm11")
+   self.assertEqual(len(pending["children"]),2)
+   self.assertEqual(prepared["candidate_bundle_revision"],3)
+   self.assertEqual([],s.content.bundles)
+
  def test_future_loader_preview_rejects_stale_installed_build(self):
   with tempfile.TemporaryDirectory() as td:
    path,s,requester,_,patcher=self.fixture(td)
