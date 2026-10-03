@@ -12,8 +12,11 @@ class ServerPackUIContractTest(unittest.TestCase):
   self.assertIn('UPLOAD_PREVIEW=UPLOAD+"/preview"',src)
   self.assertIn('if parsed.path==UPLOAD_PREVIEW:',src)
   self.assertIn('preview=api.preview_serverpack(user',src)
+  self.assertIn('if parsed.path==UPLOAD_MIGRATION_REVALIDATE:',src)
+  self.assertIn('revalidate_staged_loader_plan(user',src)
   self.assertIn('if parsed.path==UPLOAD_FINALIZE:',src)
-  self.assertLess(src.index("if parsed.path==UPLOAD_PREVIEW"),src.index("if parsed.path==UPLOAD_FINALIZE"))
+  self.assertLess(src.index("if parsed.path==UPLOAD_PREVIEW"),src.index("if parsed.path==UPLOAD_MIGRATION_REVALIDATE"))
+  self.assertLess(src.index("if parsed.path==UPLOAD_MIGRATION_REVALIDATE"),src.index("if parsed.path==UPLOAD_FINALIZE"))
 
  def test_zip_supports_manual_or_official_provenance_and_requires_consent(self):
   js=(ROOT/"dashboard/web/customer-instance-v2.js").read_text()
@@ -29,6 +32,8 @@ class ServerPackUIContractTest(unittest.TestCase):
   self.assertNotIn('prompt("Informe a versão EXATA do NeoForge',js)
   self.assertIn('IDs do CurseForge são opcionais',js)
   self.assertIn('preview.kind!=="CapivaraServerPackPreview"',js)
+  self.assertIn('/content/upload/migration/revalidate',js)
+  self.assertIn('migration_plan_sha256:plan.migration_plan_sha256',js)
 
  def test_workspace_never_auto_enables_a_serverpack(self):
   js=(ROOT/"dashboard/web/customer-instance-v2.js").read_text()

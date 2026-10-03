@@ -25,6 +25,7 @@ BUNDLE=PATH+"/bundle"
 UPLOAD=PATH+"/upload"
 UPLOAD_URL=UPLOAD+"/url"
 UPLOAD_PREVIEW=UPLOAD+"/preview"
+UPLOAD_MIGRATION_REVALIDATE=UPLOAD+"/migration/revalidate"
 MODPACK_DISCOVER=PATH+"/modpack/discover"
 MODPACK_SERVERPACK_DOWNLOAD=PATH+"/modpack/serverpack/download"
 UPLOAD_STATUS=UPLOAD+"/status"
@@ -234,6 +235,16 @@ def install_customer_content_http(legacy,authenticate):
    try:
     body=self.read_json_body();api=CustomerContentUploadService(backend(),legacy.DSM_ROOT);preview=api.preview_serverpack(user,str(body.get("transfer_id") or ""),body);return send(self,200,{"serverpack":preview})
    except Exception as exc:return error(self,exc)
+  if parsed.path==UPLOAD_MIGRATION_REVALIDATE:
+   user=require_user(self)
+   if user is None:return
+   try:
+    body=self.read_json_body();fingerprint=str(body.get("migration_plan_sha256") or "")
+    preview_body={key:body.get(key) for key in ("instance_id","transfer_id","content_id","content_type","metadata") if key in body}
+    api=CustomerContentUploadService(backend(),legacy.DSM_ROOT)
+    attestation=api.revalidate_staged_loader_plan(user,str(body.get("transfer_id") or ""),preview_body,fingerprint)
+    return send(self,200,{"migration":attestation})
+   except Exception as exc:return error(self,exc)
   if parsed.path==UPLOAD_FINALIZE:
    user=require_user(self)
    if user is None:return
@@ -307,4 +318,4 @@ def install_customer_content_http(legacy,authenticate):
    _UPLOAD_SLOTS.release()
  legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post;legacy.DashboardHandler.do_PUT=put
 
-__all__=["PATH","SEARCH","ICON","BUNDLE","UPLOAD","UPLOAD_URL","UPLOAD_PREVIEW","MODPACK_DISCOVER","MODPACK_SERVERPACK_DOWNLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","UPLOAD_CANCEL","UPDATE_POLICY","UPDATE_POLICY_ITEM","STREAM","install_customer_content_http"]
+__all__=["PATH","SEARCH","ICON","BUNDLE","UPLOAD","UPLOAD_URL","UPLOAD_PREVIEW","UPLOAD_MIGRATION_REVALIDATE","MODPACK_DISCOVER","MODPACK_SERVERPACK_DOWNLOAD","UPLOAD_STATUS","UPLOAD_FINALIZE","UPLOAD_CANCEL","UPDATE_POLICY","UPDATE_POLICY_ITEM","STREAM","install_customer_content_http"]
