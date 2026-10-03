@@ -320,7 +320,7 @@ class CustomerContentUploadService:
   metadata=body.get("metadata") if isinstance(body.get("metadata"),Mapping) else {}
   # Read-only preview can inspect a future loader. Finalization deliberately
   # retains strict installed-build checks and same-build revision rules.
-  preview,_,bundle,children=build_serverpack_bundle(
+  preview,parent,bundle,children=build_serverpack_bundle(
    self.root,context,item,relative,cid,metadata,path,preview_loader_mismatch=True)
   self._serverpack_capacity(context,cid,children)
   installed_build=str(context.get("build_id") or "").strip()
