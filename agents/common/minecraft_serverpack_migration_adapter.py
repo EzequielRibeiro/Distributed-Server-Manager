@@ -104,7 +104,7 @@ def prepare_migration_inputs(
         "isolated_install_dir": install_dir,
         "runtime_selection": selected,
         "serverpack_staging": staged,
-        "neoform_installer_sha256": asset_sha,
+        "neoforge_installer_sha256": asset_sha,
         "execution_authorized": False,
     }
 
