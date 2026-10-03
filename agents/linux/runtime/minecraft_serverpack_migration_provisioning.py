@@ -20,8 +20,10 @@ import zipfile
 import sys
 
 _AGENT_COMMON=Path(__file__).resolve().parents[2]/"common"
-if str(_AGENT_COMMON) not in sys.path:
-    sys.path.insert(0,str(_AGENT_COMMON))
+_PROJECT_ROOT=Path(__file__).resolve().parents[3]
+for _path in (_AGENT_COMMON,_PROJECT_ROOT/"core"):
+    if str(_path) not in sys.path:
+        sys.path.insert(0,str(_path))
 
 from adapters import resolve_adapter
 from backup_client import _create as create_backup
