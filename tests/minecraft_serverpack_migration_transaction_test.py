@@ -44,8 +44,10 @@ class TransactionTest(unittest.TestCase):
   @contextmanager
   def fake_operation(config,instance_id,operation,lock_timeout_seconds=5.0):
    locks.append((instance_id,operation,lock_timeout_seconds));events.append("lock")
-   yield {}
-   events.append("unlock")
+   try:
+    yield {}
+   finally:
+    events.append("unlock")
   module.runtime_operation=fake_operation
   def hook(name,result=None):
    def call(*args):
