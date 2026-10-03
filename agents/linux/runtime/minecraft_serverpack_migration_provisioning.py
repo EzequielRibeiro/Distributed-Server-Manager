@@ -17,6 +17,11 @@ import tarfile
 import time
 from typing import Any
 import zipfile
+import sys
+
+_AGENT_COMMON=Path(__file__).resolve().parents[2]/"common"
+if str(_AGENT_COMMON) not in sys.path:
+    sys.path.insert(0,str(_AGENT_COMMON))
 
 from adapters import resolve_adapter
 from backup_client import _create as create_backup
