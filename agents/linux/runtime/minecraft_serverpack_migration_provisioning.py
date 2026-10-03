@@ -41,6 +41,7 @@ from minecraft_staged_migration_safety import assess_staged_migration
 
 _ENABLE_ENV="CAPIVARA_ENABLE_SERVERPACK_MIGRATION_HOMOLOGATION"
 _PREFIX="pr855-"
+_LAB_AGENT_ID="pr839-isolated-agent"
 
 
 class MinecraftServerPackProvisioningHomologationError(RuntimeError):
@@ -51,6 +52,7 @@ def enabled_for(request:dict[str,Any])->bool:
     return (
         os.environ.get(_ENABLE_ENV,"").strip().upper()=="YES"
         and str(request.get("instance_id") or "").startswith(_PREFIX)
+        and str(request.get("agent_id") or "").strip()==_LAB_AGENT_ID
     )
 
 
