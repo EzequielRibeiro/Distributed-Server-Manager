@@ -193,7 +193,7 @@ class AtomicPendingPublicationTest(unittest.TestCase):
     def test_mismatched_agent_fingerprint_rolls_back_job_completion_and_bundle_publication(self):
         pending=self.pending()
         repo,state=self.enqueue(pending)
-        with self.assertRaisesRegex(Exception,"fingerprint"):
+        with self.assertRaisesRegex(Exception,"migration_plan_sha256 mismatch"):
             repo.apply_result(
                 "pr839-isolated-agent",
                 self.completed(state,pending,fingerprint="d"*64),
