@@ -33,6 +33,7 @@ os.environ.setdefault("CAPIVARA_AGENT_CONFIG", str(_HYBRID_STATE / "agent.json")
 os.environ.setdefault("CAPIVARA_AGENT_SERVICE", "dsm-dashboard-worker.service")
 
 from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
+from agent_runtime_repository import AgentRuntimeRepository
 from dayz_management_repository import DayZManagementRepository
 from native_restart_repository import NativeRestartRepository
 from agent_public_network import AgentPublicNetworkRepository
@@ -815,6 +816,10 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         return {"active": False, "reason": "identity_incomplete"}
 
     effective_backend = backend or backend_from_environment(_database_environment(root))
+    # Renew liveness before potentially slow reconciliation/content work. This
+    # is a lease for a cycle that actually started, not a replacement for the
+    # normal inventory heartbeat performed by local reconciliation.
+    AgentRuntimeRepository(effective_backend).heartbeat(agent_id)
     local_reconcile_error = None
     try:
         result = reconcile_local_hybrid_runtime(
