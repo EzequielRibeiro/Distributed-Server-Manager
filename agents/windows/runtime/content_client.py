@@ -17,6 +17,12 @@ from minecraft_serverpack_agent import prepare_serverpack_payload,verify_install
 PROGRAM_DATA=Path(os.environ.get("PROGRAMDATA",r"C:\ProgramData"));STATE_ROOT=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR",PROGRAM_DATA/"CapivaraAgent"/"state"));CONTENT_STATE=STATE_ROOT/"managed-content";GAME_DATA_ROOT=Path(os.environ.get("CAPIVARA_AGENT_GAME_DATA_ROOT",STATE_ROOT/"game-data")).resolve()
 try:SECURITY_RETRY_SECONDS=max(30,min(int(os.environ.get("CAPIVARA_CONTENT_SECURITY_RETRY_SECONDS","300")),3600))
 except (TypeError,ValueError):SECURITY_RETRY_SECONDS=300
+try:OPERATIONAL_RETRY_SECONDS=max(60,min(int(os.environ.get("CAPIVARA_CONTENT_OPERATIONAL_RETRY_SECONDS","900")),3600))
+except (TypeError,ValueError):OPERATIONAL_RETRY_SECONDS=900
+try:ENOSPC_RETRY_SECONDS=max(OPERATIONAL_RETRY_SECONDS,min(int(os.environ.get("CAPIVARA_CONTENT_ENOSPC_RETRY_SECONDS","3600")),21600))
+except (TypeError,ValueError):ENOSPC_RETRY_SECONDS=max(OPERATIONAL_RETRY_SECONDS,3600)
+def _operational_retry_seconds(exc):
+ return ENOSPC_RETRY_SECONDS if isinstance(exc,OSError) and getattr(exc,"errno",None)==28 else OPERATIONAL_RETRY_SECONDS
 class ContentActivationError(RuntimeError):pass
 class ContentRollbackError(ContentActivationError):pass
 def _write(path:Path,payload:dict[str,Any]):
@@ -260,6 +266,15 @@ def _apply(config,cmd):
   try:retry_after=float(previous.get("security_retry_after_epoch") or 0)
   except (TypeError,ValueError):retry_after=0
   if time.time()<retry_after:return previous
+ if previous.get("status") in {"failed","rollback_failed"} and int(previous.get("desired_revision") or 0)==revision and str(previous.get("desired_checksum") or "")==checksum:
+  try:retry_after=float(previous.get("operational_retry_after_epoch") or 0)
+  except (TypeError,ValueError):retry_after=0
+  if retry_after<=0:
+   try:
+    legacy_delay=ENOSPC_RETRY_SECONDS if "no space left on device" in str(previous.get("last_error") or "").lower() else OPERATIONAL_RETRY_SECONDS
+    retry_after=state.stat().st_mtime+legacy_delay
+   except OSError:retry_after=0
+  if time.time()<retry_after:return previous
  try:
   desired=str(cmd.get("desired_state") or "installed");security={"security_state":"clean","engine":"none","policy_version":1,"reason":None,"matches":[]}
   if desired=="absent":path=_remove(config,cmd)
@@ -268,12 +283,12 @@ def _apply(config,cmd):
   report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":revision,"desired_checksum":checksum,"applied_checksum":checksum,"status":"applied","installed_version":None if desired=="absent" else str(cmd.get("version") or "latest"),"managed_path":path,"last_error":None,"readiness":"healthy","security_state":str(security.get("security_state") or "clean"),"applied_security_state":str(security.get("security_state") or "clean"),"security_policy_version":1,"security":{"engine":security.get("engine"),"matches":security.get("matches") or []},**source_meta}
  except ContentSecurityRejected as exc:
   verdict=exc.verdict;security_state=str(verdict.get("security_state") or "scan_failed");terminal=security_state in {"suspicious","blocked"};has_previous=previous.get("status") in {"applied","rolled_back"} and int(previous.get("applied_revision") or 0)>0 and bool(previous.get("applied_checksum")) and bool(previous.get("installed_version")) and bool(previous.get("managed_path"));applied_security=str(previous.get("applied_security_state") or previous.get("security_state") or "clean") if has_previous else None;report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":int(previous.get("applied_revision")) if has_previous else None,"desired_checksum":checksum,"applied_checksum":str(previous.get("applied_checksum")) if has_previous else None,"status":"security_blocked" if terminal else "security_scan_failed","installed_version":previous.get("installed_version") if has_previous else None,"managed_path":previous.get("managed_path") if has_previous else None,"last_error":str(verdict.get("reason") or exc)[:2000],"readiness":"security_rejected","security_state":security_state,"applied_security_state":applied_security,"security_policy_version":1,"security_retry_after_epoch":None if terminal else time.time()+SECURITY_RETRY_SECONDS,"security":{"engine":verdict.get("engine"),"matches":verdict.get("matches") or []},**source_meta}
- except ContentRollbackError as exc:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"rollback_failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"rollback_failed","security_state":"unscanned","security_policy_version":1,**source_meta}
+ except ContentRollbackError as exc:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"rollback_failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"rollback_failed","security_state":"unscanned","security_policy_version":1,"operational_retry_after_epoch":time.time()+_operational_retry_seconds(exc),**source_meta}
  except ContentActivationError as exc:
   if previous.get("status")=="applied" and int(previous.get("applied_revision") or 0)>0 and str(previous.get("applied_checksum") or ""):
    restored_meta={key:(previous.get(key) if previous.get(key) is not None else source_meta.get(key)) for key in ("provider","content_type","package_id","game_id","target","artifact_filename")}
    report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":int(previous.get("applied_revision")),"desired_checksum":checksum,"applied_checksum":str(previous.get("applied_checksum")),"status":"rolled_back","installed_version":previous.get("installed_version"),"managed_path":previous.get("managed_path"),"last_error":str(exc)[:2000],"readiness":"rolled_back","security_state":str(previous.get("security_state") or "clean"),"security_policy_version":int(previous.get("security_policy_version") or 1),**restored_meta}
-  else:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"rolled_back","security_state":"unscanned","security_policy_version":1,**source_meta}
+  else:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"rolled_back","security_state":"unscanned","security_policy_version":1,"operational_retry_after_epoch":time.time()+_operational_retry_seconds(exc),**source_meta}
  except Exception as exc:
   artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {}
   official=artifact.get("serverpack_v1") is True or artifact.get("serverpack_child_v1") is True
@@ -306,7 +321,8 @@ def _apply(config,cmd):
            "applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,
            "status":"failed","installed_version":None,"managed_path":None,
            "last_error":str(exc)[:2000],"readiness":"unknown",
-           "security_state":"unscanned","security_policy_version":1,**source_meta}
+           "security_state":"unscanned","security_policy_version":1,
+           "operational_retry_after_epoch":time.time()+_operational_retry_seconds(exc),**source_meta}
  _write(state,report);return report
 def apply_content_commands(config:dict[str,Any],commands:list[dict[str,Any]])->list[dict[str,Any]]:
  bounded=[c for c in commands[:2000] if isinstance(c,dict)];ordered=[c for c in bounded if c.get("desired_state")=="absent"]+[c for c in bounded if c.get("desired_state")!="absent"];reports=[];pending=ordered;prior={(str(c.get("instance_id") or ""),str(c.get("content_id") or "")):_dependency_state(str(c.get("instance_id") or ""),str(c.get("content_id") or "")) for c in bounded}
