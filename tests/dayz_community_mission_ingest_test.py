@@ -64,6 +64,28 @@ class DayZCommunityMissionIngestTest(unittest.TestCase):
                 ],
             )
 
+    def test_duplicate_mission_names_require_explicit_selector(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for version in ("V5.3", "V5.9"):
+                mission = root / "archive-root" / version / "empty.deerisle"
+                (mission / "db").mkdir(parents=True)
+                (mission / "init.c").write_text("void main() {}\n", encoding="utf-8")
+                (mission / "cfgeconomycore.xml").write_text("<economycore/>\n", encoding="utf-8")
+                (mission / "db" / "types.xml").write_text("<types/>\n", encoding="utf-8")
+            with self.assertRaisesRegex(DayZCommunityMissionError, "duplicate"):
+                discover_community_missions(root)
+            selected = discover_community_missions(
+                root, mission_path="V5.9/empty.deerisle"
+            )
+            self.assertEqual(len(selected), 1)
+            self.assertEqual(
+                selected[0]["relative_path"],
+                "archive-root/V5.9/empty.deerisle",
+            )
+            with self.assertRaisesRegex(DayZCommunityMissionError, "invalid"):
+                discover_community_missions(root, mission_path="../escape")
+
     def test_rejects_payload_without_recognizable_mission(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -119,8 +119,11 @@ def project_dayz_community_maps(spec: dict[str, Any], entries: list[dict[str, An
     for entry in entries:
         source_root = _managed_path(spec, entry)
         content_id = str(entry.get("content_id") or "").strip()
+        metadata = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+        marker = metadata.get("community_map") if isinstance(metadata.get("community_map"), dict) else {}
+        mission_path = str(marker.get("mission_path") or "").strip() or None
         try:
-            discovered = discover_community_missions(source_root)
+            discovered = discover_community_missions(source_root, mission_path=mission_path)
         except ValueError as exc:
             raise DayZContentActivationError(str(exc)) from exc
         for item in discovered:

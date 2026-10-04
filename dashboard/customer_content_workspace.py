@@ -383,7 +383,7 @@ class CustomerContentWorkspaceService:
 
  def install_dayz_community_map(self,user,instance_id,body):
   if not isinstance(body,Mapping):raise ValueError("community map payload must be an object")
-  allowed={"content_id","source","workshop_items","activation_order","name"}
+  allowed={"content_id","source","workshop_items","activation_order","name","mission_path"}
   unknown=sorted(set(body)-allowed-{"instance_id"})
   if unknown:raise ValueError("unsupported community map fields: "+", ".join(unknown))
   context,policy=self._context_policy(user,instance_id,"content.install")
@@ -411,7 +411,12 @@ class CustomerContentWorkspaceService:
    artifact.update({"url":url,"filename":"community-map.archive"})
    provenance["community_map"]["url"]=url
   items=list(prepared["items"]);dependencies=list(prepared["dependencies"])
-  payload={"instance_id":instance_id,"content_id":content_id,"content_type":"map","provider":provider,"desired_state":"installed","activation_state":"enabled","activation_order":order,"artifact":artifact,"provenance":provenance,"metadata":{"community_map":{"name":str(body.get("name") or content_id).strip()[:191]}},"dependencies":dependencies}
+  mission_path=str(body.get("mission_path") or "").strip().replace("\\","/")
+  parts=mission_path.split("/") if mission_path else []
+  if mission_path and (len(mission_path)>512 or mission_path.startswith("/") or any(part in {"",".",".."} for part in parts)):raise ValueError("invalid DayZ community mission path")
+  community_meta={"name":str(body.get("name") or content_id).strip()[:191]}
+  if mission_path:community_meta["mission_path"]=mission_path
+  payload={"instance_id":instance_id,"content_id":content_id,"content_type":"map","provider":provider,"desired_state":"installed","activation_state":"enabled","activation_order":order,"artifact":artifact,"provenance":provenance,"metadata":{"community_map":community_meta},"dependencies":dependencies}
   self._enforce_policy(payload,policy)
   actor=str(user.get("username") or "customer")
   result=self.content.put_many([*items,payload],requested_by=actor,**self._customer_guard_options())
