@@ -96,7 +96,7 @@ def _dayz_map_compatibility(command: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _entry(state: dict[str, Any]) -> dict[str, Any] | None:
+def _entry(state: dict[str, Any], *, include_disabled: bool = False) -> dict[str, Any] | None:
     status = str(state.get("status") or "")
     active_security = str(state.get("security_state") or "unscanned")
     if status in {"security_blocked", "security_scan_failed"}:
@@ -113,7 +113,7 @@ def _entry(state: dict[str, Any]) -> dict[str, Any] | None:
         return None
     if str(state.get("desired_state") or "installed") != "installed":
         return None
-    if str(state.get("activation_state") or "enabled") != "enabled":
+    if not include_disabled and str(state.get("activation_state") or "enabled") != "enabled":
         return None
     if not state.get("installed_version"):
         return None
@@ -188,6 +188,25 @@ def build_activation_snapshot(instance_id: str) -> dict[str, Any]:
     return {**identity, "checksum": checksum}
 
 
+def activation_snapshot_with(instance_id: str, content_ids: list[str]) -> dict[str, Any]:
+    iid = _safe_component(instance_id);states=_load_instance_states(iid);by_id={str(state.get("content_id") or ""):state for state in states}
+    selected={str(value).strip() for value in content_ids if str(value).strip()}
+    pending=list(selected)
+    while pending:
+        cid=pending.pop();state=by_id.get(cid) or {}
+        for dep in state.get("dependencies") or []:
+            dep=str(dep).strip()
+            if dep and dep not in selected:selected.add(dep);pending.append(dep)
+    entries=[]
+    for state in states:
+        cid=str(state.get("content_id") or "")
+        entry=_entry(state,include_disabled=cid in selected)
+        if entry is not None:entries.append(entry)
+    entries=_ordered_entries(entries)
+    identity={"schema_version":1,"kind":"CapivaraContentActivationSnapshot","instance_id":iid,"entries":entries}
+    checksum=hashlib.sha256(json.dumps(identity,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode("utf-8")).hexdigest()
+    return {**identity,"checksum":checksum}
+
 def refresh_activation_snapshot(instance_id: str) -> dict[str, Any]:
     snapshot = build_activation_snapshot(instance_id)
     _write(ACTIVATION_STATE / f"{snapshot['instance_id']}.json", snapshot)
@@ -232,6 +251,8 @@ def synchronize_activation_state(commands: list[dict[str, Any]], reports: list[d
         state["dependencies"] = [str(value).strip() for value in (command.get("dependencies") or []) if str(value).strip()]
         state["activation"] = _activation(command)
         state["dayz_map_compatibility"] = _dayz_map_compatibility(command)
+        metadata = command.get("metadata") if isinstance(command.get("metadata"), dict) else {}
+        state["community_map"] = dict(metadata.get("community_map") or {}) if isinstance(metadata.get("community_map"), dict) else {}
         _write(path, state)
         changed_instances.add(iid)
 
@@ -250,6 +271,7 @@ def activation_snapshot(instance_id: str) -> dict[str, Any]:
 
 __all__ = [
     "activation_snapshot",
+    "activation_snapshot_with",
     "build_activation_snapshot",
     "refresh_activation_snapshot",
     "synchronize_activation_state",

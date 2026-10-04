@@ -87,7 +87,8 @@ def project_runtime_spec(spec:dict[str,Any],snapshot:dict[str,Any])->dict[str,An
  if game_id=="dayz":result["dayz_content_enabled"]=dayz_enabled
  if game_id=="dayz" and not dayz_enabled:base=[value for value in base if not str(value).strip().lower().startswith(("-mod=","-servermod="))]
  dayz_map_entries=[entry for entry in entries if _adapter(entry)=="dayz" and str(entry.get("content_type") or "").strip().lower()=="map"]
- dayz_entries=[entry for entry in entries if _adapter(entry)=="dayz" and str(entry.get("content_type") or "").strip().lower()!="map"] if dayz_enabled else []
+ required_dayz={str(value).strip() for value in result.get("dayz_required_content_ids") or [] if str(value).strip()}
+ dayz_entries=[entry for entry in entries if _adapter(entry)=="dayz" and str(entry.get("content_type") or "").strip().lower()!="map" and (dayz_enabled or str(entry.get("content_id") or "") in required_dayz)]
  try:
   community_missions=project_dayz_community_maps(result,dayz_map_entries) if game_id=="dayz" else []
  except DayZContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc

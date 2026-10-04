@@ -4,6 +4,8 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+import json
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -85,6 +87,17 @@ class DayZMapSwitchStabilizationTest(unittest.TestCase):
             [item["content_id"] for item in dayz_operation_client._activation_order(snapshot)],
             ["cf", "vpp", "codelock"],
         )
+
+    def test_prepared_disabled_map_is_exposed_as_community_source(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);managed=root/"managed";mission=managed/"V5.9"/"empty.deerisle";mission.mkdir(parents=True)
+            (mission/"init.c").write_text("void main(){}",encoding="utf-8");(mission/"cfgeconomycore.xml").write_text("<economy/>",encoding="utf-8")
+            state_root=root/"state";instance=state_root/"dayz-1";instance.mkdir(parents=True)
+            state={"status":"applied","desired_state":"installed","activation_state":"disabled","game_id":"dayz","content_type":"map","security_state":"clean","installed_version":"latest","managed_path":str(managed),"content_id":"dayz-map:deerisle","community_map":{"mission_path":"V5.9/empty.deerisle"}}
+            (instance/"dayz-map:deerisle.json").write_text(json.dumps(state),encoding="utf-8")
+            with patch.object(dayz_operation_client,"CONTENT_STATE",state_root):
+                record=dayz_operation_client._record_with_prepared_maps({},"dayz-1")
+            self.assertEqual(record["content_dayz_community_missions"],[{"id":"empty.deerisle","source":str(mission.resolve()),"content_id":"dayz-map:deerisle"}])
 
     def test_hybrid_rollback_repairs_file_access_through_privileged_helper(self):
         completed = type("Completed", (), {"returncode": 0, "stderr": "", "stdout": ""})()

@@ -56,6 +56,15 @@ class ContentContractTest(unittest.TestCase):
    with patch.object(content_client,"_owned",return_value=({"instance_id":"instance-c4","agent_id":"agent-c4"},instance)),patch.object(content_client,"_source",return_value=source),patch.object(content_client,"require_clean",return_value={"security_state":"clean","engine":"yara-x","policy_version":1,"matches":[]}),patch.object(content_client.instance_runtime,"status",return_value={"observed_state":"running"}),patch.object(content_client.instance_runtime,"lifecycle",side_effect=life),patch.object(content_client.instance_runtime,"doctor",side_effect=[{"ready":False},{"ready":True}]):
     with self.assertRaises(content_client.ContentActivationError):content_client._install({"agent_id":"agent-c4"},cmd)
    self.assertTrue((target/"old.bin").is_file());self.assertFalse((target/"new.bin").exists());self.assertEqual(lifecycle,["stop","start","stop","start"]);self.assertFalse(target.with_name(target.name+".c4-old").exists())
+ def test_disabled_content_materializes_without_runtime_restart(self):
+  with tempfile.TemporaryDirectory() as td:
+   instance=Path(td)/"instance";instance.mkdir();source=Path(td)/"map";mission=source/"empty.test";mission.mkdir(parents=True);(mission/"init.c").write_text("void main(){}",encoding="utf-8");(mission/"cfgeconomycore.xml").write_text("<economy/>",encoding="utf-8")
+   cmd={"instance_id":"instance-c4","content_id":"dayz-map:test","game_id":"dayz","content_type":"map","activation_state":"disabled","target":"maps/dayz-map:test","provider":"local","artifact":{}}
+   lifecycle=[]
+   with patch.object(content_client,"_owned",return_value=({"instance_id":"instance-c4","agent_id":"agent-c4"},instance)),patch.object(content_client,"_source",return_value=source),patch.object(content_client,"require_clean",return_value={"security_state":"clean","engine":"yara-x","policy_version":1,"matches":[]}),patch.object(content_client.instance_runtime,"status") as status,patch.object(content_client.instance_runtime,"lifecycle",side_effect=lambda config,iid,action:lifecycle.append(action)):
+    path,_=content_client._install({"agent_id":"agent-c4"},cmd)
+   self.assertTrue((Path(path)/"empty.test"/"init.c").is_file());self.assertEqual(lifecycle,[]);status.assert_not_called()
+
  def test_workshop_install_materializes_directly_into_private_instance_transaction(self):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);instance=root/"instance";instance.mkdir();source=root/"steam"/"1602372402";source.mkdir(parents=True);(source/"map.pbo").write_bytes(b"tiny")
@@ -63,7 +72,7 @@ class ContentContractTest(unittest.TestCase):
    seen={}
    def materialize(artifact,game_data_root,consume):
     seen["source"]=source;return consume(source)
-   def activate(config,iid,target,payload):
+   def activate(config,iid,target,payload,**kwargs):
     seen["target"]=target;seen["payload_files"]=[x.relative_to(payload).as_posix() for x in payload.rglob("*") if x.is_file()]
     target.parent.mkdir(parents=True,exist_ok=True);import shutil;shutil.copytree(payload,target)
    clean={"security_state":"clean","engine":"yara-x","policy_version":1,"matches":[]}

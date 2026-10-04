@@ -36,7 +36,8 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
   self.assertIn("Iniciar novo mapa com mods desabilitados (recomendado)",dayz_js)
   self.assertIn("Manter mods ativos (preflight de compatibilidade)",dayz_js)
   self.assertIn("content_mode:mapContentMode",dayz_js)
-  self.assertIn('"Adicionar mapa comunitário"',dayz_js)
+  self.assertIn('"Adicionar mapa"',dayz_js)
+  self.assertIn("sem alterar o mapa ativo",dayz_js)
   self.assertIn('COMMUNITY_API=API+"/community-map"',dayz_js)
   self.assertIn('workshop_items:ids',dayz_js)
   self.assertIn('"Upload direto","upload"',dayz_js)
@@ -69,6 +70,8 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
    self.assertIn("project_runtime_spec(updated,snapshot)",operation)
    self.assertIn("dayz_content_enabled",runtime)
    self.assertIn("dayz_map_compatibility",projection)
+   self.assertIn("_record_with_prepared_maps",operation)
+   self.assertIn("discover_community_missions",operation)
  def test_upgrade_is_registered(self):
   source=(ROOT/"database"/"baseline_upgrade_engine.py").read_text(encoding="utf-8")
   self.assertIn('BaselineUpgrade(21, "dayz_management_operations"',source)
