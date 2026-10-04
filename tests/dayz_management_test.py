@@ -62,9 +62,10 @@ class DayZManagementTest(unittest.TestCase):
  def test_discovers_and_copies_managed_community_mission(self):
   source=self.state/"content"/"maps"/"namalsk"/"Mission Files"/"regular.namalsk"
   (source/"db").mkdir(parents=True);(source/"init.c").write_text("void main() {}\n",encoding="utf-8");(source/"db"/"types.xml").write_text("<types/>\n",encoding="utf-8")
-  record={**self.record,"content_dayz_community_missions":[{"id":"regular.namalsk","source":str(source),"content_id":"github:namalsk"}]}
+  record={**self.record,"content_dayz_community_missions":[{"id":"regular.namalsk","source":str(source),"content_id":"github:namalsk","name":"Namalsk"}]}
   view=discover_missions(record);item=next(x for x in view["missions"] if x["id"]=="regular.namalsk")
   self.assertTrue(item["community"]);self.assertEqual(item["source"],"community-content");self.assertTrue(item["available"]);self.assertFalse(item["installed"])
+  self.assertEqual(item["name"],"Namalsk");self.assertEqual(item["content_id"],"github:namalsk")
   changed=apply_mission(record,"regular.namalsk")
   private=self.state/"mpmissions"/"regular.namalsk"
   self.assertTrue((private/"init.c").is_file());self.assertTrue((private/"db"/"types.xml").is_file())

@@ -40,6 +40,17 @@ def _community_sources(record):
         if source.is_dir():result[mission]=source
     return result
 
+def _community_metadata(record):
+    result={}
+    raw=record.get("content_dayz_community_missions")
+    if not isinstance(raw,list):return result
+    for item in raw:
+        if not isinstance(item,dict):continue
+        mission=str(item.get("id") or "").strip()
+        if not _SAFE.fullmatch(mission):continue
+        result[mission]={"content_id":str(item.get("content_id") or "").strip(),"name":str(item.get("name") or "").strip()}
+    return result
+
 def current_mission(record):
     path=_config(record)
     try:source=path.read_text(encoding="utf-8",errors="replace")
@@ -55,7 +66,7 @@ def current_mission(record):
     return "dayzOffline.chernarusplus"
 def discover_missions(record):
     current=current_mission(record);root=_root(record);working=_working(record)
-    private_root=root/"mpmissions";shared_root=working/"mpmissions";community=_community_sources(record)
+    private_root=root/"mpmissions";shared_root=working/"mpmissions";community=_community_sources(record);community_metadata=_community_metadata(record)
     names=set(_OFFICIAL)
     locations={}
     for kind,base in (("instance",private_root),("runtime",shared_root)):
@@ -76,11 +87,14 @@ def discover_missions(record):
         active=name==current
         state="active" if active else ("installed" if installed else ("available" if available else "unavailable"))
         source="official-runtime" if official else ("community-instance" if installed else ("community-content" if "content" in where else "community-runtime"))
-        result.append({
-            "id":name,"name":_OFFICIAL.get(name,name),"official":official,"community":not official,
+        community_item=community_metadata.get(name) or {}
+        item={
+            "id":name,"name":_OFFICIAL.get(name,community_item.get("name") or name),"official":official,"community":not official,
             "current":active,"active":active,"installed":installed,"available":available,
             "can_activate":available,"state":state,"source":source,
-        })
+        }
+        if community_item.get("content_id"):item["content_id"]=community_item["content_id"]
+        result.append(item)
     active_item=next((item for item in result if item["active"]),None)
     return {
         "schema_version":2,

@@ -43,11 +43,11 @@ class ContentActivationRuntimeTest(unittest.TestCase):
    root=Path(tmp);(root/"server").mkdir();mission=root/"state"/"content"/"maps"/"namalsk"/"Mission Files"/"regular.namalsk";(mission/"db").mkdir(parents=True)
    (mission/"init.c").write_text("void main() {}\n",encoding="utf-8");(mission/"db"/"types.xml").write_text("<types/>\n",encoding="utf-8")
    spec={**self._spec(root),"game_id":"dayz"}
-   snapshot={"checksum":"map","entries":[{"content_id":"github:namalsk","game_id":"dayz","content_type":"map","provider":"github","managed_path":str(root/"state"/"content"/"maps"/"namalsk")}]}
+   snapshot={"checksum":"map","entries":[{"content_id":"github:namalsk","game_id":"dayz","content_type":"map","provider":"github","managed_path":str(root/"state"/"content"/"maps"/"namalsk"),"metadata":{"community_map":{"name":"Namalsk"}}}]}
    projected=self.module.project_runtime_spec(spec,snapshot)
    self.assertEqual(projected["arguments"],["-config=server.cfg"])
    self.assertNotIn("content_dayz_mod_aliases",projected)
-   self.assertEqual(projected["content_dayz_community_missions"],[{"id":"regular.namalsk","source":str(mission.resolve()),"content_id":"github:namalsk"}])
+   self.assertEqual(projected["content_dayz_community_missions"],[{"id":"regular.namalsk","source":str(mission.resolve()),"content_id":"github:namalsk","name":"Namalsk"}])
  def test_project_zomboid_projection_and_materialization(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);(root/"server").mkdir();(root/"state").mkdir()
