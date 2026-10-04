@@ -254,6 +254,8 @@ class ControllerServerPackFlowTest(unittest.TestCase):
                 "content_id":"atm11",
                 "transfer_id":"transfer-e2e",
                 "migration_plan_sha256":"c"*64,
+                "from_loader_version":"26.1.2.94",
+                "target_loader_version":"26.1.2.109",
                 "commit":{
                     "status":"committed",
                     "journal":{
@@ -272,6 +274,13 @@ class ControllerServerPackFlowTest(unittest.TestCase):
             final["result"]["controller_bundle_publication"]["candidate_sha256"],
             self.prepared["pending_bundle_commit"]["candidate_sha256"],
         )
+        with self.backend.connect() as connection:
+            row=connection.execute(
+                "SELECT game_version,build_id FROM instances WHERE id=?",
+                ("pr855-controller-e2e",),
+            ).fetchone()
+        self.assertEqual(row["game_version"],"26.1.2")
+        self.assertEqual(row["build_id"],"26.1.2.109")
 
 
 if __name__=="__main__":
