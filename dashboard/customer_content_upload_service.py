@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import os
 import socket
 import zipfile
 from pathlib import Path
@@ -408,6 +409,13 @@ class CustomerContentUploadService:
   if str(plan.get("migration_plan_sha256") or "")!=expected:
    raise ValueError("O ZIP, loader, transferência ou revisão mudou desde a prévia; revalide antes de atualizar.")
   # Never return an executable request or let this validation alter assignments.
+  item=self._transfer(user,transfer_id)
+  context,_,_=self._access(user,str(item.get("instance_id") or ""))
+  homologation_enqueue_available=(
+   os.environ.get("CAPIVARA_ENABLE_SERVERPACK_MIGRATION_HOMOLOGATION","").strip().upper()=="YES"
+   and str(context.get("id") or "").startswith("pr855-")
+   and str(context.get("agent_id") or "").strip()=="pr839-isolated-agent"
+  )
   return {
    "valid":True,
    "install_allowed":False,
@@ -416,6 +424,7 @@ class CustomerContentUploadService:
    "manifest_diff":dict(plan.get("manifest_diff") or {}),
    "requires_verified_backup":True,
    "requires_exclusive_instance_lock":True,
+   "provisioning_homologation_available":homologation_enqueue_available,
   }
 
  def prepare_staged_loader_migration(self,user,transfer_id,body:Mapping[str,Any],expected_plan_sha256:str):
