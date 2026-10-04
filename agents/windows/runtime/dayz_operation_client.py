@@ -108,7 +108,10 @@ def _record_with_prepared_maps(record,iid):
             relative=str(mission.get("relative_path") or "").strip();mission_id=str(mission.get("id") or "").strip()
             if not relative or not mission_id:continue
             source=(Path(managed)/relative).resolve(strict=False)
-            prepared.append({"id":mission_id,"source":str(source),"content_id":str(state.get("content_id") or ""),"dependencies":[str(value).strip() for value in state.get("dependencies") or [] if str(value).strip()]})
+            item={"id":mission_id,"source":str(source),"content_id":str(state.get("content_id") or ""),"dependencies":[str(value).strip() for value in state.get("dependencies") or [] if str(value).strip()]}
+            display_name=str(community.get("name") or "").strip()
+            if display_name:item["name"]=display_name
+            prepared.append(item)
     existing=result.get("content_dayz_community_missions") if isinstance(result.get("content_dayz_community_missions"),list) else []
     merged={str(item.get("id") or "").casefold():dict(item) for item in existing if isinstance(item,dict) and item.get("id")}
     for item in prepared:merged[str(item["id"]).casefold()]=item
