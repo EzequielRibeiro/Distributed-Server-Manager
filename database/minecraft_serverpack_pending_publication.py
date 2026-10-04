@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from content_repository import ContentRepository
+from alert_repository import dialect_for_backend
 from core.minecraft_serverpack_pending_commit import (
     MinecraftServerPackPendingCommitError,
     authorize_after_agent_completion,
@@ -42,6 +43,7 @@ def publish_pending_serverpack_bundle(
 
     repo=ContentRepository(backend)
     ph=repo.ph
+    dialect=dialect_for_backend(backend)
     current=session.execute(
         f"SELECT revision,manifest_sha256,minecraft_version,loader_id,loader_version "
         f"FROM content_bundles WHERE instance_id={ph} AND parent_content_id={ph}",
@@ -114,7 +116,7 @@ def publish_pending_serverpack_bundle(
         )
 
     updated=session.execute(
-        f"UPDATE instances SET game_version={ph},build_id={ph},updated_at={repo.dialect.current_timestamp} "
+        f"UPDATE instances SET game_version={ph},build_id={ph},updated_at={dialect.current_timestamp} "
         f"WHERE id={ph} AND runtime_id={ph} AND game_version={ph} AND build_id={ph}",
         (
             target_minecraft,
