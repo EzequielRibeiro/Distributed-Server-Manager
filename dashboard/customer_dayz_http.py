@@ -86,7 +86,12 @@ def install_customer_dayz_http(legacy,authenticate):
                 content=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT)
                 prepared=content.dayz_community_workshop_dependencies(user,instance_id,body.get("workshop_items") or [],body.get("activation_order") or 100)
                 upload=CustomerContentUploadService(backend(),legacy.DSM_ROOT)
-                finalize_body={"instance_id":instance_id,"transfer_id":str(body.get("transfer_id") or ""),"content_id":str(body.get("content_id") or ""),"activation_order":int(prepared["activation_order"]),"metadata":{"display_name":str(body.get("name") or body.get("content_id") or "")[:191]}}
+                mission_path=str(body.get("mission_path") or "").strip().replace("\\","/")
+                parts=mission_path.split("/") if mission_path else []
+                if mission_path and (len(mission_path)>512 or mission_path.startswith("/") or any(part in {"",".",".."} for part in parts)):raise ValueError("invalid DayZ community mission path")
+                community_meta={"name":str(body.get("name") or body.get("content_id") or "")[:191]}
+                if mission_path:community_meta["mission_path"]=mission_path
+                finalize_body={"instance_id":instance_id,"transfer_id":str(body.get("transfer_id") or ""),"content_id":str(body.get("content_id") or ""),"activation_order":int(prepared["activation_order"]),"metadata":{"display_name":community_meta["name"],"community_map":community_meta}}
                 result=upload.finalize_dayz_community_map(user,finalize_body["transfer_id"],finalize_body,prepared["items"])
                 return send(self,202,{"community_map":result,"view":view(user,instance_id)})
             workspace,context,repo=service(user,instance_id,"instance.restart");workspace.require(user,instance_id,"settings.write");repo.initialize()

@@ -12,7 +12,7 @@ COMMON_DIR = RUNTIME_DIR.parent.parent / "common"
 if str(COMMON_DIR) not in sys.path:
     sys.path.insert(0, str(COMMON_DIR))
 
-from dayz_community_missions import community_mission_manifest
+from dayz_community_missions import discover_community_missions
 from minecraft_serverpack_agent import validate_extracted_serverpack
 
 
@@ -49,15 +49,18 @@ def _validate_dayz_mod(root: Path, files: list[Path]) -> dict[str, Any]:
     return {"validator": "dayz-mod-v1", "pbo_files": len(pbo)}
 
 
-def _validate_dayz_map(root: Path) -> dict[str, Any]:
+def _validate_dayz_map(root: Path, command: dict[str, Any]) -> dict[str, Any]:
+    metadata = command.get("metadata") if isinstance(command.get("metadata"), dict) else {}
+    marker = metadata.get("community_map") if isinstance(metadata.get("community_map"), dict) else {}
+    mission_path = str(marker.get("mission_path") or "").strip() or None
     try:
-        manifest = community_mission_manifest(root)
+        missions = discover_community_missions(root, mission_path=mission_path)
     except ValueError as exc:
         raise ContentSemanticValidationError(str(exc)) from exc
     return {
         "validator": "dayz-community-map-v1",
-        "missions": manifest["missions"],
-        "mission_count": manifest["count"],
+        "missions": missions,
+        "mission_count": len(missions),
     }
 
 
@@ -173,7 +176,7 @@ def validate_external_content_payload(
     # only when they originate from a customer upload. This keeps GitHub/HTTP
     # mission sources behind the same fail-closed semantic boundary.
     if game_id == "dayz" and content_type == "map":
-        return _validate_dayz_map(payload)
+        return _validate_dayz_map(payload, command)
 
     if provider != "local" or artifact.get("ephemeral_upload") is not True:
         return {"validator": "not-required"}

@@ -188,6 +188,32 @@ class CustomerWorkshopIntegrationTest(unittest.TestCase):
         self.assertEqual(community["activation_order"], 42)
         self.assertEqual(community["provenance"]["community_map"]["repository"], "SumrakDZN/Namalsk-Server")
 
+    def test_dayz_community_map_persists_mission_path_selector(self):
+        service = _service()
+        service.workspace.policy.mods_allowed = True
+        result = service.install_dayz_community_map(
+            {"username": "u"}, "i1", {
+                "content_id": "dayz-map:deerisle",
+                "name": "DeerIsle",
+                "mission_path": "V5.9/empty.deerisle",
+                "source": {"provider": "github", "repository": "johnmclane666/Deerisle-Stable", "ref": "master"},
+                "workshop_items": ["1602372402"],
+            })
+        community = result["assignment"]
+        self.assertEqual(community["metadata"]["community_map"]["mission_path"], "V5.9/empty.deerisle")
+
+    def test_dayz_community_map_rejects_unsafe_mission_path(self):
+        service = _service()
+        service.workspace.policy.mods_allowed = True
+        with self.assertRaisesRegex(ValueError, "invalid DayZ community mission path"):
+            service.install_dayz_community_map(
+                {"username": "u"}, "i1", {
+                    "content_id": "dayz-map:deerisle",
+                    "mission_path": "../escape",
+                    "source": {"provider": "github", "repository": "johnmclane666/Deerisle-Stable", "ref": "master"},
+                    "workshop_items": [],
+                })
+
     def test_dayz_community_map_rejects_unsafe_github_ref(self):
         service = _service()
         service.workspace.policy.mods_allowed = True

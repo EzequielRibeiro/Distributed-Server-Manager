@@ -57,10 +57,18 @@ def _looks_like_mission(path: Path) -> bool:
     )
 
 
-def discover_community_missions(root: Path | str) -> list[dict[str, Any]]:
+def discover_community_missions(root: Path | str, *, mission_path: str | None = None) -> list[dict[str, Any]]:
     payload = Path(root).resolve(strict=False)
     if not payload.is_dir() or _is_link(payload):
         raise DayZCommunityMissionError("DayZ community map payload is not a safe directory")
+    selected_parts = None
+    if mission_path is not None:
+        raw = str(mission_path or "").strip().replace("\\", "/")
+        relative = Path(raw)
+        if (not raw or raw.startswith("/") or relative.is_absolute()
+                or any(part in {"", ".", ".."} for part in relative.parts)):
+            raise DayZCommunityMissionError("invalid DayZ community mission path")
+        selected_parts = tuple(relative.parts)
 
     found: dict[str, Path] = {}
     for current, directories, _files in os.walk(payload, followlinks=False):
@@ -79,6 +87,10 @@ def discover_community_missions(root: Path | str) -> list[dict[str, Any]]:
 
         if base == payload or not _looks_like_mission(base):
             continue
+        if selected_parts is not None:
+            relative_parts = base.relative_to(payload).parts
+            if len(relative_parts) < len(selected_parts) or tuple(relative_parts[-len(selected_parts):]) != selected_parts:
+                continue
 
         name = base.name
         if not _SAFE_MISSION.fullmatch(name):
@@ -95,6 +107,8 @@ def discover_community_missions(root: Path | str) -> list[dict[str, Any]]:
             raise DayZCommunityMissionError("DayZ community map payload exposes too many missions")
 
     if not found:
+        if selected_parts is not None:
+            raise DayZCommunityMissionError("selected DayZ community mission was not found")
         raise DayZCommunityMissionError(
             "DayZ community map payload contains no recognizable mission directories"
         )
