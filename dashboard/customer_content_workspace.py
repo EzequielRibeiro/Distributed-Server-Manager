@@ -372,17 +372,22 @@ class CustomerContentWorkspaceService:
    if text.startswith("steam-workshop:"):text=text.split(":",1)[1]
    if not text.isdigit() or len(text)>20:raise ValueError("invalid Steam Workshop item")
    if text not in workshop_ids:workshop_ids.append(text)
-  dependencies=[];item_index={}
+  dependencies=[];item_index={};existing_items={}
   for index,published_id in enumerate(workshop_ids):
    content_id=f"steam-workshop:{published_id}";existing=self.content.get(instance_id,content_id)
-   activation_state=str((existing or {}).get("activation_state") or "disabled") if str((existing or {}).get("desired_state") or "")=="installed" else "disabled"
-   item={"instance_id":instance_id,"content_id":content_id,"content_type":"workshop","provider":"steam-workshop","desired_state":"installed","activation_state":activation_state,"activation_order":order+index,"artifact":{"provider":"steam-workshop","published_file_id":published_id}}
+   if existing is not None and str(existing.get("desired_state") or "installed")=="installed":
+    dependencies.append(content_id);existing_items[content_id]={**existing,"content_id":content_id}
+    continue
+   item={"instance_id":instance_id,"content_id":content_id,"content_type":"workshop","provider":"steam-workshop","desired_state":"installed","activation_state":"disabled","activation_order":order+index,"artifact":{"provider":"steam-workshop","published_file_id":published_id}}
    self._enforce_policy(item,policy);self._resolve_workshop(context,item);nested=self._resolve_workshop_dependencies(context,item);self._prepare_activation_defaults(context,item)
    for dependency in nested:
     dependency_id=str(dependency.get("content_id") or "");existing_dependency=self.content.get(instance_id,dependency_id)
-    dependency["activation_state"]=str((existing_dependency or {}).get("activation_state") or "disabled") if str((existing_dependency or {}).get("desired_state") or "")=="installed" else "disabled";self._enforce_policy(dependency,policy);item_index[dependency_id]=dependency
+    if existing_dependency is not None and str(existing_dependency.get("desired_state") or "installed")=="installed":
+     existing_items[dependency_id]={**existing_dependency,"content_id":dependency_id}
+     continue
+    dependency["activation_state"]="disabled";self._enforce_policy(dependency,policy);item_index[dependency_id]=dependency
    item_index[item["content_id"]]=item;dependencies.append(item["content_id"])
-  return {"context":context,"policy":policy,"items":list(item_index.values()),"dependencies":dependencies,"activation_order":order+len(item_index)}
+  return {"context":context,"policy":policy,"items":list(item_index.values()),"existing_items":list(existing_items.values()),"dependencies":dependencies,"activation_order":order+len(item_index)}
 
  def install_dayz_community_map(self,user,instance_id,body):
   if not isinstance(body,Mapping):raise ValueError("community map payload must be an object")
@@ -424,7 +429,7 @@ class CustomerContentWorkspaceService:
   actor=str(user.get("username") or "customer")
   result=self.content.put_many([*items,payload],requested_by=actor,**self._customer_guard_options())
   result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==content_id)
-  result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=content_id]
+  result["dependencies"]=[*prepared.get("existing_items",[]),*[item for item in result["assignments"] if str(item.get("content_id") or "")!=content_id]]
   return result
 
  def install(self,user,instance_id,body):
