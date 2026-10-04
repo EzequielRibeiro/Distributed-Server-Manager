@@ -200,6 +200,9 @@ class CustomerWorkshopIntegrationTest(unittest.TestCase):
         result=service.install_dayz_community_map({"username":"u"},"i1",{"content_id":"dayz-map:deerisle","name":"DeerIsle","source":{"provider":"github","repository":"johnmclane666/Deerisle-Stable","ref":"master"},"workshop_items":["1602372402"]})
         dep=next(item for item in result["dependencies"] if item["content_id"]=="steam-workshop:1602372402")
         self.assertEqual(dep["activation_state"],"enabled");self.assertEqual(result["assignment"]["activation_state"],"disabled")
+        written=[payload["content_id"] for payload,_ in service.content.puts]
+        self.assertNotIn("steam-workshop:1602372402",written)
+        self.assertIn("dayz-map:deerisle",written)
 
     def test_dayz_community_map_persists_mission_path_selector(self):
         service = _service()
