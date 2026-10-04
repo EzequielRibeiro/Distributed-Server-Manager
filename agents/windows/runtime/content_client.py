@@ -134,10 +134,10 @@ def _remove_path(path:Path):
  if not path.exists():return
  shutil.rmtree(path) if path.is_dir() else path.unlink()
 def _runtime_ready(config:dict[str,Any],iid:str)->bool:return bool(instance_runtime.doctor(config,iid).get("ready"))
-def _activate_target(config:dict[str,Any],iid:str,target:Path,payload:Path|None)->None:
+def _activate_target(config:dict[str,Any],iid:str,target:Path,payload:Path|None,*,restart_runtime:bool=True)->None:
  backup=target.with_name(target.name+".c4-old")
  if backup.exists():raise ContentActivationError("unfinished content transaction detected")
- was_running=instance_runtime.status(config,iid).get("observed_state")=="running";previous_exists=target.exists();activated=False
+ was_running=restart_runtime and instance_runtime.status(config,iid).get("observed_state")=="running";previous_exists=target.exists();activated=False
  try:
   if was_running:instance_runtime.lifecycle(config,iid,"stop")
   if previous_exists:os.replace(target,backup)
@@ -203,7 +203,7 @@ def _install(config,cmd):
   elif source.is_dir():shutil.copytree(source,payload,dirs_exist_ok=True)
   else:shutil.copy2(source,payload/(str(artifact.get("filename") or source.name or "content.bin")))
   validate_external_content_payload(payload,cmd)
-  _activate_target(config,iid,target,payload)
+  _activate_target(config,iid,target,payload,restart_runtime=str(cmd.get("activation_state") or "enabled").strip().lower()=="enabled")
  finally:shutil.rmtree(stage,ignore_errors=True)
  return str(target),expanded_scan or source_scan
 def _remove(config,cmd):

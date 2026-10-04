@@ -187,6 +187,8 @@ class CustomerWorkshopIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(community["activation_order"], 42)
         self.assertEqual(community["provenance"]["community_map"]["repository"], "SumrakDZN/Namalsk-Server")
+        self.assertEqual(community["activation_state"], "disabled")
+        self.assertTrue(all(item["activation_state"] == "disabled" for item in result["dependencies"]))
 
     def test_dayz_community_map_persists_mission_path_selector(self):
         service = _service()

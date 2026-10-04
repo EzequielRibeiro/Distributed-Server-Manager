@@ -27,6 +27,17 @@ class ContentActivationRuntimeTest(unittest.TestCase):
    empty=self.module.project_runtime_spec(projected,{"checksum":"empty","entries":[]})
    self.assertEqual(empty["arguments"],["-config=server.cfg"])
    self.assertNotIn("content_dayz_mod_aliases",empty)
+ def test_dayz_required_map_dependency_stays_loaded_when_optional_mods_are_disabled(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);(root/"server").mkdir();required=root/"state"/"content"/"required";optional=root/"state"/"content"/"optional";required.mkdir(parents=True);optional.mkdir(parents=True)
+   spec={**self._spec(root),"game_id":"dayz","dayz_content_enabled":False,"dayz_required_content_ids":["required"]}
+   snapshot={"checksum":"map-switch","entries":[
+    {"content_id":"required","game_id":"dayz","package_id":"221100:1602372402","managed_path":str(required),"activation":{"mode":"mod"}},
+    {"content_id":"optional","game_id":"dayz","package_id":"221100:999","managed_path":str(optional),"activation":{"mode":"mod"}},
+   ]}
+   projected=self.module.project_runtime_spec(spec,snapshot)
+   self.assertIn("-mod=@dsm-i1-1602372402",projected["arguments"]);self.assertNotIn("@dsm-i1-999"," ".join(projected["arguments"]))
+
  def test_dayz_map_projection_exposes_missions_without_adding_mod_argument(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);(root/"server").mkdir();mission=root/"state"/"content"/"maps"/"namalsk"/"Mission Files"/"regular.namalsk";(mission/"db").mkdir(parents=True)

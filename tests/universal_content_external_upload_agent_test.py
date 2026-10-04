@@ -85,7 +85,7 @@ class ExternalUploadAgentTest(unittest.TestCase):
    source=(ROOT/f"agents/{platform}/runtime/content_client.py").read_text(encoding="utf-8")
    self.assertIn("from content_semantic_validation import validate_external_content_payload",source)
    validation=source.index("validate_external_content_payload(payload,cmd)")
-   activation=source.index("_activate_target(config,iid,target,payload)",validation)
+   activation=source.index("_activate_target(config,iid,target,payload,",validation)
    self.assertLess(validation,activation)
 
  def test_repository_persists_only_validated_agent_quarantine_ack(self):

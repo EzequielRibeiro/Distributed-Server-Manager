@@ -405,9 +405,12 @@ class CustomerContentUploadService:
   item=self._transfer(user,transfer_id)
   try:
    if not isinstance(body,Mapping):raise ValueError("content payload must be an object")
-   payload=dict(body);payload["content_type"]="map";payload["activation_state"]="enabled"
+   payload=dict(body);payload["content_type"]="map";payload["activation_state"]="disabled"
    payload["dependencies"]=[str(value.get("content_id") or "").strip() for value in (dependency_assignments or []) if isinstance(value,Mapping) and str(value.get("content_id") or "").strip()]
-   return self._finalize(user,transfer_id,payload,extra_assignments=dependency_assignments)
+   prepared_dependencies=[]
+   for value in dependency_assignments or []:
+    prepared=dict(value);prepared["activation_state"]="disabled";prepared_dependencies.append(prepared)
+   return self._finalize(user,transfer_id,payload,extra_assignments=prepared_dependencies)
   except Exception as exc:
    if str(item.get("status") or "").lower()=="completed":
     try:self.transfers.reject_content_upload(str(item["transfer_id"]),str(exc))

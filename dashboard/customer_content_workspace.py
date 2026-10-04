@@ -374,10 +374,10 @@ class CustomerContentWorkspaceService:
    if text not in workshop_ids:workshop_ids.append(text)
   dependencies=[];item_index={}
   for index,published_id in enumerate(workshop_ids):
-   item={"instance_id":instance_id,"content_id":f"steam-workshop:{published_id}","content_type":"workshop","provider":"steam-workshop","desired_state":"installed","activation_state":"enabled","activation_order":order+index,"artifact":{"provider":"steam-workshop","published_file_id":published_id}}
+   item={"instance_id":instance_id,"content_id":f"steam-workshop:{published_id}","content_type":"workshop","provider":"steam-workshop","desired_state":"installed","activation_state":"disabled","activation_order":order+index,"artifact":{"provider":"steam-workshop","published_file_id":published_id}}
    self._enforce_policy(item,policy);self._resolve_workshop(context,item);nested=self._resolve_workshop_dependencies(context,item);self._prepare_activation_defaults(context,item)
    for dependency in nested:
-    self._enforce_policy(dependency,policy);item_index[str(dependency.get("content_id") or "")]=dependency
+    dependency["activation_state"]="disabled";self._enforce_policy(dependency,policy);item_index[str(dependency.get("content_id") or "")]=dependency
    item_index[item["content_id"]]=item;dependencies.append(item["content_id"])
   return {"context":context,"policy":policy,"items":list(item_index.values()),"dependencies":dependencies,"activation_order":order+len(item_index)}
 
@@ -416,7 +416,7 @@ class CustomerContentWorkspaceService:
   if mission_path and (len(mission_path)>512 or mission_path.startswith("/") or any(part in {"",".",".."} for part in parts)):raise ValueError("invalid DayZ community mission path")
   community_meta={"name":str(body.get("name") or content_id).strip()[:191]}
   if mission_path:community_meta["mission_path"]=mission_path
-  payload={"instance_id":instance_id,"content_id":content_id,"content_type":"map","provider":provider,"desired_state":"installed","activation_state":"enabled","activation_order":order,"artifact":artifact,"provenance":provenance,"metadata":{"community_map":community_meta},"dependencies":dependencies}
+  payload={"instance_id":instance_id,"content_id":content_id,"content_type":"map","provider":provider,"desired_state":"installed","activation_state":"disabled","activation_order":order,"artifact":artifact,"provenance":provenance,"metadata":{"community_map":community_meta},"dependencies":dependencies}
   self._enforce_policy(payload,policy)
   actor=str(user.get("username") or "customer")
   result=self.content.put_many([*items,payload],requested_by=actor,**self._customer_guard_options())
