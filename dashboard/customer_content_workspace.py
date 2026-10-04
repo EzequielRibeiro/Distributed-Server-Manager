@@ -374,10 +374,13 @@ class CustomerContentWorkspaceService:
    if text not in workshop_ids:workshop_ids.append(text)
   dependencies=[];item_index={}
   for index,published_id in enumerate(workshop_ids):
-   item={"instance_id":instance_id,"content_id":f"steam-workshop:{published_id}","content_type":"workshop","provider":"steam-workshop","desired_state":"installed","activation_state":"disabled","activation_order":order+index,"artifact":{"provider":"steam-workshop","published_file_id":published_id}}
+   content_id=f"steam-workshop:{published_id}";existing=self.content.get(instance_id,content_id)
+   activation_state=str((existing or {}).get("activation_state") or "disabled") if str((existing or {}).get("desired_state") or "")=="installed" else "disabled"
+   item={"instance_id":instance_id,"content_id":content_id,"content_type":"workshop","provider":"steam-workshop","desired_state":"installed","activation_state":activation_state,"activation_order":order+index,"artifact":{"provider":"steam-workshop","published_file_id":published_id}}
    self._enforce_policy(item,policy);self._resolve_workshop(context,item);nested=self._resolve_workshop_dependencies(context,item);self._prepare_activation_defaults(context,item)
    for dependency in nested:
-    dependency["activation_state"]="disabled";self._enforce_policy(dependency,policy);item_index[str(dependency.get("content_id") or "")]=dependency
+    dependency_id=str(dependency.get("content_id") or "");existing_dependency=self.content.get(instance_id,dependency_id)
+    dependency["activation_state"]=str((existing_dependency or {}).get("activation_state") or "disabled") if str((existing_dependency or {}).get("desired_state") or "")=="installed" else "disabled";self._enforce_policy(dependency,policy);item_index[dependency_id]=dependency
    item_index[item["content_id"]]=item;dependencies.append(item["content_id"])
   return {"context":context,"policy":policy,"items":list(item_index.values()),"dependencies":dependencies,"activation_order":order+len(item_index)}
 

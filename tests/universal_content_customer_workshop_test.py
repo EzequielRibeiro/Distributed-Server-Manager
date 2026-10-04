@@ -44,6 +44,10 @@ class _Workspace:
 class _Content:
     def __init__(self):
         self.puts = []
+        self.existing = {}
+
+    def get(self, instance_id, content_id):
+        return self.existing.get((instance_id, content_id))
 
     def put(self, payload, requested_by=None):
         self.puts.append((dict(payload), requested_by))
@@ -189,6 +193,13 @@ class CustomerWorkshopIntegrationTest(unittest.TestCase):
         self.assertEqual(community["provenance"]["community_map"]["repository"], "SumrakDZN/Namalsk-Server")
         self.assertEqual(community["activation_state"], "disabled")
         self.assertTrue(all(item["activation_state"] == "disabled" for item in result["dependencies"]))
+
+    def test_dayz_community_map_preserves_existing_active_workshop_dependency(self):
+        service = _service();service.workspace.policy.mods_allowed = True
+        service.content.existing[("i1","steam-workshop:1602372402")]={"desired_state":"installed","activation_state":"enabled"}
+        result=service.install_dayz_community_map({"username":"u"},"i1",{"content_id":"dayz-map:deerisle","name":"DeerIsle","source":{"provider":"github","repository":"johnmclane666/Deerisle-Stable","ref":"master"},"workshop_items":["1602372402"]})
+        dep=next(item for item in result["dependencies"] if item["content_id"]=="steam-workshop:1602372402")
+        self.assertEqual(dep["activation_state"],"enabled");self.assertEqual(result["assignment"]["activation_state"],"disabled")
 
     def test_dayz_community_map_persists_mission_path_selector(self):
         service = _service()
