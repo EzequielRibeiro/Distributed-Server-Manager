@@ -74,6 +74,24 @@ class ContentContractTest(unittest.TestCase):
    lease.assert_called_once();scan.assert_called_once_with(source,context=content_client._security_context({"agent_id":"agent-c4"},cmd));validate.assert_called_once()
    self.assertEqual(security["engine"],"yara-x")
 
+ def test_workshop_private_transaction_uses_hardlinks_without_symlink_managed_path(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);source=root/"steam";payload=root/"instance"/"content"/".workshop.c4"/"payload";source.mkdir();payload.mkdir(parents=True)
+   (source/"Addons").mkdir();original=source/"Addons"/"map.pbo";original.write_bytes(b"large-workshop-payload")
+   content_client._materialize_workshop_tree(source,payload)
+   materialized=payload/"Addons"/"map.pbo"
+   self.assertTrue(materialized.is_file());self.assertFalse(payload.is_symlink());self.assertFalse(materialized.is_symlink())
+   self.assertEqual(original.stat().st_ino,materialized.stat().st_ino)
+   self.assertGreaterEqual(original.stat().st_nlink,2)
+
+ def test_workshop_cross_device_preflight_refuses_insufficient_space_before_copy(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);source=root/"steam";payload=root/"payload";source.mkdir();payload.mkdir();(source/"map.pbo").write_bytes(b"x"*1024)
+   usage=type("Usage",(),{"total":10*1024**3,"used":9*1024**3,"free":1024})()
+   with patch.object(content_client,"_same_filesystem",return_value=False),patch.object(content_client.shutil,"disk_usage",return_value=usage),patch.object(content_client.shutil,"copytree") as copytree:
+    with self.assertRaisesRegex(ValueError,"Espaço insuficiente"):content_client._materialize_workshop_tree(source,payload)
+   copytree.assert_not_called()
+
  def test_security_rejection_never_activates_content(self):
   with tempfile.TemporaryDirectory() as td:
    instance=Path(td)/"instance";instance.mkdir();source=Path(td)/"blocked.jar";source.write_bytes(b"blocked")

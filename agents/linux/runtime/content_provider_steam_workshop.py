@@ -187,28 +187,35 @@ def _snapshot_revision(
     revision: str,
     protected_revisions: set[str] | None = None,
 ) -> Path:
-    destination = _revision_cache_path(
-        game_data_root,
-        app_id,
-        item_id,
-        revision,
-    )
+    destination = _revision_cache_path(game_data_root, app_id, item_id, revision)
     if destination.is_dir():
         return destination
-
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.parent / f".{revision}.{os.getpid()}.tmp"
-    if temporary.exists():
-        shutil.rmtree(temporary, ignore_errors=True)
+    if source.is_symlink():
+        raise RuntimeError("Steam Workshop revision source must be a real directory")
+    source = source.resolve(strict=True)
+    # Exact Workshop revisions are promoted out of Steam's mutable live cache.
+    # A same-filesystem rename is metadata-only, so a multi-gigabyte item is
+    # never duplicated merely to freeze the revision. SteamCMD can recreate
+    # its live item on a later update; the managed revision remains immutable.
     try:
-        shutil.copytree(source, temporary)
-        if destination.exists():
-            shutil.rmtree(temporary, ignore_errors=True)
-        else:
-            os.replace(temporary, destination)
-    finally:
-        if temporary.exists():
-            shutil.rmtree(temporary, ignore_errors=True)
+        same_device = source.stat().st_dev == destination.parent.stat().st_dev
+    except OSError as exc:
+        raise RuntimeError(f"Cannot inspect Steam Workshop revision storage: {exc}") from exc
+    if not same_device:
+        raise RuntimeError(
+            "Steam Workshop revision cache must share a filesystem with the Steam cache; "
+            "refusing a full artifact copy"
+        )
+    if not source.is_dir():
+        raise RuntimeError("Steam Workshop revision source must be a real directory")
+    for item in source.rglob("*"):
+        if item.is_symlink():
+            raise RuntimeError("Steam Workshop revision source contains a symlink")
+    try:
+        os.replace(source, destination)
+    except OSError as exc:
+        raise RuntimeError(f"Steam Workshop revision cache promotion failed: {exc}") from exc
     if not destination.is_dir():
         raise RuntimeError("Steam Workshop revision cache materialization failed")
     _prune_revision_cache(
@@ -399,8 +406,9 @@ def materialize_steam_workshop(artifact: dict[str, Any], game_data_root: Path, c
             except RuntimeError as exc:
                 live_errors.append(str(exc))
                 continue
+            frozen = _snapshot_revision(candidate, game_data_root, app_id, item_id, revision, _protected_revisions(artifact))
             record_cache_event("hit")
-            return consume(candidate)
+            return consume(frozen)
         login = _login(artifact)
         session_home = str(Path(os.environ.get("CAPIVARA_STEAM_HOME") or os.environ.get("HOME") or str(Path(game_data_root).resolve().parent)).resolve())
         env = {**os.environ, "HOME": session_home, "CAPIVARA_STEAM_HOME": session_home}
@@ -427,8 +435,9 @@ def materialize_steam_workshop(artifact: dict[str, Any], game_data_root: Path, c
             except RuntimeError as exc:
                 errors.append(str(exc))
                 continue
+            frozen = _snapshot_revision(candidate, game_data_root, app_id, item_id, revision, _protected_revisions(artifact))
             record_cache_event("download")
-            return consume(candidate)
+            return consume(frozen)
         if errors:
             raise RuntimeError("SteamCMD completed but no managed Workshop cache matched the requested revision: " + "; ".join(errors[:3]))
         raise RuntimeError("SteamCMD completed but the Workshop item was not found in a managed Steam cache")

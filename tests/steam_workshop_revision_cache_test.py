@@ -169,7 +169,7 @@ class SteamWorkshopRevisionCacheTest(unittest.TestCase):
             self.assertTrue((expected / "mod.cpp").is_file())
             self.assertEqual(run.call_count, 1)
 
-    def test_materialize_consumes_validated_steam_source_under_revision_lock_without_snapshot(self):
+    def test_materialize_promotes_validated_source_under_revision_lock(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             state_root = root / "state"
@@ -203,16 +203,16 @@ class SteamWorkshopRevisionCacheTest(unittest.TestCase):
                 patch.dict("os.environ", {"HOME": str(root / "home")}, clear=False),
                 patch.object(workshop_provider, "_steamcmd", return_value=str(executable)),
                 patch.object(workshop_provider.subprocess, "run", return_value=completed),
-                patch.object(workshop_provider, "_snapshot_revision") as snapshot,
+                patch.object(workshop_provider, "_snapshot_revision", wraps=workshop_provider._snapshot_revision) as snapshot,
             ):
                 result = workshop_provider.materialize_steam_workshop(artifact, game_data_root, consume)
             self.assertEqual(result, "consumed")
-            self.assertEqual(observed["path"], source.resolve())
+            frozen=workshop_provider._revision_cache_path(game_data_root,"221100","1828439124","1785000000")
+            self.assertEqual(observed["path"], frozen)
             self.assertTrue(observed["locked"])
-            snapshot.assert_not_called()
-            self.assertFalse(workshop_provider._revision_cache_path(game_data_root,"221100","1828439124","1785000000").exists())
+            snapshot.assert_called_once()
 
-    def test_materialize_reuses_matching_live_steam_source_without_steamcmd_or_snapshot(self):
+    def test_materialize_promotes_matching_live_source_and_reuses_frozen_revision(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             game_data_root = root / "state" / "game-data"
@@ -228,15 +228,27 @@ class SteamWorkshopRevisionCacheTest(unittest.TestCase):
                 patch.dict("os.environ", {"HOME": str(root / "home")}, clear=False),
                 patch.object(workshop_provider, "_steamcmd", return_value=str(executable)),
                 patch.object(workshop_provider.subprocess, "run") as run,
-                patch.object(workshop_provider, "_snapshot_revision") as snapshot,
+                patch.object(workshop_provider, "_snapshot_revision", wraps=workshop_provider._snapshot_revision) as snapshot,
             ):
                 first = workshop_provider.materialize_steam_workshop(artifact, game_data_root, lambda path:path)
                 second = workshop_provider.materialize_steam_workshop(artifact, game_data_root, lambda path:path)
-            self.assertEqual(first, source.resolve())
-            self.assertEqual(second, source.resolve())
+            frozen=workshop_provider._revision_cache_path(game_data_root,"221100","1828439124","1785000000")
+            self.assertEqual(first, frozen)
+            self.assertEqual(second, frozen)
             run.assert_not_called()
-            snapshot.assert_not_called()
-            self.assertFalse(workshop_provider._revision_cache_path(game_data_root,"221100","1828439124","1785000000").exists())
+            snapshot.assert_called_once()
+
+    def test_promoted_revision_isolated_from_future_live_cache_update(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); game_data_root=root/"state"/"game-data"
+            source=root/"home"/".local"/"share"/"Steam"/"steamapps"/"workshop"/"content"/"221100"/"1828439124"
+            source.mkdir(parents=True); (source/"mod.cpp").write_text("revision-a",encoding="utf-8")
+            self._write_manifest(source,"221100","1828439124","1785000000")
+            frozen=workshop_provider._snapshot_revision(source,game_data_root,"221100","1828439124","1785000000")
+            self.assertFalse(source.exists())
+            source.mkdir(parents=True); (source/"mod.cpp").write_text("revision-b",encoding="utf-8")
+            self.assertEqual((frozen/"mod.cpp").read_text(encoding="utf-8"),"revision-a")
+            self.assertEqual((source/"mod.cpp").read_text(encoding="utf-8"),"revision-b")
 
     def test_materialize_reuses_existing_revision_cache(self):
         with tempfile.TemporaryDirectory() as td:
