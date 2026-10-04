@@ -163,6 +163,8 @@ class AtomicPendingPublicationTest(unittest.TestCase):
                 "content_id":"atm11",
                 "transfer_id":"transfer-atomic",
                 "migration_plan_sha256":fp,
+                "from_loader_version":"26.1.2.94",
+                "target_loader_version":"26.1.2.109",
                 "commit":{
                     "status":"committed",
                     "journal":{
@@ -189,6 +191,16 @@ class AtomicPendingPublicationTest(unittest.TestCase):
         self.assertEqual(publication["status"],"published")
         self.assertEqual(publication["previous_bundle_revision"],1)
         self.assertEqual(publication["bundle_revision"],2)
+        self.assertTrue(publication["instance_runtime_updated"])
+        self.assertEqual(publication["from_loader_version"],"26.1.2.94")
+        self.assertEqual(publication["target_loader_version"],"26.1.2.109")
+        with self.backend.connect() as connection:
+            row=connection.execute(
+                "SELECT game_version,build_id FROM instances WHERE id=?",
+                ("pr855-controller-atomic",),
+            ).fetchone()
+        self.assertEqual(row["game_version"],"26.1.2")
+        self.assertEqual(row["build_id"],"26.1.2.109")
 
     def test_mismatched_agent_fingerprint_rolls_back_job_completion_and_bundle_publication(self):
         pending=self.pending()
@@ -203,6 +215,30 @@ class AtomicPendingPublicationTest(unittest.TestCase):
         history=self.content.bundle_history("pr855-controller-atomic","atm11")
         self.assertEqual(history[0]["revision"],1)
         self.assertEqual(history[0]["loader_version"],"26.1.2.94")
+
+    def test_stale_instance_build_rolls_back_job_completion_and_bundle_publication(self):
+        pending=self.pending()
+        repo,state=self.enqueue(pending)
+        with self.backend.transaction() as connection:
+            connection.execute(
+                "UPDATE instances SET build_id=? WHERE id=?",
+                ("26.1.2.95","pr855-controller-atomic"),
+            )
+        with self.assertRaisesRegex(Exception,"instance runtime identity changed"):
+            repo.apply_result(
+                "pr839-isolated-agent",
+                self.completed(state,pending),
+            )
+        self.assertEqual(repo.snapshot(state["provisioning_id"])["status"],"queued")
+        history=self.content.bundle_history("pr855-controller-atomic","atm11")
+        self.assertEqual(history[0]["revision"],1)
+        self.assertEqual(history[0]["loader_version"],"26.1.2.94")
+        with self.backend.connect() as connection:
+            row=connection.execute(
+                "SELECT build_id FROM instances WHERE id=?",
+                ("pr855-controller-atomic",),
+            ).fetchone()
+        self.assertEqual(row["build_id"],"26.1.2.95")
 
     def test_stale_bundle_revision_rolls_back_job_completion(self):
         pending=self.pending()
