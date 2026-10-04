@@ -23,7 +23,7 @@ _LAB_AGENT_ID="pr839-isolated-agent"
 _INSTANCE_PREFIX="pr855-"
 
 
-class MinecraftServerPackMigrationRequestError(RuntimeError):
+class MinecraftServerPackMigrationRequestError(ValueError):
     pass
 
 
