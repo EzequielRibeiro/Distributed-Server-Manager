@@ -129,12 +129,17 @@ def _record_with_prepared_maps(record,iid):
             if display_name:item["name"]=display_name
             prepared.append(item)
     existing=result.get("content_dayz_community_missions") if isinstance(result.get("content_dayz_community_missions"),list) else []
-    merged={str(item.get("id") or "").casefold():dict(item) for item in existing if isinstance(item,dict) and item.get("id")}
+    # Managed community-map state is authoritative. Entries carrying content_id
+    # must disappear from discovery after their assignment is removed.
+    merged={str(item.get("id") or "").casefold():dict(item) for item in existing if isinstance(item,dict) and item.get("id") and not str(item.get("content_id") or "").strip()}
     for item in prepared:merged[str(item["id"]).casefold()]=item
     if merged:
         values=[merged[key] for key in sorted(merged)]
         result["content_dayz_community_missions"]=[{k:v for k,v in item.items() if k!="dependencies"} for item in values]
         result["_dayz_prepared_map_content"]={str(item["id"]):[str(item.get("content_id") or ""),*list(item.get("dependencies") or [])] for item in values}
+    else:
+        result.pop("content_dayz_community_missions",None)
+        result.pop("_dayz_prepared_map_content",None)
     return result
 
 def _change_mission(config,record,iid,payload):
