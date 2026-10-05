@@ -7,6 +7,7 @@ from controller_session import session_user_from_headers
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from customer_content_workspace import CustomerContentWorkspaceService
 from customer_content_upload_service import CustomerContentUploadService
+from content_repository import ContentRepository
 from dayz_management_repository import DayZManagementRepository,DayZOperationConflict
 from json_serialization import to_json_compatible
 
@@ -24,6 +25,28 @@ def _discovery_payload(op):
     required={"id","official","community","active","installed","available","can_activate","state","source"}
     if any(not isinstance(item,dict) or not required.issubset(item) for item in missions):return None
     return payload
+
+def _community_display_names(content,instance_id,maps):
+    if not isinstance(maps,dict):return maps
+    missions=maps.get("missions")
+    if not isinstance(missions,list):return maps
+    result=dict(maps);enriched=[]
+    for raw in missions:
+        item=dict(raw) if isinstance(raw,dict) else raw
+        if isinstance(item,dict) and item.get("community") and item.get("content_id"):
+            current=str(item.get("name") or "").strip();mission_id=str(item.get("id") or "").strip()
+            if not current or current==mission_id:
+                assignment=content.get(instance_id,str(item["content_id"]))
+                metadata=assignment.get("metadata") if isinstance(assignment,dict) and isinstance(assignment.get("metadata"),dict) else {}
+                community=metadata.get("community_map") if isinstance(metadata.get("community_map"),dict) else {}
+                display=str(community.get("name") or metadata.get("display_name") or "").strip()
+                if display:item["name"]=display
+        enriched.append(item)
+    result["missions"]=enriched
+    current_id=str(result.get("current") or "").strip()
+    active=next((item for item in enriched if isinstance(item,dict) and (item.get("active") or str(item.get("id") or "")==current_id)),None)
+    if active and active.get("name"):result["current_name"]=active["name"]
+    return result
 
 def install_customer_dayz_http(legacy,authenticate):
     previous_get=legacy.DashboardHandler.do_GET;previous_post=legacy.DashboardHandler.do_POST
@@ -58,6 +81,7 @@ def install_customer_dayz_http(legacy,authenticate):
             ops=repo.list_for_instance(instance_id,25)
         discovery=next(((op,_discovery_payload(op)) for op in ops if _discovery_payload(op) is not None),None)
         maps=discovery[1] if discovery else {}
+        maps=_community_display_names(ContentRepository(backend()),instance_id,maps)
         return {"instance_id":instance_id,"editable":"instance.restart" in workspace.permissions(user,instance_id) and "settings.write" in workspace.permissions(user,instance_id),"maps":maps,"operations":[{k:op.get(k) for k in ("operation_id","action","status","scheduled_at","last_error","created_at","delivered_at","completed_at","canceled_at","payload","result")} for op in ops[:15]]}
     def error(self,exc):
         if isinstance(exc,PermissionError):return send(self,403,{"error":"forbidden","message":str(exc)})
