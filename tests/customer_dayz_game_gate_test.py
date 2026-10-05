@@ -41,6 +41,7 @@ class DayzWipeScheduleFieldsContractTest(unittest.TestCase):
         self.assertIn('`${wipeHour.value}:${wipeMinute.value}`', script)
         self.assertIn('scheduled_at:future?future.toISOString():null', script)
         self.assertIn('const pendingWipe=operations.find(op=>op.action==="wipe"', script)
+        self.assertIn('op.status==="delivered"||(op.status==="queued"&&(!op.scheduled_at||new Date(op.scheduled_at)<=new Date()))', script)
         self.assertIn('wipeDay.value=String(due.getDate()).padStart(2,"0")', script)
         self.assertIn('let wipeFormDirty=false', script)
         self.assertIn('const markWipeDirty=()=>{wipeFormDirty=true}', script)

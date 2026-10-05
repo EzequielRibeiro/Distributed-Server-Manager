@@ -46,7 +46,13 @@ class DayZManagementRepository:
             if str(instance["agent_id"] or "")!=agent_id:raise PermissionError("Instance belongs to another Agent")
             if str(instance["game_id"] or "").lower()!="dayz":raise ValueError("DayZ operation requires a DayZ instance")
             if action in MUTATING_ACTIONS:
-                active=s.execute("SELECT operation_id,action FROM dayz_operations "+f"WHERE instance_id={ph} AND action IN ('change_mission','wipe') AND status IN ('queued','delivered') ORDER BY created_at LIMIT 1",(instance_id,)).fetchone()
+                now=utc_timestamp();future=_stamp(due)>_stamp(now)
+                timing="(status='delivered' OR scheduled_at<={0})".format(ph)
+                params:list[Any]=[instance_id,now]
+                if future:
+                    timing="status IN ('queued','delivered')"
+                    params=[instance_id]
+                active=s.execute("SELECT operation_id,action FROM dayz_operations "+f"WHERE instance_id={ph} AND action IN ('change_mission','wipe') AND {timing} ORDER BY scheduled_at,created_at LIMIT 1",tuple(params)).fetchone()
                 if active is not None:raise DayZOperationConflict(f"DayZ operation already active: {active['action']} ({active['operation_id']})")
             operation_id="dayz-op-"+uuid.uuid4().hex;now=utc_timestamp()
             s.execute("INSERT INTO dayz_operations(operation_id,agent_id,instance_id,action,status,requested_by,scheduled_at,payload_json,created_at,updated_at) "+f"VALUES ({self.dialect.parameters(10)})",(operation_id,agent_id,instance_id,action,"queued",str(requested_by or "").strip() or None,due,json.dumps(body,separators=(",",":"),sort_keys=True),now,now))
