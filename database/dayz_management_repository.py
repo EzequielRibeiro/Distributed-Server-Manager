@@ -47,7 +47,7 @@ class DayZManagementRepository:
             if str(instance["game_id"] or "").lower()!="dayz":raise ValueError("DayZ operation requires a DayZ instance")
             if action in MUTATING_ACTIONS:
                 now=utc_timestamp();future=_stamp(due)>_stamp(now)
-                timing="(status='delivered' OR scheduled_at<={0})".format(ph)
+                timing="(status='delivered' OR (status='queued' AND scheduled_at<={0}))".format(ph)
                 params:list[Any]=[instance_id,now]
                 if future:
                     timing="status IN ('queued','delivered')"
