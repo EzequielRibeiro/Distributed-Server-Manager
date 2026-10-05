@@ -95,7 +95,8 @@ class DayzFutureOperationConflictContractTest(unittest.TestCase):
  def test_future_queued_mutation_does_not_block_current_mutation(self):
   source=(ROOT/"database/dayz_management_repository.py").read_text(encoding="utf-8")
   self.assertIn("future=_stamp(due)>_stamp(now)",source)
-  self.assertIn("\"(status='delivered' OR scheduled_at<={0})\".format(ph)",source)
+  self.assertIn("\"(status='delivered' OR (status='queued' AND scheduled_at<={0}))\".format(ph)",source)
+  self.assertNotIn("\"(status='delivered' OR scheduled_at<={0})\".format(ph)",source)
   self.assertIn("\"status IN ('queued','delivered')\"",source)
   self.assertIn("ORDER BY scheduled_at,created_at",source)
 
