@@ -19,6 +19,11 @@ def _ready(config:dict[str,Any],instance_id:str)->bool:
 def _materializable(record:dict[str,Any])->bool:
  return bool(str(record.get("executable") or "").strip() and str(record.get("working_directory") or record.get("path") or "").strip())
 
+_METADATA_ONLY_FIELDS={"content_activation_checksum","content_dayz_community_missions"}
+
+def _runtime_effective_spec(spec:dict[str,Any])->dict[str,Any]:
+ return {key:value for key,value in spec.items() if key not in _METADATA_ONLY_FIELDS}
+
 def apply_activation_snapshots(config:dict[str,Any],snapshots:list[dict[str,Any]])->list[dict[str,Any]]:
  results=[]
  for snapshot in snapshots:
@@ -30,6 +35,9 @@ def apply_activation_snapshots(config:dict[str,Any],snapshots:list[dict[str,Any]
   projected=project_runtime_spec(previous,snapshot);old_checksum=str(previous.get("content_activation_checksum") or "");new_checksum=str(projected.get("content_activation_checksum") or "")
   if old_checksum==new_checksum:
    results.append({"instance_id":iid,"changed":False,"checksum":new_checksum});continue
+  if _runtime_effective_spec(previous)==_runtime_effective_spec(projected):
+   instance_runtime.register_instance(projected)
+   results.append({"instance_id":iid,"changed":True,"checksum":new_checksum,"restarted":False,"metadata_only":True});continue
   was_running=instance_runtime.status(config,iid).get("observed_state")=="running"
   try:
    if was_running:instance_runtime.lifecycle(config,iid,"stop")
