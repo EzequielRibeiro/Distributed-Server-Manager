@@ -99,6 +99,23 @@ class DayZMapSwitchStabilizationTest(unittest.TestCase):
                 record=dayz_operation_client._record_with_prepared_maps({},"dayz-1")
             self.assertEqual(record["content_dayz_community_missions"],[{"id":"empty.deerisle","source":str(mission.resolve()),"content_id":"dayz-map:deerisle","name":"Deer Isle"}])
 
+    def test_removed_managed_map_is_not_preserved_from_runtime_projection(self):
+        with tempfile.TemporaryDirectory() as td:
+            state_root=Path(td)/"state";(state_root/"dayz-1").mkdir(parents=True)
+            stale={"content_dayz_community_missions":[{"id":"empty.deerisle","source":"/stale/deerisle","content_id":"dayz-map:deerisle","name":"Deer Isle"}]}
+            with patch.object(dayz_operation_client,"CONTENT_STATE",state_root):
+                record=dayz_operation_client._record_with_prepared_maps(stale,"dayz-1")
+            self.assertNotIn("content_dayz_community_missions",record)
+            self.assertNotIn("_dayz_prepared_map_content",record)
+
+    def test_unmanaged_community_mission_is_preserved(self):
+        with tempfile.TemporaryDirectory() as td:
+            state_root=Path(td)/"state";(state_root/"dayz-1").mkdir(parents=True)
+            unmanaged={"id":"custom.mission","source":"/srv/custom.mission","name":"Custom"}
+            with patch.object(dayz_operation_client,"CONTENT_STATE",state_root):
+                record=dayz_operation_client._record_with_prepared_maps({"content_dayz_community_missions":[unmanaged]},"dayz-1")
+            self.assertEqual(record["content_dayz_community_missions"],[unmanaged])
+
     def test_hybrid_rollback_repairs_file_access_through_privileged_helper(self):
         completed = type("Completed", (), {"returncode": 0, "stderr": "", "stdout": ""})()
         with (
