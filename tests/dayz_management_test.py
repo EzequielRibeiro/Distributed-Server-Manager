@@ -59,6 +59,13 @@ class DayZManagementTest(unittest.TestCase):
   changed=apply_mission(self.record,item["id"])
   self.assertEqual(current_mission(changed),"dayzOffline.namalsk")
   self.assertTrue((self.state/"mpmissions"/"dayzOffline.namalsk").is_dir())
+ def test_legacy_deerisle_content_id_has_friendly_display_name(self):
+  source=Path(self.record["instance_state_root"])/"content"/"deerisle";source.mkdir(parents=True)
+  record={**self.record,"content_dayz_community_missions":[{"id":"empty.deerisle","source":str(source),"content_id":"dayz-map:deerisle"}]}
+  item=next(x for x in discover_missions(record)["missions"] if x["id"]=="empty.deerisle")
+  self.assertEqual(item["name"],"Deer Isle")
+  self.assertEqual(item["content_id"],"dayz-map:deerisle")
+
  def test_discovers_and_copies_managed_community_mission(self):
   source=self.state/"content"/"maps"/"namalsk"/"Mission Files"/"regular.namalsk"
   (source/"db").mkdir(parents=True);(source/"init.c").write_text("void main() {}\n",encoding="utf-8");(source/"db"/"types.xml").write_text("<types/>\n",encoding="utf-8")

@@ -8,6 +8,7 @@ from typing import Any
 _SAFE=re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _TEMPLATE=re.compile(r'(\btemplate\s*=\s*["\'])([^"\']+)(["\']\s*;)',re.I)
 _OFFICIAL={"dayzOffline.chernarusplus":"Chernarus","dayzOffline.enoch":"Livonia","dayzOffline.sakhal":"Sakhal"}
+_LEGACY_COMMUNITY_NAMES={"dayz-map:deerisle":"Deer Isle"}
 _STORAGE_DIR=re.compile(r"^storage_\d+$",re.I)
 
 def _root(record):
@@ -88,8 +89,10 @@ def discover_missions(record):
         state="active" if active else ("installed" if installed else ("available" if available else "unavailable"))
         source="official-runtime" if official else ("community-instance" if installed else ("community-content" if "content" in where else "community-runtime"))
         community_item=community_metadata.get(name) or {}
+        content_id=community_item.get("content_id") or ""
+        display_name=community_item.get("name") or _LEGACY_COMMUNITY_NAMES.get(content_id) or name
         item={
-            "id":name,"name":_OFFICIAL.get(name,community_item.get("name") or name),"official":official,"community":not official,
+            "id":name,"name":_OFFICIAL.get(name,display_name),"official":official,"community":not official,
             "current":active,"active":active,"installed":installed,"available":available,
             "can_activate":available,"state":state,"source":source,
         }
