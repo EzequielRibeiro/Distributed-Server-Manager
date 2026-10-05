@@ -78,4 +78,10 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
   schema=(ROOT/"database"/"schema_baseline.py").read_text(encoding="utf-8")
   self.assertIn("ensure_dayz_management_schema",schema)
 
+ def test_legacy_community_map_display_name_enrichment_contract(self):
+  source=(ROOT/"dashboard"/"customer_dayz_http.py").read_text(encoding="utf-8")
+  self.assertIn("def _community_display_names",source)
+  self.assertIn("ContentRepository(backend())",source)
+  self.assertIn('community.get("name") or metadata.get("display_name")',source)
+
 if __name__=="__main__":unittest.main()
