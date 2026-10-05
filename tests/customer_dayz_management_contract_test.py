@@ -86,5 +86,8 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
   self.assertIn("def _community_display_names",source)
   self.assertIn("ContentRepository(backend())",source)
   self.assertIn('community.get("name") or metadata.get("display_name")',source)
+  self.assertIn("content_counts",source)
+  self.assertIn('display=f"{display} — {variant.title()}"',source)
+  self.assertIn("assignments[content_id]",source)
 
 if __name__=="__main__":unittest.main()
