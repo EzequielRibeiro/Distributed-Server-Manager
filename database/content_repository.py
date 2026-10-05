@@ -69,6 +69,17 @@ class ContentRepository:
    s=AlertSession(self.backend,c)
    try:return self._existing_session(s,instance_id,content_id)
    finally:s.close()
+ def latest_updated_at(self,instance_id,content_types=None):
+  params=[str(instance_id)];where=f"instance_id={self.ph}"
+  types=sorted({str(value).strip().lower() for value in (content_types or []) if str(value).strip()})
+  if types:
+   where+=f" AND content_type IN ({','.join([self.ph]*len(types))})";params.extend(types)
+  with self.backend.connect() as c:
+   s=AlertSession(self.backend,c)
+   try:
+    row=s.execute(f"SELECT MAX(updated_at) AS updated_at FROM content_assignments WHERE {where}",tuple(params)).fetchone()
+    return row["updated_at"] if row is not None else None
+   finally:s.close()
  def _guard_parallel_modpack_session(self,s,instance_id,requested_content_id,game_id):
   """Serialize new Minecraft content changes against an in-flight modpack.
 
