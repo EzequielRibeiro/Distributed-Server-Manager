@@ -26,6 +26,15 @@ def _discovery_payload(op):
     if any(not isinstance(item,dict) or not required.issubset(item) for item in missions):return None
     return payload
 
+def _as_utc(value):
+    if value in {None,""}:return None
+    if isinstance(value,datetime):dt=value
+    else:
+        try:dt=datetime.fromisoformat(str(value).replace("Z","+00:00"))
+        except (TypeError,ValueError):return None
+    if dt.tzinfo is None:dt=dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
 def _community_display_names(content,instance_id,maps):
     if not isinstance(maps,dict):return maps
     missions=maps.get("missions")
@@ -74,14 +83,21 @@ def install_customer_dayz_http(legacy,authenticate):
         latest_change=next((op for op in ops if op.get("action")=="change_mission" and op.get("status")=="completed"),None)
         discovery_created=(discovery[0].get("created_at") if discovery else None)
         change_completed=(latest_change.get("completed_at") if latest_change else None)
-        stale_after_change=bool(latest_change and (discovery is None or (change_completed and discovery_created and change_completed>discovery_created)))
-        if (discovery is None or stale_after_change) and active_discovery is None:
+        stale_after_change=bool(latest_change and (discovery is None or (_as_utc(change_completed) and _as_utc(discovery_created) and _as_utc(change_completed)>_as_utc(discovery_created))))
+        content=ContentRepository(backend())
+        content_updated=content.latest_updated_at(instance_id,{"map","workshop"})
+        stale_after_content=bool(discovery and _as_utc(content_updated) and _as_utc(discovery_created) and _as_utc(content_updated)>_as_utc(discovery_created))
+        if (discovery is None or stale_after_change or stale_after_content) and active_discovery is None:
             actor=str((user or {}).get("username") or (user or {}).get("id") or "customer")
             repo.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="discover_missions",requested_by=actor)
             ops=repo.list_for_instance(instance_id,25)
         discovery=next(((op,_discovery_payload(op)) for op in ops if _discovery_payload(op) is not None),None)
-        maps=discovery[1] if discovery else {}
-        maps=_community_display_names(ContentRepository(backend()),instance_id,maps)
+        discovery=next(((op,_discovery_payload(op)) for op in ops if _discovery_payload(op) is not None),None)
+        discovery_created=(discovery[0].get("created_at") if discovery else None)
+        content_updated=content.latest_updated_at(instance_id,{"map","workshop"})
+        discovery_is_stale=bool(discovery and _as_utc(content_updated) and _as_utc(discovery_created) and _as_utc(content_updated)>_as_utc(discovery_created))
+        maps={} if discovery_is_stale else (discovery[1] if discovery else {})
+        maps=_community_display_names(content,instance_id,maps)
         return {"instance_id":instance_id,"editable":"instance.restart" in workspace.permissions(user,instance_id) and "settings.write" in workspace.permissions(user,instance_id),"maps":maps,"operations":[{k:op.get(k) for k in ("operation_id","action","status","scheduled_at","last_error","created_at","delivered_at","completed_at","canceled_at","payload","result")} for op in ops[:15]]}
     def error(self,exc):
         if isinstance(exc,PermissionError):return send(self,403,{"error":"forbidden","message":str(exc)})
